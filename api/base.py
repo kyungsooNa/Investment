@@ -37,6 +37,8 @@ class _KoreaInvestAPIBase:
                 raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
             response.raise_for_status()
+            print(f"API 응답 텍스트: {response.text}")
+
             return response.json()
         except requests.exceptions.HTTPError as http_err:
             print(f"HTTP 오류 발생: {http_err.response.status_code} - {http_err.response.text}")

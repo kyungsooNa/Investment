@@ -43,8 +43,22 @@ def main():
     else:
         print(f"\n삼성전자 현재가 조회 실패.")
 
-    # --- 계좌 잔고 조회 ---
-    account_balance = korea_invest_api.account.get_account_balance()
+    # --- 계좌 잔고 조회 (실전/모의 구분) ---
+    print("\n--- 계좌 잔고 조회 시도 ---")
+
+    # KoreaInvestAPI 인스턴스가 생성될 때 env 객체의 config를 내부적으로 저장합니다.
+    # self._config는 api.client.KoreaInvestAPI 내부에 있는 속성입니다.
+    # 그러나 main.py에서 직접 korea_invest_api._config에 접근하는 것은 캡슐화 원칙에 위배될 수 있으므로,
+    # env 객체를 통해 is_paper_trading 상태를 확인하는 것이 더 적절합니다.
+
+    # env.is_paper_trading을 직접 확인하여 호출 분기
+    if env.is_paper_trading:
+        print("INFO: 모의투자 계좌 잔고를 조회합니다.")
+        account_balance = korea_invest_api.account.get_account_balance()  # 모의투자용 호출
+    else:
+        print("INFO: 실전 계좌 잔고를 조회합니다.")
+        account_balance = korea_invest_api.account.get_real_account_balance()  # 실전용 호출
+
     if account_balance and account_balance.get('rt_cd') == '0':
         print(f"\n계좌 잔고: {account_balance}")
     else:
