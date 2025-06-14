@@ -1,0 +1,10 @@
+requests
+websockets
+pandas
+loguru
+pyyaml
+pycryptodome
+PyQt5
+urllib3==1.26.15
+bs4
+openpyxl
