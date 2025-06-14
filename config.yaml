@@ -1,0 +1,26 @@
+# 실전투자
+# api_key: "PSGqvCZEnv2omWB8hZQTjyuZNSFPJfTp2cjc" # API KEY를 입력하세요
+# api_secret_key: "WNz24z1SEyvmHos0cbMw6oLTzSv6RHD6dJLtn8kyK2CRcWJBAqs17LhwsgGGnRPLWoNTkSGLu+vdISEjA5qR9pTMnXad1kgdtlYUIhApg1LJjC12VpAYbGN/YM613+v1MuL0MoTlmEINYPrK2q2Z1zUW8w9tOXBdjgH5nhWe7cf+wEtwo+Y=" # API SECRET KEY를 입력하세요
+# stock_account_number: "43068357" # 실전투자 계좌번호 앞 8자리를 입력하세요 (예: XXXXXXXX-01 형식이라면 -01 제외하고 입력)
+
+api_key: "" # API KEY를 입력하세요
+api_secret_key: "" # API SECRET KEY를 입력하세요
+stock_account_number: "" # 실전투자 계좌번호 앞 8자리를 입력하세요 (예: XXXXXXXX-01 형식이라면 -01 제외하고 입력)
+
+#모의투자
+paper_api_key: "PSjxJYabFtaIP29HJYoCHeLKBITxxv7g7nvg" # 모의투자 API KEY를 입력하세요
+paper_api_secret_key: "0spGtA+5lefR4GJTOgxn82HG7fTjL2S6rUVuyv+ZVpqZspUF61ywVrvb7RkjjtotadXPlozxJ0XuDmM+7PhJB5wLgXT0ZP7nPXqEsNNq4Un8Bf3RZ/Ce7oRvzt8BZRSt+ozHVIm0IpKG1ae2pZ9xll/mATPfzEpcQVhsVUb8XH0gtieywDM=" # 모의투자 API SECRET KEY를 입력하세요
+paper_stock_account_number: "50139085" # 모의투자 계좌번호 앞 8자리를 입력하세요 (예: XXXXXXXX-01 형식이라면 -01 제외하고 입력)
+
+htsid: "@0173312" # 체결 통보용 HTS ID를 입력하세요
+custtype: P # customer type, 개인:P 법인:B
+is_paper_trading: True # 모의투자 여부 (True 또는 False)
+
+# User Agent
+my_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36"
+
+# domain info
+url: "https://openapi.koreainvestment.com:9443" # 실제 서비스 URL
+websocket_url: "ws://ops.koreainvestment.com:21000" # 웹소켓 URL
+paper_url: "https://openapivts.koreainvestment.com:29443" # 모의투자 서비스 URL (수정된 부분)
+paper_websocket_url: "ws://ops.koreainvestment.com:31000" # 모의투자 웹소켓 URL
