@@ -193,5 +193,6 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+config.yaml
 # KIS API Token file
 KIS_TOKEN_*.yaml
