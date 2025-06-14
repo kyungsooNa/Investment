@@ -1,17 +1,12 @@
 # main.py
-import yaml
 import os
-from utils import KoreaInvestEnv, KoreaInvestAPI
+from core.config_loader import load_config  # core 폴더에서 임포트
+from api.env import KoreaInvestEnv  # api 폴더에서 임포트
+from api.client import KoreaInvestAPI  # api 폴더에서 임포트
 
 # config.yaml 파일 경로 설정
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
-
-
-def load_config(config_path):
-    """config.yaml 파일을 로드합니다."""
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
 
 
 def main():
@@ -22,6 +17,9 @@ def main():
     except ValueError as e:
         print(f"ERROR: 환경 설정 초기화 실패: {e}")
         return
+    except FileNotFoundError as e:
+        print(f"ERROR: 설정 파일을 찾을 수 없습니다: {e}")
+        return
 
     # 2. 접근 토큰 발급
     access_token = env.get_access_token()
@@ -29,24 +27,24 @@ def main():
         print("ERROR: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
         return
 
-    # 3. API 클라이언트 초기화
+    # 3. API 클라이언트 초기화 (env 객체를 바로 전달)
     try:
-        korea_invest_api = KoreaInvestAPI(env.get_full_config(), env.get_base_headers())
+        korea_invest_api = KoreaInvestAPI(env)
         print(f"\n성공적으로 API 클라이언트를 초기화했습니다: {korea_invest_api}")
     except ValueError as e:
         print(f"ERROR: API 클라이언트 초기화 실패: {e}")
         return
 
-    # --- 주식 현재가 조회 (기존 기능) ---
+    # --- 주식 현재가 조회 ---
     stock_code_samsung = "005930"  # 삼성전자
-    current_price_samsung = korea_invest_api.get_current_price(stock_code_samsung)
+    current_price_samsung = korea_invest_api.quotations.get_current_price(stock_code_samsung)
     if current_price_samsung and current_price_samsung.get('rt_cd') == '0':
         print(f"\n삼성전자 현재가: {current_price_samsung}")
     else:
         print(f"\n삼성전자 현재가 조회 실패.")
 
-    # --- 계좌 잔고 조회 (기존 기능) ---
-    account_balance = korea_invest_api.get_account_balance()
+    # --- 계좌 잔고 조회 ---
+    account_balance = korea_invest_api.account.get_account_balance()
     if account_balance and account_balance.get('rt_cd') == '0':
         print(f"\n계좌 잔고: {account_balance}")
     else:
@@ -54,23 +52,16 @@ def main():
 
     # --- 주식 매수 주문 예시 ---
     print("\n--- 주식 매수 주문 시도 ---")
-    order_type = "매수"
-    # 주문할 종목코드 (삼성전자)
-    order_stock_code = "005930"
-    # 주문 가격 (현재가보다 약간 높은 지정가 또는 시장가)
-    # 모의투자이므로, 현재가 조회 후 호가 단위를 고려하여 가격 설정 필요
-    # 여기서는 임의의 지정가로 설정. 실제로는 current_price_samsung에서 'stck_prpr' 값을 가져와 활용
-    order_price = "58500"  # 예시: 지정가 58,500원
-    order_qty = "1"  # 예시: 1주
+    order_stock_code = "005930"  # 주문할 종목코드 (삼성전자)
+    order_price = "58500"  # 예시: 지정가 58,500원 (문자열로 전달)
+    order_qty = "1"  # 예시: 1주 (문자열로 전달)
+    order_dvsn = "00"  # 주문 유형: "00" 지정가
 
-    # '00': 지정가, '01': 시장가, '02': 조건부지정가, '03': 최유리 지정가, '04': 최우선 지정가
-    order_dvsn = "00"  # 지정가
-
-    buy_order_result = korea_invest_api.place_stock_order(
+    buy_order_result = korea_invest_api.trading.place_stock_order(
         order_stock_code,
         order_price,
         order_qty,
-        "매수",  # 매매 구분: "매수" 또는 "매도"
+        "매수",  # 매매 구분: "매수"
         order_dvsn  # 주문 유형
     )
 
@@ -80,6 +71,7 @@ def main():
         print(f"주식 매수 주문 실패: {buy_order_result}")
 
     # --- 주식 매도 주문 예시 ---
+    # 주석을 해제하고 사용 시, 보유한 주식이 있어야 합니다.
     # print("\n--- 주식 매도 주문 시도 ---")
     # order_type = "매도"
     # order_stock_code = "005930"
@@ -87,7 +79,7 @@ def main():
     # order_qty = "1" # 예시: 1주
     # order_dvsn = "00" # 지정가
 
-    # sell_order_result = korea_invest_api.place_stock_order(
+    # sell_order_result = korea_invest_api.trading.place_stock_order(
     #     order_stock_code,
     #     order_price,
     #     order_qty,
