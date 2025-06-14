@@ -1,57 +1,104 @@
+# main.py
 import yaml
 import os
-
 from utils import KoreaInvestEnv, KoreaInvestAPI
+
+# config.yaml 파일 경로 설정
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
+
+
+def load_config(config_path):
+    """config.yaml 파일을 로드합니다."""
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
 
 
 def main():
-    config_file_path = "./config.yaml"
-    if not os.path.exists(config_file_path):
-        print(f"ERROR: 설정 파일이 존재하지 않습니다: {config_file_path}")
-        print("config.yaml 파일을 스크립트와 같은 디렉토리에 두거나 경로를 수정해주세요.")
-        return
-
+    # 1. 환경 설정 로드 및 초기화
     try:
-        with open(config_file_path, encoding='UTF-8') as f:
-            cfg_data = yaml.load(f, Loader=yaml.FullLoader) # cfg_data로 변수명 변경
-    except Exception as e:
-        print(f"ERROR: config.yaml 파일을 로드하는 중 오류 발생: {e}")
+        config_data = load_config(CONFIG_PATH)
+        env = KoreaInvestEnv(config_data)
+    except ValueError as e:
+        print(f"ERROR: 환경 설정 초기화 실패: {e}")
         return
 
-    # 1. KoreaInvestEnv 객체 생성
-    env_cls = KoreaInvestEnv(cfg_data) # 초기 설정 데이터를 전달
-
-    # 2. API 접근 토큰 발급 (가장 중요!)
-    # 이 시점에서 env_cls 내부에 access_token이 업데이트됩니다.
-    access_token_result = env_cls.get_access_token()
-    if not access_token_result: # 토큰 발급 실패 시
+    # 2. 접근 토큰 발급
+    access_token = env.get_access_token()
+    if not access_token:
         print("ERROR: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
         return
 
-    # 3. KoreaInvestAPI 객체 생성을 위한 최신 설정 및 헤더 가져오기
-    # env_cls 내부에 업데이트된 access_token이 포함된 최신 full_config와 base_headers를 가져옵니다.
-    full_config_with_token = env_cls.get_full_config()
-    base_headers_with_token = env_cls.get_base_headers()
+    # 3. API 클라이언트 초기화
+    try:
+        korea_invest_api = KoreaInvestAPI(env.get_full_config(), env.get_base_headers())
+        print(f"\n성공적으로 API 클라이언트를 초기화했습니다: {korea_invest_api}")
+    except ValueError as e:
+        print(f"ERROR: API 클라이언트 초기화 실패: {e}")
+        return
 
-    # 4. KoreaInvestAPI 객체 생성 (업데이트된 설정과 헤더 전달)
-    korea_invest_api = KoreaInvestAPI(full_config_with_token, base_headers=base_headers_with_token)
-
-    print(f"\n성공적으로 API 클라이언트를 초기화했습니다: {korea_invest_api}")
-
-    # --- 이제 초기화된 korea_invest_api 객체를 사용하여 실제 API를 호출할 수 있습니다. ---
-    # 예시: 주식 현재가 조회 (한국투자증권 Open API 문서에 맞는 종목 코드를 사용하세요)
-    stock_price = korea_invest_api.get_current_price("005930") # 삼성전자 예시
-    if stock_price:
-        print(f"\n삼성전자 현재가: {stock_price}")
+    # --- 주식 현재가 조회 (기존 기능) ---
+    stock_code_samsung = "005930"  # 삼성전자
+    current_price_samsung = korea_invest_api.get_current_price(stock_code_samsung)
+    if current_price_samsung and current_price_samsung.get('rt_cd') == '0':
+        print(f"\n삼성전자 현재가: {current_price_samsung}")
     else:
-        print("\n현재가 조회 실패.")
+        print(f"\n삼성전자 현재가 조회 실패.")
 
-    # 예시: 계좌 잔고 조회
+    # --- 계좌 잔고 조회 (기존 기능) ---
     account_balance = korea_invest_api.get_account_balance()
-    if account_balance:
+    if account_balance and account_balance.get('rt_cd') == '0':
         print(f"\n계좌 잔고: {account_balance}")
     else:
-        print("\n계좌 잔고 조회 실패.")
+        print(f"\n계좌 잔고 조회 실패.")
+
+    # --- 주식 매수 주문 예시 ---
+    print("\n--- 주식 매수 주문 시도 ---")
+    order_type = "매수"
+    # 주문할 종목코드 (삼성전자)
+    order_stock_code = "005930"
+    # 주문 가격 (현재가보다 약간 높은 지정가 또는 시장가)
+    # 모의투자이므로, 현재가 조회 후 호가 단위를 고려하여 가격 설정 필요
+    # 여기서는 임의의 지정가로 설정. 실제로는 current_price_samsung에서 'stck_prpr' 값을 가져와 활용
+    order_price = "58500"  # 예시: 지정가 58,500원
+    order_qty = "1"  # 예시: 1주
+
+    # '00': 지정가, '01': 시장가, '02': 조건부지정가, '03': 최유리 지정가, '04': 최우선 지정가
+    order_dvsn = "00"  # 지정가
+
+    buy_order_result = korea_invest_api.place_stock_order(
+        order_stock_code,
+        order_price,
+        order_qty,
+        "매수",  # 매매 구분: "매수" 또는 "매도"
+        order_dvsn  # 주문 유형
+    )
+
+    if buy_order_result and buy_order_result.get('rt_cd') == '0':
+        print(f"주식 매수 주문 성공: {buy_order_result}")
+    else:
+        print(f"주식 매수 주문 실패: {buy_order_result}")
+
+    # --- 주식 매도 주문 예시 ---
+    # print("\n--- 주식 매도 주문 시도 ---")
+    # order_type = "매도"
+    # order_stock_code = "005930"
+    # order_price = "58000" # 예시: 지정가 58,000원
+    # order_qty = "1" # 예시: 1주
+    # order_dvsn = "00" # 지정가
+
+    # sell_order_result = korea_invest_api.place_stock_order(
+    #     order_stock_code,
+    #     order_price,
+    #     order_qty,
+    #     "매도", # 매매 구분
+    #     order_dvsn # 주문 유형
+    # )
+
+    # if sell_order_result and sell_order_result.get('rt_cd') == '0':
+    #     print(f"주식 매도 주문 성공: {sell_order_result}")
+    # else:
+    #     print(f"주식 매도 주문 실패: {sell_order_result}")
 
 
 if __name__ == "__main__":

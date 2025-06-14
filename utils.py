@@ -251,6 +251,91 @@ class KoreaInvestAPI:
         }
         print(f"INFO: 계좌 잔고 조회 시도...")
         return self._call_api('GET', path, params=params)
+
+    def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn):
+        """
+        주식 매수/매도 주문을 제출하는 메서드 (모의투자용 예시).
+        (실제 API 명세에 따라 파라미터와 헤더 구성이 달라질 수 있습니다.)
+
+        :param stock_code: 주문할 종목코드 (예: "005930")
+        :param order_price: 주문 가격 (지정가인 경우, 문자열 "50000" 등)
+        :param order_qty: 주문 수량 (문자열 "1", "10" 등)
+        :param trade_type: "매수" 또는 "매도"
+        :param order_dvsn: 주문 구분 (예: "00": 지정가, "01": 시장가)
+        :return: API 응답 JSON
+        """
+        path = "/uapi/domestic-stock/v1/trading/order-cash"  # 국내주식현금주문 API 경로
+
+        # --- 매수/매도에 따른 TR_ID 설정 (문서에서 찾은 새로운 TR_ID 적용) ---
+        if trade_type == "매수":
+            tr_id = "VTTC0012U"  # 매수 TR ID (새로운 신TR)
+        elif trade_type == "매도":
+            tr_id = "VTTC0011U"  # 매도 TR ID (새로운 신TR)
+        else:
+            print("ERROR: trade_type은 '매수' 또는 '매도'여야 합니다.")
+            return None
+
+        # 헤더 설정
+        self.headers["tr_id"] = tr_id
+        self.headers["custtype"] = self.config['custtype']
+        # --- gt_uid 생성 길이 변경: 6 -> 16 ---
+        self.headers["gt_uid"] = os.urandom(16).hex() # <span style="color:red;">16바이트 랜덤 생성하여 32자 16진수 문자열로!</span>
+        # ----------------------------------------
+        self.headers["hashkey"] = "" # hashkey는 아래에서 계산하여 추가
+
+        # 바디 파라미터 설정 (문서와 이미지에 맞게 키를 모두 대문자로 수정)
+        data = {
+            "CANO": self.config['stock_account_number'],
+            "ACNT_PRDT_CD": "01",
+            "PDNO": stock_code,
+            "ORD_QTY": order_qty,
+            "ORD_UNPR": order_price,
+            "INQR_PSBL_QTY_DVN": "01",
+            "ORD_DVSN": order_dvsn,
+            "LOCL_CSHR_PRCS_DVSN": "00",
+            "RPRS_SYS_DVSN": "00",
+            "TR_DVN": trade_type
+        }
+
+        # --- hashkey 생성 및 추가 로직 ---
+        body_json_str = json.dumps(data)
+
+        hashkey_url = f"{self.base_url}/uapi/hashkey"
+
+        hashkey_headers = self.base_headers.copy()
+        hashkey_headers["Authorization"] = f"Bearer {self.access_token}"
+        hashkey_headers["appkey"] = self.config['api_key']
+        hashkey_headers["appsecret"] = self.config['api_secret_key']
+        hashkey_headers["Content-Type"] = "application/json; charset=utf-8"
+
+        try:
+            hash_response = requests.post(hashkey_url, headers=hashkey_headers, data=body_json_str,
+                                          verify=certifi.where())
+            hash_response.raise_for_status()
+            hash_data = hash_response.json()
+            calculated_hashkey = hash_data.get('HASH')
+
+            if not calculated_hashkey:
+                print(f"ERROR: Hashkey API 응답에 HASH 값이 없습니다: {hash_data}")
+                return None
+
+            self.headers["hashkey"] = calculated_hashkey
+            print(f"INFO: Hashkey 계산 성공: {calculated_hashkey}")
+
+        except requests.exceptions.RequestException as e:
+            print(f"ERROR: Hashkey API 호출 중 네트워크 오류: {e}")
+            return None
+        except json.JSONDecodeError:
+            print(f"ERROR: Hashkey API 응답 JSON 디코딩 실패: {hash_response.text}")
+            return None
+        except Exception as e:
+            print(f"ERROR: Hashkey API 호출 중 알 수 없는 오류: {e}")
+            return None
+        # -------------------------------------------------------------
+
+        print(f"INFO: 주식 {trade_type} 주문 시도 - 종목: {stock_code}, 수량: {order_qty}, 가격: {order_price}")
+        return self._call_api('POST', path, data=data)
+
     def __str__(self):
         """객체를 문자열로 표현할 때 사용."""
         return f"KoreaInvestAPI(base_url={self.base_url}, is_paper_trading={self.config['is_paper_trading']})"
