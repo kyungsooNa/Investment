@@ -91,7 +91,21 @@ def main():
     #     print(f"주식 매도 주문 성공: {sell_order_result}")
     # else:
     #     print(f"주식 매도 주문 실패: {sell_order_result}")
+    # --- 시가총액 상위 종목 조회 예시 (모의투자 미지원) ---
+    print("\n--- 시가총액 상위 종목 조회 시도 (모의투자 미지원) ---")
+    # 이 API는 모의투자를 지원하지 않으므로, 실전 환경에서만 작동합니다.
+    # config.yaml의 is_paper_trading: False로 변경 필요
+    top_market_cap_stocks = korea_invest_api.quotations.get_top_market_cap_stocks(market_code="0000")  # 0000: 전체 시장
 
+    if top_market_cap_stocks and top_market_cap_stocks.get('rt_cd') == '0':
+        print(f"성공: 시가총액 상위 종목 목록:")
+        for stock_info in top_market_cap_stocks.get('output', []):
+            print(f"  순위: {stock_info.get('data_rank', '')}, "
+                  f"종목명: {stock_info.get('hts_kor_isnm', '')}, "
+                  f"시가총액: {stock_info.get('stck_avls', '')}, "
+                  f"현재가: {stock_info.get('stck_prpr', '')}")
+    else:
+        print(f"실패: 시가총액 상위 종목 조회.")
 
 if __name__ == "__main__":
     main()
