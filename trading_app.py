@@ -3,7 +3,8 @@ import os
 from core.config_loader import load_config
 from api.env import KoreaInvestEnv
 from api.client import KoreaInvestAPI
-from services.trading_service import TradingService  # 새로 생성한 서비스 클래스 임포트
+from services.trading_service import TradingService
+from core.time_manager import TimeManager  # TimeManager 클래스 임포트
 
 
 class TradingApp:
@@ -18,9 +19,10 @@ class TradingApp:
 
         self.env = None
         self.api_client = None
-        self.trading_service = None  # 서비스 계층 인스턴스
+        self.trading_service = None
+        self.time_manager = None  # TimeManager 인스턴스 추가
 
-        self._initialize_api_client()
+        self._initialize_api_client()  # 이 메서드에서 TimeManager 초기화 포함
 
     def _initialize_api_client(self):
         """환경 설정 로드, 토큰 발급 및 API 클라이언트 초기화."""
@@ -34,12 +36,21 @@ class TradingApp:
 
             self.env = KoreaInvestEnv(config_data)
 
+            # TimeManager 초기화
+            # config_data에서 시장 개장/폐장 시간, 시간대 정보를 가져와 TimeManager에 전달
+            self.time_manager = TimeManager(
+                market_open_time=config_data.get('market_open_time', "09:00"),
+                market_close_time=config_data.get('market_close_time', "15:30"),
+                timezone=config_data.get('market_timezone', "Asia/Seoul")
+            )
+
             access_token = self.env.get_access_token()
             if not access_token:
                 raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
             self.api_client = KoreaInvestAPI(self.env)
-            self.trading_service = TradingService(self.api_client, self.env)  # 서비스 계층 인스턴스화
+            # TradingService에 TimeManager 인스턴스도 전달 (필요시 사용)
+            self.trading_service = TradingService(self.api_client, self.env)
             print(f"\n성공적으로 API 클라이언트를 초기화했습니다: {self.api_client}")
         except FileNotFoundError as e:
             print(f"ERROR: 설정 파일을 찾을 수 없습니다: {e}")
@@ -49,8 +60,12 @@ class TradingApp:
             raise
 
     def _display_menu(self):
-        """사용자에게 메뉴 옵션을 출력합니다."""
-        print("\n--- 한국투자증권 API 애플리케이션 ---")
+        """사용자에게 메뉴 옵션을 출력하고 현재 시간을 포함합니다."""
+        current_time = self.time_manager.get_current_kst_time()
+        market_status = "열려있음" if self.time_manager.is_market_open() else "닫혀있음"  # 시장 상태는 is_market_open()이 자체 출력하므로 여기서는 문자열만 가져옴
+
+        print(
+            f"\n--- 한국투자증권 API 애플리케이션 (현재: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, 시장: {market_status}) ---")
         print("1. 주식 현재가 조회 (삼성전자)")
         print("2. 계좌 잔고 조회")
         print("3. 주식 매수 주문 (삼성전자 1주, 지정가)")
@@ -65,7 +80,11 @@ class TradingApp:
         elif choice == '2':
             self._handle_get_account_balance()
         elif choice == '3':
-            self._handle_place_buy_order("005930", "58500", "1", "00")
+            # 주문 전 시장 개장 여부 확인
+            if not self.time_manager.is_market_open():
+                print("WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.")
+            else:
+                self._handle_place_buy_order("005930", "58500", "1", "00")
         elif choice == '4':
             self._handle_get_top_market_cap_stocks("0000")
         elif choice == '0':
@@ -78,7 +97,7 @@ class TradingApp:
     def _handle_get_current_stock_price(self, stock_code):
         """현재가 조회 요청 및 결과 출력."""
         print(f"\n--- {stock_code} 현재가 조회 ---")
-        current_price_result = self.trading_service.get_current_stock_price(stock_code)  # 서비스 호출
+        current_price_result = self.trading_service.get_current_stock_price(stock_code)
         if current_price_result and current_price_result.get('rt_cd') == '0':
             print(f"\n{stock_code} 현재가: {current_price_result}")
         else:
@@ -87,7 +106,7 @@ class TradingApp:
     def _handle_get_account_balance(self):
         """계좌 잔고 조회 요청 및 결과 출력."""
         print("\n--- 계좌 잔고 조회 ---")
-        account_balance = self.trading_service.get_account_balance()  # 서비스 호출
+        account_balance = self.trading_service.get_account_balance()
         if account_balance and account_balance.get('rt_cd') == '0':
             print(f"\n계좌 잔고: {account_balance}")
         else:
@@ -104,10 +123,10 @@ class TradingApp:
         else:
             print(f"주식 매수 주문 실패: {buy_order_result}")
 
-    def _handle_get_top_market_cap_stocks(self, market_code):
+    def _get_top_market_cap_stocks(self, market_code):
         """시가총액 상위 종목 조회 요청 및 결과 출력."""
         print("\n--- 시가총액 상위 종목 조회 시도 ---")
-        top_market_cap_stocks = self.trading_service.get_top_market_cap_stocks(market_code)  # 서비스 호출
+        top_market_cap_stocks = self.trading_service.get_top_market_cap_stocks(market_code)
 
         if top_market_cap_stocks and top_market_cap_stocks.get('rt_cd') == '0':
             print(f"성공: 시가총액 상위 종목 목록:")
@@ -127,4 +146,4 @@ class TradingApp:
             choice = input("원하는 작업을 선택하세요 (숫자 입력): ").strip()
             running = self._execute_action(choice)
             if running:
-                input("계속하려면 Enter를 누르세요...")  # 사용자가 결과를 확인할 수 있도록 일시 정지
+                input("계속하려면 Enter를 누르세요...")
