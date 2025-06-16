@@ -196,3 +196,6 @@ cython_debug/
 config.yaml
 # KIS API Token file
 KIS_TOKEN_*.yaml
+KIS_ACCESS_*.yaml
+
+workspace.xml
