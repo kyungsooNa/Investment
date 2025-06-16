@@ -204,5 +204,5 @@ kis_access_token.yaml # <--- 고정된 토큰 파일명 추가
 # Log files generated per run
 logs/ # <--- logs 폴더 전체를 무시
 
-./idea/workspace.xml
 /kis_access_token.yaml
+/.idea/workspace.xml
