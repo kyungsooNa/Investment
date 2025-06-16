@@ -1,0 +1,14 @@
+# tr_ids_config.yaml
+tr_ids: # <--- 이 라인이 있는지 꼭 확인해주세요!
+  quotations:
+    inquire_price: "FHKST01010100" # 주식 현재가 조회 (실전/모의 공통)
+    search_info: "FHKST01010500" # 상품기본조회 (시가총액 등, 실전/모의 공통)
+    top_market_cap: "FHPST01740000" # 시가총액 상위 (실전 전용, 모의 미지원)
+  account:
+    inquire_balance_real: "TTTC8434R" # 실전 계좌 잔고 조회
+    inquire_balance_paper: "VTTC8434R" # 모의 계좌 잔고 조회
+  trading:
+    order_cash_buy_real: "TTTC0012U" # 실전 주식 현금 매수
+    order_cash_sell_real: "TTTC0011U" # 실전 주식 현금 매도
+    order_cash_buy_paper: "VTTC0012U" # 모의 주식 현금 매수
+    order_cash_sell_paper: "VTTC0011U" # 모의 주식 현금 매도
