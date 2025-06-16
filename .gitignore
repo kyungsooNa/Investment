@@ -95,8 +95,7 @@ ipython_config.py
 #Pipfile.lock
 
 # UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   Similar to Pipfile.lock, it is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
 #uv.lock
 
@@ -174,9 +173,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the enitre vscode folder
 # .vscode/
 
@@ -193,9 +192,14 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# --- Custom Additions ---
+# Configuration files (sensitive)
 config.yaml
-# KIS API Token file
-KIS_TOKEN_*.yaml
-KIS_ACCESS_*.yaml
 
-workspace.xml
+# KIS API Token files
+# KIS_TOKEN_*.yaml (기존)
+KIS_ACCESS_*.yaml # <--- 새롭게 추가된 토큰 파일 형식
+kis_access_token.yaml # <--- 고정된 토큰 파일명 추가
+
+# Log files generated per run
+logs/ # <--- logs 폴더 전체를 무시
