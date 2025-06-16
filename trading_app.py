@@ -3,22 +3,28 @@ import os
 from core.config_loader import load_config
 from api.env import KoreaInvestEnv
 from api.client import KoreaInvestAPI
+from services.trading_service import TradingService  # 새로 생성한 서비스 클래스 임포트
 
 
 class TradingApp:
+    """
+    한국투자증권 Open API 애플리케이션의 사용자 인터페이스 (CLI)를 관리하는 클래스.
+    모든 비즈니스 로직은 TradingService를 통해 처리됩니다.
+    """
+
     def __init__(self, main_config_path, tr_ids_config_path):
         self.main_config_path = main_config_path
         self.tr_ids_config_path = tr_ids_config_path
 
         self.env = None
         self.api_client = None
+        self.trading_service = None  # 서비스 계층 인스턴스
 
         self._initialize_api_client()
 
     def _initialize_api_client(self):
         """환경 설정 로드, 토큰 발급 및 API 클라이언트 초기화."""
         try:
-            # 설정 파일 로드 및 병합
             main_config_data = load_config(self.main_config_path)
             tr_ids_data = load_config(self.tr_ids_config_path)
 
@@ -28,14 +34,12 @@ class TradingApp:
 
             self.env = KoreaInvestEnv(config_data)
 
-            # 접근 토큰 발급
             access_token = self.env.get_access_token()
             if not access_token:
-                print("ERROR: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
-                raise Exception("API Token Issuance Failed")
+                raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
-            # API 클라이언트 초기화
-            self.api_client = KoreaInvestAPI(self.env)  # env 객체 전달
+            self.api_client = KoreaInvestAPI(self.env)
+            self.trading_service = TradingService(self.api_client, self.env)  # 서비스 계층 인스턴스화
             print(f"\n성공적으로 API 클라이언트를 초기화했습니다: {self.api_client}")
         except FileNotFoundError as e:
             print(f"ERROR: 설정 파일을 찾을 수 없습니다: {e}")
@@ -55,15 +59,15 @@ class TradingApp:
         print("-----------------------------------")
 
     def _execute_action(self, choice):
-        """사용자 선택에 따라 해당 작업을 실행합니다."""
+        """사용자 선택에 따라 해당 작업을 실행하고 결과를 콘솔에 출력합니다."""
         if choice == '1':
-            self._get_current_stock_price("005930")  # 삼성전자
+            self._handle_get_current_stock_price("005930")
         elif choice == '2':
-            self._get_account_balance()
+            self._handle_get_account_balance()
         elif choice == '3':
-            self._place_buy_order("005930", "58500", "1", "00")  # 종목코드, 가격, 수량, 주문유형
+            self._handle_place_buy_order("005930", "58500", "1", "00")
         elif choice == '4':
-            self._get_top_market_cap_stocks("0000")
+            self._handle_get_top_market_cap_stocks("0000")
         elif choice == '0':
             print("애플리케이션을 종료합니다.")
             return False
@@ -71,53 +75,39 @@ class TradingApp:
             print("유효하지 않은 선택입니다. 다시 시도해주세요.")
         return True
 
-    def _get_current_stock_price(self, stock_code):
-        """주식 현재가 조회 로직."""
+    def _handle_get_current_stock_price(self, stock_code):
+        """현재가 조회 요청 및 결과 출력."""
         print(f"\n--- {stock_code} 현재가 조회 ---")
-        current_price_result = self.api_client.quotations.get_current_price(stock_code)
+        current_price_result = self.trading_service.get_current_stock_price(stock_code)  # 서비스 호출
         if current_price_result and current_price_result.get('rt_cd') == '0':
             print(f"\n{stock_code} 현재가: {current_price_result}")
         else:
             print(f"\n{stock_code} 현재가 조회 실패.")
 
-    def _get_account_balance(self):
-        """계좌 잔고 조회 로직 (실전/모의 구분)."""
+    def _handle_get_account_balance(self):
+        """계좌 잔고 조회 요청 및 결과 출력."""
         print("\n--- 계좌 잔고 조회 ---")
-        if self.env.is_paper_trading:
-            print("INFO: 모의투자 계좌 잔고를 조회합니다.")
-            account_balance = self.api_client.account.get_account_balance()
-        else:
-            print("INFO: 실전 계좌 잔고를 조회합니다.")
-            account_balance = self.api_client.account.get_real_account_balance()
-
+        account_balance = self.trading_service.get_account_balance()  # 서비스 호출
         if account_balance and account_balance.get('rt_cd') == '0':
             print(f"\n계좌 잔고: {account_balance}")
         else:
             print(f"\n계좌 잔고 조회 실패.")
 
-    def _place_buy_order(self, stock_code, price, qty, order_dvsn):
-        """주식 매수 주문 로직."""
+    def _handle_place_buy_order(self, stock_code, price, qty, order_dvsn):
+        """주식 매수 주문 요청 및 결과 출력."""
         print("\n--- 주식 매수 주문 시도 ---")
-        buy_order_result = self.api_client.trading.place_stock_order(
-            stock_code,
-            price,
-            qty,
-            "매수",
-            order_dvsn
+        buy_order_result = self.trading_service.place_buy_order(
+            stock_code, price, qty, order_dvsn
         )
         if buy_order_result and buy_order_result.get('rt_cd') == '0':
             print(f"주식 매수 주문 성공: {buy_order_result}")
         else:
             print(f"주식 매수 주문 실패: {buy_order_result}")
 
-    def _get_top_market_cap_stocks(self, market_code):
-        """시가총액 상위 종목 조회 로직 (모의투자 미지원)."""
-        print("\n--- 시가총액 상위 종목 조회 시도 (모의투자 미지원) ---")
-        if self.env.is_paper_trading:
-            print("WARNING: 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다. config.yaml의 is_paper_trading을 False로 설정해주세요.")
-            return
-
-        top_market_cap_stocks = self.api_client.quotations.get_top_market_cap_stocks(market_code)
+    def _handle_get_top_market_cap_stocks(self, market_code):
+        """시가총액 상위 종목 조회 요청 및 결과 출력."""
+        print("\n--- 시가총액 상위 종목 조회 시도 ---")
+        top_market_cap_stocks = self.trading_service.get_top_market_cap_stocks(market_code)  # 서비스 호출
 
         if top_market_cap_stocks and top_market_cap_stocks.get('rt_cd') == '0':
             print(f"성공: 시가총액 상위 종목 목록:")
@@ -136,5 +126,5 @@ class TradingApp:
             self._display_menu()
             choice = input("원하는 작업을 선택하세요 (숫자 입력): ").strip()
             running = self._execute_action(choice)
-            if running:  # 작업 실행 후 바로 종료되지 않았다면 잠시 대기
+            if running:
                 input("계속하려면 Enter를 누르세요...")  # 사용자가 결과를 확인할 수 있도록 일시 정지
