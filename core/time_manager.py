@@ -3,8 +3,9 @@ import datetime
 import time
 import pytz
 import logging  # 로깅 임포트
-from zoneinfo import ZoneInfo
 
+
+# from zoneinfo import ZoneInfo # Python 3.9+에서 ZoneInfo 사용 (pytz와 함께 사용 권장)
 
 class TimeManager:
     """
@@ -12,17 +13,16 @@ class TimeManager:
     시장 개장 시간 확인, 시간 지연 등의 기능을 제공합니다.
     """
 
-    def __init__(self, market_open_time="09:00", market_close_time="15:30", timezone="Asia/Seoul",
-                 logger=None):  # logger 인자 추가
+    def __init__(self, market_open_time="09:00", market_close_time="15:30", timezone="Asia/Seoul", logger=None):
         self.market_open_time_str = market_open_time
         self.market_close_time_str = market_close_time
         self.timezone_name = timezone
-        self.logger = logger if logger else logging.getLogger(__name__)  # 로거 주입 또는 기본 로거 사용
+        self.logger = logger if logger else logging.getLogger(__name__)
 
         try:
             self.market_timezone = pytz.timezone(self.timezone_name)
         except pytz.UnknownTimeZoneError:
-            self.logger.error(f"알 수 없는 시간대: {self.timezone_name}. 'Asia/Seoul'로 기본 설정합니다.")  # print 대신 logger 사용
+            self.logger.error(f"알 수 없는 시간대: {self.timezone_name}. 'Asia/Seoul'로 기본 설정합니다.")
             self.timezone_name = "Asia/Seoul"
             self.market_timezone = pytz.timezone(self.timezone_name)
 
@@ -37,11 +37,12 @@ class TimeManager:
         """
         now = self.get_current_kst_time()
 
+        # 1. 주말 확인 (토요일=5, 일요일=6)
         if now.weekday() >= 5:
-            self.logger.info(
-                f"시장 상태 - 주말이므로 시장이 닫혀 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")  # print 대신 logger 사용
+            self.logger.info(f"시장 상태 - 주말이므로 시장이 닫혀 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")
             return False
 
+        # 2. 시장 시간 확인 (timezone-aware datetime 객체 생성)
         market_open_dt = self.market_timezone.localize(datetime.datetime(
             now.year, now.month, now.day,
             hour=int(self.market_open_time_str.split(':')[0]),
@@ -56,18 +57,52 @@ class TimeManager:
         ))
 
         if market_open_dt <= now <= market_close_dt:
-            self.logger.info(
-                f"시장 상태 - 시장이 열려 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")  # print 대신 logger 사용
+            self.logger.info(f"시장 상태 - 시장이 열려 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")
             return True
         else:
             self.logger.info(
-                f"시장 상태 - 시장이 닫혀 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, 개장: {self.market_open_time_str}, 폐장: {self.market_close_time_str})")  # print 대신 logger 사용
+                f"시장 상태 - 시장이 닫혀 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, 개장: {self.market_open_time_str}, 폐장: {self.market_close_time_str})")
             return False
+
+    def get_next_market_open_time(self):
+        """
+        다음 시장 개장 시간을 계산하여 datetime 객체로 반환합니다.
+        주말과 이미 지난 시장 시간을 고려합니다.
+        """
+        now = self.get_current_kst_time()
+        today_open = self.market_timezone.localize(datetime.datetime(
+            now.year, now.month, now.day,
+            hour=int(self.market_open_time_str.split(':')[0]),
+            minute=int(self.market_open_time_str.split(':')[1]),
+            second=0, microsecond=0
+        ))
+
+        # 1. 오늘 시장 개장 시간과 현재 시간 비교
+        if now < today_open:
+            # 아직 오늘 시장이 열리지 않았다면, 오늘 개장 시간이 다음 개장 시간
+            next_open = today_open
+        else:
+            # 오늘 시장이 이미 닫혔거나, 개장 시간이 지났다면, 다음 날로 넘어감
+            next_day = now.date() + datetime.timedelta(days=1)
+            # 다음 날이 주말이면 평일까지 이동
+            while next_day.weekday() >= 5:  # 5: 토요일, 6: 일요일
+                next_day += datetime.timedelta(days=1)
+
+            next_open = self.market_timezone.localize(datetime.datetime(
+                next_day.year, next_day.month, next_day.day,
+                hour=int(self.market_open_time_str.split(':')[0]),
+                minute=int(self.market_open_time_str.split(':')[1]),
+                second=0, microsecond=0
+            ))
+
+        self.logger.info(f"다음 시장 개장 시간: {next_open.strftime('%Y-%m-%d %H:%M:%S %Z%z')}")
+        return next_open
 
     def sleep(self, seconds):
         """지정된 시간(초)만큼 프로그램을 일시 중지합니다."""
-        self.logger.info(f"{seconds}초 동안 대기합니다.")  # print 대신 logger 사용
-        time.sleep(seconds)
+        if seconds > 0:
+            self.logger.info(f"{seconds:.2f}초 동안 대기합니다.")  # 소수점 둘째 자리까지 표시
+            time.sleep(seconds)
 
     def is_holiday(self):
         """공휴일 여부를 확인합니다. (미구현)"""
