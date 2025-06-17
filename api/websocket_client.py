@@ -1,0 +1,517 @@
+# api/websocket_client.py
+import websockets
+import json
+import logging
+import requests
+import certifi
+import asyncio
+import os
+
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+from base64 import b64decode
+
+from api.env import KoreaInvestEnv
+
+
+class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
+    """
+    한국투자증권 Open API의 웹소켓 연결 및 실시간 데이터 수신을 관리하는 클래스입니다.
+    `websockets` 라이브러리(asyncio 기반)를 사용합니다.
+    """
+
+    def __init__(self, env: KoreaInvestEnv, logger=None):
+        self._env = env
+        self.logger = logger if logger else logging.getLogger(__name__)
+        self._config = self._env.get_full_config()
+
+        self._websocket_url = self._config['websocket_url']
+        self._rest_api_key = self._config['api_key']
+        self._rest_api_secret = self._config['api_secret_key']
+        self._base_rest_url = self._config['base_url']
+
+        self.ws = None
+        self.approval_key = None
+        self._is_connected = False
+        self._receive_task = None
+
+        self.on_realtime_message_callback = None
+
+        self._aes_key = None
+        self._aes_iv = None
+
+    @staticmethod
+    def _aes_cbc_base64_dec(key, iv, cipher_text):
+        """AES256 DECODE (정적 메서드)"""
+        try:
+            cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
+            return bytes.decode(unpad(cipher.decrypt(b64decode(cipher_text)), AES.block_size))
+        except Exception as e:
+            logging.error(f"AES 복호화 오류 발생: {e}")
+            return None
+
+    async def _get_approval_key(self):
+        """웹소켓 접속 키(approval_key)를 비동기로 발급받습니다."""
+        path = "/oauth2/Approval"
+        url = f"{self._base_rest_url}{path}"
+        headers = {"content-type": "application/json; utf-8"}
+        body = {
+            "grant_type": "client_credentials",
+            "appkey": self._rest_api_key,
+            "secretkey": self._rest_api_secret
+        }
+
+        self.logger.info("웹소켓 접속키 발급 시도...")
+        try:
+            loop = asyncio.get_running_loop()
+            res = await loop.run_in_executor(
+                None,
+                lambda: requests.post(url, headers=headers, data=json.dumps(body), verify=certifi.where())
+            )
+
+            res.raise_for_status()
+            auth_data = res.json()
+
+            if auth_data and auth_data.get('approval_key'):
+                self.approval_key = auth_data['approval_key']
+                self.logger.info(f"웹소켓 접속키 발급 성공: {self.approval_key[:10]}...")
+                return self.approval_key
+            else:
+                self.logger.error(f"웹소켓 접속키 발급 실패 - 응답 데이터 오류: {auth_data}")
+                return None
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"웹소켓 접속키 발급 중 네트워크 오류: {e}")
+            return None
+        except json.JSONDecodeError:
+            self.logger.error(f"웹소켓 접속키 발급 응답 JSON 디코딩 실패: {res.text if res else '응답 없음'}")
+            return None
+        except Exception as e:
+            self.logger.error(f"웹소켓 접속키 발급 중 알 수 없는 오류: {e}")
+            return None
+
+    async def _receive_messages(self):
+        """웹소켓으로부터 메시지를 비동기적으로 계속 수신합니다."""
+        try:
+            while self._is_connected:
+                message = await self.ws.recv()
+                self._handle_websocket_message(message)
+        except websockets.exceptions.ConnectionClosedOK:
+            self.logger.info("웹소켓 연결이 정상적으로 종료되었습니다.")
+        except websockets.exceptions.ConnectionClosedError as e:
+            self.logger.error(f"웹소켓 연결이 예외적으로 종료되었습니다: {e}")
+        except Exception as e:
+            self.logger.error(f"웹소켓 메시지 수신 중 오류 발생: {e}")
+        finally:
+            self._is_connected = False
+            self.ws = None
+
+    def _handle_websocket_message(self, message: str):
+        """수신된 웹소켓 메시지를 파싱하고 콜백으로 전달합니다."""
+        if message and (message.startswith('0|') or message.startswith('1|')):
+            recvstr = message.split('|')
+            tr_id = recvstr[1]
+            data_body = recvstr[3]
+
+            parsed_data = {}
+            message_type = 'unknown'
+
+            if tr_id == self._config['tr_ids']['websocket']['realtime_price']:
+                parsed_data = self._parse_stock_contract_data(data_body)
+                message_type = 'realtime_price'
+            elif tr_id == self._config['tr_ids']['websocket']['realtime_quote']:
+                parsed_data = self._parse_stock_quote_data(data_body)
+                message_type = 'realtime_quote'
+
+            elif tr_id in ["H0IFASP0", "H0IOASP0"]:  # 지수선물/옵션 호가 (H0IFASP0, H0IOASP0)
+                parsed_data = self._parse_futs_optn_quote_data(data_body)
+                message_type = 'realtime_futs_optn_quote'
+            elif tr_id in ["H0IFCNT0", "H0IOCNT0"]:  # 지수선물/옵션 체결 (H0IFCNT0, H0IOCNT0)
+                parsed_data = self._parse_futs_optn_contract_data(data_body)
+                message_type = 'realtime_futs_optn_contract'
+            elif tr_id == "H0CFASP0":  # 상품선물 호가
+                parsed_data = self._parse_product_futs_quote_data(data_body)
+                message_type = 'realtime_product_futs_quote'
+            elif tr_id == "H0CFCNT0":  # 상품선물 체결
+                parsed_data = self._parse_product_futs_contract_data(data_body)
+                message_type = 'realtime_product_futs_contract'
+            elif tr_id in ["H0ZFASP0", "H0ZOASP0"]:  # 주식선물/옵션 호가
+                parsed_data = self._parse_stock_futs_optn_quote_data(data_body)
+                message_type = 'realtime_stock_futs_optn_quote'
+            elif tr_id in ["H0ZFCNT0", "H0ZOCNT0"]:  # 주식선물/옵션 체결
+                parsed_data = self._parse_stock_futs_optn_contract_data(data_body)
+                message_type = 'realtime_stock_futs_optn_contract'
+            elif tr_id in ["H0ZFANC0", "H0ZOANC0"]:  # 주식선물/옵션 예상체결
+                parsed_data = self._parse_stock_futs_optn_exp_contract_data(data_body)
+                message_type = 'realtime_stock_futs_optn_exp_contract'
+            elif tr_id == "H0MFASP0":  # 야간선물(CME) 호가
+                parsed_data = self._parse_cmefuts_quote_data(data_body)
+                message_type = 'realtime_cmefuts_quote'
+            elif tr_id == "H0MFCNT0":  # 야간선물(CME) 체결
+                parsed_data = self._parse_cmefuts_contract_data(data_body)
+                message_type = 'realtime_cmefuts_contract'
+            elif tr_id == "H0EUASP0":  # 야간옵션(EUREX) 호가
+                parsed_data = self._parse_eurex_optn_quote_data(data_body)
+                message_type = 'realtime_eurex_optn_quote'
+            elif tr_id == "H0EUCNT0":  # 야간옵션(EUREX) 체결
+                parsed_data = self._parse_eurex_optn_contract_data(data_body)
+                message_type = 'realtime_eurex_optn_contract'
+            elif tr_id == "H0EUANC0":  # 야간옵션(EUREX) 예상체결
+                parsed_data = self._parse_eurex_optn_exp_contract_data(data_body)
+                message_type = 'realtime_eurex_optn_exp_contract'
+
+            elif tr_id in ["H0STCNI0", "H0STCNI9", "H0IFCNI0", "H0MFCNI0", "H0EUCNI0"]:
+                if self._aes_key and self._aes_iv:
+                    decrypted_str = self._aes_cbc_base64_dec(self._aes_key, self._aes_iv, data_body)
+                    if decrypted_str:
+                        parsed_data = self._parse_signing_notice(decrypted_str, tr_id)
+                        message_type = 'signing_notice'
+                    else:
+                        self.logger.error(f"체결통보 복호화 실패: {tr_id}, 데이터: {data_body[:50]}...")
+                        return
+                else:
+                    self.logger.warning(f"체결통보 암호화 해제 실패: AES 키/IV 없음. TR_ID: {tr_id}, 메시지: {message[:50]}...")
+                    return
+
+            if self.on_realtime_message_callback:
+                self.on_realtime_message_callback({'type': message_type, 'tr_id': tr_id, 'data': parsed_data})
+
+        else:  # 제어 메시지 (응답, PINGPONG 등)
+            try:
+                json_object = json.loads(message)
+                header = json_object.get("header", {})
+                tr_id = header.get("tr_id")
+
+                if tr_id == "PINGPONG":
+                    self.logger.info("PINGPONG 수신됨. PONG 응답.")
+                elif json_object.get("body", {}).get("rt_cd") == '0':
+                    self.logger.info(f"실시간 요청 응답 성공: TR_KEY={header.get('tr_key')}, MSG={json_object['body']['msg1']}")
+                    if tr_id in ["H0IFCNI0", "H0STCNI0", "H0STCNI9", "H0MFCNI0", "H0EUCNI0"] and json_object.get("body",
+                                                                                                                 {}).get(
+                            "output"):
+                        self._aes_key = json_object["body"]["output"].get("key")
+                        self._aes_iv = json_object["body"]["output"].get("iv")
+                        self.logger.info(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
+                else:
+                    self.logger.error(
+                        f"실시간 요청 응답 오류: TR_KEY={header.get('tr_key')}, RT_CD={json_object.get('body', {}).get('rt_cd')}, MSG={json_object.get('body', {}).get('msg1')}")
+                    if json_object.get("body", {}).get("msg1") == 'ALREADY IN SUBSCRIBE':
+                        self.logger.warning("이미 구독 중인 종목입니다.")
+            except json.JSONDecodeError:
+                self.logger.error(f"제어 메시지 JSON 디코딩 실패: {message}")
+            except Exception as e:
+                self.logger.error(f"제어 메시지 처리 중 오류 발생: {e}, 메시지: {message}")
+
+    def _parse_stock_quote_data(self, data_str):
+        """H0STASP0 (주식 호가) 데이터를 파싱합니다."""
+        recvvalue = data_str.split('^')
+        return {
+            "유가증권단축종목코드": recvvalue[0], "영업시간": recvvalue[1], "시간구분코드": recvvalue[2],
+            "매도호가1": recvvalue[3], "매도호가2": recvvalue[4], "매도호가3": recvvalue[5], "매도호가4": recvvalue[6],
+            "매도호가5": recvvalue[7],
+            "매도호가6": recvvalue[8], "매도호가7": recvvalue[9], "매도호가8": recvvalue[10], "매도호가9": recvvalue[11],
+            "매도호가10": recvvalue[12],
+            "매수호가1": recvvalue[13], "매수호가2": recvvalue[14], "매수호가3": recvvalue[15], "매수호가4": recvvalue[16],
+            "매수호가5": recvvalue[17],
+            "매수호가6": recvvalue[18], "매수호가7": recvvalue[19], "매수호가8": recvvalue[20], "매수호가9": recvvalue[21],
+            "매수호가10": recvvalue[22],
+            "매도호가잔량1": recvvalue[23], "매도호가잔량2": recvvalue[24], "매도호가잔량3": recvvalue[25], "매도호가잔량4": recvvalue[26],
+            "매도호가잔량5": recvvalue[27],
+            "매도호가잔량6": recvvalue[28], "매도호가잔량7": recvvalue[29], "매도호가잔량8": recvvalue[30], "매도호가잔량9": recvvalue[31],
+            "매도호가잔량10": recvvalue[32],
+            "매수호가잔량1": recvvalue[33], "매수호가잔량2": recvvalue[34], "매수호가잔량3": recvvalue[35], "매수호가잔량4": recvvalue[36],
+            "매수호가잔량5": recvvalue[37],
+            "매수호가잔량6": recvvalue[38], "매수호가잔량7": recvvalue[39], "매수호가잔량8": recvvalue[40], "매수호가잔량9": recvvalue[41],
+            "매수호가잔량10": recvvalue[42],
+            "총매도호가잔량": recvvalue[43], "총매수호가잔량": recvvalue[44], "시간외총매도호가잔량": recvvalue[45],
+            "시간외총매수호가잔량": recvvalue[46],
+            "예상체결가": recvvalue[47], "예상체결량": recvvalue[48], "예상거래량": recvvalue[49], "예상체결대비": recvvalue[50],
+            "부호": recvvalue[51],
+            "예상체결전일대비율": recvvalue[52], "누적거래량": recvvalue[53], "주식매매구분코드": recvvalue[58]
+        }
+
+    def _parse_stock_contract_data(self, data_str):
+        """H0STCNT0 (주식 체결) 데이터를 파싱합니다."""
+        menulist = "유가증권단축종목코드|주식체결시간|주식현재가|전일대비부호|전일대비|전일대비율|가중평균주식가격|주식시가|주식최고가|주식최저가|매도호가1|매수호가1|체결거래량|누적거래량|누적거래대금|매도체결건수|매수체결건수|순매수체결건수|체결강도|총매도수량|총매수수량|체결구분|매수비율|전일거래량대비등락율|시가시간|시가대비구분|시가대비|최고가시간|고가대비구분|고가대비|최저가시간|저가대비구분|저가대비|영업일자|신장운영구분코드|거래정지여부|매도호가잔량|매수호가잔량|총매도호가잔량|총매수호가잔량|거래량회전율|전일동시간누적거래량|전일동시간누적거래량비율|시간구분코드|임의종료구분코드|정적VI발동기준가"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    def _parse_futs_optn_quote_data(self, data_str):
+        """H0IFASP0, H0IOASP0 (지수선물/옵션 호가) 데이터를 파싱합니다."""
+        recvvalue = data_str.split('^')
+        return {
+            "종목코드": recvvalue[0], "영업시간": recvvalue[1],
+            "매도호가1": recvvalue[2], "매도호가2": recvvalue[3], "매도호가3": recvvalue[4], "매도호가4": recvvalue[5],
+            "매도호가5": recvvalue[6],
+            "매수호가1": recvvalue[7], "매수호가2": recvvalue[8], "매수호가3": recvvalue[9], "매수호가4": recvvalue[10],
+            "매수호가5": recvvalue[11],
+            "매도호가건수1": recvvalue[12], "매도호가건수2": recvvalue[13], "매도호가건수3": recvvalue[14], "매도호가건수4": recvvalue[15],
+            "매도호가건수5": recvvalue[16],
+            "매수호가건수1": recvvalue[17], "매수호가건수2": recvvalue[18], "매수호가건수3": recvvalue[19], "매수호가건수4": recvvalue[20],
+            "매수호가건수5": recvvalue[21],
+            "매도호가잔량1": recvvalue[22], "매도호가잔량2": recvvalue[23], "매도호가잔량3": recvvalue[24], "매도호가잔량4": recvvalue[25],
+            "매도호가잔량5": recvvalue[26],
+            "매수호가잔량1": recvvalue[27], "매수호가잔량2": recvvalue[28], "매수호가잔량3": recvvalue[29], "매수호가잔량4": recvvalue[30],
+            "매수호가잔량5": recvvalue[31],
+            "총매도호가건수": recvvalue[32], "총매수호가건수": recvvalue[33],
+            "총매도호가잔량": recvvalue[34], "총매수호가잔량": recvvalue[35],
+            "총매도호가잔량증감": recvvalue[36], "총매수호가잔량증감": recvvalue[37]
+        }
+
+    def _parse_futs_optn_contract_data(self, data_str):
+        """H0IFCNT0, H0IOCNT0 (지수선물/옵션 체결) 데이터를 파싱합니다."""
+        menulist = "선물단축종목코드|영업시간|선물전일대비|전일대비부호|선물전일대비율|선물현재가|선물시가|선물최고가|선물최저가|최종거래량|누적거래량|누적거래대금|HTS이론가|시장베이시스|괴리율|근월물약정가|원월물약정가|스프레드|미결제약정수량|미결제약정수량증감|시가시간|시가대비현재가부호|시가대비지수현재가|최고가시간|최고가대비현재가부호|최고가대비지수현재가|최저가시간|최저가대비현재가부호|최저가대비지수현재가|매수비율|체결강도|괴리도|미결제약정직전수량증감|이론베이시스|선물매도호가|선물매수호가|매도호가잔량|매수호가잔량|매도체결건수|매수체결건수|순매수체결건수|총매도수량|총매수수량|총매도호가잔량|총매수호가잔량|전일거래량대비등락율|협의대량거래량|실시간상한가|실시간하한가|실시간가격제한구분"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    def _parse_product_futs_quote_data(self, data_str):
+        """H0CFASP0 (상품선물 호가) 데이터를 파싱합니다."""
+        recvvalue = data_str.split('^')
+        return {
+            "종목코드": recvvalue[0], "영업시간": recvvalue[1],
+            "매도호가1": recvvalue[2], "매도호가2": recvvalue[3], "매도호가3": recvvalue[4], "매도호가4": recvvalue[5],
+            "매도호가5": recvvalue[6],
+            "매수호가1": recvvalue[7], "매수호가2": recvvalue[8], "매수호가3": recvvalue[9], "매수호가4": recvvalue[10],
+            "매수호가5": recvvalue[11],
+            "매도호가건수1": recvvalue[12], "매도호가건수2": recvvalue[13], "매도호가건수3": recvvalue[14], "매도호가건수4": recvvalue[15],
+            "매도호가건수5": recvvalue[16],
+            "매수호가건수1": recvvalue[17], "매수호가건수2": recvvalue[18], "매수호가건수3": recvvalue[19], "매수호가건수4": recvvalue[20],
+            "매수호가건수5": recvvalue[21],
+            "매도호가잔량1": recvvalue[22], "매도호가잔량2": recvvalue[23], "매도호가잔량3": recvvalue[24], "매도호가잔량4": recvvalue[25],
+            "매도호가잔량5": recvvalue[26],
+            "매수호가잔량1": recvvalue[27], "매수호가잔량2": recvvalue[28], "매수호가잔량3": recvvalue[29], "매수호가잔량4": recvvalue[30],
+            "매수호가잔량5": recvvalue[31],
+            "총매도호가건수": recvvalue[32], "총매수호가건수": recvvalue[33],
+            "총매도호가잔량": recvvalue[34], "총매수호가잔량": recvvalue[35],
+            "총매도호가잔량증감": recvvalue[36], "총매수호가잔량증감": recvvalue[37]
+        }
+
+    def _parse_product_futs_contract_data(self, data_str):
+        """H0CFCNT0 (상품선물 체결) 데이터를 파싱합니다."""
+        menulist = "선물단축종목코드|영업시간|선물전일대비|전일대비부호|선물전일대비율|선물현재가|선물시가|선물최고가|선물최저가|최종거래량|누적거래량|누적거래대금|HTS이론가|시장베이시스|괴리율|근월물약정가|원월물약정가|스프레드|미결제약정수량|미결제약정수량증감|시가시간|시가대비현재가부호|시가대비지수현재가|최고가시간|최고가대비현재가부호|최고가대비지수현재가|최저가시간|최저가대비현재가부호|최저가대비지수현재가|매수비율|체결강도|괴리도|미결제약정직전수량증감|이론베이시스|선물매도호가|선물매수호가|매도호가잔량|매수호가잔량|매도체결건수|매수체결건수|순매수체결건수|총매도수량|총매수수량|총매도호가잔량|총매수호가잔량|전일거래량대비등락율|협의대량거래량|실시간상한가|실시간하한가|실시간가격제한구분"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    def _parse_stock_futs_optn_quote_data(self, data_str):
+        """H0ZFASP0, H0ZOASP0 (주식선물/옵션 호가) 데이터를 파싱합니다."""
+        recvvalue = data_str.split('^')
+        return {
+            "종목코드": recvvalue[0], "영업시간": recvvalue[1],
+            "매도호가1": recvvalue[2], "매도호가2": recvvalue[3], "매도호가3": recvvalue[4], "매도호가4": recvvalue[5],
+            "매도호가5": recvvalue[6],
+            "매수호가1": recvvalue[7], "매수호가2": recvvalue[8], "매수호가3": recvvalue[9], "매수호가4": recvvalue[10],
+            "매수호가5": recvvalue[11],
+            "매도호가건수1": recvvalue[12], "매도호가건수2": recvvalue[13], "매도호가건수3": recvvalue[14], "매도호가건수4": recvvalue[15],
+            "매도호가건수5": recvvalue[16],
+            "매수호가건수1": recvvalue[17], "매수호가건수2": recvvalue[18], "매수호가건수3": recvvalue[19], "매수호가건수4": recvvalue[20],
+            "매수호가건수5": recvvalue[21],
+            "매도호가잔량1": recvvalue[22], "매도호가잔량2": recvvalue[23], "매도호가잔량3": recvvalue[24], "매도호가잔량4": recvvalue[25],
+            "매도호가잔량5": recvvalue[26],
+            "매수호가잔량1": recvvalue[27], "매수호가잔량2": recvvalue[28], "매수호가잔량3": recvvalue[29], "매수호가잔량4": recvvalue[30],
+            "매수호가잔량5": recvvalue[31],
+            "총매도호가건수": recvvalue[32], "총매수호가건수": recvvalue[33],
+            "총매도호가잔량": recvvalue[34], "총매수호가잔량": recvvalue[35],
+            "총매도호가잔량증감": recvvalue[36], "총매수호가잔량증감": recvvalue[37]
+        }
+
+    def _parse_stock_futs_optn_contract_data(self, data_str):
+        """H0ZFCNT0, H0ZOCNT0 (주식선물/옵션 체결) 데이터를 파싱합니다."""
+        menulist = "선물단축종목코드|영업시간|주식현재가|전일대비부호|전일대비|선물전일대비율|주식시가2|주식최고가|주식최저가|최종거래량|누적거래량|누적거래대금|HTS이론가|시장베이시스|괴리율|근월물약정가|원월물약정가|스프레드1|HTS미결제약정수량|미결제약정수량증감|시가시간|시가2대비현재가부호|시가2대비현재가|최고가시간|최고가대비현재가부호|최고가대비현재가|최저가시간|최저가대비현재가부호|최저가대비현재가|매수2비율|체결강도|괴리도|미결제약정직전수량증감|이론베이시스|매도호가1|매수호가1|매도호가잔량1|매수호가잔량1|매도체결건수|매수체결건수|순매수체결건수|총매도수량|총매수수량|총매도호가잔량|총매수호가잔량|전일거래량대비등락율|실시간상한가|실시간하한가|실시간가격제한구분"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    def _parse_stock_futs_optn_exp_contract_data(self, data_str):
+        """H0ZFANC0, H0ZOANC0 (주식선물/옵션 예상체결) 데이터를 파싱합니다."""
+        menulist = "선물단축종목코드|영업시간|예상체결가|예상체결대비|예상체결대비부호|예상체결전일대비율|예상장운영구분코드"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    def _parse_cmefuts_quote_data(self, data_str):
+        """H0MFASP0 (야간선물(CME) 호가) 데이터를 파싱합니다."""
+        recvvalue = data_str.split('^')
+        return {
+            "종목코드": recvvalue[0], "영업시간": recvvalue[1],
+            "매도호가1": recvvalue[2], "매도호가2": recvvalue[3], "매도호가3": recvvalue[4], "매도호가4": recvvalue[5],
+            "매도호가5": recvvalue[6],
+            "매수호가1": recvvalue[7], "매수호가2": recvvalue[8], "매수호가3": recvvalue[9], "매수호가4": recvvalue[10],
+            "매수호가5": recvvalue[11],
+            "매도호가건수1": recvvalue[12], "매도호가건수2": recvvalue[13], "매도호가건수3": recvvalue[14], "매도호가건수4": recvvalue[15],
+            "매도호가건수5": recvvalue[16],
+            "매수호가건수1": recvvalue[17], "매수호가건수2": recvvalue[18], "매수호가건수3": recvvalue[19], "매수호가건수4": recvvalue[20],
+            "매수호가건수5": recvvalue[21],
+            "매도호가잔량1": recvvalue[22], "매도호가잔량2": recvvalue[23], "매도호가잔량3": recvvalue[24], "매도호가잔량4": recvvalue[25],
+            "매도호가잔량5": recvvalue[26],
+            "매수호가잔량1": recvvalue[27], "매수호가잔량2": recvvalue[28], "매수호가잔량3": recvvalue[29], "매수호가잔량4": recvvalue[30],
+            "매수호가잔량5": recvvalue[31],
+            "총매도호가건수": recvvalue[32], "총매수호가건수": recvvalue[33],
+            "총매도호가잔량": recvvalue[34], "총매수호가잔량": recvvalue[35],
+            "총매도호가잔량증감": recvvalue[36], "총매수호가잔량증감": recvvalue[37]
+        }
+
+    def _parse_cmefuts_contract_data(self, data_str):
+        """H0MFCNT0 (야간선물(CME) 체결) 데이터를 파싱합니다."""
+        menulist = "선물단축종목코드|영업시간|선물전일대비|전일대비부호|선물전일대비율|선물현재가|선물시가2|선물최고가|선물최저가|최종거래량|누적거래량|누적거래대금|HTS이론가|시장베이시스|괴리율|근월물약정가|원월물약정가|스프레드1|HTS미결제약정수량|미결제약정수량증감|시가시간|시가2대비현재가부호|시가2대비현재가|최고가시간|최고가대비현재가부호|최고가대비현재가|최저가시간|최저가대비현재가부호|최저가대비현재가|매수2비율|체결강도|괴리도|미결제약정직전수량증감|이론베이시스|선물매도호가1|선물매수호가1|매도호가잔량1|매수호가잔량1|매도체결건수|매수체결건수|순매수체결건수|총매도수량|총매수수량|총매도호가잔량|총매수호가잔량|전일거래량대비등락율"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    def _parse_eurex_optn_quote_data(self, data_str):
+        """H0EUASP0 (야간옵션(EUREX) 호가) 데이터를 파싱합니다."""
+        recvvalue = data_str.split('^')
+        return {
+            "종목코드": recvvalue[0], "영업시간": recvvalue[1],
+            "매도호가1": recvvalue[2], "매도호가2": recvvalue[3], "매도호가3": recvvalue[4], "매도호가4": recvvalue[5],
+            "매도호가5": recvvalue[6],
+            "매수호가1": recvvalue[7], "매수호가2": recvvalue[8], "매수호가3": recvvalue[9], "매수호가4": recvvalue[10],
+            "매수호가5": recvvalue[11],
+            "매도호가건수1": recvvalue[12], "매도호가건수2": recvvalue[13], "매도호가건수3": recvvalue[14], "매도호가건수4": recvvalue[15],
+            "매도호가건수5": recvvalue[16],
+            "매수호가건수1": recvvalue[17], "매수호가건수2": recvvalue[18], "매수호가건수3": recvvalue[19], "매수호가건수4": recvvalue[20],
+            "매수호가건수5": recvvalue[21],
+            "매도호가잔량1": recvvalue[22], "매도호가잔량2": recvvalue[23], "매도호가잔량3": recvvalue[24], "매도호가잔량4": recvvalue[25],
+            "매도호가잔량5": recvvalue[26],
+            "매수호가잔량1": recvvalue[27], "매수호가잔량2": recvvalue[28], "매수호가잔량3": recvvalue[29], "매수호가잔량4": recvvalue[30],
+            "매수호가잔량5": recvvalue[31],
+            "총매도호가건수": recvvalue[32], "총매수호가건수": recvvalue[33],
+            "총매도호가잔량": recvvalue[34], "총매수호가잔량": recvvalue[35],
+            "총매도호가잔량증감": recvvalue[36], "총매수호가잔량증감": recvvalue[37]
+        }
+
+    def _parse_eurex_optn_contract_data(self, data_str):
+        """H0EUCNT0 (야간옵션(EUREX) 체결) 데이터를 파싱합니다."""
+        menulist = "옵션단축종목코드|영업시간|옵션현재가|전일대비부호|옵션전일대비|전일대비율|옵션시가2|옵션최고가|옵션최저가|최종거래량|누적거래량|누적거래대금|HTS이론가|HTS미결제약정수량|미결제약정수량증감|시가시간|시가2대비현재가부호|시가대비지수현재가|최고가시간|최고가대비현재가부호|최고가대비지수현재가|최저가시간|최저가대비현재가부호|최저가대비지수현재가|매수2비율|프리미엄값|내재가치값|시간가치값|델타|감마|베가|세타|로우|HTS내재변동성|괴리도|미결제약정직전수량증감|이론베이시스|역사적변동성|체결강도|괴리율|시장베이시스|옵션매도호가1|옵션매수호가1|매도호가잔량1|매수호가잔량1|매도체결건수|매수체결건수|순매수체결건수|총매도수량|총매수수량|총매도호가잔량|총매수호가잔량|전일거래량대비등락율"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    def _parse_eurex_optn_exp_contract_data(self, data_str):
+        """H0EUANC0 (야간옵션(EUREX) 예상체결) 데이터를 파싱합니다."""
+        menulist = "옵션단축종목코드|영업시간|예상체결가|예상체결대비|예상체결대비부호|예상체결전일대비율|예상장운영구분코드"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    # --- 웹소켓 연결 및 해지 ---
+    async def connect(self, on_message_callback=None):
+        """웹소켓 연결을 시작하고 실시간 데이터 수신을 준비합니다."""
+        if self.ws and self._is_connected:
+            self.logger.info("웹소켓이 이미 연결되어 있습니다.")
+            return True
+
+        self.on_realtime_message_callback = on_message_callback  # 외부 콜백 등록
+
+        # 1. approval_key 발급 (비동기)
+        if not self.approval_key:
+            self.approval_key = await self._get_approval_key()
+            if not self.approval_key:
+                self.logger.error("웹소켓 접속 키 발급 실패로 연결할 수 없습니다.")
+                return False
+
+        # 2. 웹소켓 연결 (async with 사용)
+        try:
+            self.logger.info(f"웹소켓 연결 시작: {self._websocket_url}")
+            self.ws = await websockets.connect(self._websocket_url, ping_interval=20, ping_timeout=20)
+            self._is_connected = True
+            self.logger.info("웹소켓 연결 성공.")
+
+            # 메시지 수신 태스크 시작 (백그라운드에서 계속 메시지 받기)
+            self._receive_task = asyncio.create_task(self._receive_messages())
+
+            return True
+        except Exception as e:
+            self.logger.error(f"웹소켓 연결 중 오류 발생: {e}")
+            self._is_connected = False
+            self.ws = None
+            return False
+
+    async def disconnect(self):
+        """웹소켓 연결을 종료합니다."""
+        if self._is_connected and self.ws:
+            self.logger.info("웹소켓 연결 종료 요청.")
+            await self.ws.close()
+            self._is_connected = False
+            if self._receive_task:
+                self._receive_task.cancel()
+                try:
+                    await self._receive_task
+                except asyncio.CancelledError:
+                    self.logger.info("웹소켓 수신 태스크 취소됨.")
+                except Exception as e:
+                    self.logger.error(f"웹so켓 수신 태스크 종료 중 오류: {e}")
+            self.ws = None
+            self.logger.info("웹소켓 연결 종료 완료.")
+        else:
+            self.logger.info("웹소켓이 연결되어 있지 않습니다.")
+
+    # --- 실시간 요청 전송 ---
+    async def send_realtime_request(self, tr_id, tr_key, tr_type="1"):  # tr_cnt는 API 문서에 없어 제거
+        """
+        실시간 데이터 구독/해지 요청 메시지를 웹소켓으로 전송합니다.
+        :param tr_id: 실시간 TR ID
+        :param tr_key: 구독할 종목코드 또는 HTS ID (체결통보용)
+        :param tr_type: 1: 등록, 2: 해지
+        """
+        if not self._is_connected or not self.ws:
+            self.logger.error("웹소켓이 연결되어 있지 않아 실시간 요청을 보낼 수 없습니다.")
+            return False
+        if not self.approval_key:
+            self.logger.error("approval_key가 없어 실시간 요청을 보낼 수 없습니다.")
+            return False
+
+        header = {
+            "approval_key": self.approval_key,
+            "custtype": self._config['custtype'],
+            "id": tr_id,
+            "pwd": "",  # 빈 값
+            "gt_uid": os.urandom(16).hex()  # 32Byte UUID
+        }
+        body = {
+            "input": {
+                "tr_id": tr_id,
+                "tr_key": tr_key,
+                "rt_type": tr_type
+            }
+        }
+
+        request_message = [header, body]
+        message_json = json.dumps(request_message)
+
+        self.logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")
+        try:
+            await self.ws.send(message_json)
+            return True
+        except websockets.exceptions.WebSocketConnectionClosedException as e:
+            self.logger.error(f"웹소켓 연결이 닫혀 전송 실패: {e}")
+            self._is_connected = False
+            return False
+        except Exception as e:
+            self.logger.error(f"실시간 요청 전송 중 오류 발생: {e}")
+            return False
+
+    async def subscribe_realtime_price(self, stock_code):
+        """실시간 주식체결 데이터(현재가)를 구독합니다."""
+        tr_id = self._config['tr_ids']['websocket']['realtime_price']
+        self.logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
+
+    async def unsubscribe_realtime_price(self, stock_code):
+        """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
+        tr_id = self._config['tr_ids']['websocket']['realtime_price']
+        self.logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 해지 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
+    async def subscribe_realtime_quote(self, stock_code):
+        """실시간 주식호가 데이터를 구독합니다."""
+        tr_id = self._config['tr_ids']['websocket']['realtime_quote']
+        self.logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
+
+    async def unsubscribe_realtime_quote(self, stock_code):
+        """실시간 주식호가 데이터 구독을 해지합니다."""
+        tr_id = self._config['tr_ids']['websocket']['realtime_quote']
+        self.logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="2")

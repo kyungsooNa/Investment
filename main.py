@@ -1,21 +1,32 @@
-# main.py
+# main.py (최종 버전)
 import os
-from trading_app import TradingApp # 새로 생성한 TradingApp 클래스 임포트
+import asyncio # 비동기 처리를 위해 추가
+import sys # sys.exit를 위해 추가
+import traceback # 예외 추적을 위해 추가
+
+from core.config_loader import load_config
+from api.env import KoreaInvestEnv
+from api.client import KoreaInvestAPI
+from trading_app import TradingApp # TradingApp 임포트
 
 # config.yaml 및 tr_ids_config.yaml 파일 경로 설정
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAIN_CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
 TR_IDS_CONFIG_PATH = os.path.join(BASE_DIR, 'core', 'tr_ids_config.yaml')
 
-def main():
+# main 함수를 비동기 함수로 선언
+async def main():
     try:
-        # TradingApp 인스턴스 생성 및 실행
-        # 초기화 과정에서 오류가 발생하면 main 함수에서 처리 (예: 프로그램 종료)
         app = TradingApp(MAIN_CONFIG_PATH, TR_IDS_CONFIG_PATH)
-        app.run() # 애플리케이션 메인 루프 실행
+        await app.run_async() # <--- run_async 메서드 호출 (비동기)
+    except KeyboardInterrupt:
+        print("\nKeyboardInterrupt 발생! 애플리케이션을 종료합니다.")
+        sys.exit(0)
     except Exception as e:
-        # TradingApp 초기화 또는 실행 중 발생한 예외를 여기서 최종 처리
         print(f"FATAL ERROR: 애플리케이션 실행 중 치명적인 오류 발생: {e}")
+        print(traceback.format_exc())
+        sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    # 비동기 메인 함수 실행
+    asyncio.run(main())
