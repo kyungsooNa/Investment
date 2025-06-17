@@ -14,7 +14,7 @@ from base64 import b64decode
 from api.env import KoreaInvestEnv
 
 
-class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
+class KoreaInvestWebSocketAPI:
     """
     한국투자증권 Open API의 웹소켓 연결 및 실시간 데이터 수신을 관리하는 클래스입니다.
     `websockets` 라이브러리(asyncio 기반)를 사용합니다.
@@ -42,16 +42,24 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
 
     @staticmethod
     def _aes_cbc_base64_dec(key, iv, cipher_text):
-        """AES256 DECODE (정적 메서드)"""
+        """
+        AES256 DECODE (Base64 인코딩된 암호문을 복호화)
+        :param key: AES256 Secret Key (str)
+        :param iv: AES256 Initialize Vector (str)
+        :param cipher_text: Base64 인코딩된 AES256 암호문 (str)
+        :return: 복호화된 문자열 (str)
+        """
         try:
             cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
             return bytes.decode(unpad(cipher.decrypt(b64decode(cipher_text)), AES.block_size))
         except Exception as e:
-            logging.error(f"AES 복호화 오류 발생: {e}")
+            logging.error(f"AES 복호화 오류 발생: {e} (key: {key[:5]}..., iv: {iv[:5]}..., cipher: {cipher_text[:50]}...)")
             return None
 
     async def _get_approval_key(self):
-        """웹소켓 접속 키(approval_key)를 비동기로 발급받습니다."""
+        """
+        웹소켓 접속 키(approval_key)를 한국투자증권 REST API를 통해 발급받습니다.
+        """
         path = "/oauth2/Approval"
         url = f"{self._base_rest_url}{path}"
         headers = {"content-type": "application/json; utf-8"}
@@ -90,7 +98,7 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
             return None
 
     async def _receive_messages(self):
-        """웹소켓으로부터 메시지를 비동기적으로 계속 수신합니다."""
+        """웹소켓으로부터 메시지를 비동기적으로 계속 수신하는 내부 태스크."""
         try:
             while self._is_connected:
                 message = await self.ws.recv()
@@ -99,8 +107,10 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
             self.logger.info("웹소켓 연결이 정상적으로 종료되었습니다.")
         except websockets.exceptions.ConnectionClosedError as e:
             self.logger.error(f"웹소켓 연결이 예외적으로 종료되었습니다: {e}")
+        except asyncio.CancelledError:
+            self.logger.info("웹소켓 메시지 수신 태스크가 취소되었습니다.")
         except Exception as e:
-            self.logger.error(f"웹소켓 메시지 수신 중 오류 발생: {e}")
+            self.logger.error(f"웹소켓 메시지 수신 중 예상치 못한 오류 발생: {e}")
         finally:
             self._is_connected = False
             self.ws = None
@@ -122,40 +132,40 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
                 parsed_data = self._parse_stock_quote_data(data_body)
                 message_type = 'realtime_quote'
 
-            elif tr_id in ["H0IFASP0", "H0IOASP0"]:  # 지수선물/옵션 호가 (H0IFASP0, H0IOASP0)
+            elif tr_id in ["H0IFASP0", "H0IOASP0"]:
                 parsed_data = self._parse_futs_optn_quote_data(data_body)
                 message_type = 'realtime_futs_optn_quote'
-            elif tr_id in ["H0IFCNT0", "H0IOCNT0"]:  # 지수선물/옵션 체결 (H0IFCNT0, H0IOCNT0)
+            elif tr_id in ["H0IFCNT0", "H0IOCNT0"]:
                 parsed_data = self._parse_futs_optn_contract_data(data_body)
                 message_type = 'realtime_futs_optn_contract'
-            elif tr_id == "H0CFASP0":  # 상품선물 호가
+            elif tr_id == "H0CFASP0":
                 parsed_data = self._parse_product_futs_quote_data(data_body)
                 message_type = 'realtime_product_futs_quote'
-            elif tr_id == "H0CFCNT0":  # 상품선물 체결
+            elif tr_id == "H0CFCNT0":
                 parsed_data = self._parse_product_futs_contract_data(data_body)
                 message_type = 'realtime_product_futs_contract'
-            elif tr_id in ["H0ZFASP0", "H0ZOASP0"]:  # 주식선물/옵션 호가
+            elif tr_id in ["H0ZFASP0", "H0ZOASP0"]:
                 parsed_data = self._parse_stock_futs_optn_quote_data(data_body)
                 message_type = 'realtime_stock_futs_optn_quote'
-            elif tr_id in ["H0ZFCNT0", "H0ZOCNT0"]:  # 주식선물/옵션 체결
+            elif tr_id in ["H0ZFCNT0", "H0ZOCNT0"]:
                 parsed_data = self._parse_stock_futs_optn_contract_data(data_body)
                 message_type = 'realtime_stock_futs_optn_contract'
-            elif tr_id in ["H0ZFANC0", "H0ZOANC0"]:  # 주식선물/옵션 예상체결
+            elif tr_id in ["H0ZFANC0", "H0ZOANC0"]:
                 parsed_data = self._parse_stock_futs_optn_exp_contract_data(data_body)
                 message_type = 'realtime_stock_futs_optn_exp_contract'
-            elif tr_id == "H0MFASP0":  # 야간선물(CME) 호가
+            elif tr_id == "H0MFASP0":
                 parsed_data = self._parse_cmefuts_quote_data(data_body)
                 message_type = 'realtime_cmefuts_quote'
-            elif tr_id == "H0MFCNT0":  # 야간선물(CME) 체결
+            elif tr_id == "H0MFCNT0":
                 parsed_data = self._parse_cmefuts_contract_data(data_body)
                 message_type = 'realtime_cmefuts_contract'
-            elif tr_id == "H0EUASP0":  # 야간옵션(EUREX) 호가
+            elif tr_id == "H0EUASP0":
                 parsed_data = self._parse_eurex_optn_quote_data(data_body)
                 message_type = 'realtime_eurex_optn_quote'
-            elif tr_id == "H0EUCNT0":  # 야간옵션(EUREX) 체결
+            elif tr_id == "H0EUCNT0":
                 parsed_data = self._parse_eurex_optn_contract_data(data_body)
                 message_type = 'realtime_eurex_optn_contract'
-            elif tr_id == "H0EUANC0":  # 야간옵션(EUREX) 예상체결
+            elif tr_id == "H0EUANC0":
                 parsed_data = self._parse_eurex_optn_exp_contract_data(data_body)
                 message_type = 'realtime_eurex_optn_exp_contract'
 
@@ -201,6 +211,8 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
             except Exception as e:
                 self.logger.error(f"제어 메시지 처리 중 오류 발생: {e}, 메시지: {message}")
 
+    # --- 실시간 데이터 파싱 헬퍼 함수들 (제공된 예제 코드 기반으로 상세 구현) ---
+
     def _parse_stock_quote_data(self, data_str):
         """H0STASP0 (주식 호가) 데이터를 파싱합니다."""
         recvvalue = data_str.split('^')
@@ -231,7 +243,8 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
 
     def _parse_stock_contract_data(self, data_str):
         """H0STCNT0 (주식 체결) 데이터를 파싱합니다."""
-        menulist = "유가증권단축종목코드|주식체결시간|주식현재가|전일대비부호|전일대비|전일대비율|가중평균주식가격|주식시가|주식최고가|주식최저가|매도호가1|매수호가1|체결거래량|누적거래량|누적거래대금|매도체결건수|매수체결건수|순매수체결건수|체결강도|총매도수량|총매수수량|체결구분|매수비율|전일거래량대비등락율|시가시간|시가대비구분|시가대비|최고가시간|고가대비구분|고가대비|최저가시간|저가대비구분|저가대비|영업일자|신장운영구분코드|거래정지여부|매도호가잔량|매수호가잔량|총매도호가잔량|총매수호가잔량|거래량회전율|전일동시간누적거래량|전일동시간누적거래량비율|시간구분코드|임의종료구분코드|정적VI발동기준가"
+        # 국내주식 실시간체결가 (KRX) [실시간-003] 공식 문서 참조
+        menulist = "MKSC_SHRN_ISCD|STCK_CNTG_HOUR|STCK_PRPR|PRDY_VRSS_SIGN|PRDY_VRSS|PRDY_CTRT|WGHN_AVRG_STCK_PRC|STCK_OPRC|STCK_HGPR|STCK_LWPR|ASKP1|BIDP1|CNTG_VOL|ACML_VOL|ACML_TR_PBMN|SELN_CNTG_CSNU|SHNU_CNTG_CSNU|NTBY_CNTG_CSNU|CTTR|SELN_CNTG_SMTN|SHNU_CNTG_SMTN|CCLD_DVSN|SHNU_RATE|PRDY_VOL_VRSS_ACML_VOL_RATE|OPRC_HOUR|OPRC_VRSS_PRPR_SIGN|OPRC_VRSS_PRPR|HGPR_HOUR|HGPR_VRSS_PRPR_SIGN|HGPR_VRSS_PRPR|LWPR_HOUR|LWPR_VRSS_PRPR_SIGN|LWPR_VRSS_PRPR|BSOP_DATE|NEW_MKOP_CLS_CODE|TRHT_YN|ASKP_RSQN1|BIDP_RSQN1|TOTAL_ASKP_RSQN|TOTAL_BIDP_RSQN|VOL_TNRT|PRDY_SMNS_HOUR_ACML_VOL|PRDY_SMNS_HOUR_ACML_VOL_RATE|HOUR_CLS_CODE|MRKT_TRTM_CLS_CODE|VI_STND_PRC"
         keys = menulist.split('|')
         values = data_str.split('^')
         return dict(zip(keys, values[:len(keys)]))
@@ -318,7 +331,7 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
 
     def _parse_stock_futs_optn_contract_data(self, data_str):
         """H0ZFCNT0, H0ZOCNT0 (주식선물/옵션 체결) 데이터를 파싱합니다."""
-        menulist = "선물단축종목코드|영업시간|주식현재가|전일대비부호|전일대비|선물전일대비율|주식시가2|주식최고가|주식최저가|최종거래량|누적거래량|누적거래대금|HTS이론가|시장베이시스|괴리율|근월물약정가|원월물약정가|스프레드1|HTS미결제약정수량|미결제약정수량증감|시가시간|시가2대비현재가부호|시가2대비현재가|최고가시간|최고가대비현재가부호|최고가대비현재가|최저가시간|최저가대비현재가부호|최저가대비현재가|매수2비율|체결강도|괴리도|미결제약정직전수량증감|이론베이시스|매도호가1|매수호가1|매도호가잔량1|매수호가잔량1|매도체결건수|매수체결건수|순매수체결건수|총매도수량|총매수수량|총매도호가잔량|총매수호가잔량|전일거래량대비등락율|실시간상한가|실시간하한가|실시간가격제한구분"
+        menulist = "선물단축종목코드|영업시간|주식현재가|전일대비부호|전일대비|선물전일대비율|주식시가2|주식최고가|주식최저가|최종거래량|누적거래량|누적거래대금|HTS이론가|시장베이시스|괴리율|근월물약정가|원월물약정가|스프레드1|HTS미결제약정수량|미결제약정수량증감|시가시간|시가2대비현재가부호|시가2대비현재가|최고가시간|최고가대비현재가부호|최고가대비현재가|최저가시간|저가대비구분|저가대비|영업일자|신장운영구분코드|거래정지여부|매도호가잔량|매수호가잔량|총매도호가잔량|총매수호가잔량|거래량회전율|전일동시간누적거래량|전일동시간누적거래량비율|시간구분코드|임의종료구분코드|정적VI발동기준가"
         keys = menulist.split('|')
         values = data_str.split('^')
         return dict(zip(keys, values[:len(keys)]))
@@ -414,7 +427,7 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
         # 2. 웹소켓 연결 (async with 사용)
         try:
             self.logger.info(f"웹소켓 연결 시작: {self._websocket_url}")
-            self.ws = await websockets.connect(self._websocket_url, ping_interval=20, ping_timeout=20)
+            self.ws = await websockets.connect(self._websocket_url, ping_interval=20, ping_timeout=20)  # 핑퐁 간격/타임아웃 설정
             self._is_connected = True
             self.logger.info("웹소켓 연결 성공.")
 
@@ -425,7 +438,7 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
         except Exception as e:
             self.logger.error(f"웹소켓 연결 중 오류 발생: {e}")
             self._is_connected = False
-            self.ws = None
+            self.ws = None  # 웹소켓 객체 초기화
             return False
 
     async def disconnect(self):
@@ -464,20 +477,22 @@ class KoreaInvestWebSocketAPI:  # 클래스 이름은 기존과 동일
 
         header = {
             "approval_key": self.approval_key,
-            "custtype": self._config['custtype'],
-            "id": tr_id,
-            "pwd": "",  # 빈 값
-            "gt_uid": os.urandom(16).hex()  # 32Byte UUID
+            "custtype": self._config['custtype'],  # P: 개인, B: 법인
+            "tr_type": tr_type,  # 1: 등록, 2: 해지
+            "content-type": "utf-8"  # 문서에 명시된 'utf-8' 문자열 그대로 사용
         }
         body = {
             "input": {
-                "tr_id": tr_id,
-                "tr_key": tr_key,
-                "rt_type": tr_type
+                "tr_id": tr_id,  # 요청 바디 input 안에 TR ID
+                "tr_key": tr_key,  # 요청 바디 input 안에 TR Key (종목코드 또는 HTS ID)
             }
         }
 
-        request_message = [header, body]
+        request_message = {
+            "header": header,  # 'header' 키 안에 헤더 딕셔너리
+            "body": body  # 'body' 키 안에 바디 딕셔너리
+        }
+
         message_json = json.dumps(request_message)
 
         self.logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")
