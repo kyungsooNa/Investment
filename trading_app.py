@@ -79,6 +79,7 @@ class TradingApp:
         print("5. 시가총액 1~10위 종목 현재가 조회")
         print("6. 실시간 주식 체결가/호가 구독 (삼성전자)")
         print("7. 주식 전일대비 등락률 조회 (삼성전자)")
+        print("8. 주식 시가대비 조회 (삼성전자)")  # <--- 새로운 메뉴 옵션 추가
         print("0. 종료")
         print("-----------------------------------")
 
@@ -103,7 +104,9 @@ class TradingApp:
         elif choice == '6':
             await self._handle_realtime_price_quote_stream("005930")
         elif choice == '7':
-            await self._handle_display_stock_change_rate("005930")  # 호출하는 부분은 그대로 둡니다.
+            await self._handle_display_stock_change_rate("005930")
+        elif choice == '8':  # <--- 새로운 핸들러 호출
+            await self._handle_display_stock_vs_open_price("005930")
         elif choice == '0':
             print("애플리케이션을 종료합니다.")
             running_status = False
@@ -199,63 +202,35 @@ class TradingApp:
                 # tr_id = data.get('tr_id') # 사용되지 않아 제거
                 output = data.get('data', {})
 
-                if data.get('type') == 'realtime_price':
-                    realtime_data = data.get('data', {})
-                    stock_code = realtime_data.get('MKSC_SHRN_ISCD', 'N/A')  # 종목코드
-                    current_price = realtime_data.get('STCK_PRPR', 'N/A')  # 주식 현재가
-                    change = realtime_data.get('PRDY_VRSS', 'N/A')  # 전일대비
-                    change_sign = realtime_data.get('PRDY_VRSS_SIGN', 'N/A')  # 전일대비 부호
-                    change_rate = realtime_data.get('PRDY_CTRT', 'N/A')  # 전일대비율
-                    cumulative_volume = realtime_data.get('ACML_VOL', 'N/A')  # 누적 거래량
-                    trade_time = realtime_data.get('STCK_CNTG_HOUR', 'N/A')  # 주식 체결 시간
+                if data_type == 'realtime_price':  # 주식 체결
+                    current_price = output.get('STCK_PRPR', 'N/A')
+                    acml_vol = output.get('ACML_VOL', 'N/A')
+                    trade_time = output.get('STCK_CNTG_HOUR', 'N/A')
+                    change_val = output.get('PRDY_VRSS', 'N/A')
+                    change_sign = output.get('PRDY_VRSS_SIGN', 'N/A')
+                    change_rate = output.get('PRDY_CTRT', 'N/A')
 
-                    # 콘솔에 덮어쓰기 출력: 전일대비 및 전일대비율 포함
                     display_message = (
-                        f"[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
-                        f"전일대비: {change_sign}{change} ({change_rate}%), 누적량: {cumulative_volume}"
+                        f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
+                        f"전일대비: {change_sign}{change_val} ({change_rate}%), 누적량: {acml_vol}"
                     )
                     print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
-                    self.logger.info(
-                        f"실시간 체결 데이터: {stock_code} 현재가={current_price}, 전일대비={change_sign}{change}({change_rate}%), 누적량={cumulative_volume}")
-
-
-                elif data.get('type') == 'realtime_quote':
-
-                    quote_data = data.get('data', {})
-
-                    stock_code = quote_data.get('유가증권단축종목코드', 'N/A')
-
-                    askp1 = quote_data.get('매도호가1', 'N/A')
-
-                    bidp1 = quote_data.get('매수호가1', 'N/A')
-
-                    trade_time = quote_data.get('영업시간', 'N/A')
-
-                    display_message = f"[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1호가: {askp1}, 매수1호가: {bidp1}"
-
+                elif data_type == 'realtime_quote':  # 주식 호가
+                    askp1 = output.get('매도호가1', 'N/A')
+                    bidp1 = output.get('매수호가1', 'N/A')
+                    trade_time = output.get('영업시간', 'N/A')
+                    display_message = (
+                        f"\r[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1: {askp1}, 매수1: {bidp1}{' ' * 20}"
+                    )
                     print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
-
-                    self.logger.info(f"실시간 호가 데이터: {stock_code} 매도1={askp1}, 매수1={bidp1}")
-
-
-                elif data.get('type') == 'signing_notice':
-
-                    notice_data = data.get('data', {})
-
-                    order_num = notice_data.get('주문번호', 'N/A')
-
-                    trade_qty = notice_data.get('체결수량', 'N/A')
-
-                    trade_price = notice_data.get('체결단가', 'N/A')
-
-                    trade_time = notice_data.get('주식체결시간', 'N/A')
-
+                elif data_type == 'signing_notice':  # 체결 통보
+                    order_num = output.get('주문번호', 'N/A')
+                    trade_qty = output.get('체결수량', 'N/A')
+                    trade_price = output.get('체결단가', 'N/A')
+                    trade_time = output.get('주식체결시간', 'N/A')
                     print(f"\n[체결통보] 주문: {order_num}, 수량: {trade_qty}, 단가: {trade_price}, 시간: {trade_time}")
-
-                    self.logger.info(f"체결통보: 주문={order_num}, 수량={trade_qty}, 단가={trade_price}")
-
-                else:
-                    self.logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
+                # else:
+                #     self.logger.debug(f"처리되지 않은 실시간 메시지: {tr_id} - {data}")
 
         # 웹소켓 연결 및 구독 요청
         if await self.trading_service.connect_websocket(on_message_callback=realtime_data_display_callback):
@@ -318,6 +293,75 @@ class TradingApp:
             # 조회 실패 시 콘솔 및 로그에 오류 기록
             print(f"\n실패: {stock_code} 전일대비 등락률 조회.")
             self.logger.error(f"{stock_code} 전일대비 등락률 조회 실패: {current_price_result}")
+
+    async def _handle_display_stock_vs_open_price(self, stock_code):
+        """
+        주식 시가대비 조회 및 결과 출력.
+        TradingService를 통해 현재 주가 정보를 가져와 시가 대비를 표시합니다.
+        :param stock_code: 조회할 주식 종목코드 (예: "005930")
+        """
+        print(f"\n--- {stock_code} 시가대비 조회 ---")
+
+        # TradingService를 통해 현재 주가 정보를 가져옵니다.
+        # 이 호출은 api/quotations.py의 get_current_price를 사용하며,
+        # 해당 API는 시가(stck_oprc), 시가대비(oprc_vrss_prpr), 시가대비부호(oprc_vrss_prpr_sign) 정보를 포함합니다.
+        current_price_result = await self.trading_service.get_current_stock_price(stock_code)
+
+        # API 호출 결과 확인
+        if current_price_result and current_price_result.get('rt_cd') == '0':
+            # 응답 데이터의 'output' 필드에서 필요한 정보 추출
+            output_data = current_price_result.get('output', {})
+            current_price_str = output_data.get('stck_prpr', 'N/A')  # 주식 현재가 (문자열)
+            open_price_str = output_data.get('stck_oprc', 'N/A')  # 주식 시가 (문자열)
+            # vs_open_price_str = output_data.get('oprc_vrss_prpr', 'N/A') # 이 값은 이제 직접 계산하므로 필요 없음
+            vs_open_sign = output_data.get('oprc_vrss_prpr_sign', 'N/A')  # 시가 대비 부호 (API 제공)
+
+            # 숫자 값으로 변환 및 오류 처리
+            current_price_float = float(current_price_str) if current_price_str != 'N/A' else None
+            open_price_float = float(open_price_str) if open_price_str != 'N/A' else None
+
+            # 시가대비 등락률 퍼센트 계산
+            percentage_change_vs_open_formatted = "N/A"
+            if open_price_float is not None and current_price_float is not None and open_price_float != 0:
+                percentage_change_vs_open = ((current_price_float - open_price_float) / open_price_float) * 100
+
+                if percentage_change_vs_open > 0:
+                    percentage_change_vs_open_formatted = f"+{percentage_change_vs_open:.2f}%"
+                elif percentage_change_vs_open < 0:
+                    percentage_change_vs_open_formatted = f"{percentage_change_vs_open:.2f}%"
+                else:
+                    percentage_change_vs_open_formatted = "0.00%"
+            else:
+                percentage_change_vs_open_formatted = "N/A"
+
+            # 시가 대비 금액 계산 및 부호 적용, 0원 처리
+            display_vs_open_price_formatted = "N/A"
+            if open_price_float is not None and current_price_float is not None:
+                calculated_vs_open_price = current_price_float - open_price_float  # <--- 직접 계산
+
+                if calculated_vs_open_price > 0:
+                    display_vs_open_price_formatted = f"+{calculated_vs_open_price:.0f}"
+                elif calculated_vs_open_price < 0:
+                    display_vs_open_price_formatted = f"{calculated_vs_open_price:.0f}"
+                else:
+                    display_vs_open_price_formatted = "0"
+
+            # 콘솔에 등락률 정보 출력
+            print(f"\n성공: {stock_code}")
+            print(f"  현재가: {current_price_str}원")
+            print(f"  시가: {open_price_str}원")
+            # --- 출력 포맷 수정 ---
+            print(f"  시가대비 등락률: {display_vs_open_price_formatted}원 ({percentage_change_vs_open_formatted})")
+
+            # 로깅 (operational.log 및 debug.log에 기록)
+            self.logger.info(
+                f"{stock_code} 시가대비 조회 성공: 현재가={current_price_str}, 시가={open_price_str}, "
+                f"시가대비={display_vs_open_price_formatted}원 ({percentage_change_vs_open_formatted})"
+            )
+        else:
+            # 조회 실패 시 콘솔 및 로그에 오류 기록
+            print(f"\n실패: {stock_code} 시가대비 조회.")
+            self.logger.error(f"{stock_code} 시가대비 조회 실패: {current_price_result}")
 
     # run 메서드를 async로 변경
     async def run_async(self):
