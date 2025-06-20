@@ -5,21 +5,22 @@ import os
 import certifi
 import hashlib
 import logging
+import asyncio  # 비동기 처리를 위해 추가
 
 from api.base import _KoreaInvestAPIBase
 
 
 class KoreaInvestTradingAPI(_KoreaInvestAPIBase):
-    def __init__(self, base_url, headers, config, logger):  # <--- 인자 변경
-        super().__init__(base_url, headers, config, logger)  # <--- 부모 클래스에 전달
+    def __init__(self, base_url, headers, config, logger):
+        super().__init__(base_url, headers, config, logger)
 
-    def _get_hashkey(self, data):
+    async def _get_hashkey(self, data):  # <--- async def 추가
         """
         주문 요청 Body를 기반으로 Hashkey를 생성하여 반환합니다.
         이는 별도의 API 호출을 통해 이루어집니다.
         """
         body_json_str = json.dumps(data)
-        hashkey_url = f"{self._config['base_url']}/uapi/hashkey"  # <--- _config에서 base_url 가져옴
+        hashkey_url = f"{self._config['base_url']}/uapi/hashkey"
 
         hashkey_headers = self._headers.copy()
         hashkey_headers["appkey"] = self._config['api_key']
@@ -27,8 +28,11 @@ class KoreaInvestTradingAPI(_KoreaInvestAPIBase):
         hashkey_headers["Content-Type"] = "application/json; charset=utf-8"
 
         try:
-            hash_response = requests.post(hashkey_url, headers=hashkey_headers, data=body_json_str,
-                                          verify=certifi.where())
+            loop = asyncio.get_running_loop()  # 현재 이벤트 루프 가져오기
+            hash_response = await loop.run_in_executor(  # <--- await loop.run_in_executor()로 감쌈
+                None,
+                lambda: requests.post(hashkey_url, headers=hashkey_headers, data=body_json_str, verify=certifi.where())
+            )
             hash_response.raise_for_status()
             hash_data = hash_response.json()
             calculated_hashkey = hash_data.get('HASH')
@@ -50,10 +54,10 @@ class KoreaInvestTradingAPI(_KoreaInvestAPIBase):
             self.logger.error(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
             return None
 
-    def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn):
+    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn):  # <--- async def 추가
         path = "/uapi/domestic-stock/v1/trading/order-cash"
 
-        full_config = self._config  # full_config는 이미 self._config에 저장되어 있음
+        full_config = self._config
 
         if trade_type == "매수":
             tr_id = full_config['tr_ids']['trading']['order_cash_buy_paper'] if full_config['is_paper_trading'] else \
@@ -82,10 +86,10 @@ class KoreaInvestTradingAPI(_KoreaInvestAPIBase):
             "TR_DVN": trade_type
         }
 
-        calculated_hashkey = self._get_hashkey(data)
+        calculated_hashkey = await self._get_hashkey(data)  # <--- await 추가
         if not calculated_hashkey:
             return None
         self._headers["hashkey"] = calculated_hashkey
 
         self.logger.info(f"주식 {trade_type} 주문 시도 - 종목: {stock_code}, 수량: {order_qty}, 가격: {order_price}")
-        return self._call_api('POST', path, data=data)
+        return await self._call_api('POST', path, data=data)  # <--- await 추가

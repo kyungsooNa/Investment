@@ -3,34 +3,42 @@ from api.base import _KoreaInvestAPIBase
 
 
 class KoreaInvestQuotationsAPI(_KoreaInvestAPIBase):
-    def __init__(self, base_url, headers, config, logger):  # <--- 인자 변경
-        super().__init__(base_url, headers, config, logger)  # <--- 부모 클래스에 전달
+    def __init__(self, base_url, headers, config, logger):
+        super().__init__(base_url, headers, config, logger)
 
-    def get_current_price(self, stock_code):
+    async def get_current_price(self, stock_code):  # <--- async def 추가
+        """
+        주식 현재가를 조회하는 메서드.
+        """
         path = "/uapi/domestic-stock/v1/quotations/inquire-price"
 
-        self._headers["tr_id"] = self._config['tr_ids']['quotations']['inquire_price']
-        self._headers["custtype"] = self._config['custtype']
+        full_config = self._config  # _config는 이제 __init__에서 저장됨
+        self._headers["tr_id"] = full_config['tr_ids']['quotations']['inquire_price']
+        self._headers["custtype"] = full_config['custtype']
 
         params = {
             "fid_cond_mrkt_div_code": "J",
             "fid_input_iscd": stock_code
         }
         self.logger.info(f"{stock_code} 현재가 조회 시도...")
-        return self._call_api('GET', path, params=params)
+        return await self._call_api('GET', path, params=params)  # <--- await 추가
 
-    def get_market_cap(self, stock_code):
+    async def get_market_cap(self, stock_code):  # <--- async def 추가
+        """
+        종목의 시가총액을 조회하는 메서드 (상품기본조회 API 활용).
+        """
         path = "/uapi/domestic-stock/v1/quotations/search-info"
 
-        self._headers["tr_id"] = self._config['tr_ids']['quotations']['search_info']
-        self._headers["custtype"] = self._config['custtype']
+        full_config = self._config
+        self._headers["tr_id"] = full_config['tr_ids']['quotations']['search_info']
+        self._headers["custtype"] = full_config['custtype']
 
         params = {
             "PDNO": stock_code,
             "FID_DIV_CLS_CODE": "2"
         }
         self.logger.info(f"{stock_code} 시가총액 조회 시도...")
-        response = self._call_api('GET', path, params=params)
+        response = await self._call_api('GET', path, params=params)  # <--- await 추가
 
         if response and response.get('rt_cd') == '0' and response.get('output'):
             market_cap = response['output'].get('stck_prpr_smkl_amt')
@@ -41,11 +49,16 @@ class KoreaInvestQuotationsAPI(_KoreaInvestAPIBase):
             self.logger.error(f"{stock_code} 시가총액 조회 실패 또는 정보 없음: {response}")
             return None
 
-    def get_top_market_cap_stocks(self, market_code="0000"):
+    async def get_top_market_cap_stocks(self, market_code="0000"):  # <--- async def 추가
+        """
+        국내주식 시가총액 상위 종목 목록을 조회하는 메서드.
+        이 API는 모의투자를 지원하지 않습니다. (실전 환경에서만 사용 가능)
+        """
         path = "/uapi/domestic-stock/v1/ranking/market-cap"
 
-        self._headers["tr_id"] = self._config['tr_ids']['quotations']['top_market_cap']
-        self._headers["custtype"] = self._config['custtype']
+        full_config = self._config
+        self._headers["tr_id"] = full_config['tr_ids']['quotations']['top_market_cap']
+        self._headers["custtype"] = full_config['custtype']
 
         params = {
             "fid_input_price_2": "",
@@ -59,7 +72,7 @@ class KoreaInvestQuotationsAPI(_KoreaInvestAPIBase):
             "fid_vol_cnt": ""
         }
         self.logger.info(f"시가총액 상위 {market_code} 종목 조회 시도...")
-        response = self._call_api('GET', path, params=params)
+        response = await self._call_api('GET', path, params=params)  # <--- await 추가
 
         if response and response.get('rt_cd') == '0' and response.get('output'):
             self.logger.info(f"시가총액 상위 종목 조회 성공.")

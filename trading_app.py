@@ -2,11 +2,11 @@
 import os
 from core.config_loader import load_config
 from api.env import KoreaInvestEnv
-from api.client import KoreaInvestAPI  # api/client.py에서 api/api_client.py로 파일명 변경 (이전 단계)
+from api.client import KoreaInvestAPI
 from services.trading_service import TradingService
 from core.time_manager import TimeManager
 from core.logger import Logger
-import asyncio  # 비동기 sleep을 위해 필요 (asyncio.to_thread 사용)
+import asyncio  # 비동기 sleep을 위해 필요
 
 
 class TradingApp:
@@ -15,7 +15,7 @@ class TradingApp:
     모든 비즈니스 로직은 TradingService를 통해 처리됩니다.
     """
 
-    def __init__(self, main_config_path, tr_ids_config_path):  # <--- 여기에 인자가 반드시 있어야 합니다!
+    def __init__(self, main_config_path, tr_ids_config_path):
         self.main_config_path = main_config_path
         self.tr_ids_config_path = tr_ids_config_path
 
@@ -23,7 +23,7 @@ class TradingApp:
         self.api_client = None
         self.trading_service = None
         self.time_manager = None
-        self.logger = Logger()  # Logger 인스턴스 생성
+        self.logger = Logger()
 
         self._initialize_api_client()
 
@@ -53,7 +53,7 @@ class TradingApp:
             if not access_token:
                 raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
-            self.api_client = KoreaInvestAPI(self.env, self.logger)  # api/client.py -> api/api_client.py 로 파일명 변경됨
+            self.api_client = KoreaInvestAPI(self.env, self.logger)
             self.trading_service = TradingService(self.api_client, self.env, self.logger, self.time_manager)
 
             self.logger.info(f"API 클라이언트 초기화 성공: {self.api_client}")
@@ -78,6 +78,7 @@ class TradingApp:
         print("4. 시가총액 상위 종목 조회 (모의투자 미지원)")
         print("5. 시가총액 1~10위 종목 현재가 조회")
         print("6. 실시간 주식 체결가/호가 구독 (삼성전자)")
+        print("7. 주식 전일대비 등락률 조회 (삼성전자)")
         print("0. 종료")
         print("-----------------------------------")
 
@@ -101,6 +102,8 @@ class TradingApp:
                 running_status = False
         elif choice == '6':
             await self._handle_realtime_price_quote_stream("005930")
+        elif choice == '7':
+            await self._handle_display_stock_change_rate("005930")  # 호출하는 부분은 그대로 둡니다.
         elif choice == '0':
             print("애플리케이션을 종료합니다.")
             running_status = False
@@ -110,7 +113,7 @@ class TradingApp:
         return running_status
 
     async def _handle_get_current_stock_price(self, stock_code):
-        """현재가 조회 요청 및 결과 출력."""
+        """주식 현재가 조회 요청 및 결과 출력."""
         print(f"\n--- {stock_code} 현재가 조회 ---")
         current_price_result = await self.trading_service.get_current_stock_price(stock_code)
         if current_price_result and current_price_result.get('rt_cd') == '0':
@@ -141,7 +144,7 @@ class TradingApp:
             print(f"주식 매수 주문 성공: {buy_order_result}")
             self.logger.info(f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={buy_order_result}")
         else:
-            print(f"주식 매수 주문 실패: {buy_order_result}")  # 수정된 라인
+            print(f"주식 매수 주문 실패: {buy_order_result}")
             self.logger.error(f"주식 매수 주문 실패: 종목={stock_code}, 결과={buy_order_result}")
 
     async def _get_top_market_cap_stocks(self, market_code):
@@ -159,7 +162,7 @@ class TradingApp:
             self.logger.info(f"시가총액 상위 종목 조회 성공 (시장: {market_code}), 결과: {top_market_cap_stocks}")
         else:
             print(f"실패: 시가총액 상위 종목 조회.")
-            self.logger.error(f"실패: 시가총액 상위 종목 조회: {top_market_cap_stocks}")  # 수정된 라인
+            self.logger.error(f"실패: 시가총액 상위 종목 조회: {top_market_cap_stocks}")
 
     async def _handle_get_top_10_market_cap_stocks_with_prices(self):
         """
@@ -196,26 +199,63 @@ class TradingApp:
                 # tr_id = data.get('tr_id') # 사용되지 않아 제거
                 output = data.get('data', {})
 
-                if data_type == 'realtime_price':  # 주식 체결
-                    current_price = output.get('주식현재가', 'N/A')
-                    acml_vol = output.get('누적거래량', 'N/A')
-                    trade_time = output.get('주식체결시간', 'N/A')
-                    display_message = f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, 누적량 {acml_vol}{' ' * 20}"
+                if data.get('type') == 'realtime_price':
+                    realtime_data = data.get('data', {})
+                    stock_code = realtime_data.get('MKSC_SHRN_ISCD', 'N/A')  # 종목코드
+                    current_price = realtime_data.get('STCK_PRPR', 'N/A')  # 주식 현재가
+                    change = realtime_data.get('PRDY_VRSS', 'N/A')  # 전일대비
+                    change_sign = realtime_data.get('PRDY_VRSS_SIGN', 'N/A')  # 전일대비 부호
+                    change_rate = realtime_data.get('PRDY_CTRT', 'N/A')  # 전일대비율
+                    cumulative_volume = realtime_data.get('ACML_VOL', 'N/A')  # 누적 거래량
+                    trade_time = realtime_data.get('STCK_CNTG_HOUR', 'N/A')  # 주식 체결 시간
+
+                    # 콘솔에 덮어쓰기 출력: 전일대비 및 전일대비율 포함
+                    display_message = (
+                        f"[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
+                        f"전일대비: {change_sign}{change} ({change_rate}%), 누적량: {cumulative_volume}"
+                    )
                     print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
-                elif data_type == 'realtime_quote':  # 주식 호가
-                    askp1 = output.get('매도호가1', 'N/A')
-                    bidp1 = output.get('매수호가1', 'N/A')
-                    trade_time = output.get('영업시간', 'N/A')
-                    display_message = f"\r[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1: {askp1}, 매수1: {bidp1}{' ' * 20}"
+                    self.logger.info(
+                        f"실시간 체결 데이터: {stock_code} 현재가={current_price}, 전일대비={change_sign}{change}({change_rate}%), 누적량={cumulative_volume}")
+
+
+                elif data.get('type') == 'realtime_quote':
+
+                    quote_data = data.get('data', {})
+
+                    stock_code = quote_data.get('유가증권단축종목코드', 'N/A')
+
+                    askp1 = quote_data.get('매도호가1', 'N/A')
+
+                    bidp1 = quote_data.get('매수호가1', 'N/A')
+
+                    trade_time = quote_data.get('영업시간', 'N/A')
+
+                    display_message = f"[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1호가: {askp1}, 매수1호가: {bidp1}"
+
                     print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
-                elif data_type == 'signing_notice':  # 체결 통보
-                    order_num = output.get('주문번호', 'N/A')
-                    trade_qty = output.get('체결수량', 'N/A')
-                    trade_price = output.get('체결단가', 'N/A')
-                    trade_time = output.get('주식체결시간', 'N/A')
+
+                    self.logger.info(f"실시간 호가 데이터: {stock_code} 매도1={askp1}, 매수1={bidp1}")
+
+
+                elif data.get('type') == 'signing_notice':
+
+                    notice_data = data.get('data', {})
+
+                    order_num = notice_data.get('주문번호', 'N/A')
+
+                    trade_qty = notice_data.get('체결수량', 'N/A')
+
+                    trade_price = notice_data.get('체결단가', 'N/A')
+
+                    trade_time = notice_data.get('주식체결시간', 'N/A')
+
                     print(f"\n[체결통보] 주문: {order_num}, 수량: {trade_qty}, 단가: {trade_price}, 시간: {trade_time}")
-                # else:
-                #     self.logger.debug(f"처리되지 않은 실시간 메시지: {tr_id} - {data}")
+
+                    self.logger.info(f"체결통보: 주문={order_num}, 수량={trade_qty}, 단가={trade_price}")
+
+                else:
+                    self.logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
 
         # 웹소켓 연결 및 구독 요청
         if await self.trading_service.connect_websocket(on_message_callback=realtime_data_display_callback):
@@ -241,6 +281,43 @@ class TradingApp:
         else:
             print("실시간 웹소켓 연결에 실패했습니다.")
             self.logger.error("실시간 웹소켓 연결 실패.")
+
+    async def _handle_display_stock_change_rate(self, stock_code):
+        """
+        주식 전일대비 등락률을 조회하고 콘솔에 출력합니다.
+        TradingService를 통해 현재 주가 정보를 가져와 등락률을 표시합니다.
+        :param stock_code: 조회할 주식 종목코드 (예: "005930")
+        """
+        print(f"\n--- {stock_code} 전일대비 등락률 조회 ---")
+
+        # TradingService를 통해 현재 주가 정보를 가져옵니다.
+        # 이 호출은 api/quotations.py의 get_current_price를 사용하며,
+        # 해당 API는 전일대비(prdy_vrss)와 전일대비율(prdy_ctrt) 정보를 포함합니다.
+        current_price_result = await self.trading_service.get_current_stock_price(stock_code)
+
+        # API 호출 결과 확인
+        if current_price_result and current_price_result.get('rt_cd') == '0':
+            # 응답 데이터의 'output' 필드에서 필요한 정보 추출
+            output_data = current_price_result.get('output', {})
+            current_price = output_data.get('stck_prpr', 'N/A')  # 주식 현재가
+            change_val = output_data.get('prdy_vrss', 'N/A')  # 전일 대비 금액
+            change_sign = output_data.get('prdy_vrss_sign', 'N/A')  # 전일 대비 부호 (1:상한, 2:상승, 3:보합, 4:하한, 5:하락)
+            change_rate = output_data.get('prdy_ctrt', 'N/A')  # 전일 대비율
+
+            # 콘솔에 등락률 정보 출력
+            print(f"\n성공: {stock_code} ({current_price}원)")
+            print(f"  전일대비: {change_sign}{change_val}원")
+            print(f"  전일대비율: {change_rate}%")
+
+            # 로깅 (operational.log 및 debug.log에 기록)
+            self.logger.info(
+                f"{stock_code} 전일대비 등락률 조회 성공: 현재가={current_price}, "
+                f"전일대비={change_sign}{change_val}, 등락률={change_rate}%"
+            )
+        else:
+            # 조회 실패 시 콘솔 및 로그에 오류 기록
+            print(f"\n실패: {stock_code} 전일대비 등락률 조회.")
+            self.logger.error(f"{stock_code} 전일대비 등락률 조회 실패: {current_price_result}")
 
     # run 메서드를 async로 변경
     async def run_async(self):
