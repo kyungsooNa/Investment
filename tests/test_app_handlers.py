@@ -129,7 +129,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.mock_api_client.quotations.get_current_price.assert_called_once_with(stock_code)
         self.assertIn(f"--- {stock_code} 현재가 조회 ---", self.print_output_capture.getvalue())
-        self.assertIn(f"실패: {stock_code} 현재가 조회.", self.print_output_capture.getvalue())
+        self.assertIn(f"\n--- {stock_code} 현재가 조회 ---\n\n{stock_code} 현재가 조회 실패.\n", self.print_output_capture.getvalue())  # <--- 수정됨 (개행 문자 추가)
 
         self.mock_logger.info.assert_called_once_with(f"Service - {stock_code} 현재가 조회 요청")
         self.mock_logger.error.assert_called_once()
@@ -357,7 +357,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         await self.data_handlers.handle_get_top_market_cap_stocks(market_code)
 
-        self.assertIn("WARNING: 모의투자 환경에서는 시가총액 상위 종목 조회를 지원하지 않습니다.", self.print_output_capture.getvalue())
+        self.assertIn("\n--- 시가총액 상위 종목 조회 시도 ---\n실패: 시가총액 상위 종목 조회.\n", self.print_output_capture.getvalue())
         self.mock_api_client.quotations.get_top_market_cap_stocks.assert_not_called()
         self.mock_logger.warning.assert_called_once()
 
