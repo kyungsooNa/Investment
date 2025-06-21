@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import certifi
 import yaml
 import logging
-import pytz  # pytz 임포트
+import pytz
 
 
 class KoreaInvestEnv:
@@ -20,8 +20,12 @@ class KoreaInvestEnv:
     def __init__(self, config_data, logger=None):
         self.config_data = config_data
         self.logger = logger if logger else logging.getLogger(__name__)
-        self._load_config()
-        self._set_base_urls()
+        self._load_config()  # config.yaml에서 초기값 로드
+
+        # self.base_url 등은 _set_base_urls에서 is_paper_trading에 따라 설정됨
+        self.base_url = None
+        self.websocket_url = None
+        self._set_base_urls()  # 초기 base_url, websocket_url 설정
 
         self._token_file_path = os.path.join(os.getcwd(), 'kis_access_token.yaml')
 
@@ -39,6 +43,8 @@ class KoreaInvestEnv:
         self.htsid = self.config_data.get('htsid')
         self.custtype = self.config_data.get('custtype', 'P')
 
+        # 이 is_paper_trading은 초기 config.yaml에서 로드되는 값.
+        # 사용자 선택에 따라 set_trading_mode에서 변경될 것임.
         self.is_paper_trading = self.config_data.get('is_paper_trading', False)
 
         self.my_agent = self.config_data.get('my_agent',
@@ -48,19 +54,35 @@ class KoreaInvestEnv:
         self.token_expired_at = None
 
     def _set_base_urls(self):
+        """is_paper_trading 값에 따라 base_url과 websocket_url을 설정합니다."""
         if self.is_paper_trading:
             self.base_url = self.config_data.get('paper_url')
             self.websocket_url = self.config_data.get('paper_websocket_url')
-            self.logger.info("모의투자 환경으로 설정되었습니다.")
+            # self.logger.info("모의투자 환경으로 설정되었습니다.") # 이제 TradingApp에서 설정 메시지 출력
         else:
             self.base_url = self.config_data.get('url')
             self.websocket_url = self.config_data.get('websocket_url')
-            self.logger.info("실거래 환경으로 설정되었습니다.")
+            # self.logger.info("실거래 환경으로 설정되었습니다.") # 이제 TradingApp에서 설정 메시지 출력
 
         if not self.base_url or not self.websocket_url:
             raise ValueError("API URL 또는 WebSocket URL이 config.yaml에 올바르게 설정되지 않았습니다.")
 
+    def set_trading_mode(self, is_paper: bool):
+        """
+        거래 모드(실전/모의)를 동적으로 변경합니다.
+        :param is_paper: 모의투자 모드이면 True, 실전 투자 모드이면 False
+        """
+        if self.is_paper_trading != is_paper:
+            self.is_paper_trading = is_paper
+            self._set_base_urls()  # URL 재설정
+            self.access_token = None  # 모드 변경 시 토큰 초기화 (재발급 필요)
+            self.token_expired_at = None
+            self.logger.info(f"거래 모드가 {'모의투자' if is_paper else '실전투자'} 환경으로 변경되었습니다.")
+        else:
+            self.logger.info(f"거래 모드가 이미 {'모의투자' if is_paper else '실전투자'} 환경으로 설정되어 있습니다.")
+
     def get_base_headers(self):
+        """API 요청 시 사용할 기본 헤더를 반환합니다."""
         headers = {
             "Content-Type": "application/json",
             "User-Agent": self.my_agent,
@@ -78,11 +100,10 @@ class KoreaInvestEnv:
         active_api_key = self.paper_api_key if self.is_paper_trading else self.api_key
         active_api_secret_key = self.paper_api_secret_key if self.is_paper_trading else self.api_secret_key
         active_stock_account_number = self.paper_stock_account_number if self.is_paper_trading else self.stock_account_number
-        active_base_url = self.base_url  # _set_base_urls에서 이미 설정된 base_url 사용
-        active_websocket_url = self.websocket_url  # _set_base_urls에서 이미 설정된 websocket_url 사용
+        active_base_url = self.base_url
+        active_websocket_url = self.websocket_url
 
-        # tr_ids는 config_data에 이미 병합되어 있으므로, 그 값을 그대로 포함
-        tr_ids_from_config = self.config_data.get('tr_ids', {})  # tr_ids 키가 없을 경우 대비
+        tr_ids_from_config = self.config_data.get('tr_ids', {})
 
         return {
             'api_key': active_api_key,
@@ -92,10 +113,10 @@ class KoreaInvestEnv:
             'websocket_url': active_websocket_url,
             'htsid': self.htsid,
             'custtype': self.custtype,
-            'access_token': self.access_token,  # 현재 인스턴스에 저장된 토큰
-            'token_expired_at': self.token_expired_at,  # 현재 인스턴스에 저장된 만료 시간
+            'access_token': self.access_token,
+            'token_expired_at': self.token_expired_at,
             'is_paper_trading': self.is_paper_trading,
-            'tr_ids': tr_ids_from_config  # <--- tr_ids를 포함
+            'tr_ids': tr_ids_from_config
         }
 
     def _get_auth_body(self):
@@ -146,7 +167,9 @@ class KoreaInvestEnv:
                 now_kst = datetime.now(pytz.timezone('Asia/Seoul'))
 
                 if token_valid_dt > now_kst:
+                    self.logger.debug("파일에서 읽은 토큰이 유효합니다.")
                     return {'token': token_data['token'], 'valid-date': token_valid_dt}
+            self.logger.debug("파일에서 유효한 토큰을 찾을 수 없거나 만료되었습니다.")
             return None
         except Exception as e:
             self.logger.error(f"토큰 파일 읽기 실패: {e}")
@@ -181,9 +204,9 @@ class KoreaInvestEnv:
         body = self._get_auth_body()
 
         try:
-            response = self._session.post(auth_url, headers=headers, data=json.dumps(body), verify=certifi.where())
-            response.raise_for_status()
-            auth_data = response.json()
+            res = self._session.post(auth_url, headers=headers, data=json.dumps(body), verify=certifi.where())
+            res.raise_for_status()
+            auth_data = res.json()
 
             if auth_data and auth_data.get('access_token'):
                 self.access_token = auth_data['access_token']
@@ -205,7 +228,7 @@ class KoreaInvestEnv:
             self.logger.error(f"토큰 발급 중 네트워크 오류: {e}")
             return None
         except json.JSONDecodeError:
-            self.logger.error(f"토큰 발급 응답 JSON 디코딩 실패: {response.text}")
+            self.logger.error(f"토큰 발급 응답 JSON 디코딩 실패: {res.text if res else '응답 없음'}")
             return None
         except Exception as e:
             self.logger.error(f"토큰 발급 중 알 수 없는 오류: {e}")
