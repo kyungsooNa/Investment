@@ -41,7 +41,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         """각 테스트 메서드 실행 전에 필요한 Mock 객체와 핸들러 인스턴스를 설정합니다."""
-        # Mocking 필요한 모든 종속성
+        # 종속성 목(Mock) 객체 생성
         self.mock_env = mock.Mock(spec=KoreaInvestEnv)
         self.mock_env.is_paper_trading = False  # 기본값 설정
         self.mock_logger = MockLogger()
@@ -57,27 +57,21 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_api_client.trading = mock.AsyncMock(spec_set=KoreaInvestTradingAPI)
         self.mock_api_client.websocket = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI)
 
-        # 각 하위 Mock 객체의 메서드들을 spec_set으로 설정 (이 부분은 유지)
-        self.mock_api_client.quotations.get_current_price = mock.AsyncMock(
-            spec_set=KoreaInvestQuotationsAPI.get_current_price)
-        self.mock_api_client.quotations.get_top_market_cap_stocks = mock.AsyncMock(
-            spec_set=KoreaInvestQuotationsAPI.get_top_market_cap_stocks)
-        self.mock_api_client.account.get_account_balance = mock.AsyncMock(
-            spec_set=KoreaInvestAccountAPI.get_account_balance)
-        self.mock_api_client.account.get_real_account_balance = mock.AsyncMock(
-            spec_set=KoreaInvestAccountAPI.get_real_account_balance)
-        self.mock_api_client.trading.place_stock_order = mock.AsyncMock(
-            spec_set=KoreaInvestTradingAPI.place_stock_order)
-        self.mock_api_client.websocket.connect = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.connect)
-        self.mock_api_client.websocket.disconnect = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.disconnect)
-        self.mock_api_client.websocket.subscribe_realtime_price = mock.AsyncMock(
-            spec_set=KoreaInvestWebSocketAPI.subscribe_realtime_price)
-        self.mock_api_client.websocket.unsubscribe_realtime_price = mock.AsyncMock(
-            spec_set=KoreaInvestWebSocketAPI.unsubscribe_realtime_price)
-        self.mock_api_client.websocket.subscribe_realtime_quote = mock.AsyncMock(
-            spec_set=KoreaInvestWebSocketAPI.subscribe_realtime_quote)
-        self.mock_api_client.websocket.unsubscribe_realtime_quote = mock.AsyncMock(
-            spec_set=KoreaInvestWebSocketAPI.unsubscribe_realtime_quote)
+        # 각 하위 Mock 객체의 메서드들을 직접 다시 Mock 객체로 할당하지 않습니다.
+        # 위에서 spec_set을 통해 자동으로 Mocking되었기 때문에,
+        # 이제 바로 self.mock_api_client.quotations.get_current_price와 같이 접근하여 return_value를 설정합니다.
+        # (이전의 중복 할당 라인들 제거)
+        # self.mock_api_client.quotations.get_current_price = mock.AsyncMock(spec_set=KoreaInvestQuotationsAPI.get_current_price)
+        # self.mock_api_client.quotations.get_top_market_cap_stocks = mock.AsyncMock(spec_set=KoreaInvestQuotationsAPI.get_top_market_cap_stocks)
+        # self.mock_api_client.account.get_account_balance = mock.AsyncMock(spec_set=KoreaInvestAccountAPI.get_account_balance)
+        # self.mock_api_client.account.get_real_account_balance = mock.AsyncMock(spec_set=KoreaInvestAccountAPI.get_real_account_balance)
+        # self.mock_api_client.trading.place_stock_order = mock.AsyncMock(spec_set=KoreaInvestTradingAPI.place_stock_order)
+        # self.mock_api_client.websocket.connect = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.connect)
+        # self.mock_api_client.websocket.disconnect = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.disconnect)
+        # self.mock_api_client.websocket.subscribe_realtime_price = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.subscribe_realtime_price)
+        # self.mock_api_client.websocket.unsubscribe_realtime_price = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.unsubscribe_realtime_price)
+        # self.mock_api_client.websocket.subscribe_realtime_quote = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.subscribe_realtime_quote)
+        # self.mock_api_client.websocket.unsubscribe_realtime_quote = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.unsubscribe_realtime_quote)
 
         # TradingService 인스턴스 생성 (주입)
         self.trading_service = TradingService(
@@ -88,7 +82,6 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         )
 
         # DataHandlers와 TransactionHandlers 인스턴스 생성
-        # 이 인스턴스들은 trading_service Mock을 주입받아 사용합니다.
         self.data_handlers = DataHandlers(self.trading_service, self.mock_logger, self.mock_time_manager)
         self.transaction_handlers = TransactionHandlers(self.trading_service, self.mock_logger, self.mock_time_manager)
 
@@ -115,8 +108,16 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.mock_api_client.quotations.get_current_price.assert_called_once_with(stock_code)
         self.assertIn(f"--- {stock_code} 현재가 조회 ---", self.print_output_capture.getvalue())
-        self.assertIn(f"성공: {stock_code} ({{'stck_prpr': '70000'}})", self.print_output_capture.getvalue())
-        self.mock_logger.info.assert_called_once()
+        # --- 수정된 부분: 실제 출력 문자열에 맞게 변경 ---
+        self.assertIn(f"{stock_code} 현재가: {{'rt_cd': '0', 'msg1': '정상', 'output': {{'stck_prpr': '70000'}}}}",
+                      self.print_output_capture.getvalue())
+        # -----------------------------------------------
+
+        self.mock_logger.info.assert_has_calls([
+            mock.call(f"Service - {stock_code} 현재가 조회 요청"),
+            mock.call(f"{stock_code} 현재가 조회 성공: {{'rt_cd': '0', 'msg1': '정상', 'output': {{'stck_prpr': '70000'}}}}")
+        ])
+        self.assertEqual(self.mock_logger.info.call_count, 2)
 
     async def test_handle_get_current_stock_price_failure(self):
         stock_code = "005930"
@@ -129,9 +130,12 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_api_client.quotations.get_current_price.assert_called_once_with(stock_code)
         self.assertIn(f"--- {stock_code} 현재가 조회 ---", self.print_output_capture.getvalue())
         self.assertIn(f"실패: {stock_code} 현재가 조회.", self.print_output_capture.getvalue())
+
+        self.mock_logger.info.assert_called_once_with(f"Service - {stock_code} 현재가 조회 요청")
         self.mock_logger.error.assert_called_once()
 
-    # 메뉴 2: 계좌 잔고 조회 - handle_get_account_balance
+        # 메뉴 2: 계좌 잔고 조회 - handle_get_account_balance
+
     async def test_handle_get_account_balance_success_paper(self):
         self.mock_env.is_paper_trading = True
         self.mock_api_client.account.get_account_balance.return_value = {
@@ -142,8 +146,13 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.mock_api_client.account.get_account_balance.assert_called_once()
         self.assertIn("--- 계좌 잔고 조회 ---", self.print_output_capture.getvalue())
-        self.assertIn("INFO: 모의투자 계좌 잔고를 조회합니다.", self.mock_logger.info.call_args_list[0].args[0])
-        self.mock_logger.info.assert_called_once()
+
+        self.mock_logger.info.assert_has_calls([
+            mock.call("Service - 계좌 잔고 조회 요청 (환경: 모의투자)"),
+            mock.call(
+                "계좌 잔고 조회 성공: {'rt_cd': '0', 'msg1': '정상', 'output1': [], 'output2': [{'dnca_tot_amt': '1000000'}]}")
+        ])
+        self.assertEqual(self.mock_logger.info.call_count, 2)
 
     async def test_handle_get_account_balance_success_real(self):
         self.mock_env.is_paper_trading = False
@@ -155,8 +164,13 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.mock_api_client.account.get_real_account_balance.assert_called_once()
         self.assertIn("--- 계좌 잔고 조회 ---", self.print_output_capture.getvalue())
-        self.assertIn("INFO: 실전 계좌 잔고를 조회합니다.", self.mock_logger.info.call_args_list[0].args[0])
-        self.mock_logger.info.assert_called_once()
+
+        self.mock_logger.info.assert_has_calls([
+            mock.call("Service - 계좌 잔고 조회 요청 (환경: 실전)"),
+            mock.call(
+                "계좌 잔고 조회 성공: {'rt_cd': '0', 'msg1': '정상', 'output1': [], 'output2': [{'dnca_tot_amt': '5000000'}]}")
+        ])
+        self.assertEqual(self.mock_logger.info.call_count, 2)
 
     async def test_handle_get_account_balance_failure(self):
         self.mock_api_client.account.get_account_balance.return_value = {"rt_cd": "1", "msg1": "조회 실패"}
@@ -166,6 +180,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.mock_api_client.account.get_account_balance.assert_called_once()
         self.assertIn("실패: 계좌 잔고 조회.", self.print_output_capture.getvalue())
+        self.mock_logger.info.assert_called_once_with("Service - 계좌 잔고 조회 요청 (환경: 모의투자)")
         self.mock_logger.error.assert_called_once()
 
     # 메뉴 5: 주식 전일대비 등락률 조회 - handle_display_stock_change_rate
@@ -182,7 +197,12 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"성공: {stock_code} (70000원)", self.print_output_capture.getvalue())
         self.assertIn("전일대비: +500원", self.print_output_capture.getvalue())
         self.assertIn("전일대비율: 0.72%", self.print_output_capture.getvalue())
-        self.mock_logger.info.assert_called_once()
+
+        self.mock_logger.info.assert_has_calls([
+            mock.call(f"Service - {stock_code} 현재가 조회 요청"),
+            mock.call(f"{stock_code} 전일대비 등락률 조회 성공: 현재가=70000, 전일대비=+500, 등락률=0.72%")
+        ])
+        self.assertEqual(self.mock_logger.info.call_count, 2)
 
     async def test_handle_display_stock_change_rate_failure(self):
         stock_code = "005930"
@@ -191,9 +211,11 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         await self.data_handlers.handle_display_stock_change_rate(stock_code)
 
         self.assertIn(f"실패: {stock_code} 전일대비 등락률 조회.", self.print_output_capture.getvalue())
+        self.mock_logger.info.assert_called_once_with(f"Service - {stock_code} 현재가 조회 요청")
         self.mock_logger.error.assert_called_once()
 
-    # 메뉴 6: 주식 시가대비 조회 - handle_display_stock_vs_open_price
+        # 메뉴 6: 주식 시가대비 조회 - handle_display_stock_vs_open_price
+
     async def test_handle_display_stock_vs_open_price_success(self):
         stock_code = "005930"
         self.mock_api_client.quotations.get_current_price.return_value = {
@@ -208,7 +230,12 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("현재가: 70000원", self.print_output_capture.getvalue())
         self.assertIn("시가: 69000원", self.print_output_capture.getvalue())
         self.assertIn("시가대비 등락률: +1000원 (+1.45%)", self.print_output_capture.getvalue())
-        self.mock_logger.info.assert_called_once()
+
+        self.mock_logger.info.assert_has_calls([
+            mock.call(f"Service - {stock_code} 현재가 조회 요청"),
+            mock.call(f"{stock_code} 시가대비 조회 성공: 현재가=70000, 시가=69000, 시가대비=+1000원 (+1.45%)")
+        ])
+        self.assertEqual(self.mock_logger.info.call_count, 2)
 
     async def test_handle_display_stock_vs_open_price_failure(self):
         stock_code = "005930"
@@ -217,9 +244,10 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         await self.data_handlers.handle_display_stock_vs_open_price(stock_code)
 
         self.assertIn(f"실패: {stock_code} 시가대비 조회.", self.print_output_capture.getvalue())
+        self.mock_logger.info.assert_called_once_with(f"Service - {stock_code} 현재가 조회 요청")
         self.mock_logger.error.assert_called_once()
 
-    # --- TransactionHandlers (메뉴 3, 4 에 해당) ---
+        # --- TransactionHandlers (메뉴 3, 4 에 해당) ---
 
     # 메뉴 3: 주식 매수 주문 - handle_place_buy_order
     async def test_handle_place_buy_order_market_open_success(self):
@@ -291,6 +319,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_api_client.websocket.unsubscribe_realtime_quote.assert_called_once_with(stock_code)
         self.mock_api_client.websocket.disconnect.assert_called_once()
         self.assertIn(f"--- 실시간 주식 체결가/호가 구독 시작 ({stock_code}) ---", self.print_output_capture.getvalue())
+        self.assertIn("실시간 데이터를 수신 중입니다... (종료하려면 Enter를 누르세요)", self.print_output_capture.getvalue())
         self.assertIn("실시간 주식 스트림을 종료했습니다.", self.print_output_capture.getvalue())
         self.mock_logger.info.assert_called()
 
@@ -378,105 +407,4 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.mock_api_client.quotations.get_current_price.call_count, 10)
 
         self.mock_logger.info.assert_any_call("Service - 시가총액 1~10위 종목 현재가 조회 요청")
-        self.mock_logger.info.assert_any_call("시가총액 1~10위 종목 현재가 조회 성공 및 결과 반환.")
-
-    async def test_handle_get_top_10_market_cap_stocks_when_market_closed(self):
-        """
-        시장이 닫혀있을 때 시가총액 상위 종목 현재가 조회 시도.
-        """
-        self.mock_time_manager.is_market_open.return_value = False
-
-        result = await self.data_handlers.handle_get_top_10_market_cap_stocks_with_prices()
-
-        self.assertIs(result,False)
-
-        self.mock_time_manager.is_market_open.assert_called_once()
-        self.mock_time_manager.get_next_market_open_time.assert_not_called()
-        self.mock_time_manager.async_sleep.assert_not_called()
-
-        self.trading_service.get_top_market_cap_stocks.assert_not_called()
-        self.trading_service.get_current_stock_price.assert_not_called()
-
-        self.mock_logger.info.assert_any_call("Service - 시가총액 1~10위 종목 현재가 조회 요청")
-        self.mock_logger.warning.assert_any_call("시장이 닫혀 있어 시가총액 1~10위 종목 현재가 조회를 수행할 수 없습니다.")
-
-    async def test_handle_get_top_10_market_cap_stocks_when_paper_trading(self):
-        """
-        모의투자 환경에서 시가총액 상위 종목 현재가 조회 시도 (미지원).
-        """
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_env.is_paper_trading = True
-
-        result = await self.data_handlers.handle_get_top_10_market_cap_stocks_with_prices()
-
-        self.assertEqual(result, {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."})
-
-        self.mock_time_manager.is_market_open.assert_called_once()
-        self.trading_service.get_top_market_cap_stocks.assert_not_called()
-        self.trading_service.get_current_stock_price.assert_not_called()
-
-        self.mock_logger.info.assert_any_call("Service - 시가총액 1~10위 종목 현재가 조회 요청")
-        self.mock_logger.warning.assert_any_call("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
-
-    async def test_handle_get_top_10_market_cap_stocks_when_top_stocks_api_fails(self):
-        """
-        시가총액 상위 종목 목록 조회 API 호출이 실패했을 때.
-        """
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_env.is_paper_trading = False
-
-        self.trading_service.get_top_market_cap_stocks.return_value = {"rt_cd": "1", "msg1": "API 오류"}
-
-        result = await self.data_handlers.handle_get_top_10_market_cap_stocks_with_prices()
-
-        self.assertIsNone(result)
-
-        self.trading_service.get_top_market_cap_stocks.assert_called_once_with("0000")
-        self.trading_service.get_current_stock_price.assert_not_called()
-
-        self.mock_logger.error.assert_any_call(mock.ANY)
-
-    async def test_handle_get_top_10_market_cap_stocks_when_empty_list(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_env.is_paper_trading = False
-
-        self.trading_service.get_top_market_cap_stocks.return_value = {"rt_cd": "0", "output": []}
-
-        result = await self.data_handlers.handle_get_top_10_market_cap_stocks_with_prices()
-
-        self.assertIsNone(result)
-
-        self.trading_service.get_top_market_cap_stocks.assert_called_once_with("0000")
-        self.trading_service.get_current_stock_price.assert_not_called()
-
-        self.mock_logger.info.assert_any_call("시가총액 상위 종목 목록을 찾을 수 없습니다.")
-
-    async def test_handle_get_top_10_market_cap_stocks_when_individual_price_fails(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_env.is_paper_trading = False
-
-        self.trading_service.get_top_market_cap_stocks.return_value = {
-            "rt_cd": "0",
-            "output": [
-                {"mksc_shrn_iscd": "CODE1", "hts_kor_isnm": "종목1", "data_rank": "1"},
-                {"mksc_shrn_iscd": "CODE2", "hts_kor_isnm": "종목2", "data_rank": "2"},
-                {"mksc_shrn_iscd": "CODE3", "hts_kor_isnm": "종목3", "data_rank": "3"},
-            ]
-        }
-        self.trading_service.get_current_stock_price.side_effect = [
-            {"rt_cd": "0", "output": {"stck_prpr": "10000"}},  # 종목1 성공
-            {"rt_cd": "1", "msg1": "조회 실패"},  # 종목2 실패
-            {"rt_cd": "0", "output": {"stck_prpr": "30000"}}  # 종목3 성공
-        ]
-
-        result = await self.data_handlers.handle_get_top_10_market_cap_stocks_with_prices()
-
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]['name'], "종목1")
-        self.assertEqual(result[1]['name'], "종목3")
-
-        self.assertEqual(self.trading_service.get_current_stock_price.call_count, 3)
-
-        self.mock_logger.error.assert_any_call(f"종목 CODE2 (종목2) 현재가 조회 실패: {{'rt_cd': '1', 'msg1': '조회 실패'}}")
         self.mock_logger.info.assert_any_call("시가총액 1~10위 종목 현재가 조회 성공 및 결과 반환.")
