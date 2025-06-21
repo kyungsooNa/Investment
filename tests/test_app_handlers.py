@@ -174,12 +174,12 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_get_account_balance_failure(self):
         self.mock_api_client.account.get_account_balance.return_value = {"rt_cd": "1", "msg1": "조회 실패"}
-        self.mock_env.is_paper_trading = True  # 모의 환경으로 설정하여 get_account_balance가 호출되도록
+        self.mock_env.is_paper_trading = True # 모의 환경으로 설정하여 get_account_balance가 호출되도록
 
         await self.data_handlers.handle_get_account_balance()
 
         self.mock_api_client.account.get_account_balance.assert_called_once()
-        self.assertIn("실패: 계좌 잔고 조회.", self.print_output_capture.getvalue())
+        self.assertIn("\n계좌 잔고 조회 실패.\n", self.print_output_capture.getvalue()) # <--- 수정됨
         self.mock_logger.info.assert_called_once_with("Service - 계좌 잔고 조회 요청 (환경: 모의투자)")
         self.mock_logger.error.assert_called_once()
 
