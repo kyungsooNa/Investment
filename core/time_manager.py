@@ -2,10 +2,9 @@
 import datetime
 import time
 import pytz
-import logging  # 로깅 임포트
+import logging
+import asyncio  # 비동기 sleep을 위해 추가
 
-
-# from zoneinfo import ZoneInfo # Python 3.9+에서 ZoneInfo 사용 (pytz와 함께 사용 권장)
 
 class TimeManager:
     """
@@ -37,12 +36,10 @@ class TimeManager:
         """
         now = self.get_current_kst_time()
 
-        # 1. 주말 확인 (토요일=5, 일요일=6)
         if now.weekday() >= 5:
             self.logger.info(f"시장 상태 - 주말이므로 시장이 닫혀 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")
             return False
 
-        # 2. 시장 시간 확인 (timezone-aware datetime 객체 생성)
         market_open_dt = self.market_timezone.localize(datetime.datetime(
             now.year, now.month, now.day,
             hour=int(self.market_open_time_str.split(':')[0]),
@@ -77,14 +74,10 @@ class TimeManager:
             second=0, microsecond=0
         ))
 
-        # 1. 오늘 시장 개장 시간과 현재 시간 비교
         if now < today_open:
-            # 아직 오늘 시장이 열리지 않았다면, 오늘 개장 시간이 다음 개장 시간
             next_open = today_open
         else:
-            # 오늘 시장이 이미 닫혔거나, 개장 시간이 지났다면, 다음 날로 넘어감
             next_day = now.date() + datetime.timedelta(days=1)
-            # 다음 날이 주말이면 평일까지 이동
             while next_day.weekday() >= 5:  # 5: 토요일, 6: 일요일
                 next_day += datetime.timedelta(days=1)
 
@@ -99,10 +92,16 @@ class TimeManager:
         return next_open
 
     def sleep(self, seconds):
-        """지정된 시간(초)만큼 프로그램을 일시 중지합니다."""
+        """지정된 시간(초)만큼 프로그램을 일시 중지합니다 (동기)."""
         if seconds > 0:
-            self.logger.info(f"{seconds:.2f}초 동안 대기합니다.")  # 소수점 둘째 자리까지 표시
+            self.logger.info(f"{seconds:.2f}초 동안 대기합니다 (동기).")
             time.sleep(seconds)
+
+    async def async_sleep(self, seconds):  # <--- async 버전의 sleep 추가
+        """지정된 시간(초)만큼 비동기적으로 프로그램을 일시 중지합니다."""
+        if seconds > 0:
+            self.logger.info(f"{seconds:.2f}초 동안 대기합니다 (비동기).")
+            await asyncio.sleep(seconds)  # <--- asyncio.sleep 사용
 
     def is_holiday(self):
         """공휴일 여부를 확인합니다. (미구현)"""
