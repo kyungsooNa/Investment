@@ -20,12 +20,11 @@ class KoreaInvestEnv:
     def __init__(self, config_data, logger=None):
         self.config_data = config_data
         self.logger = logger if logger else logging.getLogger(__name__)
-        self._load_config()  # config.yaml에서 초기값 로드
+        self._load_config()
 
-        # self.base_url 등은 _set_base_urls에서 is_paper_trading에 따라 설정됨
         self.base_url = None
         self.websocket_url = None
-        self._set_base_urls()  # 초기 base_url, websocket_url 설정
+        self._set_base_urls()  # 초기 base_url, websocket_url 설정 (config.yaml의 is_paper_trading 기반)
 
         self._token_file_path = os.path.join(os.getcwd(), 'kis_access_token.yaml')
 
@@ -43,8 +42,6 @@ class KoreaInvestEnv:
         self.htsid = self.config_data.get('htsid')
         self.custtype = self.config_data.get('custtype', 'P')
 
-        # 이 is_paper_trading은 초기 config.yaml에서 로드되는 값.
-        # 사용자 선택에 따라 set_trading_mode에서 변경될 것임.
         self.is_paper_trading = self.config_data.get('is_paper_trading', False)
 
         self.my_agent = self.config_data.get('my_agent',
@@ -58,11 +55,9 @@ class KoreaInvestEnv:
         if self.is_paper_trading:
             self.base_url = self.config_data.get('paper_url')
             self.websocket_url = self.config_data.get('paper_websocket_url')
-            # self.logger.info("모의투자 환경으로 설정되었습니다.") # 이제 TradingApp에서 설정 메시지 출력
         else:
             self.base_url = self.config_data.get('url')
             self.websocket_url = self.config_data.get('websocket_url')
-            # self.logger.info("실거래 환경으로 설정되었습니다.") # 이제 TradingApp에서 설정 메시지 출력
 
         if not self.base_url or not self.websocket_url:
             raise ValueError("API URL 또는 WebSocket URL이 config.yaml에 올바르게 설정되지 않았습니다.")
@@ -74,8 +69,9 @@ class KoreaInvestEnv:
         """
         if self.is_paper_trading != is_paper:
             self.is_paper_trading = is_paper
-            self._set_base_urls()  # URL 재설정
-            self.access_token = None  # 모드 변경 시 토큰 초기화 (재발급 필요)
+            # 모드 변경 시 base_url, websocket_url 재설정
+            self._set_base_urls()
+            self.access_token = None  # 모드 변경 시 현재 메모리 토큰 무효화
             self.token_expired_at = None
             self.logger.info(f"거래 모드가 {'모의투자' if is_paper else '실전투자'} 환경으로 변경되었습니다.")
         else:
@@ -94,7 +90,7 @@ class KoreaInvestEnv:
 
     def get_full_config(self):
         """
-        현재 활성화된 환경(실거래/모의투자)에 맞는 API 키, 계좌 정보, URL 등을 반환합니다.
+        현재 활성화된 환경(실전/모의투자)에 맞는 API 키, 계좌 정보, URL 등을 반환합니다.
         tr_ids는 config_data에서 그대로 가져와 포함합니다.
         """
         active_api_key = self.paper_api_key if self.is_paper_trading else self.api_key
@@ -113,10 +109,11 @@ class KoreaInvestEnv:
             'websocket_url': active_websocket_url,
             'htsid': self.htsid,
             'custtype': self.custtype,
-            'access_token': self.access_token,
-            'token_expired_at': self.token_expired_at,
+            'access_token': self.access_token,  # 현재 인스턴스에 저장된 토큰
+            'token_expired_at': self.token_expired_at,  # 현재 인스턴스에 저장된 만료 시간
             'is_paper_trading': self.is_paper_trading,
-            'tr_ids': tr_ids_from_config
+            'tr_ids': tr_ids_from_config,
+            '_env_instance': self  # <--- _env_instance는 KoreaInvestAPI로 전달하기 위해 여기에 추가
         }
 
     def _get_auth_body(self):
@@ -133,12 +130,13 @@ class KoreaInvestEnv:
                 "appsecret": self.api_secret_key
             }
 
-    def _save_token_to_file(self, token, expires_at_str):
+    def _save_token_to_file(self, token, expires_at_str, base_url_for_token):  # <--- base_url_for_token 인자 추가
         """토큰 정보를 로컬 파일에 저장합니다."""
         try:
             token_data = {
                 'token': token,
-                'valid-date': expires_at_str
+                'valid-date': expires_at_str,
+                'base-url': base_url_for_token  # <--- base_url 저장
             }
             with open(self._token_file_path, 'w', encoding='utf-8') as f:
                 yaml.dump(token_data, f)
@@ -150,13 +148,21 @@ class KoreaInvestEnv:
         """로컬 파일에서 토큰 정보를 읽어옵니다."""
         try:
             if not os.path.exists(self._token_file_path):
+                self.logger.debug("토큰 파일이 존재하지 않습니다.")
                 return None
 
             with open(self._token_file_path, 'r', encoding='utf-8') as f:
                 token_data = yaml.safe_load(f)
 
-            if token_data and 'token' in token_data and 'valid-date' in token_data:
+            if token_data and 'token' in token_data and 'valid-date' in token_data and 'base-url' in token_data:
                 token_valid_date_str = token_data['valid-date']
+                token_base_url = token_data['base-url']  # <--- 저장된 base_url 읽기
+
+                # 현재 환경의 base_url과 토큰이 발급된 base_url이 일치하는지 확인
+                if token_base_url != self.base_url:  # self.base_url은 현재 env에 설정된 URL
+                    self.logger.info(f"토큰의 base_url 불일치. 저장된: {token_base_url}, 현재: {self.base_url}. 새 토큰 발급 필요.")
+                    return None
+
                 try:
                     kst_timezone = pytz.timezone('Asia/Seoul')
                     token_valid_dt = kst_timezone.localize(datetime.strptime(token_valid_date_str, '%Y-%m-%d %H:%M:%S'))
@@ -168,7 +174,7 @@ class KoreaInvestEnv:
 
                 if token_valid_dt > now_kst:
                     self.logger.debug("파일에서 읽은 토큰이 유효합니다.")
-                    return {'token': token_data['token'], 'valid-date': token_valid_dt}
+                    return {'token': token_data['token'], 'valid-date': token_valid_dt, 'base-url': token_base_url}
             self.logger.debug("파일에서 유효한 토큰을 찾을 수 없거나 만료되었습니다.")
             return None
         except Exception as e:
@@ -195,7 +201,7 @@ class KoreaInvestEnv:
                 return self.access_token
 
         self.logger.info("새로운 접근 토큰 발급 시도...")
-        auth_url = f"{self.base_url}/oauth2/tokenP"
+        auth_url = f"{self.base_url}/oauth2/tokenP"  # self.base_url은 이미 set_trading_mode에서 현재 환경에 맞게 설정됨
         headers = {
             "Content-Type": "application/json",
             "User-Agent": self.my_agent,
@@ -217,7 +223,8 @@ class KoreaInvestEnv:
                 self.token_expired_at = token_issue_time + timedelta(seconds=expires_in - 60)
                 expires_at_str = self.token_expired_at.strftime('%Y-%m-%d %H:%M:%S')
 
-                self._save_token_to_file(self.access_token, expires_at_str)
+                # 토큰 파일에 현재 base_url도 함께 저장
+                self._save_token_to_file(self.access_token, expires_at_str, self.base_url)  # <--- base_url도 저장
 
                 self.logger.info(f"토큰 발급 성공. 만료 시간: {self.token_expired_at.strftime('%Y-%m-%d %H:%M:%S %Z%z')}")
                 return self.access_token
