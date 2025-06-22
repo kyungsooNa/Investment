@@ -530,3 +530,15 @@ class WebSocketClient:
         tr_id = self._config['tr_ids']['websocket']['realtime_quote']
         self.logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
+    # For test only
+    async def _on_receive(self, message: str):
+        """웹소켓에서 받은 메시지를 콜백으로 전달합니다."""
+        if not self.on_realtime_message_callback:
+            self.logger.warning("수신된 메시지를 처리할 콜백이 등록되지 않았습니다.")
+            return
+        try:
+            parsed = json.loads(message)
+            await self.on_realtime_message_callback(parsed)
+        except Exception as e:
+            self.logger.error(f"메시지 처리 중 오류 발생: {e}")
