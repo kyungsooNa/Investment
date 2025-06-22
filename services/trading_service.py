@@ -110,9 +110,17 @@ class TradingService:
 
     async def place_buy_order(self, stock_code, price, qty, order_dvsn):
         self.logger.info(f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
-        return await self._api_client.trading.place_stock_order(
+
+        response = await self._api_client.trading.place_stock_order(
             stock_code, price, qty, "매수", order_dvsn
         )
+
+        if response.get("rt_cd") != "0":
+            msg = response.get("msg1", "매수 주문 실패")
+            self.logger.error(f"매수 주문 실패: {msg}")
+            raise Exception(msg)
+
+        return response
 
     async def place_sell_order(self, stock_code, price, qty, order_dvsn):
         self.logger.info(f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
@@ -146,9 +154,13 @@ class TradingService:
             return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}
 
         top_stocks_response = await self.get_top_market_cap_stocks("0000")
-
-        if not top_stocks_response or top_stocks_response.get('rt_cd') != '0' or not top_stocks_response.get('output'):
+        if not top_stocks_response or top_stocks_response.get('rt_cd') != '0':
             self.logger.error(f"시가총액 상위 종목 조회 실패: {top_stocks_response}")
+            return None
+
+        top_stocks_list = top_stocks_response.get('output', [])
+        if not top_stocks_list:
+            self.logger.info("시가총액 상위 종목 목록을 찾을 수 없습니다.")
             return None
 
         top_stocks_list = top_stocks_response.get('output', [])
