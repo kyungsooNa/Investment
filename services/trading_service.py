@@ -109,18 +109,23 @@ class TradingService:
             return await self._api_client.account.get_real_account_balance()
 
     async def place_buy_order(self, stock_code, price, qty, order_dvsn):
-        self.logger.info(f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
+        try:
+            self.logger.info(f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
 
-        response = await self._api_client.trading.place_stock_order(
-            stock_code, price, qty, "매수", order_dvsn
-        )
+            response = await self._api_client.trading.place_stock_order(
+                stock_code, price, qty, "매수", order_dvsn
+            )
 
-        if response.get("rt_cd") != "0":
-            msg = response.get("msg1", "매수 주문 실패")
-            self.logger.error(f"매수 주문 실패: {msg}")
-            raise Exception(msg)
+            if response.get("rt_cd") != "0":
+                msg = response.get("msg1", "매수 주문 실패")
+                self.logger.error(f"매수 주문 실패: {msg}")
+                raise Exception(msg)
 
-        return response
+            return response
+
+        except Exception as e:
+            self.logger.error(f"Service - 매수 주문 중 오류 발생: {str(e)}")
+            raise
 
     async def place_sell_order(self, stock_code: str, price: str, qty: str, order_dvsn: str):
         """

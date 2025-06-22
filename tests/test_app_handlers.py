@@ -299,7 +299,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             await self.transaction_handlers.handle_place_buy_order(stock_code, price, qty, order_dvsn)
 
         self.assertIn("주문 실패", str(context.exception))  # 예외 메시지 검증
-        self.mock_logger.error.assert_called_once_with("매수 주문 실패: 주문 실패")
+        self.mock_logger.error.assert_any_call("매수 주문 실패: 주문 실패")
 
     # 메뉴 4: 실시간 주식 체결가/호가 구독 - handle_realtime_price_quote_stream
     async def test_handle_realtime_price_quote_stream_success(self):
