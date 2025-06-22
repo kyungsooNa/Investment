@@ -29,12 +29,14 @@ class TimeManager:
         """현재 한국 시간(KST)을 timezone-aware datetime 객체로 반환합니다."""
         return datetime.datetime.now(self.market_timezone)
 
-    def is_market_open(self):
+
+    def is_market_open(self, now=None):
         """
         현재 시간이 시장 개장 시간 내에 있는지 확인합니다.
-        주말(토, 일)과 공휴일은 닫힌 것으로 간주하며, 이는 실제 운영 시간과 다를 수 있습니다.
+        주말(토, 일)과 공휴일은 닫힌 것으로 간주합니다.
+        테스트를 위해 now 인자를 수동으로 주입할 수 있습니다.
         """
-        now = self.get_current_kst_time()
+        now = now or self.get_current_kst_time()
 
         if now.weekday() >= 5:
             self.logger.info(f"시장 상태 - 주말이므로 시장이 닫혀 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")
@@ -46,6 +48,7 @@ class TimeManager:
             minute=int(self.market_open_time_str.split(':')[1]),
             second=0, microsecond=0
         ))
+
         market_close_dt = self.market_timezone.localize(datetime.datetime(
             now.year, now.month, now.day,
             hour=int(self.market_close_time_str.split(':')[0]),
