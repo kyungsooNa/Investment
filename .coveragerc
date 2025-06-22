@@ -1,0 +1,24 @@
+[run]
+branch = True
+source =
+    app
+    services
+    api
+    core
+
+[report]
+omit =
+    */__init__.py
+    */tests/*
+    */migrations/*
+    */env/*
+    */venv/*
+    */site-packages/*
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    if typing.TYPE_CHECKING:
+
+[html]
+directory = htmlcov
+title = 테스트 커버리지 리포트
