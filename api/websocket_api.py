@@ -545,11 +545,11 @@ class WebSocketAPI:
 
     # For test only
     async def _on_receive(self, message):
-        """
-        웹소켓에서 수신된 단일 메시지를 처리합니다.
-        외부 콜백이 등록되어 있다면 해당 콜백에 메시지를 전달합니다.
-        """
-        if self.on_realtime_message_callback:
-            await self.on_realtime_message_callback(message)
-        else:
-            self.logger.warning("수신된 메시지를 처리할 콜백이 등록되지 않았습니다.")
+        try:
+            parsed = json.loads(message)  # <-- JSON 문자열을 dict로 파싱
+            if self.on_realtime_message_callback:
+                await self.on_realtime_message_callback(parsed)
+            else:
+                self.logger.warning("수신된 메시지를 처리할 콜백이 등록되지 않았습니다.")
+        except Exception as e:
+            self.logger.error(f"수신 메시지 처리 중 예외 발생: {e}")

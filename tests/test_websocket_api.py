@@ -165,3 +165,38 @@ async def test_on_receive_with_callback_called():
 
     await ws_api._on_receive(dummy_message)
     callback.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_on_receive_with_callback_called_once():
+    mock_env = MagicMock()
+    mock_env.get_full_config.return_value = {
+        "websocket_url": "wss://test-url",
+        "api_key": "dummy-key",
+        "api_secret_key": "dummy-secret",
+        "base_url": "https://test-base"
+    }
+
+    ws_api = WebSocketAPI(env=mock_env)
+
+    dummy_callback = AsyncMock()
+    ws_api.on_realtime_message_callback = dummy_callback
+
+    dummy_message = json.dumps({
+        "header": {
+            "tr_id": "H0IFCNI0"
+        },
+        "body": {
+            "output": {"key": "value"}
+        }
+    })
+
+    await ws_api._on_receive(dummy_message)
+
+    dummy_callback.assert_awaited_once_with({
+        "header": {
+            "tr_id": "H0IFCNI0"
+        },
+        "body": {
+            "output": {"key": "value"}
+        }
+    })
