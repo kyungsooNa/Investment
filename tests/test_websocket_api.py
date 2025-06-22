@@ -1,5 +1,6 @@
 # tests/test_websocket_api.py
 import pytest
+import json
 from unittest.mock import MagicMock, patch, AsyncMock
 from api.websocket_api import WebSocketAPI
 
@@ -87,3 +88,80 @@ async def test_get_approval_key(mock_post):
 
     approval_key = await ws_api._get_approval_key()  # ✅ await 추가
     assert approval_key == "MOCKED_KEY"
+
+@pytest.mark.asyncio
+async def test_websocket_api_connect_failure_due_to_approval_key():
+    mock_env = MagicMock()
+    mock_env.get_full_config.return_value = {
+        "websocket_url": "wss://test-url",
+        "api_key": "dummy-key",
+        "api_secret_key": "dummy-secret",
+        "base_url": "https://test-base"
+    }
+
+    ws_api = WebSocketAPI(env=mock_env)
+
+    with patch("api.websocket_api.websockets.connect", new_callable=AsyncMock) as mock_connect, \
+         patch.object(ws_api, "_get_approval_key", new_callable=AsyncMock, return_value=None):
+        with pytest.raises(Exception, match="approval_key 발급 실패"):
+            await ws_api.connect()
+
+@pytest.mark.asyncio
+async def test_websocket_api_disconnect_calls_close():
+    mock_env = MagicMock()
+    mock_env.get_full_config.return_value = {
+        "websocket_url": "wss://test-url",
+        "api_key": "dummy-key",
+        "api_secret_key": "dummy-secret",
+        "base_url": "https://test-base"
+    }
+
+    ws_api = WebSocketAPI(env=mock_env)
+    mock_ws = AsyncMock()
+    ws_api.ws = mock_ws
+    ws_api._is_connected = True
+
+    await ws_api.disconnect()
+
+    mock_ws.close.assert_called_once()
+    assert ws_api._is_connected is False
+
+
+@pytest.mark.asyncio
+async def test_on_receive_without_callback_logs_warning(caplog):
+    mock_env = MagicMock()
+    mock_env.get_full_config.return_value = {
+        "websocket_url": "wss://test-url",
+        "api_key": "dummy-key",
+        "api_secret_key": "dummy-secret",
+        "base_url": "https://test-base"
+    }
+
+    ws_api = WebSocketAPI(env=mock_env)
+    dummy_message = json.dumps({"header": {}, "body": {}})
+
+    with caplog.at_level("WARNING"):
+        await ws_api._on_receive(dummy_message)
+        assert "수신된 메시지를 처리할 콜백이 등록되지 않았습니다." in caplog.text
+
+@pytest.mark.asyncio
+async def test_on_receive_with_callback_called():
+    mock_env = MagicMock()
+    mock_env.get_full_config.return_value = {
+        "websocket_url": "wss://test-url",
+        "api_key": "dummy-key",
+        "api_secret_key": "dummy-secret",
+        "base_url": "https://test-base"
+    }
+
+    ws_api = WebSocketAPI(env=mock_env)
+    callback = AsyncMock()
+    ws_api.on_realtime_message_callback = callback
+
+    dummy_message = json.dumps({
+        "header": {"tr_id": "H0STCNT0"},
+        "body": {"output": {"msg": "test"}}
+    })
+
+    await ws_api._on_receive(dummy_message)
+    callback.assert_awaited_once()

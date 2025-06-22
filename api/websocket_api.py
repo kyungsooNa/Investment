@@ -436,7 +436,7 @@ class WebSocketAPI:
             self.approval_key = await self._get_approval_key()
             if not self.approval_key:
                 self.logger.error("웹소켓 접속 키 발급 실패로 연결할 수 없습니다.")
-                return False
+                raise RuntimeError("approval_key 발급 실패")  # 추가
 
         # 2. 웹소켓 연결 (async with 사용)
         try:
@@ -542,3 +542,14 @@ class WebSocketAPI:
         tr_id = self._config['tr_ids']['websocket']['realtime_quote']
         self.logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
+    # For test only
+    async def _on_receive(self, message):
+        """
+        웹소켓에서 수신된 단일 메시지를 처리합니다.
+        외부 콜백이 등록되어 있다면 해당 콜백에 메시지를 전달합니다.
+        """
+        if self.on_realtime_message_callback:
+            await self.on_realtime_message_callback(message)
+        else:
+            self.logger.warning("수신된 메시지를 처리할 콜백이 등록되지 않았습니다.")
