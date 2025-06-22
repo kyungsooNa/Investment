@@ -6,6 +6,15 @@ import logging
 from io import StringIO
 import builtins
 import pytz
+import pytest
+from unittest import IsolatedAsyncioTestCase
+from services.trading_service import TradingService
+import unittest
+from unittest.mock import MagicMock, AsyncMock
+from io import StringIO
+import builtins
+
+
 
 # 테스트할 모듈 임포트
 from services.trading_service import TradingService
@@ -17,7 +26,6 @@ from api.websocket_client import KoreaInvestWebSocketAPI
 from core.time_manager import TimeManager
 from core.logger import Logger
 from api.env import KoreaInvestEnv
-
 
 # 로거의 출력을 캡처하기 위한 설정
 logging.getLogger('operational_logger').propagate = True
@@ -37,6 +45,10 @@ class MockLogger:
 
 
 class TestTradingService(unittest.IsolatedAsyncioTestCase):
+    from unittest import mock
+    from unittest.mock import MagicMock, AsyncMock
+    from io import StringIO
+    import builtins
 
     def setUp(self):
         self.mock_env = mock.Mock(spec=KoreaInvestEnv)
@@ -45,12 +57,16 @@ class TestTradingService(unittest.IsolatedAsyncioTestCase):
         self.mock_logger = MockLogger()
         self.mock_time_manager = mock.AsyncMock(spec=TimeManager)
 
-        self.mock_api_client = mock.AsyncMock(spec=KoreaInvestAPI)
+        self.mock_api_client = MagicMock()
 
+        # 각 API는 명확히 AsyncMock으로 지정
         self.mock_api_client.quotations = mock.AsyncMock(spec=KoreaInvestQuotationsAPI)
         self.mock_api_client.account = mock.AsyncMock(spec=KoreaInvestAccountAPI)
         self.mock_api_client.trading = mock.AsyncMock(spec=KoreaInvestTradingAPI)
         self.mock_api_client.websocket = mock.AsyncMock(spec=KoreaInvestWebSocketAPI)
+
+        # place_stock_order는 명시적으로 AsyncMock으로 재정의 (테스트에서 side_effect 줄 수 있도록)
+        self.mock_api_client.trading.place_stock_order = AsyncMock()
 
         self.trading_service = TradingService(
             api_client=self.mock_api_client,
@@ -59,6 +75,7 @@ class TestTradingService(unittest.IsolatedAsyncioTestCase):
             time_manager=self.mock_time_manager
         )
 
+        # print 캡처
         self.original_print = builtins.print
         self.print_output_capture = StringIO()
         builtins.print = lambda *args, **kwargs: self.print_output_capture.write(' '.join(map(str, args)) + '\n')

@@ -122,11 +122,34 @@ class TradingService:
 
         return response
 
-    async def place_sell_order(self, stock_code, price, qty, order_dvsn):
-        self.logger.info(f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
-        return await self._api_client.trading.place_stock_order(
-            stock_code, price, qty, "매도", order_dvsn
-        )
+    async def place_sell_order(self, stock_code: str, price: str, qty: str, order_dvsn: str):
+        """
+        주식을 매도하는 함수입니다.
+        :param stock_code: 종목코드
+        :param price: 주문 가격
+        :param qty: 주문 수량
+        :param order_dvsn: 주문 구분 코드
+        :return: 주문 결과
+        """
+        try:
+            self.logger.info(
+                f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
+            )
+
+            response = await self._api_client.trading.place_stock_order(
+                stock_code=stock_code,
+                price=price,
+                qty=qty,
+                bs_type="매도",
+                order_dvsn=order_dvsn
+            )
+
+            self.logger.info(f"Service - 매도 주문 응답: {response}")
+            return response
+
+        except Exception as e:
+            self.logger.error(f"Service - 매도 주문 중 오류 발생: {str(e)}")
+            raise Exception(str(e))
 
     async def get_top_market_cap_stocks(self, market_code):
         """시가총액 상위 종목을 조회하고 결과를 반환합니다 (모의투자 미지원)."""
