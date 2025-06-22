@@ -194,16 +194,19 @@ class DataHandlers:
         :param limit: 조회할 상위 종목의 최대 개수
         """
         print(f"\n--- 시가총액 상위 {limit}개 종목 중 상한가 종목 조회 ---")
+        # --- 추가된 로그 ---
+        self.logger.info(f"Service - 시가총액 상위 {limit}개 종목 중 상한가 종목 조회 요청")
+        # -------------------
 
         # 시장 개장 및 모의투자 여부 확인
         if not self.time_manager.is_market_open():
             self.logger.warning("시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.")
-            print("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n")  # <--- 개행 문자 추가
+            print("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n")
             return None  # None 반환하여 상위 호출자에게 실패 알림
 
         if self.trading_service._env.is_paper_trading:  # trading_service 내부의 env 확인
             self.logger.warning("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
-            print("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n")  # <--- 개행 문자 추가
+            print("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n")
             return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}  # 오류 딕셔너리 반환
 
         upper_limit_stocks_found = []
@@ -214,13 +217,13 @@ class DataHandlers:
             if not top_stocks_response or top_stocks_response.get('rt_cd') != '0' or not top_stocks_response.get(
                     'output'):
                 self.logger.error(f"시가총액 상위 종목 목록 조회 실패: {top_stocks_response}")
-                print(f"실패: 시가총액 상위 종목 목록을 가져올 수 없습니다. {top_stocks_response.get('msg1', '')}\n")  # <--- 개행 문자 추가
+                print(f"실패: 시가총액 상위 종목 목록을 가져올 수 없습니다. {top_stocks_response.get('msg1', '')}\n")
                 return None
 
             top_stocks_list = top_stocks_response.get('output', [])
             if not top_stocks_list:
                 self.logger.info("조회된 시가총액 상위 종목이 없습니다.")
-                print("조회된 시가총액 상위 종목이 없습니다.\n")  # <--- 개행 문자 추가
+                print("조회된 시가총액 상위 종목이 없습니다.\n")
                 return None
 
             # 상위 limit 개수까지만 처리
@@ -266,17 +269,16 @@ class DataHandlers:
             if upper_limit_stocks_found:
                 print("\n--- 상한가 종목 목록 ---")
                 for stock in upper_limit_stocks_found:
-                    print(
-                        f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)\n")  # <--- 개행 문자 추가
+                    print(f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)\n")
                 self.logger.info(f"총 {len(upper_limit_stocks_found)}개의 상한가 종목 발견.")
                 return True  # 성공적으로 상한가 종목을 찾았거나 목록을 출력했음을 알림
             else:
-                print("\n현재 상한가에 도달한 종목이 없습니다.\n")  # <--- 개행 문자 추가
+                print("\n현재 상한가에 도달한 종목이 없습니다.\n")
                 self.logger.info("현재 상한가에 도달한 종목이 없습니다.")
                 return False  # 상한가 종목을 찾지 못했음을 알림
 
         except Exception as e:
             self.logger.error(f"상한가 종목 조회 중 예기치 않은 오류 발생: {e}")
-            print(f"실패: 상한가 종목 조회 중 오류 발생. {e}\n")  # <--- 개행 문자 추가
+            print(f"실패: 상한가 종목 조회 중 오류 발생. {e}\n")
             return None  # 예외 발생 시 None 반환
 

@@ -147,7 +147,7 @@ class TradingService:
 
         top_stocks_response = await self.get_top_market_cap_stocks("0000")
 
-        if not top_stocks_response or top_stocks_response.get('rt_cd') != '0':
+        if not top_stocks_response or top_stocks_response.get('rt_cd') != '0' or not top_stocks_response.get('output'):
             self.logger.error(f"시가총액 상위 종목 조회 실패: {top_stocks_response}")
             return None
 
