@@ -14,7 +14,7 @@ from base64 import b64decode
 from api.env import KoreaInvestEnv
 
 
-class KoreaInvestWebSocketAPI:
+class WebSocketClient:
     """
     한국투자증권 Open API의 웹소켓 연결 및 실시간 데이터 수신을 관리하는 클래스입니다.
     `websockets` 라이브러리(asyncio 기반)를 사용합니다.

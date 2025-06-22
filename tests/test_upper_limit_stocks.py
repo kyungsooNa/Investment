@@ -14,7 +14,7 @@ from api.client import KoreaInvestAPI  # Mocking용
 from api.quotations import KoreaInvestQuotationsAPI  # Mocking용
 from api.account import KoreaInvestAccountAPI  # Mocking용
 from api.trading import KoreaInvestTradingAPI  # Mocking용
-from api.websocket_client import KoreaInvestWebSocketAPI  # Mocking용
+from api.websocket_client import WebSocketClient  # Mocking용
 from core.time_manager import TimeManager  # Mocking용
 from core.logger import Logger  # Mocking용
 from api.env import KoreaInvestEnv  # Mocking용
@@ -54,7 +54,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_api_client.quotations = mock.AsyncMock(spec_set=KoreaInvestQuotationsAPI)
         self.mock_api_client.account = mock.AsyncMock(spec_set=KoreaInvestAccountAPI)
         self.mock_api_client.trading = mock.AsyncMock(spec_set=KoreaInvestTradingAPI)
-        self.mock_api_client.websocket = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI)
+        self.mock_api_client.websocket = mock.AsyncMock(spec_set=WebSocketClient)
 
         # 각 하위 Mock 객체의 메서드들을 직접 다시 Mock 객체로 할당하지 않습니다.
         # 위에서 spec_set을 통해 자동으로 Mocking되었기 때문에,
@@ -69,16 +69,16 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
             spec_set=KoreaInvestAccountAPI.get_real_account_balance)
         self.mock_api_client.trading.place_stock_order = mock.AsyncMock(
             spec_set=KoreaInvestTradingAPI.place_stock_order)
-        self.mock_api_client.websocket.connect = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.connect)
-        self.mock_api_client.websocket.disconnect = mock.AsyncMock(spec_set=KoreaInvestWebSocketAPI.disconnect)
+        self.mock_api_client.websocket.connect = mock.AsyncMock(spec_set=WebSocketClient.connect)
+        self.mock_api_client.websocket.disconnect = mock.AsyncMock(spec_set=WebSocketClient.disconnect)
         self.mock_api_client.websocket.subscribe_realtime_price = mock.AsyncMock(
-            spec_set=KoreaInvestWebSocketAPI.subscribe_realtime_price)
+            spec_set=WebSocketClient.subscribe_realtime_price)
         self.mock_api_client.websocket.unsubscribe_realtime_price = mock.AsyncMock(
-            spec_set=KoreaInvestWebSocketAPI.unsubscribe_realtime_price)
+            spec_set=WebSocketClient.unsubscribe_realtime_price)
         self.mock_api_client.websocket.subscribe_realtime_quote = mock.AsyncMock(
-            spec_set=KoreaInvestWebSocketAPI.subscribe_realtime_quote)
+            spec_set=WebSocketClient.subscribe_realtime_quote)
         self.mock_api_client.websocket.unsubscribe_realtime_quote = mock.AsyncMock(
-            spec_set=KoreaInvestWebSocketAPI.unsubscribe_realtime_quote)
+            spec_set=WebSocketClient.unsubscribe_realtime_quote)
 
         # TradingService 인스턴스 생성 (주입)
         self.trading_service = TradingService(
