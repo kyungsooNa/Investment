@@ -36,10 +36,17 @@ class TestTradingServiceBuyOrder(IsolatedAsyncioTestCase):
         self.mock_logger.info.assert_any_call(
             "Service - 주식 매수 주문 요청 - 종목: 005930, 수량: 10, 가격: 70000"
         )
+
         self.mock_api_client.trading.place_stock_order.assert_awaited_once_with(
-            "005930", "70000", "10", "매수", "00"
+            stock_code="005930",
+            price="70000",
+            qty="10",
+            bs_type="매수",
+            order_dvsn="00"
         )
+
         assert result == {"rt_cd": "0", "msg1": "주문 성공"}
+
 
     async def test_place_buy_order_failure(self):
         self.mock_api_client.trading.place_stock_order.side_effect = Exception("API 오류 발생")
@@ -102,10 +109,36 @@ class TestTradingServiceBuyOrder(IsolatedAsyncioTestCase):
         self.mock_logger.error.assert_any_call("매수 주문 실패: 매수 주문 실패")
 
     async def test_place_buy_order_called_with_expected_arguments(self):
-        self.mock_api_client.trading.place_stock_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "주문 성공"})
+        self.mock_api_client.trading.place_stock_order = AsyncMock(
+            return_value={"rt_cd": "0", "msg1": "주문 성공"}
+        )
 
         await self.trading_service.place_buy_order("005930", "70000", "10", "00")
 
-        self.mock_api_client.trading.place_stock_order.assert_awaited_once()
-        args, _ = self.mock_api_client.trading.place_stock_order.await_args
-        assert args == ("005930", "70000", "10", "매수", "00")  # 포지셔널 확인
+        self.mock_api_client.trading.place_stock_order.assert_awaited_once_with(
+            stock_code="005930",
+            price="70000",
+            qty="10",
+            bs_type="매수",
+            order_dvsn="00"
+        )
+
+    async def test_place_buy_order_api_failure(self):
+        self.mock_api_client.trading.place_stock_order.return_value = {
+            "rt_cd": "1", "msg1": "매수 불가"
+        }
+
+        with self.assertRaises(Exception) as context:
+            await self.trading_service.place_buy_order("005930", "70000", "10", "00")
+
+        self.assertIn("매수 불가", str(context.exception))
+        self.mock_logger.error.assert_any_call("매수 주문 실패: 매수 불가")
+
+    async def test_place_buy_order_exception_logging(self):
+        self.mock_api_client.trading.place_stock_order.side_effect = Exception("예상치 못한 오류")
+
+        with self.assertRaises(Exception) as context:
+            await self.trading_service.place_buy_order("005930", "70000", "10", "00")
+
+        self.assertIn("예상치 못한 오류", str(context.exception))
+        self.mock_logger.error.assert_any_call("Service - 매수 주문 중 오류 발생: 예상치 못한 오류")

@@ -109,38 +109,35 @@ class TradingService:
             return await self._api_client.account.get_real_account_balance()
 
     async def place_buy_order(self, stock_code, price, qty, order_dvsn):
+        self.logger.info(
+            f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
+        )
+
         try:
-            self.logger.info(f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
-
             response = await self._api_client.trading.place_stock_order(
-                stock_code, price, qty, "매수", order_dvsn
+                stock_code=stock_code,
+                price=price,
+                qty=qty,
+                bs_type="매수",
+                order_dvsn=order_dvsn
             )
-
-            if response.get("rt_cd") != "0":
-                msg = response.get("msg1", "매수 주문 실패")
-                self.logger.error(f"매수 주문 실패: {msg}")
-                raise Exception(msg)
-
-            return response
-
         except Exception as e:
             self.logger.error(f"Service - 매수 주문 중 오류 발생: {str(e)}")
             raise
 
-    async def place_sell_order(self, stock_code: str, price: str, qty: str, order_dvsn: str):
-        """
-        주식을 매도하는 함수입니다.
-        :param stock_code: 종목코드
-        :param price: 주문 가격
-        :param qty: 주문 수량
-        :param order_dvsn: 주문 구분 코드
-        :return: 주문 결과
-        """
-        try:
-            self.logger.info(
-                f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
-            )
+        if response.get("rt_cd") != "0":
+            msg = response.get("msg1", "매수 주문 실패")
+            self.logger.error(f"매수 주문 실패: {msg}")
+            raise Exception(msg)
 
+        return response
+
+    async def place_sell_order(self, stock_code, price, qty, order_dvsn):
+        self.logger.info(
+            f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
+        )
+
+        try:
             response = await self._api_client.trading.place_stock_order(
                 stock_code=stock_code,
                 price=price,
@@ -148,13 +145,16 @@ class TradingService:
                 bs_type="매도",
                 order_dvsn=order_dvsn
             )
-
-            self.logger.info(f"Service - 매도 주문 응답: {response}")
-            return response
-
         except Exception as e:
             self.logger.error(f"Service - 매도 주문 중 오류 발생: {str(e)}")
-            raise Exception(str(e))
+            raise
+
+        if response.get("rt_cd") != "0":
+            msg = response.get("msg1", "매도 주문 실패")
+            self.logger.error(f"매도 주문 실패: {msg}")
+            raise Exception(msg)
+
+        return response
 
     async def get_top_market_cap_stocks(self, market_code):
         """시가총액 상위 종목을 조회하고 결과를 반환합니다 (모의투자 미지원)."""

@@ -36,6 +36,7 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
         self.mock_api_client.trading.place_stock_order.assert_called_once_with(
             stock_code=stock_code, price=price, qty=qty, bs_type="매도", order_dvsn=order_dvsn
         )
+
         assert result == {"rt_cd": "0", "msg1": "주문 성공"}
 
     async def test_place_sell_order_failure(self):
@@ -45,3 +46,23 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
             await self.trading_service.place_sell_order("005930", "70000", "10", "00")
 
         self.assertIn("API 오류 발생", str(context.exception))
+
+    async def test_place_sell_order_api_failure(self):
+        self.mock_api_client.trading.place_stock_order.return_value = {
+            "rt_cd": "1", "msg1": "매도 불가"
+        }
+
+        with self.assertRaises(Exception) as context:
+            await self.trading_service.place_sell_order("005930", "70000", "10", "00")
+
+        self.assertIn("매도 불가", str(context.exception))
+        self.mock_logger.error.assert_any_call("매도 주문 실패: 매도 불가")
+
+    async def test_place_sell_order_exception_logging(self):
+        self.mock_api_client.trading.place_stock_order.side_effect = Exception("예상치 못한 오류")
+
+        with self.assertRaises(Exception) as context:
+            await self.trading_service.place_sell_order("005930", "70000", "10", "00")
+
+        self.assertIn("예상치 못한 오류", str(context.exception))
+        self.mock_logger.error.assert_any_call("Service - 매도 주문 중 오류 발생: 예상치 못한 오류")

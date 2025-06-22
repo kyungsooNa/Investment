@@ -262,7 +262,13 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         await self.transaction_handlers.handle_place_buy_order(stock_code, price, qty, order_dvsn)
 
         self.mock_time_manager.is_market_open.assert_called_once()
-        self.mock_api_client.trading.place_stock_order.assert_called_once_with(stock_code, price, qty, "매수", order_dvsn)
+        self.mock_api_client.trading.place_stock_order.assert_called_once_with(
+            stock_code=stock_code,
+            price=price,
+            qty=qty,
+            bs_type="매수",
+            order_dvsn=order_dvsn
+        )
         self.assertIn("주식 매수 주문 성공:", self.print_output_capture.getvalue())
 
         self.mock_logger.info.assert_has_calls([  # <--- 이 부분의 call.count가 2
