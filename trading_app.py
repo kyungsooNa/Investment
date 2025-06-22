@@ -76,23 +76,24 @@ class TradingApp:
             if not access_token:
                 raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
-            # API 클라이언트 및 서비스 계층 초기화
+            # --- API 클라이언트 및 서비스 계층 인스턴스 재초기화 ---
             self.api_client = KoreaInvestAPI(self.env, self.logger)
             self.trading_service = TradingService(self.api_client, self.env, self.logger, self.time_manager)
 
             # 핸들러 클래스 인스턴스화 (서비스와 로거, 타임 매니저 주입)
             self.data_handlers = DataHandlers(self.trading_service, self.logger, self.time_manager)
             self.transaction_handlers = TransactionHandlers(self.trading_service, self.logger, self.time_manager)
+            # -----------------------------------------------------
 
             self.logger.info(f"API 클라이언트 및 서비스 초기화 성공: {self.api_client}")
             return True
         except Exception as e:
             self.logger.critical(f"API 클라이언트 초기화 실패: {e}")
-            # print(f"ERROR: API 클라이언트 초기화 중 오류 발생: {e}") # CLI에 직접 에러 표시
+            print(f"ERROR: API 클라이언트 초기화 중 오류 발생: {e}")
             return False
 
     async def _select_environment(self):
-        """애플리케이션 시작 시 모의/실전 투자 환경을 선택합니다."""
+        """애플리케이션 시작 시 모의/실전 투자 환경을 선택하고, 선택된 환경으로 API 클라이언트를 초기화합니다."""
         selected = False
         while not selected:
             print("\n--- 거래 환경 선택 ---")
@@ -110,8 +111,18 @@ class TradingApp:
             else:
                 print("유효하지 않은 선택입니다. '1' 또는 '2'를 입력해주세요.")
 
+        # --- 환경 선택 후 토큰 강제 재발급 및 API 클라이언트 재초기화 ---
+        # get_access_token은 이미 동기 함수이므로 await 제거
+        new_token_acquired = self.env.get_access_token(force_new=True)  # <--- await 제거
+
+        # 토큰이 성공적으로 발급되었는지 확인 (None이 아니면 성공)
+        if not new_token_acquired:  # new_token_acquired는 이제 str 또는 None
+            self.logger.critical("선택된 환경의 토큰 발급에 실패했습니다. 애플리케이션을 종료합니다.")
+            return False  # 토큰 발급 실패 시 앱 종료 유도
+
+        # 토큰 발급 성공 시 _complete_api_initialization 호출 (await으로)
         if not await self._complete_api_initialization():
-            print("ERROR: 선택된 환경으로 API 클라이언트 초기화에 실패했습니다. 프로그램을 종료합니다.")
+            self.logger.critical("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
             return False
         return True
 
@@ -132,10 +143,9 @@ class TradingApp:
         print("4. 실시간 주식 체결가/호가 구독 (삼성전자)")
         print("5. 주식 전일대비 등락률 조회 (삼성전자)")
         print("6. 주식 시가대비 조회 (삼성전자)")
-
-        if not self.env.is_paper_trading:
-            print("7. 시가총액 상위 종목 조회 (실전전용)")
-            print("8. 시가총액 1~10위 종목 현재가 조회 (실전전용)")
+        print("7. 시가총액 상위 종목 조회 (실전전용)")
+        print("8. 시가총액 1~10위 종목 현재가 조회 (실전전용)")
+        print("9. 상한가 종목 조회 (상위 500개 종목 기준)")
 
         print("0. 종료")
         print("-----------------------------------")
@@ -150,19 +160,19 @@ class TradingApp:
             await self.data_handlers.handle_get_account_balance()
         elif choice == '3':
             await self.transaction_handlers.handle_place_buy_order("005930", "58500", "1", "00")
-        elif choice == '4':  # 실시간 주식 체결가/호가 구독 (이전 6번)
+        elif choice == '4':
             await self.transaction_handlers.handle_realtime_price_quote_stream("005930")
-        elif choice == '5':  # 주식 전일대비 등락률 조회 (이전 7번)
+        elif choice == '5':
             await self.data_handlers.handle_display_stock_change_rate("005930")
-        elif choice == '6':  # 주식 시가대비 조회 (이전 8번)
+        elif choice == '6':
             await self.data_handlers.handle_display_stock_vs_open_price("005930")
-        elif choice == '7':  # 시가총액 상위 종목 조회 (이전 4번)
+        elif choice == '7':
             if self.env.is_paper_trading:
                 print("WARNING: 모의투자 환경에서는 시가총액 상위 종목 조회를 지원하지 않습니다.")
                 self.logger.warning("모의투자 환경에서 시가총액 상위 종목 조회 시도 (미지원).")
             else:
                 await self.data_handlers.handle_get_top_market_cap_stocks("0000")
-        elif choice == '8':  # 시가총액 1~10위 종목 현재가 조회 (이전 5번)
+        elif choice == '8':
             if self.env.is_paper_trading:
                 print("WARNING: 모의투자 환경에서는 시가총액 1~10위 종목 조회를 지원하지 않습니다.")
                 self.logger.warning("모의투자 환경에서 시가총액 1~10위 종목 조회 시도 (미지원).")
@@ -170,6 +180,8 @@ class TradingApp:
             else:
                 if await self.data_handlers.handle_get_top_10_market_cap_stocks_with_prices():
                     running_status = False
+        elif choice == '9':
+            await self.data_handlers.handle_upper_limit_stocks("0000", limit=500)
         elif choice == '0':
             print("애플리케이션을 종료합니다.")
             running_status = False
@@ -177,10 +189,6 @@ class TradingApp:
             print("유효하지 않은 선택입니다. 다시 시도해주세요.")
 
         return running_status
-
-        # --- _handle_로 시작하는 모든 메서드들은 app/data_handlers.py 또는 app/transaction_handlers.py로 이동 ---
-
-    # 이 클래스에서는 더 이상 이 메서드들을 직접 정의하지 않습니다.
 
     async def run_async(self):
         """애플리케이션의 메인 비동기 루프를 실행합니다."""

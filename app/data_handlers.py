@@ -1,5 +1,5 @@
 # app/data_handlers.py
-import asyncio  # input()을 비동기적으로 처리하기 위해 필요
+import asyncio
 
 
 class DataHandlers:
@@ -115,8 +115,8 @@ class DataHandlers:
                     pass  # 숫자로 변환 불가능하면 N/A 그대로 사용
 
             print(f"\n성공: {stock_code} ({current_price}원)")
-            print(f"  전일대비: {display_change_val}원")  # 수정된 변수 사용
-            print(f"  전일대비율: {change_rate_str}%")  # change_rate_str 사용
+            print(f"  전일대비: {display_change_val}원")
+            print(f"  전일대비율: {change_rate_str}%")
 
             self.logger.info(
                 f"{stock_code} 전일대비 등락률 조회 성공: 현재가={current_price}, "
@@ -185,3 +185,98 @@ class DataHandlers:
         else:
             print(f"\n실패: {stock_code} 시가대비 조회.")
             self.logger.error(f"{stock_code} 시가대비 조회 실패: {current_price_result}")
+
+    async def handle_upper_limit_stocks(self, market_code: str = "0000", limit: int = 500):
+        """
+        시가총액 상위 종목 중 상한가에 도달한 종목을 조회하여 출력합니다.
+        이 기능은 모의투자를 지원하지 않으며, 시장 개장 시에만 조회 가능합니다. (스냅샷 기준)
+        :param market_code: 시장 분류 코드 (예: "0000" 코스피)
+        :param limit: 조회할 상위 종목의 최대 개수
+        """
+        print(f"\n--- 시가총액 상위 {limit}개 종목 중 상한가 종목 조회 ---")
+
+        # 시장 개장 및 모의투자 여부 확인
+        if not self.time_manager.is_market_open():
+            self.logger.warning("시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.")
+            print("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n")  # <--- 개행 문자 추가
+            return None  # None 반환하여 상위 호출자에게 실패 알림
+
+        if self.trading_service._env.is_paper_trading:  # trading_service 내부의 env 확인
+            self.logger.warning("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
+            print("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n")  # <--- 개행 문자 추가
+            return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}  # 오류 딕셔너리 반환
+
+        upper_limit_stocks_found = []
+        try:
+            # 1. 시가총액 상위 종목 목록 조회 (TradingService 위임)
+            top_stocks_response = await self.trading_service.get_top_market_cap_stocks(market_code)
+
+            if not top_stocks_response or top_stocks_response.get('rt_cd') != '0' or not top_stocks_response.get(
+                    'output'):
+                self.logger.error(f"시가총액 상위 종목 목록 조회 실패: {top_stocks_response}")
+                print(f"실패: 시가총액 상위 종목 목록을 가져올 수 없습니다. {top_stocks_response.get('msg1', '')}\n")  # <--- 개행 문자 추가
+                return None
+
+            top_stocks_list = top_stocks_response.get('output', [])
+            if not top_stocks_list:
+                self.logger.info("조회된 시가총액 상위 종목이 없습니다.")
+                print("조회된 시가총액 상위 종목이 없습니다.\n")  # <--- 개행 문자 추가
+                return None
+
+            # 상위 limit 개수까지만 처리
+            top_stocks_to_check = top_stocks_list[:limit]
+
+            print(f"조회 대상 종목: 총 {len(top_stocks_to_check)}개")
+            current_checked_count = 0
+
+            # 2. 각 종목의 현재가 조회 및 상한가 여부 판단
+            for stock_info in top_stocks_to_check:
+                stock_code = stock_info.get('mksc_shrn_iscd')
+                stock_name = stock_info.get('hts_kor_isnm')
+
+                if stock_code:
+                    current_price_response = await self.trading_service.get_current_stock_price(stock_code)
+                    current_checked_count += 1
+                    print(f"\r조회 중... {current_checked_count}/{len(top_stocks_to_check)}", end="")
+
+                    if current_price_response and current_price_response.get('rt_cd') == '0':
+                        output_data = current_price_response.get('output', {})
+                        prdy_vrss_sign = output_data.get('prdy_vrss_sign', 'N/A')  # 전일대비 부호
+                        stck_prpr = output_data.get('stck_prpr', 'N/A')  # 현재가
+                        prdy_ctrt = output_data.get('prdy_ctrt', 'N/A')  # 전일대비율
+
+                        # 상한가 부호는 '1' (상한)
+                        if prdy_vrss_sign == '1':
+                            upper_limit_stocks_found.append({
+                                "code": stock_code,
+                                "name": stock_name,
+                                "price": stck_prpr,
+                                "change_rate": prdy_ctrt  # 상한가에서는 등락률도 중요
+                            })
+                            self.logger.info(
+                                f"상한가 종목 발견: {stock_name} ({stock_code}), 현재가: {stck_prpr}, 등락률: {prdy_ctrt}%")
+                    else:
+                        self.logger.warning(f"종목 {stock_name} ({stock_code}) 현재가 조회 실패: {current_price_response}")
+                else:
+                    self.logger.warning(f"유효한 종목코드를 찾을 수 없습니다: {stock_info}")
+
+            print("\r" + " " * 80 + "\r", end="")  # 진행 메시지 지우기
+
+            # 3. 결과 출력
+            if upper_limit_stocks_found:
+                print("\n--- 상한가 종목 목록 ---")
+                for stock in upper_limit_stocks_found:
+                    print(
+                        f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)\n")  # <--- 개행 문자 추가
+                self.logger.info(f"총 {len(upper_limit_stocks_found)}개의 상한가 종목 발견.")
+                return True  # 성공적으로 상한가 종목을 찾았거나 목록을 출력했음을 알림
+            else:
+                print("\n현재 상한가에 도달한 종목이 없습니다.\n")  # <--- 개행 문자 추가
+                self.logger.info("현재 상한가에 도달한 종목이 없습니다.")
+                return False  # 상한가 종목을 찾지 못했음을 알림
+
+        except Exception as e:
+            self.logger.error(f"상한가 종목 조회 중 예기치 않은 오류 발생: {e}")
+            print(f"실패: 상한가 종목 조회 중 오류 발생. {e}\n")  # <--- 개행 문자 추가
+            return None  # 예외 발생 시 None 반환
+
