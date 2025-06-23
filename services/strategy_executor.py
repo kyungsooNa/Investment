@@ -1,6 +1,6 @@
 
 # services/strategy_executor.py
-from services.interfaces.strategy import Strategy
+from interfaces.strategy import Strategy
 from typing import List, Dict
 class StrategyExecutor:
     def __init__(self, strategy: Strategy):
