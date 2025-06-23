@@ -3,7 +3,7 @@ from api.env import KoreaInvestEnv
 from api.quotations import Quotations
 from api.account import KoreaInvestAccountAPI
 from api.trading import KoreaInvestTradingAPI
-from api.websocket_client import WebSocketClient
+from api.websocket_api import WebSocketAPI
 import logging
 
 
@@ -45,7 +45,7 @@ class KoreaInvestAPI:
         self.trading = KoreaInvestTradingAPI(self._config['base_url'], common_headers_template, self._config,
                                              self.logger)
 
-        self.websocket = WebSocketAPI(self._env, self.logger)
+        self.websocketAPI = WebSocketAPI(self._env, self.logger)
 
     def __str__(self):
         """객체를 문자열로 표현할 때 사용."""
