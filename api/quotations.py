@@ -2,7 +2,7 @@
 from api.base import _KoreaInvestAPIBase
 
 
-class KoreaInvestQuotationsAPI(_KoreaInvestAPIBase):
+class Quotations(_KoreaInvestAPIBase):
     def __init__(self, base_url, headers, config, logger):
         super().__init__(base_url, headers, config, logger)
 
@@ -19,6 +19,25 @@ class KoreaInvestQuotationsAPI(_KoreaInvestAPIBase):
         }
         self.logger.info(f"{stock_code} 현재가 조회 시도...")
         return await self._call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
+
+    async def get_price_summary(self, stock_code: str) -> dict:
+        """
+        주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보 반환
+        """
+        response = await self.get_current_price(stock_code)
+        output = response.get("output", {})
+
+        open_price = int(output.get("stck_oprc", 0))
+        current_price = int(output.get("stck_prpr", 0))
+
+        change_rate = (current_price - open_price) / open_price * 100 if open_price else 0
+
+        return {
+            "symbol": stock_code,
+            "open": open_price,
+            "current": current_price,
+            "change_rate": round(change_rate, 2)
+        }
 
     async def get_market_cap(self, stock_code):
         path = "/uapi/domestic-stock/v1/quotations/search-info"
@@ -70,3 +89,20 @@ class KoreaInvestQuotationsAPI(_KoreaInvestAPIBase):
         else:
             self.logger.error(f"시가총액 상위 종목 조회 실패 또는 정보 없음: {response}")
             return None
+
+    def get_previous_day_info(self, code: str) -> dict:
+        """
+        종목의 전일 종가, 전일 거래량 조회
+        """
+        params = {
+            "fid_cond_mrkt_div_code": "J",  # 주식시장
+            "fid_input_iscd": code,
+        }
+        response = self._client.request("get", "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                                        params)
+        data = response.json()
+        # 마지막 1개만 추출
+        return {
+            "prev_close": float(data["output"]["stck_clpr"]),
+            "prev_volume": int(data["output"]["acml_vol"])
+        }

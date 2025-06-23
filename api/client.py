@@ -1,6 +1,6 @@
 # api/client.py
 from api.env import KoreaInvestEnv
-from api.quotations import KoreaInvestQuotationsAPI
+from api.quotations import Quotations
 from api.account import KoreaInvestAccountAPI
 from api.trading import KoreaInvestTradingAPI
 from api.websocket_client import WebSocketClient
@@ -38,7 +38,7 @@ class KoreaInvestAPI:
 
         # 각 도메인별 API 클래스 인스턴스화
         # _config에서 바로 base_url을 가져와 전달
-        self.quotations = KoreaInvestQuotationsAPI(self._config['base_url'], common_headers_template, self._config,
+        self.quotations = Quotations(self._config['base_url'], common_headers_template, self._config,
                                                    self.logger)
         self.account = KoreaInvestAccountAPI(self._config['base_url'], common_headers_template, self._config,
                                              self.logger)

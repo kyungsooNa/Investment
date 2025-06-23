@@ -12,7 +12,7 @@ from app.data_handlers import DataHandlers
 from app.transaction_handlers import TransactionHandlers
 from services.trading_service import TradingService
 from api.client import KoreaInvestAPI  # Mocking용
-from api.quotations import KoreaInvestQuotationsAPI  # Mocking용
+from api.quotations import Quotations  # Mocking용
 from api.account import KoreaInvestAccountAPI  # Mocking용
 from api.trading import KoreaInvestTradingAPI  # Mocking용
 from api.websocket_client import WebSocketClient  # Mocking용
@@ -52,7 +52,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_api_client = mock.AsyncMock()
 
         # 하위 API 클라이언트들을 Mock 객체로 할당. 이들 자체에 spec_set을 적용.
-        self.mock_api_client.quotations = mock.AsyncMock(spec_set=KoreaInvestQuotationsAPI)
+        self.mock_api_client.quotations = mock.AsyncMock(spec_set=Quotations)
         self.mock_api_client.account = mock.AsyncMock(spec_set=KoreaInvestAccountAPI)
         self.mock_api_client.trading = mock.AsyncMock(spec_set=KoreaInvestTradingAPI)
         self.mock_api_client.websocket = mock.AsyncMock(spec_set=WebSocketClient)
@@ -61,8 +61,8 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         # 위에서 spec_set을 통해 자동으로 Mocking되었기 때문에,
         # 이제 바로 self.mock_api_client.quotations.get_current_price와 같이 접근하여 return_value를 설정합니다.
         # (이전의 중복 할당 라인들 제거)
-        # self.mock_api_client.quotations.get_current_price = mock.AsyncMock(spec_set=KoreaInvestQuotationsAPI.get_current_price)
-        # self.mock_api_client.quotations.get_top_market_cap_stocks = mock.AsyncMock(spec_set=KoreaInvestQuotationsAPI.get_top_market_cap_stocks)
+        # self.mock_api_client.quotations.get_current_price = mock.AsyncMock(spec_set=Quotations.get_current_price)
+        # self.mock_api_client.quotations.get_top_market_cap_stocks = mock.AsyncMock(spec_set=Quotations.get_top_market_cap_stocks)
         # self.mock_api_client.account.get_account_balance = mock.AsyncMock(spec_set=KoreaInvestAccountAPI.get_account_balance)
         # self.mock_api_client.account.get_real_account_balance = mock.AsyncMock(spec_set=KoreaInvestAccountAPI.get_real_account_balance)
         # self.mock_api_client.trading.place_stock_order = mock.AsyncMock(spec_set=KoreaInvestTradingAPI.place_stock_order)
