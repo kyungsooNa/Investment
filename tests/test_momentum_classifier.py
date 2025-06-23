@@ -1,25 +1,30 @@
+# tests/test_strategy_executor.py
 import pytest
-from services.momentum_classifier import MomentumStrategyClassifier
-
+from unittest.mock import AsyncMock
+from services.momentum_strategy import MomentumStrategy
+from services.strategy_executor import StrategyExecutor
 
 @pytest.mark.asyncio
-async def test_classify_momentum_follow_through():
-    dummy_data = {
-        "A": {"change_rate": 12.0, "after_rate": 3.0},
-        "B": {"change_rate": 15.0, "after_rate": 1.5},
-        "C": {"change_rate": 8.0, "after_rate": 2.5}
-    }
+async def test_momentum_strategy_classification():
+    # Mock quotations 객체 생성
+    mock_quotations = AsyncMock()
+    mock_quotations.get_price_summary.side_effect = [
+        {"symbol": "A", "open": 10000, "current": 11000, "change_rate": 10.0},
+        {"symbol": "B", "open": 10000, "current": 10500, "change_rate": 5.0},
+        {"symbol": "C", "open": 10000, "current": 12000, "change_rate": 20.0}
+    ]
+    mock_quotations.backtest_price_lookup.side_effect = [
+        11330,  # A: 3% 상승
+        10600,  # B: 0.95% 상승
+        12480   # C: 4% 상승
+    ]
 
-    async def mock_lookup(symbol):
-        return dummy_data[symbol]
+    # 전략 및 실행자 구성
+    strategy = MomentumStrategy(mock_quotations, min_change_rate=10.0, min_follow_through=3.0)
+    executor = StrategyExecutor(strategy)
 
-    classifier = MomentumStrategyClassifier(price_lookup=mock_lookup)
-    result = await classifier.classify_momentum_follow_through(
-        symbols=["A", "B", "C"],
-        min_change_rate=10.0,
-        min_follow_through=2.0
-    )
+    # 실행 및 검증
+    result = await executor.execute(["A", "B", "C"])
 
-    assert result["follow_through"] == ["A"]
+    assert result["follow_through"] == ["A", "C"]
     assert result["not_follow_through"] == ["B"]
-    assert "C" not in result["follow_through"] and "C" not in result["not_follow_through"]
