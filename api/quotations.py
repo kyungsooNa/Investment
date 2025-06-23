@@ -25,6 +25,14 @@ class Quotations(_KoreaInvestAPIBase):
         주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보 반환
         """
         response = await self.get_current_price(stock_code)
+        if not response or "output" not in response:
+            self.logger.warning(f"API 응답 없음 또는 형식 오류: {stock_code}")
+            return {
+                "symbol": stock_code,
+                "open": 0,
+                "current": 0,
+                "change_rate": 0.0
+            }
         output = response.get("output", {})
 
         open_price = int(output.get("stck_oprc", 0))
