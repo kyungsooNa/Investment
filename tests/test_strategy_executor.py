@@ -21,6 +21,7 @@ async def test_strategy_executor_with_mocked_quotations():
         quotations=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=3.0,
+        min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
         mode="live"
     )
 
@@ -57,6 +58,7 @@ async def test_strategy_executor_in_backtest_mode():
         quotations=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=3.0,
+        min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
         mode="backtest",
         backtest_lookup=mock_backtest_lookup
     )

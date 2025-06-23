@@ -1,5 +1,4 @@
-
-# services/momentum_strategy.py
+import logging
 from interfaces.strategy import Strategy
 from typing import List, Dict, Optional, Callable
 
@@ -9,14 +8,18 @@ class MomentumStrategy(Strategy):
         quotations,
         min_change_rate: float = 10.0,
         min_follow_through: float = 3.0,
+        min_follow_through_time: int = 5,  # 몇 분 후 기준인지
         mode: str = "live",  # 'live' or 'backtest'
-        backtest_lookup: Optional[Callable[[str], int]] = None
+        backtest_lookup: Optional[Callable[[str], int]] = None,
+        logger: Optional[logging.Logger] = None
     ):
         self.quotations = quotations
         self.min_change_rate = min_change_rate
         self.min_follow_through = min_follow_through
+        self.min_follow_through_time = min_follow_through_time  # 추가
         self.mode = mode
         self.backtest_lookup = backtest_lookup
+        self.logger = logger or logging.getLogger(__name__)
 
     async def run(self, stock_codes: List[str]) -> Dict:
         results = []
@@ -40,11 +43,33 @@ class MomentumStrategy(Strategy):
 
         follow_through = []
         not_follow_through = []
+
         for s in results:
-            if s["change_rate"] >= self.min_change_rate and s["after_rate"] >= self.min_follow_through:
+            is_success = s["change_rate"] >= self.min_change_rate and s["after_rate"] >= self.min_follow_through
+
+            if is_success:
                 follow_through.append(s["symbol"])
+                self.logger.info(
+                    f"[성공] 종목: {s['symbol']} | 시가: {s['open']} | 종가: {s['current']} | "
+                    f"등락률: {s['change_rate']:.2f}% | 기준 등락률: {self.min_change_rate}% | "
+                    f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% | 기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
+                )
             else:
                 not_follow_through.append(s["symbol"])
+                self.logger.info(
+                    f"[실패] 종목: {s['symbol']} | 시가: {s['open']} | 종가: {s['current']} | "
+                    f"등락률: {s['change_rate']:.2f}% | 기준 등락률: {self.min_change_rate}% | "
+                    f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% | 기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
+                )
+
+        total = len(results)
+        success = len(follow_through)
+        fail = len(not_follow_through)
+        success_rate = (success / total * 100) if total > 0 else 0
+
+        self.logger.info(
+            f"[결과 요약] 총 종목: {total}, 성공: {success}, 실패: {fail}, 성공률: {success_rate:.2f}%, 모드: {self.mode}"
+        )
 
         return {
             "follow_through": follow_through,

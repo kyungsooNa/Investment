@@ -217,7 +217,10 @@ class TradingApp:
                     quotations=self.api_client.quotations,
                     min_change_rate=10.0,
                     min_follow_through=3.0,
-                    mode="live"
+                    min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
+                    mode="live",
+                    backtest_lookup=None,
+                    logger=self.logger
                 )
                 executor = StrategyExecutor(strategy)
                 result = await executor.execute(top_stock_codes)
@@ -258,8 +261,10 @@ class TradingApp:
                     quotations=self.api_client.quotations,
                     min_change_rate=10.0,
                     min_follow_through=3.0,
+                    min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
                     mode="backtest",
-                    backtest_lookup=self._mock_backtest_price_lookup
+                    backtest_lookup=self._mock_backtest_price_lookup,
+                    logger=self.logger
                 )
                 executor = StrategyExecutor(strategy)
                 result = await executor.execute(top_stock_codes)

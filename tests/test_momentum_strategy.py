@@ -17,6 +17,7 @@ async def test_momentum_strategy_live_mode():
         quotations=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=3.0,
+        min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
         mode="live"
     )
 
@@ -39,6 +40,7 @@ async def test_momentum_strategy_live_mode_not_follow():
         quotations=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=3.0,
+        min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
         mode="live"
     )
 
@@ -63,6 +65,7 @@ async def test_momentum_strategy_backtest_mode():
         quotations=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=5.0,
+        min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
         mode="backtest",
         backtest_lookup=dummy_backtest_lookup
     )
