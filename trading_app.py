@@ -146,6 +146,8 @@ class TradingApp:
         print("7. 시가총액 상위 종목 조회 (실전전용)")
         print("8. 시가총액 1~10위 종목 현재가 조회 (실전전용)")
         print("9. 상한가 종목 조회 (상위 500개 종목 기준)")
+        print("10. 모멘텀 전략 실행 (상승 추세 필터링)")
+        print("11. 모멘텀 전략 백테스트 실행")
 
         print("0. 종료")
         print("-----------------------------------")
@@ -185,6 +187,95 @@ class TradingApp:
         elif choice == '0':
             print("애플리케이션을 종료합니다.")
             running_status = False
+        elif choice == '10':
+            # 시장이 열려있는 경우만 전략 실행
+            if not self.time_manager.is_market_open():
+                print("시장 개장 시간에만 전략 실행이 가능합니다.")
+                self.logger.warning("시장 미개장 상태에서 전략 실행 시도")
+                return running_status
+
+            print("\n모멘텀 전략 실행 중...")
+
+            from services.momentum_strategy import MomentumStrategy
+            from services.strategy_executor import StrategyExecutor
+
+            try:
+                # 1~30위 시가총액 종목 가져오기
+                top_response = await self.trading_service.get_top_market_cap_stocks("0000")
+                if top_response.get('rt_cd') != '0':
+                    print("시가총액 상위 종목 조회 실패:", top_response.get('msg1', '알 수 없는 오류'))
+                    return running_status
+
+                top_stock_codes = [
+                    item["mksc_shrn_iscd"]
+                    for item in top_response["output"][:30]
+                    if "mksc_shrn_iscd" in item
+                ]
+
+                # 전략 실행기 구성
+                strategy = MomentumStrategy(
+                    quotations=self.api_client.quotations,
+                    min_change_rate=10.0,
+                    min_follow_through=3.0,
+                    mode="live"
+                )
+                executor = StrategyExecutor(strategy)
+                result = await executor.execute(top_stock_codes)
+
+                print("\n📈 [모멘텀 전략 결과]")
+                print("📌 Follow Through 종목:")
+                for s in result["follow_through"]:
+                    print(f" - {s}")
+
+                print("📌 Follow 실패 종목:")
+                for s in result["not_follow_through"]:
+                    print(f" - {s}")
+
+            except Exception as e:
+                self.logger.error(f"모멘텀 전략 실행 중 오류 발생: {e}")
+                print(f"[오류] 전략 실행 실패: {e}")
+
+        elif choice == '11':
+            print("\n[모멘텀 전략 백테스트 실행 중...]")
+
+            from services.momentum_strategy import MomentumStrategy
+            from services.strategy_executor import StrategyExecutor
+
+            try:
+                top_response = await self.trading_service.get_top_market_cap_stocks("0000")
+                if top_response.get('rt_cd') != '0':
+                    print("시가총액 상위 종목 조회 실패:", top_response.get('msg1', '알 수 없는 오류'))
+                    return running_status
+
+                top_stock_codes = [
+                    item["mksc_shrn_iscd"]
+                    for item in top_response["output"][:30]
+                    if "mksc_shrn_iscd" in item
+                ]
+
+                # 백테스트 모드 전략 구성
+                strategy = MomentumStrategy(
+                    quotations=self.api_client.quotations,
+                    min_change_rate=10.0,
+                    min_follow_through=3.0,
+                    mode="backtest",
+                    backtest_lookup=self._mock_backtest_price_lookup
+                )
+                executor = StrategyExecutor(strategy)
+                result = await executor.execute(top_stock_codes)
+
+                print("\n📊 [백테스트 결과]")
+                print("✔️ Follow Through 종목:")
+                for s in result["follow_through"]:
+                    print(f" - {s}")
+                print("❌ Follow 실패 종목:")
+                for s in result["not_follow_through"]:
+                    print(f" - {s}")
+
+            except Exception as e:
+                self.logger.error(f"[백테스트] 전략 실행 중 오류 발생: {e}")
+                print(f"[오류] 전략 실행 실패: {e}")
+
         else:
             print("유효하지 않은 선택입니다. 다시 시도해주세요.")
 
@@ -206,3 +297,15 @@ class TradingApp:
             running = await self._execute_action(choice)
             if running:
                 await asyncio.to_thread(input, "계속하려면 Enter를 누르세요...")
+
+    async def _mock_backtest_price_lookup(self, stock_code: str) -> int:
+        """
+        백테스트용으로 주가 상승을 가정한 모의 가격 제공
+        (실제로는 DB, CSV, 또는 API를 통해 특정 시점 데이터를 받아야 함)
+        """
+        try:
+            current_info = await self.api_client.quotations.get_price_summary(stock_code)
+            return int(current_info["current"] * 1.05)  # 5% 상승 가정
+        except Exception as e:
+            self.logger.warning(f"[백테스트] {stock_code} 가격 조회 실패: {e}")
+            return 0
