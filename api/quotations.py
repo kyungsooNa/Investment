@@ -106,3 +106,45 @@ class Quotations(_KoreaInvestAPIBase):
             "prev_close": float(data["output"]["stck_clpr"]),
             "prev_volume": int(data["output"]["acml_vol"])
         }
+
+    async def get_filtered_stocks_by_momentum(
+            self, count=20, min_change_rate=10.0, min_volume_ratio=2.0
+    ) -> list:
+        """
+        거래량 급증 + 등락률 조건 기반 모멘텀 종목 필터링
+
+        :param count: 조회할 시가총액 상위 종목 수
+        :param min_change_rate: 필터 기준 등락률 (%)
+        :param min_volume_ratio: 필터 기준 거래량 배수
+        :return: 조건에 맞는 종목 리스트
+        """
+        top_stocks = await self.get_top_market_cap_stocks()
+        if not top_stocks or "output" not in top_stocks:
+            self.logger.error("시가총액 상위 종목 조회 실패")
+            return []
+
+        filtered = []
+        for item in top_stocks["output"][:count]:
+            symbol = item.get("isu_cd", "").replace("A", "")
+            prev_info = self.get_previous_day_info(symbol)
+            prev_close = prev_info.get("prev_close", 0)
+            prev_volume = prev_info.get("prev_volume", 0)
+
+            summary = await self.get_price_summary(symbol)
+            change_rate = summary.get("change_rate", 0)
+            current_volume = int(item.get("acc_trdvol", 0))
+
+            # 필터 기준 적용
+            if (
+                    change_rate >= min_change_rate
+                    and prev_volume > 0
+                    and current_volume / prev_volume >= min_volume_ratio
+            ):
+                filtered.append({
+                    "symbol": symbol,
+                    "change_rate": change_rate,
+                    "prev_volume": prev_volume,
+                    "current_volume": current_volume
+                })
+
+        return filtered

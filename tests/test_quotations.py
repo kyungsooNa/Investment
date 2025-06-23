@@ -179,3 +179,55 @@ async def test_get_top_market_cap_stocks_failure():
 
     result = await quotations.get_top_market_cap_stocks()
     assert result is None
+
+@pytest.mark.asyncio
+async def test_get_filtered_stocks_by_momentum():
+    mock_logger = MagicMock()
+    mock_config = {
+        "api_key": "dummy-key",
+        "api_secret_key": "dummy-secret",
+        "base_url": "https://mock-base",
+        "tr_ids": {
+            "quotations": {
+                "inquire_price": "dummy-tr-id",
+                "top_market_cap": "dummy-tr-id"
+            }
+        },
+        "custtype": "P"
+    }
+
+    quotations = Quotations(
+        base_url=mock_config["base_url"],
+        headers={},
+        config=mock_config,
+        logger=mock_logger
+    )
+
+    # 시총 상위 mock 데이터
+    quotations.get_top_market_cap_stocks = AsyncMock(return_value={
+        "output": [
+            {"isu_cd": "A0001", "acc_trdvol": "300000"},
+            {"isu_cd": "A0002", "acc_trdvol": "100000"}
+        ]
+    })
+
+    # 전일 종가 및 거래량 mock
+    quotations.get_previous_day_info = MagicMock(side_effect=[
+        {"prev_close": 8000, "prev_volume": 100000},  # symbol 0001
+        {"prev_close": 10000, "prev_volume": 100000}  # symbol 0002
+    ])
+
+    # 현재가 요약 mock
+    quotations.get_price_summary = AsyncMock(side_effect=[
+        {"symbol": "0001", "open": 8000, "current": 9000, "change_rate": 12.5},
+        {"symbol": "0002", "open": 10000, "current": 10800, "change_rate": 8.0}
+    ])
+
+    results = await quotations.get_filtered_stocks_by_momentum(
+        count=2, min_change_rate=10.0, min_volume_ratio=2.0
+    )
+
+    assert len(results) == 1
+    assert results[0]["symbol"] == "0001"
+    assert results[0]["change_rate"] >= 10.0
+    assert results[0]["current_volume"] / results[0]["prev_volume"] >= 2.0
