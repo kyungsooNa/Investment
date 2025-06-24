@@ -30,7 +30,7 @@ class KoreaInvestAccountAPI(_KoreaInvestAPIBase):
             "CTX_AREA_NK100": ""
         }
         self.logger.info(f"계좌 잔고 조회 시도...")
-        return await self._call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
+        return await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
 
     async def get_real_account_balance(self):  # 실전용
         """
@@ -65,4 +65,4 @@ class KoreaInvestAccountAPI(_KoreaInvestAPIBase):
             "CTX_AREA_NK100": ""
         }
         self.logger.info(f"실전 계좌 잔고 조회 시도...")
-        return await self._call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
+        return await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가

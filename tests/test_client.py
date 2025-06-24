@@ -25,8 +25,8 @@ async def test_quotations_get_price_summary_success():
     # KoreaInvestAPI 인스턴스 생성
     client = KoreaInvestAPI(env=mock_env)
 
-    # quotations._call_api 비동기 메서드 모킹 (실제 네트워크 호출 차단)
-    client.quotations._call_api = AsyncMock(return_value={
+    # quotations.call_api 비동기 메서드 모킹 (실제 네트워크 호출 차단)
+    client.quotations.call_api = AsyncMock(return_value={
         "output": {
             "stck_oprc": "10000",
             "stck_prpr": "10500"

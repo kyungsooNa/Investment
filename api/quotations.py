@@ -18,7 +18,7 @@ class Quotations(_KoreaInvestAPIBase):
             "fid_input_iscd": stock_code
         }
         self.logger.info(f"{stock_code} 현재가 조회 시도...")
-        return await self._call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
+        return await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
 
     async def get_price_summary(self, stock_code: str) -> dict:
         """
@@ -59,7 +59,7 @@ class Quotations(_KoreaInvestAPIBase):
             "FID_DIV_CLS_CODE": "2"
         }
         self.logger.info(f"{stock_code} 시가총액 조회 시도...")
-        response = await self._call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
+        response = await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
 
         if response and response.get('rt_cd') == '0' and response.get('output'):
             market_cap = response['output'].get('stck_prpr_smkl_amt')
@@ -89,7 +89,7 @@ class Quotations(_KoreaInvestAPIBase):
             "fid_vol_cnt": ""
         }
         self.logger.info(f"시가총액 상위 {market_code} 종목 조회 시도...")
-        response = await self._call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
+        response = await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
 
         if response and response.get('rt_cd') == '0' and response.get('output'):
             self.logger.info(f"시가총액 상위 종목 조회 성공.")

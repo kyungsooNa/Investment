@@ -145,7 +145,7 @@ async def test_get_top_market_cap_stocks_success():
         "output": [{"symbol": "005930", "name": "삼성전자"}]
     }
 
-    quotations._call_api = AsyncMock(return_value=mock_response)
+    quotations.call_api = AsyncMock(return_value=mock_response)
 
     result = await quotations.get_top_market_cap_stocks()
     assert result == mock_response
@@ -172,7 +172,7 @@ async def test_get_top_market_cap_stocks_failure():
         logger=mock_logger
     )
 
-    quotations._call_api = AsyncMock(return_value={
+    quotations.call_api = AsyncMock(return_value={
         "rt_cd": "1",  # 실패 코드
         "output": None
     })

@@ -92,4 +92,4 @@ class KoreaInvestTradingAPI(_KoreaInvestAPIBase):
         self._headers["hashkey"] = calculated_hashkey
 
         self.logger.info(f"주식 {trade_type} 주문 시도 - 종목: {stock_code}, 수량: {order_qty}, 가격: {order_price}")
-        return await self._call_api('POST', path, data=data, retry_count=1)
+        return await self.call_api('POST', path, data=data, retry_count=1)
