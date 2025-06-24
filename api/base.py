@@ -24,120 +24,122 @@ class _KoreaInvestAPIBase:
         # (API 호출 시 토큰 만료 등 특정 오류 발생 시 KoreaInvestEnv 인스턴스에 직접 접근하여 토큰 초기화 목적)
         self._env = self._config.get('_env_instance')
 
-        # urllib3 로거의 DEBUG 레벨을 비활성화하여 _call_api의 DEBUG 로그와 분리
+        # urllib3 로거의 DEBUG 레벨을 비활성화하여 call_api의 DEBUG 로그와 분리
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
 
-    async def _call_api(self, method, path, params=None, data=None, retry_count=10, delay=1):
-        """
-        API 호출 헬퍼 메서드.
-        retry_count: 재시도 횟수 (초당 거래건수 초과 등 API 제한 대응용)
-        delay: 재시도 전 대기 시간(초), 고정
-        """
+    async def call_api(self, method, path, params=None, data=None, retry_count=10, delay=1):
         url = f"{self._base_url}{path}"
 
         for attempt in range(1, retry_count + 1):
             try:
-                self.logger.debug("\nDEBUG: Headers being sent:")
-                self.logger.debug(f"DEBUG: Checking _config in _call_api (tr_ids exists: {'tr_ids' in self._config})")
-                self.logger.debug(f"DEBUG: _config keys in _call_api: {self._config.keys()}")
                 self.logger.debug(f"API 호출 시도 {attempt}/{retry_count} - {method} {url}")
+                self._log_headers()
 
-                for key, value in self._headers.items():
-                    try:
-                        encoded_value = str(value).encode('latin-1', errors='ignore')
-                        self.logger.debug(f"  {key}: {encoded_value}")
-                    except UnicodeEncodeError:
-                        self.logger.debug(f"  {key}: *** UnicodeEncodeError - Contains non-latin-1 characters ***")
-                        self.logger.debug(f"  Problematic value (type: {type(value)}): {repr(value)}")
-                self.logger.debug("--- End Headers Debug ---")
+                response = await self._execute_request(method, url, params, data)
 
-                loop = asyncio.get_running_loop()
-                response = None
+                result = await self._handle_response(response, attempt, retry_count, delay)
+                if result == "retry":
+                    continue
+                elif result is not None:
+                    return result
 
-                if method.upper() == 'GET':
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: self._session.get(url, headers=self._headers, params=params, verify=certifi.where())
-                    )
-                elif method.upper() == 'POST':
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: self._session.post(url, headers=self._headers,
-                                                   data=json.dumps(data) if data else None,
-                                                   verify=certifi.where())
-                    )
-                else:
-                    raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
-
-                # 호출 제한 대응 (429 또는 500 + 초당 거래건수 초과)
-                if response.status_code == 429 or (response.status_code == 500 and
-                                                   response.json().get("msg1") == "초당 거래건수를 초과하였습니다."):
-                    self.logger.warning(
-                        f"호출 제한 오류 감지(HTTP {response.status_code}). {delay}초 후 재시도 {attempt}/{retry_count} ...")
-                    if attempt < retry_count:
-                        await asyncio.sleep(delay)  # delay는 항상 1초로 고정
-                        continue
-                    else:
-                        self.logger.error("재시도 횟수 초과, API 호출 실패")
-                        return None
-
-                response.raise_for_status()
-
-                if response.status_code != 200:
-                    self.logger.error(f"비정상 HTTP 상태 코드: {response.status_code}, 응답 내용: {response.text}")
-                    return None
-
-                # JSON을 한번만 호출하도록 저장
-                try:
-                    response_json = response.json()
-                except (json.JSONDecodeError, ValueError):  # <-- 이 부분을 수정
-                    self.logger.error(f"응답 JSON 디코딩 실패: {response.text if response else '응답 없음'}")
-                    return None
-
-                if response_json is None or not isinstance(response_json, dict):
-                    self.logger.error(f"잘못된 응답 형식: {response_json}")
-                    return None
-
-                # 만료 토큰 오류 처리 (기존 로직 유지)
-                if response_json.get('rt_cd') == '1' and response_json.get('msg_cd') == 'EGW00123':
-                    self.logger.error(f"HTTP 오류 발생: {response.status_code} - {response.text}")
-                    self.logger.error("토큰 만료 오류 감지. 다음 요청 시 토큰을 재발급합니다.")
-
-                    if self._env and isinstance(self._env, KoreaInvestEnv):
-                        self._env.access_token = None
-                        self._env.token_expired_at = None
-
-                        if attempt < retry_count:
-                            self.logger.info("토큰 재발급 후 API 호출을 재시도합니다.")
-                            await asyncio.sleep(delay)  # delay 고정 1초
-                            continue
-                        else:
-                            self.logger.error("토큰 재발급 후에도 재시도 횟수가 없어 API 호출에 실패했습니다.")
-                            return None
-                    else:
-                        self.logger.error("KoreaInvestEnv 인스턴스를 찾을 수 없어 토큰 초기화 및 재시도를 할 수 없습니다.")
-                        return None
-
-                # 정상 응답
-                self.logger.debug(f"API 응답 상태: {response.status_code}")
-                self.logger.debug(f"API 응답 텍스트: {response.text}")
-                return response_json
-
-            except requests.exceptions.HTTPError as http_err:
-                self.logger.error(f"HTTP 오류 발생: {http_err.response.status_code} - {http_err.response.text}")
-                return None
-            except requests.exceptions.ConnectionError as conn_err:
-                self.logger.error(f"연결 오류 발생: {conn_err}")
-                return None
-            except requests.exceptions.Timeout as timeout_err:
-                self.logger.error(f"타임아웃 오류 발생: {timeout_err}")
-                return None
-            except requests.exceptions.RequestException as req_err:
-                self.logger.error(f"알 수 없는 요청 오류 발생: {req_err}")
-                return None
-            except json.JSONDecodeError:
-                self.logger.error(f"응답 JSON 디코딩 실패: {response.text if response else '응답 없음'}")
+            except Exception as e:
+                self._log_request_exception(e)
                 return None
 
         self.logger.error("모든 재시도 실패, API 호출 종료")
         return None
+
+    def _log_headers(self):
+        self.logger.debug("\nDEBUG: Headers being sent:")
+        for key, value in self._headers.items():
+            try:
+                encoded_value = str(value).encode('latin-1', errors='ignore')
+                self.logger.debug(f"  {key}: {encoded_value}")
+            except UnicodeEncodeError:
+                self.logger.debug(f"  {key}: *** UnicodeEncodeError ***")
+
+    def _log_request_exception(self, e):
+        if isinstance(e, requests.exceptions.HTTPError):
+            self.logger.error(f"HTTP 오류 발생: {e.response.status_code} - {e.response.text}")
+        elif isinstance(e, requests.exceptions.ConnectionError):
+            self.logger.error(f"연결 오류 발생: {e}")
+        elif isinstance(e, requests.exceptions.Timeout):
+            self.logger.error(f"타임아웃 오류 발생: {e}")
+        elif isinstance(e, requests.exceptions.RequestException):
+            self.logger.error(f"요청 예외 발생: {e}")
+        elif isinstance(e, json.JSONDecodeError):
+            self.logger.error("JSON 디코딩 오류 발생")
+        else:
+            self.logger.error(f"예상치 못한 예외 발생: {e}")
+
+    async def _execute_request(self, method, url, params, data):
+        loop = asyncio.get_running_loop()
+
+        if method.upper() == 'GET':
+            return await loop.run_in_executor(
+                None,
+                lambda: self._session.get(url, headers=self._headers, params=params, verify=certifi.where())
+            )
+        elif method.upper() == 'POST':
+            return await loop.run_in_executor(
+                None,
+                lambda: self._session.post(
+                    url, headers=self._headers,
+                    data=json.dumps(data) if data else None,
+                    verify=certifi.where()
+                )
+            )
+        else:
+            raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+
+    async def _handle_response(self, response, attempt, retry_count, delay):
+        if response.status_code == 429 or (response.status_code == 500 and
+                                           response.json().get("msg1") == "초당 거래건수를 초과하였습니다."):
+            self.logger.warning(f"호출 제한 오류 감지(HTTP {response.status_code}). {delay}초 후 재시도 {attempt}/{retry_count} ...")
+            if attempt < retry_count:
+                await asyncio.sleep(delay)
+                return "retry"
+            else:
+                self.logger.error("재시도 횟수 초과, API 호출 실패")
+                return None
+
+        response.raise_for_status()
+
+        if response.status_code != 200:
+            self.logger.error(f"비정상 HTTP 상태 코드: {response.status_code}, 응답 내용: {response.text}")
+            return None
+
+        try:
+            response_json = response.json()
+        except (json.JSONDecodeError, ValueError):
+            self.logger.error(f"응답 JSON 디코딩 실패: {response.text if response else '응답 없음'}")
+            return None
+
+        if not isinstance(response_json, dict):
+            self.logger.error(f"잘못된 응답 형식: {response_json}")
+            return None
+
+        if response_json.get('rt_cd') == '1' and response_json.get('msg_cd') == 'EGW00123':
+            return await self._handle_token_expiration(response_json, attempt, retry_count, delay)
+
+        self.logger.debug(f"API 응답 상태: {response.status_code}")
+        self.logger.debug(f"API 응답 텍스트: {response.text}")
+        return response_json
+
+    async def _handle_token_expiration(self, response_json, attempt, retry_count, delay):
+        self.logger.error("토큰 만료 오류 감지. 다음 요청 시 토큰을 재발급합니다.")
+        if self._env and isinstance(self._env, KoreaInvestEnv):
+            self._env.access_token = None
+            self._env.token_expired_at = None
+
+            if attempt < retry_count:
+                self.logger.info("토큰 재발급 후 API 호출을 재시도합니다.")
+                await asyncio.sleep(delay)
+                return "retry"
+            else:
+                self.logger.error("토큰 재발급 후에도 실패, 종료")
+                return None
+        else:
+            self.logger.error("KoreaInvestEnv 인스턴스를 찾을 수 없어 토큰 초기화 불가")
+            return None
