@@ -56,7 +56,7 @@ class MomentumStrategy(Strategy):
             )
 
             if is_success:
-                follow_through.append(code)
+                follow_through.append({"code": code, "name": name})
                 self.logger.info(
                     f"[성공] 종목: {display} | 시가: {s['open']} | 종가: {s['current']} | "
                     f"등락률: {s['change_rate']:.2f}% | 기준 등락률: {self.min_change_rate}% | "
@@ -64,7 +64,7 @@ class MomentumStrategy(Strategy):
                     f"기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
                 )
             else:
-                not_follow_through.append(code)
+                not_follow_through.append({"code": code, "name": name})
                 self.logger.info(
                     f"[실패] 종목: {display} | 시가: {s['open']} | 종가: {s['current']} | "
                     f"등락률: {s['change_rate']:.2f}% | 기준 등락률: {self.min_change_rate}% | "
@@ -82,6 +82,6 @@ class MomentumStrategy(Strategy):
         )
 
         return {
-            "follow_through": follow_through,
+            "follow_through": follow_through,  # [{"code": "005930", "name": "삼성전자"}, ...]
             "not_follow_through": not_follow_through
         }

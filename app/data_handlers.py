@@ -44,10 +44,10 @@ class DataHandlers:
             print(f"\n계좌 잔고 조회 실패.")
             self.logger.error(f"계좌 잔고 조회 실패: {account_balance}")
 
-    async def handle_get_top_market_cap_stocks(self, market_code):
+    async def handle_get_top_market_cap_stocks(self, market_code, count: int = None):
         """시가총액 상위 종목 조회 요청 및 결과 출력 (전체 목록)."""
         print("\n--- 시가총액 상위 종목 조회 시도 ---")
-        top_market_cap_stocks = await self.trading_service.get_top_market_cap_stocks(market_code)
+        top_market_cap_stocks = await self.trading_service.get_top_market_cap_stocks(market_code, count)
 
         if top_market_cap_stocks and top_market_cap_stocks.get('rt_cd') == '0':
             print(f"성공: 시가총액 상위 종목 목록:")

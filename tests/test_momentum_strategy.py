@@ -16,18 +16,24 @@ async def test_momentum_strategy_live_mode():
             "stck_prpr": "11500"
         }
     })
+    mock_quotations.get_stock_name_by_code = AsyncMock(return_value="삼성전자")  # ✅ 이거 추가
 
     strategy = MomentumStrategy(
         quotations=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=3.0,
-        min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
+        min_follow_through_time=10,
         mode="live"
     )
 
     result = await strategy.run(["005930"])
-    assert result["follow_through"] == ["005930"]
+
+    assert result["follow_through"] == [{
+        "code": "005930",
+        "name": "삼성전자"
+    }]
     assert result["not_follow_through"] == []
+
 
 @pytest.mark.asyncio
 async def test_momentum_strategy_live_mode_not_follow():
@@ -41,9 +47,11 @@ async def test_momentum_strategy_live_mode_not_follow():
 
     mock_quotations.get_current_price = AsyncMock(return_value={
         "output": {
-            "stck_prpr": "11200"  # 1.8% 상승으로 min_follow_through=3.0 미만
+            "stck_prpr": "11200"  # 1.8% 상승 → Follow Through 조건 미달
         }
     })
+
+    mock_quotations.get_stock_name_by_code = AsyncMock(return_value="SK하이닉스")
 
     strategy = MomentumStrategy(
         quotations=mock_quotations,
@@ -54,8 +62,13 @@ async def test_momentum_strategy_live_mode_not_follow():
     )
 
     result = await strategy.run(["000660"])
+
     assert result["follow_through"] == []
-    assert result["not_follow_through"] == ["000660"]
+    assert result["not_follow_through"] == [{
+        "code": "000660",
+        "name": "SK하이닉스"
+    }]
+
 
 @pytest.mark.asyncio
 async def test_momentum_strategy_backtest_mode():
@@ -66,6 +79,7 @@ async def test_momentum_strategy_backtest_mode():
         "current": 330000,
         "change_rate": 10.0
     })
+    mock_quotations.get_stock_name_by_code = AsyncMock(return_value="카카오")
 
     async def dummy_backtest_lookup(code):
         return 350000  # 6.06% 추가 상승
@@ -74,14 +88,16 @@ async def test_momentum_strategy_backtest_mode():
         quotations=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=5.0,
-        min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
+        min_follow_through_time=10,
         mode="backtest",
         backtest_lookup=dummy_backtest_lookup
     )
 
     result = await strategy.run(["035720"])
-    assert result["follow_through"] == ["035720"]
+
+    assert result["follow_through"] == [{"code": "035720", "name": "카카오"}]
     assert result["not_follow_through"] == []
+
 
 @pytest.mark.asyncio
 async def test_momentum_strategy_backtest_no_lookup_raises():

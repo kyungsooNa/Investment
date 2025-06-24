@@ -83,42 +83,6 @@ async def test_get_price_summary_open_price_zero():
     assert result["change_rate"] == 0.0  # 시가가 0이면 등락률도 0 처리
 
 @pytest.mark.asyncio
-async def test_get_price_summary_missing_fields():
-    mock_logger = MagicMock()
-    mock_config = {
-        "api_key": "dummy-key",
-        "api_secret_key": "dummy-secret",
-        "base_url": "https://mock-base",
-        "tr_ids": {
-            "quotations": {
-                "inquire_price": "dummy-tr-id"
-            }
-        },
-        "custtype": "P"
-    }
-
-    # 2. Quotations 인스턴스 생성
-    quotations = Quotations(
-        base_url=mock_config["base_url"],
-        headers={},
-        config=mock_config,
-        logger=mock_logger
-    )
-
-    quotations.get_current_price = AsyncMock(return_value={
-        "output": {
-            "stck_oprc": "0",
-            "stck_prpr": "11000"
-        }
-    })
-
-    result = await quotations.get_price_summary("005930")
-    assert result["symbol"] == "005930"
-    assert result["open"] == 0
-    assert result["current"] == 11000
-    assert result["change_rate"] == 0.0  # 0으로 나누는 경우 방지됨
-
-@pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_success():
     mock_logger = MagicMock()
     mock_config = {
@@ -140,20 +104,24 @@ async def test_get_top_market_cap_stocks_success():
         logger=mock_logger
     )
 
-    # 1. top_market_cap API 응답 모킹
+    # 🧪 모의투자 아님으로 설정
+    quotations._env = MagicMock()
+    quotations._env.is_paper_trading = False
+
+    # API 응답 모킹
     mock_top_response = {
         "rt_cd": "0",
         "output": [
-            {"iscd": "005930", "mktcap": "500000000000"}
+            {"iscd": "005930", "stck_avls": "500000000000"}
         ]
     }
     quotations.call_api = AsyncMock(return_value=mock_top_response)
 
-    # 2. 종목명 반환 함수 모킹
+    # 종목명 반환 함수 모킹
     quotations.get_stock_name_by_code = AsyncMock(return_value="삼성전자")
 
-    # 3. 실행 및 검증
-    result = await quotations.get_top_market_cap_stocks(count=1)
+    # 실행 및 검증
+    result = await quotations.get_top_market_cap_stocks("0000", count=1)
 
     assert result == [{
         "code": "005930",
@@ -188,7 +156,7 @@ async def test_get_top_market_cap_stocks_failure():
         "output": None
     })
 
-    result = await quotations.get_top_market_cap_stocks()
+    result = await quotations.get_top_market_cap_stocks("0000", count=1)
     assert result == []
 
 @pytest.mark.asyncio

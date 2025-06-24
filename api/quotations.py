@@ -82,7 +82,7 @@ class Quotations(_KoreaInvestAPIBase):
             self.logger.warning(f"{stock_code} 시가총액 정보 없음 또는 형식 오류")
             return 0
 
-    async def get_top_market_cap_stocks(self, market_code: str, count: int = 20) -> list[dict]:
+    async def get_top_market_cap_stocks(self, market_code: str, count: int = 30) -> list[dict]:
         """
         시가총액 상위 종목 목록을 반환합니다. 최대 30개까지만 지원됩니다.
 

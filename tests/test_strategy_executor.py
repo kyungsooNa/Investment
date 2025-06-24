@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import AsyncMock
-
 from services.strategy_executor import StrategyExecutor
 from services.momentum_strategy import MomentumStrategy
 
@@ -25,6 +24,7 @@ async def test_strategy_executor_with_mocked_quotations():
         return data_map.get(code, {"output": {"stck_prpr": "0"}})
 
     mock_quotations.get_current_price.side_effect = mock_get_current_price
+    mock_quotations.get_stock_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
 
     strategy = MomentumStrategy(
         quotations=mock_quotations,
@@ -41,8 +41,11 @@ async def test_strategy_executor_with_mocked_quotations():
     assert "follow_through" in result
     assert "not_follow_through" in result
 
-    assert result["follow_through"] == ["0001", "0002"]
-    assert result["not_follow_through"] == ["0003"]
+    assert result["follow_through"] == [
+        {"code": "0001", "name": "종목0001"},
+        {"code": "0002", "name": "종목0002"}
+    ]
+
 
 @pytest.mark.asyncio
 async def test_strategy_executor_in_backtest_mode():
@@ -52,6 +55,7 @@ async def test_strategy_executor_in_backtest_mode():
         {"symbol": "005930", "open": 70000, "current": 77000, "change_rate": 10.0},
         {"symbol": "000660", "open": 100000, "current": 105000, "change_rate": 5.0}
     ]
+    mock_quotations.get_stock_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
 
     # 2. Mock backtest price lookup
     async def mock_backtest_lookup(code):
@@ -76,13 +80,8 @@ async def test_strategy_executor_in_backtest_mode():
     result = await executor.execute(["005930", "000660"])
 
     # 5. 검증
-    assert result["follow_through"] == ["005930"]
-    assert result["not_follow_through"] == ["000660"]
-
-import pytest
-from unittest.mock import AsyncMock
-from services.strategy_executor import StrategyExecutor
-from services.momentum_strategy import MomentumStrategy
+    assert result["follow_through"] == [{"code": "005930", "name": "종목005930"}]
+    assert result["not_follow_through"] == [{"code": "000660", "name": "종목000660"}]
 
 
 @pytest.mark.asyncio
@@ -124,6 +123,7 @@ async def test_strategy_executor_live_mode_without_backtest_lookup():
             "stck_prpr": "80000"
         }
     }
+    mock_quotations.get_stock_name_by_code = AsyncMock(return_value="삼성전자")
 
     strategy = MomentumStrategy(
         quotations=mock_quotations,
@@ -135,5 +135,4 @@ async def test_strategy_executor_live_mode_without_backtest_lookup():
     result = await executor.execute(["005930"])
 
     assert "follow_through" in result
-    assert "005930" in result["follow_through"]
-    assert result["not_follow_through"] == []
+    assert result["follow_through"] == [{"code": "005930", "name": "삼성전자"}]

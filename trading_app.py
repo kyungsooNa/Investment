@@ -286,11 +286,12 @@ class TradingApp:
 
                 print("\n📊 [백테스트 결과]")
                 print("✔️ Follow Through 종목:")
-                for s in result["follow_through"]:
-                    print(f" - {s}")
+                for item in result["follow_through"]:
+                    print(f" - {item['name']}({item['code']})")
+
                 print("❌ Follow 실패 종목:")
-                for s in result["not_follow_through"]:
-                    print(f" - {s}")
+                for item in result["not_follow_through"]:
+                    print(f" - {item['name']}({item['code']})")
 
             except Exception as e:
                 self.logger.error(f"[백테스트] 전략 실행 중 오류 발생: {e}")
