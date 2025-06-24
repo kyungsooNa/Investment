@@ -32,7 +32,9 @@ class MomentumStrategy(Strategy):
                     raise ValueError("Backtest 모드에서는 backtest_lookup 함수가 필요합니다.")
                 after_price = await self.backtest_lookup(code)
             else:
-                after_price = await self.quotations.get_current_price_value(code)
+                price_data = await self.quotations.get_current_price(code)
+                # price_data에서 현재가 필드(예: 'stck_prpr')를 int형으로 추출
+                after_price = int(price_data.get("output", {}).get("stck_prpr", 0))
 
             summary["after"] = after_price
             summary["after_rate"] = (
