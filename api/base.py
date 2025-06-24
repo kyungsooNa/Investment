@@ -27,9 +27,6 @@ class _KoreaInvestAPIBase:
         # urllib3 로거의 DEBUG 레벨을 비활성화하여 _call_api의 DEBUG 로그와 분리
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
 
-    import asyncio
-    import json
-
     async def _call_api(self, method, path, params=None, data=None, retry_count=3, delay=1):
         """
         API 호출 헬퍼 메서드.
