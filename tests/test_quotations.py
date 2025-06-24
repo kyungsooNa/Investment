@@ -140,15 +140,26 @@ async def test_get_top_market_cap_stocks_success():
         logger=mock_logger
     )
 
-    mock_response = {
+    # 1. top_market_cap API 응답 모킹
+    mock_top_response = {
         "rt_cd": "0",
-        "output": [{"symbol": "005930", "name": "삼성전자"}]
+        "output": [
+            {"iscd": "005930", "mktcap": "500000000000"}
+        ]
     }
+    quotations.call_api = AsyncMock(return_value=mock_top_response)
 
-    quotations.call_api = AsyncMock(return_value=mock_response)
+    # 2. 종목명 반환 함수 모킹
+    quotations.get_stock_name_by_code = AsyncMock(return_value="삼성전자")
 
-    result = await quotations.get_top_market_cap_stocks()
-    assert result == mock_response
+    # 3. 실행 및 검증
+    result = await quotations.get_top_market_cap_stocks(count=1)
+
+    assert result == [{
+        "code": "005930",
+        "name": "삼성전자",
+        "market_cap": 500000000000
+    }]
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_failure():
@@ -178,7 +189,7 @@ async def test_get_top_market_cap_stocks_failure():
     })
 
     result = await quotations.get_top_market_cap_stocks()
-    assert result is None
+    assert result == []
 
 @pytest.mark.asyncio
 async def test_get_filtered_stocks_by_momentum():
@@ -231,3 +242,102 @@ async def test_get_filtered_stocks_by_momentum():
     assert results[0]["symbol"] == "0001"
     assert results[0]["change_rate"] >= 10.0
     assert results[0]["current_volume"] / results[0]["prev_volume"] >= 2.0
+
+@pytest.mark.asyncio
+async def test_get_stock_info_by_code_success():
+    mock_logger = MagicMock()
+    mock_config = {
+        "tr_ids": {"quotations": {"search_info": "dummy-tr-id"}},
+        "custtype": "P"
+    }
+
+    quotations = Quotations("https://mock-url", {}, mock_config, mock_logger)
+    mock_output = {
+        "hts_kor_isnm": "삼성전자",
+        "stck_prpr_smkl_amt": "500000000000"
+    }
+
+    quotations.call_api = AsyncMock(return_value={"rt_cd": "0", "output": mock_output})
+
+    result = await quotations.get_stock_info_by_code("005930")
+    assert result == mock_output
+
+@pytest.mark.asyncio
+async def test_get_stock_info_by_code_failure():
+    mock_logger = MagicMock()
+    mock_config = {
+        "tr_ids": {"quotations": {"search_info": "dummy-tr-id"}},
+        "custtype": "P"
+    }
+
+    quotations = Quotations("https://mock-url", {}, mock_config, mock_logger)
+    quotations.call_api = AsyncMock(return_value={"rt_cd": "1", "output": None})
+
+    result = await quotations.get_stock_info_by_code("005930")
+    assert result == {}
+
+@pytest.mark.asyncio
+async def test_get_market_cap_success():
+    mock_logger = MagicMock()
+    mock_config = {}
+
+    quotations = Quotations("https://mock-url", {}, mock_config, mock_logger)
+    quotations.get_stock_info_by_code = AsyncMock(return_value={
+        "stck_prpr_smkl_amt": "123456789000"
+    })
+
+    result = await quotations.get_market_cap("005930")
+    assert result == 123456789000
+
+@pytest.mark.asyncio
+async def test_get_market_cap_failure_invalid_format():
+    mock_logger = MagicMock()
+    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations.get_stock_info_by_code = AsyncMock(return_value={
+        "stck_prpr_smkl_amt": "INVALID"
+    })
+
+    result = await quotations.get_market_cap("005930")
+    assert result == 0
+
+@pytest.mark.asyncio
+async def test_get_market_cap_failure_missing_key():
+    mock_logger = MagicMock()
+    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations.get_stock_info_by_code = AsyncMock(return_value={})  # no market cap field
+
+    result = await quotations.get_market_cap("005930")
+    assert result == 0
+
+@pytest.mark.asyncio
+async def test_get_stock_name_by_code_success():
+    mock_logger = MagicMock()
+
+    # config와 headers는 최소 필수 필드 포함하도록 설정
+    mock_config = {
+        "tr_ids": {
+            "quotations": {
+                "search_info": "dummy-tr-id"
+            }
+        },
+        "custtype": "P"
+    }
+
+    quotations = Quotations("https://mock-url", {}, mock_config, mock_logger)
+
+    async def mock_info_method(_):
+        return {"hts_kor_isnm": "삼성전자"}
+    quotations.get_stock_info_by_code = mock_info_method
+
+    result = await quotations.get_stock_name_by_code("005930")
+
+    assert result == "삼성전자"
+
+@pytest.mark.asyncio
+async def test_get_stock_name_by_code_empty():
+    mock_logger = MagicMock()
+    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations.get_stock_info_by_code = AsyncMock(return_value={})  # no name field
+
+    result = await quotations.get_stock_name_by_code("005930")
+    assert result == ""

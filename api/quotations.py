@@ -6,6 +6,29 @@ class Quotations(_KoreaInvestAPIBase):
     def __init__(self, base_url, headers, config, logger):
         super().__init__(base_url, headers, config, logger)
 
+    async def get_stock_info_by_code(self, stock_code: str) -> dict:
+        """
+        종목코드로 종목의 전체 정보 (이름, 현재가, 시가총액 등)를 가져옵니다.
+        """
+        path = "/uapi/domestic-stock/v1/quotations/search-info"
+
+        self._headers["tr_id"] = self._config['tr_ids']['quotations']['search_info']
+        self._headers["custtype"] = self._config['custtype']
+
+        params = {
+            "PDNO": stock_code,
+            "FID_DIV_CLS_CODE": "2"
+        }
+
+        self.logger.info(f"{stock_code} 종목 정보 조회 시도...")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        if response and response.get("rt_cd") == "0" and response.get("output"):
+            return response["output"]
+        else:
+            self.logger.warning(f"{stock_code} 종목 정보 조회 실패: {response}")
+            return {}
+
     async def get_current_price(self, stock_code):
         path = "/uapi/domestic-stock/v1/quotations/inquire-price"
 
@@ -47,56 +70,69 @@ class Quotations(_KoreaInvestAPIBase):
             "change_rate": round(change_rate, 2)
         }
 
-    async def get_market_cap(self, stock_code):
-        path = "/uapi/domestic-stock/v1/quotations/search-info"
-
-        full_config = self._config
-        self._headers["tr_id"] = full_config['tr_ids']['quotations']['search_info']
-        self._headers["custtype"] = full_config['custtype']
-
-        params = {
-            "PDNO": stock_code,
-            "FID_DIV_CLS_CODE": "2"
-        }
-        self.logger.info(f"{stock_code} 시가총액 조회 시도...")
-        response = await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
-
-        if response and response.get('rt_cd') == '0' and response.get('output'):
-            market_cap = response['output'].get('stck_prpr_smkl_amt')
-            if market_cap:
-                self.logger.info(f"{stock_code} 시가총액: {market_cap}")
-            return response
+    async def get_market_cap(self, stock_code: str) -> int:
+        """
+        종목코드로 시가총액을 반환합니다. (단위: 원)
+        """
+        info = await self.get_stock_info_by_code(stock_code)
+        market_cap_str = info.get("stck_prpr_smkl_amt")  # 문자열로 반환됨
+        if market_cap_str and market_cap_str.isdigit():
+            return int(market_cap_str)
         else:
-            self.logger.error(f"{stock_code} 시가총액 조회 실패 또는 정보 없음: {response}")
-            return None
+            self.logger.warning(f"{stock_code} 시가총액 정보 없음 또는 형식 오류")
+            return 0
 
-    async def get_top_market_cap_stocks(self, market_code="0000"):
+    async def get_top_market_cap_stocks(self, count: int = 20, market_code: str = "0000") -> list[dict]:
+        """
+        시가총액 상위 종목 목록을 반환합니다.
+
+        :param count: 반환할 종목 수 (기본값 20개)
+        :param market_code: 시장 코드 (0000: 전체, 1001: 코스피, 1002: 코스닥 등)
+        :return: [{'code': 종목코드, 'name': 종목명, 'market_cap': 시가총액}, ...]
+        """
         path = "/uapi/domestic-stock/v1/ranking/market-cap"
 
-        full_config = self._config
-        self._headers["tr_id"] = full_config['tr_ids']['quotations']['top_market_cap']
-        self._headers["custtype"] = full_config['custtype']
+        self._headers["tr_id"] = self._config['tr_ids']['quotations']['top_market_cap']
+        self._headers["custtype"] = self._config['custtype']
 
         params = {
-            "fid_input_price_2": "",
-            "fid_cond_mrkt_div_code": "J",
+            "fid_cond_mrkt_div_code": "J",  # 주식시장
             "fid_cond_scr_div_code": "20174",
             "fid_div_cls_code": "0",
             "fid_input_iscd": market_code,
             "fid_trgt_cls_code": "20",
             "fid_trgt_exls_cls_code": "20",
             "fid_input_price_1": "",
+            "fid_input_price_2": "",
             "fid_vol_cnt": ""
         }
-        self.logger.info(f"시가총액 상위 {market_code} 종목 조회 시도...")
-        response = await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
 
-        if response and response.get('rt_cd') == '0' and response.get('output'):
-            self.logger.info(f"시가총액 상위 종목 조회 성공.")
-            return response
-        else:
-            self.logger.error(f"시가총액 상위 종목 조회 실패 또는 정보 없음: {response}")
-            return None
+        self.logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code})")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        results = []
+        if response and response.get("rt_cd") == "0" and "output" in response:
+            output_list = response["output"][:count]  # 상위 N개만
+
+            for item in output_list:
+                code = item.get("iscd") or item.get("mksc_shrn_iscd")  # 종목코드
+                market_cap = item.get("mktcap")  # 시가총액
+
+                if not code or not market_cap:
+                    continue
+
+                name = await self.get_stock_name_by_code(code)
+
+                results.append({
+                    "code": code,
+                    "name": name,
+                    "market_cap": int(market_cap.replace(",", "")) if market_cap.replace(",", "").isdigit() else 0
+                })
+
+            return results
+
+        self.logger.error(f"시가총액 상위 종목 조회 실패: {response}")
+        return []
 
     def get_previous_day_info(self, code: str) -> dict:
         """
@@ -156,3 +192,14 @@ class Quotations(_KoreaInvestAPIBase):
                 })
 
         return filtered
+
+    async def get_stock_name_by_code(self, stock_code: str) -> str:
+        """
+        종목코드를 입력하면 종목명을 반환합니다.
+        """
+        info = await self.get_stock_info_by_code(stock_code)
+        if not info or "hts_kor_isnm" not in info:
+            self.logger.warning(f"종목명 조회 실패 또는 응답 없음: {stock_code}")
+            return ""
+
+        return info["hts_kor_isnm"]
