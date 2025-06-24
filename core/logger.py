@@ -3,6 +3,7 @@ import logging
 import os
 from datetime import datetime
 import http.client
+import inspect
 
 
 class Logger:
@@ -69,9 +70,23 @@ class Logger:
     def error(self, message):
         """운영 및 디버깅 로그에 ERROR 레벨 메시지를 기록합니다."""
         self.operational_logger.error(message)
-        self.debug_logger.error(message)
+        caller_info = self._get_caller_info()
+        full_message = f"{caller_info} - {message}"
+        self.debug_logger.error(full_message)
 
     def critical(self, message):
         """운영 및 디버깅 로그에 CRITICAL 레벨 메시지를 기록합니다."""
         self.operational_logger.critical(message)
         self.debug_logger.critical(message)
+
+    def _get_caller_info(self):
+        """호출한 파일명과 라인 번호를 반환 (디버깅용)."""
+        frame = inspect.currentframe()
+        while frame:
+            info = inspect.getframeinfo(frame)
+            # 현재 logger.py 내부가 아닌 외부 호출 지점을 찾음
+            if "logger.py" not in info.filename:
+                filename = os.path.basename(info.filename)
+                return f"{filename}:{info.lineno}"
+            frame = frame.f_back
+        return "unknown"
