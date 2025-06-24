@@ -245,15 +245,30 @@ class TradingApp:
             from services.strategy_executor import StrategyExecutor
 
             try:
-                top_response = await self.trading_service.get_top_market_cap_stocks("0000")
-                if top_response.get('rt_cd') != '0':
-                    print("시가총액 상위 종목 조회 실패:", top_response.get('msg1', '알 수 없는 오류'))
+                # 사용자에게 입력받기
+                count_input = input("시가총액 상위 몇 개 종목을 조회할까요? (기본값: 30): ").strip()
+
+                try:
+                    count = int(count_input) if count_input else 30
+                    if count <= 0:
+                        print("0 이하의 수는 허용되지 않으므로 기본값 30을 사용합니다.")
+                        count = 30
+                except ValueError:
+                    print("숫자가 아닌 값이 입력되어 기본값 30을 사용합니다.")
+                    count = 30
+
+                top_response = await self.trading_service.get_top_market_cap_stocks("0000", count=count)
+
+                # ✅ 리스트이므로 .get() 사용 불가 → 대신 리스트 비어있는지 확인
+                if not top_response:
+                    print("시가총액 상위 종목 조회 실패: 결과 없음")
                     return running_status
 
+                # ✅ 리스트에서 종목코드 추출
                 top_stock_codes = [
-                    item["mksc_shrn_iscd"]
-                    for item in top_response["output"][:30]
-                    if "mksc_shrn_iscd" in item
+                    item["code"]
+                    for item in top_response[:count]
+                    if "code" in item
                 ]
 
                 # 백테스트 모드 전략 구성

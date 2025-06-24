@@ -33,7 +33,6 @@ class MomentumStrategy(Strategy):
                 after_price = await self.backtest_lookup(code)
             else:
                 price_data = await self.quotations.get_current_price(code)
-                # price_data에서 현재가 필드(예: 'stck_prpr')를 int형으로 추출
                 after_price = int(price_data.get("output", {}).get("stck_prpr", 0))
 
             summary["after"] = after_price
@@ -47,21 +46,30 @@ class MomentumStrategy(Strategy):
         not_follow_through = []
 
         for s in results:
-            is_success = s["change_rate"] >= self.min_change_rate and s["after_rate"] >= self.min_follow_through
+            code = s["symbol"]
+            name = await self.quotations.get_stock_name_by_code(code)  # ✅ 종목명 조회
+            display = f"{name}({code})" if name else code  # ✅ 종목명(종목코드) 또는 코드만
+
+            is_success = (
+                s["change_rate"] >= self.min_change_rate and
+                s["after_rate"] >= self.min_follow_through
+            )
 
             if is_success:
-                follow_through.append(s["symbol"])
+                follow_through.append(code)
                 self.logger.info(
-                    f"[성공] 종목: {s['symbol']} | 시가: {s['open']} | 종가: {s['current']} | "
+                    f"[성공] 종목: {display} | 시가: {s['open']} | 종가: {s['current']} | "
                     f"등락률: {s['change_rate']:.2f}% | 기준 등락률: {self.min_change_rate}% | "
-                    f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% | 기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
+                    f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% | "
+                    f"기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
                 )
             else:
-                not_follow_through.append(s["symbol"])
+                not_follow_through.append(code)
                 self.logger.info(
-                    f"[실패] 종목: {s['symbol']} | 시가: {s['open']} | 종가: {s['current']} | "
+                    f"[실패] 종목: {display} | 시가: {s['open']} | 종가: {s['current']} | "
                     f"등락률: {s['change_rate']:.2f}% | 기준 등락률: {self.min_change_rate}% | "
-                    f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% | 기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
+                    f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% | "
+                    f"기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
                 )
 
         total = len(results)

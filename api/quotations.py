@@ -82,21 +82,27 @@ class Quotations(_KoreaInvestAPIBase):
             self.logger.warning(f"{stock_code} 시가총액 정보 없음 또는 형식 오류")
             return 0
 
-    async def get_top_market_cap_stocks(self, count: int = 20, market_code: str = "0000") -> list[dict]:
+    async def get_top_market_cap_stocks(self, market_code: str, count: int = 20) -> list[dict]:
         """
-        시가총액 상위 종목 목록을 반환합니다.
+        시가총액 상위 종목 목록을 반환합니다. 최대 30개까지만 지원됩니다.
 
-        :param count: 반환할 종목 수 (기본값 20개)
         :param market_code: 시장 코드 (0000: 전체, 1001: 코스피, 1002: 코스닥 등)
-        :return: [{'code': 종목코드, 'name': 종목명, 'market_cap': 시가총액}, ...]
+        :param count: 반환할 종목 수 (기본값 20개, 최대 30개)
         """
-        path = "/uapi/domestic-stock/v1/ranking/market-cap"
+        if count <= 0:
+            self.logger.warning(f"요청된 count가 0 이하입니다. count={count}")
+            return []
+
+        if count > 30:
+            self.logger.warning(f"요청 수 {count}는 최대 허용값 30을 초과하므로 30개로 제한됩니다.")
+            count = 30
 
         self._headers["tr_id"] = self._config['tr_ids']['quotations']['top_market_cap']
         self._headers["custtype"] = self._config['custtype']
 
+        path = "/uapi/domestic-stock/v1/ranking/market-cap"
         params = {
-            "fid_cond_mrkt_div_code": "J",  # 주식시장
+            "fid_cond_mrkt_div_code": "J",
             "fid_cond_scr_div_code": "20174",
             "fid_div_cls_code": "0",
             "fid_input_iscd": market_code,
@@ -107,32 +113,34 @@ class Quotations(_KoreaInvestAPIBase):
             "fid_vol_cnt": ""
         }
 
-        self.logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code})")
+        self.logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code}, 요청개수: {count})")
         response = await self.call_api("GET", path, params=params, retry_count=1)
 
+        if not response or response.get("rt_cd") != "0" or not response.get("output"):
+            self.logger.warning("시가총액 응답 오류 또는 비어 있음")
+            return []
+
+        batch = response["output"][:count]
+        self.logger.info(f"API로부터 수신한 종목 수: {len(batch)}")
+
         results = []
-        if response and response.get("rt_cd") == "0" and "output" in response:
-            output_list = response["output"][:count]  # 상위 N개만
+        for item in batch:
+            code = item.get("iscd") or item.get("mksc_shrn_iscd")
+            raw_market_cap = item.get("stck_avls")
 
-            for item in output_list:
-                code = item.get("iscd") or item.get("mksc_shrn_iscd")  # 종목코드
-                market_cap = item.get("mktcap")  # 시가총액
+            if not code or not raw_market_cap:
+                continue
 
-                if not code or not market_cap:
-                    continue
+            name = await self.get_stock_name_by_code(code)
+            market_cap = int(raw_market_cap.replace(",", "")) if raw_market_cap.replace(",", "").isdigit() else 0
 
-                name = await self.get_stock_name_by_code(code)
+            results.append({
+                "code": code,
+                "name": name,
+                "market_cap": market_cap
+            })
 
-                results.append({
-                    "code": code,
-                    "name": name,
-                    "market_cap": int(market_cap.replace(",", "")) if market_cap.replace(",", "").isdigit() else 0
-                })
-
-            return results
-
-        self.logger.error(f"시가총액 상위 종목 조회 실패: {response}")
-        return []
+        return results
 
     def get_previous_day_info(self, code: str) -> dict:
         """
