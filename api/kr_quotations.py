@@ -150,14 +150,35 @@ class Quotations(_KoreaInvestAPIBase):
             "fid_cond_mrkt_div_code": "J",  # 주식시장
             "fid_input_iscd": code,
         }
-        response = self._client.request("get", "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
-                                        params)
-        data = response.json()
-        # 마지막 1개만 추출
-        return {
-            "prev_close": float(data["output"]["stck_clpr"]),
-            "prev_volume": int(data["output"]["acml_vol"])
-        }
+        try:
+            response = self._client.request("get", "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                                            params)
+            data = response.json()
+
+            # "output" 키가 없거나 output이 비어있는 경우를 추가로 검사하여 로깅
+            if not data or "output" not in data or not data["output"]:  #
+                self.logger.error(f"{code} 종목 전일 정보 응답에 'output' 데이터가 없거나 비어 있습니다. 응답: {data}")  #
+                return {"prev_close": 0, "prev_volume": 0}  #
+
+            output_data = data.get("output", {})
+
+            # 'stck_clpr' 또는 'acml_vol'이 없는 경우도 여기서 처리하고 로깅할 수 있습니다.
+            if "stck_clpr" not in output_data or "acml_vol" not in output_data:  #
+                self.logger.error(f"{code} 종목 전일 정보 응답에 필수 키가 없습니다. 응답 output: {output_data}")  #
+                return {"prev_close": 0, "prev_volume": 0}  #
+
+            prev_close = float(output_data.get("stck_clpr", 0))
+            prev_volume = int(output_data.get("acml_vol", 0))
+
+            return {
+                "prev_close": prev_close,
+                "prev_volume": prev_volume
+            }
+        except (ValueError, TypeError) as e:  # KeyError는 위에서 명시적으로 처리되므로 제거 가능
+            # 데이터 변환 실패 (예: 숫자가 아닌 문자열을 float/int로 변환 시도) 시 로깅
+            self.logger.error(f"{code} 종목 전일 정보 데이터 변환 실패: {e}, 응답: {data if 'data' in locals() else '없음'}")
+            return {"prev_close": 0, "prev_volume": 0}
+
 
     async def get_filtered_stocks_by_momentum(
             self, count=20, min_change_rate=10.0, min_volume_ratio=2.0
@@ -182,7 +203,15 @@ class Quotations(_KoreaInvestAPIBase):
             prev_close = prev_info.get("prev_close", 0)
             prev_volume = prev_info.get("prev_volume", 0)
 
+            if prev_volume <= 0: # 전일 거래량이 0이거나 유효하지 않을 때
+                self.logger.warning(f"{symbol} 종목 전일 거래량 정보가 없거나 유효하지 않아 필터링에서 제외합니다.")
+                continue # 이 종목을 건너뛰고 다음 루프 항목으로 이동합니다.
+
             summary = await self.get_price_summary(symbol)
+            if not summary:
+                self.logger.warning(f"{symbol} 종목 현재가 요약 정보를 가져오지 못했습니다. 필터링 제외.")
+                continue # 다음 종목으로 넘어감
+
             change_rate = summary.get("change_rate", 0)
             current_volume = int(item.get("acc_trdvol", 0))
 
