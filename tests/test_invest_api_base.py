@@ -3,6 +3,8 @@ import json
 from unittest.mock import MagicMock, patch
 from api.invest_api_base import _KoreaInvestAPIBase
 import requests
+import logging
+
 
 @pytest.mark.asyncio
 async def test_log_request_exception_cases(caplog):
@@ -90,32 +92,59 @@ async def test_call_api_with_invalid_json_type(caplog):
 @pytest.mark.asyncio
 async def test_call_api_token_renew_failed(caplog):
     """토큰 재발급 후에도 실패"""
-    api = _KoreaInvestAPIBase("http://test", {}, {}, logger=None)
-    api._env = MagicMock()
-    api._env.refresh_access_token.return_value = False  # 재발급 실패
+    mock_env = MagicMock()
+    mock_env.refresh_access_token.return_value = False
+
+    config = {"_env_instance": mock_env}
+    api = _KoreaInvestAPIBase("http://test", {}, config, logger=None)
+    api._env = mock_env  # config와 별도로 보장
 
     response_mock = MagicMock()
-    response_mock.status_code = 401
+    response_mock.status_code = 200
     response_mock.text = "expired"
-    response_mock.json.return_value = {"msg_cd": "EGW00123"}  # 토큰 오류 코드
+    response_mock.json.return_value = {
+        "rt_cd": "1",
+        "msg_cd": "EGW00123"
+    }
 
     api._session.request = MagicMock(return_value=response_mock)
 
-    result = await api.call_api("GET", "/token-expired")
+    with caplog.at_level(logging.ERROR):
+        result = await api.call_api("GET", "/token-expired")
+
     assert result is None
+    assert "토큰" in caplog.text and "실패" in caplog.text
+
 
 @pytest.mark.asyncio
 async def test_call_api_no_env_instance(caplog):
-    """_env_instance 없음"""
-    api = _KoreaInvestAPIBase("http://test", {}, {}, logger=None)
+    import api.invest_api_base as base_module
+    logger_name = "api.invest_api_base"
+
+    # logger 직접 설정
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = True  # caplog 연결
+
+    # 주입
+    api = base_module._KoreaInvestAPIBase("http://test", {}, {}, logger=logger)
     api._env = None
 
     response_mock = MagicMock()
-    response_mock.status_code = 401
+    response_mock.status_code = 200
     response_mock.text = "expired"
-    response_mock.json.return_value = {"msg_cd": "EGW00123"}
-
+    response_mock.json.return_value = {"rt_cd": "1", "msg_cd": "EGW00123"}
     api._session.request = MagicMock(return_value=response_mock)
 
-    result = await api.call_api("GET", "/no-env")
+    with caplog.at_level(logging.ERROR, logger=logger_name):
+        result = await api.call_api("GET", "/no-env")
+
+    print("\n=== Captured Log ===")
+    for r in caplog.records:
+        print(f"[{r.levelname}] {r.name} - {r.message}")
+    print("=====================\n")
+
     assert result is None
+    assert any("KoreaInvestEnv 인스턴스를 찾을 수 없어 토큰 초기화 불가" in r.message for r in caplog.records)
+
+

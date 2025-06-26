@@ -40,8 +40,9 @@ class _KoreaInvestAPIBase:
                 result = await self._handle_response(response, attempt, retry_count, delay)
                 if result == "retry":
                     continue
-                elif result is not None:
-                    return result
+                if result is None:
+                    continue  # 🔥 이 부분이 핵심!
+                return result
 
             except Exception as e:
                 self._log_request_exception(e)
@@ -120,8 +121,12 @@ class _KoreaInvestAPIBase:
             self.logger.error(f"잘못된 응답 형식: {response_json}")
             return None
 
+        # 🔥 토큰 만료 처리: 결과값 분기
         if response_json.get('rt_cd') == '1' and response_json.get('msg_cd') == 'EGW00123':
-            return await self._handle_token_expiration(response_json, attempt, retry_count, delay)
+            token_result = await self._handle_token_expiration(response_json, attempt, retry_count, delay)
+            if token_result == "retry":
+                return "retry"
+            return None
 
         self.logger.debug(f"API 응답 상태: {response.status_code}")
         self.logger.debug(f"API 응답 텍스트: {response.text}")
