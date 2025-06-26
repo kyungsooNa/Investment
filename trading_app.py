@@ -202,7 +202,7 @@ class TradingApp:
             try:
                 # 1~30위 시가총액 종목 가져오기
                 top_response = await self.trading_service.get_top_market_cap_stocks("0000")
-                if top_response.get('rt_cd') != '0':
+                if top_response.get('rt_cd') != '0': # list 'rt_cd' 없음.
                     print("시가총액 상위 종목 조회 실패:", top_response.get('msg1', '알 수 없는 오류'))
                     return running_status
 

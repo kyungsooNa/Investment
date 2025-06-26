@@ -7,7 +7,7 @@ import hashlib
 import logging
 import asyncio  # 비동기 처리를 위해 추가
 
-from api.base import _KoreaInvestAPIBase
+from api.invest_api_base import _KoreaInvestAPIBase
 
 
 class KoreaInvestTradingAPI(_KoreaInvestAPIBase):

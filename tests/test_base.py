@@ -1,7 +1,7 @@
 import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from api.base import _KoreaInvestAPIBase
+from api.invest_api_base import _KoreaInvestAPIBase
 import requests
 from api.env import KoreaInvestEnv
 
