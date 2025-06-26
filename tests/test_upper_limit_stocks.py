@@ -11,9 +11,9 @@ import pytz
 from app.data_handlers import DataHandlers
 from services.trading_service import TradingService
 from api.client import KoreaInvestAPI  # Mocking용
-from api.quotations import Quotations  # Mocking용
-from api.account import KoreaInvestAccountAPI  # Mocking용
-from api.trading import KoreaInvestTradingAPI  # Mocking용
+from api.kr_quotations import Quotations  # Mocking용
+from api.kr_account import KoreaInvestAccountAPI  # Mocking용
+from api.kr_trading import KoreaInvestTradingAPI  # Mocking용
 from api.websocket_client import WebSocketClient  # Mocking용
 from core.time_manager import TimeManager  # Mocking용
 from core.logger import Logger  # Mocking용

@@ -1,4 +1,4 @@
-# api/trading.py
+# api/kr_trading.py
 import requests
 import json
 import os

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from api.client import KoreaInvestAPI
-from api.quotations import Quotations
+from api.kr_quotations import Quotations
 
 @pytest.mark.asyncio
 async def test_quotations_get_price_summary_success():

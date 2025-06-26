@@ -1,4 +1,4 @@
-# api/account.py
+# api/kr_account.py
 from api.invest_api_base import _KoreaInvestAPIBase
 
 

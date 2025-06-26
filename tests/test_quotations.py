@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from api.quotations import Quotations
+from api.kr_quotations import Quotations
 
 @pytest.mark.asyncio
 async def test_get_price_summary():

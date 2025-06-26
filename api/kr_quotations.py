@@ -1,4 +1,4 @@
-# api/quotations.py
+# api/kr_quotations.py
 from api.invest_api_base import _KoreaInvestAPIBase
 
 

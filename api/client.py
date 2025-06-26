@@ -1,8 +1,8 @@
 # api/client.py
 from api.env import KoreaInvestEnv
-from api.quotations import Quotations
-from api.account import KoreaInvestAccountAPI
-from api.trading import KoreaInvestTradingAPI
+from api.kr_quotations import Quotations
+from api.kr_account import KoreaInvestAccountAPI
+from api.kr_trading import KoreaInvestTradingAPI
 from api.websocket_api import WebSocketAPI
 import logging
 
