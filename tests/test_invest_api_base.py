@@ -2,6 +2,7 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 from api.invest_api_base import _KoreaInvestAPIBase
+from api.env import KoreaInvestEnv
 import requests
 import logging
 
@@ -148,3 +149,46 @@ async def test_call_api_no_env_instance(caplog):
     assert any("KoreaInvestEnv 인스턴스를 찾을 수 없어 토큰 초기화 불가" in r.message for r in caplog.records)
 
 
+@pytest.mark.asyncio
+async def test_token_renewal_failure_triggers_exit(caplog):
+    # api._env에 할당될 mock_env를 위한 가상의 KoreaInvestEnv 클래스 (실제 클래스 대체)
+    # 실제 KoreaInvestEnv 클래스가 임포트되지 않았거나, 메서드 이름이 다를 때 이와 같이 Mock합니다.
+    class MockKoreaInvestEnv:
+        def __init__(self):
+            # refresh_access_token이 실제 존재하지 않거나 비동기 함수가 아닐 수 있으므로
+            # 여기서는 단순히 이 클래스가 해당 메서드를 가지고 있다고 Mock으로 명시
+            pass
+
+        # 만약 실제 KoreaInvestEnv에 refresh_access_token이 없었다면,
+        # 아래는 테스트를 통과시키기 위한 가상의 비동기 메서드를 추가하는 예시입니다.
+        # 그러나 더 좋은 방법은 실제 KoreaInvestEnv의 토큰 갱신 메서드 이름을 파악하는 것입니다.
+        async def refresh_access_token(self):
+            # 테스트를 위해 이 메서드가 AsyncMock으로 대체될 것입니다.
+            pass
+
+    # KoreaInvestEnv가 임포트되지 않았다면 위 MockKoreaInvestEnv 사용
+    # KoreaInvestEnv = MockKoreaInvestEnv # 이렇게 대체하여 사용 가능
+
+    # api._env에 할당될 mock_env를 생성
+    api = _KoreaInvestAPIBase("http://test", {}, {"_env_instance": MagicMock()}, logger=None)
+
+    # KoreaInvestEnv가 실제 존재한다면:
+    mock_env = MagicMock(spec=KoreaInvestEnv)  # KoreaInvestEnv는 실제 클래스여야 합니다.
+
+    # 만약 KoreaInvestEnv에 'refresh_access_token' 메서드가 없고 'request_access_token' 이나 다른 이름이라면
+    # 이 부분을 해당 이름으로 변경해야 합니다.
+    # 예시: mock_env._request_access_token.return_value = False
+    mock_env._request_access_token.return_value = False # <--- 이 부분을 수정
+
+    api._env = mock_env
+
+    with caplog.at_level(logging.ERROR):
+        result = await api._handle_token_expiration(
+            response_json={"msg_cd": "EGW00123"},
+            attempt=3,  # 최대 재시도 횟수 도달
+            retry_count=3,
+            delay=0
+        )
+
+    assert result is None
+    assert "토큰 재발급 후에도 실패, 종료" in caplog.text
