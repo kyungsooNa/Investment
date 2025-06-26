@@ -201,7 +201,13 @@ class KoreaInvestEnv:
                 return self.access_token
 
         self.logger.info("새로운 접근 토큰 발급 시도...")
-        auth_url = f"{self.base_url}/oauth2/tokenP"  # self.base_url은 이미 set_trading_mode에서 현재 환경에 맞게 설정됨
+        return self._request_access_token()
+
+    def _request_access_token(self):
+        """
+        새로운 접근 토큰을 요청하고 파일에 저장합니다.
+        """
+        auth_url = f"{self.base_url}/oauth2/tokenP"
         headers = {
             "Content-Type": "application/json",
             "User-Agent": self.my_agent,
@@ -223,14 +229,13 @@ class KoreaInvestEnv:
                 self.token_expired_at = token_issue_time + timedelta(seconds=expires_in - 60)
                 expires_at_str = self.token_expired_at.strftime('%Y-%m-%d %H:%M:%S')
 
-                # 토큰 파일에 현재 base_url도 함께 저장
-                self._save_token_to_file(self.access_token, expires_at_str, self.base_url)  # <--- base_url도 저장
-
+                self._save_token_to_file(self.access_token, expires_at_str, self.base_url)
                 self.logger.info(f"토큰 발급 성공. 만료 시간: {self.token_expired_at.strftime('%Y-%m-%d %H:%M:%S %Z%z')}")
                 return self.access_token
             else:
                 self.logger.error(f"토큰 발급 실패 - 응답 데이터 오류: {auth_data}")
                 return None
+
         except requests.exceptions.RequestException as e:
             self.logger.error(f"토큰 발급 중 네트워크 오류: {e}")
             return None
