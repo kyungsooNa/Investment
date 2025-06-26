@@ -106,6 +106,7 @@ async def testcall_api_success():
     assert result == {"key": "value"}
 
 @pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)  # <-- sleep patch
 async def testcall_api_retry_on_429(monkeypatch):
     dummy = DummyAPI("https://mock-base", {}, {}, MagicMock())
     responses = []
@@ -132,6 +133,7 @@ async def testcall_api_retry_on_429(monkeypatch):
     assert len(responses) == 3
 
 @pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)  # <-- sleep patch
 async def testcall_api_retry_on_500_rate_limit(monkeypatch):
     dummy = DummyAPI("https://mock-base", {}, {}, MagicMock())
     responses = []
