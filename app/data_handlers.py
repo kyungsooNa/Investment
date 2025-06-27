@@ -61,24 +61,36 @@ class DataHandlers:
             print(f"실패: 시가총액 상위 종목 조회.")
             self.logger.error(f"실패: 시가총액 상위 종목 조회: {top_market_cap_stocks}")
 
-    async def handle_get_top_10_market_cap_stocks_with_prices(self):
-        """
-        시가총액 1~10위 종목의 현재가를 조회하고 출력하는 핸들러.
-        성공 시 True, 실패 시 False 반환 (앱 종료 여부 판단용).
-        """
-        print("\n--- 시가총액 1~10위 종목 현재가 조회 시도 ---")
-        top_10_with_prices = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
-        if top_10_with_prices:
-            print("\n성공: 시가총액 1~10위 종목 현재가:")
-            for stock in top_10_with_prices:
-                print(
-                    f"  순위: {stock['rank']}, 종목명: {stock['name']}, 종목코드: {stock['code']}, 현재가: {stock['current_price']}원")
-            self.logger.info(f"시가총액 1~10위 종목 현재가 조회 성공: {top_10_with_prices}")
-            return True
-        else:
-            print("\n실패: 시가총액 1~10위 종목 현재가 조회.")
-            self.logger.error("시가총액 1~10위 종목 현재가 조회 실패.")
+    async def handle_get_top_10_market_cap_stocks_with_prices(self):
+        print("\n--- 시가총액 1~10위 종목 현재가 조회 시도 ---")
+        self.logger.info("시가총액 1~10위 종목 현재가 조회 시도")
+        try:
+            stocks_data = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+
+            if stocks_data is None: # None은 조회 자체의 실패로 간주
+                print("\n실패: 시가총액 1~10위 종목 현재가 조회.")
+                self.logger.error("시가총액 1~10위 종목 현재가 조회 실패: None 반환됨")
+                return False
+            elif not stocks_data: # 빈 리스트는 조회 성공, 결과 없음으로 간주
+                print("\n성공: 시가총액 1~10위 종목 현재가:")
+                print("  조회된 종목이 없습니다.")
+                self.logger.info("조회된 종목이 없습니다.") # 이 줄을 추가합니다.
+                return True
+            else: # 종목이 있는 경우
+                print("\n성공: 시가총액 1~10위 종목 현재가:")
+                for stock in stocks_data:
+                    rank = stock.get('rank', 'N/A')
+                    name = stock.get('name', 'N/A')
+                    code = stock.get('code', 'N/A')
+                    price = stock.get('current_price', 'N/A')
+                    print(f"  순위: {rank}, 종목명: {name}, 종목코드: {code}, 현재가: {price}원")
+                self.logger.info(f"시가총액 1~10위 종목 현재가 조회 성공: {len(stocks_data)}개 종목")
+                return True
+
+        except Exception as e:
+            print(f"\n실패: 시가총액 1~10위 종목 현재가 조회.")
+            self.logger.error(f"시가총액 1~10위 종목 현재가 조회 중 오류 발생: {e}")
             return False
 
     async def handle_display_stock_change_rate(self, stock_code):
