@@ -1,4 +1,5 @@
 # trading_app.py
+from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from core.config_loader import load_config
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
@@ -76,7 +77,7 @@ class TradingApp:
                 raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
             # --- API 클라이언트 및 서비스 계층 인스턴스 재초기화 ---
-            self.api_client = KoreaInvestAPI(self.env, self.logger)
+            self.api_client = KoreaInvestApiClient(self.env, self.logger)
             self.trading_service = TradingService(self.api_client, self.env, self.logger, self.time_manager)
 
             # 핸들러 클래스 인스턴스화 (서비스와 로거, 타임 매니저 주입)

@@ -22,7 +22,7 @@ async def test_quotations_get_price_summary_success():
         "is_paper_trading": False
     }
 
-    # KoreaInvestAPI 인스턴스 생성
+    # KoreaInvestApiClient 인스턴스 생성
     client = KoreaInvestApiClient(env=mock_env)
 
     # quotations.call_api 비동기 메서드 모킹 (실제 네트워크 호출 차단)

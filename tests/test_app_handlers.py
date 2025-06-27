@@ -43,7 +43,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_time_manager = mock.AsyncMock(spec_set=TimeManager)
         self.mock_time_manager.is_market_open.return_value = True  # 기본값 설정 (시장이 열려있다고 가정)
 
-        # KoreaInvestAPI Mocking: spec을 제거하여 동적 속성 할당을 허용
+        # KoreaInvestApiClient Mocking: spec을 제거하여 동적 속성 할당을 허용
         self.mock_api_client = mock.AsyncMock()
 
         # 하위 API 클라이언트들을 Mock 객체로 할당. 이들 자체에 spec_set을 적용.
