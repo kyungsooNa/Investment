@@ -1,4 +1,5 @@
-# api/korea_invest_env.py
+# brokers/korea_investment/korea_invest_env.py
+
 import requests
 import json
 import os

@@ -1,4 +1,4 @@
-# api/korea_invest_client.py
+# brokers/korea_investment/korea_invest_client.py
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
