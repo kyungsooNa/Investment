@@ -44,7 +44,7 @@ class BrokerAPIWrapper:
         return self.stock_mapper.get_code_by_name(name)
 
     async def get_balance(self):
-        return await self.account.get_balance()
+        return await self.account.get_account_balance()
 
     async def buy_stock(self, code: str, quantity: int, price: int):
         return await self.trading.buy(code, quantity, price)
