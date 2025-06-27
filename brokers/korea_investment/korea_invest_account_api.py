@@ -1,8 +1,8 @@
-# api/kr_account.py
-from api.invest_api_base import _KoreaInvestAPIBase
+# brokers/korea_investment/korea_invest_account_api.py
 
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 
-class KoreaInvestAccountAPI(_KoreaInvestAPIBase):
+class KoreaInvestApiAccount(KoreaInvestApiBase):
     def __init__(self, base_url, headers, config, logger):
         super().__init__(base_url, headers, config, logger)
 

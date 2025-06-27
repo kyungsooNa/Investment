@@ -1,11 +1,8 @@
 # services/trading_service.py
-from api.client import KoreaInvestAPI
-from api.env import KoreaInvestEnv
+from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from core.time_manager import TimeManager
 import logging
-import datetime
-import asyncio  # async/await 사용을 위해 추가
-import time  # time.sleep 사용 (TimeManager에서 여전히 사용)
 
 
 class TradingService:
@@ -14,7 +11,7 @@ class TradingService:
     이 클래스의 메서드는 UI와 독립적으로 데이터를 조회하고 처리하며, 결과를 반환합니다.
     """
 
-    def __init__(self, api_client: KoreaInvestAPI, env: KoreaInvestEnv, logger=None, time_manager: TimeManager = None):
+    def __init__(self, api_client: KoreaInvestApiClient, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None):
         self._api_client = api_client
         self._env = env
         self.logger = logger if logger else logging.getLogger(__name__)

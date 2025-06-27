@@ -1,4 +1,4 @@
-# api/kr_trading.py
+# brokers/korea_investment/korea_invest_trading_api.py
 import requests
 import json
 import os
@@ -7,10 +7,9 @@ import hashlib
 import logging
 import asyncio  # 비동기 처리를 위해 추가
 
-from api.invest_api_base import _KoreaInvestAPIBase
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 
-
-class KoreaInvestTradingAPI(_KoreaInvestAPIBase):
+class KoreaInvestApiTrading(KoreaInvestApiBase):
     def __init__(self, base_url, headers, config, logger):
         super().__init__(base_url, headers, config, logger)
 

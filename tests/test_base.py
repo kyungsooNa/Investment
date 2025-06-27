@@ -1,11 +1,11 @@
 import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from api.invest_api_base import _KoreaInvestAPIBase
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 import requests
-from api.env import KoreaInvestEnv
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 
-class DummyAPI(_KoreaInvestAPIBase):
+class DummyAPI(KoreaInvestApiBase):
     # call_api를 호출 가능하도록 래핑
     async def call_api_wrapper(self, *args, **kwargs):
         return await self.call_api(*args, **kwargs)
@@ -160,7 +160,7 @@ async def testcall_api_retry_on_500_rate_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def testcall_api_token_expired_retry(monkeypatch):
-    dummy_env = MagicMock(spec=KoreaInvestEnv)
+    dummy_env = MagicMock(spec=KoreaInvestApiEnv)
     dummy_env.access_token = "oldtoken"
     dummy_env.token_expired_at = 12345
 

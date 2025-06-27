@@ -1,8 +1,7 @@
 # trading_app.py
-import os
 from core.config_loader import load_config
-from api.env import KoreaInvestEnv
-from api.client import KoreaInvestAPI
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from services.trading_service import TradingService
 from core.time_manager import TimeManager
 from core.logger import Logger
@@ -48,7 +47,7 @@ class TradingApp:
             config_data.update(main_config_data)
             config_data.update(tr_ids_data)
 
-            self.env = KoreaInvestEnv(config_data, self.logger)
+            self.env = KoreaInvestApiEnv(config_data, self.logger)
 
             # TimeManager 초기화 (환경 설정 로드 후)
             self.time_manager = TimeManager(

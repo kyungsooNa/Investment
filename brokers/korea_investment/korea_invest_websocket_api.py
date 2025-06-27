@@ -1,4 +1,4 @@
-# api/websocket_api.py
+# api/korea_invest_websocket_api.py
 import websockets  # pip install websockets
 import json
 import logging
@@ -11,16 +11,16 @@ from Crypto.Cipher import AES  # pip install pycryptodome
 from Crypto.Util.Padding import unpad
 from base64 import b64decode
 
-from api.env import KoreaInvestEnv  # KoreaInvestEnv 클래스 임포트
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # KoreaInvestEnv 클래스 임포트
 
 
-class WebSocketAPI:
+class KereaInvestWebSocketAPI:
     """
     한국투자증권 Open API의 웹소켓 연결 및 실시간 데이터 수신을 관리하는 클래스입니다.
     `websockets` 라이브러리(asyncio 기반)를 사용하며, 다양한 실시간 데이터 파싱을 포함합니다.
     """
 
-    def __init__(self, env: KoreaInvestEnv, logger=None):
+    def __init__(self, env: KoreaInvestApiEnv, logger=None):
         self._env = env
         self.logger = logger if logger else logging.getLogger(__name__)
         self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)

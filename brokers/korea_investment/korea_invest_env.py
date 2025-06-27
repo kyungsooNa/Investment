@@ -1,4 +1,4 @@
-# api/env.py
+# api/korea_invest_env.py
 import requests
 import json
 import os
@@ -9,7 +9,7 @@ import logging
 import pytz
 
 
-class KoreaInvestEnv:
+class KoreaInvestApiEnv:
     """
     한국투자증권 Open API 환경 설정을 관리하는 클래스입니다.
     API 키, 계좌 정보, 도메인 정보 등을 로드하고,

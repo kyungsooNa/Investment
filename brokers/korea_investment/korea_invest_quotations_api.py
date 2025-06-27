@@ -1,8 +1,8 @@
-# api/kr_quotations.py
-from api.invest_api_base import _KoreaInvestAPIBase
+# brokers/korea_investment/korea_invest_quotations_api.py
 
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 
-class Quotations(_KoreaInvestAPIBase):
+class KoreaInvestApiQuotations(KoreaInvestApiBase):
     def __init__(self, base_url, headers, config, logger):
         super().__init__(base_url, headers, config, logger)
 
@@ -151,7 +151,8 @@ class Quotations(_KoreaInvestAPIBase):
             "fid_input_iscd": code,
         }
         try:
-            response = self._client.request("get", "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            response = self._client.request("get",
+                                            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
                                             params)
             data = response.json()
 
@@ -179,7 +180,6 @@ class Quotations(_KoreaInvestAPIBase):
             self.logger.error(f"{code} 종목 전일 정보 데이터 변환 실패: {e}, 응답: {data if 'data' in locals() else '없음'}")
             return {"prev_close": 0, "prev_volume": 0}
 
-
     async def get_filtered_stocks_by_momentum(
             self, count=20, min_change_rate=10.0, min_volume_ratio=2.0
     ) -> list:
@@ -203,14 +203,14 @@ class Quotations(_KoreaInvestAPIBase):
             prev_close = prev_info.get("prev_close", 0)
             prev_volume = prev_info.get("prev_volume", 0)
 
-            if prev_volume <= 0: # 전일 거래량이 0이거나 유효하지 않을 때
+            if prev_volume <= 0:  # 전일 거래량이 0이거나 유효하지 않을 때
                 self.logger.warning(f"{symbol} 종목 전일 거래량 정보가 없거나 유효하지 않아 필터링에서 제외합니다.")
-                continue # 이 종목을 건너뛰고 다음 루프 항목으로 이동합니다.
+                continue  # 이 종목을 건너뛰고 다음 루프 항목으로 이동합니다.
 
             summary = await self.get_price_summary(symbol)
             if not summary:
                 self.logger.warning(f"{symbol} 종목 현재가 요약 정보를 가져오지 못했습니다. 필터링 제외.")
-                continue # 다음 종목으로 넘어감
+                continue  # 다음 종목으로 넘어감
 
             change_rate = summary.get("change_rate", 0)
             current_volume = int(item.get("acc_trdvol", 0))

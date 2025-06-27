@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from api.kr_quotations import Quotations
+from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 
 @pytest.mark.asyncio
 async def test_get_price_summary():
@@ -18,8 +18,8 @@ async def test_get_price_summary():
         "custtype": "P"
     }
 
-    # 2. Quotations 인스턴스 생성
-    quotations = Quotations(
+    # 2. KoreaInvestApiQuotations 인스턴스 생성
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -61,8 +61,8 @@ async def test_get_price_summary_open_price_zero():
         "custtype": "P"
     }
 
-    # 2. Quotations 인스턴스 생성
-    quotations = Quotations(
+    # 2. KoreaInvestApiQuotations 인스턴스 생성
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -97,7 +97,7 @@ async def test_get_top_market_cap_stocks_success():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -144,7 +144,7 @@ async def test_get_top_market_cap_stocks_failure():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -175,7 +175,7 @@ async def test_get_filtered_stocks_by_momentum():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -219,7 +219,7 @@ async def test_get_stock_info_by_code_success():
         "custtype": "P"
     }
 
-    quotations = Quotations("https://mock-url", {}, mock_config, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, mock_config, mock_logger)
     mock_output = {
         "hts_kor_isnm": "삼성전자",
         "stck_prpr_smkl_amt": "500000000000"
@@ -238,7 +238,7 @@ async def test_get_stock_info_by_code_failure():
         "custtype": "P"
     }
 
-    quotations = Quotations("https://mock-url", {}, mock_config, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, mock_config, mock_logger)
     quotations.call_api = AsyncMock(return_value={"rt_cd": "1", "output": None})
 
     result = await quotations.get_stock_info_by_code("005930")
@@ -251,7 +251,7 @@ async def test_get_market_cap_success():
     mock_logger = MagicMock()
     mock_config = {}
 
-    quotations = Quotations("https://mock-url", {}, mock_config, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, mock_config, mock_logger)
     quotations.get_stock_info_by_code = AsyncMock(return_value={
         "stck_prpr_smkl_amt": "123456789000"
     })
@@ -264,7 +264,7 @@ async def test_get_market_cap_success():
 async def test_get_market_cap_failure_invalid_format():
     # ... (기존 코드) ...
     mock_logger = MagicMock()
-    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, {}, mock_logger)
     quotations.get_stock_info_by_code = AsyncMock(return_value={
         "stck_prpr_smkl_amt": "INVALID"
     })
@@ -277,7 +277,7 @@ async def test_get_market_cap_failure_invalid_format():
 async def test_get_market_cap_conversion_error():
     # ... (기존 코드) ...
     mock_logger = MagicMock()
-    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, {}, mock_logger)
     quotations.get_stock_info_by_code = AsyncMock(return_value={
         "stck_prpr_smkl_amt": "invalid_number"
     })
@@ -290,7 +290,7 @@ async def test_get_market_cap_conversion_error():
 @pytest.mark.asyncio
 async def test_get_market_cap_failure_missing_key():
     mock_logger = MagicMock()
-    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, {}, mock_logger)
     quotations.get_stock_info_by_code = AsyncMock(return_value={})  # no market cap field
 
     result = await quotations.get_market_cap("005930")
@@ -310,7 +310,7 @@ async def test_get_stock_name_by_code_success():
         "custtype": "P"
     }
 
-    quotations = Quotations("https://mock-url", {}, mock_config, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, mock_config, mock_logger)
 
     async def mock_info_method(_):
         return {"hts_kor_isnm": "삼성전자"}
@@ -324,7 +324,7 @@ async def test_get_stock_name_by_code_success():
 async def test_get_stock_name_by_code_empty():
     # ... (기존 코드) ...
     mock_logger = MagicMock()
-    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, {}, mock_logger)
     quotations.get_stock_info_by_code = AsyncMock(return_value={})  # no name field
 
     result = await quotations.get_stock_name_by_code("005930")
@@ -335,7 +335,7 @@ async def test_get_stock_name_by_code_empty():
 async def test_get_stock_name_by_code_key_missing():
     # ... (기존 코드) ...
     mock_logger = MagicMock()
-    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, {}, mock_logger)
     quotations.get_stock_info_by_code = AsyncMock(return_value={"other_key": "value"}) # `hts_kor_isnm` 키 없음
 
     result = await quotations.get_stock_name_by_code("005930")
@@ -358,7 +358,7 @@ async def test_get_top_market_cap_stocks_success_revised():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -428,7 +428,7 @@ async def test_get_top_market_cap_stocks_failure_rt_cd_not_zero():
         "custtype": "P"
     }
 
-    quotations = Quotations("https://mock-base", {}, mock_config, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-base", {}, mock_config, mock_logger)
     quotations.call_api = AsyncMock(return_value={
         "rt_cd": "1",  # 실패 코드
         "msg1": "API 호출 실패",
@@ -450,7 +450,7 @@ async def test_get_top_market_cap_stocks_count_validation():
         "custtype": "P"
     }
 
-    quotations = Quotations("https://mock-base", {}, mock_config, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-base", {}, mock_config, mock_logger)
 
     quotations.call_api = AsyncMock()
     quotations.get_stock_name_by_code = AsyncMock()
@@ -501,7 +501,7 @@ async def test_get_filtered_stocks_by_momentum_price_summary_failure():
         },
         "custtype": "P"
     }
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url="https://mock-base",
         headers={},
         config=mock_config,
@@ -548,7 +548,7 @@ async def test_get_filtered_stocks_by_momentum_prev_day_info_failure():
         },
         "custtype": "P"
     }
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url="https://mock-base",
         headers={},
         config=mock_config,
@@ -580,7 +580,7 @@ async def test_get_filtered_stocks_by_momentum_prev_day_info_failure():
 async def test_get_stock_name_by_code_no_info():
     # ... (기존 코드) ...
     mock_logger = MagicMock()
-    quotations = Quotations("https://mock-url", {}, {}, mock_logger)
+    quotations = KoreaInvestApiQuotations("https://mock-url", {}, {}, mock_logger)
     quotations.get_stock_info_by_code = AsyncMock(return_value={})  # 정보 없음
 
     result = await quotations.get_stock_name_by_code("005930")
@@ -603,7 +603,7 @@ async def test_get_filtered_stocks_by_momentum_no_top_stocks_output():
         },
         "custtype": "P"
     }
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url="https://mock-base",
         headers={},
         config=mock_config,
@@ -638,7 +638,7 @@ async def test_get_price_summary_no_response():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -691,7 +691,7 @@ async def test_get_top_market_cap_stocks_item_missing_keys():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -742,7 +742,7 @@ async def test_get_previous_day_info_success():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -799,7 +799,7 @@ async def test_get_previous_day_info_api_failure():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url="https://mock-base",
         headers={},
         config=mock_config,
@@ -836,7 +836,7 @@ async def test_get_previous_day_info_missing_output_keys():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers={},
         config=mock_config,
@@ -883,7 +883,7 @@ async def test_get_filtered_stocks_by_momentum_no_top_stocks_output():
         },
         "custtype": "P"
     }
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url="https://mock-base",
         headers={},
         config=mock_config,
@@ -920,7 +920,7 @@ async def test_init_with_provided_headers():
     }
     custom_headers = {"User-Agent": "MyTestAgent", "Content-Type": "application/xml"}
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url=mock_config["base_url"],
         headers=custom_headers,  # 명시적으로 headers 전달
         config=mock_config,
@@ -940,7 +940,7 @@ async def test_init_with_provided_headers():
 @pytest.mark.asyncio
 async def test_get_price_summary_with_invalid_response():
     mock_logger = AsyncMock()
-    mock_api = Quotations("base_url", {}, {
+    mock_api = KoreaInvestApiQuotations("base_url", {}, {
         "tr_ids": {"quotations": {"inquire_price": "ID"}},
         "custtype": "P"
     }, mock_logger)
@@ -957,7 +957,7 @@ async def test_get_price_summary_with_invalid_response():
 @pytest.mark.asyncio
 async def test_get_market_cap_with_invalid_string():
     mock_logger = AsyncMock()
-    mock_api = Quotations("base_url", {}, {
+    mock_api = KoreaInvestApiQuotations("base_url", {}, {
         "tr_ids": {"quotations": {"search_info": "ID"}},
         "custtype": "P"
     }, mock_logger)
@@ -985,7 +985,7 @@ async def test_get_previous_day_info_missing_required_keys():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url="https://mock-base",
         headers={},
         config=mock_config,
@@ -1030,7 +1030,7 @@ async def test_get_previous_day_info_value_error():
         "custtype": "P"
     }
 
-    quotations = Quotations(
+    quotations = KoreaInvestApiQuotations(
         base_url="https://mock-base",
         headers={},
         config=mock_config,

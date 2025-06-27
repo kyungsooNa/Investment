@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from api.websocket_client import WebSocketClient  # 실제 경로에 맞게 조정
+from brokers.korea_investment.korea_invest_websocket_client import KoreaInvestWebSocketClient  # 실제 경로에 맞게 조정
 
 @pytest.mark.asyncio
 async def test_websocket_client_initialization():
@@ -12,7 +12,7 @@ async def test_websocket_client_initialization():
         "base_url": "https://mock-base"
     }
 
-    client = WebSocketClient(env=mock_env)
+    client = KoreaInvestWebSocketClient(env=mock_env)
     assert client._env == mock_env
     assert client._config["websocket_url"] == "wss://mock-url"
     assert client._is_connected is False
@@ -27,10 +27,11 @@ async def test_websocket_client_connect_success():
         "base_url": "https://mock-base"
     }
 
-    client = WebSocketClient(env=mock_env)
+    client = KoreaInvestWebSocketClient(env=mock_env)
     client.approval_key = "MOCKED_KEY"  # ✅ 이걸 미리 설정해야 connect까지 진행됨
 
-    with patch("api.websocket_client.websockets.connect", new_callable=AsyncMock) as mock_connect:
+    patch_target = f"{KoreaInvestWebSocketClient.__module__}.websockets.connect"
+    with patch(patch_target, new_callable=AsyncMock) as mock_connect:
         await client.connect()
         mock_connect.assert_called_once_with("wss://mock-url", ping_interval=20, ping_timeout=20)
         assert client._is_connected is True
@@ -45,7 +46,7 @@ async def test_websocket_client_disconnect():
         "base_url": "https://mock-base"
     }
 
-    client = WebSocketClient(env=mock_env)
+    client = KoreaInvestWebSocketClient(env=mock_env)
     mock_ws = AsyncMock()
     client.ws = mock_ws
     client._is_connected = True
@@ -65,7 +66,7 @@ async def test_receive_message_handler_called():
         "base_url": "https://mock-base"
     }
 
-    client = WebSocketClient(env=mock_env)
+    client = KoreaInvestWebSocketClient(env=mock_env)
     dummy_message = '{"header": {}, "body": {}}'
     callback = AsyncMock()
     client.on_realtime_message_callback = callback

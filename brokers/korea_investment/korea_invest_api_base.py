@@ -1,13 +1,13 @@
-# api/invest_api_base.py
+# api/korea_invest_api_base.py
 import requests
 import json
 import certifi
 import logging
 import asyncio  # 비동기 처리를 위해 추가
-from api.env import KoreaInvestEnv
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 
 
-class _KoreaInvestAPIBase:
+class KoreaInvestApiBase:
     """
     모든 한국투자증권 API 호출 클래스가 공통적으로 사용할 기본 클래스입니다.
     requests.Session을 사용하여 연결 효율성을 높입니다.
@@ -134,7 +134,7 @@ class _KoreaInvestAPIBase:
 
     async def _handle_token_expiration(self, response_json, attempt, retry_count, delay):
         self.logger.error("토큰 만료 오류 감지. 다음 요청 시 토큰을 재발급합니다.")
-        if self._env and isinstance(self._env, KoreaInvestEnv):
+        if self._env and isinstance(self._env, KoreaInvestApiEnv):
             self._env.access_token = None
             self._env.token_expired_at = None
 

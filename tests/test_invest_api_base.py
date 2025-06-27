@@ -1,15 +1,15 @@
 import pytest
 import json
-from unittest.mock import MagicMock, patch
-from api.invest_api_base import _KoreaInvestAPIBase
-from api.env import KoreaInvestEnv
+from unittest.mock import MagicMock
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import requests
 import logging
 
 
 @pytest.mark.asyncio
 async def test_log_request_exception_cases(caplog):
-    api = _KoreaInvestAPIBase("http://test", {}, {}, logger=None)
+    api = KoreaInvestApiBase("http://test", {}, {}, logger=None)
 
     class DummyResponse:
         status_code = 500
@@ -30,7 +30,7 @@ async def test_log_request_exception_cases(caplog):
 
 @pytest.mark.asyncio
 async def test_execute_request_post(monkeypatch):
-    api = _KoreaInvestAPIBase("http://test", {}, {}, logger=None)
+    api = KoreaInvestApiBase("http://test", {}, {}, logger=None)
     mock_response = MagicMock()
     mock_response.status_code = 200
     monkeypatch.setattr(api._session, "post", lambda *a, **k: mock_response)
@@ -39,7 +39,7 @@ async def test_execute_request_post(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_execute_request_invalid_method():
-    api = _KoreaInvestAPIBase("http://test", {}, {}, logger=None)
+    api = KoreaInvestApiBase("http://test", {}, {}, logger=None)
     with pytest.raises(ValueError):
         await api._execute_request("PUT", "http://test", {}, {})
 
@@ -54,7 +54,7 @@ class ExplodingHeader:
 @pytest.mark.asyncio
 async def test_log_headers_unicode_error_with_custom_object(caplog):
     headers = {"bad": ExplodingHeader()}
-    api = _KoreaInvestAPIBase("http://test", headers, {}, logger=None)
+    api = KoreaInvestApiBase("http://test", headers, {}, logger=None)
 
     with caplog.at_level("DEBUG"):
         api._log_headers()
@@ -69,7 +69,7 @@ async def test_call_api_with_http_error_status(caplog):
     response_mock.status_code = 500
     response_mock.text = "Internal Server Error"
 
-    api = _KoreaInvestAPIBase("http://test", {}, {}, logger=None)
+    api = KoreaInvestApiBase("http://test", {}, {}, logger=None)
     api._session.request = MagicMock(return_value=response_mock)
 
     result = await api.call_api("GET", "/fail")
@@ -83,7 +83,7 @@ async def test_call_api_with_invalid_json_type(caplog):
     response_mock.status_code = 200
     response_mock.json.return_value = "not a dict"
 
-    api = _KoreaInvestAPIBase("http://test", {}, {}, logger=None)
+    api = KoreaInvestApiBase("http://test", {}, {}, logger=None)
     api._session.request = MagicMock(return_value=response_mock)
 
     result = await api.call_api("GET", "/invalid")
@@ -97,7 +97,7 @@ async def test_call_api_token_renew_failed(caplog):
     mock_env.refresh_access_token.return_value = False
 
     config = {"_env_instance": mock_env}
-    api = _KoreaInvestAPIBase("http://test", {}, config, logger=None)
+    api = KoreaInvestApiBase("http://test", {}, config, logger=None)
     api._env = mock_env  # config와 별도로 보장
 
     response_mock = MagicMock()
@@ -119,8 +119,8 @@ async def test_call_api_token_renew_failed(caplog):
 
 @pytest.mark.asyncio
 async def test_call_api_no_env_instance(caplog):
-    import api.invest_api_base as base_module
-    logger_name = "api.invest_api_base"
+    from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
+    logger_name = KoreaInvestApiBase.__module__
 
     # logger 직접 설정
     logger = logging.getLogger(logger_name)
@@ -128,7 +128,7 @@ async def test_call_api_no_env_instance(caplog):
     logger.propagate = True  # caplog 연결
 
     # 주입
-    api = base_module._KoreaInvestAPIBase("http://test", {}, {}, logger=logger)
+    api = KoreaInvestApiBase("http://test", {}, {}, logger=logger)
     api._env = None
 
     response_mock = MagicMock()
@@ -170,10 +170,10 @@ async def test_token_renewal_failure_triggers_exit(caplog):
     # KoreaInvestEnv = MockKoreaInvestEnv # 이렇게 대체하여 사용 가능
 
     # api._env에 할당될 mock_env를 생성
-    api = _KoreaInvestAPIBase("http://test", {}, {"_env_instance": MagicMock()}, logger=None)
+    api = KoreaInvestApiBase("http://test", {}, {"_env_instance": MagicMock()}, logger=None)
 
     # KoreaInvestEnv가 실제 존재한다면:
-    mock_env = MagicMock(spec=KoreaInvestEnv)  # KoreaInvestEnv는 실제 클래스여야 합니다.
+    mock_env = MagicMock(spec=KoreaInvestApiEnv)  # KoreaInvestEnv는 실제 클래스여야 합니다.
 
     # 만약 KoreaInvestEnv에 'refresh_access_token' 메서드가 없고 'request_access_token' 이나 다른 이름이라면
     # 이 부분을 해당 이름으로 변경해야 합니다.

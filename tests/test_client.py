@@ -1,7 +1,7 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from api.client import KoreaInvestAPI
-from api.kr_quotations import Quotations
+from unittest.mock import MagicMock, AsyncMock
+from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
+
 
 @pytest.mark.asyncio
 async def test_quotations_get_price_summary_success():
@@ -23,7 +23,7 @@ async def test_quotations_get_price_summary_success():
     }
 
     # KoreaInvestAPI 인스턴스 생성
-    client = KoreaInvestAPI(env=mock_env)
+    client = KoreaInvestApiClient(env=mock_env)
 
     # quotations.call_api 비동기 메서드 모킹 (실제 네트워크 호출 차단)
     client.quotations.call_api = AsyncMock(return_value={
@@ -61,8 +61,8 @@ async def test_client_str_and_missing_access_token():
         "is_paper_trading": False
     }
 
-    client = KoreaInvestAPI(env=mock_env)
-    expected_str = "KoreaInvestAPI(base_url=https://mock-base, is_paper_trading=False)"
+    client = KoreaInvestApiClient(env=mock_env)
+    expected_str = "KoreaInvestApiClient(base_url=https://mock-base, is_paper_trading=False)"
     assert str(client) == expected_str
 
     # access_token 누락 시 ValueError 발생
@@ -83,4 +83,4 @@ async def test_client_str_and_missing_access_token():
     }
     import pytest
     with pytest.raises(ValueError, match="접근 토큰이 없습니다"):
-        KoreaInvestAPI(env=mock_env2)
+        KoreaInvestApiClient(env=mock_env2)

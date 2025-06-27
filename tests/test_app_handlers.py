@@ -1,24 +1,19 @@
 import unittest
 import unittest.mock as mock
-import asyncio
-import datetime
 import logging
 from io import StringIO
 import builtins
-import pytz
 
 # 테스트할 모듈 임포트
 from app.data_handlers import DataHandlers
 from app.transaction_handlers import TransactionHandlers
 from services.trading_service import TradingService
-from api.client import KoreaInvestAPI  # Mocking용
-from api.kr_quotations import Quotations  # Mocking용
-from api.kr_account import KoreaInvestAccountAPI  # Mocking용
-from api.kr_trading import KoreaInvestTradingAPI  # Mocking용
-from api.websocket_client import WebSocketClient  # Mocking용
+from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
+from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
+from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+from brokers.korea_investment.korea_invest_websocket_client import KoreaInvestWebSocketClient  # Mocking용
 from core.time_manager import TimeManager  # Mocking용
-from core.logger import Logger  # Mocking용
-from api.env import KoreaInvestEnv  # Mocking용
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Mocking용
 
 # 로거의 출력을 캡처하기 위한 설정 (테스트 시 실제 파일에 로그를 남기지 않도록)
 logging.getLogger('operational_logger').propagate = False
@@ -42,7 +37,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         """각 테스트 메서드 실행 전에 필요한 Mock 객체와 핸들러 인스턴스를 설정합니다."""
         # 종속성 목(Mock) 객체 생성
-        self.mock_env = mock.Mock(spec=KoreaInvestEnv)
+        self.mock_env = mock.Mock(spec=KoreaInvestApiEnv)
         self.mock_env.is_paper_trading = False  # 기본값 설정
         self.mock_logger = MockLogger()
         self.mock_time_manager = mock.AsyncMock(spec_set=TimeManager)
@@ -52,10 +47,10 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_api_client = mock.AsyncMock()
 
         # 하위 API 클라이언트들을 Mock 객체로 할당. 이들 자체에 spec_set을 적용.
-        self.mock_api_client.quotations = mock.AsyncMock(spec_set=Quotations)
-        self.mock_api_client.account = mock.AsyncMock(spec_set=KoreaInvestAccountAPI)
-        self.mock_api_client.trading = mock.AsyncMock(spec_set=KoreaInvestTradingAPI)
-        self.mock_api_client.websocket = mock.AsyncMock(spec_set=WebSocketClient)
+        self.mock_api_client.quotations = mock.AsyncMock(spec_set=KoreaInvestApiQuotations)
+        self.mock_api_client.account = mock.AsyncMock(spec_set=KoreaInvestApiAccount)
+        self.mock_api_client.trading = mock.AsyncMock(spec_set=KoreaInvestApiTrading)
+        self.mock_api_client.websocket = mock.AsyncMock(spec_set=KoreaInvestWebSocketClient)
 
         # 각 하위 Mock 객체의 메서드들을 직접 다시 Mock 객체로 할당하지 않습니다.
         # 위에서 spec_set을 통해 자동으로 Mocking되었기 때문에,

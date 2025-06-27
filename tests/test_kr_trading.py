@@ -3,7 +3,7 @@ import requests
 import json
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from api.kr_trading import KoreaInvestTradingAPI
+from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 
 
 @pytest.mark.asyncio
@@ -26,7 +26,7 @@ async def test_place_stock_order_buy_success():
     }
 
     mock_logger = MagicMock()
-    trading_api = KoreaInvestTradingAPI("https://mock.api", {}, mock_config, mock_logger)
+    trading_api = KoreaInvestApiTrading("https://mock.api", {}, mock_config, mock_logger)
 
     # mock _get_hashkey and call_api
     trading_api._get_hashkey = AsyncMock(return_value='mocked_hash')
@@ -55,7 +55,7 @@ async def test_place_stock_order_invalid_type():
     }
 
     mock_logger = MagicMock()
-    trading_api = KoreaInvestTradingAPI("https://mock.api", {}, mock_config, mock_logger)
+    trading_api = KoreaInvestApiTrading("https://mock.api", {}, mock_config, mock_logger)
 
     result = await trading_api.place_stock_order('005930', '70000', '10', '잘못된타입', '00')
     assert result is None
@@ -77,7 +77,7 @@ async def test_get_hashkey_success(mock_post):
         'api_secret_key': 'def'
     }
 
-    trading_api = KoreaInvestTradingAPI('https://mock.api', {}, mock_config, MagicMock())
+    trading_api = KoreaInvestApiTrading('https://mock.api', {}, mock_config, MagicMock())
     result = await trading_api._get_hashkey({'test': 'value'})
 
     assert result == 'abc123'
@@ -86,7 +86,7 @@ async def test_get_hashkey_success(mock_post):
 @pytest.mark.asyncio
 @patch("requests.post", side_effect=requests.exceptions.RequestException("network error"))
 async def test_get_hashkey_network_error(mock_post):
-    trading_api = KoreaInvestTradingAPI('https://mock.api', {}, {
+    trading_api = KoreaInvestApiTrading('https://mock.api', {}, {
         'base_url': 'https://mock.api',
         'api_key': 'abc',
         'api_secret_key': 'def'
@@ -105,7 +105,7 @@ async def test_get_hashkey_json_decode_error(mock_post):
     mock_response.text = "invalid json"
     mock_post.return_value = mock_response
 
-    trading_api = KoreaInvestTradingAPI('https://mock.api', {}, {
+    trading_api = KoreaInvestApiTrading('https://mock.api', {}, {
         'base_url': 'https://mock.api',
         'api_key': 'abc',
         'api_secret_key': 'def'
@@ -120,7 +120,7 @@ async def test_get_hashkey_json_decode_error(mock_post):
 async def test_get_hashkey_unexpected_exception(mock_post):
     mock_post.side_effect = Exception("Unexpected Error")
 
-    trading_api = KoreaInvestTradingAPI('https://mock.api', {}, {
+    trading_api = KoreaInvestApiTrading('https://mock.api', {}, {
         'base_url': 'https://mock.api',
         'api_key': 'abc',
         'api_secret_key': 'def'
@@ -141,7 +141,7 @@ async def test_get_hashkey_missing_hash_field(mock_post):
 
     mock_logger = MagicMock()
 
-    trading_api = KoreaInvestTradingAPI('https://mock.api', {}, {
+    trading_api = KoreaInvestApiTrading('https://mock.api', {}, {
         'base_url': 'https://mock.api',
         'api_key': 'abc',
         'api_secret_key': 'def'
@@ -173,7 +173,7 @@ async def test_place_stock_order_sell_success():
     }
 
     mock_logger = MagicMock()
-    trading_api = KoreaInvestTradingAPI("https://mock.api", {}, mock_config, mock_logger)
+    trading_api = KoreaInvestApiTrading("https://mock.api", {}, mock_config, mock_logger)
 
     trading_api._get_hashkey = AsyncMock(return_value="hash123")
     trading_api.call_api = AsyncMock(return_value={"status": "sell_success"})
@@ -212,7 +212,7 @@ async def test_place_stock_order_hashkey_none():
     }
 
     mock_logger = MagicMock()
-    trading_api = KoreaInvestTradingAPI("https://mock.api", {}, mock_config, mock_logger)
+    trading_api = KoreaInvestApiTrading("https://mock.api", {}, mock_config, mock_logger)
 
     # 해시 생성 실패 상황을 모의
     trading_api._get_hashkey = AsyncMock(return_value=None)

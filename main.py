@@ -4,9 +4,6 @@ import asyncio # 비동기 처리를 위해 추가
 import sys # sys.exit를 위해 추가
 import traceback # 예외 추적을 위해 추가
 
-from core.config_loader import load_config
-from api.env import KoreaInvestEnv
-from api.client import KoreaInvestAPI
 from trading_app import TradingApp # TradingApp 임포트
 
 # config.yaml 및 tr_ids_config.yaml 파일 경로 설정

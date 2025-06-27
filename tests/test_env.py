@@ -1,5 +1,5 @@
 import pytest
-from api.env import KoreaInvestEnv
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from unittest.mock import MagicMock, patch, mock_open, Mock
 from datetime import datetime, timedelta
 import pytz
@@ -11,7 +11,7 @@ import json
 
 def test_set_trading_mode_switch():
     logger = MagicMock()
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'is_paper_trading': False,
         'paper_url': 'https://paper-api.com',
         'url': 'https://real-api.com',
@@ -27,7 +27,7 @@ def test_set_trading_mode_switch():
 
 def test_set_trading_mode_no_change():
     logger = MagicMock()
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'is_paper_trading': False,
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
@@ -39,7 +39,7 @@ def test_set_trading_mode_no_change():
 @patch("os.path.exists", return_value=False)
 def test_read_token_file_not_exist(mock_exists):
     logger = MagicMock()
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -70,7 +70,7 @@ def test_read_token_file_valid_yaml(mock_exists, mock_file):
     from io import StringIO
     mock_file.return_value.__enter__.return_value = StringIO(yaml_content)
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'url': base_url,
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -89,7 +89,7 @@ def test_read_token_file_valid_yaml(mock_exists, mock_file):
 @patch("os.path.exists", return_value=True)
 def test_read_token_file_invalid_yaml(mock_exists, mock_file):
     logger = MagicMock()
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -122,8 +122,8 @@ def test_read_token_file_valid_yaml(mock_open, mock_exists):
     # StringIO를 file처럼 열리게 patch
     mock_open.return_value.__enter__.return_value = io.StringIO(yaml_content)
 
-    from api.env import KoreaInvestEnv  # ⚠ 실제 import 경로로 맞춰주세요
-    env = KoreaInvestEnv({
+    from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # ⚠ 실제 import 경로로 맞춰주세요
+    env = KoreaInvestApiEnv({
         'url': base_url,
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -142,7 +142,7 @@ def test_read_token_file_valid_yaml(mock_open, mock_exists):
 @patch("os.path.exists", return_value=True)
 def test_read_token_file_invalid_yaml(mock_exists, mock_file):
     logger = MagicMock()
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -153,8 +153,8 @@ def test_read_token_file_invalid_yaml(mock_exists, mock_file):
     assert token is None
     logger.error.assert_called()
 
-@patch.object(KoreaInvestEnv, "_read_token_from_file")
-@patch.object(KoreaInvestEnv, "_request_access_token")
+@patch.object(KoreaInvestApiEnv, "_read_token_from_file")
+@patch.object(KoreaInvestApiEnv, "_request_access_token")
 def test_get_access_token_with_valid_token(mock_request_token, mock_read_token):
     logger = MagicMock()
 
@@ -166,7 +166,7 @@ def test_get_access_token_with_valid_token(mock_request_token, mock_read_token):
         "base-url": "https://real-api.com"
     }
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -177,12 +177,12 @@ def test_get_access_token_with_valid_token(mock_request_token, mock_read_token):
     mock_read_token.assert_called_once()
     mock_request_token.assert_not_called()
 
-@patch.object(KoreaInvestEnv, "_read_token_from_file", return_value=None)
-@patch.object(KoreaInvestEnv, "_request_access_token", return_value="new_token_456")
+@patch.object(KoreaInvestApiEnv, "_read_token_from_file", return_value=None)
+@patch.object(KoreaInvestApiEnv, "_request_access_token", return_value="new_token_456")
 def test_get_access_token_with_request(mock_request_token, mock_read_token):
     logger = MagicMock()
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -193,101 +193,117 @@ def test_get_access_token_with_request(mock_request_token, mock_read_token):
     mock_read_token.assert_called_once()
     mock_request_token.assert_called_once()
 
+def test_get_access_token_uses_token_from_file():
+    from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 
-@patch("api.env.KoreaInvestEnv._read_token_from_file")
-@patch("api.env.KoreaInvestEnv._save_token_to_file")
-def test_get_access_token_uses_token_from_file(mock_save_token, mock_read_token):
     logger = MagicMock()
     now = datetime.now(pytz.timezone("Asia/Seoul"))
     future = now + timedelta(hours=1)
 
-    mock_read_token.return_value = {
-        "token": "abc123",
-        "valid-date": future,
-        "base-url": "https://real-api.com"
-    }
+    with patch.object(KoreaInvestApiEnv, "_read_token_from_file") as mock_read_token, \
+         patch.object(KoreaInvestApiEnv, "_save_token_to_file") as mock_save_token:
 
-    env = KoreaInvestEnv({
-        "url": "https://real-api.com",
-        "websocket_url": "wss://real-ws"
-    }, logger=logger)
+        mock_read_token.return_value = {
+            "token": "abc123",
+            "valid-date": future,
+            "base-url": "https://real-api.com"
+        }
 
-    # 메모리에 토큰 없는 상태
-    env.access_token = None
-    env.token_expired_at = None
+        env = KoreaInvestApiEnv({
+            "url": "https://real-api.com",
+            "websocket_url": "wss://real-ws"
+        }, logger=logger)
 
-    token = env.get_access_token()
+        # 메모리에 토큰 없는 상태
+        env.access_token = None
+        env.token_expired_at = None
 
-    # ✅ 기대 결과: 파일에서 읽은 토큰 사용
-    assert token == "abc123"
-    assert env.access_token == "abc123"
-    assert env.token_expired_at == future
-    logger.info.assert_called_with("파일에서 기존 유효한 토큰 사용.")
-    mock_save_token.assert_not_called()
+        token = env.get_access_token()
 
+        # ✅ 기대 결과: 파일에서 읽은 토큰 사용
+        assert token == "abc123"
+        assert env.access_token == "abc123"
+        assert env.token_expired_at == future
+        logger.info.assert_called_with("파일에서 기존 유효한 토큰 사용.")
+        mock_save_token.assert_not_called()
 
-@patch("api.env.certifi.where", return_value="/mock/cert.pem")
-@patch("api.env.requests.Session.post")
-@patch.object(KoreaInvestEnv, "_save_token_to_file")
-def test_request_access_token_success(mock_save_file, mock_post, mock_cert):
+def test_request_access_token_success():
+    from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+    import certifi
+    import requests
+
     logger = MagicMock()
 
-    # mock된 API 응답
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "access_token": "newtoken123",
-        "expires_in": 3600
-    }
-    mock_post.return_value = mock_response
+    with patch("certifi.where", return_value="/mock/cert.pem"), \
+         patch.object(requests.Session, "post") as mock_post, \
+         patch.object(KoreaInvestApiEnv, "_save_token_to_file") as mock_save_file:
 
-    env = KoreaInvestEnv({
-        'url': 'https://real-api.com',
-        'websocket_url': 'wss://real-ws'
-    }, logger=logger)
+        # mock된 API 응답
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "access_token": "newtoken123",
+            "expires_in": 3600
+        }
+        mock_post.return_value = mock_response
 
-    token = env._request_access_token()
+        env = KoreaInvestApiEnv({
+            'url': 'https://real-api.com',
+            'websocket_url': 'wss://real-ws'
+        }, logger=logger)
 
-    assert token == "newtoken123"
-    assert env.access_token == "newtoken123"
-    assert isinstance(env.token_expired_at, datetime)
-    mock_save_file.assert_called_once()
-    logger.info.assert_called()  # 단순 로그 호출 여부만 확인
+        token = env._request_access_token()
 
-@patch("api.env.certifi.where", return_value="/mock/cert.pem")
-@patch("api.env.requests.Session.post")
-def test_request_access_token_invalid_response(mock_post, mock_cert):
+        assert token == "newtoken123"
+        assert env.access_token == "newtoken123"
+        assert isinstance(env.token_expired_at, datetime)
+        mock_save_file.assert_called_once()
+        logger.info.assert_called()
+
+def test_request_access_token_invalid_response():
+    from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+    import certifi
+    import requests
+
     logger = MagicMock()
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {}  # access_token 없음
-    mock_post.return_value = mock_response
+    with patch("certifi.where", return_value="/mock/cert.pem"), \
+         patch.object(requests.Session, "post") as mock_post:
 
-    env = KoreaInvestEnv({
-        'url': 'https://real-api.com',
-        'websocket_url': 'wss://real-ws'
-    }, logger=logger)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}  # access_token 없음
+        mock_post.return_value = mock_response
 
-    token = env._request_access_token()
+        env = KoreaInvestApiEnv({
+            'url': 'https://real-api.com',
+            'websocket_url': 'wss://real-ws'
+        }, logger=logger)
 
-    assert token is None
-    logger.error.assert_called()  # 에러 로그만 호출 여부 확인
+        token = env._request_access_token()
 
-@patch("api.env.certifi.where", return_value="/mock/cert.pem")
-@patch("api.env.requests.Session.post", side_effect=Exception("mocked error"))
-def test_request_access_token_exception(mock_post, mock_cert):
+        assert token is None
+        logger.error.assert_called()
+def test_request_access_token_exception():
+    from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+    import certifi
+    import requests
+
     logger = MagicMock()
 
-    env = KoreaInvestEnv({
-        'url': 'https://real-api.com',
-        'websocket_url': 'wss://real-ws'
-    }, logger=logger)
+    with patch("certifi.where", return_value="/mock/cert.pem"), \
+         patch.object(requests.Session, "post", side_effect=Exception("mocked error")):
 
-    token = env._request_access_token()
+        env = KoreaInvestApiEnv({
+            'url': 'https://real-api.com',
+            'websocket_url': 'wss://real-ws'
+        }, logger=logger)
 
-    assert token is None
-    logger.error.assert_called()
+        token = env._request_access_token()
+
+        assert token is None
+        logger.error.assert_called()
+
 
 def test_set_base_urls_raises_value_error_when_missing_urls():
     logger = MagicMock()
@@ -299,11 +315,11 @@ def test_set_base_urls_raises_value_error_when_missing_urls():
     }
 
     with pytest.raises(ValueError, match="API URL 또는 WebSocket URL이 config.yaml에 올바르게 설정되지 않았습니다."):
-        KoreaInvestEnv(config, logger=logger)
+        KoreaInvestApiEnv(config, logger=logger)
 
 def test_get_base_headers_without_token():
     logger = MagicMock()
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -319,7 +335,7 @@ def test_get_base_headers_without_token():
 
 def test_get_base_headers_with_token():
     logger = MagicMock()
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }, logger=logger)
@@ -347,7 +363,7 @@ def test_get_full_config_in_real_mode():
     }
     logger = MagicMock()
 
-    env = KoreaInvestEnv(config, logger=logger)
+    env = KoreaInvestApiEnv(config, logger=logger)
     env.access_token = "token123"
     env.token_expired_at = "2030-01-01"
     env.htsid = "HTS"
@@ -385,7 +401,7 @@ def test_get_full_config_in_paper_mode():
     }
     logger = MagicMock()
 
-    env = KoreaInvestEnv(config, logger=logger)
+    env = KoreaInvestApiEnv(config, logger=logger)
     env.access_token = "token456"
     env.token_expired_at = "2035-12-31"
     env.htsid = "MTS"
@@ -421,7 +437,7 @@ def test_get_auth_body_real_mode():
     }
     logger = MagicMock()
 
-    env = KoreaInvestEnv(config, logger=logger)
+    env = KoreaInvestApiEnv(config, logger=logger)
     body = env._get_auth_body()
 
     assert body['grant_type'] == 'client_credentials'
@@ -442,7 +458,7 @@ def test_get_auth_body_paper_mode():
     }
     logger = MagicMock()
 
-    env = KoreaInvestEnv(config, logger=logger)
+    env = KoreaInvestApiEnv(config, logger=logger)
     body = env._get_auth_body()
 
     assert body['grant_type'] == 'client_credentials'
@@ -458,7 +474,7 @@ def test_save_token_to_file_success(mock_file):
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }
-    env = KoreaInvestEnv(config, logger=logger)
+    env = KoreaInvestApiEnv(config, logger=logger)
     env._token_file_path = "dummy_token.yaml"
 
     token = "test_token"
@@ -483,7 +499,7 @@ def test_save_token_to_file_failure(mock_file):
         'url': 'https://real-api.com',
         'websocket_url': 'wss://real-ws'
     }
-    env = KoreaInvestEnv(config, logger=logger)
+    env = KoreaInvestApiEnv(config, logger=logger)
     env._token_file_path = "dummy_token.yaml"
 
     env._save_token_to_file("token", "2025-12-31 23:59:59", "https://real-api.com")
@@ -510,7 +526,7 @@ def test_token_file_base_url_mismatch(mock_open, mock_exists):
     # 핵심: open().read()의 결과를 StringIO로 명확하게 지정
     mock_open.return_value.__enter__.return_value = io.StringIO(yaml.dump(token_data))
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         "url": "https://real-api.com",
         "websocket_url": "wss://real-ws"
     }, logger=logger)
@@ -536,7 +552,7 @@ def test_token_file_invalid_date_format(mock_open, mock_exists):
     # ✅ 여기에서 mock_file → mock_open 으로 수정
     mock_open.return_value.__enter__.return_value = io.StringIO(yaml.dump(token_data))
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         "url": "https://real-api.com",
         "websocket_url": "wss://real-ws"
     }, logger=logger)
@@ -564,7 +580,7 @@ PAST_DATE = (datetime.now(kst) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S
 def test_token_file_expired_token(mock_open, mock_exists):
     logger = MagicMock()
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         "url": "https://real-api.com",
         "websocket_url": "wss://real-ws"
     }, logger=logger)
@@ -576,14 +592,14 @@ def test_token_file_expired_token(mock_open, mock_exists):
     logger.debug.assert_called()
 
 
-@patch.object(KoreaInvestEnv, "_read_token_from_file", return_value=None)
+@patch.object(KoreaInvestApiEnv, "_read_token_from_file", return_value=None)
 def test_get_access_token_uses_memory_token(mock_read_token):
     logger = MagicMock()
 
     kst = pytz.timezone("Asia/Seoul")
     future_time = datetime.now(kst) + timedelta(minutes=30)
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         "url": "https://real-api.com",
         "websocket_url": "wss://real-ws"
     }, logger=logger)
@@ -601,7 +617,7 @@ def test_get_access_token_uses_memory_token(mock_read_token):
 @patch("requests.Session.post", side_effect=requests.exceptions.RequestException("Connection error"))
 def test_request_access_token_network_error(mock_post):
     logger = MagicMock()
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         "url": "https://real-api.com",
         "websocket_url": "wss://real-ws"
     }, logger=logger)
@@ -623,7 +639,7 @@ def test_request_access_token_json_decode_error(mock_post):
     mock_response.json.side_effect = json.JSONDecodeError("Expecting value", "Not a JSON response", 0)
     mock_post.return_value = mock_response
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         "url": "https://real-api.com",
         "websocket_url": "wss://real-ws"
     }, logger=logger)
@@ -635,11 +651,11 @@ def test_request_access_token_json_decode_error(mock_post):
     assert "토큰 발급 응답 JSON 디코딩 실패" in logger.error.call_args[0][0]
 
 
-@patch.object(KoreaInvestEnv, "_request_access_token", return_value="new_token")
+@patch.object(KoreaInvestApiEnv, "_request_access_token", return_value="new_token")
 def test_get_access_token_force_new_true(mock_request_token):
     logger = MagicMock()
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         "url": "https://real-api.com",
         "websocket_url": "wss://real-ws"
     }, logger=logger)
@@ -658,7 +674,7 @@ def test_get_access_token_force_new_true(mock_request_token):
 def test_read_token_from_file_missing_keys(mock_file, mock_exists):
     logger = MagicMock()
 
-    env = KoreaInvestEnv({
+    env = KoreaInvestApiEnv({
         "url": "https://real-api.com",
         "websocket_url": "wss://real-ws"
     }, logger=logger)

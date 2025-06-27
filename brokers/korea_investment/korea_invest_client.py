@@ -1,19 +1,19 @@
-# api/client.py
-from api.env import KoreaInvestEnv
-from api.kr_quotations import Quotations
-from api.kr_account import KoreaInvestAccountAPI
-from api.kr_trading import KoreaInvestTradingAPI
-from api.websocket_api import WebSocketAPI
+# api/korea_invest_client.py
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
+from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
+from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+from brokers.korea_investment.korea_invest_websocket_api import KereaInvestWebSocketAPI
 import logging
 
 
-class KoreaInvestAPI:
+class KoreaInvestApiClient:
     """
     한국투자증권 Open API와 상호작용하는 메인 클라이언트입니다.
     각 도메인별 API 클래스를 통해 접근합니다.
     """
 
-    def __init__(self, env: KoreaInvestEnv, logger=None):
+    def __init__(self, env: KoreaInvestApiEnv, logger=None):
         self._env = env
         self.logger = logger if logger else logging.getLogger(__name__)
 
@@ -38,16 +38,18 @@ class KoreaInvestAPI:
 
         # 각 도메인별 API 클래스 인스턴스화
         # _config에서 바로 base_url을 가져와 전달
-        self.quotations = Quotations(self._config['base_url'], common_headers_template, self._config,
+        self.quotations = KoreaInvestApiQuotations(self._config['base_url'], common_headers_template, self._config,
                                                    self.logger)
-        self.account = KoreaInvestAccountAPI(self._config['base_url'], common_headers_template, self._config,
+        self.account = KoreaInvestApiAccount(self._config['base_url'], common_headers_template, self._config,
                                              self.logger)
-        self.trading = KoreaInvestTradingAPI(self._config['base_url'], common_headers_template, self._config,
+        self.trading = KoreaInvestApiTrading(self._config['base_url'], common_headers_template, self._config,
                                              self.logger)
 
-        self.websocketAPI = WebSocketAPI(self._env, self.logger)
+        self.websocketAPI = KereaInvestWebSocketAPI(self._env, self.logger)
 
     def __str__(self):
         """객체를 문자열로 표현할 때 사용."""
         # _config에서 base_url과 is_paper_trading을 가져옴
-        return f"KoreaInvestAPI(base_url={self._config['base_url']}, is_paper_trading={self._config['is_paper_trading']})"
+        class_name = self.__class__.__name__
+        return f"{class_name}(base_url={self._config['base_url']}, is_paper_trading={self._config['is_paper_trading']})"
+

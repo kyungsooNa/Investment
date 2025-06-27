@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from api.kr_account import KoreaInvestAccountAPI
+from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 
 @pytest.mark.asyncio
 async def test_get_account_balance():
@@ -13,7 +13,7 @@ async def test_get_account_balance():
     }
 
     mock_logger = MagicMock()
-    mock_api = KoreaInvestAccountAPI(
+    mock_api = KoreaInvestApiAccount(
         base_url='https://mock.api',
         headers={},
         config=mock_config,
@@ -35,7 +35,7 @@ async def test_get_real_account_balance_with_dash():
     }
 
     mock_logger = MagicMock()
-    mock_api = KoreaInvestAccountAPI(
+    mock_api = KoreaInvestApiAccount(
         base_url='https://mock.api',
         headers={},
         config=mock_config,
@@ -57,7 +57,7 @@ async def test_get_real_account_balance_without_dash():
     }
 
     mock_logger = MagicMock()
-    mock_api = KoreaInvestAccountAPI(
+    mock_api = KoreaInvestApiAccount(
         base_url='https://mock.api',
         headers={},
         config=mock_config,

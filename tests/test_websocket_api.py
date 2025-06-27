@@ -2,7 +2,7 @@
 import pytest
 import json
 from unittest.mock import MagicMock, patch, AsyncMock
-from api.websocket_api import WebSocketAPI
+from brokers.korea_investment.korea_invest_websocket_api import KereaInvestWebSocketAPI
 
 @pytest.mark.asyncio
 async def test_websocket_api_initialization():
@@ -16,7 +16,7 @@ async def test_websocket_api_initialization():
     }
 
     # 테스트 대상 객체 생성
-    ws_api = WebSocketAPI(env=mock_env)
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
 
     # 속성이 잘 초기화됐는지 검증
     assert ws_api._websocket_url == "wss://dummy-url"
@@ -36,13 +36,15 @@ async def test_websocket_api_connect_success():
         "base_url": "https://test-base"
     }
 
-    ws_api = WebSocketAPI(env=mock_env)
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
 
-    with patch("api.websocket_api.websockets.connect", new_callable=AsyncMock) as mock_connect, \
+    # ⬇ 동적 모듈 경로를 활용한 patch
+    patch_target = f"{KereaInvestWebSocketAPI.__module__}.websockets.connect"
+
+    with patch(patch_target, new_callable=AsyncMock) as mock_connect, \
          patch.object(ws_api, "_get_approval_key", new_callable=AsyncMock, return_value="approval-key"):
         await ws_api.connect()
 
-        # ✅ 여기를 실제 인자에 맞게 수정
         mock_connect.assert_called_once_with("wss://test-url", ping_interval=20, ping_timeout=20)
         assert ws_api._is_connected is True
         assert ws_api.approval_key == "approval-key"
@@ -56,7 +58,7 @@ def test_set_on_realtime_message_callback():
         "base_url": "https://test-base"
     }
 
-    ws_api = WebSocketAPI(env=mock_env)
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
 
     # 콜백 함수 정의
     def dummy_callback(msg):
@@ -68,8 +70,7 @@ def test_set_on_realtime_message_callback():
     assert ws_api.on_realtime_message_callback("테스트") == "received: 테스트"
 
 @pytest.mark.asyncio
-@patch("api.websocket_api.requests.post")
-async def test_get_approval_key(mock_post):
+async def test_get_approval_key():
     mock_env = MagicMock()
     mock_env.get_full_config.return_value = {
         "websocket_url": "wss://test-url",
@@ -78,16 +79,19 @@ async def test_get_approval_key(mock_post):
         "base_url": "https://test-base"
     }
 
-    ws_api = WebSocketAPI(env=mock_env)
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
 
-    # 응답 모킹
-    mock_post.return_value.status_code = 200
-    mock_post.return_value.json.return_value = {
-        "approval_key": "MOCKED_KEY"
-    }
+    # 동적 패치 대상 설정
+    patch_target = f"{KereaInvestWebSocketAPI.__module__}.requests.post"
 
-    approval_key = await ws_api._get_approval_key()  # ✅ await 추가
-    assert approval_key == "MOCKED_KEY"
+    with patch(patch_target) as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {
+            "approval_key": "MOCKED_KEY"
+        }
+
+        approval_key = await ws_api._get_approval_key()
+        assert approval_key == "MOCKED_KEY"
 
 @pytest.mark.asyncio
 async def test_websocket_api_connect_failure_due_to_approval_key():
@@ -98,13 +102,16 @@ async def test_websocket_api_connect_failure_due_to_approval_key():
         "api_secret_key": "dummy-secret",
         "base_url": "https://test-base"
     }
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
 
-    ws_api = WebSocketAPI(env=mock_env)
+    # 🧩 동적 경로로 패치 대상 문자열 생성
+    patch_target = f"{KereaInvestWebSocketAPI.__module__}.websockets.connect"
 
-    with patch("api.websocket_api.websockets.connect", new_callable=AsyncMock) as mock_connect, \
+    with patch(patch_target, new_callable=AsyncMock) as mock_connect, \
          patch.object(ws_api, "_get_approval_key", new_callable=AsyncMock, return_value=None):
         with pytest.raises(Exception, match="approval_key 발급 실패"):
             await ws_api.connect()
+
 
 @pytest.mark.asyncio
 async def test_websocket_api_disconnect_calls_close():
@@ -116,7 +123,7 @@ async def test_websocket_api_disconnect_calls_close():
         "base_url": "https://test-base"
     }
 
-    ws_api = WebSocketAPI(env=mock_env)
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
     mock_ws = AsyncMock()
     ws_api.ws = mock_ws
     ws_api._is_connected = True
@@ -137,7 +144,7 @@ async def test_on_receive_without_callback_logs_warning(caplog):
         "base_url": "https://test-base"
     }
 
-    ws_api = WebSocketAPI(env=mock_env)
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
     dummy_message = json.dumps({"header": {}, "body": {}})
 
     with caplog.at_level("WARNING"):
@@ -154,7 +161,7 @@ async def test_on_receive_with_callback_called():
         "base_url": "https://test-base"
     }
 
-    ws_api = WebSocketAPI(env=mock_env)
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
     callback = AsyncMock()
     ws_api.on_realtime_message_callback = callback
 
@@ -176,7 +183,7 @@ async def test_on_receive_with_callback_called_once():
         "base_url": "https://test-base"
     }
 
-    ws_api = WebSocketAPI(env=mock_env)
+    ws_api = KereaInvestWebSocketAPI(env=mock_env)
 
     dummy_callback = AsyncMock()
     ws_api.on_realtime_message_callback = dummy_callback
