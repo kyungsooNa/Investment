@@ -1,6 +1,6 @@
 # user_api/broker_api_wrapper.py
 
-from brokers.korea_investment.korea_invest_account_api import KoreaInvestAccountAPI
+from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from market_data.stock_code_mapper import StockCodeMapper
@@ -16,7 +16,7 @@ class BrokerAPIWrapper:
         self.logger = logger
 
         if broker == "korea_investment":
-            self.account = KoreaInvestAccountAPI(logger=logger)
+            self.account = KoreaInvestApiAccount(logger=logger)
             self.trading = KoreaInvestApiTrading(logger=logger)
             self.quotations = KoreaInvestApiQuotations(logger=logger)
         else:
