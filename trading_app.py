@@ -11,6 +11,7 @@ import asyncio  # 비동기 sleep을 위해 필요
 # 새로 분리된 핸들러 클래스 임포트
 from app.data_handlers import DataHandlers
 from app.transaction_handlers import TransactionHandlers
+from user_api.broker_api_wrapper import BrokerAPIWrapper  # wrapper import 추가
 
 
 class TradingApp:
@@ -35,6 +36,7 @@ class TradingApp:
 
         # 초기 설정 로드 및 환경 클래스만 초기화 (API 클라이언트는 환경 선택 후 초기화)
         self._load_configs_and_init_env()
+        self.broker = None
 
     def _load_configs_and_init_env(self):
         """환경 설정 파일 로드 및 KoreaInvestEnv 초기화."""
@@ -84,9 +86,11 @@ class TradingApp:
             self.data_handlers = DataHandlers(self.trading_service, self.logger, self.time_manager)
             self.transaction_handlers = TransactionHandlers(self.trading_service, self.logger, self.time_manager)
             # -----------------------------------------------------
+            self.broker = BrokerAPIWrapper(env=self.env, logger=self.logger)
 
             self.logger.info(f"API 클라이언트 및 서비스 초기화 성공: {self.api_client}")
             return True
+
         except Exception as e:
             self.logger.critical(f"API 클라이언트 초기화 실패: {e}")
             print(f"ERROR: API 클라이언트 초기화 중 오류 발생: {e}")
@@ -238,7 +242,7 @@ class TradingApp:
 
                 # 전략 실행기 구성
                 strategy = MomentumStrategy(
-                    quotations=self.api_client.quotations,
+                    broker=self.broker,
                     min_change_rate=10.0,
                     min_follow_through=3.0,
                     min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
@@ -297,7 +301,7 @@ class TradingApp:
 
                 # 백테스트 모드 전략 구성
                 strategy = MomentumStrategy(
-                    quotations=self.api_client.quotations,
+                    broker=self.broker,
                     min_change_rate=10.0,
                     min_follow_through=3.0,
                     min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단

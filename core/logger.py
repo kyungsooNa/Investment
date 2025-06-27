@@ -77,7 +77,9 @@ class Logger:
     def critical(self, message):
         """운영 및 디버깅 로그에 CRITICAL 레벨 메시지를 기록합니다."""
         self.operational_logger.critical(message)
-        self.debug_logger.critical(message)
+        caller_info = self._get_caller_info()
+        full_message = f"{caller_info} - {message}"
+        self.debug_logger.critical(full_message)
 
     def _get_caller_info(self):
         """호출한 파일명과 라인 번호를 반환 (디버깅용)."""

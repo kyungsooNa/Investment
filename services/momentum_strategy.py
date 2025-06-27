@@ -1,11 +1,13 @@
 import logging
 from interfaces.strategy import Strategy
 from typing import List, Dict, Optional, Callable
+import inspect
+
 
 class MomentumStrategy(Strategy):
     def __init__(
         self,
-        quotations,
+        broker,
         min_change_rate: float = 10.0,
         min_follow_through: float = 3.0,
         min_follow_through_time: int = 5,  # 몇 분 후 기준인지
@@ -13,7 +15,7 @@ class MomentumStrategy(Strategy):
         backtest_lookup: Optional[Callable[[str], int]] = None,
         logger: Optional[logging.Logger] = None
     ):
-        self.quotations = quotations
+        self.broker = broker  # ✅ 통합 wrapper (API + CSV)
         self.min_change_rate = min_change_rate
         self.min_follow_through = min_follow_through
         self.min_follow_through_time = min_follow_through_time  # 추가
@@ -25,14 +27,16 @@ class MomentumStrategy(Strategy):
         results = []
 
         for code in stock_codes:
-            summary = await self.quotations.get_price_summary(code)
+            summary = await self.broker.get_price_summary(code)  # ✅ wrapper 통해 조회
 
             if self.mode == "backtest":
                 if not self.backtest_lookup:
                     raise ValueError("Backtest 모드에서는 backtest_lookup 함수가 필요합니다.")
-                after_price = await self.backtest_lookup(code)
+
+                result = self.backtest_lookup(code)
+                after_price = await result if inspect.isawaitable(result) else result
             else:
-                price_data = await self.quotations.get_current_price(code)
+                price_data = await self.broker.get_current_price(code)  # ✅ wrapper 통해 조회
                 after_price = int(price_data.get("output", {}).get("stck_prpr", 0))
 
             summary["after"] = after_price
@@ -47,7 +51,7 @@ class MomentumStrategy(Strategy):
 
         for s in results:
             code = s["symbol"]
-            name = await self.quotations.get_stock_name_by_code(code)  # ✅ 종목명 조회
+            name = await self.broker.get_name_by_code(code)  # ✅ wrapper 통해 종목명 조회
             display = f"{name}({code})" if name else code  # ✅ 종목명(종목코드) 또는 코드만
 
             is_success = (
