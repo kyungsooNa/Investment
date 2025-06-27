@@ -8,6 +8,7 @@ source =
 
 [report]
 omit =
+    */main.py
     */__init__.py
     */tests/*
     */migrations/*
