@@ -28,13 +28,19 @@ async def test_websocket_client_connect_success():
     }
 
     client = KoreaInvestWebSocketClient(env=mock_env)
-    client.approval_key = "MOCKED_KEY"  # ✅ 이걸 미리 설정해야 connect까지 진행됨
+    client.approval_key = "MOCKED_KEY"
 
     patch_target = f"{KoreaInvestWebSocketClient.__module__}.websockets.connect"
     with patch(patch_target, new_callable=AsyncMock) as mock_connect:
+        mock_websocket = AsyncMock()
+        mock_websocket.recv = AsyncMock(return_value="0|mock-message")  # ✅ 이 줄이 경고 방지 핵심
+        mock_connect.return_value = mock_websocket
+
         await client.connect()
+
         mock_connect.assert_called_once_with("wss://mock-url", ping_interval=20, ping_timeout=20)
         assert client._is_connected is True
+
 
 @pytest.mark.asyncio
 async def test_websocket_client_disconnect():

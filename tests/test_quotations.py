@@ -939,7 +939,7 @@ async def test_init_with_provided_headers():
 
 @pytest.mark.asyncio
 async def test_get_price_summary_with_invalid_response():
-    mock_logger = AsyncMock()
+    mock_logger = MagicMock()
     mock_api = KoreaInvestApiQuotations("base_url", {}, {
         "tr_ids": {"quotations": {"inquire_price": "ID"}},
         "custtype": "P"
@@ -956,7 +956,7 @@ async def test_get_price_summary_with_invalid_response():
 
 @pytest.mark.asyncio
 async def test_get_market_cap_with_invalid_string():
-    mock_logger = AsyncMock()
+    mock_logger = MagicMock()
     mock_api = KoreaInvestApiQuotations("base_url", {}, {
         "tr_ids": {"quotations": {"search_info": "ID"}},
         "custtype": "P"

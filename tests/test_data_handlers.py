@@ -15,7 +15,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         unittest.IsolatedAsyncioTestCase는 이 asyncSetUp을 각 async/sync 테스트 전에 실행합니다.
         """
         self.mock_trading_service = AsyncMock()
-        self.mock_logger = AsyncMock()
+        self.mock_logger = MagicMock()
         self.mock_time_manager = MagicMock()
         # _env 속성이 필요한 경우를 위해 AsyncMock으로 설정
         self.mock_trading_service._env = AsyncMock()
