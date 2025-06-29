@@ -170,7 +170,10 @@ class TradingApp:
         """사용자 선택에 따라 해당 작업을 실행하고 결과를 콘솔에 출력합니다."""
         running_status = True
 
-        if choice == '1':
+        if choice == '0':
+            print("애플리케이션을 종료합니다.")
+            running_status = False
+        elif choice == '1':
             await self.data_handlers.handle_get_current_stock_price("005930")
         elif choice == '2':
             await self.data_handlers.handle_get_account_balance()
@@ -198,9 +201,6 @@ class TradingApp:
                     running_status = False
         elif choice == '9':
             await self.data_handlers.handle_upper_limit_stocks("0000", limit=500)
-        elif choice == '0':
-            print("애플리케이션을 종료합니다.")
-            running_status = False
         elif choice == '10':
             # 시장이 열려있는 경우만 전략 실행
             if not self.time_manager.is_market_open():
@@ -210,6 +210,7 @@ class TradingApp:
 
             print("\n모멘텀 전략 실행 중...")
 
+            # 동적 import는 유지
             from services.momentum_strategy import MomentumStrategy
             from services.strategy_executor import StrategyExecutor
 
@@ -217,38 +218,25 @@ class TradingApp:
                 # 1~30위 시가총액 종목 가져오기
                 top_response = await self.trading_service.get_top_market_cap_stocks("0000")
 
-                # 1. 응답이 딕셔너리이고, 'rt_cd'가 '0'이 아닌 경우 (서비스 레벨 오류)
-                #   예: 모의투자 미지원 오류
-                if isinstance(top_response, dict) and top_response.get('rt_cd') != '0':
-                    print("시가총액 상위 종목 조회 실패:", top_response.get('msg1', '알 수 없는 오류'))
-                    return running_status  # 오류 상태를 반환하거나 적절히 처리
+                # 1. 실패 조건: 응답이 dict가 아니거나, rt_cd가 '0'이 아닌 경우를 한번에 처리
+                if not isinstance(top_response, dict) or top_response.get('rt_cd') != '0':
+                    print("시가총액 상위 종목 조회 실패:", top_response.get('msg1', '알 수 없는 오류 또는 예상치 못한 응답 타입'))
+                    self.logger.warning(f"시가총액 조회 실패. 응답: {top_response}")
+                    return running_status
 
-                # 2. 응답이 리스트이지만 비어있는 경우 (API 클라이언트 레벨 오류 또는 데이터 없음)
-                #   예: API 호출 실패, 응답 데이터 파싱 실패 등
-                elif isinstance(top_response, list) and not top_response:
-                    print("시가총액 상위 종목 조회 실패: 데이터를 가져오지 못했습니다. (API 응답 오류 또는 데이터 없음)")
-                    return running_status  # 오류 상태를 반환하거나 적절히 처리
+                # 2. 성공 경로: 위 조건을 통과하면, 응답은 성공적인 dict임이 보장됨
+                print("시가총액 상위 종목 조회 성공!")
 
-                # 3. 응답이 비어있지 않은 리스트인 경우 (성공)
-                #   이제 top_response는 실제 시가총액 상위 종목 목록입니다.
-                elif isinstance(top_response, list) and top_response:
-                    print("시가총액 상위 종목 조회 성공!")
-                    # 성공적으로 가져온 종목 데이터를 여기서 활용합니다.
-                    # 예시:
-                    # for stock in top_response:
-                    #     print(f"종목 코드: {stock['code']}, 종목명: {stock['name']}, 시가총액: {stock['market_cap']}")
-                    pass  # 여기에 비즈니스 로직(예: 다음 단계 실행)을 추가합니다.
-
-                # 4. 예상치 못한 응답 타입 (혹시 모를 상황 대비)
-                else:
-                    print(f"시가총액 상위 종목 조회 응답이 예상과 다릅니다: {type(top_response)} - {top_response}")
-                    return running_status  # 오류 상태를 반환하거나 적절히 처리
-
+                # 종목 코드 추출 및 전략 실행 로직을 모두 성공 경로 안으로 이동
                 top_stock_codes = [
                     item["mksc_shrn_iscd"]
-                    for item in top_response["output"][:30]
+                    for item in top_response.get("output", [])[:30]  # .get()으로 더 안전하게 접근
                     if "mksc_shrn_iscd" in item
                 ]
+
+                if not top_stock_codes:
+                    print("조회된 종목이 없어 전략을 실행할 수 없습니다.")
+                    return running_status
 
                 # 전략 실행기 구성
                 strategy = MomentumStrategy(
@@ -263,17 +251,18 @@ class TradingApp:
                 executor = StrategyExecutor(strategy)
                 result = await executor.execute(top_stock_codes)
 
+                # 결과 출력
                 print("\n📈 [모멘텀 전략 결과]")
                 print("📌 Follow Through 종목:")
-                for s in result["follow_through"]:
+                for s in result.get("follow_through", []):
                     print(f" - {s}")
 
                 print("📌 Follow 실패 종목:")
-                for s in result["not_follow_through"]:
+                for s in result.get("not_follow_through", []):
                     print(f" - {s}")
 
             except Exception as e:
-                self.logger.error(f"모멘텀 전략 실행 중 오류 발생: {e}")
+                self.logger.error(f"모멘텀 전략 실행 중 오류 발생: {e}", exc_info=True)  # 상세한 오류 로깅
                 print(f"[오류] 전략 실행 실패: {e}")
 
         elif choice == '11':
