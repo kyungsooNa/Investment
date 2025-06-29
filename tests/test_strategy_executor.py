@@ -24,14 +24,14 @@ async def test_strategy_executor_with_mocked_quotations():
         }
         return data_map.get(code, {"output": {"stck_prpr": "0"}})
     mock_quotations.get_current_price.side_effect = mock_get_current_price
-    mock_quotations.get_stock_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
+    mock_quotations.get_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
 
 
     # ▼▼▼▼▼ 핵심 수정 부분 ▼▼▼▼▼
     # 'quotations=' 대신 MomentumStrategy의 __init__에 정의된 실제 파라미터 이름을 사용해야 합니다.
     # (여기서는 'api_client'라고 가정)
     strategy = MomentumStrategy(
-        api_client=mock_quotations,  # 'quotations=' -> 'api_client=' 로 변경
+        broker=mock_quotations,  # 'quotations=' -> 'api_client=' 로 변경
         min_change_rate=10.0,
         min_follow_through=3.0,
         min_follow_through_time=10,
@@ -60,7 +60,7 @@ async def test_strategy_executor_in_backtest_mode():
         {"symbol": "005930", "open": 70000, "current": 77000, "change_rate": 10.0},
         {"symbol": "000660", "open": 100000, "current": 105000, "change_rate": 5.0}
     ]
-    mock_quotations.get_stock_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
+    mock_quotations.get_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
 
     # 2. Mock backtest price lookup
     async def mock_backtest_lookup(code):
@@ -71,7 +71,7 @@ async def test_strategy_executor_in_backtest_mode():
 
     # 3. 전략 생성 (backtest 모드)
     strategy = MomentumStrategy(
-        quotations=mock_quotations,
+        broker=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=3.0,
         min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
@@ -102,7 +102,7 @@ async def test_strategy_executor_backtest_mode_without_lookup_raises():
 
     # backtest_lookup 없이 생성
     strategy = MomentumStrategy(
-        quotations=mock_quotations,
+        broker=mock_quotations,
         mode="backtest"  # backtest 모드 설정
         # backtest_lookup intentionally omitted
     )
@@ -128,10 +128,10 @@ async def test_strategy_executor_live_mode_without_backtest_lookup():
             "stck_prpr": "80000"
         }
     }
-    mock_quotations.get_stock_name_by_code = AsyncMock(return_value="삼성전자")
+    mock_quotations.get_name_by_code = AsyncMock(return_value="삼성전자")
 
     strategy = MomentumStrategy(
-        quotations=mock_quotations,
+        broker=mock_quotations,
         mode="live"
     )
 
