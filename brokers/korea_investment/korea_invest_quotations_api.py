@@ -1,10 +1,11 @@
 # brokers/korea_investment/korea_invest_quotations_api.py
 
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
+from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
 
 class KoreaInvestApiQuotations(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, logger):
-        super().__init__(base_url, headers, config, logger)
+    def __init__(self, base_url, headers, config, token_manager:TokenManager, logger=None):
+        super().__init__(base_url, headers, config, token_manager, logger)
 
     async def get_stock_info_by_code(self, stock_code: str) -> dict:
         """
@@ -43,6 +44,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self.logger.info(f"{stock_code} 현재가 조회 시도...")
         return await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
 
+
     async def get_price_summary(self, stock_code: str) -> dict:
         """
         주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보 반환
@@ -56,10 +58,20 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 "current": 0,
                 "change_rate": 0.0
             }
+
         output = response.get("output", {})
 
-        open_price = int(output.get("stck_oprc", 0))
-        current_price = int(output.get("stck_prpr", 0))
+        try:
+            open_price = int(output.get("stck_oprc") or 0)
+            current_price = int(output.get("stck_prpr") or 0)
+        except (ValueError, TypeError):
+            self.logger.warning(f"가격 데이터 파싱 실패: {stock_code}, 응답: {output}")
+            return {
+                "symbol": stock_code,
+                "open": 0,
+                "current": 0,
+                "change_rate": 0.0
+            }
 
         change_rate = (current_price - open_price) / open_price * 100 if open_price else 0
 
@@ -69,6 +81,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "current": current_price,
             "change_rate": round(change_rate, 2)
         }
+
 
     async def get_market_cap(self, stock_code: str) -> int:
         """

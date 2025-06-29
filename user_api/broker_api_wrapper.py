@@ -11,9 +11,10 @@ class BrokerAPIWrapper:
     범용 사용자용 API Wrapper 클래스.
     증권사별 구현체를 내부적으로 호출하여, 일관된 방식의 인터페이스를 제공.
     """
-    def __init__(self, broker: str = "korea_investment", env=None, logger=None):
+    def __init__(self, broker: str = "korea_investment", env=None, token_manager=None, logger=None):
         self.broker = broker
         self.logger = logger
+        self.token_manager = token_manager
 
         if broker == "korea_investment":
             if env is None:
@@ -29,9 +30,9 @@ class BrokerAPIWrapper:
                 "custtype": config['custtype']
             }
 
-            self.account = KoreaInvestApiAccount(base_url, headers.copy(), config, logger)
-            self.trading = KoreaInvestApiTrading(base_url, headers.copy(), config, logger)
-            self.quotations = KoreaInvestApiQuotations(base_url, headers.copy(), config, logger)
+            self.account = KoreaInvestApiAccount(base_url, headers.copy(), config, token_manager, logger)
+            self.trading = KoreaInvestApiTrading(base_url, headers.copy(), config, token_manager, logger)
+            self.quotations = KoreaInvestApiQuotations(base_url, headers.copy(), config, token_manager, logger)
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
 

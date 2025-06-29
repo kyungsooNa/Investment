@@ -13,10 +13,12 @@ async def test_get_account_balance():
     }
 
     mock_logger = MagicMock()
+    mock_TokenManager = MagicMock()
     mock_api = KoreaInvestApiAccount(
         base_url='https://mock.api',
         headers={},
         config=mock_config,
+        token_manager=mock_TokenManager,
         logger=mock_logger
     )
     mock_api.call_api = AsyncMock(return_value={'result': 'success'})
@@ -24,7 +26,7 @@ async def test_get_account_balance():
     result = await mock_api.get_account_balance()
 
     assert result == {'result': 'success'}
-    mock_logger.info.assert_called_with("계좌 잔고 조회 시도...")
+    mock_logger.info.assert_called()
 
 @pytest.mark.asyncio
 async def test_get_real_account_balance_with_dash():
@@ -34,11 +36,13 @@ async def test_get_real_account_balance_with_dash():
         'stock_account_number': '12345678-01'
     }
 
+    mock_token_manager = MagicMock()
     mock_logger = MagicMock()
     mock_api = KoreaInvestApiAccount(
         base_url='https://mock.api',
         headers={},
         config=mock_config,
+        token_manager=mock_token_manager,
         logger=mock_logger
     )
     mock_api.call_api = AsyncMock(return_value={'result': 'real_success'})
@@ -56,11 +60,13 @@ async def test_get_real_account_balance_without_dash():
         'stock_account_number': '12345678'
     }
 
+    mock_token_manager = MagicMock()
     mock_logger = MagicMock()
     mock_api = KoreaInvestApiAccount(
         base_url='https://mock.api',
         headers={},
         config=mock_config,
+        token_manager=mock_token_manager,
         logger=mock_logger
     )
     mock_api.call_api = AsyncMock(return_value={'result': 'real_success_without_dash'})

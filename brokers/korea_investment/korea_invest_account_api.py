@@ -1,10 +1,11 @@
 # brokers/korea_investment/korea_invest_account_api.py
 
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
+from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
 
 class KoreaInvestApiAccount(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, logger):
-        super().__init__(base_url, headers, config, logger)
+    def __init__(self, base_url, headers, config, token_manager: TokenManager, logger=None):
+        super().__init__(base_url, headers, config, token_manager, logger)
 
     async def get_account_balance(self):  # 모의투자용
         path = "/uapi/domestic-stock/v1/trading/inquire-balance"

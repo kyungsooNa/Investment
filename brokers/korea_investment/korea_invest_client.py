@@ -4,6 +4,7 @@ from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQ
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from brokers.korea_investment.korea_invest_websocket_api import KereaInvestWebSocketAPI
+from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
 import logging
 
 
@@ -13,9 +14,10 @@ class KoreaInvestApiClient:
     각 도메인별 API 클래스를 통해 접근합니다.
     """
 
-    def __init__(self, env: KoreaInvestApiEnv, logger=None):
+    def __init__(self, env: KoreaInvestApiEnv, token_manager:TokenManager, logger=None):
         self._env = env
         self.logger = logger if logger else logging.getLogger(__name__)
+        self.token_manager = token_manager
 
         # _config는 env.get_full_config()를 통해 모든 설정(tr_ids 포함)을 가져옴
         self._config = self._env.get_full_config()
@@ -39,11 +41,11 @@ class KoreaInvestApiClient:
         # 각 도메인별 API 클래스 인스턴스화
         # _config에서 바로 base_url을 가져와 전달
         self.quotations = KoreaInvestApiQuotations(self._config['base_url'], common_headers_template, self._config,
-                                                   self.logger)
+                                                   self.token_manager,self.logger)
         self.account = KoreaInvestApiAccount(self._config['base_url'], common_headers_template, self._config,
-                                             self.logger)
+                                             self.token_manager, self.logger)
         self.trading = KoreaInvestApiTrading(self._config['base_url'], common_headers_template, self._config,
-                                             self.logger)
+                                             self.token_manager, self.logger)
 
         self.websocketAPI = KereaInvestWebSocketAPI(self._env, self.logger)
 

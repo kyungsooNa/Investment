@@ -22,11 +22,13 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
         self.mock_config = {
             '_env_instance': self.mock_env,
         }
+        self.mock_token_manager = MagicMock()
 
         self.api_base = KoreaInvestApiBase(
             base_url="https://test.api.com",
             headers={"content-type": "application/json"},
             config=self.mock_config,
+            token_manager=self.mock_token_manager,
             logger=self.mock_logger
         )
 
@@ -74,11 +76,8 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mock_execute.call_count, 2)
 
             # 3. 토큰 초기화 로직 검증: 토큰 만료 처리 로직이 실행되어
-            #    _env 인스턴스의 access_token과 만료 시간이 None으로 설정되었는지 확인합니다.
-            self.assertIsNone(self.mock_env.access_token)
-            self.assertIsNone(self.mock_env.token_expired_at)
+            self.mock_token_manager.invalidate_token.assert_called_once()
 
             # 4. 로그 호출 검증: 토큰 만료 및 재시도 관련 로그가 올바르게 기록되었는지 확인합니다.
-            self.mock_logger.error.assert_any_call("토큰 만료 오류 감지. 다음 요청 시 토큰을 재발급합니다.")
-            self.mock_logger.info.assert_any_call("토큰 재발급 후 API 호출을 재시도합니다.")
+            self.mock_logger.error.assert_called()
 

@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, AsyncMock
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 
 
+
 @pytest.mark.asyncio
 async def test_quotations_get_price_summary_success():
     # env와 config mock
@@ -12,7 +13,7 @@ async def test_quotations_get_price_summary_success():
         "api_key": "dummy-key",
         "api_secret_key": "dummy-secret",
         "base_url": "https://mock-base",
-        "websocket_url": "wss://mock-websocket-url",  # 추가 필수
+        "websocket_url": "wss://mock-websocket-url",
         "tr_ids": {
             "quotations": {
                 "inquire_price": "dummy-tr-id"
@@ -22,8 +23,11 @@ async def test_quotations_get_price_summary_success():
         "is_paper_trading": False
     }
 
-    # KoreaInvestApiClient 인스턴스 생성
-    client = KoreaInvestApiClient(env=mock_env)
+    # 1. TokenManager에 대한 모의(mock) 객체를 생성합니다.
+    mock_token_manager = MagicMock()
+
+    # 2. KoreaInvestApiClient 생성자를 호출할 때 mock_token_manager를 전달합니다.
+    client = KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager)
 
     # quotations.call_api 비동기 메서드 모킹 (실제 네트워크 호출 차단)
     client.quotations.call_api = AsyncMock(return_value={
@@ -60,8 +64,11 @@ async def test_client_str_and_missing_access_token():
         "custtype": "P",
         "is_paper_trading": False
     }
+    # 1. TokenManager에 대한 모의(mock) 객체를 생성합니다.
+    mock_token_manager = MagicMock()
 
-    client = KoreaInvestApiClient(env=mock_env)
+    # 2. KoreaInvestApiClient 생성자를 호출할 때 mock_token_manager를 전달합니다.
+    client = KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager)
     expected_str = "KoreaInvestApiClient(base_url=https://mock-base, is_paper_trading=False)"
     assert str(client) == expected_str
 
@@ -83,4 +90,4 @@ async def test_client_str_and_missing_access_token():
     }
     import pytest
     with pytest.raises(ValueError, match="접근 토큰이 없습니다"):
-        KoreaInvestApiClient(env=mock_env2)
+        KoreaInvestApiClient(env=mock_env2, token_manager=mock_token_manager)

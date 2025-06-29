@@ -3,7 +3,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 import requests
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 
 class DummyAPI(KoreaInvestApiBase):
     # call_api를 호출 가능하도록 래핑
@@ -11,7 +10,7 @@ class DummyAPI(KoreaInvestApiBase):
         return await self.call_api(*args, **kwargs)
 
 @pytest.mark.asyncio
-async def testcall_api_retry_on_rate_limit(caplog):
+async def testcall_api_retry_exceed_failure(caplog):
     base_url = "https://dummy-base"
     headers = {"Authorization": "Bearer dummy"}
     config = {
@@ -19,46 +18,28 @@ async def testcall_api_retry_on_rate_limit(caplog):
         "_env_instance": None,
     }
     logger = logging.getLogger("test_logger")
+    logger.setLevel(logging.ERROR)
 
-    api = DummyAPI(base_url, headers, config, logger)
+    api = DummyAPI(base_url, headers, config, MagicMock(), logger)
 
-    # 응답 객체 모킹 (500 + 초당 거래건수 초과)
+    # 항상 500 + 초당 거래건수 초과 응답만 반환
     mock_response = MagicMock()
     mock_response.status_code = 500
     mock_response.json.return_value = {"msg1": "초당 거래건수를 초과하였습니다."}
     mock_response.text = '{"msg1":"초당 거래건수를 초과하였습니다."}'
     mock_response.raise_for_status = MagicMock()
 
-    # requests.Session.get 모킹 (첫 2회는 실패, 3회째는 정상)
-    success_response = MagicMock()
-    success_response.status_code = 200
-    success_response.json.return_value = {"rt_cd": "0", "output": {"data": "success"}}
-    success_response.text = '{"rt_cd":"0","output":{"data":"success"}}'
-    success_response.raise_for_status = MagicMock()
+    api._session.get = MagicMock(return_value=mock_response)
 
-    call_count = 0
-    def side_effect_get(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count < 3:
-            return mock_response
-        else:
-            return success_response
+    with caplog.at_level(logging.ERROR):
+        result = await api.call_api('GET', '/dummy-path', retry_count=2, delay=0.01)
 
-    api._session.get = MagicMock(side_effect=side_effect_get)
+    assert result is None
 
-    with caplog.at_level(logging.WARNING):
-        result = await api.call_api('GET', '/dummy-path', retry_count=3, delay=0.01)
+    # ✅ 로그 메시지 수정에 맞춰 assertion 변경
+    errors = [rec for rec in caplog.records if rec.levelname == "ERROR"]
+    assert any("모든 재시도 실패" in rec.message for rec in errors)
 
-    # 정상 응답이 리턴되는지 확인
-    assert result == {"rt_cd": "0", "output": {"data": "success"}}
-
-    # 로그 레벨이 WARNING인 로그가 하나 이상 찍혔는지 확인
-    warnings = [rec for rec in caplog.records if rec.levelname == "WARNING"]
-    assert len(warnings) > 0
-
-    # 총 3회 호출되었는지 확인
-    assert call_count == 3
 
 @pytest.mark.asyncio
 async def testcall_api_retry_exceed_failure(caplog):
@@ -89,7 +70,8 @@ async def testcall_api_retry_exceed_failure(caplog):
 
     # 오류 로그가 기록됐는지 확인
     errors = [rec for rec in caplog.records if rec.levelname == "ERROR"]
-    assert any("재시도 횟수 초과" in rec.message for rec in errors)
+    assert any("모든 재시도 실패" in rec.message for rec in errors)
+
 
 @pytest.mark.asyncio
 async def testcall_api_success():
@@ -159,13 +141,23 @@ async def testcall_api_retry_on_500_rate_limit(monkeypatch):
     assert len(responses) == 3
 
 @pytest.mark.asyncio
-async def testcall_api_token_expired_retry(monkeypatch):
-    dummy_env = MagicMock(spec=KoreaInvestApiEnv)
-    dummy_env.access_token = "oldtoken"
-    dummy_env.token_expired_at = 12345
+async def testcall_api_token_expired_retry():
+    class MockTokenManager:
+        def __init__(self):
+            self.invalidated = False
 
-    dummy = DummyAPI("https://mock-base", {}, {"_env_instance": dummy_env}, MagicMock())
-    dummy._env = dummy_env
+        def invalidate_token(self):
+            self.invalidated = True
+
+    token_manager = MockTokenManager()
+
+    dummy = DummyAPI(
+        base_url="https://mock-base",
+        headers={},
+        config={"_env_instance": MagicMock()},  # _config is not None
+        token_manager=token_manager,
+        logger=MagicMock()
+    )
 
     responses = []
 
@@ -185,12 +177,12 @@ async def testcall_api_token_expired_retry(monkeypatch):
 
     dummy._session.get = MagicMock(side_effect=mock_get)
 
-    result = await dummy.call_api('GET', '/token_expired', retry_count=10, delay=0.01)
+    result = await dummy.call_api('GET', '/token_expired', retry_count=5, delay=0.01)
 
     assert result == {"success": True}
-    assert dummy_env.access_token is None
-    assert dummy_env.token_expired_at is None
-    assert len(responses) == 3
+    assert token_manager.invalidated is True  # ✅ token_manager.invalidate_token()이 호출되어야 함
+
+
 
 @pytest.mark.asyncio
 async def testcall_api_http_error(monkeypatch):

@@ -14,6 +14,7 @@ def test_korea_invest_api_client_initialization():
         "is_paper_trading": True
     }
     mock_env.my_agent = "mock-user-agent"
+    mock_token_manager = MagicMock()
 
     # 2. 각 도메인 API 클래스들도 patch
     with patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiQuotations") as mock_quotations, \
@@ -21,7 +22,7 @@ def test_korea_invest_api_client_initialization():
          patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiTrading") as mock_trading, \
          patch("brokers.korea_investment.korea_invest_client.KereaInvestWebSocketAPI") as mock_ws:
 
-        client = KoreaInvestApiClient(env=mock_env)
+        client = KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager)
 
         # 3. 인스턴스 존재 확인
         mock_quotations.assert_called_once()

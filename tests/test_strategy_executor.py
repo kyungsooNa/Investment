@@ -2,19 +2,20 @@ import pytest
 from unittest.mock import AsyncMock
 from services.strategy_executor import StrategyExecutor
 from services.momentum_strategy import MomentumStrategy
+import pytest
+from unittest.mock import AsyncMock
+
+# (테스트에 필요한 클래스들을 import 했다고 가정)
 
 @pytest.mark.asyncio
 async def test_strategy_executor_with_mocked_quotations():
     mock_quotations = AsyncMock()
-
-    # get_price_summary는 리스트 순서대로 결과 반환
+    # ... (mock_quotations의 나머지 설정은 동일) ...
     mock_quotations.get_price_summary.side_effect = [
         {"symbol": "0001", "open": 10000, "current": 11000, "change_rate": 10.0},
         {"symbol": "0002", "open": 20000, "current": 24000, "change_rate": 20.0},
         {"symbol": "0003", "open": 15000, "current": 16000, "change_rate": 6.7}
     ]
-
-    # get_current_price는 async 함수이므로 async mock 함수로 구현
     async def mock_get_current_price(code):
         data_map = {
             "0001": {"output": {"stck_prpr": "11500"}},
@@ -22,17 +23,21 @@ async def test_strategy_executor_with_mocked_quotations():
             "0003": {"output": {"stck_prpr": "16500"}},
         }
         return data_map.get(code, {"output": {"stck_prpr": "0"}})
-
     mock_quotations.get_current_price.side_effect = mock_get_current_price
     mock_quotations.get_stock_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
 
+
+    # ▼▼▼▼▼ 핵심 수정 부분 ▼▼▼▼▼
+    # 'quotations=' 대신 MomentumStrategy의 __init__에 정의된 실제 파라미터 이름을 사용해야 합니다.
+    # (여기서는 'api_client'라고 가정)
     strategy = MomentumStrategy(
-        quotations=mock_quotations,
+        api_client=mock_quotations,  # 'quotations=' -> 'api_client=' 로 변경
         min_change_rate=10.0,
         min_follow_through=3.0,
         min_follow_through_time=10,
         mode="live"
     )
+    # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
     executor = StrategyExecutor(strategy=strategy)
 

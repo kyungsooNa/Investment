@@ -16,10 +16,10 @@ async def test_momentum_strategy_live_mode():
             "stck_prpr": "11500"
         }
     })
-    mock_quotations.get_stock_name_by_code = AsyncMock(return_value="삼성전자")  # ✅ 이거 추가
+    mock_quotations.get_name_by_code = AsyncMock(return_value="삼성전자")  # ✅ 이거 추가
 
     strategy = MomentumStrategy(
-        quotations=mock_quotations,
+        broker=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=3.0,
         min_follow_through_time=10,
@@ -51,10 +51,10 @@ async def test_momentum_strategy_live_mode_not_follow():
         }
     })
 
-    mock_quotations.get_stock_name_by_code = AsyncMock(return_value="SK하이닉스")
+    mock_quotations.get_name_by_code = AsyncMock(return_value="SK하이닉스")
 
     strategy = MomentumStrategy(
-        quotations=mock_quotations,
+        broker=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=3.0,
         min_follow_through_time=10,
@@ -79,13 +79,13 @@ async def test_momentum_strategy_backtest_mode():
         "current": 330000,
         "change_rate": 10.0
     })
-    mock_quotations.get_stock_name_by_code = AsyncMock(return_value="카카오")
+    mock_quotations.get_name_by_code = AsyncMock(return_value="카카오")  # ✅ 핵심 수정
 
     async def dummy_backtest_lookup(code):
         return 350000  # 6.06% 추가 상승
 
     strategy = MomentumStrategy(
-        quotations=mock_quotations,
+        broker=mock_quotations,
         min_change_rate=10.0,
         min_follow_through=5.0,
         min_follow_through_time=10,
@@ -110,7 +110,7 @@ async def test_momentum_strategy_backtest_no_lookup_raises():
     })
 
     strategy = MomentumStrategy(
-        quotations=mock_quotations,
+        broker=mock_quotations,
         mode="backtest",  # but no backtest_lookup provided
     )
 
