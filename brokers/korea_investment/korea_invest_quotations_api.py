@@ -253,3 +253,41 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             return ""
 
         return info["hts_kor_isnm"]
+
+    # KoreaInvestApiQuotations 클래스 내부에 이 메서드를 추가해주세요.
+    async def inquire_daily_itemchartprice(self, stock_code: str, date: str) -> list:
+        """
+        특정 종목의 특정 날짜의 분봉 데이터를 조회합니다.
+        (참고: 이 API는 실제로는 일봉 데이터를 반환하므로,
+        더 정교한 백테스트를 위해서는 분봉 API(inquire-time-itemchartprice) 사용이 권장됩니다.)
+
+        :param stock_code: 종목코드
+        :param date: 조회할 날짜 (YYYYMMDD 형식)
+        :return: 조회된 데이터 리스트 또는 빈 리스트
+        """
+        path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+
+        # API 문서에 따른 필수 헤더 설정
+        # config.yaml에 TR ID가 정의되어 있지 않을 경우를 대비해 기본값을 사용합니다.
+        tr_id = self._config['tr_ids']['quotations'].get('inquire_daily_itemchartprice', 'FHKST03010200')
+        self._headers["tr_id"] = tr_id
+
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code,
+            "FID_INPUT_DATE_1": date,
+            "FID_INPUT_DATE_2": date,
+            "FID_PERIOD_DIV_CODE": "D",  # D: 일봉 데이터
+            "FID_ORG_ADJ_PRC": "0"  # 0: 수정주가 반영
+        }
+
+        self.logger.info(f"{stock_code}의 {date} 일자별 주가 데이터 조회 시도...")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        # 한국투자증권 API는 분봉/일봉 데이터를 'output2' 키로 반환합니다.
+        if response and response.get("rt_cd") == "0" and response.get("output2"):
+            self.logger.info(f"{stock_code} 데이터 조회 성공. {len(response['output2'])}개 캔들 수신.")
+            return response["output2"]
+        else:
+            self.logger.warning(f"{stock_code} 데이터 조회 실패: {response}")
+            return []
