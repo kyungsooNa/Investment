@@ -68,3 +68,234 @@ async def test_execute_action_momentum_strategy_success(mocker, capsys):
     captured = capsys.readouterr()
     assert "모멘텀 전략 결과" in captured.out
     assert str({'code': '005930', 'name': '삼성전자'}) in captured.out
+
+# Helper function to create a mock config for tests
+def get_mock_config():
+    """테스트에 필요한 최소한의 모의 설정(config) 객체를 반환합니다."""
+    return {
+        'token_file_path': 'dummy.json',
+        'is_paper_trading': False,
+        'url': 'https://dummy-url.com',
+        'paper_url': 'https://dummy-paper-url.com',
+        'websocket_url': 'wss://dummy-ws.com',
+        'paper_websocket_url': 'wss://dummy-paper-ws.com',
+    }
+
+@pytest.mark.asyncio
+async def test_execute_action_get_current_price(mocker):
+    """
+    메뉴 '1' 선택 시 data_handlers.handle_get_current_stock_price가 호출되는지 테스트합니다.
+    """
+    # --- Arrange (준비) ---
+    # TradingApp의 의존성을 모킹합니다. (수정된 부분)
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+
+    # 핸들러들을 AsyncMock으로 교체합니다.
+    app.data_handlers = AsyncMock()
+    app.transaction_handlers = AsyncMock()
+
+    # --- Act (실행) ---
+    await app._execute_action('1')
+
+    # --- Assert (검증) ---
+    # 'handle_get_current_stock_price'가 '005930' 인자와 함께 호출되었는지 확인합니다.
+    app.data_handlers.handle_get_current_stock_price.assert_awaited_once_with("005930")
+
+@pytest.mark.asyncio
+async def test_execute_action_get_account_balance(mocker):
+    """
+    메뉴 '2' 선택 시 data_handlers.handle_get_account_balance가 호출되는지 테스트합니다.
+    """
+    # --- Arrange (준비) ---
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())  # 수정된 부분
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    app.transaction_handlers = AsyncMock()
+
+    # --- Act (실행) ---
+    await app._execute_action('2')
+
+    # --- Assert (검증) ---
+    # 'handle_get_account_balance'가 호출되었는지 확인합니다.
+    app.data_handlers.handle_get_account_balance.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_execute_action_place_buy_order(mocker):
+    """
+    메뉴 '3' 선택 시 transaction_handlers.handle_place_buy_order가 호출되는지 테스트합니다.
+    """
+    # --- Arrange (준비) ---
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())  # 수정된 부분
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    app.transaction_handlers = AsyncMock()
+
+    # --- Act (실행) ---
+    await app._execute_action('3')
+
+    # --- Assert (검증) ---
+    # 'handle_place_buy_order'가 고정된 인자들과 함께 호출되었는지 확인합니다.
+    app.transaction_handlers.handle_place_buy_order.assert_awaited_once_with("005930", "58500", "1", "00")
+
+@pytest.mark.asyncio
+async def test_execute_action_exit_app(mocker):
+    """
+    메뉴 '0' 선택 시 running_status가 False를 반환하는지 테스트합니다.
+    """
+    # --- Arrange (준비) ---
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())  # 수정된 부분
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+
+    # --- Act (실행) ---
+    running_status = await app._execute_action('0')
+
+    # --- Assert (검증) ---
+    # 앱 종료를 위해 False가 반환되었는지 확인합니다.
+    assert running_status is False
+
+@pytest.mark.asyncio
+async def test_execute_action_momentum_strategy_success(mocker, capsys):
+    """
+    TradingApp._execute_action('10') - 모멘텀 전략 실행이 성공하는 시나리오를 테스트합니다.
+    """
+    mock_config = get_mock_config()
+    mocker.patch('trading_app.load_config', return_value=mock_config)
+    mocker.patch('services.momentum_strategy.MomentumStrategy')
+    mock_executor_class = mocker.patch('services.strategy_executor.StrategyExecutor')
+
+    mock_executor_instance = mock_executor_class.return_value
+    mock_executor_instance.execute = AsyncMock(return_value={
+        "follow_through": [{'code': '005930', 'name': '삼성전자'}],
+        "not_follow_through": [{'code': '000660', 'name': 'SK하이닉스'}]
+    })
+
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.time_manager = MagicMock(spec=TimeManager)
+    app.time_manager.is_market_open.return_value = True
+    app.trading_service = MagicMock(spec=TradingService)
+    app.trading_service.get_top_market_cap_stocks = AsyncMock(return_value={
+        "rt_cd": "0",
+        "output": [{"mksc_shrn_iscd": "005930"}, {"mksc_shrn_iscd": "000660"}]
+    })
+    app.broker = MagicMock(spec=BrokerAPIWrapper)
+    app.logger = logging.getLogger('test_trading_app')
+
+    await app._execute_action('10')
+
+    captured = capsys.readouterr()
+    assert "모멘텀 전략 결과" in captured.out
+    assert str({'code': '005930', 'name': '삼성전자'}) in captured.out
+
+# --- New and Corrected Test Cases ---
+@pytest.mark.asyncio
+async def test_execute_action_get_current_price(mocker):
+    """메뉴 '1' 선택 시 data_handlers.handle_get_current_stock_price가 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    await app._execute_action('1')
+    app.data_handlers.handle_get_current_stock_price.assert_awaited_once_with("005930")
+
+@pytest.mark.asyncio
+async def test_execute_action_get_account_balance(mocker):
+    """메뉴 '2' 선택 시 data_handlers.handle_get_account_balance가 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    await app._execute_action('2')
+    app.data_handlers.handle_get_account_balance.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_execute_action_place_buy_order(mocker):
+    """메뉴 '3' 선택 시 transaction_handlers.handle_place_buy_order가 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.transaction_handlers = AsyncMock()
+    await app._execute_action('3')
+    app.transaction_handlers.handle_place_buy_order.assert_awaited_once_with("005930", "58500", "1", "00")
+
+@pytest.mark.asyncio
+async def test_execute_action_realtime_stream(mocker):
+    """메뉴 '4' 선택 시 handle_realtime_price_quote_stream이 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.transaction_handlers = AsyncMock()
+    await app._execute_action('4')
+    app.transaction_handlers.handle_realtime_price_quote_stream.assert_awaited_once_with("005930")
+
+@pytest.mark.asyncio
+async def test_execute_action_display_change_rate(mocker):
+    """메뉴 '5' 선택 시 handle_display_stock_change_rate가 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    await app._execute_action('5')
+    app.data_handlers.handle_display_stock_change_rate.assert_awaited_once_with("005930")
+
+@pytest.mark.asyncio
+async def test_execute_action_display_vs_open_price(mocker):
+    """메뉴 '6' 선택 시 handle_display_stock_vs_open_price가 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    await app._execute_action('6')
+    app.data_handlers.handle_display_stock_vs_open_price.assert_awaited_once_with("005930")
+
+@pytest.mark.asyncio
+async def test_execute_action_get_top_market_cap_real(mocker):
+    """메뉴 '7' 선택 시 (실전) handle_get_top_market_cap_stocks가 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    app.env.is_paper_trading = False # 실전 모드로 설정
+    await app._execute_action('7')
+    app.data_handlers.handle_get_top_market_cap_stocks.assert_awaited_once_with("0000")
+
+@pytest.mark.asyncio
+async def test_execute_action_get_top_market_cap_paper(mocker, capsys):
+    """메뉴 '7' 선택 시 (모의) 경고 메시지가 출력되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    app.env.is_paper_trading = True # 모의투자 모드로 설정
+    await app._execute_action('7')
+    captured = capsys.readouterr()
+    assert "모의투자 환경에서는" in captured.out
+    app.data_handlers.handle_get_top_market_cap_stocks.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_execute_action_get_top_10_with_prices(mocker):
+    """메뉴 '8' 선택 시 handle_get_top_10_market_cap_stocks_with_prices가 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    app.env.is_paper_trading = False
+    await app._execute_action('8')
+    app.data_handlers.handle_get_top_10_market_cap_stocks_with_prices.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_execute_action_get_upper_limit_stocks(mocker):
+    """메뉴 '9' 선택 시 handle_upper_limit_stocks가 호출되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    app.data_handlers = AsyncMock()
+    await app._execute_action('9')
+    app.data_handlers.handle_upper_limit_stocks.assert_awaited_once_with("0000", limit=500)
+
+@pytest.mark.asyncio
+async def test_execute_action_exit_app(mocker):
+    """메뉴 '0' 선택 시 running_status가 False를 반환하는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    running_status = await app._execute_action('0')
+    assert running_status is False
+
+@pytest.mark.asyncio
+async def test_execute_action_invalid_choice(mocker, capsys):
+    """잘못된 메뉴 선택 시 "Invalid choice" 메시지가 출력되는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    await app._execute_action('99')
+    captured = capsys.readouterr()
+    assert "유효하지 않은 선택입니다" in captured.out
