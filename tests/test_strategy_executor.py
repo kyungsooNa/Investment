@@ -61,7 +61,7 @@ async def test_strategy_executor_in_backtest_mode():
     mock_quotations.get_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
 
     # 2. Mock backtest price lookup
-    async def mock_backtest_lookup(code):
+    async def mock_backtest_lookup(code, summary, minutes):
         return {
             "005930": 80000,   # 상승률 3.9%
             "000660": 106000   # 상승률 0.95%

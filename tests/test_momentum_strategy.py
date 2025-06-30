@@ -81,8 +81,8 @@ async def test_momentum_strategy_backtest_mode():
     })
     mock_quotations.get_name_by_code = AsyncMock(return_value="카카오")  # ✅ 핵심 수정
 
-    async def dummy_backtest_lookup(code):
-        return 350000  # 6.06% 추가 상승
+    async def dummy_backtest_lookup(code, summary, minutes_after):
+        return 350000  # 6.06% 추가 상승을 의미하는 가짜 가격
 
     strategy = MomentumStrategy(
         broker=mock_quotations,
