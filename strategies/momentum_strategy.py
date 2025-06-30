@@ -49,32 +49,42 @@ class MomentumStrategy(Strategy):
         follow_through = []
         not_follow_through = []
 
+
         for s in results:
             code = s["symbol"]
-            name = await self.broker.get_name_by_code(code)  # ✅ wrapper 통해 종목명 조회
-            display = f"{name}({code})" if name else code  # ✅ 종목명(종목코드) 또는 코드만
+            name = await self.broker.get_name_by_code(code)
+            display = f"{name}({code})" if name else code
 
-            is_success = (
-                s["change_rate"] >= self.min_change_rate and
-                s["after_rate"] >= self.min_follow_through
-            )
+            # ▼▼▼▼▼ 핵심 로직 및 로그 수정 ▼▼▼▼▼
+            # 1. 초기 모멘텀 (시가 대비 현재가) 조건 확인
+            initial_momentum_ok = s["change_rate"] >= self.min_change_rate
+            # 2. 추세 지속 (현재가 대비 N분 후 가격) 조건 확인
+            follow_through_ok = s["after_rate"] >= self.min_follow_through
+
+            is_success = initial_momentum_ok and follow_through_ok
+
+            # 이제 로그에 각 단계의 실제값과 기준을 명확히 기록합니다.
+            log_initial_rate = f"초기 등락률: {s['change_rate']:.2f}% (기준: {self.min_change_rate}%)"
+            log_follow_rate = f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% (기준: {self.min_follow_through}%)"
 
             if is_success:
                 follow_through.append({"code": code, "name": name})
                 self.logger.info(
-                    f"[성공] 종목: {display} | 시가: {s['open']} | 종가: {s['current']} | "
-                    f"등락률: {s['change_rate']:.2f}% | 기준 등락률: {self.min_change_rate}% | "
-                    f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% | "
-                    f"기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
+                    f"[성공] 종목: {display} | {log_initial_rate} | {log_follow_rate}"
                 )
             else:
+                failure_reasons = []
+                if not initial_momentum_ok:
+                    failure_reasons.append("초기 등락률 미달")
+                if not follow_through_ok:
+                    failure_reasons.append("추세 지속 실패")
+
+                reason_str = " & ".join(failure_reasons)
                 not_follow_through.append({"code": code, "name": name})
                 self.logger.info(
-                    f"[실패] 종목: {display} | 시가: {s['open']} | 종가: {s['current']} | "
-                    f"등락률: {s['change_rate']:.2f}% | 기준 등락률: {self.min_change_rate}% | "
-                    f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% | "
-                    f"기준 상승률: {self.min_follow_through}% | 모드: {self.mode}"
+                    f"[실패] 종목: {display} | 사유: {reason_str} | {log_initial_rate} | {log_follow_rate}"
                 )
+            # ▲▲▲▲▲ 핵심 로직 및 로그 수정 ▲▲▲▲▲
 
         total = len(results)
         success = len(follow_through)

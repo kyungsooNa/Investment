@@ -3,7 +3,6 @@ from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 from core.config_loader import load_config
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
-from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from services.trading_service import TradingService
 from core.time_manager import TimeManager
 from core.logger import Logger
@@ -211,7 +210,7 @@ class TradingApp:
             print("\n모멘텀 전략 실행 중...")
 
             # 동적 import는 유지
-            from services.momentum_strategy import MomentumStrategy
+            from strategies.momentum_strategy import MomentumStrategy
             from services.strategy_executor import StrategyExecutor
 
             try:
@@ -268,7 +267,7 @@ class TradingApp:
         elif choice == '11':
             print("\n[모멘텀 전략 백테스트 실행 중...]")
 
-            from services.momentum_strategy import MomentumStrategy
+            from strategies.momentum_strategy import MomentumStrategy
             from services.strategy_executor import StrategyExecutor
 
             try:

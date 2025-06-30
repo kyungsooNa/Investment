@@ -1,10 +1,13 @@
 import pytest
 import logging
+import inspect
 from unittest.mock import MagicMock, AsyncMock
 from trading_app import TradingApp
 from services.trading_service import TradingService
 from core.time_manager import TimeManager
 from user_api.broker_api_wrapper import BrokerAPIWrapper
+from strategies.momentum_strategy import MomentumStrategy
+from services.strategy_executor import StrategyExecutor
 
 
 @pytest.mark.asyncio
@@ -161,8 +164,14 @@ async def test_execute_action_momentum_strategy_success(mocker, capsys):
     """
     mock_config = get_mock_config()
     mocker.patch('trading_app.load_config', return_value=mock_config)
-    mocker.patch('services.momentum_strategy.MomentumStrategy')
-    mock_executor_class = mocker.patch('services.strategy_executor.StrategyExecutor')
+
+    module_path = inspect.getmodule(MomentumStrategy).__name__
+    mocker.patch(f"{module_path}.MomentumStrategy")
+    # mocker.patch('services.momentum_strategy.MomentumStrategy')
+
+    executor_path = inspect.getmodule(StrategyExecutor).__name__
+    mock_executor_class = mocker.patch(f"{executor_path}.StrategyExecutor")
+    # mock_executor_class = mocker.patch('services.strategy_executor.StrategyExecutor')
 
     mock_executor_instance = mock_executor_class.return_value
     mock_executor_instance.execute = AsyncMock(return_value={

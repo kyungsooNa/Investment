@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock
-from services.momentum_strategy import MomentumStrategy
+from strategies.momentum_strategy import MomentumStrategy
 
 @pytest.mark.asyncio
 async def test_momentum_strategy_live_mode():
