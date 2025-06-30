@@ -47,6 +47,8 @@ async def test_execute_request_invalid_method():
     mock_token_manager = MagicMock()
 
     api = KoreaInvestApiBase("http://test", {}, {},mock_token_manager, logger=None)
+    api._session = MagicMock()
+
     with pytest.raises(ValueError):
         await api._execute_request("PUT", "http://test", {}, {})
 
