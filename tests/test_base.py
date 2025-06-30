@@ -63,7 +63,7 @@ async def testcall_api_retry_exceed_failure(caplog):
     api._session.get = MagicMock(return_value=mock_response)
 
     with caplog.at_level(logging.ERROR):
-        result = await api.call_api('GET', '/dummy-path', retry_count=2, delay=0.01)
+        result = await api.call_api('GET', '/dummy-path', retry_count=2, delay=0)
 
     # 실패시 None 리턴
     assert result is None
