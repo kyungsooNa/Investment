@@ -719,3 +719,36 @@ async def test_get_previous_day_info_value_error(mock_quotations):
     assert result_vol_error == {"prev_close": 0, "prev_volume": 0}
     mock_quotations.logger.error.assert_called_once()
 
+@pytest.mark.asyncio
+async def test_get_price_summary_parsing_error(mock_quotations):
+    """
+    get_current_price 응답의 가격 데이터가 숫자가 아닐 때,
+    ValueError/TypeError를 처리하고 기본값을 반환하는지 테스트합니다.
+    """
+    # Arrange
+    # 현재가(stck_prpr)에 숫자로 변환 불가능한 문자열을 넣어 예외 상황을 만듭니다.
+    mock_quotations.get_current_price = AsyncMock(return_value={
+        "output": {
+            "stck_oprc": "10000",
+            "stck_prpr": "INVALID_PRICE"  # int() 변환 시 ValueError 발생
+        }
+    })
+
+    # Act
+    result = await mock_quotations.get_price_summary("005930")
+
+    # Assert
+    # 1. 예외가 발생했을 때 반환하기로 약속된 기본 딕셔너리가 반환되었는지 확인합니다.
+    assert result == {
+        "symbol": "005930",
+        "open": 0,
+        "current": 0,
+        "change_rate": 0.0
+    }
+
+    # 2. 예외 상황에 대한 경고 로그가 기록되었는지 확인합니다.
+    mock_quotations.logger.warning.assert_called_once()
+
+    # 3. 로그 메시지에 "가격 데이터 파싱 실패"가 포함되어 있는지 확인 (더 상세한 검증)
+    log_message = mock_quotations.logger.warning.call_args[0][0]
+    assert "가격 데이터 파싱 실패" in log_message
