@@ -7,7 +7,7 @@ from services.trading_service import TradingService
 from core.time_manager import TimeManager
 from user_api.broker_api_wrapper import BrokerAPIWrapper
 from strategies.momentum_strategy import MomentumStrategy
-from services.strategy_executor import StrategyExecutor
+from strategies.strategy_executor import StrategyExecutor
 
 
 @pytest.mark.asyncio

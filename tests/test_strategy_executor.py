@@ -1,4 +1,4 @@
-from services.strategy_executor import StrategyExecutor
+from strategies.strategy_executor import StrategyExecutor
 from strategies.momentum_strategy import MomentumStrategy
 import pytest
 from unittest.mock import AsyncMock

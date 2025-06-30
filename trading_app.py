@@ -161,6 +161,7 @@ class TradingApp:
         print("9. 상한가 종목 조회 (상위 500개 종목 기준)")
         print("10. 모멘텀 전략 실행 (상승 추세 필터링)")
         print("11. 모멘텀 전략 백테스트 실행")
+        print("12. GapUpPullback 전략 실행")
 
         print("0. 종료")
         print("-----------------------------------")
@@ -211,7 +212,7 @@ class TradingApp:
 
             # 동적 import는 유지
             from strategies.momentum_strategy import MomentumStrategy
-            from services.strategy_executor import StrategyExecutor
+            from strategies.strategy_executor import StrategyExecutor
 
             try:
                 # 1~30위 시가총액 종목 가져오기
@@ -268,7 +269,7 @@ class TradingApp:
             print("\n[모멘텀 전략 백테스트 실행 중...]")
 
             from strategies.momentum_strategy import MomentumStrategy
-            from services.strategy_executor import StrategyExecutor
+            from strategies.strategy_executor import StrategyExecutor
 
             try:
                 # 사용자에게 입력받기
@@ -304,7 +305,7 @@ class TradingApp:
                     min_follow_through=3.0,
                     min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
                     mode="backtest",
-                    backtest_lookup=self._mock_backtest_price_lookup,
+                    backtest_lookup=self._realistic_backtest_price_lookup,
                     logger=self.logger
                 )
                 executor = StrategyExecutor(strategy)
@@ -321,6 +322,67 @@ class TradingApp:
 
             except Exception as e:
                 self.logger.error(f"[백테스트] 전략 실행 중 오류 발생: {e}")
+                print(f"[오류] 전략 실행 실패: {e}")
+
+
+        elif choice == '12':
+
+            print("\nGapUpPullback 전략 실행 중...")
+
+            from strategies.GapUpPullback_strategy import GapUpPullbackStrategy
+            from strategies.strategy_executor import StrategyExecutor
+
+            try:
+                top_response = await self.trading_service.get_top_market_cap_stocks("0000")
+
+                # ✅ 응답 형식 구분: dict (정상 API) vs list (임시 대체 or 모의투자)
+                if isinstance(top_response, dict) and top_response.get('rt_cd') == '0':
+                    output_items = top_response.get("output", [])
+                    top_stock_codes = [
+                        item["mksc_shrn_iscd"] for item in output_items if "mksc_shrn_iscd" in item
+                    ]
+                elif isinstance(top_response, list):  # list인 경우를 fallback으로 허용
+                    top_stock_codes = [
+                        item["code"] for item in top_response if "code" in item
+                    ]
+                else:
+                    print("[ERROR] 시가총액 상위 종목 조회 실패: 응답 형식 오류")
+                    return running_status
+
+                if not top_stock_codes:
+                    print("조회된 종목이 없어 전략을 실행할 수 없습니다.")
+                    return running_status
+
+                strategy = GapUpPullbackStrategy(
+                    broker=self.broker,
+                    min_gap_rate=5.0,
+                    max_pullback_rate=2.0,
+                    rebound_rate=2.0,
+                    mode="live",
+                    logger=self.logger
+
+                )
+
+                executor = StrategyExecutor(strategy)
+                result = await executor.execute(top_stock_codes)
+
+                print("\n📊 [GapUpPullback 전략 결과]")
+
+                print("✔️ 후보 종목:")
+
+                for item in result.get("gapup_pullback_selected", []):
+                    print(f" - {item['name']}({item['code']})")
+
+                print("❌ 제외 종목:")
+
+                for item in result.get("gapup_pullback_rejected", []):
+                    print(f" - {item['name']}({item['code']})")
+
+
+            except Exception as e:
+
+                self.logger.error(f"[GapUpPullback] 전략 실행 오류: {e}")
+
                 print(f"[오류] 전략 실행 실패: {e}")
 
         else:
@@ -356,3 +418,56 @@ class TradingApp:
         except Exception as e:
             self.logger.warning(f"[백테스트] {stock_code} 가격 조회 실패: {e}")
             return 0
+
+    async def _realistic_backtest_price_lookup(self, stock_code: str, base_summary: dict, minutes_after: int) -> int:
+        """
+        백테스트용으로, 실제 과거 분봉 데이터를 기반으로 N분 후의 가격을 조회합니다.
+
+        :param stock_code: 종목코드
+        :param base_summary: 초기 등락률이 감지된 시점의 가격 요약 정보
+        :param minutes_after: 몇 분 후의 가격을 조회할지
+        :return: N분 후의 실제 종가
+        """
+        try:
+            # 여기서는 로깅의 편의를 위해 임시로 '오늘' 날짜를 사용합니다.
+            # 실제 정교한 백테스트에서는 특정 과거 날짜를 지정해야 합니다.
+            backtest_date = self.time_manager.get_current_kst_time().strftime('%Y%m%d')
+
+            # 1. API를 통해 해당 날짜의 분봉 데이터를 모두 가져옵니다.
+            chart_data = await self.api_client.quotations.inquire_daily_itemchartprice(stock_code, backtest_date)
+            if not chart_data:
+                self.logger.warning(f"[백테스트] {stock_code}의 분봉 데이터가 없습니다.")
+                return base_summary["current"]  # 데이터를 못찾으면 원래 가격 반환
+
+            # 2. 초기 등락률이 감지된 시점의 '현재가'와 가장 가까운 분봉을 찾습니다.
+            #    (여기서는 단순화를 위해, 초기 요약 정보의 현재가와 같은 가격의 첫 분봉을 찾습니다)
+            base_price = base_summary["current"]
+            base_index = -1
+
+            for i, candle in enumerate(chart_data):
+                # 'stck_prpr'는 현재가, 'stck_clpr'는 종가입니다. 분봉에서는 종가를 사용합니다.
+                if int(candle.get('stck_clpr', 0)) == base_price:
+                    base_index = i
+                    break
+
+            if base_index == -1:
+                self.logger.warning(f"[백테스트] {stock_code}의 기준 시점 분봉을 찾지 못했습니다.")
+                return base_price
+
+            # 3. N분 후의 인덱스를 계산합니다.
+            #    (참고: 한-투 API는 보통 시간 역순으로 데이터를 주므로 인덱스를 빼줍니다.)
+            after_index = base_index - minutes_after
+
+            if after_index < 0:
+                # N분 뒤 데이터가 장 마감 등으로 없는 경우, 가장 마지막(오래된) 데이터 사용
+                after_index = 0
+
+            # 4. N분 후의 가격을 반환합니다.
+            after_price = int(chart_data[after_index].get('stck_clpr', 0))
+
+            self.logger.info(f"[백테스트] {stock_code} | 기준가: {base_price} | {minutes_after}분 후 가격: {after_price}")
+            return after_price
+
+        except Exception as e:
+            self.logger.error(f"[백테스트] {stock_code} 가격 조회 중 오류 발생: {e}")
+            return base_summary.get("current", 0)  # 오류 발생 시 원래 가격 반환

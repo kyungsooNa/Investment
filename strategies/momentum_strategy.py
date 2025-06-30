@@ -12,7 +12,7 @@ class MomentumStrategy(Strategy):
         min_follow_through: float = 3.0,
         min_follow_through_time: int = 5,  # 몇 분 후 기준인지
         mode: str = "live",  # 'live' or 'backtest'
-        backtest_lookup: Optional[Callable[[str], int]] = None,
+        backtest_lookup: Optional[Callable[[str, Dict, int], int]] = None,
         logger: Optional[logging.Logger] = None
     ):
         self.broker = broker  # ✅ 통합 wrapper (API + CSV)
@@ -33,7 +33,11 @@ class MomentumStrategy(Strategy):
                 if not self.backtest_lookup:
                     raise ValueError("Backtest 모드에서는 backtest_lookup 함수가 필요합니다.")
 
-                result = self.backtest_lookup(code)
+                result = self.backtest_lookup(
+                    code,
+                    summary,
+                    self.min_follow_through_time
+                )
                 after_price = await result if inspect.isawaitable(result) else result
             else:
                 price_data = await self.broker.get_current_price(code)  # ✅ wrapper 통해 조회
@@ -65,8 +69,15 @@ class MomentumStrategy(Strategy):
 
             # 이제 로그에 각 단계의 실제값과 기준을 명확히 기록합니다.
             log_initial_rate = f"초기 등락률: {s['change_rate']:.2f}% (기준: {self.min_change_rate}%)"
-            log_follow_rate = f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% (기준: {self.min_follow_through}%)"
-
+            # ▼▼▼▼▼ 여기가 핵심 수정 부분입니다 ▼▼▼▼▼
+            # N분 전/후 가격을 로그에 포함시킵니다.
+            before_price = s['current']
+            after_price = s['after']
+            log_follow_rate = (
+                f"{self.min_follow_through_time}분 후 상승률: {s['after_rate']:.2f}% "
+                f"({before_price:,}원 → {after_price:,}원, 기준: {self.min_follow_through}%)"
+            )
+            # ▲▲▲▲▲ 여기가 핵심 수정 부분입니다 ▲▲▲▲▲
             if is_success:
                 follow_through.append({"code": code, "name": name})
                 self.logger.info(
