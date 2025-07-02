@@ -2,7 +2,7 @@ import pytest
 import requests
 import json
 import websockets
-
+from websockets.exceptions import ConnectionClosedOK
 from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_websocket_client import KoreaInvestWebSocketClient  # 실제 경로에 맞게 조정
 
