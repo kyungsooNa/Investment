@@ -61,7 +61,7 @@ async def test_execute_action_momentum_strategy_success(mocker, capsys):
             {"mksc_shrn_iscd": "000660"}
         ]
     }
-    app.trading_service.get_top_market_cap_stocks = AsyncMock(return_value=mock_top_stocks_response)
+    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=mock_top_stocks_response)
 
     app.broker = MagicMock(spec=BrokerAPIWrapper)
     app.logger = logging.getLogger('test_trading_app')
@@ -183,7 +183,7 @@ async def test_execute_action_momentum_strategy_success(mocker, capsys):
     app.time_manager = MagicMock(spec=TimeManager)
     app.time_manager.is_market_open.return_value = True
     app.trading_service = MagicMock(spec=TradingService)
-    app.trading_service.get_top_market_cap_stocks = AsyncMock(return_value={
+    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
         "rt_cd": "0",
         "output": [{"mksc_shrn_iscd": "005930"}, {"mksc_shrn_iscd": "000660"}]
     })

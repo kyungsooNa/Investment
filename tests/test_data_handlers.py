@@ -93,9 +93,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             mock_print.assert_called()
             self.mock_logger.error.assert_called_once_with("계좌 잔고 조회 실패: None")
 
-    # --- handle_get_top_market_cap_stocks 함수 테스트 ---
-    async def test_handle_get_top_market_cap_stocks_success(self):
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+    # --- handle_get_top_market_cap_stocks_code 함수 테스트 ---
+    async def test_handle_get_top_market_cap_stocks_code_success(self):
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0",
             "output": [
                 {"data_rank": "1", "hts_kor_isnm": "삼성전자", "stck_avls": "400000000000000", "stck_prpr": "70000"},
@@ -110,7 +110,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             self.assertIn("시가총액 상위 종목 조회 성공", self.mock_logger.info.call_args[0][0])
 
     async def test_handle_get_top_market_cap_stocks_no_output(self):
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0", "output": []
         }
         with patch('builtins.print') as mock_print:
@@ -120,7 +120,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             self.assertIn("시가총액 상위 종목 조회 성공", self.mock_logger.info.call_args[0][0])
 
     async def test_handle_get_top_market_cap_stocks_failure_rt_cd(self):
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "1", "msg1": "에러 발생"
         }
         with patch('builtins.print') as mock_print:
@@ -130,14 +130,14 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             self.assertIn("실패: 시가총액 상위 종목 조회", self.mock_logger.error.call_args[0][0])
 
     async def test_handle_get_top_market_cap_stocks_none_return(self):
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = None
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = None
         with patch('builtins.print') as mock_print:
             await self.handler.handle_get_top_market_cap_stocks("0000", 1)
             mock_print.assert_called()
             self.mock_logger.error.assert_called_once_with("실패: 시가총액 상위 종목 조회: None")
 
     async def test_handle_get_top_market_cap_stocks_missing_output_key(self):
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0"
         }
         with patch('builtins.print') as mock_print:
@@ -266,7 +266,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             mock_print.assert_called()
             self.mock_logger.warning.assert_called()
             self.assertIsNone(result)
-            self.mock_trading_service.get_top_market_cap_stocks.assert_not_called()
+            self.mock_trading_service.get_top_market_cap_stocks_code.assert_not_called()
 
     async def test_handle_upper_limit_stocks_paper_trading(self):
         self.mock_time_manager.is_market_open.return_value = True
@@ -276,12 +276,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             mock_print.assert_called()
             self.mock_logger.warning.assert_called()
             self.assertEqual(result, {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."})
-            self.mock_trading_service.get_top_market_cap_stocks.assert_not_called()
+            self.mock_trading_service.get_top_market_cap_stocks_code.assert_not_called()
 
     async def test_handle_upper_limit_stocks_get_top_stocks_failure(self):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "1", "msg1": "API 에러"
         }
         with patch('builtins.print') as mock_print:
@@ -294,7 +294,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_upper_limit_stocks_no_top_stocks(self):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0", "output": []
         }
         with patch('builtins.print') as mock_print:
@@ -306,7 +306,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_upper_limit_stocks_found_one_upper_limit(self):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0", "output": [{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"}]}
         self.mock_trading_service.get_current_stock_price.return_value = {
             "rt_cd": "0", "output": {"prdy_vrss_sign": "1", "stck_prpr": "70000", "prdy_ctrt": "30.00"}}
@@ -319,7 +319,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_upper_limit_stocks_no_upper_limit_found(self):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0",
             "output": [
                 {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"},
@@ -339,7 +339,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_upper_limit_stocks_individual_price_lookup_failure(self):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0", "output": [{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"}]
         }
         self.mock_trading_service.get_current_stock_price.return_value = {
@@ -354,7 +354,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_upper_limit_stocks_exception_handling(self):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks.side_effect = Exception("Test Exception")
+        self.mock_trading_service.get_top_market_cap_stocks_code.side_effect = Exception("Test Exception")
 
         with patch('builtins.print') as mock_print:
             result = await self.handler.handle_upper_limit_stocks()
@@ -365,7 +365,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_upper_limit_stocks_limit_parameter(self):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks.return_value = {
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0", "output": [
                 {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"},
                 {"mksc_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스"},

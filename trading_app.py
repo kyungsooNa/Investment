@@ -216,12 +216,12 @@ class TradingApp:
 
             try:
                 # 1~30위 시가총액 종목 가져오기
-                top_response = await self.trading_service.get_top_market_cap_stocks("0000")
+                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000")
 
                 # 1. 실패 조건: 응답이 dict가 아니거나, rt_cd가 '0'이 아닌 경우를 한번에 처리
-                if not isinstance(top_response, dict) or top_response.get('rt_cd') != '0':
-                    print("시가총액 상위 종목 조회 실패:", top_response.get('msg1', '알 수 없는 오류 또는 예상치 못한 응답 타입'))
-                    self.logger.warning(f"시가총액 조회 실패. 응답: {top_response}")
+                if not isinstance(top_codes, dict) or top_codes.get('rt_cd') != '0':
+                    print("시가총액 상위 종목 조회 실패:", top_codes.get('msg1', '알 수 없는 오류 또는 예상치 못한 응답 타입'))
+                    self.logger.warning(f"시가총액 조회 실패. 응답: {top_codes}")
                     return running_status
 
                 # 2. 성공 경로: 위 조건을 통과하면, 응답은 성공적인 dict임이 보장됨
@@ -230,7 +230,7 @@ class TradingApp:
                 # 종목 코드 추출 및 전략 실행 로직을 모두 성공 경로 안으로 이동
                 top_stock_codes = [
                     item["mksc_shrn_iscd"]
-                    for item in top_response.get("output", [])[:30]  # .get()으로 더 안전하게 접근
+                    for item in top_codes.get("output", [])[:30]  # .get()으로 더 안전하게 접근
                     if "mksc_shrn_iscd" in item
                 ]
 
@@ -284,17 +284,17 @@ class TradingApp:
                     print("숫자가 아닌 값이 입력되어 기본값 30을 사용합니다.")
                     count = 30
 
-                top_response = await self.trading_service.get_top_market_cap_stocks("0000", count=count)
+                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000", count=count)
 
                 # ✅ 리스트이므로 .get() 사용 불가 → 대신 리스트 비어있는지 확인
-                if not top_response:
+                if not top_codes:
                     print("시가총액 상위 종목 조회 실패: 결과 없음")
                     return running_status
 
                 # ✅ 리스트에서 종목코드 추출
                 top_stock_codes = [
                     item["code"]
-                    for item in top_response[:count]
+                    for item in top_codes[:count]
                     if "code" in item
                 ]
 
@@ -333,17 +333,17 @@ class TradingApp:
             from strategies.strategy_executor import StrategyExecutor
 
             try:
-                top_response = await self.trading_service.get_top_market_cap_stocks("0000")
+                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000")
 
                 # ✅ 응답 형식 구분: dict (정상 API) vs list (임시 대체 or 모의투자)
-                if isinstance(top_response, dict) and top_response.get('rt_cd') == '0':
-                    output_items = top_response.get("output", [])
+                if isinstance(top_codes, dict) and top_codes.get('rt_cd') == '0':
+                    output_items = top_codes.get("output", [])
                     top_stock_codes = [
                         item["mksc_shrn_iscd"] for item in output_items if "mksc_shrn_iscd" in item
                     ]
-                elif isinstance(top_response, list):  # list인 경우를 fallback으로 허용
+                elif isinstance(top_codes, list):  # list인 경우를 fallback으로 허용
                     top_stock_codes = [
-                        item["code"] for item in top_response if "code" in item
+                        item["code"] for item in top_codes if "code" in item
                     ]
                 else:
                     print("[ERROR] 시가총액 상위 종목 조회 실패: 응답 형식 오류")

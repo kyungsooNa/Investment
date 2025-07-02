@@ -95,7 +95,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self.logger.warning(f"{stock_code} 시가총액 정보 없음 또는 형식 오류")
             return 0
 
-    async def get_top_market_cap_stocks(self, market_code: str, count: int = 30) -> list[dict]:
+    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> list[dict]:
         """
         시가총액 상위 종목 목록을 반환합니다. 최대 30개까지만 지원됩니다.
 
@@ -144,12 +144,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             if not code or not raw_market_cap:
                 continue
 
-            name = await self.get_stock_name_by_code(code)
             market_cap = int(raw_market_cap.replace(",", "")) if raw_market_cap.replace(",", "").isdigit() else 0
 
             results.append({
                 "code": code,
-                "name": name,
                 "market_cap": market_cap
             })
 
@@ -204,7 +202,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         :param min_volume_ratio: 필터 기준 거래량 배수
         :return: 조건에 맞는 종목 리스트
         """
-        top_stocks = await self.get_top_market_cap_stocks()
+        top_stocks = await self.get_top_market_cap_stocks_code()
         if not top_stocks or "output" not in top_stocks:
             self.logger.error("시가총액 상위 종목 조회 실패")
             return []
@@ -243,16 +241,16 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         return filtered
 
-    async def get_stock_name_by_code(self, stock_code: str) -> str:
-        """
-        종목코드를 입력하면 종목명을 반환합니다.
-        """
-        info = await self.get_stock_info_by_code(stock_code)
-        if not info or "hts_kor_isnm" not in info:
-            self.logger.warning(f"종목명 조회 실패 또는 응답 없음: {stock_code}")
-            return ""
-
-        return info["hts_kor_isnm"]
+    # async def get_stock_name_by_code(self, stock_code: str) -> str:
+    #     """
+    #     종목코드를 입력하면 종목명을 반환합니다.
+    #     """
+    #     info = await self.get_stock_info_by_code(stock_code)
+    #     if not info or "hts_kor_isnm" not in info:
+    #         self.logger.warning(f"종목명 조회 실패 또는 응답 없음: {stock_code}")
+    #         return ""
+    #
+    #     return info["hts_kor_isnm"]
 
     # KoreaInvestApiQuotations 클래스 내부에 이 메서드를 추가해주세요.
     async def inquire_daily_itemchartprice(self, stock_code: str, date: str) -> list:

@@ -59,8 +59,8 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         # 이제 바로 self.mock_api_client.KoreaInvestApiQuotations.get_current_price와 같이 접근하여 return_value를 설정합니다.
         self.mock_api_client.KoreaInvestApiQuotations.get_current_price = mock.AsyncMock(
             spec_set=KoreaInvestApiQuotations.get_current_price)
-        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks = mock.AsyncMock(
-            spec_set=KoreaInvestApiQuotations.get_top_market_cap_stocks)
+        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks_code = mock.AsyncMock(
+            spec_set=KoreaInvestApiQuotations.get_top_market_cap_stocks_code)
         self.mock_api_client.account.get_account_balance = mock.AsyncMock(
             spec_set=KoreaInvestApiAccount.get_account_balance)
         self.mock_api_client.account.get_real_account_balance = mock.AsyncMock(
@@ -109,7 +109,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         self.mock_time_manager.is_market_open.assert_called_once()
-        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks.assert_not_called()
+        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks_code.assert_not_called()
         self.mock_logger.warning.assert_called_once_with("시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.")
         self.assertIn("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n", self.print_output_capture.getvalue())
 
@@ -122,7 +122,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."})
         self.mock_time_manager.is_market_open.assert_called_once()
-        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks.assert_not_called()
+        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks_code.assert_not_called()
         self.mock_logger.warning.assert_called_once_with("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
         self.assertIn("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n", self.print_output_capture.getvalue())
 
@@ -137,7 +137,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_env.is_paper_trading = False
 
         # TradingService 쪽 mock 메서드 설정 (❗️여기 중요)
-        self.trading_service.get_top_market_cap_stocks = AsyncMock(return_value={
+        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
             "rt_cd": "1",  # 실패 응답
             "msg1": "API 오류"
         })
@@ -149,7 +149,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
         # API 호출 검증
-        self.trading_service.get_top_market_cap_stocks.assert_called_once_with("0000")
+        self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with("0000")
         self.mock_api_client.KoreaInvestApiQuotations.get_current_price.assert_not_called()
 
         # 로그 및 콘솔 출력 검증
@@ -167,7 +167,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = False
 
-        self.trading_service.get_top_market_cap_stocks = AsyncMock(return_value={
+        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
             "rt_cd": "0", "msg1": "정상", "output": []
         })
 
@@ -175,7 +175,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
-        self.trading_service.get_top_market_cap_stocks.assert_called_once_with(market_code)
+        self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with(market_code)
         self.mock_api_client.KoreaInvestApiQuotations.get_current_price.assert_not_called()
 
         self.assertTrue(self.mock_logger.info.called)
@@ -192,7 +192,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         trading_service = MagicMock()
         trading_service._env = mock_env
-        trading_service.get_top_market_cap_stocks = AsyncMock(return_value={
+        trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
             "rt_cd": "0",
             "output": [
                 {"mksc_shrn_iscd": "CODE001", "hts_kor_isnm": "상한가종목1", "data_rank": "1"},
@@ -218,7 +218,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         result = await data_handler.handle_upper_limit_stocks(market_code="0000", limit=500)
 
         assert result is True
-        trading_service.get_top_market_cap_stocks.assert_called_once_with("0000")
+        trading_service.get_top_market_cap_stocks_code.assert_called_once_with("0000")
         assert trading_service.get_current_stock_price.call_count == 3
         assert mock_logger.info.called
 
@@ -229,7 +229,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         limit = 500
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = False
-        self.trading_service.get_top_market_cap_stocks = AsyncMock(return_value={
+        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
             "rt_cd": "0",
             "output": [
                 {"mksc_shrn_iscd": "CODE001", "hts_kor_isnm": "상한가종목1", "data_rank": "1"},
@@ -244,7 +244,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         result = await self.data_handlers.handle_upper_limit_stocks(market_code=market_code, limit=limit)
 
         self.assertTrue(result)  # 상한가 종목 1개 발견되므로 True 반환
-        self.trading_service.get_top_market_cap_stocks.assert_called_once_with(market_code)
+        self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with(market_code)
         self.assertEqual(self.trading_service.get_current_stock_price.call_count, 2)
 
         # 콘솔 출력 검증

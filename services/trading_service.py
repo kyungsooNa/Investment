@@ -153,7 +153,7 @@ class TradingService:
 
         return response
 
-    async def get_top_market_cap_stocks(self, market_code: str, count: int = None):
+    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = None):
         """
         시가총액 상위 종목을 조회하고 결과를 반환합니다 (모의투자 미지원).
         :param market_code: 시장 코드 (예: 'STK')
@@ -169,7 +169,7 @@ class TradingService:
             self.logger.warning("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
             return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}
 
-        return await self._api_client.quotations.get_top_market_cap_stocks(market_code, count)
+        return await self._api_client.quotations.get_top_market_cap_stocks_code(market_code, count)
 
     async def get_top_10_market_cap_stocks_with_prices(self):
         """
@@ -188,7 +188,7 @@ class TradingService:
             self.logger.warning("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
             return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}
 
-        top_stocks_response = await self.get_top_market_cap_stocks("0000")
+        top_stocks_response = await self.get_top_market_cap_stocks_code("0000")
         if not top_stocks_response or top_stocks_response.get('rt_cd') != '0':
             self.logger.error(f"시가총액 상위 종목 조회 실패: {top_stocks_response}")
             return None

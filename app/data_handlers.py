@@ -47,7 +47,7 @@ class DataHandlers:
     async def handle_get_top_market_cap_stocks(self, market_code, count: int = None):
         """시가총액 상위 종목 조회 요청 및 결과 출력 (전체 목록)."""
         print("\n--- 시가총액 상위 종목 조회 시도 ---")
-        top_market_cap_stocks = await self.trading_service.get_top_market_cap_stocks(market_code, count)
+        top_market_cap_stocks = await self.trading_service.get_top_market_cap_stocks_code(market_code, count)
 
         if top_market_cap_stocks and top_market_cap_stocks.get('rt_cd') == '0':
             print(f"성공: 시가총액 상위 종목 목록:")
@@ -224,7 +224,7 @@ class DataHandlers:
         upper_limit_stocks_found = []
         try:
             # 1. 시가총액 상위 종목 목록 조회 (TradingService 위임)
-            top_stocks_response = await self.trading_service.get_top_market_cap_stocks(market_code)
+            top_stocks_response = await self.trading_service.get_top_market_cap_stocks_code(market_code)
 
             if not top_stocks_response or top_stocks_response.get('rt_cd') != '0' or not top_stocks_response.get(
                     'output'):
