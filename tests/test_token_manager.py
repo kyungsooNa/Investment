@@ -8,37 +8,31 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 import pytz  # pytz 임포트
 import shutil # shutil 임포트
-
+import tempfile # tempfile 모듈 임포트
 
 class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        # 테스트 환경을 위한 임시 토큰 파일 경로 설정
-        self.temp_dir = 'temp_config_test' # 충돌 방지를 위해 이름 변경
+        # 각 테스트 실행마다 고유한 임시 디렉토리 생성
+        self.temp_dir = tempfile.mkdtemp()  # unique temp directory for each test run
         self.test_token_file = os.path.join(self.temp_dir, 'test_token.json')
 
-        # 테스트 시작 시 임시 디렉토리가 존재하지 않으면 생성
-        os.makedirs(self.temp_dir, exist_ok=True) # setUp에서 디렉토리 생성
-
-        # TokenManager 초기화 시 'config' 인자 제거
         self.token_manager = TokenManager(token_file_path=self.test_token_file)
         self.kst_timezone = pytz.timezone('Asia/Seoul')
 
-        # Mock config data (테스트에 필요한 최소한의 정보만 제공)
         self.mock_config = {
             'app_key': 'test_app_key',
             'app_secret': 'test_app_secret',
             'url': 'https://test-api.koreainvestment.com:9443',
-            'paper_url': 'https://test-api.koreainvestment.com:9443'  # 모의투자 URL도 필요
+            'paper_url': 'https://test-api.koreainvestment.com:9443'
         }
 
-        # Test Env (TokenManager에 필요한 env 정보를 제공하기 위함)
         self.mock_env = MagicMock()
         self.mock_env.get_full_config.return_value = {
             'base_url': self.mock_config['url'],
             'api_key': self.mock_config['app_key'],
             'api_secret_key': self.mock_config['app_secret']
         }
-        self.mock_env.base_url = self.mock_config['url']  # _get_token_base_url_from_file 비교를 위해 추가
+        self.mock_env.base_url = self.mock_config['url']
 
     def tearDown(self):
         # 테스트 후 생성된 임시 토큰 파일 삭제
@@ -311,3 +305,113 @@ async def test_get_token_no_file_new_issued_isolated(tmp_path):  # 이제 self �
             token_data = json.load(f)
             assert token_data['access_token'] == 'token_no_file_new_issued'
             assert token_data['base_url'] == mock_config['url']
+
+
+@pytest.mark.asyncio
+async def test_is_token_valid_when_token_is_none():
+    """
+    _is_token_valid: _access_token이 None일 때 False 반환 검증.
+    """
+    token_manager = TokenManager() # 초기화 시 _access_token과 _token_expired_at은 None
+    assert token_manager._is_token_valid() is False
+
+@pytest.mark.asyncio
+async def test_is_token_valid_when_expiry_is_none():
+    """
+    _is_token_valid: _token_expired_at이 None일 때 False 반환 검증.
+    """
+    token_manager = TokenManager()
+    token_manager._access_token = "some_token" # access_token만 설정
+    assert token_manager._is_token_valid() is False
+
+@pytest.mark.asyncio
+async def test_get_token_base_url_from_file_not_found(tmp_path):
+    """
+    _get_token_base_url_from_file: 토큰 파일이 없을 때 None 반환 검증.
+    """
+    non_existent_file = tmp_path / "non_existent_token.json"
+    token_manager = TokenManager(token_file_path=str(non_existent_file))
+    assert token_manager._get_token_base_url_from_file() is None
+
+@pytest.mark.asyncio
+async def test_get_token_base_url_from_file_invalid_json(tmp_path):
+    """
+    _get_token_base_url_from_file: 토큰 파일이 있지만 JSON 형식이 아닐 때 None 반환 검증.
+    """
+    invalid_json_file = tmp_path / "invalid_token.json"
+    with open(invalid_json_file, 'w') as f:
+        f.write("this is not json")
+    token_manager = TokenManager(token_file_path=str(invalid_json_file))
+    assert token_manager._get_token_base_url_from_file() is None
+
+@pytest.mark.asyncio
+async def test_issue_new_token_missing_base_url_raises_error():
+    """
+    _issue_new_token: base_url이 누락되었을 때 ValueError 발생 검증.
+    """
+    token_manager = TokenManager()
+    with pytest.raises(ValueError, match="Missing environment configuration for token issuance."):
+        await token_manager._issue_new_token(base_url="", app_key="key", app_secret="secret")
+
+@pytest.mark.asyncio
+async def test_issue_new_token_missing_app_key_raises_error():
+    """
+    _issue_new_token: app_key가 누락되었을 때 ValueError 발생 검증.
+    """
+    token_manager = TokenManager()
+    with pytest.raises(ValueError, match="Missing environment configuration for token issuance."):
+        await token_manager._issue_new_token(base_url="url", app_key="", app_secret="secret")
+
+@pytest.mark.asyncio
+async def test_issue_new_token_missing_app_secret_raises_error():
+    """
+    _issue_new_token: app_secret이 누락되었을 때 ValueError 발생 검증.
+    """
+    token_manager = TokenManager()
+    with pytest.raises(ValueError, match="Missing environment configuration for token issuance."):
+        await token_manager._issue_new_token(base_url="url", app_key="key", app_secret="")
+
+@pytest.mark.asyncio
+async def test_invalidate_token_when_file_not_exists(tmp_path):
+    """
+    invalidate_token: 토큰 파일이 존재하지 않을 때 호출 시, 파일 삭제 시도 없이 토큰만 초기화되는지 검증.
+    """
+    non_existent_file = tmp_path / "non_existent_token.json"
+    token_manager = TokenManager(token_file_path=str(non_existent_file))
+
+    # 토큰이 메모리에 있는 것처럼 설정
+    token_manager._access_token = 'token_to_invalidate'
+    token_manager._token_expired_at = datetime.now() + timedelta(hours=1)
+
+    # os.remove가 호출되지 않는지 확인하기 위해 patch
+    with patch('os.remove') as mock_os_remove:
+        token_manager.invalidate_token()
+
+        assert token_manager._access_token is None
+        assert token_manager._token_expired_at is None
+        mock_os_remove.assert_not_called()  # 파일이 없으므로 os.remove 호출되면 안 됨
+
+@pytest.mark.asyncio
+async def test_load_token_from_file_no_expiry_str(tmp_path):
+    """
+    _load_token_from_file: expired_at 필드가 없는 토큰 파일을 로드할 때,
+    _token_expired_at이 None으로 유지되는지 검증하여 라인 62 분기점 커버.
+    """
+    token_file = tmp_path / "token_no_expiry.json"
+    initial_token_data = {
+        'access_token': 'token_without_expiry_field',
+        # 'expired_at' 필드를 의도적으로 제외
+        'base_url': 'https://test-url.com'
+    }
+    with open(token_file, 'w') as f:
+        json.dump(initial_token_data, f)
+
+    token_manager = TokenManager(token_file_path=str(token_file))
+
+    # 로드하기 전에 _token_expired_at이 None인지 확인 (초기 상태)
+    assert token_manager._token_expired_at is None
+
+    token_manager._load_token_from_file()
+
+    assert token_manager._access_token == 'token_without_expiry_field'
+    assert token_manager._token_expired_at is None  # expired_at이 없으므로 None으로 유지되어야 함
