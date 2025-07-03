@@ -64,7 +64,7 @@ class TokenManager:
                     self._token_expired_at = datetime.fromisoformat(expiry_str)
 
         except (FileNotFoundError, json.JSONDecodeError):
-            self.logger.warning("토큰 파일을 찾을 수 없거나 형식이 잘못되었습니다.")
+            self.logger.warning(f"토큰 파일({self.token_file_path})을 찾을 수 없거나 형식이 잘못되었습니다. 새 토큰 발급을 시도합니다.")
             self._access_token = None
             self._token_expired_at = None
 
@@ -107,7 +107,7 @@ class TokenManager:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, json=body)
             response.raise_for_status()
-            res_data = await response.json()
+            res_data = response.json()
 
             self._access_token = res_data.get('access_token')
             expires_in = int(res_data.get('expires_in', 0))
