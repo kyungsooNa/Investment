@@ -23,7 +23,7 @@ class BrokerAPIWrapper:
             config = env.get_full_config()
             base_url = config['base_url']
             headers = {
-                "authorization": f"Bearer {env.access_token}",
+                "authorization": f"Bearer {config['access_token']}",
                 "appkey": config['api_key'],
                 "appsecret": config['api_secret_key'],
                 "tr_id": "",
