@@ -53,12 +53,11 @@ class TradingApp:
 
             # ✅ TokenManager 생성 (config 전체 전달)
             self.token_manager = TokenManager(
-                config=config_data,
                 token_file_path=config_data.get('token_file_path', 'config/token.json')
             )
 
             # ✅ KoreaInvestEnv 초기화
-            self.env = KoreaInvestApiEnv(config_data, self.logger)
+            self.env = KoreaInvestApiEnv(config_data, self.token_manager, self.logger)
 
             # ✅ TimeManager 초기화
             self.time_manager = TimeManager(
@@ -83,7 +82,7 @@ class TradingApp:
             self.logger.info("API 클라이언트 초기화 시작 (선택된 환경 기반)...")
 
             # 접근 토큰 발급
-            access_token = self.env.get_access_token()
+            access_token = await self.env.get_access_token()
             if not access_token:
                 raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
@@ -125,8 +124,10 @@ class TradingApp:
                 print("유효하지 않은 선택입니다. '1' 또는 '2'를 입력해주세요.")
 
         # --- 환경 선택 후 토큰 강제 재발급 및 API 클라이언트 재초기화 ---
-        # get_access_token은 이미 동기 함수이므로 await 제거
-        new_token_acquired = self.env.get_access_token(force_new=True)  # <--- await 제거
+        # TokenManager.get_access_token이 env에서 필요한 정보를 받도록 변경되었으므로,
+        # self.env.get_access_token()을 호출하는 것이 올바른 방식입니다.
+        # 이전에 직접 TokenManager를 호출했던 부분을 self.env를 통하도록 변경합니다.
+        new_token_acquired = await self.env.get_access_token()
 
         # 토큰이 성공적으로 발급되었는지 확인 (None이 아니면 성공)
         if not new_token_acquired:  # new_token_acquired는 이제 str 또는 None
