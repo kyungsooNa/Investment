@@ -151,6 +151,7 @@ class TradingApp:
         print(
             f"\n--- 한국투자증권 API 애플리케이션 (환경: {env_type}, 현재: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, 시장: {market_status_str}) ---")
         # --- 메뉴 순서 변경 ---
+        print("0. 거래 환경 변경") # <<< 0번으로 변경
         print("1. 주식 현재가 조회 (삼성전자)")
         print("2. 계좌 잔고 조회")
         print("3. 주식 매수 주문 (삼성전자 1주, 지정가)")
@@ -164,16 +165,20 @@ class TradingApp:
         print("11. 모멘텀 전략 백테스트 실행")
         print("12. GapUpPullback 전략 실행")
 
-        print("0. 종료")
+        print("99. 종료") # <<< 99번으로 변경
         print("-----------------------------------")
 
     async def _execute_action(self, choice):
         """사용자 선택에 따라 해당 작업을 실행하고 결과를 콘솔에 출력합니다."""
         running_status = True
 
-        if choice == '0':
+        if choice == '99': # <<< 종료 번호 변경
             print("애플리케이션을 종료합니다.")
             running_status = False
+        elif choice == '0': # <<< 환경 변경 번호 변경
+            self.logger.info("거래 환경 변경을 시작합니다.")
+            if not await self._select_environment():
+                running_status = False
         elif choice == '1':
             await self.data_handlers.handle_get_current_stock_price("005930")
         elif choice == '2':
