@@ -297,7 +297,7 @@ async def test_execute_action_exit_app(mocker):
     """메뉴 '0' 선택 시 running_status가 False를 반환하는지 테스트합니다."""
     mocker.patch('trading_app.load_config', return_value=get_mock_config())
     app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
-    running_status = await app._execute_action('0')
+    running_status = await app._execute_action('99')
     assert running_status is False
 
 @pytest.mark.asyncio
@@ -305,6 +305,6 @@ async def test_execute_action_invalid_choice(mocker, capsys):
     """잘못된 메뉴 선택 시 "Invalid choice" 메시지가 출력되는지 테스트합니다."""
     mocker.patch('trading_app.load_config', return_value=get_mock_config())
     app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
-    await app._execute_action('99')
+    await app._execute_action('9999')
     captured = capsys.readouterr()
     assert "유효하지 않은 선택입니다" in captured.out

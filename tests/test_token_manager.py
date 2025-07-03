@@ -53,10 +53,10 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         """
         mock_response = AsyncMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_response.json = MagicMock(return_value={
             'access_token': 'new_test_token',
             'expires_in': 86400  # 24시간
-        }
+        })
         mock_response.raise_for_status.return_value = None  # ensure no exception raised
 
         with patch('httpx.AsyncClient') as MockAsyncClient:
@@ -153,10 +153,10 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
         mock_new_token_response = AsyncMock()
         mock_new_token_response.status_code = 200
-        mock_new_token_response.json.return_value = {
+        mock_new_token_response.json = MagicMock(return_value={
             'access_token': 'fresh_new_token',
             'expires_in': 3600
-        }
+        })
         mock_new_token_response.raise_for_status.return_value = None
 
         with patch('httpx.AsyncClient') as MockAsyncClient:
@@ -225,10 +225,10 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         # 새 토큰 발급을 위한 API 응답 Mocking
         mock_new_token_response = AsyncMock()
         mock_new_token_response.status_code = 200
-        mock_new_token_response.json.return_value = {
+        mock_new_token_response.json = MagicMock(return_value={
             'access_token': 'fresh_new_token_for_correct_env',
             'expires_in': 3600
-        }
+        })
         mock_new_token_response.raise_for_status.return_value = None
 
         with patch('httpx.AsyncClient') as MockAsyncClient:
@@ -278,13 +278,15 @@ async def test_get_token_no_file_new_issued_isolated(tmp_path):  # 이제 self �
         os.remove(unique_token_file)
 
     # 새 토큰 발급을 위한 API 응답 Mocking
-    mock_new_token_response = AsyncMock()
+    mock_new_token_response = AsyncMock()  # 응답 객체 자체는 AsyncMock으로 유지
     mock_new_token_response.status_code = 200
-    mock_new_token_response.json.return_value = {
+    mock_new_token_response.raise_for_status.return_value = None
+
+    # response.json() 메서드가 await 없이 딕셔너리를 직접 반환하도록 설정
+    mock_new_token_response.json = MagicMock(return_value={  # <<< 이 부분을 수정했습니다.
         'access_token': 'token_no_file_new_issued',
         'expires_in': 3600
-    }
-    mock_new_token_response.raise_for_status.return_value = None
+    })
 
     with patch('httpx.AsyncClient') as MockAsyncClient:
         MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_new_token_response

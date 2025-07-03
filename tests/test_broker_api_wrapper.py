@@ -12,10 +12,11 @@ def mock_env():
     env = MagicMock()
     # __init__에서 필요한 설정 값들을 반환하도록 설정
     env.get_full_config.return_value = {
-        'base_url': 'https://mock-url.com',
-        'api_key': 'mock_key',
-        'api_secret_key': 'mock_secret',
-        'custtype': 'P',
+        'base_url': 'http://mock-base-url.com',
+        'api_key': 'mock_api_key',
+        'api_secret_key': 'mock_api_secret_key',
+        'access_token': 'mock_access_token_from_env', # <<-- 이 값을 추가
+        'custtype': 'P'
     }
     env.access_token = 'mock_token'
     return env
