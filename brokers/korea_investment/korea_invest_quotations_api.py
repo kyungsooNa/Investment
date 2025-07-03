@@ -252,40 +252,46 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
     #
     #     return info["hts_kor_isnm"]
 
-    # KoreaInvestApiQuotations 클래스 내부에 이 메서드를 추가해주세요.
-    async def inquire_daily_itemchartprice(self, stock_code: str, date: str) -> list:
+    async def inquire_daily_itemchartprice(self, stock_code: str, date: str, fid_input_iscd: str = '00',
+                                           fid_input_date_1: str = '', fid_input_date_2: str = '',
+                                           fid_period_div_code: str = 'D', fid_org_adj_prc: str = '0'):
         """
-        특정 종목의 특정 날짜의 분봉 데이터를 조회합니다.
-        (참고: 이 API는 실제로는 일봉 데이터를 반환하므로,
-        더 정교한 백테스트를 위해서는 분봉 API(inquire-time-itemchartprice) 사용이 권장됩니다.)
-
-        :param stock_code: 종목코드
-        :param date: 조회할 날짜 (YYYYMMDD 형식)
-        :return: 조회된 데이터 리스트 또는 빈 리스트
+        일별/주별/월별/분별/틱별 주식 시세 차트 데이터를 조회합니다.
+        TRID: FHKST03010100 (일별), FHNKF03060000 (분봉)
         """
-        path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        selected_tr_id = None
+        if fid_period_div_code == 'D':
+            selected_tr_id = self._config['tr_ids']['daily_itemchartprice_day']
+        elif fid_period_div_code == 'M':
+            # <<< 이 줄 바로 위에 DEBUG 로그 추가
+            self.logger.debug(f"현재 _config['tr_ids'] 내용: {self._config.get('tr_ids')}") # 'tr_ids' 키 자체가 없을 수도 있으므로 .get() 사용
+            selected_tr_id = self._config['tr_ids']['daily_itemchartprice_minute'] # 라인 268
+        else:
+            self.logger.error(f"지원하지 않는 fid_period_div_code: {fid_period_div_code}. 기본값 'D'로 설정합니다.")
+            selected_tr_id = self._config['tr_ids']['daily_itemchartprice_day']
 
-        # API 문서에 따른 필수 헤더 설정
-        # config.yaml에 TR ID가 정의되어 있지 않을 경우를 대비해 기본값을 사용합니다.
-        tr_id = self._config['tr_ids']['quotations'].get('inquire_daily_itemchartprice', 'FHKST03010200')
-        self._headers["tr_id"] = tr_id
+        if not selected_tr_id:
+            self.logger.critical(f"TR_ID 설정을 찾을 수 없습니다. fid_period_div_code: {fid_period_div_code}")
+            return None
+
+        headers = self._headers.copy()
+        headers["tr_id"] = selected_tr_id  # <<< 정확히 선택된 TR_ID 사용
 
         params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": stock_code,
-            "FID_INPUT_DATE_1": date,
-            "FID_INPUT_DATE_2": date,
-            "FID_PERIOD_DIV_CODE": "D",  # D: 일봉 데이터
-            "FID_ORG_ADJ_PRC": "0"  # 0: 수정주가 반영
+            "fid_cond_mrkt_div_code": "J",
+            "fid_input_iscd": stock_code,
+            "fid_input_date_1": date,
+            "fid_input_date_2": date,
+            "fid_period_div_code": fid_period_div_code,
+            "fid_org_adj_prc": fid_org_adj_prc
         }
 
-        self.logger.info(f"{stock_code}의 {date} 일자별 주가 데이터 조회 시도...")
-        response = await self.call_api("GET", path, params=params, retry_count=1)
+        response_data = await self.call_api(method="GET",
+                                            path="/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                                            params=params, data=None)
 
-        # 한국투자증권 API는 분봉/일봉 데이터를 'output2' 키로 반환합니다.
-        if response and response.get("rt_cd") == "0" and response.get("output2"):
-            self.logger.info(f"{stock_code} 데이터 조회 성공. {len(response['output2'])}개 캔들 수신.")
-            return response["output2"]
-        else:
-            self.logger.warning(f"{stock_code} 데이터 조회 실패: {response}")
-            return []
+        if not response_data or response_data.get('rt_cd') != '0':
+            self.logger.error(f"API 응답 비정상: {response_data}")
+            return None
+
+        return response_data.get('output', [])

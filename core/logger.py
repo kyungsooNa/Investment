@@ -67,19 +67,19 @@ class Logger:
         self.operational_logger.warning(message)
         self.debug_logger.warning(message)
 
-    def error(self, message):
+    def error(self, message, exc_info=False):  # <<< exc_info 인자 추가
         """운영 및 디버깅 로그에 ERROR 레벨 메시지를 기록합니다."""
-        self.operational_logger.error(message)
+        self.operational_logger.error(message, exc_info=exc_info)  # <<< exc_info 전달
         caller_info = self._get_caller_info()
         full_message = f"{caller_info} - {message}"
-        self.debug_logger.error(full_message)
+        self.debug_logger.error(full_message, exc_info=exc_info)  # <<< exc_info 전달
 
-    def critical(self, message):
+    def critical(self, message, exc_info=False):  # <<< exc_info 인자 추가
         """운영 및 디버깅 로그에 CRITICAL 레벨 메시지를 기록합니다."""
-        self.operational_logger.critical(message)
+        self.operational_logger.critical(message, exc_info=exc_info)  # <<< exc_info 전달
         caller_info = self._get_caller_info()
         full_message = f"{caller_info} - {message}"
-        self.debug_logger.critical(full_message)
+        self.debug_logger.critical(full_message, exc_info=exc_info)  # <<< exc_info 전달
 
     def _get_caller_info(self):
         """호출한 파일명과 라인 번호를 반환 (디버깅용)."""

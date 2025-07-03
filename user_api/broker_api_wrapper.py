@@ -58,3 +58,13 @@ class BrokerAPIWrapper:
 
     async def get_market_cap(self, code: str):
         return await self.quotations.get_market_cap(code)
+
+    async def inquire_daily_itemchartprice(self, stock_code: str, date: str, fid_period_div_code: str = 'D'):
+        """
+        일별/분봉 주식 시세 차트 데이터를 조회합니다.
+        :param stock_code: 종목코드
+        :param date: 조회 날짜 (YYYYMMDD)
+        :param fid_period_div_code: 기간 구분 코드 (D:일봉, M:분봉 등)
+        """
+        # fid_period_div_code 인자를 self.quotations.inquire_daily_itemchartprice로 전달
+        return await self.quotations.inquire_daily_itemchartprice(stock_code, date, fid_period_div_code=fid_period_div_code)

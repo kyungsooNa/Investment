@@ -215,14 +215,61 @@ async def test_execute_action_get_account_balance(mocker):
     await app._execute_action('2')
     app.data_handlers.handle_get_account_balance.assert_awaited_once()
 
+
 @pytest.mark.asyncio
 async def test_execute_action_place_buy_order(mocker):
     """메뉴 '3' 선택 시 transaction_handlers.handle_place_buy_order가 호출되는지 테스트합니다."""
     mocker.patch('trading_app.load_config', return_value=get_mock_config())
+
     app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
-    app.transaction_handlers = AsyncMock()
+
+    app.logger = mocker.MagicMock()
+    app.time_manager = mocker.MagicMock()
+
+    # app.cli_view를 Mock하고, _select_environment에서 호출되는 메서드를 AsyncMock으로 설정
+    app.cli_view = mocker.MagicMock()
+    # Traceback에 따라 get_user_input이 문제이므로, 이를 AsyncMock으로 설정
+    # _select_environment가 '1'을 반환하도록 설정하여 실전투자 경로를 따르게 함
+    app.cli_view.get_user_input = AsyncMock(return_value='1')  # <<< 이 부분을 수정했습니다.
+
+    # _complete_api_initialization이 호출될 때 필요한 종속성들을 모의합니다.
+    mock_api_client_class = mocker.patch('trading_app.KoreaInvestApiClient')
+    mock_trading_service_class = mocker.patch('trading_app.TradingService')
+    mock_data_handlers_class = mocker.patch('trading_app.DataHandlers')
+    mock_transaction_handlers_class = mocker.patch('trading_app.TransactionHandlers')
+    mock_broker_api_wrapper_class = mocker.patch('trading_app.BrokerAPIWrapper')
+    mock_backtest_data_provider_class = mocker.patch('trading_app.BacktestDataProvider')
+
+    mock_api_client_instance = mock_api_client_class.return_value
+    mock_trading_service_instance = mock_trading_service_class.return_value
+    mock_data_handlers_instance = mock_data_handlers_class.return_value
+
+    mock_transaction_handlers_instance = mock_transaction_handlers_class.return_value
+    mock_transaction_handlers_instance.handle_place_buy_order = AsyncMock()
+
+    mock_broker_api_wrapper_instance = mock_broker_api_wrapper_class.return_value
+    mock_backtest_data_provider_instance = mock_backtest_data_provider_class.return_value
+
+    # _complete_api_initialization에서 호출되는 self.env.get_access_token 모의
+    app.env = mocker.MagicMock()
+    app.env.get_access_token = AsyncMock(return_value="mock_access_token_value")
+    app.env.set_trading_mode = mocker.MagicMock()
+
+    # 시장이 열려있는 상태를 모의하여 주문 제출 로직이 실행되도록 보장합니다.
+    app.time_manager.is_market_open.return_value = True
+
+    # _complete_api_initialization을 호출하여 app의 핸들러들을 올바르게 초기화합니다.
+    init_success = await app._complete_api_initialization()
+    assert init_success is True
+
+    # _select_environment를 호출하여 환경이 선택되고 API 클라이언트가 초기화된 상태를 만듭니다.
+    await app._select_environment()
+
     await app._execute_action('3')
-    app.transaction_handlers.handle_place_buy_order.assert_awaited_once_with("005930", "58500", "1", "00")
+
+    # assert_awaited_once_with를 사용하여 비동기 메서드가 한 번 호출되었는지 확인
+    mock_transaction_handlers_instance.handle_place_buy_order.assert_awaited_once_with("005930", "58500", "1", "00")
+
 
 @pytest.mark.asyncio
 async def test_execute_action_realtime_stream(mocker):
