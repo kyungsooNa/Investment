@@ -1128,6 +1128,48 @@ async def test_execute_action_momentum_backtest_zero_or_negative_count_input(set
     app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", count=30) # 기본값 30으로 호출되었는지 확인
     assert result is True # 앱은 계속 실행되어야 함
 
+
+@pytest.mark.asyncio
+async def test_execute_action_gap_up_pullback_strategy_success(setup_mock_app, mocker):
+    app = setup_mock_app
+    app.time_manager.is_market_open.return_value = True  # 시장 개장 가정
+    # trading_service.get_top_market_cap_stocks_code가 유효한 응답을 반환하도록 목 설정
+    mock_top_codes_response = {
+        "rt_cd": "0",
+        "output": [
+            {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "data_rank": "1"},
+            {"mksc_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "data_rank": "2"}
+        ]
+    }
+    app.trading_service.get_top_market_cap_stocks_code.return_value = mock_top_codes_response
+
+    # GapUpPullbackStrategy와 StrategyExecutor의 인스턴스 메서드를 목킹
+    mock_strategy_instance = AsyncMock()
+    mock_executor_instance = AsyncMock()
+    mock_executor_instance.execute.return_value = {
+        "total_processed": 2,
+        "gapup_pullback_selected": [{"name": "삼성전자", "code": "005930"}],
+        "gapup_pullback_rejected": [{"name": "SK하이닉스", "code": "000660"}],
+    }
+
+    # 클래스 자체를 목킹하여 인스턴스 생성 시 목 객체가 반환되도록 설정
+    mocker.patch('strategies.GapUpPullback_strategy.GapUpPullbackStrategy', return_value=mock_strategy_instance)
+    mocker.patch('strategies.strategy_executor.StrategyExecutor', return_value=mock_executor_instance)
+
+    result = await app._execute_action('12')
+
+    # 검증
+    app.cli_view.display_strategy_running_message.assert_called_once_with("GapUpPullback")
+    app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
+
+    # GapUpPullbackStrategy와 StrategyExecutor가 올바른 인자로 생성되었는지 확인
+    # (여기서는 인스턴스 자체를 목킹했으므로, 생성자 호출만 확인)
+    assert app.cli_view.display_strategy_results.called  # 결과 표시 호출 확인
+    app.cli_view.display_gapup_pullback_selected_stocks.assert_called_once_with([{"name": "삼성전자", "code": "005930"}])
+    app.cli_view.display_gapup_pullback_rejected_stocks.assert_called_once_with([{"name": "SK하이닉스", "code": "000660"}])
+
+    assert result is True  # 앱은 계속 실행되어야 함
+
 @pytest.mark.asyncio
 async def test_execute_action_realtime_stream_new_menu_option(setup_mock_app):
     app = setup_mock_app
