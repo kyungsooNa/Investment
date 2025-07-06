@@ -862,49 +862,6 @@ async def test_execute_action_get_upper_limit_stocks(mocker):
     await app._execute_action('9')
     app.data_handlers.handle_upper_limit_stocks.assert_awaited_once_with("0000", limit=500)
 
-@pytest.mark.asyncio
-async def test_execute_action_invalid_choice(mocker, capsys):
-    """잘못된 메뉴 선택 시 "잘못된 메뉴 선택입니다. 다시 시도해주세요." 메시지가 출력되는지 테스트합니다."""
-    mocker.patch('trading_app.load_config', return_value=get_mock_config())
-
-    # 1. TradingApp 클래스 자체를 Mock합니다.
-    mock_app_class = mocker.patch('trading_app.TradingApp', autospec=True)
-    app = mock_app_class.return_value
-
-    # 2. 필요한 종속성 Mock 객체를 app 인스턴스에 명시적으로 할당합니다.
-    #    CLIView의 display_message가 capsys에 의해 캡처되도록 설정합니다.
-    mock_cli_view = MagicMock(spec=CLIView)
-    # mock_cli_view의 display_message 메서드가 호출될 때, 실제 print 함수를 호출하도록 side_effect를 설정합니다.
-    # 이렇게 하면 capsys가 print 출력을 캡처할 수 있습니다.
-    mock_cli_view.display_message.side_effect = lambda msg: print(msg)
-    app.cli_view = mock_cli_view
-    app.logger = logging.getLogger('test_trading_app')
-
-    # 3. _execute_action 메서드의 동작을 정의합니다.
-    #    잘못된 선택 시 특정 메시지를 출력하도록 합니다.
-    async def mock_execute_action_side_effect_for_invalid_choice(choice):
-        if choice == '99': # 종료 선택
-            app.cli_view.display_exit_message()
-            return False
-        # 다른 유효한 선택은 이 테스트의 범위를 벗어나므로 직접 처리하지 않습니다.
-        # 대신, 잘못된 선택에 대한 메시지를 출력합니다.
-        app.cli_view.display_message("잘못된 메뉴 선택입니다. 다시 시도해주세요.")
-        return True # 계속 실행
-
-    app._execute_action.side_effect = mock_execute_action_side_effect_for_invalid_choice
-
-    # 4. 테스트 대상 메서드 호출 (잘못된 선택)
-    await app._execute_action('9999')
-
-    # 5. capsys를 통해 출력된 내용을 캡처합니다.
-    captured = capsys.readouterr()
-
-    # 6. 예상 메시지가 출력되었는지 검증합니다.
-    # print() 함수는 기본적으로 끝에 개행 문자('\n')를 추가하므로, 어설션에 이를 포함합니다.
-    assert "잘못된 메뉴 선택입니다. 다시 시도해주세요.\n" in captured.out
-    # cli_view.display_message가 올바른 인자로 호출되었는지도 검증합니다.
-    app.cli_view.display_message.assert_called_once_with("잘못된 메뉴 선택입니다. 다시 시도해주세요.")
-
 # 각 테스트를 위한 목(mock) TradingApp 인스턴스 설정 픽스처
 @pytest.fixture
 def setup_mock_app(mocker):
@@ -952,6 +909,7 @@ def setup_mock_app(mocker):
     app.cli_view.display_token_invalidated_message = AsyncMock()
     app.cli_view.display_account_balance_failure = AsyncMock()
     app.cli_view.display_stock_code_not_found = AsyncMock()
+    app.cli_view.display_invalid_menu_choice = AsyncMock()
 
 
     app.time_manager = mocker.MagicMock(spec=TimeManager)
@@ -1201,3 +1159,14 @@ async def test_execute_action_exit_app(mocker):
     app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
     running_status = await app._execute_action('99')
     assert running_status is False
+
+@pytest.mark.asyncio
+async def test_execute_action_invalid_menu_choice_general(setup_mock_app):
+    app = setup_mock_app
+    # 유효하지 않은 임의의 메뉴 선택
+    result = await app._execute_action('999')
+
+    # display_invalid_menu_choice가 호출되었는지 확인
+    app.cli_view.display_invalid_menu_choice.assert_called_once()
+    # 앱은 종료되지 않고 계속 실행되어야 함
+    assert result is True
