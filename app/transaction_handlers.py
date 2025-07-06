@@ -1,5 +1,9 @@
 # app/transaction_handlers.py
-import asyncio  # input()을 비동기적으로 처리하기 위해 필요
+import asyncio
+# json, os 등의 추가 임포트가 필요할 수 있으나, 현재 기능에 직접적으로는 필요하지 않아 추가하지 않았습니다.
+# 만약 필요하다면 주석 처리된 부분을 해제하거나 다른 임포트를 추가해주세요.
+# import json
+# import os
 
 
 class TransactionHandlers:
@@ -19,7 +23,7 @@ class TransactionHandlers:
         if not self.time_manager.is_market_open():
             print("WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.")
             self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
-            return
+            return None # 주문 실패 시 None 반환하도록 수정 (또는 실패 응답 딕셔너리)
 
         buy_order_result = await self.trading_service.place_buy_order(
             stock_code, price, qty, order_dvsn
@@ -30,6 +34,72 @@ class TransactionHandlers:
         else:
             print(f"주식 매수 주문 실패: {buy_order_result}")
             self.logger.error(f"주식 매수 주문 실패: 종목={stock_code}, 결과={buy_order_result}")
+        return buy_order_result
+
+    async def handle_place_sell_order(self, stock_code, price, qty, order_dvsn):
+        """주식 매도 주문 요청 및 결과 출력."""
+        print(f"\n--- 주식 매도 주문 시도 ---")
+        if not self.time_manager.is_market_open():
+            print("WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.")
+            self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
+            return None # 주문 실패 시 None 반환
+
+        sell_order_result = await self.trading_service.place_sell_order(
+            stock_code, price, qty, order_dvsn
+        )
+        if sell_order_result and sell_order_result.get('rt_cd') == '0':
+            print(f"주식 매도 주문 성공: {sell_order_result}")
+            self.logger.info(f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={sell_order_result}")
+        else:
+            print(f"주식 매도 주문 실패: {sell_order_result}")
+            self.logger.error(f"주식 매도 주문 실패: 종목={stock_code}, 결과={sell_order_result}")
+        return sell_order_result
+
+    async def handle_buy_stock(self):
+        """
+        사용자 입력을 받아 주식 매수 주문을 처리합니다.
+        trading_app.py의 '3'번 옵션에 매핑됩니다.
+        """
+        print("\n--- 주식 매수 주문 ---")
+        stock_code = await self.trading_service.get_user_input("매수할 종목 코드를 입력하세요: ")
+        qty_input = await self.trading_service.get_user_input("매수할 수량을 입력하세요: ")
+        price_input = await self.trading_service.get_user_input("매수 가격을 입력하세요 (시장가: 0): ")
+
+        try:
+            qty = int(qty_input)
+            price = int(price_input)
+            order_dvsn = '01' if price > 0 else '00' # 01: 지정가, 00: 시장가
+        except ValueError:
+            print("잘못된 수량 또는 가격 입력입니다.")
+            self.logger.warning(f"잘못된 매수 입력: 수량={qty_input}, 가격={price_input}")
+            return
+
+        # handle_place_buy_order 호출
+        await self.handle_place_buy_order(stock_code, price, qty, order_dvsn)
+
+
+    async def handle_sell_stock(self):
+        """
+        사용자 입력을 받아 주식 매도 주문을 처리합니다.
+        trading_app.py의 '4'번 옵션에 매핑됩니다.
+        """
+        print("\n--- 주식 매도 주문 ---")
+        stock_code = await self.trading_service.get_user_input("매도할 종목 코드를 입력하세요: ")
+        qty_input = await self.trading_service.get_user_input("매도할 수량을 입력하세요: ")
+        price_input = await self.trading_service.get_user_input("매도 가격을 입력하세요 (시장가: 0): ")
+
+        try:
+            qty = int(qty_input)
+            price = int(price_input)
+            order_dvsn = '01' if price > 0 else '00' # 01: 지정가, 00: 시장가
+        except ValueError:
+            print("잘못된 수량 또는 가격 입력입니다.")
+            self.logger.warning(f"잘못된 매도 입력: 수량={qty_input}, 가격={price_input}")
+            return
+
+        # handle_place_sell_order 호출
+        await self.handle_place_sell_order(stock_code, price, qty, order_dvsn)
+
 
     async def handle_realtime_price_quote_stream(self, stock_code):
         """
