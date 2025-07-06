@@ -913,7 +913,11 @@ def setup_mock_app(mocker):
 
     app.time_manager = mocker.MagicMock(spec=TimeManager)
     app.env = mocker.MagicMock(spec=KoreaInvestApiEnv)
-    app.trading_service = mocker.AsyncMock(spec=TradingService)
+    app.env.get_access_token = mocker.AsyncMock(return_value="mock_access_token") # 명시적으로 AsyncMock으로 설정
+    # app.env.get_access_token = mocker.AsyncMock(return_value="mock_access_token") # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
+    # app._complete_api_initialization = AsyncMock(return_value=True) # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
+    # app._select_environment = AsyncMock(return_value=True) # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
+
     app.data_handlers = mocker.AsyncMock(spec=DataHandlers)
     app.transaction_handlers = mocker.AsyncMock(spec=TransactionHandlers)
     app.broker = mocker.AsyncMock(spec=BrokerAPIWrapper)
@@ -921,9 +925,9 @@ def setup_mock_app(mocker):
 
     app.env.get_full_config = mocker.MagicMock(return_value=mock_config)
     app.env.is_paper_trading = mock_config['is_paper_trading']
-    app.env.get_access_token = mocker.AsyncMock(return_value="mock_access_token")
-    app._complete_api_initialization = AsyncMock(return_value=True)
-    app._select_environment = AsyncMock(return_value=True)
+    # app.env.get_access_token = mocker.AsyncMock(return_value="mock_access_token") # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
+    # app._complete_api_initialization = AsyncMock(return_value=True) # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
+    # app._select_environment = AsyncMock(return_value=True) # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
 
     app.data_handlers.handle_get_top_10_market_cap_stocks_with_prices = AsyncMock()
     app.data_handlers.handle_get_top_market_cap_stocks = AsyncMock()
@@ -933,6 +937,7 @@ def setup_mock_app(mocker):
     app.data_handlers.handle_display_stock_vs_open_price = AsyncMock()
 
 
+    app.trading_service = mocker.AsyncMock(spec=TradingService)
     app.trading_service.get_code_by_name = AsyncMock()
     app.trading_service.get_top_market_cap_stocks_code = AsyncMock()
     app.trading_service.get_price_summary = AsyncMock()
@@ -940,11 +945,10 @@ def setup_mock_app(mocker):
 
     mocker.patch('strategies.momentum_strategy.MomentumStrategy')
     mocker.patch('strategies.strategy_executor.StrategyExecutor')
-    mocker.patch('strategies.GapUpPullback_strategy.GapUpPullbackStrategy')
+    mocker.patch('strategies.GapUpPullback_strategy.GapUpPullbackStrategy') # 이 클래스 자체를 목킹
 
     app.transaction_handlers.handle_buy_stock = AsyncMock()
     app.transaction_handlers.handle_sell_stock = AsyncMock()
-    # handle_realtime_price_quote_stream 메서드를 명시적으로 목킹
     app.transaction_handlers.handle_realtime_price_quote_stream = AsyncMock()
     app.token_manager = MagicMock()
     app.token_manager.invalidate_token = MagicMock()
@@ -1211,3 +1215,68 @@ async def test_execute_action_invalid_menu_choice_general(setup_mock_app):
     app.cli_view.display_invalid_menu_choice.assert_called_once()
     # 앱은 종료되지 않고 계속 실행되어야 함
     assert result is True
+
+# 13. `_complete_api_initialization` 성공 시나리오 테스트
+@pytest.mark.asyncio
+async def test_complete_api_initialization_success(setup_mock_app, mocker):
+    app = setup_mock_app
+
+    # _complete_api_initialization의 내부에서 호출되는 종속성들을 목킹
+    app.env.get_access_token.return_value = "valid_access_token"
+    # 클래스 자체를 목킹하여 생성자 호출을 추적할 수 있도록 함
+    mock_ki_client = mocker.patch('trading_app.KoreaInvestApiClient')
+    mock_trading_service_cls = mocker.patch('trading_app.TradingService')
+    mock_data_handlers_cls = mocker.patch('trading_app.DataHandlers')
+    mock_transaction_handlers_cls = mocker.patch('trading_app.TransactionHandlers')
+    mock_broker_wrapper_cls = mocker.patch('trading_app.BrokerAPIWrapper')
+    mock_backtest_provider_cls = mocker.patch('trading_app.BacktestDataProvider')
+
+    # 실제 _complete_api_initialization 메서드 호출
+    result = await app._complete_api_initialization()
+
+    # 검증
+    app.env.get_access_token.assert_awaited_once()
+    mock_ki_client.assert_called_once() # KoreaInvestApiClient 생성자 호출 확인
+    mock_trading_service_cls.assert_called_once() # TradingService 생성자 호출 확인
+    mock_data_handlers_cls.assert_called_once() # DataHandlers 생성자 호출 확인
+    mock_transaction_handlers_cls.assert_called_once() # TransactionHandlers 생성자 호출 확인
+    mock_broker_wrapper_cls.assert_called_once() # BrokerAPIWrapper 생성자 호출 확인
+    mock_backtest_provider_cls.assert_called_once() # BacktestDataProvider 생성자 호출 확인
+
+    app.logger.info.assert_called_with(mocker.ANY) # info 로깅 호출 확인
+    assert result is True
+
+@pytest.mark.asyncio
+async def test_complete_api_initialization_token_failure(setup_mock_app, mocker):
+    app = setup_mock_app
+
+    # env.get_access_token이 None을 반환하도록 목킹하여 토큰 획득 실패 시뮬레이션
+    app.env.get_access_token.return_value = None
+
+    # 나머지 서비스들은 호출되지 않아야 함 (클래스 자체를 목킹하여 호출 여부 확인)
+    mock_ki_client = mocker.patch('trading_app.KoreaInvestApiClient')
+    mock_trading_service_cls = mocker.patch('trading_app.TradingService')
+    mock_data_handlers_cls = mocker.patch('trading_app.DataHandlers')
+    mock_transaction_handlers_cls = mocker.patch('trading_app.TransactionHandlers')
+    mock_broker_wrapper_cls = mocker.patch('trading_app.BrokerAPIWrapper')
+    mock_backtest_provider_cls = mocker.patch('trading_app.BacktestDataProvider')
+
+    # 실제 _complete_api_initialization 메서드 호출
+    result = await app._complete_api_initialization()
+
+    # 검증
+    app.env.get_access_token.assert_awaited_once()
+    # 실제 로깅 메시지에 맞춰 수정
+    app.logger.critical.assert_called_once_with("API 클라이언트 초기화 실패: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
+    app.cli_view.display_app_start_error.assert_called_once_with("API 클라이언트 초기화 중 오류 발생: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
+
+    # 다른 서비스들이 초기화되지 않았는지 확인
+    mock_ki_client.assert_not_called()
+    mock_trading_service_cls.assert_not_called()
+    mock_data_handlers_cls.assert_not_called()
+    mock_transaction_handlers_cls.assert_not_called()
+    mock_broker_wrapper_cls.assert_not_called()
+    mock_backtest_provider_cls.assert_not_called()
+
+    assert result is False
+
