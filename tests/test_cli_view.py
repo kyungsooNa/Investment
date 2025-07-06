@@ -52,7 +52,6 @@ async def test_display_welcome_message(cli_view_instance, capsys):
 @pytest.mark.asyncio
 async def test_get_user_input(cli_view_instance):
     """사용자 입력 받기 기능을 테스트합니다."""
-    # asyncio.to_thread와 input 함수를 목킹
     with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
         mock_to_thread.return_value = "test_input_value"
 
@@ -120,7 +119,7 @@ def test_display_stock_info_found(cli_view_instance, capsys):
 
 def test_display_stock_info_not_found(cli_view_instance, capsys):
     """종목 정보(찾을 수 없음) 출력을 테스트합니다."""
-    cli_view_instance.display_stock_info(None)  # 또는 {}
+    cli_view_instance.display_stock_info(None)
     captured = capsys.readouterr()
     assert "종목 정보를 찾을 수 없습니다." in captured.out
 
@@ -196,6 +195,22 @@ def test_display_strategy_results(cli_view_instance, capsys):
     assert "전략 실행 시간: 15.35초" in captured.out
 
 
+def test_display_strategy_results_non_numeric_execution_time(cli_view_instance, capsys):
+    """전략 실행 결과 요약 출력을 테스트합니다 (실행 시간이 숫자가 아닐 때)."""
+    results = {
+        'total_processed': 1,
+        'buy_attempts': 1,
+        'buy_successes': 1,
+        'sell_attempts': 0,
+        'sell_successes': 0,
+        'execution_time': "N/A"  # 숫자가 아닌 값
+    }
+    cli_view_instance.display_strategy_results("테스트 전략", results)
+    captured = capsys.readouterr()
+    assert "총 처리 종목: 1개" in captured.out
+    assert "전략 실행 시간: 0.00초" in captured.out  # 0.00으로 변환되어야 함
+
+
 def test_display_strategy_error(cli_view_instance, capsys):
     """전략 실행 중 오류 메시지 출력을 테스트합니다."""
     cli_view_instance.display_strategy_error("데이터 부족")
@@ -217,14 +232,24 @@ def test_display_warning_strategy_market_closed(cli_view_instance, capsys):
     assert "⚠️ 시장이 폐장 상태이므로 전략을 실행할 수 없습니다." in captured.out
 
 
-def test_display_follow_through_stocks_found(cli_view_instance, capsys):
-    """Follow Through 종목 목록(발견) 출력을 테스트합니다."""
+def test_display_follow_through_stocks_found_dict(cli_view_instance, capsys):
+    """Follow Through 종목 목록(dict 형식) 출력을 테스트합니다."""
     stocks = [{'name': '삼성전자', 'code': '005930'}, {'name': 'SK하이닉스', 'code': '000660'}]
     cli_view_instance.display_follow_through_stocks(stocks)
     captured = capsys.readouterr()
     assert "✔️ Follow Through 종목:" in captured.out
     assert " - 삼성전자(005930)" in captured.out
     assert " - SK하이닉스(000660)" in captured.out
+
+
+def test_display_follow_through_stocks_found_string(cli_view_instance, capsys):
+    """Follow Through 종목 목록(문자열 형식) 출력을 테스트합니다."""
+    stocks = ['005930', '000660']  # 문자열 형식의 종목 코드
+    cli_view_instance.display_follow_through_stocks(stocks)
+    captured = capsys.readouterr()
+    assert "✔️ Follow Through 종목:" in captured.out
+    assert " - 005930" in captured.out
+    assert " - 000660" in captured.out
 
 
 def test_display_follow_through_stocks_not_found(cli_view_instance, capsys):
@@ -235,13 +260,23 @@ def test_display_follow_through_stocks_not_found(cli_view_instance, capsys):
     assert "   없음" in captured.out
 
 
-def test_display_not_follow_through_stocks_found(cli_view_instance, capsys):
-    """Follow 실패 종목 목록(발견) 출력을 테스트합니다."""
+def test_display_not_follow_through_stocks_found_dict(cli_view_instance, capsys):
+    """Follow 실패 종목 목록(dict 형식) 출력을 테스트합니다."""
     stocks = [{'name': '카카오', 'code': '035720'}]
     cli_view_instance.display_not_follow_through_stocks(stocks)
     captured = capsys.readouterr()
     assert "❌ Follow 실패 종목:" in captured.out
     assert " - 카카오(035720)" in captured.out
+
+
+def test_display_not_follow_through_stocks_found_string(cli_view_instance, capsys):
+    """Follow 실패 종목 목록(문자열 형식) 출력을 테스트합니다."""
+    stocks = ['035720', '123450']  # 문자열 형식의 종목 코드
+    cli_view_instance.display_not_follow_through_stocks(stocks)
+    captured = capsys.readouterr()
+    assert "❌ Follow 실패 종목:" in captured.out
+    assert " - 035720" in captured.out
+    assert " - 123450" in captured.out
 
 
 def test_display_not_follow_through_stocks_not_found(cli_view_instance, capsys):
