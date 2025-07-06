@@ -50,7 +50,7 @@ def test_force_update_saves_files(
 @patch("builtins.open", new_callable=mock_open)
 @patch(f"{stock_info_updater.__name__}.os.path.exists", return_value=True)
 @patch(f"{stock_info_updater.__name__}.json.dump")
-@patch(f"{stock_info_updater.__name__}.json.load", return_value={"last_updated": "2025-06-27"})
+@patch(f"{stock_info_updater.__name__}._needs_update", return_value=False) # <--- 이 부분을 수정했습니다.
 @patch(f"{stock_info_updater.__name__}.stock.get_market_ticker_list", return_value=["005930"])
 @patch(f"{stock_info_updater.__name__}.stock.get_market_ticker_name", return_value="삼성전자")
 def test_metadata_blocks_update_within_7_days(
