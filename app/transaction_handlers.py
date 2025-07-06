@@ -55,15 +55,13 @@ class TransactionHandlers:
             self.logger.error(f"주식 매도 주문 실패: 종목={stock_code}, 결과={sell_order_result}")
         return sell_order_result
 
-    async def handle_buy_stock(self):
+
+    async def handle_buy_stock(self, stock_code, qty_input, price_input): # 파라미터 추가
         """
         사용자 입력을 받아 주식 매수 주문을 처리합니다.
         trading_app.py의 '3'번 옵션에 매핑됩니다.
         """
         print("\n--- 주식 매수 주문 ---")
-        stock_code = await self.trading_service.get_user_input("매수할 종목 코드를 입력하세요: ")
-        qty_input = await self.trading_service.get_user_input("매수할 수량을 입력하세요: ")
-        price_input = await self.trading_service.get_user_input("매수 가격을 입력하세요 (시장가: 0): ")
 
         try:
             qty = int(qty_input)
@@ -77,17 +75,12 @@ class TransactionHandlers:
         # handle_place_buy_order 호출
         await self.handle_place_buy_order(stock_code, price, qty, order_dvsn)
 
-
-    async def handle_sell_stock(self):
+    async def handle_sell_stock(self, stock_code, qty_input, price_input): # 파라미터 추가
         """
         사용자 입력을 받아 주식 매도 주문을 처리합니다.
         trading_app.py의 '4'번 옵션에 매핑됩니다.
         """
         print("\n--- 주식 매도 주문 ---")
-        stock_code = await self.trading_service.get_user_input("매도할 종목 코드를 입력하세요: ")
-        qty_input = await self.trading_service.get_user_input("매도할 수량을 입력하세요: ")
-        price_input = await self.trading_service.get_user_input("매도 가격을 입력하세요 (시장가: 0): ")
-
         try:
             qty = int(qty_input)
             price = int(price_input)

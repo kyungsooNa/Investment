@@ -863,14 +863,6 @@ async def test_execute_action_get_upper_limit_stocks(mocker):
     app.data_handlers.handle_upper_limit_stocks.assert_awaited_once_with("0000", limit=500)
 
 @pytest.mark.asyncio
-async def test_execute_action_exit_app(mocker):
-    """메뉴 '0' 선택 시 running_status가 False를 반환하는지 테스트합니다."""
-    mocker.patch('trading_app.load_config', return_value=get_mock_config())
-    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
-    running_status = await app._execute_action('99')
-    assert running_status is False
-
-@pytest.mark.asyncio
 async def test_execute_action_invalid_choice(mocker, capsys):
     """잘못된 메뉴 선택 시 "잘못된 메뉴 선택입니다. 다시 시도해주세요." 메시지가 출력되는지 테스트합니다."""
     mocker.patch('trading_app.load_config', return_value=get_mock_config())
@@ -957,6 +949,9 @@ def setup_mock_app(mocker):
     app.cli_view.display_gapup_pullback_rejected_stocks = AsyncMock()
     app.cli_view.display_welcome_message = AsyncMock()
     app.cli_view.display_current_time = AsyncMock()
+    app.cli_view.display_token_invalidated_message = AsyncMock()
+    app.cli_view.display_account_balance_failure = AsyncMock()
+    app.cli_view.display_stock_code_not_found = AsyncMock()
 
 
     app.time_manager = mocker.MagicMock(spec=TimeManager)
@@ -973,9 +968,13 @@ def setup_mock_app(mocker):
     app._complete_api_initialization = AsyncMock(return_value=True)
     app._select_environment = AsyncMock(return_value=True)
 
-    # data_handlers 메서드 명시적 목킹 추가
     app.data_handlers.handle_get_top_10_market_cap_stocks_with_prices = AsyncMock()
-    app.data_handlers.handle_get_top_market_cap_stocks = AsyncMock() # 추가된 목킹
+    app.data_handlers.handle_get_top_market_cap_stocks = AsyncMock()
+    app.data_handlers.handle_upper_limit_stocks = AsyncMock()
+    app.data_handlers.handle_get_current_stock_price = AsyncMock()
+    app.data_handlers.handle_display_stock_change_rate = AsyncMock()
+    app.data_handlers.handle_display_stock_vs_open_price = AsyncMock()
+
 
     app.trading_service.get_code_by_name = AsyncMock()
     app.trading_service.get_top_market_cap_stocks_code = AsyncMock()
@@ -988,6 +987,8 @@ def setup_mock_app(mocker):
 
     app.transaction_handlers.handle_buy_stock = AsyncMock()
     app.transaction_handlers.handle_sell_stock = AsyncMock()
+    # handle_realtime_price_quote_stream 메서드를 명시적으로 목킹
+    app.transaction_handlers.handle_realtime_price_quote_stream = AsyncMock()
     app.token_manager = MagicMock()
     app.token_manager.invalidate_token = MagicMock()
 
@@ -1010,52 +1011,30 @@ async def test_execute_action_change_environment_success(setup_mock_app): # caps
     # logger.info 호출을 확인
     app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
 
-async def test_execute_action_account_balance_failure(setup_mock_app, capsys):
-    app = setup_mock_app
-    # get_account_balance가 실패 응답을 반환하도록 목(mock) 설정
-    app.trading_service.get_account_balance.return_value = None
-
-    # 실제 _execute_action 메서드 호출
-    result = await app._execute_action('1')
-
-    # 검증
-    app.trading_service.get_account_balance.assert_awaited_once() # 서비스 호출 확인
-    assert "계좌 잔고 조회에 실패했습니다." in capsys.readouterr().out # 실패 메시지 확인
-    assert result is True # 앱은 계속 실행되어야 함
-
 @pytest.mark.asyncio
 async def test_execute_action_stock_info_success(setup_mock_app):
     app = setup_mock_app
-    app.cli_view.get_user_input.return_value = "삼성전자"
-    app.trading_service.get_code_by_name.return_value = "005930"
-    app.trading_service.get_price_summary.return_value = {"name": "삼성전자", "current": 70000}
-    app.cli_view.display_stock_info.return_value = None # display_stock_info는 반환값이 없음
+    app.cli_view.get_user_input.return_value = "005930" # 종목코드 직접 입력으로 변경
+    # trading_service.get_code_by_name과 get_price_summary는 이제 1번 메뉴에서 직접 호출되지 않음
+    # 대신 data_handlers.handle_get_current_stock_price가 호출됨
+    app.data_handlers.handle_get_current_stock_price.return_value = None # handle_get_current_stock_price를 목킹
 
-    # 실제 _execute_action 메서드 호출
-    result = await app._execute_action('2')
+    result = await app._execute_action('1') # 1번 메뉴로 변경
 
-    # 검증
-    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목명을 입력하세요: ")
-    app.trading_service.get_code_by_name.assert_awaited_once_with("삼성전자")
-    app.trading_service.get_price_summary.assert_awaited_once_with("005930")
-    app.cli_view.display_stock_info.assert_called_once_with({"name": "삼성전자", "current": 70000})
-    assert result is True # 앱은 계속 실행되어야 함
+    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
+    app.data_handlers.handle_get_current_stock_price.assert_awaited_once_with("005930") # handle_get_current_stock_price 호출 확인
+    assert result is True
 
 @pytest.mark.asyncio
-async def test_execute_action_stock_name_lookup_failure(setup_mock_app, capsys):
+async def test_execute_action_account_balance_failure(setup_mock_app, capsys):
     app = setup_mock_app
-    app.cli_view.get_user_input.return_value = "없는종목" # 존재하지 않는 종목명 입력 시뮬레이션
-    # trading_service.get_code_by_name 메서드를 AsyncMock으로 설정
-    app.trading_service.get_code_by_name = AsyncMock(return_value=None) # 조회 실패 시뮬레이션
+    app.trading_service.get_account_balance.return_value = None
 
-    # 실제 _execute_action 메서드 호출
-    result = await app._execute_action('2')
+    result = await app._execute_action('2') # 1번 -> 2번 메뉴로 변경
 
-    # 검증
-    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목명을 입력하세요: ") # 입력 프롬프트 확인
-    app.trading_service.get_code_by_name.assert_awaited_once_with("없는종목") # 서비스 호출 확인
-    assert f"'없는종목'에 해당하는 종목 코드를 찾을 수 없습니다." in capsys.readouterr().out # 오류 메시지 확인
-    assert result is True # 앱은 계속 실행되어야 함
+    app.trading_service.get_account_balance.assert_awaited_once()
+    app.cli_view.display_account_balance_failure.assert_called_once() # CLIView 메서드 호출 확인
+    assert result is True
 
 @pytest.mark.asyncio
 async def test_execute_action_place_buy_order_success(setup_mock_app):
@@ -1082,31 +1061,28 @@ async def test_execute_action_place_sell_order_success(setup_mock_app):
     assert result is True # 앱은 계속 실행되어야 함
 
 @pytest.mark.asyncio
-async def test_execute_action_invalidate_token(setup_mock_app, capsys):
+async def test_execute_action_display_stock_change_rate(setup_mock_app, mocker):
     app = setup_mock_app
-    app.token_manager.invalidate_token.return_value = None # invalidate_token은 반환값이 없음
+    app.cli_view.get_user_input.return_value = "005930"
+    app.data_handlers.handle_display_stock_change_rate.return_value = None
 
-    # 실제 _execute_action 메서드 호출
     result = await app._execute_action('5')
 
-    # 검증
-    app.token_manager.invalidate_token.assert_called_once() # invalidate_token이 호출되었는지 확인
-    assert "토큰이 무효화되었습니다. 다음 요청 시 새 토큰이 발급됩니다." in capsys.readouterr().out # 메시지 확인
-    assert result is True # 앱은 계속 실행되어야 함
+    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
+    app.data_handlers.handle_display_stock_change_rate.assert_awaited_once_with("005930")
+    assert result is True
 
 @pytest.mark.asyncio
-async def test_execute_action_display_market_status(setup_mock_app):
+async def test_execute_action_display_stock_vs_open_price(setup_mock_app, mocker):
     app = setup_mock_app
-    app.time_manager.is_market_open.return_value = True # 시장이 열려있다고 가정
-    app.cli_view.display_market_status.return_value = None # display_market_status는 반환값이 없음
+    app.cli_view.get_user_input.return_value = "005930" # 종목 코드 입력 시뮬레이션
+    app.data_handlers.handle_display_stock_vs_open_price.return_value = None # 핸들러 목킹
 
-    # 실제 _execute_action 메서드 호출
     result = await app._execute_action('6')
 
-    # 검증
-    app.time_manager.is_market_open.assert_called_once() # is_market_open이 호출되었는지 확인
-    app.cli_view.display_market_status.assert_called_once_with(True) # display_market_status가 올바른 인자로 호출되었는지 확인
-    assert result is True # 앱은 계속 실행되어야 함
+    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
+    app.data_handlers.handle_display_stock_vs_open_price.assert_awaited_once_with("005930")
+    assert result is True
 
 @pytest.mark.asyncio
 async def test_execute_action_get_top_market_cap_real_success(setup_mock_app):
@@ -1194,3 +1170,34 @@ async def test_execute_action_momentum_backtest_zero_or_negative_count_input(set
     app.cli_view.display_invalid_input_warning.assert_called_once_with("0 이하의 수는 허용되지 않으므로 기본값 30을 사용합니다.") # 경고 메시지 확인
     app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", count=30) # 기본값 30으로 호출되었는지 확인
     assert result is True # 앱은 계속 실행되어야 함
+
+@pytest.mark.asyncio
+async def test_execute_action_realtime_stream_new_menu_option(setup_mock_app):
+    app = setup_mock_app
+    app.cli_view.get_user_input.return_value = "005930" # 구독할 종목 코드 입력 시뮬레이션
+    app.transaction_handlers.handle_realtime_price_quote_stream.return_value = None
+
+    result = await app._execute_action('13')
+
+    app.cli_view.get_user_input.assert_awaited_once_with("구독할 종목 코드를 입력하세요: ")
+    app.transaction_handlers.handle_realtime_price_quote_stream.assert_awaited_once_with("005930")
+    assert result is True
+
+@pytest.mark.asyncio
+async def test_execute_action_invalidate_token(setup_mock_app, capsys):
+    app = setup_mock_app
+    app.token_manager.invalidate_token.return_value = None
+
+    result = await app._execute_action('98')
+
+    app.token_manager.invalidate_token.assert_called_once()
+    app.cli_view.display_token_invalidated_message.assert_called_once()
+    assert result is True
+
+@pytest.mark.asyncio
+async def test_execute_action_exit_app(mocker):
+    """메뉴 '99' 선택 시 running_status가 False를 반환하는지 테스트합니다."""
+    mocker.patch('trading_app.load_config', return_value=get_mock_config())
+    app = TradingApp(main_config_path="dummy/path", tr_ids_config_path="dummy/path")
+    running_status = await app._execute_action('99')
+    assert running_status is False

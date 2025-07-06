@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta
 
 from strategies.backtest_data_provider import BacktestDataProvider
-from app.cli_view import CLIView  # CLIView 임포트
+from app.cli_view import CLIView
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 from core.config_loader import load_config
@@ -12,24 +12,23 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from services.trading_service import TradingService
 from core.time_manager import TimeManager
 from core.logger import Logger
-import asyncio  # 비동기 sleep을 위해 필요
+import asyncio
 
 # 새로 분리된 핸들러 클래스 임포트
 from app.data_handlers import DataHandlers
 from app.transaction_handlers import TransactionHandlers
-from user_api.broker_api_wrapper import BrokerAPIWrapper  # wrapper import 추가
+from user_api.broker_api_wrapper import BrokerAPIWrapper
 
+# config_loader.py에 이미 정의되어 있을 수 있으나, 독립 실행을 위해 여기에 포함
 def load_config(file_path):
     """지정된 경로에서 YAML 또는 JSON 설정 파일을 로드합니다."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
-            # YAML 라이브러리가 설치되어 있다면 YAML을 먼저 시도
             try:
                 import yaml
                 return yaml.safe_load(f)
             except ImportError:
-                # YAML이 없으면 JSON으로 시도
-                f.seek(0) # 파일 포인터 다시 처음으로
+                f.seek(0)
                 return json.load(f)
     except FileNotFoundError:
         raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
@@ -47,7 +46,7 @@ class TradingApp:
         self.time_manager = None
         self.logger = Logger()
         self.token_manager = None
-        self.cli_view = None  # CLIView 인스턴스를 위한 변수 추가
+        self.cli_view = None # CLIView는 여기서 초기화됩니다.
 
         self.data_handlers = None
         self.transaction_handlers = None
@@ -96,7 +95,7 @@ class TradingApp:
             raise
 
     async def _complete_api_initialization(self):
-        """API 클라이언트 및 서비스 계층 초기화를 수행합니다."""
+        """API 클라이언트 및 서비스 객체 초기화를 수행합니다."""
         try:
             self.logger.info("API 클라이언트 초기화 시작 (선택된 환경 기반)...")
 
@@ -108,6 +107,7 @@ class TradingApp:
             self.trading_service = TradingService(self.api_client, self.env, self.logger, self.time_manager)
 
             self.data_handlers = DataHandlers(self.trading_service, self.logger, self.time_manager)
+            # TransactionHandlers 초기화 시 cli_view 인자 제거 (이제 TransactionHandlers는 직접 입력을 받지 않습니다)
             self.transaction_handlers = TransactionHandlers(self.trading_service, self.logger, self.time_manager)
             self.broker = BrokerAPIWrapper(env=self.env, token_manager=self.token_manager, logger=self.logger)
             self.backtest_data_provider = BacktestDataProvider(
@@ -121,45 +121,40 @@ class TradingApp:
 
         except Exception as e:
             self.logger.critical(f"API 클라이언트 초기화 실패: {e}")
-            self.cli_view.display_app_start_error(f"API 클라이언트 초기화 중 오류 발생: {e}") # CLIView 사용
+            self.cli_view.display_app_start_error(f"API 클라이언트 초기화 중 오류 발생: {e}")
             return False
 
     async def _select_environment(self):
-        """애플리케이션 시작 시 모의/실전 투자 환경을 선택하고, 선택된 환경으로 API 클라이언트를 초기화합니다."""
+        """애플리케이션 시작 시 모의/실전 투자 환경을 선택하고, 선택된 환경으로 API 클라이언트를 재초기화합니다."""
         selected = False
         while not selected:
-            # CLIView를 통해 환경 선택 프롬프트 출력 및 입력 받기
             choice = await self.cli_view.select_environment_input()
 
             if choice == '1':
-                self.env.set_trading_mode(False)  # 실전투자 설정
+                self.env.set_trading_mode(False)
                 self.logger.info("실전 투자 환경으로 설정되었습니다.")
                 selected = True
             elif choice == '2':
-                self.env.set_trading_mode(True)  # 모의투자 설정
+                self.env.set_trading_mode(True)
                 self.logger.info("모의 투자 환경으로 설정되었습니다.")
                 selected = True
             else:
                 self.cli_view.display_invalid_environment_choice()
 
-        # --- 환경 선택 후 토큰 강제 재발급 및 API 클라이언트 재초기화 ---
-        # TokenManager.get_access_token이 env에서 필요한 정보를 받도록 변경되었으므로,
-        # self.env.get_access_token()을 호출하는 것이 올바른 방식입니다.
-        # 이전에 직접 TokenManager를 호출했던 부분을 self.env를 통하도록 변경합니다.
         new_token_acquired = await self.env.get_access_token()
 
-        # 토큰이 성공적으로 발급되었는지 확인 (None이 아니면 성공)
-        if not new_token_acquired:  # new_token_acquired는 이제 str 또는 None
+        if not new_token_acquired:
             self.logger.critical("선택된 환경의 토큰 발급에 실패했습니다. 애플리케이션을 종료합니다.")
-            return False  # 토큰 발급 실패 시 앱 종료 유도
+            return False
 
-        # 토큰 발급 성공 시 _complete_api_initialization 호출 (await으로)
         if not await self._complete_api_initialization():
             self.logger.critical("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
             return False
 
+        return True
+
     def _display_menu(self):
-        """사용자에게 메뉴 옵션을 출력하고 현재 시간을 포함합니다 (환경에 따라 동적)."""
+        """사용자에게 메뉴 옵션을 출력하고 현재 상태를 표시합니다 (환경에 따라 동적)."""
         current_time = self.time_manager.get_current_kst_time()
         market_open_status = self.time_manager.is_market_open()
         market_status_str = "열려있음" if market_open_status else "닫혀있음"
@@ -174,37 +169,37 @@ class TradingApp:
     async def _execute_action(self, choice):
         """사용자 선택에 따른 액션을 실행합니다."""
         running_status = True
-        if choice == '99': # <<< 종료 번호 변경
-            self.cli_view.display_exit_message() # <<< CLIView 사용
-            running_status = False
-        elif choice == '0': # <<< 환경 변경 번호 변경
+        if choice == '0':
             self.logger.info("거래 환경 변경을 시작합니다.")
             if not await self._select_environment():
                 running_status = False
         elif choice == '1':
+            stock_code = await self.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
+            await self.data_handlers.handle_get_current_stock_price(stock_code)
+        elif choice == '2':
             balance = await self.trading_service.get_account_balance()
             if balance:
-                self.cli_view.display_account_balance(balance) # CLIView 사용
+                self.cli_view.display_account_balance(balance)
             else:
-                print("계좌 잔고 조회에 실패했습니다.") # TODO: CLIView에 실패 메시지 추가
-        elif choice == '2':
-            stock_name = await self.cli_view.get_user_input("조회할 종목명을 입력하세요: ") # CLIView 사용
-            stock_code = await self.trading_service.get_code_by_name(stock_name)
-            if stock_code:
-                stock_summary = await self.trading_service.get_price_summary(stock_code)
-                self.cli_view.display_stock_info(stock_summary) # CLIView 사용
-            else:
-                print(f"'{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.") # TODO: CLIView에 메시지 추가
+                self.cli_view.display_account_balance_failure() # CLIView 메서드 사용
         elif choice == '3':
-            await self.transaction_handlers.handle_buy_stock()
+            # 사용자 입력을 CLIView에서 직접 받아서 TransactionHandlers로 전달
+            stock_code = await self.cli_view.get_user_input("매수할 종목 코드를 입력하세요: ")
+            qty_input = await self.cli_view.get_user_input("매수할 수량을 입력하세요: ")
+            price_input = await self.cli_view.get_user_input("매수 가격을 입력하세요 (시장가: 0): ")
+            await self.transaction_handlers.handle_buy_stock(stock_code, qty_input, price_input)
         elif choice == '4':
-            await self.transaction_handlers.handle_sell_stock()
+            # 사용자 입력을 CLIView에서 직접 받아서 TransactionHandlers로 전달
+            stock_code = await self.cli_view.get_user_input("매도할 종목 코드를 입력하세요: ")
+            qty_input = await self.cli_view.get_user_input("매도할 수량을 입력하세요: ")
+            price_input = await self.cli_view.get_user_input("매도 가격을 입력하세요 (시장가: 0): ")
+            await self.transaction_handlers.handle_sell_stock(stock_code, qty_input, price_input)
         elif choice == '5':
-            self.token_manager.invalidate_token()
-            print("토큰이 무효화되었습니다. 다음 요청 시 새 토큰이 발급됩니다.") # TODO: CLIView에 메시지 추가
+            stock_code = await self.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
+            await self.data_handlers.handle_display_stock_change_rate(stock_code)
         elif choice == '6':
-            is_market_open = self.time_manager.is_market_open()
-            self.cli_view.display_market_status(is_market_open) # CLIView 사용
+            stock_code = await self.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
+            await self.data_handlers.handle_display_stock_vs_open_price(stock_code)
         elif choice == '7':
             if self.env.is_paper_trading:
                 print("WARNING: 모의투자 환경에서는 시가총액 상위 종목 조회를 지원하지 않습니다.")
@@ -218,7 +213,9 @@ class TradingApp:
                 running_status = True
             else:
                 if await self.data_handlers.handle_get_top_10_market_cap_stocks_with_prices():
-                    running_status = False
+                    running_status = True  # 조회 성공 시에도 계속 실행
+                else:
+                    running_status = True  # 조회 실패 시에도 계속 실행
         elif choice == '9':
             await self.data_handlers.handle_upper_limit_stocks("0000", limit=500)
         elif choice == '10':
@@ -265,10 +262,8 @@ class TradingApp:
                 result = await executor.execute(top_stock_codes)
 
                 self.cli_view.display_strategy_results("모멘텀", result)
-                # <<< 이 부분이 수정되었습니다.
                 self.cli_view.display_follow_through_stocks(result.get("follow_through", []))
                 self.cli_view.display_not_follow_through_stocks(result.get("not_follow_through", []))
-                # >>>
 
             except Exception as e:
                 self.logger.error(f"모멘텀 전략 실행 중 오류 발생: {e}", exc_info=True)
@@ -303,18 +298,15 @@ class TradingApp:
 
                 top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000", count=count)
 
-                # <<< 이 부분이 추가되었습니다: API 오류 딕셔너리 처리
-
                 if isinstance(top_codes, dict) and top_codes.get('rt_cd') != '0':
+
                     self.cli_view.display_top_stocks_failure(top_codes.get('msg1', '알 수 없는 오류 또는 예상치 못한 응답 타입'))
 
                     self.logger.warning(f"시가총액 조회 실패. 응답: {top_codes}")
 
                     return running_status
 
-                # >>>
-
-                if not top_codes:  # 이 조건은 이제 빈 리스트를 처리합니다.
+                if not top_codes:
 
                     self.cli_view.display_top_stocks_failure("결과 없음")
 
@@ -331,6 +323,7 @@ class TradingApp:
                 ]
 
                 if not top_stock_codes:
+
                     self.cli_view.display_no_stocks_for_strategy()
 
                     return running_status
@@ -363,13 +356,11 @@ class TradingApp:
 
                 self.cli_view.display_not_follow_through_stocks(result.get("not_follow_through", []))
 
-
             except Exception as e:
 
                 self.logger.error(f"[백테스트] 전략 실행 중 오류 발생: {e}")
 
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
-
 
         elif choice == '12':
 
@@ -408,6 +399,7 @@ class TradingApp:
                     return running_status
 
                 if not top_stock_codes:
+
                     self.cli_view.display_no_stocks_for_strategy()
 
                     return running_status
@@ -434,29 +426,32 @@ class TradingApp:
 
                 self.cli_view.display_strategy_results("GapUpPullback", result)
 
-                # <<< 이 부분이 수정되었습니다.
-
                 self.cli_view.display_gapup_pullback_selected_stocks(result.get("gapup_pullback_selected", []))
 
                 self.cli_view.display_gapup_pullback_rejected_stocks(result.get("gapup_pullback_rejected", []))
-
-                # >>>
-
 
             except Exception as e:
 
                 self.logger.error(f"[GapUpPullback] 전략 실행 오류: {e}")
 
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
-
+        elif choice == '13':
+            stock_code = await self.cli_view.get_user_input("구독할 종목 코드를 입력하세요: ")
+            await self.transaction_handlers.handle_realtime_price_quote_stream(stock_code)
+        elif choice == '98':  # 14번 메뉴 추가: 토큰 무효화
+            self.token_manager.invalidate_token()
+            self.cli_view.display_token_invalidated_message()
+        elif choice == '99':
+            self.cli_view.display_exit_message()
+            running_status = False
         else:
-            self.cli_view.display_invalid_menu_choice() # CLIView 사용
+            self.cli_view.display_invalid_menu_choice()
 
         return running_status
 
     async def run_async(self):
         """비동기 애플리케이션을 실행합니다."""
-        self.cli_view.display_welcome_message() # CLIView 사용
+        self.cli_view.display_welcome_message()
 
         if not await self._complete_api_initialization():
             return
@@ -465,7 +460,7 @@ class TradingApp:
 
         running = True
         while running:
-            self.cli_view.display_current_time() # CLIView 사용
-            self._display_menu() # 이제 CLIView를 통해 메뉴 표시
-            choice = await self.cli_view.get_user_input("메뉴를 선택하세요: ") # CLIView 사용
+            self.cli_view.display_current_time()
+            self._display_menu()
+            choice = await self.cli_view.get_user_input("메뉴를 선택하세요: ")
             running = await self._execute_action(choice)

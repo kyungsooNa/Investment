@@ -1,4 +1,5 @@
 import pytest
+import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import builtins
@@ -59,10 +60,6 @@ def handler(mock_trading_service, mock_logger, mock_time_manager):
         logger=mock_logger,
         time_manager=mock_time_manager
     )
-    # handle_buy_stock, handle_sell_stock 테스트를 위해 내부 메서드 목킹
-    # 이 부분은 실제 handle_place_buy_order/sell_order가 호출되도록 변경 (아래 테스트에서)
-    # handler_instance.handle_place_buy_order = AsyncMock(return_value={"rt_cd": "0"})
-    # handler_instance.handle_place_sell_order = AsyncMock(return_value={"rt_cd": "0"})
     return handler_instance
 
 # --- Pytest 스타일 테스트 케이스 ---
@@ -70,52 +67,47 @@ def handler(mock_trading_service, mock_logger, mock_time_manager):
 @pytest.mark.asyncio
 async def test_handle_buy_stock_success(handler, mock_trading_service, print_output_capture):
     """handle_buy_stock 매수 성공 시나리오 테스트."""
-    mock_trading_service.get_user_input.side_effect = ["005930", "10", "70000"]
-    # handle_place_buy_order가 성공적으로 실행되도록 mock_trading_service.place_buy_order를 목킹
+    # handle_buy_stock이 이제 인자를 받으므로, 여기에 직접 전달합니다.
+    # get_user_input의 side_effect와 일치시킵니다.
+    stock_code_input = "005930"
+    qty_input = "10"
+    price_input = "70000"
+
     mock_trading_service.place_buy_order.return_value = {"rt_cd": "0", "msg1": "주문 성공"}
 
-    await handler.handle_buy_stock()
+    await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    mock_trading_service.get_user_input.assert_has_awaits([
-        call("매수할 종목 코드를 입력하세요: "),
-        call("매수할 수량을 입력하세요: "),
-        call("매수 가격을 입력하세요 (시장가: 0): ")
-    ])
-    mock_trading_service.place_buy_order.assert_awaited_once_with("005930", 70000, 10, "01")
+    # get_user_input은 이제 handle_buy_stock 내부에서 호출되지 않으므로 assert_has_awaits는 제거
+    # 대신 place_buy_order가 올바르게 호출되었는지 확인
+    mock_trading_service.place_buy_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input), "01")
     assert "--- 주식 매수 주문 ---" in print_output_capture.getvalue()
     assert "주식 매수 주문 성공" in print_output_capture.getvalue()
 
 @pytest.mark.asyncio
 async def test_handle_buy_stock_market_closed(handler, mock_trading_service, mock_time_manager, print_output_capture, mock_logger):
     """handle_buy_stock 시장 마감 시 매수 실패 테스트."""
-    mock_trading_service.get_user_input.side_effect = ["005930", "10", "70000"]
+    stock_code_input = "005930"
+    qty_input = "10"
+    price_input = "70000"
+
     mock_time_manager.is_market_open.return_value = False
 
-    await handler.handle_buy_stock()
+    await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    mock_trading_service.get_user_input.assert_has_awaits([
-        call("매수할 종목 코드를 입력하세요: "),
-        call("매수할 수량을 입력하세요: "),
-        call("매수 가격을 입력하세요 (시장가: 0): ")
-    ])
     assert "WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.\n" in print_output_capture.getvalue()
     mock_logger.warning.assert_called_with("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
-    mock_trading_service.place_buy_order.assert_not_awaited() # 주문이 시도되지 않아야 함
+    mock_trading_service.place_buy_order.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_handle_buy_stock_invalid_input(handler, mock_trading_service, print_output_capture, mock_logger):
     """handle_buy_stock 유효하지 않은 입력 시 매수 실패 테스트."""
-    mock_trading_service.get_user_input.side_effect = ["005930", "abc", "70000"] # 잘못된 수량 입력
-    mock_trading_service.place_buy_order = AsyncMock() # 호출되지 않아야 함
+    stock_code_input = "005930"
+    qty_input = "abc" # 잘못된 수량 입력
+    price_input = "70000"
 
-    await handler.handle_buy_stock()
+    await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    mock_trading_service.get_user_input.assert_has_awaits([
-        call("매수할 종목 코드를 입력하세요: "),
-        call("매수할 수량을 입력하세요: "),
-        call("매수 가격을 입력하세요 (시장가: 0): ")
-    ])
     assert "잘못된 수량 또는 가격 입력입니다.\n" in print_output_capture.getvalue()
     mock_logger.warning.assert_called_once()
     mock_trading_service.place_buy_order.assert_not_awaited()
@@ -123,10 +115,13 @@ async def test_handle_buy_stock_invalid_input(handler, mock_trading_service, pri
 @pytest.mark.asyncio
 async def test_handle_buy_stock_place_order_delegation_failure(handler, mock_trading_service, print_output_capture, mock_logger):
     """handle_buy_stock 주문 위임 실패 시 테스트."""
-    mock_trading_service.get_user_input.side_effect = ["005930", "10", "70000"]
+    stock_code_input = "005930"
+    qty_input = "10"
+    price_input = "70000"
+
     mock_trading_service.place_buy_order.return_value = {"rt_cd": "1", "msg1": "주문 실패"}
 
-    await handler.handle_buy_stock()
+    await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
     mock_trading_service.place_buy_order.assert_awaited_once_with("005930", 70000, 10, "01")
     assert "주식 매수 주문 실패: {'rt_cd': '1', 'msg1': '주문 실패'}" in print_output_capture.getvalue()
@@ -135,17 +130,14 @@ async def test_handle_buy_stock_place_order_delegation_failure(handler, mock_tra
 @pytest.mark.asyncio
 async def test_handle_sell_stock_success(handler, mock_trading_service, print_output_capture):
     """handle_sell_stock 매도 성공 시나리오 테스트."""
-    mock_trading_service.get_user_input.side_effect = ["005930", "5", "60000"]
-    # handle_place_sell_order가 성공적으로 실행되도록 mock_trading_service.place_sell_order를 목킹
+    stock_code_input = "005930"
+    qty_input = "5"
+    price_input = "60000"
+
     mock_trading_service.place_sell_order.return_value = {"rt_cd": "0", "msg1": "매도 성공"}
 
-    await handler.handle_sell_stock()
+    await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
-    mock_trading_service.get_user_input.assert_has_awaits([
-        call("매도할 종목 코드를 입력하세요: "),
-        call("매도할 수량을 입력하세요: "),
-        call("매도 가격을 입력하세요 (시장가: 0): ")
-    ])
     mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5, "01")
     assert "--- 주식 매도 주문 ---" in print_output_capture.getvalue()
     assert "주식 매도 주문 성공" in print_output_capture.getvalue()
@@ -154,22 +146,26 @@ async def test_handle_sell_stock_success(handler, mock_trading_service, print_ou
 @pytest.mark.asyncio
 async def test_handle_sell_stock_market_closed(handler, mock_trading_service, mock_time_manager, print_output_capture, mock_logger):
     """handle_sell_stock 시장 마감 시 매도 실패 테스트."""
-    mock_trading_service.get_user_input.side_effect = ["005930", "5", "60000"]
+    stock_code_input = "005930"
+    qty_input = "5"
+    price_input = "60000"
+
     mock_time_manager.is_market_open.return_value = False
 
-    await handler.handle_sell_stock()
+    await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
     assert "WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.\n" in print_output_capture.getvalue()
     mock_logger.warning.assert_called_with("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
-    mock_trading_service.place_sell_order.assert_not_awaited() # 주문이 시도되지 않아야 함
+    mock_trading_service.place_sell_order.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_handle_sell_stock_invalid_input(handler, mock_trading_service, print_output_capture, mock_logger):
     """handle_sell_stock 유효하지 않은 입력 시 매도 실패 테스트."""
-    mock_trading_service.get_user_input.side_effect = ["005930", "xyz", "60000"]
-    mock_trading_service.place_sell_order = AsyncMock() # 호출되지 않아야 함
+    stock_code_input = "005930"
+    qty_input = "xyz"
+    price_input = "60000"
 
-    await handler.handle_sell_stock()
+    await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
     assert "잘못된 수량 또는 가격 입력입니다.\n" in print_output_capture.getvalue()
     mock_logger.warning.assert_called_once()
@@ -178,10 +174,13 @@ async def test_handle_sell_stock_invalid_input(handler, mock_trading_service, pr
 @pytest.mark.asyncio
 async def test_handle_sell_stock_place_order_delegation_failure(handler, mock_trading_service, print_output_capture, mock_logger):
     """handle_sell_stock 주문 위임 실패 시 테스트."""
-    mock_trading_service.get_user_input.side_effect = ["005930", "5", "60000"]
+    stock_code_input = "005930"
+    qty_input = "5"
+    price_input = "60000"
+
     mock_trading_service.place_sell_order.return_value = {"rt_cd": "1", "msg1": "매도 실패"}
 
-    await handler.handle_sell_stock()
+    await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
     mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5, "01")
     assert "주식 매도 주문 실패: {'rt_cd': '1', 'msg1': '매도 실패'}" in print_output_capture.getvalue()
@@ -312,14 +311,15 @@ async def test_handle_buy_order_when_market_closed(handler, mock_time_manager, m
 
     assert "WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.\n" in print_output_capture.getvalue()
     mock_logger.warning.assert_called_once_with("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
-    mock_trading_service.place_buy_order.assert_not_awaited() # 주문이 시도되지 않아야 함
+    mock_trading_service.place_buy_order.assert_not_awaited()
+
+# --- 콜백 함수 내부 로직 검증 테스트 ---
 
 @pytest.mark.asyncio
 async def test_realtime_data_display_callback_logic(handler, mock_trading_service, print_output_capture, mock_logger):
     """
     realtime_data_display_callback 함수의 내부 로직을 다양한 데이터 타입으로 검증합니다.
     """
-    # handle_realtime_price_quote_stream을 호출하여 콜백 함수에 대한 참조를 얻음
     mock_trading_service.connect_websocket.return_value = True
     mock_trading_service.subscribe_realtime_price.return_value = True
     mock_trading_service.subscribe_realtime_quote.return_value = True
@@ -327,18 +327,16 @@ async def test_realtime_data_display_callback_logic(handler, mock_trading_servic
     mock_trading_service.unsubscribe_realtime_quote.return_value = True
     mock_trading_service.disconnect_websocket.return_value = True
 
-    # asyncio.to_thread를 목킹하여 input() 대기를 건너뜀
     with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
         mock_to_thread.return_value = None
         await handler.handle_realtime_price_quote_stream("005930")
 
-    # connect_websocket에 전달된 콜백 함수를 캡처
-    # call_args.args[0]은 첫 번째 위치 인자 (on_message_callback)
     realtime_callback = mock_trading_service.connect_websocket.call_args.kwargs['on_message_callback']
+
     # --- 테스트 시나리오 1: realtime_price (주식 체결) 데이터 ---
-    print_output_capture.truncate(0) # 이전 출력 초기화
+    print_output_capture.truncate(0)
     print_output_capture.seek(0)
-    mock_logger.info.reset_mock() # 로거 목 초기화
+    mock_logger.info.reset_mock()
     mock_logger.debug.reset_mock()
 
     price_data = {
@@ -353,16 +351,11 @@ async def test_realtime_data_display_callback_logic(handler, mock_trading_servic
         }
     }
     realtime_callback(price_data)
-    expected_output = "\r[실시간 체결 - 100000] 종목: 005930: 현재가 75000원, 전일대비: 2500 (0.67%), 누적량: 123456" # '2'는 '+'로 변환되어야 함
-    # 실제 코드의 _get_sign_from_code 로직이 없으므로, 직접 부호 검증은 어려움.
-    # 하지만 print가 호출되는지, 그리고 데이터가 포함되는지는 검증 가능.
-    # print_output_capture.getvalue()는 \r과 공백 채우기 때문에 정확한 문자열 매칭이 어려울 수 있음.
-    # 대신, 중요한 키워드 포함 여부로 검증.
     output_str = print_output_capture.getvalue()
     assert "현재가 75000원" in output_str
     assert "누적량: 123456" in output_str
-    assert "전일대비: 2500 (0.67%)" in output_str # 부호는 실제 코드의 _get_sign_from_code에 따라 달라짐
-    mock_logger.info.assert_not_called() # 콜백 내부에서는 info 로깅 없음
+    assert "전일대비: 2500 (0.67%)" in output_str
+    mock_logger.info.assert_not_called()
     mock_logger.debug.assert_not_called()
 
 
@@ -423,8 +416,8 @@ async def test_realtime_data_display_callback_logic(handler, mock_trading_servic
     }
     realtime_callback(unknown_data)
     output_str = print_output_capture.getvalue()
-    assert output_str == "" # 콘솔에 아무것도 출력되지 않아야 함
-    mock_logger.debug.assert_called_once_with(f"처리되지 않은 실시간 메시지: UNKNOWN001 - {unknown_data}")
+    assert output_str == ""
+    mock_logger.debug.assert_called_once_with(f"처리되지 않은 실시간 메시지: UNKNOWN001 - {{'type': 'unknown_type', 'tr_id': 'UNKNOWN001', 'data': {{'some_key': 'some_value'}}}}") # 데이터 전체를 포함하도록 수정
 
     # --- 테스트 시나리오 5: 데이터가 dict가 아닌 경우 ---
     print_output_capture.truncate(0)
@@ -435,5 +428,5 @@ async def test_realtime_data_display_callback_logic(handler, mock_trading_servic
     non_dict_data = "invalid_string_data"
     realtime_callback(non_dict_data)
     output_str = print_output_capture.getvalue()
-    assert output_str == "" # 아무것도 출력되지 않아야 함
-    mock_logger.debug.assert_not_called() # 로깅도 호출되지 않아야 함
+    assert output_str == ""
+    mock_logger.debug.assert_not_called()
