@@ -925,9 +925,7 @@ def setup_mock_app(mocker):
 
     app.env.get_full_config = mocker.MagicMock(return_value=mock_config)
     app.env.is_paper_trading = mock_config['is_paper_trading']
-    # app.env.get_access_token = mocker.AsyncMock(return_value="mock_access_token") # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
-    # app._complete_api_initialization = AsyncMock(return_value=True) # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
-    # app._select_environment = AsyncMock(return_value=True) # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
+    app.env.set_trading_mode = MagicMock() # set_trading_mode 메서드 명시적 목킹 추가
 
     app.data_handlers.handle_get_top_10_market_cap_stocks_with_prices = AsyncMock()
     app.data_handlers.handle_get_top_market_cap_stocks = AsyncMock()
@@ -954,6 +952,7 @@ def setup_mock_app(mocker):
     app.token_manager.invalidate_token = MagicMock()
 
     yield app
+
 
 ### `_execute_action` 메서드를 위한 새로운 테스트 케이스
 
@@ -1278,5 +1277,103 @@ async def test_complete_api_initialization_token_failure(setup_mock_app, mocker)
     mock_broker_wrapper_cls.assert_not_called()
     mock_backtest_provider_cls.assert_not_called()
 
+    assert result is False
+
+
+# 15. `_select_environment` 실전투자 선택 성공 시나리오 테스트
+@pytest.mark.asyncio
+async def test_select_environment_real_trading_success(setup_mock_app):
+    app = setup_mock_app
+
+    # cli_view.select_environment_input이 '1' (실전투자)을 반환하도록 설정
+    app.cli_view.select_environment_input.side_effect = ["1"]
+
+    # env.get_access_token 및 _complete_api_initialization이 성공적으로 작동하도록 목킹
+    app.env.get_access_token.return_value = "mock_access_token"
+    app._complete_api_initialization = AsyncMock(return_value=True)
+
+    # _select_environment 메서드 호출
+    result = await app._select_environment()
+
+    # 검증
+    app.cli_view.select_environment_input.assert_awaited_once()
+    app.env.set_trading_mode.assert_called_once_with(False)  # False (실전투자)로 호출되었는지 확인
+    app.logger.info.assert_called_once_with("실전 투자 환경으로 설정되었습니다.")
+    app.env.get_access_token.assert_awaited_once()
+    app._complete_api_initialization.assert_awaited_once()
+    assert result is True
+
+
+# 16. `_select_environment` 모의투자 선택 성공 시나리오 테스트
+@pytest.mark.asyncio
+async def test_select_environment_paper_trading_success(setup_mock_app):
+    app = setup_mock_app
+
+    # cli_view.select_environment_input이 '2' (모의투자)을 반환하도록 설정
+    app.cli_view.select_environment_input.side_effect = ["2"]
+
+    # env.get_access_token 및 _complete_api_initialization이 성공적으로 작동하도록 목킹
+    app.env.get_access_token.return_value = "mock_access_token"
+    app._complete_api_initialization = AsyncMock(return_value=True)
+
+    # _select_environment 메서드 호출
+    result = await app._select_environment()
+
+    # 검증
+    app.cli_view.select_environment_input.assert_awaited_once()
+    app.env.set_trading_mode.assert_called_once_with(True)  # True (모의투자)로 호출되었는지 확인
+    app.logger.info.assert_called_once_with("모의 투자 환경으로 설정되었습니다.")
+    app.env.get_access_token.assert_awaited_once()
+    app._complete_api_initialization.assert_awaited_once()
+    assert result is True
+
+
+# 17. `_select_environment` 토큰 획득 실패 시나리오 테스트
+@pytest.mark.asyncio
+async def test_select_environment_token_acquisition_failure(setup_mock_app):
+    app = setup_mock_app
+
+    # cli_view.select_environment_input이 '1' (실전투자)을 반환하도록 설정
+    app.cli_view.select_environment_input.side_effect = ["1"]
+
+    # env.get_access_token이 None을 반환하도록 목킹하여 토큰 획득 실패 시뮬레이션
+    app.env.get_access_token.return_value = None
+
+    # _complete_api_initialization은 호출되지 않아야 함
+    app._complete_api_initialization = AsyncMock()
+
+    # _select_environment 메서드 호출
+    result = await app._select_environment()
+
+    # 검증
+    app.cli_view.select_environment_input.assert_awaited_once()
+    app.env.set_trading_mode.assert_called_once_with(False)  # 환경 설정은 시도됨
+    app.env.get_access_token.assert_awaited_once()
+    app.logger.critical.assert_called_once_with("선택된 환경의 토큰 발급에 실패했습니다. 애플리케이션을 종료합니다.")
+    app._complete_api_initialization.assert_not_awaited()  # 토큰 실패 시 초기화 호출 안 됨
+    assert result is False
+
+
+# 18. `_select_environment` API 클라이언트 초기화 실패 시나리오 테스트
+@pytest.mark.asyncio
+async def test_select_environment_api_initialization_failure(setup_mock_app):
+    app = setup_mock_app
+
+    # cli_view.select_environment_input이 '1' (실전투자)을 반환하도록 설정
+    app.cli_view.select_environment_input.side_effect = ["1"]
+
+    # env.get_access_token은 성공하지만, _complete_api_initialization이 False를 반환하도록 목킹
+    app.env.get_access_token.return_value = "mock_access_token"
+    app._complete_api_initialization = AsyncMock(return_value=False)
+
+    # _select_environment 메서드 호출
+    result = await app._select_environment()
+
+    # 검증
+    app.cli_view.select_environment_input.assert_awaited_once()
+    app.env.set_trading_mode.assert_called_once_with(False)
+    app.env.get_access_token.assert_awaited_once()
+    app._complete_api_initialization.assert_awaited_once()
+    app.logger.critical.assert_called_once_with("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
     assert result is False
 
