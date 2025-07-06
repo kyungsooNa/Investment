@@ -21,32 +21,52 @@ except ImportError as e:
     logging.warning(f"Could not import a module for testing: {e}. Proceeding with mocks.")
 
 
-# Helper function to create a mock config for tests
 def get_mock_config():
     """
-    Returns a mock configuration dictionary for testing.
-    Ensure it includes necessary URL configurations for KoreaInvestApiEnv.
+    테스트를 위해 필요한 모든 URL 및 TR ID를 포함하는 목 설정 딕셔너리를 반환합니다.
     """
     return {
-        # This determines which URLs (paper_ or real) are expected
-        'is_paper_trading': True,  # Set to True for paper trading URLs, False for real trading URLs
-
-        # --- Required for is_paper_trading: True ---
+        'is_paper_trading': True,
         'paper_url': 'https://mock-paper-api.koreainvestment.com:443',
         'paper_websocket_url': 'ws://mock-paper-websocket.koreainvestment.com:80',
-
-        # --- Required for is_paper_trading: False (include these if your tests might switch) ---
         'url': 'https://mock-real-api.koreainvestment.com:443',
         'websocket_url': 'ws://mock-real-websocket.koreainvestment.com:80',
-
-        # ... add any other configuration parameters your TradingApp expects
         'app_key': 'mock_app_key',
         'app_secret': 'mock_app_secret',
-        'account_number': 'mock_account_number',
-        'account_number_stock': 'mock_account_number_stock',
+        'account_number': 'mock_account_number', # 일반 계좌 번호
+        'stock_account_number': 'mock_stock_account_number', # 특정 주식 계좌 번호
         'hts_id': 'mock_hts_id',
-        # etc.
+        'custtype': 'P', # 개인 고객 유형
+        'market_open_time': "09:00",
+        'market_close_time': "15:30",
+        'market_timezone': "Asia/Seoul",
+        'token_file_path': 'config/token.json',
+        'tr_ids': {
+            'quotations': {
+                'inquire_price': 'FHKST01010100',
+                'search_info': 'FHKST01010500',
+                'top_market_cap': 'FHPST01740000',
+                'daily_itemchartprice_day': 'FHKST03010100',
+                'daily_itemchartprice_minute': 'FHNKF03060000'
+            },
+            'account': {
+                'inquire_balance_real': 'TTTC8434R',
+                'inquire_balance_paper': 'VTTC8434R'
+            },
+            'trading': {
+                'order_cash_buy_real': 'TTTC0012U',
+                'order_cash_sell_real': 'TTTC0011U',
+                'order_cash_buy_paper': 'VTTC0012U',
+                'order_cash_sell_paper': 'VTTC0011U'
+            },
+            'websocket': {
+                'approval_key': '실시간-000',
+                'realtime_price': 'H0STCNT0',
+                'realtime_quote': 'H0STASP0'
+            }
+        }
     }
+
 class TokenManager:
     pass
 class KoreaInvestApiEnv:
@@ -892,3 +912,137 @@ async def test_execute_action_invalid_choice(mocker, capsys):
     assert "잘못된 메뉴 선택입니다. 다시 시도해주세요.\n" in captured.out
     # cli_view.display_message가 올바른 인자로 호출되었는지도 검증합니다.
     app.cli_view.display_message.assert_called_once_with("잘못된 메뉴 선택입니다. 다시 시도해주세요.")
+
+# 각 테스트를 위한 목(mock) TradingApp 인스턴스 설정 픽스처
+# 각 테스트를 위한 목(mock) TradingApp 인스턴스 설정 픽스처
+@pytest.fixture
+def setup_mock_app(mocker):
+    # mock_config를 로드하도록 load_config 목 설정
+    mock_config = get_mock_config()
+    mocker.patch('trading_app.load_config', side_effect=lambda path: mock_config if 'config.yaml' in path or 'tr_ids_config.yaml' in path else None)
+
+    # TradingApp이 초기화될 때 사용하는 모든 외부 의존성을 목(mock) 설정
+    mocker.patch('trading_app.TokenManager')
+    mocker.patch('trading_app.KoreaInvestApiEnv')
+    mocker.patch('trading_app.TimeManager')
+    mocker.patch('trading_app.Logger')
+    mocker.patch('trading_app.CLIView')
+    mocker.patch('trading_app.KoreaInvestApiClient')
+    mocker.patch('trading_app.TradingService')
+    mocker.patch('trading_app.DataHandlers')
+    mocker.patch('trading_app.TransactionHandlers')
+    mocker.patch('trading_app.BrokerAPIWrapper')
+    mocker.patch('trading_app.BacktestDataProvider')
+
+    # 실제 TradingApp 인스턴스 생성. 이 인스턴스의 내부 의존성들은 목 객체가 됨.
+    app = TradingApp(main_config_path="dummy/config.yaml", tr_ids_config_path="dummy/core/tr_ids_config.yaml")
+
+    # 테스트에서 직접 접근하고 제어할 수 있도록 목 속성들을 수동으로 설정
+    # 가능한 경우 실제 클래스 사양을 사용하여 올바른 메서드 시그니처가 목되도록 함
+    app.logger = mocker.MagicMock(spec=logging.Logger)
+    # app.cli_view를 AsyncMock으로 설정 (spec=CLIView 제거)
+    app.cli_view = mocker.AsyncMock() # spec=CLIView 제거
+    app.time_manager = mocker.MagicMock(spec=TimeManager)
+    app.env = mocker.MagicMock(spec=KoreaInvestApiEnv)
+    app.trading_service = mocker.AsyncMock(spec=TradingService)
+    # app.data_handlers를 DataHandlers 클래스의 AsyncMock으로 설정
+    app.data_handlers = mocker.AsyncMock(spec=DataHandlers)
+    app.transaction_handlers = mocker.AsyncMock(spec=app.transaction_handlers.__class__) # 원본 클래스 사양 사용
+    app.broker = mocker.AsyncMock(spec=BrokerAPIWrapper)
+    app.backtest_data_provider = mocker.AsyncMock(spec=BacktestDataProvider)
+
+    # 일반적인 목 메서드들에 대한 기본 반환 값 설정
+    # KoreaInvestApiEnv 목 객체의 get_full_config 메서드를 명시적으로 목킹합니다.
+    app.env.get_full_config = mocker.MagicMock(return_value=mock_config)
+    app.env.is_paper_trading = mock_config['is_paper_trading'] # 설정에 따라 초기 상태 설정
+    # get_access_token 메서드가 비동기이므로 AsyncMock으로 설정
+    app.env.get_access_token = mocker.AsyncMock(return_value="mock_access_token") # 토큰 획득 성공 가정
+    app._complete_api_initialization = AsyncMock(return_value=True) # 초기화 프로세스 목 설정
+    app._select_environment = AsyncMock(return_value=True) # 환경 선택 프로세스 목 설정
+
+    # DataHandlers의 특정 메서드를 AsyncMock으로 설정
+    app.data_handlers.handle_get_top_10_market_cap_stocks_with_prices = AsyncMock()
+
+    # MomentumStrategy와 StrategyExecutor를 원래 모듈 경로를 대상으로 패치 (autospec=True 제거)
+    mocker.patch('strategies.momentum_strategy.MomentumStrategy') # autospec=True 제거
+    mocker.patch('strategies.strategy_executor.StrategyExecutor') # autospec=True 제거
+
+    yield app
+
+### `_execute_action` 메서드를 위한 새로운 테스트 케이스
+
+@pytest.mark.asyncio
+async def test_execute_action_change_environment_success(setup_mock_app): # capsys 제거
+    app = setup_mock_app
+    # 환경 선택을 담당하는 내부 메서드를 목(mock) 설정
+    app._select_environment = AsyncMock(return_value=True)
+
+    # 실제 _execute_action 메서드 호출
+    result = await app._execute_action('0')
+
+    # 검증
+    app._select_environment.assert_awaited_once() # _select_environment가 호출되었는지 확인
+    assert result is True # 환경 변경이 성공하면 앱은 계속 실행되어야 함
+    # logger.info 호출을 확인
+    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
+
+@pytest.mark.asyncio
+async def test_execute_action_stock_name_lookup_failure(setup_mock_app, capsys):
+    app = setup_mock_app
+    app.cli_view.get_user_input.return_value = "없는종목" # 존재하지 않는 종목명 입력 시뮬레이션
+    # trading_service.get_code_by_name 메서드를 AsyncMock으로 설정
+    app.trading_service.get_code_by_name = AsyncMock(return_value=None) # 조회 실패 시뮬레이션
+
+    # 실제 _execute_action 메서드 호출
+    result = await app._execute_action('2')
+
+    # 검증
+    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목명을 입력하세요: ") # 입력 프롬프트 확인
+    app.trading_service.get_code_by_name.assert_awaited_once_with("없는종목") # 서비스 호출 확인
+    assert f"'없는종목'에 해당하는 종목 코드를 찾을 수 없습니다." in capsys.readouterr().out # 오류 메시지 확인
+    assert result is True # 앱은 계속 실행되어야 함
+
+@pytest.mark.asyncio
+async def test_execute_action_top_10_market_cap_paper_mode(setup_mock_app, capsys):
+    app = setup_mock_app
+    app.env.is_paper_trading = True # 환경을 모의 투자 모드로 설정
+    app.time_manager.is_market_open.return_value = True # 시장 개장 (이 특정 경고에는 무관)
+
+    # 실제 _execute_action 메서드 호출
+    result = await app._execute_action('8')
+
+    # 검증
+    assert "WARNING: 모의투자 환경에서는 시가총액 1~10위 종목 조회를 지원하지 않습니다." in capsys.readouterr().out # 콘솔 경고 확인
+    app.logger.warning.assert_called_once_with("모의투자 환경에서 시가총액 1~10위 종목 조회 시도 (미지원).") # 로거 경고 확인
+    app.data_handlers.handle_get_top_10_market_cap_stocks_with_prices.assert_not_called() # 하위 핸들러가 호출되지 않았는지 확인
+    assert result is True # 앱은 계속 실행되어야 함
+
+@pytest.mark.asyncio
+async def test_execute_action_momentum_strategy_market_closed(setup_mock_app, capsys):
+    app = setup_mock_app
+    app.time_manager.is_market_open.return_value = False # 시장 마감 시뮬레이션
+
+    # 실제 _execute_action 메서드 호출
+    result = await app._execute_action('10')
+
+    # 검증
+    app.cli_view.display_warning_strategy_market_closed.assert_called_once() # CLI 경고 메시지 확인
+    app.logger.warning.assert_called_once_with("시장 미개장 상태에서 전략 실행 시도") # 로거 경고 확인
+    # 시장이 마감되었을 때는 더 이상 전략 관련 호출이 이루어지지 않는지 확인
+    app.trading_service.get_top_market_cap_stocks_code.assert_not_called()
+    assert result is True # 앱은 계속 실행되어야 함
+
+@pytest.mark.asyncio
+async def test_execute_action_momentum_backtest_invalid_count_input_value_error(setup_mock_app, capsys, mocker):
+    app = setup_mock_app
+    app.cli_view.get_user_input.return_value = "invalid_number"
+    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={"rt_cd": "0", "output": []})
+    # mocker.patch('strategies.momentum_strategy.MomentumStrategy') # 이 줄을 제거
+    # mocker.patch('strategies.strategy_executor.StrategyExecutor') # 이 줄을 제거
+
+    result = await app._execute_action('11')
+
+    app.cli_view.get_user_input.assert_awaited_once_with("시가총액 상위 몇 개 종목을 조회할까요? (기본값: 30): ")
+    app.cli_view.display_invalid_input_warning.assert_called_once_with("숫자가 아닌 값이 입력되어 기본값 30을 사용합니다.")
+    app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", count=30)
+    assert result is True
