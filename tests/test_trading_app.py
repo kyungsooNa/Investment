@@ -148,7 +148,6 @@ class CLIView:
         print("1. 모의투자")
         print("2. 실전투자")
         print("-----------------------")
-        return await asyncio.to_thread(input, "환경을 선택하세요 (숫자 입력): ")
     def display_strategy_running_message(self, strategy_name: str): # display_strategy_running_message 추가
         print(f"\n--- {strategy_name} 전략 실행 시작 ---")
     def display_top_stocks_success(self): # display_top_stocks_success 추가
