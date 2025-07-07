@@ -11,7 +11,6 @@ from services.trading_service import TradingService
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
-from brokers.korea_investment.korea_invest_websocket_client import KoreaInvestWebSocketClient  # Mocking용
 from core.time_manager import TimeManager  # Mocking용
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Mocking용
 
@@ -50,7 +49,6 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_api_client.quotations = mock.AsyncMock(spec_set=KoreaInvestApiQuotations)
         self.mock_api_client.account = mock.AsyncMock(spec_set=KoreaInvestApiAccount)
         self.mock_api_client.trading = mock.AsyncMock(spec_set=KoreaInvestApiTrading)
-        self.mock_api_client.websocket = mock.AsyncMock(spec_set=KoreaInvestWebSocketClient)
 
         # 각 하위 Mock 객체의 메서드들을 직접 다시 Mock 객체로 할당하지 않습니다.
         # 위에서 spec_set을 통해 자동으로 Mocking되었기 때문에,
