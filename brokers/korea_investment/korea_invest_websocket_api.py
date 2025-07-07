@@ -109,9 +109,9 @@ class KoreaInvestWebSocketAPI:
                 # 메시지를 받을 때까지 대기
                 message = await self.ws.recv()
                 self._handle_websocket_message(message)
-        except websockets.exceptions.ConnectionClosedOK:
+        except websockets.ConnectionClosedOK:
             self.logger.info("웹소켓 연결이 정상적으로 종료되었습니다.")
-        except websockets.exceptions.ConnectionClosedError as e:
+        except websockets.ConnectionClosedError as e:
             self.logger.error(f"웹소켓 연결이 예외적으로 종료되었습니다: {e}")
         except asyncio.CancelledError:
             self.logger.info("웹소켓 메시지 수신 태스크가 취소되었습니다.")
@@ -511,12 +511,10 @@ class KoreaInvestWebSocketAPI:
         try:
             await self.ws.send(message_json)
             return True
-        except websockets.exceptions.WebSocketConnectionClosedException as e:
-            self.logger.error(f"웹소켓 연결이 닫혀 전송 실패: {e}")
-            self._is_connected = False
-            return False
         except Exception as e:
             self.logger.error(f"실시간 요청 전송 중 오류 발생: {e}")
+            self._is_connected = False
+            self.ws = None
             return False
 
     async def subscribe_realtime_price(self, stock_code):
