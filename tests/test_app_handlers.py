@@ -59,12 +59,12 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         # self.mock_api_client.account.get_account_balance = mock.AsyncMock(spec_set=KoreaInvestAccountAPI.get_account_balance)
         # self.mock_api_client.account.get_real_account_balance = mock.AsyncMock(spec_set=KoreaInvestAccountAPI.get_real_account_balance)
         # self.mock_api_client.trading.place_stock_order = mock.AsyncMock(spec_set=KoreaInvestTradingAPI.place_stock_order)
-        # self.mock_api_client.websocket.connect = mock.AsyncMock(spec_set=WebSocketAPI.connect)
-        # self.mock_api_client.websocket.disconnect = mock.AsyncMock(spec_set=WebSocketAPI.disconnect)
-        # self.mock_api_client.websocket.subscribe_realtime_price = mock.AsyncMock(spec_set=WebSocketAPI.subscribe_realtime_price)
-        # self.mock_api_client.websocket.unsubscribe_realtime_price = mock.AsyncMock(spec_set=WebSocketAPI.unsubscribe_realtime_price)
-        # self.mock_api_client.websocket.subscribe_realtime_quote = mock.AsyncMock(spec_set=WebSocketAPI.subscribe_realtime_quote)
-        # self.mock_api_client.websocket.unsubscribe_realtime_quote = mock.AsyncMock(spec_set=WebSocketAPI.unsubscribe_realtime_quote)
+        # self.mock_api_client.websocketAPI.connect = mock.AsyncMock(spec_set=WebSocketAPI.connect)
+        # self.mock_api_client.websocketAPI.disconnect = mock.AsyncMock(spec_set=WebSocketAPI.disconnect)
+        # self.mock_api_client.websocketAPI.subscribe_realtime_price = mock.AsyncMock(spec_set=WebSocketAPI.subscribe_realtime_price)
+        # self.mock_api_client.websocketAPI.unsubscribe_realtime_price = mock.AsyncMock(spec_set=WebSocketAPI.unsubscribe_realtime_price)
+        # self.mock_api_client.websocketAPI.subscribe_realtime_quote = mock.AsyncMock(spec_set=WebSocketAPI.subscribe_realtime_quote)
+        # self.mock_api_client.websocketAPI.unsubscribe_realtime_quote = mock.AsyncMock(spec_set=WebSocketAPI.unsubscribe_realtime_quote)
 
         # TradingService 인스턴스 생성 (주입)
         self.trading_service = TradingService(
@@ -303,24 +303,24 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
     # 메뉴 4: 실시간 주식 체결가/호가 구독 - handle_realtime_price_quote_stream
     async def test_handle_realtime_price_quote_stream_success(self):
         stock_code = "005930"
-        self.mock_api_client.websocket.connect.return_value = True
-        self.mock_api_client.websocket.subscribe_realtime_price.return_value = True
-        self.mock_api_client.websocket.subscribe_realtime_quote.return_value = True
-        self.mock_api_client.websocket.unsubscribe_realtime_price.return_value = True
-        self.mock_api_client.websocket.unsubscribe_realtime_quote.return_value = True
-        self.mock_api_client.websocket.disconnect.return_value = True
+        self.mock_api_client.websocketAPI.connect.return_value = True
+        self.mock_api_client.websocketAPI.subscribe_realtime_price.return_value = True
+        self.mock_api_client.websocketAPI.subscribe_realtime_quote.return_value = True
+        self.mock_api_client.websocketAPI.unsubscribe_realtime_price.return_value = True
+        self.mock_api_client.websocketAPI.unsubscribe_realtime_quote.return_value = True
+        self.mock_api_client.websocketAPI.disconnect.return_value = True
 
         with mock.patch('asyncio.to_thread', new_callable=mock.AsyncMock) as mock_to_thread:
             mock_to_thread.side_effect = [mock.MagicMock(), None]
             await self.transaction_handlers.handle_realtime_price_quote_stream(stock_code)
             mock_to_thread.assert_called_with(builtins.input)
 
-        self.mock_api_client.websocket.connect.assert_called_once()
-        self.mock_api_client.websocket.subscribe_realtime_price.assert_called_once_with(stock_code)
-        self.mock_api_client.websocket.subscribe_realtime_quote.assert_called_once_with(stock_code)
-        self.mock_api_client.websocket.unsubscribe_realtime_price.assert_called_once_with(stock_code)
-        self.mock_api_client.websocket.unsubscribe_realtime_quote.assert_called_once_with(stock_code)
-        self.mock_api_client.websocket.disconnect.assert_called_once()
+        self.mock_api_client.websocketAPI.connect.assert_called_once()
+        self.mock_api_client.websocketAPI.subscribe_realtime_price.assert_called_once_with(stock_code)
+        self.mock_api_client.websocketAPI.subscribe_realtime_quote.assert_called_once_with(stock_code)
+        self.mock_api_client.websocketAPI.unsubscribe_realtime_price.assert_called_once_with(stock_code)
+        self.mock_api_client.websocketAPI.unsubscribe_realtime_quote.assert_called_once_with(stock_code)
+        self.mock_api_client.websocketAPI.disconnect.assert_called_once()
         self.assertIn(f"--- 실시간 주식 체결가/호가 구독 시작 ({stock_code}) ---", self.print_output_capture.getvalue())
         self.assertIn("실시간 데이터를 수신 중입니다... (종료하려면 Enter를 누르세요)", self.print_output_capture.getvalue())
         self.assertIn("실시간 주식 스트림을 종료했습니다.", self.print_output_capture.getvalue())
@@ -328,14 +328,14 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_realtime_price_quote_stream_connection_failure(self):
         stock_code = "005930"
-        self.mock_api_client.websocket.connect.return_value = False
+        self.mock_api_client.websocketAPI.connect.return_value = False
 
         with mock.patch('asyncio.to_thread', new_callable=mock.AsyncMock) as mock_to_thread:
             mock_to_thread.return_value = ""
             await self.transaction_handlers.handle_realtime_price_quote_stream(stock_code)
 
-        self.mock_api_client.websocket.connect.assert_called_once()
-        self.mock_api_client.websocket.subscribe_realtime_price.assert_not_called()
+        self.mock_api_client.websocketAPI.connect.assert_called_once()
+        self.mock_api_client.websocketAPI.subscribe_realtime_price.assert_not_called()
         self.assertIn("실시간 웹소켓 연결에 실패했습니다.", self.print_output_capture.getvalue())
         self.mock_logger.error.assert_called_once()
 
