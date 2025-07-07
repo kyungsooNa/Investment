@@ -1285,8 +1285,8 @@ async def test_complete_api_initialization_token_failure(setup_mock_app, mocker)
 async def test_select_environment_real_trading_success(setup_mock_app):
     app = setup_mock_app
 
-    # cli_view.select_environment_input이 '1' (실전투자)을 반환하도록 설정
-    app.cli_view.select_environment_input.side_effect = ["1"]
+    # cli_view.select_environment_input이 '2' (실전투자)을 반환하도록 설정
+    app.cli_view.select_environment_input.side_effect = ["2"]
 
     # env.get_access_token 및 _complete_api_initialization이 성공적으로 작동하도록 목킹
     app.env.get_access_token.return_value = "mock_access_token"
@@ -1309,8 +1309,8 @@ async def test_select_environment_real_trading_success(setup_mock_app):
 async def test_select_environment_paper_trading_success(setup_mock_app):
     app = setup_mock_app
 
-    # cli_view.select_environment_input이 '2' (모의투자)을 반환하도록 설정
-    app.cli_view.select_environment_input.side_effect = ["2"]
+    # cli_view.select_environment_input이 '1' (모의투자)을 반환하도록 설정
+    app.cli_view.select_environment_input.side_effect = ["1"]
 
     # env.get_access_token 및 _complete_api_initialization이 성공적으로 작동하도록 목킹
     app.env.get_access_token.return_value = "mock_access_token"
@@ -1333,8 +1333,8 @@ async def test_select_environment_paper_trading_success(setup_mock_app):
 async def test_select_environment_token_acquisition_failure(setup_mock_app):
     app = setup_mock_app
 
-    # cli_view.select_environment_input이 '1' (실전투자)을 반환하도록 설정
-    app.cli_view.select_environment_input.side_effect = ["1"]
+    # cli_view.select_environment_input이 '2' (실전투자)을 반환하도록 설정
+    app.cli_view.select_environment_input.side_effect = ["2"]
 
     # env.get_access_token이 None을 반환하도록 목킹하여 토큰 획득 실패 시뮬레이션
     app.env.get_access_token.return_value = None
@@ -1359,8 +1359,8 @@ async def test_select_environment_token_acquisition_failure(setup_mock_app):
 async def test_select_environment_api_initialization_failure(setup_mock_app):
     app = setup_mock_app
 
-    # cli_view.select_environment_input이 '1' (실전투자)을 반환하도록 설정
-    app.cli_view.select_environment_input.side_effect = ["1"]
+    # cli_view.select_environment_input이 '2' (실전투자)을 반환하도록 설정
+    app.cli_view.select_environment_input.side_effect = ["2"]
 
     # env.get_access_token은 성공하지만, _complete_api_initialization이 False를 반환하도록 목킹
     app.env.get_access_token.return_value = "mock_access_token"
