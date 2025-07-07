@@ -71,28 +71,28 @@ class TradingService:
 
     async def connect_websocket(self, on_message_callback=None):
         """웹소켓 연결을 비동기로 시작합니다."""
-        return await self._api_client.websocket.connect(
+        return await self._api_client.websocketAPI.connect(
             on_message_callback=on_message_callback if on_message_callback else self._default_realtime_message_handler)
 
     async def disconnect_websocket(self):
         """웹소켓 연결을 비동기로 종료합니다."""
-        return await self._api_client.websocket.disconnect()
+        return await self._api_client.websocketAPI.disconnect()
 
     async def subscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가)를 구독합니다."""
-        return await self._api_client.websocket.subscribe_realtime_price(stock_code)
+        return await self._api_client.websocketAPI.subscribe_realtime_price(stock_code)
 
     async def unsubscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
-        return await self._api_client.websocket.unsubscribe_realtime_price(stock_code)
+        return await self._api_client.websocketAPI.unsubscribe_realtime_price(stock_code)
 
     async def subscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터를 구독합니다."""
-        return await self._api_client.websocket.subscribe_realtime_quote(stock_code)
+        return await self._api_client.websocketAPI.subscribe_realtime_quote(stock_code)
 
     async def unsubscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터 구독을 해지합니다."""
-        return await self._api_client.websocket.unsubscribe_realtime_quote(stock_code)
+        return await self._api_client.websocketAPI.unsubscribe_realtime_quote(stock_code)
 
     async def get_current_stock_price(self, stock_code):
         self.logger.info(f"Service - {stock_code} 현재가 조회 요청")

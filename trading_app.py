@@ -131,12 +131,12 @@ class TradingApp:
             choice = await self.cli_view.select_environment_input()
 
             if choice == '1':
-                self.env.set_trading_mode(False)
-                self.logger.info("실전 투자 환경으로 설정되었습니다.")
-                selected = True
-            elif choice == '2':
                 self.env.set_trading_mode(True)
                 self.logger.info("모의 투자 환경으로 설정되었습니다.")
+                selected = True
+            elif choice == '2':
+                self.env.set_trading_mode(False)
+                self.logger.info("실전 투자 환경으로 설정되었습니다.")
                 selected = True
             else:
                 self.cli_view.display_invalid_environment_choice()
