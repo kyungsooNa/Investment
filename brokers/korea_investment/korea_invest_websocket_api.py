@@ -469,10 +469,13 @@ class KoreaInvestWebSocketAPI:
                     self.logger.info("웹소켓 수신 태스크 취소됨.")
                 except Exception as e:
                     self.logger.error(f"웹so켓 수신 태스크 종료 중 오류: {e}")
-            self.ws = None
             self.logger.info("웹소켓 연결 종료 완료.")
+            self._is_connected = False
+            self.ws = None
         else:
             self.logger.info("웹소켓이 연결되어 있지 않습니다.")
+            self._is_connected = False
+            self.ws = None
 
     # --- 실시간 요청 전송 ---
     async def send_realtime_request(self, tr_id, tr_key, tr_type="1"):

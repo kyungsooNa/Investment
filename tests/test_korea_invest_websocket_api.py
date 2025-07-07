@@ -908,3 +908,13 @@ def test_parse_stock_contract_data_valid_fields(websocket_api_instance):
     assert parsed_data["누적거래량"] == '10000'
     assert parsed_data["누적거래대금"] == '500000000'
     # 나머지 필드들도 0 또는 빈 문자열로 잘 파싱되었는지 검증 가능
+
+@pytest.mark.asyncio
+async def test_disconnect_when_ws_is_none(websocket_api_instance):
+    api = websocket_api_instance
+    api.ws = None
+    api._is_connected = True
+
+    await api.disconnect()
+
+    assert api._is_connected is False
