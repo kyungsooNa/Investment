@@ -3,7 +3,7 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
-from brokers.korea_investment.korea_invest_websocket_api import KereaInvestWebSocketAPI
+from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
 import logging
 
@@ -47,7 +47,7 @@ class KoreaInvestApiClient:
         self.trading = KoreaInvestApiTrading(self._config['base_url'], common_headers_template, self._config,
                                              self.token_manager, self.logger)
 
-        self.websocketAPI = KereaInvestWebSocketAPI(self._env, self.logger)
+        self.websocketAPI = KoreaInvestWebSocketAPI(self._env, self.logger)
 
     def __str__(self):
         """객체를 문자열로 표현할 때 사용."""
