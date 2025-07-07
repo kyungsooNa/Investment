@@ -20,7 +20,7 @@ def test_korea_invest_api_client_initialization():
     with patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiQuotations") as mock_quotations, \
          patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiAccount") as mock_account, \
          patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiTrading") as mock_trading, \
-         patch("brokers.korea_investment.korea_invest_client.KereaInvestWebSocketAPI") as mock_ws:
+         patch("brokers.korea_investment.korea_invest_client.KoreaInvestWebSocketAPI") as mock_ws:
 
         client = KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager)
 
