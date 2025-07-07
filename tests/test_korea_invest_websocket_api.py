@@ -969,7 +969,8 @@ async def test_disconnect_with_receive_task_exception(websocket_api_instance):
 
     # 태스크가 실행되어 예외를 발생시킬 시간을 주기 위해 짧게 대기합니다.
     # await asyncio.sleep(0)은 이벤트 루프에 제어권을 넘겨주어 태스크가 스케줄되도록 합니다.
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
 
     # disconnect 메서드 호출
     await api.disconnect()
