@@ -918,3 +918,69 @@ async def test_disconnect_when_ws_is_none(websocket_api_instance):
     await api.disconnect()
 
     assert api._is_connected is False
+
+
+@pytest.mark.asyncio
+async def test_disconnect_with_receive_task_cancelled(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.ws.close = AsyncMock()
+
+    # ✅ 실제 asyncio 태스크를 생성해서 취소
+    async def dummy_receive_loop():
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            raise
+
+    task = asyncio.create_task(dummy_receive_loop())
+    api._receive_task = task
+
+    await api.disconnect()
+
+    # ✅ 태스크는 cancel 되었고 완료되었어야 함
+    assert task.cancelled() or task.done()
+    assert api._is_connected is False
+    assert api.ws is None
+
+    # ✅ 로그 메시지 확인
+    log_messages = [call[0][0] for call in api.logger.info.call_args_list]
+    assert "웹소켓 연결 종료 요청." in log_messages
+    assert "웹소켓 수신 태스크 취소됨." in log_messages
+    assert "웹소켓 연결 종료 완료." in log_messages
+
+@pytest.mark.asyncio
+async def test_disconnect_with_receive_task_exception(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.ws.close = AsyncMock()
+
+    # _receive_messages 태스크가 실행되다가 예외를 발생시키도록 ws.recv를 모의(mock)합니다.
+    api.ws.recv.side_effect = [
+        "0|H0STCNT0|000660|some_data", # 첫 번째 메시지는 정상적으로 수신
+        Exception("테스트용 예외") # 두 번째 ws.recv 호출 시 예외 발생
+    ]
+
+    # 실제 _receive_messages 태스크를 생성하여 실행합니다.
+    api._receive_task = asyncio.create_task(api._receive_messages())
+
+    # 태스크가 실행되어 예외를 발생시킬 시간을 주기 위해 짧게 대기합니다.
+    # await asyncio.sleep(0)은 이벤트 루프에 제어권을 넘겨주어 태스크가 스케줄되도록 합니다.
+    await asyncio.sleep(0.01)
+
+    # disconnect 메서드 호출
+    await api.disconnect()
+
+    # 로거에 기록된 에러 로그를 확인합니다.
+    error_logs = [call[0][0] for call in api.logger.error.call_args_list]
+    print("📌 로그들:", error_logs)
+
+    # 이제 _receive_messages 내부에서 발생한 예외 로그를 확인해야 합니다.
+    assert any("웹소켓 메시지 수신 중 예상치 못한 오류 발생" in msg for msg in error_logs)
+    assert api._is_connected is False
+    assert api.ws is None
+
+
