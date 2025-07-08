@@ -157,7 +157,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             'access_token': 'fresh_new_token',
             'expires_in': 3600
         })
-        mock_new_token_response.raise_for_status.return_value = None
+        mock_new_token_response.raise_for_status = MagicMock(return_value=None)
 
         with patch('httpx.AsyncClient') as MockAsyncClient:
             MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_new_token_response
@@ -229,7 +229,12 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             'access_token': 'fresh_new_token_for_correct_env',
             'expires_in': 3600
         })
-        mock_new_token_response.raise_for_status.return_value = None
+        # 경고 제거를 위한 핵심 수정:
+        # raise_for_status는 동기 메서드이므로 MagicMock으로 명시적으로 모킹합니다.
+        # 이렇게 하면 AsyncMockMixin이 불필요하게 코루틴을 생성하지 않습니다.
+        mock_new_token_response.raise_for_status = MagicMock(return_value=None)
+        # 만약 raise_for_status가 에러를 발생시키는 경우를 테스트한다면:
+        # mock_new_token_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("Test Error", request=httpx.Request("GET", "http://example.com"), response=mock_new_token_response))
 
         with patch('httpx.AsyncClient') as MockAsyncClient:
             MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_new_token_response
@@ -280,7 +285,7 @@ async def test_get_token_no_file_new_issued_isolated(tmp_path):  # 이제 self �
     # 새 토큰 발급을 위한 API 응답 Mocking
     mock_new_token_response = AsyncMock()  # 응답 객체 자체는 AsyncMock으로 유지
     mock_new_token_response.status_code = 200
-    mock_new_token_response.raise_for_status.return_value = None
+    mock_new_token_response.raise_for_status = MagicMock(return_value=None)
 
     # response.json() 메서드가 await 없이 딕셔너리를 직접 반환하도록 설정
     mock_new_token_response.json = MagicMock(return_value={  # <<< 이 부분을 수정했습니다.

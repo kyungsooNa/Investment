@@ -6,6 +6,7 @@ import certifi
 import logging
 import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
+import ssl
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
 
 
@@ -22,7 +23,8 @@ class KoreaInvestApiBase:
         self._headers = headers.copy()  # 초기화 시 전달받은 headers 복사하여 사용
         self._session = requests.Session()  # requests.Session은 동기
         self.token_manager = token_manager
-        self._async_session = httpx.AsyncClient(verify=certifi.where()) # 비동기 세션 생성
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        self._async_session = httpx.AsyncClient(verify=ssl_context) # 수정된 부분: ssl_context 사용
 
 
         # urllib3 로거의 DEBUG 레벨을 비활성화하여 call_api의 DEBUG 로그와 분리
@@ -105,8 +107,6 @@ class KoreaInvestApiBase:
             )
         else:
             raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
-
-    # brokers/korea_investment/korea_invest_api_base.py
 
     async def _handle_response(self, response):
         """HTTP 응답을 처리하고, 오류 유형에 따라 재시도 여부를 결정합니다."""
