@@ -1,3 +1,5 @@
+# test/test_trading_app.py
+
 import pytest
 import logging
 import sys
@@ -882,33 +884,20 @@ def setup_mock_app(mocker):
     app = TradingApp(main_config_path="dummy/config.yaml", tr_ids_config_path="dummy/core/tr_ids_config.yaml")
 
     app.logger = mocker.MagicMock(spec=logging.Logger)
-    app.cli_view = mocker.AsyncMock(spec=CLIView)
-    app.cli_view.display_exit_message = AsyncMock()
+    app.cli_view = mocker.MagicMock(spec=CLIView) # AsyncMock 대신 MagicMock 사용
     app.cli_view.select_environment_input = AsyncMock()
-    app.cli_view.display_invalid_environment_choice = AsyncMock()
-    app.cli_view.display_account_balance = AsyncMock()
-    app.cli_view.get_user_input = AsyncMock()
-    app.cli_view.display_stock_info = AsyncMock()
-    app.cli_view.display_invalid_input_warning = AsyncMock()
-    app.cli_view.display_market_status = AsyncMock()
-    app.cli_view.display_warning_strategy_market_closed = AsyncMock()
-    app.cli_view.display_strategy_running_message = AsyncMock()
-    app.cli_view.display_top_stocks_failure = AsyncMock()
-    app.cli_view.display_top_stocks_success = AsyncMock()
-    app.cli_view.display_no_stocks_for_strategy = AsyncMock()
-    app.cli_view.display_strategy_results = AsyncMock()
-    app.cli_view.display_follow_through_stocks = AsyncMock()
-    app.cli_view.display_not_follow_through_stocks = AsyncMock()
-    app.cli_view.display_strategy_error = AsyncMock()
-    app.cli_view.display_app_start_error = AsyncMock()
-    app.cli_view.display_gapup_pullback_selected_stocks = AsyncMock()
-    app.cli_view.display_gapup_pullback_rejected_stocks = AsyncMock()
-    app.cli_view.display_welcome_message = AsyncMock()
-    app.cli_view.display_current_time = AsyncMock()
-    app.cli_view.display_token_invalidated_message = AsyncMock()
-    app.cli_view.display_account_balance_failure = AsyncMock()
-    app.cli_view.display_stock_code_not_found = AsyncMock()
-    app.cli_view.display_invalid_menu_choice = AsyncMock()
+    app.cli_view.display_invalid_input_warning = MagicMock()
+    app.cli_view.display_strategy_running_message = MagicMock()
+    app.cli_view.display_strategy_results = MagicMock()
+    app.cli_view.display_strategy_error = MagicMock()
+    app.cli_view.display_app_start_error = MagicMock()
+    app.cli_view.display_gapup_pullback_selected_stocks = MagicMock()
+    app.cli_view.display_gapup_pullback_rejected_stocks = MagicMock()
+    app.cli_view.display_token_invalidated_message = MagicMock()
+    app.cli_view.display_account_balance_failure = MagicMock()
+    app.cli_view.display_invalid_menu_choice = MagicMock()
+
+    app.cli_view.get_user_input = AsyncMock() # 이 줄은 유지
 
 
     app.time_manager = mocker.MagicMock(spec=TimeManager)

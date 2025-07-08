@@ -57,7 +57,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             'access_token': 'new_test_token',
             'expires_in': 86400  # 24시간
         })
-        mock_response.raise_for_status.return_value = None  # ensure no exception raised
+        mock_response.raise_for_status = MagicMock(return_value=None)
 
         with patch('httpx.AsyncClient') as MockAsyncClient:
             MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_response
