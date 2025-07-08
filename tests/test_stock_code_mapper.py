@@ -130,3 +130,15 @@ def test_get_code_by_name(mock_read_csv, mock_stock_df, mock_logger):
     assert code_fail == ""
     # 실패 시 로거가 호출되었는지 확인
     mock_logger.warning.assert_called_once_with("❗ 종목코드 없음: 없는회사")
+
+@patch('pandas.read_csv')
+def test_initialization_file_not_found_without_logger(mock_read_csv):
+    """
+    CSV 로드 실패 시 logger가 없더라도 정상적으로 예외가 발생하는지 테스트합니다 (line 24 분기 타기).
+    """
+    # Arrange: FileNotFoundError 유도
+    mock_read_csv.side_effect = FileNotFoundError("파일 없음")
+
+    # Act & Assert
+    with pytest.raises(FileNotFoundError):
+        StockCodeMapper(logger=None)  # logger 없이 초기화
