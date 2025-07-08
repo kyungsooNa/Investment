@@ -1,5 +1,7 @@
 # tests/test_korea_invest_env.py
 import unittest
+import os # os 모듈 추가 (테스트에 필요)
+import logging # logging 모듈 추가 (테스트에 필요)
 from datetime import datetime, timedelta
 from unittest.mock import patch, AsyncMock, MagicMock
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
@@ -156,3 +158,73 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_kwargs_paper['app_key'], self.mock_config_data['paper_api_key'])
         self.assertEqual(call_kwargs_paper['app_secret'], self.mock_config_data['paper_api_secret_key'])
 
+    def test_set_base_urls_missing_url_raises_error(self):
+        """
+        TC-1: config_data에 필수 API URL (base_url 또는 websocket_url)이 누락되었을 때
+              _set_base_urls 호출 시 ValueError가 발생하는지 테스트합니다.
+        이는 brokers/korea_investment/korea_invest_env.py의 65번 라인을 커버합니다.
+        """
+        # Given: 'url'이 누락된 config_data (실전투자 모드)
+        invalid_config_data_real = {
+            "api_key": "real_key",
+            "api_secret_key": "real_secret",
+            "stock_account_number": "real_acc",
+            # 'url' 키를 의도적으로 누락시켜 base_url이 None이 되도록 함
+            "websocket_url": "wss://real.ws.com",
+            "is_paper_trading": False,
+            "tr_ids": {},
+            "custtype": "P"
+        }
+        mock_token_manager = MagicMock(spec=TokenManager)
+        mock_logger = MagicMock(spec=logging.Logger)
+
+        # When & Then: ValueError가 발생하는지 검증
+        with self.assertRaisesRegex(ValueError, "API URL 또는 WebSocket URL이 config.yaml에 올바르게 설정되지 않았습니다."):
+            KoreaInvestApiEnv(invalid_config_data_real, mock_token_manager, mock_logger)
+        mock_logger.assert_not_called()  # 에러 발생 시 로거는 호출되지 않아야 함 (직접 raise이므로)
+
+        # Given: 'paper_websocket_url'이 누락된 config_data (모의투자 모드)
+        invalid_config_data_paper = {
+            "api_key": "real_key",
+            "api_secret_key": "real_secret",
+            "stock_account_number": "real_acc",
+            "paper_url": "https://paper.api.com",
+            # 'paper_websocket_url' 키를 의도적으로 누락시켜 websocket_url이 None이 되도록 함
+            "is_paper_trading": True,
+            "tr_ids": {},
+            "custtype": "P"
+        }
+        mock_token_manager.reset_mock()  # mock 초기화
+        mock_logger.reset_mock()
+        with self.assertRaisesRegex(ValueError, "API URL 또는 WebSocket URL이 config.yaml에 올바르게 설정되지 않았습니다."):
+            KoreaInvestApiEnv(invalid_config_data_paper, mock_token_manager, mock_logger)
+        mock_logger.assert_not_called()
+
+    # --- 79번 라인 커버: set_trading_mode에서 모드 변경이 없을 때 로깅 ---
+    async def test_set_trading_mode_no_change_logging(self):
+        """
+        TC-3: set_trading_mode 호출 시 현재 모드와 동일한 모드로 설정할 때
+              불필요한 작업 없이 로깅만 하는지 테스트합니다.
+        이는 brokers/korea_investment/korea_invest_env.py의 79번 라인을 커버합니다.
+        """
+        # Given: 현재 env는 실전 투자 모드 (setUp에서 초기화됨)
+        self.assertFalse(self.env.is_paper_trading)
+
+        # _set_base_urls와 invalidate_token이 호출되지 않도록 Mock
+        with patch.object(self.env, '_set_base_urls') as mock_set_base_urls, \
+                patch.object(self.token_manager, 'invalidate_token') as mock_invalidate_token:
+            # When: 현재와 동일한 실전 투자 모드로 다시 설정
+            self.env.set_trading_mode(False)  # is_paper=False
+
+            # Then:
+            self.assertFalse(self.env.is_paper_trading)  # 모드 변경 없음
+            mock_set_base_urls.assert_not_called()  # _set_base_urls 호출 안 됨
+            mock_invalidate_token.assert_not_called()  # 토큰 무효화 호출 안 됨
+
+            # 79번 라인의 info 로깅만 호출되었는지 확인
+            self.logger.info.assert_called_once_with("거래 모드가 이미 실전투자 환경으로 설정되어 있습니다.")
+            self.logger.info.reset_mock()  # 다음 테스트를 위해 Mock 초기화
+
+            # When: 현재 실전 투자 모드에서 다시 실전 투자 모드로 설정 (다른 방법)
+            self.env.set_trading_mode(False)
+            self.logger.info.assert_called_once_with("거래 모드가 이미 실전투자 환경으로 설정되어 있습니다.")
