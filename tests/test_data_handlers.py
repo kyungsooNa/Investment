@@ -591,3 +591,26 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             )
             self.assertFalse(result)  # 유효한 종목이 없으므로 False 반환
 
+    async def test_handle_display_stock_change_rate_increase_sign_path(self):
+        # 상승 부호 조건 ("2") → "+" 반환
+        mock_response = {
+            "rt_cd": "0",
+            "output": {
+                "stck_prpr": "70000",  # 현재가
+                "prdy_vrss": "1500",  # 전일대비
+                "prdy_vrss_sign": "2",  # 상승
+                "prdy_ctrt": "2.19"  # 등락률
+            }
+        }
+
+        handler = self.handler  # 기존 asyncSetUp에서 생성된 handler
+        self.mock_trading_service.get_current_stock_price.return_value = mock_response
+
+        with patch('builtins.print') as mock_print:
+            await handler.handle_display_stock_change_rate("005930")
+
+            # 부호가 붙은 메시지 출력 확인 → 부호 조건 분기 통과
+            # 개별적으로 부호와 등락률 출력이 분리되어 있는지 확인
+            mock_print.assert_any_call("  전일대비: +1500원")
+            mock_print.assert_any_call("  전일대비율: 2.19%")
+            self.mock_logger.info.assert_called_once()
