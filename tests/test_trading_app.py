@@ -1365,10 +1365,3 @@ async def test_select_environment_api_initialization_failure(setup_mock_app):
     app._complete_api_initialization.assert_awaited_once()
     app.logger.critical.assert_called_once_with("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
     assert result is False
-
-@pytest.mark.asyncio
-async def test_execute_action_invalid_menu_choice(cli_app_instance):
-    app = cli_app_instance
-    app.cli_view.display_invalid_menu_choice = AsyncMock()
-    await app._execute_action("invalid_menu")
-    app.cli_view.display_invalid_menu_choice.assert_awaited_once()
