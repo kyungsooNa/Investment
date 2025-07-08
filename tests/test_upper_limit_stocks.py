@@ -124,28 +124,33 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         # 실전 투자 환경으로 설정
         self.mock_env.is_paper_trading = False
 
-        # TradingService 쪽 mock 메서드 설정 (❗️여기 중요)
-        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
-            "rt_cd": "1",  # 실패 응답
+        # API 실패 응답을 명확하게 지정
+        mock_api_response = {
+            "rt_cd": "1",
             "msg1": "API 오류"
-        })
+        }
+
+        # TradingService mock 메서드 설정
+        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=mock_api_response)
 
         # 실행
         result = await self.data_handlers.handle_upper_limit_stocks(market_code="0000", limit=500)
 
-        # 반환값 검증 (None이어야 함)
+        # 반환값 검증
         self.assertIsNone(result)
 
         # API 호출 검증
         self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with("0000")
         self.mock_api_client.KoreaInvestApiQuotations.get_current_price.assert_not_called()
 
-        # 로그 및 콘솔 출력 검증
+        # 로그 검증
         self.mock_logger.error.assert_called()
+        self.mock_logger.error.assert_any_call(f"시가총액 상위 종목 목록 조회 실패: {mock_api_response}")
 
         # 콘솔 출력 검증
         output = self.print_output_capture.getvalue()
-        self.assertTrue("실패" in output and "시가총액 상위 종목" in output)
+        assert "실패: 시가총액 상위 종목 목록을 가져올 수 없습니다." in output
+        assert "API 오류" in output
 
     async def test_handle_upper_limit_stocks_no_top_stocks_found(self):
         """상위 종목 목록이 비어있을 때."""
