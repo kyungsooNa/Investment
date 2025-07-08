@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.data_handlers import DataHandlers
-import sys
-import io
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
+from brokers.korea_investment.korea_invest_token_manager import TokenManager
 
 # 모든 테스트를 하나의 AsyncioTestCase 클래스 내에 통합합니다.
 # asyncSetUp 메서드가 모든 비동기 테스트 케이스에 대해 올바르게 mock 객체를 초기화하도록 합니다.
@@ -20,6 +20,20 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         # _env 속성이 필요한 경우를 위해 AsyncMock으로 설정
         self.mock_trading_service._env = AsyncMock()
         self.handler = DataHandlers(self.mock_trading_service, self.mock_logger, self.mock_time_manager)
+
+        self.mock_token_manager = MagicMock(spec=TokenManager)
+
+        self.api = KoreaInvestApiBase(
+            base_url="https://mock.api",
+            headers={"Authorization": "Bearer expired"},
+            config={
+                "base_url": "https://mock.api",
+                "tr_ids": {},
+                "custtype": "P"
+            },
+            token_manager=self.mock_token_manager,
+            logger=self.mock_logger
+        )
 
     # --- _get_sign_from_code 함수 테스트 (Synchronous) ---
     def test_get_sign_from_code_plus(self):
@@ -482,3 +496,49 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             mock_print.assert_called()
             self.mock_logger.info.assert_called()
 
+    async def test_handle_token_expiration_invalidates_token(self):
+        # Arrange
+        dummy_response = {"msg_cd": "EGW00123"}
+        dummy_attempt = 1
+        dummy_retry = 3
+        dummy_delay = 0.5
+
+        # Act
+        await self.api._handle_token_expiration(
+            response_json=dummy_response,
+            attempt=dummy_attempt,
+            retry_count=dummy_retry,
+            delay=dummy_delay
+        )
+
+        # Assert
+        self.mock_token_manager.invalidate_token.assert_called_once()
+        self.mock_logger.info.assert_any_call("토큰 재발급 후 API 호출을 재시도합니다.")
+
+    async def test_handle_get_top_10_market_cap_stocks_with_prices_exception_covered(self):
+        """
+        TC: 시가총액 1~10위 종목 현재가 조회 중 예외 발생 시,
+            except 블록이 실행되고 False를 반환하는지 테스트
+        """
+        # Arrange
+        # trading_service의 해당 메서드가 호출될 때 Exception을 발생시키도록 설정
+        self.mock_trading_service.get_top_10_market_cap_stocks_with_prices.side_effect = Exception("테스트 예외 발생")
+
+        # Act
+        with patch('builtins.print') as mock_print:
+            result = await self.handler.handle_get_top_10_market_cap_stocks_with_prices()
+
+            # Assert
+            # trading_service 메서드가 호출되었는지 확인
+            self.mock_trading_service.get_top_10_market_cap_stocks_with_prices.assert_awaited_once()
+
+            # print 함수가 호출되었는지 확인
+            mock_print.assert_any_call("\n--- 시가총액 1~10위 종목 현재가 조회 시도 ---")
+            mock_print.assert_any_call("\n실패: 시가총액 1~10위 종목 현재가 조회.")
+
+            # logger.error가 호출되었는지 확인 (exc_info=True는 제외하고 메시지만 검증)
+            self.mock_logger.error.assert_called_once()
+            self.assertIn("시가총액 1~10위 종목 현재가 조회 중 오류 발생: 테스트 예외 발생", self.mock_logger.error.call_args[0][0])
+
+            # 메서드가 False를 반환하는지 확인
+            self.assertFalse(result)
