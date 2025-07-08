@@ -1,3 +1,5 @@
+import io
+import sys
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.data_handlers import DataHandlers
@@ -19,6 +21,10 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_time_manager = MagicMock()
         # _env 속성이 필요한 경우를 위해 AsyncMock으로 설정
         self.mock_trading_service._env = AsyncMock()
+        self.print_output_capture = io.StringIO()
+        self._original_stdout = sys.stdout
+        sys.stdout = self.print_output_capture
+
         self.handler = DataHandlers(self.mock_trading_service, self.mock_logger, self.mock_time_manager)
 
         self.mock_token_manager = MagicMock(spec=TokenManager)
