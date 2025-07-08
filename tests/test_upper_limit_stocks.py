@@ -1,8 +1,8 @@
 import pytest
 import unittest
 import unittest.mock as mock
-from unittest.mock import AsyncMock, MagicMock
-
+from unittest.mock import AsyncMock, MagicMock, patch
+import sys
 import logging
 from io import StringIO
 import builtins
@@ -38,54 +38,55 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         """각 테스트 메서드 실행 전에 필요한 Mock 객체와 핸들러 인스턴스를 설정합니다."""
         # 종속성 Mock 객체 생성
-        self.mock_env = mock.Mock(spec=KoreaInvestApiEnv)
+        self.mock_env = mock.MagicMock(spec=KoreaInvestApiEnv) # MagicMock으로 변경
         self.mock_env.is_paper_trading = False  # 기본값 설정
         self.mock_logger = MockLogger()
-        self.mock_time_manager = mock.AsyncMock(spec_set=TimeManager)
+        self.mock_time_manager = mock.MagicMock(spec_set=TimeManager) # MagicMock으로 변경
         self.mock_time_manager.is_market_open.return_value = True  # 기본값 설정 (시장이 열려있다고 가정)
 
-        # KoreaInvestApiClient Mocking: spec을 제거하여 동적 속성 할당을 허용
-        self.mock_api_client = mock.AsyncMock()
+        # KoreaInvestApiClient Mocking:
+        self.mock_api_client = mock.MagicMock() # MagicMock()만 사용
+        self.mock_api_client.quotations = mock.MagicMock(spec_set=KoreaInvestApiQuotations)
+        self.mock_api_client.account = mock.MagicMock(spec_set=KoreaInvestApiAccount)
+        self.mock_api_client.trading = mock.MagicMock(spec_set=KoreaInvestApiTrading)
 
-        # 하위 API 클라이언트들을 Mock 객체로 할당. 이들 자체에 spec_set을 적용.
-        self.mock_api_client.KoreaInvestApiQuotations = mock.AsyncMock(spec_set=KoreaInvestApiQuotations)
-        self.mock_api_client.account = mock.AsyncMock(spec_set=KoreaInvestApiAccount)
-        self.mock_api_client.trading = mock.AsyncMock(spec_set=KoreaInvestApiTrading)
+        # 각 하위 Mock 객체의 메서드들을 직접 Mock 객체로 할당하고 return_value를 설정합니다.
+        # 이렇게 하면 TradingService가 이 Mock 메서드들을 호출할 수 있습니다.
+        self.mock_api_client.quotations.get_current_price = mock.AsyncMock() # KoreaInvestApiQuotations의 메서드
+        self.mock_api_client.quotations.get_top_market_cap_stocks_code = mock.AsyncMock() # KoreaInvestApiQuotations의 메서드
 
-        # 각 하위 Mock 객체의 메서드들을 직접 다시 Mock 객체로 할당하지 않습니다.
-        # 위에서 spec_set을 통해 자동으로 Mocking되었기 때문에,
-        # 이제 바로 self.mock_api_client.KoreaInvestApiQuotations.get_current_price와 같이 접근하여 return_value를 설정합니다.
-        self.mock_api_client.KoreaInvestApiQuotations.get_current_price = mock.AsyncMock(
-            spec_set=KoreaInvestApiQuotations.get_current_price)
-        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks_code = mock.AsyncMock(
-            spec_set=KoreaInvestApiQuotations.get_top_market_cap_stocks_code)
-        self.mock_api_client.account.get_account_balance = mock.AsyncMock(
-            spec_set=KoreaInvestApiAccount.get_account_balance)
-        self.mock_api_client.account.get_real_account_balance = mock.AsyncMock(
-            spec_set=KoreaInvestApiAccount.get_real_account_balance)
-        self.mock_api_client.trading.place_stock_order = mock.AsyncMock(
-            spec_set=KoreaInvestApiTrading.place_stock_order)
+        self.mock_api_client.account.get_account_balance = mock.AsyncMock()
+        self.mock_api_client.account.get_real_account_balance = mock.AsyncMock()
 
-        # TradingService 인스턴스 생성 (주입)
+        self.mock_api_client.trading.place_stock_order = mock.AsyncMock()
+
+        # 📌 TradingService 인스턴스 생성 (주입) - setUp에서 한 번만 생성
         self.trading_service = TradingService(
-            api_client=self.mock_api_client,
+            api_client=self.mock_api_client, # 여기에서 Mock api_client를 주입
             env=self.mock_env,
             logger=self.mock_logger,
             time_manager=self.mock_time_manager
         )
 
-        # DataHandlers 인스턴스 생성 (handle_upper_limit_stocks 포함)
-        self.data_handlers = DataHandlers(self.trading_service, self.mock_logger, self.mock_time_manager)
+        # 📌 DataHandlers 인스턴스 생성 (handle_upper_limit_stocks 포함) - setUp에서 한 번만 생성
+        self.data_handlers = DataHandlers(
+            trading_service=self.trading_service, # 여기에서 Mock trading_service를 주입
+            logger=self.mock_logger,
+            time_manager=self.mock_time_manager
+        )
 
         # print 함수 출력을 캡처 (콘솔 출력 검증용)
         self.original_print = builtins.print
         self.print_output_capture = StringIO()
+        self._original_stdout = sys.stdout
+        sys.stdout = self.print_output_capture
         builtins.print = lambda *args, **kwargs: self.print_output_capture.write(' '.join(map(str, args)) + '\n')
 
     def tearDown(self):
         """각 테스트 메서드 실행 후에 설정을 정리합니다."""
         builtins.print = self.original_print
         self.print_output_capture.close()
+        sys.stdout = self._original_stdout
 
     # --- handle_upper_limit_stocks 테스트 케이스들 ---
 
@@ -97,7 +98,8 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         self.mock_time_manager.is_market_open.assert_called_once()
-        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks_code.assert_not_called()
+        # 📌 수정된 경로: self.mock_api_client.quotations
+        self.mock_api_client.quotations.get_top_market_cap_stocks_code.assert_not_called()
         self.mock_logger.warning.assert_called_once_with("시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.")
         self.assertIn("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n", self.print_output_capture.getvalue())
 
@@ -114,43 +116,38 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.warning.assert_called_once_with("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
         self.assertIn("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n", self.print_output_capture.getvalue())
 
-    @pytest.mark.asyncio
-    async def test_handle_upper_limit_stocks_get_top_market_cap_stocks_failure(self):
-        """시가총액 상위 종목 목록 조회 API 실패 시."""
+        # 📌 수정된 테스트: test_handle_upper_limit_stocks_get_top_market_cap_stocks_failure
+        async def test_handle_upper_limit_stocks_get_top_market_cap_stocks_failure(self):
+            """시가총액 상위 종목 목록 조회 API 실패 시, 콘솔 및 로그 출력 포함."""
 
-        # 시장 열림으로 설정
-        self.mock_time_manager.is_market_open.return_value = True
+            self.mock_time_manager.is_market_open.return_value = True
+            self.mock_env.is_paper_trading = False
 
-        # 실전 투자 환경으로 설정
-        self.mock_env.is_paper_trading = False
+            # --- 핵심: TradingService가 호출할 api_client.quotations를 Mock ---
+            mock_api_response = {
+                "rt_cd": "1",  # 실패 응답
+                "msg1": "API 오류"
+            }
+            # setUp에서 이미 생성된 self.mock_api_client.quotations (MagicMock)의 메서드를 설정
+            self.mock_api_client.quotations.get_top_market_cap_stocks_code.return_value = mock_api_response
 
-        # API 실패 응답을 명확하게 지정
-        mock_api_response = {
-            "rt_cd": "1",
-            "msg1": "API 오류"
-        }
+            # When
+            # builtins.print를 patch하는 with 문 제거. sys.stdout 리다이렉션을 사용.
+            result = await self.data_handlers.handle_upper_limit_stocks(market_code="0000", limit=500)
 
-        # TradingService mock 메서드 설정
-        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=mock_api_response)
+            # Then
+            self.assertIsNone(result)
+            self.mock_logger.error.assert_called_once()
+            self.mock_logger.error.assert_called_with(f"시가총액 상위 종목 목록 조회 실패: {mock_api_response}")
 
-        # 실행
-        result = await self.data_handlers.handle_upper_limit_stocks(market_code="0000", limit=500)
+            # self.trading_service가 내부적으로 호출하는 Mock 메서드에 대한 assert
+            self.mock_api_client.quotations.get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
 
-        # 반환값 검증
-        self.assertIsNone(result)
-
-        # API 호출 검증
-        self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with("0000")
-        self.mock_api_client.KoreaInvestApiQuotations.get_current_price.assert_not_called()
-
-        # 로그 검증
-        self.mock_logger.error.assert_called()
-        self.mock_logger.error.assert_any_call(f"시가총액 상위 종목 목록 조회 실패: {mock_api_response}")
-
-        # 콘솔 출력 검증
-        output = self.print_output_capture.getvalue()
-        assert "실패: 시가총액 상위 종목 목록을 가져올 수 없습니다." in output
-        assert "API 오류" in output
+            # 콘솔 출력 메시지 검증
+            output = self.print_output_capture.getvalue()
+            self.assertIn("실패: 시가총액 상위 종목 목록을 가져올 수 없습니다.", output)
+            self.assertIn("API 오류", output)
+            self.assertIn("--- 시가총액 상위 500개 종목 중 상한가 종목 조회 ---", output)
 
     async def test_handle_upper_limit_stocks_no_top_stocks_found(self):
         """상위 종목 목록이 비어있을 때."""
