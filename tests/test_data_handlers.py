@@ -542,3 +542,46 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
             # 메서드가 False를 반환하는지 확인
             self.assertFalse(result)
+
+    async def test_handle_upper_limit_stocks_empty_top_stocks_list(self):
+        """빈 output 리스트일 때도 상위 실패 분기로 빠지는 현재 로직을 반영"""
+        self.mock_time_manager.is_market_open.return_value = True
+        self.mock_trading_service._env.is_paper_trading = False
+
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
+            "rt_cd": "0",
+            "output": []  # 비어 있음 → 실패로 간주됨
+        }
+
+        with patch('builtins.print') as mock_print:
+            result = await self.handler.handle_upper_limit_stocks()
+
+            mock_print.assert_any_call("실패: 시가총액 상위 종목 목록을 가져올 수 없습니다. \n")
+            self.mock_logger.error.assert_called_once()
+            self.assertIsNone(result)
+
+    async def test_handle_upper_limit_stocks_invalid_stock_code_in_output(self):
+        """stock_info 내에 mksc_shrn_iscd 키가 없을 때 warning 로그 발생"""
+
+        self.mock_time_manager.is_market_open.return_value = True
+        self.mock_trading_service._env.is_paper_trading = False
+
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
+            "rt_cd": "0",
+            "output": [
+                {"hts_kor_isnm": "삼성전자"},  # mksc_shrn_iscd 없음 → 유효한 종목코드 없음
+                {"mksc_shrn_iscd": "", "hts_kor_isnm": "카카오"}  # 빈 문자열도 포함 가능
+            ]
+        }
+
+        with patch("builtins.print"):
+            result = await self.handler.handle_upper_limit_stocks()
+
+            self.mock_logger.warning.assert_any_call(
+                "유효한 종목코드를 찾을 수 없습니다: {'hts_kor_isnm': '삼성전자'}"
+            )
+            self.mock_logger.warning.assert_any_call(
+                "유효한 종목코드를 찾을 수 없습니다: {'mksc_shrn_iscd': '', 'hts_kor_isnm': '카카오'}"
+            )
+            self.assertFalse(result)  # 유효한 종목이 없으므로 False 반환
+
