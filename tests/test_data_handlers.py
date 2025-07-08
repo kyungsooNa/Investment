@@ -400,6 +400,78 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             mock_print.assert_called()
             self.mock_logger.info.assert_called()
 
+    async def test_handle_display_stock_vs_open_price_decrease(self):
+        """TC: 시가대비 등락률이 하락하는 경우"""
+        self.mock_trading_service.get_current_stock_price.return_value = {
+            "rt_cd": "0",
+            "output": {
+                "stck_prpr": "68000",  # 현재가
+                "stck_oprc": "69000",  # 시가
+                "oprc_vrss_prpr_sign": "5"  # 시가대비 부호 (하락)
+            }
+        }
+        with patch('builtins.print') as mock_print:
+            await self.handler.handle_display_stock_vs_open_price("005930")
+            mock_print.assert_any_call("  시가대비 등락률: -1000원 (-1.45%)")  # -1.449... -> -1.45
+            self.mock_logger.info.assert_called_once()
+
+    async def test_handle_display_stock_vs_open_price_no_change(self):
+        """TC: 시가대비 등락률이 0인 경우 (보합)"""
+        self.mock_trading_service.get_current_stock_price.return_value = {
+            "rt_cd": "0",
+            "output": {
+                "stck_prpr": "69000", # 현재가
+                "stck_oprc": "69000", # 시가
+                "oprc_vrss_prpr_sign": "3" # 시가대비 부호 (보합)
+            }
+        }
+        with patch('builtins.print') as mock_print:
+            await self.handler.handle_display_stock_vs_open_price("005930")
+            mock_print.assert_any_call("  시가대비 등락률: 0원 (0.00%)")
+            self.mock_logger.info.assert_called_once()
+
+    async def test_handle_display_stock_vs_open_price_zero_open_price(self):
+        """TC: 시가가 0원인 경우 (나누기 0 방지 및 N/A 처리)"""
+        self.mock_trading_service.get_current_stock_price.return_value = {
+            "rt_cd": "0",
+            "output": {
+                "stck_prpr": "70000",
+                "stck_oprc": "0", # 시가 0원
+                "oprc_vrss_prpr_sign": "2"
+            }
+        }
+        with patch('builtins.print') as mock_print:
+            await self.handler.handle_display_stock_vs_open_price("005930")
+            mock_print.assert_any_call("  시가대비 등락률: +70000원 (N/A)") # 시가대비 금액은 계산되지만, 퍼센트는 N/A
+            self.mock_logger.info.assert_called_once()
+
+    async def test_handle_display_stock_vs_open_price_missing_price_data(self):
+        """TC: 현재가 또는 시가 데이터가 누락되거나 'N/A'일 경우"""
+        self.mock_trading_service.get_current_stock_price.return_value = {
+            "rt_cd": "0",
+            "output": {
+                "stck_prpr": "N/A",  # 현재가 누락
+                "stck_oprc": "69000",
+                "oprc_vrss_prpr_sign": "2"
+            }
+        }
+        with patch('builtins.print') as mock_print:
+            await self.handler.handle_display_stock_vs_open_price("005930")
+            mock_print.assert_any_call("  현재가: N/A원")
+            mock_print.assert_any_call("  시가대비 등락률: N/A원 (N/A)")  # 둘 다 N/A로 출력
+            self.mock_logger.info.assert_called_once()
+
+    async def test_handle_display_stock_vs_open_price_failure(self):
+        self.mock_trading_service.get_current_stock_price.return_value = {
+            "rt_cd": "1", "msg1": "API 에러"
+        }
+        with patch('builtins.print') as mock_print:
+            await self.handler.handle_display_stock_vs_open_price("005930")
+            mock_print.assert_any_call("\n--- 005930 시가대비 조회 ---")
+            mock_print.assert_any_call("\n실패: 005930 시가대비 조회.")
+            self.mock_logger.error.assert_called_once()
+            self.assertIn("시가대비 조회 실패", self.mock_logger.error.call_args[0][0])
+
     async def test_handle_display_stock_vs_open_price_output_data_missing(self):
         self.mock_trading_service.get_current_stock_price.return_value = {
             "rt_cd": "0",
