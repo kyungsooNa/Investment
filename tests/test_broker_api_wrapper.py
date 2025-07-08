@@ -124,3 +124,32 @@ async def test_method_delegation(mock_env, mock_token_manager, mock_logger):
         MockTrading.return_value.sell.assert_awaited_once_with("000660", 5, 150000)
         MockQuotations.return_value.get_price_summary.assert_awaited_once_with("035720")
         MockQuotations.return_value.get_market_cap.assert_awaited_once_with("035420")
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_delegation(mock_env, mock_token_manager, mock_logger):
+    """
+    inquire_daily_itemchartprice 메서드가 quotations 객체의 동일 메서드에 정확히 위임되는지 검증합니다.
+    """
+    with patch('user_api.broker_api_wrapper.KoreaInvestApiAccount'), \
+         patch('user_api.broker_api_wrapper.KoreaInvestApiTrading'), \
+         patch('user_api.broker_api_wrapper.KoreaInvestApiQuotations') as MockQuotations, \
+         patch('user_api.broker_api_wrapper.StockCodeMapper'):
+
+        # Mock 객체 구성
+        mock_quotations_instance = MockQuotations.return_value
+        mock_quotations_instance.inquire_daily_itemchartprice = AsyncMock(return_value=[{"stck_prpr": "70000"}])
+
+        wrapper = BrokerAPIWrapper(
+            env=mock_env,
+            token_manager=mock_token_manager,
+            logger=mock_logger
+        )
+
+        # Act
+        result = await wrapper.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
+
+        # Assert
+        mock_quotations_instance.inquire_daily_itemchartprice.assert_awaited_once_with(
+            "005930", "20250708", fid_period_div_code="D"
+        )
+        assert result == [{"stck_prpr": "70000"}]

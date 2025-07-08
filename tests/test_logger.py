@@ -185,3 +185,38 @@ def test_logger_get_caller_info_skips_logger_frames(mock_getframeinfo, mock_curr
     assert mock_currentframe.call_count == 1
     # inspect.getframeinfo()는 `while` 루프에서 두 번 호출됩니다.
     assert mock_getframeinfo.call_count == 2
+
+def test_logger_creates_log_dir_if_not_exists(tmp_path):
+    """
+    TC: 로그 디렉토리가 존재하지 않을 때 Logger 초기화 시 디렉토리가 생성되는지 테스트합니다.
+    이는 core/logger.py의 23-24 라인을 커버합니다.
+    """
+    # given: tmp_path는 각 테스트마다 비어 있는 임시 디렉토리를 제공합니다.
+    # 따라서, tmp_path/non_existent_logs_dir은 처음에는 존재하지 않습니다.
+    non_existent_log_dir = tmp_path / "non_existent_logs_dir"
+
+    # when: Logger 인스턴스를 생성할 때, 해당 디렉토리가 생성되어야 합니다.
+    # 기존 root 로거 핸들러를 정리하여 테스트 간 간섭을 방지
+    original_handlers = logging.root.handlers[:]
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+    logger = Logger(log_dir=str(non_existent_log_dir))
+
+    # then: 로그 디렉토리가 성공적으로 생성되었는지 확인
+    assert non_existent_log_dir.is_dir() # 디렉토리가 존재하는지 확인
+
+    # cleanup: 테스트 후 로거 핸들러 및 디렉토리 정리
+    for handler in logging.getLogger('operational_logger').handlers:
+        handler.close()
+        logging.getLogger('operational_logger').removeHandler(handler)
+    for handler in logging.getLogger('debug_logger').handlers:
+        handler.close()
+        logging.getLogger('debug_logger').removeHandler(handler)
+
+    if os.path.exists(non_existent_log_dir):
+        import shutil
+        shutil.rmtree(non_existent_log_dir)
+
+    logging.root.handlers = original_handlers
+
