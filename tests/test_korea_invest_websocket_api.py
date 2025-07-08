@@ -6,6 +6,7 @@ import json
 import requests
 import websockets
 import asyncio
+from websockets.frames import Close
 from core.logger import Logger # 사용자 정의 Logger 사용을 가정
 from unittest.mock import MagicMock, patch, AsyncMock
 from unittest import mock
@@ -655,7 +656,16 @@ async def test_receive_messages_connection_closed_ok(websocket_api_instance):
     api = websocket_api_instance
     api._is_connected = True
     api.ws = AsyncMock()
-    api.ws.recv.side_effect = websockets.ConnectionClosedOK(1000, "OK") # 정상 종료
+
+    # Close frame 생성
+    close_frame = Close(code=1000, reason="OK")
+
+    # ConnectionClosedOK 예외를 side_effect로 설정
+    api.ws.recv.side_effect = websockets.ConnectionClosedOK(
+        rcvd=close_frame,
+        sent=close_frame,
+        rcvd_then_sent=True
+    )
 
     await api._receive_messages()
 
