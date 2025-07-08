@@ -749,3 +749,116 @@ async def test_get_price_summary_parsing_error(mock_quotations):
     # 3. 로그 메시지에 "가격 데이터 파싱 실패"가 포함되어 있는지 확인 (더 상세한 검증)
     log_message = mock_quotations.logger.warning.call_args[0][0]
     assert "가격 데이터 파싱 실패" in log_message
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_success_day(mocker):
+    # 1. Setup
+    mock_headers = {"Authorization": "Bearer dummy"}
+    mock_config = {
+        "tr_ids": {
+            "daily_itemchartprice_day": "FHKST03010100"
+        },
+        "custtype": "P"
+    }
+    mock_token_manager = MagicMock()
+    mock_logger = MagicMock()
+
+    api = KoreaInvestApiQuotations(
+        base_url="https://mock.api",
+        headers=mock_headers,
+        config=mock_config,
+        token_manager=mock_token_manager,
+        logger=mock_logger
+    )
+
+    # 2. call_api mock
+    mocked_response = {"rt_cd": "0", "output": [{"date": "20250708"}]}
+    mocker.patch.object(api, "call_api", return_value=mocked_response)
+
+    # 3. Call method
+    result = await api.inquire_daily_itemchartprice(
+        stock_code="005930", date="20250708", fid_period_div_code="D"
+    )
+
+    # 4. 검증
+    assert result == [{"date": "20250708"}]
+    mock_logger.error.assert_not_called()
+    mock_logger.critical.assert_not_called()
+
+@pytest.fixture
+def api_instance(mocker):
+    mock_headers = {"Authorization": "Bearer dummy"}
+    mock_config = {
+        "tr_ids": {
+            "daily_itemchartprice_day": "TRID-D",
+            "daily_itemchartprice_minute": "TRID-M"
+        },
+        "custtype": "P"
+    }
+    mock_token_manager = MagicMock()
+    mock_logger = MagicMock()
+
+    api = KoreaInvestApiQuotations(
+        base_url="https://mock.api",
+        headers=mock_headers,
+        config=mock_config,
+        token_manager=mock_token_manager,
+        logger=mock_logger
+    )
+
+    return api, mock_logger
+
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_unsupported_period_code(mocker, api_instance):
+    api, mock_logger = api_instance
+
+    # 응답은 정상적으로 반환되도록 mock 처리
+    mocker.patch.object(api, "call_api", return_value={"rt_cd": "0", "output": []})
+
+    result = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="X")
+
+    assert result == []  # output이 빈 리스트로 반환됨
+    mock_logger.error.assert_called_once()
+    assert "지원하지 않는 fid_period_div_code" in mock_logger.error.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_call_api_none(mocker, api_instance):
+    api, mock_logger = api_instance
+
+    mocker.patch.object(api, "call_api", return_value=None)
+
+    result = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
+
+    assert result is None
+    mock_logger.error.assert_called_once()
+    assert "API 응답 비정상" in mock_logger.error.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_missing_tr_id_in_config(mocker):
+    mock_headers = {"Authorization": "Bearer dummy"}
+    mock_config = {
+        "tr_ids": {
+            # deliberately omit "daily_itemchartprice_day"
+            "daily_itemchartprice_minute": "TRID-M"
+        },
+        "custtype": "P"
+    }
+    mock_token_manager = MagicMock()
+    mock_logger = MagicMock()
+
+    api = KoreaInvestApiQuotations(
+        base_url="https://mock.api",
+        headers=mock_headers,
+        config=mock_config,
+        token_manager=mock_token_manager,
+        logger=mock_logger
+    )
+
+    result = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
+
+    assert result is None
+    mock_logger.critical.assert_called_once()
+    assert "TR_ID 설정을 찾을 수 없습니다" in mock_logger.critical.call_args[0][0]

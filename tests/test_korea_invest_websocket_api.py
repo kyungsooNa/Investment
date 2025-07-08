@@ -994,4 +994,31 @@ async def test_disconnect_with_receive_task_exception(websocket_api_instance):
     assert api._is_connected is False
     assert api.ws is None
 
+@pytest.mark.asyncio
+async def test_on_receive_json_decode_error_logs_error(websocket_api_instance):
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()  # 콜백은 있어도 무방
+    api.logger = MagicMock()
 
+    invalid_json = '{"invalid_json": '  # 👈 JSON 파싱 실패 유도
+
+    await api._on_receive(invalid_json)
+
+    # 예외 로그가 찍혔는지 확인
+    assert api.logger.error.call_count == 1
+    assert "수신 메시지 처리 중 예외 발생" in api.logger.error.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_on_receive_callback_raises_exception_logs_error(websocket_api_instance):
+    api = websocket_api_instance
+    api.logger = MagicMock()
+
+    async def faulty_callback(data):
+        raise RuntimeError("의도된 예외")
+
+    api.on_realtime_message_callback = faulty_callback
+
+    await api._on_receive('{"key": "value"}')
+
+    assert api.logger.error.call_count == 1
+    assert "수신 메시지 처리 중 예외 발생" in api.logger.error.call_args[0][0]

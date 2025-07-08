@@ -261,7 +261,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         selected_tr_id = None
         if fid_period_div_code == 'D':
-            selected_tr_id = self._config['tr_ids']['daily_itemchartprice_day']
+            selected_tr_id = self._config.get('tr_ids', {}).get('daily_itemchartprice_day')
         elif fid_period_div_code == 'M':
             # <<< 이 줄 바로 위에 DEBUG 로그 추가
             self.logger.debug(f"현재 _config['tr_ids'] 내용: {self._config.get('tr_ids')}") # 'tr_ids' 키 자체가 없을 수도 있으므로 .get() 사용
