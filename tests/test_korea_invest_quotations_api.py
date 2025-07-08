@@ -862,3 +862,36 @@ async def test_inquire_daily_itemchartprice_missing_tr_id_in_config(mocker):
     assert result is None
     mock_logger.critical.assert_called_once()
     assert "TR_ID 설정을 찾을 수 없습니다" in mock_logger.critical.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mocker):
+    mock_headers = {"Authorization": "Bearer dummy"}
+    mock_config = {
+        "tr_ids": {
+            "daily_itemchartprice_minute": "TRID-M"
+        },
+        "custtype": "P"
+    }
+    mock_token_manager = MagicMock()
+    mock_logger = MagicMock()
+
+    # API 인스턴스 생성
+    api = KoreaInvestApiQuotations(
+        base_url="https://mock.api",
+        headers=mock_headers,
+        config=mock_config,
+        token_manager=mock_token_manager,
+        logger=mock_logger
+    )
+
+    # call_api 모킹
+    mock_response = {"rt_cd": "0", "output": [{"dummy": "data"}]}
+    api.call_api = AsyncMock(return_value=mock_response)
+
+    # 함수 호출
+    result = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="M")
+
+    # 검증
+    mock_logger.debug.assert_called_once_with("현재 _config['tr_ids'] 내용: {'daily_itemchartprice_minute': 'TRID-M'}")
+    assert result == [{"dummy": "data"}]
