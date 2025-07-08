@@ -226,10 +226,8 @@ class DataHandlers:
             # 1. 시가총액 상위 종목 목록 조회 (TradingService 위임)
             top_stocks_response = await self.trading_service.get_top_market_cap_stocks_code(market_code)
 
-            if not top_stocks_response or top_stocks_response.get('rt_cd') != '0' or not top_stocks_response.get(
-                    'output'):
+            if not top_stocks_response or top_stocks_response.get('rt_cd') != '0':
                 self.logger.error(f"시가총액 상위 종목 목록 조회 실패: {top_stocks_response}")
-                print(f"실패: 시가총액 상위 종목 목록을 가져올 수 없습니다. {top_stocks_response.get('msg1', '')}\n")
                 return None
 
             top_stocks_list = top_stocks_response.get('output', [])

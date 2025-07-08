@@ -544,20 +544,26 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result)
 
     async def test_handle_upper_limit_stocks_empty_top_stocks_list(self):
-        """빈 output 리스트일 때도 상위 실패 분기로 빠지는 현재 로직을 반영"""
+        """top_stocks_list가 빈 리스트일 때 info 로그 및 메시지 출력 분기 검증"""
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
 
         self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
             "rt_cd": "0",
-            "output": []  # 비어 있음 → 실패로 간주됨
+            "output": []  # 빈 리스트 → 236라인 분기
         }
 
         with patch('builtins.print') as mock_print:
             result = await self.handler.handle_upper_limit_stocks()
 
-            mock_print.assert_any_call("실패: 시가총액 상위 종목 목록을 가져올 수 없습니다. \n")
-            self.mock_logger.error.assert_called_once()
+            # print 메시지 검증
+            mock_print.assert_any_call("조회된 시가총액 상위 종목이 없습니다.\n")
+
+            # 로그 호출 검증 (error 아님 → info)
+            self.mock_logger.info.assert_any_call("조회된 시가총액 상위 종목이 없습니다.")
+            self.mock_logger.error.assert_not_called()
+
+            # 반환값 None
             self.assertIsNone(result)
 
     async def test_handle_upper_limit_stocks_invalid_stock_code_in_output(self):
