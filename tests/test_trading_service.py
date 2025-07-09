@@ -152,3 +152,45 @@ class TestGetTop10MarketCapStocksWithPrices:
         assert result == [
             {"rank": "2", "name": "SK하이닉스", "code": "000660", "current_price": "130000"}
         ]
+
+    @pytest.mark.asyncio
+    async def test_market_cap_limit_10_enforced(self):
+
+        # ─ Setup ─
+        mock_api_client = AsyncMock()
+        mock_env = MagicMock()
+        mock_time_manager = MagicMock()
+        mock_logger = MagicMock()
+        service = TradingService(
+            api_client=mock_api_client,
+            env=mock_env,
+            logger=mock_logger,
+            time_manager=mock_time_manager,
+        )
+
+        # ─ Conditions ─
+        mock_time_manager.is_market_open.return_value = True
+        mock_env.is_paper_trading = False
+
+        # 11개 종목 제공
+        top_stocks = [
+            {"mksc_shrn_iscd": f"00000{i}", "hts_kor_isnm": f"종목{i}", "data_rank": str(i + 1)}
+            for i in range(11)
+        ]
+        service.get_top_market_cap_stocks_code = AsyncMock(
+            return_value={"rt_cd": "0", "output": top_stocks}
+        )
+        service.get_current_stock_price = AsyncMock(
+            side_effect=[
+                {"rt_cd": "0", "output": {"stck_prpr": str(10000 + i)}} for i in range(11)
+            ]
+        )
+
+        # ─ Execute ─
+        result = await service.get_top_10_market_cap_stocks_with_prices()
+
+        # ─ Assert ─
+        assert len(result) == 10
+        assert all("current_price" in r for r in result)
+        service.get_current_stock_price.assert_awaited()
+        assert service.get_current_stock_price.await_count == 10  # 11개 중 10개만 처리되어야 함

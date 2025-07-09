@@ -198,11 +198,6 @@ class TradingService:
             self.logger.info("시가총액 상위 종목 목록을 찾을 수 없습니다.")
             return None
 
-        top_stocks_list = top_stocks_response.get('output', [])
-        if not top_stocks_list:
-            self.logger.info("시가총액 상위 종목 목록을 찾을 수 없습니다.")
-            return None
-
         results = []
         for i, stock_info in enumerate(top_stocks_list):
             if i >= 10:
