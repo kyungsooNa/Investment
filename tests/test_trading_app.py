@@ -1415,3 +1415,33 @@ def test_load_config_yaml_parse_error_raises_value_error():
         # 예외 메시지의 앞부분만 검증
         assert "설정 파일 형식이 올바르지 않습니다 (broken.yaml):" in str(exc.value)
         assert "while parsing a flow sequence" in str(exc.value)
+
+def test_load_configs_and_init_env_file_not_found(mocker):
+    # ─ Arrange ─
+    mock_logger = MagicMock()
+
+    # TradingApp 생성 이전에 load_config을 patch하여 예외 발생 시뮬레이션
+    mocker.patch('trading_app.load_config', side_effect=FileNotFoundError("설정 파일 없음"))
+
+    # ─ Act & Assert ─
+    with pytest.raises(FileNotFoundError):
+        app = TradingApp(main_config_path="invalid_path.yaml", tr_ids_config_path="tr_ids.yaml")
+        app.logger = mock_logger
+
+    # logger는 생성자 이후에 설정되므로, 이 예외는 직접적으로 logger 확인은 어렵고, 예외 발생만 검증합니다.
+
+def test_load_configs_and_init_env_unexpected_exception(mocker):
+    # load_config이 일반 Exception을 발생하도록 패치
+    mocker.patch('trading_app.load_config', side_effect=Exception("예기치 않은 오류"))
+
+    # __init__을 우회하여 인스턴스만 만들고 직접 메서드 호출
+    app = object.__new__(TradingApp)
+    app.main_config_path = "main.yaml"
+    app.tr_ids_config_path = "tr_ids.yaml"
+    app.logger = MagicMock()
+
+    with pytest.raises(Exception):
+        app._load_configs_and_init_env()
+
+    app.logger.critical.assert_called_once()
+    assert "애플리케이션 초기화 실패" in app.logger.critical.call_args[0][0]
