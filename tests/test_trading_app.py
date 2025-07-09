@@ -5,7 +5,7 @@ import logging
 import sys
 import os # os 모듈 추가
 import builtins
-from unittest.mock import MagicMock, AsyncMock, patch, mock_open
+from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
 from trading_app import TradingApp, load_config
 from datetime import datetime
 
@@ -1505,3 +1505,71 @@ def test_display_menu_outputs_expected_messages():
     assert kwargs['env_type'] == "모의투자"
     assert kwargs['market_status_str'] == "열려있음"
     assert kwargs['current_time_str'].startswith("2025-01-01 09:00:00")
+
+@pytest.mark.asyncio
+async def test_run_async_main_loop():
+    """
+    TradingApp의 run_async 메서드가 애플리케이션의 메인 루프를 올바르게 실행하고 종료하는지 테스트합니다.
+    """
+    # ─ 준비 (Arrange) ─
+    # TradingApp 인스턴스를 __init__을 우회하여 생성하고 필요한 속성을 수동으로 Mocking합니다.
+    app = object.__new__(TradingApp)
+
+    # CLIView, Logger, TimeManager 등 TradingApp의 주요 종속성 Mocking
+    app.cli_view = MagicMock()
+    app.logger = MagicMock() # 로거도 Mocking하여 로그 호출을 검증할 수 있습니다.
+    app.time_manager = MagicMock() # display_current_time 내부에서 사용될 수 있으므로 Mocking
+
+    # TradingApp 내부의 비동기 메서드들을 Mocking하여 제어합니다.
+    # _complete_api_initialization이 성공적으로 완료되었다고 가정합니다.
+    app._complete_api_initialization = AsyncMock(return_value=True)
+    # _select_environment가 성공적으로 완료되었다고 가정합니다.
+    app._select_environment = AsyncMock(return_value=True)
+    # _display_menu는 동기 메서드이므로 MagicMock으로 충분합니다.
+    app._display_menu = MagicMock()
+    # _execute_action은 사용자의 선택에 따라 루프를 계속할지(True) 종료할지(False)를 반환합니다.
+    app._execute_action = AsyncMock()
+
+    # 사용자 입력을 시뮬레이션합니다.
+    # 첫 번째 입력: '1' (예: 현재가 조회)
+    # 두 번째 입력: '99' (종료)
+    app.cli_view.get_user_input = AsyncMock(side_effect=["1", "99"])
+
+    # _execute_action의 반환 값을 시뮬레이션합니다.
+    # 첫 번째 액션('1')은 루프를 계속하게 하고 (True),
+    # 두 번째 액션('99')은 루프를 종료하게 합니다 (False).
+    app._execute_action.side_effect = [True, False]
+
+    # ─ 실행 (Act) ─
+    await app.run_async()
+
+    # ─ 검증 (Assert) ─
+
+    # 1. 애플리케이션 시작 및 초기화 단계 검증
+    # 환영 메시지가 한 번 표시되었는지 확인
+    app.cli_view.display_welcome_message.assert_called_once()
+    # API 초기화가 한 번 호출되고 await되었는지 확인
+    app._complete_api_initialization.assert_awaited_once()
+    # 환경 선택이 한 번 호출되고 await되었는지 확인
+    app._select_environment.assert_awaited_once()
+
+    # 2. 메인 루프의 반복 횟수 및 호출 검증
+    # 루프는 '1' 입력 후 한 번, '99' 입력 후 한 번 더 실행되므로 총 두 번 반복됩니다.
+    # 따라서 다음 메서드들은 두 번씩 호출되어야 합니다.
+    assert app.cli_view.display_current_time.call_count == 2
+    assert app._display_menu.call_count == 2
+    assert app.cli_view.get_user_input.call_count == 2
+
+    # _execute_action이 올바른 인자로 두 번 호출되었는지 확인
+    # 첫 번째 호출은 "1"로, 두 번째 호출은 "99"로 이루어져야 합니다.
+    app._execute_action.assert_has_calls([
+        call("1"),
+        call("99")
+    ])
+    # _execute_action이 정확히 두 번 호출되었는지 확인
+    assert app._execute_action.call_count == 2
+
+    # 추가 검증 (선택 사항):
+    # 예를 들어, 로거가 특정 메시지를 기록했는지 확인할 수 있습니다.
+    # app.logger.info.assert_any_call("애플리케이션 종료.") # 만약 종료 로그가 있다면
+

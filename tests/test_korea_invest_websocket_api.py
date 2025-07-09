@@ -1022,3 +1022,20 @@ async def test_on_receive_callback_raises_exception_logs_error(websocket_api_ins
 
     assert api.logger.error.call_count == 1
     assert "수신 메시지 처리 중 예외 발생" in api.logger.error.call_args[0][0]
+
+def test_parse_futs_optn_quote_data_extracts_total_bid_ask_volumes(websocket_api_instance):
+    """
+    _parse_futs_optn_quote_data가 총매도호가잔량/총매수호가잔량 (268, 269라인)을 포함해 정확히 파싱하는지 테스트
+    """
+    api = websocket_api_instance
+
+    # 최소 38개 항목 (index 0~37) 필요. 34~35번째 인덱스에 총매도/매수호가잔량을 넣는다.
+    parts = [''] * 38
+    parts[34] = '123456'  # 총매도호가잔량
+    parts[35] = '654321'  # 총매수호가잔량
+
+    data_str = '^'.join(parts)
+    result = api._parse_futs_optn_quote_data(data_str)
+
+    assert result["총매도호가잔량"] == "123456"
+    assert result["총매수호가잔량"] == "654321"
