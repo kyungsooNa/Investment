@@ -1064,6 +1064,28 @@ async def test_execute_action_top_10_market_cap_paper_mode(setup_mock_app, capsy
     assert result is True # 앱은 계속 실행되어야 함
 
 @pytest.mark.asyncio
+async def test_execute_action_choice_8_market_cap_query_failure_in_live_env():
+    """실전투자 환경에서 시가총액 10위 조회 실패 시에도 running_status는 True"""
+    from trading_app import TradingApp
+
+    # ─ Arrange ─
+    app = object.__new__(TradingApp)
+    app.logger = MagicMock()
+    app.cli_view = MagicMock()
+    app.env = MagicMock()
+    app.env.is_paper_trading = False  # 실전 환경
+    app.data_handlers = MagicMock()
+    app.data_handlers.handle_get_top_10_market_cap_stocks_with_prices = AsyncMock(return_value=False)
+
+    # ─ Act ─
+    result = await app._execute_action("8")
+
+    # ─ Assert ─
+    assert result is True  # 실패해도 True 반환 (계속 실행)
+    app.data_handlers.handle_get_top_10_market_cap_stocks_with_prices.assert_called_once()
+    app.logger.warning.assert_not_called()
+
+@pytest.mark.asyncio
 async def test_execute_action_momentum_strategy_market_closed(setup_mock_app, capsys):
     app = setup_mock_app
     app.time_manager.is_market_open.return_value = False # 시장 마감 시뮬레이션
