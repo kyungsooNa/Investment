@@ -1819,6 +1819,102 @@ async def test_execute_action_choice_11_empty_top_codes_list(mocker):
     assert result is True
     app.cli_view.display_top_stocks_failure.assert_called_with("결과 없음")
 
+@pytest.mark.asyncio
+async def test_execute_action_choice_12_success_with_dict_response():
+    from trading_app import TradingApp
+
+    app = object.__new__(TradingApp)
+    app.cli_view = MagicMock()
+    app.logger = MagicMock()
+    app.time_manager = MagicMock()
+    app.trading_service = AsyncMock()
+    app.broker = MagicMock()
+
+    # ─ Arrange ─
+    app.trading_service.get_top_market_cap_stocks_code.return_value = {
+        "rt_cd": "0",
+        "output": [{"mksc_shrn_iscd": "005930"}, {"mksc_shrn_iscd": "000660"}]
+    }
+
+    mock_strategy = MagicMock()
+    mock_executor = AsyncMock()
+    mock_executor.execute.return_value = {
+        "gapup_pullback_selected": [{"code": "005930"}],
+        "gapup_pullback_rejected": [{"code": "000660"}]
+    }
+
+    # ─ Act ─
+    with patch("strategies.GapUpPullback_strategy.GapUpPullbackStrategy", return_value=mock_strategy), \
+         patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor):
+        result = await app._execute_action("12")
+
+    # ─ Assert ─
+    assert result is True
+    app.cli_view.display_strategy_running_message.assert_called_with("GapUpPullback")
+    app.cli_view.display_strategy_results.assert_called_once()
+    app.cli_view.display_gapup_pullback_selected_stocks.assert_called_once()
+    app.cli_view.display_gapup_pullback_rejected_stocks.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_execute_action_choice_12_response_format_error():
+    app = object.__new__(TradingApp)
+    app.cli_view = MagicMock()
+    app.logger = MagicMock()
+    app.trading_service = AsyncMock()
+    app.broker = MagicMock()
+
+    app.trading_service.get_top_market_cap_stocks_code.return_value = "INVALID_TYPE"
+
+    result = await app._execute_action("12")
+
+    assert result is True
+    app.cli_view.display_top_stocks_failure.assert_called_once_with("응답 형식 오류")
+    app.logger.error.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_execute_action_choice_12_no_stocks_for_strategy():
+    app = object.__new__(TradingApp)
+    app.cli_view = MagicMock()
+    app.logger = MagicMock()
+    app.trading_service = AsyncMock()
+    app.broker = MagicMock()
+
+    app.trading_service.get_top_market_cap_stocks_code.return_value = {
+        "rt_cd": "0",
+        "output": []  # ⛔ Empty list
+    }
+
+    result = await app._execute_action("12")
+
+    assert result is True
+    app.cli_view.display_no_stocks_for_strategy.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_execute_action_choice_12_strategy_exception(mocker):
+    app = object.__new__(TradingApp)
+    app.cli_view = MagicMock()
+    app.logger = MagicMock()
+    app.trading_service = AsyncMock()
+    app.broker = MagicMock()
+
+    app.trading_service.get_top_market_cap_stocks_code.return_value = {
+        "rt_cd": "0",
+        "output": [{"mksc_shrn_iscd": "005930"}]
+    }
+
+    mock_strategy = MagicMock()
+    mock_executor = AsyncMock()
+    mock_executor.execute.side_effect = Exception("GapUpPullback 실행 오류")
+
+    mocker.patch("strategies.GapUpPullback_strategy.GapUpPullbackStrategy", return_value=mock_strategy)
+    mocker.patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor)
+
+    result = await app._execute_action("12")
+
+    assert result is True
+    app.cli_view.display_strategy_error.assert_called_once()
+    app.logger.error.assert_called_once()
+
 
 @pytest.mark.asyncio
 @patch('builtins.print') # Patch print to avoid actual console output
