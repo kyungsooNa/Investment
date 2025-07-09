@@ -7,6 +7,7 @@ import os # os 모듈 추가
 import builtins
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 from trading_app import TradingApp, load_config
+from datetime import datetime
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
@@ -1447,16 +1448,17 @@ def test_load_configs_and_init_env_unexpected_exception(mocker):
     assert "애플리케이션 초기화 실패" in app.logger.critical.call_args[0][0]
 
 @pytest.mark.asyncio
-async def test_select_environment_invalid_choice_triggers_warning():
+@patch('builtins.print') # Patch print to avoid actual console output
+async def test_select_environment_invalid_choice_triggers_warning(mock_print): # Remove 'self'
     # ─ Arrange ─
     app = object.__new__(TradingApp)  # __init__ 우회
     app.cli_view = MagicMock()
-    app.cli_view.select_environment_input = AsyncMock(side_effect=["abc"])  # 잘못된 입력
+    app.cli_view.select_environment_input = AsyncMock(side_effect=["abc", "1"])  # 잘못된 입력
     app.cli_view.display_invalid_environment_choice = MagicMock()
 
     app.env = MagicMock()
     app.env.set_trading_mode = MagicMock()
-    app.env.get_access_token = AsyncMock()
+    app.env.get_access_token = AsyncMock(return_value="dummy_token")
     app.logger = MagicMock()
 
     app._complete_api_initialization = AsyncMock()
@@ -1465,7 +1467,41 @@ async def test_select_environment_invalid_choice_triggers_warning():
     result = await app._select_environment()
 
     # ─ Assert ─
-    app.cli_view.select_environment_input.assert_awaited_once()
+    # Ensure display_invalid_environment_choice was called for the invalid input
     app.cli_view.display_invalid_environment_choice.assert_called_once()
-    assert result is False
+    # Ensure select_environment_input was called twice (once for invalid, once for valid)
+    assert app.cli_view.select_environment_input.call_count == 2 # Use pytest's assert
+    # Ensure set_trading_mode was called for the valid input
+    app.env.set_trading_mode.assert_called_once_with(True)
+    # Ensure _complete_api_initialization was called
+    app._complete_api_initialization.assert_awaited_once()
+    # Ensure the method returns True on success
+    assert result is True # Use pytest's assert
 
+
+def test_display_menu_outputs_expected_messages():
+    # ─ Arrange ─
+    app = object.__new__(TradingApp)
+    app.cli_view = MagicMock()
+
+    # datetime 객체로 수정
+    mock_time = datetime(2025, 1, 1, 9, 0, 0)
+    app.time_manager = MagicMock()
+    app.time_manager.get_current_kst_time.return_value = mock_time
+    app.time_manager.is_market_open.return_value = True
+
+    app.env = MagicMock()
+    app.env.is_paper_trading = True
+
+    # display_menu는 별도로 mock
+    app.cli_view.display_menu = MagicMock()
+
+    # ─ Act ─
+    app._display_menu()
+
+    # ─ Assert ─
+    app.cli_view.display_menu.assert_called_once()
+    args, kwargs = app.cli_view.display_menu.call_args
+    assert kwargs['env_type'] == "모의투자"
+    assert kwargs['market_status_str'] == "열려있음"
+    assert kwargs['current_time_str'].startswith("2025-01-01 09:00:00")
