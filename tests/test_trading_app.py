@@ -1573,3 +1573,72 @@ async def test_run_async_main_loop():
     # 예를 들어, 로거가 특정 메시지를 기록했는지 확인할 수 있습니다.
     # app.logger.info.assert_any_call("애플리케이션 종료.") # 만약 종료 로그가 있다면
 
+    @pytest.mark.asyncio
+    async def test_execute_action_choice_0_environment_change_fails(self):
+        """
+        _execute_action 메서드에서 choice '0' (환경 변경) 선택 시
+        _select_environment가 실패하여 running_status가 False가 되는지 검증합니다 (175 라인).
+        """
+        # ─ 준비 (Arrange) ─
+        # _select_environment가 False를 반환하도록 Mocking하여 환경 변경 실패를 시뮬레이션합니다.
+        self.app._select_environment.return_value = False
+
+        # ─ 실행 (Act) ─
+        # _execute_action을 '0' 선택으로 호출합니다.
+        running_status = await self.app._execute_action('0')
+
+        # ─ 검증 (Assert) ─
+        # 175번 라인: running_status가 False로 설정되었는지 확인
+        assert running_status is False
+        # logger.info("거래 환경 변경을 시작합니다.")가 호출되었는지 확인
+        self.app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
+        # _select_environment가 호출되었는지 확인
+        self.app._select_environment.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_action_choice_2_account_balance_success(self):
+        """
+        _execute_action 메서드에서 choice '2' (계좌 잔고 조회) 선택 시
+        계좌 잔고 조회가 성공하여 display_account_balance가 호출되는지 검증합니다 (182 라인).
+        """
+        # ─ 준비 (Arrange) ─
+        # trading_service.get_account_balance가 성공적인 잔고를 반환하도록 Mocking합니다.
+        mock_balance_data = {"rt_cd": "0", "output": {"dnca_tot_amt": "1234567"}}
+        self.mock_trading_service.get_account_balance.return_value = mock_balance_data
+
+        # ─ 실행 (Act) ─
+        # _execute_action을 '2' 선택으로 호출합니다.
+        running_status = await self.app._execute_action('2')
+
+        # ─ 검증 (Assert) ─
+        # trading_service.get_account_balance가 호출되었는지 확인
+        self.mock_trading_service.get_account_balance.assert_awaited_once()
+        # 182번 라인: cli_view.display_account_balance가 올바른 인자로 호출되었는지 확인
+        self.app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data)
+        # running_status가 True로 유지되었는지 확인 (기본값)
+        assert running_status is True
+
+    @pytest.mark.asyncio
+    async def test_execute_action_choice_2_account_balance_failure(self):
+        """
+        _execute_action 메서드에서 choice '2' (계좌 잔고 조회) 선택 시
+        계좌 잔고 조회가 실패하여 display_account_balance_failure가 호출되는지 검증합니다.
+        """
+        # ─ 준비 (Arrange) ─
+        # trading_service.get_account_balance가 실패를 나타내는 None을 반환하도록 Mocking합니다.
+        self.mock_trading_service.get_account_balance.return_value = None
+
+        # ─ 실행 (Act) ─
+        # _execute_action을 '2' 선택으로 호출합니다.
+        running_status = await self.app._execute_action('2')
+
+        # ─ 검증 (Assert) ─
+        # trading_service.get_account_balance가 호출되었는지 확인
+        self.mock_trading_service.get_account_balance.assert_awaited_once()
+        # cli_view.display_account_balance가 호출되지 않았는지 확인
+        self.app.cli_view.display_account_balance.assert_not_called()
+        # cli_view.display_account_balance_failure가 호출되었는지 확인
+        self.app.cli_view.display_account_balance_failure.assert_called_once()
+        # running_status가 True로 유지되었는지 확인 (기본값)
+        assert running_status is True
+
