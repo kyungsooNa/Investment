@@ -4,8 +4,9 @@ import pytest
 import logging
 import sys
 import os # os 모듈 추가
-from unittest.mock import MagicMock, AsyncMock
-from trading_app import TradingApp
+import builtins
+from unittest.mock import MagicMock, AsyncMock, patch, mock_open
+from trading_app import TradingApp, load_config
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
@@ -1365,3 +1366,52 @@ async def test_select_environment_api_initialization_failure(setup_mock_app):
     app._complete_api_initialization.assert_awaited_once()
     app.logger.critical.assert_called_once_with("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
     assert result is False
+
+
+
+def test_load_config_yaml_success():
+    # YAML 파일 정상 로드
+    yaml_data = "api_key: test-key\n"
+    with patch("builtins.open", mock_open(read_data=yaml_data)), \
+         patch("core.config_loader.yaml.safe_load", return_value={"api_key": "test-key"}) as mock_yaml:
+        result = load_config("dummy.yaml")
+        assert result == {"api_key": "test-key"}
+        mock_yaml.assert_called_once()
+
+
+def test_load_config_json_fallback_on_yaml_import_error():
+    # yaml import 실패 시 fallback to json.load
+    json_data = '{"api_key": "test-key"}'
+    with patch("builtins.open", mock_open(read_data=json_data)), \
+         patch.dict("sys.modules", {"yaml": None}), \
+         patch("trading_app.json.load", return_value={"api_key": "test-key"}) as mock_json:
+        result = load_config("dummy.json")
+        assert result == {"api_key": "test-key"}
+        mock_json.assert_called_once()
+
+
+def test_load_config_file_not_found():
+    # 파일이 존재하지 않는 경우
+    with patch("builtins.open", side_effect=FileNotFoundError):
+        with pytest.raises(FileNotFoundError):
+            load_config("missing.yaml")
+
+
+def test_load_config_json_parse_error_raises_value_error():
+    # JSON 파싱 오류 → ValueError 변환
+    bad_json = '{"api_key": "bad_value"'
+    with patch("builtins.open", mock_open(read_data=bad_json)), \
+         patch("core.config_loader.yaml.safe_load", side_effect=ValueError):
+        with pytest.raises(ValueError):
+            load_config("broken.json")
+
+
+def test_load_config_yaml_parse_error_raises_value_error():
+    bad_yaml = "api_key: [unclosed"
+    with patch.object(builtins, "open", mock_open(read_data=bad_yaml)):
+        with pytest.raises(ValueError) as exc:
+            load_config("broken.yaml")
+
+        # 예외 메시지의 앞부분만 검증
+        assert "설정 파일 형식이 올바르지 않습니다 (broken.yaml):" in str(exc.value)
+        assert "while parsing a flow sequence" in str(exc.value)
