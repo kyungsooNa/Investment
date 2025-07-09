@@ -1088,3 +1088,51 @@ def test_aes_cbc_base64_dec_success():
     # --- Assert ---
     assert decrypted == plaintext
 
+@pytest.mark.asyncio
+async def test_receive_messages_connection_closed_error_korea_invest(websocket_api_instance, caplog):
+    """
+    KoreaInvestWebSocketAPI의 _receive_messages 메서드에서 websockets.ConnectionClosedError 발생 시
+    logger.error가 올바른 메시지로 호출되고 상태가 정리되는지 검증합니다.
+    """
+    api = websocket_api_instance # 픽스처를 통해 KoreaInvestWebSocketAPI 인스턴스를 가져옵니다.
+
+    # ─ 준비 (Arrange) ─
+    # Mock WebSocket 객체를 생성하고 api.ws에 할당합니다.
+    mock_ws = AsyncMock()
+    api.ws = mock_ws
+    api._is_connected = True # _receive_messages 루프에 진입하도록 설정
+
+    # ConnectionClosedError에 전달할 Close 프레임을 생성합니다.
+    # Close 프레임은 code와 reason을 인자로 받습니다.
+    rcvd_close_frame = Close(code=1006, reason="Abnormal closure")
+    sent_close_frame = Close(code=1006, reason="Abnormal closure") # 또는 None
+
+    # mock_ws.recv()가 ConnectionClosedError를 발생시키도록 설정합니다.
+    # ConnectionClosedError는 rcvd와 sent 인자로 Close 프레임을 받습니다.
+    # rcvd_then_sent 인자를 명시적으로 False로 설정하여 AssertionError를 해결합니다.
+    mock_ws.recv.side_effect = websockets.ConnectionClosedError(
+        rcvd=rcvd_close_frame, sent=sent_close_frame, rcvd_then_sent=False
+    )
+
+    # caplog를 사용하여 로깅 메시지를 캡처합니다. (이 부분은 현재 테스트에서 직접 사용되지 않지만, 다른 로그를 캡처할 수 있으므로 유지)
+    with caplog.at_level(logging.ERROR):
+        # ─ 실행 (Act) ─
+        # _receive_messages 메서드를 직접 호출합니다.
+        await api._receive_messages()
+
+        # ─ 검증 (Assert) ─
+        # logger.error가 한 번 호출되었는지 확인합니다.
+        api.logger.error.assert_called_once()
+
+        # logger.error의 호출 인자를 확인하여 예상된 오류 메시지가 포함되어 있는지 검증합니다.
+        # api.logger는 Mock 객체이므로 caplog.text 대신 api.logger.error.call_args를 사용합니다.
+        logged_message = api.logger.error.call_args[0][0]
+        assert "웹소켓 연결이 예외적으로 종료되었습니다" in logged_message
+        assert "1006" in logged_message
+        assert "Abnormal closure" in logged_message
+
+        # finally 블록이 실행되어 상태가 올바르게 정리되었는지 확인합니다.
+        assert api._is_connected is False
+        assert api.ws is None # 웹소켓 객체가 초기화되었는지 확인
+
+
