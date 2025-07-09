@@ -12,6 +12,10 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from unittest import mock
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 
+from Crypto.Util.Padding import pad
+from Crypto.Cipher import AES
+from base64 import b64encode
+
 @pytest.mark.asyncio
 async def test_websocket_api_initialization():
     # MagicMock을 사용하여 env.get_full_config() 가 필요한 설정을 반환하도록 설정
@@ -1061,3 +1065,26 @@ def test_parse_futs_optn_contract_data_parses_correctly(websocket_api_instance):
     assert result["영업시간"] == "value1"
     assert result["선물현재가"] == "value5"  # 정확한 필드명으로 변경
     assert result["실시간가격제한구분"] == sample_values[-1]
+
+def test_aes_cbc_base64_dec_success():
+    from Crypto.Cipher import AES
+    from Crypto.Util.Padding import pad
+    from base64 import b64encode
+    from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
+
+    # --- Arrange ---
+    key_str = "1234567890123456"  # 16 bytes
+    iv_str = "6543210987654321"   # 16 bytes
+    plaintext = "테스트 메시지입니다."
+
+    # 암호화: pad → encrypt → base64
+    cipher = AES.new(key_str.encode("utf-8"), AES.MODE_CBC, iv_str.encode("utf-8"))
+    encrypted = cipher.encrypt(pad(plaintext.encode("utf-8"), AES.block_size))
+    cipher_b64 = b64encode(encrypted).decode("utf-8")
+
+    # --- Act ---
+    decrypted = KoreaInvestWebSocketAPI._aes_cbc_base64_dec(key_str, iv_str, cipher_b64)
+
+    # --- Assert ---
+    assert decrypted == plaintext
+
