@@ -1445,3 +1445,27 @@ def test_load_configs_and_init_env_unexpected_exception(mocker):
 
     app.logger.critical.assert_called_once()
     assert "애플리케이션 초기화 실패" in app.logger.critical.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_select_environment_invalid_choice_triggers_warning():
+    # ─ Arrange ─
+    app = object.__new__(TradingApp)  # __init__ 우회
+    app.cli_view = MagicMock()
+    app.cli_view.select_environment_input = AsyncMock(side_effect=["abc"])  # 잘못된 입력
+    app.cli_view.display_invalid_environment_choice = MagicMock()
+
+    app.env = MagicMock()
+    app.env.set_trading_mode = MagicMock()
+    app.env.get_access_token = AsyncMock()
+    app.logger = MagicMock()
+
+    app._complete_api_initialization = AsyncMock()
+
+    # ─ Act ─
+    result = await app._select_environment()
+
+    # ─ Assert ─
+    app.cli_view.select_environment_input.assert_awaited_once()
+    app.cli_view.display_invalid_environment_choice.assert_called_once()
+    assert result is False
+

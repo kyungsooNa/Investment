@@ -620,3 +620,63 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             mock_print.assert_any_call("  전일대비: +1500원")
             mock_print.assert_any_call("  전일대비율: 2.19%")
             self.mock_logger.info.assert_called_once()
+
+    async def test_handle_display_stock_change_rate_positive_change(self):
+        # Scenario 1: 양수 변화량
+        stock_code = "005930"
+        self.mock_trading_service.get_current_stock_price.return_value = {
+            'rt_cd': '0',
+            'output': {
+                'stck_prpr': '70000',
+                'prdy_vrss': '1500', # 전일대비 +1500원
+                'prdy_vrss_sign': '2', # 2:상승
+                'prdy_ctrt': '2.19' # 전일대비율
+            }
+        }
+
+        # 테스트 실행
+        await self.handler.handle_display_stock_change_rate(stock_code)
+
+        # 출력 확인 (실제 콘솔 출력 대신, 로그나 내부 상태를 검증하는 방식이 더 견고함)
+        # 여기서는 로거가 올바르게 호출되었는지 확인
+        self.mock_logger.info.assert_called_with(
+            f"{stock_code} 전일대비 등락률 조회 성공: 현재가=70000, 전일대비=+1500, 등락률=2.19%"
+        )
+
+    async def test_handle_display_stock_change_rate_negative_change(self):
+        # Scenario 2: 음수 변화량
+        stock_code = "000660"
+        self.mock_trading_service.get_current_stock_price.return_value = {
+            'rt_cd': '0',
+            'output': {
+                'stck_prpr': '90000',
+                'prdy_vrss': '2000', # 전일대비 -2000원
+                'prdy_vrss_sign': '5', # 5:하락
+                'prdy_ctrt': '2.17' # 전일대비율
+            }
+        }
+
+        await self.handler.handle_display_stock_change_rate(stock_code)
+
+        self.mock_logger.info.assert_called_with(
+            f"{stock_code} 전일대비 등락률 조회 성공: 현재가=90000, 전일대비=-2000, 등락률=2.17%"
+        )
+
+    async def test_handle_display_stock_change_rate_zero_change(self):
+        # Scenario 3: 변화량 0
+        stock_code = "000001"
+        self.mock_trading_service.get_current_stock_price.return_value = {
+            'rt_cd': '0',
+            'output': {
+                'stck_prpr': '50000',
+                'prdy_vrss': '0', # 전일대비 0원
+                'prdy_vrss_sign': '3', # 3:보합 (또는 기타)
+                'prdy_ctrt': '0.00' # 전일대비율
+            }
+        }
+
+        await self.handler.handle_display_stock_change_rate(stock_code)
+
+        self.mock_logger.info.assert_called_with(
+            f"{stock_code} 전일대비 등락률 조회 성공: 현재가=50000, 전일대비=0, 등락률=0.00%"
+        )
