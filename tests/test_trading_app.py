@@ -1574,6 +1574,41 @@ async def test_run_async_main_loop():
     # app.logger.info.assert_any_call("애플리케이션 종료.") # 만약 종료 로그가 있다면
 
     @pytest.mark.asyncio
+    async def test_run_async_api_initialization_fails(self):
+        """
+        run_async 메서드에서 _complete_api_initialization이 실패할 경우
+        애플리케이션이 즉시 종료되고 다음 단계가 실행되지 않는지 검증합니다 (456-457 라인).
+        """
+        # ─ 준비 (Arrange) ─
+        # _complete_api_initialization이 False를 반환하도록 Mocking하여 실패를 시뮬레이션합니다.
+        self.app._complete_api_initialization.return_value = False
+
+        # _select_environment 및 메인 루프 관련 메서드들이 호출되지 않음을 확인하기 위해 Mocking합니다.
+        self.app._select_environment = AsyncMock()
+        self.app.cli_view.display_current_time = MagicMock()
+        self.app._display_menu = MagicMock()
+        self.app.cli_view.get_user_input = AsyncMock()
+        self.app._execute_action = AsyncMock()
+
+        # ─ 실행 (Act) ─
+        await self.app.run_async()
+
+        # ─ 검증 (Assert) ─
+        # 환영 메시지가 한 번 표시되었는지 확인
+        self.app.cli_view.display_welcome_message.assert_called_once()
+        # _complete_api_initialization이 한 번 호출되었는지 확인
+        self.app._complete_api_initialization.assert_awaited_once()
+
+        # 중요: _complete_api_initialization 실패 시 다음 단계가 실행되지 않음을 검증
+        # _select_environment가 호출되지 않았는지 확인
+        self.app._select_environment.assert_not_awaited()
+        # 메인 루프 내부의 메서드들이 호출되지 않았는지 확인
+        self.app.cli_view.display_current_time.assert_not_called()
+        self.app._display_menu.assert_not_called()
+        self.app.cli_view.get_user_input.assert_not_called()
+        self.app._execute_action.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_execute_action_choice_0_environment_change_fails(self):
         """
         _execute_action 메서드에서 choice '0' (환경 변경) 선택 시

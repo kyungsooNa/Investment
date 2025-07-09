@@ -1039,3 +1039,25 @@ def test_parse_futs_optn_quote_data_extracts_total_bid_ask_volumes(websocket_api
 
     assert result["총매도호가잔량"] == "123456"
     assert result["총매수호가잔량"] == "654321"
+
+def test_parse_futs_optn_contract_data_parses_correctly(websocket_api_instance):
+    """
+    _parse_futs_optn_contract_data가 지수선물/옵션 체결 데이터를 정확히 파싱하는지 테스트
+    """
+    api = websocket_api_instance
+
+    # 필드 수에 맞게 mock 데이터 생성
+    field_count = 50  # 실제 반환 키 개수에 맞춤
+    sample_values = [f"value{i}" for i in range(field_count)]
+    data_str = "^".join(sample_values)
+
+    result = api._parse_futs_optn_contract_data(data_str)
+
+    # 기본 검증
+
+    assert isinstance(result, dict)
+    assert len(result) == field_count
+    assert result["선물단축종목코드"] == "value0"
+    assert result["영업시간"] == "value1"
+    assert result["선물현재가"] == "value5"  # 정확한 필드명으로 변경
+    assert result["실시간가격제한구분"] == sample_values[-1]
