@@ -120,8 +120,7 @@ class DataHandlers:
                     change_val_float = float(change_val_str)
                     if change_val_float == 0:
                         display_change_val = "0"
-                        actual_change_sign = ""  # 0일 때는 부호 없음
-                    elif change_val_float != 0 and actual_change_sign:
+                    else:
                         display_change_val = f"{actual_change_sign}{change_val_str}"
                 except ValueError:
                     pass  # 숫자로 변환 불가능하면 N/A 그대로 사용
