@@ -488,37 +488,38 @@ def test_handle_websocket_message_unknown_tr_id(websocket_api_instance): # 동�
     assert "실시간 요청 응답 오류:" in logged_message
 
 # --- 새롭게 추가되는 테스트 케이스 시작 ---
-
-# _handle_websocket_message: 성공적인 주식 체결(H0STCNT0) 파싱 테스트
 def test_handle_websocket_message_realtime_price_success(websocket_api_instance):
     api = websocket_api_instance
-    tr_id = api._config['tr_ids']['websocket']['realtime_price']
-    # _parse_stock_contract_data가 기대하는 46개 필드의 유효한 데이터
-    # 유가증권단축종목코드, 주식현재가, 전일대비부호, 전일대비, 전일대비율, 누적거래량, 누적거래대금
-    data_parts = [''] * 46
-    data_parts[0] = '0001' # 유가증권단축종목코드
-    data_parts[2] = '10000' # 주식현재가
-    data_parts[3] = '+' # 전일대비부호
-    data_parts[4] = '100' # 전일대비
-    data_parts[5] = '1.00' # 전일대비율
-    data_parts[13] = '1000' # 누적거래량
-    data_parts[14] = '10000000' # 누적거래대금
+
+    # ✅ TR ID 강제 설정
+    api._config['tr_ids']['websocket']['realtime_price'] = "H0STCNT0"
+    tr_id = "H0STCNT0"
+
+    data_parts = [''] * 60
+    data_parts[0] = '0001'
+    data_parts[2] = '10000'
+    data_parts[3] = '+'
+    data_parts[4] = '100'
+    data_parts[5] = '1.00'
+    data_parts[13] = '1000'
+    data_parts[14] = '10000000'
     data_body = '^'.join(data_parts)
 
     message = f"0|{tr_id}|some_key|{data_body}"
+    print(f"[TEST] realtime_price TR_ID = {tr_id}")
 
-    # on_realtime_message_callback Mock
     mock_callback = MagicMock()
     api.on_realtime_message_callback = mock_callback
 
     api._handle_websocket_message(message)
 
     mock_callback.assert_called_once()
-    called_args = mock_callback.call_args[0][0] # 첫 번째 인자는 딕셔너리
+    called_args = mock_callback.call_args[0][0]
     assert called_args['type'] == 'realtime_price'
     assert called_args['tr_id'] == tr_id
     assert called_args['data']["유가증권단축종목코드"] == '0001'
     assert called_args['data']["주식현재가"] == '10000'
+
 
 # _handle_websocket_message: 성공적인 주식 호가(H0STASP0) 파싱 테스트
 def test_handle_websocket_message_realtime_quote_success(websocket_api_instance):
@@ -1136,3 +1137,805 @@ async def test_receive_messages_connection_closed_error_korea_invest(websocket_a
         assert api.ws is None # 웹소켓 객체가 초기화되었는지 확인
 
 
+def test_handle_websocket_message_parse_realtime_price(websocket_api_instance):
+    api = websocket_api_instance
+    price_tr_id = api._config["tr_ids"]["websocket"]["realtime_price"]
+    data_parts = ['0001'] + ['0'] * 45  # 46개 필드
+    message = f"0|{price_tr_id}|SOME_KEY|{'^'.join(data_parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    result = callback.call_args[0][0]
+    assert result["type"] == "realtime_price"
+    assert result["tr_id"] == price_tr_id
+    assert result["data"]["유가증권단축종목코드"] == "0001"
+
+
+def test_handle_websocket_message_signing_notice_success(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "testaeskey1234567890123456abcd"
+    api._aes_iv = "testivvalue123456"
+    tr_id = "H0STCNI0"
+    enc_msg = "ENCRYPTED_STRING"
+
+    with patch.object(api, "_aes_cbc_base64_dec", return_value="decrypted_json"), \
+            patch.object(api, "_parse_signing_notice", return_value={"confirmed": True}):
+        api.on_realtime_message_callback = MagicMock()
+        message = f"1|{tr_id}|SOME_KEY|{enc_msg}"
+        api._handle_websocket_message(message)
+
+        api.on_realtime_message_callback.assert_called_once()
+        args = api.on_realtime_message_callback.call_args[0][0]
+        assert args["type"] == "signing_notice"
+        assert args["tr_id"] == tr_id
+        assert args["data"] == {"confirmed": True}
+
+
+def test_handle_websocket_message_control_pingpong(websocket_api_instance):
+    api = websocket_api_instance
+    api.logger = MagicMock()
+    message = json.dumps({"header": {"tr_id": "PINGPONG"}})
+
+    api._handle_websocket_message(message)
+
+    api.logger.info.assert_called_with("PINGPONG 수신됨. PONG 응답.")
+
+
+def test_handle_websocket_message_parse_h0ifasp0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0IFASP0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_futs_optn_quote"
+    assert args["tr_id"] == "H0IFASP0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0ioasp0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0IOASP0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_futs_optn_quote"
+    assert args["tr_id"] == "H0IOASP0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0ifcnt0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0IFCNT0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_futs_optn_contract"
+    assert args["tr_id"] == "H0IFCNT0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0iocnt0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0IOCNT0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_futs_optn_contract"
+    assert args["tr_id"] == "H0IOCNT0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0cfasp0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0CFASP0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_product_futs_quote"
+    assert args["tr_id"] == "H0CFASP0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0cfcnt0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0CFCNT0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_product_futs_contract"
+    assert args["tr_id"] == "H0CFCNT0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0zfasp0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0ZFASP0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_stock_futs_optn_quote"
+    assert args["tr_id"] == "H0ZFASP0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0zoasp0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0ZOASP0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_stock_futs_optn_quote"
+    assert args["tr_id"] == "H0ZOASP0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0zfcnt0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0ZFCNT0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_stock_futs_optn_contract"
+    assert args["tr_id"] == "H0ZFCNT0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0zocnt0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0ZOCNT0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_stock_futs_optn_contract"
+    assert args["tr_id"] == "H0ZOCNT0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0zfanc0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0ZFANC0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_stock_futs_optn_exp_contract"
+    assert args["tr_id"] == "H0ZFANC0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0zoanc0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0ZOANC0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_stock_futs_optn_exp_contract"
+    assert args["tr_id"] == "H0ZOANC0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0mfasp0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0MFASP0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_cmefuts_quote"
+    assert args["tr_id"] == "H0MFASP0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0mfcnt0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0MFCNT0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_cmefuts_contract"
+    assert args["tr_id"] == "H0MFCNT0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0euasp0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0EUASP0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_eurex_optn_quote"
+    assert args["tr_id"] == "H0EUASP0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0eucnt0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0EUCNT0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_eurex_optn_contract"
+    assert args["tr_id"] == "H0EUCNT0"
+    assert isinstance(args["data"], dict)
+
+
+def test_handle_websocket_message_parse_h0euanc0(websocket_api_instance):
+    api = websocket_api_instance
+    parts = ["SAMPLE"] + ["0"] * 50
+    message = f"0|H0EUANC0|some_key|{'^'.join(parts)}"
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+
+    api._handle_websocket_message(message)
+
+    callback.assert_called_once()
+    args = callback.call_args[0][0]
+    assert args["type"] == "realtime_eurex_optn_exp_contract"
+    assert args["tr_id"] == "H0EUANC0"
+    assert isinstance(args["data"], dict)
+
+def test_handle_websocket_message_signing_notice_success_h0stcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+    with patch.object(api, "_aes_cbc_base64_dec", return_value="decrypted_message"), \
+            patch.object(api, "_parse_signing_notice", return_value={"parsed": True}):
+        msg = f"1|H0STCNI0|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        callback.assert_called_once()
+        result = callback.call_args[0][0]
+        assert result["type"] == "signing_notice"
+        assert result["tr_id"] == "H0STCNI0"
+        assert result["data"] == {"parsed": True}
+
+def test_handle_websocket_message_signing_notice_key_missing_h0stcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = None
+    api._aes_iv = None
+    api.logger = MagicMock()
+    msg = f"1|H0STCNI0|some_key|ENC_DATA"
+    api._handle_websocket_message(msg)
+    api.logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_decrypt_fail_h0stcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    api.logger = MagicMock()
+    with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
+        msg = f"1|H0STCNI0|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        api.logger.error.assert_called_once()
+        assert "복호화 실패" in api.logger.error.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_success_h0stcni9(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+    with patch.object(api, "_aes_cbc_base64_dec", return_value="decrypted_message"), \
+            patch.object(api, "_parse_signing_notice", return_value={"parsed": True}):
+        msg = f"1|H0STCNI9|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        callback.assert_called_once()
+        result = callback.call_args[0][0]
+        assert result["type"] == "signing_notice"
+        assert result["tr_id"] == "H0STCNI9"
+        assert result["data"] == {"parsed": True}
+
+def test_handle_websocket_message_signing_notice_key_missing_h0stcni9(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = None
+    api._aes_iv = None
+    api.logger = MagicMock()
+    msg = f"1|H0STCNI9|some_key|ENC_DATA"
+    api._handle_websocket_message(msg)
+    api.logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_decrypt_fail_h0stcni9(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    api.logger = MagicMock()
+    with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
+        msg = f"1|H0STCNI9|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        api.logger.error.assert_called_once()
+        assert "복호화 실패" in api.logger.error.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_success_h0ifcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+    with patch.object(api, "_aes_cbc_base64_dec", return_value="decrypted_message"), \
+            patch.object(api, "_parse_signing_notice", return_value={"parsed": True}):
+        msg = f"1|H0IFCNI0|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        callback.assert_called_once()
+        result = callback.call_args[0][0]
+        assert result["type"] == "signing_notice"
+        assert result["tr_id"] == "H0IFCNI0"
+        assert result["data"] == {"parsed": True}
+
+def test_handle_websocket_message_signing_notice_key_missing_h0ifcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = None
+    api._aes_iv = None
+    api.logger = MagicMock()
+    msg = f"1|H0IFCNI0|some_key|ENC_DATA"
+    api._handle_websocket_message(msg)
+    api.logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_decrypt_fail_h0ifcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    api.logger = MagicMock()
+    with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
+        msg = f"1|H0IFCNI0|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        api.logger.error.assert_called_once()
+        assert "복호화 실패" in api.logger.error.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_success_h0mfcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+    with patch.object(api, "_aes_cbc_base64_dec", return_value="decrypted_message"), \
+            patch.object(api, "_parse_signing_notice", return_value={"parsed": True}):
+        msg = f"1|H0MFCNI0|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        callback.assert_called_once()
+        result = callback.call_args[0][0]
+        assert result["type"] == "signing_notice"
+        assert result["tr_id"] == "H0MFCNI0"
+        assert result["data"] == {"parsed": True}
+
+def test_handle_websocket_message_signing_notice_key_missing_h0mfcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = None
+    api._aes_iv = None
+    api.logger = MagicMock()
+    msg = f"1|H0MFCNI0|some_key|ENC_DATA"
+    api._handle_websocket_message(msg)
+    api.logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_decrypt_fail_h0mfcni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    api.logger = MagicMock()
+    with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
+        msg = f"1|H0MFCNI0|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        api.logger.error.assert_called_once()
+        assert "복호화 실패" in api.logger.error.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_success_h0eucni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    callback = MagicMock()
+    api.on_realtime_message_callback = callback
+    with patch.object(api, "_aes_cbc_base64_dec", return_value="decrypted_message"), \
+            patch.object(api, "_parse_signing_notice", return_value={"parsed": True}):
+        msg = f"1|H0EUCNI0|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        callback.assert_called_once()
+        result = callback.call_args[0][0]
+        assert result["type"] == "signing_notice"
+        assert result["tr_id"] == "H0EUCNI0"
+        assert result["data"] == {"parsed": True}
+
+def test_handle_websocket_message_signing_notice_key_missing_h0eucni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = None
+    api._aes_iv = None
+    api.logger = MagicMock()
+    msg = f"1|H0EUCNI0|some_key|ENC_DATA"
+    api._handle_websocket_message(msg)
+    api.logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+
+def test_handle_websocket_message_signing_notice_decrypt_fail_h0eucni0(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    api.logger = MagicMock()
+    with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
+        msg = f"1|H0EUCNI0|some_key|ENC_DATA"
+        api._handle_websocket_message(msg)
+        api.logger.error.assert_called_once()
+        assert "복호화 실패" in api.logger.error.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_get_approval_key_missing_key_field(websocket_api_instance):
+    api = websocket_api_instance
+    patch_target = f"{KoreaInvestWebSocketAPI.__module__}.requests.post"
+
+    with patch(patch_target) as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {"not_approval_key": "123"}  # ✅ approval_key 없음
+
+        result = await api._get_approval_key()
+        assert result is None
+        api.logger.error.assert_called_once()
+        assert "웹소켓 접속키 발급 실패" in api.logger.error.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_get_approval_key_empty_auth_data(websocket_api_instance):
+    api = websocket_api_instance
+    patch_target = f"{KoreaInvestWebSocketAPI.__module__}.requests.post"
+
+    with patch(patch_target) as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {}  # 빈 JSON 응답
+
+        result = await api._get_approval_key()
+        assert result is None
+        api.logger.error.assert_called_once()
+        assert "웹소켓 접속키 발급 실패" in api.logger.error.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_connect_already_connected(websocket_api_instance):
+    api = websocket_api_instance
+    api.ws = AsyncMock()
+    api._is_connected = True
+    api.logger = MagicMock()
+
+    result = await api.connect()
+
+    assert result is True
+    api.logger.info.assert_called_once_with("웹소켓이 이미 연결되어 있습니다.")
+
+@pytest.mark.asyncio
+async def test_connect_exception_during_connection(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = False
+    api.ws = None
+    api.approval_key = "mock_approval_key"
+    api.logger = MagicMock()
+
+    patch_target = f"{KoreaInvestWebSocketAPI.__module__}.websockets.connect"
+
+    with patch(patch_target, side_effect=Exception("Connection failed")):
+        result = await api.connect()
+
+        assert result is False
+        assert api._is_connected is False
+        assert api.ws is None
+        api.logger.error.assert_called_once()
+        assert "웹소켓 연결 중 오류 발생" in api.logger.error.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_send_realtime_request_success(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.approval_key = "dummy_approval_key"
+    api._config["custtype"] = "P"  # 필수 설정
+
+    result = await api.send_realtime_request("H0STCNT0", "005930", tr_type="1")
+
+    assert result is True
+    api.ws.send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_receive_task_exception_logging(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.ws.close = AsyncMock()
+    api.logger = MagicMock()
+
+    # 예외 발생하는 receive_task 생성
+    class DummyTask:
+        def cancel(self):
+            pass
+        def __await__(self):  # 비동기 아님, generator 반환
+            def generator():
+                raise Exception("예외 발생 during await")
+                yield  # 실제로는 실행되지 않지만 필요
+            return generator()
+
+    api._receive_task = DummyTask()
+
+    await api.disconnect()
+
+    # 예외 로그 검증
+    api.logger.error.assert_called_once()
+    assert "웹소켓 수신 태스크 종료 중 오류" in api.logger.error.call_args[0][0]
+
+def test_handle_websocket_message_already_in_subscribe_warning(websocket_api_instance):
+    api = websocket_api_instance
+    api.logger = MagicMock()
+
+    message = json.dumps({
+        "header": {"tr_id": "H0STCNT0", "tr_key": "test_key"},
+        "body": {
+            "rt_cd": "1",
+            "msg1": "ALREADY IN SUBSCRIBE"
+        }
+    })
+
+    api._handle_websocket_message(message)
+
+    api.logger.warning.assert_called_once_with("이미 구독 중인 종목입니다.")
+    api.logger.error.assert_called_once()
+    assert "실시간 요청 응답 오류" in api.logger.error.call_args[0][0]
+
+
+def test_handle_websocket_message_exception_during_processing(websocket_api_instance):
+    api = websocket_api_instance
+    api.logger = MagicMock()
+
+    # json.loads는 성공하되, 내부 로직에서 의도적으로 예외 발생하도록 조작
+    with patch.object(api, "_handle_websocket_message", side_effect=Exception("의도된 오류")):
+        try:
+            api._handle_websocket_message('{"header": {"tr_id": "X"}}')  # 의도된 예외
+        except Exception:
+            pass  # 테스트 목적상 예외 무시
+
+    # 위 patch는 전체 함수 대체라 정상 검증이 어려움 → 예외 유발하는 메시지로 재작성
+    broken_message = '{"header": "not_a_dict"}'  # header.get이 불가능한 구조
+
+    api._handle_websocket_message(broken_message)
+
+    api.logger.error.assert_called()
+    last_call = api.logger.error.call_args[0][0]
+    assert "제어 메시지 처리 중 오류 발생" in last_call
+    assert "header" in last_call
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_while_loop_enters_once(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = True
+    api.ws = AsyncMock()
+
+    # 첫 호출 시 _is_connected를 False로 바꿔 루프 1회만 실행되도록
+    def side_effect_recv():
+        api._is_connected = False
+        return "0|H0STCNT0|000660|some_data"
+
+    api.ws.recv.side_effect = side_effect_recv
+    api._handle_websocket_message = MagicMock()
+
+    await api._receive_messages()
+
+    # 루프가 한 번 실행되어 handle_websocket_message가 호출되었는지 검증
+    api._handle_websocket_message.assert_called_once_with("0|H0STCNT0|000660|some_data")
+
+
+@pytest.mark.parametrize("tr_id", [
+    "H0STCNI0", "H0STCNI9", "H0IFCNI0", "H0MFCNI0", "H0EUCNI0"
+])
+def test_handle_websocket_message_signing_notice_tr_ids(websocket_api_instance, tr_id):
+    api = websocket_api_instance
+    api._aes_key = "x" * 32
+    api._aes_iv = "y" * 16
+    api._aes_cbc_base64_dec = MagicMock(return_value="decrypted")
+    api._parse_signing_notice = MagicMock(return_value={"ok": True})
+    api.logger = MagicMock()
+    api.on_realtime_message_callback = MagicMock()
+
+    message = f"1|{tr_id}|dummy|encrypted_payload"
+    api._handle_websocket_message(message)
+
+    api._aes_cbc_base64_dec.assert_called_once_with(api._aes_key, api._aes_iv, "encrypted_payload")
+    api._parse_signing_notice.assert_called_once_with("decrypted", tr_id)
+    api.on_realtime_message_callback.assert_called_once()
+
+
+@pytest.mark.parametrize("tr_id", [
+    "H0STCNI0",
+    "H0STCNI9",
+    "H0IFCNI0",
+    "H0MFCNI0",
+    "H0EUCNI0",
+])
+def test_handle_websocket_message_receives_aes_key_iv_success(websocket_api_instance, tr_id):
+    api = websocket_api_instance
+    api.logger = MagicMock()
+
+    key_val = "mock_aes_key"
+    iv_val = "mock_aes_iv"
+
+    message = json.dumps({
+        "header": {"tr_id": tr_id, "tr_key": "some_key"},
+        "body": {
+            "rt_cd": "0",
+            "msg1": "성공",
+            "output": {
+                "key": key_val,
+                "iv": iv_val
+            }
+        }
+    })
+
+    api._handle_websocket_message(message)
+
+    assert api._aes_key == key_val
+    assert api._aes_iv == iv_val
+    api.logger.info.assert_any_call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
+
+def test_handle_websocket_message_signing_notice_else_branch(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "x" * 32
+    api._aes_iv = "y" * 16
+    api._aes_cbc_base64_dec = MagicMock(return_value=None)  # 복호화 실패 유도
+    api._parse_signing_notice = MagicMock()
+    api.logger = MagicMock()
+
+    # ✅ 유효한 TR_ID지만 복호화 실패 → else 블록 진입 유도
+    message = "1|H0STCNI0|dummy|encrypted_payload"
+    api._handle_websocket_message(message)
+
+    api.logger.error.assert_called_once_with(
+        "체결통보 복호화 실패: H0STCNI0, 데이터: encrypted_payload..."
+    )
+
+def test_handle_websocket_message_missing_aes_key_iv(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = None  # or intentionally unset
+    api._aes_iv = None
+    api.logger = MagicMock()
+
+    message = "1|H0MFCNI0|dummy|encrypted_payload"
+    api._handle_websocket_message(message)
+
+    api.logger.warning.assert_called_once()
+
+def test_handle_websocket_message_signing_notice_missing_aes_key_iv(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = None  # AES key 없음
+    api._aes_iv = None   # AES IV 없음
+    api.logger = MagicMock()
+    api._aes_cbc_base64_dec = MagicMock()
+    api._parse_signing_notice = MagicMock()
+
+    # 실시간 체결 통보 메시지 중 하나 사용
+    message = "1|H0STCNI0|dummy|encrypted_payload"
+
+    api._handle_websocket_message(message)
+
+    # 복호화 시도조차 하지 않음
+    api._aes_cbc_base64_dec.assert_not_called()
+    api._parse_signing_notice.assert_not_called()
+
+    # warning 로그가 출력됐는지 확인 (이 부분이 핵심)
+    api.logger.warning.assert_called_once()
+
+def test_handle_websocket_message_signing_notice_decryption_failed(websocket_api_instance):
+    api = websocket_api_instance
+    api._aes_key = "k" * 32
+    api._aes_iv = "i" * 16
+    api._aes_cbc_base64_dec = MagicMock(return_value=None)  # 복호화 실패
+    api._parse_signing_notice = MagicMock()
+    api.logger = MagicMock()
+
+    message = "1|H0STCNI0|dummy|encrypted_payload"
+    api._handle_websocket_message(message)
+
+    # assert 복호화는 시도됨
+    api._aes_cbc_base64_dec.assert_called_once_with(api._aes_key, api._aes_iv, "encrypted_payload")
+
+    # ✅ 복호화 실패 로그 확인
+    api.logger.error.assert_called()
+    args, _ = api.logger.error.call_args
+    assert "체결통보 복호화 실패" in args[0]
+    assert "H0STCNI0" in args[0]
+
+def test_handle_websocket_message_aes_key_missing_output(websocket_api_instance):
+    api = websocket_api_instance
+    api.logger = MagicMock()
+
+    message = json.dumps({
+        "header": {"tr_id": "H0STCNI0", "tr_key": "some_key"},
+        "body": {
+            "rt_cd": "0",
+            "msg1": "성공"
+            # 'output' 키 없음 → False 흐름 유도
+        }
+    })
+
+    api._handle_websocket_message(message)
+
+    assert api._aes_key is None
+    assert api._aes_iv is None
+    api.logger.info.assert_called_with("실시간 요청 응답 성공: TR_KEY=some_key, MSG=성공")

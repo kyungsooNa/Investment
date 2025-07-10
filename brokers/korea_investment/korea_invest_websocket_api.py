@@ -129,6 +129,9 @@ class KoreaInvestWebSocketAPI:
             tr_id = recvstr[1]  # 두 번째 요소가 TR_ID
             data_body = recvstr[3]  # 네 번째 요소가 실제 데이터 본문
 
+            print("📩 받은 TR_ID:", tr_id)
+            print("🔍 비교 대상:", self._config['tr_ids']['websocket']['realtime_price'])
+
             parsed_data = {}
             message_type = 'unknown'
 
@@ -468,7 +471,7 @@ class KoreaInvestWebSocketAPI:
                 except asyncio.CancelledError:
                     self.logger.info("웹소켓 수신 태스크 취소됨.")
                 except Exception as e:
-                    self.logger.error(f"웹so켓 수신 태스크 종료 중 오류: {e}")
+                    self.logger.error(f"웹소켓 수신 태스크 종료 중 오류: {e}")
             self.logger.info("웹소켓 연결 종료 완료.")
             self._is_connected = False
             self.ws = None
