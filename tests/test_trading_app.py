@@ -2261,3 +2261,69 @@ class TestTradingApp(unittest.IsolatedAsyncioTestCase):
 
         mock_cli.display_strategy_running_message.assert_called_once()
         mock_cli.display_gapup_pullback_selected_stocks.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("trading_app.load_config", return_value={
+    "url": "https://api.test.com",
+    "websocket_url": "wss://ws.test.com",
+    "tr_ids": {},
+    "token_file_path": "dummy.json"
+})
+async def test_execute_action_14_top_codes_fail(mock_config):
+    app = TradingApp("dummy", "dummy")
+    app.logger = MagicMock()
+    app.cli_view = MagicMock()
+    app.trading_service = MagicMock()
+    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={"rt_cd": "1", "msg1": "API 오류"})
+
+    result = await app._execute_action('14')
+
+    app.cli_view.display_top_stocks_failure.assert_called_with("API 오류")
+    app.logger.warning.assert_called_with("상위 종목 조회 실패: {'rt_cd': '1', 'msg1': 'API 오류'}")
+    assert result is True
+
+@pytest.mark.asyncio
+@patch("trading_app.load_config", return_value={
+    "url": "https://api.test.com",
+    "websocket_url": "wss://ws.test.com",
+    "tr_ids": {},
+    "token_file_path": "dummy.json"
+})
+async def test_execute_action_14_no_upper_limit_stocks(mock_config):
+    app = TradingApp("dummy", "dummy")
+    app.logger = MagicMock()
+    app.cli_view = MagicMock()
+    app.trading_service = MagicMock()
+
+    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
+        "rt_cd": "0",
+        "output": [{"mksc_shrn_iscd": "005930"}]
+    })
+    app.trading_service.get_yesterday_upper_limit_stocks = AsyncMock(return_value=[])
+
+    result = await app._execute_action('14')
+
+    app.cli_view.display_no_stocks_for_strategy.assert_called_once()
+    assert result is True
+
+# 3. 예외 발생 흐름 (462 라인)
+@pytest.mark.asyncio
+@patch("trading_app.load_config", return_value={
+    "url": "https://api.test.com",
+    "websocket_url": "wss://ws.test.com",
+    "tr_ids": {},
+    "token_file_path": "dummy.json"
+})
+async def test_execute_action_14_raises_exception(mock_config):
+    app = TradingApp("dummy", "dummy")
+    app.logger = MagicMock()
+    app.cli_view = MagicMock()
+    app.trading_service = MagicMock()
+    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(side_effect=Exception("강제 오류"))
+
+    result = await app._execute_action('14')
+
+    app.logger.error.assert_called()
+    app.cli_view.display_strategy_error.assert_called_with("전일 상한가 종목 조회 실패: 강제 오류")
+    assert result is True
