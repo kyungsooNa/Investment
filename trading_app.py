@@ -438,7 +438,7 @@ class TradingApp:
             self.cli_view.display_strategy_running_message("전일 상한가 종목 조회")
 
             try:
-                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000")
+                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000") # @TODO 전체 종목에서 찾아야함.
 
                 if not isinstance(top_codes, dict) or top_codes.get('rt_cd') != '0':
                     self.cli_view.display_top_stocks_failure(top_codes.get('msg1', '조회 실패'))

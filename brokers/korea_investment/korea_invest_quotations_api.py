@@ -1,5 +1,5 @@
 # brokers/korea_investment/korea_invest_quotations_api.py
-
+from typing import Dict, Any
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
 
@@ -95,7 +95,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self.logger.warning(f"{stock_code} 시가총액 정보 없음 또는 형식 오류")
             return 0
 
-    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> list[dict]:
+    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> Dict[str, Any]:
         """
         시가총액 상위 종목 목록을 반환합니다. 최대 30개까지만 지원됩니다.
 
@@ -104,7 +104,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         if count <= 0:
             self.logger.warning(f"요청된 count가 0 이하입니다. count={count}")
-            return []
+            return {
+                "rt_cd": "1",
+                "msg1": f"요청된 count가 0 이하입니다. count={count}",
+                "output": []
+            }
 
         if count > 30:
             self.logger.warning(f"요청 수 {count}는 최대 허용값 30을 초과하므로 30개로 제한됩니다.")
@@ -131,7 +135,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         if not response or response.get("rt_cd") != "0" or not response.get("output"):
             self.logger.warning("시가총액 응답 오류 또는 비어 있음")
-            return []
+            return {
+                "rt_cd": response.get("rt_cd", "1") if isinstance(response, dict) else "1",
+                "msg1": response.get("msg1", "시가총액 조회 실패") if isinstance(response, dict) else "API 호출 실패",
+                "output": []
+            }
 
         batch = response["output"][:count]
         self.logger.info(f"API로부터 수신한 종목 수: {len(batch)}")
@@ -151,7 +159,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 "market_cap": market_cap
             })
 
-        return results
+        return {
+            "rt_cd": "0",
+            "output": results
+        }
 
     def get_previous_day_info(self, code: str) -> dict:
         """

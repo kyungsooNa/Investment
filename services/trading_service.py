@@ -170,7 +170,8 @@ class TradingService:
             return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}
 
         return await self._api_client.quotations.get_top_market_cap_stocks_code(market_code, count)
-
+    
+    # @TODO 다시 검증 필요
     async def get_top_10_market_cap_stocks_with_prices(self):
         """
         시가총액 1~10위 종목의 현재가를 조회합니다.
@@ -229,3 +230,29 @@ class TradingService:
         else:
             self.logger.warning("시가총액 1~10위 종목 현재가 조회 결과 없음.")
             return None
+
+    # @TODO TC 추가 필요
+    async def get_yesterday_upper_limit_stocks(self, stock_codes: list[str]) -> list[dict]:
+        results = []
+
+        for code in stock_codes:
+            try:
+                price_info = await self._api_client.quotations.get_price_summary(code)
+                if not price_info:
+                    continue
+
+                current_price = int(price_info.get("stck_prpr", "0"))
+                upper_limit_price = int(price_info.get("stck_uppr", "0"))
+                change_rate = float(price_info.get("rate", 0.0))
+
+                if current_price == upper_limit_price:
+                    results.append({
+                        "code": code,
+                        "price": current_price,
+                        "change_rate": change_rate
+                    })
+            except Exception as e:
+                self.logger.warning(f"{code} 상한가 필터링 중 오류: {e}")
+                continue
+
+        return results

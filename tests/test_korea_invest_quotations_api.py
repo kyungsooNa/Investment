@@ -115,21 +115,31 @@ async def test_get_top_market_cap_stocks_success(mock_quotations):
 
     result = await mock_quotations.get_top_market_cap_stocks_code("0000", count=1)
 
-    assert result == [{
-        "code": "005930",
-        "market_cap": 500000000000
-    }]
+    assert result == {
+        "rt_cd": "0",
+        "output": [
+            {
+                "code": "005930",
+                "market_cap": 500000000000
+            }
+        ]
+    }
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_failure(mock_quotations):
     mock_quotations.call_api = AsyncMock(return_value={
         "rt_cd": "1",  # 실패 코드
+        "msg1": "시가총액 조회 실패",
         "output": None
     })
 
     result = await mock_quotations.get_top_market_cap_stocks_code("0000", count=1)
-    assert result == []
 
+    assert result == {
+        "rt_cd": "1",
+        "msg1": "시가총액 조회 실패",
+        "output": []
+    }
 @pytest.mark.asyncio
 async def test_get_filtered_stocks_by_momentum(mock_quotations):
     # 시총 상위 mock 데이터
@@ -266,21 +276,23 @@ async def test_get_top_market_cap_stocks_success_revised(mock_quotations):
 
     result = await mock_quotations.get_top_market_cap_stocks_code("0000", count=2)
 
-    assert isinstance(result, list)
-    assert len(result) == 2
-    assert result[0]["code"] == "005930"
-    # assert result[0]["name"] == "삼성전자"
-    assert result[0]["market_cap"] == 500000000000
-    assert result[1]["code"] == "000660"
-    # assert result[1]["name"] == "SK하이닉스"
-    assert result[1]["market_cap"] == 120000000000
+    assert isinstance(result, dict)
+    assert result["rt_cd"] == "0"
+    assert isinstance(result["output"], list)
+    assert len(result["output"]) == 2
+
+    output = result["output"]
+    assert output[0]["code"] == "005930"
+    assert output[0]["market_cap"] == 500000000000
+    assert output[1]["code"] == "000660"
+    assert output[1]["market_cap"] == 120000000000
 
     mock_quotations.call_api.assert_called_once()
     args, kwargs = mock_quotations.call_api.call_args
     assert args[0] == "GET"
     assert args[1] == "/uapi/domestic-stock/v1/ranking/market-cap"
-    assert kwargs['params']['fid_input_iscd'] == "0000"
-    assert kwargs['retry_count'] == 1
+    assert kwargs["params"]["fid_input_iscd"] == "0000"
+    assert kwargs["retry_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -293,48 +305,60 @@ async def test_get_top_market_cap_stocks_failure_rt_cd_not_zero(mock_quotations)
 
     result = await mock_quotations.get_top_market_cap_stocks_code("0000", count=1)
 
-    assert result == []
+    assert result == {
+        "rt_cd": "1",
+        "msg1": "API 호출 실패",
+        "output": []
+    }
     mock_quotations.logger.warning.assert_called_once()  # 로깅 호출 여부 검사
 
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_count_validation(mock_quotations):
-    # call_api를 모킹 (이걸 안 하면 assert_not_called에서 AttributeError 발생함)
     mock_quotations.call_api = AsyncMock()
     mock_quotations.get_stock_name_by_code = AsyncMock()
+    mock_quotations.logger.warning = MagicMock()
 
     # 1. count가 0 이하인 경우
     result_zero = await mock_quotations.get_top_market_cap_stocks_code("0000", count=0)
-    assert result_zero == []
+    assert result_zero == {
+        "rt_cd": "1",
+        "msg1": "요청된 count가 0 이하입니다. count=0",
+        "output": []
+    }
     mock_quotations.call_api.assert_not_called()
     mock_quotations.logger.warning.assert_called_once()
 
     mock_quotations.logger.reset_mock()
     mock_quotations.call_api.reset_mock()
-    mock_quotations.get_stock_name_by_code.reset_mock()
 
     result_negative = await mock_quotations.get_top_market_cap_stocks_code("0000", count=-5)
-    assert result_negative == []
+    assert result_negative == {
+        "rt_cd": "1",
+        "msg1": "요청된 count가 0 이하입니다. count=-5",
+        "output": []
+    }
     mock_quotations.call_api.assert_not_called()
     mock_quotations.logger.warning.assert_called_once()
 
+    # 2. count가 30을 초과하는 경우
     mock_quotations.logger.reset_mock()
     mock_quotations.call_api.reset_mock()
-    # mock_quotations.get_stock_name_by_code.reset_mock()
 
-    # 2. count가 30을 초과하는 경우
     mock_api_response_large = {
         "rt_cd": "0",
         "output": [{"iscd": f"{i:06d}", "stck_avls": f"{1000000000 + i}"} for i in range(40)]
     }
     mock_quotations.call_api.return_value = mock_api_response_large
-    # mock_quotations.get_stock_name_by_code.side_effect = lambda code: f"종목_{code}"
 
     result_exceed_max = await mock_quotations.get_top_market_cap_stocks_code("0000", count=50)
-    assert len(result_exceed_max) == 30
+
+    assert isinstance(result_exceed_max, dict)
+    assert result_exceed_max["rt_cd"] == "0"
+    assert len(result_exceed_max["output"]) == 30
     mock_quotations.call_api.assert_called_once()
-    # assert mock_quotations.get_stock_name_by_code.call_count == 30
     mock_quotations.logger.warning.assert_called_once()
+
 
 
 @pytest.mark.asyncio
@@ -482,12 +506,13 @@ async def test_get_top_market_cap_stocks_item_missing_keys(mock_quotations):
     mock_quotations.get_stock_name_by_code = AsyncMock(side_effect=lambda code: f"이름_{code}")
 
     result = await mock_quotations.get_top_market_cap_stocks_code("0000", count=4)
+    output = result["output"]  # ✅ 리스트 추출
 
-    assert len(result) == 2  # '005930'은 정상, '000770'은 INVALID → 0 처리
-    assert result[0]["code"] == "005930"
-    assert result[0]["market_cap"] == 500000000000
-    assert result[1]["code"] == "000770"
-    assert result[1]["market_cap"] == 0
+    assert len(output) == 2  # '005930'은 정상, '000770'은 INVALID → 0 처리
+    assert output[0]["code"] == "005930"
+    assert output[0]["market_cap"] == 500000000000
+    assert output[1]["code"] == "000770"
+    assert output[1]["market_cap"] == 0
 
 
 
