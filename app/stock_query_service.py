@@ -2,7 +2,7 @@
 import asyncio
 
 
-class DataHandlers:
+class StockQueryService:
     """
     주식 현재가, 계좌 잔고, 시가총액 조회 등 데이터 조회 관련 핸들러를 관리하는 클래스입니다.
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
@@ -291,3 +291,44 @@ class DataHandlers:
             print(f"실패: 상한가 종목 조회 중 오류 발생. {e}\n")
             return None  # 예외 발생 시 None 반환
 
+    async def handle_yesterday_upper_limit_stocks(self, market_code="0000", limit: int = 300):
+        """
+        시가총액 상위 종목 중 전일 상한가에 도달했던 종목을 조회하여 출력합니다.
+        trading_service 내부의 get_top_market_cap_stocks_code 및 get_yesterday_upper_limit_stocks 사용.
+        """
+        print(f"\n--- 전일 상한가 종목 조회 (상위 {limit}개) ---")
+        self.logger.info(f"Service - 전일 상한가 종목 조회 요청 (시장 코드: {market_code}, 수량: {limit})")
+
+        try:
+            top_codes_response = await self.trading_service.get_top_market_cap_stocks_code(market_code)
+
+            if not isinstance(top_codes_response, dict) or top_codes_response.get('rt_cd') != '0':
+                msg = top_codes_response.get("msg1", "조회 실패") if isinstance(top_codes_response, dict) else "응답 오류"
+                print(f"전일 상한가 종목 조회 실패: {msg}")
+                self.logger.warning(f"상위 종목 조회 실패: {top_codes_response}")
+                return
+
+            top_stock_codes = [
+                item.get("mksc_shrn_iscd")
+                for item in top_codes_response.get("output", [])[:limit]
+                if "mksc_shrn_iscd" in item
+            ]
+
+            if not top_stock_codes:
+                print("전일 상한가 종목 조회 대상이 없습니다.")
+                self.logger.info("조회된 시가총액 종목 코드 없음.")
+                return
+
+            upper_limit_stocks = await self.trading_service.get_yesterday_upper_limit_stocks(top_stock_codes)
+
+            if not upper_limit_stocks:
+                print("현재 전일 상한가에 해당하는 종목이 없습니다.")
+                self.logger.info("전일 상한가 종목 없음.")
+            else:
+                print("\n--- 전일 상한가 종목 ---")
+                for stock in upper_limit_stocks:
+                    print(f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)")
+                self.logger.info(f"전일 상한가 종목 조회 성공. 총 {len(upper_limit_stocks)}개")
+        except Exception as e:
+            print(f"전일 상한가 종목 조회 중 오류 발생: {e}")
+            self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)

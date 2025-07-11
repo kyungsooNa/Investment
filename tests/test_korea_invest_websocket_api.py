@@ -12,9 +12,6 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from unittest import mock
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 
-from Crypto.Util.Padding import pad
-from Crypto.Cipher import AES
-from base64 import b64encode
 
 @pytest.mark.asyncio
 async def test_websocket_api_initialization():
@@ -1939,3 +1936,55 @@ def test_handle_websocket_message_aes_key_missing_output(websocket_api_instance)
     assert api._aes_key is None
     assert api._aes_iv is None
     api.logger.info.assert_called_with("실시간 요청 응답 성공: TR_KEY=some_key, MSG=성공")
+
+@pytest.mark.parametrize("tr_id", [
+    "H0STCNI0", "H0STCNI9", "H0IFCNI0", "H0MFCNI0", "H0EUCNI0"
+])
+def test_handle_websocket_message_signing_notice_tr_ids(websocket_api_instance, tr_id):
+    api = websocket_api_instance
+    api._aes_key = "x" * 32
+    api._aes_iv = "y" * 16
+    api._aes_cbc_base64_dec = MagicMock(return_value="decrypted")
+    api._parse_signing_notice = MagicMock(return_value={"ok": True})
+    # api.logger는 픽스처에서 주입된 MagicMock이므로 직접 변경하지 않습니다.
+    api.on_realtime_message_callback = MagicMock()
+
+    message = f"1|{tr_id}|dummy|encrypted_payload"
+    api._handle_websocket_message(message)
+
+    api._aes_cbc_base64_dec.assert_called_once_with(api._aes_key, api._aes_iv, "encrypted_payload")
+    api._parse_signing_notice.assert_called_once_with("decrypted", tr_id)
+    api.on_realtime_message_callback.assert_called_once()
+
+
+@pytest.mark.parametrize("tr_id", [
+    "H0STCNI0",
+    "H0STCNI9",
+    "H0IFCNI0",
+    "H0MFCNI0",
+    "H0EUCNI0",
+])
+def test_handle_websocket_message_receives_aes_key_iv_success(websocket_api_instance, tr_id):
+    api = websocket_api_instance
+    # api.logger는 픽스처에서 주입된 MagicMock이므로 직접 변경하지 않습니다.
+
+    key_val = "mock_aes_key"
+    iv_val = "mock_aes_iv"
+
+    message = json.dumps({
+        "header": {"tr_id": tr_id, "tr_key": "some_key"},
+        "body": {
+            "rt_cd": "0",
+            "msg1": "성공",
+            "output": {
+                "key": key_val,
+                "iv": iv_val
+            }
+        }
+    })
+
+    api._handle_websocket_message(message)
+
+    assert api._aes_key == key_val
+    assert api._aes_iv == iv_val
+    api.logger.info.assert_any_call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")

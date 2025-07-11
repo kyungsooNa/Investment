@@ -11,8 +11,8 @@ from core.time_manager import TimeManager
 from core.logger import Logger
 
 # 새로 분리된 핸들러 클래스 임포트
-from app.stock_query_service import DataHandlers
-from app.order_execution_service import TransactionHandlers
+from app.stock_query_service import StockQueryService
+from app.order_execution_service import OrderExecutionService
 from user_api.broker_api_wrapper import BrokerAPIWrapper
 
 # config_loader.py에 이미 정의되어 있을 수 있으나, 독립 실행을 위해 여기에 포함
@@ -44,7 +44,7 @@ class TradingApp:
         self.token_manager = None
         self.cli_view = None # CLIView는 여기서 초기화됩니다.
 
-        self.data_handlers = None
+        self.order_execution_service = None
         self.transaction_handlers = None
         self.backtest_data_provider = None
 
@@ -102,9 +102,9 @@ class TradingApp:
             self.api_client = KoreaInvestApiClient(self.env, token_manager=self.token_manager, logger=self.logger)
             self.trading_service = TradingService(self.api_client, self.env, self.logger, self.time_manager)
 
-            self.data_handlers = DataHandlers(self.trading_service, self.logger, self.time_manager)
+            self.order_execution_service = StockQueryService(self.trading_service, self.logger, self.time_manager)
             # TransactionHandlers 초기화 시 cli_view 인자 제거 (이제 TransactionHandlers는 직접 입력을 받지 않습니다)
-            self.transaction_handlers = TransactionHandlers(self.trading_service, self.logger, self.time_manager)
+            self.transaction_handlers = OrderExecutionService(self.trading_service, self.logger, self.time_manager)
             self.broker = BrokerAPIWrapper(env=self.env, token_manager=self.token_manager, logger=self.logger)
             self.backtest_data_provider = BacktestDataProvider(
                 broker=self.broker,
@@ -171,7 +171,7 @@ class TradingApp:
                 running_status = False
         elif choice == '1':
             stock_code = await self.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-            await self.data_handlers.handle_get_current_stock_price(stock_code)
+            await self.order_execution_service.handle_get_current_stock_price(stock_code)
         elif choice == '2':
             balance = await self.trading_service.get_account_balance()
             if balance:
@@ -192,28 +192,28 @@ class TradingApp:
             await self.transaction_handlers.handle_sell_stock(stock_code, qty_input, price_input)
         elif choice == '5':
             stock_code = await self.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-            await self.data_handlers.handle_display_stock_change_rate(stock_code)
+            await self.order_execution_service.handle_display_stock_change_rate(stock_code)
         elif choice == '6':
             stock_code = await self.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-            await self.data_handlers.handle_display_stock_vs_open_price(stock_code)
+            await self.order_execution_service.handle_display_stock_vs_open_price(stock_code)
         elif choice == '7':
             if self.env.is_paper_trading:
                 print("WARNING: 모의투자 환경에서는 시가총액 상위 종목 조회를 지원하지 않습니다.")
                 self.logger.warning("모의투자 환경에서 시가총액 상위 종목 조회 시도 (미지원).")
             else:
-                await self.data_handlers.handle_get_top_market_cap_stocks("0000")
+                await self.order_execution_service.handle_get_top_market_cap_stocks("0000")
         elif choice == '8':
             if self.env.is_paper_trading:
                 print("WARNING: 모의투자 환경에서는 시가총액 1~10위 종목 조회를 지원하지 않습니다.")
                 self.logger.warning("모의투자 환경에서 시가총액 1~10위 종목 조회 시도 (미지원).")
                 running_status = True
             else:
-                if await self.data_handlers.handle_get_top_10_market_cap_stocks_with_prices():
+                if await self.order_execution_service.handle_get_top_10_market_cap_stocks_with_prices():
                     running_status = True  # 조회 성공 시에도 계속 실행
                 else:
                     running_status = True  # 조회 실패 시에도 계속 실행
         elif choice == '9':
-            await self.data_handlers.handle_upper_limit_stocks("0000", limit=500)
+            await self.order_execution_service.handle_upper_limit_stocks("0000", limit=500)
         elif choice == '10':
             if not self.time_manager.is_market_open():
                 self.cli_view.display_warning_strategy_market_closed()

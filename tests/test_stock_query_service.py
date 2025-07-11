@@ -6,7 +6,7 @@ import builtins
 from unittest.mock import call, ANY
 
 # 테스트 대상 모듈 임포트
-from app.order_execution_service import TransactionHandlers
+from app.order_execution_service import OrderExecutionService
 
 # 테스트를 위한 MockLogger
 class MockLogger:
@@ -55,7 +55,7 @@ def print_output_capture():
 @pytest.fixture
 def handler(mock_trading_service, mock_logger, mock_time_manager):
     """TransactionHandlers 인스턴스를 제공하는 픽스처."""
-    handler_instance = TransactionHandlers(
+    handler_instance = OrderExecutionService(
         trading_service=mock_trading_service,
         logger=mock_logger,
         time_manager=mock_time_manager

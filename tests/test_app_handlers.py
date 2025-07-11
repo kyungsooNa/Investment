@@ -5,8 +5,8 @@ from io import StringIO
 import builtins
 
 # 테스트할 모듈 임포트
-from app.stock_query_service import DataHandlers
-from app.order_execution_service import TransactionHandlers
+from app.stock_query_service import StockQueryService
+from app.order_execution_service import OrderExecutionService
 from services.trading_service import TradingService
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
@@ -75,8 +75,8 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         )
 
         # DataHandlers와 TransactionHandlers 인스턴스 생성
-        self.data_handlers = DataHandlers(self.trading_service, self.mock_logger, self.mock_time_manager)
-        self.transaction_handlers = TransactionHandlers(self.trading_service, self.mock_logger, self.mock_time_manager)
+        self.data_handlers = StockQueryService(self.trading_service, self.mock_logger, self.mock_time_manager)
+        self.transaction_handlers = OrderExecutionService(self.trading_service, self.mock_logger, self.mock_time_manager)
 
         # print 함수 출력을 캡처 (콘솔 출력 검증용)
         self.original_print = builtins.print

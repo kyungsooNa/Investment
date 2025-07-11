@@ -6,7 +6,7 @@ import asyncio
 # import os
 
 
-class TransactionHandlers:
+class OrderExecutionService:
     """
     주식 매수/매도 주문 및 실시간 체결가/호가 구독 관련 핸들러를 관리하는 클래스입니다.
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.

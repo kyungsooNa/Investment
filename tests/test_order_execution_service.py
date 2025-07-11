@@ -2,7 +2,7 @@ import io
 import sys
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.stock_query_service import DataHandlers
+from app.stock_query_service import StockQueryService
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 
@@ -25,7 +25,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self._original_stdout = sys.stdout
         sys.stdout = self.print_output_capture
 
-        self.handler = DataHandlers(self.mock_trading_service, self.mock_logger, self.mock_time_manager)
+        self.handler = StockQueryService(self.mock_trading_service, self.mock_logger, self.mock_time_manager)
 
         self.mock_token_manager = MagicMock(spec=TokenManager)
 
