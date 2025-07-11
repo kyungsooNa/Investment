@@ -1,16 +1,14 @@
 # tests/test_korea_invest_api_base.py
-# test_korea_invest_api_base.py (수정된 setUp)
-import logging
 import unittest
-from unittest.mock import MagicMock, AsyncMock, patch
-import requests # requests.exceptions 사용을 위해 추가
-import asyncio
-import httpx
 import pytest
-
-# spec으로 사용할 실제 클래스를 import 해야 합니다.
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+import json
+from unittest.mock import MagicMock, AsyncMock, patch
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from brokers.korea_investment.korea_invest_token_manager import TokenManager
+import requests
+import logging
+import httpx # 에러 시뮬레이션을 위해 import
 
 class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -582,3 +580,285 @@ async def testcall_api_json_decode_error(monkeypatch):
 
     result = await dummy.call_api_wrapper('GET', '/json_error')
     assert result is None
+
+@pytest.mark.asyncio
+async def test_log_request_exception_cases(caplog):
+    mock_token_manager = MagicMock()
+    api = KoreaInvestApiBase("http://test", {}, {},mock_token_manager, logger=None)
+
+    class DummyResponse:
+        status_code = 500
+        text = "error"
+    http_error = requests.exceptions.HTTPError(response=DummyResponse())
+    connection_error = requests.exceptions.ConnectionError("conn")
+    timeout_error = requests.exceptions.Timeout("timeout")
+    request_exception = requests.exceptions.RequestException("req")
+    json_error = json.JSONDecodeError("msg", "doc", 0)
+    generic_exception = Exception("generic")
+
+    with caplog.at_level("ERROR"):
+        for exc in [http_error, connection_error, timeout_error, request_exception, json_error, generic_exception]:
+            api._log_request_exception(exc)
+
+    for expected in ["HTTP ", " ", "", " ", "JSON ", " "]:
+        assert any(expected in message for message in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
+    mock_token_manager = MagicMock()
+    api = KoreaInvestApiBase("http://test", {}, {}, mock_token_manager, logger=None)
+
+    # httpx.Response 스펙을 따르는 mock_response 생성
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 200
+    mock_response.text = '{"some": "data"}'  # 응답 텍스트 추가
+    mock_response.json.return_value = {"some": "data"}  # json() 메서드 모킹
+
+    # 변경: api._session 대신 api._async_session.post를 대상으로 모킹합니다.
+    # _async_session.post는 비동기 메서드이므로 AsyncMock으로 설정해야 합니다.
+    # AsyncMock의 return_value에 mock_response를 설정합니다.
+    monkeypatch.setattr(api._async_session, "post", AsyncMock(return_value=mock_response))
+
+    # _execute_request는 데이터를 'json' 파라미터로 httpx에 전달합니다.
+    result = await api._execute_request("POST", "http://test", params={}, data={"x": "y"})
+
+    assert result.status_code == 200
+
+    # 변경: 모킹된 post 메서드가 올바른 인자로 호출되었는지 확인합니다.
+    # httpx는 딕셔너리 데이터를 'json' 파라미터로 받습니다.
+    api._async_session.post.assert_called_once_with(
+        "http://test",
+        headers=api._headers,  # api 인스턴스의 헤더를 사용합니다.
+        json={"x": "y"}  # httpx는 dict 데이터를 'json' 파라미터로 받습니다.
+    )
+
+@pytest.mark.asyncio
+async def test_execute_request_invalid_method():
+    mock_token_manager = MagicMock()
+
+    api = KoreaInvestApiBase("http://test", {}, {},mock_token_manager, logger=None)
+    api._session = MagicMock()
+
+    with pytest.raises(ValueError):
+        await api._execute_request("PUT", "http://test", {}, {})
+
+class ExplodingString(str):
+    def encode(self, encoding='utf-8', errors='strict'):
+        raise UnicodeEncodeError(encoding, self, 0, 1, "intentional failure")
+
+class ExplodingHeader:
+    def __str__(self):
+        return ExplodingString("trigger")
+
+@pytest.mark.asyncio
+async def test_log_headers_unicode_error_with_custom_object(caplog):
+    # 테스트에 사용할 헤더
+    exploding_headers = {"bad": ExplodingHeader()}
+    mock_token_manager = MagicMock()
+    mock_config = MagicMock()
+
+    # --- 수정된 부분 ---
+    # headers 인자에 위에서 생성한 exploding_headers를 정확히 전달합니다.
+    # 불필요한 빈 딕셔너리 {}를 제거합니다.
+    api = KoreaInvestApiBase(
+        base_url="http://test",
+        headers=exploding_headers,
+        config=mock_config,  # 'config' 인자를 전달
+        token_manager=mock_token_manager,
+        logger=None
+    )
+    # --------------------
+
+    with caplog.at_level("DEBUG"):
+        api._log_headers()
+
+    # 이제 로그에 에러 메시지가 정상적으로 포함됩니다.
+    assert "*** UnicodeEncodeError ***" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_call_api_with_http_error_status(caplog):
+    # --- Arrange (준비) ---
+    # 1. HTTP 500 오류를 내는 가짜 응답 객체 생성
+    # _handle_response 내부 로직과 호환되도록 httpx.Response 스펙을 따릅니다.
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 500
+    mock_response.text = "Internal Server Error"
+    # _handle_response의 raise_for_status()가 호출될 때 실제 에러를 발생시키도록 설정
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        message="Server Error", request=MagicMock(), response=mock_response
+    )
+
+    # 2. 의존성 객체(config, token_manager)를 가짜로 생성
+    mock_config = MagicMock()
+    mock_token_manager = MagicMock(spec=TokenManager)
+
+    # 3. 테스트 대상 API 인스턴스 생성
+    api = KoreaInvestApiBase(
+        base_url="http://test",
+        headers={},
+        config=mock_config,
+        token_manager=mock_token_manager
+    )
+
+    # ▼▼▼ 핵심 수정 부분 ▼▼▼
+    # 실제 네트워크 호출을 하는 _execute_request를 패치하고,
+    # 미리 만들어둔 가짜 응답(mock_response)을 반환하도록 설정합니다.
+    with patch.object(api, '_execute_request', new_callable=AsyncMock, return_value=mock_response) as mock_execute_request:
+        # --- Act (실행) ---
+        # 이제 call_api는 실제 네트워크 통신 없이 즉시 mock_response를 받게 됩니다.
+        result = await api.call_api("GET", "/fail")
+
+        # --- Assert (검증) ---
+        # _execute_request가 1번 호출되었는지 확인
+        mock_execute_request.assert_awaited_once()
+
+        # _handle_response 로직에 의해 최종적으로 None이 반환되어야 함
+        assert result is None
+
+        # _handle_response가 남기는 로그가 정상적으로 찍혔는지 확인
+        assert "HTTP 오류 발생: 500 - Internal Server Error" in caplog.text
+
+        # 재시도 루프가 돌지 않았으므로 '모든 재시도 실패' 로그는 없어야 함
+        assert "모든 재시도 실패" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_call_api_with_invalid_json_type(caplog):
+    """응답이 dict가 아님"""
+    # caplog 설정: 테스트 대상 모듈의 로그를 캡처
+    caplog.set_level(logging.DEBUG, logger='brokers.korea_investment.korea_invest_api_base')
+
+    response_mock = MagicMock(spec=httpx.Response)  # httpx.Response 스펙을 따름
+    response_mock.status_code = 200
+
+    # 변경: response_mock.json()이 json.JSONDecodeError를 발생시키도록 side_effect 설정
+    # _handle_response 메서드는 이 예외를 (json.JSONDecodeError, ValueError)로 잡습니다.
+    response_mock.json.side_effect = json.JSONDecodeError("Invalid JSON", doc="not a dict", pos=0)
+
+    mock_token_manager = MagicMock()
+
+    api = KoreaInvestApiBase("http://test", {}, {}, mock_token_manager, logger=None)  # logger=None은 기본 로거 사용
+
+    # 변경: api._session.request 대신 api._async_session.get을 모킹
+    # _execute_request는 GET 메서드에 대해 awaitable을 반환하므로 AsyncMock 사용
+    api._async_session.get = AsyncMock(return_value=response_mock)
+
+    result = await api.call_api("GET", "/invalid")
+
+    assert result is None
+    # 변경: 예상되는 로그 메시지를 "응답 JSON 디코딩 실패"로 수정
+    assert any("응답 JSON 디코딩 실패" in r.message for r in caplog.records)
+
+    # 추가: 불필요한 다른 오류 로그가 없는지 확인
+    assert not any("HTTP 오류 발생" in r.message for r in caplog.records)
+    assert not any("토큰 만료 오류" in r.message for r in caplog.records)
+    assert not any("API 비즈니스 오류" in r.message for r in caplog.records)
+    assert not any("모든 재시도 실패" in r.message for r in caplog.records)
+    assert not any("예상치 못한 예외 발생" in r.message for r in caplog.records)  # 이 예외는 _handle_response에서 명시적으로 처리되므로 없어야 함
+
+@pytest.mark.asyncio
+async def test_call_api_no_env_instance(caplog):
+    """토큰 재발급에 필요한 config 정보가 없어 토큰 초기화가 불가능한 시나리오"""
+    logger_name = KoreaInvestApiBase.__module__
+
+    # caplog 설정 (테스트 대상 로거에서 모든 로그 레벨을 캡처)
+    caplog.set_level(logging.DEBUG, logger=logger_name)
+
+    # 로거 직접 설정 (테스트 환경에서 로깅을 보장)
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = True  # caplog가 로거의 메시지를 받을 수 있도록 전파 설정
+
+    mock_token_manager = MagicMock()
+
+    # 변경: KoreaInvestApiBase 생성 시 config 인자를 None으로 전달
+    # 이렇게 하면 _handle_response 내의 `if self._config is None:` 조건이 True가 됩니다.
+    api = KoreaInvestApiBase("http://test", {}, None, mock_token_manager, logger=None)
+
+    # api._env = None # 이 라인은 _handle_response 로직에 직접적인 영향 없음. (self._config를 검사)
+
+    response_mock = MagicMock(spec=httpx.Response)  # httpx.Response 스펙을 따름
+    response_mock.status_code = 200
+    response_mock.text = "expired"
+    response_mock.json.return_value = {"rt_cd": "1", "msg_cd": "EGW00123"}  # 토큰 만료 메시지
+    response_mock.raise_for_status.return_value = None  # raise_for_status는 예외를 발생시키지 않음
+
+    # 변경: api._session.request 대신 api._async_session.get을 모킹
+    api._async_session.get = AsyncMock(return_value=response_mock)
+
+    with caplog.at_level(logging.ERROR, logger=logger_name):  # ERROR 레벨 로그만 캡처하는 컨텍스트
+        result = await api.call_api("GET", "/no-env")
+
+    # 디버깅을 위해 캡처된 로그 출력
+    print("\n=== Captured Log ===")
+    for r in caplog.records:
+        print(f"[{r.levelname}] {r.name} - {r.message}")
+    print("=====================\n")
+
+    assert result is None
+    # 예상되는 로그 메시지 확인: "토큰 만료 오류" 및 "토큰 초기화 불가" 메시지 확인
+    assert any("토큰 만료 오류(EGW00123) 감지" in r.message for r in caplog.records)
+    assert any("KoreaInvestEnv(config) 인스턴스를 찾을 수 없어 토큰 초기화 불가" in r.message for r in caplog.records)
+
+    # _handle_response에서 config가 None이므로 invalidate_token이 호출되지 않아야 합니다.
+    mock_token_manager.invalidate_token.assert_not_called()
+
+    # 추가 단언: 다른 유형의 오류 로그는 없어야 합니다.
+    assert not any("HTTP 오류 발생" in r.message for r in caplog.records)
+    assert not any("JSON 디코딩 오류 발생" in r.message for r in caplog.records)
+    assert not any("API 비즈니스 오류" in r.message for r in caplog.records)
+    assert not any("모든 재시도 실패" in r.message for r in caplog.records)  # 최종 재시도 실패 로그도 없어야 함
+    assert not any("예상치 못한 예외 발생" in r.message for r in caplog.records)  # 예상치 못한 예외 로그도 없어야 함
+
+
+@pytest.mark.asyncio
+async def test_call_api_token_renew_failed(caplog):
+    caplog.set_level(logging.DEBUG)
+
+    mock_env = MagicMock()
+    config = {"_env_instance": mock_env}
+    mock_token_manager = MagicMock()
+
+    # 토큰 만료된 응답 모킹
+    token_expired_response_mock = MagicMock(spec=httpx.Response)
+    token_expired_response_mock.status_code = 200
+    token_expired_response_mock.text = '{"rt_cd":"1","msg_cd":"EGW00123"}'
+    token_expired_response_mock.json.return_value = {
+        "rt_cd": "1",
+        "msg_cd": "EGW00123"
+    }
+    token_expired_response_mock.raise_for_status.return_value = None
+
+    # AsyncMock으로 httpx.AsyncClient 모킹
+    mock_async_session = AsyncMock()
+    mock_async_session.get.side_effect = [token_expired_response_mock] * 3
+
+    # API 인스턴스 생성
+    api = KoreaInvestApiBase(
+        base_url="http://test",
+        headers={},
+        config=config,
+        token_manager=mock_token_manager,
+        logger=None
+    )
+    # 실제 _async_session을 모킹한 객체로 덮어쓰기
+    api._async_session = mock_async_session
+
+    # 테스트 실행
+    result = await api.call_api("GET", "/token-expired", retry_count=3, delay=0.01)
+
+    # 검증
+    assert result is None
+    assert mock_async_session.get.call_count == 3
+    assert mock_token_manager.invalidate_token.call_count == 3
+
+    assert any("토큰 만료 오류(EGW00123) 감지" in r.message for r in caplog.records)
+    assert any("모든 재시도 실패, API 호출 종료" in r.message for r in caplog.records)
+
+    error_logs = [r for r in caplog.records if r.levelno == logging.ERROR]
+    info_logs = [r for r in caplog.records if r.levelno == logging.INFO]
+
+    assert len(error_logs) == 4
+    assert len(info_logs) == 3
