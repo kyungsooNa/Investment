@@ -862,3 +862,28 @@ async def test_call_api_token_renew_failed(caplog):
 
     assert len(error_logs) == 4
     assert len(info_logs) == 3
+
+@pytest.mark.asyncio
+async def test_log_request_exception_httpx_request_error(caplog):
+    caplog.set_level(logging.ERROR)
+
+    mock_token_manager = MagicMock()
+    config = {"_env_instance": MagicMock()}
+
+    api = KoreaInvestApiBase(
+        base_url="http://test",
+        headers={},
+        config=config,
+        token_manager=mock_token_manager,
+        logger=None  # 실제 로거 사용
+    )
+
+    # httpx.RequestError 예외를 던지는 mock 세션 생성
+    mock_session = AsyncMock()
+    mock_session.get.side_effect = httpx.RequestError("연결 실패", request=MagicMock())
+    api._async_session = mock_session
+
+    result = await api.call_api("GET", "/error", retry_count=1, delay=0)
+
+    assert result is None
+    assert any("요청 예외 발생 (httpx): 연결 실패" in r.message for r in caplog.records)
