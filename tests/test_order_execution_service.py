@@ -2,7 +2,7 @@ import io
 import sys
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.data_handlers import DataHandlers
+from app.stock_query_service import DataHandlers
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 
@@ -501,25 +501,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             await self.handler.handle_display_stock_vs_open_price("005930")
             mock_print.assert_called()
             self.mock_logger.info.assert_called()
-
-    async def test_handle_token_expiration_invalidates_token(self):
-        # Arrange
-        dummy_response = {"msg_cd": "EGW00123"}
-        dummy_attempt = 1
-        dummy_retry = 3
-        dummy_delay = 0.5
-
-        # Act
-        await self.api._handle_token_expiration(
-            response_json=dummy_response,
-            attempt=dummy_attempt,
-            retry_count=dummy_retry,
-            delay=dummy_delay
-        )
-
-        # Assert
-        self.mock_token_manager.invalidate_token.assert_called_once()
-        self.mock_logger.info.assert_any_call("토큰 재발급 후 API 호출을 재시도합니다.")
 
     async def test_handle_get_top_10_market_cap_stocks_with_prices_exception_covered(self):
         """

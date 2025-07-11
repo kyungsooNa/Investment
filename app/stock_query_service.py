@@ -1,4 +1,4 @@
-# app/data_handlers.py
+# app/stock_query_service.py
 import asyncio
 
 

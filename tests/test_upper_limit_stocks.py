@@ -8,7 +8,7 @@ from io import StringIO
 import builtins
 
 # 테스트할 모듈 임포트
-from app.data_handlers import DataHandlers
+from app.stock_query_service import DataHandlers
 from services.trading_service import TradingService
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
@@ -197,7 +197,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
             {"rt_cd": "0", "output": {"prdy_vrss_sign": "1", "stck_prpr": "5000", "prdy_ctrt": "29.8"}},  # 상한가
         ])
 
-        from app.data_handlers import DataHandlers
+        from app.stock_query_service import DataHandlers
 
         data_handler = DataHandlers(
             trading_service=trading_service,

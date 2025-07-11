@@ -5,8 +5,8 @@ from io import StringIO
 import builtins
 
 # 테스트할 모듈 임포트
-from app.data_handlers import DataHandlers
-from app.transaction_handlers import TransactionHandlers
+from app.stock_query_service import DataHandlers
+from app.order_execution_service import TransactionHandlers
 from services.trading_service import TradingService
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount

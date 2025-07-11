@@ -6,7 +6,7 @@ import builtins
 from unittest.mock import call, ANY
 
 # 테스트 대상 모듈 임포트
-from app.transaction_handlers import TransactionHandlers
+from app.order_execution_service import TransactionHandlers
 
 # 테스트를 위한 MockLogger
 class MockLogger:

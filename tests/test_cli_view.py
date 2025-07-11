@@ -1,11 +1,9 @@
 import pytest
-import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
-from io import StringIO
 import builtins
 
 # 테스트 대상 모듈 임포트
-from app.cli_view import CLIView
+from view.cli_view import CLIView
 from core.logger import Logger
 from core.time_manager import TimeManager
 

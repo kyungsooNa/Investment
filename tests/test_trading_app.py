@@ -2240,3 +2240,24 @@ class TestTradingApp(unittest.IsolatedAsyncioTestCase):
         self.app._display_menu.assert_not_called()
         self.app.cli_view.get_user_input.assert_not_called()
         self.app._execute_action.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_execute_action_yesterday_upper_limit(self):
+        mock_service = AsyncMock()
+        mock_service.get_top_market_cap_stocks_code.return_value = {
+            "rt_cd": "0",
+            "output": [{"mksc_shrn_iscd": "005930"}]
+        }
+        mock_service.get_yesterday_upper_limit_stocks.return_value = [{"code": "005930", "name": "삼성전자"}]
+
+        mock_cli = MagicMock()
+        self.app.cli_view = mock_cli
+        self.app.trading_service = mock_service
+        self.app.logger = MagicMock()
+        self.app.env = MagicMock()
+        self.app.env.is_paper_trading = False
+
+        await self.app._execute_action("14")
+
+        mock_cli.display_strategy_running_message.assert_called_once()
+        mock_cli.display_gapup_pullback_selected_stocks.assert_called_once()

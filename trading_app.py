@@ -1,10 +1,7 @@
-import asyncio
 import json
-import os
-from datetime import datetime, timedelta
 
 from strategies.backtest_data_provider import BacktestDataProvider
-from app.cli_view import CLIView
+from view.cli_view import CLIView
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 from core.config_loader import load_config
@@ -12,11 +9,10 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from services.trading_service import TradingService
 from core.time_manager import TimeManager
 from core.logger import Logger
-import asyncio
 
 # 새로 분리된 핸들러 클래스 임포트
-from app.data_handlers import DataHandlers
-from app.transaction_handlers import TransactionHandlers
+from app.stock_query_service import DataHandlers
+from app.order_execution_service import TransactionHandlers
 from user_api.broker_api_wrapper import BrokerAPIWrapper
 
 # config_loader.py에 이미 정의되어 있을 수 있으나, 독립 실행을 위해 여기에 포함
@@ -438,6 +434,34 @@ class TradingApp:
         elif choice == '13':
             stock_code = await self.cli_view.get_user_input("구독할 종목 코드를 입력하세요: ")
             await self.transaction_handlers.handle_realtime_price_quote_stream(stock_code)
+        elif choice == '14':
+            self.cli_view.display_strategy_running_message("전일 상한가 종목 조회")
+
+            try:
+                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000")
+
+                if not isinstance(top_codes, dict) or top_codes.get('rt_cd') != '0':
+                    self.cli_view.display_top_stocks_failure(top_codes.get('msg1', '조회 실패'))
+                    self.logger.warning(f"상위 종목 조회 실패: {top_codes}")
+                    return running_status
+
+                top_stock_codes = [
+                    item["mksc_shrn_iscd"]
+                    for item in top_codes.get("output", [])[:300]
+                    if "mksc_shrn_iscd" in item
+                ]
+
+                upper_limit_stocks = await self.trading_service.get_yesterday_upper_limit_stocks(top_stock_codes)
+
+                if not upper_limit_stocks:
+                    self.cli_view.display_no_stocks_for_strategy()
+                else:
+                    self.cli_view.display_gapup_pullback_selected_stocks(upper_limit_stocks)
+
+            except Exception as e:
+                self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
+                self.cli_view.display_strategy_error(f"전일 상한가 종목 조회 실패: {e}")
+
         elif choice == '98':  # 14번 메뉴 추가: 토큰 무효화
             self.token_manager.invalidate_token()
             self.cli_view.display_token_invalidated_message()
