@@ -181,3 +181,57 @@ class TestGetTop10MarketCapStocksWithPrices:
         assert all("current_price" in r for r in result)
         self.service.get_current_stock_price.assert_awaited()
         assert self.service.get_current_stock_price.await_count == 10  # 11개 중 10개만 처리되어야 함
+
+class TestGetYesterdayUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.mock_broker_api_wrapper = AsyncMock()
+        self.mock_logger = MagicMock()
+        self.mock_evn = MagicMock()
+
+        self.trading_service = TradingService(
+            broker_api_wrapper=self.mock_broker_api_wrapper,
+            env=self.mock_evn,
+            logger=self.mock_logger,
+            time_manager=None
+        )
+
+    async def test_upper_limit_stock_detected(self):
+        # 현재가 = 상한가
+        self.mock_broker_api_wrapper.get_price_summary = AsyncMock(side_effect=[
+            {"stck_prpr": "30000", "stck_uppr": "30000", "rate": "29.9"},
+            {"stck_prpr": "15000", "stck_uppr": "20000", "rate": "10.0"}
+        ])
+
+        stock_codes = ["000660", "005930"]
+        result = await self.trading_service.get_yesterday_upper_limit_stocks(stock_codes)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["code"], "000660")
+        self.assertEqual(result[0]["price"], 30000)
+        self.assertAlmostEqual(result[0]["change_rate"], 29.9)
+
+    async def test_no_upper_limit_stocks(self):
+        self.mock_broker_api_wrapper.get_price_summary = AsyncMock(return_value={
+            "stck_prpr": "15000", "stck_uppr": "30000", "rate": "5.0"
+        })
+
+        stock_codes = ["035720"]
+        result = await self.trading_service.get_yesterday_upper_limit_stocks(stock_codes)
+        self.assertEqual(result, [])
+
+    async def test_missing_price_info_skipped(self):
+        self.mock_broker_api_wrapper.get_price_summary = AsyncMock(return_value=None)
+
+        stock_codes = ["068270"]
+        result = await self.trading_service.get_yesterday_upper_limit_stocks(stock_codes)
+        self.assertEqual(result, [])
+
+    async def test_exception_during_api_call(self):
+        self.mock_broker_api_wrapper.get_price_summary = AsyncMock(side_effect=Exception("API 오류"))
+
+        stock_codes = ["001234"]
+        result = await self.trading_service.get_yesterday_upper_limit_stocks(stock_codes)
+
+        self.assertEqual(result, [])
+        self.mock_logger.warning.assert_called_once()
+        self.assertIn("001234 상한가 필터링 중 오류", self.mock_logger.warning.call_args.args[0])
