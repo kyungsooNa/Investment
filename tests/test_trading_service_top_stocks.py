@@ -12,7 +12,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_time_manager = MagicMock()
 
         self.trading_service = TradingService(
-            broker_wrapper=self.mock_broker_api_wrapper,
+            broker_api_wrapper=self.mock_broker_api_wrapper,
             logger=self.mock_logger,
             env=self.mock_env,
             time_manager=self.mock_time_manager
