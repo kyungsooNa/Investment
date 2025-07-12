@@ -182,6 +182,30 @@ class TestGetTop10MarketCapStocksWithPrices:
         self.service.get_current_stock_price.assert_awaited()
         assert self.service.get_current_stock_price.await_count == 10  # 11개 중 10개만 처리되어야 함
 
+    @pytest.mark.asyncio
+    async def test_top10_result_none_logs_warning(self):
+
+        self.service._time_manager.is_market_open.return_value = True
+        self.service._env.is_paper_trading = False
+
+        # 정상 종목 1개지만 현재가 조회 실패
+        mock_top_stocks = [
+            {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "data_rank": "1"},
+        ]
+        self.service.get_top_market_cap_stocks_code = AsyncMock(
+            return_value={"rt_cd": "0", "output": mock_top_stocks}
+        )
+        self.service.get_current_stock_price = AsyncMock(
+            return_value={"rt_cd": "1", "msg1": "조회 실패"}  # 실패 응답
+        )
+
+        # Act
+        result = await self.service.get_top_10_market_cap_stocks_with_prices()
+
+        # Assert
+        assert result is None
+        self.service._logger.warning.assert_any_call("시가총액 1~10위 종목 현재가 조회 결과 없음.")
+
 class TestGetYesterdayUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.mock_broker_api_wrapper = AsyncMock()
