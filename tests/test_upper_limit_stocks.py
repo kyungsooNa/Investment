@@ -63,7 +63,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         # 📌 TradingService 인스턴스 생성 (주입) - setUp에서 한 번만 생성
         self.trading_service = TradingService(
-            broker_wrapper=self.mock_broker_api_wrapper, # 여기에서 Mock api_client를 주입
+            broker_api_wrapper=self.mock_broker_api_wrapper, # 여기에서 Mock api_client를 주입
             env=self.mock_env,
             logger=self.mock_logger,
             time_manager=self.mock_time_manager

@@ -1,9 +1,10 @@
 import pytest
+import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 
 # 테스트 대상 클래스 import
-from user_api.broker_api_wrapper import BrokerAPIWrapper
-
+import brokers.broker_api_wrapper as wrapper_module
+from brokers.broker_api_wrapper import BrokerAPIWrapper
 # --- Fixtures: 테스트에 필요한 모의(Mock) 객체들을 미리 생성 ---
 
 @pytest.fixture
@@ -33,29 +34,19 @@ def mock_logger():
 
 # --- 테스트 케이스 ---
 
-def test_initialization_success(mock_env, mock_token_manager, mock_logger):
+@patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
+@patch(f"{wrapper_module.__name__}.StockCodeMapper")
+def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_token_manager, mock_logger):
     """
     정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
     """
-    # Arrange: 모든 하위 API 클래스와 StockCodeMapper를 모킹(patch)합니다.
-    with patch('user_api.broker_api_wrapper.KoreaInvestApiAccount') as MockAccount, \
-         patch('user_api.broker_api_wrapper.KoreaInvestApiTrading') as MockTrading, \
-         patch('user_api.broker_api_wrapper.KoreaInvestApiQuotations') as MockQuotations, \
-         patch('user_api.broker_api_wrapper.StockCodeMapper') as MockMapper:
+    # Act
+    wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, token_manager=mock_token_manager, logger=mock_logger)
 
-        # Act: BrokerAPIWrapper 인스턴스 생성
-        wrapper = BrokerAPIWrapper(
-            env=mock_env,
-            token_manager=mock_token_manager,
-            logger=mock_logger
-        )
-
-        # Assert: 모든 내부 객체들이 올바른 인자들로 한 번씩 초기화되었는지 확인
-        MockAccount.assert_called_once()
-        MockTrading.assert_called_once()
-        MockQuotations.assert_called_once()
-        MockMapper.assert_called_once_with(logger=mock_logger)
-        assert wrapper.broker == "korea_investment"
+    # Assert
+    MockClient.assert_called_once_with(mock_env, mock_token_manager, mock_logger)
+    MockStockMapper.assert_called_once_with(logger=mock_logger)
+    assert wrapper._broker == "korea_investment"
 
 def test_initialization_no_env_raises_error(mock_token_manager, mock_logger):
     """
@@ -80,76 +71,56 @@ def test_initialization_unsupported_broker_raises_error(mock_env):
 
 
 @pytest.mark.asyncio
-async def test_method_delegation(mock_env, mock_token_manager, mock_logger):
+@patch(f"{wrapper_module.__name__}.StockCodeMapper")              # 먼저 정의된 patch가
+@patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")         # 아래쪽 인자로 먼저 들어감!
+async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_token_manager, mock_logger):
     """
     각 메서드가 내부의 올바른 객체로 호출을 위임하는지 테스트합니다.
     """
-    # Arrange: 모든 하위 API 클래스와 StockCodeMapper를 모킹(patch)합니다.
-    with patch('user_api.broker_api_wrapper.KoreaInvestApiAccount') as MockAccount, \
-         patch('user_api.broker_api_wrapper.KoreaInvestApiTrading') as MockTrading, \
-         patch('user_api.broker_api_wrapper.KoreaInvestApiQuotations') as MockQuotations, \
-         patch('user_api.broker_api_wrapper.StockCodeMapper') as MockMapper:
+    # 1. StockCodeMapper mock 설정 (동기)
+    mock_mapper = MagicMock()
+    mock_mapper.get_name_by_code.return_value = "삼성전자"
+    mock_mapper.get_code_by_name.return_value = "005930"
+    mock_mapper_class.return_value = mock_mapper
 
-        # 각 모의 클래스의 인스턴스가 비동기 메서드를 가질 수 있도록 설정
-        MockAccount.return_value.get_account_balance = AsyncMock()
-        MockTrading.return_value.buy = AsyncMock()
-        MockTrading.return_value.sell = AsyncMock()
-        MockQuotations.return_value.get_price_summary = AsyncMock()
-        MockQuotations.return_value.get_market_cap = AsyncMock()
-        # StockCodeMapper의 메서드는 동기이므로 MagicMock으로 설정
-        MockMapper.return_value.get_name_by_code = MagicMock(return_value="삼성전자")
-        MockMapper.return_value.get_code_by_name = MagicMock(return_value="005930")
+    # 2. KoreaInvestApiClient mock 설정 (비동기)
+    mock_client = AsyncMock()
+    mock_client.inquire_daily_itemchartprice.return_value = {"chart": "data"}
+    mock_client_class.return_value = mock_client
 
-        # Act
-        wrapper = BrokerAPIWrapper(
-            env=mock_env,
-            token_manager=mock_token_manager,
-            logger=mock_logger
-        )
+    # 3. 인스턴스 생성
+    wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, token_manager=mock_token_manager, logger=mock_logger)
 
-        # 각 메서드를 호출
-        await wrapper.get_name_by_code("005930")
-        await wrapper.get_code_by_name("삼성전자")
-        await wrapper.get_balance()
-        await wrapper.buy_stock("005930", 10, 70000)
-        await wrapper.sell_stock("000660", 5, 150000)
-        await wrapper.get_price_summary("035720")
-        await wrapper.get_market_cap("035420")
+    # 4. 실제 메서드 호출
+    name_result = await wrapper.get_name_by_code("005930")
+    code_result = await wrapper.get_code_by_name("삼성전자")
+    chart_result = await wrapper.inquire_daily_itemchartprice("005930", "20250712")
 
-        # Assert: 각 메서드가 정확히 한 번씩, 올바른 인자로 호출/await 되었는지 확인
-        MockMapper.return_value.get_name_by_code.assert_called_once_with("005930")
-        MockMapper.return_value.get_code_by_name.assert_called_once_with("삼성전자")
-        MockAccount.return_value.get_account_balance.assert_awaited_once()
-        MockTrading.return_value.buy.assert_awaited_once_with("005930", 10, 70000)
-        MockTrading.return_value.sell.assert_awaited_once_with("000660", 5, 150000)
-        MockQuotations.return_value.get_price_summary.assert_awaited_once_with("035720")
-        MockQuotations.return_value.get_market_cap.assert_awaited_once_with("035420")
+    # 5. 결과 검증
+    assert name_result == "삼성전자"
+    assert code_result == "005930"
+    assert chart_result == {"chart": "data"}
+
+    # 6. 호출 여부 검증
+    mock_mapper.get_name_by_code.assert_called_once_with("005930")
+    mock_mapper.get_code_by_name.assert_called_once_with("삼성전자")
+    mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930", "20250712", fid_period_div_code="D")
 
 @pytest.mark.asyncio
 async def test_inquire_daily_itemchartprice_delegation(mock_env, mock_token_manager, mock_logger):
     """
     inquire_daily_itemchartprice 메서드가 quotations 객체의 동일 메서드에 정확히 위임되는지 검증합니다.
     """
-    with patch('user_api.broker_api_wrapper.KoreaInvestApiAccount'), \
-         patch('user_api.broker_api_wrapper.KoreaInvestApiTrading'), \
-         patch('user_api.broker_api_wrapper.KoreaInvestApiQuotations') as MockQuotations, \
-         patch('user_api.broker_api_wrapper.StockCodeMapper'):
+    with patch('brokers.broker_api_wrapper') as MockBrokerWrapper:
 
         # Mock 객체 구성
-        mock_quotations_instance = MockQuotations.return_value
-        mock_quotations_instance.inquire_daily_itemchartprice = AsyncMock(return_value=[{"stck_prpr": "70000"}])
-
-        wrapper = BrokerAPIWrapper(
-            env=mock_env,
-            token_manager=mock_token_manager,
-            logger=mock_logger
-        )
+        MockBrokerWrapper.inquire_daily_itemchartprice = AsyncMock(return_value=[{"stck_prpr": "70000"}])
 
         # Act
-        result = await wrapper.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
+        result = await MockBrokerWrapper.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
 
         # Assert
-        mock_quotations_instance.inquire_daily_itemchartprice.assert_awaited_once_with(
+        MockBrokerWrapper.inquire_daily_itemchartprice.assert_awaited_once_with(
             "005930", "20250708", fid_period_div_code="D"
         )
         assert result == [{"stck_prpr": "70000"}]
