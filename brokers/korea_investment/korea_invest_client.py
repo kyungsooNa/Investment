@@ -38,16 +38,36 @@ class KoreaInvestApiClient:
             "appsecret": self._config['api_secret_key']  # _config에서 api_secret_key 사용
         }
 
+        base_url = self._config['base_url']
+
         # 각 도메인별 API 클래스 인스턴스화
         # _config에서 바로 base_url을 가져와 전달
-        self.quotations = KoreaInvestApiQuotations(self._config['base_url'], common_headers_template, self._config,
+        self.quotations = KoreaInvestApiQuotations(base_url, common_headers_template, self._config,
                                                    self.token_manager,self.logger)
-        self.account = KoreaInvestApiAccount(self._config['base_url'], common_headers_template, self._config,
+        self.account = KoreaInvestApiAccount(base_url, common_headers_template, self._config,
                                              self.token_manager, self.logger)
-        self.trading = KoreaInvestApiTrading(self._config['base_url'], common_headers_template, self._config,
+        self.trading = KoreaInvestApiTrading(base_url, common_headers_template, self._config,
                                              self.token_manager, self.logger)
 
         self.websocketAPI = KoreaInvestWebSocketAPI(self._env, self.logger)
+
+    async def get_balance(self):
+        return await self.account.get_account_balance()
+
+    async def buy_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn):
+        return await self.trading.place_stock_order(stock_code, order_price, order_qty, "buy", order_dvsn)
+
+    async def sell_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn):
+        return await self.trading.place_stock_order(stock_code, order_price, order_qty, "sell", order_dvsn)
+
+    async def get_price_summary(self, code: str):
+        return await self.quotations.get_price_summary(code)
+
+    async def get_market_cap(self, code: str):
+        return await self.quotations.get_market_cap(code)
+
+    def inquire_daily_itemchartprice(self, stock_code: str, date: str, fid_period_div_code: str = 'D'):
+        self.quotations.inquire_daily_itemchartprice(stock_code, date, fid_period_div_code)
 
     def __str__(self):
         """객체를 문자열로 표현할 때 사용."""

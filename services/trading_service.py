@@ -3,6 +3,7 @@ from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from core.time_manager import TimeManager
 import logging
+from brokers.broker_api_wrapper import BrokerAPIWrapper
 
 
 class TradingService:
@@ -11,13 +12,11 @@ class TradingService:
     이 클래스의 메서드는 UI와 독립적으로 데이터를 조회하고 처리하며, 결과를 반환합니다.
     """
 
-    def __init__(self, api_client: KoreaInvestApiClient, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None):
-        self._api_client = api_client
-        self._env = env
+    def __init__(self, broker_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None):
+        self._broker_wrapper = broker_wrapper
+        self._env = env # env는 그대로 유지
         self.logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
-
-        self._realtime_data_handler_callback = None
 
     def _default_realtime_message_handler(self, data):
         """
@@ -237,7 +236,7 @@ class TradingService:
 
         for code in stock_codes:
             try:
-                price_info = await self._api_client.quotations.get_price_summary(code)
+                price_info = await self._broker_wrapper.get_price_summary(code)
                 if not price_info:
                     continue
 

@@ -13,7 +13,7 @@ from core.logger import Logger
 # 새로 분리된 핸들러 클래스 임포트
 from app.stock_query_service import StockQueryService
 from app.order_execution_service import OrderExecutionService
-from user_api.broker_api_wrapper import BrokerAPIWrapper
+from brokers.broker_api_wrapper import BrokerAPIWrapper
 
 # config_loader.py에 이미 정의되어 있을 수 있으나, 독립 실행을 위해 여기에 포함
 def load_config(file_path):
@@ -99,25 +99,31 @@ class TradingApp:
             if not access_token:
                 raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
-            self.api_client = KoreaInvestApiClient(self.env, token_manager=self.token_manager, logger=self.logger)
-            self.trading_service = TradingService(self.api_client, self.env, self.logger, self.time_manager)
+            # KoreaInvestApiClient는 이제 BrokerAPIWrapper 내부에서 관리됩니다.
+            # 이 인스턴스를 직접 TradingService에 넘기지 않습니다.
+            # self.api_client = KoreaInvestApiClient(self.env, token_manager=self.token_manager, logger=self.logger) # 이 줄은 삭제 또는 주석 처리
+
+            # BrokerAPIWrapper를 한 번만 생성합니다.
+            self.broker_wrapper = BrokerAPIWrapper(env=self.env, token_manager=self.token_manager, logger=self.logger)
+
+            # TradingService에 BrokerAPIWrapper를 전달하도록 수정
+            # TradingService의 __init__ 시그니처도 변경되어야 합니다 (broker_wrapper를 받도록)
+            self.trading_service = TradingService(self.broker_wrapper, self.env, self.logger, self.time_manager)
 
             self.order_execution_service = OrderExecutionService(self.trading_service, self.logger, self.time_manager)
-            # TransactionHandlers 초기화 시 cli_view 인자 제거 (이제 TransactionHandlers는 직접 입력을 받지 않습니다)
             self.stock_query_service = StockQueryService(self.trading_service, self.logger, self.time_manager)
-            self.broker = BrokerAPIWrapper(env=self.env, token_manager=self.token_manager, logger=self.logger)
+
+            # BacktestDataProvider에 BrokerAPIWrapper를 전달 (현재와 동일)
             self.backtest_data_provider = BacktestDataProvider(
-                broker=self.broker,
+                broker=self.broker_wrapper, # self.broker 대신 self.broker_wrapper 사용 (일관성을 위해)
                 time_manager=self.time_manager,
                 logger=self.logger
             )
 
-            self.logger.info(f"API 클라이언트 및 서비스 초기화 성공: {self.api_client}")
+            self.logger.info(f"API 클라이언트 및 서비스 초기화 성공.") # self.api_client 출력 대신 일반 메시지
             return True
-
         except Exception as e:
-            self.logger.critical(f"API 클라이언트 초기화 실패: {e}")
-            self.cli_view.display_app_start_error(f"API 클라이언트 초기화 중 오류 발생: {e}")
+            self.logger.error(f"API 클라이언트 초기화 실패: {e}")
             return False
 
     async def _select_environment(self):

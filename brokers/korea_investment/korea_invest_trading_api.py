@@ -59,14 +59,14 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
 
         full_config = self._config
 
-        if trade_type == "매수":
+        if trade_type == "buy":
             tr_id = full_config['tr_ids']['trading']['order_cash_buy_paper'] if full_config['is_paper_trading'] else \
             full_config['tr_ids']['trading']['order_cash_buy_real']
-        elif trade_type == "매도":
+        elif trade_type == "sell":
             tr_id = full_config['tr_ids']['trading']['order_cash_sell_paper'] if full_config['is_paper_trading'] else \
             full_config['tr_ids']['trading']['order_cash_sell_real']
         else:
-            self.logger.error("trade_type은 '매수' 또는 '매도'여야 합니다.")
+            self.logger.error("trade_type은 'buy' 또는 'sell'여야 합니다.")
             return None
 
         self._headers["tr_id"] = tr_id

@@ -1,8 +1,6 @@
 # user_api/broker_api_wrapper.py
 
-from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
-from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
-from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
+from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from market_data.stock_code_mapper import StockCodeMapper
 
 
@@ -15,28 +13,16 @@ class BrokerAPIWrapper:
         self.broker = broker
         self.logger = logger
         self.token_manager = token_manager
+        self.client = None
+        self.stock_mapper = StockCodeMapper(logger=logger)
 
         if broker == "korea_investment":
             if env is None:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
-            config = env.get_full_config()
-            base_url = config['base_url']
-            headers = {
-                "authorization": f"Bearer {config['access_token']}",
-                "appkey": config['api_key'],
-                "appsecret": config['api_secret_key'],
-                "tr_id": "",
-                "custtype": config['custtype']
-            }
-
-            self.account = KoreaInvestApiAccount(base_url, headers.copy(), config, token_manager, logger)
-            self.trading = KoreaInvestApiTrading(base_url, headers.copy(), config, token_manager, logger)
-            self.quotations = KoreaInvestApiQuotations(base_url, headers.copy(), config, token_manager, logger)
+            self.client = KoreaInvestApiClient(env, self.token_manager, logger)
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
-
-        self.stock_mapper = StockCodeMapper(logger=logger)
 
     async def get_name_by_code(self, code: str) -> str:
         return self.stock_mapper.get_name_by_code(code)
@@ -67,4 +53,4 @@ class BrokerAPIWrapper:
         :param fid_period_div_code: 기간 구분 코드 (D:일봉, M:분봉 등)
         """
         # fid_period_div_code 인자를 self.quotations.inquire_daily_itemchartprice로 전달
-        return await self.quotations.inquire_daily_itemchartprice(stock_code, date, fid_period_div_code=fid_period_div_code)
+        return await self.client.inquire_daily_itemchartprice(stock_code, date, fid_period_div_code=fid_period_div_code)
