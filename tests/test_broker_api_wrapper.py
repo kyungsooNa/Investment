@@ -174,6 +174,13 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     assert result == {"output": {"dnca_tot_amt": "1000000"}}
     mock_client.get_account_balance.assert_called_once()
 
+    # --- KoreaInvestApiClient / Account API delegation ---
+    # get_real_account_balance - calls self._client.get_real_account_balance
+    mock_client.get_real_account_balance = AsyncMock(return_value={"output": {"dnca_tot_amt": "5000000"}})
+    result = await wrapper.get_real_account_balance()
+    assert result == {"output": {"dnca_tot_amt": "5000000"}}
+    mock_client.get_real_account_balance.assert_called_once()
+
     # --- KoreaInvestApiClient / Trading API delegation ---
     # buy_stock (lines 107, 109) - calls self._client.place_stock_order
     result = await wrapper.buy_stock("005930", 10, 70000)

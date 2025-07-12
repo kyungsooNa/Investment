@@ -485,3 +485,14 @@ async def test_unsubscribe_realtime_quote_delegation(korea_invest_client_instanc
 
     mock_websocket_api.unsubscribe_realtime_quote.assert_awaited_once_with("005930")
     assert result is True
+
+@pytest.mark.asyncio
+async def test_get_current_price_delegation(korea_invest_client_instance):
+    """get_current_price 메서드가 _quotations.get_current_price를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_current_price.return_value = {"output": {"stck_prpr": "75000"}}
+
+    result = await client.get_current_price("005930")
+
+    mock_quotations.get_current_price.assert_awaited_once_with("005930")
+    assert result == {"output": {"stck_prpr": "75000"}}
