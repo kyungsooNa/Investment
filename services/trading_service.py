@@ -254,3 +254,35 @@ class TradingService:
                 continue
 
         return results
+
+    async def get_current_upper_limit_stocks(self, stock_codes: list[str]) -> list[dict]:
+        """
+        전체 종목 리스트 중 현재 상한가에 도달한 종목을 필터링합니다.
+        :param stock_codes: 전체 종목 코드 리스트
+        :return: 현재 상한가 종목 리스트 [{code, name, price, change_rate}]
+        """
+        results = []
+
+        for code in stock_codes:
+            try:
+                price_info = await self._api_client.quotations.get_price_summary(code)
+                if not price_info:
+                    continue
+
+                current_price = int(price_info.get("stck_prpr", "0"))
+                upper_limit_price = int(price_info.get("stck_uppr", "0"))
+                change_rate = float(price_info.get("rate", 0.0))
+                name = await self._api_client.quotations.get_stock_name_by_code(code)
+
+                if current_price == upper_limit_price:
+                    results.append({
+                        "code": code,
+                        "name": name,
+                        "price": current_price,
+                        "change_rate": change_rate
+                    })
+            except Exception as e:
+                self.logger.warning(f"{code} 현재 상한가 필터링 중 오류: {e}")
+                continue
+
+        return results

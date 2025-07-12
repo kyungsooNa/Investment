@@ -332,3 +332,36 @@ class StockQueryService:
         except Exception as e:
             print(f"전일 상한가 종목 조회 중 오류 발생: {e}")
             self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
+
+    async def handle_current_upper_limit_stocks(self, market_code="0000"):
+        """
+        전체 종목 중 현재 상한가에 도달한 종목을 조회하여 출력합니다.
+        trading_service 내부의 get_all_stocks_code 및 get_current_upper_limit_stocks 사용.
+        """
+        print("\n--- 현재 상한가 종목 조회 ---")
+        self.logger.info(f"Service - 현재 상한가 종목 조회 요청 (시장 코드: {market_code})")
+
+        try:
+            # 전체 종목 코드 조회
+            all_stock_codes = await self.trading_service.get_all_stocks_code(market_code)
+
+            if not all_stock_codes:
+                print("전체 종목 코드 조회 실패 또는 결과 없음.")
+                self.logger.warning("전체 종목 코드 없음.")
+                return
+
+            # 현재 상한가 종목 필터링
+            upper_limit_stocks = await self.trading_service.get_current_upper_limit_stocks(all_stock_codes)
+
+            if not upper_limit_stocks:
+                print("현재 상한가에 해당하는 종목이 없습니다.")
+                self.logger.info("현재 상한가 종목 없음.")
+            else:
+                print("\n--- 현재 상한가 종목 ---")
+                for stock in upper_limit_stocks:
+                    print(f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)")
+                self.logger.info(f"현재 상한가 종목 조회 성공. 총 {len(upper_limit_stocks)}개")
+
+        except Exception as e:
+            print(f"현재 상한가 종목 조회 중 오류 발생: {e}")
+            self.logger.error(f"현재 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
