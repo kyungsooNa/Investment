@@ -920,3 +920,49 @@ async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mocker):
     # 검증
     mock_logger.debug.assert_called_once_with("현재 _config['tr_ids'] 내용: {'daily_itemchartprice_minute': 'TRID-M'}")
     assert result == [{"dummy": "data"}]
+
+@pytest.mark.asyncio
+async def test_get_current_price_success(mock_quotations):
+    """
+    get_current_price가 정상적인 응답을 반환하는 경우를 테스트합니다.
+    """
+    # 1. Mock 응답 정의
+    expected_output = {
+        "rt_cd": "0",
+        "output": {
+            "stck_oprc": "80000",
+            "stck_prpr": "85000",
+            "askp1": "85100",
+            "bidp1": "84900"
+        }
+    }
+
+    # 2. call_api를 모킹하여 위의 응답을 리턴
+    mock_quotations.call_api = AsyncMock(return_value=expected_output)
+
+    # 3. 메서드 호출
+    result = await mock_quotations.get_current_price("005930")
+
+    # 4. 검증
+    assert result == expected_output
+    mock_quotations.call_api.assert_awaited_once_with(
+        "GET",
+        "/uapi/domestic-stock/v1/quotations/inquire-price",
+        params={
+            "fid_cond_mrkt_div_code": "J",
+            "fid_input_iscd": "005930"
+        },
+        retry_count=1  # ✅ 누락되었던 키워드 인자 추가
+    )
+
+@pytest.mark.asyncio
+async def test_get_current_price_api_failure(mock_quotations):
+    """
+    get_current_price가 API 오류로 인해 None을 반환하는 경우
+    """
+    # call_api가 실패 (None 또는 실패 응답)
+    mock_quotations.call_api = AsyncMock(return_value=None)
+
+    result = await mock_quotations.get_current_price("005930")
+    assert result is None
+    mock_quotations.logger.warning.assert_called_once()
