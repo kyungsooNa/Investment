@@ -36,7 +36,7 @@ async def test_place_stock_order_buy_success():
         stock_code='005930',
         order_price='70000',
         order_qty='10',
-        trade_type='매수',
+        trade_type='buy',
         order_dvsn='00'
     )
 
@@ -187,7 +187,7 @@ async def test_place_stock_order_sell_success():
         stock_code='005930',
         order_price='70000',
         order_qty='10',
-        trade_type='매도',
+        trade_type='sell',
         order_dvsn='00'
     )
 
@@ -227,7 +227,7 @@ async def test_place_stock_order_hashkey_none():
         stock_code='005930',
         order_price='70000',
         order_qty='10',
-        trade_type='매수',
+        trade_type='buy',
         order_dvsn='00'
     )
 

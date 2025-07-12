@@ -42,8 +42,13 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_input_iscd": stock_code
         }
         self.logger.info(f"{stock_code} 현재가 조회 시도...")
-        return await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
+        response = await self.call_api('GET', path, params=params, retry_count=1)
 
+        if response is None:
+            self.logger.warning(f"[get_current_price] {stock_code} - API 응답 실패")
+            return None
+
+        return response
 
     async def get_price_summary(self, stock_code: str) -> dict:
         """

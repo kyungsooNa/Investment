@@ -2,6 +2,9 @@ import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock
 import os
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
+from app.stock_query_service import StockQueryService
 
 # 경로 문제를 피하기 위해, 테스트 실행 시 프로젝트 루트를 기준으로 import
 from market_data.stock_code_mapper import StockCodeMapper
@@ -142,3 +145,68 @@ def test_initialization_file_not_found_without_logger(mock_read_csv):
     # Act & Assert
     with pytest.raises(FileNotFoundError):
         StockCodeMapper(logger=None)  # logger 없이 초기화
+
+class TestHandleYesterdayUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.mock_trading_service = AsyncMock()
+        self.mock_logger = MagicMock()
+        self.print_patch = patch("builtins.print")
+        self.mock_print = self.print_patch.start()
+
+        self.service = StockQueryService(
+            trading_service=self.mock_trading_service,
+            logger=self.mock_logger,
+            time_manager=None
+        )
+
+    async def asyncTearDown(self):
+        self.print_patch.stop()
+
+    async def test_success_case(self):
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
+            "rt_cd": "0",
+            "output": [{"mksc_shrn_iscd": "000660"}]
+        }
+        self.mock_trading_service.get_yesterday_upper_limit_stocks.return_value = [
+            {"name": "SK하이닉스", "code": "000660", "price": 120000, "change_rate": 29.9}
+        ]
+
+        await self.service.handle_yesterday_upper_limit_stocks()
+
+        self.mock_logger.info.assert_any_call("전일 상한가 종목 조회 성공. 총 1개")
+        self.mock_print.assert_any_call("  SK하이닉스 (000660): 120000원 (등락률: +29.9%)")
+
+    async def test_fail_market_cap_response(self):
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {"rt_cd": "1", "msg1": "에러"}
+
+        await self.service.handle_yesterday_upper_limit_stocks()
+
+        self.mock_logger.warning.assert_called_once()
+        self.mock_print.assert_any_call("전일 상한가 종목 조회 실패: 에러")
+
+    async def test_empty_output(self):
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {"rt_cd": "0", "output": []}
+
+        await self.service.handle_yesterday_upper_limit_stocks()
+
+        self.mock_logger.info.assert_called_with("조회된 시가총액 종목 코드 없음.")
+        self.mock_print.assert_any_call("전일 상한가 종목 조회 대상이 없습니다.")
+
+    async def test_no_upper_limit_stocks(self):
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
+            "rt_cd": "0", "output": [{"mksc_shrn_iscd": "000660"}]
+        }
+        self.mock_trading_service.get_yesterday_upper_limit_stocks.return_value = []
+
+        await self.service.handle_yesterday_upper_limit_stocks()
+
+        self.mock_logger.info.assert_called_with("전일 상한가 종목 없음.")
+        self.mock_print.assert_any_call("현재 전일 상한가에 해당하는 종목이 없습니다.")
+
+    async def test_exception(self):
+        self.mock_trading_service.get_top_market_cap_stocks_code.side_effect = Exception("예외 발생")
+
+        await self.service.handle_yesterday_upper_limit_stocks()
+
+        self.mock_logger.error.assert_called()
+        self.mock_print.assert_any_call("전일 상한가 종목 조회 중 오류 발생: 예외 발생")

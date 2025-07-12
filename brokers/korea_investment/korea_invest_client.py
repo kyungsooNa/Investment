@@ -6,6 +6,7 @@ from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrad
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
 import logging
+from typing import Dict, Any, List
 
 
 class KoreaInvestApiClient:
@@ -16,8 +17,8 @@ class KoreaInvestApiClient:
 
     def __init__(self, env: KoreaInvestApiEnv, token_manager:TokenManager, logger=None):
         self._env = env
-        self.logger = logger if logger else logging.getLogger(__name__)
-        self.token_manager = token_manager
+        self._logger = logger if logger else logging.getLogger(__name__)
+        self._token_manager = token_manager
 
         # _config는 env.get_full_config()를 통해 모든 설정(tr_ids 포함)을 가져옴
         self._config = self._env.get_full_config()
@@ -38,16 +39,99 @@ class KoreaInvestApiClient:
             "appsecret": self._config['api_secret_key']  # _config에서 api_secret_key 사용
         }
 
+        base_url = self._config['base_url']
+
         # 각 도메인별 API 클래스 인스턴스화
         # _config에서 바로 base_url을 가져와 전달
-        self.quotations = KoreaInvestApiQuotations(self._config['base_url'], common_headers_template, self._config,
-                                                   self.token_manager,self.logger)
-        self.account = KoreaInvestApiAccount(self._config['base_url'], common_headers_template, self._config,
-                                             self.token_manager, self.logger)
-        self.trading = KoreaInvestApiTrading(self._config['base_url'], common_headers_template, self._config,
-                                             self.token_manager, self.logger)
+        self._quotations = KoreaInvestApiQuotations(base_url, common_headers_template, self._config,
+                                                   self._token_manager,self._logger)
+        self._account = KoreaInvestApiAccount(base_url, common_headers_template, self._config,
+                                             self._token_manager, self._logger)
+        self._trading = KoreaInvestApiTrading(base_url, common_headers_template, self._config,
+                                             self._token_manager, self._logger)
+        self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger)
 
-        self.websocketAPI = KoreaInvestWebSocketAPI(self._env, self.logger)
+
+    # --- Account API delegation ---
+    async def get_account_balance(self):
+        return await self._account.get_account_balance()
+
+    async def get_real_account_balance(self):
+        return await self._account.get_real_account_balance()
+
+    # --- Trading API delegation ---
+    async def buy_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn):
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, "buy", order_dvsn)
+
+    async def sell_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn):
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, "sell", order_dvsn)
+
+    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn):
+        # trading_api.py의 place_stock_order는 buy/sell 유형을 trade_type으로 받으므로 그대로 전달
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, trade_type, order_dvsn)
+
+
+    # --- Quotations API delegation (Updated) ---
+    async def get_stock_info_by_code(self, stock_code: str) -> dict:
+        """종목코드로 종목의 전체 정보를 가져옵니다."""
+        return await self._quotations.get_stock_info_by_code(stock_code)
+
+    async def get_current_price(self, code: str):
+        """현재가를 조회합니다."""
+        return await self._quotations.get_current_price(code)
+
+    async def get_price_summary(self, code: str) -> dict:
+        """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다."""
+        return await self._quotations.get_price_summary(code)
+
+    async def get_market_cap(self, code: str) -> int:
+        """종목코드로 시가총액을 반환합니다."""
+        return await self._quotations.get_market_cap(code)
+
+    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> Dict[str, Any]:
+        """시가총액 상위 종목 목록을 반환합니다."""
+        return await self._quotations.get_top_market_cap_stocks_code(market_code, count)
+
+    def get_previous_day_info(self, code: str) -> dict:
+        """종목의 전일 종가, 전일 거래량을 조회합니다."""
+        # 이 메서드는 KoreaInvestApiQuotations에서 동기 메서드로 정의되어 있으므로 await 사용 안 함
+        return self._quotations.get_previous_day_info(code)
+
+    async def get_filtered_stocks_by_momentum(
+            self, count=20, min_change_rate=10.0, min_volume_ratio=2.0
+    ) -> List[Dict[str, Any]]:
+        """거래량 급증 + 등락률 조건 기반 모멘텀 종목 필터링합니다."""
+        return await self._quotations.get_filtered_stocks_by_momentum(count, min_change_rate, min_volume_ratio)
+
+    async def inquire_daily_itemchartprice(self, stock_code: str, date: str, fid_period_div_code: str = 'D'):
+        """일별/분별 주식 시세 차트 데이터를 조회합니다."""
+        # 기존 코드는 return 누락: await 호출 결과를 반환하도록 수정
+        return await self._quotations.inquire_daily_itemchartprice(stock_code, date, fid_period_div_code=fid_period_div_code)
+
+    # --- WebSocket API delegation ---
+    async def connect_websocket(self, on_message_callback=None):
+        """웹소켓 연결을 시작하고 실시간 데이터 수신을 준비합니다."""
+        return await self._websocketAPI.connect(on_message_callback)
+
+    async def disconnect_websocket(self):
+        """웹소켓 연결을 종료합니다."""
+        return await self._websocketAPI.disconnect()
+
+    async def subscribe_realtime_price(self, stock_code):
+        """실시간 주식체결 데이터(현재가)를 구독합니다."""
+        return await self._websocketAPI.subscribe_realtime_price(stock_code)
+
+    async def unsubscribe_realtime_price(self, stock_code):
+        """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
+        return await self._websocketAPI.unsubscribe_realtime_price(stock_code)
+
+    async def subscribe_realtime_quote(self, stock_code):
+        """실시간 주식호가 데이터를 구독합니다."""
+        return await self._websocketAPI.subscribe_realtime_quote(stock_code)
+
+    async def unsubscribe_realtime_quote(self, stock_code):
+        """실시간 주식호가 데이터 구독을 해지합니다."""
+        return await self._websocketAPI.unsubscribe_realtime_quote(stock_code)
 
     def __str__(self):
         """객체를 문자열로 표현할 때 사용."""

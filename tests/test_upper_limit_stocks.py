@@ -44,25 +44,26 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_time_manager = mock.MagicMock(spec_set=TimeManager) # MagicMock으로 변경
         self.mock_time_manager.is_market_open.return_value = True  # 기본값 설정 (시장이 열려있다고 가정)
 
-        # KoreaInvestApiClient Mocking:
-        self.mock_api_client = mock.MagicMock() # MagicMock()만 사용
-        self.mock_api_client.quotations = mock.MagicMock(spec_set=KoreaInvestApiQuotations)
-        self.mock_api_client.account = mock.MagicMock(spec_set=KoreaInvestApiAccount)
-        self.mock_api_client.trading = mock.MagicMock(spec_set=KoreaInvestApiTrading)
+        self.mock_broker_api_wrapper = AsyncMock()
+        self.mock_broker_api_wrapper.client = AsyncMock(spec=KoreaInvestApiQuotations)
+
+        self.mock_broker_api_wrapper.client.quotations = mock.MagicMock(spec_set=KoreaInvestApiQuotations)
+        self.mock_broker_api_wrapper.client.account = mock.MagicMock(spec_set=KoreaInvestApiAccount)
+        self.mock_broker_api_wrapper.client.trading = mock.MagicMock(spec_set=KoreaInvestApiTrading)
 
         # 각 하위 Mock 객체의 메서드들을 직접 Mock 객체로 할당하고 return_value를 설정합니다.
         # 이렇게 하면 TradingService가 이 Mock 메서드들을 호출할 수 있습니다.
-        self.mock_api_client.quotations.get_current_price = mock.AsyncMock() # KoreaInvestApiQuotations의 메서드
-        self.mock_api_client.quotations.get_top_market_cap_stocks_code = mock.AsyncMock() # KoreaInvestApiQuotations의 메서드
+        self.mock_broker_api_wrapper.client.quotations.get_current_price = mock.AsyncMock() # KoreaInvestApiQuotations의 메서드
+        self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code = mock.AsyncMock() # KoreaInvestApiQuotations의 메서드
 
-        self.mock_api_client.account.get_account_balance = mock.AsyncMock()
-        self.mock_api_client.account.get_real_account_balance = mock.AsyncMock()
+        self.mock_broker_api_wrapper.client.account.get_account_balance = mock.AsyncMock()
+        self.mock_broker_api_wrapper.client.account.get_real_account_balance = mock.AsyncMock()
 
-        self.mock_api_client.trading.place_stock_order = mock.AsyncMock()
+        self.mock_broker_api_wrapper.client.trading.place_stock_order = mock.AsyncMock()
 
         # 📌 TradingService 인스턴스 생성 (주입) - setUp에서 한 번만 생성
         self.trading_service = TradingService(
-            api_client=self.mock_api_client, # 여기에서 Mock api_client를 주입
+            broker_api_wrapper=self.mock_broker_api_wrapper, # 여기에서 Mock api_client를 주입
             env=self.mock_env,
             logger=self.mock_logger,
             time_manager=self.mock_time_manager
@@ -99,7 +100,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.mock_time_manager.is_market_open.assert_called_once()
         # 📌 수정된 경로: self.mock_api_client.quotations
-        self.mock_api_client.quotations.get_top_market_cap_stocks_code.assert_not_called()
+        self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code.assert_not_called()
         self.mock_logger.warning.assert_called_once_with("시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.")
         self.assertIn("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n", self.print_output_capture.getvalue())
 
@@ -112,7 +113,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."})
         self.mock_time_manager.is_market_open.assert_called_once()
-        self.mock_api_client.KoreaInvestApiQuotations.get_top_market_cap_stocks_code.assert_not_called()
+        self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code.assert_not_called()
         self.mock_logger.warning.assert_called_once_with("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
         self.assertIn("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n", self.print_output_capture.getvalue())
 
@@ -166,7 +167,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
         self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with(market_code)
-        self.mock_api_client.KoreaInvestApiQuotations.get_current_price.assert_not_called()
+        self.mock_broker_api_wrapper.client.quotations.get_current_price.assert_not_called()
 
         self.assertTrue(self.mock_logger.info.called)
 

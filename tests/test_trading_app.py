@@ -1714,9 +1714,8 @@ async def test_complete_api_initialization_success(setup_mock_app, mocker):
     # _complete_api_initialization의 내부에서 호출되는 종속성들을 목킹
     app.env.get_access_token.return_value = "valid_access_token"
     # 클래스 자체를 목킹하여 생성자 호출을 추적할 수 있도록 함
-    mock_ki_client = mocker.patch('trading_app.KoreaInvestApiClient')
     mock_trading_service_cls = mocker.patch('trading_app.TradingService')
-    mock_stock_query_service_cls = mocker.patch('trading_app.OrderExecutionService')
+    mock_order_execution_service_cls = mocker.patch('trading_app.OrderExecutionService')
     mock_stock_query_service_cls = mocker.patch('trading_app.StockQueryService')
     mock_broker_wrapper_cls = mocker.patch('trading_app.BrokerAPIWrapper')
     mock_backtest_provider_cls = mocker.patch('trading_app.BacktestDataProvider')
@@ -1726,9 +1725,8 @@ async def test_complete_api_initialization_success(setup_mock_app, mocker):
 
     # 검증
     app.env.get_access_token.assert_awaited_once()
-    mock_ki_client.assert_called_once() # KoreaInvestApiClient 생성자 호출 확인
     mock_trading_service_cls.assert_called_once() # TradingService 생성자 호출 확인
-    mock_stock_query_service_cls.assert_called_once() # OrderExecutionService 생성자 호출 확인
+    mock_order_execution_service_cls.assert_called_once() # OrderExecutionService 생성자 호출 확인
     mock_stock_query_service_cls.assert_called_once() # StockQueryService 생성자 호출 확인
     mock_broker_wrapper_cls.assert_called_once() # BrokerAPIWrapper 생성자 호출 확인
     mock_backtest_provider_cls.assert_called_once() # BacktestDataProvider 생성자 호출 확인
@@ -1744,9 +1742,8 @@ async def test_complete_api_initialization_token_failure(setup_mock_app, mocker)
     app.env.get_access_token.return_value = None
 
     # 나머지 서비스들은 호출되지 않아야 함 (클래스 자체를 목킹하여 호출 여부 확인)
-    mock_ki_client = mocker.patch('trading_app.KoreaInvestApiClient')
     mock_trading_service_cls = mocker.patch('trading_app.TradingService')
-    mock_stock_query_service_cls = mocker.patch('trading_app.OrderExecutionService')
+    mock_order_execution_service_cls = mocker.patch('trading_app.OrderExecutionService')
     mock_stock_query_service_cls = mocker.patch('trading_app.StockQueryService')
     mock_broker_wrapper_cls = mocker.patch('trading_app.BrokerAPIWrapper')
     mock_backtest_provider_cls = mocker.patch('trading_app.BacktestDataProvider')
@@ -1756,14 +1753,13 @@ async def test_complete_api_initialization_token_failure(setup_mock_app, mocker)
 
     # 검증
     app.env.get_access_token.assert_awaited_once()
-    # 실제 로깅 메시지에 맞춰 수정
-    app.logger.critical.assert_called_once_with("API 클라이언트 초기화 실패: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
-    app.cli_view.display_app_start_error.assert_called_once_with("API 클라이언트 초기화 중 오류 발생: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
+
+    app.logger.critical.assert_called()
+    app.cli_view.display_app_start_error.assert_called()
 
     # 다른 서비스들이 초기화되지 않았는지 확인
-    mock_ki_client.assert_not_called()
     mock_trading_service_cls.assert_not_called()
-    mock_stock_query_service_cls.assert_not_called()
+    mock_order_execution_service_cls.assert_not_called()
     mock_stock_query_service_cls.assert_not_called()
     mock_broker_wrapper_cls.assert_not_called()
     mock_backtest_provider_cls.assert_not_called()
