@@ -90,6 +90,7 @@ class TradingApp:
             self.logger.critical(f"애플리케이션 초기화 실패: {e}")
             raise
 
+
     async def _complete_api_initialization(self):
         """API 클라이언트 및 서비스 객체 초기화를 수행합니다."""
         try:
@@ -97,6 +98,7 @@ class TradingApp:
 
             access_token = await self.env.get_access_token()
             if not access_token:
+                self.logger.critical("API 클라이언트 초기화 실패: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
                 raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
             # KoreaInvestApiClient는 이제 BrokerAPIWrapper 내부에서 관리됩니다.
@@ -123,7 +125,9 @@ class TradingApp:
             self.logger.info(f"API 클라이언트 및 서비스 초기화 성공.") # self.api_client 출력 대신 일반 메시지
             return True
         except Exception as e:
-            self.logger.error(f"API 클라이언트 초기화 실패: {e}")
+            error_message = f"API 클라이언트 초기화 실패: {e}"
+            self.logger.error(error_message)
+            self.cli_view.display_app_start_error(error_message)
             return False
 
     async def _select_environment(self):
