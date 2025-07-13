@@ -306,6 +306,8 @@ class TradingService:
         # 충분한 공백으로 덮어쓴 후 커서를 줄 시작으로 옮깁니다. (80칸은 일반적인 터미널 폭을 고려)
         print("\r" + " " * 80 + "\r", end="", flush=True)
 
+        return results
+
     # `get_current_upper_limit_stocks` 메서드가 정의된 클래스 내부에 다음 헬퍼 메서드를 추가합니다.
     async def _fetch_stock_data(self, code: str):
         """

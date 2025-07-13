@@ -259,3 +259,137 @@ class TestGetYesterdayUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
         self.mock_logger.warning.assert_called_once()
         self.assertIn("001234 상한가 필터링 중 오류", self.mock_logger.warning.call_args.args[0])
+
+class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.mock_broker_api_wrapper = AsyncMock()
+        self.mock_logger = MagicMock()
+        self.mock_env = MagicMock()
+
+        self.trading_service = TradingService(
+            broker_api_wrapper=self.mock_broker_api_wrapper,
+            env=self.mock_env,
+            logger=self.mock_logger,
+            time_manager=None
+        )
+
+    async def test_get_current_upper_limit_stocks_success(self):
+        # ─ Conditions ─
+        # trading_service.py의 get_current_upper_limit_stocks가 기대하는 형식에 맞춰
+        # get_price_summary의 반환 값 설정 (current, open, change_rate 키 사용)
+        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
+            # 000660 (상한가 조건 충족)
+            {"symbol": "000660", "open": 23077, "current": 30000, "change_rate": 29.99},
+            # 005930 (상한가 조건 미충족)
+            {"symbol": "005930", "open": 79600, "current": 80000, "change_rate": 0.50}
+        ]
+
+        # get_name_by_code 모의 (get_current_upper_limit_stocks 내부에서 호출됨)
+        self.mock_broker_api_wrapper.get_name_by_code.side_effect = [
+            "SK하이닉스", # 000660에 대한 응답
+            "삼성전자"    # 005930에 대한 응답
+        ]
+
+        # get_current_upper_limit_stocks에 전달될 입력 데이터 구조
+        all_codes_input = ["000660", "005930"]
+
+        # ─ Execute ─
+        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
+
+        # ─ Assert ─
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["code"], "000660")
+        self.assertEqual(result[0]["name"], "SK하이닉스")
+        self.assertEqual(result[0]["current_price"], 30000)
+        self.assertAlmostEqual(result[0]["change_rate"], 29.99)
+
+        # mock_broker_api_wrapper.get_price_summary가 각 종목에 대해 호출되었는지 확인
+        self.mock_broker_api_wrapper.get_price_summary.assert_any_call("000660")
+        self.mock_broker_api_wrapper.get_price_summary.assert_any_call("005930")
+        self.assertEqual(self.mock_broker_api_wrapper.get_price_summary.call_count, 2)
+
+        # mock_broker_api_wrapper.get_name_by_code가 각 종목에 대해 호출되었는지 확인
+        self.mock_broker_api_wrapper.get_name_by_code.assert_any_call("000660")
+        self.mock_broker_api_wrapper.get_name_by_code.assert_any_call("005930")
+        self.assertEqual(self.mock_broker_api_wrapper.get_name_by_code.call_count, 2)
+
+        self.mock_logger.info.assert_not_called() # 상한가 종목이 있을 때는 경고 로그가 없어야 함
+
+    # ... (나머지 테스트 케이스는 위에서 수정한 get_price_summary의 반환값에 맞춰 필요시 수정)
+    # 예시로 test_get_current_upper_limit_stocks_no_upper_limit을 수정해 드립니다.
+    async def test_get_current_upper_limit_stocks_no_upper_limit(self):
+        # ─ Conditions ─
+        # 모든 종목이 상한가가 아님
+        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
+            {"symbol": "CODEA", "open": 9000, "current": 10000, "change_rate": 5.0},
+            {"symbol": "CODEB", "open": 18000, "current": 20000, "change_rate": 7.0}
+        ]
+        self.mock_broker_api_wrapper.get_name_by_code.side_effect = [
+            "종목A",
+            "종목B"
+        ]
+        all_codes_input = ["000660", "005930"]
+
+        # ─ Execute ─
+        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
+
+        # ─ Assert ─
+        self.assertEqual(result, [])
+        self.assertEqual(self.mock_broker_api_wrapper.get_price_summary.call_count, 2)
+        self.assertEqual(self.mock_broker_api_wrapper.get_name_by_code.call_count, 2)
+        self.mock_logger.info.assert_not_called()
+
+    async def test_get_current_upper_limit_stocks_api_failure_for_some_stocks(self):
+        # ─ Conditions ─
+        # 첫 번째 종목 CODEF → 예외 발생
+        # 두 번째 종목 CODEC → 정상, 상한가
+
+        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
+            Exception("API 오류 발생"),  # CODEF는 예외 발생
+            {"current": 40000, "open": 30770, "change_rate": 29.99}  # CODEC은 정상
+        ]
+
+        self.mock_broker_api_wrapper.get_name_by_code.side_effect = [
+            "종목C"  # CODEC에 대한 이름만 필요
+        ]
+
+        all_codes_input = ["CODEF", "CODEC"]
+
+        # ─ Execute ─
+        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
+
+        # ─ Assert ─
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["code"], "CODEC")
+        self.assertEqual(result[0]["name"], "종목C")
+        self.assertEqual(result[0]["current_price"], 40000)
+        self.assertAlmostEqual(result[0]["change_rate"], 29.99)
+
+        self.mock_logger.warning.assert_called_once()
+        self.assertIn("CODEF 현재 상한가 필터링 중 오류", self.mock_logger.warning.call_args.args[0])
+
+    # ... (나머지 테스트 케이스도 유사하게 get_price_summary와 get_name_by_code 모의를 조정해야 합니다)
+    async def test_get_current_upper_limit_stocks_exception_during_iteration(self):
+        # ─ Conditions ─
+        # 두 번째 종목 조회 중 예외 발생
+        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
+            {"current": 50000, "open": 38460, "change_rate": 29.99}, # CODED에 대한 성공 응답
+            Exception("강제 API 예외") # CODEE 처리 중 예외 발생
+        ]
+        self.mock_broker_api_wrapper.get_name_by_code.side_effect = [
+            "종목D", # CODED에 대한 이름
+            "종목E"  # CODEE에 대한 이름 (이 호출은 예외 때문에 발생하지 않을 수도 있음)
+        ]
+        all_codes_input = ["CODED", "CODEE"] # 입력 변경
+
+        # ─ Execute ─
+        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
+
+        # ─ Assert ─
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["code"], "CODED")
+        self.mock_logger.warning.assert_called_once() # 예외 발생 시 warning 로깅
+        self.assertIn("CODEE 현재 상한가 필터링 중 오류", self.mock_logger.warning.call_args.args[0])
+        # get_name_by_code는 첫 번째 종목에 대해 호출되고, 두 번째 종목 get_price_summary에서 예외 발생
+        # 따라서 get_name_by_code는 한 번만 호출될 것입니다.
+        self.assertEqual(self.mock_broker_api_wrapper.get_name_by_code.call_count, 1)
