@@ -3,6 +3,7 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from core.time_manager import TimeManager
 import logging
 from brokers.broker_api_wrapper import BrokerAPIWrapper
+import asyncio
 
 
 class TradingService:
@@ -11,9 +12,10 @@ class TradingService:
     이 클래스의 메서드는 UI와 독립적으로 데이터를 조회하고 처리하며, 결과를 반환합니다.
     """
 
-    def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None):
+    def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
+                 time_manager: TimeManager = None):
         self._broker_api_wrapper = broker_api_wrapper
-        self._env = env # env는 그대로 유지
+        self._env = env  # env는 그대로 유지
         self._logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
 
@@ -254,3 +256,90 @@ class TradingService:
                 continue
 
         return results
+
+    async def get_current_upper_limit_stocks(self, stock_codes: list[str]) -> list[dict]:
+        """
+        전체 종목 리스트 중 현재 상한가에 도달한 종목을 필터링합니다.
+        :param stock_codes: 전체 종목 코드 리스트
+        :return: 현재 상한가 종목 리스트 [{code, name, price, change_rate}]
+        """
+
+        results = []
+        total_stocks = len(stock_codes)
+        # progress_step은 최소 1이 되어, 종목 수가 10개 미만일 때는 모든 종목마다 표시됩니다.
+        # (예: total_stocks가 5이면 progress_step = max(1, 0) = 1)
+        # (예: total_stocks가 100이면 progress_step = max(1, 10) = 10)
+        progress_step = max(1, total_stocks // 10)
+
+        for idx, code in enumerate(stock_codes):  # enumerate를 사용하여 인덱스(idx)와 종목코드(code)를 함께 가져옴
+            # 10% 간격으로, 또는 마지막 종목일 때 진행률을 표시합니다.
+            # idx는 0부터 시작하므로, (idx + 1)을 사용하여 현재 처리 중인 항목 번호를 맞춥니다.
+            if (idx + 1) % progress_step == 0 or (idx + 1) == total_stocks:
+                # 현재 진행된 퍼센트를 소수점 없이 표시 (예: 10%, 20% 등)
+                current_percentage = ((idx + 1) / total_stocks) * 100 if total_stocks > 0 else 100
+                print(f"\r처리 중... {current_percentage:.0f}% 완료 ({idx + 1}/{total_stocks})", end="", flush=True)
+
+            try:
+                price_info = await self._broker_api_wrapper.get_price_summary(code)
+                if not price_info:
+                    continue
+
+                current_price = int(price_info.get("current", "0"))
+                open_price = int(price_info.get("open", "0"))
+                # upper_limit_price = open_price * 1.3 # 이 변수는 조건문에서 사용되지 않으므로 제거할 수 있습니다.
+                change_rate = float(price_info.get("change_rate", 0.0))
+                name = await self._broker_api_wrapper.get_name_by_code(code)
+
+                if change_rate > 29.0:  # 등락률 조건
+                    results.append({
+                        "code": code,
+                        "name": name,
+                        "open_price": open_price,
+                        "current_price": current_price,
+                        "change_rate": change_rate
+                    })
+            except Exception as e:
+                self._logger.warning(f"{code} 현재 상한가 필터링 중 오류: {e}")
+                continue
+
+        # 루프가 완료된 후 진행률 표시 줄을 지웁니다.
+        # 충분한 공백으로 덮어쓴 후 커서를 줄 시작으로 옮깁니다. (80칸은 일반적인 터미널 폭을 고려)
+        print("\r" + " " * 80 + "\r", end="", flush=True)
+
+        return results
+
+    # `get_current_upper_limit_stocks` 메서드가 정의된 클래스 내부에 다음 헬퍼 메서드를 추가합니다.
+    async def _fetch_stock_data(self, code: str):
+        """
+        단일 종목에 대해 get_price_summary와 get_name_by_code를 비동기적으로 조회하는 헬퍼 메서드.
+        """
+        price_info = await self._broker_api_wrapper.get_price_summary(code)
+        name = await self._broker_api_wrapper.get_name_by_code(code)
+        print(f"\rFetch_StockDtata.. {price_info}% 완료 ({name})")
+
+        return price_info, name
+
+    async def get_all_stocks_code(self) -> dict:
+        """
+        전체 종목 코드를 조회합니다.
+        :return: {"rt_cd": "0", "output": [...]} 또는 {"rt_cd": "1", "msg1": "..."}
+        """
+        self._logger.info("Service - 전체 종목 코드 조회 요청")
+
+        try:
+            codes = await self._broker_api_wrapper.get_all_stock_code_list()
+
+            if not isinstance(codes, list):
+                msg = f"비정상 응답 형식: {codes}"
+                self._logger.warning(msg)
+                return {"rt_cd": "1", "msg1": msg}
+
+            return {
+                "rt_cd": "0",
+                "output": codes
+            }
+
+        except Exception as e:
+            error_msg = f"전체 종목 코드 조회 실패: {e}"
+            self._logger.error(error_msg)
+            return {"rt_cd": "1", "msg1": error_msg}

@@ -952,7 +952,7 @@ async def test_get_current_price_success(mock_quotations):
             "fid_cond_mrkt_div_code": "J",
             "fid_input_iscd": "005930"
         },
-        retry_count=1  # ✅ 누락되었던 키워드 인자 추가
+        retry_count=3  # ✅ 누락되었던 키워드 인자 추가
     )
 
 @pytest.mark.asyncio

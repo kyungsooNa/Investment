@@ -2,7 +2,6 @@ import json
 
 from strategies.backtest_data_provider import BacktestDataProvider
 from view.cli_view import CLIView
-from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 from core.config_loader import load_config
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
@@ -448,20 +447,15 @@ class TradingApp:
             self.cli_view.display_strategy_running_message("전일 상한가 종목 조회")
 
             try:
-                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000") # @TODO 전체 종목에서 찾아야함.
+                all_codes = await self.trading_service.get_all_stocks_code()
 
-                if not isinstance(top_codes, dict) or top_codes.get('rt_cd') != '0':
-                    self.cli_view.display_top_stocks_failure(top_codes.get('msg1', '조회 실패'))
-                    self.logger.warning(f"상위 종목 조회 실패: {top_codes}")
+                if not isinstance(all_codes, dict) or all_codes.get('rt_cd') != '0':
+                    self.cli_view.display_top_stocks_failure(all_codes.get('msg1', '조회 실패'))
+                    self.logger.warning(f"전체 종목 조회 실패: {all_codes}")
                     return running_status
 
-                top_stock_codes = [
-                    item["mksc_shrn_iscd"]
-                    for item in top_codes.get("output", [])[:300]
-                    if "mksc_shrn_iscd" in item
-                ]
 
-                upper_limit_stocks = await self.trading_service.get_yesterday_upper_limit_stocks(top_stock_codes)
+                upper_limit_stocks = await self.trading_service.get_current_upper_limit_stocks(all_codes.get('output'))
 
                 if not upper_limit_stocks:
                     self.cli_view.display_no_stocks_for_strategy()

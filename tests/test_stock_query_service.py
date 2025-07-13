@@ -430,3 +430,56 @@ async def test_realtime_data_display_callback_logic(handler, mock_trading_servic
     output_str = print_output_capture.getvalue()
     assert output_str == ""
     mock_logger.debug.assert_not_called()
+
+class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.mock_trading_service = AsyncMock()
+        self.mock_logger = MagicMock()
+        self.print_patch = patch("builtins.print")
+        self.mock_print = self.print_patch.start()
+
+        from app.stock_query_service import StockQueryService  # 필요 시 수정
+        self.service = StockQueryService(
+            trading_service=self.mock_trading_service,
+            logger=self.mock_logger,
+            time_manager=None
+        )
+
+    async def asyncTearDown(self):
+        self.print_patch.stop()
+
+    async def test_success_case(self):
+        self.mock_trading_service.get_all_stocks_code.return_value = ["000660"]
+        self.mock_trading_service.get_current_upper_limit_stocks.return_value = [
+            {"name": "SK하이닉스", "code": "000660", "price": 120000, "change_rate": 29.9}
+        ]
+
+        await self.service.handle_current_upper_limit_stocks()
+
+        self.mock_logger.info.assert_any_call("현재 상한가 종목 조회 성공. 총 1개")
+        self.mock_print.assert_any_call("  SK하이닉스 (000660): 120000원 (등락률: +29.9%)")
+
+    async def test_all_stock_code_fetch_failed(self):
+        self.mock_trading_service.get_all_stocks_code.return_value = None
+
+        await self.service.handle_current_upper_limit_stocks()
+
+        self.mock_logger.warning.assert_called_once_with("전체 종목 코드 없음.")
+        self.mock_print.assert_any_call("전체 종목 코드 조회 실패 또는 결과 없음.")
+
+    async def test_no_upper_limit_stocks(self):
+        self.mock_trading_service.get_all_stocks_code.return_value = ["000660"]
+        self.mock_trading_service.get_current_upper_limit_stocks.return_value = []
+
+        await self.service.handle_current_upper_limit_stocks()
+
+        self.mock_logger.info.assert_called_with("현재 상한가 종목 없음.")
+        self.mock_print.assert_any_call("현재 상한가에 해당하는 종목이 없습니다.")
+
+    async def test_exception_during_processing(self):
+        self.mock_trading_service.get_all_stocks_code.side_effect = Exception("예외 발생")
+
+        await self.service.handle_current_upper_limit_stocks()
+
+        self.mock_logger.error.assert_called()
+        self.mock_print.assert_any_call("현재 상한가 종목 조회 중 오류 발생: 예외 발생")
