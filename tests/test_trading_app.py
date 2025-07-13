@@ -2251,11 +2251,13 @@ class TestTradingApp(unittest.IsolatedAsyncioTestCase):
     @pytest.mark.asyncio
     async def test_execute_action_yesterday_upper_limit(self):
         mock_service = AsyncMock()
-        mock_service.get_top_market_cap_stocks_code.return_value = {
+        # get_all_stocks_code를 성공적인 응답과 일부 출력을 반환하도록 모의합니다.
+        mock_service.get_all_stocks_code.return_value = {
             "rt_cd": "0",
-            "output": [{"mksc_shrn_iscd": "005930"}]
+            "output": [{"mksc_shrn_iscd": "005930"}]  # 예시 주식, 내용은 실제 사용법과 일치해야 할 수 있습니다.
         }
-        mock_service.get_yesterday_upper_limit_stocks.return_value = [{"code": "005930", "name": "삼성전자"}]
+        # 앱에서 호출되는 메서드인 get_current_upper_limit_stocks를 모의합니다.
+        mock_service.get_current_upper_limit_stocks.return_value = [{"code": "005930", "name": "삼성전자"}]
 
         mock_cli = MagicMock()
         self.app.cli_view = mock_cli
@@ -2266,9 +2268,17 @@ class TestTradingApp(unittest.IsolatedAsyncioTestCase):
 
         await self.app._execute_action("14")
 
-        mock_cli.display_strategy_running_message.assert_called_once()
-        mock_cli.display_gapup_pullback_selected_stocks.assert_called_once()
+        mock_cli.display_strategy_running_message.assert_called_once_with("전일 상한가 종목 조회")
+        # get_all_stocks_code가 호출되었는지 확인합니다.
+        mock_service.get_all_stocks_code.assert_called_once()
+        # get_current_upper_limit_stocks가 올바른 인수로 호출되었는지 확인합니다.
+        mock_service.get_current_upper_limit_stocks.assert_called_once_with([{"mksc_shrn_iscd": "005930"}])
+        mock_cli.display_gapup_pullback_selected_stocks.assert_called_once_with([{"code": "005930", "name": "삼성전자"}])
 
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from trading_app import TradingApp # Assuming TradingApp is in trading_app.py
 
 @pytest.mark.asyncio
 @patch("trading_app.load_config", return_value={
@@ -2282,13 +2292,15 @@ async def test_execute_action_14_top_codes_fail(mock_config):
     app.logger = MagicMock()
     app.cli_view = MagicMock()
     app.trading_service = MagicMock()
-    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={"rt_cd": "1", "msg1": "API 오류"})
+    # Correctly mock get_all_stocks_code as this is what's called in the app logic
+    app.trading_service.get_all_stocks_code = AsyncMock(return_value={"rt_cd": "1", "msg1": "API 오류"})
 
     result = await app._execute_action('14')
 
     app.cli_view.display_top_stocks_failure.assert_called_with("API 오류")
-    app.logger.warning.assert_called_with("상위 종목 조회 실패: {'rt_cd': '1', 'msg1': 'API 오류'}")
+    app.logger.warning.assert_called_with("전체 종목 조회 실패: {'rt_cd': '1', 'msg1': 'API 오류'}")
     assert result is True
+
 
 @pytest.mark.asyncio
 @patch("trading_app.load_config", return_value={
@@ -2303,18 +2315,23 @@ async def test_execute_action_14_no_upper_limit_stocks(mock_config):
     app.cli_view = MagicMock()
     app.trading_service = MagicMock()
 
-    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
+    # get_all_stocks_code를 모의하여 유효한 응답을 반환하도록 합니다.
+    app.trading_service.get_all_stocks_code = AsyncMock(return_value={
         "rt_cd": "0",
-        "output": [{"mksc_shrn_iscd": "005930"}]
+        "output": [{"mksc_shrn_iscd": "005930"}] # 빈 리스트가 아니어야 함
     })
-    app.trading_service.get_yesterday_upper_limit_stocks = AsyncMock(return_value=[])
+    # get_current_upper_limit_stocks를 모의하여 빈 리스트를 반환하도록 합니다.
+    app.trading_service.get_current_upper_limit_stocks = AsyncMock(return_value=[])
 
     result = await app._execute_action('14')
 
+    # get_all_stocks_code가 호출되었는지 확인
+    app.trading_service.get_all_stocks_code.assert_called_once()
+    # get_current_upper_limit_stocks가 호출되었는지 확인 (all_codes.get('output')을 인수로 받음)
+    app.trading_service.get_current_upper_limit_stocks.assert_called_once_with([{"mksc_shrn_iscd": "005930"}])
     app.cli_view.display_no_stocks_for_strategy.assert_called_once()
     assert result is True
 
-# 3. 예외 발생 흐름 (462 라인)
 @pytest.mark.asyncio
 @patch("trading_app.load_config", return_value={
     "url": "https://api.test.com",
@@ -2327,7 +2344,9 @@ async def test_execute_action_14_raises_exception(mock_config):
     app.logger = MagicMock()
     app.cli_view = MagicMock()
     app.trading_service = MagicMock()
-    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(side_effect=Exception("강제 오류"))
+    # get_all_stocks_code에 side_effect를 설정하여 강제 오류를 발생시킵니다.
+    # AsyncMock을 사용하여 await 가능하도록 합니다.
+    app.trading_service.get_all_stocks_code = AsyncMock(side_effect=Exception("강제 오류"))
 
     result = await app._execute_action('14')
 
