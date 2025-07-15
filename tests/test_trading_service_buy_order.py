@@ -1,7 +1,7 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from services.trading_service import TradingService
-from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem
+from common.types import ResCommonResponse, ErrorCode
 
 
 class TestTradingServiceBuyOrder(IsolatedAsyncioTestCase):
