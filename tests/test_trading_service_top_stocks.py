@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from services.trading_service import TradingService
 from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem,ResMarketCapStockItem
-
+from typing import List
 import unittest
 
 class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
@@ -56,7 +56,8 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         # 이제는 리스트 1개가 반환되어야 함
-        self.assertEqual(len(result.data), 1)
+        assert isinstance(result.data, List)
+        assert len(result.data) == 1
 
         # 로그 메시지 확인
         self.assertTrue(
@@ -68,12 +69,13 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
     async def test_market_closed_returns_none(self):
         self.mock_time_manager.is_market_open.return_value = False
 
-        result = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         # 수정된 기대값 검증
         assert isinstance(result, ResCommonResponse)
         assert result.rt_cd == ErrorCode.INVALID_INPUT.value
         assert result.msg1 == "시장이 닫혀 있어 조회 불가"
+        assert isinstance(result.data, List)
         assert result.data == []
 
         self.mock_logger.warning.assert_any_call("시장이 닫혀 있어 시가총액 1~10위 종목 현재가 조회를 수행할 수 없습니다.")
@@ -83,11 +85,12 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = True
 
-        result = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert isinstance(result, ResCommonResponse)
         assert result.rt_cd == ErrorCode.INVALID_INPUT.value
         assert result.msg1 == "모의투자 미지원 API입니다."
+        assert isinstance(result.data, List)
         assert result.data == []
 
     async def test_get_top_stocks_failure(self):
@@ -95,13 +98,14 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_env.is_paper_trading = False
 
         self.trading_service.get_top_market_cap_stocks_code = AsyncMock(
-            return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="API 오류", data=None)
+            return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="API 오류", data=[])
         )
 
-        result = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert result.rt_cd == ErrorCode.API_ERROR.value
         assert "API 오류" in result.msg1
+        assert isinstance(result.data, List)
         self.mock_logger.error.assert_called()
 
     async def test_get_top_stocks_empty_list(self):
@@ -112,9 +116,10 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
             return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="조회 성공", data=[])
         )
 
-        result = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert result.rt_cd == ErrorCode.API_ERROR.value
+        assert isinstance(result.data, List)
         assert result.data == []
         self.mock_logger.info.assert_any_call("시가총액 상위 종목 목록을 찾을 수 없습니다.")
 
@@ -157,9 +162,10 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        result = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert isinstance(result.data, List)
         assert len(result.data) == 2
 
         assert result.data[0] == ResMarketCapStockItem(
@@ -193,9 +199,10 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
             ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data={"stck_prpr": "130000"}),
         ])
 
-        result = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert isinstance(result.data, List)
         assert result.data == [
             ResMarketCapStockItem(rank="2", name="SK하이닉스", code="000660", current_price="130000")
         ]
@@ -240,10 +247,11 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         )
 
         # 실행
-        result = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         # 검증
         assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert isinstance(result.data, List)
         assert len(result.data) == 10
         assert all(isinstance(item, ResMarketCapStockItem) for item in result.data)
         self.trading_service.get_current_stock_price.assert_awaited()
@@ -283,9 +291,10 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         )
 
         # Act
-        result = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         # Assert
         assert result.rt_cd == ErrorCode.API_ERROR.value
+        assert isinstance(result.data, List)
         assert result.data == []
         self.trading_service._logger.warning.assert_any_call("시가총액 1~10위 종목 현재가 조회 결과 없음.")
