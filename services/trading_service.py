@@ -3,8 +3,12 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from core.time_manager import TimeManager
 import logging
 from brokers.broker_api_wrapper import BrokerAPIWrapper
-import asyncio
-
+from typing import List
+# common/types에서 모든 ResTypedDict와 ErrorCode 임포트
+from common.types import (
+    ResPriceSummary, ResCommonResponse, ErrorCode, ResMarketCapStockItem,
+    ResTopMarketCapApiItem,
+)
 
 class TradingService:
     """
@@ -69,6 +73,7 @@ class TradingService:
         else:
             self._logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
 
+
     async def connect_websocket(self, on_message_callback=None):
         """웹소켓 연결을 비동기로 시작합니다."""
         return await self._broker_api_wrapper.connect_websocket(
@@ -94,24 +99,24 @@ class TradingService:
         """실시간 주식호가 데이터 구독을 해지합니다."""
         return await self._broker_api_wrapper.unsubscribe_realtime_quote(stock_code)
 
-    async def get_current_stock_price(self, stock_code):
+    async def get_current_stock_price(self, stock_code) -> ResCommonResponse:
         self._logger.info(f"Service - {stock_code} 현재가 조회 요청")
         return await self._broker_api_wrapper.get_current_price(stock_code)
 
-    async def get_account_balance(self):
+    async def get_account_balance(self) -> ResCommonResponse:
         self._logger.info(f"Service - 계좌 잔고 조회 요청 (환경: {'모의투자' if self._env.is_paper_trading else '실전'})")
         if self._env.is_paper_trading:
             return await self._broker_api_wrapper.get_account_balance()
         else:
             return await self._broker_api_wrapper.get_real_account_balance()
 
-    async def place_buy_order(self, stock_code, price, qty, order_dvsn):
+    async def place_buy_order(self, stock_code, price, qty, order_dvsn) -> ResCommonResponse:
         self._logger.info(
             f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
         )
 
         try:
-            response = await self._broker_api_wrapper.place_stock_order(
+            response_common : ResCommonResponse = await self._broker_api_wrapper.place_stock_order(
                 stock_code=stock_code,
                 order_price=price,
                 order_qty=qty,
@@ -120,22 +125,26 @@ class TradingService:
             )
         except Exception as e:
             self._logger.error(f"Service - 매수 주문 중 오류 발생: {str(e)}")
-            raise
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value, # Enum 값 사용
+                msg1=f"매수 주문 처리 중 예외 발생: {str(e)}",
+                data=None
+            )
 
-        if response.get("rt_cd") != "0":
-            msg = response.get("msg1", "매수 주문 실패")
+        if response_common.rt_cd != ErrorCode.SUCCESS.value: # Enum 값 사용
+            msg = getattr(response_common, "msg1", "매수 주문 실패")  # 방어적 접근
             self._logger.error(f"매수 주문 실패: {msg}")
-            raise Exception(msg)
+            return response_common
 
-        return response
+        return response_common
 
-    async def place_sell_order(self, stock_code, price, qty, order_dvsn):
+    async def place_sell_order(self, stock_code, price, qty, order_dvsn) -> ResCommonResponse:
         self._logger.info(
             f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
         )
 
         try:
-            response = await self._broker_api_wrapper.place_stock_order(
+            response_common : ResCommonResponse = await self._broker_api_wrapper.place_stock_order(
                 stock_code=stock_code,
                 order_price=price,
                 order_qty=qty,
@@ -144,20 +153,23 @@ class TradingService:
             )
         except Exception as e:
             self._logger.error(f"Service - 매도 주문 중 오류 발생: {str(e)}")
-            raise
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value, # Enum 값 사용
+                msg1=f"매도 주문 처리 중 예외 발생: {str(e)}",
+                data=None
+            )
 
-        if response.get("rt_cd") != "0":
-            msg = response.get("msg1", "매도 주문 실패")
+        if response_common.rt_cd != ErrorCode.SUCCESS.value: # Enum 값 사용
+            msg = getattr(response_common, "msg1", "매도 주문 실패")
             self._logger.error(f"매도 주문 실패: {msg}")
-            raise Exception(msg)
+            return response_common
 
-        return response
+        return response_common
 
-    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = None):
+    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = None) -> ResCommonResponse:
         """
         시가총액 상위 종목을 조회하고 결과를 반환합니다 (모의투자 미지원).
-        :param market_code: 시장 코드 (예: 'STK')
-        :param count: 상위 몇 개 종목을 가져올지 (기본값 10개)
+        ResCommonResponse 형태로 반환하며, data 필드에 List[ResTopMarketCapApiItem] 포함.
         """
         if count is None:
             count = 10
@@ -167,146 +179,178 @@ class TradingService:
 
         if self._env.is_paper_trading:
             self._logger.warning("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
-            return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1="모의투자 미지원 API입니다.", data=[]) # Enum 값 사용
 
         return await self._broker_api_wrapper.get_top_market_cap_stocks_code(market_code, count)
 
-    # @TODO 다시 검증 필요
-    async def get_top_10_market_cap_stocks_with_prices(self):
+    async def get_top_10_market_cap_stocks_with_prices(self) -> ResCommonResponse:
         """
         시가총액 1~10위 종목의 현재가를 조회합니다.
         시장 개장 여부를 확인하고, 모의투자 미지원 API입니다.
         이제 시장 개장까지 기다리지 않고, 닫혀있으면 바로 None을 반환합니다.
+        ResCommonResponse 형태로 반환하며, data 필드에 List[ResMarketCapStockItem] 포함.
         """
         self._logger.info("Service - 시가총액 1~10위 종목 현재가 조회 요청")
 
         if self._time_manager and not self._time_manager.is_market_open():
-            # 시장이 닫혀있으면 대기하지 않고 바로 None 반환
             self._logger.warning("시장이 닫혀 있어 시가총액 1~10위 종목 현재가 조회를 수행할 수 없습니다.")
-            return None  # None 반환하여 상위 핸들러에서 메시지 출력 및 메인 메뉴로 돌아가도록 함
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value, # Enum 값 사용
+                msg1="시장이 닫혀 있어 조회 불가",
+                data=[]
+            )
 
         if self._env.is_paper_trading:
             self._logger.warning("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
-            return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1="모의투자 미지원 API입니다.", data=[]) # Enum 값 사용
 
-        top_stocks_response = await self.get_top_market_cap_stocks_code("0000")
-        if not top_stocks_response or top_stocks_response.get('rt_cd') != '0':
-            self._logger.error(f"시가총액 상위 종목 조회 실패: {top_stocks_response}")
-            return None
+        top_stocks_response_common: ResCommonResponse = await self.get_top_market_cap_stocks_code("0000")
+        if top_stocks_response_common.rt_cd != ErrorCode.SUCCESS.value: # Enum 값 사용
+            self._logger.error(f"시가총액 상위 종목 조회 실패: {top_stocks_response_common.msg1}")
+            return top_stocks_response_common
 
-        top_stocks_list = top_stocks_response.get('output', [])
+        top_stocks_list: List[ResTopMarketCapApiItem] = top_stocks_response_common.data
         if not top_stocks_list:
             self._logger.info("시가총액 상위 종목 목록을 찾을 수 없습니다.")
-            return None
+            return ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value, # Enum 값 사용
+                msg1="시가총액 1~10위 종목 현재가 조회 결과 없음",
+                data=[]
+            )
 
-        results = []
-        for i, stock_info in enumerate(top_stocks_list):
+        results: List[ResMarketCapStockItem] = []
+        for i, stock_info_api_item in enumerate(top_stocks_list):
             if i >= 10:
                 break
 
-            stock_code = stock_info.get('mksc_shrn_iscd')
-            stock_name = stock_info.get('hts_kor_isnm')
-            stock_rank = stock_info.get('data_rank')
+            stock_code = stock_info_api_item.mksc_shrn_iscd
+            stock_name = stock_info_api_item.hts_kor_isnm or "N/A"
+            stock_rank = stock_info_api_item.data_rank or "N/A"
 
             if stock_code:
-                current_price_response = await self.get_current_stock_price(stock_code)
-                if current_price_response and current_price_response.get('rt_cd') == '0':
-                    current_price = current_price_response['output'].get('stck_prpr', 'N/A')
-                    results.append({
-                        'rank': stock_rank,
-                        'name': stock_name,
-                        'code': stock_code,
-                        'current_price': current_price
-                    })
+                current_price_response_common: ResCommonResponse = await self.get_current_stock_price(stock_code)
+                if current_price_response_common.rt_cd == ErrorCode.SUCCESS.value: # Enum 값 사용
+                    current_price_output_data = current_price_response_common.data
+                    current_price = current_price_output_data.get('stck_prpr', 'N/A')
+                    results.append(ResMarketCapStockItem(
+                        rank=stock_rank,
+                        name=stock_name,
+                        code=stock_code,
+                        current_price=current_price
+                    ))
                     self._logger.debug(f"종목 {stock_code} ({stock_name}) 현재가 {current_price} 조회 성공.")
                 else:
-                    self._logger.error(f"종목 {stock_code} ({stock_name}) 현재가 조회 실패: {current_price_response}")
+                    self._logger.error(f"종목 {stock_code} ({stock_name}) 현재가 조회 실패: {current_price_response_common.msg1}")
             else:
-                self._logger.warning(f"시가총액 상위 종목 목록에서 유효한 종목코드를 찾을 수 없습니다: {stock_info}")
+                self._logger.warning(f"시가총액 상위 종목 목록에서 유효한 종목코드를 찾을 수 없습니다: {stock_info_api_item}")
 
         if results:
             self._logger.info("시가총액 1~10위 종목 현재가 조회 성공 및 결과 반환.")
-            return results
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, # Enum 값 사용
+                msg1="시가총액 1~10위 종목 현재가 조회 성공",
+                data=results
+            )
         else:
             self._logger.warning("시가총액 1~10위 종목 현재가 조회 결과 없음.")
-            return None
+            return ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value, # Enum 값 사용
+                msg1="시가총액 1~10위 종목 현재가 조회 결과 없음",
+                data=[]
+            )
 
     # @TODO TC 추가 필요
-    async def get_yesterday_upper_limit_stocks(self, stock_codes: list[str]) -> list[dict]:
+    async def get_yesterday_upper_limit_stocks(self, stock_codes: List[str]) -> ResCommonResponse:
+        """
+        전체 종목 리스트 중 어제 상한가에 도달한 종목을 필터링합니다. (TODO: 재검증 및 TC 추가 필요)
+        ResCommonResponse 형태로 반환하며, data 필드에 List[Dict] 포함.
+        """
         results = []
 
         for code in stock_codes:
             try:
-                price_info = await self._broker_api_wrapper.get_price_summary(code)
-                if not price_info:
+                price_info_common: ResCommonResponse = await self._broker_api_wrapper.get_price_summary(code)
+                if price_info_common.rt_cd != ErrorCode.SUCCESS.value: # Enum 값 사용
+                    self._logger.warning(f"{code} 종목 가격 요약 정보 조회 실패: {price_info_common.msg1}. 필터링 제외.")
                     continue
 
-                current_price = int(price_info.get("stck_prpr", "0"))
-                upper_limit_price = int(price_info.get("stck_uppr", "0"))
-                change_rate = float(price_info.get("rate", 0.0))
+                price_info: ResPriceSummary = price_info_common.data
+                if price_info is None:
+                    self._logger.warning(f"{code} 종목 가격 요약 정보 데이터가 None입니다. 필터링 제외.")
+                    continue
 
-                if current_price == upper_limit_price:
+
+                current_price = price_info.current
+                prdy_ctrt = price_info.prdy_ctrt
+
+                if prdy_ctrt >= 29.0: # 29% 이상이면 상한가 근접으로 판단
                     results.append({
                         "code": code,
                         "price": current_price,
-                        "change_rate": change_rate
+                        "change_rate": prdy_ctrt
                     })
             except Exception as e:
                 self._logger.warning(f"{code} 상한가 필터링 중 오류: {e}")
-                continue
+                continue #
 
-        return results
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, # Enum 값 사용
+            msg1="어제 상한가 종목 필터링 성공 (임시 로직)",
+            data=results
+        )
 
-    async def get_current_upper_limit_stocks(self, stock_codes: list[str]) -> list[dict]:
+    async def get_current_upper_limit_stocks(self, stock_codes: List[str]) -> ResCommonResponse:
         """
         전체 종목 리스트 중 현재 상한가에 도달한 종목을 필터링합니다.
-        :param stock_codes: 전체 종목 코드 리스트
-        :return: 현재 상한가 종목 리스트 [{code, name, price, change_rate}]
+        ResCommonResponse 형태로 반환하며, data 필드에 List[Dict] (종목 정보) 포함.
         """
-
         results = []
         total_stocks = len(stock_codes)
-        # progress_step은 최소 1이 되어, 종목 수가 10개 미만일 때는 모든 종목마다 표시됩니다.
-        # (예: total_stocks가 5이면 progress_step = max(1, 0) = 1)
-        # (예: total_stocks가 100이면 progress_step = max(1, 10) = 10)
         progress_step = max(1, total_stocks // 10)
 
-        for idx, code in enumerate(stock_codes):  # enumerate를 사용하여 인덱스(idx)와 종목코드(code)를 함께 가져옴
-            # 10% 간격으로, 또는 마지막 종목일 때 진행률을 표시합니다.
-            # idx는 0부터 시작하므로, (idx + 1)을 사용하여 현재 처리 중인 항목 번호를 맞춥니다.
+        for idx, code in enumerate(stock_codes):
             if (idx + 1) % progress_step == 0 or (idx + 1) == total_stocks:
-                # 현재 진행된 퍼센트를 소수점 없이 표시 (예: 10%, 20% 등)
                 current_percentage = ((idx + 1) / total_stocks) * 100 if total_stocks > 0 else 100
                 print(f"\r처리 중... {current_percentage:.0f}% 완료 ({idx + 1}/{total_stocks})", end="", flush=True)
 
             try:
-                price_info = await self._broker_api_wrapper.get_price_summary(code)
-                if not price_info:
+                price_info_common: ResCommonResponse = await self._broker_api_wrapper.get_price_summary(code)
+                if price_info_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
+                    self._logger.warning(f"{code} 종목 가격 요약 정보 조회 실패: {price_info_common.msg1}. 필터링 제외.")
                     continue
 
-                current_price = int(price_info.get("current", "0"))
-                open_price = int(price_info.get("open", "0"))
-                # upper_limit_price = open_price * 1.3 # 이 변수는 조건문에서 사용되지 않으므로 제거할 수 있습니다.
-                change_rate = float(price_info.get("change_rate", 0.0))
-                name = await self._broker_api_wrapper.get_name_by_code(code)
+                price_info: ResPriceSummary = price_info_common.data
+                if price_info is None:
+                    self._logger.warning(f"{code} 종목 가격 요약 정보 데이터가 None입니다. 필터링 제외.")
+                    continue
 
-                if change_rate > 29.0:  # 등락률 조건
+                current_price = price_info.current
+                open_price = price_info.open
+                prdy_ctrt = price_info.prdy_ctrt
+
+                name_response_common = await self._broker_api_wrapper.get_name_by_code(code)
+                name = name_response_common  # get_name_by_code는 현재 문자열을 직접 반환
+
+                if prdy_ctrt > 29.0:  # 등락률 조건 (전일 대비 29% 이상을 상한가로 간주)
                     results.append({
                         "code": code,
                         "name": name,
                         "open_price": open_price,
                         "current_price": current_price,
-                        "change_rate": change_rate
+                        "change_rate": price_info.change_rate,
+                        "prdy_ctrt": prdy_ctrt
                     })
             except Exception as e:
                 self._logger.warning(f"{code} 현재 상한가 필터링 중 오류: {e}")
-                continue
+                continue  #
 
-        # 루프가 완료된 후 진행률 표시 줄을 지웁니다.
-        # 충분한 공백으로 덮어쓴 후 커서를 줄 시작으로 옮깁니다. (80칸은 일반적인 터미널 폭을 고려)
         print("\r" + " " * 80 + "\r", end="", flush=True)
 
-        return results
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
+            msg1="현재 상한가 종목 필터링 성공",
+            data=results
+        )
 
     # `get_current_upper_limit_stocks` 메서드가 정의된 클래스 내부에 다음 헬퍼 메서드를 추가합니다.
     async def _fetch_stock_data(self, code: str):
@@ -319,27 +363,36 @@ class TradingService:
 
         return price_info, name
 
-    async def get_all_stocks_code(self) -> dict:
+    async def get_all_stocks_code(self) -> ResCommonResponse:
         """
         전체 종목 코드를 조회합니다.
-        :return: {"rt_cd": "0", "output": [...]} 또는 {"rt_cd": "1", "msg1": "..."}
+        ResCommonResponse 형태로 반환하며, data 필드에 List[str] (종목 코드 리스트) 포함.
         """
         self._logger.info("Service - 전체 종목 코드 조회 요청")
 
         try:
-            codes = await self._broker_api_wrapper.get_all_stock_code_list()
+            codes = await self._broker_api_wrapper.get_all_stock_code_list() # 현재 List[str] 반환
 
             if not isinstance(codes, list):
                 msg = f"비정상 응답 형식: {codes}"
                 self._logger.warning(msg)
-                return {"rt_cd": "1", "msg1": msg}
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.PARSING_ERROR.value, # Enum 값 사용
+                    msg1=msg,
+                    data=[]
+                )
 
-            return {
-                "rt_cd": "0",
-                "output": codes
-            }
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, # Enum 값 사용
+                msg1="전체 종목 코드 조회 성공",
+                data=codes
+            )
 
         except Exception as e:
             error_msg = f"전체 종목 코드 조회 실패: {e}"
             self._logger.error(error_msg)
-            return {"rt_cd": "1", "msg1": error_msg}
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value, # Enum 값 사용
+                msg1=error_msg,
+                data=[]
+            )

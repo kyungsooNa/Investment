@@ -1,6 +1,7 @@
 # app/stock_query_service.py
 import asyncio
-
+from common.types import ErrorCode, ResCommonResponse
+from typing import List, Dict
 
 class StockQueryService:
     """
@@ -25,8 +26,8 @@ class StockQueryService:
     async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 조회 요청 및 결과 출력."""
         print(f"\n--- {stock_code} 현재가 조회 ---")
-        current_price_result = await self.trading_service.get_current_stock_price(stock_code)
-        if current_price_result and current_price_result.get('rt_cd') == '0':
+        current_price_result : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
             print(f"\n{stock_code} 현재가: {current_price_result}")
             self.logger.info(f"{stock_code} 현재가 조회 성공: {current_price_result}")
         else:
@@ -36,8 +37,8 @@ class StockQueryService:
     async def handle_get_account_balance(self):
         """계좌 잔고 조회 요청 및 결과 출력."""
         print("\n--- 계좌 잔고 조회 ---")
-        account_balance = await self.trading_service.get_account_balance()
-        if account_balance and account_balance.get('rt_cd') == '0':
+        account_balance : ResCommonResponse = await self.trading_service.get_account_balance()
+        if account_balance and account_balance.rt_cd == ErrorCode.SUCCESS.value:
             print(f"\n계좌 잔고: {account_balance}")
             self.logger.info(f"계좌 잔고 조회 성공: {account_balance}")
         else:
@@ -47,15 +48,15 @@ class StockQueryService:
     async def handle_get_top_market_cap_stocks(self, market_code, count: int = None):
         """시가총액 상위 종목 조회 요청 및 결과 출력 (전체 목록)."""
         print("\n--- 시가총액 상위 종목 조회 시도 ---")
-        top_market_cap_stocks = await self.trading_service.get_top_market_cap_stocks_code(market_code, count)
+        top_market_cap_stocks : ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code, count)
 
-        if top_market_cap_stocks and top_market_cap_stocks.get('rt_cd') == '0':
+        if top_market_cap_stocks and top_market_cap_stocks.rt_cd == ErrorCode.SUCCESS.value:
             print(f"성공: 시가총액 상위 종목 목록:")
-            for stock_info in top_market_cap_stocks.get('output', []):
-                print(f"  순위: {stock_info.get('data_rank', '')}, "
-                      f"종목명: {stock_info.get('hts_kor_isnm', '')}, "
-                      f"시가총액: {stock_info.get('stck_avls', '')}, "
-                      f"현재가: {stock_info.get('stck_prpr', '')}")
+            for stock_info in top_market_cap_stocks.data:
+                print(f"  순위: {getattr(stock_info, 'data_rank', '')}, "
+                      f"종목명: {getattr(stock_info, 'hts_kor_isnm', '')}, "
+                      f"시가총액: {getattr(stock_info, 'stck_avls', '')}, "
+                      f"현재가: {getattr(stock_info, 'stck_prpr', '')}")
             self.logger.info(f"시가총액 상위 종목 조회 성공 (시장: {market_code}), 결과: {top_market_cap_stocks}")
         else:
             print(f"실패: 시가총액 상위 종목 조회.")
@@ -66,7 +67,8 @@ class StockQueryService:
         print("\n--- 시가총액 1~10위 종목 현재가 조회 시도 ---")
         self.logger.info("시가총액 1~10위 종목 현재가 조회 시도")
         try:
-            stocks_data = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+            response : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+            stocks_data : List = response.data
 
             if stocks_data is None: # None은 조회 자체의 실패로 간주
                 print("\n실패: 시가총액 1~10위 종목 현재가 조회.")
@@ -101,10 +103,10 @@ class StockQueryService:
         """
         print(f"\n--- {stock_code} 전일대비 등락률 조회 ---")
 
-        current_price_result = await self.trading_service.get_current_stock_price(stock_code)
+        current_price_result : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
-        if current_price_result and current_price_result.get('rt_cd') == '0':
-            output_data = current_price_result.get('output', {})
+        if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
+            output_data = current_price_result.data
             current_price = output_data.get('stck_prpr', 'N/A')
             change_val_str = output_data.get('prdy_vrss', 'N/A')  # 문자열로 가져옴
             change_sign_code = output_data.get('prdy_vrss_sign', 'N/A')  # 부호 코드
@@ -145,10 +147,10 @@ class StockQueryService:
         """
         print(f"\n--- {stock_code} 시가대비 조회 ---")
 
-        current_price_result = await self.trading_service.get_current_stock_price(stock_code)
+        current_price_result : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
-        if current_price_result and current_price_result.get('rt_cd') == '0':
-            output_data = current_price_result.get('output', {})
+        if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
+            output_data : Dict = current_price_result.data
             current_price_str = output_data.get('stck_prpr', 'N/A')
             open_price_str = output_data.get('stck_oprc', 'N/A')
             vs_open_sign_code = output_data.get('oprc_vrss_prpr_sign', 'N/A')  # 부호 코드
@@ -223,13 +225,13 @@ class StockQueryService:
         upper_limit_stocks_found = []
         try:
             # 1. 시가총액 상위 종목 목록 조회 (TradingService 위임)
-            top_stocks_response = await self.trading_service.get_top_market_cap_stocks_code(market_code)
+            top_stocks_response : ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code)
 
-            if not top_stocks_response or top_stocks_response.get('rt_cd') != '0':
+            if not top_stocks_response or top_stocks_response.rt_cd != ErrorCode.SUCCESS.value:
                 self.logger.error(f"시가총액 상위 종목 목록 조회 실패: {top_stocks_response}")
                 return None
 
-            top_stocks_list = top_stocks_response.get('output', [])
+            top_stocks_list : List = top_stocks_response.data
             if not top_stocks_list:
                 self.logger.info("조회된 시가총액 상위 종목이 없습니다.")
                 print("조회된 시가총액 상위 종목이 없습니다.\n")
@@ -300,7 +302,7 @@ class StockQueryService:
         self.logger.info(f"Service - 전일 상한가 종목 조회 요청 (시장 코드: {market_code}, 수량: {limit})")
 
         try:
-            top_codes_response = await self.trading_service.get_top_market_cap_stocks_code(market_code)
+            top_codes_response : ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code)
 
             if not isinstance(top_codes_response, dict) or top_codes_response.get('rt_cd') != '0':
                 msg = top_codes_response.get("msg1", "조회 실패") if isinstance(top_codes_response, dict) else "응답 오류"
@@ -343,7 +345,7 @@ class StockQueryService:
 
         try:
             # 전체 종목 코드 조회
-            all_stock_codes = await self.trading_service.get_all_stocks_code(market_code)
+            all_stock_codes : ResCommonResponse = await self.trading_service.get_all_stocks_code(market_code)
 
             if not all_stock_codes:
                 print("전체 종목 코드 조회 실패 또는 결과 없음.")

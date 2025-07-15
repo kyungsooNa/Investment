@@ -139,7 +139,7 @@ class CLIView:
         print("✔️ 후보 종목:")
         if stocks:
             for item in stocks:
-                print(f" - {item.get('name', 'N/A')}({item.get('code', 'N/A')})")
+                print(f" - {item.get('name', 'N/A')}({item.get('code', 'N/A')}) - 등락률 ({item.get('prdy_ctrt','N/A')})")
         else:
             print("   없음")
 

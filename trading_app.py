@@ -1,4 +1,5 @@
 import json
+import yaml
 
 from strategies.backtest_data_provider import BacktestDataProvider
 from view.cli_view import CLIView
@@ -14,13 +15,22 @@ from app.stock_query_service import StockQueryService
 from app.order_execution_service import OrderExecutionService
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 
+# common.types에서 모든 ResTypedDict와 ErrorCode 임포트
+from typing import List
+from common.types import (
+    ResCommonResponse, ErrorCode,
+    ResPriceSummary, ResMomentumStock, ResMarketCapStockItem,
+    ResStockFullInfoApiOutput, ResTopMarketCapApiItem, ResDailyChartApiItem,
+    ResAccountBalanceApiOutput, ResStockOrderApiOutput
+)  #
+
+
 # config_loader.py에 이미 정의되어 있을 수 있으나, 독립 실행을 위해 여기에 포함
 def load_config(file_path):
     """지정된 경로에서 YAML 또는 JSON 설정 파일을 로드합니다."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             try:
-                import yaml
                 return yaml.safe_load(f)
             except ImportError:
                 f.seek(0)
@@ -29,6 +39,7 @@ def load_config(file_path):
         raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
     except (json.JSONDecodeError, yaml.YAMLError) as e:
         raise ValueError(f"설정 파일 형식이 올바르지 않습니다 ({file_path}): {e}")
+
 
 class TradingApp:
     def __init__(self, main_config_path, tr_ids_config_path):
@@ -41,7 +52,7 @@ class TradingApp:
         self.time_manager = None
         self.logger = Logger()
         self.token_manager = None
-        self.cli_view = None # CLIView는 여기서 초기화됩니다.
+        self.cli_view = None  # CLIView는 여기서 초기화됩니다.
 
         self.order_execution_service = None
         self.stock_query_service = None
@@ -78,7 +89,7 @@ class TradingApp:
                 timezone=config_data.get('market_timezone', "Asia/Seoul"),
                 logger=self.logger
             )
-            self.cli_view = CLIView(self.time_manager, self.logger) # CLIView 인스턴스 초기화
+            self.cli_view = CLIView(self.time_manager, self.logger)  # CLIView 인스턴스 초기화
 
             self.logger.info("환경 설정 로드 및 KoreaInvestEnv 초기화 완료.")
 
@@ -88,7 +99,6 @@ class TradingApp:
         except Exception as e:
             self.logger.critical(f"애플리케이션 초기화 실패: {e}")
             raise
-
 
     async def _complete_api_initialization(self):
         """API 클라이언트 및 서비스 객체 초기화를 수행합니다."""
@@ -116,12 +126,12 @@ class TradingApp:
 
             # BacktestDataProvider에 BrokerAPIWrapper를 전달 (현재와 동일)
             self.backtest_data_provider = BacktestDataProvider(
-                broker=self.broker_wrapper, # self.broker 대신 self.broker_wrapper 사용 (일관성을 위해)
+                broker=self.broker_wrapper,  # self.broker 대신 self.broker_wrapper 사용 (일관성을 위해)
                 time_manager=self.time_manager,
                 logger=self.logger
             )
 
-            self.logger.info(f"API 클라이언트 및 서비스 초기화 성공.") # self.api_client 출력 대신 일반 메시지
+            self.logger.info(f"API 클라이언트 및 서비스 초기화 성공.")  # self.api_client 출력 대신 일반 메시지
             return True
         except Exception as e:
             error_message = f"API 클라이언트 초기화 실패: {e}"
@@ -182,11 +192,13 @@ class TradingApp:
             stock_code = await self.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
             await self.stock_query_service.handle_get_current_stock_price(stock_code)
         elif choice == '2':
-            balance = await self.trading_service.get_account_balance()
-            if balance:
-                self.cli_view.display_account_balance(balance)
+            balance_response: ResCommonResponse = await self.trading_service.get_account_balance()
+            if balance_response.rt_cd == ErrorCode.SUCCESS.value:
+                # balance_response['data']가 실제 잔고 데이터입니다.
+                self.cli_view.display_account_balance(balance_response.data)
             else:
-                self.cli_view.display_account_balance_failure() # CLIView 메서드 사용
+                self.cli_view.display_account_balance_failure(
+                    balance_response.msg1)  # 실패 메시지 전달
         elif choice == '3':
             # 사용자 입력을 CLIView에서 직접 받아서 TransactionHandlers로 전달
             stock_code = await self.cli_view.get_user_input("매수할 종목 코드를 입력하세요: ")
@@ -217,11 +229,17 @@ class TradingApp:
                 self.logger.warning("모의투자 환경에서 시가총액 1~10위 종목 조회 시도 (미지원).")
                 running_status = True
             else:
-                if await self.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices():
-                    running_status = True  # 조회 성공 시에도 계속 실행
+                # stock_query_service.handle_get_top_10_market_cap_stocks_with_prices()의 반환 타입에 따라 로직 수정
+                # 해당 서비스 함수가 성공/실패 여부를 ResCommonResponse로 반환한다고 가정
+                response_common = await self.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices()
+                if response_common["rt_cd"] == ErrorCode.SUCCESS.value:
+                    running_status = True
                 else:
-                    running_status = True  # 조회 실패 시에도 계속 실행
+                    self.cli_view.display_top_stocks_failure(response_common["msg1"])
+                    running_status = True  # 조회 실패 시에도 앱은 계속 실행
         elif choice == '9':
+            # handle_upper_limit_stocks는 내부적으로 ResCommonResponse를 처리하고
+            # display_gapup_pullback_selected_stocks 등을 호출한다고 가정
             await self.stock_query_service.handle_upper_limit_stocks("0000", limit=500)
         elif choice == '10':
             if not self.time_manager.is_market_open():
@@ -235,19 +253,28 @@ class TradingApp:
             from strategies.strategy_executor import StrategyExecutor
 
             try:
-                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000")
+                # trading_service.get_top_market_cap_stocks_code는 이제 ResCommonResponse를 반환
+                top_codes_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
+                    "0000")
 
-                if not isinstance(top_codes, dict) or top_codes.get('rt_cd') != '0':
-                    self.cli_view.display_top_stocks_failure(top_codes.get('msg1', '알 수 없는 오류 또는 예상치 못한 응답 타입'))
-                    self.logger.warning(f"시가총액 조회 실패. 응답: {top_codes}")
+                if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
+                    self.cli_view.display_top_stocks_failure(getattr(top_codes_response.msg1, '알 수 없는 오류'))
+                    self.logger.warning(f"시가총액 조회 실패. 응답: {top_codes_response}")
+                    return running_status
+
+                # 'data' 필드에서 실제 목록을 가져옴
+                top_codes_list: List[ResTopMarketCapApiItem] = getattr(top_codes_response, 'data', [])
+                if not top_codes_list:  # 데이터가 비어있는 경우
+                    self.cli_view.display_top_stocks_failure("시가총액 상위 종목 데이터 없음.")
+                    self.logger.warning("시가총액 상위 종목 데이터 없음.")
                     return running_status
 
                 self.cli_view.display_top_stocks_success()
 
                 top_stock_codes = [
-                    item["mksc_shrn_iscd"]
-                    for item in top_codes.get("output", [])[:30]
-                    if "mksc_shrn_iscd" in item
+                    item.mksc_shrn_iscd
+                    for item in top_codes_list[:30]  # data 필드에 List[ResTopMarketCapApiItem]이 있으므로 그대로 사용
+                    if item.mksc_shrn_iscd
                 ]
 
                 if not top_stock_codes:
@@ -275,171 +302,112 @@ class TradingApp:
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
 
         elif choice == '11':
-
             self.cli_view.display_strategy_running_message("모멘텀 백테스트")
 
             from strategies.momentum_strategy import MomentumStrategy
-
             from strategies.strategy_executor import StrategyExecutor
 
             try:
-
                 count_input = await self.cli_view.get_user_input("시가총액 상위 몇 개 종목을 조회할까요? (기본값: 30): ")
-
                 try:
-
                     count = int(count_input) if count_input else 30
-
                     if count <= 0:
                         self.cli_view.display_invalid_input_warning("0 이하의 수는 허용되지 않으므로 기본값 30을 사용합니다.")
-
                         count = 30
-
                 except ValueError:
-
                     self.cli_view.display_invalid_input_warning("숫자가 아닌 값이 입력되어 기본값 30을 사용합니다.")
-
                     count = 30
 
-                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000", count=count)
+                # trading_service.get_top_market_cap_stocks_code는 이제 ResCommonResponse를 반환
+                top_codes_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
+                    "0000", count=count)
 
-                if isinstance(top_codes, dict) and top_codes.get('rt_cd') != '0':
-
-                    self.cli_view.display_top_stocks_failure(top_codes.get('msg1', '알 수 없는 오류 또는 예상치 못한 응답 타입'))
-
-                    self.logger.warning(f"시가총액 조회 실패. 응답: {top_codes}")
-
+                if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
+                    self.cli_view.display_top_stocks_failure(getattr(top_codes_response.msg1, '알 수 없는 오류'))
+                    self.logger.warning(f"시가총액 조회 실패. 응답: {top_codes_response}")
                     return running_status
 
-                if not top_codes:
-
-                    self.cli_view.display_top_stocks_failure("결과 없음")
-
+                # 'data' 필드에서 실제 목록을 가져옴
+                top_codes_list: List[ResTopMarketCapApiItem] = getattr(top_codes_response, "data", [])
+                if not top_codes_list:  # 데이터가 비어있는 경우
+                    self.cli_view.display_top_stocks_failure("시가총액 상위 종목 데이터 없음 (백테스트).")
+                    self.logger.warning("시가총액 상위 종목 데이터 없음 (백테스트).")
                     return running_status
 
                 top_stock_codes = [
-
-                    item["code"]
-
-                    for item in top_codes[:count]
-
-                    if "code" in item
-
-                ]
+                    item.mksc_shrn_iscd  # 백테스트에서는 'code' 대신 'mksc_shrn_iscd' 사용해야 할 수 있음. API 스키마 확인 필요.
+                    for item in top_codes_list[:count]
+                    if "mksc_shrn_iscd" in item  # 'mksc_shrn_iscd' 필드가 있는지 확인
+                ]  # 원본 코드에서는 item["code"]로 되어있어 수정
 
                 if not top_stock_codes:
-
                     self.cli_view.display_no_stocks_for_strategy()
-
                     return running_status
 
                 strategy = MomentumStrategy(
-
                     broker=self.broker,
-
                     min_change_rate=10.0,
-
                     min_follow_through=3.0,
-
                     min_follow_through_time=10,
-
                     mode="backtest",
-
                     backtest_lookup=self.backtest_data_provider.realistic_price_lookup,
-
                     logger=self.logger
-
                 )
-
                 executor = StrategyExecutor(strategy)
-
                 result = await executor.execute(top_stock_codes)
 
                 self.cli_view.display_strategy_results("백테스트", result)
-
                 self.cli_view.display_follow_through_stocks(result.get("follow_through", []))
-
                 self.cli_view.display_not_follow_through_stocks(result.get("not_follow_through", []))
 
             except Exception as e:
-
                 self.logger.error(f"[백테스트] 전략 실행 중 오류 발생: {e}")
-
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
 
         elif choice == '12':
-
             self.cli_view.display_strategy_running_message("GapUpPullback")
 
             from strategies.GapUpPullback_strategy import GapUpPullbackStrategy
-
             from strategies.strategy_executor import StrategyExecutor
 
             try:
+                # trading_service.get_top_market_cap_stocks_code는 이제 ResCommonResponse를 반환
+                top_codes_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
+                    "0000")
 
-                top_codes = await self.trading_service.get_top_market_cap_stocks_code("0000")
-
-                if isinstance(top_codes, dict) and top_codes.get('rt_cd') == '0':
-
-                    output_items = top_codes.get("output", [])
-
+                if top_codes_response.rt_cd == ErrorCode.SUCCESS.value:  # Enum 값 사용
+                    output_items: List[ResTopMarketCapApiItem] = getattr(top_codes_response,'data', [])
                     top_stock_codes = [
-
-                        item["mksc_shrn_iscd"] for item in output_items if "mksc_shrn_iscd" in item
-
+                        item.mksc_shrn_iscd for item in output_items if item.mksc_shrn_iscd
                     ]
-
-                elif isinstance(top_codes, list):
-
-                    top_stock_codes = [
-
-                        item["code"] for item in top_codes if "code" in item
-
-                    ]
-
-                else:
-
-                    self.cli_view.display_top_stocks_failure("응답 형식 오류")
-
+                else:  # top_codes_response["rt_cd"] != ErrorCode.SUCCESS.value
+                    self.cli_view.display_top_stocks_failure(getattr(top_codes_response.msg1, '응답 형식 오류'))
+                    self.logger.warning(f"GapUpPullback 시가총액 조회 실패: {top_codes_response}")
                     return running_status
 
                 if not top_stock_codes:
-
                     self.cli_view.display_no_stocks_for_strategy()
-
                     return running_status
 
                 strategy = GapUpPullbackStrategy(
-
                     broker=self.broker,
-
                     min_gap_rate=5.0,
-
                     max_pullback_rate=2.0,
-
                     rebound_rate=2.0,
-
                     mode="live",
-
                     logger=self.logger
-
                 )
-
                 executor = StrategyExecutor(strategy)
-
                 result = await executor.execute(top_stock_codes)
 
                 self.cli_view.display_strategy_results("GapUpPullback", result)
-
                 self.cli_view.display_gapup_pullback_selected_stocks(result.get("gapup_pullback_selected", []))
-
                 self.cli_view.display_gapup_pullback_rejected_stocks(result.get("gapup_pullback_rejected", []))
 
             except Exception as e:
-
                 self.logger.error(f"[GapUpPullback] 전략 실행 오류: {e}")
-
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
+
         elif choice == '13':
             stock_code = await self.cli_view.get_user_input("구독할 종목 코드를 입력하세요: ")
             await self.stock_query_service.handle_realtime_price_quote_stream(stock_code)
@@ -447,20 +415,31 @@ class TradingApp:
             self.cli_view.display_strategy_running_message("전일 상한가 종목 조회")
 
             try:
-                all_codes = await self.trading_service.get_all_stocks_code()
+                # trading_service.get_all_stocks_code는 이제 ResCommonResponse를 반환
+                all_codes_response: ResCommonResponse = await self.trading_service.get_all_stocks_code()
 
-                if not isinstance(all_codes, dict) or all_codes.get('rt_cd') != '0':
-                    self.cli_view.display_top_stocks_failure(all_codes.get('msg1', '조회 실패'))
-                    self.logger.warning(f"전체 종목 조회 실패: {all_codes}")
+                if all_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
+                    self.cli_view.display_top_stocks_failure(getattr(all_codes_response.msg1, '조회 실패'))
+                    self.logger.warning(f"전체 종목 조회 실패: {all_codes_response}")
                     return running_status
 
+                # 'data' 필드에서 실제 목록을 가져옴
+                all_stock_codes_list: List[str] = getattr(all_codes_response, 'data', [])
 
-                upper_limit_stocks = await self.trading_service.get_current_upper_limit_stocks(all_codes.get('output'))
+                # get_current_upper_limit_stocks는 이제 ResCommonResponse를 반환
+                upper_limit_stocks_response: ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(
+                    all_stock_codes_list)
 
-                if not upper_limit_stocks:
-                    self.cli_view.display_no_stocks_for_strategy()
-                else:
-                    self.cli_view.display_gapup_pullback_selected_stocks(upper_limit_stocks)
+                if upper_limit_stocks_response.rt_cd == ErrorCode.SUCCESS.value:  # Enum 값 사용
+                    upper_limit_stocks_data = getattr(upper_limit_stocks_response, 'data', [])
+                    if not upper_limit_stocks_data:
+                        self.cli_view.display_no_stocks_for_strategy()
+                    else:
+                        self.cli_view.display_gapup_pullback_selected_stocks(upper_limit_stocks_data)
+                else:  # 상한가 종목 조회 실패
+                    self.cli_view.display_top_stocks_failure(getattr(upper_limit_stocks_response.msg1, '상한가 종목 조회 실패'))
+                    self.logger.error(f"상한가 종목 조회 중 오류 발생: {upper_limit_stocks_response.msg1}")
+
 
             except Exception as e:
                 self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
