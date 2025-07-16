@@ -1,7 +1,7 @@
 import pytest
 import unittest
 import unittest.mock as mock
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
 import logging
 from io import StringIO
@@ -15,6 +15,8 @@ from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrad
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from core.time_manager import TimeManager  # Mocking용
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Mocking용
+from common.types import ResCommonResponse, ResStockFullInfoApiOutput, ResTopMarketCapApiItem
+from dataclasses import fields
 
 # 로거의 출력을 캡처하기 위한 설정 (테스트 시 실제 파일에 로그를 남기지 않도록)
 logging.getLogger('operational_logger').propagate = False
@@ -32,6 +34,29 @@ class MockLogger:
         self.error = mock.Mock()
         self.critical = mock.Mock()
 
+
+def make_stock_response(prdy_vrss_sign: str, stck_prpr: str, prdy_ctrt: str) -> ResCommonResponse:
+    """
+    최소 필드만 받아서 ResStockFullInfoApiOutput을 생성하고,
+    ResCommonResponse로 감싸주는 테스트용 헬퍼 함수입니다.
+    """
+    base_fields = {
+        f.name: "" for f in fields(ResStockFullInfoApiOutput)
+        if f.name not in {"prdy_vrss_sign", "stck_prpr", "prdy_ctrt"}
+    }
+
+    stock_data = ResStockFullInfoApiOutput(
+        prdy_vrss_sign=prdy_vrss_sign,
+        stck_prpr=stck_prpr,
+        prdy_ctrt=prdy_ctrt,
+        **base_fields
+    )
+
+    return ResCommonResponse(
+        rt_cd="0",
+        msg1="정상처리 되었습니다.",
+        data=stock_data
+    )
 
 class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
@@ -183,22 +208,30 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         trading_service = MagicMock()
         trading_service._env = mock_env
-        trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
-            "rt_cd": "0",
-            "output": [
-                {"mksc_shrn_iscd": "CODE001", "hts_kor_isnm": "상한가종목1", "data_rank": "1"},
-                {"mksc_shrn_iscd": "CODE002", "hts_kor_isnm": "일반종목2", "data_rank": "2"},
-                {"mksc_shrn_iscd": "CODE003", "hts_kor_isnm": "상한가종목3", "data_rank": "3"},
+        trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="정상",
+            data=[
+                ResTopMarketCapApiItem(
+                    iscd="CODE001", mksc_shrn_iscd="CODE001", stck_avls="100000000000",
+                    data_rank="1", hts_kor_isnm="상한가종목1", acc_trdvol="100000"
+                ),
+                ResTopMarketCapApiItem(
+                    iscd="CODE002", mksc_shrn_iscd="CODE002", stck_avls="90000000000",
+                    data_rank="2", hts_kor_isnm="일반종목2", acc_trdvol="200000"
+                ),
+                ResTopMarketCapApiItem(
+                    iscd="CODE003", mksc_shrn_iscd="CODE003", stck_avls="80000000000",
+                    data_rank="3", hts_kor_isnm="상한가종목3", acc_trdvol="150000"
+                )
             ]
-        })
+        ))
 
         trading_service.get_current_stock_price = AsyncMock(side_effect=[
-            {"rt_cd": "0", "output": {"prdy_vrss_sign": "1", "stck_prpr": "10000", "prdy_ctrt": "30.0"}},  # 상한가
-            {"rt_cd": "0", "output": {"prdy_vrss_sign": "2", "stck_prpr": "100", "prdy_ctrt": "1.0"}},  # 일반
-            {"rt_cd": "0", "output": {"prdy_vrss_sign": "1", "stck_prpr": "5000", "prdy_ctrt": "29.8"}},  # 상한가
+            make_stock_response("1", "10000", "30.0"),
+            make_stock_response("2", "100", "1.0"),
+            make_stock_response("1", "5000", "29.8"),
         ])
-
-        from app.stock_query_service import StockQueryService
 
         data_handler = StockQueryService(
             trading_service=trading_service,
@@ -220,16 +253,25 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         limit = 500
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = False
-        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={
-            "rt_cd": "0",
-            "output": [
-                {"mksc_shrn_iscd": "CODE001", "hts_kor_isnm": "상한가종목1", "data_rank": "1"},
-                {"mksc_shrn_iscd": "CODE002", "hts_kor_isnm": "실패종목2", "data_rank": "2"},
+
+        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="정상",
+            data=[
+                ResTopMarketCapApiItem(
+                    iscd="CODE001", mksc_shrn_iscd="CODE001", stck_avls="100000000000",
+                    data_rank="1", hts_kor_isnm="상한가종목1", acc_trdvol="100000"
+                ),
+                ResTopMarketCapApiItem(
+                    iscd="CODE002", mksc_shrn_iscd="CODE002", stck_avls="90000000000",
+                    data_rank="2", hts_kor_isnm="실패종목2", acc_trdvol="200000"
+                ),
             ]
-        })
+        ))
+
         self.trading_service.get_current_stock_price = AsyncMock(side_effect=[
-            {"rt_cd": "0", "output": {"prdy_vrss_sign": "1", "stck_prpr": "10000", "prdy_ctrt": "30.0"}},
-            {"rt_cd": "1", "msg1": "조회 실패"},
+            make_stock_response("1", "10000", "30.0"),
+            ResCommonResponse(rt_cd="1", msg1="조회 실패", data=None)
         ])
 
         result = await self.data_handlers.handle_upper_limit_stocks(market_code=market_code, limit=limit)
