@@ -25,10 +25,10 @@ class OrderExecutionService:
             stock_code, price, qty, order_dvsn
         )
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
-            print(f"주식 매수 주문 성공: {buy_order_result}")
+            print(f"주식 매수 주문 성공: {buy_order_result.data}")
             self.logger.info(f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
         else:
-            print(f"주식 매수 주문 실패: {buy_order_result}")
+            print(f"주식 매수 주문 실패: {buy_order_result.data}")
             self.logger.error(f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
         return buy_order_result
 
@@ -44,10 +44,10 @@ class OrderExecutionService:
             stock_code, price, qty, order_dvsn
         )
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
-            print(f"주식 매도 주문 성공: {sell_order_result}")
+            print(f"주식 매도 주문 성공: {sell_order_result.data}")
             self.logger.info(f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
         else:
-            print(f"주식 매도 주문 실패: {sell_order_result}")
+            print(f"주식 매도 주문 실패: {sell_order_result.data}")
             self.logger.error(f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
         return sell_order_result
 

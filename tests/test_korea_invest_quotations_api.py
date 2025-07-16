@@ -8,8 +8,47 @@ from common.types import (
     ResStockFullInfoApiOutput, ResTopMarketCapApiItem, ResDailyChartApiItem,
     ResAccountBalanceApiOutput, ResStockOrderApiOutput, ResStockFullInfoApiOutput # 추가될 수 있는 타입들
 )
+from dataclasses import fields
 from typing import List
 from types import SimpleNamespace
+
+
+def make_stock_info_response(rt_cd="0", price="10000", market_cap="123456789000", open_price="900") -> ResCommonResponse:
+    base_fields = {
+        f.name: "" for f in fields(ResStockFullInfoApiOutput)
+        if f.name not in {"stck_prpr", "stck_llam", "stck_oprc"}
+    }
+    stock_info = ResStockFullInfoApiOutput(
+        stck_prpr=price,
+        stck_llam=market_cap,
+        stck_oprc=open_price,
+        **base_fields
+    )
+    return ResCommonResponse(
+        rt_cd=rt_cd,
+        msg1="성공",
+        data=stock_info
+    )
+
+def make_call_api_response(
+    price="1000", market_cap="500000000000", open_price="900"
+) -> dict:
+    base_fields = {
+        f.name: "" for f in fields(ResStockFullInfoApiOutput)
+        if f.name not in {"stck_prpr", "stck_llam", "stck_oprc"}
+    }
+    output = ResStockFullInfoApiOutput(
+        stck_prpr=price,
+        stck_llam=market_cap,
+        stck_oprc=open_price,
+        **base_fields
+    ).__dict__  # → dict 형태로 변환
+
+    return {
+        "rt_cd": "0",
+        "msg1": "정상 처리",
+        "output": output
+    }
 
 @pytest.fixture(scope="function")
 def mock_quotations():
@@ -277,21 +316,8 @@ async def test_get_filtered_stocks_by_momentum(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_stock_info_by_code_success(mock_quotations):
-    mock_output = {
-        "hts_kor_isnm": "삼성전자",
-        "stck_prpr_smkl_amt": "500000000000",
-        "stck_prpr": "1000",
-        "stck_oprc": "900",
-        "prdy_vrss": "0",
-        "prdy_ctrt": "0.00",
-        "stck_hgpr": "0",
-        "stck_lwpr": "0",
-        "prdy_vol_rate": "0.00",
-        "acml_vol": "0",
-        "acml_tr_pbmn": "0"
-    }
+    mock_quotations.call_api = AsyncMock(return_value=make_call_api_response())
 
-    mock_quotations.call_api = AsyncMock(return_value={"rt_cd": "0", "output": mock_output})
     result_common = await mock_quotations.get_stock_info_by_code("005930")
 
     assert result_common.rt_cd == ErrorCode.SUCCESS.value
@@ -299,8 +325,8 @@ async def test_get_stock_info_by_code_success(mock_quotations):
     assert isinstance(result_common.data, ResStockFullInfoApiOutput)
 
     stock_info = result_common.data
-    assert stock_info.hts_kor_isnm == "삼성전자"
-    assert stock_info.stck_prpr_smkl_amt == "500000000000"
+    assert stock_info.stck_prpr == "1000"  # 현재가
+    assert stock_info.stck_llam == "500000000000"  # 시가총액
 
 
 @pytest.mark.asyncio
@@ -329,23 +355,11 @@ async def test_get_stock_info_by_code_parsing_error(mock_quotations):
 @pytest.mark.asyncio
 async def test_get_market_cap_success(mock_quotations):
     # get_stock_info_by_code가 ResCommonResponse를 반환하도록 Mock
-    mock_quotations.get_stock_info_by_code = AsyncMock(return_value=ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="성공",
-        data=ResStockFullInfoApiOutput(
-            stck_prpr="1000",
-            stck_oprc="900",
-            hts_kor_isnm="삼성전자",
-            stck_prpr_smkl_amt="123456789000",
-            prdy_vrss="0",
-            prdy_ctrt="0.00",
-            stck_hgpr="0",
-            stck_lwpr="0",
-            prdy_vol_rate="0.00",
-            acml_vol="0",
-            acml_tr_pbmn="0"
-        )
-    ))
+    mock_quotations.get_stock_info_by_code = AsyncMock(side_effect=[
+        make_stock_info_response(rt_cd="0", price="10000", market_cap="123456789000"),
+        ResCommonResponse(rt_cd="0", msg1="시가총액 조회 성공", data=None)
+    ])
+
     result_common = await mock_quotations.get_market_cap("005930")
 
     assert result_common.rt_cd== ErrorCode.SUCCESS.value
@@ -356,22 +370,11 @@ async def test_get_market_cap_success(mock_quotations):
 @pytest.mark.asyncio
 async def test_get_market_cap_failure_invalid_format(mock_quotations):
     # get_stock_info_by_code가 ResCommonResponse를 반환하도록 Mock
-    mock_quotations.get_stock_info_by_code = AsyncMock(return_value=ResCommonResponse(
+    mock_quotations.get_stock_info_by_code = AsyncMock(return_value=make_stock_info_response(
         rt_cd=ErrorCode.SUCCESS.value,
-        msg1="성공",
-        data=ResStockFullInfoApiOutput(
-            stck_prpr="1000",
-            stck_oprc="900",
-            hts_kor_isnm="삼성전자",
-            stck_prpr_smkl_amt="INVALID",  # 유효하지 않은 형식
-            prdy_vrss="0",
-            prdy_ctrt="0.00",
-            stck_hgpr="0",
-            stck_lwpr="0",
-            prdy_vol_rate="0.00",
-            acml_vol="0",
-            acml_tr_pbmn="0"
-        )
+        price="1000",
+        market_cap="INVALID",  # ✅ 여기서 의도한 파싱 실패 유도
+        open_price="900"
     ))
     result_common = await mock_quotations.get_market_cap("005930")
 
@@ -382,22 +385,9 @@ async def test_get_market_cap_failure_invalid_format(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_market_cap_conversion_error(mock_quotations):
-    mock_quotations.get_stock_info_by_code = AsyncMock(return_value=ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="정상 응답",
-        data=ResStockFullInfoApiOutput(
-            stck_prpr="1000",
-            stck_oprc="900",
-            hts_kor_isnm="삼성전자",
-            stck_prpr_smkl_amt="invalid_number",  # ❗ 잘못된 값
-            prdy_vrss="0",
-            prdy_ctrt="0.00",
-            stck_hgpr="0",
-            stck_lwpr="0",
-            prdy_vol_rate="0.00",
-            acml_vol="0",
-            acml_tr_pbmn="0"
-        )
+    mock_quotations.get_stock_info_by_code = AsyncMock(return_value=make_stock_info_response(
+        rt_cd="0",
+        market_cap="invalid_number"  # ✅ 변환 실패 유도
     ))
 
     result_common = await mock_quotations.get_market_cap("005930")
@@ -408,23 +398,9 @@ async def test_get_market_cap_conversion_error(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_market_cap_failure_missing_key(mock_quotations):
-    # get_stock_info_by_code가 ResCommonResponse를 반환하도록 Mock
-    mock_quotations.get_stock_info_by_code = AsyncMock(return_value=ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="성공",
-        data=ResStockFullInfoApiOutput(
-            stck_prpr="1000",
-            stck_oprc="900",
-            hts_kor_isnm="삼성전자",
-            stck_prpr_smkl_amt="",  # 누락 대신 빈 값 처리
-            prdy_vrss="0",
-            prdy_ctrt="0.00",
-            stck_hgpr="0",
-            stck_lwpr="0",
-            prdy_vol_rate="0.00",
-            acml_vol="0",
-            acml_tr_pbmn="0"
-        )
+    mock_quotations.get_stock_info_by_code = AsyncMock(return_value=make_stock_info_response(
+        rt_cd="0",
+        market_cap=""  # 누락 대신 빈 값 처리
     ))
     result_common = await mock_quotations.get_market_cap("005930")
     assert result_common.rt_cd== ErrorCode.PARSING_ERROR.value
@@ -898,7 +874,7 @@ async def test_get_market_cap_with_invalid_string(mock_quotations):
     mock_quotations.get_stock_info_by_code = AsyncMock(return_value=ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="정상 처리",
-        data=SimpleNamespace(stck_prpr_smkl_amt="NotANumber")
+        data=SimpleNamespace(stck_llam="NotANumber")
     ))
 
     result = await mock_quotations.get_market_cap("005930")
