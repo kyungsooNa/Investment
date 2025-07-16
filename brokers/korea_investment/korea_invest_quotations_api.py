@@ -176,7 +176,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=None
             )
 
-        market_cap_str = info.stck_prpr_smkl_amt
+        market_cap_str = info.stck_llam
         if market_cap_str and market_cap_str.isdigit():
             market_cap = int(market_cap_str)
             return ResCommonResponse(
