@@ -28,11 +28,11 @@ class StockQueryService:
         print(f"\n--- {stock_code} 현재가 조회 ---")
         current_price_result : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
         if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
-            print(f"\n{stock_code} 현재가: {current_price_result}")
-            self.logger.info(f"{stock_code} 현재가 조회 성공: {current_price_result}")
+            print(f"\n{stock_code} 현재가: {current_price_result.data}")
+            self.logger.info(f"{stock_code} 현재가 조회 성공: {current_price_result.data}")
         else:
             print(f"\n{stock_code} 현재가 조회 실패.")
-            self.logger.error(f"{stock_code} 현재가 조회 실패: {current_price_result}")
+            self.logger.error(f"{stock_code} 현재가 조회 실패: {current_price_result.data}")
 
     async def handle_get_account_balance(self):
         """계좌 잔고 조회 요청 및 결과 출력."""
@@ -245,19 +245,19 @@ class StockQueryService:
 
             # 2. 각 종목의 현재가 조회 및 상한가 여부 판단
             for stock_info in top_stocks_to_check:
-                stock_code = stock_info.get('mksc_shrn_iscd')
-                stock_name = stock_info.get('hts_kor_isnm')
+                stock_code = stock_info.mksc_shrn_iscd
+                stock_name = stock_info.hts_kor_isnm
 
                 if stock_code:
-                    current_price_response = await self.trading_service.get_current_stock_price(stock_code)
+                    current_price_response : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
                     current_checked_count += 1
                     print(f"\r조회 중... {current_checked_count}/{len(top_stocks_to_check)}", end="")
 
-                    if current_price_response and current_price_response.get('rt_cd') == '0':
-                        output_data = current_price_response.get('output', {})
-                        prdy_vrss_sign = output_data.get('prdy_vrss_sign', 'N/A')  # 전일대비 부호
-                        stck_prpr = output_data.get('stck_prpr', 'N/A')  # 현재가
-                        prdy_ctrt = output_data.get('prdy_ctrt', 'N/A')  # 전일대비율
+                    if current_price_response and current_price_response.rt_cd == ErrorCode.SUCCESS.value:
+                        output_data = current_price_response.data
+                        prdy_vrss_sign = output_data.prdy_vrss_sign  # 전일대비 부호
+                        stck_prpr = output_data.stck_prpr  # 현재가
+                        prdy_ctrt = output_data.prdy_ctrt  # 전일대비율
 
                         # 상한가 부호는 '1' (상한)
                         if prdy_vrss_sign == '1':
