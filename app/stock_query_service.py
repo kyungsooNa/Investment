@@ -70,16 +70,26 @@ class StockQueryService:
             response : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
             stocks_data : List = response.data
 
-            if stocks_data is None: # None은 조회 자체의 실패로 간주
+            if response.rt_cd != ErrorCode.SUCCESS.value: # None은 조회 자체의 실패로 간주
                 print("\n실패: 시가총액 1~10위 종목 현재가 조회.")
                 self.logger.error("시가총액 1~10위 종목 현재가 조회 실패: None 반환됨")
-                return False
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.API_ERROR.value,
+                    msg1="조회 실패: 데이터 None",
+                    data=None
+                )
             elif not stocks_data: # 빈 리스트는 조회 성공, 결과 없음으로 간주
+                # 성공했으나 데이터 없음
                 print("\n성공: 시가총액 1~10위 종목 현재가:")
                 print("  조회된 종목이 없습니다.")
-                self.logger.info("조회된 종목이 없습니다.") # 이 줄을 추가합니다.
-                return True
+                self.logger.info("조회된 종목이 없습니다.")
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="조회 성공 (종목 없음)",
+                    data=[]
+                )
             else: # 종목이 있는 경우
+                # 정상 조회
                 print("\n성공: 시가총액 1~10위 종목 현재가:")
                 for stock in stocks_data:
                     rank = stock.get('rank', 'N/A')
@@ -87,13 +97,22 @@ class StockQueryService:
                     code = stock.get('code', 'N/A')
                     price = stock.get('current_price', 'N/A')
                     print(f"  순위: {rank}, 종목명: {name}, 종목코드: {code}, 현재가: {price}원")
+
                 self.logger.info(f"시가총액 1~10위 종목 현재가 조회 성공: {len(stocks_data)}개 종목")
-                return True
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="조회 성공",
+                    data=stocks_data
+                )
 
         except Exception as e:
             print(f"\n실패: 시가총액 1~10위 종목 현재가 조회.")
             self.logger.error(f"시가총액 1~10위 종목 현재가 조회 중 오류 발생: {e}")
-            return False
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,
+                msg1=f"예외 발생: {e}",
+                data=None
+            )
 
     async def handle_display_stock_change_rate(self, stock_code):
         """
