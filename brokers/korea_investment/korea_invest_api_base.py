@@ -8,7 +8,7 @@ import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
-
+from common.types import ErrorCode, ResCommonResponse
 
 class KoreaInvestApiBase:
     """
@@ -51,9 +51,17 @@ class KoreaInvestApiBase:
                     continue
                 if result is None:
                     self.logger.error(f"복구 불가능한 오류 발생: {url}, 응답: {response.text}")
-                    return None
+                    return ResCommonResponse(
+                        rt_cd=ErrorCode.PARSING_ERROR.value,
+                        msg1="API 응답 파싱 실패 또는 처리 불가능",
+                        data=None
+                    )
 
-                return result
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="정상",
+                    data=result
+                )
 
             except Exception as e:
                 self._log_request_exception(e)
@@ -65,7 +73,11 @@ class KoreaInvestApiBase:
                     pass
 
         self.logger.error("모든 재시도 실패, API 호출 종료")
-        return None
+        return ResCommonResponse(
+            rt_cd=ErrorCode.RETRY_LIMIT.value,  # 또는 NETWORK_ERROR 등 더 구체적인 코드
+            msg1=f"최대 재시도 횟수 초과",
+            data=None
+        )
 
     async def close_session(self):
         """애플리케이션 종료 시 httpx 세션을 닫습니다."""
