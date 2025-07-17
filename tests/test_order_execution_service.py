@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from app.stock_query_service import StockQueryService
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
-from common.types import ResCommonResponse, ResTopMarketCapApiItem
+from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
 from types import SimpleNamespace
 
 # 모든 테스트를 하나의 AsyncioTestCase 클래스 내에 통합합니다.
@@ -615,8 +615,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             self.mock_logger.error.assert_called_once()
             self.assertIn("시가총액 1~10위 종목 현재가 조회 중 오류 발생: 테스트 예외 발생", self.mock_logger.error.call_args[0][0])
 
-            # 메서드가 False를 반환하는지 확인
-            self.assertFalse(result)
+            # ✅ 핵심 검증
+            self.assertIsInstance(result, ResCommonResponse)
+            self.assertEqual(result.rt_cd, ErrorCode.UNKNOWN_ERROR.value)
+            self.assertEqual(result.data, None)
+            self.assertIn("예외 발생", result.msg1)
 
     async def test_handle_upper_limit_stocks_empty_top_stocks_list(self):
         """top_stocks_list가 빈 리스트일 때 info 로그 및 메시지 출력 분기 검증"""
