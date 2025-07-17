@@ -44,7 +44,7 @@ class KoreaInvestApiBase:
 
                 response = await self._execute_request(method, url, params, data)
 
-                result = await self._handle_response(response)
+                result : dict = await self._handle_response(response)
                 if result == "retry":
                     self.logger.info(f"재시도 필요: {attempt}/{retry_count}, 지연 {delay}초")
                     await asyncio.sleep(delay)  # 이 부분이 호출되어야 함
@@ -60,7 +60,7 @@ class KoreaInvestApiBase:
                 return ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value,
                     msg1="정상",
-                    data=result
+                    data=result['output']
                 )
 
             except Exception as e:
@@ -125,11 +125,11 @@ class KoreaInvestApiBase:
             raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
 
-    async def _handle_response(self, response):
+    async def _handle_response(self, response) -> dict:
         """HTTP 응답을 처리하고, 오류 유형에 따라 재시도 여부를 결정합니다."""
         # 1. 호출 제한 오류 (Rate Limit) - 최상단에서 가장 먼저 검사하고 즉시 반환
         if response.status_code == 429 or \
-                (response.status_code == 500 and "초당 거래건수를 초과하였습니다." in response.text):
+                (response.status_code == 500 and "초당 거래건수를 초과하였습니다" in response.text):
             return "retry" # <--- 이 조건이 만족되면 다른 검사 없이 즉시 반환
 
         # 2. 그 외의 HTTP 오류 (HTTP 상태 코드 자체로 인한 오류)
