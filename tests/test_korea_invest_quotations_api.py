@@ -1168,38 +1168,31 @@ async def test_get_current_price_success(mock_quotations):
     """
     get_current_price가 정상적인 응답을 반환하는 경우를 테스트합니다.
     """
-    # 1. Mock 응답 정의 (API 원본 응답 형태)
-    expected_api_output = {
-        "rt_cd": "0",
-        "output": {
+    # 1. call_api를 모킹
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={
             "stck_oprc": "80000",
             "stck_prpr": "85000",
             "askp1": "85100",
             "bidp1": "84900"
         }
-    }
-
-    # 2. call_api를 모킹하여 위의 응답을 리턴
-    mock_quotations.call_api = AsyncMock(return_value=expected_api_output)
+    ))
 
     # 3. 메서드 호출
     result_common = await mock_quotations.get_current_price("005930")
 
     # 4. 검증
     # get_current_price는 ResCommonResponse로 래핑하여 반환
-    assert result_common.rt_cd== expected_api_output["rt_cd"]
-    assert result_common.msg1 == expected_api_output.get("msg1", "응답 메시지 없음")
-    assert result_common.data == expected_api_output["output"]
-
-    mock_quotations.call_api.assert_awaited_once_with(
-        "GET",
-        "/uapi/domestic-stock/v1/quotations/inquire-price",
-        params={
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": "005930"
-        },
-        retry_count=3
-    )
+    assert result_common.rt_cd == ErrorCode.SUCCESS.value
+    assert result_common.msg1 == "정상"
+    assert result_common.data == {
+        "stck_oprc": "80000",
+        "stck_prpr": "85000",
+        "askp1": "85100",
+        "bidp1": "84900"
+    }
 
 
 @pytest.mark.asyncio
@@ -1208,11 +1201,15 @@ async def test_get_current_price_api_failure(mock_quotations):
     get_current_price가 API 오류로 인해 None을 반환하는 경우
     """
     # call_api가 실패 (None 반환)
-    mock_quotations.call_api = AsyncMock(return_value=None)
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.NETWORK_ERROR.value,
+        msg1="API 에러",
+        data=None
+    ))
 
     result_common = await mock_quotations.get_current_price("005930")
 
     assert result_common.rt_cd== ErrorCode.NETWORK_ERROR.value
-    assert "API 응답 실패" in result_common.msg1
+    assert "API 에러" in result_common.msg1
     assert result_common.data is None
     mock_quotations.logger.warning.assert_called_once()

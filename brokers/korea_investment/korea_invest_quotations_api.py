@@ -73,22 +73,14 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_input_iscd": stock_code
         }
         self.logger.info(f"{stock_code} 현재가 조회 시도...")
-        response = await self.call_api('GET', path, params=params, retry_count=3)
 
-        if response is None:
-            error_msg = f"[get_current_price] {stock_code} - API 응답 실패 (네트워크 또는 타임아웃)"
-            self.logger.warning(error_msg)
-            return ResCommonResponse(
-                rt_cd=ErrorCode.NETWORK_ERROR.value,  # Enum 값 사용
-                msg1=error_msg,
-                data=None
-            )
-
-        return ResCommonResponse(
-            rt_cd=response.get("rt_cd", ErrorCode.UNKNOWN_ERROR.value),  # Enum 값 사용
-            msg1=response.get("msg1", "응답 메시지 없음"),
-            data=response.get("output")  # 원본 output을 그대로 data 필드에 저장
-        )
+        response : ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=3)
+        
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning("현재가 조회 실패")
+            return response
+        
+        return await self.call_api('GET', path, params=params, retry_count=3)
 
     async def get_price_summary(self, stock_code: str) -> ResCommonResponse:
         """
