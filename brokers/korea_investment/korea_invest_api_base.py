@@ -74,7 +74,7 @@ class KoreaInvestApiBase:
 
         self.logger.error("모든 재시도 실패, API 호출 종료")
         return ResCommonResponse(
-            rt_cd=ErrorCode.RETRY_LIMIT.value,  # 또는 NETWORK_ERROR 등 더 구체적인 코드
+            rt_cd=ErrorCode.RETRY_LIMIT.value,
             msg1=f"최대 재시도 횟수 초과",
             data=None
         )

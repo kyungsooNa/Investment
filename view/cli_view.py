@@ -19,6 +19,7 @@ class CLIView:
 
     async def get_user_input(self, prompt: str) -> str:
         """사용자로부터 입력을 받습니다."""
+        self._print_time_header()
         return await asyncio.to_thread(input, prompt)
 
     def display_current_time(self):
@@ -28,11 +29,13 @@ class CLIView:
 
     def display_market_status(self, is_open: bool):
         """시장 개장 여부를 표시합니다."""
+        self._print_time_header()
         status = "개장" if is_open else "폐장"
         print(f"시장 상태: {status}")
 
     def display_account_balance(self, balance_info: dict):
         """계좌 잔고 정보를 표시합니다."""
+        self._print_time_header()
         print("\n--- 계좌 잔고 ---")
         print(f"예수금: {balance_info.get('dnca_tot_amt', 'N/A')}원")
         print(f"총 평가 금액: {balance_info.get('tot_evlu_amt', 'N/A')}원")
@@ -42,6 +45,7 @@ class CLIView:
 
     def display_stock_info(self, stock_summary: dict):
         """단일 종목 정보를 표시합니다."""
+        self._print_time_header()
         if stock_summary:
             print("\n--- 종목 정보 ---")
             print(f"종목명: {stock_summary.get('name', 'N/A')}")
@@ -54,6 +58,7 @@ class CLIView:
 
     def display_transaction_result(self, result: dict, action: str):
         """매수/매도 거래 결과를 표시합니다."""
+        self._print_time_header()
         if result and result.get('rt_cd') == '0':
             print(f"\n✔️ {action} 성공!")
             print(f"주문 번호: {result.get('ord_no', 'N/A')}")
@@ -63,27 +68,33 @@ class CLIView:
 
     def display_app_start_error(self, message: str):
         """애플리케이션 시작 오류 메시지를 표시합니다."""
+        self._print_time_header()
         print(f"\n[오류] 애플리케이션 시작 실패: {message}")
         print("설정 파일을 확인하거나 관리자에게 문의하세요.")
 
     def display_strategy_running_message(self, strategy_name: str):
         """전략 실행 시작 메시지를 표시합니다."""
+        self._print_time_header()
         print(f"\n--- {strategy_name} 전략 실행 시작 ---")
 
     def display_top_stocks_failure(self, message: str):
         """시가총액 상위 종목 조회 실패 메시지를 표시합니다."""
+        self._print_time_header()
         print(f"시가총액 상위 종목 조회 실패: {message}")
 
     def display_top_stocks_success(self):
         """시가총액 상위 종목 조회 성공 메시지를 표시합니다."""
+        self._print_time_header()
         print("시가총액 상위 종목 조회 완료.")
 
     def display_no_stocks_for_strategy(self):
         """전략 실행을 위한 종목이 없음을 알립니다."""
+        self._print_time_header()
         print("전략을 실행할 종목이 없습니다.")
 
     def display_strategy_results(self, strategy_name: str, results: dict):
         """전략 실행 결과를 요약하여 표시합니다."""
+        self._print_time_header()
         print(f"\n--- {strategy_name} 전략 실행 결과 ---")
         print(f"총 처리 종목: {results.get('total_processed', 0)}개")
         print(f"매수 시도 종목: {results.get('buy_attempts', 0)}개")
@@ -99,18 +110,22 @@ class CLIView:
 
     def display_strategy_error(self, message: str):
         """전략 실행 중 오류 메시지를 표시합니다."""
+        self._print_time_header()
         print(f"\n[오류] 전략 실행 중 문제 발생: {message}")
 
     def display_invalid_menu_choice(self):
         """잘못된 메뉴 선택 메시지를 표시합니다."""
+        self._print_time_header()
         print("잘못된 메뉴 선택입니다. 다시 시도해주세요.")
 
     def display_warning_strategy_market_closed(self):
         """시장이 닫혔을 때 전략 실행 경고 메시지를 표시합니다."""
+        self._print_time_header()
         print("⚠️ 시장이 폐장 상태이므로 전략을 실행할 수 없습니다.")
 
     def display_follow_through_stocks(self, stocks: list):
         """Follow Through 종목 목록을 표시합니다."""
+        self._print_time_header()
         print("✔️ Follow Through 종목:")
         if stocks:
             for s in stocks:
@@ -124,6 +139,7 @@ class CLIView:
 
     def display_not_follow_through_stocks(self, stocks: list):
         """Follow 실패 종목 목록을 표시합니다."""
+        self._print_time_header()
         print("❌ Follow 실패 종목:")
         if stocks:
             for s in stocks:
@@ -136,6 +152,7 @@ class CLIView:
 
     def display_gapup_pullback_selected_stocks(self, stocks: list):
         """GapUpPullback 전략의 후보 종목 목록을 표시합니다."""
+        self._print_time_header()
         print("✔️ 후보 종목:")
         if stocks:
             for item in stocks:
@@ -145,6 +162,7 @@ class CLIView:
 
     def display_gapup_pullback_rejected_stocks(self, stocks: list):
         """GapUpPullback 전략의 제외 종목 목록을 표시합니다."""
+        self._print_time_header()
         print("❌ 제외 종목:")
         if stocks:
             for item in stocks:
@@ -158,23 +176,28 @@ class CLIView:
 
     def display_exit_message(self):
         """종료 메시지를 표시합니다."""
+        self._print_time_header()
         print("애플리케이션을 종료합니다.")
 
     def display_token_invalidated_message(self):
         """토큰 무효화 메시지를 표시합니다."""
+        self._print_time_header()
         print("토큰이 무효화되었습니다. 다음 요청 시 새 토큰이 발급됩니다.")
 
     def display_account_balance_failure(self):
         """계좌 잔고 조회 실패 메시지를 표시합니다."""
+        self._print_time_header()
         print("계좌 잔고 조회에 실패했습니다.")
 
     def display_stock_code_not_found(self, stock_name: str):
         """종목 코드를 찾을 수 없을 때 메시지를 표시합니다."""
+        self._print_time_header()
         print(f"'{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
 
     # display_menu 메서드 업데이트 (환경 정보 표시)
     def display_menu(self, env_type: str, current_time_str: str, market_status_str: str):
         """사용자에게 메뉴 옵션을 출력하고 현재 시간을 포함합니다 (환경에 따라 동적)."""
+        self._print_time_header()
         print(
             f"\n--- 한국투자증권 API 애플리케이션 (환경: {env_type}, 현재: {current_time_str}, 시장: {market_status_str}) ---")
         print("0. 거래 환경 변경")
@@ -198,6 +221,7 @@ class CLIView:
 
     async def select_environment_input(self) -> str:
         """환경 선택 프롬프트를 출력하고 사용자 입력을 받습니다."""
+        self._print_time_header()
         print("\n--- 거래 환경 선택 ---")
         print("1. 모의투자")
         print("2. 실전투자")
@@ -205,3 +229,8 @@ class CLIView:
         # asyncio.to_thread를 사용하여 동기 input() 함수를 비동기 환경에서 실행
         choice = (await asyncio.to_thread(input, "환경을 선택하세요 (숫자 입력): ")).strip()
         return choice
+
+    def _print_time_header(self):
+        """현재 시각을 출력하는 공통 헤더."""
+        current_time = self.time_manager.get_current_kst_time().strftime("[%Y-%m-%d %H:%M:%S]")
+        print(current_time)
