@@ -30,18 +30,18 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         }
 
         self.logger.info(f"{stock_code} 종목 정보 조회 시도...")
-        response = await self.call_api("GET", path, params=params, retry_count=1)
+        response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
 
-        if response and response.get("rt_cd") == "0" and response.get("output"):
+        if response.rt_cd == ErrorCode.SUCCESS.value:
             try:
-                stock_info_data = ResStockFullInfoApiOutput(**response["output"])
+                stock_info_data = ResStockFullInfoApiOutput(**response.data)
                 return ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
                     msg1="종목 정보 조회 성공",
                     data=stock_info_data
                 )
             except TypeError as e:
-                error_msg = f"{stock_code} 종목 정보 응답 형식 오류: {e}, 응답: {response['output']}"
+                error_msg = f"{stock_code} 종목 정보 응답 형식 오류: {e}, 응답: {response.data}"
                 self.logger.error(error_msg)
                 return ResCommonResponse(
                     rt_cd=ErrorCode.PARSING_ERROR.value,  # Enum 값 사용
@@ -49,7 +49,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                     data=None
                 )
         else:
-            error_msg = f"{stock_code} 종목 정보 조회 실패: {response.get('msg1', '알 수 없는 오류')}, 응답: {response}"
+            error_msg = f"{stock_code} 종목 정보 조회 실패: {response.msg1 or '알 수 없는 오류'}, 응답: {response}"
             self.logger.warning(error_msg)
             return ResCommonResponse(
                 rt_cd=response.get("rt_cd", ErrorCode.API_ERROR.value) if isinstance(response,
@@ -228,20 +228,19 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         }
 
         self.logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code}, 요청개수: {count})")
-        response = await self.call_api("GET", path, params=params, retry_count=1)
+        response : ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
 
-        if not response or response.get("rt_cd") != "0" or not response.get("output"):
-            error_msg = response.get("msg1", "시가총액 조회 실패") if isinstance(response, dict) else "API 호출 실패"
-            self.logger.warning(f"시가총액 응답 오류 또는 비어 있음: {error_msg}")
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(f"시가총액 응답 오류 또는 비어 있음: 시가총액 조회 실패")
             return ResCommonResponse(
                 rt_cd=response.get("rt_cd", ErrorCode.API_ERROR.value) if isinstance(response,
                                                                                      dict) else ErrorCode.API_ERROR.value,
                 # Enum 값 사용
-                msg1=error_msg,
+                msg1="시가총액 조회 실패",
                 data=[]
             )
 
-        batch = response["output"][:count]
+        batch = response.data[:count]
         self.logger.info(f"API로부터 수신한 종목 수: {len(batch)}")
 
         results = []
@@ -463,12 +462,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_org_adj_prc": fid_org_adj_prc
         }
 
-        response_data = await self.call_api(method="GET",
+        response_data : ResCommonResponse = await self.call_api(method="GET",
                                             path="/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
                                             params=params, data=None)
 
-        if not response_data:
-            error_msg = f"API 응답 비정상: None, 응답: {response_data}"
+        if response_data.rt_cd != ErrorCode.SUCCESS.value:
+            error_msg = f"API 응답 비정상: None, 응답: {response_data.data}"
             self.logger.error(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.API_ERROR.value,
@@ -476,16 +475,16 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=[]
             )
 
-        if response_data.get('rt_cd') != '0':
-            error_msg = f"API 응답 비정상: {response_data.get('msg1', '알 수 없는 오류')}, 응답: {response_data}"
-            self.logger.error(error_msg)
+        if not response_data.data:  # None 또는 빈 리스트
+            warning_msg = f"일별 시세 차트 데이터가 비어있음 (stock_code: {stock_code})"
+            self.logger.warning(warning_msg)
             return ResCommonResponse(
-                rt_cd=response_data.get('rt_cd', ErrorCode.API_ERROR.value),
-                msg1=error_msg,
+                rt_cd=ErrorCode.MISSING_KEY.value,
+                msg1=warning_msg,
                 data=[]
             )
 
-        output_list = response_data.get('output', [])
+        output_list = response_data.data
         chart_data_items: List[ResDailyChartApiItem] = []
         for item in output_list:
             try:

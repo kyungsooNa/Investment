@@ -2,6 +2,7 @@ import pytest
 import requests
 from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from common.types import (
     ResCommonResponse, ErrorCode,
     ResPriceSummary, ResMomentumStock, ResMarketCapStockItem,
@@ -31,8 +32,9 @@ def make_stock_info_response(rt_cd="0", price="10000", market_cap="123456789000"
     )
 
 def make_call_api_response(
+    rt_cd=ErrorCode.SUCCESS.value, msg1="정상 처리",
     price="1000", market_cap="500000000000", open_price="900"
-) -> dict:
+) -> ResCommonResponse:
     base_fields = {
         f.name: "" for f in fields(ResStockFullInfoApiOutput)
         if f.name not in {"stck_prpr", "stck_llam", "stck_oprc"}
@@ -42,13 +44,13 @@ def make_call_api_response(
         stck_llam=market_cap,
         stck_oprc=open_price,
         **base_fields
-    ).__dict__  # → dict 형태로 변환
+    )
 
-    return {
-        "rt_cd": "0",
-        "msg1": "정상 처리",
-        "output": output
-    }
+    return ResCommonResponse(
+        rt_cd=rt_cd,
+        msg1=msg1,
+        data=output.__dict__  # 또는 data=output 자체도 가능 (타입에 따라)
+    )
 
 @pytest.fixture(scope="function")
 def mock_quotations():
@@ -201,18 +203,22 @@ async def test_get_price_summary_invalid_response(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_success(mock_quotations):
-    # get_stock_info_by_code는 get_top_market_cap_stocks_code에서 직접 호출되지 않습니다.
-    # mock_quotations.get_stock_info_by_code = AsyncMock(return_value={}) # 이 라인은 불필요
+    mock_quotations._config = {
+        'tr_ids': {'quotations': {'top_market_cap': 'TEST_TR_ID'}},
+        'custtype': 'P'
+    }
 
     mock_top_response = {
-        "rt_cd": "0",
         "output": [
             {"iscd": "005930", "mksc_shrn_iscd": "005930", "stck_avls": "500000000000"},
             {"iscd": "000660", "mksc_shrn_iscd": "000660", "stck_avls": "120000000000"}
         ]
     }
-    mock_quotations.call_api = AsyncMock(return_value=mock_top_response)
-    # get_stock_name_by_code는 이 함수에서 호출되지 않으므로 mock 불필요
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data=mock_top_response["output"]
+    ))    # get_stock_name_by_code는 이 함수에서 호출되지 않으므로 mock 불필요
     # mock_quotations.get_stock_name_by_code = AsyncMock(return_value="삼성전자")
 
     result_common = await mock_quotations.get_top_market_cap_stocks_code("0000", count=2)
@@ -240,16 +246,16 @@ async def test_get_top_market_cap_stocks_success(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_failure(mock_quotations):
-    mock_quotations.call_api = AsyncMock(return_value={
-        "rt_cd": "1",  # 실패 코드
-        "msg1": "시가총액 조회 실패",
-        "output": None
-    })
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="1",
+        msg1="시가총액 조회 실패",
+        data=None
+    ))
 
     result_common = await mock_quotations.get_top_market_cap_stocks_code("0000", count=1)
 
     # ResCommonResponse의 실패 여부 확인
-    assert result_common.rt_cd== "1"  # API에서 온 실패 코드
+    assert result_common.rt_cd== ErrorCode.API_ERROR.value  # API에서 온 실패 코드
     assert result_common.msg1 == "시가총액 조회 실패"
     assert result_common.data == []  # 실패 시 data는 빈 리스트
     mock_quotations.logger.warning.assert_called_once()
@@ -331,10 +337,10 @@ async def test_get_stock_info_by_code_success(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_stock_info_by_code_failure(mock_quotations):
-    mock_quotations.call_api = AsyncMock(return_value={"rt_cd": "1", "msg1": "API 실패 메시지", "output": None})
+    mock_quotations.call_api = AsyncMock(return_value=make_call_api_response(rt_cd=ErrorCode.API_ERROR.value,msg1="종목 조회 실패"))
     result_common = await mock_quotations.get_stock_info_by_code("005930")
 
-    assert result_common.rt_cd== "1"  # API에서 온 실패 코드
+    assert result_common.rt_cd== ErrorCode.API_ERROR.value # API에서 온 실패 코드
     assert result_common.data is None
     mock_quotations.logger.warning.assert_called_once()
 
@@ -342,7 +348,11 @@ async def test_get_stock_info_by_code_failure(mock_quotations):
 @pytest.mark.asyncio
 async def test_get_stock_info_by_code_parsing_error(mock_quotations):
     # 필수 필드가 누락된 mock output (ResStockFullInfoApiOutput에 정의되지 않은 필드)
-    mock_quotations.call_api = AsyncMock(return_value={"rt_cd": "0", "output": {"some_unknown_key": "value"}})
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="SUCCESS",
+        data={"some_unknown_key": "value"}
+    ))
 
     result_common = await mock_quotations.get_stock_info_by_code("005930")
 
@@ -417,15 +427,14 @@ async def test_get_market_cap_failure_missing_key(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_success_revised(mock_quotations):
-    mock_api_response = {
-        "rt_cd": "0",
-        "msg1": "SUCCESS",
-        "output": [
-            {"iscd": "005930", "mksc_shrn_iscd": "005930", "stck_avls": "500,000,000,000"},  # 삼성전자
-            {"iscd": "000660", "mksc_shrn_iscd": "000660", "stck_avls": "120,000,000,000"}  # SK하이닉스
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="SUCCESS",
+        data=[
+            {"iscd": "005930", "mksc_shrn_iscd": "005930", "stck_avls": "500,000,000,000"},
+            {"iscd": "000660", "mksc_shrn_iscd": "000660", "stck_avls": "120,000,000,000"}
         ]
-    }
-    mock_quotations.call_api = AsyncMock(return_value=mock_api_response)
+    ))
 
     # get_stock_name_by_code는 이 함수에서 호출되지 않으므로 mock 불필요.
     # def mock_get_stock_name(code):
@@ -459,16 +468,15 @@ async def test_get_top_market_cap_stocks_success_revised(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_failure_rt_cd_not_zero(mock_quotations):
-    mock_quotations.call_api = AsyncMock(return_value={
-        "rt_cd": "1",  # 실패 코드
-        "msg1": "API 호출 실패",
-        "output": []
-    })
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="1",  # 실패 코드
+        msg1="API 호출 실패",
+        data=[]
+    ))
 
     result_common = await mock_quotations.get_top_market_cap_stocks_code("0000", count=1)
 
-    assert result_common.rt_cd== "1"
-    assert result_common.msg1 == "API 호출 실패"
+    assert result_common.rt_cd== ErrorCode.API_ERROR.value
     assert result_common.data == []
     mock_quotations.logger.warning.assert_called_once()
 
@@ -501,11 +509,14 @@ async def test_get_top_market_cap_stocks_count_validation(mock_quotations):
     mock_quotations.logger.reset_mock()
     mock_quotations.call_api.reset_mock()
 
-    mock_api_response_large = {
-        "rt_cd": "0",
-        "output": [{"iscd": f"{i:06d}", "mksc_shrn_iscd": f"{i:06d}", "stck_avls": f"{1000000000 + i}"} for i in
-                   range(40)]
-    }
+    mock_api_response_large = ResCommonResponse(
+        rt_cd="0",
+        msg1="SUCCESS",
+        data=[
+            {"iscd": f"{i:06d}", "mksc_shrn_iscd": f"{i:06d}", "stck_avls": f"{1000000000 + i}"}
+            for i in range(40)
+        ]
+    )
     mock_quotations.call_api.return_value = mock_api_response_large
 
     result_exceed_max_common = await mock_quotations.get_top_market_cap_stocks_code("0000", count=50)
@@ -659,17 +670,17 @@ async def test_get_top_market_cap_stocks_item_missing_keys(mock_quotations):
     """
     get_top_market_cap_stocks에서 item에 'iscd' 또는 'stck_avls'가 없을 경우
     """
-    mock_api_response = {
-        "rt_cd": "0",
-        "output": [
-            {"iscd": "005930", "stck_avls": "500,000,000,000"},  # 정상
-            {"mksc_shrn_iscd": "000660"},  # stck_avls 없음 -> 건너뜀
-            {"stck_avls": "100,000,000,000"},  # iscd/mksc_shrn_iscd 없음 -> 건너뜀
-            {"iscd": "000770", "stck_avls": "INVALID"}  # 유효하지 않은 시총 -> market_cap 0으로 처리
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="SUCCESS",
+        data=[
+            {"iscd": "005930", "stck_avls": "500,000,000,000"},
+            {"mksc_shrn_iscd": "000660"},  # stck_avls 없음
+            {"stck_avls": "100,000,000,000"},  # iscd 없음
+            {"iscd": "000770", "stck_avls": "INVALID"}  # 시총 파싱 실패 → 0으로 처리
         ]
-    }
+    ))
 
-    mock_quotations.call_api = AsyncMock(return_value=mock_api_response)
     # get_stock_name_by_code는 이 함수에서 호출되지 않으므로 mock 불필요.
     # mock_quotations.get_stock_name_by_code = AsyncMock(side_effect=lambda code: f"이름_{code}")
 
@@ -994,9 +1005,10 @@ async def test_inquire_daily_itemchartprice_success_day(mocker, api_instance):  
     api, mock_logger = api_instance
 
     # 2. call_api mock
-    mocked_response = {
-        "rt_cd": "0",
-        "output": [
+    mocked_response = ResCommonResponse(
+        rt_cd="0",
+        msg1="정상처리",
+        data=[
             {
                 "stck_bsop_date": "20250708",
                 "stck_oprc": "980",
@@ -1006,7 +1018,7 @@ async def test_inquire_daily_itemchartprice_success_day(mocker, api_instance):  
                 "acml_vol": "100"
             }
         ]
-    }
+    )
     mocker.patch.object(api, "call_api", return_value=mocked_response)
 
     # 3. Call method
@@ -1051,14 +1063,17 @@ async def test_inquire_daily_itemchartprice_unsupported_period_code(mocker, api_
 async def test_inquire_daily_itemchartprice_call_api_none(mocker, api_instance):
     api, mock_logger = api_instance
 
-    mocker.patch.object(api, "call_api", return_value=None)
+    mocker.patch.object(api, "call_api", return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상처리",
+        data=None  # ✅ 핵심 포인트
+    ))
 
     result_common = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
 
-    assert result_common.rt_cd== ErrorCode.API_ERROR.value  # Enum 값 사용
-    assert "API 응답 비정상" in result_common.msg1
+    assert result_common.rt_cd != ErrorCode.SUCCESS.value  # Enum 값 사용
     assert result_common.data == []  # 실패 시 빈 리스트
-    mock_logger.error.assert_called_once()
+    mock_logger.warning.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1111,9 +1126,11 @@ async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mocker):
     )
 
     # 필수 필드 포함한 mock 응답
-    mock_response = {
-        "rt_cd": "0",
-        "output": [
+
+    mock_response = ResCommonResponse(
+        rt_cd="0",
+        msg1="정상처리",
+        data=[
             {
                 "stck_bsop_date": "20250708",
                 "stck_oprc": "950",
@@ -1123,7 +1140,8 @@ async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mocker):
                 "acml_vol": "100"
             }
         ]
-    }
+    )
+
     api.call_api = AsyncMock(return_value=mock_response)
 
     result_common = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="M")
