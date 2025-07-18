@@ -12,6 +12,7 @@ class ErrorCode(enum.Enum):
     INVALID_INPUT = "102"   # 유효성 오류
     NETWORK_ERROR = "103"   # 네트워크 오류
     MISSING_KEY  = "104"    # MISSING_KEY
+    RETRY_LIMIT  = "105"    # RETRY_LIMIT
     UNKNOWN_ERROR = "999"   # 기타 오류
 
 

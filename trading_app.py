@@ -193,12 +193,19 @@ class TradingApp:
             await self.stock_query_service.handle_get_current_stock_price(stock_code)
         elif choice == '2':
             balance_response: ResCommonResponse = await self.trading_service.get_account_balance()
+
+            if balance_response is None:
+                self.cli_view.display_account_balance_failure("잔고 조회 실패: 응답 없음")
+                self.logger.warning("계좌 잔고 조회 실패 - 응답이 None입니다.")
+                return running_status
+
             if balance_response.rt_cd == ErrorCode.SUCCESS.value:
-                # balance_response['data']가 실제 잔고 데이터입니다.
                 self.cli_view.display_account_balance(balance_response.data)
+                self.logger.info(f"계좌 잔고 조회 성공: {balance_response.data}")
             else:
-                self.cli_view.display_account_balance_failure(
-                    balance_response.msg1)  # 실패 메시지 전달
+                self.cli_view.display_account_balance_failure(balance_response.msg1)
+                self.logger.warning(f"계좌 잔고 조회 실패: {balance_response.msg1}")
+
         elif choice == '3':
             # 사용자 입력을 CLIView에서 직접 받아서 TransactionHandlers로 전달
             stock_code = await self.cli_view.get_user_input("매수할 종목 코드를 입력하세요: ")
@@ -232,10 +239,10 @@ class TradingApp:
                 # stock_query_service.handle_get_top_10_market_cap_stocks_with_prices()의 반환 타입에 따라 로직 수정
                 # 해당 서비스 함수가 성공/실패 여부를 ResCommonResponse로 반환한다고 가정
                 response_common = await self.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices()
-                if response_common["rt_cd"] == ErrorCode.SUCCESS.value:
+                if response_common.rt_cd == ErrorCode.SUCCESS.value:
                     running_status = True
                 else:
-                    self.cli_view.display_top_stocks_failure(response_common["msg1"])
+                    self.cli_view.display_top_stocks_failure(response_common.msg1)
                     running_status = True  # 조회 실패 시에도 앱은 계속 실행
         elif choice == '9':
             # handle_upper_limit_stocks는 내부적으로 ResCommonResponse를 처리하고
@@ -258,7 +265,7 @@ class TradingApp:
                     "0000")
 
                 if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-                    self.cli_view.display_top_stocks_failure(getattr(top_codes_response.msg1, '알 수 없는 오류'))
+                    self.cli_view.display_top_stocks_failure(top_codes_response.msg1 or "알 수 없는 오류")
                     self.logger.warning(f"시가총액 조회 실패. 응답: {top_codes_response}")
                     return running_status
 
@@ -323,7 +330,7 @@ class TradingApp:
                     "0000", count=count)
 
                 if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-                    self.cli_view.display_top_stocks_failure(getattr(top_codes_response.msg1, '알 수 없는 오류'))
+                    self.cli_view.display_top_stocks_failure(top_codes_response.msg1 or "알 수 없는 오류")
                     self.logger.warning(f"시가총액 조회 실패. 응답: {top_codes_response}")
                     return running_status
 
@@ -335,10 +342,10 @@ class TradingApp:
                     return running_status
 
                 top_stock_codes = [
-                    item.mksc_shrn_iscd  # 백테스트에서는 'code' 대신 'mksc_shrn_iscd' 사용해야 할 수 있음. API 스키마 확인 필요.
+                    item.get('mksc_shrn_iscd')  # 백테스트에서는 'code' 대신 'mksc_shrn_iscd' 사용해야 할 수 있음. API 스키마 확인 필요.
                     for item in top_codes_list[:count]
-                    if "mksc_shrn_iscd" in item  # 'mksc_shrn_iscd' 필드가 있는지 확인
-                ]  # 원본 코드에서는 item["code"]로 되어있어 수정
+                    if isinstance(item, dict) and "mksc_shrn_iscd" in item
+                ]
 
                 if not top_stock_codes:
                     self.cli_view.display_no_stocks_for_strategy()
@@ -371,14 +378,32 @@ class TradingApp:
             from strategies.strategy_executor import StrategyExecutor
 
             try:
+                count_input = await self.cli_view.get_user_input("시가총액 상위 몇 개 종목을 조회할까요? (기본값: 30): ")
+                try:
+                    count = int(count_input) if count_input else 30
+                    if count <= 0:
+                        self.cli_view.display_invalid_input_warning("0 이하의 수는 허용되지 않으므로 기본값 30을 사용합니다.")
+                        count = 30
+                except ValueError:
+                    self.cli_view.display_invalid_input_warning("숫자가 아닌 값이 입력되어 기본값 30을 사용합니다.")
+                    count = 30
+
                 # trading_service.get_top_market_cap_stocks_code는 이제 ResCommonResponse를 반환
                 top_codes_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
-                    "0000")
+                    "0000", count=count)
 
                 if top_codes_response.rt_cd == ErrorCode.SUCCESS.value:  # Enum 값 사용
-                    output_items: List[ResTopMarketCapApiItem] = getattr(top_codes_response,'data', [])
+                    top_codes_list: List[ResTopMarketCapApiItem] = getattr(top_codes_response,'data', [])
+
+                    if not top_codes_list:  # 데이터가 비어있는 경우
+                        self.cli_view.display_no_stocks_for_strategy("시가총액 상위 종목 데이터 없음 (백테스트).")
+                        self.logger.warning("시가총액 상위 종목 데이터 없음 (백테스트).")
+                        return running_status
+
                     top_stock_codes = [
-                        item.mksc_shrn_iscd for item in output_items if item.mksc_shrn_iscd
+                        item.get('mksc_shrn_iscd')  # 백테스트에서는 'code' 대신 'mksc_shrn_iscd' 사용해야 할 수 있음. API 스키마 확인 필요.
+                        for item in top_codes_list[:count]
+                        if isinstance(item, dict) and "mksc_shrn_iscd" in item
                     ]
                 else:  # top_codes_response["rt_cd"] != ErrorCode.SUCCESS.value
                     self.cli_view.display_top_stocks_failure(getattr(top_codes_response.msg1, '응답 형식 오류'))
@@ -419,7 +444,7 @@ class TradingApp:
                 all_codes_response: ResCommonResponse = await self.trading_service.get_all_stocks_code()
 
                 if all_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-                    self.cli_view.display_top_stocks_failure(getattr(all_codes_response.msg1, '조회 실패'))
+                    self.cli_view.display_top_stocks_failure(getattr(all_codes_response, "msg1", "조회 실패"))
                     self.logger.warning(f"전체 종목 조회 실패: {all_codes_response}")
                     return running_status
 
@@ -437,7 +462,7 @@ class TradingApp:
                     else:
                         self.cli_view.display_gapup_pullback_selected_stocks(upper_limit_stocks_data)
                 else:  # 상한가 종목 조회 실패
-                    self.cli_view.display_top_stocks_failure(getattr(upper_limit_stocks_response.msg1, '상한가 종목 조회 실패'))
+                    self.cli_view.display_top_stocks_failure(getattr(upper_limit_stocks_response, "msg1", "상한가 종목 조회 실패"))
                     self.logger.error(f"상한가 종목 조회 중 오류 발생: {upper_limit_stocks_response.msg1}")
 
 
