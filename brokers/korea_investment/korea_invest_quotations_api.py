@@ -492,7 +492,6 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             msg1="일별/분봉 차트 데이터 조회 성공",
             data=chart_data_items
         )
-
     async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
         """
         종목의 실시간 호가(매도/매수 잔량 포함) 정보를 조회합니다.
@@ -516,6 +515,174 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self.logger.warning(f"{stock_code} 호가 정보 조회 실패: {response.msg1}")
+            return response
+
+        return response
+
+    async def get_time_concluded_prices(self, stock_code: str) -> ResCommonResponse:
+        """
+        종목의 시간대별 체결가/체결량 정보를 조회합니다.
+        """
+        path = self._config["paths"]["time_conclude"]
+        tr_id = self._config["tr_ids"]["quotations"]["time_conclude"]
+        market_code = self._config.get("market_code", "J")
+
+        self._headers["tr_id"] = tr_id
+        self._headers["custtype"] = self._config["custtype"]
+
+        params = {
+            "fid_cond_mrkt_div_code": market_code,
+            "fid_input_iscd": stock_code
+        }
+
+        self.logger.info(f"{stock_code} 종목 체결가 조회 시도...")
+        response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(f"{stock_code} 체결가 정보 조회 실패: {response.msg1}")
+            return response
+
+        return response
+
+    async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
+        """
+        키워드로 종목 검색
+        """
+        path = self._config["paths"]["search_stock"]
+        tr_id = self._config["tr_ids"]["quotations"]["search_stock"]
+
+        self._headers["tr_id"] = tr_id
+        self._headers["custtype"] = self._config["custtype"]
+
+        params = {
+            "word": keyword
+        }
+
+        self.logger.info(f"'{keyword}' 키워드로 종목 검색 시도...")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(f"종목 검색 실패: {response.msg1}")
+            return response
+
+        return response
+
+    async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
+        """
+        상승률/하락률 상위 종목 조회
+        """
+        key = "ranking_rise" if rise else "ranking_fall"
+        path = self._config["paths"][key]
+        tr_id = self._config["tr_ids"]["quotations"][key]
+        market_code = self._config.get("market_code", "J")
+
+        self._headers["tr_id"] = tr_id
+        self._headers["custtype"] = self._config["custtype"]
+
+        params = {
+            "fid_cond_mrkt_div_code": market_code
+        }
+
+        direction = "상승" if rise else "하락"
+        self.logger.info(f"{direction}률 상위 종목 조회 시도...")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(f"{direction}률 상위 조회 실패: {response.msg1}")
+            return response
+
+        return response
+
+    async def get_top_volume_stocks(self) -> ResCommonResponse:
+        """
+        거래량 상위 종목 조회
+        """
+        path = self._config["paths"]["ranking_volume"]
+        tr_id = self._config["tr_ids"]["quotations"]["ranking_volume"]
+        market_code = self._config.get("market_code", "J")
+
+        self._headers["tr_id"] = tr_id
+        self._headers["custtype"] = self._config["custtype"]
+
+        params = {
+            "fid_cond_mrkt_div_code": market_code
+        }
+
+        self.logger.info(f"거래량 상위 종목 조회 시도...")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(f"거래량 상위 조회 실패: {response.msg1}")
+            return response
+
+        return response
+
+    async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
+        """
+        외국인 순매수 상위 종목 조회
+        """
+        path = self._config["paths"]["ranking_foreign"]
+        tr_id = self._config["tr_ids"]["quotations"]["ranking_foreign"]
+        market_code = self._config.get("market_code", "J")
+
+        self._headers["tr_id"] = tr_id
+        self._headers["custtype"] = self._config["custtype"]
+
+        params = {
+            "fid_cond_mrkt_div_code": market_code
+        }
+
+        self.logger.info("외국인 순매수 상위 종목 조회 시도...")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(f"외국인 순매수 조회 실패: {response.msg1}")
+            return response
+
+        return response
+
+    async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
+        """
+        종목 뉴스 조회
+        """
+        path = self._config["paths"]["item_news"]
+        tr_id = self._config["tr_ids"]["quotations"]["item_news"]
+
+        self._headers["tr_id"] = tr_id
+        self._headers["custtype"] = self._config["custtype"]
+
+        params = {
+            "fid_input_iscd": stock_code
+        }
+
+        self.logger.info(f"{stock_code} 종목 뉴스 조회 시도...")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(f"{stock_code} 종목 뉴스 조회 실패: {response.msg1}")
+            return response
+
+        return response
+
+    async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
+        """
+        ETF 정보 조회
+        """
+        path = self._config["paths"]["etf_info"]
+        tr_id = self._config["tr_ids"]["quotations"]["etf_info"]
+
+        self._headers["tr_id"] = tr_id
+        self._headers["custtype"] = self._config["custtype"]
+
+        params = {
+            "fid_input_iscd": etf_code
+        }
+
+        self.logger.info(f"{etf_code} ETF 정보 조회 시도...")
+        response = await self.call_api("GET", path, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(f"{etf_code} ETF 조회 실패: {response.msg1}")
             return response
 
         return response
