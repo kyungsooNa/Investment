@@ -483,7 +483,9 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.print_patch.stop()
 
     async def test_success_case(self):
-        self.mock_trading_service.get_all_stocks_code.return_value = ["000660"]
+        self.mock_trading_service.get_all_stocks_code.return_value = ResCommonResponse(
+            rt_cd="0", msg1="성공", data=["000660"]
+        )
         self.mock_trading_service.get_current_upper_limit_stocks.return_value = [
             {"name": "SK하이닉스", "code": "000660", "price": 120000, "change_rate": 29.9}
         ]
@@ -494,15 +496,18 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_print.assert_any_call("  SK하이닉스 (000660): 120000원 (등락률: +29.9%)")
 
     async def test_all_stock_code_fetch_failed(self):
-        self.mock_trading_service.get_all_stocks_code.return_value = None
-
+        self.mock_trading_service.get_all_stocks_code.return_value = ResCommonResponse(
+            rt_cd="1", msg1="실패", data=None
+        )
         await self.service.handle_current_upper_limit_stocks()
 
         self.mock_logger.warning.assert_called_once_with("전체 종목 코드 없음.")
         self.mock_print.assert_any_call("전체 종목 코드 조회 실패 또는 결과 없음.")
 
     async def test_no_upper_limit_stocks(self):
-        self.mock_trading_service.get_all_stocks_code.return_value = ["000660"]
+        self.mock_trading_service.get_all_stocks_code.return_value = ResCommonResponse(
+            rt_cd="0", msg1="성공", data=["000660"]
+        )
         self.mock_trading_service.get_current_upper_limit_stocks.return_value = []
 
         await self.service.handle_current_upper_limit_stocks()

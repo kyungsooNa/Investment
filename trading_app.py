@@ -100,7 +100,7 @@ class TradingApp:
 
             # BacktestDataProvider에 BrokerAPIWrapper를 전달 (현재와 동일)
             self.backtest_data_provider = BacktestDataProvider(
-                broker=self.broker_wrapper,  # self.broker 대신 self.broker_wrapper 사용 (일관성을 위해)
+                broker_api_wrapper=self.broker_wrapper,  # self.broker 대신 self.broker_wrapper 사용 (일관성을 위해)
                 time_manager=self.time_manager,
                 logger=self.logger
             )
@@ -173,10 +173,11 @@ class TradingApp:
                 "13": "시가총액 상위 조회 (실전 전용)",
                 "14": "시가총액 상위 10개 현재가 조회 (실전 전용)",
                 "15": "상한가 종목 조회 (실전 전용)",
-                "16": "전일 상한가 종목 조회 (실전 전용)",
+                "16": "전일 상한가 종목 조회 (상위) (실전 전용)",
+                "17": "전일 상한가 종목 조회 (전체) (실전 전용)",
             },
             "실시간 구독": {
-                "17": "실시간 체결가/호가 구독",
+                "18": "실시간 체결가/호가 구독",
             },
             "전략 실행": {
                 "20": "모멘텀 전략 실행",
@@ -274,12 +275,46 @@ class TradingApp:
             await self.stock_query_service.handle_upper_limit_stocks("0000", limit=500)
         elif choice == '16':  # 기존 14번
             await self.stock_query_service.handle_yesterday_upper_limit_stocks()
+        elif choice == '17':
+            await self.stock_query_service.handle_current_upper_limit_stocks()
 
-        elif choice == '17':  # 기존 13번
+            #
+            # self.cli_view.display_strategy_running_message("전일 상한가 종목 조회(전체 종목)")
+            #
+            # try:
+            #     # trading_service.get_all_stocks_code는 이제 ResCommonResponse를 반환
+            #     all_codes_response: ResCommonResponse = await self.trading_service.get_all_stocks_code()
+            #
+            #     if all_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
+            #         self.cli_view.display_top_stocks_failure(getattr(all_codes_response, "msg1", "조회 실패"))
+            #         self.logger.warning(f"전체 종목 조회 실패: {all_codes_response}")
+            #         return running_status
+            #
+            #     # 'data' 필드에서 실제 목록을 가져옴
+            #     all_stock_codes_list: List[str] = getattr(all_codes_response, 'data', [])
+            #
+            #     # get_current_upper_limit_stocks는 이제 ResCommonResponse를 반환
+            #     upper_limit_stocks_response: ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(
+            #         all_stock_codes_list)
+            #
+            #     if upper_limit_stocks_response.rt_cd == ErrorCode.SUCCESS.value:  # Enum 값 사용
+            #         upper_limit_stocks_data = getattr(upper_limit_stocks_response, 'data', [])
+            #         if not upper_limit_stocks_data:
+            #             self.cli_view.display_no_stocks_for_strategy()
+            #         else:
+            #             self.cli_view.display_gapup_pullback_selected_stocks(upper_limit_stocks_data)
+            #     else:  # 상한가 종목 조회 실패
+            #         self.cli_view.display_top_stocks_failure(getattr(upper_limit_stocks_response, "msg1", "상한가 종목 조회 실패"))
+            #         self.logger.error(f"상한가 종목 조회 중 오류 발생: {upper_limit_stocks_response.msg1}")
+            #
+            #
+            # except Exception as e:
+            #     self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
+            #     self.cli_view.display_strategy_error(f"전일 상한가 종목 조회 실패: {e}")
+
+        elif choice == '18':
             stock_code = await self.cli_view.get_user_input("구독할 종목 코드를 입력하세요: ")
-            # 이 기능은 아직 StockQueryService에 없으므로 추가가 필요합니다.
             await self.stock_query_service.handle_realtime_stream(stock_code)
-            # self.cli_view.display_message("실시간 구독 기능은 현재 개발 중입니다.")
 
         elif choice == '20':
             if not self.time_manager.is_market_open():
@@ -456,40 +491,6 @@ class TradingApp:
             except Exception as e:
                 self.logger.error(f"[GapUpPullback] 전략 실행 오류: {e}")
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
-        #
-        # elif choice == '14':
-        #     self.cli_view.display_strategy_running_message("전일 상한가 종목 조회")
-        #
-        #     try:
-        #         # trading_service.get_all_stocks_code는 이제 ResCommonResponse를 반환
-        #         all_codes_response: ResCommonResponse = await self.trading_service.get_all_stocks_code()
-        #
-        #         if all_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-        #             self.cli_view.display_top_stocks_failure(getattr(all_codes_response, "msg1", "조회 실패"))
-        #             self.logger.warning(f"전체 종목 조회 실패: {all_codes_response}")
-        #             return running_status
-        #
-        #         # 'data' 필드에서 실제 목록을 가져옴
-        #         all_stock_codes_list: List[str] = getattr(all_codes_response, 'data', [])
-        #
-        #         # get_current_upper_limit_stocks는 이제 ResCommonResponse를 반환
-        #         upper_limit_stocks_response: ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(
-        #             all_stock_codes_list)
-        #
-        #         if upper_limit_stocks_response.rt_cd == ErrorCode.SUCCESS.value:  # Enum 값 사용
-        #             upper_limit_stocks_data = getattr(upper_limit_stocks_response, 'data', [])
-        #             if not upper_limit_stocks_data:
-        #                 self.cli_view.display_no_stocks_for_strategy()
-        #             else:
-        #                 self.cli_view.display_gapup_pullback_selected_stocks(upper_limit_stocks_data)
-        #         else:  # 상한가 종목 조회 실패
-        #             self.cli_view.display_top_stocks_failure(getattr(upper_limit_stocks_response, "msg1", "상한가 종목 조회 실패"))
-        #             self.logger.error(f"상한가 종목 조회 중 오류 발생: {upper_limit_stocks_response.msg1}")
-        #
-        #
-        #     except Exception as e:
-        #         self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
-        #         self.cli_view.display_strategy_error(f"전일 상한가 종목 조회 실패: {e}")
 
         elif choice == '98':  # 14번 메뉴 추가: 토큰 무효화
             self.token_manager.invalidate_token()

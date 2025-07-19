@@ -104,6 +104,7 @@ def setup_mock_app(mocker):
     app.stock_query_service.handle_realtime_price_quote_stream = AsyncMock()
     app.stock_query_service.handle_get_asking_price = AsyncMock()
     app.stock_query_service.handle_yesterday_upper_limit_stocks = AsyncMock()
+    app.stock_query_service.handle_current_upper_limit_stocks = AsyncMock()
     app.stock_query_service.handle_realtime_stream = AsyncMock()
 
     app.trading_service = mocker.AsyncMock(spec=TradingService)
@@ -2112,6 +2113,27 @@ async def test_execute_action_16_calls_yesterday_upper_limit_handler(setup_mock_
 
 
 @pytest.mark.asyncio
+async def test_execute_action_17_calls_yesterday_upper_limit_handler(setup_mock_app):
+    """
+    메뉴 '17' 선택 시 stock_query_service.handle_current_upper_limit_stocks
+    호출되는지 테스트합니다.
+    """
+    # --- Arrange ---
+    # The setup_mock_app fixture provides a correctly mocked app instance.
+    app = setup_mock_app
+
+    # --- Act ---
+    # Call the action for menu '16'.
+    result = await app._execute_action('17')
+
+    # --- Assert ---
+    # Verify that the correct handler in the stock_query_service was called.
+    app.stock_query_service.handle_current_upper_limit_stocks.assert_awaited_once()
+
+    # The app should continue running.
+    assert result is True
+
+@pytest.mark.asyncio
 async def test_execute_action_15_calls_upper_limit_handler(setup_mock_app):
     """
     메뉴 '15' 선택 시 stock_query_service.handle_upper_limit_stocks가 호출되는지 테스트합니다.
@@ -2154,8 +2176,8 @@ async def test_execute_action_16_handler_exception_propagates(setup_mock_app):
 # tests/test_trading_app.py
 
 @pytest.mark.asyncio
-async def test_execute_action_17_realtime_subscription(setup_mock_app):
-    """메뉴 '17' 선택 시 실시간 구독 핸들러가 올바르게 호출되는지 테스트합니다."""
+async def test_execute_action_18_realtime_subscription(setup_mock_app):
+    """메뉴 '18' 선택 시 실시간 구독 핸들러가 올바르게 호출되는지 테스트합니다."""
     # --- Arrange (준비) ---
     app = setup_mock_app
     test_stock_code = "005930"
@@ -2164,8 +2186,8 @@ async def test_execute_action_17_realtime_subscription(setup_mock_app):
     app.cli_view.get_user_input.return_value = test_stock_code
 
     # --- Act (실행) ---
-    # 메뉴 '17'번을 호출합니다.
-    await app._execute_action('17')
+    # 메뉴 '18'번을 호출합니다.
+    await app._execute_action('18')
 
     # --- Assert (검증) ---
     # 1. 사용자에게 종목 코드를 요청했는지 확인합니다.
@@ -2233,15 +2255,15 @@ async def test_execute_action_2_get_account_balance_integration(setup_mock_app):
 # C:/Users/Kyungsoo/Documents/Code/Investment/tests/test_trading_app.py
 
 @pytest.mark.asyncio
-async def test_execute_action_17_realtime_stream_new_menu_option(setup_mock_app):
-    """메뉴 '17' 선택 시 실시간 구독 기능이 호출되는지 테스트합니다."""  # Docstring도 일관성 있게 수정
+async def test_execute_action_18_realtime_stream_new_menu_option(setup_mock_app):
+    """메뉴 '18' 선택 시 실시간 구독 기능이 호출되는지 테스트합니다."""  # Docstring도 일관성 있게 수정
     app = setup_mock_app
     app.cli_view.get_user_input.return_value = "005930"  # 구독할 종목 코드 입력 시뮬레이션
 
     # ✅ 검증할 메서드에 맞게 return_value 설정 (필수는 아니지만 좋은 습관)
     app.stock_query_service.handle_realtime_stream.return_value = None
 
-    result = await app._execute_action('17')
+    result = await app._execute_action('18')
 
     app.cli_view.get_user_input.assert_awaited_once_with("구독할 종목 코드를 입력하세요: ")
 
