@@ -2,7 +2,9 @@
 from typing import Dict, List, Union
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
-import requests  # 임시 임포트
+import requests
+from config.kis_config import KIS_QUOTATIONS_CONFIG
+
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
     ResPriceSummary, ResMomentumStock, ResCommonResponse, ErrorCode,
@@ -13,20 +15,21 @@ from common.types import (
 class KoreaInvestApiQuotations(KoreaInvestApiBase):
     def __init__(self, base_url, headers, config, token_manager: TokenManager, logger=None):
         super().__init__(base_url, headers, config, token_manager, logger)
+        self._quotations_config = KIS_QUOTATIONS_CONFIG
 
     async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
         """
         종목코드로 종목의 전체 정보 (이름, 현재가, 시가총액 등)를 가져옵니다.
         ResCommonResponse 형태로 반환하며, data 필드에 ResStockFullInfoApiOutput 포함.
         """
-        path = "/uapi/domestic-stock/v1/quotations/search-info"
+        path = self._quotations_config["paths"]["search_info"]
 
         self._headers["tr_id"] = self._config['tr_ids']['quotations']['search_info']
         self._headers["custtype"] = self._config['custtype']
 
         params = {
             "PDNO": stock_code,
-            "FID_DIV_CLS_CODE": "2"
+            "FID_DIV_CLS_CODE": self._quotations_config["params"]["fid_div_cls_code"]
         }
 
         self.logger.info(f"{stock_code} 종목 정보 조회 시도...")
@@ -62,7 +65,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         현재가를 조회합니다. API 원본 응답을 ResCommonResponse의 data 필드에 담아 반환.
         """
-        path = "/uapi/domestic-stock/v1/quotations/inquire-price"
+        path = self._quotations_config["paths"]["inquire_price"]
 
         full_config = self._config
         self._headers["tr_id"] = full_config['tr_ids']['quotations']['inquire_price']
@@ -206,7 +209,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers["tr_id"] = self._config['tr_ids']['quotations']['top_market_cap']
         self._headers["custtype"] = self._config['custtype']
 
-        path = "/uapi/domestic-stock/v1/ranking/market-cap"
+        path = self._quotations_config["paths"]["market_cap"]
+
         params = {
             "fid_cond_mrkt_div_code": "J",
             "fid_cond_scr_div_code": "20174",
@@ -278,7 +282,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             headers_sync["tr_id"] = self._config['tr_ids']['daily_itemchartprice_day']
 
             response_raw = requests.get(
-                self._base_url + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                self._quotations_config["paths"]["inquire-daily-itemchartprice"],
                 headers=headers_sync,
                 params=params
             )
@@ -455,7 +459,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         }
 
         response_data : ResCommonResponse = await self.call_api(method="GET",
-                                            path="/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                                            path=self._quotations_config["paths"]["inquire-daily-itemchartprice"],
                                             params=params, data=None)
 
         if response_data.rt_cd != ErrorCode.SUCCESS.value:
