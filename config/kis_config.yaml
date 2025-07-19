@@ -4,6 +4,14 @@ paths:
   market_cap: /uapi/domestic-stock/v1/ranking/market-cap
   inquire_daily_itemchartprice: /uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice
   asking_price: /uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn
+  time_conclude: /uapi/domestic-stock/v1/quotations/inquire-time-itemconclude
+  search_stock: /uapi/domestic-stock/v1/search/search-stock-info
+  ranking_rise: /uapi/domestic-stock/v1/ranking/inquire-rise
+  ranking_fall: /uapi/domestic-stock/v1/ranking/inquire-fall
+  ranking_volume: /uapi/domestic-stock/v1/ranking/inquire-volume
+  ranking_foreign: /uapi/domestic-stock/v1/ranking/inquire-foreign
+  item_news: /uapi/domestic-stock/v1/news/inquire-item-news
+  etf_info: /uapi/domestic-stock/v1/quotations/inquire-etf-product-info
 
 params:
   fid_div_cls_code: "2"

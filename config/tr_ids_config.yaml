@@ -6,7 +6,15 @@ tr_ids:
     top_market_cap: "FHPST01740000" # 시가총액 상위 (실전 전용, 모의 미지원)
     daily_itemchartprice_day: "FHKST03010100" # 일별 주식 시세 (차트)
     daily_itemchartprice_minute: "FHNKF03060000" # 분별 주식 시세 (차트)
-    asking_price: "FHKST01010200"  # TR_ID는 실제 계정 환경에 따라 조정
+    asking_price: FHKST01010200
+    time_conclude: FHKST01010300
+    search_stock: FHKST01010400
+    ranking_rise: FHKUP03200000
+    ranking_fall: FHKUP03300000
+    ranking_volume: FHKUP03400000
+    ranking_foreign: FHKUP03600000
+    item_news: FHPST01040000
+    etf_info: FHKST05010100
   account:
     inquire_balance_real: "TTTC8434R" # 실전 계좌 잔고 조회
     inquire_balance_paper: "VTTC8434R" # 모의 계좌 잔고 조회
