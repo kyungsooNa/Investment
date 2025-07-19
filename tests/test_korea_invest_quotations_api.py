@@ -1233,3 +1233,21 @@ async def test_get_stock_news_success(mock_quotations):
     result = await mock_quotations.get_stock_news("005930")
     assert result.rt_cd == "0"
     mock_quotations.logger.info.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_get_top_foreign_buying_stocks_success(mock_quotations):
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"foreign": "data"}
+    ))
+    result = await mock_quotations.get_top_foreign_buying_stocks()
+    assert result.rt_cd == "0"
+    mock_quotations.logger.info.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_get_etf_info_success(mock_quotations):
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"etf": "info"}
+    ))
+    result = await mock_quotations.get_etf_info("ETF12345")
+    assert result.rt_cd == "0"
+    mock_quotations.logger.info.assert_called_once()
