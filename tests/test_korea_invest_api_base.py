@@ -9,6 +9,7 @@ from brokers.korea_investment.korea_invest_token_manager import TokenManager
 import requests
 import logging
 import httpx # 에러 시뮬레이션을 위해 import
+from common.types import ErrorCode, ResCommonResponse
 
 class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -79,7 +80,7 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
             # --- Assert (검증) ---
             # 1. 최종 결과 검증: 두 번째 시도의 성공적인 결과값이 반환되었는지 확인합니다.
             self.assertIsNotNone(final_result)
-            self.assertEqual(final_result['output']['result'], 'success_data')
+            self.assertEqual(final_result.data.get("result"), "success_data")
 
             # 2. 호출 횟수 검증: API가 총 2번 호출되었는지 확인합니다. (첫 시도 실패 -> 재시도 성공)
             self.assertEqual(mock_execute.call_count, 2)
@@ -276,8 +277,12 @@ async def testcall_api_success(caplog):
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
-    mock_response.text = '{"key":"value", "rt_cd":"0"}'
-    mock_response.json.return_value = {"key": "value", "rt_cd": "0"}
+    mock_response.text = '{"rt_cd":"0","msg1":"정상","output":{"key":"value"}}'
+    mock_response.json.return_value = {
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output": {"key": "value"}
+    }
 
     mock_response.raise_for_status.return_value = None
     mock_response.raise_for_status.side_effect = None
@@ -286,7 +291,9 @@ async def testcall_api_success(caplog):
 
     result = await dummy.call_api('GET', '/test')
 
-    assert result == {"key": "value", "rt_cd": "0"}
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.msg1 == "정상"
+    assert result.data == {"key": "value"}
 
     # 이제 dummy._log_request_exception은 MagicMock이므로 assert_not_called() 사용 가능
     dummy._log_request_exception.get.assert_not_called()
@@ -324,14 +331,23 @@ async def testcall_api_retry_on_429(mock_sleep, caplog):
         resp = MagicMock(spec=httpx.Response)  # httpx.Response 스펙을 따름
         if len(responses_list) < 2:  # 첫 2번은 429 응답
             resp.status_code = 429
-            resp.text = "Too Many Requests"
-            resp.json.return_value = {}  # 빈 딕셔너리 반환
+            resp.text = '{"rt_cd":"0","msg1":"Too Many Requests","output":{}}'
+            resp.json.return_value = {
+                "rt_cd": "0",
+                "msg1": "정상",
+                "output": {}
+            }
+
             resp.raise_for_status.return_value = None  # HTTP 오류를 발생시키지 않도록
             resp.raise_for_status.side_effect = None
         else:  # 3번째부터는 200 성공 응답
             resp.status_code = 200
-            resp.text = '{"success":true}'
-            resp.json.return_value = {"success": True}
+            resp.text = '{"rt_cd":"0","msg1":"정상","output":{"key":"value"}}'
+            resp.json.return_value = {
+                "rt_cd": "0",
+                "msg1": "정상",
+                "output": {"success": True}
+            }
             resp.raise_for_status.return_value = None
             resp.raise_for_status.side_effect = None
 
@@ -346,7 +362,10 @@ async def testcall_api_retry_on_429(mock_sleep, caplog):
     # retry_count를 넉넉하게 설정하여 3번의 호출이 충분히 발생하도록 합니다.
     result = await dummy.call_api('GET', '/retry', retry_count=5, delay=0.01)
 
-    assert result == {"success": True}
+    assert result.rt_cd == "0"
+    assert result.msg1 == "정상"
+    assert result.data == {"success": True}
+
     assert len(responses_list) == 3 # 3번의 응답 객체가 생성되었는지 확인 (2번 실패, 1번 성공)
     assert dummy._async_session.get.call_count == 3 # 모의 get 메서드가 3번 호출되었는지 확인
 
@@ -373,16 +392,23 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
         resp = MagicMock(spec=httpx.Response)
         if len(responses_list) < 2:
             resp.status_code = 500
-            resp.text = '{"msg1":"초당 거래건수를 초과하였습니다."}'
-            resp.json.return_value = {"msg1": "초당 거래건수를 초과하였습니다."}
+            resp.text = '{"rt_cd":"1","msg1":"초당 거래건수를 초과하였습니다.","output":{"success": True}}'
+            resp.json.return_value = {
+                "rt_cd": "1",
+                "msg1": "초당 거래건수를 초과하였습니다.",
+                "output": {"success": False}
+            }
             # 이 500 오류 응답은 _handle_response에서 "retry"로 처리되어야 하며,
             # 비즈니스 오류로 로깅되지 않아야 합니다. (위의 _handle_response 수정으로 보장)
         else:
             resp.status_code = 200
             # 변경: 성공 응답에 rt_cd: "0"을 포함하도록 수정
-            resp.text = '{"success":true, "rt_cd":"0"}'
-            resp.json.return_value = {"success": True, "rt_cd": "0"}
-
+            resp.text = '{"rt_cd":"0","msg1":"정상","output":{"success":true}}'
+            resp.json.return_value = {
+                "rt_cd": "0",
+                "msg1": "정상",
+                "output": {"success": True}
+            }
         resp.raise_for_status.return_value = None
         resp.raise_for_status.side_effect = None
         responses_list.append(resp)
@@ -393,7 +419,10 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
 
     result = await dummy.call_api('GET', '/retry500', retry_count=5, delay=0.01)
 
-    assert result == {"success": True, "rt_cd": "0"}
+    assert result.rt_cd == "0"
+    assert result.msg1 == "정상"
+    assert result.data == {'success': True}
+
     assert len(responses_list) == 3
     assert dummy._async_session.get.call_count == 3
     assert mock_sleep.call_count == 2
@@ -437,12 +466,19 @@ async def testcall_api_token_expired_retry():
         resp = MagicMock(spec=httpx.Response)
         if len(responses) < 1:
             resp.status_code = 200
-            resp.text = '{"rt_cd":"1","msg_cd":"EGW00123"}'
-            resp.json.return_value = {"rt_cd": "1", "msg_cd": "EGW00123"}
+            resp.text = '{"rt_cd":"1","msg_cd":"EGW00123","output":{"success":true}}'
+            resp.json.return_value = {
+                "rt_cd": "1",
+                "msg_cd": "EGW00123",
+                "output": {"success": False}}
         else:
             resp.status_code = 200
-            resp.text = '{"success":true}'
-            resp.json.return_value = {"success": True}
+            resp.text = '{"rt_cd":"0","msg1":"정상","output":{"success":true}}'
+            resp.json.return_value = {
+                "rt_cd": "0",
+                "msg1": "정상",
+                "output": {"success": True}
+            }
 
         def _raise_for_status():
             if resp.status_code >= 400:
@@ -460,7 +496,9 @@ async def testcall_api_token_expired_retry():
 
     result = await dummy.call_api('GET', '/token_expired', retry_count=5, delay=0.01)
 
-    assert result == {"success": True}
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.msg1 == "정상"
+    assert result.data == {"success": True}
     assert token_manager.invalidated is True
     assert dummy._async_session.get.call_count == 2
 
@@ -499,7 +537,10 @@ async def testcall_api_http_error(monkeypatch):
     dummy._async_session.get = MagicMock(side_effect=mock_get_async)
 
     result = await dummy.call_api_wrapper('GET', '/http_error')
-    assert result is None
+
+    assert result.rt_cd != "0"
+    assert result.msg1 != "정상"
+    assert result.data is None
 
 @pytest.mark.asyncio
 async def testcall_api_connection_error(monkeypatch):
@@ -525,7 +566,10 @@ async def testcall_api_connection_error(monkeypatch):
     dummy._async_session.get = AsyncMock(side_effect=mock_get_async)
 
     result = await dummy.call_api_wrapper('GET', '/conn_err')
-    assert result is None
+
+    assert result.rt_cd != "0"
+    assert result.msg1 != "정상"
+    assert result.data is None
 
 @pytest.mark.asyncio
 async def testcall_api_timeout(monkeypatch):
@@ -550,7 +594,10 @@ async def testcall_api_timeout(monkeypatch):
     dummy._async_session.get = MagicMock(side_effect=mock_get_async)
 
     result = await dummy.call_api_wrapper('GET', '/timeout')
-    assert result is None
+
+    assert result.rt_cd != "0"
+    assert result.msg1 != "정상"
+    assert result.data is None
 
 @pytest.mark.asyncio
 async def testcall_api_json_decode_error(monkeypatch):
@@ -579,7 +626,10 @@ async def testcall_api_json_decode_error(monkeypatch):
     dummy._async_session.get = MagicMock(return_value=resp)
 
     result = await dummy.call_api_wrapper('GET', '/json_error')
-    assert result is None
+
+    assert result.rt_cd != "0"
+    assert result.msg1 != "정상"
+    assert result.data is None
 
 @pytest.mark.asyncio
 async def test_log_request_exception_cases(caplog):
@@ -715,7 +765,7 @@ async def test_call_api_with_http_error_status(caplog):
         mock_execute_request.assert_awaited_once()
 
         # _handle_response 로직에 의해 최종적으로 None이 반환되어야 함
-        assert result is None
+        assert result.data is None
 
         # _handle_response가 남기는 로그가 정상적으로 찍혔는지 확인
         assert "HTTP 오류 발생: 500 - Internal Server Error" in caplog.text
@@ -747,7 +797,7 @@ async def test_call_api_with_invalid_json_type(caplog):
 
     result = await api.call_api("GET", "/invalid")
 
-    assert result is None
+    assert result.data is None
     # 변경: 예상되는 로그 메시지를 "응답 JSON 디코딩 실패"로 수정
     assert any("응답 JSON 디코딩 실패" in r.message for r in caplog.records)
 
@@ -797,7 +847,7 @@ async def test_call_api_no_env_instance(caplog):
         print(f"[{r.levelname}] {r.name} - {r.message}")
     print("=====================\n")
 
-    assert result is None
+    assert result.data is None
     # 예상되는 로그 메시지 확인: "토큰 만료 오류" 및 "토큰 초기화 불가" 메시지 확인
     assert any("토큰 만료 오류(EGW00123) 감지" in r.message for r in caplog.records)
     assert any("KoreaInvestEnv(config) 인스턴스를 찾을 수 없어 토큰 초기화 불가" in r.message for r in caplog.records)
@@ -850,7 +900,7 @@ async def test_call_api_token_renew_failed(caplog):
     result = await api.call_api("GET", "/token-expired", retry_count=3, delay=0.01)
 
     # 검증
-    assert result is None
+    assert result.data is None
     assert mock_async_session.get.call_count == 3
     assert mock_token_manager.invalidate_token.call_count == 3
 
@@ -885,5 +935,5 @@ async def test_log_request_exception_httpx_request_error(caplog):
 
     result = await api.call_api("GET", "/error", retry_count=1, delay=0)
 
-    assert result is None
+    assert result.data is None
     assert any("요청 예외 발생 (httpx): 연결 실패" in r.message for r in caplog.records)

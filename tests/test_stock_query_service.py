@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import builtins
 from unittest.mock import call, ANY
+from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem, ResMarketCapStockItem
 
 # 테스트 대상 모듈 임포트
 from app.order_execution_service import OrderExecutionService
@@ -73,8 +74,11 @@ async def test_handle_buy_stock_success(handler, mock_trading_service, print_out
     qty_input = "10"
     price_input = "70000"
 
-    mock_trading_service.place_buy_order.return_value = {"rt_cd": "0", "msg1": "주문 성공"}
-
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="주문 성공",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
     # get_user_input은 이제 handle_buy_stock 내부에서 호출되지 않으므로 assert_has_awaits는 제거
@@ -119,13 +123,18 @@ async def test_handle_buy_stock_place_order_delegation_failure(handler, mock_tra
     qty_input = "10"
     price_input = "70000"
 
-    mock_trading_service.place_buy_order.return_value = {"rt_cd": "1", "msg1": "주문 실패"}
-
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="주문 실패",
+        data=None
+    )
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
     mock_trading_service.place_buy_order.assert_awaited_once_with("005930", 70000, 10, "01")
-    assert "주식 매수 주문 실패: {'rt_cd': '1', 'msg1': '주문 실패'}" in print_output_capture.getvalue()
-    mock_logger.error.assert_called_once_with(f"주식 매수 주문 실패: 종목=005930, 결과={{'rt_cd': '1', 'msg1': '주문 실패'}}")
+    assert "매수 주문 실패" in print_output_capture.getvalue()
+    logged_msg = mock_logger.error.call_args[0][0]
+    assert "매수 주문 실패" in logged_msg
+    assert "005930" in logged_msg
 
 @pytest.mark.asyncio
 async def test_handle_sell_stock_success(handler, mock_trading_service, print_output_capture):
@@ -134,8 +143,11 @@ async def test_handle_sell_stock_success(handler, mock_trading_service, print_ou
     qty_input = "5"
     price_input = "60000"
 
-    mock_trading_service.place_sell_order.return_value = {"rt_cd": "0", "msg1": "매도 성공"}
-
+    mock_trading_service.place_sell_order.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="매도 성공",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
     await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
     mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5, "01")
@@ -178,19 +190,28 @@ async def test_handle_sell_stock_place_order_delegation_failure(handler, mock_tr
     qty_input = "5"
     price_input = "60000"
 
-    mock_trading_service.place_sell_order.return_value = {"rt_cd": "1", "msg1": "매도 실패"}
+    mock_trading_service.place_sell_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="주문 실패",
+        data=None
+    )
 
     await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
     mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5, "01")
-    assert "주식 매도 주문 실패: {'rt_cd': '1', 'msg1': '매도 실패'}" in print_output_capture.getvalue()
-    mock_logger.error.assert_called_once_with(f"주식 매도 주문 실패: 종목=005930, 결과={{'rt_cd': '1', 'msg1': '매도 실패'}}")
+    assert "매도 주문 실패" in print_output_capture.getvalue()
+    logged_msg = mock_logger.error.call_args[0][0]
+    assert "매도 주문 실패" in logged_msg
+    assert "005930" in logged_msg
 
 @pytest.mark.asyncio
 async def test_handle_place_buy_order_success(handler, mock_trading_service, print_output_capture, mock_logger):
     """handle_place_buy_order 매수 주문 실행 성공 테스트."""
-    mock_trading_service.place_buy_order.return_value = {"rt_cd": "0", "msg1": "주문 성공"}
-
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="주문 성공",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
     result = await handler.handle_place_buy_order("005930", 70000, 10, "01")
 
     mock_trading_service.place_buy_order.assert_awaited_once_with(
@@ -199,24 +220,31 @@ async def test_handle_place_buy_order_success(handler, mock_trading_service, pri
     assert "--- 주식 매수 주문 시도 ---" in print_output_capture.getvalue()
     assert "주식 매수 주문 성공" in print_output_capture.getvalue()
     mock_logger.info.assert_called_once()
-    assert result == {"rt_cd": "0", "msg1": "주문 성공"}
+    assert result.rt_cd == "0"
+    assert result.msg1 == "주문 성공"
 
 @pytest.mark.asyncio
 async def test_handle_place_buy_order_trading_service_failure(handler, mock_trading_service, print_output_capture, mock_logger):
     """handle_place_buy_order 매수 주문 실행 실패 테스트."""
-    mock_trading_service.place_buy_order.return_value = {"rt_cd": "1", "msg1": "잔고 부족"}
-
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="잔고 부족",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
     result = await handler.handle_place_buy_order("005930", 70000, 10, "01")
 
-    assert "주식 매수 주문 실패: {'rt_cd': '1', 'msg1': '잔고 부족'}" in print_output_capture.getvalue()
     mock_logger.error.assert_called_once()
-    assert result == {"rt_cd": "1", "msg1": "잔고 부족"}
+    assert result.rt_cd == "1"
+    assert result.msg1 == "잔고 부족"
 
 @pytest.mark.asyncio
 async def test_handle_place_sell_order_success(handler, mock_trading_service, print_output_capture, mock_logger):
     """handle_place_sell_order 매도 주문 실행 성공 테스트."""
-    mock_trading_service.place_sell_order.return_value = {"rt_cd": "0", "msg1": "매도 성공"}
-
+    mock_trading_service.place_sell_order.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="매도 성공",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
     result = await handler.handle_place_sell_order("005930", 60000, 5, "01")
 
     mock_trading_service.place_sell_order.assert_awaited_once_with(
@@ -225,18 +253,24 @@ async def test_handle_place_sell_order_success(handler, mock_trading_service, pr
     assert "--- 주식 매도 주문 시도 ---" in print_output_capture.getvalue()
     assert "주식 매도 주문 성공" in print_output_capture.getvalue()
     mock_logger.info.assert_called_once()
-    assert result == {"rt_cd": "0", "msg1": "매도 성공"}
+    assert result.rt_cd == "0"
+    assert result.msg1 == "매도 성공"
 
 @pytest.mark.asyncio
 async def test_handle_place_sell_order_trading_service_failure(handler, mock_trading_service, print_output_capture, mock_logger):
     """handle_place_sell_order 매도 주문 실행 실패 테스트."""
-    mock_trading_service.place_sell_order.return_value = {"rt_cd": "1", "msg1": "수량 부족"}
+    mock_trading_service.place_sell_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="수량 부족",
+        data=None
+    )
 
     result = await handler.handle_place_sell_order("005930", 60000, 5, "01")
 
-    assert "주식 매도 주문 실패: {'rt_cd': '1', 'msg1': '수량 부족'}" in print_output_capture.getvalue()
+    assert "매도 주문 실패" in print_output_capture.getvalue()
     mock_logger.error.assert_called_once()
-    assert result == {"rt_cd": "1", "msg1": "수량 부족"}
+    assert result.rt_cd == "1"
+    assert result.msg1 == "수량 부족"
 
 @pytest.mark.asyncio
 async def test_handle_realtime_price_quote_stream_success(handler, mock_trading_service, print_output_capture, mock_logger):

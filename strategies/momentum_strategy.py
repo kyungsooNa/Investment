@@ -1,6 +1,7 @@
 import logging
 from interfaces.strategy import Strategy
 from typing import List, Dict, Optional, Callable
+from common.types import ErrorCode, ResCommonResponse
 import inspect
 
 
@@ -27,7 +28,7 @@ class MomentumStrategy(Strategy):
         results = []
 
         for code in stock_codes:
-            summary = await self.broker.get_price_summary(code)  # ✅ wrapper 통해 조회
+            summary : ResCommonResponse = await self.broker.get_price_summary(code)  # ✅ wrapper 통해 조회
 
             if self.mode == "backtest":
                 if not self.backtest_lookup:
@@ -35,20 +36,20 @@ class MomentumStrategy(Strategy):
 
                 result = self.backtest_lookup(
                     code,
-                    summary,
+                    summary.data,
                     self.min_follow_through_time
                 )
                 after_price = await result if inspect.isawaitable(result) else result
             else:
-                price_data = await self.broker.get_current_price(code)  # ✅ wrapper 통해 조회
-                after_price = int(price_data.get("output", {}).get("stck_prpr", 0))
+                price_data : ResCommonResponse = await self.broker.get_current_price(code)  # ✅ wrapper 통해 조회
+                after_price = int(price_data.data.get("stck_prpr", "0") or 0)
 
-            summary["after"] = after_price
-            summary["after_rate"] = (
-                (after_price - summary["current"]) / summary["current"] * 100
-                if summary["current"] else 0
+            summary.data["after"] = after_price
+            summary.data["after_rate"] = (
+                (after_price - summary.data["current"]) / summary.data["current"] * 100
+                if summary.data["current"] else 0
             )
-            results.append(summary)
+            results.append(summary.data)
 
         follow_through = []
         not_follow_through = []
@@ -56,7 +57,7 @@ class MomentumStrategy(Strategy):
 
         for s in results:
             code = s["symbol"]
-            name = await self.broker.get_name_by_code(code)
+            name : str = await self.broker.get_name_by_code(code)
             display = f"{name}({code})" if name else code
 
             # ▼▼▼▼▼ 핵심 로직 및 로그 수정 ▼▼▼▼▼

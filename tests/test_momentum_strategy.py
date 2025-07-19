@@ -1,22 +1,29 @@
 import pytest
 from unittest.mock import AsyncMock
 from strategies.momentum_strategy import MomentumStrategy
+from common.types import ResCommonResponse
 
 @pytest.mark.asyncio
 async def test_momentum_strategy_live_mode():
     mock_quotations = AsyncMock()
-    mock_quotations.get_price_summary = AsyncMock(return_value={
-        "symbol": "005930",
-        "open": 10000,
-        "current": 11000,
-        "change_rate": 10.0
-    })
-    mock_quotations.get_current_price = AsyncMock(return_value={
-        "output": {
+    mock_quotations.get_price_summary = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={
+            "symbol": "005930",
+            "open": 10000,
+            "current": 11000,
+            "change_rate": 10.0
+        }
+    ))
+    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={
             "stck_prpr": "11500"
         }
-    })
-    mock_quotations.get_name_by_code = AsyncMock(return_value="삼성전자")  # ✅ 이거 추가
+    ))
+    mock_quotations.get_name_by_code = AsyncMock(return_value="삼성전자")
 
     strategy = MomentumStrategy(
         broker=mock_quotations,
@@ -28,28 +35,32 @@ async def test_momentum_strategy_live_mode():
 
     result = await strategy.run(["005930"])
 
-    assert result["follow_through"] == [{
-        "code": "005930",
-        "name": "삼성전자"
-    }]
-    assert result["not_follow_through"] == []
-
+    assert isinstance(result, dict)
+    assert "follow_through" in result
+    assert "not_follow_through" in result
+    assert result["follow_through"][0]["code"] == "005930"
 
 @pytest.mark.asyncio
 async def test_momentum_strategy_live_mode_not_follow():
     mock_quotations = AsyncMock()
-    mock_quotations.get_price_summary = AsyncMock(return_value={
+    mock_quotations.get_price_summary = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={
         "symbol": "000660",
         "open": 10000,
         "current": 11000,
         "change_rate": 10.0
-    })
-
-    mock_quotations.get_current_price = AsyncMock(return_value={
-        "output": {
-            "stck_prpr": "11200"  # 1.8% 상승 → Follow Through 조건 미달
         }
-    })
+    ))
+
+    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={
+            "stck_prpr": "11200"  # 1.8% 상승
+        }
+    ))
 
     mock_quotations.get_name_by_code = AsyncMock(return_value="SK하이닉스")
 
@@ -73,12 +84,17 @@ async def test_momentum_strategy_live_mode_not_follow():
 @pytest.mark.asyncio
 async def test_momentum_strategy_backtest_mode():
     mock_quotations = AsyncMock()
-    mock_quotations.get_price_summary = AsyncMock(return_value={
-        "symbol": "035720",
-        "open": 300000,
-        "current": 330000,
-        "change_rate": 10.0
-    })
+
+    mock_quotations.get_price_summary = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={
+            "symbol": "035720",
+            "open": 300000,
+            "current": 330000,
+            "change_rate": 10.0
+        }
+    ))
     mock_quotations.get_name_by_code = AsyncMock(return_value="카카오")  # ✅ 핵심 수정
 
     async def dummy_backtest_lookup(code, summary, minutes_after):

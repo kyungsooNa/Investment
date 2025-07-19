@@ -6,8 +6,8 @@ from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrad
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
 import logging
-from typing import Dict, Any, List
-
+from typing import Any
+from common.types import ResCommonResponse
 
 class KoreaInvestApiClient:
     """
@@ -53,89 +53,89 @@ class KoreaInvestApiClient:
 
 
     # --- Account API delegation ---
-    async def get_account_balance(self):
+    # KoreaInvestApiAccount의 get_account_balance, get_real_account_balance도 ResCommonResponse를 반환하도록 수정 필요
+    async def get_account_balance(self) -> ResCommonResponse:
         return await self._account.get_account_balance()
 
-    async def get_real_account_balance(self):
+    async def get_real_account_balance(self) -> ResCommonResponse:
         return await self._account.get_real_account_balance()
 
     # --- Trading API delegation ---
-    async def buy_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn):
+    # KoreaInvestApiTrading의 place_stock_order도 ResCommonResponse를 반환하도록 수정 필요
+    async def buy_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn) -> ResCommonResponse:
         return await self._trading.place_stock_order(stock_code, order_price, order_qty, "buy", order_dvsn)
 
-    async def sell_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn):
+    async def sell_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn) -> ResCommonResponse:
         return await self._trading.place_stock_order(stock_code, order_price, order_qty, "sell", order_dvsn)
 
-    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn):
-        # trading_api.py의 place_stock_order는 buy/sell 유형을 trade_type으로 받으므로 그대로 전달
+    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn) -> ResCommonResponse:
         return await self._trading.place_stock_order(stock_code, order_price, order_qty, trade_type, order_dvsn)
 
 
     # --- Quotations API delegation (Updated) ---
-    async def get_stock_info_by_code(self, stock_code: str) -> dict:
-        """종목코드로 종목의 전체 정보를 가져옵니다."""
+    # KoreaInvestApiQuotations의 모든 메서드가 ResCommonResponse를 반환하도록 이미 수정되었으므로, 해당 반환 타입을 반영
+    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+        """종목코드로 종목의 전체 정보를 가져옵니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_stock_info_by_code(stock_code)
 
-    async def get_current_price(self, code: str):
-        """현재가를 조회합니다."""
+    async def get_current_price(self, code: str) -> ResCommonResponse:
+        """현재가를 조회합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_current_price(code)
 
-    async def get_price_summary(self, code: str) -> dict:
-        """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다."""
+    async def get_price_summary(self, code: str) -> ResCommonResponse: # 반환 타입 변경
+        """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_price_summary(code)
 
-    async def get_market_cap(self, code: str) -> int:
-        """종목코드로 시가총액을 반환합니다."""
+    async def get_market_cap(self, code: str) -> ResCommonResponse: # 반환 타입 변경
+        """종목코드로 시가총액을 반환합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_market_cap(code)
 
-    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> Dict[str, Any]:
-        """시가총액 상위 종목 목록을 반환합니다."""
+    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> ResCommonResponse: # 반환 타입 변경
+        """시가총액 상위 종목 목록을 반환합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_top_market_cap_stocks_code(market_code, count)
 
-    def get_previous_day_info(self, code: str) -> dict:
-        """종목의 전일 종가, 전일 거래량을 조회합니다."""
-        # 이 메서드는 KoreaInvestApiQuotations에서 동기 메서드로 정의되어 있으므로 await 사용 안 함
+    def get_previous_day_info(self, code: str) -> ResCommonResponse: # 반환 타입 변경
+        """종목의 전일 종가, 전일 거래량을 조회합니다. ResCommonResponse를 반환합니다."""
         return self._quotations.get_previous_day_info(code)
 
     async def get_filtered_stocks_by_momentum(
             self, count=20, min_change_rate=10.0, min_volume_ratio=2.0
-    ) -> List[Dict[str, Any]]:
-        """거래량 급증 + 등락률 조건 기반 모멘텀 종목 필터링합니다."""
+    ) -> ResCommonResponse: # 반환 타입 변경
+        """거래량 급증 + 등락률 조건 기반 모멘텀 종목 필터링합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_filtered_stocks_by_momentum(count, min_change_rate, min_volume_ratio)
 
-    async def inquire_daily_itemchartprice(self, stock_code: str, date: str, fid_period_div_code: str = 'D'):
-        """일별/분별 주식 시세 차트 데이터를 조회합니다."""
-        # 기존 코드는 return 누락: await 호출 결과를 반환하도록 수정
+    async def inquire_daily_itemchartprice(self, stock_code: str, date: str, fid_period_div_code: str = 'D') -> ResCommonResponse: # 반환 타입 변경
+        """일별/분별 주식 시세 차트 데이터를 조회합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.inquire_daily_itemchartprice(stock_code, date, fid_period_div_code=fid_period_div_code)
 
     # --- WebSocket API delegation ---
-    async def connect_websocket(self, on_message_callback=None):
+    # 웹소켓 API는 연결/구독 성공 여부만 반환할 수 있으므로, ResCommonResponse로 래핑 여부는 구현에 따라 달라집니다.
+    # 여기서는 임시로 Any로 두지만, ResCommonResponse(rt_cd, msg1, data=True/False) 형태로 변경하는 것을 고려할 수 있습니다.
+    async def connect_websocket(self, on_message_callback=None) -> Any:
         """웹소켓 연결을 시작하고 실시간 데이터 수신을 준비합니다."""
         return await self._websocketAPI.connect(on_message_callback)
 
-    async def disconnect_websocket(self):
+    async def disconnect_websocket(self) -> Any:
         """웹소켓 연결을 종료합니다."""
         return await self._websocketAPI.disconnect()
 
-    async def subscribe_realtime_price(self, stock_code):
+    async def subscribe_realtime_price(self, stock_code) -> Any:
         """실시간 주식체결 데이터(현재가)를 구독합니다."""
         return await self._websocketAPI.subscribe_realtime_price(stock_code)
 
-    async def unsubscribe_realtime_price(self, stock_code):
+    async def unsubscribe_realtime_price(self, stock_code) -> Any:
         """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
         return await self._websocketAPI.unsubscribe_realtime_price(stock_code)
 
-    async def subscribe_realtime_quote(self, stock_code):
+    async def subscribe_realtime_quote(self, stock_code) -> Any:
         """실시간 주식호가 데이터를 구독합니다."""
         return await self._websocketAPI.subscribe_realtime_quote(stock_code)
 
-    async def unsubscribe_realtime_quote(self, stock_code):
+    async def unsubscribe_realtime_quote(self, stock_code) -> Any:
         """실시간 주식호가 데이터 구독을 해지합니다."""
         return await self._websocketAPI.unsubscribe_realtime_quote(stock_code)
 
     def __str__(self):
         """객체를 문자열로 표현할 때 사용."""
-        # _config에서 base_url과 is_paper_trading을 가져옴
         class_name = self.__class__.__name__
         return f"{class_name}(base_url={self._config['base_url']}, is_paper_trading={self._config['is_paper_trading']})"
-

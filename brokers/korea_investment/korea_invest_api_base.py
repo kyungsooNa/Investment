@@ -8,7 +8,7 @@ import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
-
+from common.types import ErrorCode, ResCommonResponse
 
 class KoreaInvestApiBase:
     """
@@ -44,16 +44,24 @@ class KoreaInvestApiBase:
 
                 response = await self._execute_request(method, url, params, data)
 
-                result = await self._handle_response(response)
+                result : dict = await self._handle_response(response)
                 if result == "retry":
                     self.logger.info(f"재시도 필요: {attempt}/{retry_count}, 지연 {delay}초")
                     await asyncio.sleep(delay)  # 이 부분이 호출되어야 함
                     continue
                 if result is None:
                     self.logger.error(f"복구 불가능한 오류 발생: {url}, 응답: {response.text}")
-                    return None
+                    return ResCommonResponse(
+                        rt_cd=ErrorCode.PARSING_ERROR.value,
+                        msg1="API 응답 파싱 실패 또는 처리 불가능",
+                        data=None
+                    )
 
-                return result
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="정상",
+                    data=result['output']
+                )
 
             except Exception as e:
                 self._log_request_exception(e)
@@ -65,7 +73,11 @@ class KoreaInvestApiBase:
                     pass
 
         self.logger.error("모든 재시도 실패, API 호출 종료")
-        return None
+        return ResCommonResponse(
+            rt_cd=ErrorCode.RETRY_LIMIT.value,
+            msg1=f"최대 재시도 횟수 초과",
+            data=None
+        )
 
     async def close_session(self):
         """애플리케이션 종료 시 httpx 세션을 닫습니다."""
@@ -113,11 +125,11 @@ class KoreaInvestApiBase:
             raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
 
-    async def _handle_response(self, response):
+    async def _handle_response(self, response) -> dict:
         """HTTP 응답을 처리하고, 오류 유형에 따라 재시도 여부를 결정합니다."""
         # 1. 호출 제한 오류 (Rate Limit) - 최상단에서 가장 먼저 검사하고 즉시 반환
         if response.status_code == 429 or \
-                (response.status_code == 500 and "초당 거래건수를 초과하였습니다." in response.text):
+                (response.status_code == 500 and "초당 거래건수를 초과하였습니다" in response.text):
             return "retry" # <--- 이 조건이 만족되면 다른 검사 없이 즉시 반환
 
         # 2. 그 외의 HTTP 오류 (HTTP 상태 코드 자체로 인한 오류)

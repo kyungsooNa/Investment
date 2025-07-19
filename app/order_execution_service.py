@@ -1,10 +1,6 @@
 # app/order_execution_service.py
 import asyncio
-# json, os 등의 추가 임포트가 필요할 수 있으나, 현재 기능에 직접적으로는 필요하지 않아 추가하지 않았습니다.
-# 만약 필요하다면 주석 처리된 부분을 해제하거나 다른 임포트를 추가해주세요.
-# import json
-# import os
-
+from common.types import ErrorCode, ResCommonResponse
 
 class OrderExecutionService:
     """
@@ -25,15 +21,15 @@ class OrderExecutionService:
             self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
             return None # 주문 실패 시 None 반환하도록 수정 (또는 실패 응답 딕셔너리)
 
-        buy_order_result = await self.trading_service.place_buy_order(
+        buy_order_result : ResCommonResponse = await self.trading_service.place_buy_order(
             stock_code, price, qty, order_dvsn
         )
-        if buy_order_result and buy_order_result.get('rt_cd') == '0':
-            print(f"주식 매수 주문 성공: {buy_order_result}")
-            self.logger.info(f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={buy_order_result}")
+        if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
+            print(f"주식 매수 주문 성공: {buy_order_result.data}")
+            self.logger.info(f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
         else:
-            print(f"주식 매수 주문 실패: {buy_order_result}")
-            self.logger.error(f"주식 매수 주문 실패: 종목={stock_code}, 결과={buy_order_result}")
+            print(f"주식 매수 주문 실패: {buy_order_result.data}")
+            self.logger.error(f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
         return buy_order_result
 
     async def handle_place_sell_order(self, stock_code, price, qty, order_dvsn):
@@ -44,15 +40,15 @@ class OrderExecutionService:
             self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
             return None # 주문 실패 시 None 반환
 
-        sell_order_result = await self.trading_service.place_sell_order(
+        sell_order_result : ResCommonResponse = await self.trading_service.place_sell_order(
             stock_code, price, qty, order_dvsn
         )
-        if sell_order_result and sell_order_result.get('rt_cd') == '0':
-            print(f"주식 매도 주문 성공: {sell_order_result}")
-            self.logger.info(f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={sell_order_result}")
+        if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
+            print(f"주식 매도 주문 성공: {sell_order_result.data}")
+            self.logger.info(f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
         else:
-            print(f"주식 매도 주문 실패: {sell_order_result}")
-            self.logger.error(f"주식 매도 주문 실패: 종목={stock_code}, 결과={sell_order_result}")
+            print(f"주식 매도 주문 실패: {sell_order_result.data}")
+            self.logger.error(f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
         return sell_order_result
 
 
