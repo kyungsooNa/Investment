@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 from strategies.backtest_data_provider import BacktestDataProvider
 import logging
 from datetime import datetime
+from common.types import ResCommonResponse
 
 
 # Mock TimeManager 클래스 정의
@@ -19,7 +20,7 @@ def backtest_data_provider_fixture():
     mock_broker = AsyncMock()
     mock_time_manager = MockTimeManager()
     # 로거는 테스트 출력을 깔끔하게 하기 위해 None으로 설정하거나, 필요시 목업
-    return BacktestDataProvider(broker=mock_broker, time_manager=mock_time_manager)
+    return BacktestDataProvider(broker_api_wrapper=mock_broker, time_manager=mock_time_manager)
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +36,7 @@ async def test_mock_price_lookup_exception_handling(backtest_data_provider_fixtu
     오류를 올바르게 처리하고 경고를 로깅하는지 테스트합니다.
     """
     provider = backtest_data_provider_fixture
-    provider.broker.get_price_summary.side_effect = Exception("API 호출 실패")
+    provider._broker_api_wrapper.get_price_summary.side_effect = Exception("API 호출 실패")
 
     with caplog.at_level(logging.WARNING):
         result = await provider.mock_price_lookup("005930")
@@ -52,7 +53,7 @@ async def test_mock_price_lookup_invalid_current_data(backtest_data_provider_fix
     """
     provider = backtest_data_provider_fixture
     # 'current' 키가 없는 경우
-    provider.broker.get_price_summary.return_value = {"symbol": "005930", "open": 70000}
+    provider._broker_api_wrapper.get_price_summary.return_value = {"symbol": "005930", "open": 70000}
 
     with caplog.at_level(logging.WARNING):  # 경고 로그가 발생하는지 확인하지만, 이 테스트에서는 발생하지 않음
         result = await provider.mock_price_lookup("005930")
@@ -68,13 +69,18 @@ async def test_mock_price_lookup_successful(backtest_data_provider_fixture):
     """
     provider = backtest_data_provider_fixture
     mock_current_price = 10000  # 가상 현재 가격
-    provider.broker.get_price_summary.return_value = {"symbol": "005930", "current": mock_current_price}
+    provider._broker_api_wrapper.get_price_summary.return_value = ResCommonResponse(
+        rt_cd="0",  # 성공 코드
+        msg1="성공",
+        data={"symbol": "005930", "current": mock_current_price}
+    )
 
     expected_price = int(mock_current_price * 1.05)
+
     result = await provider.mock_price_lookup("005930")
 
     assert result == expected_price
-    provider.broker.get_price_summary.assert_called_once_with("005930")
+    provider._broker_api_wrapper.get_price_summary.assert_called_once_with("005930")
 
 
 @pytest.mark.asyncio
@@ -84,7 +90,7 @@ async def test_realistic_price_lookup_empty_or_invalid_chart_data(backtest_data_
     기준 시점의 현재 가격을 반환하고 경고를 로깅하는지 테스트합니다.
     """
     provider = backtest_data_provider_fixture
-    provider.broker.inquire_daily_itemchartprice.return_value = []  # 빈 리스트
+    provider._broker_api_wrapper.inquire_daily_itemchartprice.return_value = []  # 빈 리스트
 
     base_summary = {"current": 77000}
 
@@ -96,7 +102,7 @@ async def test_realistic_price_lookup_empty_or_invalid_chart_data(backtest_data_
 
     # chart_data가 None인 경우 테스트
     caplog.clear()
-    provider.broker.inquire_daily_itemchartprice.return_value = None
+    provider._broker_api_wrapper.inquire_daily_itemchartprice.return_value = None
     with caplog.at_level(logging.WARNING):
         result = await provider.realistic_price_lookup("005930", base_summary, 10)
     assert result == base_summary["current"]
@@ -104,7 +110,7 @@ async def test_realistic_price_lookup_empty_or_invalid_chart_data(backtest_data_
 
     # chart_data가 리스트가 아닌 경우 테스트
     caplog.clear()
-    provider.broker.inquire_daily_itemchartprice.return_value = "invalid_data"
+    provider._broker_api_wrapper.inquire_daily_itemchartprice.return_value = "invalid_data"
     with caplog.at_level(logging.WARNING):
         result = await provider.realistic_price_lookup("005930", base_summary, 10)
     assert result == base_summary["current"]
@@ -119,7 +125,7 @@ async def test_realistic_price_lookup_base_price_not_found(backtest_data_provide
     """
     provider = backtest_data_provider_fixture
     # 기준 가격인 77000이 차트 데이터에 없는 경우
-    provider.broker.inquire_daily_itemchartprice.return_value = [
+    provider._broker_api_wrapper.inquire_daily_itemchartprice.return_value = [
         {'stck_clpr': '76000'},
         {'stck_clpr': '78000'}
     ]
@@ -139,7 +145,7 @@ async def test_realistic_price_lookup_after_index_less_than_zero(backtest_data_p
     첫 번째 분봉 가격을 올바르게 반환하는지 테스트합니다.
     """
     provider = backtest_data_provider_fixture
-    provider.broker.inquire_daily_itemchartprice.return_value = [
+    provider._broker_api_wrapper.inquire_daily_itemchartprice.return_value = [
         {'stck_clpr': '70000'},  # after_index가 0이 됨
         {'stck_clpr': '71000'},
         {'stck_clpr': '72000'}  # base_price
@@ -159,7 +165,7 @@ async def test_realistic_price_lookup_after_index_greater_than_length(backtest_d
     차트 데이터 길이를 초과할 때 마지막 분봉 가격을 올바르게 반환하는지 테스트합니다.
     """
     provider = backtest_data_provider_fixture
-    provider.broker.inquire_daily_itemchartprice.return_value = [
+    provider._broker_api_wrapper.inquire_daily_itemchartprice.return_value = [
         {'stck_clpr': '70000'},  # base_price
         {'stck_clpr': '71000'},  # after_index가 len-1이 됨
         {'stck_clpr': '72000'}
@@ -181,7 +187,7 @@ async def test_realistic_price_lookup_api_call_exception(backtest_data_provider_
     오류를 처리하고 에러를 로깅하며 기준 시점 가격을 반환하는지 테스트합니다.
     """
     provider = backtest_data_provider_fixture
-    provider.broker.inquire_daily_itemchartprice.side_effect = Exception("분봉 데이터 API 오류")
+    provider._broker_api_wrapper.inquire_daily_itemchartprice.side_effect = Exception("분봉 데이터 API 오류")
 
     base_summary = {"current": 77000}
 
