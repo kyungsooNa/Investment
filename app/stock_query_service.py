@@ -375,16 +375,16 @@ class StockQueryService:
                 return
 
             # 현재 상한가 종목 필터링
-            upper_limit_stocks = await self.trading_service.get_current_upper_limit_stocks(all_stock_codes.data)
+            upper_limit_stocks : ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(all_stock_codes.data)
 
-            if not upper_limit_stocks:
+            if upper_limit_stocks.rt_cd != ErrorCode.SUCCESS.value:
                 print("현재 상한가에 해당하는 종목이 없습니다.")
                 self.logger.info("현재 상한가 종목 없음.")
             else:
                 print("\n--- 현재 상한가 종목 ---")
-                for stock in upper_limit_stocks:
+                for stock in upper_limit_stocks.data:
                     print(f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)")
-                self.logger.info(f"현재 상한가 종목 조회 성공. 총 {len(upper_limit_stocks)}개")
+                self.logger.info(f"현재 상한가 종목 조회 성공. 총 {len(upper_limit_stocks.data)}개")
 
         except Exception as e:
             print(f"현재 상한가 종목 조회 중 오류 발생: {e}")
