@@ -1,7 +1,7 @@
 # app/stock_query_service.py
-import asyncio
 from common.types import ErrorCode, ResCommonResponse
 from typing import List, Dict
+
 
 class StockQueryService:
     """
@@ -26,7 +26,7 @@ class StockQueryService:
     async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 조회 요청 및 결과 출력."""
         print(f"\n--- {stock_code} 현재가 조회 ---")
-        current_price_result : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
         if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
             print(f"\n{stock_code} 현재가: {current_price_result.data}")
             self.logger.info(f"{stock_code} 현재가 조회 성공: {current_price_result.data}")
@@ -37,7 +37,7 @@ class StockQueryService:
     async def handle_get_account_balance(self):
         """계좌 잔고 조회 요청 및 결과 출력."""
         print("\n--- 계좌 잔고 조회 ---")
-        account_balance : ResCommonResponse = await self.trading_service.get_account_balance()
+        account_balance: ResCommonResponse = await self.trading_service.get_account_balance()
         if account_balance and account_balance.rt_cd == ErrorCode.SUCCESS.value:
             print(f"\n계좌 잔고: {account_balance}")
             self.logger.info(f"계좌 잔고 조회 성공: {account_balance.data}")
@@ -48,7 +48,8 @@ class StockQueryService:
     async def handle_get_top_market_cap_stocks(self, market_code, count: int = None):
         """시가총액 상위 종목 조회 요청 및 결과 출력 (전체 목록)."""
         print("\n--- 시가총액 상위 종목 조회 시도 ---")
-        top_market_cap_stocks : ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code, count)
+        top_market_cap_stocks: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
+            market_code, count)
 
         if top_market_cap_stocks and top_market_cap_stocks.rt_cd == ErrorCode.SUCCESS.value:
             print(f"성공: 시가총액 상위 종목 목록:")
@@ -62,15 +63,14 @@ class StockQueryService:
             print(f"실패: 시가총액 상위 종목 조회.")
             self.logger.error(f"실패: 시가총액 상위 종목 조회: {top_market_cap_stocks}")
 
-
     async def handle_get_top_10_market_cap_stocks_with_prices(self):
         print("\n--- 시가총액 1~10위 종목 현재가 조회 시도 ---")
         self.logger.info("시가총액 1~10위 종목 현재가 조회 시도")
         try:
-            response : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
-            stocks_data : List = response.data
+            response: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+            stocks_data: List = response.data
 
-            if response.rt_cd != ErrorCode.SUCCESS.value: # None은 조회 자체의 실패로 간주
+            if response.rt_cd != ErrorCode.SUCCESS.value:  # None은 조회 자체의 실패로 간주
                 print("\n실패: 시가총액 1~10위 종목 현재가 조회.")
                 self.logger.error("시가총액 1~10위 종목 현재가 조회 실패: None 반환됨")
                 return ResCommonResponse(
@@ -78,7 +78,7 @@ class StockQueryService:
                     msg1="조회 실패: 데이터 None",
                     data=None
                 )
-            elif not stocks_data: # 빈 리스트는 조회 성공, 결과 없음으로 간주
+            elif not stocks_data:  # 빈 리스트는 조회 성공, 결과 없음으로 간주
                 # 성공했으나 데이터 없음
                 print("\n성공: 시가총액 1~10위 종목 현재가:")
                 print("  조회된 종목이 없습니다.")
@@ -88,7 +88,7 @@ class StockQueryService:
                     msg1="조회 성공 (종목 없음)",
                     data=[]
                 )
-            else: # 종목이 있는 경우
+            else:  # 종목이 있는 경우
                 # 정상 조회
                 print("\n성공: 시가총액 1~10위 종목 현재가:")
                 for stock in stocks_data:
@@ -122,7 +122,7 @@ class StockQueryService:
         """
         print(f"\n--- {stock_code} 전일대비 등락률 조회 ---")
 
-        current_price_result : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
         if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
             output_data = current_price_result.data
@@ -166,10 +166,10 @@ class StockQueryService:
         """
         print(f"\n--- {stock_code} 시가대비 조회 ---")
 
-        current_price_result : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
         if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
-            output_data : Dict = current_price_result.data
+            output_data: Dict = current_price_result.data
             current_price_str = output_data.get('stck_prpr', 'N/A')
             open_price_str = output_data.get('stck_oprc', 'N/A')
             vs_open_sign_code = output_data.get('oprc_vrss_prpr_sign', 'N/A')  # 부호 코드
@@ -244,13 +244,14 @@ class StockQueryService:
         upper_limit_stocks_found = []
         try:
             # 1. 시가총액 상위 종목 목록 조회 (TradingService 위임)
-            top_stocks_response : ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code)
+            top_stocks_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
+                market_code)
 
             if not top_stocks_response or top_stocks_response.rt_cd != ErrorCode.SUCCESS.value:
                 self.logger.error(f"시가총액 상위 종목 목록 조회 실패: {top_stocks_response}")
                 return None
 
-            top_stocks_list : List = top_stocks_response.data
+            top_stocks_list: List = top_stocks_response.data
             if not top_stocks_list:
                 self.logger.info("조회된 시가총액 상위 종목이 없습니다.")
                 print("조회된 시가총액 상위 종목이 없습니다.\n")
@@ -268,7 +269,8 @@ class StockQueryService:
                 stock_name = stock_info.hts_kor_isnm
 
                 if stock_code:
-                    current_price_response : ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+                    current_price_response: ResCommonResponse = await self.trading_service.get_current_stock_price(
+                        stock_code)
                     current_checked_count += 1
                     print(f"\r조회 중... {current_checked_count}/{len(top_stocks_to_check)}", end="")
 
@@ -321,7 +323,8 @@ class StockQueryService:
         self.logger.info(f"Service - 전일 상한가 종목 조회 요청 (시장 코드: {market_code}, 수량: {limit})")
 
         try:
-            top_codes_response : ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code)
+            top_codes_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
+                market_code)
 
             if not isinstance(top_codes_response, dict) or top_codes_response.get('rt_cd') != '0':
                 msg = top_codes_response.get("msg1", "조회 실패") if isinstance(top_codes_response, dict) else "응답 오류"
@@ -364,7 +367,7 @@ class StockQueryService:
 
         try:
             # 전체 종목 코드 조회
-            all_stock_codes : ResCommonResponse = await self.trading_service.get_all_stocks_code(market_code)
+            all_stock_codes: ResCommonResponse = await self.trading_service.get_all_stocks_code(market_code)
 
             if not all_stock_codes:
                 print("전체 종목 코드 조회 실패 또는 결과 없음.")
@@ -386,3 +389,188 @@ class StockQueryService:
         except Exception as e:
             print(f"현재 상한가 종목 조회 중 오류 발생: {e}")
             self.logger.error(f"현재 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
+
+    async def handle_get_asking_price(self, stock_code: str):
+        """종목의 실시간 호가 정보 조회 및 출력."""
+        print(f"\n--- {stock_code} 실시간 호가 조회 ---")
+        self.logger.info(f"Handler - {stock_code} 호가 정보 조회 요청")
+        response = await self.trading_service.get_asking_price(stock_code)
+
+        if response and response.rt_cd == ErrorCode.SUCCESS.value:
+            # 한국투자증권 API는 output1에 호가, output2에 시간외 단일가 정보를 담아 반환합니다.
+            quote_data = response.data.get('output1', [])
+            print(f"\n성공: {stock_code} 호가 정보")
+            print("-" * 40)
+            print(f"{'매도잔량':>10s} | {'호가':>10s} | {'매수잔량':>10s}")
+            print("-" * 40)
+            for i in range(min(len(quote_data), 5)):  # 상위 5개 호가만 출력
+                ask_price = quote_data[i].get(f'askp{i + 1}', 'N/A')
+                ask_rem = quote_data[i].get(f'askp_rsqn{i + 1}', 'N/A')
+                bid_price = quote_data[i].get(f'bidp{i + 1}', 'N/A')
+                bid_rem = quote_data[i].get(f'bidp_rsqn{i + 1}', 'N/A')
+                print(f"{ask_rem:>10s} | {ask_price:>10s} |")
+                print(f"{'':>23s} | {bid_price:>10s} | {bid_rem:>10s}")
+            print("-" * 40)
+            self.logger.info(f"{stock_code} 호가 정보 조회 성공")
+        else:
+            msg = response.msg1 if response else "응답 없음"
+            print(f"\n실패: {stock_code} 호가 정보 조회. ({msg})")
+            self.logger.error(f"{stock_code} 호가 정보 조회 실패: {msg}")
+
+    async def handle_get_time_concluded_prices(self, stock_code: str):
+        """종목의 시간대별 체결가 정보 조회 및 출력."""
+        print(f"\n--- {stock_code} 시간대별 체결가 조회 ---")
+        self.logger.info(f"Handler - {stock_code} 시간대별 체결가 조회 요청")
+        response = await self.trading_service.get_time_concluded_prices(stock_code)
+
+        if response and response.rt_cd == ErrorCode.SUCCESS.value:
+            concluded_data = response.data.get('output', [])
+            print(f"\n성공: {stock_code} 시간대별 체결 정보 (최근 10건)")
+            print("-" * 50)
+            print(f"{'체결시각':>10s} | {'체결가':>12s} | {'전일대비':>10s} | {'체결량':>10s}")
+            print("-" * 50)
+            for item in concluded_data[:10]:
+                trade_time = item.get('stck_cntg_hour', 'N/A')
+                price = item.get('stck_prpr', 'N/A')
+                change = item.get('prdy_vrss', 'N/A')
+                volume = item.get('cntg_vol', 'N/A')
+                print(f"{trade_time:>10s} | {price:>12s} | {change:>10s} | {volume:>10s}")
+            print("-" * 50)
+            self.logger.info(f"{stock_code} 시간대별 체결가 조회 성공")
+        else:
+            msg = response.msg1 if response else "응답 없음"
+            print(f"\n실패: {stock_code} 시간대별 체결가 조회. ({msg})")
+            self.logger.error(f"{stock_code} 시간대별 체결가 조회 실패: {msg}")
+
+    async def handle_search_stocks_by_keyword(self, keyword: str):
+        """키워드로 종목 검색 및 결과 출력."""
+        print(f"\n--- '{keyword}' 키워드 종목 검색 ---")
+        self.logger.info(f"Handler - '{keyword}' 키워드 종목 검색 요청")
+        response = await self.trading_service.search_stocks_by_keyword(keyword)
+
+        if response and response.rt_cd == ErrorCode.SUCCESS.value:
+            search_results = response.data.get('output', [])
+            if not search_results:
+                print(f"\n'{keyword}'에 대한 검색 결과가 없습니다.")
+                self.logger.info(f"'{keyword}' 키워드 검색 결과 없음")
+                return
+
+            print(f"\n성공: '{keyword}' 검색 결과")
+            print("-" * 40)
+            print(f"{'종목코드':<15} | {'종목명'}")
+            print("-" * 40)
+            for item in search_results:
+                code = item.get('iscd', 'N/A')
+                name = item.get('iscd_nm', 'N/A')
+                print(f"{code:<15} | {name}")
+            print("-" * 40)
+            self.logger.info(f"'{keyword}' 키워드 종목 검색 성공")
+        else:
+            msg = response.msg1 if response else "응답 없음"
+            print(f"\n실패: 종목 검색. ({msg})")
+            self.logger.error(f"종목 검색 실패: {msg}")
+
+    async def handle_get_top_stocks(self, category: str):
+        """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수)."""
+        category_map = {
+            "rise": ("상승률", self.trading_service.get_top_rise_fall_stocks, True),
+            "fall": ("하락률", self.trading_service.get_top_rise_fall_stocks, False),
+            "volume": ("거래량", self.trading_service.get_top_volume_stocks, None),
+            "foreign": ("외국인 순매수", self.trading_service.get_top_foreign_buying_stocks, None),
+        }
+
+        if category not in category_map:
+            print(f"\n오류: 지원하지 않는 카테고리입니다. (사용 가능: rise, fall, volume, foreign)")
+            return
+
+        title, service_func, param = category_map[category]
+        print(f"\n--- {title} 상위 종목 조회 ---")
+        self.logger.info(f"Handler - {title} 상위 종목 조회 요청")
+
+        if param is not None:
+            response = await service_func(param)
+        else:
+            response = await service_func()
+
+        if response and response.rt_cd == ErrorCode.SUCCESS.value:
+            stock_list = response.data.get('output', [])
+            print(f"\n성공: {title} 상위 10개 종목")
+            print("-" * 60)
+            print(f"{'순위':>4s} | {'종목명':<20s} | {'현재가':>10s} | {'등락률(%)':>10s}")
+            print("-" * 60)
+            for item in stock_list[:10]:
+                rank = item.get('data_rank', 'N/A')
+                name = item.get('hts_kor_isnm', 'N/A')
+                price = item.get('stck_prpr', 'N/A')
+                rate = item.get('prdy_ctrt', 'N/A')
+                print(f"{rank:>4s} | {name:<20s} | {price:>10s} | {rate:>10s}")
+            print("-" * 60)
+            self.logger.info(f"{title} 상위 종목 조회 성공")
+        else:
+            msg = response.msg1 if response else "응답 없음"
+            print(f"\n실패: {title} 상위 종목 조회. ({msg})")
+            self.logger.error(f"{title} 상위 종목 조회 실패: {msg}")
+
+    async def handle_get_stock_news(self, stock_code: str):
+        """종목 뉴스 조회 및 출력."""
+        print(f"\n--- {stock_code} 종목 뉴스 조회 ---")
+        self.logger.info(f"Handler - {stock_code} 종목 뉴스 조회 요청")
+        response = await self.trading_service.get_stock_news(stock_code)
+
+        if response and response.rt_cd == ErrorCode.SUCCESS.value:
+            news_list = response.data.get('output', [])
+            if not news_list:
+                print(f"\n{stock_code}에 대한 뉴스가 없습니다.")
+                self.logger.info(f"{stock_code} 뉴스 없음")
+                return
+
+            print(f"\n성공: {stock_code} 최신 뉴스 (최대 5건)")
+            print("-" * 70)
+            for item in news_list[:5]:
+                news_date = item.get('news_dt', '')
+                news_time = item.get('news_tm', '')
+                title = item.get('news_tl', 'N/A')
+                print(f"[{news_date} {news_time}] {title}")
+            print("-" * 70)
+            self.logger.info(f"{stock_code} 종목 뉴스 조회 성공")
+        else:
+            msg = response.msg1 if response else "응답 없음"
+            print(f"\n실패: {stock_code} 종목 뉴스 조회. ({msg})")
+            self.logger.error(f"{stock_code} 종목 뉴스 조회 실패: {msg}")
+
+    async def handle_get_etf_info(self, etf_code: str):
+        """ETF 정보 조회 및 출력."""
+        print(f"\n--- {etf_code} ETF 정보 조회 ---")
+        self.logger.info(f"Handler - {etf_code} ETF 정보 조회 요청")
+        response = await self.trading_service.get_etf_info(etf_code)
+
+        if response and response.rt_cd == ErrorCode.SUCCESS.value:
+            etf_info = response.data.get('output1', {})
+            name = etf_info.get('hts_kor_isnm', 'N/A')
+            price = etf_info.get('stck_prpr', 'N/A')
+            nav = etf_info.get('nav', 'N/A')
+            market_cap = etf_info.get('stck_llam', 'N/A')
+
+            print(f"\n성공: {name} ({etf_code})")
+            print("-" * 40)
+            print(f"  현재가: {price} 원")
+            print(f"  NAV: {nav}")
+            print(f"  시가총액: {market_cap} 원")
+            print("-" * 40)
+            self.logger.info(f"{etf_code} ETF 정보 조회 성공")
+        else:
+            msg = response.msg1 if response else "응답 없음"
+            print(f"\n실패: {etf_code} ETF 정보 조회. ({msg})")
+            self.logger.error(f"{etf_code} ETF 정보 조회 실패: {msg}")
+
+
+    async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
+        """
+        TradingService를 통해 실시간 스트림을 구독 및 처리합니다.
+
+        :param stock_codes: 실시간 데이터를 구독할 종목 코드 리스트
+        :param fields: "price", "quote" 중 원하는 실시간 데이터 타입 리스트
+        :param duration: 실시간 스트리밍을 유지할 시간 (초)
+        """
+        self.logger.info(f"StockQueryService - 실시간 스트림 요청: 종목={stock_codes}, 필드={fields}, 시간={duration}s")
+        await self.trading_service.handle_realtime_stream(stock_codes, fields, duration)

@@ -108,6 +108,57 @@ class KoreaInvestApiClient:
         """일별/분별 주식 시세 차트 데이터를 조회합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.inquire_daily_itemchartprice(stock_code, date, fid_period_div_code=fid_period_div_code)
 
+    async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
+        """
+        종목의 실시간 호가(매도/매수 잔량 포함) 정보를 조회합니다.
+        """
+        return await self._quotations.get_asking_price(stock_code)
+
+    async def get_time_concluded_prices(self, stock_code: str) -> ResCommonResponse:
+        """
+        종목의 시간대별 체결가/체결량 정보를 조회합니다.
+        """
+        return await self._quotations.get_time_concluded_prices(stock_code)
+
+    async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
+        """
+        키워드로 종목을 검색합니다.
+        """
+        return await self._quotations.search_stocks_by_keyword(keyword)
+
+    async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
+        """
+        상승률 또는 하락률 상위 종목을 조회합니다.
+
+        Args:
+            rise (bool): True이면 상승률, False이면 하락률 상위를 조회합니다.
+        """
+        return await self._quotations.get_top_rise_fall_stocks(rise)
+
+    async def get_top_volume_stocks(self) -> ResCommonResponse:
+        """
+        거래량 상위 종목을 조회합니다.
+        """
+        return await self._quotations.get_top_volume_stocks()
+
+    async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
+        """
+        외국인 순매수 상위 종목을 조회합니다.
+        """
+        return await self._quotations.get_top_foreign_buying_stocks()
+
+    async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
+        """
+        특정 종목의 뉴스를 조회합니다.
+        """
+        return await self._quotations.get_stock_news(stock_code)
+
+    async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
+        """
+        특정 ETF의 상세 정보를 조회합니다.
+        """
+        return await self._quotations.get_etf_info(etf_code)
+
     # --- WebSocket API delegation ---
     # 웹소켓 API는 연결/구독 성공 여부만 반환할 수 있으므로, ResCommonResponse로 래핑 여부는 구현에 따라 달라집니다.
     # 여기서는 임시로 Any로 두지만, ResCommonResponse(rt_cd, msg1, data=True/False) 형태로 변경하는 것을 고려할 수 있습니다.

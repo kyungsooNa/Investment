@@ -492,6 +492,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             msg1="일별/분봉 차트 데이터 조회 성공",
             data=chart_data_items
         )
+
     async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
         """
         종목의 실시간 호가(매도/매수 잔량 포함) 정보를 조회합니다.

@@ -4,6 +4,9 @@ from core.time_manager import TimeManager
 import logging
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from typing import List
+from datetime import datetime, timedelta
+import asyncio
+
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
     ResPriceSummary, ResCommonResponse, ErrorCode, ResMarketCapStockItem,
@@ -397,3 +400,80 @@ class TradingService:
                 msg1=error_msg,
                 data=[]
             )
+
+    async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
+        """종목의 실시간 호가 정보를 조회합니다."""
+        self._logger.info(f"Service - {stock_code} 종목 호가 정보 조회 요청")
+        return await self._broker_api_wrapper.get_asking_price(stock_code)
+
+    async def get_time_concluded_prices(self, stock_code: str) -> ResCommonResponse:
+        """종목의 시간대별 체결가 정보를 조회합니다."""
+        self._logger.info(f"Service - {stock_code} 종목 시간대별 체결가 조회 요청")
+        return await self._broker_api_wrapper.get_time_concluded_prices(stock_code)
+
+    async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
+        """키워드로 종목을 검색합니다."""
+        self._logger.info(f"Service - '{keyword}' 키워드로 종목 검색 요청")
+        return await self._broker_api_wrapper.search_stocks_by_keyword(keyword)
+
+    async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
+        """상승률 또는 하락률 상위 종목을 조회합니다."""
+        direction = "상승" if rise else "하락"
+        self._logger.info(f"Service - {direction}률 상위 종목 조회 요청")
+        return await self._broker_api_wrapper.get_top_rise_fall_stocks(rise)
+
+    async def get_top_volume_stocks(self) -> ResCommonResponse:
+        """거래량 상위 종목을 조회합니다."""
+        self._logger.info("Service - 거래량 상위 종목 조회 요청")
+        return await self._broker_api_wrapper.get_top_volume_stocks()
+
+    async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
+        """외국인 순매수 상위 종목을 조회합니다."""
+        self._logger.info("Service - 외국인 순매수 상위 종목 조회 요청")
+        return await self._broker_api_wrapper.get_top_foreign_buying_stocks()
+
+    async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
+        """특정 종목의 뉴스를 조회합니다."""
+        self._logger.info(f"Service - {stock_code} 종목 뉴스 조회 요청")
+        return await self._broker_api_wrapper.get_stock_news(stock_code)
+
+    async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
+        """특정 ETF의 상세 정보를 조회합니다."""
+        self._logger.info(f"Service - {etf_code} ETF 정보 조회 요청")
+        return await self._broker_api_wrapper.get_etf_info(etf_code)
+
+    async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
+        """
+        실시간 데이터 스트림을 구독하고 지정된 시간 동안 수신합니다.
+
+        :param stock_codes: 종목 코드 리스트
+        :param fields: 수신할 실시간 데이터 필드 (e.g. ["price", "quote"])
+        :param duration: 구독 유지 시간 (초), 기본 30초
+        """
+        self._logger.info(f"실시간 스트림 시작 - 종목: {stock_codes}, 필드: {fields}, 시간: {duration}s")
+
+        try:
+            await self.connect_websocket()
+
+            for code in stock_codes:
+                if "price" in fields:
+                    await self.subscribe_realtime_price(code)
+                if "quote" in fields:
+                    await self.subscribe_realtime_quote(code)
+
+            start_time = datetime.now()
+            while (datetime.now() - start_time) < timedelta(seconds=duration):
+                await asyncio.sleep(1)  # 단순 대기 (메시지는 내부 handler에서 자동 처리됨)
+
+        except Exception as e:
+            self._logger.error(f"실시간 스트림 처리 중 오류 발생: {str(e)}")
+
+        finally:
+            for code in stock_codes:
+                if "price" in fields:
+                    await self.unsubscribe_realtime_price(code)
+                if "quote" in fields:
+                    await self.unsubscribe_realtime_quote(code)
+
+            await self.disconnect_websocket()
+            self._logger.info("실시간 스트림 종료")

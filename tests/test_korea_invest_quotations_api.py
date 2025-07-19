@@ -1,8 +1,6 @@
 import pytest
-import requests
 from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
-from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from common.types import (
     ResCommonResponse, ErrorCode,
     ResPriceSummary, ResMomentumStock, ResMarketCapStockItem,

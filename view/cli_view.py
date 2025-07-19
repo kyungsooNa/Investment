@@ -194,30 +194,28 @@ class CLIView:
         self._print_time_header()
         print(f"'{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
 
-    # display_menu 메서드 업데이트 (환경 정보 표시)
-    def display_menu(self, env_type: str, current_time_str: str, market_status_str: str):
-        """사용자에게 메뉴 옵션을 출력하고 현재 시간을 포함합니다 (환경에 따라 동적)."""
+    def display_menu(self, env_type: str, current_time_str: str, market_status_str: str, menu_items: dict):
+        """
+        사용자에게 메뉴 옵션을 동적으로 출력하고 현재 상태를 표시합니다.
+
+        Args:
+            env_type (str): 현재 거래 환경 (예: "모의투자")
+            current_time_str (str): 현재 시각 문자열
+            market_status_str (str): 시장 개장 상태 문자열 (예: "열려있음")
+            menu_items (dict): 카테고리별로 그룹화된 메뉴 항목 딕셔너리
+        """
         self._print_time_header()
         print(
             f"\n--- 한국투자증권 API 애플리케이션 (환경: {env_type}, 현재: {current_time_str}, 시장: {market_status_str}) ---")
-        print("0. 거래 환경 변경")
-        print("1. 주식 현재가 조회 (종목코드 입력)") # 수정: 삼성전자 -> 종목코드 입력
-        print("2. 계좌 잔고 조회")
-        print("3. 주식 매수 주문 (종목코드, 수량, 가격 입력)") # 수정: 삼성전자 1주, 지정가 -> 종목코드, 수량, 가격 입력
-        print("4. 주식 매도 주문 (종목코드, 수량, 가격 입력)") # 수정: 실시간 주식 체결가/호가 구독 -> 주식 매도 주문
-        print("5. 주식 전일대비 등락률 조회 (종목코드 입력)") # 수정: 삼성전자 -> 종목코드 입력
-        print("6. 주식 시가대비 조회 (종목코드 입력)") # 수정: 삼성전자 -> 종목코드 입력
-        print("7. 시가총액 상위 종목 조회 (실전전용)")
-        print("8. 시가총액 1~10위 종목 현재가 조회 (실전전용)")
-        print("9. 상한가 종목 조회 (상위 500개 종목 기준)")
-        print("10. 모멘텀 전략 실행 (상승 추세 필터링)")
-        print("11. 모멘텀 전략 백테스트 실행")
-        print("12. GapUpPullback 전략 실행")
-        print("13. 실시간 주식 체결가/호가 구독 (종목코드 입력)")
-        print("14. 전일 상한가 종목 조회")
-        print("98. 토큰 무효화") # 14번 메뉴 추가
-        print("99. 종료")
-        print("-----------------------------------")
+
+        # 딕셔너리를 순회하며 동적으로 메뉴를 생성
+        for category, items in menu_items.items():
+            print(f"\n[{category}]")
+            for number, description in items.items():
+                # 숫자를 오른쪽 정렬하여 가독성 향상
+                print(f"  {number.rjust(3)}. {description}")
+
+        print("-----------------------------------------------------------------")
 
     async def select_environment_input(self) -> str:
         """환경 선택 프롬프트를 출력하고 사용자 입력을 받습니다."""

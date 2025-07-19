@@ -356,17 +356,29 @@ def test_display_stock_code_not_found(cli_view_instance, capsys):
 
 def test_display_menu(cli_view_instance, capsys):
     """메뉴 출력 기능을 테스트합니다."""
+    sample_menu_items = {
+        "기본 기능": {
+            "1": "현재가 조회",
+            "99": "종료",
+        },
+        "시세 조회": {
+            "7": "실시간 호가 조회",
+        }
+    }
     cli_view_instance.display_menu(
         env_type="모의투자",
         current_time_str="2025-07-07 11:00:00 KST+0900",
-        market_status_str="열려있음"
+        market_status_str="열려있음",
+        menu_items=sample_menu_items  # 누락되었던 인자 추가
     )
     captured = capsys.readouterr()
-    assert "--- 한국투자증권 API 애플리케이션 (환경: 모의투자, 현재: 2025-07-07 11:00:00 KST+0900, 시장: 열려있음) ---" in captured.out
-    assert "1. 주식 현재가 조회 (종목코드 입력)" in captured.out
-    assert "98. 토큰 무효화" in captured.out
-    assert "99. 종료" in captured.out
 
+    assert "--- 한국투자증권 API 애플리케이션 (환경: 모의투자, 현재: 2025-07-07 11:00:00 KST+0900, 시장: 열려있음) ---" in captured.out
+    assert "[기본 기능]" in captured.out
+    assert "  1. 현재가 조회" in captured.out
+    assert " 99. 종료" in captured.out
+    assert "[시세 조회]" in captured.out
+    assert "  7. 실시간 호가 조회" in captured.out
 
 @pytest.mark.asyncio
 async def test_select_environment_input(cli_view_instance):
