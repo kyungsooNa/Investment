@@ -345,7 +345,7 @@ class TradingService:
                 continue  #
 
         print("\r" + " " * 80 + "\r", end="", flush=True)
-        self._time_manager.display_current_time()
+        self._time_manager.get_current_kst_time()
 
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용

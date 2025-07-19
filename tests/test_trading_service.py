@@ -16,7 +16,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
             broker_api_wrapper=self.mock_broker_api_wrapper,
             env=self.mock_env,
             logger=self.mock_logger,
-            time_manager=None
+            time_manager=MagicMock()
         )
 
     async def test_get_current_upper_limit_stocks_success(self):
@@ -242,7 +242,7 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
             broker_api_wrapper=self.mock_broker_api_wrapper,
             env=self.mock_env,
             logger=self.mock_logger,
-            time_manager=None
+            time_manager=MagicMock()
         )
 
     @patch('sys.stdout', new_callable=io.StringIO)
