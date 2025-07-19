@@ -80,7 +80,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self.logger.warning("현재가 조회 실패")
             return response
         
-        return await self.call_api('GET', path, params=params, retry_count=3)
+        return response
 
     async def get_price_summary(self, stock_code: str) -> ResCommonResponse:
         """
