@@ -116,6 +116,9 @@ class KoreaInvestApiEnv:
             'token_expired_at': current_token_expired_at,  # 현재 인스턴스에 저장된 만료 시간
             'is_paper_trading': self.is_paper_trading,
             'tr_ids': tr_ids_from_config,
+            'paths': self.config_data['paths'],
+            'params': self.config_data['params'],
+            'market_code': self.config_data['market_code'],
             '_env_instance': self  # <--- _env_instance는 KoreaInvestAPI로 전달하기 위해 여기에 추가
         }
 

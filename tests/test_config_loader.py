@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import mock_open, patch
-from core.config_loader import load_config
+from config.config_loader import load_config
 
 
 @pytest.fixture
@@ -24,5 +24,5 @@ def test_load_config_success(fake_yaml_content):
 def test_load_config_file_not_found():
     # os.path.exists가 False일 때 FileNotFoundError 발생 여부 확인
     with patch("os.path.exists", return_value=False):
-        with pytest.raises(FileNotFoundError, match="Config file not found"):
+        with pytest.raises(FileNotFoundError, match="파일을 찾을 수 없습니다"):
             load_config("nonexistent.yaml")

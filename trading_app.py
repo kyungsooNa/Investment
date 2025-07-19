@@ -1,10 +1,7 @@
-import json
-import yaml
-
 from strategies.backtest_data_provider import BacktestDataProvider
 from view.cli_view import CLIView
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
-from core.config_loader import load_config
+from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from services.trading_service import TradingService
 from core.time_manager import TimeManager
@@ -19,33 +16,12 @@ from brokers.broker_api_wrapper import BrokerAPIWrapper
 from typing import List
 from common.types import (
     ResCommonResponse, ErrorCode,
-    ResPriceSummary, ResMomentumStock, ResMarketCapStockItem,
-    ResStockFullInfoApiOutput, ResTopMarketCapApiItem, ResDailyChartApiItem,
-    ResAccountBalanceApiOutput, ResStockOrderApiOutput
+    ResTopMarketCapApiItem
 )  #
 
 
-# config_loader.py에 이미 정의되어 있을 수 있으나, 독립 실행을 위해 여기에 포함
-def load_config(file_path):
-    """지정된 경로에서 YAML 또는 JSON 설정 파일을 로드합니다."""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            try:
-                return yaml.safe_load(f)
-            except ImportError:
-                f.seek(0)
-                return json.load(f)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
-    except (json.JSONDecodeError, yaml.YAMLError) as e:
-        raise ValueError(f"설정 파일 형식이 올바르지 않습니다 ({file_path}): {e}")
-
-
 class TradingApp:
-    def __init__(self, main_config_path, tr_ids_config_path):
-        self.main_config_path = main_config_path
-        self.tr_ids_config_path = tr_ids_config_path
-
+    def __init__(self):
         self.env = None
         self.api_client = None
         self.trading_service = None
@@ -68,12 +44,8 @@ class TradingApp:
         try:
             self.logger.info("애플리케이션 초기화 시작...")
 
-            main_config_data = load_config(self.main_config_path)
-            tr_ids_data = load_config(self.tr_ids_config_path)
 
-            config_data = {}
-            config_data.update(main_config_data)
-            config_data.update(tr_ids_data)
+            config_data = load_configs()
 
             self.logger.debug(f"최종 config_data['tr_ids'] 내용 (init 전): {config_data.get('tr_ids')}")
 

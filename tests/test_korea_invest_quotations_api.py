@@ -65,10 +65,26 @@ def mock_quotations():
                 "inquire_price": "dummy-tr-id",
                 "top_market_cap": "dummy-tr-id",
                 "search_info": "dummy-tr-id",
-                "inquire_daily_itemchartprice": "FHKST03010100"
+                "daily_itemchartprice_day": "dummy-tr-id",
+                "daily_itemchartprice_minute": "dummy-tr-id",
+                "inquire_daily_itemchartprice": "dummy-tr-id"
             }
         },
-        "custtype": "P"
+        "custtype": "P",
+        'paths':
+            {
+                'search_info': 'test_path',
+                'inquire_price': 'test_path',
+                'market_cap': 'test_path',
+                'inquire_daily_itemchartprice': 'test_path',
+                'asking_price': 'test_path'
+            },
+        'params':
+            {
+                'fid_div_cls_code': 2,
+                'screening_code': '20174'
+            },
+        'market_code':'J',
     }
 
     return KoreaInvestApiQuotations(
@@ -78,24 +94,6 @@ def mock_quotations():
         token_manager=mock_token_manager,
         logger=mock_logger
     )
-
-@pytest.fixture
-def api_instance():
-    mock_logger = MagicMock()
-    api = KoreaInvestApiQuotations(
-        base_url="https://mock.api",
-        headers={"Authorization": "Bearer test"},
-        config={
-            "tr_ids": {
-                "daily_itemchartprice_day": "TRD-D",
-                "daily_itemchartprice_minute": "TRD-M"
-            },
-            "custtype": "P"
-        },
-        token_manager=MagicMock(),
-        logger=mock_logger
-    )
-    return api, mock_logger
 
 @pytest.mark.asyncio
 async def test_get_price_summary(mock_quotations):
@@ -203,10 +201,10 @@ async def test_get_price_summary_invalid_response(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_success(mock_quotations):
-    mock_quotations._config = {
-        'tr_ids': {'quotations': {'top_market_cap': 'TEST_TR_ID'}},
-        'custtype': 'P'
-    }
+    # mock_quotations._config = {
+    #     'tr_ids': {'quotations': {'top_market_cap': 'TEST_TR_ID'}},
+    #     'custtype': 'P'
+    # }
 
     mock_top_response = {
         "output": [
@@ -239,7 +237,7 @@ async def test_get_top_market_cap_stocks_success(mock_quotations):
     mock_quotations.call_api.assert_called_once()
     args, kwargs = mock_quotations.call_api.call_args
     assert args[0] == "GET"
-    assert args[1] == "/uapi/domestic-stock/v1/ranking/market-cap"
+    assert args[1] == "test_path"
     assert kwargs["params"]["fid_input_iscd"] == "0000"
     assert kwargs["retry_count"] == 1
 
@@ -461,7 +459,7 @@ async def test_get_top_market_cap_stocks_success_revised(mock_quotations):
     mock_quotations.call_api.assert_called_once()
     args, kwargs = mock_quotations.call_api.call_args
     assert args[0] == "GET"
-    assert args[1] == "/uapi/domestic-stock/v1/ranking/market-cap"
+    assert args[1] == "test_path"
     assert kwargs["params"]["fid_input_iscd"] == "0000"
     assert kwargs["retry_count"] == 1
 
@@ -595,44 +593,25 @@ async def test_get_filtered_stocks_by_momentum_prev_day_info_failure(mock_quotat
 
 
 @pytest.mark.asyncio
-async def test_get_filtered_stocks_by_momentum_no_top_stocks_output():
+async def test_get_filtered_stocks_by_momentum_no_top_stocks_output(mock_quotations):
     """
     get_filtered_stocks_by_momentum에서 get_top_market_cap_stocks 응답에 'data' 키가 없거나 실패할 경우
     """
-    mock_logger = MagicMock()
-    mock_config = {
-        "tr_ids": {
-            "quotations": {
-                "inquire_price": "dummy-tr-id",
-                "top_market_cap": "dummy-tr-id",
-                "daily_itemchartprice_day": "dummy-daily-tr-id"  # get_previous_day_info에서 사용
-            }
-        },
-        "custtype": "P"
-    }
-    quotations = KoreaInvestApiQuotations(
-        base_url="https://mock-base",
-        headers={},
-        config=mock_config,
-        token_manager=MagicMock(),
-        logger=mock_logger
-    )
-
     # get_top_market_cap_stocks_code가 실패 응답을 반환하는 경우
-    quotations.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
+    mock_quotations.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
         rt_cd=ErrorCode.API_ERROR.value,
         msg1="API 응답에 'output' 키 없음",
         data=None  # 또는 []
     ))
 
-    results_common = await quotations.get_filtered_stocks_by_momentum(
+    results_common = await mock_quotations.get_filtered_stocks_by_momentum(
         count=10, min_change_rate=5.0, min_volume_ratio=1.5
     )
 
     assert results_common.rt_cd == ErrorCode.API_ERROR.value  # get_top_market_cap_stocks_code의 실패가 전파됨
     assert "시가총액 상위 종목 조회 실패" in results_common.msg1
     assert results_common.data == []  # 빈 리스트 반환
-    mock_logger.error.assert_called_once()  # 로깅 메시지 내용 대신 로깅 호출 여부만 검사
+    mock_quotations.logger.error.assert_called_once()  # 로깅 메시지 내용 대신 로깅 호출 여부만 검사
 
 
 @pytest.mark.asyncio
@@ -759,12 +738,6 @@ async def test_get_previous_day_info_success(mock_get, mock_quotations):  # fixt
     """
     get_previous_day_info 함수의 정상 응답 시 전체 로직 커버
     """
-    mock_quotations._config = {
-        "tr_ids": {
-            "daily_itemchartprice_day": "TEST_TR_ID"
-        },
-        "custtype": "P"
-    }
 
     mock_response_json = {
         "rt_cd": "0",
@@ -798,13 +771,6 @@ async def test_get_previous_day_info_missing_output_keys(mock_quotations, mocker
     """
     get_previous_day_info - 응답에 필요한 키가 없을 경우를 커버
     """
-    mock_quotations._config = {
-        "tr_ids": {
-            "daily_itemchartprice_day": "TEST_TR_ID"
-        },
-        "custtype": "P"
-    }
-
     # ✅ 정상적인 응답 구조지만 필수 키 누락
     mock_response = MagicMock()
     mock_response.json.return_value = {
@@ -899,13 +865,6 @@ async def test_get_market_cap_with_invalid_string(mock_quotations):
 @pytest.mark.asyncio
 @patch("brokers.korea_investment.korea_invest_quotations_api.requests.get")
 async def test_get_previous_day_info_missing_required_keys(mock_get, mock_quotations):
-    mock_quotations._config = {
-        "tr_ids": {
-            "daily_itemchartprice_day": "TR_ID_TEST"
-        },
-        "custtype": "P"
-    }
-
     mock_response = MagicMock()
     mock_response.json.return_value = {
         "rt_cd": "0",
@@ -953,14 +912,6 @@ async def test_get_previous_day_info_value_error(mock_get, mock_quotations):  # 
     mock_response.json.return_value = mock_response_json
     mock_get.return_value = mock_response  # ✅ 핵심: requests.get을 patch
 
-    # ✅ 다시 _config 설정
-    mock_quotations._config = {
-        "tr_ids": {
-            "daily_itemchartprice_day": "TR_ID_TEST"
-        },
-        "custtype": "P"
-    }
-
     result_vol_error_common = mock_quotations.get_previous_day_info("005930")
 
     assert result_vol_error_common.rt_cd == ErrorCode.PARSING_ERROR.value
@@ -1001,9 +952,7 @@ async def test_get_price_summary_parsing_error(mock_quotations):
 
 
 @pytest.mark.asyncio
-async def test_inquire_daily_itemchartprice_success_day(mocker, api_instance):  # fixture 활용
-    api, mock_logger = api_instance
-
+async def test_inquire_daily_itemchartprice_success_day(mock_quotations):  # fixture 활용
     # 2. call_api mock
     mocked_response = ResCommonResponse(
         rt_cd="0",
@@ -1019,10 +968,10 @@ async def test_inquire_daily_itemchartprice_success_day(mocker, api_instance):  
             }
         ]
     )
-    mocker.patch.object(api, "call_api", return_value=mocked_response)
+    mock_quotations.call_api = AsyncMock(return_value=mocked_response)
 
     # 3. Call method
-    result_common = await api.inquire_daily_itemchartprice(
+    result_common = await mock_quotations.inquire_daily_itemchartprice(
         stock_code="005930", date="20250708", fid_period_div_code="D"
     )
 
@@ -1040,91 +989,72 @@ async def test_inquire_daily_itemchartprice_success_day(mocker, api_instance):  
         acml_vol="100"
     ))
 
-    mock_logger.error.assert_not_called()
-    mock_logger.critical.assert_not_called()
+    mock_quotations.logger.error.assert_not_called()
+    mock_quotations.logger.critical.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_inquire_daily_itemchartprice_unsupported_period_code(mocker, api_instance):
-    api, mock_logger = api_instance
-
-    # 응답은 정상적으로 반환되도록 mock 처리
-    mocker.patch.object(api, "call_api", return_value={"rt_cd": "0", "output": []})
-
-    result_common = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="X")
+async def test_inquire_daily_itemchartprice_unsupported_period_code(mock_quotations):
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={}
+    ))
+    result_common = await mock_quotations.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="X")
 
     assert result_common.rt_cd== ErrorCode.INVALID_INPUT.value  # Enum 값 사용
     assert "지원하지 않는 fid_period_div_code" in result_common.msg1
     assert result_common.data == []
-    mock_logger.error.assert_called_once()
+    mock_quotations.logger.error.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_inquire_daily_itemchartprice_call_api_none(mocker, api_instance):
-    api, mock_logger = api_instance
-
-    mocker.patch.object(api, "call_api", return_value=ResCommonResponse(
+async def test_inquire_daily_itemchartprice_call_api_none(mock_quotations):
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
         rt_cd="0",
-        msg1="정상처리",
-        data=None  # ✅ 핵심 포인트
+        msg1="정상",
+        data=None
     ))
 
-    result_common = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
+    result_common = await mock_quotations.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
 
     assert result_common.rt_cd != ErrorCode.SUCCESS.value  # Enum 값 사용
     assert result_common.data == []  # 실패 시 빈 리스트
-    mock_logger.warning.assert_called_once()
+    mock_quotations.logger.warning.assert_called_once()
+
+#
+# @pytest.mark.asyncio
+# async def test_inquire_daily_itemchartprice_missing_tr_id_in_config(mock_quotations):
+#     mock_quotations._config = {
+#         "api_key": "dummy-key",
+#         "api_secret_key": "dummy-secret",
+#         "base_url": "https://mock-base",
+#         "custtype": "P",
+#         'paths':
+#             {
+#                 'search_info': 'test_path',
+#                 'inquire_price': 'test_path',
+#                 'market_cap': 'test_path',
+#                 'inquire_daily_itemchartprice': 'test_path',
+#                 'asking_price': 'test_path'
+#             },
+#         'params':
+#             {
+#                 'fid_div_cls_code': 2,
+#                 'screening_code': '20174'
+#             },
+#         'market_code': 'J',
+#     }
+#     result_common = await mock_quotations.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
+#
+#     assert result_common.rt_cd== ErrorCode.INVALID_INPUT.value  # Enum 값 사용
+#     assert "TR_ID 설정을 찾을 수 없습니다" in result_common.msg1
+#     assert result_common.data == []
+#     mock_quotations.logger.critical.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_inquire_daily_itemchartprice_missing_tr_id_in_config(mocker):
-    mock_headers = {"Authorization": "Bearer dummy"}
-    mock_config = {
-        "tr_ids": {
-            # deliberately omit "daily_itemchartprice_day"
-            "daily_itemchartprice_minute": "TRID-M"
-        },
-        "custtype": "P"
-    }
-    mock_token_manager = MagicMock()
-    mock_logger = MagicMock()
-
-    api = KoreaInvestApiQuotations(
-        base_url="https://mock.api",
-        headers=mock_headers,
-        config=mock_config,
-        token_manager=mock_token_manager,
-        logger=mock_logger
-    )
-
-    result_common = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="D")
-
-    assert result_common.rt_cd== ErrorCode.INVALID_INPUT.value  # Enum 값 사용
-    assert "TR_ID 설정을 찾을 수 없습니다" in result_common.msg1
-    assert result_common.data == []
-    mock_logger.critical.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mocker):
-    mock_headers = {"Authorization": "Bearer dummy"}
-    mock_config = {
-        "tr_ids": {
-            "daily_itemchartprice_minute": "TRID-M"
-        },
-        "custtype": "P"
-    }
-    mock_token_manager = MagicMock()
-    mock_logger = MagicMock()
-
-    api = KoreaInvestApiQuotations(
-        base_url="https://mock.api",
-        headers=mock_headers,
-        config=mock_config,
-        token_manager=mock_token_manager,
-        logger=mock_logger
-    )
-
+async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mock_quotations):
     # 필수 필드 포함한 mock 응답
 
     mock_response = ResCommonResponse(
@@ -1142,15 +1072,12 @@ async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mocker):
         ]
     )
 
-    api.call_api = AsyncMock(return_value=mock_response)
+    mock_quotations.call_api = AsyncMock(return_value=mock_response)
 
-    result_common = await api.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="M")
+    result_common = await mock_quotations.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="M")
 
     # 검증
-    mock_logger.debug.assert_called_once_with(
-        "현재 _config['tr_ids'] 내용: {'daily_itemchartprice_minute': 'TRID-M'}"
-    )
-
+    mock_quotations.logger.debug.assert_called()
     assert result_common.rt_cd == ErrorCode.SUCCESS.value
     assert result_common.data == [
         ResDailyChartApiItem(

@@ -24,7 +24,10 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
             "paper_websocket_url": "wss://paper-ws",
             "htsid": "test_htsid",
             "tr_ids": {"TR_CODE_1": "value1"},
-            "token_file_path": "test_token_env.json"  # 테스트용 토큰 파일 경로 추가
+            "token_file_path": "test_token_env.json",  # 테스트용 토큰 파일 경로 추가
+            "paths": "test_paths" ,
+            "params": "test_params",
+            "market_code": "test_market_code",
         }
         self.logger = MagicMock()
         # self.token_manager = TokenManager(token_file_path=self.mock_config_data['token_file_path']) # 실제 인스턴스 대신 Mock 객체 사용

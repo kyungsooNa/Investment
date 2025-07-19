@@ -6,15 +6,11 @@ import traceback # 예외 추적을 위해 추가
 
 from trading_app import TradingApp # TradingApp 임포트
 
-# config.yaml 및 tr_ids_config.yaml 파일 경로 설정
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MAIN_CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
-TR_IDS_CONFIG_PATH = os.path.join(BASE_DIR, 'core', 'tr_ids_config.yaml')
 
 # main 함수를 비동기 함수로 선언
 async def main():
     try:
-        app = TradingApp(MAIN_CONFIG_PATH, TR_IDS_CONFIG_PATH)
+        app = TradingApp()
         await app.run_async() # <--- run_async 메서드 호출 (비동기)
     except KeyboardInterrupt:
         print("\nKeyboardInterrupt 발생! 애플리케이션을 종료합니다.")

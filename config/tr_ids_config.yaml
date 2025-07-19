@@ -4,10 +4,9 @@ tr_ids:
     inquire_price: "FHKST01010100" # 주식 현재가 조회 (실전/모의 공통)
     search_info: "FHKST01010500" # 상품기본조회 (시가총액 등, 실전/모의 공통)
     top_market_cap: "FHPST01740000" # 시가총액 상위 (실전 전용, 모의 미지원)
-    # <<< 이 두 라인을 추가해야 합니다!
     daily_itemchartprice_day: "FHKST03010100" # 일별 주식 시세 (차트)
     daily_itemchartprice_minute: "FHNKF03060000" # 분별 주식 시세 (차트)
-    # >>>
+    asking_price: "FHKST01010200"  # TR_ID는 실제 계정 환경에 따라 조정
   account:
     inquire_balance_real: "TTTC8434R" # 실전 계좌 잔고 조회
     inquire_balance_paper: "VTTC8434R" # 모의 계좌 잔고 조회

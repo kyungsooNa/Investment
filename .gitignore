@@ -194,7 +194,7 @@ cython_debug/
 
 # --- Custom Additions ---
 # Configuration files (sensitive)
-config.yaml
+config/config.yaml
 
 # KIS API Token files
 # KIS_TOKEN_*.yaml (기존)
