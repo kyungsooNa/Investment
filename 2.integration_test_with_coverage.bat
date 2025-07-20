@@ -1,0 +1,15 @@
+@echo off
+
+REM 가상환경 활성화
+call C:\Users\Kyungsoo\anaconda3\Scripts\activate.bat py310
+
+REM integration_test만 실행 (단일 프로세스)
+pytest tests/integration_test ^
+    -n auto ^
+    --cov=. ^
+    --cov-report=term-missing ^
+    --cov-report=html ^
+    --cov-config=.coveragerc
+
+REM HTML 커버리지 리포트 자동 열기
+start htmlcov\index.html
