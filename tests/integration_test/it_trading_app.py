@@ -68,18 +68,57 @@ def real_app_instance(mocker, get_mock_config):
     app.config = get_mock_config
     app.logger = MagicMock()
 
-    # 3. 테스트 자동화를 위해 CLIView의 일부 메서드만 모킹합니다.
-    #    실제 app 인스턴스에 이미 생성된 cli_view 객체를 대상으로 patch.object를 사용합니다.
-    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
-    mocker.patch.object(app.cli_view, 'display_account_balance', new_callable=MagicMock)
-    mocker.patch.object(app.cli_view, 'display_account_balance_failure', new_callable=MagicMock)
-
-    # 4. TradingService 등 주요 서비스들을 실제 객체로 초기화합니다.
+    # 3. TradingService 등 주요 서비스들을 실제 객체로 초기화합니다.
     #    이 과정은 app.run_async()의 일부이며, 동기적으로 실행하여 테스트 준비를 마칩니다.
     asyncio.run(app._complete_api_initialization())
 
     return app
 
+
+@pytest.mark.asyncio
+async def test_get_current_price_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 현재가 조회 시 TradingApp → StockQueryService → BrokerAPIWrapper →
+    get_current_price → call_api 흐름을 따라 실제 서비스가 실행되며,
+    최하위 API 호출만 모킹하여 검증합니다.
+    """
+    # --- Arrange ---
+    app = real_app_instance
+    test_price_data = {
+        "stck_prpr": "70500",
+        "prdy_vrss": "1200",
+        "prdy_ctrt": "1.73"
+    }
+
+    mock_api_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=test_price_data
+    )
+
+    # 최하단 API만 모킹
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_api_response
+    )
+
+    # 1번 종목 조회
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    test_stock_code = "005930"
+    app.cli_view.get_user_input.return_value = test_stock_code
+
+    # --- Act ---
+    await app._execute_action("1")
+
+    # --- Assert ---
+    mock_call_api.assert_awaited_once()
+
+    method, path = mock_call_api.call_args[0][:2]
+    assert method == "GET"
+    assert path == "/uapi/domestic-stock/v1/quotations/inquire-price"
+
+    # 입력 프롬프트 호출 여부
+    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
 
 
 @pytest.mark.asyncio
@@ -105,6 +144,11 @@ async def test_get_account_balance_full_integration(real_app_instance, mocker):
         'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
         return_value=mock_api_response
     )
+
+    # 2번 계좌 잔고 조회
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    mocker.patch.object(app.cli_view, 'display_account_balance', new_callable=MagicMock)
+    mocker.patch.object(app.cli_view, 'display_account_balance_failure', new_callable=MagicMock)
 
     # --- Act (실행) ---
     await app._execute_action("2")
