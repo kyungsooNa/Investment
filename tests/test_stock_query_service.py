@@ -483,12 +483,18 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.print_patch.stop()
 
     async def test_success_case(self):
+        """Test the successful case where upper limit stocks are found."""
         self.mock_trading_service.get_all_stocks_code.return_value = ResCommonResponse(
             rt_cd="0", msg1="성공", data=["000660"]
         )
-        self.mock_trading_service.get_current_upper_limit_stocks.return_value = [
-            {"name": "SK하이닉스", "code": "000660", "price": 120000, "change_rate": 29.9}
-        ]
+        # ✅ Wrap the return value in a ResCommonResponse object
+        self.mock_trading_service.get_current_upper_limit_stocks.return_value = ResCommonResponse(
+            rt_cd="0",
+            msg1="성공",
+            data=[
+                {"name": "SK하이닉스", "code": "000660", "price": 120000, "change_rate": 29.9}
+            ]
+        )
 
         await self.service.handle_current_upper_limit_stocks()
 
@@ -505,15 +511,20 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_print.assert_any_call("전체 종목 코드 조회 실패 또는 결과 없음.")
 
     async def test_no_upper_limit_stocks(self):
+        """Test the case where no upper limit stocks are found."""
         self.mock_trading_service.get_all_stocks_code.return_value = ResCommonResponse(
             rt_cd="0", msg1="성공", data=["000660"]
         )
-        self.mock_trading_service.get_current_upper_limit_stocks.return_value = []
+        # ✅ Wrap the return value in a ResCommonResponse object indicating failure or no data
+        self.mock_trading_service.get_current_upper_limit_stocks.return_value = ResCommonResponse(
+            rt_cd="1", msg1="데이터 없음", data=[]
+        )
 
         await self.service.handle_current_upper_limit_stocks()
 
         self.mock_logger.info.assert_called_with("현재 상한가 종목 없음.")
         self.mock_print.assert_any_call("현재 상한가에 해당하는 종목이 없습니다.")
+
 
     async def test_exception_during_processing(self):
         self.mock_trading_service.get_all_stocks_code.side_effect = Exception("예외 발생")
