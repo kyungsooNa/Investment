@@ -896,3 +896,59 @@ async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instanc
     assert running_status == True
     app.cli_view.display_top_stocks_failure.assert_called_once_with("시가총액 조회 실패")
     app.logger.warning.assert_called()
+
+@pytest.mark.asyncio
+async def test_execute_action_momentum_backtest_strategy_success(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '21' - 모멘텀 백테스트 전략 정상 실행 흐름 테스트
+
+    TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
+    → StrategyExecutor.execute (백테스트 모드)
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력: 조회 개수
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "2"
+
+    # ✅ 시가총액 상위 종목 mock 응답 (dict 형태로 리턴)
+    mock_market_cap_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="성공",
+        data=[
+            {"mksc_shrn_iscd": "005930"},
+            {"mksc_shrn_iscd": "000660"}
+        ]
+    )
+    mocker.patch.object(
+        app.trading_service._broker_api_wrapper._client._quotations,
+        "get_top_market_cap_stocks_code",
+        new_callable=AsyncMock,
+        return_value=mock_market_cap_response
+    )
+
+    # ✅ 백테스트 price lookup 모킹
+    app.backtest_data_provider.realistic_price_lookup = MagicMock()
+
+    # ✅ StrategyExecutor.execute 모킹
+    mock_strategy_result = {
+        "follow_through": [{"code": "005930"}],
+        "not_follow_through": [{"code": "000660"}]
+    }
+    mocker.patch("strategies.strategy_executor.StrategyExecutor.execute", new_callable=AsyncMock, return_value=mock_strategy_result)
+
+    # ✅ CLI 출력 함수 모킹
+    app.cli_view.display_strategy_running_message = MagicMock()
+    app.cli_view.display_strategy_results = MagicMock()
+    app.cli_view.display_follow_through_stocks = MagicMock()
+    app.cli_view.display_not_follow_through_stocks = MagicMock()
+
+    # --- 실행 ---
+    result = await app._execute_action("21")
+
+    # --- 검증 ---
+    assert result is True
+    app.cli_view.display_strategy_running_message.assert_called_once_with("모멘텀 백테스트")
+    app.cli_view.display_strategy_results.assert_called_once_with("백테스트", mock_strategy_result)
+    app.cli_view.display_follow_through_stocks.assert_called_once_with(mock_strategy_result["follow_through"])
+    app.cli_view.display_not_follow_through_stocks.assert_called_once_with(mock_strategy_result["not_follow_through"])
