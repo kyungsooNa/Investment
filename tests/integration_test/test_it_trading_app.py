@@ -1,7 +1,7 @@
 # integration_test/it_trading_app.py
 import pytest
 import asyncio
-
+import pandas as pd
 from trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
 from common.types import ResCommonResponse, ErrorCode
@@ -534,4 +534,228 @@ async def test_get_top_stocks_full_integration(real_app_instance, mocker):
     # --- 검증 ---
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 랭킹 종류를 입력하세요 (rise|fall|volume|foreign): ")
+
+@pytest.mark.asyncio
+async def test_get_top_market_cap_stocks_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 시가총액 상위 조회 (실전 전용): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 실전 투자 환경으로 설정
+    app.env.is_paper_trading = False
+
+    # ✅ API 응답 모킹 (시가총액 상위 종목 목록)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=[
+            {"mksc_shrn_iscd": "005930", "code": "005930", "name": "삼성전자"},
+            {"mksc_shrn_iscd": "000660", "code": "000660", "name": "SK하이닉스"}
+        ]
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("13")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_get_top_10_market_cap_stocks_with_prices_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 시가총액 상위 10개 현재가 조회 (실전 전용):
+    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 시장을 연 상태로 설정
+    app.time_manager.is_market_open = MagicMock(return_value=True)
+
+    # ✅ 실전 투자 환경으로 설정
+    app.env.set_trading_mode(False)  # ← 이게 실제 API 내부 속성까지 반영
+
+    # ✅ API 응답 모킹 (시가총액 상위 + 현재가)
+    mock_top_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=[
+            {"mksc_shrn_iscd": "005930", "stck_avls": "1000000000"},
+            {"mksc_shrn_iscd": "000660", "stck_avls": "500000000"}
+        ]
+    )
+    mock_price_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "stck_prpr": "70500",
+            "prdy_vrss": "1200",
+            "prdy_ctrt": "1.73"
+        }
+    )
+
+    # 첫 번째 호출: 시가총액 상위 종목 목록 조회
+    # 두 번째 이후: 종목별 현재가 조회
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        side_effect=[mock_top_response, mock_price_response, mock_price_response]
+    )
+
+    # --- 실행 ---
+    await app._execute_action("14")
+
+    # --- 검증 ---
+    assert mock_call_api.await_count == 3  # 1번 top 종목, 2번 개별 가격 조회
+
+@pytest.mark.asyncio
+async def test_handle_upper_limit_stocks_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 상한가 종목 조회 (실전 전용):
+    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 시장을 연 상태로 설정
+    app.time_manager.is_market_open = MagicMock(return_value=True)
+
+    # ✅ 실전 투자 환경으로 설정
+    app.env.is_paper_trading = False
+
+    # ✅ 상한가 종목 API 응답 모킹
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=[
+            {"code": "005930", "name": "삼성전자", "price": "70500", "change_rate": "29.85"}
+        ]
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("15")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited()
+
+@pytest.mark.asyncio
+async def test_handle_yesterday_upper_limit_stocks_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 전일 상한가 종목 조회 (상위):
+    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 실전 투자 환경으로 설정
+    app.env.set_trading_mode(False)
+
+    # ✅ 모의 응답: 시가총액 상위 종목 코드 조회 → 종목 코드 리스트 반환
+    mock_top_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=[
+            {"mksc_shrn_iscd": "005930", "stck_avls": "492,000,000,000"},
+            {"mksc_shrn_iscd": "000660", "stck_avls": "110,000,000,000"}
+        ]
+    )
+
+    # ✅ 모의 응답: 전일 상한가 종목 조회 → 리스트 반환
+    mock_upper_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=[
+            {"code": "005930", "name": "삼성전자", "price": "70500", "change_rate": "29.85"}
+        ]
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        side_effect=[mock_top_response, mock_upper_response]
+    )
+
+    # --- 실행 ---
+    await app._execute_action("16")
+
+    # --- 검증 ---
+    assert mock_call_api.await_count == 3
+
+@pytest.mark.asyncio
+async def test_handle_current_upper_limit_stocks_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 전일 상한가 종목 조회 (전체):
+    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 실전 투자 환경으로 설정
+    app.env.set_trading_mode(False)
+
+    mocker.patch.object(
+        app.trading_service._broker_api_wrapper,
+        "get_all_stock_codes",
+        return_value=pd.DataFrame({
+            "종목코드": ["005930", "000660"],
+            "종목명": ["삼성전자", "SK하이닉스"]
+        })
+    )
+
+    # ── ② 각 종목 get_current_price() 용 mock (open·현재가·등락률 포함) ─────
+    price_payload = {
+        "stck_oprc": "69500",
+        "stck_prpr": "70500",
+        "prdy_ctrt": "29.85"
+    }
+    mock_price_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=price_payload
+    )
+
+    # ── call_api() 호출 순서: ① 코드-목록 → ② 삼성전자 → ③ SK하이닉스 ───────
+    mock_call_api = mocker.patch(
+        "brokers.korea_investment.korea_invest_api_base."
+        "KoreaInvestApiBase.call_api",
+        side_effect=[mock_price_response,
+                     mock_price_response]
+    )
+
+    # --- 실행 ---
+    await app._execute_action("17")
+
+    # --- 검증 ---
+    assert mock_call_api.await_count == 2
+
+@pytest.mark.asyncio
+async def test_handle_realtime_stream_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 실시간 체결가/호가 구독:
+    TradingApp → StockQueryService → BrokerAPIWrapper.websocket_subscribe 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹 (2번 호출될 것)
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = ["005930", "price"]
+
+    # ✅ 웹소켓 구독 함수 모킹
+    mock_subscribe = mocker.patch.object(
+        app.trading_service._broker_api_wrapper._client._websocketAPI,
+        "subscribe_realtime_price",
+        new_callable=AsyncMock
+    )
+
+    # --- 실행 ---
+    await app._execute_action("18")
+
+    # --- 검증 ---
+    mock_subscribe.assert_awaited_once_with("005930")
+
 

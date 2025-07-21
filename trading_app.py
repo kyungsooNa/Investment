@@ -312,9 +312,18 @@ class TradingApp:
             #     self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
             #     self.cli_view.display_strategy_error(f"전일 상한가 종목 조회 실패: {e}")
 
+
         elif choice == '18':
             stock_code = await self.cli_view.get_user_input("구독할 종목 코드를 입력하세요: ")
-            await self.stock_query_service.handle_realtime_stream(stock_code)
+            field_input = await self.cli_view.get_user_input("구독할 데이터 타입을 입력하세요 (price, quote 중 택1 또는 쉼표로 구분): ")
+            stock_codes = [stock_code]
+            fields = [field.strip() for field in field_input.split(",") if field.strip() in {"price", "quote"}]
+
+            if not fields:
+                self.cli_view.display_strategy_error("올바른 필드를 입력하세요. (price, quote 중 선택)")
+                return
+
+            await self.stock_query_service.handle_realtime_stream(stock_codes, fields, duration=30)
 
         elif choice == '20':
             if not self.time_manager.is_market_open():

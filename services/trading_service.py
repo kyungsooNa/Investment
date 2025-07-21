@@ -262,7 +262,6 @@ class TradingService:
                 data=[]
             )
 
-    # @TODO TC 추가 필요
     async def get_yesterday_upper_limit_stocks(self, stock_codes: List[str]) -> ResCommonResponse:
         """
         전체 종목 리스트 중 어제 상한가에 도달한 종목을 필터링합니다. (TODO: 재검증 및 TC 추가 필요)

@@ -1,5 +1,5 @@
 # app/stock_query_service.py
-from common.types import ErrorCode, ResCommonResponse
+from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem
 from typing import List, Dict
 
 
@@ -326,16 +326,16 @@ class StockQueryService:
             top_codes_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
                 market_code)
 
-            if not isinstance(top_codes_response, dict) or top_codes_response.get('rt_cd') != '0':
+            if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:
                 msg = top_codes_response.get("msg1", "조회 실패") if isinstance(top_codes_response, dict) else "응답 오류"
                 print(f"전일 상한가 종목 조회 실패: {msg}")
                 self.logger.warning(f"상위 종목 조회 실패: {top_codes_response}")
                 return
 
             top_stock_codes = [
-                item.get("mksc_shrn_iscd")
-                for item in top_codes_response.get("output", [])[:limit]
-                if "mksc_shrn_iscd" in item
+                item.mksc_shrn_iscd
+                for item in top_codes_response.data
+                if isinstance(item, ResTopMarketCapApiItem) and item.mksc_shrn_iscd
             ]
 
             if not top_stock_codes:
@@ -343,16 +343,16 @@ class StockQueryService:
                 self.logger.info("조회된 시가총액 종목 코드 없음.")
                 return
 
-            upper_limit_stocks = await self.trading_service.get_yesterday_upper_limit_stocks(top_stock_codes)
+            upper_limit_stocks : ResCommonResponse = await self.trading_service.get_yesterday_upper_limit_stocks(top_stock_codes)
 
-            if not upper_limit_stocks:
+            if upper_limit_stocks.rt_cd != ErrorCode.SUCCESS.value:
                 print("현재 전일 상한가에 해당하는 종목이 없습니다.")
                 self.logger.info("전일 상한가 종목 없음.")
             else:
                 print("\n--- 전일 상한가 종목 ---")
-                for stock in upper_limit_stocks:
+                for stock in upper_limit_stocks.data:
                     print(f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)")
-                self.logger.info(f"전일 상한가 종목 조회 성공. 총 {len(upper_limit_stocks)}개")
+                self.logger.info(f"전일 상한가 종목 조회 성공. 총 {len(upper_limit_stocks.data)}개")
         except Exception as e:
             print(f"전일 상한가 종목 조회 중 오류 발생: {e}")
             self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
