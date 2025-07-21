@@ -322,3 +322,72 @@ async def test_display_stock_vs_open_price_full_integration(real_app_instance, m
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
 
+@pytest.mark.asyncio
+async def test_get_asking_price_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 실시간 호가 조회: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "005930"
+
+    # ✅ API 응답 모킹 (호가 정보 일부 포함)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "askp1": "70500",
+            "bidp1": "70400",
+            "askp_rsqn1": "100",
+            "bidp_rsqn1": "120"
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("7")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+    app.cli_view.get_user_input.assert_awaited_once_with("호가를 조회할 종목 코드를 입력하세요: ")
+
+@pytest.mark.asyncio
+async def test_get_time_concluded_prices_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 시간대별 체결가 조회: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "005930"
+
+    # ✅ API 응답 모킹 (시간대별 체결가 일부 포함)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "stck_cntg_hour": "1015",
+            "stck_prpr": "70200",
+            "cntg_vol": "1000"
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("8")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+    app.cli_view.get_user_input.assert_awaited_once_with("시간대별 체결가를 조회할 종목 코드를 입력하세요: ")
+
