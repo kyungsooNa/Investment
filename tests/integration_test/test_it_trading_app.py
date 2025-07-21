@@ -391,3 +391,76 @@ async def test_get_time_concluded_prices_full_integration(real_app_instance, moc
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("시간대별 체결가를 조회할 종목 코드를 입력하세요: ")
 
+@pytest.mark.asyncio
+async def test_get_stock_news_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 종목 뉴스 조회: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "005930"
+
+    # ✅ API 응답 모킹 (뉴스 항목 일부 포함)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "output": [  # ✅ 이 구조가 필요
+                {
+                    "news_title": "삼성전자, 2분기 실적 발표",
+                    "news_date": "20250721",
+                    "news_time": "093000",
+                    "news_summary": "영업이익 증가 발표"
+                }
+            ]
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("9")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+    app.cli_view.get_user_input.assert_awaited_once_with("뉴스를 조회할 종목 코드를 입력하세요: ")
+
+@pytest.mark.asyncio
+async def test_get_etf_info_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) ETF 정보 조회: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "069500"  # 예: KODEX 200
+
+    # ✅ API 응답 모킹 (ETF 정보 포함)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "etf_name": "KODEX 200",
+            "nav": "41500.00",
+            "prdy_ctrt": "0.45"
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("10")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+    app.cli_view.get_user_input.assert_awaited_once_with("정보를 조회할 ETF 코드를 입력하세요: ")
+
