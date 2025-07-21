@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import builtins
 from unittest.mock import call, ANY
-from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem, ResMarketCapStockItem
+from common.types import ResCommonResponse, ErrorCode, ResBasicStockInfo
 
 # 테스트 대상 모듈 임포트
 from app.order_execution_service import OrderExecutionService
@@ -485,14 +485,21 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
     async def test_success_case(self):
         """Test the successful case where upper limit stocks are found."""
         self.mock_trading_service.get_all_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0", msg1="성공", data=["000660"]
+            rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=["000660"]
         )
         # ✅ Wrap the return value in a ResCommonResponse object
         self.mock_trading_service.get_current_upper_limit_stocks.return_value = ResCommonResponse(
-            rt_cd="0",
+            rt_cd=ErrorCode.SUCCESS.value,
             msg1="성공",
             data=[
-                {"name": "SK하이닉스", "code": "000660", "price": 120000, "change_rate": 29.9}
+                ResBasicStockInfo(
+                    name="SK하이닉스",
+                    code="000660",
+                    current_price=120000,
+                    open_price=115000,
+                    change_rate=29.9,
+                    prdy_ctrt=29.9
+                )
             ]
         )
 
@@ -503,7 +510,7 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_stock_code_fetch_failed(self):
         self.mock_trading_service.get_all_stocks_code.return_value = ResCommonResponse(
-            rt_cd="1", msg1="실패", data=None
+            rt_cd=ErrorCode.API_ERROR.value, msg1="실패", data=None
         )
         await self.service.handle_current_upper_limit_stocks()
 

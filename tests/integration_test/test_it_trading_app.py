@@ -782,7 +782,11 @@ async def test_handle_current_upper_limit_stocks_full_integration(real_app_insta
     )
 
     # --- Act ---
-    running_status = await app._execute_action("17")
+    try:
+        running_status = await app._execute_action("17")
+    except TypeError as e:
+        assert str(e) == "Error 발생하면 안됨."
+        running_status = None
 
     # --- Assert (검증) ---
     assert running_status == True

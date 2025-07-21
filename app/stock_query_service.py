@@ -340,7 +340,7 @@ class StockQueryService:
 
             if not top_stock_codes:
                 print("전일 상한가 종목 조회 대상이 없습니다.")
-                self.logger.info("조회된 시가총액 종목 코드 없음.")
+                self.logger.warning("조회된 시가총액 종목 코드 없음.")
                 return
 
             upper_limit_stocks : ResCommonResponse = await self.trading_service.get_yesterday_upper_limit_stocks(top_stock_codes)
@@ -375,6 +375,10 @@ class StockQueryService:
                 return
 
             # 현재 상한가 종목 필터링
+            if not isinstance(all_stock_codes.data, list):
+                self.logger.error("get_all_stock_codes.data 리스트가 아님.")
+                return
+
             upper_limit_stocks : ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(all_stock_codes.data)
 
             if upper_limit_stocks.rt_cd != ErrorCode.SUCCESS.value:
@@ -386,7 +390,8 @@ class StockQueryService:
                     if not isinstance(stock, ResBasicStockInfo):
                         raise TypeError(f"ResBasicStockInfo 타입이 아님: {type(stock)}")
 
-                    print(f"  {stock.name} ({stock.code}): {stock.current_price}원 (등락률: +{stock.change_rate}%)")
+                    print(f"  {stock.name} ({stock.code}): {stock.current_price}원 (등락률: +{stock.prdy_ctrt}%)")
+                self.logger.info(f"현재 상한가 종목 조회 성공. 총 {len(upper_limit_stocks.data)}개")
 
         except Exception as e:
             print(f"현재 상한가 종목 조회 중 오류 발생: {e}")
