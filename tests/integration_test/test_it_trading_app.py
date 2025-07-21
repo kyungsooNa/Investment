@@ -74,6 +74,44 @@ def real_app_instance(mocker, get_mock_config):
 
     return app
 
+@pytest.mark.asyncio
+async def test_execute_action_select_environment_success(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '0' - 거래 환경 변경 성공 시 running_status 유지
+    """
+    app = real_app_instance
+
+    # ✅ _select_environment() 모킹: 성공
+    mocker.patch.object(app, "_select_environment", new_callable=AsyncMock, return_value=True)
+    app.logger.info = MagicMock()
+
+    # --- 실행 ---
+    running_status = await app._execute_action("0")
+
+    # --- 검증 ---
+    app._select_environment.assert_awaited_once()
+    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
+    assert running_status is True
+
+@pytest.mark.asyncio
+async def test_execute_action_select_environment_fail(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '0' - 거래 환경 변경 실패 시 running_status = False
+    """
+    app = real_app_instance
+
+    # ✅ _select_environment() 모킹: 실패
+    mocker.patch.object(app, "_select_environment", new_callable=AsyncMock, return_value=False)
+    app.logger.info = MagicMock()
+
+    # --- 실행 ---
+    running_status = await app._execute_action("0")
+
+    # --- 검증 ---
+    app._select_environment.assert_awaited_once()
+    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
+    assert running_status is False
+
 
 @pytest.mark.asyncio
 async def test_get_current_price_full_integration(real_app_instance, mocker):
@@ -1006,3 +1044,40 @@ async def test_execute_action_gapup_pullback_strategy_success(real_app_instance,
     app.cli_view.display_gapup_pullback_selected_stocks.assert_called_once_with(mock_strategy_result["gapup_pullback_selected"])
     app.cli_view.display_gapup_pullback_rejected_stocks.assert_called_once_with(mock_strategy_result["gapup_pullback_rejected"])
 
+@pytest.mark.asyncio
+async def test_execute_action_invalidate_token_success(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '98' - 토큰 무효화 성공 흐름
+    TradingApp → TokenManager.invalidate_token → CLIView.display_token_invalidated_message
+    """
+    app = real_app_instance
+
+    # ✅ 의존성 모킹
+    app.token_manager.invalidate_token = MagicMock()
+    app.cli_view.display_token_invalidated_message = MagicMock()
+
+    # --- 실행 ---
+    running_status = await app._execute_action("98")
+
+    # --- 검증 ---
+    app.token_manager.invalidate_token.assert_called_once()
+    app.cli_view.display_token_invalidated_message.assert_called_once()
+    assert running_status is True
+
+@pytest.mark.asyncio
+async def test_execute_action_exit_success(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '99' - 프로그램 종료 처리 흐름
+    TradingApp → CLIView.display_exit_message → running_status=False 반환
+    """
+    app = real_app_instance
+
+    # ✅ 종료 메시지 출력 함수 모킹
+    app.cli_view.display_exit_message = MagicMock()
+
+    # --- 실행 ---
+    running_status = await app._execute_action("99")
+
+    # --- 검증 ---
+    app.cli_view.display_exit_message.assert_called_once()
+    assert running_status is False
