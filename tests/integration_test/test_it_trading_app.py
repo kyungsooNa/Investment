@@ -464,3 +464,74 @@ async def test_get_etf_info_full_integration(real_app_instance, mocker):
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("정보를 조회할 ETF 코드를 입력하세요: ")
 
+@pytest.mark.asyncio
+async def test_search_stocks_by_keyword_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 키워드로 종목 검색: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "삼성"
+
+    # ✅ API 응답 모킹 (검색 결과 포함)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "output": [
+                {"code": "005930", "name": "삼성전자"},
+                {"code": "005935", "name": "삼성전자우"}
+            ]
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("11")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+    app.cli_view.get_user_input.assert_awaited_once_with("검색할 키워드를 입력하세요: ")
+
+
+@pytest.mark.asyncio
+async def test_get_top_stocks_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 상위 랭킹 조회 (rise|fall|volume|foreign): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "rise"
+
+    # ✅ API 응답 모킹 (상위 랭킹 종목 리스트)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "output": [
+                {"code": "005930", "name": "삼성전자", "change_rate": "3.2"},
+                {"code": "000660", "name": "SK하이닉스", "change_rate": "2.7"}
+            ]
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("12")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+    app.cli_view.get_user_input.assert_awaited_once_with("조회할 랭킹 종류를 입력하세요 (rise|fall|volume|foreign): ")
+
