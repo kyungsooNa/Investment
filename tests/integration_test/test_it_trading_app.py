@@ -171,3 +171,84 @@ async def test_get_account_balance_full_integration(real_app_instance, mocker):
     # ✅ 성공 결과를 표시하는 View 메서드가 올바른 데이터로 호출되었는지 확인합니다.
     app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data)
     app.cli_view.display_account_balance_failure.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_buy_stock_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 주식 매수 요청: TradingApp -> OrderExecutionService -> TradingService -> BrokerAPIWrapper 호출 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 시장을 연 상태로 설정
+    app.time_manager.is_market_open = MagicMock(return_value=True)
+
+    # --- Mock 사용자 입력 ---
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = ["005930", "10", "70000"]  # 종목코드, 수량, 가격
+
+    # --- Mock API 응답 ---
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="매수 주문 성공",
+        data={"ord_no": "1234567890"}
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- Act ---
+    await app._execute_action("3")
+
+    # --- Assert ---
+    assert mock_call_api.await_count == 1
+    called_args = mock_call_api.call_args[0]
+    assert called_args[0] == "POST"
+    assert "/uapi/domestic-stock/v1/trading/order-cash" in called_args[1]
+
+    app.cli_view.get_user_input.assert_any_await("매수할 종목 코드를 입력하세요: ")
+    app.cli_view.get_user_input.assert_any_await("매수할 수량을 입력하세요: ")
+    app.cli_view.get_user_input.assert_any_await("매수 가격을 입력하세요 (시장가: 0): ")
+
+
+@pytest.mark.asyncio
+async def test_sell_stock_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 주식 매도 요청: TradingApp -> OrderExecutionService -> TradingService -> BrokerAPIWrapper 호출 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 시장을 연 상태로 설정
+    app.time_manager.is_market_open = MagicMock(return_value=True)
+
+    # --- Mock 사용자 입력 ---
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = ["005930", "5", "69000"]
+
+    # --- Mock API 응답 ---
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="매도 주문 성공",
+        data={"ord_no": "9876543210"}
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- Act ---
+    await app._execute_action("4")
+
+    # --- Assert ---
+    assert mock_call_api.await_count == 1
+    called_args = mock_call_api.call_args[0]
+    assert called_args[0] == "POST"
+    assert "/uapi/domestic-stock/v1/trading/order-cash" in called_args[1]
+
+    app.cli_view.get_user_input.assert_any_await("매도할 종목 코드를 입력하세요: ")
+    app.cli_view.get_user_input.assert_any_await("매도할 수량을 입력하세요: ")
+    app.cli_view.get_user_input.assert_any_await("매도 가격을 입력하세요 (시장가: 0): ")
+
