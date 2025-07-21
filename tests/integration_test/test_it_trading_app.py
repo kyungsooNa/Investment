@@ -4,7 +4,7 @@ import asyncio
 import pandas as pd
 from trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
-from common.types import ResCommonResponse, ErrorCode
+from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
 
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 
@@ -108,9 +108,10 @@ async def test_get_current_price_full_integration(real_app_instance, mocker):
     app.cli_view.get_user_input.return_value = test_stock_code
 
     # --- Act ---
-    await app._execute_action("1")
+    running_status = await app._execute_action("1")
 
     # --- Assert ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
 
     method, path = mock_call_api.call_args[0][:2]
@@ -119,7 +120,6 @@ async def test_get_current_price_full_integration(real_app_instance, mocker):
 
     # 입력 프롬프트 호출 여부
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-
 
 @pytest.mark.asyncio
 async def test_get_account_balance_full_integration(real_app_instance, mocker):
@@ -150,10 +150,12 @@ async def test_get_account_balance_full_integration(real_app_instance, mocker):
     mocker.patch.object(app.cli_view, 'display_account_balance', new_callable=MagicMock)
     mocker.patch.object(app.cli_view, 'display_account_balance_failure', new_callable=MagicMock)
 
-    # --- Act (실행) ---
-    await app._execute_action("2")
+    # --- Act ---
+    running_status = await app._execute_action("2")
 
     # --- Assert (검증) ---
+    assert running_status == True
+
     mock_call_api.assert_awaited_once()
 
     called_args, called_kwargs = mock_call_api.call_args
@@ -200,9 +202,10 @@ async def test_buy_stock_full_integration(real_app_instance, mocker):
     )
 
     # --- Act ---
-    await app._execute_action("3")
+    running_status = await app._execute_action("3")
 
-    # --- Assert ---
+    # --- Assert (검증) ---
+    assert running_status == True
     assert mock_call_api.await_count == 1
     called_args = mock_call_api.call_args[0]
     assert called_args[0] == "POST"
@@ -240,9 +243,10 @@ async def test_sell_stock_full_integration(real_app_instance, mocker):
     )
 
     # --- Act ---
-    await app._execute_action("4")
+    running_status = await app._execute_action("4")
 
-    # --- Assert ---
+    # --- Assert (검증) ---
+    assert running_status == True
     assert mock_call_api.await_count == 1
     called_args = mock_call_api.call_args[0]
     assert called_args[0] == "POST"
@@ -280,10 +284,11 @@ async def test_display_stock_change_rate_full_integration(real_app_instance, moc
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("5")
+    # --- Act ---
+    running_status = await app._execute_action("5")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
 
@@ -315,10 +320,11 @@ async def test_display_stock_vs_open_price_full_integration(real_app_instance, m
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("6")
+    # --- Act ---
+    running_status = await app._execute_action("6")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
 
@@ -350,10 +356,11 @@ async def test_get_asking_price_full_integration(real_app_instance, mocker):
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("7")
+    # --- Act ---
+    running_status = await app._execute_action("7")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("호가를 조회할 종목 코드를 입력하세요: ")
 
@@ -384,10 +391,11 @@ async def test_get_time_concluded_prices_full_integration(real_app_instance, moc
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("8")
+    # --- Act ---
+    running_status = await app._execute_action("8")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("시간대별 체결가를 조회할 종목 코드를 입력하세요: ")
 
@@ -423,10 +431,11 @@ async def test_get_stock_news_full_integration(real_app_instance, mocker):
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("9")
+    # --- Act ---
+    running_status = await app._execute_action("9")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("뉴스를 조회할 종목 코드를 입력하세요: ")
 
@@ -457,10 +466,11 @@ async def test_get_etf_info_full_integration(real_app_instance, mocker):
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("10")
+    # --- Act ---
+    running_status = await app._execute_action("10")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("정보를 조회할 ETF 코드를 입력하세요: ")
 
@@ -492,10 +502,11 @@ async def test_search_stocks_by_keyword_full_integration(real_app_instance, mock
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("11")
+    # --- Act ---
+    running_status = await app._execute_action("11")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("검색할 키워드를 입력하세요: ")
 
@@ -528,10 +539,11 @@ async def test_get_top_stocks_full_integration(real_app_instance, mocker):
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("12")
+    # --- Act ---
+    running_status = await app._execute_action("12")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 랭킹 종류를 입력하세요 (rise|fall|volume|foreign): ")
 
@@ -560,10 +572,11 @@ async def test_get_top_market_cap_stocks_full_integration(real_app_instance, moc
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("13")
+    # --- Act ---
+    running_status = await app._execute_action("13")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited_once()
 
 @pytest.mark.asyncio
@@ -606,10 +619,11 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration(real_ap
         side_effect=[mock_top_response, mock_price_response, mock_price_response]
     )
 
-    # --- 실행 ---
-    await app._execute_action("14")
+    # --- Act ---
+    running_status = await app._execute_action("14")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     assert mock_call_api.await_count == 3  # 1번 top 종목, 2번 개별 가격 조회
 
 @pytest.mark.asyncio
@@ -640,10 +654,11 @@ async def test_handle_upper_limit_stocks_full_integration(real_app_instance, moc
         return_value=mock_response
     )
 
-    # --- 실행 ---
-    await app._execute_action("15")
+    # --- Act ---
+    running_status = await app._execute_action("15")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_call_api.assert_awaited()
 
 @pytest.mark.asyncio
@@ -681,10 +696,11 @@ async def test_handle_yesterday_upper_limit_stocks_full_integration(real_app_ins
         side_effect=[mock_top_response, mock_upper_response]
     )
 
-    # --- 실행 ---
-    await app._execute_action("16")
+    # --- Act ---
+    running_status = await app._execute_action("16")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     assert mock_call_api.await_count == 3
 
 @pytest.mark.asyncio
@@ -727,10 +743,11 @@ async def test_handle_current_upper_limit_stocks_full_integration(real_app_insta
                      mock_price_response]
     )
 
-    # --- 실행 ---
-    await app._execute_action("17")
+    # --- Act ---
+    running_status = await app._execute_action("17")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     assert mock_call_api.await_count == 2
 
 @pytest.mark.asyncio
@@ -752,10 +769,130 @@ async def test_handle_realtime_stream_full_integration(real_app_instance, mocker
         new_callable=AsyncMock
     )
 
-    # --- 실행 ---
-    await app._execute_action("18")
+    # --- Act ---
+    running_status = await app._execute_action("18")
 
-    # --- 검증 ---
+    # --- Assert (검증) ---
+    assert running_status == True
     mock_subscribe.assert_awaited_once_with("005930")
 
 
+@pytest.mark.asyncio
+async def test_execute_action_momentum_strategy_success(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '20' - 모멘텀 전략 정상 실행 흐름 테스트
+
+    TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code → StrategyExecutor.execute
+    """
+    app = real_app_instance
+
+    # ✅ 실전 투자 환경으로 설정
+    app.env.set_trading_mode(False)
+
+    # ✅ 시장 개장 상태로 설정
+    mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
+
+    # ✅ 시가총액 상위 종목 mock 응답
+    mock_market_cap_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="성공",
+        data=[
+            ResTopMarketCapApiItem(
+                iscd="KR7005930003",
+                mksc_shrn_iscd="005930",
+                stck_avls="500000000000",
+                data_rank="1",
+                hts_kor_isnm="삼성전자",
+                acc_trdvol="100000"
+            ),
+            ResTopMarketCapApiItem(
+                iscd="KR7000660001",
+                mksc_shrn_iscd="000660",
+                stck_avls="300000000000",
+                data_rank="2",
+                hts_kor_isnm="SK하이닉스",
+                acc_trdvol="80000"
+            )
+        ]
+    )
+
+    mocker.patch.object(
+        app.trading_service._broker_api_wrapper._client._quotations,
+        "get_top_market_cap_stocks_code",
+        new_callable=AsyncMock,
+        return_value=mock_market_cap_response
+    )
+
+    # ✅ StrategyExecutor.execute 모킹
+    mock_strategy_result = {
+        "follow_through": [{"code": "005930", "score": 95}],
+        "not_follow_through": [{"code": "000660", "score": 50}]
+    }
+    mock_executor = mocker.patch(
+        "strategies.strategy_executor.StrategyExecutor.execute",
+        new_callable=AsyncMock,
+        return_value=mock_strategy_result
+    )
+
+    # ✅ 결과 출력 함수들 모킹
+    app.cli_view.display_top_stocks_success = MagicMock()
+    app.cli_view.display_strategy_running_message = MagicMock()
+    app.cli_view.display_strategy_results = MagicMock()
+    app.cli_view.display_follow_through_stocks = MagicMock()
+    app.cli_view.display_not_follow_through_stocks = MagicMock()
+
+    # --- Act ---
+    running_status = await app._execute_action("20")
+
+    # --- Assert (검증) ---
+    assert running_status == True
+    app.cli_view.display_strategy_running_message.assert_called_once_with("모멘텀")
+    app.cli_view.display_top_stocks_success.assert_called_once()
+    mock_executor.assert_awaited_once()
+    app.cli_view.display_strategy_results.assert_called_once_with("모멘텀", mock_strategy_result)
+    app.cli_view.display_follow_through_stocks.assert_called_once_with(mock_strategy_result["follow_through"])
+    app.cli_view.display_not_follow_through_stocks.assert_called_once_with(mock_strategy_result["not_follow_through"])
+
+
+@pytest.mark.asyncio
+async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '20' - 모멘텀 전략 실행 중 시가총액 상위 종목 조회 실패 시 흐름 검증
+
+    TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
+    → 실패 시 display_top_stocks_failure 및 로그 기록
+    """
+    app = real_app_instance
+
+    # ✅ 실전 투자 환경으로 설정
+    app.env.set_trading_mode(False)
+
+    # ✅ 시장 개장 상태로 설정
+    mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
+
+    # ✅ 종목 조회 실패 응답 (rt_cd != '0')
+    fail_response = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="시가총액 조회 실패",
+        data=None
+    )
+
+    # ✅ 실패 응답 모킹
+    mocker.patch.object(
+        app.trading_service._broker_api_wrapper._client._quotations,
+        "get_top_market_cap_stocks_code",
+        new_callable=AsyncMock,
+        return_value=fail_response
+    )
+
+    # ✅ 메시지 출력 메서드 모킹
+    app.cli_view.display_top_stocks_failure = MagicMock()
+    app.logger.warning = MagicMock()
+
+    # --- Act ---
+    running_status = await app._execute_action("20")
+
+    # --- Assert (검증) ---
+    assert running_status == True
+    app.cli_view.display_top_stocks_failure.assert_called_once_with("시가총액 조회 실패")
+    app.logger.warning.assert_called()
