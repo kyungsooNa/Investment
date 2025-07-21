@@ -952,3 +952,57 @@ async def test_execute_action_momentum_backtest_strategy_success(real_app_instan
     app.cli_view.display_strategy_results.assert_called_once_with("백테스트", mock_strategy_result)
     app.cli_view.display_follow_through_stocks.assert_called_once_with(mock_strategy_result["follow_through"])
     app.cli_view.display_not_follow_through_stocks.assert_called_once_with(mock_strategy_result["not_follow_through"])
+
+@pytest.mark.asyncio
+async def test_execute_action_gapup_pullback_strategy_success(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '22' - GapUpPullback 전략 정상 실행 흐름 테스트
+
+    TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
+    → StrategyExecutor.execute → 결과 출력까지 전 과정 검증
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력: 시가총액 상위 몇 개 종목?
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "2"
+
+    # ✅ 시가총액 상위 종목 조회 응답 모킹
+    mock_market_cap_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="성공",
+        data=[
+            {"mksc_shrn_iscd": "005930"},
+            {"mksc_shrn_iscd": "000660"}
+        ]
+    )
+    mocker.patch.object(
+        app.trading_service._broker_api_wrapper._client._quotations,
+        "get_top_market_cap_stocks_code",
+        new_callable=AsyncMock,
+        return_value=mock_market_cap_response
+    )
+
+    # ✅ 전략 실행 결과 모킹
+    mock_strategy_result = {
+        "gapup_pullback_selected": [{"code": "005930"}],
+        "gapup_pullback_rejected": [{"code": "000660"}]
+    }
+    mocker.patch("strategies.strategy_executor.StrategyExecutor.execute", new_callable=AsyncMock, return_value=mock_strategy_result)
+
+    # ✅ CLI 출력 메서드 모킹
+    app.cli_view.display_strategy_running_message = MagicMock()
+    app.cli_view.display_strategy_results = MagicMock()
+    app.cli_view.display_gapup_pullback_selected_stocks = MagicMock()
+    app.cli_view.display_gapup_pullback_rejected_stocks = MagicMock()
+
+    # --- 실행 ---
+    running_status = await app._execute_action("22")
+
+    # --- 검증 ---
+    assert running_status is True
+    app.cli_view.display_strategy_running_message.assert_called_once_with("GapUpPullback")
+    app.cli_view.display_strategy_results.assert_called_once_with("GapUpPullback", mock_strategy_result)
+    app.cli_view.display_gapup_pullback_selected_stocks.assert_called_once_with(mock_strategy_result["gapup_pullback_selected"])
+    app.cli_view.display_gapup_pullback_rejected_stocks.assert_called_once_with(mock_strategy_result["gapup_pullback_rejected"])
+
