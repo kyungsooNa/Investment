@@ -1,5 +1,5 @@
 # app/stock_query_service.py
-from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem
+from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo
 from typing import List, Dict
 
 
@@ -383,8 +383,10 @@ class StockQueryService:
             else:
                 print("\n--- 현재 상한가 종목 ---")
                 for stock in upper_limit_stocks.data:
-                    print(f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)")
-                self.logger.info(f"현재 상한가 종목 조회 성공. 총 {len(upper_limit_stocks.data)}개")
+                    if not isinstance(stock, ResBasicStockInfo):
+                        raise TypeError(f"ResBasicStockInfo 타입이 아님: {type(stock)}")
+
+                    print(f"  {stock.name} ({stock.code}): {stock.current_price}원 (등락률: +{stock.change_rate}%)")
 
         except Exception as e:
             print(f"현재 상한가 종목 조회 중 오류 발생: {e}")

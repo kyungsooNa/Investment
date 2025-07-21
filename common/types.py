@@ -1,8 +1,9 @@
 # common/types.py
 import enum
 from dataclasses import dataclass
-from typing import Optional, Any, List
+from typing import Optional, Any, Generic, TypeVar
 
+T = TypeVar("T")
 
 # API 응답 결과의 성공/실패를 나타내는 Enum
 class ErrorCode(enum.Enum):
@@ -164,10 +165,21 @@ class ResStockOrderApiOutput:
     prdt_no: str
 
 
+# 종목 요약 정보 응답 구조 (상승률 기반 필터링용 등)
+@dataclass
+class ResBasicStockInfo:
+    code: str
+    name: str
+    open_price: int
+    current_price: int
+    change_rate: float
+    prdy_ctrt: float
+
+
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
 @dataclass
-class ResCommonResponse:
+class ResCommonResponse(Generic[T]):
     rt_cd: str
     msg1: str
-    data: Optional[Any]
+    data: Optional[T] = None
