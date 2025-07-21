@@ -252,3 +252,73 @@ async def test_sell_stock_full_integration(real_app_instance, mocker):
     app.cli_view.get_user_input.assert_any_await("매도할 수량을 입력하세요: ")
     app.cli_view.get_user_input.assert_any_await("매도 가격을 입력하세요 (시장가: 0): ")
 
+
+@pytest.mark.asyncio
+async def test_display_stock_change_rate_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 전일대비 등락률 조회: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "005930"
+
+    # ✅ API 응답 모킹
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "stck_prpr": "70500",
+            "prdy_vrss": "1200",
+            "prdy_ctrt": "1.73"
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("5")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
+
+@pytest.mark.asyncio
+async def test_display_stock_vs_open_price_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 시가대비 등락률 조회: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ 사용자 입력 모킹
+    mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
+    app.cli_view.get_user_input.return_value = "005930"
+
+    # ✅ API 응답 모킹 (open_price와 현재가 비교 가능 데이터)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "stck_prpr": "70500",
+            "stck_oprc": "69500",
+            "prdy_vrss": "1000",
+            "prdy_ctrt": "1.44"
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- 실행 ---
+    await app._execute_action("6")
+
+    # --- 검증 ---
+    mock_call_api.assert_awaited_once()
+    app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
+
