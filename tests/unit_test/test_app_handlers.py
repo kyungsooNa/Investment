@@ -65,7 +65,8 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         # DataHandlers와 TransactionHandlers 인스턴스 생성
         self.stock_query_service = StockQueryService(self.trading_service, self.mock_logger, self.mock_time_manager)
-        self.order_execution_service = OrderExecutionService(self.trading_service, self.mock_logger, self.mock_time_manager)
+        self.order_execution_service = OrderExecutionService(self.trading_service, self.mock_logger,
+                                                             self.mock_time_manager)
 
         # print 함수 출력을 캡처 (콘솔 출력 검증용)
         self.original_print = builtins.print
@@ -113,7 +114,8 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.mock_broker_api_wrapper.get_current_price.assert_called_once_with(stock_code)
         self.assertIn(f"--- {stock_code} 현재가 조회 ---", self.print_output_capture.getvalue())
-        self.assertIn(f"\n--- {stock_code} 현재가 조회 ---\n\n{stock_code} 현재가 조회 실패.\n", self.print_output_capture.getvalue())  # <--- 수정됨 (개행 문자 추가)
+        self.assertIn(f"\n--- {stock_code} 현재가 조회 ---\n\n{stock_code} 현재가 조회 실패.\n",
+                      self.print_output_capture.getvalue())  # <--- 수정됨 (개행 문자 추가)
 
         self.mock_logger.info.assert_called_once_with(f"Service - {stock_code} 현재가 조회 요청")
         self.mock_logger.error.assert_called_once()
@@ -159,15 +161,14 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
                 data=None
             )
         )
-        self.mock_env.is_paper_trading = True # 모의 환경으로 설정하여 get_account_balance가 호출되도록
+        self.mock_env.is_paper_trading = True  # 모의 환경으로 설정하여 get_account_balance가 호출되도록
 
         await self.stock_query_service.handle_get_account_balance()  # 이거 빠졌으면 반드시 추가
 
         self.mock_broker_api_wrapper.get_account_balance.assert_called_once()
-        self.assertIn("\n계좌 잔고 조회 실패.\n", self.print_output_capture.getvalue()) # <--- 수정됨
+        self.assertIn("\n계좌 잔고 조회 실패.\n", self.print_output_capture.getvalue())  # <--- 수정됨
         self.mock_logger.info.assert_called_once_with("Service - 계좌 잔고 조회 요청 (환경: 모의투자)")
         self.mock_logger.error.assert_called_once()
-
 
         # --- TransactionHandlers (메뉴 3, 4 에 해당) ---
 
@@ -269,10 +270,12 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="정상",
             data={
-                "stck_prpr": "70000",
-                "prdy_vrss": "500",
-                "prdy_vrss_sign": "2",
-                "prdy_ctrt": "0.72"
+                "output": {
+                    "stck_prpr": "70000",
+                    "prdy_vrss": "500",
+                    "prdy_vrss_sign": "2",
+                    "prdy_ctrt": "0.72"
+                }
             }
         )
         await self.stock_query_service.handle_display_stock_change_rate(stock_code)
@@ -309,9 +312,11 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="정상",
             data={
-                "stck_prpr": "70000",
-                "stck_oprc": "69000",
-                "oprc_vrss_prpr_sign": "2"
+                "output": {
+                    "stck_prpr": "70000",
+                    "stck_oprc": "69000",
+                    "oprc_vrss_prpr_sign": "2"
+                }
             }
         )
         await self.stock_query_service.handle_display_stock_vs_open_price(stock_code)
@@ -436,7 +441,11 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value,
                 msg1="정상 처리되었습니다.",
-                data={"stck_prpr": str(10000 + i * 100)}
+                data={
+                    "output": {
+                        "stck_prpr": str(10000 + i * 100)
+                    }
+                }
             )
             for i in range(10)
         ])

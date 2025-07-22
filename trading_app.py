@@ -242,16 +242,16 @@ class TradingApp:
             await self.stock_query_service.handle_display_stock_vs_open_price(stock_code)
             # --- 새로 추가된 기능 ---
         elif choice == '7':
-            stock_code = await self.cli_view.get_user_input("호가를 조회할 종목 코드를 입력하세요: ")
+            stock_code = await self.cli_view.get_user_input("호가를 조회할 종목 코드를 입력하세요(삼성전자: 005930): ")
             await self.stock_query_service.handle_get_asking_price(stock_code)
         elif choice == '8':
-            stock_code = await self.cli_view.get_user_input("시간대별 체결가를 조회할 종목 코드를 입력하세요: ")
+            stock_code = await self.cli_view.get_user_input("시간대별 체결가를 조회할 종목 코드를 입력하세요(삼성전자: 005930): ")
             await self.stock_query_service.handle_get_time_concluded_prices(stock_code)
         elif choice == '9':
-            stock_code = await self.cli_view.get_user_input("뉴스를 조회할 종목 코드를 입력하세요: ")
+            stock_code = await self.cli_view.get_user_input("뉴스를 조회할 종목 코드를 입력하세요(삼성전자: 005930): ")
             await self.stock_query_service.handle_get_stock_news(stock_code)
         elif choice == '10':
-            etf_code = await self.cli_view.get_user_input("정보를 조회할 ETF 코드를 입력하세요: ")
+            etf_code = await self.cli_view.get_user_input("정보를 조회할 ETF 코드를 입력하세요(나스닥 ETF: 133690): ")
             await self.stock_query_service.handle_get_etf_info(etf_code)
         elif choice == '11':
             keyword = await self.cli_view.get_user_input("검색할 키워드를 입력하세요: ")

@@ -1,5 +1,5 @@
 # app/stock_query_service.py
-from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo
+from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, ResMarketCapStockItem
 from typing import List, Dict
 
 
@@ -92,10 +92,13 @@ class StockQueryService:
                 # 정상 조회
                 print("\n성공: 시가총액 1~10위 종목 현재가:")
                 for stock in stocks_data:
-                    rank = stock.get('rank', 'N/A')
-                    name = stock.get('name', 'N/A')
-                    code = stock.get('code', 'N/A')
-                    price = stock.get('current_price', 'N/A')
+                    if not isinstance(stock, ResMarketCapStockItem):
+                        raise TypeError(f"Stock가 ResMarketCapStockItem 타입이 아님: {type(stock)}")
+
+                    rank = stock.rank
+                    name = stock.name
+                    code = stock.code
+                    price = stock.current_price
                     print(f"  순위: {rank}, 종목명: {name}, 종목코드: {code}, 현재가: {price}원")
 
                 self.logger.info(f"시가총액 1~10위 종목 현재가 조회 성공: {len(stocks_data)}개 종목")
@@ -124,8 +127,8 @@ class StockQueryService:
 
         current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
-        if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
-            output_data = current_price_result.data
+        if current_price_result.rt_cd == ErrorCode.SUCCESS.value:
+            output_data = current_price_result.data.get("output") or {}
             current_price = output_data.get('stck_prpr', 'N/A')
             change_val_str = output_data.get('prdy_vrss', 'N/A')  # 문자열로 가져옴
             change_sign_code = output_data.get('prdy_vrss_sign', 'N/A')  # 부호 코드
@@ -169,7 +172,7 @@ class StockQueryService:
         current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
         if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
-            output_data: Dict = current_price_result.data
+            output_data: Dict = current_price_result.data.get("output") or {}
             current_price_str = output_data.get('stck_prpr', 'N/A')
             open_price_str = output_data.get('stck_oprc', 'N/A')
             vs_open_sign_code = output_data.get('oprc_vrss_prpr_sign', 'N/A')  # 부호 코드
@@ -274,11 +277,12 @@ class StockQueryService:
                     current_checked_count += 1
                     print(f"\r조회 중... {current_checked_count}/{len(top_stocks_to_check)}", end="")
 
-                    if current_price_response and current_price_response.rt_cd == ErrorCode.SUCCESS.value:
-                        output_data = current_price_response.data
-                        prdy_vrss_sign = output_data.prdy_vrss_sign  # 전일대비 부호
-                        stck_prpr = output_data.stck_prpr  # 현재가
-                        prdy_ctrt = output_data.prdy_ctrt  # 전일대비율
+                    if current_price_response.rt_cd == ErrorCode.SUCCESS.value:
+                        output_data = current_price_response.data.get("output", {}) if isinstance(
+                            current_price_response.data, dict) else {}
+                        prdy_vrss_sign = output_data['prdy_vrss_sign']  # 전일대비 부호
+                        stck_prpr = output_data['stck_prpr']  # 현재가
+                        prdy_ctrt = output_data['prdy_ctrt']  # 전일대비율
 
                         # 상한가 부호는 '1' (상한)
                         if prdy_vrss_sign == '1':
@@ -343,7 +347,8 @@ class StockQueryService:
                 self.logger.warning("조회된 시가총액 종목 코드 없음.")
                 return
 
-            upper_limit_stocks : ResCommonResponse = await self.trading_service.get_yesterday_upper_limit_stocks(top_stock_codes)
+            upper_limit_stocks: ResCommonResponse = await self.trading_service.get_yesterday_upper_limit_stocks(
+                top_stock_codes)
 
             if upper_limit_stocks.rt_cd != ErrorCode.SUCCESS.value:
                 print("현재 전일 상한가에 해당하는 종목이 없습니다.")
@@ -379,7 +384,8 @@ class StockQueryService:
                 self.logger.error("get_all_stock_codes.data 리스트가 아님.")
                 return
 
-            upper_limit_stocks : ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(all_stock_codes.data)
+            upper_limit_stocks: ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(
+                all_stock_codes.data)
 
             if upper_limit_stocks.rt_cd != ErrorCode.SUCCESS.value:
                 print("현재 상한가에 해당하는 종목이 없습니다.")
@@ -411,10 +417,10 @@ class StockQueryService:
             print(f"{'매도잔량':>10s} | {'호가':>10s} | {'매수잔량':>10s}")
             print("-" * 40)
             for i in range(min(len(quote_data), 5)):  # 상위 5개 호가만 출력
-                ask_price = quote_data[i].get(f'askp{i + 1}', 'N/A')
-                ask_rem = quote_data[i].get(f'askp_rsqn{i + 1}', 'N/A')
-                bid_price = quote_data[i].get(f'bidp{i + 1}', 'N/A')
-                bid_rem = quote_data[i].get(f'bidp_rsqn{i + 1}', 'N/A')
+                ask_price = quote_data.get(f'askp{i + 1}', 'N/A')
+                ask_rem = quote_data.get(f'askp_rsqn{i + 1}', 'N/A')
+                bid_price = quote_data.get(f'bidp{i + 1}', 'N/A')
+                bid_rem = quote_data.get(f'bidp_rsqn{i + 1}', 'N/A')
                 print(f"{ask_rem:>10s} | {ask_price:>10s} |")
                 print(f"{'':>23s} | {bid_price:>10s} | {bid_rem:>10s}")
             print("-" * 40)
@@ -569,7 +575,6 @@ class StockQueryService:
             msg = response.msg1 if response else "응답 없음"
             print(f"\n실패: {etf_code} ETF 정보 조회. ({msg})")
             self.logger.error(f"{etf_code} ETF 정보 조회 실패: {msg}")
-
 
     async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
         """

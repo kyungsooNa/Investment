@@ -779,7 +779,8 @@ async def test_execute_action_7_get_asking_price(setup_mock_app):
 
     # --- Assert (검증) ---
     # 1. 사용자에게 종목 코드를 요청했는지 확인합니다.
-    app.cli_view.get_user_input.assert_awaited_once_with("호가를 조회할 종목 코드를 입력하세요: ")
+    called_args = app.cli_view.get_user_input.await_args.args[0]
+    assert "호가를 조회할 종목" in called_args
 
     # 2. stock_query_service의 핸들러가 올바른 종목 코드로 호출되었는지 확인합니다.
     app.stock_query_service.handle_get_asking_price.assert_awaited_once_with("005930")

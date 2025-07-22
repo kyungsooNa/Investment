@@ -1,12 +1,12 @@
 # common/types.py
-import enum
 from dataclasses import dataclass
-from typing import Optional, Any, Generic, TypeVar
+from typing import Optional, Generic, TypeVar
+from enum import Enum, auto
 
 T = TypeVar("T")
 
 # API 응답 결과의 성공/실패를 나타내는 Enum
-class ErrorCode(enum.Enum):
+class ErrorCode(Enum):
     SUCCESS = "0"
     API_ERROR = "100"       # 외부 API 호출 실패
     PARSING_ERROR = "101"   # 응답 파싱 실패
@@ -183,3 +183,9 @@ class ResCommonResponse(Generic[T]):
     rt_cd: str
     msg1: str
     data: Optional[T] = None
+
+class ResponseStatus(Enum):
+    RETRY = auto()
+    FATAL_ERROR = auto()
+    HTTP_ERROR = auto()
+    PARSING_ERROR = auto()
