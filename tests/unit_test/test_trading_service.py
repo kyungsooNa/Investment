@@ -60,10 +60,10 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.data), 1)
 
         stock = result.data[0]
-        self.assertEqual(stock["code"], "000660")
-        self.assertEqual(stock["name"], "SK하이닉스")
-        self.assertEqual(stock["current_price"], 30000)
-        self.assertAlmostEqual(stock["change_rate"], 29.99)
+        self.assertEqual(stock.code, "000660")
+        self.assertEqual(stock.name, "SK하이닉스")
+        self.assertEqual(stock.current_price, 30000)
+        self.assertAlmostEqual(stock.change_rate, 29.99)
 
         self.mock_broker_api_wrapper.get_price_summary.assert_any_call("000660")
         self.mock_broker_api_wrapper.get_price_summary.assert_any_call("005930")
@@ -135,10 +135,10 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
         self.assertEqual(len(result.data), 1)
 
-        self.assertEqual(result.data[0]["code"], "CODEC")
-        self.assertEqual(result.data[0]["name"], "종목C")
-        self.assertEqual(result.data[0]["current_price"], 40000)
-        self.assertAlmostEqual(result.data[0]["change_rate"], 29.99)
+        self.assertEqual(result.data[0].code, "CODEC")
+        self.assertEqual(result.data[0].name, "종목C")
+        self.assertEqual(result.data[0].current_price, 40000)
+        self.assertAlmostEqual(result.data[0].change_rate, 29.99)
 
         self.mock_logger.warning.assert_called_once()
         self.assertIn("CODEF 현재 상한가 필터링 중 오류", self.mock_logger.warning.call_args.args[0])
@@ -172,10 +172,10 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.data), 1)
 
         stock = result.data[0]
-        self.assertEqual(stock["code"], "CODED")
-        self.assertEqual(stock["name"], "종목D")
-        self.assertEqual(stock["current_price"], 50000)
-        self.assertAlmostEqual(stock["change_rate"], 29.99)
+        self.assertEqual(stock.code, "CODED")
+        self.assertEqual(stock.name, "종목D")
+        self.assertEqual(stock.current_price, 50000)
+        self.assertAlmostEqual(stock.change_rate, 29.99)
 
         # 예외 로그 발생 여부 확인
         self.mock_logger.warning.assert_called_with("CODEE 현재 상한가 필터링 중 오류: 강제 API 예외")
@@ -312,10 +312,10 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.data), 1)  # ✅ 이제 통과됨
 
         item = result.data[0]
-        self.assertEqual(item["code"], "CODEC")
-        self.assertEqual(item["name"], "종목C")
-        self.assertEqual(item["current_price"], 40000)
-        self.assertAlmostEqual(item["change_rate"], 29.99)
+        self.assertEqual(item.code, "CODEC")
+        self.assertEqual(item.name, "종목C")
+        self.assertEqual(item.current_price, 40000)
+        self.assertAlmostEqual(item.change_rate, 29.99)
 
         self.mock_broker_api_wrapper.get_price_summary.assert_any_call("CODEF")
         self.mock_broker_api_wrapper.get_price_summary.assert_any_call("CODEC")

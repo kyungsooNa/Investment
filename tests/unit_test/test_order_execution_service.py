@@ -8,6 +8,7 @@ from brokers.korea_investment.korea_invest_token_manager import TokenManager
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
 from types import SimpleNamespace
 
+
 # 모든 테스트를 하나의 AsyncioTestCase 클래스 내에 통합합니다.
 # asyncSetUp 메서드가 모든 비동기 테스트 케이스에 대해 올바르게 mock 객체를 초기화하도록 합니다.
 # 동기 메서드(_get_sign_from_code)도 이 클래스 내에서 테스트할 수 있습니다.
@@ -173,7 +174,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             self.mock_logger.info.assert_called()
             self.assertTrue(result)
 
-
     async def test_handle_get_top_10_market_cap_stocks_with_prices_empty_list(self):
         # TC 5.2
         self.mock_trading_service.get_top_10_market_cap_stocks_with_prices.return_value = ResCommonResponse(
@@ -181,11 +181,10 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             msg1="정상",
             data=[]
         )
-        with patch('builtins.print'): # patch 'builtins.print' but don't assert specific calls
+        with patch('builtins.print'):  # patch 'builtins.print' but don't assert specific calls
             result = await self.handler.handle_get_top_10_market_cap_stocks_with_prices()
             self.mock_logger.info.assert_called()
-            self.assertTrue(result) # 빈 리스트는 True로 평가됨
-
+            self.assertTrue(result)  # 빈 리스트는 True로 평가됨
 
     # --- handle_display_stock_change_rate 함수 테스트 ---
     async def test_handle_display_stock_change_rate_increase(self):
@@ -193,7 +192,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "70000", "prdy_vrss": "1000", "prdy_vrss_sign": "2", "prdy_ctrt": "1.45"
+                "output": {
+                    "stck_prpr": "70000",
+                    "prdy_vrss": "1000",
+                    "prdy_vrss_sign": "2",
+                    "prdy_ctrt": "1.45"
+                }
             }
         )
         with patch('builtins.print') as mock_print:
@@ -208,10 +212,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "68000",
-                "prdy_vrss": "1000",
-                "prdy_vrss_sign": "5",  # 하락
-                "prdy_ctrt": "1.45"
+                "output": {
+                    "stck_prpr": "68000",
+                    "prdy_vrss": "1000",
+                    "prdy_vrss_sign": "5",  # 하락
+                    "prdy_ctrt": "1.45"
+                }
             }
         )
 
@@ -226,7 +232,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "69000", "prdy_vrss": "0", "prdy_vrss_sign": "3", "prdy_ctrt": "0.00"
+                "output": {
+                    "stck_prpr": "69000", "prdy_vrss": "0", "prdy_vrss_sign": "3", "prdy_ctrt": "0.00"
+                }
             }
         )
         with patch('builtins.print') as mock_print:
@@ -240,7 +248,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "N/A", "prdy_vrss_sign": "N/A", "prdy_ctrt": "N/A"
+                "output": {
+                    "stck_prpr": "N/A", "prdy_vrss_sign": "N/A", "prdy_ctrt": "N/A"
+                }
             }
         )
         with patch('builtins.print') as mock_print:
@@ -256,7 +266,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "70000", "prdy_vrss": "ABC", "prdy_vrss_sign": "2", "prdy_ctrt": "1.45"
+                "output": {
+                    "stck_prpr": "70000", "prdy_vrss": "ABC", "prdy_vrss_sign": "2", "prdy_ctrt": "1.45"
+                }
             }
         )
         with patch('builtins.print') as mock_print:
@@ -358,11 +370,14 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
-            data=SimpleNamespace(
-                prdy_vrss_sign="1",
-                stck_prpr="70000",
-                prdy_ctrt="30.00"
-            )
+            data={
+                "output": {
+                    "prdy_vrss_sign": "1",
+                    "stck_prpr": "70000",
+                    "prdy_ctrt": "30.00"
+                }
+            }
+
         )
 
         with patch('builtins.print') as mock_print:
@@ -405,7 +420,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
                     data_rank="1",
                     hts_kor_isnm="삼성전자",
                     acc_trdvol="123456"
-                )            ]
+                )]
         )
         self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
             rt_cd="1",
@@ -489,9 +504,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "70000",
-                "stck_oprc": "69000",
-                "oprc_vrss_prpr_sign": "2"
+                "output": {
+                    "stck_prpr": "70000",
+                    "stck_oprc": "69000",
+                    "oprc_vrss_prpr_sign": "2"
+                }
             }
         )
 
@@ -506,9 +523,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "68000",  # 현재가
-                "stck_oprc": "69000",  # 시가
-                "oprc_vrss_prpr_sign": "5"  # 시가대비 부호 (하락)
+                "output": {
+                    "stck_prpr": "68000",  # 현재가
+                    "stck_oprc": "69000",  # 시가
+                    "oprc_vrss_prpr_sign": "5"  # 시가대비 부호 (하락)
+                }
             }
         )
         with patch('builtins.print') as mock_print:
@@ -522,9 +541,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "69000", # 현재가
-                "stck_oprc": "69000", # 시가
-                "oprc_vrss_prpr_sign": "3" # 시가대비 부호 (보합)
+                "output": {
+                    "stck_prpr": "69000",  # 현재가
+                    "stck_oprc": "69000",  # 시가
+                    "oprc_vrss_prpr_sign": "3"  # 시가대비 부호 (보합)
+                }
             }
         )
         with patch('builtins.print') as mock_print:
@@ -538,14 +559,16 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "70000",
-                "stck_oprc": "0", # 시가 0원
-                "oprc_vrss_prpr_sign": "2"
+                "output": {
+                    "stck_prpr": "70000",
+                    "stck_oprc": "0",  # 시가 0원
+                    "oprc_vrss_prpr_sign": "2"
+                }
             }
         )
         with patch('builtins.print') as mock_print:
             await self.handler.handle_display_stock_vs_open_price("005930")
-            mock_print.assert_any_call("  시가대비 등락률: +70000원 (N/A)") # 시가대비 금액은 계산되지만, 퍼센트는 N/A
+            mock_print.assert_any_call("  시가대비 등락률: +70000원 (N/A)")  # 시가대비 금액은 계산되지만, 퍼센트는 N/A
             self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_vs_open_price_missing_price_data(self):
@@ -554,9 +577,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "N/A",  # 현재가 누락
-                "stck_oprc": "69000",
-                "oprc_vrss_prpr_sign": "2"
+                "output": {
+                    "stck_prpr": "N/A",  # 현재가 누락
+                    "stck_oprc": "69000",
+                    "oprc_vrss_prpr_sign": "2"
+                }
             }
         )
         with patch('builtins.print') as mock_print:
@@ -583,6 +608,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
+                "output": {}  # ✅ 빈 딕셔너리라도 명시적으로 output 키가 있어야 함
             }
         )
         with patch('builtins.print') as mock_print:
@@ -673,10 +699,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "stck_prpr": "70000",
-                "prdy_vrss": "1500",
-                "prdy_vrss_sign": "2",
-                "prdy_ctrt": "2.19"
+                "output": {
+                    "stck_prpr": "70000",
+                    "prdy_vrss": "1500",
+                    "prdy_vrss_sign": "2",
+                    "prdy_ctrt": "2.19"
+                }
             }
         )
 
@@ -696,10 +724,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                'stck_prpr': '70000',
-                'prdy_vrss': '1500', # 전일대비 +1500원
-                'prdy_vrss_sign': '2', # 2:상승
-                'prdy_ctrt': '2.19' # 전일대비율
+                "output": {
+                    'stck_prpr': '70000',
+                    'prdy_vrss': '1500',  # 전일대비 +1500원
+                    'prdy_vrss_sign': '2',  # 2:상승
+                    'prdy_ctrt': '2.19'  # 전일대비율
+                }
             }
         )
 
@@ -719,10 +749,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                'stck_prpr': '90000',
-                'prdy_vrss': '2000', # 전일대비 -2000원
-                'prdy_vrss_sign': '5', # 5:하락
-                'prdy_ctrt': '2.17' # 전일대비율
+                "output": {
+                    'stck_prpr': '90000',
+                    'prdy_vrss': '2000',  # 전일대비 -2000원
+                    'prdy_vrss_sign': '5',  # 5:하락
+                    'prdy_ctrt': '2.17'  # 전일대비율
+                }
             }
         )
         await self.handler.handle_display_stock_change_rate(stock_code)
@@ -738,10 +770,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                'stck_prpr': '50000',
-                'prdy_vrss': '0', # 전일대비 0원
-                'prdy_vrss_sign': '3', # 3:보합 (또는 기타)
-                'prdy_ctrt': '0.00' # 전일대비율
+                "output": {
+                    'stck_prpr': '50000',
+                    'prdy_vrss': '0',  # 전일대비 0원
+                    'prdy_vrss_sign': '3',  # 3:보합 (또는 기타)
+                    'prdy_ctrt': '0.00'  # 전일대비율
+                }
             }
         )
 

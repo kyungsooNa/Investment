@@ -234,7 +234,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=[]
             )
 
-        batch = response.data[:count]
+        batch = response.data.get('output','')[:count]
         self.logger.info(f"API로부터 수신한 종목 수: {len(batch)}")
 
         results = []

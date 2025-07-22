@@ -58,15 +58,22 @@ def make_stock_response(prdy_vrss_sign: str, stck_prpr: str, prdy_ctrt: str) -> 
         data=stock_data
     )
 
+def make_stock_payload(sign: str, price: str, change_rate: str):
+    return {
+        "prdy_vrss_sign": sign,
+        "stck_prpr": price,
+        "prdy_ctrt": change_rate
+    }
+
 class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         """각 테스트 메서드 실행 전에 필요한 Mock 객체와 핸들러 인스턴스를 설정합니다."""
         # 종속성 Mock 객체 생성
-        self.mock_env = mock.MagicMock(spec=KoreaInvestApiEnv) # MagicMock으로 변경
+        self.mock_env = mock.MagicMock(spec=KoreaInvestApiEnv)  # MagicMock으로 변경
         self.mock_env.is_paper_trading = False  # 기본값 설정
         self.mock_logger = MockLogger()
-        self.mock_time_manager = mock.MagicMock(spec_set=TimeManager) # MagicMock으로 변경
+        self.mock_time_manager = mock.MagicMock(spec_set=TimeManager)  # MagicMock으로 변경
         self.mock_time_manager.is_market_open.return_value = True  # 기본값 설정 (시장이 열려있다고 가정)
 
         self.mock_broker_api_wrapper = AsyncMock()
@@ -78,8 +85,8 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         # 각 하위 Mock 객체의 메서드들을 직접 Mock 객체로 할당하고 return_value를 설정합니다.
         # 이렇게 하면 TradingService가 이 Mock 메서드들을 호출할 수 있습니다.
-        self.mock_broker_api_wrapper.client.quotations.get_current_price = mock.AsyncMock() # KoreaInvestApiQuotations의 메서드
-        self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code = mock.AsyncMock() # KoreaInvestApiQuotations의 메서드
+        self.mock_broker_api_wrapper.client.quotations.get_current_price = mock.AsyncMock()  # KoreaInvestApiQuotations의 메서드
+        self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code = mock.AsyncMock()  # KoreaInvestApiQuotations의 메서드
 
         self.mock_broker_api_wrapper.client.account.get_account_balance = mock.AsyncMock()
         self.mock_broker_api_wrapper.client.account.get_real_account_balance = mock.AsyncMock()
@@ -88,7 +95,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         # 📌 TradingService 인스턴스 생성 (주입) - setUp에서 한 번만 생성
         self.trading_service = TradingService(
-            broker_api_wrapper=self.mock_broker_api_wrapper, # 여기에서 Mock api_client를 주입
+            broker_api_wrapper=self.mock_broker_api_wrapper,  # 여기에서 Mock api_client를 주입
             env=self.mock_env,
             logger=self.mock_logger,
             time_manager=self.mock_time_manager
@@ -96,7 +103,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         # 📌 DataHandlers 인스턴스 생성 (handle_upper_limit_stocks 포함) - setUp에서 한 번만 생성
         self.data_handlers = StockQueryService(
-            trading_service=self.trading_service, # 여기에서 Mock trading_service를 주입
+            trading_service=self.trading_service,  # 여기에서 Mock trading_service를 주입
             logger=self.mock_logger,
             time_manager=self.mock_time_manager
         )
@@ -196,7 +203,6 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(self.mock_logger.info.called)
 
-
     @pytest.mark.asyncio
     async def test_handle_upper_limit_stocks_success(self):
         mock_env = MagicMock()
@@ -228,9 +234,21 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         ))
 
         trading_service.get_current_stock_price = AsyncMock(side_effect=[
-            make_stock_response("1", "10000", "30.0"),
-            make_stock_response("2", "100", "1.0"),
-            make_stock_response("1", "5000", "29.8"),
+            ResCommonResponse(
+                rt_cd="0",
+                msg1="정상",
+                data={"output": make_stock_payload("1", "10000", "30.0")}
+            ),
+            ResCommonResponse(
+                rt_cd="0",
+                msg1="정상",
+                data={"output": make_stock_payload("2", "100", "1.0")}
+            ),
+            ResCommonResponse(
+                rt_cd="0",
+                msg1="정상",
+                data={"output": make_stock_payload("1", "5000", "29.8")}
+            ),
         ])
 
         data_handler = StockQueryService(
@@ -245,7 +263,6 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         trading_service.get_top_market_cap_stocks_code.assert_called_once_with("0000")
         assert trading_service.get_current_stock_price.call_count == 3
         assert mock_logger.info.called
-
 
     async def test_handle_upper_limit_stocks_individual_stock_price_failure(self):
         """개별 종목 현재가 조회 실패 시."""
@@ -270,8 +287,16 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         ))
 
         self.trading_service.get_current_stock_price = AsyncMock(side_effect=[
-            make_stock_response("1", "10000", "30.0"),
-            ResCommonResponse(rt_cd="1", msg1="조회 실패", data=None)
+            ResCommonResponse(
+                rt_cd="0",
+                msg1="정상",
+                data={"output": make_stock_payload("1", "10000", "30.0")}
+            ),
+            ResCommonResponse(
+                rt_cd="1",
+                msg1="조회 실패",
+                data=None
+            )
         ])
 
         result = await self.data_handlers.handle_upper_limit_stocks(market_code=market_code, limit=limit)

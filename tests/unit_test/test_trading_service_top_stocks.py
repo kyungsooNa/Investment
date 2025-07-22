@@ -1,9 +1,10 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from services.trading_service import TradingService
-from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem,ResMarketCapStockItem
+from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem, ResMarketCapStockItem
 from typing import List
 import unittest
+
 
 class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -50,10 +51,16 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         self.trading_service.get_current_stock_price = AsyncMock(return_value=ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="성공",
-            data={"stck_prpr": "10000"}
+            data={
+                "output": {
+                    "stck_prpr": "10000",
+                    "prdy_ctrt": "2.35",
+                    "prdy_vrss_sign": "1"
+                }
+            }
         ))
 
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         # 이제는 리스트 1개가 반환되어야 함
         assert isinstance(result.data, List)
@@ -69,7 +76,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
     async def test_market_closed_returns_none(self):
         self.mock_time_manager.is_market_open.return_value = False
 
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         # 수정된 기대값 검증
         assert isinstance(result, ResCommonResponse)
@@ -85,7 +92,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = True
 
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert isinstance(result, ResCommonResponse)
         assert result.rt_cd == ErrorCode.INVALID_INPUT.value
@@ -101,7 +108,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
             return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="API 오류", data=[])
         )
 
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert result.rt_cd == ErrorCode.API_ERROR.value
         assert "API 오류" in result.msg1
@@ -116,7 +123,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
             return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="조회 성공", data=[])
         )
 
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert result.rt_cd == ErrorCode.API_ERROR.value
         assert isinstance(result.data, List)
@@ -157,12 +164,12 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
 
         self.trading_service.get_current_stock_price = AsyncMock(
             side_effect=[
-                ResCommonResponse(rt_cd="0", msg1="성공", data={"stck_prpr": "80000"}),
-                ResCommonResponse(rt_cd="0", msg1="성공", data={"stck_prpr": "130000"}),
+                ResCommonResponse(rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "80000"}}),
+                ResCommonResponse(rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "130000"}}),
             ]
         )
 
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert result.rt_cd == ErrorCode.SUCCESS.value
         assert isinstance(result.data, List)
@@ -195,11 +202,17 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         )
 
         self.trading_service.get_current_stock_price = AsyncMock(side_effect=[
+            # 첫 번째 종목 실패
             ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="실패", data=None),
-            ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data={"stck_prpr": "130000"}),
-        ])
 
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+            # 두 번째 종목 성공 (✅ 'output'으로 감싸기)
+            ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="성공",
+                data={"output": {"stck_prpr": "130000"}}
+            ),
+        ])
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         assert result.rt_cd == ErrorCode.SUCCESS.value
         assert isinstance(result.data, List)
@@ -240,14 +253,14 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
                 ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value,
                     msg1="성공",
-                    data={"stck_prpr": str(10000 + i)}
+                    data={"output": {"stck_prpr": str(10000 + i)}}
                 )
                 for i in range(11)
             ]
         )
 
         # 실행
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         # 검증
         assert result.rt_cd == ErrorCode.SUCCESS.value
@@ -291,7 +304,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         )
 
         # Act
-        result : ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
+        result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
 
         # Assert
         assert result.rt_cd == ErrorCode.API_ERROR.value

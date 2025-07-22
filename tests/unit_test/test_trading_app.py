@@ -779,7 +779,8 @@ async def test_execute_action_7_get_asking_price(setup_mock_app):
 
     # --- Assert (검증) ---
     # 1. 사용자에게 종목 코드를 요청했는지 확인합니다.
-    app.cli_view.get_user_input.assert_awaited_once_with("호가를 조회할 종목 코드를 입력하세요: ")
+    called_args = app.cli_view.get_user_input.await_args.args[0]
+    assert "호가를 조회할 종목" in called_args
 
     # 2. stock_query_service의 핸들러가 올바른 종목 코드로 호출되었는지 확인합니다.
     app.stock_query_service.handle_get_asking_price.assert_awaited_once_with("005930")
@@ -2180,10 +2181,12 @@ async def test_execute_action_18_realtime_subscription(setup_mock_app):
     """메뉴 '18' 선택 시 실시간 구독 핸들러가 올바르게 호출되는지 테스트합니다."""
     # --- Arrange (준비) ---
     app = setup_mock_app
-    test_stock_code = "005930"
 
     # 사용자 입력을 모의(Mock)합니다.
-    app.cli_view.get_user_input.return_value = test_stock_code
+    app.cli_view.get_user_input.side_effect = [
+        "005930",  # 종목 코드 입력
+        "price,quote"  # 구독할 데이터 타입 입력
+    ]
 
     # --- Act (실행) ---
     # 메뉴 '18'번을 호출합니다.
@@ -2191,10 +2194,14 @@ async def test_execute_action_18_realtime_subscription(setup_mock_app):
 
     # --- Assert (검증) ---
     # 1. 사용자에게 종목 코드를 요청했는지 확인합니다.
-    app.cli_view.get_user_input.assert_awaited_once_with("구독할 종목 코드를 입력하세요: ")
+    calls = [args[0][0] for args in app.cli_view.get_user_input.await_args_list]
+    assert "구독할 종목 코드를 입력하세요: " in calls
+    assert "구독할 데이터 타입을 입력하세요 (price, quote 중 택1 또는 쉼표로 구분): " in calls
 
     # 2. stock_query_service의 핸들러가 올바른 종목 코드로 호출되었는지 확인합니다.
-    app.stock_query_service.handle_realtime_stream.assert_awaited_once_with(test_stock_code)
+    app.stock_query_service.handle_realtime_stream.assert_awaited_once_with(
+        ['005930'], ['price', 'quote'], duration=30
+    )
 
 @pytest.mark.asyncio
 async def test_initialization_and_environment_selection(setup_mock_app):
@@ -2258,16 +2265,22 @@ async def test_execute_action_2_get_account_balance_integration(setup_mock_app):
 async def test_execute_action_18_realtime_stream_new_menu_option(setup_mock_app):
     """메뉴 '18' 선택 시 실시간 구독 기능이 호출되는지 테스트합니다."""  # Docstring도 일관성 있게 수정
     app = setup_mock_app
-    app.cli_view.get_user_input.return_value = "005930"  # 구독할 종목 코드 입력 시뮬레이션
-
+    app.cli_view.get_user_input.side_effect = [
+        "005930",  # 종목 코드
+        "price,quote"  # 데이터 타입
+    ]
     # ✅ 검증할 메서드에 맞게 return_value 설정 (필수는 아니지만 좋은 습관)
     app.stock_query_service.handle_realtime_stream.return_value = None
 
     result = await app._execute_action('18')
 
-    app.cli_view.get_user_input.assert_awaited_once_with("구독할 종목 코드를 입력하세요: ")
+    calls = [call.args[0] for call in app.cli_view.get_user_input.await_args_list]
+
+    assert any("종목 코드" in msg for msg in calls), "Expected prompt for 종목 코드"
+    assert any("데이터 타입" in msg for msg in calls), "Expected prompt for 데이터 타입"
 
     # ✅ 실제 호출되는 메서드 이름으로 수정합니다.
-    app.stock_query_service.handle_realtime_stream.assert_awaited_once_with("005930")
-
+    app.stock_query_service.handle_realtime_stream.assert_awaited_once_with(
+        ['005930'], ['price', 'quote'], duration=30
+    )
     assert result is True

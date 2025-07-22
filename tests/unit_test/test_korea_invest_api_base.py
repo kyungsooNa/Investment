@@ -9,7 +9,7 @@ from brokers.korea_investment.korea_invest_token_manager import TokenManager
 import requests
 import logging
 import httpx # 에러 시뮬레이션을 위해 import
-from common.types import ErrorCode, ResCommonResponse
+from common.types import ErrorCode, ResponseStatus
 
 class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -80,7 +80,7 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
             # --- Assert (검증) ---
             # 1. 최종 결과 검증: 두 번째 시도의 성공적인 결과값이 반환되었는지 확인합니다.
             self.assertIsNotNone(final_result)
-            self.assertEqual(final_result.data.get("result"), "success_data")
+            self.assertEqual(final_result.data["output"].get("result"), "success_data")
 
             # 2. 호출 횟수 검증: API가 총 2번 호출되었는지 확인합니다. (첫 시도 실패 -> 재시도 성공)
             self.assertEqual(mock_execute.call_count, 2)
@@ -132,37 +132,7 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
         # 토큰 매니저의 invalidate_token이 호출되지 않았는지 확인 (config가 없으므로)
         self.mock_token_manager.invalidate_token.assert_not_called()
 
-        # 결과는 None이어야 함 (141번 라인 커버)
-        self.assertIsNone(result)
-
-    # --- 165, 166번 라인 커버: _handle_token_expiration에서 재시도 횟수 초과 ---
-    # async def test_handle_token_expiration_retry_exceeded(self):
-    #     """
-    #     TC: _handle_token_expiration 메서드에서 재시도 횟수를 초과했을 때
-    #         (attempt >= retry_count) 에러 로깅 후 None을 반환하는지 테스트합니다.
-    #     이는 brokers/korea_investment/korea_invest_api_base.py의 165, 166번 라인을 커버합니다.
-    #     """
-    #     # Given:
-    #     mock_response_json = {"msg_cd": "EGW00123"}
-    #     attempt = 3
-    #     retry_count = 3  # attempt == retry_count 이므로 재시도 초과
-    #
-    #     with patch('asyncio.sleep', new_callable=AsyncMock) as mock_asyncio_sleep:
-    #         result = await self.api_base._handle_token_expiration(
-    #             mock_response_json, attempt, retry_count, delay=1
-    #         )
-    #
-    #         self.mock_token_manager.invalidate_token.assert_called_once()
-    #
-    #         # 📌 수정된 부분: assert_called_once_with 대신 assert_called_with를 사용합니다.
-    #         #    혹은 mock_logger.error.call_args_list[-1]을 사용하여 마지막 호출을 검증할 수도 있습니다.
-    #         self.mock_logger.error.assert_called_with("토큰 재발급 후에도 실패, 종료")  # 165번 라인 커버
-    #
-    #         # self.mock_logger.error가 총 2번 호출되었는지 검증 (옵션)
-    #         self.assertEqual(self.mock_logger.error.call_count, 2)
-    #
-    #         self.assertIsNone(result)  # 166번 라인 커버
-    #         mock_asyncio_sleep.assert_not_awaited()
+        self.assertEqual(result, ResponseStatus.PARSING_ERROR)  # 또는 ResponseStatus.FATAL_ERROR
 
 
 class DummyAPI(KoreaInvestApiBase):
@@ -293,7 +263,7 @@ async def testcall_api_success(caplog):
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert result.msg1 == "정상"
-    assert result.data == {"key": "value"}
+    assert result.data.get("output") == {"key": "value"}
 
     # 이제 dummy._log_request_exception은 MagicMock이므로 assert_not_called() 사용 가능
     dummy._log_request_exception.get.assert_not_called()
@@ -364,7 +334,7 @@ async def testcall_api_retry_on_429(mock_sleep, caplog):
 
     assert result.rt_cd == "0"
     assert result.msg1 == "정상"
-    assert result.data == {"success": True}
+    assert result.data["output"]["success"] is True  # ✅ 성공
 
     assert len(responses_list) == 3 # 3번의 응답 객체가 생성되었는지 확인 (2번 실패, 1번 성공)
     assert dummy._async_session.get.call_count == 3 # 모의 get 메서드가 3번 호출되었는지 확인
@@ -421,7 +391,7 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
 
     assert result.rt_cd == "0"
     assert result.msg1 == "정상"
-    assert result.data == {'success': True}
+    assert result.data["output"] == {"success": True}
 
     assert len(responses_list) == 3
     assert dummy._async_session.get.call_count == 3
@@ -498,7 +468,7 @@ async def testcall_api_token_expired_retry():
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert result.msg1 == "정상"
-    assert result.data == {"success": True}
+    assert result.data["output"] == {"success": True}
     assert token_manager.invalidated is True
     assert dummy._async_session.get.call_count == 2
 

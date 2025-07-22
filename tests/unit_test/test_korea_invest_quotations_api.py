@@ -221,19 +221,16 @@ async def test_get_price_summary_invalid_response(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_success(mock_quotations):
-
-    mock_top_response = {
-        "output": [
-            {"iscd": "005930", "mksc_shrn_iscd": "005930", "stck_avls": "500000000000"},
-            {"iscd": "000660", "mksc_shrn_iscd": "000660", "stck_avls": "120000000000"}
-        ]
-    }
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
         rt_cd="0",
-        msg1="정상",
-        data=mock_top_response["output"]
-    ))  # get_stock_name_by_code는 이 함수에서 호출되지 않으므로 mock 불필요
-    # mock_quotations.get_stock_name_by_code = AsyncMock(return_value="삼성전자")
+        msg1="SUCCESS",
+        data={
+            "output": [
+                {"iscd": "005930", "mksc_shrn_iscd": "005930", "stck_avls": "500000000000"},
+                {"iscd": "000660", "mksc_shrn_iscd": "000660", "stck_avls": "120000000000"}
+            ]
+        }
+    ))
 
     result_common = await mock_quotations.get_top_market_cap_stocks_code("0000", count=2)
 
@@ -447,10 +444,12 @@ async def test_get_top_market_cap_stocks_success_revised(mock_quotations):
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
         rt_cd="0",
         msg1="SUCCESS",
-        data=[
-            {"iscd": "005930", "mksc_shrn_iscd": "005930", "stck_avls": "500,000,000,000"},
-            {"iscd": "000660", "mksc_shrn_iscd": "000660", "stck_avls": "120,000,000,000"}
-        ]
+        data={
+            "output": [
+                {"iscd": "005930", "mksc_shrn_iscd": "005930", "stck_avls": "500,000,000,000"},
+                {"iscd": "000660", "mksc_shrn_iscd": "000660", "stck_avls": "120,000,000,000"}
+            ]
+        }
     ))
 
     # get_stock_name_by_code는 이 함수에서 호출되지 않으므로 mock 불필요.
@@ -529,11 +528,14 @@ async def test_get_top_market_cap_stocks_count_validation(mock_quotations):
     mock_api_response_large = ResCommonResponse(
         rt_cd="0",
         msg1="SUCCESS",
-        data=[
-            {"iscd": f"{i:06d}", "mksc_shrn_iscd": f"{i:06d}", "stck_avls": f"{1000000000 + i}"}
-            for i in range(40)
-        ]
+        data={
+            "output": [
+                {"iscd": f"{i:06d}", "mksc_shrn_iscd": f"{i:06d}", "stck_avls": f"{1000000000 + i}"}
+                for i in range(40)
+            ]
+        }
     )
+
     mock_quotations.call_api.return_value = mock_api_response_large
 
     result_exceed_max_common = await mock_quotations.get_top_market_cap_stocks_code("0000", count=50)
@@ -671,12 +673,14 @@ async def test_get_top_market_cap_stocks_item_missing_keys(mock_quotations):
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
         rt_cd="0",
         msg1="SUCCESS",
-        data=[
-            {"iscd": "005930", "stck_avls": "500,000,000,000"},
-            {"mksc_shrn_iscd": "000660"},  # stck_avls 없음
-            {"stck_avls": "100,000,000,000"},  # iscd 없음
-            {"iscd": "000770", "stck_avls": "INVALID"}  # 시총 파싱 실패 → 0으로 처리
-        ]
+        data={
+            "output": [
+                {"iscd": "005930", "stck_avls": "500,000,000,000"},
+                {"mksc_shrn_iscd": "000660"},  # stck_avls 없음
+                {"stck_avls": "100,000,000,000"},  # iscd 없음
+                {"iscd": "000770", "stck_avls": "INVALID"}  # 시총 파싱 실패 → 0으로 처리
+            ]
+        }
     ))
 
     # get_stock_name_by_code는 이 함수에서 호출되지 않으므로 mock 불필요.
@@ -1232,6 +1236,7 @@ async def test_get_stock_news_success(mock_quotations):
     assert result.rt_cd == "0"
     mock_quotations.logger.info.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_get_top_foreign_buying_stocks_success(mock_quotations):
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
@@ -1240,6 +1245,7 @@ async def test_get_top_foreign_buying_stocks_success(mock_quotations):
     result = await mock_quotations.get_top_foreign_buying_stocks()
     assert result.rt_cd == "0"
     mock_quotations.logger.info.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_get_etf_info_success(mock_quotations):

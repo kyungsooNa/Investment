@@ -10,7 +10,7 @@ import asyncio
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
     ResPriceSummary, ResCommonResponse, ErrorCode, ResMarketCapStockItem,
-    ResTopMarketCapApiItem,
+    ResTopMarketCapApiItem,ResBasicStockInfo
 )
 
 class TradingService:
@@ -234,7 +234,7 @@ class TradingService:
                 current_price_response_common: ResCommonResponse = await self.get_current_stock_price(stock_code)
                 if current_price_response_common.rt_cd == ErrorCode.SUCCESS.value: # Enum 값 사용
                     current_price_output_data = current_price_response_common.data
-                    current_price = current_price_output_data.get('stck_prpr', 'N/A')
+                    current_price = current_price_output_data.get('output').get('stck_prpr', 'N/A')
                     results.append(ResMarketCapStockItem(
                         rank=stock_rank,
                         name=stock_name,
@@ -262,7 +262,6 @@ class TradingService:
                 data=[]
             )
 
-    # @TODO TC 추가 필요
     async def get_yesterday_upper_limit_stocks(self, stock_codes: List[str]) -> ResCommonResponse:
         """
         전체 종목 리스트 중 어제 상한가에 도달한 종목을 필터링합니다. (TODO: 재검증 및 TC 추가 필요)
@@ -307,7 +306,7 @@ class TradingService:
         전체 종목 리스트 중 현재 상한가에 도달한 종목을 필터링합니다.
         ResCommonResponse 형태로 반환하며, data 필드에 List[Dict] (종목 정보) 포함.
         """
-        results = []
+        results: List[ResBasicStockInfo] = []
         total_stocks = len(stock_codes)
         progress_step = max(1, total_stocks // 10)
 
@@ -335,14 +334,15 @@ class TradingService:
                 name = name_response_common  # get_name_by_code는 현재 문자열을 직접 반환
 
                 if prdy_ctrt > 29.0:  # 등락률 조건 (전일 대비 29% 이상을 상한가로 간주)
-                    results.append({
-                        "code": code,
-                        "name": name,
-                        "open_price": open_price,
-                        "current_price": current_price,
-                        "change_rate": price_info.change_rate,
-                        "prdy_ctrt": prdy_ctrt
-                    })
+                    stock_info = ResBasicStockInfo(
+                        code=code,
+                        name=name,
+                        open_price=open_price,
+                        current_price=current_price,
+                        change_rate=price_info.change_rate,
+                        prdy_ctrt=prdy_ctrt
+                    )
+                    results.append(stock_info)
             except Exception as e:
                 self._logger.warning(f"{code} 현재 상한가 필터링 중 오류: {e}")
                 continue  #
@@ -353,7 +353,7 @@ class TradingService:
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
             msg1="현재 상한가 종목 필터링 성공",
-            data=results
+            data=results  # List[ResBasicStockInfo]
         )
 
     # `get_current_upper_limit_stocks` 메서드가 정의된 클래스 내부에 다음 헬퍼 메서드를 추가합니다.
