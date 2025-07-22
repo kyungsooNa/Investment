@@ -196,6 +196,7 @@ class TradingService:
         self._logger.info("Service - 시가총액 1~10위 종목 현재가 조회 요청")
 
         if self._time_manager and not self._time_manager.is_market_open():
+            print("시장이 닫혀 있어 시가총액 1~10위 종목 현재가 조회를 수행할 수 없습니다.")
             self._logger.warning("시장이 닫혀 있어 시가총액 1~10위 종목 현재가 조회를 수행할 수 없습니다.")
             return ResCommonResponse(
                 rt_cd=ErrorCode.INVALID_INPUT.value, # Enum 값 사용

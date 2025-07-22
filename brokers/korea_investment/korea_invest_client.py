@@ -5,7 +5,10 @@ from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAcco
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
+import certifi
 import logging
+import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
+import ssl
 from typing import Any
 from common.types import ResCommonResponse
 
@@ -43,12 +46,14 @@ class KoreaInvestApiClient:
 
         # 각 도메인별 API 클래스 인스턴스화
         # _config에서 바로 base_url을 가져와 전달
+        shared_client = httpx.AsyncClient(verify=ssl.create_default_context(cafile=certifi.where()))
+
         self._quotations = KoreaInvestApiQuotations(base_url, common_headers_template, self._config,
-                                                   self._token_manager,self._logger)
+                                                   self._token_manager,self._logger, async_client=shared_client)
         self._account = KoreaInvestApiAccount(base_url, common_headers_template, self._config,
-                                             self._token_manager, self._logger)
+                                             self._token_manager, self._logger, async_client=shared_client)
         self._trading = KoreaInvestApiTrading(base_url, common_headers_template, self._config,
-                                             self._token_manager, self._logger)
+                                             self._token_manager, self._logger, async_client=shared_client)
         self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger)
 
 

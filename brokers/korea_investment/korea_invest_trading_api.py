@@ -3,16 +3,16 @@ import requests
 import json
 import os
 import certifi
-import hashlib
-import logging
 import asyncio  # 비동기 처리를 위해 추가
+import httpx
 
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
+from typing import Optional
 
 class KoreaInvestApiTrading(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, token_manager : TokenManager, logger):
-        super().__init__(base_url, headers, config, token_manager, logger)
+    def __init__(self, base_url, headers, config, token_manager : TokenManager, logger, async_client: Optional[httpx.AsyncClient] = None):
+        super().__init__(base_url, headers, config, token_manager, logger, async_client=async_client)
 
     async def _get_hashkey(self, data):  # async def로 변경됨
         """

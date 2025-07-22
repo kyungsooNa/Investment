@@ -1,9 +1,9 @@
 # brokers/korea_investment/korea_invest_quotations_api.py
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 import requests
-
+import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
     ResPriceSummary, ResMomentumStock, ResCommonResponse, ErrorCode,
@@ -12,8 +12,9 @@ from common.types import (
 
 
 class KoreaInvestApiQuotations(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, token_manager: TokenManager, logger=None):
-        super().__init__(base_url, headers, config, token_manager, logger)
+    def __init__(self, base_url, headers, config, token_manager: TokenManager, logger=None,
+                 async_client: Optional[httpx.AsyncClient] = None):
+        super().__init__(base_url, headers, config, token_manager, logger, async_client=async_client)
 
     async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
         """
@@ -75,12 +76,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         }
         self.logger.info(f"{stock_code} 현재가 조회 시도...")
 
-        response : ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=3)
-        
+        response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=3)
+
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self.logger.warning("현재가 조회 실패")
             return response
-        
+
         return response
 
     async def get_price_summary(self, stock_code: str) -> ResCommonResponse:
@@ -222,7 +223,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         }
 
         self.logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code}, 요청개수: {count})")
-        response : ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
+        response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self.logger.warning(f"시가총액 응답 오류 또는 비어 있음: 시가총액 조회 실패")
@@ -234,7 +235,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=[]
             )
 
-        batch = response.data.get('output','')[:count]
+        batch = response.data.get('output', '')[:count]
         self.logger.info(f"API로부터 수신한 종목 수: {len(batch)}")
 
         results = []
@@ -456,9 +457,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_org_adj_prc": fid_org_adj_prc
         }
 
-        response_data : ResCommonResponse = await self.call_api(method="GET",
-                                            path=self._config["paths"]["inquire_daily_itemchartprice"],
-                                            params=params, data=None)
+        response_data: ResCommonResponse = await self.call_api(method="GET",
+                                                               path=self._config["paths"][
+                                                                   "inquire_daily_itemchartprice"],
+                                                               params=params, data=None)
 
         if response_data.rt_cd != ErrorCode.SUCCESS.value:
             error_msg = f"API 응답 비정상: None, 응답: {response_data.data}"

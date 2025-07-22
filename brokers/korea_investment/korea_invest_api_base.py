@@ -9,7 +9,7 @@ import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from brokers.korea_investment.korea_invest_token_manager import TokenManager  # TokenManager를 import
 from common.types import ErrorCode, ResCommonResponse, ResponseStatus
-from typing import Union
+from typing import Union, Optional
 
 
 class KoreaInvestApiBase:
@@ -19,15 +19,19 @@ class KoreaInvestApiBase:
     """
 
     def __init__(self, base_url, headers, config, token_manager: TokenManager,
-                 logger=None):  # base_url, headers, config, logger를 받음
+                 logger=None, async_client: Optional[httpx.AsyncClient] = None):  # base_url, headers, config, logger를 받음
         self.logger = logger if logger else logging.getLogger(__name__)
         self._config = config  # _config는 모든 설정(tr_ids, base_url 등)을 포함
         self._base_url = base_url  # 초기화 시 전달받은 base_url 사용
         self._headers = headers.copy()  # 초기화 시 전달받은 headers 복사하여 사용
         # self._session = requests.Session()  # requests.Session은 동기
         self.token_manager = token_manager
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        self._async_session = httpx.AsyncClient(verify=ssl_context)  # 수정된 부분: ssl_context 사용
+
+        if async_client:
+            self._async_session = async_client
+        else:
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            self._async_session = httpx.AsyncClient(verify=ssl_context)
 
         # urllib3 로거의 DEBUG 레벨을 비활성화하여 call_api의 DEBUG 로그와 분리
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
