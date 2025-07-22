@@ -136,9 +136,9 @@ class TradingApp:
             self.logger.critical("선택된 환경의 토큰 발급에 실패했습니다. 애플리케이션을 종료합니다.")
             return False
 
-        if not await self._complete_api_initialization():
-            self.logger.critical("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
-            return False
+        # if not await self._complete_api_initialization():
+        #     self.logger.critical("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
+        #     return False
 
         return True
 

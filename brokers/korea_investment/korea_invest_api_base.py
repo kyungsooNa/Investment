@@ -29,10 +29,6 @@ class KoreaInvestApiBase:
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         self._async_session = httpx.AsyncClient(verify=ssl_context)  # 수정된 부분: ssl_context 사용
 
-        # httpx.AsyncClient는 비동기 요청에 사용
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        self._async_session = httpx.AsyncClient(verify=ssl_context)
-
         # urllib3 로거의 DEBUG 레벨을 비활성화하여 call_api의 DEBUG 로그와 분리
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
         logging.getLogger('httpcore').setLevel(logging.WARNING)  # httpx의 하위 로거
