@@ -2,6 +2,7 @@
 
 import os
 import pandas as pd
+from utils.stock_info_updater import save_stock_code_list # Import the function
 
 
 class StockCodeMapper:
@@ -13,6 +14,19 @@ class StockCodeMapper:
         if csv_path is None:
             root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
             csv_path = os.path.join(root, "data", "stock_code_list.csv")
+
+        # Check if the CSV file exists, if not, create it
+        if not os.path.exists(csv_path):
+            if self.logger:
+                self.logger.info(f"🔍 종목코드 매핑 CSV 파일 없음. 생성 시작: {csv_path}")
+            try:
+                save_stock_code_list(force_update=True) # Call save function to create the CSV
+                if self.logger:
+                    self.logger.info("✅ 종목코드 매핑 CSV 파일 생성 완료.")
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"❌ 종목코드 매핑 CSV 파일 생성 실패: {e}")
+                raise e
 
         try:
             self.df = pd.read_csv(csv_path, dtype={"종목코드": str})
