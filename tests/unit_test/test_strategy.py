@@ -1,7 +1,5 @@
 import unittest
-import pytest # pytest.mark.asyncio를 사용하기 위함
 from interfaces.strategy import Strategy # 실제 Strategy 클래스 경로에 맞게 수정
-from typing import List, Dict # 타입 힌트 임포트
 
 
 class TestStrategyInterface(unittest.IsolatedAsyncioTestCase):

@@ -1,12 +1,28 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 import builtins
+import logging
 
 # 테스트 대상 모듈 임포트
 from view.cli_view import CLIView
-from core.logger import Logger
 from core.time_manager import TimeManager
 
+def get_test_logger():
+    logger = logging.getLogger("test_logger")
+    logger.setLevel(logging.DEBUG)
+
+    # 기존 핸들러 제거
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 콘솔 출력만 (파일 기록 없음)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    return logger
 
 # --- Pytest 픽스처 정의 ---
 
@@ -21,14 +37,7 @@ def mock_time_manager():
 
 @pytest.fixture
 def mock_logger():
-    """Logger의 MagicMock 인스턴스를 제공하는 픽스처."""
-    mock = MagicMock(spec=Logger)
-    mock.info = MagicMock()
-    mock.warning = MagicMock()
-    mock.error = MagicMock()
-    mock.critical = MagicMock()
-    mock.debug = MagicMock()
-    return mock
+    return get_test_logger()
 
 
 @pytest.fixture

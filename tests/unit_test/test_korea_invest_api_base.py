@@ -11,6 +11,22 @@ import logging
 import httpx  # 에러 시뮬레이션을 위해 import
 from common.types import ErrorCode, ResponseStatus
 
+def get_test_logger():
+    logger = logging.getLogger("test_logger")
+    logger.setLevel(logging.DEBUG)
+
+    # 기존 핸들러 제거
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 콘솔 출력만 (파일 기록 없음)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    return logger
 
 class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -156,7 +172,7 @@ async def testcall_api_retry_exceed_failure(caplog):
         "tr_ids": {},
         "_env_instance": None,
     }
-    logger = logging.getLogger("test_logger")
+    logger = get_test_logger()
     logger.setLevel(logging.ERROR)
 
     api = DummyAPI(base_url, headers, config, MagicMock(), logger)
@@ -825,7 +841,7 @@ async def test_call_api_no_env_instance(caplog):
     caplog.set_level(logging.DEBUG, logger=logger_name)
 
     # 로거 직접 설정 (테스트 환경에서 로깅을 보장)
-    logger = logging.getLogger(logger_name)
+    logger = get_test_logger()
     logger.setLevel(logging.DEBUG)
     logger.propagate = True  # caplog가 로거의 메시지를 받을 수 있도록 전파 설정
 

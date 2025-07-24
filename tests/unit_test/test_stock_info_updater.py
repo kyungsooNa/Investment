@@ -1,15 +1,11 @@
 # tests/test_stock_info_updater.py
 
-import os
-import shutil
 import json
 from datetime import datetime, timedelta
 import pandas as pd # pandas import 추가
-
 import pytest
 from utils import stock_info_updater
-from unittest.mock import patch, mock_open, MagicMock
-import builtins
+from unittest.mock import patch, mock_open
 
 TEST_DATA_DIR = "data_test"
 

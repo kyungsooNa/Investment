@@ -8,6 +8,23 @@ from datetime import datetime, timedelta # datetime 모듈 자체를 사용할 �
 import pytz
 import logging
 
+
+def get_test_logger():
+    logger = logging.getLogger("test_logger")
+    logger.setLevel(logging.DEBUG)
+
+    # 기존 핸들러 제거
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 콘솔 출력만 (파일 기록 없음)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    return logger
 # 테스트용 로거 설정
 @pytest.fixture
 def mock_logger():
@@ -46,16 +63,19 @@ def test_is_market_open_false_after_hours(mock_get_time):
     manager = TimeManager()
     assert manager.is_market_open() is False
 
-
+@patch("core.time_manager.logging.getLogger")
 def test_init_default_values(mock_logger):
     """
     __init__ 메서드의 기본값 설정 및 로거 할당 확인
     """
+    dummy_logger = MagicMock()
+    mock_logger.return_value = dummy_logger
+
     tm = TimeManager()
     assert tm.market_open_time_str == "09:00"
     assert tm.market_close_time_str == "15:30"
     assert tm.timezone_name == "Asia/Seoul"
-    assert isinstance(tm.logger, logging.Logger)  # 기본 로거 확인
+    assert tm.logger == dummy_logger  # 로거가 패치된 것인지 확인
 
     tm_with_custom_logger = TimeManager(logger=mock_logger)
     assert tm_with_custom_logger.logger == mock_logger

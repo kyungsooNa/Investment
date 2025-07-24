@@ -8,6 +8,22 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_token_manager import TokenManager  # TokenManager 임포트
 import pytz
 
+def get_test_logger():
+    logger = logging.getLogger("test_logger")
+    logger.setLevel(logging.DEBUG)
+
+    # 기존 핸들러 제거
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 콘솔 출력만 (파일 기록 없음)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    return logger
 
 class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -153,7 +169,7 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
             "tr_ids": {},
             "custtype": "P"
         }
-        mock_logger = MagicMock(spec=logging.Logger)
+        mock_logger = MagicMock(spec=get_test_logger())
 
         # When & Then: ValueError가 발생하는지 검증
         with self.assertRaisesRegex(ValueError, "API URL 또는 WebSocket URL이 config.yaml에 올바르게 설정되지 않았습니다."):

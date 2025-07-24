@@ -2,7 +2,6 @@
 
 import pytest
 import pandas as pd
-from unittest.mock import patch, MagicMock
 import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch

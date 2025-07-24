@@ -8,10 +8,27 @@ from strategies.GapUpPullback_strategy import GapUpPullbackStrategy
 # MockBroker 클래스는 더 이상 필요 없습니다.
 # 직접 AsyncMock을 사용하여 broker를 모킹할 것입니다.
 
+def get_test_logger():
+    logger = logging.getLogger("test_logger")
+    logger.setLevel(logging.DEBUG)
+
+    # 기존 핸들러 제거
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 콘솔 출력만 (파일 기록 없음)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    return logger
+
 # 기존 test_gapup_pullback_strategy_selection 함수 수정 (broker 모킹 방식 변경)
 @pytest.mark.asyncio
 async def test_gapup_pullback_strategy_selection():
-    logger = logging.getLogger("test")
+    logger = get_test_logger()
     logger.setLevel(logging.INFO)
 
     # 📌 MockBroker 인스턴스 대신 AsyncMock을 사용하고 메서드를 설정합니다.
@@ -73,7 +90,7 @@ async def test_run_missing_price_data():
         경고 로깅 후 해당 종목을 건너뛰는지 테스트합니다.
     이는 strategies/GapUpPullback_strategy.py의 35-37번 라인을 커버합니다.
     """
-    logger = logging.getLogger("test_missing_data")
+    logger = get_test_logger()
     logger.setLevel(logging.WARNING) # 경고 레벨 로깅을 확인하기 위해 WARNING으로 설정
 
     # 📌 MockBroker 인스턴스 대신 AsyncMock을 사용하고 메서드를 설정합니다.
