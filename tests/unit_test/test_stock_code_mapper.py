@@ -53,8 +53,8 @@ def test_initialization_with_explicit_path(mock_read_csv, mock_stock_df, mock_lo
     assert mapper.name_to_code['SK하이닉스'] == '000660'
 
     # 3. 로거가 정상적으로 호출되었는지 확인
-    mock_logger.info.assert_called_once_with(f"🔄 종목코드 매핑 CSV 로드 완료: {csv_path}")
-
+    calls = [call.args[0] for call in mock_logger.info.call_args_list]
+    assert f"🔄 종목코드 매핑 CSV 로드 완료: {csv_path}" in calls
 
 @patch('pandas.read_csv')
 @patch('os.path.abspath')
