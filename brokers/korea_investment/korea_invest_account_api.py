@@ -2,12 +2,12 @@
 
 import httpx
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv # TokenManager를 import
 from typing import Optional
 
 class KoreaInvestApiAccount(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, token_manager: TokenManager, logger=None, async_client: Optional[httpx.AsyncClient] = None):
-        super().__init__(base_url, headers, config, token_manager, logger, async_client=async_client)
+    def __init__(self, base_url, headers, config, env: KoreaInvestApiEnv, logger=None, async_client: Optional[httpx.AsyncClient] = None):
+        super().__init__(base_url, headers, config, env, logger, async_client=async_client)
 
     async def get_account_balance(self):  # 모의투자용
         path = "/uapi/domestic-stock/v1/trading/inquire-balance"
@@ -32,7 +32,7 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": ""
         }
-        self.logger.info(f"계좌 잔고 조회 시도...")
+        self._logger.info(f"계좌 잔고 조회 시도...")
         return await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가
 
     async def get_real_account_balance(self):  # 실전용
@@ -67,5 +67,5 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": ""
         }
-        self.logger.info(f"실전 계좌 잔고 조회 시도...")
+        self._logger.info(f"실전 계좌 잔고 조회 시도...")
         return await self.call_api('GET', path, params=params, retry_count=1)  # <--- retry_count 추가

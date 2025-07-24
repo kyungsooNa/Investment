@@ -126,9 +126,11 @@ async def test_get_current_price_full_integration(real_app_instance, mocker):
     # --- Arrange ---
     app = real_app_instance
     test_price_data = {
-        "stck_prpr": "70500",
-        "prdy_vrss": "1200",
-        "prdy_ctrt": "1.73"
+        "output": {
+            "stck_prpr": "70500",
+            "prdy_vrss": "1200",
+            "prdy_ctrt": "1.73"
+        }
     }
 
     mock_api_response = ResCommonResponse(
@@ -315,9 +317,11 @@ async def test_display_stock_change_rate_full_integration(real_app_instance, moc
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="정상",
         data={
-            "stck_prpr": "70500",
-            "prdy_vrss": "1200",
-            "prdy_ctrt": "1.73"
+            "output": {
+                "stck_prpr": "70500",
+                "prdy_vrss": "1200",
+                "prdy_ctrt": "1.73"
+            }
         }
     )
 
@@ -351,10 +355,12 @@ async def test_display_stock_vs_open_price_full_integration(real_app_instance, m
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="정상",
         data={
-            "stck_prpr": "70500",
-            "stck_oprc": "69500",
-            "prdy_vrss": "1000",
-            "prdy_ctrt": "1.44"
+            "output": {
+                "stck_prpr": "70500",
+                "stck_oprc": "69500",
+                "prdy_vrss": "1000",
+                "prdy_ctrt": "1.44"
+            }
         }
     )
 
@@ -657,8 +663,8 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration(real_ap
         msg1="정상",
         data={
             "output": [
-                {"mksc_shrn_iscd": "005930", "stck_avls": "1000000000", "stock_name": "삼성전자", "stock_rank": "1"},
-                {"mksc_shrn_iscd": "000660", "stck_avls": "500000000", "stock_name": "SK하이닉스", "stock_rank": "2"}
+                {"mksc_shrn_iscd": "005930", "stck_avls": "1000000000", "hts_kor_isnm": "삼성전자", "data_rank": "1"},
+                {"mksc_shrn_iscd": "000660", "stck_avls": "500000000", "hts_kor_isnm": "SK하이닉스", "data_rank": "2"}
             ]
         }
     )
@@ -667,11 +673,11 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration(real_ap
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="정상",
         data={
-            "output":{
-                    "stck_prpr": "70500",
-                    "prdy_vrss": "1200",
-                    "prdy_ctrt": "1.73"
-                }
+            "output": {
+                "stck_prpr": "70500",
+                "prdy_vrss": "1200",
+                "prdy_ctrt": "1.73"
+            }
         }
     )
 
@@ -1097,14 +1103,14 @@ async def test_execute_action_invalidate_token_success(real_app_instance, mocker
     app = real_app_instance
 
     # ✅ 의존성 모킹
-    app.token_manager.invalidate_token = MagicMock()
+    app.env.invalidate_token = MagicMock()
     app.cli_view.display_token_invalidated_message = MagicMock()
 
     # --- 실행 ---
     running_status = await app._execute_action("98")
 
     # --- 검증 ---
-    app.token_manager.invalidate_token.assert_called_once()
+    app.env.invalidate_token.assert_called_once()
     app.cli_view.display_token_invalidated_message.assert_called_once()
     assert running_status is True
 

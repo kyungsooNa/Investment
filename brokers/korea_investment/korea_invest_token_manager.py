@@ -4,6 +4,7 @@ import httpx  # 비동기 HTTP 클라이언트
 from datetime import datetime, timedelta
 import logging
 import pytz # pytz 임포트
+from typing import Optional
 
 
 class TokenManager:
@@ -13,13 +14,17 @@ class TokenManager:
     - 토큰의 유효성을 검사하고, 만료 시 자동으로 재발급합니다.
     """
 
-    def __init__(self, token_file_path='config/token.json'):
+    def __init__(self, token_file_path: Optional[str] = None):
+        """
+        :param token_file_path: 명시적으로 토큰 파일 경로를 지정할 수 있음
+        :param is_paper_trading: True면 모의투자용 토큰 파일, False면 실전투자용
+        """
         self.token_file_path = token_file_path
         self._access_token = None
         self._token_expired_at = None
         self.logger = logging.getLogger(__name__)
 
-    async def get_access_token(self, base_url: str, app_key: str, app_secret: str): # env 인자 대신 필요한 정보만 받음
+    async def get_access_token(self, base_url: str, app_key: str, app_secret: str) -> str: # env 인자 대신 필요한 정보만 받음
         """유효한 액세스 토큰을 반환합니다. 필요 시 파일에서 로드하거나 새로 발급합니다."""
         # 1. 메모리에 토큰이 있고 유효한지 먼저 확인
         if self._access_token and self._is_token_valid():
@@ -41,6 +46,7 @@ class TokenManager:
         # 3. 위 모든 경우에 해당하지 않으면 새로 발급
         self.logger.info("새로운 액세스 토큰을 발급합니다.")
         await self._issue_new_token(base_url, app_key, app_secret) # 필요한 정보 전달
+
         return self._access_token
 
     def _is_token_valid(self):
@@ -49,7 +55,10 @@ class TokenManager:
             return False
         # 만료 시간 5분 전에 갱신하도록 여유를 둡니다.
         now_kst = datetime.now(pytz.timezone('Asia/Seoul'))
-        return now_kst < self._token_expired_at - timedelta(minutes=5)
+        # self.logger.debug(
+        #     f"현재 시각: {now_kst}, 만료 시각: {self._token_expired_at}, 기준 시각: {self._token_expired_at - timedelta(minutes=10)}")
+
+        return now_kst < self._token_expired_at - timedelta(minutes=10)
 
     def _load_token_from_file(self):
         """파일에서 토큰 정보를 로드합니다."""
@@ -125,3 +134,12 @@ class TokenManager:
         if os.path.exists(self.token_file_path):
             os.remove(self.token_file_path)
         self.logger.info("저장된 토큰이 무효화되었습니다.")
+
+    async def refresh_token(self, base_url: str, app_key: str, app_secret: str):
+        """
+        외부에서 강제로 토큰을 재발급하고 상태를 초기화할 때 사용합니다.
+        EGW00123 오류 응답을 받았을 때 호출하면 됩니다.
+        """
+        self.logger.info("🔁 refresh_token() 호출됨 - 강제 토큰 재발급 시작")
+        await self._issue_new_token(base_url, app_key, app_secret)
+        self.logger.info("✅ 강제 토큰 재발급 완료")

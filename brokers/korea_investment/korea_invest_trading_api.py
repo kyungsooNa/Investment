@@ -7,12 +7,12 @@ import asyncio  # 비동기 처리를 위해 추가
 import httpx
 
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_token_manager import TokenManager # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv # TokenManager를 import
 from typing import Optional
 
 class KoreaInvestApiTrading(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, token_manager : TokenManager, logger, async_client: Optional[httpx.AsyncClient] = None):
-        super().__init__(base_url, headers, config, token_manager, logger, async_client=async_client)
+    def __init__(self, base_url, headers, config, env : KoreaInvestApiEnv, logger, async_client: Optional[httpx.AsyncClient] = None):
+        super().__init__(base_url, headers, config, env, logger, async_client=async_client)
 
     async def _get_hashkey(self, data):  # async def로 변경됨
         """
@@ -38,20 +38,20 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             calculated_hashkey = hash_data.get('HASH')
 
             if not calculated_hashkey:
-                self.logger.error(f"Hashkey API 응답에 HASH 값이 없습니다: {hash_data}")
+                self._logger.error(f"Hashkey API 응답에 HASH 값이 없습니다: {hash_data}")
                 return None
 
-            self.logger.info(f"Hashkey 계산 성공: {calculated_hashkey}")
+            self._logger.info(f"Hashkey 계산 성공: {calculated_hashkey}")
             return calculated_hashkey
 
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Hashkey API 호출 중 네트워크 오류: {e}")
+            self._logger.error(f"Hashkey API 호출 중 네트워크 오류: {e}")
             return None
         except json.JSONDecodeError:
-            self.logger.error(f"Hashkey API 응답 JSON 디코딩 실패: {hash_response.text}")
+            self._logger.error(f"Hashkey API 응답 JSON 디코딩 실패: {hash_response.text}")
             return None
         except Exception as e:
-            self.logger.error(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
+            self._logger.error(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
             return None
 
     async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn):  # async def로 변경됨
@@ -66,7 +66,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             tr_id = full_config['tr_ids']['trading']['order_cash_sell_paper'] if full_config['is_paper_trading'] else \
             full_config['tr_ids']['trading']['order_cash_sell_real']
         else:
-            self.logger.error("trade_type은 'buy' 또는 'sell'여야 합니다.")
+            self._logger.error("trade_type은 'buy' 또는 'sell'여야 합니다.")
             return None
 
         self._headers["tr_id"] = tr_id
@@ -91,5 +91,5 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             return None
         self._headers["hashkey"] = calculated_hashkey
 
-        self.logger.info(f"주식 {trade_type} 주문 시도 - 종목: {stock_code}, 수량: {order_qty}, 가격: {order_price}")
+        self._logger.info(f"주식 {trade_type} 주문 시도 - 종목: {stock_code}, 수량: {order_qty}, 가격: {order_price}")
         return await self.call_api('POST', path, data=data, retry_count=1)

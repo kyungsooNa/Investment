@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from services.trading_service import TradingService
-from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem, ResMarketCapStockItem
+from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResMarketCapStockItem,ResStockFullInfoApiOutput
 from typing import List
 import unittest
 
@@ -52,11 +52,11 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="성공",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "10000",
                     "prdy_ctrt": "2.35",
                     "prdy_vrss_sign": "1"
-                }
+                })
             }
         ))
 
@@ -164,8 +164,16 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
 
         self.trading_service.get_current_stock_price = AsyncMock(
             side_effect=[
-                ResCommonResponse(rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "80000"}}),
-                ResCommonResponse(rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "130000"}}),
+                ResCommonResponse(
+                    rt_cd="0",
+                    msg1="성공",
+                    data={"output": ResStockFullInfoApiOutput.from_dict({"stck_prpr": "80000"})}
+                ),
+                ResCommonResponse(
+                    rt_cd="0",
+                    msg1="성공",
+                    data={"output": ResStockFullInfoApiOutput.from_dict({"stck_prpr": "130000"})}
+                ),
             ]
         )
 
@@ -209,7 +217,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
             ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value,
                 msg1="성공",
-                data={"output": {"stck_prpr": "130000"}}
+                data={"output": ResStockFullInfoApiOutput.from_dict({"stck_prpr": "130000"})}
             ),
         ])
         result: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
@@ -253,7 +261,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
                 ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value,
                     msg1="성공",
-                    data={"output": {"stck_prpr": str(10000 + i)}}
+                    data={"output": ResStockFullInfoApiOutput.from_dict({"stck_prpr": str(10000 + i)})}
                 )
                 for i in range(11)
             ]

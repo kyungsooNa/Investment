@@ -235,7 +235,7 @@ class TradingService:
                 current_price_response_common: ResCommonResponse = await self.get_current_stock_price(stock_code)
                 if current_price_response_common.rt_cd == ErrorCode.SUCCESS.value: # Enum 값 사용
                     current_price_output_data = current_price_response_common.data
-                    current_price = current_price_output_data.get('output').get('stck_prpr', 'N/A')
+                    current_price = current_price_output_data.get('output').stck_prpr
                     results.append(ResMarketCapStockItem(
                         rank=stock_rank,
                         name=stock_name,
@@ -350,6 +350,8 @@ class TradingService:
 
         print("\r" + " " * 80 + "\r", end="", flush=True)
         self._time_manager.get_current_kst_time()
+
+        results.sort(key=lambda x: x.prdy_ctrt, reverse=True)
 
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용

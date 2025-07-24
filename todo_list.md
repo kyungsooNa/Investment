@@ -7,6 +7,8 @@
 * **[개선 필요]** 
 
 0. 실전, 모의 에 대한 토큰 파일 이름 다르게 저장해서 분리하기
+1. 테스트 로그가 실제로그 폴더에 남음
+2. 상한가 전체종목 조회는 너무 오래걸림 (6분)
 ### 실전
 
 8.
@@ -290,7 +292,7 @@ AttributeError: 'CLIView' object has no attribute 'display_warning_paper_trading
 
 
 ### 1. 환경 (Environment)
-* **[개선 필요]** `token` 설정이 두 번 되는 현상 수정.
+* **[개선 필요]** CacheManager 추가
 
 ### 2. 성능 (Performance)
 * **[개선 필요]** 전체 종목 정보를 읽었으면 RAM에 유지하는 기능 추가 (시장이 닫혔을 경우).

@@ -334,8 +334,8 @@ def test_handle_websocket_message_json_decode_error_control(websocket_api_instan
     api._handle_websocket_message(invalid_json_message) # await 제거
 
     # 직접 mock_logger.error 호출을 확인 [수정]
-    api.logger.error.assert_called_once()
-    logged_message = api.logger.error.call_args[0][0] # 첫 번째 인자는 메시지 문자열
+    api._logger.error.assert_called_once()
+    logged_message = api._logger.error.call_args[0][0] # 첫 번째 인자는 메시지 문자열
     assert "제어 메시지 JSON 디코딩 실패:" in logged_message # 로그 메시지 일치하도록 수정 [수정]
 
 # _handle_websocket_message: _aes_key 또는 _aes_iv가 없는 서명 통지 메시지 처리 테스트
@@ -359,8 +359,8 @@ def test_handle_websocket_message_signing_notice_missing_aes_keys(websocket_api_
     api._handle_websocket_message(message) # await 제거
 
     # 직접 mock_logger.error 호출을 확인 [수정: warning -> error]
-    api.logger.error.assert_called_once()
-    logged_message = api.logger.error.call_args[0][0]
+    api._logger.error.assert_called_once()
+    logged_message = api._logger.error.call_args[0][0]
     assert "실시간 요청 응답 오류:" in logged_message # 로그 메시지 일치하도록 수정 [수정]
 
 
@@ -461,8 +461,8 @@ def test_handle_websocket_message_unknown_tr_id(websocket_api_instance): # @pyte
     api._handle_websocket_message(unknown_tr_id_message) # await 제거
 
     # 알 수 없는 TR_ID 제어 메시지는 ERROR 로그를 발생시킴 (실시간 요청 응답 오류) [수정]
-    api.logger.error.assert_called_once()
-    logged_message = api.logger.error.call_args[0][0]
+    api._logger.error.assert_called_once()
+    logged_message = api._logger.error.call_args[0][0]
     assert "실시간 요청 응답 오류:" in logged_message
 
 # _handle_websocket_message: 알 수 없는 tr_id 처리 테스트
@@ -480,8 +480,8 @@ def test_handle_websocket_message_unknown_tr_id(websocket_api_instance): # 동�
 
     api._handle_websocket_message(unknown_tr_id_message) # 동기 호출
 
-    api.logger.error.assert_called_once()
-    logged_message = api.logger.error.call_args[0][0]
+    api._logger.error.assert_called_once()
+    logged_message = api._logger.error.call_args[0][0]
     assert "실시간 요청 응답 오류:" in logged_message
 
 # --- 새롭게 추가되는 테스트 케이스 시작 ---
@@ -555,7 +555,7 @@ def test_handle_websocket_message_pingpong(websocket_api_instance):
 
     api._handle_websocket_message(pingpong_message)
 
-    api.logger.info.assert_called_once_with("PINGPONG 수신됨. PONG 응답.")
+    api._logger.info.assert_called_once_with("PINGPONG 수신됨. PONG 응답.")
 
 # _handle_websocket_message: 성공적인 AES KEY/IV 수신 처리 테스트
 def test_handle_websocket_message_aes_key_iv_reception(websocket_api_instance):
@@ -577,8 +577,8 @@ def test_handle_websocket_message_aes_key_iv_reception(websocket_api_instance):
 
     assert api._aes_key == key_value
     assert api._aes_iv == iv_value
-    assert api.logger.info.call_count == 2 # 2개의 info 로그가 발생
-    api.logger.info.assert_has_calls([
+    assert api._logger.info.call_count == 2 # 2개의 info 로그가 발생
+    api._logger.info.assert_has_calls([
         mock.call("실시간 요청 응답 성공: TR_KEY=some_tr_key, MSG=SUCCESS"),
         mock.call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
     ])
@@ -620,8 +620,8 @@ async def test_get_approval_key_request_exception(websocket_api_instance):
     with patch(patch_target, side_effect=requests.exceptions.RequestException("Connection error")) as mock_post:
         result = await api._get_approval_key()
         assert result is None
-        api.logger.error.assert_called_once()
-        logged_message = api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        logged_message = api._logger.error.call_args[0][0]
         assert "웹소켓 접속키 발급 중 네트워크 오류:" in logged_message
 
 # _get_approval_key: json.JSONDecodeError 처리 테스트
@@ -635,8 +635,8 @@ async def test_get_approval_key_json_decode_error(websocket_api_instance):
         mock_post.return_value.json.side_effect = json.JSONDecodeError("Invalid JSON", "doc", 0) # json decode error
         result = await api._get_approval_key()
         assert result is None
-        api.logger.error.assert_called_once()
-        logged_message = api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        logged_message = api._logger.error.call_args[0][0]
         assert "웹소켓 접속키 발급 응답 JSON 디코딩 실패:" in logged_message
 
 # _get_approval_key: 일반 Exception 처리 테스트
@@ -648,8 +648,8 @@ async def test_get_approval_key_general_exception(websocket_api_instance):
     with patch(patch_target, side_effect=Exception("Unexpected error")) as mock_post:
         result = await api._get_approval_key()
         assert result is None
-        api.logger.error.assert_called_once()
-        logged_message = api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        logged_message = api._logger.error.call_args[0][0]
         assert "웹소켓 접속키 발급 중 알 수 없는 오류:" in logged_message
 
 # _receive_messages: websockets.exceptions.ConnectionClosedOK 처리 테스트
@@ -671,7 +671,7 @@ async def test_receive_messages_connection_closed_ok(websocket_api_instance):
 
     await api._receive_messages()
 
-    api.logger.info.assert_called_once_with("웹소켓 연결이 정상적으로 종료되었습니다.")
+    api._logger.info.assert_called_once_with("웹소켓 연결이 정상적으로 종료되었습니다.")
     assert api._is_connected is False
     assert api.ws is None
 
@@ -685,8 +685,8 @@ async def test_receive_messages_connection_closed_error(websocket_api_instance):
 
     await api._receive_messages()
 
-    api.logger.error.assert_called_once()
-    logged_message = api.logger.error.call_args[0][0]
+    api._logger.error.assert_called_once()
+    logged_message = api._logger.error.call_args[0][0]
     assert "웹소켓 메시지 수신 중 예상치 못한 오류 발생" in logged_message
     assert api._is_connected is False
     assert api.ws is None
@@ -701,7 +701,7 @@ async def test_receive_messages_cancelled_error(websocket_api_instance):
 
     await api._receive_messages()
 
-    api.logger.info.assert_called_once_with("웹소켓 메시지 수신 태스크가 취소되었습니다.")
+    api._logger.info.assert_called_once_with("웹소켓 메시지 수신 태스크가 취소되었습니다.")
     assert api._is_connected is False
     assert api.ws is None
 
@@ -715,8 +715,8 @@ async def test_receive_messages_general_exception(websocket_api_instance):
 
     await api._receive_messages()
 
-    api.logger.error.assert_called_once()
-    logged_message = api.logger.error.call_args[0][0]
+    api._logger.error.assert_called_once()
+    logged_message = api._logger.error.call_args[0][0]
     assert "웹소켓 메시지 수신 중 예상치 못한 오류 발생:" in logged_message
     assert api._is_connected is False
     assert api.ws is None
@@ -730,7 +730,7 @@ async def test_send_realtime_request_not_connected(websocket_api_instance):
 
     result = await api.send_realtime_request("TR_ID", "TR_KEY")
     assert result is False
-    api.logger.error.assert_called_once_with("웹소켓이 연결되어 있지 않아 실시간 요청을 보낼 수 없습니다.")
+    api._logger.error.assert_called_once_with("웹소켓이 연결되어 있지 않아 실시간 요청을 보낼 수 없습니다.")
 
 # send_realtime_request: approval_key 없을 때 False 반환 테스트
 @pytest.mark.asyncio
@@ -742,7 +742,7 @@ async def test_send_realtime_request_no_approval_key(websocket_api_instance):
 
     result = await api.send_realtime_request("TR_ID", "TR_KEY")
     assert result is False
-    api.logger.error.assert_called_once_with("approval_key가 없어 실시간 요청을 보낼 수 없습니다.")
+    api._logger.error.assert_called_once_with("approval_key가 없어 실시간 요청을 보낼 수 없습니다.")
 
 # send_realtime_request: 웹소켓 전송 중 ConnectionClosedException 처리 테스트
 @pytest.mark.asyncio
@@ -755,8 +755,8 @@ async def test_send_realtime_request_connection_closed_exception(websocket_api_i
 
     result = await api.send_realtime_request("TR_ID", "TR_KEY")
     assert result is False
-    api.logger.error.assert_called_once()
-    logged_message = api.logger.error.call_args[0][0]
+    api._logger.error.assert_called_once()
+    logged_message = api._logger.error.call_args[0][0]
     assert "실시간 요청 전송 중 오류 발생" in logged_message
     assert api._is_connected is False
 
@@ -772,8 +772,8 @@ async def test_send_realtime_request_general_exception(websocket_api_instance):
 
     result = await api.send_realtime_request("TR_ID", "TR_KEY")
     assert result is False
-    api.logger.error.assert_called_once()
-    logged_message = api.logger.error.call_args[0][0]
+    api._logger.error.assert_called_once()
+    logged_message = api._logger.error.call_args[0][0]
     assert "실시간 요청 전송 중 오류 발생:" in logged_message
 
 # subscribe_realtime_price: 성공 테스트
@@ -787,8 +787,8 @@ async def test_subscribe_realtime_price_success(websocket_api_instance):
         mock_send.assert_called_once_with(
             api._config['tr_ids']['websocket']['realtime_price'], stock_code, tr_type="1"
         )
-        api.logger.info.assert_called_once()
-        logged_message = api.logger.info.call_args[0][0]
+        api._logger.info.assert_called_once()
+        logged_message = api._logger.info.call_args[0][0]
         assert f"종목 {stock_code} 실시간 체결 데이터 구독 요청" in logged_message
 
 # unsubscribe_realtime_price: 성공 테스트
@@ -802,8 +802,8 @@ async def test_unsubscribe_realtime_price_success(websocket_api_instance):
         mock_send.assert_called_once_with(
             api._config['tr_ids']['websocket']['realtime_price'], stock_code, tr_type="2"
         )
-        api.logger.info.assert_called_once()
-        logged_message = api.logger.info.call_args[0][0]
+        api._logger.info.assert_called_once()
+        logged_message = api._logger.info.call_args[0][0]
         assert f"종목 {stock_code} 실시간 체결 데이터 구독 해지 요청" in logged_message
 
 # subscribe_realtime_quote: 성공 테스트
@@ -817,8 +817,8 @@ async def test_subscribe_realtime_quote_success(websocket_api_instance):
         mock_send.assert_called_once_with(
             api._config['tr_ids']['websocket']['realtime_quote'], stock_code, tr_type="1"
         )
-        api.logger.info.assert_called_once()
-        logged_message = api.logger.info.call_args[0][0]
+        api._logger.info.assert_called_once()
+        logged_message = api._logger.info.call_args[0][0]
         assert f"종목 {stock_code} 실시간 호가 데이터 구독 요청" in logged_message
 
 # unsubscribe_realtime_quote: 성공 테스트
@@ -832,8 +832,8 @@ async def test_unsubscribe_realtime_quote_success(websocket_api_instance):
         mock_send.assert_called_once_with(
             api._config['tr_ids']['websocket']['realtime_quote'], stock_code, tr_type="2"
         )
-        api.logger.info.assert_called_once()
-        logged_message = api.logger.info.call_args[0][0]
+        api._logger.info.assert_called_once()
+        logged_message = api._logger.info.call_args[0][0]
         assert f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청" in logged_message
 
 # _parse_stock_quote_data: 모든 필드 포함된 유효한 데이터 파싱 테스트
@@ -958,7 +958,7 @@ async def test_disconnect_with_receive_task_cancelled(websocket_api_instance):
     assert api.ws is None
 
     # ✅ 로그 메시지 확인
-    log_messages = [call[0][0] for call in api.logger.info.call_args_list]
+    log_messages = [call[0][0] for call in api._logger.info.call_args_list]
     assert "웹소켓 연결 종료 요청." in log_messages
     assert "웹소켓 수신 태스크 취소됨." in log_messages
     assert "웹소켓 연결 종료 완료." in log_messages
@@ -988,7 +988,7 @@ async def test_disconnect_with_receive_task_exception(websocket_api_instance):
     await api.disconnect()
 
     # 로거에 기록된 에러 로그를 확인합니다.
-    error_logs = [call[0][0] for call in api.logger.error.call_args_list]
+    error_logs = [call[0][0] for call in api._logger.error.call_args_list]
     print("📌 로그들:", error_logs)
 
     # 이제 _receive_messages 내부에서 발생한 예외 로그를 확인해야 합니다.
@@ -1007,8 +1007,8 @@ async def test_on_receive_json_decode_error_logs_error(websocket_api_instance):
     await api._on_receive(invalid_json)
 
     # 예외 로그가 찍혔는지 확인
-    assert api.logger.error.call_count == 1
-    assert "수신 메시지 처리 중 예외 발생" in api.logger.error.call_args[0][0]
+    assert api._logger.error.call_count == 1
+    assert "수신 메시지 처리 중 예외 발생" in api._logger.error.call_args[0][0]
 
 @pytest.mark.asyncio
 async def test_on_receive_callback_raises_exception_logs_error(websocket_api_instance):
@@ -1022,8 +1022,8 @@ async def test_on_receive_callback_raises_exception_logs_error(websocket_api_ins
 
     await api._on_receive('{"key": "value"}')
 
-    assert api.logger.error.call_count == 1
-    assert "수신 메시지 처리 중 예외 발생" in api.logger.error.call_args[0][0]
+    assert api._logger.error.call_count == 1
+    assert "수신 메시지 처리 중 예외 발생" in api._logger.error.call_args[0][0]
 
 def test_parse_futs_optn_quote_data_extracts_total_bid_ask_volumes(websocket_api_instance):
     """
@@ -1120,11 +1120,11 @@ async def test_receive_messages_connection_closed_error_korea_invest(websocket_a
 
         # ─ 검증 (Assert) ─
         # logger.error가 한 번 호출되었는지 확인합니다.
-        api.logger.error.assert_called_once()
+        api._logger.error.assert_called_once()
 
         # logger.error의 호출 인자를 확인하여 예상된 오류 메시지가 포함되어 있는지 검증합니다.
-        # api.logger는 Mock 객체이므로 caplog.text 대신 api.logger.error.call_args를 사용합니다.
-        logged_message = api.logger.error.call_args[0][0]
+        # api.logger는 Mock 객체이므로 caplog.text 대신 api._logger.error.call_args를 사용합니다.
+        logged_message = api._logger.error.call_args[0][0]
         assert "웹소켓 연결이 예외적으로 종료되었습니다" in logged_message
         assert "1006" in logged_message
         assert "Abnormal closure" in logged_message
@@ -1178,7 +1178,7 @@ def test_handle_websocket_message_control_pingpong(websocket_api_instance):
 
     api._handle_websocket_message(message)
 
-    api.logger.info.assert_called_with("PINGPONG 수신됨. PONG 응답.")
+    api._logger.info.assert_called_with("PINGPONG 수신됨. PONG 응답.")
 
 
 def test_handle_websocket_message_parse_h0ifasp0(websocket_api_instance):
@@ -1475,8 +1475,8 @@ def test_handle_websocket_message_signing_notice_key_missing_h0stcni0(websocket_
     api.logger = MagicMock()
     msg = f"1|H0STCNI0|some_key|ENC_DATA"
     api._handle_websocket_message(msg)
-    api.logger.warning.assert_called_once()
-    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+    api._logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api._logger.warning.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_decrypt_fail_h0stcni0(websocket_api_instance):
     api = websocket_api_instance
@@ -1486,8 +1486,8 @@ def test_handle_websocket_message_signing_notice_decrypt_fail_h0stcni0(websocket
     with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
         msg = f"1|H0STCNI0|some_key|ENC_DATA"
         api._handle_websocket_message(msg)
-        api.logger.error.assert_called_once()
-        assert "복호화 실패" in api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        assert "복호화 실패" in api._logger.error.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_success_h0stcni9(websocket_api_instance):
     api = websocket_api_instance
@@ -1512,8 +1512,8 @@ def test_handle_websocket_message_signing_notice_key_missing_h0stcni9(websocket_
     api.logger = MagicMock()
     msg = f"1|H0STCNI9|some_key|ENC_DATA"
     api._handle_websocket_message(msg)
-    api.logger.warning.assert_called_once()
-    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+    api._logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api._logger.warning.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_decrypt_fail_h0stcni9(websocket_api_instance):
     api = websocket_api_instance
@@ -1523,8 +1523,8 @@ def test_handle_websocket_message_signing_notice_decrypt_fail_h0stcni9(websocket
     with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
         msg = f"1|H0STCNI9|some_key|ENC_DATA"
         api._handle_websocket_message(msg)
-        api.logger.error.assert_called_once()
-        assert "복호화 실패" in api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        assert "복호화 실패" in api._logger.error.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_success_h0ifcni0(websocket_api_instance):
     api = websocket_api_instance
@@ -1549,8 +1549,8 @@ def test_handle_websocket_message_signing_notice_key_missing_h0ifcni0(websocket_
     api.logger = MagicMock()
     msg = f"1|H0IFCNI0|some_key|ENC_DATA"
     api._handle_websocket_message(msg)
-    api.logger.warning.assert_called_once()
-    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+    api._logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api._logger.warning.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_decrypt_fail_h0ifcni0(websocket_api_instance):
     api = websocket_api_instance
@@ -1560,8 +1560,8 @@ def test_handle_websocket_message_signing_notice_decrypt_fail_h0ifcni0(websocket
     with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
         msg = f"1|H0IFCNI0|some_key|ENC_DATA"
         api._handle_websocket_message(msg)
-        api.logger.error.assert_called_once()
-        assert "복호화 실패" in api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        assert "복호화 실패" in api._logger.error.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_success_h0mfcni0(websocket_api_instance):
     api = websocket_api_instance
@@ -1586,8 +1586,8 @@ def test_handle_websocket_message_signing_notice_key_missing_h0mfcni0(websocket_
     api.logger = MagicMock()
     msg = f"1|H0MFCNI0|some_key|ENC_DATA"
     api._handle_websocket_message(msg)
-    api.logger.warning.assert_called_once()
-    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+    api._logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api._logger.warning.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_decrypt_fail_h0mfcni0(websocket_api_instance):
     api = websocket_api_instance
@@ -1597,8 +1597,8 @@ def test_handle_websocket_message_signing_notice_decrypt_fail_h0mfcni0(websocket
     with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
         msg = f"1|H0MFCNI0|some_key|ENC_DATA"
         api._handle_websocket_message(msg)
-        api.logger.error.assert_called_once()
-        assert "복호화 실패" in api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        assert "복호화 실패" in api._logger.error.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_success_h0eucni0(websocket_api_instance):
     api = websocket_api_instance
@@ -1623,8 +1623,8 @@ def test_handle_websocket_message_signing_notice_key_missing_h0eucni0(websocket_
     api.logger = MagicMock()
     msg = f"1|H0EUCNI0|some_key|ENC_DATA"
     api._handle_websocket_message(msg)
-    api.logger.warning.assert_called_once()
-    assert "AES 키/IV 없음" in api.logger.warning.call_args[0][0]
+    api._logger.warning.assert_called_once()
+    assert "AES 키/IV 없음" in api._logger.warning.call_args[0][0]
 
 def test_handle_websocket_message_signing_notice_decrypt_fail_h0eucni0(websocket_api_instance):
     api = websocket_api_instance
@@ -1634,8 +1634,8 @@ def test_handle_websocket_message_signing_notice_decrypt_fail_h0eucni0(websocket
     with patch.object(api, "_aes_cbc_base64_dec", return_value=None):
         msg = f"1|H0EUCNI0|some_key|ENC_DATA"
         api._handle_websocket_message(msg)
-        api.logger.error.assert_called_once()
-        assert "복호화 실패" in api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        assert "복호화 실패" in api._logger.error.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -1649,8 +1649,8 @@ async def test_get_approval_key_missing_key_field(websocket_api_instance):
 
         result = await api._get_approval_key()
         assert result is None
-        api.logger.error.assert_called_once()
-        assert "웹소켓 접속키 발급 실패" in api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        assert "웹소켓 접속키 발급 실패" in api._logger.error.call_args[0][0]
 
 @pytest.mark.asyncio
 async def test_get_approval_key_empty_auth_data(websocket_api_instance):
@@ -1663,8 +1663,8 @@ async def test_get_approval_key_empty_auth_data(websocket_api_instance):
 
         result = await api._get_approval_key()
         assert result is None
-        api.logger.error.assert_called_once()
-        assert "웹소켓 접속키 발급 실패" in api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        assert "웹소켓 접속키 발급 실패" in api._logger.error.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -1677,7 +1677,7 @@ async def test_connect_already_connected(websocket_api_instance):
     result = await api.connect()
 
     assert result is True
-    api.logger.info.assert_called_once_with("웹소켓이 이미 연결되어 있습니다.")
+    api._logger.info.assert_called_once_with("웹소켓이 이미 연결되어 있습니다.")
 
 @pytest.mark.asyncio
 async def test_connect_exception_during_connection(websocket_api_instance):
@@ -1695,8 +1695,8 @@ async def test_connect_exception_during_connection(websocket_api_instance):
         assert result is False
         assert api._is_connected is False
         assert api.ws is None
-        api.logger.error.assert_called_once()
-        assert "웹소켓 연결 중 오류 발생" in api.logger.error.call_args[0][0]
+        api._logger.error.assert_called_once()
+        assert "웹소켓 연결 중 오류 발생" in api._logger.error.call_args[0][0]
 
 @pytest.mark.asyncio
 async def test_send_realtime_request_success(websocket_api_instance):
@@ -1735,8 +1735,8 @@ async def test_disconnect_receive_task_exception_logging(websocket_api_instance)
     await api.disconnect()
 
     # 예외 로그 검증
-    api.logger.error.assert_called_once()
-    assert "웹소켓 수신 태스크 종료 중 오류" in api.logger.error.call_args[0][0]
+    api._logger.error.assert_called_once()
+    assert "웹소켓 수신 태스크 종료 중 오류" in api._logger.error.call_args[0][0]
 
 def test_handle_websocket_message_already_in_subscribe_warning(websocket_api_instance):
     api = websocket_api_instance
@@ -1752,9 +1752,9 @@ def test_handle_websocket_message_already_in_subscribe_warning(websocket_api_ins
 
     api._handle_websocket_message(message)
 
-    api.logger.warning.assert_called_once_with("이미 구독 중인 종목입니다.")
-    api.logger.error.assert_called_once()
-    assert "실시간 요청 응답 오류" in api.logger.error.call_args[0][0]
+    api._logger.warning.assert_called_once_with("이미 구독 중인 종목입니다.")
+    api._logger.error.assert_called_once()
+    assert "실시간 요청 응답 오류" in api._logger.error.call_args[0][0]
 
 
 def test_handle_websocket_message_exception_during_processing(websocket_api_instance):
@@ -1773,8 +1773,8 @@ def test_handle_websocket_message_exception_during_processing(websocket_api_inst
 
     api._handle_websocket_message(broken_message)
 
-    api.logger.error.assert_called()
-    last_call = api.logger.error.call_args[0][0]
+    api._logger.error.assert_called()
+    last_call = api._logger.error.call_args[0][0]
     assert "제어 메시지 처리 중 오류 발생" in last_call
     assert "header" in last_call
 
@@ -1849,7 +1849,7 @@ def test_handle_websocket_message_receives_aes_key_iv_success(websocket_api_inst
 
     assert api._aes_key == key_val
     assert api._aes_iv == iv_val
-    api.logger.info.assert_any_call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
+    api._logger.info.assert_any_call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
 
 def test_handle_websocket_message_signing_notice_else_branch(websocket_api_instance):
     api = websocket_api_instance
@@ -1863,7 +1863,7 @@ def test_handle_websocket_message_signing_notice_else_branch(websocket_api_insta
     message = "1|H0STCNI0|dummy|encrypted_payload"
     api._handle_websocket_message(message)
 
-    api.logger.error.assert_called_once_with(
+    api._logger.error.assert_called_once_with(
         "체결통보 복호화 실패: H0STCNI0, 데이터: encrypted_payload..."
     )
 
@@ -1876,7 +1876,7 @@ def test_handle_websocket_message_missing_aes_key_iv(websocket_api_instance):
     message = "1|H0MFCNI0|dummy|encrypted_payload"
     api._handle_websocket_message(message)
 
-    api.logger.warning.assert_called_once()
+    api._logger.warning.assert_called_once()
 
 def test_handle_websocket_message_signing_notice_missing_aes_key_iv(websocket_api_instance):
     api = websocket_api_instance
@@ -1896,7 +1896,7 @@ def test_handle_websocket_message_signing_notice_missing_aes_key_iv(websocket_ap
     api._parse_signing_notice.assert_not_called()
 
     # warning 로그가 출력됐는지 확인 (이 부분이 핵심)
-    api.logger.warning.assert_called_once()
+    api._logger.warning.assert_called_once()
 
 def test_handle_websocket_message_signing_notice_decryption_failed(websocket_api_instance):
     api = websocket_api_instance
@@ -1913,8 +1913,8 @@ def test_handle_websocket_message_signing_notice_decryption_failed(websocket_api
     api._aes_cbc_base64_dec.assert_called_once_with(api._aes_key, api._aes_iv, "encrypted_payload")
 
     # ✅ 복호화 실패 로그 확인
-    api.logger.error.assert_called()
-    args, _ = api.logger.error.call_args
+    api._logger.error.assert_called()
+    args, _ = api._logger.error.call_args
     assert "체결통보 복호화 실패" in args[0]
     assert "H0STCNI0" in args[0]
 
@@ -1935,7 +1935,7 @@ def test_handle_websocket_message_aes_key_missing_output(websocket_api_instance)
 
     assert api._aes_key is None
     assert api._aes_iv is None
-    api.logger.info.assert_called_with("실시간 요청 응답 성공: TR_KEY=some_key, MSG=성공")
+    api._logger.info.assert_called_with("실시간 요청 응답 성공: TR_KEY=some_key, MSG=성공")
 
 @pytest.mark.parametrize("tr_id", [
     "H0STCNI0", "H0STCNI9", "H0IFCNI0", "H0MFCNI0", "H0EUCNI0"
@@ -1987,4 +1987,4 @@ def test_handle_websocket_message_receives_aes_key_iv_success(websocket_api_inst
 
     assert api._aes_key == key_val
     assert api._aes_iv == iv_val
-    api.logger.info.assert_any_call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
+    api._logger.info.assert_any_call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")

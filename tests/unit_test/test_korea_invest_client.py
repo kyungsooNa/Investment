@@ -1,49 +1,27 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
+from common.types import ErrorCode, ResCommonResponse
 
+def test_korea_invest_api_client_initialization(korea_invest_client_instance):
+    """KoreaInvestApiClient 초기화가 정상적으로 이루어지는지 테스트합니다."""
+    client, mock_quotations, mock_account, mock_trading, mock_websocket_api, mock_logger, mock_env = korea_invest_client_instance
 
-def test_korea_invest_api_client_initialization():
-    # 1. mock env 구성
-    mock_env = MagicMock()
-    mock_env.get_full_config.return_value = {
-        "access_token": "test-access-token",
-        "api_key": "test-app-key",
-        "api_secret_key": "test-app-secret",
-        "base_url": "https://mock-base-url",
-        "is_paper_trading": True
-    }
-    mock_env.my_agent = "mock-user-agent"
-    mock_token_manager = MagicMock()
+    # 인스턴스 존재 확인 (픽스처에서 이미 모킹되었으므로, 여기서 assert_called_once_with를 직접 호출할 필요는 없습니다)
+    # 대신, client._quotations 등이 올바른 mock 인스턴스를 참조하는지 확인합니다.
+    assert client._quotations is mock_quotations
+    assert client._account is mock_account
+    assert client._trading is mock_trading
+    assert client._websocketAPI is mock_websocket_api  # public 속성도 확인
 
-    # 2. 각 도메인 API 클래스들도 patch
-    from brokers.korea_investment.korea_invest_client import (
-        KoreaInvestApiQuotations,
-        KoreaInvestApiAccount,
-        KoreaInvestApiTrading,
-        KoreaInvestWebSocketAPI,
-    )
+    # _config 내용 확인
+    assert client._config["access_token"] == "test-access-token"
+    assert client._config["base_url"] == "https://mock-base-url"
+    assert client._config["is_paper_trading"] is True  # is_paper_trading 확인
 
-    quotations_path = f"{KoreaInvestApiQuotations.__module__}.KoreaInvestApiQuotations"
-    account_path = f"{KoreaInvestApiAccount.__module__}.KoreaInvestApiAccount"
-    trading_path = f"{KoreaInvestApiTrading.__module__}.KoreaInvestApiTrading"
-    ws_path = f"{KoreaInvestWebSocketAPI.__module__}.KoreaInvestWebSocketAPI"
-
-    with patch(quotations_path) as mock_quotations, \
-            patch(account_path) as mock_account, \
-            patch(trading_path) as mock_trading, \
-            patch(ws_path) as mock_ws:
-
-        client = KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager)
-
-        # 3. 인스턴스 존재 확인
-        mock_quotations.assert_called_once()
-        mock_account.assert_called_once()
-        mock_trading.assert_called_once()
-        mock_ws.assert_called_once()
-
-        assert client._config["access_token"] == "test-access-token"
-        assert str(client).startswith("KoreaInvestApiClient(")
+    # __str__ 메서드 테스트
+    expected_str = "KoreaInvestApiClient(base_url=https://mock-base-url, is_paper_trading=True)"
+    assert str(client) == expected_str
 
 
 @pytest.mark.asyncio
@@ -69,7 +47,7 @@ async def test_quotations_get_price_summary_success():
     mock_token_manager = MagicMock()
 
     # 2. KoreaInvestApiClient 생성자를 호출할 때 mock_token_manager를 전달합니다.
-    client = KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager)
+    client = KoreaInvestApiClient(env=mock_env)
 
     # quotations.call_api 비동기 메서드 모킹 (실제 네트워크 호출 차단)
     client._quotations.call_api = AsyncMock(return_value={
@@ -88,51 +66,6 @@ async def test_quotations_get_price_summary_success():
     assert abs(result["change_rate"] - 5.0) < 0.01
 
 
-@pytest.mark.asyncio
-async def test_client_str_and_missing_access_token():
-    # 정상 케이스
-    mock_env = MagicMock()
-    mock_env.get_full_config.return_value = {
-        "access_token": "dummy-access-token",
-        "api_key": "dummy-key",
-        "api_secret_key": "dummy-secret",
-        "base_url": "https://mock-base",
-        "websocket_url": "wss://mock-websocket-url",  # 추가 필수
-        "tr_ids": {
-            "quotations": {
-                "inquire_price": "dummy-tr-id"
-            }
-        },
-        "custtype": "P",
-        "is_paper_trading": False
-    }
-    # 1. TokenManager에 대한 모의(mock) 객체를 생성합니다.
-    mock_token_manager = MagicMock()
-
-    # 2. KoreaInvestApiClient 생성자를 호출할 때 mock_token_manager를 전달합니다.
-    client = KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager)
-    expected_str = "KoreaInvestApiClient(base_url=https://mock-base, is_paper_trading=False)"
-    assert str(client) == expected_str
-
-    # access_token 누락 시 ValueError 발생
-    mock_env2 = MagicMock()
-    mock_env2.get_full_config.return_value = {
-        "access_token": None,
-        "api_key": "dummy-key",
-        "api_secret_key": "dummy-secret",
-        "base_url": "https://mock-base",
-        "websocket_url": "wss://mock-websocket-url",  # 추가 필수
-        "tr_ids": {
-            "quotations": {
-                "inquire_price": "dummy-tr-id"
-            }
-        },
-        "custtype": "P",
-        "is_paper_trading": False
-    }
-    import pytest
-    with pytest.raises(ValueError, match="접근 토큰이 없습니다"):
-        KoreaInvestApiClient(env=mock_env2, token_manager=mock_token_manager)
 
 
 @pytest.fixture
@@ -196,50 +129,11 @@ def korea_invest_client_instance(mocker):
     mock_websocket_api_class.return_value = mock_websocket_api_instance
 
     # KoreaInvestApiClient 인스턴스 생성
-    client = KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager, logger=mock_logger)
+    client = KoreaInvestApiClient(env=mock_env, logger=mock_logger)
 
     # 픽스처에서 모의 객체들을 반환하여 테스트에서 접근할 수 있도록 함
     return client, mock_quotations_instance, mock_account_instance, mock_trading_instance, mock_websocket_api_instance, mock_logger, mock_env
 
-
-def test_korea_invest_api_client_initialization(korea_invest_client_instance):
-    """KoreaInvestApiClient 초기화가 정상적으로 이루어지는지 테스트합니다."""
-    client, mock_quotations, mock_account, mock_trading, mock_websocket_api, mock_logger, mock_env = korea_invest_client_instance
-
-    # 인스턴스 존재 확인 (픽스처에서 이미 모킹되었으므로, 여기서 assert_called_once_with를 직접 호출할 필요는 없습니다)
-    # 대신, client._quotations 등이 올바른 mock 인스턴스를 참조하는지 확인합니다.
-    assert client._quotations is mock_quotations
-    assert client._account is mock_account
-    assert client._trading is mock_trading
-    assert client._websocketAPI is mock_websocket_api  # public 속성도 확인
-
-    # _config 내용 확인
-    assert client._config["access_token"] == "test-access-token"
-    assert client._config["base_url"] == "https://mock-base-url"
-    assert client._config["is_paper_trading"] is True  # is_paper_trading 확인
-
-    # __str__ 메서드 테스트
-    expected_str = "KoreaInvestApiClient(base_url=https://mock-base-url, is_paper_trading=True)"
-    assert str(client) == expected_str
-
-
-def test_client_initialization_missing_access_token():
-    """access_token 누락 시 ValueError가 발생하는지 테스트합니다."""
-    mock_env = MagicMock()
-    mock_env.get_full_config.return_value = {
-        "access_token": None,  # access_token 누락
-        "api_key": "dummy-key",
-        "api_secret_key": "dummy-secret",
-        "base_url": "https://mock-base",
-        "websocket_url": "wss://mock-websocket-url",
-        "tr_ids": {},  # 최소한의 tr_ids
-        "custtype": "P",
-        "is_paper_trading": False
-    }
-    mock_token_manager = MagicMock()
-
-    with pytest.raises(ValueError, match="접근 토큰이 없습니다"):
-        KoreaInvestApiClient(env=mock_env, token_manager=mock_token_manager)
 
 
 @pytest.mark.asyncio
@@ -248,22 +142,26 @@ async def test_quotations_get_price_summary_success(korea_invest_client_instance
     client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
 
     # get_price_summary의 반환 값 설정
-    mock_quotations.get_price_summary.return_value = {
-        "symbol": "005930",
-        "open": 10000,
-        "current": 10500,
-        "change_rate": 5.0
-    }
+    mock_quotations.get_price_summary.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "symbol": "005930",
+            "open": 10000,
+            "current": 10500,
+            "change_rate": 5.0
+        }
+    )
 
     # get_price_summary 호출
-    result = await client.get_price_summary("005930")
+    result : ResCommonResponse = await client.get_price_summary("005930")
 
     # 검증
     mock_quotations.get_price_summary.assert_awaited_once_with("005930")
-    assert result["symbol"] == "005930"
-    assert result["open"] == 10000
-    assert result["current"] == 10500
-    assert abs(result["change_rate"] - 5.0) < 0.01
+    assert result.data["symbol"] == "005930"
+    assert result.data["open"] == 10000
+    assert result.data["current"] == 10500
+    assert abs(result.data["change_rate"] - 5.0) < 0.01
 
 
 # --- Account API delegation 테스트 (라인 57, 60 커버) ---

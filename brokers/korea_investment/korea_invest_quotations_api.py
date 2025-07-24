@@ -1,7 +1,7 @@
 # brokers/korea_investment/korea_invest_quotations_api.py
 from typing import Dict, List, Union, Optional
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_token_manager import TokenManager
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
 import requests
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
@@ -12,9 +12,9 @@ from common.types import (
 
 
 class KoreaInvestApiQuotations(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, token_manager: TokenManager, logger=None,
+    def __init__(self, base_url, headers, config, env: KoreaInvestApiEnv, logger=None,
                  async_client: Optional[httpx.AsyncClient] = None):
-        super().__init__(base_url, headers, config, token_manager, logger, async_client=async_client)
+        super().__init__(base_url, headers, config, env, logger, async_client=async_client)
 
     async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
         """
@@ -31,7 +31,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "FID_DIV_CLS_CODE": self._config["params"]["fid_div_cls_code"]
         }
 
-        self.logger.info(f"{stock_code} 종목 정보 조회 시도...")
+        self._logger.info(f"{stock_code} 종목 정보 조회 시도...")
         response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd == ErrorCode.SUCCESS.value:
@@ -44,7 +44,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 )
             except TypeError as e:
                 error_msg = f"{stock_code} 종목 정보 응답 형식 오류: {e}, 응답: {response.data}"
-                self.logger.error(error_msg)
+                self._logger.error(error_msg)
                 return ResCommonResponse(
                     rt_cd=ErrorCode.PARSING_ERROR.value,  # Enum 값 사용
                     msg1=error_msg,
@@ -52,7 +52,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 )
         else:
             error_msg = f"{stock_code} 종목 정보 조회 실패: {response.msg1 or '알 수 없는 오류'}, 응답: {response}"
-            self.logger.warning(error_msg)
+            self._logger.warning(error_msg)
             return ResCommonResponse(
                 rt_cd=response.get("rt_cd", ErrorCode.API_ERROR.value) if isinstance(response,
                                                                                      dict) else ErrorCode.API_ERROR.value,
@@ -74,14 +74,15 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_cond_mrkt_div_code": "J",
             "fid_input_iscd": stock_code
         }
-        self.logger.info(f"{stock_code} 현재가 조회 시도...")
+        self._logger.info(f"{stock_code} 현재가 조회 시도...")
 
         response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=3)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning("현재가 조회 실패")
+            self._logger.warning("현재가 조회 실패")
             return response
-
+        response_data_dict = response.data['output']
+        response.data['output'] = ResStockFullInfoApiOutput.from_dict(response_data_dict)
         return response
 
     async def get_price_summary(self, stock_code: str) -> ResCommonResponse:
@@ -92,29 +93,37 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         response_common = await self.get_current_price(stock_code)
 
         if response_common.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"({stock_code}) get_current_price 실패: {response_common.msg1}")
+            self._logger.warning(f"({stock_code}) get_current_price 실패: {response_common.msg1}")
             return ResCommonResponse(
                 rt_cd=ErrorCode.API_ERROR.value,
                 msg1="get_current_price 실패",
                 data=None
             )
 
-        output = response_common.data
+        output : ResStockFullInfoApiOutput = response_common.data['output']
 
         if not output:
             error_msg = f"API 응답 output 데이터 없음: {stock_code}, 응답: {response_common.msg1}"
-            self.logger.warning(error_msg)
+            self._logger.warning(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.API_ERROR.value,  # Enum 값 사용
+                msg1=error_msg,
+                data=None
+            )
+        if not isinstance(output, ResStockFullInfoApiOutput):
+            error_msg = f"Wrong Ret Type ResStockFullInfoApiOutput - Ret: {type(output)}, 응답: {response_common.msg1}"
+            self._logger.warning(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.WRONG_RET_TYPE.value,  # Enum 값 사용
                 msg1=error_msg,
                 data=None
             )
 
         # ✅ 필수 키 누락 체크
         required_keys = ["stck_oprc", "stck_prpr", "prdy_ctrt"]
-        if not all(k in output for k in required_keys):
+        if not all(hasattr(output, k) and getattr(output, k) is not None for k in required_keys):
             error_msg = f"API 응답 output에 필수 가격 데이터 누락: {stock_code}, 응답: {output}"
-            self.logger.warning(error_msg)
+            self._logger.warning(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.PARSING_ERROR.value,
                 msg1=error_msg,
@@ -122,12 +131,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
 
         try:
-            open_price = int(output.get("stck_oprc", 0))
-            current_price = int(output.get("stck_prpr", 0))
-            prdy_ctrt = float(output.get("prdy_ctrt", 0.0))
+            open_price = int(output.stck_oprc)
+            current_price = int(output.stck_prpr)
+            prdy_ctrt = float(output.prdy_ctrt)
         except (ValueError, TypeError) as e:
             error_msg = f"가격 데이터 파싱 실패: {stock_code}, 응답: {output}, 오류: {e}"
-            self.logger.warning(error_msg)
+            self._logger.warning(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.PARSING_ERROR.value,  # Enum 값 사용
                 msg1=error_msg,
@@ -163,7 +172,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         if info is None:
             error_msg = f"{stock_code} 시가총액 정보 조회 실패: ResStockFullInfoApiOutput 데이터가 None"
-            self.logger.warning(error_msg)
+            self._logger.warning(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.PARSING_ERROR.value,  # Enum 값 사용
                 msg1=error_msg,
@@ -180,7 +189,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
         else:
             error_msg = f"{stock_code} 시가총액 정보 없음 또는 형식 오류: {market_cap_str}"
-            self.logger.warning(error_msg)
+            self._logger.warning(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.PARSING_ERROR.value,  # Enum 값 사용
                 msg1=error_msg,
@@ -194,7 +203,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         if count <= 0:
             error_msg = f"요청된 count가 0 이하입니다. count={count}"
-            self.logger.warning(error_msg)
+            self._logger.warning(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.INVALID_INPUT.value,  # Enum 값 사용
                 msg1=error_msg,
@@ -202,7 +211,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
 
         if count > 30:
-            self.logger.warning(f"요청 수 {count}는 최대 허용값 30을 초과하므로 30개로 제한됩니다.")
+            self._logger.warning(f"요청 수 {count}는 최대 허용값 30을 초과하므로 30개로 제한됩니다.")
             count = 30
 
         self._headers["tr_id"] = self._config['tr_ids']['quotations']['top_market_cap']
@@ -222,11 +231,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_vol_cnt": ""
         }
 
-        self.logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code}, 요청개수: {count})")
+        self._logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code}, 요청개수: {count})")
         response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"시가총액 응답 오류 또는 비어 있음: 시가총액 조회 실패")
+            self._logger.warning(f"시가총액 응답 오류 또는 비어 있음: 시가총액 조회 실패")
             return ResCommonResponse(
                 rt_cd=response.get("rt_cd", ErrorCode.API_ERROR.value) if isinstance(response,
                                                                                      dict) else ErrorCode.API_ERROR.value,
@@ -236,7 +245,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
 
         batch = response.data.get('output', '')[:count]
-        self.logger.info(f"API로부터 수신한 종목 수: {len(batch)}")
+        self._logger.info(f"API로부터 수신한 종목 수: {len(batch)}")
 
         results = []
         for item in batch:
@@ -258,7 +267,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                     acc_trdvol=item.get("acc_trdvol", "0")
                 ))
             except (ValueError, TypeError, KeyError) as e:
-                self.logger.warning(f"시가총액 상위 종목 개별 항목 파싱 오류: {e}, 항목: {item}")
+                self._logger.warning(f"시가총액 상위 종목 개별 항목 파싱 오류: {e}, 항목: {item}")
                 continue
 
         return ResCommonResponse(
@@ -290,7 +299,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
             if not data or "output" not in data:
                 error_msg = f"{code} 종목 전일 정보 응답에 'output' 데이터가 없거나 비어 있습니다. 응답: {data}"
-                self.logger.error(error_msg)
+                self._logger.error(error_msg)
                 return ResCommonResponse(
                     rt_cd=ErrorCode.API_ERROR.value,
                     msg1=error_msg,
@@ -303,7 +312,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 output_data = ResDailyChartApiItem(**output_raw)
             except TypeError as e:
                 error_msg = f"{code} 종목 전일 정보 응답 파싱 실패 (필드 누락 등): {e}, 응답: {output_raw}"
-                self.logger.error(error_msg)
+                self._logger.error(error_msg)
                 return ResCommonResponse(
                     rt_cd=ErrorCode.MISSING_KEY.value,
                     msg1=error_msg,
@@ -315,7 +324,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 prev_volume = int(output_data.acml_vol)
             except (ValueError, TypeError) as e:
                 error_msg = f"{code} 종목 전일 정보 데이터 변환 실패: {e}, 응답: {output_data}"
-                self.logger.error(error_msg)
+                self._logger.error(error_msg)
                 return ResCommonResponse(
                     rt_cd=ErrorCode.PARSING_ERROR.value,
                     msg1=error_msg,
@@ -333,7 +342,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         except requests.exceptions.RequestException as e:
             error_msg = f"{code} 종목 전일 정보 네트워크 오류: {e}"
-            self.logger.error(error_msg)
+            self._logger.error(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.NETWORK_ERROR.value,
                 msg1=error_msg,
@@ -350,12 +359,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         top_stocks_response_common = await self.get_top_market_cap_stocks_code('0000')
 
         if top_stocks_response_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-            self.logger.error(f"시가총액 상위 종목 조회 실패: {top_stocks_response_common.msg1}")
+            self._logger.error(f"시가총액 상위 종목 조회 실패: {top_stocks_response_common.msg1}")
             return top_stocks_response_common
 
         top_stocks_list: List[ResTopMarketCapApiItem] = top_stocks_response_common.data
         if not top_stocks_list:
-            self.logger.warning("시가총액 상위 종목 목록이 비어있습니다.")
+            self._logger.warning("시가총액 상위 종목 목록이 비어있습니다.")
             return ResCommonResponse(
                 rt_cd=ErrorCode.API_ERROR.value,  # Enum 값 사용
                 msg1="시가총액 상위 종목 목록 없음",
@@ -366,25 +375,25 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         for item in top_stocks_list[:count]:
             symbol = item.mksc_shrn_iscd.replace("A", "")
             if not symbol:
-                self.logger.warning(f"유효하지 않은 종목 코드: {item}")
+                self._logger.warning(f"유효하지 않은 종목 코드: {item}")
                 continue
 
             prev_info_common = self.get_previous_day_info(symbol)
 
             if prev_info_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-                self.logger.warning(f"{symbol} 종목 전일 정보 조회 실패: {prev_info_common.msg1}. 필터링에서 제외합니다.")
+                self._logger.warning(f"{symbol} 종목 전일 정보 조회 실패: {prev_info_common.msg1}. 필터링에서 제외합니다.")
                 continue
 
             prev_info_data: Dict[str, Union[float, int]] = prev_info_common.data
             prev_volume = prev_info_data.get("prev_volume", 0)
 
             if prev_volume <= 0:
-                self.logger.warning(f"{symbol} 종목 전일 거래량 정보가 없거나 유효하지 않아 필터링에서 제외합니다.")
+                self._logger.warning(f"{symbol} 종목 전일 거래량 정보가 없거나 유효하지 않아 필터링에서 제외합니다.")
                 continue  #
 
             summary_common = await self.get_price_summary(symbol)
             if summary_common.rt_cd != ErrorCode.SUCCESS.value or summary_common.data is None:  # Enum 값 사용
-                self.logger.warning(f"{symbol} 종목 현재가 요약 정보를 가져오지 못했습니다. 오류: {summary_common.msg1}. 필터링 제외.")
+                self._logger.warning(f"{symbol} 종목 현재가 요약 정보를 가져오지 못했습니다. 오류: {summary_common.msg1}. 필터링 제외.")
                 continue  #
 
             summary: ResPriceSummary = summary_common.data
@@ -422,7 +431,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         valid_period_codes = {"D", "M"}
         if fid_period_div_code not in valid_period_codes:
             error_msg = f"지원하지 않는 fid_period_div_code: {fid_period_div_code}"
-            self.logger.error(error_msg)
+            self._logger.error(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.INVALID_INPUT.value,
                 msg1=error_msg,
@@ -433,12 +442,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         if fid_period_div_code == 'D':
             selected_tr_id = self._config['tr_ids']['quotations']['daily_itemchartprice_day']
         elif fid_period_div_code == 'M':
-            self.logger.debug(f"현재 _config['tr_ids'] 내용: {self._config.get('tr_ids')}")
+            self._logger.debug(f"현재 _config['tr_ids'] 내용: {self._config.get('tr_ids')}")
             selected_tr_id = self._config['tr_ids']['quotations']['daily_itemchartprice_minute']
 
         if not selected_tr_id:
             error_msg = f"TR_ID 설정을 찾을 수 없습니다. fid_period_div_code: {fid_period_div_code}"
-            self.logger.critical(error_msg)
+            self._logger.critical(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.INVALID_INPUT.value,  # Enum 값 사용
                 msg1=error_msg,
@@ -464,7 +473,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         if response_data.rt_cd != ErrorCode.SUCCESS.value:
             error_msg = f"API 응답 비정상: None, 응답: {response_data.data}"
-            self.logger.error(error_msg)
+            self._logger.error(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.API_ERROR.value,
                 msg1=error_msg,
@@ -473,7 +482,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         if not response_data.data:  # None 또는 빈 리스트
             warning_msg = f"일별 시세 차트 데이터가 비어있음 (stock_code: {stock_code})"
-            self.logger.warning(warning_msg)
+            self._logger.warning(warning_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.MISSING_KEY.value,
                 msg1=warning_msg,
@@ -486,7 +495,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             try:
                 chart_data_items.append(ResDailyChartApiItem(**item))
             except TypeError as e:
-                self.logger.warning(f"차트 데이터 항목 파싱 오류: {e}, 항목: {item}")
+                self._logger.warning(f"차트 데이터 항목 파싱 오류: {e}, 항목: {item}")
                 continue
 
         return ResCommonResponse(
@@ -512,12 +521,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_input_iscd": stock_code
         }
 
-        self.logger.info(f"{stock_code} 종목 호가잔량 조회 시도...")
+        self._logger.info(f"{stock_code} 종목 호가잔량 조회 시도...")
 
         response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"{stock_code} 호가 정보 조회 실패: {response.msg1}")
+            self._logger.warning(f"{stock_code} 호가 정보 조회 실패: {response.msg1}")
             return response
 
         return response
@@ -538,11 +547,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_input_iscd": stock_code
         }
 
-        self.logger.info(f"{stock_code} 종목 체결가 조회 시도...")
+        self._logger.info(f"{stock_code} 종목 체결가 조회 시도...")
         response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"{stock_code} 체결가 정보 조회 실패: {response.msg1}")
+            self._logger.warning(f"{stock_code} 체결가 정보 조회 실패: {response.msg1}")
             return response
 
         return response
@@ -561,11 +570,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "word": keyword
         }
 
-        self.logger.info(f"'{keyword}' 키워드로 종목 검색 시도...")
+        self._logger.info(f"'{keyword}' 키워드로 종목 검색 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"종목 검색 실패: {response.msg1}")
+            self._logger.warning(f"종목 검색 실패: {response.msg1}")
             return response
 
         return response
@@ -587,11 +596,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         }
 
         direction = "상승" if rise else "하락"
-        self.logger.info(f"{direction}률 상위 종목 조회 시도...")
+        self._logger.info(f"{direction}률 상위 종목 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"{direction}률 상위 조회 실패: {response.msg1}")
+            self._logger.warning(f"{direction}률 상위 조회 실패: {response.msg1}")
             return response
 
         return response
@@ -611,11 +620,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_cond_mrkt_div_code": market_code
         }
 
-        self.logger.info(f"거래량 상위 종목 조회 시도...")
+        self._logger.info(f"거래량 상위 종목 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"거래량 상위 조회 실패: {response.msg1}")
+            self._logger.warning(f"거래량 상위 조회 실패: {response.msg1}")
             return response
 
         return response
@@ -635,11 +644,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_cond_mrkt_div_code": market_code
         }
 
-        self.logger.info("외국인 순매수 상위 종목 조회 시도...")
+        self._logger.info("외국인 순매수 상위 종목 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"외국인 순매수 조회 실패: {response.msg1}")
+            self._logger.warning(f"외국인 순매수 조회 실패: {response.msg1}")
             return response
 
         return response
@@ -658,11 +667,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_input_iscd": stock_code
         }
 
-        self.logger.info(f"{stock_code} 종목 뉴스 조회 시도...")
+        self._logger.info(f"{stock_code} 종목 뉴스 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"{stock_code} 종목 뉴스 조회 실패: {response.msg1}")
+            self._logger.warning(f"{stock_code} 종목 뉴스 조회 실패: {response.msg1}")
             return response
 
         return response
@@ -681,11 +690,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "fid_input_iscd": etf_code
         }
 
-        self.logger.info(f"{etf_code} ETF 정보 조회 시도...")
+        self._logger.info(f"{etf_code} ETF 정보 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
-            self.logger.warning(f"{etf_code} ETF 조회 실패: {response.msg1}")
+            self._logger.warning(f"{etf_code} ETF 조회 실패: {response.msg1}")
             return response
 
         return response

@@ -1,20 +1,22 @@
 # common/types.py
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields, MISSING
 from typing import Optional, Generic, TypeVar
 from enum import Enum, auto
 
 T = TypeVar("T")
 
+
 # API 응답 결과의 성공/실패를 나타내는 Enum
 class ErrorCode(Enum):
     SUCCESS = "0"
-    API_ERROR = "100"       # 외부 API 호출 실패
-    PARSING_ERROR = "101"   # 응답 파싱 실패
-    INVALID_INPUT = "102"   # 유효성 오류
-    NETWORK_ERROR = "103"   # 네트워크 오류
-    MISSING_KEY  = "104"    # MISSING_KEY
-    RETRY_LIMIT  = "105"    # RETRY_LIMIT
-    UNKNOWN_ERROR = "999"   # 기타 오류
+    API_ERROR = "100"  # 외부 API 호출 실패
+    PARSING_ERROR = "101"  # 응답 파싱 실패
+    INVALID_INPUT = "102"  # 유효성 오류
+    NETWORK_ERROR = "103"  # 네트워크 오류
+    MISSING_KEY = "104"  # MISSING_KEY
+    RETRY_LIMIT = "105"  # RETRY_LIMIT
+    WRONG_RET_TYPE = "106"  # WRONG_RET_TYPE
+    UNKNOWN_ERROR = "999"  # 기타 오류
 
 
 # --- 공통적으로 사용되는 데이터 응답 구조 ---
@@ -131,6 +133,25 @@ class ResStockFullInfoApiOutput:
     wghn_avrg_stck_prc: str  # 가중평균주가
     whol_loan_rmnd_rate: str  # 전체 대주잔고 비율 (%)
 
+    @classmethod
+    def from_dict(cls, data: dict, log_missing: bool = True) -> "ResStockFullInfoApiOutput":
+        init_kwargs = {}
+
+        for field_def in fields(cls):
+            field_name = field_def.name
+            if field_name in data:
+                init_kwargs[field_name] = data[field_name]
+            elif field_def.default is not MISSING or field_def.default_factory is not MISSING:
+                # 기본값이 있으면 무시 (dataclass가 처리함)
+                pass
+            else:
+                # 필수 필드인데 누락된 경우 → 기본값 설정
+                init_kwargs[field_name] = "N/A"  # 또는 None, "N/A" 등
+                # if log_missing:
+                #     logger.warning(f"[from_dict] 필수 필드 누락 → 기본값 대입: '{field_name}'")
+
+        return cls(**init_kwargs)
+
 
 @dataclass
 class ResTopMarketCapApiItem:
@@ -183,6 +204,7 @@ class ResCommonResponse(Generic[T]):
     rt_cd: str
     msg1: str
     data: Optional[T] = None
+
 
 class ResponseStatus(Enum):
     RETRY = auto()
