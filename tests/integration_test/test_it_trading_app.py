@@ -46,9 +46,7 @@ def real_app_instance(mocker, get_mock_config):
     통합 테스트를 위해 실제 TradingApp 인스턴스를 생성하고 초기화합니다.
     실제 네트워크 호출과 관련된 부분만 최소한으로 모킹합니다.
     """
-    # 1. 초기화 과정에서 발생하는 네트워크 호출을 미리 모킹합니다.
-    #    - TokenManager의 실제 토큰 발급 로직
-    #    - Hashkey 생성 로직
+    # 1. TokenManager 관련 네트워크 호출 모킹
     mock_token_manager_instance = MagicMock()
     mock_token_manager_instance.get_access_token = AsyncMock(return_value="mock_access_token")
     mock_token_manager_instance.issue_token = AsyncMock(return_value={
@@ -56,16 +54,18 @@ def real_app_instance(mocker, get_mock_config):
     })
     mocker.patch('trading_app.TokenManager', return_value=mock_token_manager_instance)
 
-    # ✅ Hashkey 생성을 담당하는 KoreaInvestApiTrading 클래스도 같은 방식으로 모킹합니다.
-    #    이 클래스는 BrokerAPIWrapper 내부에서 사용될 가능성이 높습니다.
+    # 2. Hashkey 생성 로직 모킹
     mock_trading_api_instance = MagicMock()
     mock_trading_api_instance._get_hashkey.return_value = "mock_hashkey_for_it_test"
     mocker.patch(f'{KoreaInvestApiTrading.__module__}.{KoreaInvestApiTrading.__name__}',
                  return_value=mock_trading_api_instance)
 
+    # ✅ 3. logging.getLogger를 모킹하여 logger 핸들러 무력화
+    dummy_logger = MagicMock()
+
     # 2. 실제 TradingApp 인스턴스를 생성합니다.
     #    이 과정에서 config.yaml 로드, Logger, TimeManager, Env, TokenManager 초기화가 자동으로 수행됩니다.
-    app = TradingApp()
+    app = TradingApp(logger=dummy_logger)
     app.config = get_mock_config
     app.logger = MagicMock()
 

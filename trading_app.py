@@ -23,12 +23,12 @@ from common.types import (
 
 
 class TradingApp:
-    def __init__(self):
+    def __init__(self, logger=None):
         self.env = None
         self.api_client = None
         self.trading_service = None
         self.time_manager = None
-        self.logger = Logger()
+        self.logger = logger if logger else Logger()  # ✅ 주입 가능한 구조
         self.cli_view = None  # CLIView는 여기서 초기화됩니다.
 
         self.order_execution_service = None

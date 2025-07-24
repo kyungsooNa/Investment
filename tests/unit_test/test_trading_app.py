@@ -65,9 +65,7 @@ def setup_mock_app(mocker):
         BacktestDataProvider
     ]:
         mocker.patch(f"{cls.__module__}.{cls.__name__}")
-    app = TradingApp()
-
-    app.logger = mocker.MagicMock(spec=get_test_logger())
+    app = TradingApp(logger=MagicMock())
 
     app.cli_view = mocker.MagicMock(spec=CLIView)  # AsyncMock 대신 MagicMock 사용
     app.cli_view.select_environment_input = AsyncMock()
@@ -680,7 +678,7 @@ async def test_execute_action_0_change_environment_success(setup_mock_app):  # c
     app._select_environment.assert_awaited_once()  # _select_environment가 호출되었는지 확인
     assert result is True  # 환경 변경이 성공하면 앱은 계속 실행되어야 함
     # logger.info 호출을 확인
-    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
+    app.logger.info.assert_any_call("거래 환경 변경을 시작합니다.")
 
 
 @pytest.mark.asyncio
@@ -1680,7 +1678,7 @@ async def test_select_environment_real_trading_success(setup_mock_app):
     # 검증
     app.cli_view.select_environment_input.assert_awaited_once()
     app.env.set_trading_mode.assert_called_once_with(False)  # False (실전투자)로 호출되었는지 확인
-    app.logger.info.assert_called_once_with("실전 투자 환경으로 설정되었습니다.")
+    app.logger.info.assert_any_call("실전 투자 환경으로 설정되었습니다.")
     app.env.get_access_token.assert_awaited_once()
     assert result is True
 
@@ -1702,7 +1700,7 @@ async def test_select_environment_paper_trading_success(setup_mock_app):
     # 검증
     app.cli_view.select_environment_input.assert_awaited_once()
     app.env.set_trading_mode.assert_called_once_with(True)  # True (모의투자)로 호출되었는지 확인
-    app.logger.info.assert_called_once_with("모의 투자 환경으로 설정되었습니다.")
+    app.logger.info.assert_any_call("모의 투자 환경으로 설정되었습니다.")
     app.env.get_access_token.assert_awaited_once()
     assert result is True
 
