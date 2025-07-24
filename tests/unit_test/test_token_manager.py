@@ -422,3 +422,48 @@ async def test_load_token_from_file_no_expiry_str(tmp_path):
 
     assert token_manager._access_token == 'token_without_expiry_field'
     assert token_manager._token_expired_at is None  # expired_at이 없으므로 None으로 유지되어야 함
+
+@pytest.mark.asyncio
+async def test_refresh_token_success(monkeypatch, tmp_path):
+    """
+    TC-9: refresh_token()이 강제로 새 토큰을 발급하고 상태를 초기화하는지 검증
+    """
+    token_file = tmp_path / "refresh_token_test.json"
+    token_manager = TokenManager(token_file_path=str(token_file))
+
+    # 테스트용 토큰 정보
+    mock_base_url = "https://test-api.koreainvestment.com:9443"
+    mock_app_key = "mock_app_key"
+    mock_app_secret = "mock_app_secret"
+    mock_access_token = "refreshed_token_123"
+    mock_expires_in = 7200
+
+    # httpx.AsyncClient를 모킹
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock(return_value=None)
+    mock_response.json = MagicMock(return_value={
+        "access_token": mock_access_token,
+        "expires_in": mock_expires_in
+    })
+
+    with patch("httpx.AsyncClient") as MockAsyncClient:
+        MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_response
+
+        # --- Act ---
+        await token_manager.refresh_token(
+            base_url=mock_base_url,
+            app_key=mock_app_key,
+            app_secret=mock_app_secret
+        )
+
+        # --- Assert ---
+        assert token_manager._access_token == mock_access_token
+        assert token_manager._token_expired_at is not None
+        assert os.path.exists(token_file)
+
+        with open(token_file, "r") as f:
+            data = json.load(f)
+            assert data["access_token"] == mock_access_token
+            assert data["base_url"] == mock_base_url
+

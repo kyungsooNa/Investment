@@ -1,5 +1,5 @@
 # app/stock_query_service.py
-from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, ResMarketCapStockItem
+from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, ResMarketCapStockItem, ResStockFullInfoApiOutput
 from typing import List, Dict
 
 
@@ -72,7 +72,7 @@ class StockQueryService:
 
             if response.rt_cd != ErrorCode.SUCCESS.value:  # None은 조회 자체의 실패로 간주
                 print("\n실패: 시가총액 1~10위 종목 현재가 조회.")
-                self.logger.error("시가총액 1~10위 종목 현재가 조회 실패: None 반환됨")
+                self.logger.error(response.msg1)
                 return ResCommonResponse(
                     rt_cd=ErrorCode.API_ERROR.value,
                     msg1="조회 실패: 데이터 None",
@@ -129,10 +129,10 @@ class StockQueryService:
 
         if current_price_result.rt_cd == ErrorCode.SUCCESS.value:
             output_data = current_price_result.data.get("output") or {}
-            current_price = output_data.get('stck_prpr', 'N/A')
-            change_val_str = output_data.get('prdy_vrss', 'N/A')  # 문자열로 가져옴
-            change_sign_code = output_data.get('prdy_vrss_sign', 'N/A')  # 부호 코드
-            change_rate_str = output_data.get('prdy_ctrt', 'N/A')  # 문자열로 가져옴
+            current_price = output_data.stck_prpr
+            change_val_str = output_data.prdy_vrss
+            change_sign_code = output_data.prdy_vrss_sign
+            change_rate_str = output_data.prdy_ctrt
 
             # 부호 코드에 따른 실제 부호 문자열 결정
             actual_change_sign = self._get_sign_from_code(change_sign_code)
@@ -172,10 +172,9 @@ class StockQueryService:
         current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
         if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
-            output_data: Dict = current_price_result.data.get("output") or {}
-            current_price_str = output_data.get('stck_prpr', 'N/A')
-            open_price_str = output_data.get('stck_oprc', 'N/A')
-            vs_open_sign_code = output_data.get('oprc_vrss_prpr_sign', 'N/A')  # 부호 코드
+            output_data: ResStockFullInfoApiOutput = current_price_result.data.get("output") or {}
+            current_price_str = output_data.stck_prpr
+            open_price_str = output_data.stck_oprc
 
             current_price_float = float(current_price_str) if current_price_str != 'N/A' else None
             open_price_float = float(open_price_str) if open_price_str != 'N/A' else None

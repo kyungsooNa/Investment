@@ -5,7 +5,7 @@ import logging
 from io import StringIO
 import builtins
 from common.types import (
-    ResPriceSummary, ResCommonResponse, ErrorCode, ResMarketCapStockItem,
+    ResStockFullInfoApiOutput, ResCommonResponse, ErrorCode, ResMarketCapStockItem,
     ResTopMarketCapApiItem,
 )
 
@@ -270,12 +270,12 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "70000",
                     "prdy_vrss": "500",
                     "prdy_vrss_sign": "2",
                     "prdy_ctrt": "0.72"
-                }
+                })
             }
         )
         await self.stock_query_service.handle_display_stock_change_rate(stock_code)
@@ -312,11 +312,11 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "70000",
                     "stck_oprc": "69000",
                     "oprc_vrss_prpr_sign": "2"
-                }
+                })
             }
         )
         await self.stock_query_service.handle_display_stock_vs_open_price(stock_code)
@@ -442,9 +442,9 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
                 rt_cd=ErrorCode.SUCCESS.value,
                 msg1="정상 처리되었습니다.",
                 data={
-                    "output": {
+                    "output": ResStockFullInfoApiOutput.from_dict({
                         "stck_prpr": str(10000 + i * 100)
-                    }
+                    })
                 }
             )
             for i in range(10)

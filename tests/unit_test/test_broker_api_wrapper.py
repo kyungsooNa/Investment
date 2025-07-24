@@ -23,11 +23,6 @@ def mock_env():
     return env
 
 @pytest.fixture
-def mock_token_manager():
-    """모의 TokenManager 객체를 생성합니다."""
-    return MagicMock()
-
-@pytest.fixture
 def mock_logger():
     """모의 로거(Logger) 객체를 생성합니다."""
     return MagicMock()
@@ -37,7 +32,7 @@ def mock_logger():
 @pytest.mark.asyncio
 @patch(f"{wrapper_module.__name__}.StockCodeMapper")              # 먼저 정의된 patch가
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")         # 아래쪽 인자로 먼저 들어감!
-async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_token_manager, mock_logger):
+async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger):
     """
     각 메서드가 내부의 올바른 객체로 호출을 위임하는지 테스트합니다.
     """
@@ -53,7 +48,7 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
     mock_client_class.return_value = mock_client
 
     # 3. 인스턴스 생성
-    wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, token_manager=mock_token_manager, logger=mock_logger)
+    wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger)
 
     # 4. 실제 메서드 호출
     name_result = await wrapper.get_name_by_code("005930")
@@ -71,7 +66,7 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
     mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930", "20250712", fid_period_div_code="D")
 
 @pytest.mark.asyncio
-async def test_inquire_daily_itemchartprice_delegation(mock_env, mock_token_manager, mock_logger):
+async def test_inquire_daily_itemchartprice_delegation(mock_env, mock_logger):
     """
     inquire_daily_itemchartprice 메서드가 _client 객체의 동일 메서드에 정확히 위임되는지 검증합니다.
     """
@@ -235,7 +230,7 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     mock_client.unsubscribe_realtime_quote.assert_called_once_with("005930")
 
 @pytest.fixture
-def broker_wrapper_instance(mock_env, mock_token_manager, mock_logger, mocker):
+def broker_wrapper_instance(mock_env, mock_logger, mocker):
     """
     BrokerAPIWrapper 인스턴스와 그 내부 종속성(_client, _stock_mapper)을 모의(mock)하여 제공하는 픽스처.
     모의된 BrokerAPIWrapper를 반환하며, 내부 _client에 대한 접근도 모의합니다.
@@ -313,7 +308,7 @@ def broker_wrapper_instance(mock_env, mock_token_manager, mock_logger, mocker):
 
     # BrokerAPIWrapper 인스턴스 생성 (사용자의 코드에 있는 __init__ 시그니처와 동일)
     # broker: str = "korea_investment", env=None, token_manager=None, logger=None
-    wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, token_manager=mock_token_manager, logger=mock_logger)
+    wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, logger=mock_logger)
 
     # 사용자의 `broker_api_wrapper.py` 파일의 논리적 오류(self._client, self._client 미초기화)를
     # 회피하기 위해 해당 속성들을 직접 mock으로 할당하여 테스트가 통과하도록 합니다.
@@ -326,36 +321,36 @@ def broker_wrapper_instance(mock_env, mock_token_manager, mock_logger, mocker):
 
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeMapper")
-def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_token_manager, mock_logger):
+def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logger):
     """
     정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
     """
     # Act
-    wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, token_manager=mock_token_manager, logger=mock_logger)
+    wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, logger=mock_logger)
 
     # Assert
-    MockClient.assert_called_once_with(mock_env, mock_token_manager, mock_logger)
+    MockClient.assert_called_once_with(mock_env, mock_logger)
     MockStockMapper.assert_called_once_with(logger=mock_logger)
     assert wrapper._broker == "korea_investment"
 
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeMapper")
-def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_token_manager, mock_logger):
+def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logger):
     """
     정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
     """
     # Act
-    wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, token_manager=mock_token_manager, logger=mock_logger)
+    wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, logger=mock_logger)
 
     # Assert
-    MockClient.assert_called_once_with(mock_env, mock_token_manager, mock_logger)
+    MockClient.assert_called_once_with(mock_env, mock_logger)
     MockStockMapper.assert_called_once_with(logger=mock_logger)
     assert wrapper._broker == "korea_investment"
     assert wrapper._client is MockClient.return_value # _client가 MockClient의 인스턴스를 참조하는지 확인
     assert wrapper._stock_mapper is MockStockMapper.return_value # _stock_mapper가 MockStockMapper의 인스턴스를 참조하는지 확인
 
 
-def test_initialization_no_env_raises_error(mock_token_manager, mock_logger):
+def test_initialization_no_env_raises_error(mock_logger):
     """
     'korea_investment' 브로커 선택 시 env가 없으면 ValueError가 발생하는지 테스트합니다.
     """
@@ -364,7 +359,7 @@ def test_initialization_no_env_raises_error(mock_token_manager, mock_logger):
         BrokerAPIWrapper(
             broker="korea_investment",
             env=None,  # env를 명시적으로 None으로 설정
-            token_manager=mock_token_manager,
+           
             logger=mock_logger
         )
 

@@ -210,4 +210,4 @@ logs/ # <--- logs 폴더 전체를 무시
 # 데이터 목록 파일
 /data
 
-token.json
+token*.json

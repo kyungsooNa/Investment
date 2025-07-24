@@ -22,7 +22,7 @@ class KoreaInvestWebSocketAPI:
 
     def __init__(self, env: KoreaInvestApiEnv, logger=None):
         self._env = env
-        self.logger = logger if logger else logging.getLogger(__name__)
+        self._logger = logger if logger else logging.getLogger(__name__)
         self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)
 
         # config에서 웹소켓 및 REST API 정보 가져오기
@@ -73,7 +73,7 @@ class KoreaInvestWebSocketAPI:
             "secretkey": self._rest_api_secret  # 웹소켓 접속키 발급 시 secretkey 필드명 사용
         }
 
-        self.logger.info("웹소켓 접속키 발급 시도...")
+        self._logger.info("웹소켓 접속키 발급 시도...")
         try:
             # requests는 동기 함수이므로 asyncio의 loop.run_in_executor를 사용하여 비동기적으로 실행
             loop = asyncio.get_running_loop()
@@ -87,19 +87,19 @@ class KoreaInvestWebSocketAPI:
 
             if auth_data and auth_data.get('approval_key'):
                 self.approval_key = auth_data['approval_key']
-                self.logger.info(f"웹소켓 접속키 발급 성공: {self.approval_key[:10]}...")  # 키의 일부만 로깅
+                self._logger.info(f"웹소켓 접속키 발급 성공: {self.approval_key[:10]}...")  # 키의 일부만 로깅
                 return self.approval_key
             else:
-                self.logger.error(f"웹소켓 접속키 발급 실패 - 응답 데이터 오류: {auth_data}")
+                self._logger.error(f"웹소켓 접속키 발급 실패 - 응답 데이터 오류: {auth_data}")
                 return None
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"웹소켓 접속키 발급 중 네트워크 오류: {e}")
+            self._logger.error(f"웹소켓 접속키 발급 중 네트워크 오류: {e}")
             return None
         except json.JSONDecodeError:
-            self.logger.error(f"웹소켓 접속키 발급 응답 JSON 디코딩 실패: {res.text if res else '응답 없음'}")
+            self._logger.error(f"웹소켓 접속키 발급 응답 JSON 디코딩 실패: {res.text if res else '응답 없음'}")
             return None
         except Exception as e:
-            self.logger.error(f"웹소켓 접속키 발급 중 알 수 없는 오류: {e}")
+            self._logger.error(f"웹소켓 접속키 발급 중 알 수 없는 오류: {e}")
             return None
 
     async def _receive_messages(self):
@@ -110,13 +110,13 @@ class KoreaInvestWebSocketAPI:
                 message = await self.ws.recv()
                 self._handle_websocket_message(message)
         except websockets.ConnectionClosedOK:
-            self.logger.info("웹소켓 연결이 정상적으로 종료되었습니다.")
+            self._logger.info("웹소켓 연결이 정상적으로 종료되었습니다.")
         except websockets.ConnectionClosedError as e:
-            self.logger.error(f"웹소켓 연결이 예외적으로 종료되었습니다: {e}")
+            self._logger.error(f"웹소켓 연결이 예외적으로 종료되었습니다: {e}")
         except asyncio.CancelledError:
-            self.logger.info("웹소켓 메시지 수신 태스크가 취소되었습니다.")
+            self._logger.info("웹소켓 메시지 수신 태스크가 취소되었습니다.")
         except Exception as e:
-            self.logger.error(f"웹소켓 메시지 수신 중 예상치 못한 오류 발생: {e}")
+            self._logger.error(f"웹소켓 메시지 수신 중 예상치 못한 오류 발생: {e}")
         finally:
             self._is_connected = False
             self.ws = None  # 웹소켓 객체 초기화 (재연결을 위해)
@@ -190,10 +190,10 @@ class KoreaInvestWebSocketAPI:
                         parsed_data = self._parse_signing_notice(decrypted_str, tr_id)
                         message_type = 'signing_notice'
                     else:
-                        self.logger.error(f"체결통보 복호화 실패: {tr_id}, 데이터: {data_body[:50]}...")
+                        self._logger.error(f"체결통보 복호화 실패: {tr_id}, 데이터: {data_body[:50]}...")
                         return
                 else:
-                    self.logger.warning(f"체결통보 암호화 해제 실패: AES 키/IV 없음. TR_ID: {tr_id}, 메시지: {message[:50]}...")
+                    self._logger.warning(f"체결통보 암호화 해제 실패: AES 키/IV 없음. TR_ID: {tr_id}, 메시지: {message[:50]}...")
                     return
 
             # 외부 콜백 함수로 파싱된 데이터 전달
@@ -207,26 +207,26 @@ class KoreaInvestWebSocketAPI:
                 tr_id = header.get("tr_id")
 
                 if tr_id == "PINGPONG":
-                    self.logger.info("PINGPONG 수신됨. PONG 응답.")
+                    self._logger.info("PINGPONG 수신됨. PONG 응답.")
                     # websockets 라이브러리 내부에서 PONG 응답 자동 처리 (ping_interval, ping_timeout 설정 시)
                 elif json_object.get("body", {}).get("rt_cd") == '0':
-                    self.logger.info(f"실시간 요청 응답 성공: TR_KEY={header.get('tr_key')}, MSG={json_object['body']['msg1']}")
+                    self._logger.info(f"실시간 요청 응답 성공: TR_KEY={header.get('tr_key')}, MSG={json_object['body']['msg1']}")
                     # 체결통보용 AES KEY, IV 수신 처리
                     if tr_id in ["H0IFCNI0", "H0STCNI0", "H0STCNI9", "H0MFCNI0", "H0EUCNI0"] and json_object.get("body",
                                                                                                                  {}).get(
                             "output"):
                         self._aes_key = json_object["body"]["output"].get("key")
                         self._aes_iv = json_object["body"]["output"].get("iv")
-                        self.logger.info(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
+                        self._logger.info(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
                 else:
-                    self.logger.error(
+                    self._logger.error(
                         f"실시간 요청 응답 오류: TR_KEY={header.get('tr_key')}, RT_CD={json_object.get('body', {}).get('rt_cd')}, MSG={json_object.get('body', {}).get('msg1')}")
                     if json_object.get("body", {}).get("msg1") == 'ALREADY IN SUBSCRIBE':
-                        self.logger.warning("이미 구독 중인 종목입니다.")
+                        self._logger.warning("이미 구독 중인 종목입니다.")
             except json.JSONDecodeError:
-                self.logger.error(f"제어 메시지 JSON 디코딩 실패: {message}")
+                self._logger.error(f"제어 메시지 JSON 디코딩 실패: {message}")
             except Exception as e:
-                self.logger.error(f"제어 메시지 처리 중 오류 발생: {e}, 메시지: {message}")
+                self._logger.error(f"제어 메시지 처리 중 오류 발생: {e}, 메시지: {message}")
 
     # --- 실시간 데이터 파싱 헬퍼 함수들 ---
 
@@ -429,7 +429,7 @@ class KoreaInvestWebSocketAPI:
     async def connect(self, on_message_callback=None):
         """웹소켓 연결을 시작하고 실시간 데이터 수신을 준비합니다."""
         if self.ws and self._is_connected:
-            self.logger.info("웹소켓이 이미 연결되어 있습니다.")
+            self._logger.info("웹소켓이 이미 연결되어 있습니다.")
             return True
 
         self.on_realtime_message_callback = on_message_callback  # 외부 콜백 등록
@@ -438,22 +438,22 @@ class KoreaInvestWebSocketAPI:
         if not self.approval_key:
             self.approval_key = await self._get_approval_key()
             if not self.approval_key:
-                self.logger.error("웹소켓 접속 키 발급 실패로 연결할 수 없습니다.")
+                self._logger.error("웹소켓 접속 키 발급 실패로 연결할 수 없습니다.")
                 raise RuntimeError("approval_key 발급 실패")  # 추가
 
         # 2. 웹소켓 연결 (async with 사용)
         try:
-            self.logger.info(f"웹소켓 연결 시작: {self._websocket_url}")
+            self._logger.info(f"웹소켓 연결 시작: {self._websocket_url}")
             self.ws = await websockets.connect(self._websocket_url, ping_interval=20, ping_timeout=20)
             self._is_connected = True
-            self.logger.info("웹소켓 연결 성공.")
+            self._logger.info("웹소켓 연결 성공.")
 
             # 메시지 수신 태스크 시작 (백그라운드에서 계속 메시지 받기)
             self._receive_task = asyncio.create_task(self._receive_messages())
 
             return True
         except Exception as e:
-            self.logger.error(f"웹소켓 연결 중 오류 발생: {e}")
+            self._logger.error(f"웹소켓 연결 중 오류 발생: {e}")
             self._is_connected = False
             self.ws = None
             return False
@@ -461,7 +461,7 @@ class KoreaInvestWebSocketAPI:
     async def disconnect(self):
         """웹소켓 연결을 종료합니다."""
         if self._is_connected and self.ws:
-            self.logger.info("웹소켓 연결 종료 요청.")
+            self._logger.info("웹소켓 연결 종료 요청.")
             await self.ws.close()
             self._is_connected = False
             if self._receive_task:
@@ -469,14 +469,14 @@ class KoreaInvestWebSocketAPI:
                 try:
                     await self._receive_task
                 except asyncio.CancelledError:
-                    self.logger.info("웹소켓 수신 태스크 취소됨.")
+                    self._logger.info("웹소켓 수신 태스크 취소됨.")
                 except Exception as e:
-                    self.logger.error(f"웹소켓 수신 태스크 종료 중 오류: {e}")
-            self.logger.info("웹소켓 연결 종료 완료.")
+                    self._logger.error(f"웹소켓 수신 태스크 종료 중 오류: {e}")
+            self._logger.info("웹소켓 연결 종료 완료.")
             self._is_connected = False
             self.ws = None
         else:
-            self.logger.info("웹소켓이 연결되어 있지 않습니다.")
+            self._logger.info("웹소켓이 연결되어 있지 않습니다.")
             self._is_connected = False
             self.ws = None
 
@@ -489,10 +489,10 @@ class KoreaInvestWebSocketAPI:
         :param tr_type: 1: 등록, 2: 해지
         """
         if not self._is_connected or not self.ws:
-            self.logger.error("웹소켓이 연결되어 있지 않아 실시간 요청을 보낼 수 없습니다.")
+            self._logger.error("웹소켓이 연결되어 있지 않아 실시간 요청을 보낼 수 없습니다.")
             return False
         if not self.approval_key:
-            self.logger.error("approval_key가 없어 실시간 요청을 보낼 수 없습니다.")
+            self._logger.error("approval_key가 없어 실시간 요청을 보낼 수 없습니다.")
             return False
 
         header = {
@@ -513,12 +513,12 @@ class KoreaInvestWebSocketAPI:
         request_message = [header, body]
         message_json = json.dumps(request_message)
 
-        self.logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")
+        self._logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")
         try:
             await self.ws.send(message_json)
             return True
         except Exception as e:
-            self.logger.error(f"실시간 요청 전송 중 오류 발생: {e}")
+            self._logger.error(f"실시간 요청 전송 중 오류 발생: {e}")
             self._is_connected = False
             self.ws = None
             return False
@@ -526,25 +526,25 @@ class KoreaInvestWebSocketAPI:
     async def subscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가)를 구독합니다."""
         tr_id = self._config['tr_ids']['websocket']['realtime_price']
-        self.logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 요청 ({tr_id})...")
+        self._logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
 
     async def unsubscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
         tr_id = self._config['tr_ids']['websocket']['realtime_price']
-        self.logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 해지 요청 ({tr_id})...")
+        self._logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
     async def subscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터를 구독합니다."""
         tr_id = self._config['tr_ids']['websocket']['realtime_quote']
-        self.logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 요청 ({tr_id})...")
+        self._logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
 
     async def unsubscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터 구독을 해지합니다."""
         tr_id = self._config['tr_ids']['websocket']['realtime_quote']
-        self.logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청 ({tr_id})...")
+        self._logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
     # For test only
@@ -554,6 +554,6 @@ class KoreaInvestWebSocketAPI:
             if self.on_realtime_message_callback:
                 await self.on_realtime_message_callback(parsed)
             else:
-                self.logger.warning("수신된 메시지를 처리할 콜백이 등록되지 않았습니다.")
+                self._logger.warning("수신된 메시지를 처리할 콜백이 등록되지 않았습니다.")
         except Exception as e:
-            self.logger.error(f"수신 메시지 처리 중 예외 발생: {e}")
+            self._logger.error(f"수신 메시지 처리 중 예외 발생: {e}")

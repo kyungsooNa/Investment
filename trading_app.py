@@ -29,7 +29,6 @@ class TradingApp:
         self.trading_service = None
         self.time_manager = None
         self.logger = Logger()
-        self.token_manager = None
         self.cli_view = None  # CLIView는 여기서 초기화됩니다.
 
         self.order_execution_service = None
@@ -51,11 +50,7 @@ class TradingApp:
 
             self.logger.debug(f"최종 config_data['tr_ids'] 내용 (init 전): {config_data.get('tr_ids')}")
 
-            self.token_manager = TokenManager(
-                token_file_path=config_data.get('token_file_path', 'config/token.json')
-            )
-
-            self.env = KoreaInvestApiEnv(config_data, self.token_manager, self.logger)
+            self.env = KoreaInvestApiEnv(config_data, self.logger)
 
             self.time_manager = TimeManager(
                 market_open_time=config_data.get('market_open_time', "09:00"),
@@ -79,17 +74,17 @@ class TradingApp:
         try:
             self.logger.info("API 클라이언트 초기화 시작 (선택된 환경 기반)...")
 
-            access_token = await self.env.get_access_token()
-            if not access_token:
-                self.logger.critical("API 클라이언트 초기화 실패: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
-                raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
+            # access_token = await self.env.get_access_token()
+            # if not access_token:
+            #     self.logger.critical("API 클라이언트 초기화 실패: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
+            #     raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
 
             # KoreaInvestApiClient는 이제 BrokerAPIWrapper 내부에서 관리됩니다.
             # 이 인스턴스를 직접 TradingService에 넘기지 않습니다.
             # self.api_client = KoreaInvestApiClient(self.env, token_manager=self.token_manager, logger=self.logger) # 이 줄은 삭제 또는 주석 처리
 
             # BrokerAPIWrapper를 한 번만 생성합니다.
-            self.broker_wrapper = BrokerAPIWrapper(env=self.env, token_manager=self.token_manager, logger=self.logger)
+            self.broker_wrapper = BrokerAPIWrapper(env=self.env, logger=self.logger)
 
             # TradingService에 BrokerAPIWrapper를 전달하도록 수정
             # TradingService의 __init__ 시그니처도 변경되어야 합니다 (broker_wrapper를 받도록)
@@ -134,10 +129,6 @@ class TradingApp:
 
         if not new_token_acquired:
             self.logger.critical("선택된 환경의 토큰 발급에 실패했습니다. 애플리케이션을 종료합니다.")
-            return False
-
-        if not await self._complete_api_initialization():
-            self.logger.critical("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
             return False
 
         return True
@@ -502,7 +493,7 @@ class TradingApp:
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
 
         elif choice == '98':  # 14번 메뉴 추가: 토큰 무효화
-            self.token_manager.invalidate_token()
+            self.env.invalidate_token()
             self.cli_view.display_token_invalidated_message()
         elif choice == '99':
             self.cli_view.display_exit_message()
@@ -517,6 +508,7 @@ class TradingApp:
         self.cli_view.display_welcome_message()
 
         if not await self._complete_api_initialization():
+            self.logger.critical("API 클라이언트 초기화 실패. 애플리케이션을 종료합니다.")
             return
 
         await self._select_environment()

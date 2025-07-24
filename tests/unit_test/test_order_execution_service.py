@@ -4,8 +4,8 @@ import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.stock_query_service import StockQueryService
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_token_manager import TokenManager
-from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResStockFullInfoApiOutput, ErrorCode
 from types import SimpleNamespace
 
 
@@ -30,7 +30,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.handler = StockQueryService(self.mock_trading_service, self.mock_logger, self.mock_time_manager)
 
-        self.mock_token_manager = MagicMock(spec=TokenManager)
+        self.mock_env = MagicMock(spec=KoreaInvestApiEnv)
 
         self.api = KoreaInvestApiBase(
             base_url="https://mock.api",
@@ -40,7 +40,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
                 "tr_ids": {},
                 "custtype": "P"
             },
-            token_manager=self.mock_token_manager,
+            env=self.mock_env,
             logger=self.mock_logger
         )
 
@@ -192,12 +192,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "70000",
                     "prdy_vrss": "1000",
                     "prdy_vrss_sign": "2",
                     "prdy_ctrt": "1.45"
-                }
+                })
             }
         )
         with patch('builtins.print') as mock_print:
@@ -212,12 +212,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "68000",
                     "prdy_vrss": "1000",
                     "prdy_vrss_sign": "5",  # 하락
                     "prdy_ctrt": "1.45"
-                }
+                })
             }
         )
 
@@ -232,9 +232,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "69000", "prdy_vrss": "0", "prdy_vrss_sign": "3", "prdy_ctrt": "0.00"
-                }
+                })
             }
         )
         with patch('builtins.print') as mock_print:
@@ -248,9 +248,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "N/A", "prdy_vrss_sign": "N/A", "prdy_ctrt": "N/A"
-                }
+                })
             }
         )
         with patch('builtins.print') as mock_print:
@@ -266,9 +266,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "70000", "prdy_vrss": "ABC", "prdy_vrss_sign": "2", "prdy_ctrt": "1.45"
-                }
+                })
             }
         )
         with patch('builtins.print') as mock_print:
@@ -504,11 +504,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "70000",
                     "stck_oprc": "69000",
                     "oprc_vrss_prpr_sign": "2"
-                }
+                })
             }
         )
 
@@ -523,11 +523,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "68000",  # 현재가
                     "stck_oprc": "69000",  # 시가
                     "oprc_vrss_prpr_sign": "5"  # 시가대비 부호 (하락)
-                }
+                })
             }
         )
         with patch('builtins.print') as mock_print:
@@ -541,11 +541,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "69000",  # 현재가
                     "stck_oprc": "69000",  # 시가
                     "oprc_vrss_prpr_sign": "3"  # 시가대비 부호 (보합)
-                }
+                })
             }
         )
         with patch('builtins.print') as mock_print:
@@ -559,11 +559,10 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "70000",
-                    "stck_oprc": "0",  # 시가 0원
-                    "oprc_vrss_prpr_sign": "2"
-                }
+                    "stck_oprc": "0",
+                })
             }
         )
         with patch('builtins.print') as mock_print:
@@ -577,11 +576,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "N/A",  # 현재가 누락
                     "stck_oprc": "69000",
                     "oprc_vrss_prpr_sign": "2"
-                }
+                })
             }
         )
         with patch('builtins.print') as mock_print:
@@ -608,7 +607,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {}  # ✅ 빈 딕셔너리라도 명시적으로 output 키가 있어야 함
+                "output": ResStockFullInfoApiOutput.from_dict(
+                    {}  # ✅ 빈 딕셔너리라도 명시적으로 output 키가 있어야 함
+                )
             }
         )
         with patch('builtins.print') as mock_print:
@@ -699,12 +700,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     "stck_prpr": "70000",
                     "prdy_vrss": "1500",
                     "prdy_vrss_sign": "2",
                     "prdy_ctrt": "2.19"
-                }
+                })
             }
         )
 
@@ -724,12 +725,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     'stck_prpr': '70000',
                     'prdy_vrss': '1500',  # 전일대비 +1500원
                     'prdy_vrss_sign': '2',  # 2:상승
                     'prdy_ctrt': '2.19'  # 전일대비율
-                }
+                })
             }
         )
 
@@ -749,12 +750,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     'stck_prpr': '90000',
                     'prdy_vrss': '2000',  # 전일대비 -2000원
                     'prdy_vrss_sign': '5',  # 5:하락
                     'prdy_ctrt': '2.17'  # 전일대비율
-                }
+                })
             }
         )
         await self.handler.handle_display_stock_change_rate(stock_code)
@@ -770,12 +771,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": {
+                "output": ResStockFullInfoApiOutput.from_dict({
                     'stck_prpr': '50000',
                     'prdy_vrss': '0',  # 전일대비 0원
                     'prdy_vrss_sign': '3',  # 3:보합 (또는 기타)
                     'prdy_ctrt': '0.00'  # 전일대비율
-                }
+                })
             }
         )
 
