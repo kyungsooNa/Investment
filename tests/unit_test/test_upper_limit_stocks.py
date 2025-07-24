@@ -3,7 +3,6 @@ import unittest
 import unittest.mock as mock
 from unittest.mock import AsyncMock, MagicMock
 import sys
-import logging
 from io import StringIO
 import builtins
 
@@ -18,11 +17,6 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Mocki
 from common.types import ResCommonResponse, ResStockFullInfoApiOutput, ResTopMarketCapApiItem
 from dataclasses import fields
 
-# 로거의 출력을 캡처하기 위한 설정 (테스트 시 실제 파일에 로그를 남기지 않도록)
-logging.getLogger('operational_logger').propagate = False
-logging.getLogger('debug_logger').propagate = False
-logging.getLogger('operational_logger').handlers = []
-logging.getLogger('debug_logger').handlers = []
 
 
 # 테스트를 위한 MockLogger (실제 로거 대신 사용)

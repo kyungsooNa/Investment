@@ -12,6 +12,22 @@ from strategies.strategy_executor import StrategyExecutor
 from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem, ResMarketCapStockItem
 from trading_app import TradingApp
 
+def get_test_logger():
+    logger = logging.getLogger("test_logger")
+    logger.setLevel(logging.DEBUG)
+
+    # 기존 핸들러 제거
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 콘솔 출력만 (파일 기록 없음)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    return logger
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
@@ -26,7 +42,8 @@ except ImportError as e:
     # but the classes are defined in the mock section below.
     # Log the error for debugging if needed, but don't stop execution
     # as mocks will be used.
-    logging.warning(f"Could not import a module for testing: {e}. Proceeding with mocks.")
+    logger = get_test_logger()
+    logger.warning(f"Could not import a module for testing: {e}. Proceeding with mocks.")
 
 
 # 각 테스트를 위한 목(mock) TradingApp 인스턴스 설정 픽스처
@@ -50,7 +67,7 @@ def setup_mock_app(mocker):
         mocker.patch(f"{cls.__module__}.{cls.__name__}")
     app = TradingApp()
 
-    app.logger = mocker.MagicMock(spec=logging.Logger)
+    app.logger = mocker.MagicMock(spec=get_test_logger())
 
     app.cli_view = mocker.MagicMock(spec=CLIView)  # AsyncMock 대신 MagicMock 사용
     app.cli_view.select_environment_input = AsyncMock()

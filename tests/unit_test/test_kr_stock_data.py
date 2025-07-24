@@ -2,6 +2,7 @@ import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock
 from utils.kr_stock_data import StockCodeNameResolver
+
 # --- 테스트를 위한 모의(Mock) 데이터프레임 생성 ---
 @pytest.fixture
 def mock_stock_df():
