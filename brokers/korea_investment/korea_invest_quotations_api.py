@@ -12,23 +12,25 @@ from common.types import (
 
 
 class KoreaInvestApiQuotations(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, env: KoreaInvestApiEnv, logger=None,
+    def __init__(self, env: KoreaInvestApiEnv, logger=None,
                  async_client: Optional[httpx.AsyncClient] = None):
-        super().__init__(base_url, headers, config, env, logger, async_client=async_client)
+        super().__init__(env, logger, async_client=async_client)
 
     async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
         """
         종목코드로 종목의 전체 정보 (이름, 현재가, 시가총액 등)를 가져옵니다.
         ResCommonResponse 형태로 반환하며, data 필드에 ResStockFullInfoApiOutput 포함.
         """
-        path = self._config["paths"]["search_info"]
+        full_config = self._env.active_config
 
-        self._headers["tr_id"] = self._config['tr_ids']['quotations']['search_info']
-        self._headers["custtype"] = self._config['custtype']
+        path = full_config["paths"]["search_info"]
+
+        self._headers["tr_id"] = full_config['tr_ids']['quotations']['search_info']
+        self._headers["custtype"] = full_config['custtype']
 
         params = {
             "PDNO": stock_code,
-            "FID_DIV_CLS_CODE": self._config["params"]["fid_div_cls_code"]
+            "FID_DIV_CLS_CODE": full_config["params"]["fid_div_cls_code"]
         }
 
         self._logger.info(f"{stock_code} 종목 정보 조회 시도...")
@@ -64,9 +66,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         현재가를 조회합니다. API 원본 응답을 ResCommonResponse의 data 필드에 담아 반환.
         """
-        path = self._config["paths"]["inquire_price"]
+        full_config = self._env.active_config
 
-        full_config = self._config
+        path = full_config["paths"]["inquire_price"]
+
         self._headers["tr_id"] = full_config['tr_ids']['quotations']['inquire_price']
         self._headers["custtype"] = full_config['custtype']
 
@@ -100,7 +103,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=None
             )
 
-        output : ResStockFullInfoApiOutput = response_common.data['output']
+        output: ResStockFullInfoApiOutput = response_common.data['output']
 
         if not output:
             error_msg = f"API 응답 output 데이터 없음: {stock_code}, 응답: {response_common.msg1}"
@@ -201,6 +204,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         시가총액 상위 종목 목록을 반환합니다. 최대 30개까지만 지원됩니다.
         ResCommonResponse 형태로 반환하며, data 필드에 List[ResTopMarketCapApiItem] 포함.
         """
+        full_config = self._env.active_config
+
         if count <= 0:
             error_msg = f"요청된 count가 0 이하입니다. count={count}"
             self._logger.warning(error_msg)
@@ -214,10 +219,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self._logger.warning(f"요청 수 {count}는 최대 허용값 30을 초과하므로 30개로 제한됩니다.")
             count = 30
 
-        self._headers["tr_id"] = self._config['tr_ids']['quotations']['top_market_cap']
-        self._headers["custtype"] = self._config['custtype']
+        self._headers["tr_id"] = full_config['tr_ids']['quotations']['top_market_cap']
+        self._headers["custtype"] = full_config['custtype']
 
-        path = self._config["paths"]["market_cap"]
+        path = full_config["paths"]["market_cap"]
 
         params = {
             "fid_cond_mrkt_div_code": "J",
@@ -281,16 +286,18 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         종목의 전일 종가, 전일 거래량 조회
         ResCommonResponse 형태로 반환하며, data 필드에 Dict[str, Union[float, int]] 포함.
         """
+        full_config = self._env.active_config
+
         params = {
             "fid_cond_mrkt_div_code": "J",  # 주식시장
             "fid_input_iscd": code,
         }
         try:
             headers_sync = self._headers.copy()
-            headers_sync["tr_id"] = self._config['tr_ids']['quotations']['daily_itemchartprice_day']
+            headers_sync["tr_id"] = full_config['tr_ids']['quotations']['daily_itemchartprice_day']
 
             response_raw = requests.get(
-                self._config["paths"]["inquire_daily_itemchartprice"],
+                full_config["paths"]["inquire_daily_itemchartprice"],
                 headers=headers_sync,
                 params=params
             )
@@ -428,6 +435,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         TRID: FHKST03010100 (일별), FHNKF03060000 (분봉)
         ResCommonResponse 형태로 반환하며, data 필드에 List[ResDailyChartApiItem] 포함.
         """
+        full_config = self._env.active_config
+
         valid_period_codes = {"D", "M"}
         if fid_period_div_code not in valid_period_codes:
             error_msg = f"지원하지 않는 fid_period_div_code: {fid_period_div_code}"
@@ -440,10 +449,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         selected_tr_id = None
         if fid_period_div_code == 'D':
-            selected_tr_id = self._config['tr_ids']['quotations']['daily_itemchartprice_day']
+            selected_tr_id = full_config['tr_ids']['quotations']['daily_itemchartprice_day']
         elif fid_period_div_code == 'M':
-            self._logger.debug(f"현재 _config['tr_ids'] 내용: {self._config.get('tr_ids')}")
-            selected_tr_id = self._config['tr_ids']['quotations']['daily_itemchartprice_minute']
+            self._logger.debug(f"현재 _config['tr_ids'] 내용: {full_config.get('tr_ids')}")
+            selected_tr_id = full_config['tr_ids']['quotations']['daily_itemchartprice_minute']
 
         if not selected_tr_id:
             error_msg = f"TR_ID 설정을 찾을 수 없습니다. fid_period_div_code: {fid_period_div_code}"
@@ -467,7 +476,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         }
 
         response_data: ResCommonResponse = await self.call_api(method="GET",
-                                                               path=self._config["paths"][
+                                                               path=full_config["paths"][
                                                                    "inquire_daily_itemchartprice"],
                                                                params=params, data=None)
 
@@ -509,12 +518,14 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         종목의 실시간 호가(매도/매수 잔량 포함) 정보를 조회합니다.
         ResCommonResponse 형태로 반환되며, data는 원시 output 딕셔너리입니다.
         """
-        path = self._config["paths"]["asking_price"]
-        tr_id = self._config["tr_ids"]["quotations"]["asking_price"]
-        market_code = self._config.get("market_code", "J")
+        full_config = self._env.active_config
+
+        path = full_config["paths"]["asking_price"]
+        tr_id = full_config["tr_ids"]["quotations"]["asking_price"]
+        market_code = full_config.get("market_code", "J")
 
         self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = self._config["custtype"]
+        self._headers["custtype"] = full_config["custtype"]
 
         params = {
             "fid_cond_mrkt_div_code": market_code,
@@ -535,12 +546,14 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         종목의 시간대별 체결가/체결량 정보를 조회합니다.
         """
-        path = self._config["paths"]["time_conclude"]
-        tr_id = self._config["tr_ids"]["quotations"]["time_conclude"]
-        market_code = self._config.get("market_code", "J")
+        full_config = self._env.active_config
+
+        path = full_config["paths"]["time_conclude"]
+        tr_id = full_config["tr_ids"]["quotations"]["time_conclude"]
+        market_code = full_config.get("market_code", "J")
 
         self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = self._config["custtype"]
+        self._headers["custtype"] = full_config["custtype"]
 
         params = {
             "fid_cond_mrkt_div_code": market_code,
@@ -560,11 +573,13 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         키워드로 종목 검색
         """
-        path = self._config["paths"]["search_stock"]
-        tr_id = self._config["tr_ids"]["quotations"]["search_stock"]
+        full_config = self._env.active_config
+
+        path = full_config["paths"]["search_stock"]
+        tr_id = full_config["tr_ids"]["quotations"]["search_stock"]
 
         self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = self._config["custtype"]
+        self._headers["custtype"] = full_config["custtype"]
 
         params = {
             "word": keyword
@@ -583,13 +598,15 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         상승률/하락률 상위 종목 조회
         """
+        full_config = self._env.active_config
+
         key = "ranking_rise" if rise else "ranking_fall"
-        path = self._config["paths"][key]
-        tr_id = self._config["tr_ids"]["quotations"][key]
-        market_code = self._config.get("market_code", "J")
+        path = full_config["paths"][key]
+        tr_id = full_config["tr_ids"]["quotations"][key]
+        market_code = full_config.get("market_code", "J")
 
         self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = self._config["custtype"]
+        self._headers["custtype"] = full_config["custtype"]
 
         params = {
             "fid_cond_mrkt_div_code": market_code
@@ -609,12 +626,14 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         거래량 상위 종목 조회
         """
-        path = self._config["paths"]["ranking_volume"]
-        tr_id = self._config["tr_ids"]["quotations"]["ranking_volume"]
-        market_code = self._config.get("market_code", "J")
+        full_config = self._env.active_config
+
+        path = full_config["paths"]["ranking_volume"]
+        tr_id = full_config["tr_ids"]["quotations"]["ranking_volume"]
+        market_code = full_config.get("market_code", "J")
 
         self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = self._config["custtype"]
+        self._headers["custtype"] = full_config["custtype"]
 
         params = {
             "fid_cond_mrkt_div_code": market_code
@@ -633,12 +652,14 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         외국인 순매수 상위 종목 조회
         """
-        path = self._config["paths"]["ranking_foreign"]
-        tr_id = self._config["tr_ids"]["quotations"]["ranking_foreign"]
-        market_code = self._config.get("market_code", "J")
+        full_config = self._env.active_config
+
+        path = full_config["paths"]["ranking_foreign"]
+        tr_id = full_config["tr_ids"]["quotations"]["ranking_foreign"]
+        market_code = full_config.get("market_code", "J")
 
         self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = self._config["custtype"]
+        self._headers["custtype"] = full_config["custtype"]
 
         params = {
             "fid_cond_mrkt_div_code": market_code
@@ -657,11 +678,13 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         종목 뉴스 조회
         """
-        path = self._config["paths"]["item_news"]
-        tr_id = self._config["tr_ids"]["quotations"]["item_news"]
+        full_config = self._env.active_config
+
+        path = full_config["paths"]["item_news"]
+        tr_id = full_config["tr_ids"]["quotations"]["item_news"]
 
         self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = self._config["custtype"]
+        self._headers["custtype"] = full_config["custtype"]
 
         params = {
             "fid_input_iscd": stock_code
@@ -680,11 +703,13 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         ETF 정보 조회
         """
-        path = self._config["paths"]["etf_info"]
-        tr_id = self._config["tr_ids"]["quotations"]["etf_info"]
+        full_config = self._env.active_config
+
+        path = full_config["paths"]["etf_info"]
+        tr_id = full_config["tr_ids"]["quotations"]["etf_info"]
 
         self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = self._config["custtype"]
+        self._headers["custtype"] = full_config["custtype"]
 
         params = {
             "fid_input_iscd": etf_code

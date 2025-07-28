@@ -7,24 +7,27 @@ import asyncio  # 비동기 처리를 위해 추가
 import httpx
 
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
 from typing import Optional
 
+
 class KoreaInvestApiTrading(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, env : KoreaInvestApiEnv, logger, async_client: Optional[httpx.AsyncClient] = None):
-        super().__init__(base_url, headers, config, env, logger, async_client=async_client)
+    def __init__(self, env: KoreaInvestApiEnv, logger, async_client: Optional[httpx.AsyncClient] = None):
+        super().__init__(env, logger, async_client=async_client)
 
     async def _get_hashkey(self, data):  # async def로 변경됨
         """
         주문 요청 Body를 기반으로 Hashkey를 생성하여 반환합니다.
         이는 별도의 API 호출을 통해 이루어집니다.
         """
+        full_config = self._env.active_config
+
         body_json_str = json.dumps(data)
-        hashkey_url = f"{self._config['base_url']}/uapi/hashkey"
+        hashkey_url = f"{full_config['base_url']}/uapi/hashkey"
 
         hashkey_headers = self._headers.copy()
-        hashkey_headers["appkey"] = self._config['api_key']
-        hashkey_headers["appsecret"] = self._config['api_secret_key']
+        hashkey_headers["appkey"] = full_config['api_key']
+        hashkey_headers["appsecret"] = full_config['api_secret_key']
         hashkey_headers["Content-Type"] = "application/json; charset=utf-8"
 
         try:
@@ -57,14 +60,14 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
     async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn):  # async def로 변경됨
         path = "/uapi/domestic-stock/v1/trading/order-cash"
 
-        full_config = self._config
+        full_config = self._env.active_config
 
         if trade_type == "buy":
             tr_id = full_config['tr_ids']['trading']['order_cash_buy_paper'] if full_config['is_paper_trading'] else \
-            full_config['tr_ids']['trading']['order_cash_buy_real']
+                full_config['tr_ids']['trading']['order_cash_buy_real']
         elif trade_type == "sell":
             tr_id = full_config['tr_ids']['trading']['order_cash_sell_paper'] if full_config['is_paper_trading'] else \
-            full_config['tr_ids']['trading']['order_cash_sell_real']
+                full_config['tr_ids']['trading']['order_cash_sell_real']
         else:
             self._logger.error("trade_type은 'buy' 또는 'sell'여야 합니다.")
             return None

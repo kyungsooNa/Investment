@@ -6,13 +6,13 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv # TokenM
 from typing import Optional
 
 class KoreaInvestApiAccount(KoreaInvestApiBase):
-    def __init__(self, base_url, headers, config, env: KoreaInvestApiEnv, logger=None, async_client: Optional[httpx.AsyncClient] = None):
-        super().__init__(base_url, headers, config, env, logger, async_client=async_client)
+    def __init__(self, env: KoreaInvestApiEnv, logger=None, async_client: Optional[httpx.AsyncClient] = None):
+        super().__init__(env, logger, async_client=async_client)
 
     async def get_account_balance(self):  # 모의투자용
         path = "/uapi/domestic-stock/v1/trading/inquire-balance"
 
-        full_config = self._config
+        full_config = self._env.active_config
         self._headers["tr_id"] = full_config['tr_ids']['account']['inquire_balance_paper']
         self._headers["custtype"] = full_config['custtype']
 
@@ -41,7 +41,7 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
         """
         path = "/uapi/domestic-stock/v1/trading/inquire-balance"
 
-        full_config = self._config
+        full_config = self._env.active_config
         self._headers["tr_id"] = full_config['tr_ids']['account']['inquire_balance_real']
         self._headers["custtype"] = full_config['custtype']
 

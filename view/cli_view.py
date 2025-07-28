@@ -35,13 +35,21 @@ class CLIView:
 
     def display_account_balance(self, balance_info: dict):
         """계좌 잔고 정보를 표시합니다."""
-        self._print_time_header()
-        print("\n--- 계좌 잔고 ---")
-        print(f"예수금: {balance_info.get('dnca_tot_amt', 'N/A')}원")
-        print(f"총 평가 금액: {balance_info.get('tot_evlu_amt', 'N/A')}원")
-        print(f"총 평가 손익: {balance_info.get('tot_evlu_pfls_amt', 'N/A')}원")
-        print(f"총 손익률: {balance_info.get('tot_evlu_pfls_rt', 'N/A')}%")
-        print("-----------------")
+        try:
+            self._print_time_header()
+            print("\n--- 계좌 잔고 ---")
+            print(f"계좌번호1: {balance_info.get('ctx_area_fk100')}")
+            print(f"계좌번호2: {balance_info.get('ctx_area_nk100')}")
+            output1 = balance_info.get('output1')
+            output2 = balance_info.get('output2')[0]
+            print(f"예수금: {output2.get('dnca_tot_amt', 'N/A')}원")
+            print(f"총 평가 금액: {output2.get('tot_evlu_amt', 'N/A')}원")
+            print(f"총 평가 손익: {output2.get('tot_evlu_pfls_amt', 'N/A')}원")
+            print(f"총 손익률: {output2.get('tot_evlu_pfls_rt', 'N/A')}%")
+            print("-----------------")
+        except (IndexError, TypeError):
+            print("계좌 상세 내역이 없습니다.")
+
 
     def display_stock_info(self, stock_summary: dict):
         """단일 종목 정보를 표시합니다."""
@@ -132,7 +140,7 @@ class CLIView:
                 # 딕셔너리 형태의 종목 정보를 가정
                 if isinstance(s, dict):
                     print(f" - {s.get('name', 'N/A')}({s.get('code', 'N/A')})")
-                else: # 문자열 형태의 종목 코드만 있을 경우
+                else:  # 문자열 형태의 종목 코드만 있을 경우
                     print(f" - {s}")
         else:
             print("   없음")
@@ -156,7 +164,7 @@ class CLIView:
         print("✔️ 후보 종목:")
         if stocks:
             for item in stocks:
-                print(f" - {item.get('name', 'N/A')}({item.get('code', 'N/A')}) - 등락률 ({item.get('prdy_ctrt','N/A')})")
+                print(f" - {item.get('name', 'N/A')}({item.get('code', 'N/A')}) - 등락률 ({item.get('prdy_ctrt', 'N/A')})")
         else:
             print("   없음")
 
@@ -184,10 +192,10 @@ class CLIView:
         self._print_time_header()
         print("토큰이 무효화되었습니다. 다음 요청 시 새 토큰이 발급됩니다.")
 
-    def display_account_balance_failure(self):
+    def display_account_balance_failure(self, msg):
         """계좌 잔고 조회 실패 메시지를 표시합니다."""
         self._print_time_header()
-        print("계좌 잔고 조회에 실패했습니다.")
+        print(f"계좌 잔고 조회에 실패했습니다.{msg}")
 
     def display_stock_code_not_found(self, stock_name: str):
         """종목 코드를 찾을 수 없을 때 메시지를 표시합니다."""

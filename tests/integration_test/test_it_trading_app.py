@@ -66,6 +66,7 @@ def real_app_instance(mocker, get_mock_config):
     # 2. 실제 TradingApp 인스턴스를 생성합니다.
     #    이 과정에서 config.yaml 로드, Logger, TimeManager, Env, TokenManager 초기화가 자동으로 수행됩니다.
     app = TradingApp(logger=dummy_logger)
+    app.env.set_trading_mode(False) # 실전 투자 환경 테스트
     app.config = get_mock_config
     app.logger = MagicMock()
 

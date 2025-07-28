@@ -23,13 +23,16 @@ class KoreaInvestWebSocketAPI:
     def __init__(self, env: KoreaInvestApiEnv, logger=None):
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
-        self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)
-
+        # self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)
         # config에서 웹소켓 및 REST API 정보 가져오기
-        self._websocket_url = self._config['websocket_url']
-        self._rest_api_key = self._config['api_key']
-        self._rest_api_secret = self._config['api_secret_key']
-        self._base_rest_url = self._config['base_url']
+        # self._websocket_url = self._config['websocket_url']
+        # self._rest_api_key = self._config['api_key']
+        # self._rest_api_secret = self._config['api_secret_key']
+        # self._base_rest_url = self._config['base_url']
+        self._websocket_url = None
+        self._rest_api_key = None
+        self._rest_api_secret = None
+        self._base_rest_url = None
 
         self.ws = None  # 웹소켓 연결 객체 (websockets.WebSocketClientProtocol)
         self.approval_key = None  # 웹소켓 접속 키 (REST API로 발급)
@@ -44,8 +47,7 @@ class KoreaInvestWebSocketAPI:
         self._aes_key = None
         self._aes_iv = None
 
-    @staticmethod
-    def _aes_cbc_base64_dec(key, iv, cipher_text):
+    def _aes_cbc_base64_dec(self, key, iv, cipher_text):
         """
         AES256 DECODE (Base64 인코딩된 암호문을 복호화)
         :param key: AES256 Secret Key (str)
@@ -57,13 +59,18 @@ class KoreaInvestWebSocketAPI:
             cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
             return bytes.decode(unpad(cipher.decrypt(b64decode(cipher_text)), AES.block_size))
         except Exception as e:
-            logging.error(f"AES 복호화 오류 발생: {e} (key: {key[:5]}..., iv: {iv[:5]}..., cipher: {cipher_text[:50]}...)")
+            self._logger.error(f"AES 복호화 오류 발생: {e} (key: {key[:5]}..., iv: {iv[:5]}..., cipher: {cipher_text[:50]}...)")
             return None
 
     async def _get_approval_key(self):
         """
         웹소켓 접속 키(approval_key)를 한국투자증권 REST API를 통해 발급받습니다.
         """
+        self._websocket_url = self._env.active_config['websocket_url']
+        self._base_rest_url = self._env.active_config['base_url']
+        self._rest_api_key= self._env.active_config['api_key']
+        self._rest_api_secret= self._env.active_config['api_secret_key']
+
         path = "/oauth2/Approval"
         url = f"{self._base_rest_url}{path}"
         headers = {"content-type": "application/json; utf-8"}
@@ -123,6 +130,11 @@ class KoreaInvestWebSocketAPI:
 
     def _handle_websocket_message(self, message: str):
         """수신된 웹소켓 메시지를 파싱하고 등록된 콜백으로 전달."""
+        self._websocket_url = self._env.active_config['websocket_url']
+        self._base_rest_url = self._env.active_config['base_url']
+        self._rest_api_key= self._env.active_config['api_key']
+        self._rest_api_secret= self._env.active_config['api_secret_key']
+
         # 한국투자증권 실시간 데이터는 '|'로 구분된 문자열 또는 JSON 객체로 수신됨
         if message and (message.startswith('0|') or message.startswith('1|')):  # 실시간 데이터 (0: 일반, 1: 체결통보)
             recvstr = message.split('|')
@@ -130,16 +142,16 @@ class KoreaInvestWebSocketAPI:
             data_body = recvstr[3]  # 네 번째 요소가 실제 데이터 본문
 
             print("📩 받은 TR_ID:", tr_id)
-            print("🔍 비교 대상:", self._config['tr_ids']['websocket']['realtime_price'])
+            print("🔍 비교 대상:", self._env.active_config['tr_ids']['websocket']['realtime_price'])
 
             parsed_data = {}
             message_type = 'unknown'
 
             # --- 주식 관련 실시간 데이터 파싱 ---
-            if tr_id == self._config['tr_ids']['websocket']['realtime_price']:  # H0STCNT0 (주식 체결)
+            if tr_id == self._env.active_config['tr_ids']['websocket']['realtime_price']:  # H0STCNT0 (주식 체결)
                 parsed_data = self._parse_stock_contract_data(data_body)
                 message_type = 'realtime_price'
-            elif tr_id == self._config['tr_ids']['websocket']['realtime_quote']:  # H0STASP0 (주식 호가)
+            elif tr_id == self._env.active_config['tr_ids']['websocket']['realtime_quote']:  # H0STASP0 (주식 호가)
                 parsed_data = self._parse_stock_quote_data(data_body)
                 message_type = 'realtime_quote'
 
@@ -428,6 +440,7 @@ class KoreaInvestWebSocketAPI:
     # --- 웹소켓 연결 및 해지 ---
     async def connect(self, on_message_callback=None):
         """웹소켓 연결을 시작하고 실시간 데이터 수신을 준비합니다."""
+        self._websocket_url = self._env.get_websocket_url()
         if self.ws and self._is_connected:
             self._logger.info("웹소켓이 이미 연결되어 있습니다.")
             return True
@@ -488,6 +501,11 @@ class KoreaInvestWebSocketAPI:
         :param tr_key: 구독할 종목코드 또는 HTS ID (체결통보용)
         :param tr_type: 1: 등록, 2: 해지
         """
+        self._websocket_url = self._env.active_config['websocket_url']
+        self._base_rest_url = self._env.active_config['base_url']
+        self._rest_api_key= self._env.active_config['api_key']
+        self._rest_api_secret= self._env.active_config['api_secret_key']
+
         if not self._is_connected or not self.ws:
             self._logger.error("웹소켓이 연결되어 있지 않아 실시간 요청을 보낼 수 없습니다.")
             return False
@@ -497,7 +515,7 @@ class KoreaInvestWebSocketAPI:
 
         header = {
             "approval_key": self.approval_key,
-            "custtype": self._config['custtype'],
+            "custtype": self._env.active_config['custtype'],
             "id": tr_id,
             "pwd": "",  # 빈 값
             "gt_uid": os.urandom(16).hex()  # 32Byte UUID
@@ -525,25 +543,25 @@ class KoreaInvestWebSocketAPI:
 
     async def subscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가)를 구독합니다."""
-        tr_id = self._config['tr_ids']['websocket']['realtime_price']
+        tr_id = self._env.active_config['tr_ids']['websocket']['realtime_price']
         self._logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
 
     async def unsubscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
-        tr_id = self._config['tr_ids']['websocket']['realtime_price']
+        tr_id = self._env.active_config['tr_ids']['websocket']['realtime_price']
         self._logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
     async def subscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터를 구독합니다."""
-        tr_id = self._config['tr_ids']['websocket']['realtime_quote']
+        tr_id = self._env.active_config['tr_ids']['websocket']['realtime_quote']
         self._logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
 
     async def unsubscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터 구독을 해지합니다."""
-        tr_id = self._config['tr_ids']['websocket']['realtime_quote']
+        tr_id = self._env.active_config['tr_ids']['websocket']['realtime_quote']
         self._logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 

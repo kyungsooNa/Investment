@@ -94,10 +94,21 @@ def test_display_market_status_closed(cli_view_instance, capsys):
 def test_display_account_balance(cli_view_instance, capsys):
     """계좌 잔고 정보 출력을 테스트합니다."""
     balance_info = {
-        'dnca_tot_amt': '1000000',
-        'tot_evlu_amt': '1200000',
-        'tot_evlu_pfls_amt': '200000',
-        'tot_evlu_pfls_rt': '20.00'
+        "output2": [
+            {
+                "dnca_tot_amt": "1000000",
+                "tot_evlu_amt": "1200000",
+                "tot_evlu_pfls_amt": "200000",
+                "tot_evlu_pfls_rt": "20.00",
+                "pdno": "005930",
+                "prdt_name": "삼성전자",
+                "hldg_qty": "10",
+                "pchs_avg_pric": "80000",
+                "evlu_pfls_amt": "200000"
+            }
+        ],
+        "ctx_area_fk100": "123-45-67890",
+        "ctx_area_nk100": "123-45-67891"
     }
     cli_view_instance.display_account_balance(balance_info)
     captured = capsys.readouterr()
@@ -351,9 +362,10 @@ def test_display_token_invalidated_message(cli_view_instance, capsys):
 
 def test_display_account_balance_failure(cli_view_instance, capsys):
     """계좌 잔고 조회 실패 메시지 출력을 테스트합니다."""
-    cli_view_instance.display_account_balance_failure()
+    msg = "msg"
+    cli_view_instance.display_account_balance_failure(msg)
     captured = capsys.readouterr()
-    assert "계좌 잔고 조회에 실패했습니다." in captured.out
+    assert "계좌 잔고 조회에 실패했습니다" in captured.out
 
 
 def test_display_stock_code_not_found(cli_view_instance, capsys):

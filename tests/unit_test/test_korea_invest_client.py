@@ -14,15 +14,6 @@ def test_korea_invest_api_client_initialization(korea_invest_client_instance):
     assert client._trading is mock_trading
     assert client._websocketAPI is mock_websocket_api  # public 속성도 확인
 
-    # _config 내용 확인
-    assert client._config["access_token"] == "test-access-token"
-    assert client._config["base_url"] == "https://mock-base-url"
-    assert client._config["is_paper_trading"] is True  # is_paper_trading 확인
-
-    # __str__ 메서드 테스트
-    expected_str = "KoreaInvestApiClient(base_url=https://mock-base-url, is_paper_trading=True)"
-    assert str(client) == expected_str
-
 
 @pytest.mark.asyncio
 async def test_quotations_get_price_summary_success():
