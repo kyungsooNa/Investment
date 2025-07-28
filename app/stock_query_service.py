@@ -557,8 +557,8 @@ class StockQueryService:
         response = await self.trading_service.get_etf_info(etf_code)
 
         if response and response.rt_cd == ErrorCode.SUCCESS.value:
-            etf_info = response.data.get('output1', {})
-            name = etf_info.get('hts_kor_isnm', 'N/A')
+            etf_info = response.data.get('output', {})
+            name = etf_info.get('etf_rprs_bstp_kor_isnm', 'N/A')
             price = etf_info.get('stck_prpr', 'N/A')
             nav = etf_info.get('nav', 'N/A')
             market_cap = etf_info.get('stck_llam', 'N/A')

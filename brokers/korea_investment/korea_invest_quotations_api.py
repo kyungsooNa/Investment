@@ -712,6 +712,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers["custtype"] = full_config["custtype"]
 
         params = {
+            "fid_cond_mrkt_div_code": "J",
             "fid_input_iscd": etf_code
         }
 

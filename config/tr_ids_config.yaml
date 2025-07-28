@@ -14,7 +14,7 @@ tr_ids:
     ranking_volume: FHKUP03400000
     ranking_foreign: FHKUP03600000
     item_news: FHPST01040000
-    etf_info: FHKST05010100
+    etf_info: FHPST02400000
   account:
     inquire_balance_real: "TTTC8434R" # 실전 계좌 잔고 조회
     inquire_balance_paper: "VTTC8434R" # 모의 계좌 잔고 조회
