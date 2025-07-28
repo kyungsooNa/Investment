@@ -7,6 +7,7 @@ import logging
 import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
+import jwt
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
 from common.types import ErrorCode, ResCommonResponse, ResponseStatus
 from typing import Union, Optional
@@ -18,14 +19,23 @@ class KoreaInvestApiBase:
     requests.Session을 사용하여 연결 효율성을 높입니다.
     """
 
-    def __init__(self, base_url, headers, config, env: KoreaInvestApiEnv,
-                 logger=None, async_client: Optional[httpx.AsyncClient] = None):  # base_url, headers, config, logger를 받음
+    def __init__(self, env: KoreaInvestApiEnv,
+                 logger=None, async_client: Optional[httpx.AsyncClient] = None):
         self._logger = logger if logger else logging.getLogger(__name__)
-        self._config = config  # _config는 모든 설정(tr_ids, base_url 등)을 포함
-        self._base_url = base_url  # 초기화 시 전달받은 base_url 사용
-        self._headers = headers.copy()  # 초기화 시 전달받은 headers 복사하여 사용
-        # self._session = requests.Session()  # requests.Session은 동기
         self._env = env
+
+        # self._headers = headers.copy()  # 초기화 시 전달받은 headers 복사하여 사용
+        self._headers = {
+            "Content-Type": "application/json",
+            "User-Agent": self._env.my_agent,
+            "charset": "UTF-8",
+            "Authorization": "",
+            "appkey": "",
+            "appsecret": "",
+        }
+        # self._session = requests.Session()  # requests.Session은 동기
+        self._base_url = None
+        # self._config = config  # _config는 모든 설정(tr_ids, base_url 등)을 포함
 
         if async_client:
             self._async_session = async_client
@@ -38,6 +48,7 @@ class KoreaInvestApiBase:
         logging.getLogger('httpcore').setLevel(logging.WARNING)  # httpx의 하위 로거
 
     async def call_api(self, method, path, params=None, data=None, retry_count=10, delay=1):
+        self._base_url = self._env.get_base_url()
         url = f"{self._base_url}{path}"
 
         for attempt in range(1, retry_count + 1):
@@ -58,7 +69,7 @@ class KoreaInvestApiBase:
                     self._logger.error(f"복구 불가능한 오류 발생: {url}, 응답: {response.text}")
                     return ResCommonResponse(
                         rt_cd=ErrorCode.PARSING_ERROR.value,
-                        msg1="API 응답 파싱 실패 또는 처리 불가능",
+                        msg1=f"API 응답 파싱 실패 또는 처리 불가능 - {response.text}",
                         data=None
                     )
 
@@ -94,9 +105,12 @@ class KoreaInvestApiBase:
         for key, value in self._headers.items():
             try:
                 encoded_value = str(value).encode('latin-1', errors='ignore')
-                self._logger.debug(f"  {key}: {encoded_value}")
             except UnicodeEncodeError:
                 self._logger.debug(f"  {key}: *** UnicodeEncodeError ***")
+            except Exception as e:
+                self._logger.debug(f"  {key}: *** {type(e).__name__}: {e} ***")
+            else:
+                self._logger.debug(f"  {key}: {encoded_value}")
 
     def _log_request_exception(self, e):
         if isinstance(e, httpx.HTTPStatusError):
@@ -123,9 +137,12 @@ class KoreaInvestApiBase:
 
         async def make_request():
             access_token: str = await self._env.get_access_token()
+            # payload = jwt.decode(access_token, options={"verify_signature": False})
+            # self._logger.debug(f"access_token payload: {payload}")
             if not isinstance(access_token, str) or access_token is None:
                 raise ValueError("접근 토큰이 없습니다. KoreaInvestEnv에서 먼저 토큰을 발급받아야 합니다.")
-            self._headers["Authorization"] = f"Bearer {access_token}"
+
+            self._set_headers(access_token)
 
             if method.upper() == 'GET':
                 return await self._async_session.get(url, headers=self._headers, params=params)
@@ -147,13 +164,24 @@ class KoreaInvestApiBase:
             # ✅ 토큰 만료 응답 감지 시 재발급 + 재시도 (단 1회만)
             if isinstance(res_json, dict) and res_json.get("msg_cd") == "EGW00123" and not token_refreshed:
                 self._logger.warning("🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도")
+                # await asyncio.sleep(65)
+                await asyncio.sleep(3)
                 await self._env.refresh_token()
                 token_refreshed = True  # ✅ 재시도 플래그 설정
+
+                # ✅ 강제 delay 삽입
+
+                # ✅ 반드시 새로 가져온 토큰으로 Authorization 헤더 재세팅
+                new_token = await self._env.get_access_token()
+                self._headers["Authorization"] = f"Bearer {new_token}"
+                self._logger.debug(f"✅ 재발급 후 토큰 적용 확인: {new_token[:40]}...")
+
                 response = await make_request()
 
         except httpx.RequestError as e:
             if self._logger:
                 self._logger.error(f"요청 예외 발생 (httpx): {str(e)}")
+                self._logger.debug(f"[EGW00123 대응] 현재 Authorization 헤더: {self._headers['Authorization'][:40]}...")
             return ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1=str(e), data=None)
 
         return response
@@ -181,11 +209,7 @@ class KoreaInvestApiBase:
 
         # 4. 토큰 만료 오류 처리 (API 응답 내용 기반)
         if response_json.get('msg_cd') == 'EGW00123':
-            self._logger.error("토큰 만료 오류(EGW00123) 감지.")
-            if self._config is None:
-                self._logger.error("KoreaInvestEnv(config) 인스턴스를 찾을 수 없어 토큰 초기화 불가")
-                return ResponseStatus.PARSING_ERROR
-
+            self._logger.error("최종 토큰 만료 오류(EGW00123) 감지.")
             self._env.invalidate_token()
             return ResponseStatus.RETRY
 
@@ -200,3 +224,8 @@ class KoreaInvestApiBase:
         # 모든 검사를 통과한 최종 성공적인 응답
         self._logger.debug(f"API 응답 성공: {response.text}")
         return response_json
+
+    def _set_headers(self, access_token):
+        self._headers["Authorization"] = f"Bearer {access_token}"
+        self._headers["appkey"] = self._env.active_config['api_key']
+        self._headers["appsecret"] = self._env.active_config['api_secret_key']

@@ -14,7 +14,7 @@ class TokenManager:
     - 토큰의 유효성을 검사하고, 만료 시 자동으로 재발급합니다.
     """
 
-    def __init__(self, token_file_path: Optional[str] = None):
+    def __init__(self, token_file_path: Optional[str] = None, logger=None):
         """
         :param token_file_path: 명시적으로 토큰 파일 경로를 지정할 수 있음
         :param is_paper_trading: True면 모의투자용 토큰 파일, False면 실전투자용
@@ -22,7 +22,7 @@ class TokenManager:
         self.token_file_path = token_file_path
         self._access_token = None
         self._token_expired_at = None
-        self.logger = logging.getLogger(__name__)
+        self._logger = logger if logger else logging.getLogger(__name__)
 
     async def get_access_token(self, base_url: str, app_key: str, app_secret: str) -> str: # env 인자 대신 필요한 정보만 받음
         """유효한 액세스 토큰을 반환합니다. 필요 시 파일에서 로드하거나 새로 발급합니다."""
@@ -36,15 +36,15 @@ class TokenManager:
             # 파일에서 로드한 토큰이 현재 환경의 base_url과 일치하는지 확인
             loaded_token_base_url = self._get_token_base_url_from_file()
             if loaded_token_base_url == base_url: # 전달받은 base_url과 비교
-                self.logger.info("파일에서 유효한 토큰을 로드했습니다.")
+                self._logger.info("파일에서 유효한 토큰을 로드했습니다.")
                 return self._access_token
             else:
-                self.logger.warning(f"파일에서 로드한 토큰의 base_url이 현재 환경과 다릅니다. 저장된: {loaded_token_base_url}, 현재: {base_url}. 새 토큰 발급 필요.")
+                self._logger.warning(f"파일에서 로드한 토큰의 base_url이 현재 환경과 다릅니다. 저장된: {loaded_token_base_url}, 현재: {base_url}. 새 토큰 발급 필요.")
                 self._access_token = None # base_url이 다르면 토큰 무효화
                 self._token_expired_at = None
 
         # 3. 위 모든 경우에 해당하지 않으면 새로 발급
-        self.logger.info("새로운 액세스 토큰을 발급합니다.")
+        self._logger.info("새로운 액세스 토큰을 발급합니다.")
         await self._issue_new_token(base_url, app_key, app_secret) # 필요한 정보 전달
 
         return self._access_token
@@ -55,7 +55,7 @@ class TokenManager:
             return False
         # 만료 시간 5분 전에 갱신하도록 여유를 둡니다.
         now_kst = datetime.now(pytz.timezone('Asia/Seoul'))
-        # self.logger.debug(
+        # self._logger.debug(
         #     f"현재 시각: {now_kst}, 만료 시각: {self._token_expired_at}, 기준 시각: {self._token_expired_at - timedelta(minutes=10)}")
 
         return now_kst < self._token_expired_at - timedelta(minutes=10)
@@ -73,7 +73,7 @@ class TokenManager:
                     self._token_expired_at = datetime.fromisoformat(expiry_str)
 
         except (FileNotFoundError, json.JSONDecodeError):
-            self.logger.warning(f"토큰 파일({self.token_file_path})을 찾을 수 없거나 형식이 잘못되었습니다. 새 토큰 발급을 시도합니다.")
+            self._logger.warning(f"토큰 파일({self.token_file_path})을 찾을 수 없거나 형식이 잘못되었습니다. 새 토큰 발급을 시도합니다.")
             self._access_token = None
             self._token_expired_at = None
 
@@ -98,13 +98,13 @@ class TokenManager:
         os.makedirs(os.path.dirname(self.token_file_path), exist_ok=True)
         with open(self.token_file_path, 'w') as f:
             json.dump(token_data, f, indent=4)
-        self.logger.info("새 토큰을 파일에 저장했습니다.")
+        self._logger.info("새 토큰을 파일에 저장했습니다.")
 
     async def _issue_new_token(self, base_url: str, app_key: str, app_secret: str):  # 필요한 정보만 받음
         """API 서버에 요청하여 새로운 토큰을 발급받고, 상태를 업데이트합니다."""
 
         if not base_url or not app_key or not app_secret:
-            self.logger.critical("토큰 발급에 필요한 환경 설정(base_url, app_key, app_secret)이 부족합니다.")
+            self._logger.critical("토큰 발급에 필요한 환경 설정(base_url, app_key, app_secret)이 부족합니다.")
             raise ValueError("Missing environment configuration for token issuance.")
 
         url = f"{base_url}/oauth2/tokenP"  # 전달받은 base_url 사용
@@ -114,11 +114,17 @@ class TokenManager:
             "appsecret": app_secret  # 전달받은 app_secret 사용
         }
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=body)
+            headers = {
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache"
+            }
+            response = await client.post(url, json=body, headers=headers)
+            # response = await client.post(url, json=body)
             response.raise_for_status()
             res_data = response.json()
 
             self._access_token = res_data.get('access_token')
+            self._logger.info(f"✅ _issue_new_token - {self._access_token}")
             expires_in = int(res_data.get('expires_in', 0))
 
             # KST timezone을 고려하여 datetime 객체 생성
@@ -133,13 +139,24 @@ class TokenManager:
         self._token_expired_at = None
         if os.path.exists(self.token_file_path):
             os.remove(self.token_file_path)
-        self.logger.info("저장된 토큰이 무효화되었습니다.")
+        self._logger.info("저장된 토큰이 무효화되었습니다.")
 
     async def refresh_token(self, base_url: str, app_key: str, app_secret: str):
         """
         외부에서 강제로 토큰을 재발급하고 상태를 초기화할 때 사용합니다.
         EGW00123 오류 응답을 받았을 때 호출하면 됩니다.
         """
-        self.logger.info("🔁 refresh_token() 호출됨 - 강제 토큰 재발급 시작")
+        self._logger.info("🔁 refresh_token() 호출됨 - 강제 토큰 재발급 시작")
+        if self._access_token:
+            self._logger.debug(f"✅ refresh_token 기존 토큰: {self._access_token[:40]}...")
+        else:
+            self._logger.debug("✅ refresh_token 기존 토큰: (None)")
+        self.invalidate_token()  # ✅ 캐시/파일 무효화 먼저!
         await self._issue_new_token(base_url, app_key, app_secret)
-        self.logger.info("✅ 강제 토큰 재발급 완료")
+
+        if self._access_token:
+            self._logger.debug(f"✅ refresh_token 재발급 후 토큰: {self._access_token[:40]}...")
+        else:
+            raise Exception
+
+        self._logger.info("✅ 강제 토큰 재발급 완료")

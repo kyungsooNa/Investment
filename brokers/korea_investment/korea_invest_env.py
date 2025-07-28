@@ -24,17 +24,17 @@ class KoreaInvestApiEnv:
         self._logger = logger if logger else logging.getLogger(__name__)
 
         self._token_manager = None
-        self._token_manager_real = TokenManager(token_file_path="config/token_real.json")
-        self._token_manager_paper = TokenManager(token_file_path="config/token_paper.json")
+        self._token_manager_real = TokenManager(token_file_path="config/token_real.json", logger=self._logger)
+        self._token_manager_paper = TokenManager(token_file_path="config/token_paper.json", logger=self._logger)
         self._load_config()
+        self._set_base_urls()  # 초기 base_url, websocket_url 설정 (config.yaml의 is_paper_trading 기반)
+        self._token_file_path = os.path.join(os.getcwd(), 'kis_access_token.yaml')
+        self._session = requests.Session()
+
         self.is_paper_trading = None
         self._base_url = None
         self._websocket_url = None
-        self._set_base_urls()  # 초기 base_url, websocket_url 설정 (config.yaml의 is_paper_trading 기반)
-
-        self._token_file_path = os.path.join(os.getcwd(), 'kis_access_token.yaml')
-
-        self._session = requests.Session()
+        self.active_config = None
 
     def _load_config(self):
         self.api_key = self._config_data.get('api_key')
@@ -74,6 +74,7 @@ class KoreaInvestApiEnv:
         if self.is_paper_trading is not is_paper:
             self.is_paper_trading = is_paper
             self._set_base_urls()
+            self.active_config = self.get_full_config()
 
             if self.is_paper_trading is True:
                 self._token_manager = self._token_manager_paper
@@ -134,7 +135,6 @@ class KoreaInvestApiEnv:
         """
         # TokenManager의 get_access_token을 호출하고 결과를 반환합니다.
         # TokenManager 내부에서 force_new 로직을 처리하므로, 여기서는 인자를 전달하지 않습니다.
-        self.active_config = self.get_full_config()
         if not self._token_manager:
             raise RuntimeError("TokenManager가 초기화되지 않았습니다. set_trading_mode 먼저 호출하세요.")
 
@@ -160,3 +160,9 @@ class KoreaInvestApiEnv:
                 app_key=self.active_config['api_key'],
                 app_secret=self.active_config['api_secret_key']
             )
+
+    def get_base_url(self):
+        return self._base_url
+
+    def get_websocket_url(self):
+        return self._websocket_url

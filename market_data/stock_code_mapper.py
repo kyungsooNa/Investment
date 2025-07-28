@@ -30,6 +30,9 @@ class StockCodeMapper:
 
         try:
             self.df = pd.read_csv(csv_path, dtype={"종목코드": str})
+            if self.df.empty or self.df.columns.empty:
+                raise ValueError("stock_code_list.csv가 비어있거나 컬럼이 없습니다.")
+
             self.code_to_name = dict(zip(self.df["종목코드"], self.df["종목명"]))
             self.name_to_code = dict(zip(self.df["종목명"], self.df["종목코드"]))
             if self.logger:

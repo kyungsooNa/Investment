@@ -31,15 +31,13 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.handler = StockQueryService(self.mock_trading_service, self.mock_logger, self.mock_time_manager)
 
         self.mock_env = MagicMock(spec=KoreaInvestApiEnv)
+        self.mock_env.my_agent = "MockUserAgent"
+        self.mock_env.my_app_key = "MockAppKey"
+        self.mock_env.my_app_secret = "MockAppSecret"
+        self.mock_env.my_custtype = "P"
+        self.mock_env.my_tr_id = "TR123456"
 
         self.api = KoreaInvestApiBase(
-            base_url="https://mock.api",
-            headers={"Authorization": "Bearer expired"},
-            config={
-                "base_url": "https://mock.api",
-                "tr_ids": {},
-                "custtype": "P"
-            },
             env=self.mock_env,
             logger=self.mock_logger
         )

@@ -106,9 +106,6 @@ def mock_quotations():
     }
 
     return KoreaInvestApiQuotations(
-        base_url=mock_config["base_url"],
-        headers={},
-        config=mock_config,
         env=mock_env,
         logger=mock_logger
     )
@@ -261,7 +258,6 @@ async def test_get_top_market_cap_stocks_success(mock_quotations):
     mock_quotations.call_api.assert_called_once()
     args, kwargs = mock_quotations.call_api.call_args
     assert args[0] == "GET"
-    assert args[1] == "/mock/market-cap"
     assert kwargs["params"]["fid_input_iscd"] == "0000"
     assert kwargs["retry_count"] == 1
 
@@ -488,7 +484,6 @@ async def test_get_top_market_cap_stocks_success_revised(mock_quotations):
     mock_quotations.call_api.assert_called_once()
     args, kwargs = mock_quotations.call_api.call_args
     assert args[0] == "GET"
-    assert args[1] == "/mock/market-cap"
     assert kwargs["params"]["fid_input_iscd"] == "0000"
     assert kwargs["retry_count"] == 1
 
@@ -719,25 +714,21 @@ async def test_get_previous_day_info_success():
     """
     Line 149-160: get_previous_day_info 함수 전체 커버
     """
-    mock_logger = MagicMock()
-    mock_config = {
-        "api_key": "dummy-key",
-        "api_secret_key": "dummy-secret",
-        "base_url": "https://mock-base",
-        "tr_ids": {
-            "quotations": {
-                "inquire_daily_itemchartprice": "FHKST03010100"  # 실제 TR ID와 유사하게 설정
-            }
-        },
-        "custtype": "P"
-    }
+    # mock_config = {
+    #     "api_key": "dummy-key",
+    #     "api_secret_key": "dummy-secret",
+    #     "base_url": "https://mock-base",
+    #     "tr_ids": {
+    #         "quotations": {
+    #             "inquire_daily_itemchartprice": "FHKST03010100"  # 실제 TR ID와 유사하게 설정
+    #         }
+    #     },
+    #     "custtype": "P"
+    # }
 
     quotations = KoreaInvestApiQuotations(
-        base_url=mock_config["base_url"],
-        headers={},
-        config=mock_config,
-        token_manager=MagicMock(),
-        logger=mock_logger
+        env=MagicMock(),
+        logger=MagicMock()
     )
 
     # _client.request 모킹 (InvestAPIBase에서 사용하는 client)
@@ -849,28 +840,6 @@ async def test_get_filtered_stocks_by_momentum_no_top_stocks_output(mock_quotati
     assert results.rt_cd == ErrorCode.API_ERROR.value
     assert results.data == []
     mock_quotations._logger.warning.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_init_with_provided_headers(mock_quotations):
-    # mock_quotations는 이미 기본 mock_config, mock_token_manager, mock_logger 등을 포함
-
-    custom_headers = {
-        "User-Agent": "MyTestAgent",
-        "Content-Type": "application/xml"
-    }
-
-    # 새 인스턴스를 직접 생성 (fixture를 참조하되 헤더만 다르게)
-    quotations = KoreaInvestApiQuotations(
-        base_url=mock_quotations._base_url,
-        headers=custom_headers,
-        config=mock_quotations._config,
-        env=mock_quotations._env,
-        logger=mock_quotations._logger
-    )
-
-    for key, val in custom_headers.items():
-        assert quotations._headers.get(key) == val
 
 
 @pytest.mark.asyncio

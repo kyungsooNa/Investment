@@ -15,9 +15,6 @@ async def test_get_account_balance():
     mock_logger = MagicMock()
     mock_env = MagicMock()
     mock_api = KoreaInvestApiAccount(
-        base_url='https://mock.api',
-        headers={},
-        config=mock_config,
         env=mock_env,
         logger=mock_logger
     )
@@ -39,9 +36,6 @@ async def test_get_real_account_balance_with_dash():
     mock_env = MagicMock()
     mock_logger = MagicMock()
     mock_api = KoreaInvestApiAccount(
-        base_url='https://mock.api',
-        headers={},
-        config=mock_config,
         env=mock_env,
         logger=mock_logger
     )
@@ -63,9 +57,6 @@ async def test_get_real_account_balance_without_dash():
     mock_env = MagicMock()
     mock_logger = MagicMock()
     mock_api = KoreaInvestApiAccount(
-        base_url='https://mock.api',
-        headers={},
-        config=mock_config,
         env=mock_env,
         logger=mock_logger
     )

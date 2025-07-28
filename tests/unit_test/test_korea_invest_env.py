@@ -70,20 +70,28 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
 
     async def test_init(self):
         self.assertEqual(self.env.api_key, "test_real_app_key")
-        self.assertEqual(self.env._base_url, "https://real-api.com")
-        self.assertFalse(self.env.is_paper_trading)
+        self.assertEqual(self.env.api_secret_key, "test_real_app_secret")
+        self.assertEqual(self.env.stock_account_number, "test_real_account")
+        self.assertEqual(self.env.paper_api_key, "test_paper_app_key")
+        self.assertEqual(self.env.paper_api_secret_key, "test_paper_app_secret")
+        self.assertEqual(self.env.paper_stock_account_number, "test_paper_account")
+        self.assertEqual(self.env.is_paper_trading, None)
+        self.assertEqual(self.env._base_url, None)
+        self.assertEqual(self.env._websocket_url, None)
+        self.assertEqual(self.env.active_config, None)
 
     async def test_set_trading_mode_to_paper(self):
         self.env.set_trading_mode(True)
         self.assertTrue(self.env.is_paper_trading)
-        self.assertEqual(self.env.api_key, "test_real_app_key")  # config_data의 api_key는 변하지 않음
-        self.assertEqual(self.env._base_url, "https://paper-api.com")  # base_url은 paper_url로 변경됨
+        self.assertEqual(self.env.active_config['api_key'], "test_paper_app_key")
+        self.assertEqual(self.env.active_config['base_url'], "https://paper-api.com")
         self.logger.info.assert_called_with("거래 모드가 모의투자 환경으로 변경되었습니다.")
 
     async def test_set_trading_mode_to_real(self):
         self.env.set_trading_mode(False)
         self.assertFalse(self.env.is_paper_trading)
-        self.assertEqual(self.env._base_url, "https://real-api.com")
+        self.assertEqual(self.env.active_config['api_key'], "test_real_app_key")
+        self.assertEqual(self.env.active_config['base_url'], "https://real-api.com")
         self.logger.info.assert_called_with("거래 모드가 실전투자 환경으로 변경되었습니다.")
 
     async def test_get_base_headers(self):
@@ -103,9 +111,6 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(full_config['api_key'], "test_paper_app_key")
         self.assertEqual(full_config['base_url'], "https://paper-api.com")
         self.assertTrue(full_config['is_paper_trading'])
-
-        # self.assertIsNotNone(full_config['token_expired_at'])
-        # self.assertIsNotNone(full_config['token_expired_at'].tzinfo)
 
 
     async def test_get_access_token_delegates_to_token_manager(self):  # mock_token_manager_get_access_token 인자 제거
