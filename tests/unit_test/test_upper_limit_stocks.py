@@ -142,39 +142,6 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.warning.assert_called_once_with("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
         self.assertIn("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n", self.print_output_capture.getvalue())
 
-        # 📌 수정된 테스트: test_handle_upper_limit_stocks_get_top_market_cap_stocks_failure
-        async def test_handle_upper_limit_stocks_get_top_market_cap_stocks_failure(self):
-            """시가총액 상위 종목 목록 조회 API 실패 시, 콘솔 및 로그 출력 포함."""
-
-            self.mock_time_manager.is_market_open.return_value = True
-            self.mock_env.is_paper_trading = False
-
-            # --- 핵심: TradingService가 호출할 api_client.quotations를 Mock ---
-            mock_api_response = {
-                "rt_cd": "1",  # 실패 응답
-                "msg1": "API 오류"
-            }
-            # setUp에서 이미 생성된 self.mock_api_client.quotations (MagicMock)의 메서드를 설정
-            self.mock_api_client.quotations.get_top_market_cap_stocks_code.return_value = mock_api_response
-
-            # When
-            # builtins.print를 patch하는 with 문 제거. sys.stdout 리다이렉션을 사용.
-            result = await self.data_handlers.handle_upper_limit_stocks(market_code="0000", limit=500)
-
-            # Then
-            self.assertIsNone(result)
-            self.mock_logger.error.assert_called_once()
-            self.mock_logger.error.assert_called_with(f"시가총액 상위 종목 목록 조회 실패: {mock_api_response}")
-
-            # self.trading_service가 내부적으로 호출하는 Mock 메서드에 대한 assert
-            self.mock_api_client.quotations.get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
-
-            # 콘솔 출력 메시지 검증
-            output = self.print_output_capture.getvalue()
-            self.assertIn("실패: 시가총액 상위 종목 목록을 가져올 수 없습니다.", output)
-            self.assertIn("API 오류", output)
-            self.assertIn("--- 시가총액 상위 500개 종목 중 상한가 종목 조회 ---", output)
-
     async def test_handle_upper_limit_stocks_no_top_stocks_found(self):
         """상위 종목 목록이 비어있을 때."""
         market_code = "0000"
