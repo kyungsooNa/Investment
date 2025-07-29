@@ -24,7 +24,7 @@ def get_mock_config():
         "htsid": "test-htsid",
         "custtype": "P",
         "market_code": "J",
-        "is_paper_trading": True,
+        "is_paper_trading": False,
         "tr_ids": {
             "quotations": {
                 "search_info": "TR_ID_SEARCH_INFO"
