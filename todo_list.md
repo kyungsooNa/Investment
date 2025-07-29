@@ -224,6 +224,7 @@ DEBUG: Headers being sent:
 
 ### 1. 환경 (Environment)
 * **[개선 필요]** CacheManager 추가
+* **[개선 필요]** TimeManager, TokenManager, StockCodeMapper 등 하나만 있는게 나은 클래스는 singleton 적용
 
 ### 2. 성능 (Performance)
 * **[개선 필요]** 전체 종목 정보를 읽었으면 RAM에 유지하는 기능 추가 (시장이 닫혔을 경우).
