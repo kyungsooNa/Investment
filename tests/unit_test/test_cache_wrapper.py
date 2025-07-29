@@ -37,3 +37,18 @@ async def test_cache_wrapper_bypass_for_non_cached_method():
     assert result == "no_cache-9"
 
     assert any("Bypass" in call.args[0] for call in logger.debug.call_args_list)
+
+def test_cache_wrapper_dir_includes_wrapped_methods():
+    client = DummyApiClient()
+    logger = MagicMock()
+    wrapped_client = cache_wrap_client(client, logger)
+
+    dir_list = dir(wrapped_client)
+
+    # DummyApiClient에 있는 메서드들이 포함되어야 함
+    assert "get_data" in dir_list
+    assert "bypass_data" in dir_list
+
+    # 내부 속성도 포함되어야 함
+    assert "_client" in dir_list
+    assert "_logger" in dir_list

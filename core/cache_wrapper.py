@@ -52,8 +52,15 @@ class ClientWithCache:
         return attr
 
     def __dir__(self):
-        # IDE 자동완성 지원을 위해 원래 객체와 자신 속성 병합
-        return sorted(set(dir(self.__class__) + dir(self._client)))
+        # 포함해야 할 속성 목록:
+        # 1. self._client의 속성
+        # 2. self 객체의 __dict__ 속성
+        # 3. 클래스 자체의 속성
+        return list(set(
+            dir(self._client) +
+            list(self.__dict__.keys()) +
+            dir(type(self))
+        ))
 
 def cache_wrap_client(api_client: T, logger) -> T:
     return ClientWithCache(api_client, logger)
