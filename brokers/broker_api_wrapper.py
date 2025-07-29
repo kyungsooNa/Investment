@@ -4,6 +4,7 @@ from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from market_data.stock_code_mapper import StockCodeMapper
 from typing import Any, List
 from common.types import ResCommonResponse
+from core.cache_wrapper import cache_wrap_client
 
 class BrokerAPIWrapper:
     """
@@ -21,6 +22,7 @@ class BrokerAPIWrapper:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
             self._client = KoreaInvestApiClient(env, logger)
+            self._client = cache_wrap_client(self._client, logger)
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
 

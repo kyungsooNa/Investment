@@ -5,9 +5,13 @@ import pandas as pd
 from trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
-
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+from core.cache_manager import cache_manager
 
+
+@pytest.fixture(autouse=True)
+def clear_cache_before_each_test():
+    cache_manager.clear()
 
 @pytest.fixture
 def get_mock_config():
@@ -365,8 +369,9 @@ async def test_display_stock_vs_open_price_full_integration(real_app_instance, m
         }
     )
 
-    mock_call_api = mocker.patch(
-        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+    mock_call_api = mocker.patch.object(
+        app.trading_service._broker_api_wrapper._client._client._quotations,
+        "call_api",
         return_value=mock_response
     )
 

@@ -5,7 +5,7 @@ import logging
 # 테스트 대상 클래스 import
 import brokers.broker_api_wrapper as wrapper_module
 from brokers.broker_api_wrapper import BrokerAPIWrapper
-# --- Fixtures: 테스트에 필요한 모의(Mock) 객체들을 미리 생성 ---
+from core.cache_wrapper import ClientWithCache
 
 
 @pytest.fixture
@@ -336,7 +336,7 @@ def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logg
 
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeMapper")
-def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logger):
+def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_logger):
     """
     정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
     """
@@ -344,11 +344,12 @@ def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logg
     wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, logger=mock_logger)
 
     # Assert
-    MockClient.assert_called_once_with(mock_env, mock_logger)
-    MockStockMapper.assert_called_once_with(logger=mock_logger)
+    mock_client.assert_called_once_with(mock_env, mock_logger)
+    mock_stock_mapper.assert_called_once_with(logger=mock_logger)
     assert wrapper._broker == "korea_investment"
-    assert wrapper._client is MockClient.return_value # _client가 MockClient의 인스턴스를 참조하는지 확인
-    assert wrapper._stock_mapper is MockStockMapper.return_value # _stock_mapper가 MockStockMapper의 인스턴스를 참조하는지 확인
+    assert isinstance(wrapper._client, ClientWithCache)  # ✅ wrapping 여부 확인
+    assert wrapper._client._client is mock_client.return_value  # ✅ 내부 원본 확인
+    assert wrapper._stock_mapper is mock_stock_mapper.return_value # _stock_mapper가 mock_stock_mapper 인스턴스를 참조하는지 확인
 
 
 def test_initialization_no_env_raises_error(mock_logger):

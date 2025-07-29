@@ -5,9 +5,13 @@ import pandas as pd
 from trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
-
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+from core.cache_manager import cache_manager
 
+
+@pytest.fixture(autouse=True)
+def clear_cache_before_each_test():
+    cache_manager.clear()
 
 @pytest.fixture
 def get_mock_config():
