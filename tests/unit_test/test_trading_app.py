@@ -655,9 +655,21 @@ async def test_execute_action_14_get_top_10_with_prices(setup_mock_app):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_15_get_upper_limit_stocks(setup_mock_app):
+async def test_execute_action_15_get_upper_limit_stocks_is_paper(setup_mock_app):
     """메뉴 '9' 선택 시 handle_upper_limit_stocks가 호출되는지 테스트합니다."""
     app = setup_mock_app
+    app.env.is_paper_trading = True
+
+    app.stock_query_service = AsyncMock()
+    await app._execute_action('15')
+    app.stock_query_service.handle_upper_limit_stocks.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_execute_action_15_get_upper_limit_stocks_is_real(setup_mock_app):
+    """메뉴 '9' 선택 시 handle_upper_limit_stocks가 호출되는지 테스트합니다."""
+    app = setup_mock_app
+    app.env.is_paper_trading = False
+
     app.stock_query_service = AsyncMock()
     await app._execute_action('15')
     app.stock_query_service.handle_upper_limit_stocks.assert_awaited_once_with("0000", limit=500)
@@ -2040,7 +2052,7 @@ class TestTradingApp(unittest.IsolatedAsyncioTestCase):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_16_calls_yesterday_upper_limit_handler(setup_mock_app):
+async def test_execute_action_16_calls_yesterday_upper_limit_handler_is_paper(setup_mock_app):
     """
     메뉴 '16' 선택 시 stock_query_service.handle_yesterday_upper_limit_stocks가
     호출되는지 테스트합니다.
@@ -2048,6 +2060,29 @@ async def test_execute_action_16_calls_yesterday_upper_limit_handler(setup_mock_
     # --- Arrange ---
     # The setup_mock_app fixture provides a correctly mocked app instance.
     app = setup_mock_app
+    app.env.is_paper_trading = True
+
+    # --- Act ---
+    # Call the action for menu '16'.
+    result = await app._execute_action('16')
+
+    # --- Assert ---
+    # Verify that the correct handler in the stock_query_service was called.
+    app.stock_query_service.handle_yesterday_upper_limit_stocks.assert_not_awaited()
+
+    # The app should continue running.
+    assert result is True
+
+@pytest.mark.asyncio
+async def test_execute_action_16_calls_yesterday_upper_limit_handler_is_real(setup_mock_app):
+    """
+    메뉴 '16' 선택 시 stock_query_service.handle_yesterday_upper_limit_stocks가
+    호출되는지 테스트합니다.
+    """
+    # --- Arrange ---
+    # The setup_mock_app fixture provides a correctly mocked app instance.
+    app = setup_mock_app
+    app.env.is_paper_trading = False
 
     # --- Act ---
     # Call the action for menu '16'.
@@ -2060,9 +2095,8 @@ async def test_execute_action_16_calls_yesterday_upper_limit_handler(setup_mock_
     # The app should continue running.
     assert result is True
 
-
 @pytest.mark.asyncio
-async def test_execute_action_17_calls_yesterday_upper_limit_handler(setup_mock_app):
+async def test_execute_action_17_calls_yesterday_upper_limit_handler_is_paper(setup_mock_app):
     """
     메뉴 '17' 선택 시 stock_query_service.handle_current_upper_limit_stocks
     호출되는지 테스트합니다.
@@ -2070,6 +2104,28 @@ async def test_execute_action_17_calls_yesterday_upper_limit_handler(setup_mock_
     # --- Arrange ---
     # The setup_mock_app fixture provides a correctly mocked app instance.
     app = setup_mock_app
+    app.env.is_paper_trading = True
+
+    # --- Act ---
+    result = await app._execute_action('17')
+
+    # --- Assert ---
+    # Verify that the correct handler in the stock_query_service was called.
+    app.stock_query_service.handle_current_upper_limit_stocks.assert_not_called()
+
+    # The app should continue running.
+    assert result is True
+
+@pytest.mark.asyncio
+async def test_execute_action_17_calls_yesterday_upper_limit_handler_is_real(setup_mock_app):
+    """
+    메뉴 '17' 선택 시 stock_query_service.handle_current_upper_limit_stocks
+    호출되는지 테스트합니다.
+    """
+    # --- Arrange ---
+    # The setup_mock_app fixture provides a correctly mocked app instance.
+    app = setup_mock_app
+    app.env.is_paper_trading = False
 
     # --- Act ---
     # Call the action for menu '16'.
@@ -2082,24 +2138,6 @@ async def test_execute_action_17_calls_yesterday_upper_limit_handler(setup_mock_
     # The app should continue running.
     assert result is True
 
-@pytest.mark.asyncio
-async def test_execute_action_15_calls_upper_limit_handler(setup_mock_app):
-    """
-    메뉴 '15' 선택 시 stock_query_service.handle_upper_limit_stocks가 호출되는지 테스트합니다.
-    """
-    # --- Arrange ---
-    # The setup_mock_app fixture provides a correctly mocked app instance.
-    app = setup_mock_app
-
-    # --- Act ---
-    # We call the action for menu '15', which is the correct one for this feature.
-    await app._execute_action('15')
-
-    # --- Assert ---
-    # The only responsibility of _execute_action for this choice is to call the
-    # corresponding handler in the stock_query_service. We verify that this call happened.
-    app.stock_query_service.handle_upper_limit_stocks.assert_awaited_once_with("0000", limit=500)
-
 
 @pytest.mark.asyncio
 async def test_execute_action_16_handler_exception_propagates(setup_mock_app):
@@ -2109,6 +2147,7 @@ async def test_execute_action_16_handler_exception_propagates(setup_mock_app):
     """
     # --- Arrange ---
     app = setup_mock_app
+    app.env.is_paper_trading = False
     error_message = "핸들러 내부 강제 오류"
 
     # stock_query_service의 핸들러 자체가 예외를 발생시키도록 설정합니다.

@@ -138,7 +138,6 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         result = await self.data_handlers.handle_upper_limit_stocks(market_code="0000", limit=500)
 
         self.assertEqual(result, {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."})
-        self.mock_time_manager.is_market_open.assert_called_once()
         self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code.assert_not_called()
         self.mock_logger.warning.assert_called_once_with("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
         self.assertIn("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n", self.print_output_capture.getvalue())
