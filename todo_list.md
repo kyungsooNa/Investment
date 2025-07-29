@@ -46,117 +46,13 @@ DEBUG: Headers being sent:
 2025-07-25 09:40:44,819 - ERROR - korea_invest_api_base.py:172 - HTTP 오류 발생: 500 - {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}
 2025-07-25 09:40:56,230 - ERROR - korea_invest_api_base.py:58 - 복구 불가능한 오류 발생: https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/trading/order-cash, 응답: {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}
 
-8.
-2025-07-25 09:42:41,148 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:42:41 KST+0900)
-2025-07-25 09:43:15,667 - INFO - Handler - 005930 시간대별 체결가 조회 요청
-2025-07-25 09:43:15,668 - INFO - Service - 005930 종목 시간대별 체결가 조회 요청
-2025-07-25 09:43:15,668 - INFO - 005930 종목 체결가 조회 시도...
-2025-07-25 09:43:15,668 - DEBUG - API 호출 시도 1/1 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-time-itemconclude
-2025-07-25 09:43:15,668 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:43:15,668 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:43:15,669 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:43:15,669 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:43:15,669 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:43:15,669 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:43:15,669 - DEBUG -   tr_id: b'FHKST01010300'
-2025-07-25 09:43:15,669 - DEBUG -   custtype: b'P'
-2025-07-25 09:43:15,669 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6Ijc2ODZjNjZiLWM1NDItNGFjMi05MmRhLWEwZGI5Y2ViZGExNCIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ1Mzc1NSwiaWF0IjoxNzUzMzY3MzU1LCJqdGkiOiJQU3ZyREJYSW1pVjZXMmszTVFMelRvYTdXWWtZbFJmNElacnQifQ.bciMR_35oyIii2w6Ni0ek-o1vyi669KS9XJkC5kf1yValirnsBhRdQ4UOhuDkaE947-Sjf_cjXbe4kZrUsGbtQ'
-2025-07-25 09:43:16,478 - ERROR - korea_invest_api_base.py:115 - JSON 디코딩 오류 발생
-2025-07-25 09:43:16,480 - ERROR - korea_invest_api_base.py:80 - 모든 재시도 실패, API 호출 종료
-2025-07-25 09:43:16,481 - WARNING - 005930 체결가 정보 조회 실패: 최대 재시도 횟수 초과
-2025-07-25 09:43:16,484 - ERROR - stock_query_service.py:455 - 005930 시간대별 체결가 조회 실패: 최대 재시도 횟수 초과
-2025-07-25 09:43:16,485 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:43:16 KST+0900)
+
+9. API 잘못됨
+
+11. API 잘못됨
 
 
-9.
-2025-07-25 09:44:07,960 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:44:07 KST+0900)
-2025-07-25 09:44:40,219 - INFO - Handler - 005930 종목 뉴스 조회 요청
-2025-07-25 09:44:40,219 - INFO - Service - 005930 종목 뉴스 조회 요청
-2025-07-25 09:44:40,220 - INFO - 005930 종목 뉴스 조회 시도...
-2025-07-25 09:44:40,220 - DEBUG - API 호출 시도 1/1 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/news/inquire-item-news
-2025-07-25 09:44:40,220 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:44:40,220 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:44:40,220 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:44:40,221 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:44:40,221 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:44:40,221 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:44:40,221 - DEBUG -   tr_id: b'FHPST01040000'
-2025-07-25 09:44:40,221 - DEBUG -   custtype: b'P'
-2025-07-25 09:44:40,221 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6Ijc2ODZjNjZiLWM1NDItNGFjMi05MmRhLWEwZGI5Y2ViZGExNCIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ1Mzc1NSwiaWF0IjoxNzUzMzY3MzU1LCJqdGkiOiJQU3ZyREJYSW1pVjZXMmszTVFMelRvYTdXWWtZbFJmNElacnQifQ.bciMR_35oyIii2w6Ni0ek-o1vyi669KS9XJkC5kf1yValirnsBhRdQ4UOhuDkaE947-Sjf_cjXbe4kZrUsGbtQ'
-2025-07-25 09:44:40,254 - ERROR - korea_invest_api_base.py:115 - JSON 디코딩 오류 발생
-2025-07-25 09:44:40,255 - ERROR - korea_invest_api_base.py:80 - 모든 재시도 실패, API 호출 종료
-2025-07-25 09:44:40,255 - WARNING - 005930 종목 뉴스 조회 실패: 최대 재시도 횟수 초과
-2025-07-25 09:44:40,256 - ERROR - stock_query_service.py:551 - 005930 종목 뉴스 조회 실패: 최대 재시도 횟수 초과
-2025-07-25 09:44:40,257 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:44:40 KST+0900)
-
-
-10.
-2025-07-25 09:45:10,417 - INFO - Handler - 133690 ETF 정보 조회 요청
-2025-07-25 09:45:10,417 - INFO - Service - 133690 ETF 정보 조회 요청
-2025-07-25 09:45:10,417 - INFO - 133690 ETF 정보 조회 시도...
-2025-07-25 09:45:10,418 - DEBUG - API 호출 시도 1/1 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-etf-product-info
-2025-07-25 09:45:10,418 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:45:10,418 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:45:10,418 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:45:10,418 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:45:10,418 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:45:10,419 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:45:10,419 - DEBUG -   tr_id: b'FHKST05010100'
-2025-07-25 09:45:10,419 - DEBUG -   custtype: b'P'
-2025-07-25 09:45:10,419 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6Ijc2ODZjNjZiLWM1NDItNGFjMi05MmRhLWEwZGI5Y2ViZGExNCIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ1Mzc1NSwiaWF0IjoxNzUzMzY3MzU1LCJqdGkiOiJQU3ZyREJYSW1pVjZXMmszTVFMelRvYTdXWWtZbFJmNElacnQifQ.bciMR_35oyIii2w6Ni0ek-o1vyi669KS9XJkC5kf1yValirnsBhRdQ4UOhuDkaE947-Sjf_cjXbe4kZrUsGbtQ'
-2025-07-25 09:45:10,460 - ERROR - korea_invest_api_base.py:115 - JSON 디코딩 오류 발생
-2025-07-25 09:45:10,461 - ERROR - korea_invest_api_base.py:80 - 모든 재시도 실패, API 호출 종료
-2025-07-25 09:45:10,462 - WARNING - 133690 ETF 조회 실패: 최대 재시도 횟수 초과
-2025-07-25 09:45:10,464 - ERROR - stock_query_service.py:576 - 133690 ETF 정보 조회 실패: 최대 재시도 횟수 초과
-2025-07-25 09:45:10,464 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:45:10 KST+0900)
-
-
-11. 
-2025-07-25 09:45:36,433 - INFO - Handler - '미래' 키워드 종목 검색 요청
-2025-07-25 09:45:36,433 - INFO - Service - '미래' 키워드로 종목 검색 요청
-2025-07-25 09:45:36,433 - INFO - '미래' 키워드로 종목 검색 시도...
-2025-07-25 09:45:36,433 - DEBUG - API 호출 시도 1/1 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/search/search-stock-info
-2025-07-25 09:45:36,434 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:45:36,434 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:45:36,434 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:45:36,434 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:45:36,434 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:45:36,435 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:45:36,435 - DEBUG -   tr_id: b'FHKST01010400'
-2025-07-25 09:45:36,435 - DEBUG -   custtype: b'P'
-2025-07-25 09:45:36,435 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6Ijc2ODZjNjZiLWM1NDItNGFjMi05MmRhLWEwZGI5Y2ViZGExNCIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ1Mzc1NSwiaWF0IjoxNzUzMzY3MzU1LCJqdGkiOiJQU3ZyREJYSW1pVjZXMmszTVFMelRvYTdXWWtZbFJmNElacnQifQ.bciMR_35oyIii2w6Ni0ek-o1vyi669KS9XJkC5kf1yValirnsBhRdQ4UOhuDkaE947-Sjf_cjXbe4kZrUsGbtQ'
-2025-07-25 09:45:36,470 - ERROR - korea_invest_api_base.py:115 - JSON 디코딩 오류 발생
-2025-07-25 09:45:36,471 - ERROR - korea_invest_api_base.py:80 - 모든 재시도 실패, API 호출 종료
-2025-07-25 09:45:36,472 - WARNING - 종목 검색 실패: 최대 재시도 횟수 초과
-2025-07-25 09:45:36,473 - ERROR - stock_query_service.py:483 - 종목 검색 실패: 최대 재시도 횟수 초과
-2025-07-25 09:45:36,473 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:45:36 KST+0900)
-
-
-12.
-2025-07-25 09:45:57,344 - INFO - Handler - 상승률 상위 종목 조회 요청
-2025-07-25 09:45:57,344 - INFO - Service - 상승률 상위 종목 조회 요청
-2025-07-25 09:45:57,345 - INFO - 상승률 상위 종목 조회 시도...
-2025-07-25 09:45:57,345 - DEBUG - API 호출 시도 1/1 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/ranking/inquire-rise
-2025-07-25 09:45:57,346 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:45:57,346 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:45:57,346 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:45:57,347 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:45:57,347 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:45:57,347 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:45:57,347 - DEBUG -   tr_id: b'FHKUP03200000'
-2025-07-25 09:45:57,347 - DEBUG -   custtype: b'P'
-2025-07-25 09:45:57,347 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6Ijc2ODZjNjZiLWM1NDItNGFjMi05MmRhLWEwZGI5Y2ViZGExNCIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ1Mzc1NSwiaWF0IjoxNzUzMzY3MzU1LCJqdGkiOiJQU3ZyREJYSW1pVjZXMmszTVFMelRvYTdXWWtZbFJmNElacnQifQ.bciMR_35oyIii2w6Ni0ek-o1vyi669KS9XJkC5kf1yValirnsBhRdQ4UOhuDkaE947-Sjf_cjXbe4kZrUsGbtQ'
-2025-07-25 09:45:57,388 - ERROR - korea_invest_api_base.py:115 - JSON 디코딩 오류 발생
-2025-07-25 09:45:57,389 - ERROR - korea_invest_api_base.py:80 - 모든 재시도 실패, API 호출 종료
-2025-07-25 09:45:57,390 - WARNING - 상승률 상위 조회 실패: 최대 재시도 횟수 초과
-2025-07-25 09:45:57,391 - ERROR - stock_query_service.py:524 - 상승률 상위 종목 조회 실패: 최대 재시도 횟수 초과
-2025-07-25 09:45:57,391 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:45:57 KST+0900)
-
+12. API 잘못됨
 
 14. 
 가격 포멧 수정
@@ -254,41 +150,7 @@ AttributeError: 'NoneType' object has no attribute 'get_price_summary'
 21. 22.
 시가총액 상위종목에서 전체로 변경.
 
-98. 토큰 무효화 했지만 정상동작하는걸로 보임.
-99. 
-
 ### 모의
-1.
-2025-07-25 09:56:12,389 - INFO - 005930 현재가 조회 시도...
-2025-07-25 09:56:12,389 - DEBUG - API 호출 시도 1/3 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price
-2025-07-25 09:56:12,389 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:56:12,390 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:56:12,390 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:56:12,390 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:56:12,390 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:56:12,390 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:56:12,391 - DEBUG -   tr_id: b'FHKST01010100'
-2025-07-25 09:56:12,391 - DEBUG -   custtype: b'P'
-2025-07-25 09:56:12,445 - WARNING - 🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도
-2025-07-25 09:56:13,925 - ERROR - korea_invest_api_base.py:172 - HTTP 오류 발생: 500 - {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}
-2025-07-25 09:56:13,927 - ERROR - korea_invest_api_base.py:58 - 복구 불가능한 오류 발생: https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price, 응답: {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}
-2025-07-25 09:56:13,927 - WARNING - 현재가 조회 실패
-2025-07-25 09:56:13,932 - ERROR - stock_query_service.py:35 - 005930 현재가 조회 실패: None
-2025-07-25 09:56:13,932 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:56:13 KST+0900)
-
-2.
-Backend tkagg is interactive backend. Turning interactive mode on.
-FATAL ERROR: 애플리케이션 실행 중 치명적인 오류 발생: CLIView.display_account_balance_failure() takes 1 positional argument but 2 were given
-Traceback (most recent call last):
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\main.py", line 14, in main
-    await app.run_async() # <--- run_async 메서드 호출 (비동기)
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\trading_app.py", line 521, in run_async
-    running = await self._execute_action(choice)
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\trading_app.py", line 213, in _execute_action
-    self.cli_view.display_account_balance_failure(balance_response.msg1)
-TypeError: CLIView.display_account_balance_failure() takes 1 positional argument but 2 were given
-
 
 3.
 2025-07-25 09:57:44,673 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:57:44 KST+0900)
@@ -325,155 +187,10 @@ DEBUG: Headers being sent:
 2025-07-22 10:09:06,109 - ERROR - 주식 매도 주문 실패: 종목=005930, 결과={'rt_cd': '101', 'msg1': 'API 응답 파싱 실패 또는 처리 불가능'}
 2025-07-22 10:09:06,110 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:09:06 KST+0900)
 
-5.
-2025-07-25 09:58:18,672 - INFO - Service - 005930 현재가 조회 요청
-2025-07-25 09:58:18,673 - INFO - 005930 현재가 조회 시도...
-2025-07-25 09:58:18,673 - DEBUG - API 호출 시도 1/3 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price
-2025-07-25 09:58:18,673 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:58:18,673 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:58:18,673 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:58:18,673 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:58:18,674 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:58:18,674 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:58:18,674 - DEBUG -   tr_id: b'FHKST01010100'
-2025-07-25 09:58:18,674 - DEBUG -   custtype: b'P'
-2025-07-25 09:58:18,753 - WARNING - 🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도
-2025-07-25 09:58:19,422 - ERROR - korea_invest_api_base.py:103 - HTTP 오류 발생 (httpx): 403 - {"error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)","error_code":"EGW00133"}
-2025-07-25 09:58:19,423 - INFO - 예외 발생, 재시도: 1/3, 지연 1초
-2025-07-25 09:58:20,438 - DEBUG - API 호출 시도 2/3 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price
-2025-07-25 09:58:20,438 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:58:20,438 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:58:20,438 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:58:20,438 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:58:20,439 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:58:20,439 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:58:20,439 - DEBUG -   tr_id: b'FHKST01010100'
-2025-07-25 09:58:20,439 - DEBUG -   custtype: b'P'
-2025-07-25 09:58:20,439 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6ImIwOTZmMGUxLTNmZmYtNDRhYy05MTg2LTUwNjFhOGJmOGFkMSIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ5MDM2MiwiaWF0IjoxNzUzNDAzOTYyLCJqdGkiOiJQU2p4SllhYkZ0YUlQMjlISllvQ0hlTEtCSVR4eHY3ZzdudmcifQ.vqWfWsLRYHW_w4NAU0eEOrWUFgzRguIYlQuDoUpEPoq_QQ28Wn70P6BgIQYKhtYWyiHTjcxyAG4MEZcTZwG-WQ'
-2025-07-25 09:58:20,490 - WARNING - 🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도
-2025-07-25 09:58:21,227 - ERROR - korea_invest_api_base.py:172 - HTTP 오류 발생: 500 - {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}
-2025-07-25 09:58:21,228 - ERROR - korea_invest_api_base.py:58 - 복구 불가능한 오류 발생: https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price, 응답: {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}
-2025-07-25 09:58:21,228 - WARNING - 현재가 조회 실패
-2025-07-25 09:58:21,233 - ERROR - stock_query_service.py:162 - 005930 전일대비 등락률 조회 실패: ResCommonResponse(rt_cd='101', msg1='API 응답 파싱 실패 또는 처리 불가능 - {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}', data=None)
-2025-07-25 09:58:21,234 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:58:21 KST+0900)
+9. API 잘못됨
 
-6.
-2025-07-25 09:58:49,190 - INFO - Service - 005930 현재가 조회 요청
-2025-07-25 09:58:49,190 - INFO - 005930 현재가 조회 시도...
-2025-07-25 09:58:49,191 - DEBUG - API 호출 시도 1/3 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price
-2025-07-25 09:58:49,191 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:58:49,191 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:58:49,191 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:58:49,191 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:58:49,192 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:58:49,192 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:58:49,192 - DEBUG -   tr_id: b'FHKST01010100'
-2025-07-25 09:58:49,193 - DEBUG -   custtype: b'P'
-2025-07-25 09:58:49,193 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6ImIwOTZmMGUxLTNmZmYtNDRhYy05MTg2LTUwNjFhOGJmOGFkMSIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ5MDM2MiwiaWF0IjoxNzUzNDAzOTYyLCJqdGkiOiJQU2p4SllhYkZ0YUlQMjlISllvQ0hlTEtCSVR4eHY3ZzdudmcifQ.vqWfWsLRYHW_w4NAU0eEOrWUFgzRguIYlQuDoUpEPoq_QQ28Wn70P6BgIQYKhtYWyiHTjcxyAG4MEZcTZwG-WQ'
-2025-07-25 09:58:49,224 - WARNING - 🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도
-2025-07-25 09:58:49,845 - ERROR - korea_invest_api_base.py:103 - HTTP 오류 발생 (httpx): 403 - {"error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)","error_code":"EGW00133"}
-2025-07-25 09:58:49,846 - INFO - 예외 발생, 재시도: 1/3, 지연 1초
-2025-07-25 09:58:50,855 - DEBUG - API 호출 시도 2/3 - GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price
-2025-07-25 09:58:50,855 - DEBUG - 
-DEBUG: Headers being sent:
-2025-07-25 09:58:50,855 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:58:50,855 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:58:50,856 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:58:50,856 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:58:50,856 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:58:50,856 - DEBUG -   tr_id: b'FHKST01010100'
-2025-07-25 09:58:50,856 - DEBUG -   custtype: b'P'
-2025-07-25 09:58:50,856 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6ImIwOTZmMGUxLTNmZmYtNDRhYy05MTg2LTUwNjFhOGJmOGFkMSIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ5MDM2MiwiaWF0IjoxNzUzNDAzOTYyLCJqdGkiOiJQU2p4SllhYkZ0YUlQMjlISllvQ0hlTEtCSVR4eHY3ZzdudmcifQ.vqWfWsLRYHW_w4NAU0eEOrWUFgzRguIYlQuDoUpEPoq_QQ28Wn70P6BgIQYKhtYWyiHTjcxyAG4MEZcTZwG-WQ'
-2025-07-25 09:58:50,887 - WARNING - 🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도
-2025-07-25 09:58:51,486 - ERROR - korea_invest_api_base.py:103 - HTTP 오류 발생 (httpx): 403 - {"error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)","error_code":"EGW00133"}
-2025-07-25 09:58:51,487 - INFO - 예외 발생, 재시도: 2/3, 지연 1초
-
-
-7.
-2025-07-22 10:09:33,379 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:09:33 KST+0900)
-2025-07-22 10:09:45,253 - INFO - Handler - 005930 호가 정보 조회 요청
-2025-07-22 10:09:45,254 - INFO - Service - 005930 종목 호가 정보 조회 요청
-2025-07-22 10:09:45,254 - INFO - 005930 종목 호가잔량 조회 시도...
-2025-07-22 10:09:45,305 - ERROR - 예상치 못한 예외 발생: 'output'
-2025-07-22 10:09:45,307 - ERROR - 모든 재시도 실패, API 호출 종료
-2025-07-22 10:09:45,308 - WARNING - 005930 호가 정보 조회 실패: 최대 재시도 횟수 초과
-2025-07-22 10:09:45,308 - ERROR - 005930 호가 정보 조회 실패: 최대 재시도 횟수 초과
-
-8.
-2025-07-22 10:09:45,313 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:09:45 KST+0900)
-2025-07-22 10:10:21,597 - INFO - Handler - 005930 시간대별 체결가 조회 요청
-2025-07-22 10:10:21,598 - INFO - Service - 005930 종목 시간대별 체결가 조회 요청
-2025-07-22 10:10:21,598 - INFO - 005930 종목 체결가 조회 시도...
-2025-07-22 10:10:21,627 - ERROR - HTTP 오류 발생: 404 - 
-2025-07-22 10:10:21,628 - ERROR - 복구 불가능한 오류 발생: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-time-itemconclude, 응답: 
-2025-07-22 10:10:21,629 - WARNING - 005930 체결가 정보 조회 실패: API 응답 파싱 실패 또는 처리 불가능
-2025-07-22 10:10:21,629 - ERROR - 005930 시간대별 체결가 조회 실패: API 응답 파싱 실패 또는 처리 불가능
-
-9.
-2025-07-22 10:10:46,327 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:10:46 KST+0900)
-2025-07-22 10:11:01,422 - INFO - Handler - 005930 종목 뉴스 조회 요청
-2025-07-22 10:11:01,423 - INFO - Service - 005930 종목 뉴스 조회 요청
-2025-07-22 10:11:01,423 - INFO - 005930 종목 뉴스 조회 시도...
-2025-07-22 10:11:01,462 - ERROR - HTTP 오류 발생: 404 - 
-2025-07-22 10:11:01,464 - ERROR - 복구 불가능한 오류 발생: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/news/inquire-item-news, 응답: 
-2025-07-22 10:11:01,465 - WARNING - 005930 종목 뉴스 조회 실패: API 응답 파싱 실패 또는 처리 불가능
-2025-07-22 10:11:01,465 - ERROR - 005930 종목 뉴스 조회 실패: API 응답 파싱 실패 또는 처리 불가능
-
-10.
-2025-07-22 10:11:01,466 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:11:01 KST+0900)
-2025-07-22 10:11:47,974 - INFO - Handler - 133690 ETF 정보 조회 요청
-2025-07-22 10:11:47,975 - INFO - Service - 133690 ETF 정보 조회 요청
-2025-07-22 10:11:47,975 - INFO - 133690 ETF 정보 조회 시도...
-2025-07-22 10:11:48,005 - ERROR - HTTP 오류 발생: 404 - 
-2025-07-22 10:11:48,006 - ERROR - 복구 불가능한 오류 발생: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-etf-product-info, 응답: 
-2025-07-22 10:11:48,007 - WARNING - 133690 ETF 조회 실패: API 응답 파싱 실패 또는 처리 불가능
-2025-07-22 10:11:48,007 - ERROR - 133690 ETF 정보 조회 실패: API 응답 파싱 실패 또는 처리 불가능
-
-11.
-2025-07-22 10:11:48,008 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:11:48 KST+0900)
-2025-07-22 10:12:23,770 - INFO - Handler - '미래' 키워드 종목 검색 요청
-2025-07-22 10:12:23,771 - INFO - Service - '미래' 키워드로 종목 검색 요청
-2025-07-22 10:12:23,771 - INFO - '미래' 키워드로 종목 검색 시도...
-2025-07-22 10:12:23,804 - ERROR - HTTP 오류 발생: 404 - 
-2025-07-22 10:12:23,805 - ERROR - 복구 불가능한 오류 발생: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/search/search-stock-info, 응답: 
-2025-07-22 10:12:23,806 - WARNING - 종목 검색 실패: API 응답 파싱 실패 또는 처리 불가능
-2025-07-22 10:12:23,806 - ERROR - 종목 검색 실패: API 응답 파싱 실패 또는 처리 불가능
-
-12.
-2025-07-22 10:12:23,807 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:12:23 KST+0900)
-2025-07-22 10:12:43,750 - INFO - Handler - 상승률 상위 종목 조회 요청
-2025-07-22 10:12:43,751 - INFO - Service - 상승률 상위 종목 조회 요청
-2025-07-22 10:12:43,751 - INFO - 상승률 상위 종목 조회 시도...
-2025-07-22 10:12:43,781 - ERROR - HTTP 오류 발생: 404 - 
-2025-07-22 10:12:43,782 - ERROR - 복구 불가능한 오류 발생: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/ranking/inquire-rise, 응답: 
-2025-07-22 10:12:43,783 - WARNING - 상승률 상위 조회 실패: API 응답 파싱 실패 또는 처리 불가능
-2025-07-22 10:12:43,783 - ERROR - 상승률 상위 종목 조회 실패: API 응답 파싱 실패 또는 처리 불가능
-
-13.
-FATAL ERROR: 애플리케이션 실행 중 치명적인 오류 발생: 'CLIView' object has no attribute 'display_warning_paper_trading_not_supported'
-Traceback (most recent call last):
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\main.py", line 14, in main
-    await app.run_async() # <--- run_async 메서드 호출 (비동기)
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\trading_app.py", line 529, in run_async
-    running = await self._execute_action(choice)
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\trading_app.py", line 266, in _execute_action
-    self.cli_view.display_warning_paper_trading_not_supported("시가총액 상위 종목 조회")
-AttributeError: 'CLIView' object has no attribute 'display_warning_paper_trading_not_supported'
-
-14.
-FATAL ERROR: 애플리케이션 실행 중 치명적인 오류 발생: 'CLIView' object has no attribute 'display_warning_paper_trading_not_supported'
-Traceback (most recent call last):
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\main.py", line 14, in main
-    await app.run_async() # <--- run_async 메서드 호출 (비동기)
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\trading_app.py", line 529, in run_async
-    running = await self._execute_action(choice)
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\trading_app.py", line 271, in _execute_action
-    self.cli_view.display_warning_paper_trading_not_supported("시가총액 1~10위 종목 조회")
-AttributeError: 'CLIView' object has no attribute 'display_warning_paper_trading_not_supported'
-
+11. API 잘못됨
+12. API 잘못됨
 18.
 2025-07-22 10:16:51,206 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:16:51 KST+0900)
 2025-07-22 10:17:02,265 - INFO - StockQueryService - 실시간 스트림 요청: 종목=['005930'], 필드=['price'], 시간=30s

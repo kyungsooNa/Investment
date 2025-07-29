@@ -233,15 +233,16 @@ class StockQueryService:
         # -------------------
 
         # 시장 개장 및 모의투자 여부 확인
+        if self.trading_service._env.is_paper_trading:  # trading_service 내부의 env 확인
+            self.logger.warning("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
+            print("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n")
+            return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}  # 오류 딕셔너리 반환
+
         if not self.time_manager.is_market_open():
             self.logger.warning("시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.")
             print("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n")
             return None  # None 반환하여 상위 호출자에게 실패 알림
 
-        if self.trading_service._env.is_paper_trading:  # trading_service 내부의 env 확인
-            self.logger.warning("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
-            print("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n")
-            return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}  # 오류 딕셔너리 반환
 
         upper_limit_stocks_found = []
         try:

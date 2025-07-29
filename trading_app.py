@@ -163,7 +163,7 @@ class TradingApp:
                 # "12": "상위 랭킹 조회 (상승/하락/거래량 등)",
                 "13": "시가총액 상위 조회 (실전 전용)",
                 "14": "시가총액 상위 10개 현재가 조회 (실전 전용)",
-                "15": "상한가 종목 조회 (실전 전용)",
+                "15": "전일 상한가 종목 조회 (상위 500) (실전 전용)",
                 "16": "전일 상한가 종목 조회 (상위) (실전 전용)",
                 "17": "전일 상한가 종목 조회 (전체) (실전 전용)",
             },
@@ -263,46 +263,20 @@ class TradingApp:
             else:
                 await self.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices()
         elif choice == '15':  # 기존 9번
-            await self.stock_query_service.handle_upper_limit_stocks("0000", limit=500)
+            if self.env.is_paper_trading:
+                self.cli_view.display_warning_paper_trading_not_supported("전일 상한가 종목 조회 (상위 500)")
+            else:
+                await self.stock_query_service.handle_upper_limit_stocks("0000", limit=500)
         elif choice == '16':  # 기존 14번
-            await self.stock_query_service.handle_yesterday_upper_limit_stocks()
+            if self.env.is_paper_trading:
+                self.cli_view.display_warning_paper_trading_not_supported("전일 상한가 종목 조회 (상위)")
+            else:
+                await self.stock_query_service.handle_yesterday_upper_limit_stocks()
         elif choice == '17':
-            await self.stock_query_service.handle_current_upper_limit_stocks()
-
-            #
-            # self.cli_view.display_strategy_running_message("전일 상한가 종목 조회(전체 종목)")
-            #
-            # try:
-            #     # trading_service.get_all_stocks_code는 이제 ResCommonResponse를 반환
-            #     all_codes_response: ResCommonResponse = await self.trading_service.get_all_stocks_code()
-            #
-            #     if all_codes_response.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-            #         self.cli_view.display_top_stocks_failure(getattr(all_codes_response, "msg1", "조회 실패"))
-            #         self.logger.warning(f"전체 종목 조회 실패: {all_codes_response}")
-            #         return running_status
-            #
-            #     # 'data' 필드에서 실제 목록을 가져옴
-            #     all_stock_codes_list: List[str] = getattr(all_codes_response, 'data', [])
-            #
-            #     # get_current_upper_limit_stocks는 이제 ResCommonResponse를 반환
-            #     upper_limit_stocks_response: ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(
-            #         all_stock_codes_list)
-            #
-            #     if upper_limit_stocks_response.rt_cd == ErrorCode.SUCCESS.value:  # Enum 값 사용
-            #         upper_limit_stocks_data = getattr(upper_limit_stocks_response, 'data', [])
-            #         if not upper_limit_stocks_data:
-            #             self.cli_view.display_no_stocks_for_strategy()
-            #         else:
-            #             self.cli_view.display_gapup_pullback_selected_stocks(upper_limit_stocks_data)
-            #     else:  # 상한가 종목 조회 실패
-            #         self.cli_view.display_top_stocks_failure(getattr(upper_limit_stocks_response, "msg1", "상한가 종목 조회 실패"))
-            #         self.logger.error(f"상한가 종목 조회 중 오류 발생: {upper_limit_stocks_response.msg1}")
-            #
-            #
-            # except Exception as e:
-            #     self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
-            #     self.cli_view.display_strategy_error(f"전일 상한가 종목 조회 실패: {e}")
-
+            if self.env.is_paper_trading:
+                self.cli_view.display_warning_paper_trading_not_supported("전일 상한가 종목 조회 (전체)")
+            else:
+                await self.stock_query_service.handle_current_upper_limit_stocks()
 
         elif choice == '18':
             stock_code = await self.cli_view.get_user_input("구독할 종목 코드를 입력하세요: ")

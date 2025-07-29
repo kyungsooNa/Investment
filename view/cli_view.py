@@ -236,6 +236,10 @@ class CLIView:
         choice = (await asyncio.to_thread(input, "환경을 선택하세요 (숫자 입력): ")).strip()
         return choice
 
+    def display_warning_paper_trading_not_supported(self, msg):
+        self._print_time_header()
+        print(f"\"{msg}\"는 실전 전용 기능입니다.")
+
     def _print_time_header(self):
         """현재 시각을 출력하는 공통 헤더."""
         current_time = self.time_manager.get_current_kst_time().strftime("[%Y-%m-%d %H:%M:%S]")
