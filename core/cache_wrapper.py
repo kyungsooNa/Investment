@@ -1,6 +1,7 @@
 # core/cache_wrapper.py
 from typing import TypeVar
 from core.cache_manager import cache_manager
+from typing import Callable
 
 
 CACHED_METHODS = {
@@ -23,16 +24,25 @@ T = TypeVar("T")
 
 
 class ClientWithCache:
-    def __init__(self, client, logger):
+    def __init__(self, client, logger, mode_fn  : Callable[[], str]):
         self._client = client
         self._logger = logger  # ✅ 로거 주입 @TODO 추후 Logger.get_instance()
+        self._mode_fn = mode_fn    # 동적으로 모드 가져오기
 
     def __getattr__(self, name: str):
         attr = getattr(self._client, name)
 
         if callable(attr) and name in CACHED_METHODS:
             async def cached_func(*args, **kwargs):
-                key = f"{name}_" + "_".join(map(str, args)) + "_" + "_".join(f"{k}={v}" for k, v in kwargs.items())
+                mode = self._mode_fn()
+                arg_str = "_".join(str(arg) for arg in args)
+                kwarg_str = "_".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
+                key_parts = [mode, name]
+                if arg_str:
+                    key_parts.append(arg_str)
+                if kwarg_str:
+                    key_parts.append(kwarg_str)
+                key = "_".join(key_parts)  # ✅ "PAPER_get_data_1" 같은 문자열 키
 
                 cached = cache_manager.get(key)
                 if cached is not None:
@@ -62,5 +72,5 @@ class ClientWithCache:
             dir(type(self))
         ))
 
-def cache_wrap_client(api_client: T, logger) -> T:
-    return ClientWithCache(api_client, logger)
+def cache_wrap_client(api_client: T, logger, mode_getter: Callable[[], str]) -> T:
+    return ClientWithCache(api_client, logger, mode_getter)

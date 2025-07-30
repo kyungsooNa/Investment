@@ -22,7 +22,9 @@ class BrokerAPIWrapper:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
             self._client = KoreaInvestApiClient(env, logger)
-            self._client = cache_wrap_client(self._client, logger)
+            is_paper = getattr(env, "is_paper_trading", False)
+            self._client = cache_wrap_client(self._client, logger, lambda: "PAPER" if env.is_paper_trading else "REAL")
+
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
 

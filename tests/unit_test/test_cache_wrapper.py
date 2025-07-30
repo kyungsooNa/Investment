@@ -16,7 +16,7 @@ async def test_cache_wrapper_hit_and_miss():
     logger = MagicMock()
     client = DummyApiClient()
     CACHED_METHODS.add("get_data")
-    client = cache_wrap_client(client, logger)
+    client = cache_wrap_client(client, logger, lambda: "TEST")
 
     result1 = await client.get_data(1)
     result2 = await client.get_data(1)
@@ -31,7 +31,7 @@ async def test_cache_wrapper_hit_and_miss():
 async def test_cache_wrapper_bypass_for_non_cached_method():
     logger = MagicMock()
     client = DummyApiClient()
-    client = cache_wrap_client(client, logger)
+    client = cache_wrap_client(client, logger, lambda: "TEST")
 
     result = await client.bypass_data(9)
     assert result == "no_cache-9"
@@ -41,7 +41,7 @@ async def test_cache_wrapper_bypass_for_non_cached_method():
 def test_cache_wrapper_dir_includes_wrapped_methods():
     client = DummyApiClient()
     logger = MagicMock()
-    wrapped_client = cache_wrap_client(client, logger)
+    wrapped_client = cache_wrap_client(client, logger, lambda: "TEST")
 
     dir_list = dir(wrapped_client)
 
@@ -52,3 +52,19 @@ def test_cache_wrapper_dir_includes_wrapped_methods():
     # 내부 속성도 포함되어야 함
     assert "_client" in dir_list
     assert "_logger" in dir_list
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_key_arg_str_empty_skip_append():
+    logger = MagicMock()
+    CACHED_METHODS.add("get_data")
+
+    client = DummyApiClient()
+    wrapped = cache_wrap_client(client, logger, lambda: "TEST")
+
+    # ✅ 공백 문자열을 인자로 넘겨 arg_str이 비어 key_parts.append() 안 타도록 유도
+    result = await wrapped.get_data("")
+    assert result == "result-"
+
+    # ✅ logger.debug 메시지를 기반으로 key_parts에 arg_str이 포함되지 않았는지 검증
+    debug_msgs = [call.args[0] for call in logger.debug.call_args_list]
+    assert any("TEST_get_data" in msg for msg in debug_msgs)
