@@ -1,10 +1,26 @@
 # common/types.py
 from dataclasses import dataclass, field, fields, MISSING, asdict
-from typing import Optional, Generic, TypeVar
+from typing import Optional, Generic, TypeVar, Type
 from enum import Enum, auto
 
 T = TypeVar("T")
 
+def with_from_dict(cls: Type[T]) -> Type[T]:
+    @classmethod
+    def from_dict(cls_: Type[T], data: dict) -> T:
+        init_kwargs = {}
+        for field_def in fields(cls_):
+            field_name = field_def.name
+            if field_name in data:
+                init_kwargs[field_name] = data[field_name]
+            elif field_def.default is not MISSING or field_def.default_factory is not MISSING:
+                continue  # 기본값 있으므로 skip
+            else:
+                init_kwargs[field_name] = None  # 누락된 필드는 None 등 기본값 설정
+        return cls_(**init_kwargs)
+
+    setattr(cls, "from_dict", from_dict)
+    return cls
 
 # API 응답 결과의 성공/실패를 나타내는 Enum
 class ErrorCode(Enum):
@@ -20,7 +36,7 @@ class ErrorCode(Enum):
 
 
 # --- 공통적으로 사용되는 데이터 응답 구조 ---
-
+@with_from_dict
 @dataclass
 class ResPriceSummary:
     symbol: str
@@ -33,6 +49,7 @@ class ResPriceSummary:
         return asdict(self)
 
 
+@with_from_dict
 @dataclass
 class ResMomentumStock:
     symbol: str
@@ -44,6 +61,7 @@ class ResMomentumStock:
         return asdict(self)
 
 
+@with_from_dict
 @dataclass
 class ResMarketCapStockItem:
     rank: Optional[str]
@@ -59,6 +77,8 @@ class ResMarketCapStockItem:
 
 # --- 한국투자증권 API 특화 응답 구조 (종목 상세정보) ---
 
+
+@with_from_dict
 @dataclass
 class ResStockFullInfoApiOutput:
     acml_tr_pbmn: str  # 누적 거래 대금 (원)
@@ -165,6 +185,7 @@ class ResStockFullInfoApiOutput:
         return cls(**init_kwargs)
 
 
+@with_from_dict
 @dataclass
 class ResTopMarketCapApiItem:
     iscd: str
@@ -178,6 +199,7 @@ class ResTopMarketCapApiItem:
         return asdict(self)
 
 
+@with_from_dict
 @dataclass
 class ResDailyChartApiItem:
     stck_bsop_date: str
@@ -191,6 +213,7 @@ class ResDailyChartApiItem:
         return asdict(self)
 
 
+@with_from_dict
 @dataclass
 class ResAccountBalanceApiOutput:
     pdno: str
@@ -201,6 +224,7 @@ class ResAccountBalanceApiOutput:
         return asdict(self)
 
 
+@with_from_dict
 @dataclass
 class ResStockOrderApiOutput:
     ordno: str
@@ -211,6 +235,7 @@ class ResStockOrderApiOutput:
 
 
 # 종목 요약 정보 응답 구조 (상승률 기반 필터링용 등)
+@with_from_dict
 @dataclass
 class ResBasicStockInfo:
     code: str
@@ -226,6 +251,7 @@ class ResBasicStockInfo:
 
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
+@with_from_dict
 @dataclass
 class ResCommonResponse(Generic[T]):
     rt_cd: str

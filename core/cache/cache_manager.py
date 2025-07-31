@@ -9,15 +9,38 @@ from core.time_manager import TimeManager
 from datetime import datetime
 from core.cache.cache_config import load_cache_config
 
+import importlib
+
+def load_deserializable_classes(class_paths: list[str]) -> list[type]:
+    """문자열로 지정된 클래스 경로를 기반으로 클래스 객체를 동적으로 로드"""
+    classes = []
+    for path in class_paths:
+        try:
+            print(f"[로드 시도] {path}")  # ✅ 디버깅용
+
+            module_path, class_name = path.rsplit('.', 1)
+            module = importlib.import_module(module_path)
+            print(f"[모듈 로드 성공] {module=}")
+
+            cls = getattr(module, class_name)
+            print(f"[클래스 로드 성공] {cls=}")
+
+            classes.append(cls)
+        except Exception as e:
+            print(f"[❌ 예외] {path}: {e}")
+            if hasattr(CacheManager, "_logger") and CacheManager._logger:
+                CacheManager._logger.warning(f"⚠️ 클래스 로드 실패: {path} - {e}")
+    return classes
 
 class CacheManager:
     _instance: Optional['CacheManager'] = None
     _cache: Dict[str, Any] = {}
-    _logger = None
 
     def __init__(self):
         config = load_cache_config()
         self._base_dir = config["cache"]["base_dir"]
+        self._deserializable_classes = load_deserializable_classes(config["cache"].get("deserializable_classes", []))
+        self._logger = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -42,32 +65,23 @@ class CacheManager:
         return value
 
     def _deserialize(self, raw_data: Any) -> Any:
-        """역직렬화 처리. 필요 시 dataclass 인스턴스로 복원"""
         if isinstance(raw_data, dict):
-            # ResCommonResponse 구조일 경우 인스턴스로 복원 시도
-            if "rt_cd" in raw_data and "msg1" in raw_data and "data" in raw_data:
-                # data 필드를 재귀적으로 역직렬화
-                deserialized_data_content = self._deserialize(raw_data["data"])
-                return ResCommonResponse(
-                    rt_cd=raw_data["rt_cd"],
-                    msg1=raw_data["msg1"],
-                    data=deserialized_data_content
-                )
-            # ResStockFullInfoApiOutput 구조일 경우 인스턴스로 복원 시도
-            try:
-                # 'MISSING'을 직접 참조하도록 수정
-                if all(f.name in raw_data for f in fields(ResStockFullInfoApiOutput) if f.default is MISSING and f.default_factory is MISSING):
-                    return ResStockFullInfoApiOutput.from_dict(raw_data)
-            except TypeError:
-                # from_dict 호출 시 타입 에러가 발생할 수 있으므로, 다른 딕셔너리로 처리
-                pass
-
-            # 일반 딕셔너리인 경우 내부 값도 역직렬화 시도
+            for cls in self._deserializable_classes:
+                try:
+                    cls_fields = {f.name for f in fields(cls)}
+                    if cls_fields.issubset(raw_data.keys()):
+                        if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
+                            # ✅ 내부 data도 재귀 복원
+                            raw_data["data"] = self._deserialize(raw_data["data"])
+                        return cls.from_dict(raw_data)
+                except Exception as e:
+                    ...
             return {k: self._deserialize(v) for k, v in raw_data.items()}
+
         elif isinstance(raw_data, (list, tuple)):
             return [self._deserialize(item) for item in raw_data]
-        return raw_data # 기본 타입은 그대로 반환
 
+        return raw_data
 
     def set(self, key: str, value: Any, save_to_file: bool = False):
         self._cache[key] = value
