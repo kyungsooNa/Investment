@@ -1,7 +1,6 @@
 # core/cache_wrapper.py
-from typing import TypeVar
-from core.cache.cache_manager import get_cache_manager
-from typing import Callable
+from typing import TypeVar, Callable, Optional
+from core.cache.cache_manager import CacheManager
 from core.cache.cache_config import load_cache_config
 
 
@@ -9,16 +8,27 @@ T = TypeVar("T")
 
 
 class ClientWithCache:
-    def __init__(self, client, logger, time_manager, mode_fn: Callable[[], str]):
+    def __init__(
+        self,
+        client,
+        logger,
+        time_manager,
+        mode_fn: Callable[[], str],
+        cache_manager: Optional[CacheManager] = None,
+        config: Optional[dict] = None
+    ):
         self._client = client
         self._logger = logger  # ✅ 로거 주입 @TODO 추후 Logger.get_instance()
         self._time_manager = time_manager  # ✅ 로거 주입 @TODO 추후 TimeManager.get_instance()
         self._mode_fn = mode_fn  # 동적으로 모드 가져오기
-        get_cache_manager().set_logger(self._logger)
 
         # ✅ 설정에서 읽기
-        _config = load_cache_config()
-        self.cached_methods = set(_config["cache"]["enabled_methods"])
+        if config is None:
+            config = load_cache_config()
+
+        self._cache = cache_manager if cache_manager else CacheManager(config)
+        self._cache.set_logger(self._logger)
+        self.cached_methods = set(config["cache"]["enabled_methods"])
 
     def __getattr__(self, name: str):
         # ✅ 무한 루프 방지
@@ -40,7 +50,7 @@ class ClientWithCache:
             key = _build_cache_key(mode, name, args)
 
             # ✅ 1. 메모리 or 파일 캐시 조회
-            cached = get_cache_manager().get(key)
+            cached = self._cache.get(key)
             if cached is not None:
                 return cached
 
@@ -50,9 +60,9 @@ class ClientWithCache:
 
             # ✅ 3. 캐싱 조건 판단
             if not self._time_manager.is_market_open():
-                get_cache_manager().set(key, result, save_to_file=True)
+                self._cache.set(key, result, save_to_file=True)
             else:
-                get_cache_manager().set(key, result, save_to_file=False)
+                self._cache.set(key, result, save_to_file=False)
 
             return result
 
@@ -70,5 +80,19 @@ class ClientWithCache:
         ))
 
 
-def cache_wrap_client(api_client: T, logger, time_manager, mode_getter: Callable[[], str]) -> T:
-    return ClientWithCache(api_client, logger, time_manager, mode_getter)
+def cache_wrap_client(
+    api_client: T,
+    logger,
+    time_manager,
+    mode_getter: Callable[[], str],
+    config: Optional[dict] = None,
+    cache_manager: Optional[CacheManager] = None
+) -> T:
+    return ClientWithCache(
+        client=api_client,
+        logger=logger,
+        time_manager=time_manager,
+        mode_fn=mode_getter,
+        cache_manager=cache_manager,
+        config=config
+    )

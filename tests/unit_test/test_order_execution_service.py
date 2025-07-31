@@ -247,7 +247,10 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             msg1="정상",
             data={
                 "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "N/A", "prdy_vrss_sign": "N/A", "prdy_ctrt": "N/A"
+                    "stck_prpr": "N/A",
+                    "prdy_vrss_sign": "N/A",
+                    "prdy_ctrt": "N/A",
+                    "prdy_vrss": "N/A"  # ✅ 누락된 필드 추가
                 })
             }
         )

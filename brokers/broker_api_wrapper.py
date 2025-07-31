@@ -13,7 +13,8 @@ class BrokerAPIWrapper:
     증권사별 구현체를 내부적으로 호출하여, 일관된 방식의 인터페이스를 제공.
     """
 
-    def __init__(self, broker: str = "korea_investment", env=None, logger=None, time_manager=None):
+    def __init__(self, broker: str = "korea_investment", env=None, logger=None, time_manager=None,
+                 cache_config=None):
         self._broker = broker
         self._logger = logger
         self._client = None
@@ -24,8 +25,11 @@ class BrokerAPIWrapper:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
             self._client = KoreaInvestApiClient(env, logger)
-            self._client = cache_wrap_client(self._client, logger, time_manager,
-                                             lambda: "PAPER" if env.is_paper_trading else "REAL")
+            self._client = cache_wrap_client(
+                self._client, logger, time_manager,
+                lambda: "PAPER" if env.is_paper_trading else "REAL",
+                config=cache_config  # ✅ 여기서 주입
+            )
 
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")

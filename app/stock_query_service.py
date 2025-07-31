@@ -137,8 +137,13 @@ class StockQueryService:
             # 부호 코드에 따른 실제 부호 문자열 결정
             actual_change_sign = self._get_sign_from_code(change_sign_code)
 
+            try:
+                float(change_val_str)
+                display_change_val = f"{actual_change_sign}{change_val_str}"
+            except (ValueError, TypeError):
+                display_change_val = change_val_str  # 그냥 "ABC"
+
             # 0원일 경우 부호 없이 0으로 표시
-            display_change_val = change_val_str
             if change_val_str != 'N/A':
                 try:
                     change_val_float = float(change_val_str)
@@ -176,46 +181,55 @@ class StockQueryService:
             current_price_str = output_data.stck_prpr
             open_price_str = output_data.stck_oprc
 
-            current_price_float = float(current_price_str) if current_price_str != 'N/A' else None
-            open_price_float = float(open_price_str) if open_price_str != 'N/A' else None
+            try:
+                try:
+                    current_price_float = float(current_price_str) if current_price_str not in (None, 'N/A') else None
+                    open_price_float = float(open_price_str) if open_price_str not in (None, 'N/A') else None
+                except (ValueError, TypeError):
+                    self.logger.warning(
+                        f"{stock_code} 시가대비 조회 실패: 가격 파싱 오류 (현재가={current_price_str}, 시가={open_price_str})")
+                    return
 
-            # 시가대비 등락률 퍼센트 계산
-            percentage_change_vs_open_formatted = "N/A"
-            if open_price_float is not None and current_price_float is not None and open_price_float != 0:
-                percentage_change_vs_open = ((current_price_float - open_price_float) / open_price_float) * 100
-
-                # 퍼센트 부호 적용 및 0.00% 처리
-                if percentage_change_vs_open > 0:
-                    percentage_change_vs_open_formatted = f"+{percentage_change_vs_open:.2f}%"
-                elif percentage_change_vs_open < 0:
-                    percentage_change_vs_open_formatted = f"{percentage_change_vs_open:.2f}%"
-                else:
-                    percentage_change_vs_open_formatted = "0.00%"
-            else:
+                # 시가대비 등락률 퍼센트 계산
                 percentage_change_vs_open_formatted = "N/A"
+                if open_price_float is not None and current_price_float is not None and open_price_float != 0:
+                    percentage_change_vs_open = ((current_price_float - open_price_float) / open_price_float) * 100
 
-            # 시가 대비 금액 계산 및 부호 적용, 0원 처리
-            display_vs_open_price_formatted = "N/A"
-            if open_price_float is not None and current_price_float is not None:
-                calculated_vs_open_price = current_price_float - open_price_float
-
-                # 금액 부호 적용 및 0원 처리
-                if calculated_vs_open_price > 0:
-                    display_vs_open_price_formatted = f"+{calculated_vs_open_price:.0f}"
-                elif calculated_vs_open_price < 0:
-                    display_vs_open_price_formatted = f"{calculated_vs_open_price:.0f}"
+                    # 퍼센트 부호 적용 및 0.00% 처리
+                    if percentage_change_vs_open > 0:
+                        percentage_change_vs_open_formatted = f"+{percentage_change_vs_open:.2f}%"
+                    elif percentage_change_vs_open < 0:
+                        percentage_change_vs_open_formatted = f"{percentage_change_vs_open:.2f}%"
+                    else:
+                        percentage_change_vs_open_formatted = "0.00%"
                 else:
-                    display_vs_open_price_formatted = "0"
+                    percentage_change_vs_open_formatted = "N/A"
 
-            print(f"\n성공: {stock_code}")
-            print(f"  현재가: {current_price_str}원")
-            print(f"  시가: {open_price_str}원")
-            print(f"  시가대비 등락률: {display_vs_open_price_formatted}원 ({percentage_change_vs_open_formatted})")
+                # 시가 대비 금액 계산 및 부호 적용, 0원 처리
+                display_vs_open_price_formatted = "N/A"
+                if open_price_float is not None and current_price_float is not None:
+                    calculated_vs_open_price = current_price_float - open_price_float
 
-            self.logger.info(
-                f"{stock_code} 시가대비 조회 성공: 현재가={current_price_str}, 시가={open_price_str}, "
-                f"시가대비={display_vs_open_price_formatted}원 ({percentage_change_vs_open_formatted})"
-            )
+                    # 금액 부호 적용 및 0원 처리
+                    if calculated_vs_open_price > 0:
+                        display_vs_open_price_formatted = f"+{calculated_vs_open_price:.0f}"
+                    elif calculated_vs_open_price < 0:
+                        display_vs_open_price_formatted = f"{calculated_vs_open_price:.0f}"
+                    else:
+                        display_vs_open_price_formatted = "0"
+
+                print(f"\n성공: {stock_code}")
+                print(f"  현재가: {current_price_str}원")
+                print(f"  시가: {open_price_str}원")
+                print(f"  시가대비 등락률: {display_vs_open_price_formatted}원 ({percentage_change_vs_open_formatted})")
+
+                self.logger.info(
+                    f"{stock_code} 시가대비 조회 성공: 현재가={current_price_str}, 시가={open_price_str}, "
+                    f"시가대비={display_vs_open_price_formatted}원 ({percentage_change_vs_open_formatted})"
+                )
+            except (TypeError, ValueError):
+                print("⚠️ 시가 또는 현재가 정보가 유효하지 않아 계산할 수 없습니다.")
+                return
         else:
             print(f"\n실패: {stock_code} 시가대비 조회.")
             self.logger.error(f"{stock_code} 시가대비 조회 실패: {current_price_result}")

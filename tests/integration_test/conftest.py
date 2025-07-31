@@ -1,58 +1,68 @@
 import os
 import stat
 import shutil
-import time
 import pytest
-from unittest.mock import patch
-from core.cache import cache_config
+from core.cache.cache_manager import CacheManager
+from core.cache.cache_wrapper import ClientWithCache
+import logging
 
-@pytest.fixture(autouse=True, scope="session")
-def patch_cache_config():
-    # ✅ 테스트 전용 config 경로 설정
-    test_config_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "config", "cache_config.yaml")
-    )
-
-    # ✅ 실제 config 파일 로딩 (yaml 파싱까지 수행)
-    config_data = cache_config.load_cache_config(test_config_path)
-
-    # ✅ 해당 데이터로 load_cache_config를 patch
-    with patch("core.cache.cache_config.load_cache_config", return_value=config_data):
-        yield
 
 @pytest.fixture(autouse=True)
-def clear_cache_files():
-    """
-    테스트 실행 전후 .cache 디렉토리 및 메모리 캐시 제거
-    """
-    from core.cache.cache_manager import get_cache_manager  # ✅ patch 이후에 import
+def patch_cache_wrap_client_for_tests(mocker):
+    def custom_cache_wrap_client(client, logger, time_manager, env_fn, config=None):
+        fake_config = {
+            "cache": {
+                "base_dir": os.path.abspath("tests/.cache"),
+                "enabled_methods": ["get_data"]
+            }
+        }
+        return ClientWithCache(client, logger, time_manager, env_fn, config=fake_config)
 
-    base_dir = os.path.dirname(__file__)
-    cache_dir = os.path.join(base_dir, ".cache")  # ./tests/.cache
+    mocker.patch("brokers.broker_api_wrapper.cache_wrap_client", side_effect=custom_cache_wrap_client)
 
-    def on_rm_error(func, path, exc_info):
+
+@pytest.fixture(scope="session")
+def test_cache_config():
+    test_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".cache"))
+    return {
+        "cache": {
+            "base_dir": test_base_dir,
+            "enabled_methods": ["get_data"],
+            "deserializable_classes": []
+        }
+    }
+
+
+@pytest.fixture(scope="function")
+def cache_manager(test_cache_config):
+    return CacheManager(config=test_cache_config)
+
+
+@pytest.fixture(autouse=True)
+def clear_cache_files(test_cache_config):
+    base_dir = test_cache_config["cache"]["base_dir"]
+
+    def on_rm_error(func, path, _):
         try:
             os.chmod(path, stat.S_IWRITE)
             func(path)
-        except Exception:
-            time.sleep(0.1)
-            try:
-                func(path)
-            except Exception:
-                pass
-
-    # ✅ 메모리 캐시 초기화
-    get_cache_manager().clear()
-
-    # ✅ 파일 캐시 삭제
-    if os.path.exists(cache_dir):
-        try:
-            shutil.rmtree(cache_dir, onerror=on_rm_error)
         except Exception as e:
-            print(f"⚠️ 캐시 디렉토리 삭제 실패: {e}")
+            print(f"❌ 파일 삭제 실패: {path} - {e}")
 
-    yield  # 테스트 실행
+    # ✅ 캐시 디렉토리 삭제 전 log 핸들 닫기
+    for handler in logging.root.handlers[:]:
+        handler.close()
+        logging.root.removeHandler(handler)
 
-    # ✅ 테스트 종료 후도 정리
-    if os.path.exists(cache_dir):
-        shutil.rmtree(cache_dir, onerror=on_rm_error)
+    if os.path.exists(base_dir):
+        shutil.rmtree(base_dir, onerror=on_rm_error)
+
+    yield
+
+    # ✅ 캐시 디렉토리 삭제 후에도 log 핸들 정리
+    for handler in logging.root.handlers[:]:
+        handler.close()
+        logging.root.removeHandler(handler)
+
+    if os.path.exists(base_dir):
+        shutil.rmtree(base_dir, onerror=on_rm_error)

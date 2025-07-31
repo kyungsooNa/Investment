@@ -4,48 +4,31 @@ import os
 import json
 from typing import Any, Dict, Optional
 from dataclasses import dataclass, field, fields, MISSING, asdict
-from common.types import ResCommonResponse, ResStockFullInfoApiOutput
-from core.time_manager import TimeManager
 from datetime import datetime
 from core.cache.cache_config import load_cache_config
 
 import importlib
 
 def load_deserializable_classes(class_paths: list[str]) -> list[type]:
-    """문자열로 지정된 클래스 경로를 기반으로 클래스 객체를 동적으로 로드"""
     classes = []
     for path in class_paths:
         try:
-            print(f"[로드 시도] {path}")  # ✅ 디버깅용
-
             module_path, class_name = path.rsplit('.', 1)
             module = importlib.import_module(module_path)
-            print(f"[모듈 로드 성공] {module=}")
-
             cls = getattr(module, class_name)
-            print(f"[클래스 로드 성공] {cls=}")
-
             classes.append(cls)
         except Exception as e:
-            print(f"[❌ 예외] {path}: {e}")
-            if hasattr(CacheManager, "_logger") and CacheManager._logger:
-                CacheManager._logger.warning(f"⚠️ 클래스 로드 실패: {path} - {e}")
+            print(f"[❌ 클래스 로드 실패] {path}: {e}")
     return classes
 
 class CacheManager:
-    _instance: Optional['CacheManager'] = None
-    _cache: Dict[str, Any] = {}
-
-    def __init__(self):
-        config = load_cache_config()
+    def __init__(self, config: Optional[dict] = None):
+        if config is None:
+            config = load_cache_config()
         self._base_dir = config["cache"]["base_dir"]
         self._deserializable_classes = load_deserializable_classes(config["cache"].get("deserializable_classes", []))
         self._logger = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(CacheManager, cls).__new__(cls)
-        return cls._instance
+        self._cache: Dict[str, Any] = {}
 
     def set_logger(self, logger):
         self._logger = logger
@@ -154,13 +137,3 @@ class CacheManager:
         self._cache.clear()
         if self._logger:
             self._logger.debug("♻️ Memory cache 초기화 완료")
-
-
-# 싱글톤 인스턴스
-_cache_manager_instance = None
-
-def get_cache_manager():
-    global _cache_manager_instance
-    if _cache_manager_instance is None:
-        _cache_manager_instance = CacheManager()
-    return _cache_manager_instance
