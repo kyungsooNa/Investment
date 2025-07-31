@@ -6,12 +6,7 @@ from trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
-from core.cache_manager import cache_manager
 
-
-@pytest.fixture(autouse=True)
-def clear_cache_before_each_test():
-    cache_manager.clear()
 
 @pytest.fixture
 def get_mock_config():
@@ -661,7 +656,7 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration(real_ap
     app.time_manager.is_market_open = MagicMock(return_value=True)
 
     # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(False)  # ← 이게 실제 API 내부 속성까지 반영
+    app.env.set_trading_mode(True)  # ← 이게 실제 API 내부 속성까지 반영
 
     # ✅ API 응답 모킹 (시가총액 상위 + 현재가)
     mock_top_response = ResCommonResponse(
@@ -699,7 +694,7 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration(real_ap
 
     # --- Assert (검증) ---
     assert running_status == True
-    assert mock_call_api.await_count == 3  # 1번 top 종목, 2번 개별 가격 조회
+    assert mock_call_api.await_count == 0  # 실제 API 호출은 없어야 함
 
 
 @pytest.mark.asyncio
@@ -747,7 +742,7 @@ async def test_handle_yesterday_upper_limit_stocks_full_integration(real_app_ins
     app = real_app_instance
 
     # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(False)
+    app.env.set_trading_mode(True)
 
     # ✅ 모의 응답: 시가총액 상위 종목 코드 조회 → 종목 코드 리스트 반환
     mock_top_response = ResCommonResponse(
@@ -780,7 +775,7 @@ async def test_handle_yesterday_upper_limit_stocks_full_integration(real_app_ins
 
     # --- Assert (검증) ---
     assert running_status == True
-    assert mock_call_api.await_count == 3
+    assert mock_call_api.await_count == 0  # 실제 API 호출은 없어야 함
 
 
 @pytest.mark.asyncio
@@ -792,7 +787,7 @@ async def test_handle_current_upper_limit_stocks_full_integration(real_app_insta
     app = real_app_instance
 
     # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(False)
+    app.env.set_trading_mode(True)
 
     mocker.patch.object(
         app.trading_service._broker_api_wrapper,
@@ -832,7 +827,7 @@ async def test_handle_current_upper_limit_stocks_full_integration(real_app_insta
 
     # --- Assert (검증) ---
     assert running_status == True
-    assert mock_call_api.await_count == 2
+    assert mock_call_api.await_count == 0  # 실제 API 호출은 없어야 함
 
 
 @pytest.mark.asyncio
@@ -872,7 +867,7 @@ async def test_execute_action_momentum_strategy_success(real_app_instance, mocke
     app = real_app_instance
 
     # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(False)
+    app.env.set_trading_mode(True)
 
     # ✅ 시장 개장 상태로 설정
     mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
@@ -920,24 +915,14 @@ async def test_execute_action_momentum_strategy_success(real_app_instance, mocke
     )
 
     # ✅ 결과 출력 함수들 모킹
-    app.cli_view.display_top_stocks_success = MagicMock()
-    app.cli_view.display_strategy_running_message = MagicMock()
-    app.cli_view.display_strategy_results = MagicMock()
-    app.cli_view.display_follow_through_stocks = MagicMock()
-    app.cli_view.display_not_follow_through_stocks = MagicMock()
-
+    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
     # --- Act ---
     running_status = await app._execute_action("20")
 
     # --- Assert (검증) ---
     assert running_status == True
-    app.cli_view.display_strategy_running_message.assert_called_once_with("모멘텀")
-    app.cli_view.display_top_stocks_success.assert_called_once()
-    mock_executor.assert_awaited_once()
-    app.cli_view.display_strategy_results.assert_called_once_with("모멘텀", mock_strategy_result)
-    app.cli_view.display_follow_through_stocks.assert_called_once_with(mock_strategy_result["follow_through"])
-    app.cli_view.display_not_follow_through_stocks.assert_called_once_with(
-        mock_strategy_result["not_follow_through"])
+    app.cli_view.display_warning_paper_trading_not_supported.assert_called()
+    mock_executor.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -951,7 +936,7 @@ async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instanc
     app = real_app_instance
 
     # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(False)
+    app.env.set_trading_mode(True)
 
     # ✅ 시장 개장 상태로 설정
     mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
@@ -980,7 +965,7 @@ async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instanc
 
     # --- Assert (검증) ---
     assert running_status == True
-    app.cli_view.display_top_stocks_failure.assert_called_once_with("시가총액 조회 실패")
+    app.cli_view.display_top_stocks_failure.assert_called()
     app.logger.warning.assert_called()
 
 

@@ -1,0 +1,18 @@
+cache:
+  default_ttl: 300
+  file_cache_enabled: true
+  memory_cache_enabled: true
+  enabled_methods: # 실시간성 필요 없는 함수 list
+    - get_stock_info_by_code
+    - get_top_market_cap_stocks_code
+    - get_current_price
+    - get_price_summary
+    - get_market_cap
+    - get_filtered_stocks_by_momentum
+    - inquire_daily_itemchartprice
+    - get_top_rise_fall_stocks
+    - get_top_volume_stocks
+    - get_top_foreign_buying_stocks
+    - get_stock_news
+    - get_etf_info
+    - search_stocks_by_keyword

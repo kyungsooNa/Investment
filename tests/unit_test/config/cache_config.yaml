@@ -1,0 +1,5 @@
+cache:
+  base_dir: core/cache/.cache
+  enabled_methods:
+    - get_data
+    - get_stock_info

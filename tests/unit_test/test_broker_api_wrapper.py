@@ -5,7 +5,7 @@ import logging
 # 테스트 대상 클래스 import
 import brokers.broker_api_wrapper as wrapper_module
 from brokers.broker_api_wrapper import BrokerAPIWrapper
-from core.cache_wrapper import ClientWithCache
+from core.cache.cache_wrapper import ClientWithCache
 
 
 @pytest.fixture
@@ -28,12 +28,17 @@ def mock_logger():
     """모의 로거(Logger) 객체를 생성합니다."""
     return MagicMock()
 
+@pytest.fixture
+def mock_time_manager():
+    """모의 로거(Logger) 객체를 생성합니다."""
+    return MagicMock()
+
 # --- 테스트 케이스 ---
 
 @pytest.mark.asyncio
 @patch(f"{wrapper_module.__name__}.StockCodeMapper")              # 먼저 정의된 patch가
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")         # 아래쪽 인자로 먼저 들어감!
-async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger):
+async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger, mock_time_manager):
     """
     각 메서드가 내부의 올바른 객체로 호출을 위임하는지 테스트합니다.
     """
@@ -48,13 +53,15 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
     mock_client.inquire_daily_itemchartprice.return_value = {"chart": "data"}
     mock_client_class.return_value = mock_client
 
+    mock_time_manager.is_market_open.return_value = True  # ✅ 함수로 유지
+
     # 3. 인스턴스 생성
-    wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger)
+    wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, time_manager=mock_time_manager)
 
     # 4. 실제 메서드 호출
     name_result = await wrapper.get_name_by_code("005930")
     code_result = await wrapper.get_code_by_name("삼성전자")
-    chart_result = await wrapper.inquire_daily_itemchartprice("005930", "20250712")
+    chart_result = await wrapper.inquire_daily_itemchartprice("005930", "20250712", fid_period_div_code="D")
 
     # 5. 결과 검증
     assert name_result == "삼성전자"

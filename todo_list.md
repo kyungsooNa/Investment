@@ -9,42 +9,30 @@
 2. 상한가 전체종목 조회는 너무 오래걸림 (6분)
 3. 2번 balance info 저장하는 ResType 생성
 ### 실전
-3. DEBUG: Headers being sent:
-2025-07-25 09:39:33,660 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:39:33,660 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:39:33,660 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:39:33,660 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:39:33,660 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:39:33,660 - DEBUG -   tr_id: b'TTTC0012U'
-2025-07-25 09:39:33,660 - DEBUG -   custtype: b'P'
-2025-07-25 09:39:33,661 - DEBUG -   gt_uid: b'8b795c882b9cdb7d3c3647bccf72430b'
-2025-07-25 09:39:33,661 - DEBUG -   hashkey: b'a30ae3e9a5cc288bdeb436dbf0a3b6094615f276794d51693518a21bbefe8588'
-2025-07-25 09:39:48,827 - WARNING - 🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도
-2025-07-25 09:39:51,430 - ERROR - korea_invest_api_base.py:103 - HTTP 오류 발생 (httpx): 403 - {"error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)","error_code":"EGW00133"}
-2025-07-25 09:39:51,432 - ERROR - korea_invest_api_base.py:80 - 모든 재시도 실패, API 호출 종료
-2025-07-25 09:39:51,437 - ERROR - trading_service.py:139 - 매수 주문 실패: 최대 재시도 횟수 초과
-2025-07-25 09:39:51,440 - ERROR - order_execution_service.py:32 - 주식 매수 주문 실패: 종목=005930, 결과={'rt_cd': '105', 'msg1': '최대 재시도 횟수 초과'}
-2025-07-25 09:39:51,443 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:39:51 KST+0900)
-2025-07-25 09:40:04,080 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-25 09:40:04 KST+0900)
-2025-07-25 09:40:04,081 - INFO - Service - 주식 매수 주문 요청 - 종목: 005930, 수량: 1, 가격: 0
-2025-07-25 09:40:04,758 - INFO - Hashkey 계산 성공: a30ae3e9a5cc288bdeb436dbf0a3b6094615f276794d51693518a21bbefe8588
-2025-07-25 09:40:04,758 - INFO - 주식 buy 주문 시도 - 종목: 005930, 수량: 1, 가격: 0
-2025-07-25 09:40:04,758 - DEBUG - API 호출 시도 1/1 - POST https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/trading/order-cash
-2025-07-25 09:40:04,759 - DEBUG - 
+3. 
+2025-07-31 09:11:38,511 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-31 09:11:38 KST+0900)
+2025-07-31 09:11:38,511 - INFO - Service - 주식 매수 주문 요청 - 종목: 005930, 수량: 1, 가격: 0
+2025-07-31 09:11:38,511 - DEBUG - Bypass - place_stock_order 캐시 건너뜀
+2025-07-31 09:11:39,457 - INFO - Hashkey 계산 성공: 1a313f9e70dce6b7c63164578818187bc98ff94de248d146d23f6903c938cd18
+2025-07-31 09:11:39,458 - INFO - 주식 buy 주문 시도 - 종목: 005930, 수량: 1, 가격: 0
+2025-07-31 09:11:39,458 - DEBUG - API 호출 시도 1/1 - POST https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/order-cash
+2025-07-31 09:11:39,458 - DEBUG - 
 DEBUG: Headers being sent:
-2025-07-25 09:40:04,759 - DEBUG -   Content-Type: b'application/json'
-2025-07-25 09:40:04,759 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-2025-07-25 09:40:04,759 - DEBUG -   charset: b'UTF-8'
-2025-07-25 09:40:04,759 - DEBUG -   appkey: b'PSvrDBXImiV6W2k3MQLzToa7WYkYlRf4IZrt'
-2025-07-25 09:40:04,760 - DEBUG -   appsecret: b'8xF4PL7QyLJYnte1mJdh8N3qq7e/D61oKeY2leXyTy0G0L/Z6djx1zUWMbvVKG7LCDJc/2uvtD7Nq2pewskcsH4qRpZInhj0As1RWg2TOQQT/1LC0WDu+oKPcUW79DeKpEtje+ZNDv9rwlhEYl+twofVh8gTklpHatVp6BDDX9KoKakDkPM='
-2025-07-25 09:40:04,760 - DEBUG -   tr_id: b'TTTC0012U'
-2025-07-25 09:40:04,760 - DEBUG -   custtype: b'P'
-2025-07-25 09:40:04,760 - DEBUG -   gt_uid: b'ae87a0f023d7d6156b5c42f5e87dddd7'
-2025-07-25 09:40:04,760 - DEBUG -   hashkey: b'a30ae3e9a5cc288bdeb436dbf0a3b6094615f276794d51693518a21bbefe8588'
-2025-07-25 09:40:04,761 - DEBUG -   Authorization: b'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6ImIwOTZmMGUxLTNmZmYtNDRhYy05MTg2LTUwNjFhOGJmOGFkMSIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc1MzQ5MDM2MiwiaWF0IjoxNzUzNDAzOTYyLCJqdGkiOiJQU2p4SllhYkZ0YUlQMjlISllvQ0hlTEtCSVR4eHY3ZzdudmcifQ.vqWfWsLRYHW_w4NAU0eEOrWUFgzRguIYlQuDoUpEPoq_QQ28Wn70P6BgIQYKhtYWyiHTjcxyAG4MEZcTZwG-WQ'
-2025-07-25 09:40:21,376 - WARNING - 🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도
-2025-07-25 09:40:44,819 - ERROR - korea_invest_api_base.py:172 - HTTP 오류 발생: 500 - {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}
-2025-07-25 09:40:56,230 - ERROR - korea_invest_api_base.py:58 - 복구 불가능한 오류 발생: https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/trading/order-cash, 응답: {"rt_cd":"1","msg1":"기간이 만료된 token 입니다.","msg_cd":"EGW00123"}
+2025-07-31 09:11:39,459 - DEBUG -   Content-Type: b'application/json'
+2025-07-31 09:11:39,459 - DEBUG -   User-Agent: b'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
+2025-07-31 09:11:39,459 - DEBUG -   charset: b'UTF-8'
+2025-07-31 09:11:39,459 - DEBUG -   Authorization: b''
+2025-07-31 09:11:39,459 - DEBUG -   appkey: b''
+2025-07-31 09:11:39,459 - DEBUG -   appsecret: b''
+2025-07-31 09:11:39,459 - DEBUG -   tr_id: b'VTTC0012U'
+2025-07-31 09:11:39,460 - DEBUG -   custtype: b'P'
+2025-07-31 09:11:39,460 - DEBUG -   gt_uid: b'59bf9fc610a18cc993a3f6d590c04277'
+2025-07-31 09:11:39,460 - DEBUG -   hashkey: b'1a313f9e70dce6b7c63164578818187bc98ff94de248d146d23f6903c938cd18'
+2025-07-31 09:11:40,152 - ERROR - korea_invest_api_base.py:200 - HTTP 오류 발생: 500 - {"rt_cd":"1","msg_cd":"IGW00007","msg1":"MCA 전문바디 구성 중 오류가 발생하였습니다."}
+2025-07-31 09:11:40,153 - ERROR - korea_invest_api_base.py:69 - 복구 불가능한 오류 발생: https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/order-cash, 응답: {"rt_cd":"1","msg_cd":"IGW00007","msg1":"MCA 전문바디 구성 중 오류가 발생하였습니다."}
+2025-07-31 09:11:40,157 - ERROR - trading_service.py:139 - 매수 주문 실패: API 응답 파싱 실패 또는 처리 불가능 - {"rt_cd":"1","msg_cd":"IGW00007","msg1":"MCA 전문바디 구성 중 오류가 발생하였습니다."}
+2025-07-31 09:11:40,173 - ERROR - order_execution_service.py:32 - 주식 매수 주문 실패: 종목=005930, 결과={'rt_cd': '101', 'msg1': 'API 응답 파싱 실패 또는 처리 불가능 - {"rt_cd":"1","msg_cd":"IGW00007","msg1":"MCA 전문바디 구성 중 오류가 발생하였습니다."}'}
+2025-07-31 09:11:40,174 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-31 09:11:40 KST+0900)
 
 
 9. API 잘못됨

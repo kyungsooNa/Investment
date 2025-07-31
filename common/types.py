@@ -1,5 +1,5 @@
 # common/types.py
-from dataclasses import dataclass, field, fields, MISSING
+from dataclasses import dataclass, field, fields, MISSING, asdict
 from typing import Optional, Generic, TypeVar
 from enum import Enum, auto
 
@@ -29,6 +29,9 @@ class ResPriceSummary:
     change_rate: float
     prdy_ctrt: float
 
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class ResMomentumStock:
@@ -37,6 +40,9 @@ class ResMomentumStock:
     prev_volume: int
     current_volume: int
 
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class ResMarketCapStockItem:
@@ -44,6 +50,9 @@ class ResMarketCapStockItem:
     name: Optional[str]
     code: str
     current_price: Optional[str]
+
+    def to_dict(self):
+        return asdict(self)
 
 
 # --- 한국투자증권 API 특화 응답 구조 ---
@@ -133,6 +142,9 @@ class ResStockFullInfoApiOutput:
     wghn_avrg_stck_prc: str  # 가중평균주가
     whol_loan_rmnd_rate: str  # 전체 대주잔고 비율 (%)
 
+    def to_dict(self):
+        return asdict(self)
+
     @classmethod
     def from_dict(cls, data: dict, log_missing: bool = True) -> "ResStockFullInfoApiOutput":
         init_kwargs = {}
@@ -162,6 +174,9 @@ class ResTopMarketCapApiItem:
     hts_kor_isnm: Optional[str]
     acc_trdvol: str
 
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class ResDailyChartApiItem:
@@ -172,6 +187,9 @@ class ResDailyChartApiItem:
     stck_clpr: str
     acml_vol: str
 
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class ResAccountBalanceApiOutput:
@@ -179,11 +197,17 @@ class ResAccountBalanceApiOutput:
     prdt_name: str
     evlu_amt: str
 
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class ResStockOrderApiOutput:
     ordno: str
     prdt_no: str
+
+    def to_dict(self):
+        return asdict(self)
 
 
 # 종목 요약 정보 응답 구조 (상승률 기반 필터링용 등)
@@ -196,6 +220,9 @@ class ResBasicStockInfo:
     change_rate: float
     prdy_ctrt: float
 
+    def to_dict(self):
+        return asdict(self)
+
 
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
@@ -204,6 +231,45 @@ class ResCommonResponse(Generic[T]):
     rt_cd: str
     msg1: str
     data: Optional[T] = None
+
+    def to_dict(self):
+        data_serialized = None
+        if hasattr(self.data, 'to_dict') and callable(getattr(self.data, 'to_dict')):
+            # data 필드 자체가 to_dict를 가진 객체인 경우
+            data_serialized = self.data.to_dict()
+        elif isinstance(self.data, (list, tuple)):
+            # data 필드가 리스트/튜플인 경우, 내부 항목들도 재귀적으로 직렬화
+            data_serialized = []
+            for item in self.data:
+                if hasattr(item, 'to_dict') and callable(getattr(item, 'to_dict')):
+                    data_serialized.append(item.to_dict())
+                elif isinstance(item, (list, tuple, dict)): # 중첩된 리스트/딕셔너리도 처리
+                    # 여기서 재귀적으로 self._serialize 같은 함수를 사용하면 좋지만,
+                    # types.py에서는 cache_manager._serialize를 직접 호출할 수 없으므로,
+                    # to_dict를 가진 객체만 처리하거나, 더 일반적인 재귀 직렬화 로직을 이 안에 구현해야 함.
+                    # 일단은 to_dict를 가진 객체만 처리하도록 간소화합니다.
+                    data_serialized.append(item) # to_dict 없는 객체는 그대로
+                else:
+                    data_serialized.append(item)
+        elif isinstance(self.data, dict):
+            # data 필드가 딕셔너리인 경우, 내부 값들도 재귀적으로 직렬화
+            data_serialized = {}
+            for k, v in self.data.items():
+                if hasattr(v, 'to_dict') and callable(getattr(v, 'to_dict')):
+                    data_serialized[k] = v.to_dict()
+                elif isinstance(v, (list, tuple, dict)): # 중첩된 리스트/딕셔너리도 처리
+                    data_serialized[k] = v # to_dict 없는 객체는 그대로
+                else:
+                    data_serialized[k] = v
+        else:
+            # 그 외 기본 JSON 직렬화 가능 타입은 그대로 반환
+            data_serialized = self.data
+
+        return {
+            "rt_cd": self.rt_cd,
+            "msg1": self.msg1,
+            "data": data_serialized
+        }
 
 
 class ResponseStatus(Enum):
