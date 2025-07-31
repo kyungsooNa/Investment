@@ -212,6 +212,7 @@ DEBUG: Headers being sent:
 
 ### 1. 환경 (Environment)
 * **[개선 필요]** File Caching Logic에 날짜 기반으로 Hit/miss 판단하도록 수정
+* **[개선 필요]** Memory Cache, File Cache로 클래스 리팩
 
 ### 2. 성능 (Performance)
 * **[개선 필요]** 전체 종목 정보를 읽었으면 RAM에 유지하는 기능 추가 (시장이 닫혔을 경우).
