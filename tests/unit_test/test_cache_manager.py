@@ -71,7 +71,7 @@ def test_cache_manager_file_cache_reuse(cache_manager, tmp_path):
     cache_manager.set(key, value, save_to_file=True)
 
     # 메모리 클리어 (의도적으로)
-    cache_manager.clear()
+    cache_manager.memory_cache.clear()
 
     # 캐시 재조회 시 파일에서 읽히는지 확인
     loaded = cache_manager.get(key)

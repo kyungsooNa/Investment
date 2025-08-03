@@ -16,6 +16,8 @@ class CacheManager:
 
     def set_logger(self, logger):
         self._logger = logger
+        self.memory_cache.set_logger(logger)
+        self.file_cache.set_logger(logger)
 
     def get(self, key: str) -> Optional[Any]:
         val = self.memory_cache.get(key)
@@ -48,4 +50,4 @@ class CacheManager:
 
     def clear(self):
         self.memory_cache.clear()
-        # Optional: self.file_cache.clear()
+        self.file_cache.clear()

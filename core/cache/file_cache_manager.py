@@ -114,5 +114,22 @@ class FileCacheManager:
                     self._logger.error(f"❌ File cache 삭제 실패: {e}")
 
     def clear(self):
-        # Optional: 모든 파일 제거
-        pass
+        """파일 캐시 전체 삭제"""
+        if not os.path.exists(self._base_dir):
+            return
+
+        try:
+            for root, _, files in os.walk(self._base_dir):
+                for file in files:
+                    if file.endswith(".json"):
+                        path = os.path.join(root, file)
+                        try:
+                            os.remove(path)
+                            if self._logger:
+                                self._logger.debug(f"🗑️ File cache 삭제됨: {path}")
+                        except Exception as e:
+                            if self._logger:
+                                self._logger.error(f"❌ 파일 삭제 실패: {path} - {e}")
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"❌ 전체 캐시 삭제 실패: {e}")
