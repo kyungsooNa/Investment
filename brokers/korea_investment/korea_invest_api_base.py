@@ -147,9 +147,16 @@ class KoreaInvestApiBase:
             if method.upper() == 'GET':
                 return await self._async_session.get(url, headers=self._headers, params=params)
             elif method.upper() == 'POST':
+                json_header = json.dumps(self._headers, indent=2)
+                json_body = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+                self._logger.debug(f"요청 Url: {url}")
+                self._logger.debug(f"요청 Headers: {self._headers}")
+                self._logger.debug(f"요청 Data: {json_body}")
+
                 return await self._async_session.post(
                     url, headers=self._headers,
-                    json=data if data else None  # httpx는 'data' 대신 'json' 파라미터를 사용하여 dict를 JSON으로 자동 변환
+                    json=json_body if json_body else None  # httpx는 'data' 대신 'json' 파라미터를 사용하여 dict를 JSON으로 자동 변환
                 )
             else:
                 raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")

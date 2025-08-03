@@ -62,7 +62,7 @@ class OrderExecutionService:
         try:
             qty = int(qty_input)
             price = int(price_input)
-            order_dvsn = '01' if price > 0 else '00' # 01: 지정가, 00: 시장가
+            order_dvsn = '00' if price > 0 else '01' # 00: 지정가, 01: 시장가
         except ValueError:
             print("잘못된 수량 또는 가격 입력입니다.")
             self.logger.warning(f"잘못된 매수 입력: 수량={qty_input}, 가격={price_input}")

@@ -76,6 +76,9 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         self._headers["custtype"] = full_config['custtype']
         self._headers["gt_uid"] = os.urandom(16).hex()
 
+        if order_price == 0 and order_dvsn == "01":
+            order_price = ""
+
         data = {
             "CANO": full_config['stock_account_number'],
             "ACNT_PRDT_CD": "01",
