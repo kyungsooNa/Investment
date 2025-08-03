@@ -15,8 +15,9 @@ async def test_cache_manager_basic_set_get(cache_manager):
         "data": data
     })
 
-    loaded = cache_manager.get_raw(key)
-    assert loaded['data']["foo"] == 123
+    loaded, cache_type = cache_manager.get_raw(key)
+    assert loaded['data'] == data
+    assert cache_type == "memory"
 
 
 @pytest.mark.asyncio
@@ -28,7 +29,9 @@ async def test_cache_manager_delete(cache_manager):
         "data": data
     })
     # 1. set
-    assert cache_manager.get_raw(key)['data'] == data
+    loaded, cache_type = cache_manager.get_raw(key)
+    assert loaded['data'] == data
+    assert cache_type == "memory"
 
     # 2. delete
     cache_manager.delete(key)
@@ -45,7 +48,10 @@ async def test_cache_manager_delete_failure(cache_manager):
         "timestamp": datetime.now().isoformat(),
         "data": data
     })
-    assert cache_manager.get_raw(key)['data'] == data
+
+    loaded, cache_type = cache_manager.get_raw(key)
+    assert loaded['data'] == data
+    assert cache_type == "memory"
 
     key2 = "test_key2"
 
@@ -92,9 +98,9 @@ def test_cache_manager_file_cache_reuse(cache_manager, tmp_path):
     cache_manager.memory_cache.clear()
 
     # 캐시 재조회 시 파일에서 읽히는지 확인
-    loaded = cache_manager.get_raw(key)
+    loaded, cache_type = cache_manager.get_raw(key)
     assert loaded['data'] == data
-
+    assert cache_type == "file"
 
 def test_cache_manager_file_cache_delete(tmp_path):
     # ✅ 캐시 설정 구성
@@ -157,8 +163,14 @@ def test_cache_manager_file_cache_clear(tmp_path):
     assert path2.exists()
 
     # ✅ 메모리 확인
-    assert cache_manager.get_raw(key1)['data'] == data1
-    assert cache_manager.get_raw(key2)['data'] == data2
+    loaded, cache_type = cache_manager.get_raw(key1)
+    assert loaded['data'] == data1
+    assert cache_type == "memory"
+
+    loaded, cache_type = cache_manager.get_raw(key2)
+    assert loaded['data'] == data2
+    assert cache_type == "memory"
+
 
     # ✅ 캐시 클리어
     cache_manager.clear()

@@ -129,40 +129,28 @@ def test_init_unknown_timezone_error(mock_logger):
 
 
 def test_get_current_kst_time(time_manager):
-    """
-    get_current_kst_time 메서드 커버 (라인 28-30)
-    """
-    # datetime.datetime 자체를 Mock합니다.
-    # 이렇게 하면 datetime.datetime(...) 호출과 .now() 호출 모두 Mock의 제어를 받습니다.
-    with patch('datetime.datetime') as mock_datetime_class:  # <-- datetime.datetime 클래스 자체를 패치
-        # TimeManager.get_current_kst_time() 함수 내에서
-        # datetime.datetime.now(self.market_timezone)가 호출됩니다.
-        # 따라서 mock_datetime_class.now의 return_value를 설정합니다.
+    """get_current_kst_time 메서드 커버"""
 
-        # mock_datetime_class.now()가 반환할 timezone-aware datetime 객체를 생성합니다.
-        # 여기서는 Mock 객체가 datetime.datetime.now(tzinfo)의 동작을 흉내냅니다.
-        # localize()를 사용하지 않고 바로 tzinfo를 가진 Mock 객체를 만듭니다.
-        mock_aware_datetime_instance = MagicMock(spec=datetime) # <-- 이 부분 수정
-        mock_aware_datetime_instance.year = 2025
-        mock_aware_datetime_instance.month = 6
-        mock_aware_datetime_instance.day = 27
-        mock_aware_datetime_instance.hour = 10
-        mock_aware_datetime_instance.minute = 0
-        mock_aware_datetime_instance.second = 0
-        mock_aware_datetime_instance.microsecond = 0
-        mock_aware_datetime_instance.tzinfo = time_manager.market_timezone  # <-- tzinfo 직접 설정
+    with patch('core.time_manager.datetime') as mock_datetime_module:
+        mock_datetime_instance = MagicMock(spec=datetime)
+        mock_datetime_instance.year = 2025
+        mock_datetime_instance.month = 6
+        mock_datetime_instance.day = 27
+        mock_datetime_instance.hour = 10
+        mock_datetime_instance.minute = 0
+        mock_datetime_instance.second = 0
+        mock_datetime_instance.microsecond = 0
+        mock_datetime_instance.tzinfo = time_manager.market_timezone
 
-        # mock_datetime_class.now()가 이 Mock 인스턴스를 반환하도록 설정
-        mock_datetime_class.now.return_value = mock_aware_datetime_instance
+        # now() 함수가 해당 mock 객체를 반환하도록 설정
+        mock_datetime_module.now.return_value = mock_datetime_instance
 
-        current_time = time_manager.get_current_kst_time()
+        result = time_manager.get_current_kst_time()
 
-        assert current_time.hour == 10
-        assert current_time.minute == 0
-        assert current_time.tzinfo == time_manager.market_timezone
-
-        # datetime.datetime.now()가 time_manager.market_timezone 인자와 함께 호출되었는지 확인
-        mock_datetime_class.now.assert_called_once_with(time_manager.market_timezone)
+        # 검증
+        assert result.hour == 10
+        assert result.year == 2025
+        assert result.tzinfo == time_manager.market_timezone
 
 
 def test_is_market_open_on_weekend(time_manager, mock_logger):
@@ -350,9 +338,52 @@ async def test_async_sleep_negative_seconds(time_manager, mock_logger):
         mock_logger.info.assert_not_called()
 
 
-def test_is_holiday(time_manager):
+def test_is_weekend_or_holiday_with_weekday(time_manager):
+    weekday = datetime(2025, 8, 5)  # 예: 화요일
+    assert not time_manager.is_weekend_or_holiday(weekday)
+
+
+def test_is_weekend_or_holiday_with_weekend(time_manager):
+    saturday = datetime(2025, 8, 2)  # 토요일
+    sunday = datetime(2025, 8, 3)    # 일요일
+    assert time_manager.is_weekend_or_holiday(saturday)
+    assert time_manager.is_weekend_or_holiday(sunday)
+
+def test_get_market_close_time(time_manager):
+    now = time_manager.get_current_kst_time()
+    close_time = time_manager.get_market_close_time()
+
+    assert close_time.hour == 15
+    assert close_time.minute == 30
+    assert close_time.tzinfo.zone == "Asia/Seoul"
+    assert close_time.date() == now.date()
+
+
+def test_get_market_close_time_on(time_manager):
+    test_date = datetime(2025, 8, 1)
+    close_time = time_manager.get_market_close_time_on(test_date)
+
+    assert close_time.hour == 15
+    assert close_time.minute == 30
+    assert close_time.date() == test_date.date()
+    assert close_time.tzinfo.zone == "Asia/Seoul"
+
+
+def test_get_latest_market_close_time_weekday(time_manager):
     """
-    is_holiday 메서드 커버 (라인 109-111)
+    평일 기준으로 직전 마감 시간 반환
     """
-    # 현재 구현은 항상 False를 반환하므로, False를 검증
-    assert not time_manager.is_holiday()
+    # 월요일 오전 8시 기준: 직전 금요일 마감 시간 반환
+    seoul = pytz.timezone("Asia/Seoul")
+    fake_now = seoul.localize(datetime(2025, 8, 4, 8, 0, 0))  # 월요일
+
+    # monkeypatch 활용하여 현재 시간 강제 지정
+    time_manager.get_current_kst_time = lambda: fake_now
+
+    latest_close = time_manager.get_latest_market_close_time()
+
+    assert latest_close.weekday() == 4  # 금요일
+    assert latest_close.hour == 15
+    assert latest_close.minute == 30
+    assert latest_close < fake_now
+

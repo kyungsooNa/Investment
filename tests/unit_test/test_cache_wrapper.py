@@ -28,12 +28,15 @@ async def test_cache_wrapper_hit_and_miss(cache_manager, test_cache_config):
 
     # KST 타임존 aware datetime
     seoul_tz = pytz.timezone("Asia/Seoul")
+    time_manager.market_timezone = seoul_tz  # <- 여기!!
+
     now = seoul_tz.localize(datetime.now())
     close_time = now - timedelta(minutes=5)
+    next_open_time = now + timedelta(hours=8)
 
-    time_manager.get_market_close_time.return_value = close_time
+    time_manager.get_latest_market_close_time.return_value = close_time
     time_manager.get_current_kst_time.return_value = now
-    time_manager.market_timezone = seoul_tz
+    time_manager.get_next_market_open_time.return_value = next_open_time  # ✅ 이 부분 추가
 
     wrapped = cache_wrap_client(
         api_client=DummyApiClient(),
@@ -66,14 +69,20 @@ async def test_cache_wrapper_expired_cache_removal(cache_manager, test_cache_con
     time_manager = MagicMock()
     time_manager.is_market_open.return_value = False
 
-    # ✅ 실제 datetime 객체로 설정
+    # KST 타임존 aware datetime
     seoul_tz = pytz.timezone("Asia/Seoul")
+    time_manager.market_timezone = seoul_tz
+
     now = seoul_tz.localize(datetime.now())
     close_time = now - timedelta(minutes=5)
 
-    time_manager.get_market_close_time.return_value = close_time
+    # ✅ 추가
+    next_open_time = now + timedelta(hours=8)
+
+    time_manager.get_latest_market_close_time.return_value = close_time
     time_manager.get_current_kst_time.return_value = now
-    time_manager.market_timezone = seoul_tz
+    time_manager.get_next_market_open_time.return_value = next_open_time  # ✅ 이 부분 추가
+
 
     # 👉 시장은 닫혀 있고, 캐시 만료 여부를 확인할 수 있게 구성
     wrapped = cache_wrap_client(
@@ -216,7 +225,7 @@ async def test_client_with_cache_file_save(cache_manager, test_cache_config, tmp
 
     with open(expected_file, encoding="utf-8") as f:
         payload = json.load(f)
-        assert payload["data"] == {
+        assert payload == {
             "data": "result-7",
             "timestamp": ANY
         }
