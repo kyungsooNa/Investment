@@ -67,24 +67,6 @@ class FileCacheManager:
     def _get_path(self, key: str):
         return os.path.join(self._base_dir, f"{key}.json")
 
-    def get(self, key: str):
-        path = self._get_path(key)
-        if not os.path.exists(path):
-            return None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                wrapper = json.load(f)
-                raw_data = wrapper.get("data")
-
-                # _deserialize 메서드를 사용하여 저장된 데이터를 객체로 복원
-                value = self._deserialize(raw_data)
-                return value
-
-        except Exception as e:
-            if self._logger:
-                self._logger.error(f"[FileCache] Load Error: {e}")
-        return None
-
     def set(self, key: str, value: Any, save_to_file: bool = False):
         if save_to_file:
             try:
@@ -93,11 +75,6 @@ class FileCacheManager:
 
                 # _serialize 메서드를 사용하여 모든 객체를 직렬화 가능하도록 변환
                 serialized_data = self._serialize(value)
-
-                # wrapper = {
-                #     "timestamp": datetime.now().isoformat(),
-                #     "data": serialized_data
-                # }
                 wrapper = serialized_data
 
                 with open(path, "w", encoding="utf-8") as f:
