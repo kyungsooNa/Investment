@@ -40,7 +40,7 @@ async def test_cache_wrapper_hit_and_miss(cache_manager, test_cache_config):
 
     assert any("Memory Cache MISS" in call.args[0] for call in logger.debug.call_args_list)
     assert any("File Cache MISS" in call.args[0] for call in logger.debug.call_args_list)
-    assert any("Memory cache HIT" in call.args[0] for call in logger.debug.call_args_list)
+    assert any("Memory Cache HIT" in call.args[0] for call in logger.debug.call_args_list)
 
 @pytest.mark.asyncio
 async def test_cache_wrapper_bypass_for_non_cached_method(cache_manager, test_cache_config):
