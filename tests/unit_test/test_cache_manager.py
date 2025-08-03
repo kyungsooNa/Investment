@@ -3,45 +3,55 @@
 import pytest
 import json
 from core.cache.cache_manager import CacheManager
-from unittest.mock import MagicMock
+from datetime import datetime
 
 
 @pytest.mark.asyncio
 async def test_cache_manager_basic_set_get(cache_manager):
     key = "test_key"
     data = {"foo": 123}
-    cache_manager.set(key, data)
+    cache_manager.set(key, {
+        "timestamp": datetime.now().isoformat(),
+        "data": data
+    })
 
-    loaded = cache_manager.get(key)
-    assert loaded["foo"] == 123
+    loaded = cache_manager.get_raw(key)
+    assert loaded['data']["foo"] == 123
+
 
 @pytest.mark.asyncio
 async def test_cache_manager_delete(cache_manager):
     key = "test_key"
-    value = {"foo": "bar"}
-
+    data = {"foo": "bar"}
+    cache_manager.set(key, {
+        "timestamp": datetime.now().isoformat(),
+        "data": data
+    })
     # 1. set
-    cache_manager.set(key, value)
-    assert cache_manager.get(key) == value
+    assert cache_manager.get_raw(key)['data'] == data
 
     # 2. delete
     cache_manager.delete(key)
-    assert cache_manager.get(key) is None
+    assert cache_manager.get_raw(key) is None
+
 
 @pytest.mark.asyncio
 async def test_cache_manager_delete_failure(cache_manager):
     key = "test_key"
-    value = {"foo": "bar"}
+    data = {"foo": "bar"}
 
     # 1. set
-    cache_manager.set(key, value)
-    assert cache_manager.get(key) == value
+    cache_manager.set(key, {
+        "timestamp": datetime.now().isoformat(),
+        "data": data
+    })
+    assert cache_manager.get_raw(key)['data'] == data
 
     key2 = "test_key2"
 
     # 2. delete
     cache_manager.delete(key2)
-    assert cache_manager.get(key) is not None
+    assert cache_manager.get_raw(key) is not None
 
 
 def test_cache_manager_set_creates_file(tmp_path):
@@ -55,27 +65,36 @@ def test_cache_manager_set_creates_file(tmp_path):
     }
     cache_manager = CacheManager(config=config)
 
-    test_key = "file_cache_test"
-    test_value = {"x": 123}
-
+    key = "file_cache_test"
+    data = {"x": 123}
     # Act
-    cache_manager.set(test_key, test_value, save_to_file=True)
+
+    cache_manager.set(key, {
+        "timestamp": datetime.now().isoformat(),
+        "data": data
+    }, save_to_file=True)
 
     # Assert
-    expected_file = tmp_path / f"{test_key}.json"
+    expected_file = tmp_path / f"{key}.json"
     assert expected_file.exists()
+
 
 def test_cache_manager_file_cache_reuse(cache_manager, tmp_path):
     key = "file_reuse_test"
-    value = {"y": 999}
-    cache_manager.set(key, value, save_to_file=True)
+    data = {"y": 999}
+
+    cache_manager.set(key, {
+        "timestamp": datetime.now().isoformat(),
+        "data": data
+    }, save_to_file=True)
 
     # 메모리 클리어 (의도적으로)
     cache_manager.memory_cache.clear()
 
     # 캐시 재조회 시 파일에서 읽히는지 확인
-    loaded = cache_manager.get(key)
-    assert loaded == value
+    loaded = cache_manager.get_raw(key)
+    assert loaded['data'] == data
+
 
 def test_cache_manager_file_cache_delete(tmp_path):
     # ✅ 캐시 설정 구성
@@ -89,10 +108,14 @@ def test_cache_manager_file_cache_delete(tmp_path):
     cache_manager = CacheManager(config=config)
 
     key = "file_cache_delete_test"
-    value = {"z": 42}
+    data = {"z": 42}
 
     # 1. 파일 캐시 저장
-    cache_manager.set(key, value, save_to_file=True)
+    cache_manager.set(key, {
+        "timestamp": datetime.now().isoformat(),
+        "data": data
+    }, save_to_file=True)
+
     file_path = tmp_path / f"{key}.json"
     assert file_path.exists()
 
@@ -101,6 +124,7 @@ def test_cache_manager_file_cache_delete(tmp_path):
 
     # 3. 파일이 실제 삭제되었는지 확인
     assert not file_path.exists()
+
 
 def test_cache_manager_file_cache_clear(tmp_path):
     # ✅ 설정: 임시 경로 사용
@@ -114,11 +138,18 @@ def test_cache_manager_file_cache_clear(tmp_path):
     cache_manager = CacheManager(config=config)
 
     key1, key2 = "clear_test_1", "clear_test_2"
-    value1, value2 = {"a": 1}, {"b": 2}
+    data1, data2 = {"a": 1}, {"b": 2}
 
     # ✅ 캐시 저장
-    cache_manager.set(key1, value1, save_to_file=True)
-    cache_manager.set(key2, value2, save_to_file=True)
+    cache_manager.set(key1, {
+        "timestamp": datetime.now().isoformat(),
+        "data": data1
+    }, save_to_file=True)
+
+    cache_manager.set(key2, {
+        "timestamp": datetime.now().isoformat(),
+        "data": data2
+    },save_to_file=True)
 
     path1 = tmp_path / f"{key1}.json"
     path2 = tmp_path / f"{key2}.json"
@@ -126,17 +157,16 @@ def test_cache_manager_file_cache_clear(tmp_path):
     assert path2.exists()
 
     # ✅ 메모리 확인
-    assert cache_manager.get(key1) == value1
-    assert cache_manager.get(key2) == value2
+    assert cache_manager.get_raw(key1)['data'] == data1
+    assert cache_manager.get_raw(key2)['data'] == data2
 
     # ✅ 캐시 클리어
     cache_manager.clear()
 
     # ✅ 메모리 캐시 제거 확인
-    assert cache_manager.get(key1) is None
-    assert cache_manager.get(key2) is None
+    assert cache_manager.get_raw(key1) is None
+    assert cache_manager.get_raw(key2) is None
 
     # ✅ 파일 캐시 제거 확인
     assert not path1.exists()
     assert not path2.exists()
-

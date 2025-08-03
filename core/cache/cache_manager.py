@@ -1,6 +1,6 @@
 # core/cache_manager.py
 
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 from datetime import datetime
 from core.cache.cache_config import load_cache_config
 from core.cache.memory_cache_manager import MemoryCacheManager
@@ -20,35 +20,16 @@ class CacheManager:
         self.memory_cache.set_logger(logger)
         self.file_cache.set_logger(logger)
 
-    def get(self, key: str) -> Optional[Any]:
-        """단순 value 반환"""
-        val = self.memory_cache.get(key)
-        if val is not None:
-            if self._logger:
-                self._logger.debug(f"✅ Memory Cache HIT: {key}")
-            return val
-
-        if self._logger:
-            self._logger.debug(f"🚫 Memory Cache MISS: {key}")
-
-        val = self.file_cache.get(key)
-        if val is not None:
-            if self._logger:
-                self._logger.debug(f"📂 File Cache HIT: {key}")
-            self.memory_cache.set(key, val)
-        else:
-            if self._logger:
-                self._logger.debug(f"🚫 File Cache MISS: {key}")
-        return val
-
-    def get_raw(self, key: str) -> Optional[dict]:
+    def get_raw(self, key: str) -> Optional[Tuple[dict, str]] | None:
         """메모리 또는 파일 캐시에서 (timestamp + data) 반환"""
         # 메모리 캐시에 timestamp 포함된 wrapper가 저장되어 있다고 가정
         raw = None
+        cache_type = ""
         raw_memory = self.memory_cache.get(key)
 
         if raw_memory:
             raw = raw_memory
+            cache_type = "memory"
             if self._logger:
                 self._logger.debug(f"🧠 Memory Cache HIT: {key}")
         else:
@@ -59,6 +40,7 @@ class CacheManager:
             if raw_file:
                 self.memory_cache.set(key, raw_file)
                 raw = raw_file
+                cache_type = "file"
                 if self._logger:
                     self._logger.debug(f"📂 File Cache HIT: {key}")
             else:
@@ -78,7 +60,7 @@ class CacheManager:
                 self._logger.warning(f"[CacheManager] ❌ 잘못된 timestamp 형식: {raw['timestamp']}")
             return None
 
-        return raw
+        return raw, cache_type
 
     def set(self, key: str, value: Any, save_to_file: bool = False):
         self.memory_cache.set(key, value)

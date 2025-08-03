@@ -74,7 +74,12 @@ class FileCacheManager:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 wrapper = json.load(f)
-                return wrapper.get("data")
+                raw_data = wrapper.get("data")
+
+                # _deserialize 메서드를 사용하여 저장된 데이터를 객체로 복원
+                value = self._deserialize(raw_data)
+                return value
+
         except Exception as e:
             if self._logger:
                 self._logger.error(f"[FileCache] Load Error: {e}")
@@ -89,10 +94,11 @@ class FileCacheManager:
                 # _serialize 메서드를 사용하여 모든 객체를 직렬화 가능하도록 변환
                 serialized_data = self._serialize(value)
 
-                wrapper = {
-                    "timestamp": datetime.now().isoformat(),
-                    "data": serialized_data
-                }
+                # wrapper = {
+                #     "timestamp": datetime.now().isoformat(),
+                #     "data": serialized_data
+                # }
+                wrapper = serialized_data
 
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(wrapper, f, ensure_ascii=False, indent=2)
@@ -140,16 +146,19 @@ class FileCacheManager:
             return None
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                wrapper = json.load(f)
+                data = wrapper["data"]
+                wrapper['data'] = self._deserialize(data)
+
+                return wrapper
+
         except Exception as e:
             if self._logger:
                 self._logger.error(f"[FileCache] Load Error: {e}")
         return None
 
-
     def set_raw(self, key: str, wrapper: dict):
-        """timestamp + data 구조를 그대로 저장"""
-        path = self._resolve_path(key)
+        path = self._get_path(key)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(wrapper, f, ensure_ascii=False, indent=2)
 

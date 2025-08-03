@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 class MemoryCacheManager:
     def __init__(self):
         self._cache: Dict[str, Any] = {}
+        self._logger = None
 
     def set_logger(self, logger):
         self._logger = logger

@@ -4,19 +4,18 @@ from core.cache.cache_manager import CacheManager
 from core.cache.cache_config import load_cache_config
 from datetime import datetime
 
-
 T = TypeVar("T")
 
 
 class ClientWithCache:
     def __init__(
-        self,
-        client,
-        logger,
-        time_manager,
-        mode_fn: Callable[[], str],
-        cache_manager: Optional[CacheManager] = None,
-        config: Optional[dict] = None
+            self,
+            client,
+            logger,
+            time_manager,
+            mode_fn: Callable[[], str],
+            cache_manager: Optional[CacheManager] = None,
+            config: Optional[dict] = None
     ):
         self._client = client
         self._logger = logger  # ✅ 로거 주입 @TODO 추후 Logger.get_instance()
@@ -49,22 +48,27 @@ class ClientWithCache:
         async def wrapped(*args, **kwargs):
             mode = self._mode_fn() or "unknown"
             key = _build_cache_key(mode, name, args)
-            wrapper = self._cache.get_raw(key)
 
             # ✅ 1. 메모리 or 파일 캐시 조회
             if self._time_manager.is_market_open():
                 self._logger.debug(f"⏳ 시장 개장 중 → 캐시 우회: {key}")
             else:
+                raw = self._cache.get_raw(key)
+                wrapper, cache_type = raw if raw is not None else (None, None)
+
                 if wrapper:
                     cache_time = self._parse_timestamp(wrapper.get("timestamp"))
-                    close_time = self._time_manager.get_market_close_time()
-                    current_time = self._time_manager.get_current_kst_time()
+                    latest_close_time = self._time_manager.get_latest_market_close_time()
+                    next_open_time = self._time_manager.get_next_market_open_time()
+                    is_valid = (cache_time and latest_close_time <= cache_time < next_open_time)
 
-                    if cache_time and cache_time >= close_time and cache_time.date() == current_time.date():
-                        if self._cache.memory_cache.has(key):
-                            self._logger.debug(f"🧠 Memory Cache HIT (유효): {key}")
-                        else:
-                            self._logger.debug(f"📂 File Cache HIT (유효): {key}")
+                    if is_valid:
+                        if cache_type == "memory":
+                            if self._cache.memory_cache.has(key):
+                                self._logger.debug(f"🧠 Memory Cache HIT (유효): {key}")
+                        elif cache_type == "file":
+                            if self._cache.file_cache.exists(key):
+                                self._logger.debug(f"📂 File Cache HIT (유효): {key}")
                         return wrapper.get("data")
                     else:
                         if self._cache.file_cache.exists(key):
@@ -110,13 +114,14 @@ class ClientWithCache:
                 self._logger.warning(f"[CacheWrapper] 잘못된 timestamp 포맷: {timestamp_str} ({e})")
             return None
 
+
 def cache_wrap_client(
-    api_client: T,
-    logger,
-    time_manager,
-    mode_getter: Callable[[], str],
-    config: Optional[dict] = None,
-    cache_manager: Optional[CacheManager] = None
+        api_client: T,
+        logger,
+        time_manager,
+        mode_getter: Callable[[], str],
+        config: Optional[dict] = None,
+        cache_manager: Optional[CacheManager] = None
 ) -> T:
     return ClientWithCache(
         client=api_client,

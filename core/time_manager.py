@@ -1,9 +1,9 @@
 # core/time_manager.py
-import datetime
 import time
 import pytz
 import logging
 import asyncio  # 비동기 sleep을 위해 추가
+from datetime import datetime, timedelta
 
 
 class TimeManager:
@@ -27,7 +27,7 @@ class TimeManager:
 
     def get_current_kst_time(self):
         """현재 한국 시간(KST)을 timezone-aware datetime 객체로 반환합니다."""
-        return datetime.datetime.now(self.market_timezone)
+        return datetime.now(self.market_timezone)
 
 
     def is_market_open(self, now=None):
@@ -42,14 +42,14 @@ class TimeManager:
             self.logger.info(f"시장 상태 - 주말이므로 시장이 닫혀 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")
             return False
 
-        market_open_dt = self.market_timezone.localize(datetime.datetime(
+        market_open_dt = self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
             hour=int(self.market_open_time_str.split(':')[0]),
             minute=int(self.market_open_time_str.split(':')[1]),
             second=0, microsecond=0
         ))
 
-        market_close_dt = self.market_timezone.localize(datetime.datetime(
+        market_close_dt = self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
             hour=int(self.market_close_time_str.split(':')[0]),
             minute=int(self.market_close_time_str.split(':')[1]),
@@ -67,7 +67,7 @@ class TimeManager:
     def get_market_close_time(self):
         """오늘의 시장 폐장 시간 반환"""
         now = self.get_current_kst_time()
-        return self.market_timezone.localize(datetime.datetime(
+        return self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
             hour=int(self.market_close_time_str.split(':')[0]),
             minute=int(self.market_close_time_str.split(':')[1]),
@@ -80,7 +80,7 @@ class TimeManager:
         주말과 이미 지난 시장 시간을 고려합니다.
         """
         now = self.get_current_kst_time()
-        today_open = self.market_timezone.localize(datetime.datetime(
+        today_open = self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
             hour=int(self.market_open_time_str.split(':')[0]),
             minute=int(self.market_open_time_str.split(':')[1]),
@@ -90,11 +90,11 @@ class TimeManager:
         if now < today_open:
             next_open = today_open
         else:
-            next_day = now.date() + datetime.timedelta(days=1)
+            next_day = now.date() + timedelta(days=1)
             while next_day.weekday() >= 5:  # 5: 토요일, 6: 일요일
-                next_day += datetime.timedelta(days=1)
+                next_day += timedelta(days=1)
 
-            next_open = self.market_timezone.localize(datetime.datetime(
+            next_open = self.market_timezone.localize(datetime(
                 next_day.year, next_day.month, next_day.day,
                 hour=int(self.market_open_time_str.split(':')[0]),
                 minute=int(self.market_open_time_str.split(':')[1]),
@@ -103,6 +103,19 @@ class TimeManager:
 
         self.logger.info(f"다음 시장 개장 시간: {next_open.strftime('%Y-%m-%d %H:%M:%S %Z%z')}")
         return next_open
+
+    def get_latest_market_close_time(self) -> datetime:
+        """
+        현재 시각 기준 가장 가까운 직전 거래일의 장 마감 시각을 반환.
+        """
+        current_time = self.get_current_kst_time()
+        date_cursor = current_time.date()
+
+        while True:
+            close_time = self.get_market_close_time_on(date_cursor)
+            if close_time < current_time and not self.is_weekend_or_holiday(close_time):
+                return close_time
+            date_cursor -= timedelta(days=1)
 
     def sleep(self, seconds):
         """지정된 시간(초)만큼 프로그램을 일시 중지합니다 (동기)."""
@@ -116,6 +129,10 @@ class TimeManager:
             self.logger.info(f"{seconds:.2f}초 동안 대기합니다 (비동기).")
             await asyncio.sleep(seconds)  # <--- asyncio.sleep 사용
 
-    def is_holiday(self):
-        """공휴일 여부를 확인합니다. (미구현)"""
-        return False
+    def get_market_close_time_on(self, date: datetime) -> datetime:
+        close_hour, close_minute = map(int, self.market_close_time_str.split(":"))
+        return self.market_timezone.localize(datetime(date.year, date.month, date.day, close_hour, close_minute))
+
+    def is_weekend_or_holiday(self, date: datetime) -> bool:
+        # ✅ 필요 시 공휴일 판단 로직 추가
+        return date.weekday() >= 5  # 토, 일
