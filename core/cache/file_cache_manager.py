@@ -134,11 +134,6 @@ class FileCacheManager:
                 self._logger.error(f"[FileCache] Load Error: {e}")
         return None
 
-    def set_raw(self, key: str, wrapper: dict):
-        path = self._get_path(key)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(wrapper, f, ensure_ascii=False, indent=2)
-
     def exists(self, key: str) -> bool:
         """파일 캐시 존재 여부 확인"""
         return os.path.exists(self._get_path(key))
