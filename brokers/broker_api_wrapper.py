@@ -4,13 +4,17 @@ from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from market_data.stock_code_mapper import StockCodeMapper
 from typing import Any, List
 from common.types import ResCommonResponse
+from core.cache.cache_wrapper import cache_wrap_client
+
 
 class BrokerAPIWrapper:
     """
     범용 사용자용 API Wrapper 클래스.
     증권사별 구현체를 내부적으로 호출하여, 일관된 방식의 인터페이스를 제공.
     """
-    def __init__(self, broker: str = "korea_investment", env=None, logger=None):
+
+    def __init__(self, broker: str = "korea_investment", env=None, logger=None, time_manager=None,
+                 cache_config=None):
         self._broker = broker
         self._logger = logger
         self._client = None
@@ -21,6 +25,12 @@ class BrokerAPIWrapper:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
             self._client = KoreaInvestApiClient(env, logger)
+            self._client = cache_wrap_client(
+                self._client, logger, time_manager,
+                lambda: "PAPER" if env.is_paper_trading else "REAL",
+                config=cache_config  # ✅ 여기서 주입
+            )
+
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
 
@@ -78,17 +88,19 @@ class BrokerAPIWrapper:
 
     async def get_previous_day_info(self, code: str) -> ResCommonResponse:
         """종목의 전일 종가, 전일 거래량을 조회합니다 (KoreaInvestApiQuotations 위임)."""
-        return self._client.get_previous_day_info(code) #
+        return self._client.get_previous_day_info(code)  #
 
     async def get_filtered_stocks_by_momentum(
             self, count=20, min_change_rate=10.0, min_volume_ratio=2.0
-    ) -> ResCommonResponse: #
+    ) -> ResCommonResponse:  #
         """거래량 급증 + 등락률 조건 기반 모멘텀 종목 필터링합니다 (KoreaInvestApiQuotations 위임)."""
         return await self._client.get_filtered_stocks_by_momentum(count, min_change_rate, min_volume_ratio)
 
-    async def inquire_daily_itemchartprice(self, stock_code: str, date: str, fid_period_div_code: str = 'D') -> ResCommonResponse:
+    async def inquire_daily_itemchartprice(self, stock_code: str, date: str,
+                                           fid_period_div_code: str = 'D') -> ResCommonResponse:
         """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""
-        return await self._client.inquire_daily_itemchartprice(stock_code, date, fid_period_div_code=fid_period_div_code)
+        return await self._client.inquire_daily_itemchartprice(stock_code, date,
+                                                               fid_period_div_code=fid_period_div_code)
 
     async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
         """
@@ -166,26 +178,26 @@ class BrokerAPIWrapper:
         return await self._client.place_stock_order(stock_code, order_price, order_qty, trade_type, order_dvsn)
 
     # --- KoreaInvestApiClient / WebSocket API delegation ---
-    async def connect_websocket(self, on_message_callback=None) -> Any: # 실제 반환 값에 따라 타입 변경
+    async def connect_websocket(self, on_message_callback=None) -> Any:  # 실제 반환 값에 따라 타입 변경
         """웹소켓 연결을 시작합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.connect_websocket(on_message_callback)
 
-    async def disconnect_websocket(self) -> Any: # 실제 반환 값에 따라 타입 변경
+    async def disconnect_websocket(self) -> Any:  # 실제 반환 값에 따라 타입 변경
         """웹소켓 연결을 종료합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.disconnect_websocket()
 
-    async def subscribe_realtime_price(self, stock_code: str) -> Any: # 실제 반환 값에 따라 타입 변경
+    async def subscribe_realtime_price(self, stock_code: str) -> Any:  # 실제 반환 값에 따라 타입 변경
         """실시간 체결 데이터 구독합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.subscribe_realtime_price(stock_code)
 
-    async def unsubscribe_realtime_price(self, stock_code: str) -> Any: # 실제 반환 값에 따라 타입 변경
+    async def unsubscribe_realtime_price(self, stock_code: str) -> Any:  # 실제 반환 값에 따라 타입 변경
         """실시간 체결 데이터 구독 해지합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.unsubscribe_realtime_price(stock_code)
 
-    async def subscribe_realtime_quote(self, stock_code: str) -> Any: # 실제 반환 값에 따라 타입 변경
+    async def subscribe_realtime_quote(self, stock_code: str) -> Any:  # 실제 반환 값에 따라 타입 변경
         """실시간 호가 데이터 구독합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.subscribe_realtime_quote(stock_code)
 
-    async def unsubscribe_realtime_quote(self, stock_code: str) -> Any: # 실제 반환 값에 따라 타입 변경
+    async def unsubscribe_realtime_quote(self, stock_code: str) -> Any:  # 실제 반환 값에 따라 타입 변경
         """실시간 호가 데이터 구독 해지합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.unsubscribe_realtime_quote(stock_code)

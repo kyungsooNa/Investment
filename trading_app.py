@@ -84,7 +84,7 @@ class TradingApp:
             # self.api_client = KoreaInvestApiClient(self.env, token_manager=self.token_manager, logger=self.logger) # 이 줄은 삭제 또는 주석 처리
 
             # BrokerAPIWrapper를 한 번만 생성합니다.
-            self.broker_wrapper = BrokerAPIWrapper(env=self.env, logger=self.logger)
+            self.broker_wrapper = BrokerAPIWrapper(env=self.env, logger=self.logger, time_manager=self.time_manager)
 
             # TradingService에 BrokerAPIWrapper를 전달하도록 수정
             # TradingService의 __init__ 시그니처도 변경되어야 합니다 (broker_wrapper를 받도록)
@@ -123,7 +123,7 @@ class TradingApp:
                 self.logger.info("실전 투자 환경으로 설정되었습니다.")
                 selected = True
             else:
-                self.cli_view.display_invalid_environment_choice()
+                self.cli_view.display_invalid_environment_choice(choice)
 
         new_token_acquired = await self.env.get_access_token()
 
@@ -291,6 +291,8 @@ class TradingApp:
             await self.stock_query_service.handle_realtime_stream(stock_codes, fields, duration=30)
 
         elif choice == '20':
+            if self.env.is_paper_trading:
+                self.cli_view.display_warning_paper_trading_not_supported("모멘텀")
             if not self.time_manager.is_market_open():
                 self.cli_view.display_warning_strategy_market_closed()
                 self.logger.warning("시장 미개장 상태에서 전략 실행 시도")
@@ -348,6 +350,8 @@ class TradingApp:
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
 
         elif choice == '21':
+            if self.env.is_paper_trading:
+                self.cli_view.display_warning_paper_trading_not_supported("모멘텀")
             self.cli_view.display_strategy_running_message("모멘텀 백테스트")
 
             try:
@@ -408,6 +412,8 @@ class TradingApp:
                 self.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
 
         elif choice == '22':
+            if self.env.is_paper_trading:
+                self.cli_view.display_warning_paper_trading_not_supported("모멘텀")
             self.cli_view.display_strategy_running_message("GapUpPullback")
 
             try:

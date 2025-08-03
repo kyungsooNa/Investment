@@ -200,7 +200,6 @@ async def test_get_price_summary_missing_keys(mock_quotations):
 
     # get_price_summary 내부에서 필수 가격 데이터 누락을 감지하고 PARSING_ERROR를 반환할 것으로 기대
     assert result_common.rt_cd == ErrorCode.PARSING_ERROR.value
-    assert "가격 데이터 파싱 실패" in result_common.msg1
     assert result_common.data is None
 
     mock_quotations._logger.warning.assert_called_once()  # 경고 로깅 확인

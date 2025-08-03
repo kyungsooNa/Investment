@@ -1013,6 +1013,7 @@ async def test_execute_action_20_market_closed(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
 
     # 시장이 열려있지 않은 상태로 설정
     app.time_manager.is_market_open.return_value = False
@@ -1037,6 +1038,7 @@ async def test_execute_action_20_top_stock_api_failure(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
 
     app.time_manager.is_market_open.return_value = True
 
@@ -1070,6 +1072,7 @@ async def test_execute_action_20_no_stocks_for_strategy(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
 
     app.time_manager.is_market_open.return_value = True
 
@@ -1138,6 +1141,8 @@ async def test_execute_action_21_empty_top_codes_list(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
+
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
@@ -1169,6 +1174,7 @@ async def test_execute_action_21_backtest_success(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
@@ -1231,6 +1237,8 @@ async def test_execute_action_21_input_negative_number(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
+
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
@@ -1262,6 +1270,8 @@ async def test_execute_action_21_input_not_a_number(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
+
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
@@ -1292,6 +1302,8 @@ async def test_execute_action_21_api_failure(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
+
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
@@ -1319,6 +1331,8 @@ async def test_execute_action_21_strategy_exception(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
+
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
@@ -1349,6 +1363,8 @@ async def test_execute_action_21_no_stock_codes_after_filtering(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
+
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
@@ -1379,6 +1395,7 @@ async def test_execute_action_22_success_with_dict_response():
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
 
     # ─ Arrange ─
     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
@@ -1429,6 +1446,7 @@ async def test_execute_action_22_response_format_error():
     app.logger = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
 
     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="0",
@@ -1450,6 +1468,7 @@ async def test_execute_action_22_no_stocks_for_strategy(mocker):
     app.logger = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
 
     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="0",
@@ -1477,6 +1496,7 @@ async def test_execute_action_22_strategy_exception(mocker):
     app.logger = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
 
     app.trading_service.get_top_market_cap_stocks_code.return_value = {
         "rt_cd": "0",
@@ -1558,6 +1578,8 @@ async def test_execute_action_22_list_format_extracts_codes_correctly(mocker):
     app.cli_view = MagicMock()
     app.cli_view.get_user_input = AsyncMock(return_value="2")
     app.broker = MagicMock()
+    app.env = MagicMock()
+
     app.trading_service = AsyncMock()
     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="0",
@@ -1752,6 +1774,7 @@ async def test_execute_action_20_strategy_exception(mocker):
     app.time_manager = MagicMock()
     app.trading_service = AsyncMock()
     app.broker = MagicMock()
+    app.env = MagicMock()
 
     app.time_manager.is_market_open.return_value = True
 

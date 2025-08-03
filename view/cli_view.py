@@ -240,6 +240,10 @@ class CLIView:
         self._print_time_header()
         print(f"\"{msg}\"는 실전 전용 기능입니다.")
 
+    def display_invalid_environment_choice(self, msg):
+        self._print_time_header()
+        print(f"\"{msg}\" 잘못된 환경 선택입니다.")
+
     def _print_time_header(self):
         """현재 시각을 출력하는 공통 헤더."""
         current_time = self.time_manager.get_current_kst_time().strftime("[%Y-%m-%d %H:%M:%S]")

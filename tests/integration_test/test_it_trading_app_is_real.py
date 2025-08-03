@@ -5,7 +5,6 @@ import pandas as pd
 from trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
-
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 
 
@@ -843,12 +842,14 @@ async def test_handle_realtime_stream_full_integration(real_app_instance, mocker
     app.cli_view.get_user_input.side_effect = ["005930", "price"]
 
     # ✅ 웹소켓 구독 함수 모킹
-    mock_subscribe = mocker.patch.object(
-        app.trading_service._broker_api_wrapper._client._websocketAPI,
-        "subscribe_realtime_price",
-        new_callable=AsyncMock
-    )
+    inner_client = app.trading_service._broker_api_wrapper._client._client
 
+    mock_subscribe = mocker.patch.object(
+        inner_client._websocketAPI,
+        "subscribe_realtime_price",
+        new_callable=AsyncMock,
+        return_value=AsyncMock
+    )
     # --- Act ---
     running_status = await app._execute_action("18")
 
@@ -896,8 +897,10 @@ async def test_execute_action_momentum_strategy_success(real_app_instance, mocke
         ]
     )
 
+    inner_client = app.trading_service._broker_api_wrapper._client._client
+
     mocker.patch.object(
-        app.trading_service._broker_api_wrapper._client._quotations,
+        inner_client._quotations,
         "get_top_market_cap_stocks_code",
         new_callable=AsyncMock,
         return_value=mock_market_cap_response
@@ -958,9 +961,11 @@ async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instanc
         data=None
     )
 
+    inner_client = app.trading_service._broker_api_wrapper._client._client
+
     # ✅ 실패 응답 모킹
     mocker.patch.object(
-        app.trading_service._broker_api_wrapper._client._quotations,
+        inner_client._quotations,
         "get_top_market_cap_stocks_code",
         new_callable=AsyncMock,
         return_value=fail_response
@@ -1002,8 +1007,11 @@ async def test_execute_action_momentum_backtest_strategy_success(real_app_instan
             {"mksc_shrn_iscd": "000660"}
         ]
     )
+
+    inner_client = app.trading_service._broker_api_wrapper._client._client
+
     mocker.patch.object(
-        app.trading_service._broker_api_wrapper._client._quotations,
+        inner_client._quotations,
         "get_top_market_cap_stocks_code",
         new_callable=AsyncMock,
         return_value=mock_market_cap_response
@@ -1061,8 +1069,12 @@ async def test_execute_action_gapup_pullback_strategy_success(real_app_instance,
             {"mksc_shrn_iscd": "000660"}
         ]
     )
+
+    inner_client = app.trading_service._broker_api_wrapper._client._client
+
+    # ✅ 실패 응답 모킹
     mocker.patch.object(
-        app.trading_service._broker_api_wrapper._client._quotations,
+        inner_client._quotations,
         "get_top_market_cap_stocks_code",
         new_callable=AsyncMock,
         return_value=mock_market_cap_response
