@@ -2,6 +2,7 @@ import os
 import stat
 import shutil
 import pytest
+import time
 from core.cache.cache_manager import CacheManager
 
 
@@ -27,8 +28,14 @@ def clear_cache_files(test_cache_config):
     base_dir = test_cache_config["cache"]["base_dir"]
 
     def on_rm_error(func, path, _):
-        os.chmod(path, stat.S_IWRITE)
-        func(path)
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            time.sleep(0.2)  # 여유시간
+            func(path)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[삭제 실패] {path}: {e}")
 
     if os.path.exists(base_dir):
         shutil.rmtree(base_dir, onerror=on_rm_error)
