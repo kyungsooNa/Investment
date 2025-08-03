@@ -133,3 +133,26 @@ class FileCacheManager:
         except Exception as e:
             if self._logger:
                 self._logger.error(f"❌ 전체 캐시 삭제 실패: {e}")
+
+    def get_raw(self, key: str):
+        path = self._get_path(key)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"[FileCache] Load Error: {e}")
+        return None
+
+
+    def set_raw(self, key: str, wrapper: dict):
+        """timestamp + data 구조를 그대로 저장"""
+        path = self._resolve_path(key)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(wrapper, f, ensure_ascii=False, indent=2)
+
+    def exists(self, key: str) -> bool:
+        """파일 캐시 존재 여부 확인"""
+        return os.path.exists(self._get_path(key))

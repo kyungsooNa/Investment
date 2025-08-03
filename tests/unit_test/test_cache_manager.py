@@ -76,3 +76,67 @@ def test_cache_manager_file_cache_reuse(cache_manager, tmp_path):
     # 캐시 재조회 시 파일에서 읽히는지 확인
     loaded = cache_manager.get(key)
     assert loaded == value
+
+def test_cache_manager_file_cache_delete(tmp_path):
+    # ✅ 캐시 설정 구성
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": [],
+            "deserializable_classes": []
+        }
+    }
+    cache_manager = CacheManager(config=config)
+
+    key = "file_cache_delete_test"
+    value = {"z": 42}
+
+    # 1. 파일 캐시 저장
+    cache_manager.set(key, value, save_to_file=True)
+    file_path = tmp_path / f"{key}.json"
+    assert file_path.exists()
+
+    # 2. 삭제 실행
+    cache_manager.delete(key)
+
+    # 3. 파일이 실제 삭제되었는지 확인
+    assert not file_path.exists()
+
+def test_cache_manager_file_cache_clear(tmp_path):
+    # ✅ 설정: 임시 경로 사용
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": [],
+            "deserializable_classes": []
+        }
+    }
+    cache_manager = CacheManager(config=config)
+
+    key1, key2 = "clear_test_1", "clear_test_2"
+    value1, value2 = {"a": 1}, {"b": 2}
+
+    # ✅ 캐시 저장
+    cache_manager.set(key1, value1, save_to_file=True)
+    cache_manager.set(key2, value2, save_to_file=True)
+
+    path1 = tmp_path / f"{key1}.json"
+    path2 = tmp_path / f"{key2}.json"
+    assert path1.exists()
+    assert path2.exists()
+
+    # ✅ 메모리 확인
+    assert cache_manager.get(key1) == value1
+    assert cache_manager.get(key2) == value2
+
+    # ✅ 캐시 클리어
+    cache_manager.clear()
+
+    # ✅ 메모리 캐시 제거 확인
+    assert cache_manager.get(key1) is None
+    assert cache_manager.get(key2) is None
+
+    # ✅ 파일 캐시 제거 확인
+    assert not path1.exists()
+    assert not path2.exists()
+

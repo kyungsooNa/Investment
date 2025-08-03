@@ -64,6 +64,16 @@ class TimeManager:
                 f"시장 상태 - 시장이 닫혀 있습니다. (현재: {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, 개장: {self.market_open_time_str}, 폐장: {self.market_close_time_str})")
             return False
 
+    def get_market_close_time(self):
+        """오늘의 시장 폐장 시간 반환"""
+        now = self.get_current_kst_time()
+        return self.market_timezone.localize(datetime.datetime(
+            now.year, now.month, now.day,
+            hour=int(self.market_close_time_str.split(':')[0]),
+            minute=int(self.market_close_time_str.split(':')[1]),
+            second=0, microsecond=0
+        ))
+
     def get_next_market_open_time(self):
         """
         다음 시장 개장 시간을 계산하여 datetime 객체로 반환합니다.
