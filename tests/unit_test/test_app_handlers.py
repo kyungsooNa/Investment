@@ -185,15 +185,14 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             msg1="주문 성공",
             data=None  # 실제 응답 구조에 따라 변경 가능
         )
-        await self.order_execution_service.handle_place_buy_order(stock_code, price, qty, order_dvsn)
+        await self.order_execution_service.handle_place_buy_order(stock_code, price, qty)
 
         self.mock_time_manager.is_market_open.assert_called_once()
         self.mock_broker_api_wrapper.place_stock_order.assert_called_once_with(
             stock_code=stock_code,
             order_price=price,
             order_qty=qty,
-            trade_type="buy",
-            order_dvsn=order_dvsn
+            trade_type="buy"
         )
         self.assertIn("주식 매수 주문 성공:", self.print_output_capture.getvalue())
 
@@ -211,7 +210,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.mock_time_manager.is_market_open.return_value = False
 
-        await self.order_execution_service.handle_place_buy_order(stock_code, price, qty, order_dvsn)
+        await self.order_execution_service.handle_place_buy_order(stock_code, price, qty)
 
         self.mock_time_manager.is_market_open.assert_called_once()
         self.mock_broker_api_wrapper.place_stock_order.assert_not_called()
@@ -231,7 +230,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             data=None
         ))
 
-        result = await self.order_execution_service.handle_place_buy_order(stock_code, price, qty, order_dvsn)
+        result = await self.order_execution_service.handle_place_buy_order(stock_code, price, qty)
 
         self.assertEqual(result.rt_cd, "1")
         self.assertIn("주문 실패", result.msg1)

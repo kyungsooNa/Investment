@@ -58,7 +58,7 @@ class TradingApp:
                 timezone=config_data.get('market_timezone', "Asia/Seoul"),
                 logger=self.logger
             )
-            self.cli_view = CLIView(self.time_manager, self.logger)  # CLIView 인스턴스 초기화
+            self.cli_view = CLIView(self.env, self.time_manager, self.logger)  # CLIView 인스턴스 초기화
 
             self.logger.info("환경 설정 로드 및 KoreaInvestEnv 초기화 완료.")
 

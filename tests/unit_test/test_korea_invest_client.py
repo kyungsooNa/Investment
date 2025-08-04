@@ -187,9 +187,9 @@ async def test_buy_stock_delegation(korea_invest_client_instance):
     client, _, _, mock_trading, _, _, _ = korea_invest_client_instance
     mock_trading.place_stock_order.return_value = {"rt_cd": "0", "msg1": "매수 주문 성공"}
 
-    result = await client.buy_stock("005930", 70000, 10, "지정가", "01")
+    result = await client.buy_stock("005930", 70000, 10)
 
-    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, "buy", "01")
+    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, "buy")
     assert result == {"rt_cd": "0", "msg1": "매수 주문 성공"}
 
 
@@ -199,9 +199,9 @@ async def test_sell_stock_delegation(korea_invest_client_instance):
     client, _, _, mock_trading, _, _, _ = korea_invest_client_instance
     mock_trading.place_stock_order.return_value = {"rt_cd": "0", "msg1": "매도 주문 성공"}
 
-    result = await client.sell_stock("005930", 69000, 5, "지정가", "01")
+    result = await client.sell_stock("005930", 69000, 5)
 
-    mock_trading.place_stock_order.assert_awaited_once_with("005930", 69000, 5, "sell", "01")
+    mock_trading.place_stock_order.assert_awaited_once_with("005930", 69000, 5, "sell")
     assert result == {"rt_cd": "0", "msg1": "매도 주문 성공"}
 
 
@@ -211,9 +211,9 @@ async def test_place_stock_order_delegation(korea_invest_client_instance):
     client, _, _, mock_trading, _, _, _ = korea_invest_client_instance
     mock_trading.place_stock_order.return_value = {"rt_cd": "0", "msg1": "주문 성공"}
 
-    result = await client.place_stock_order("005930", 70000, 10, "buy", "00")  # 시장가 매수
+    result = await client.place_stock_order("005930", 70000, 10, "buy")  # 시장가 매수
 
-    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, "buy", "00")
+    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, "buy")
     assert result == {"rt_cd": "0", "msg1": "주문 성공"}
 
 

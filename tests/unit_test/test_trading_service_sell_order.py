@@ -28,8 +28,7 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
         result : ResCommonResponse = await self.trading_service.place_sell_order(
             stock_code="005930",
             price="70000",
-            qty="10",
-            order_dvsn="00"
+            qty="10"
         )
 
         self.mock_logger.info.assert_any_call(
@@ -40,14 +39,13 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
             stock_code="005930",
             order_price="70000",
             order_qty="10",
-            trade_type="sell",
-            order_dvsn="00"
+            trade_type="sell"
         )
 
     async def test_place_sell_order_failure(self):
         self.mock_broker_api_wrapper.place_stock_order.side_effect = Exception("API 오류 발생")
 
-        result = await self.trading_service.place_sell_order("005930", "70000", "10", "00")
+        result = await self.trading_service.place_sell_order("005930", "70000", "10")
 
         # 예외를 내부 처리 후 ErrorCode.UNKNOWN_ERROR 반환 확인
         self.assertEqual(result.rt_cd, ErrorCode.UNKNOWN_ERROR.value)
@@ -64,9 +62,9 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
             msg1="매도 주문 실패",
             data=None
         )
-
-        result = await self.trading_service.place_sell_order("005930", "70000", "10", "00")
-
+        
+        result = await self.trading_service.place_sell_order("005930", "70000", "10")
+        
         assert result.rt_cd == ErrorCode.API_ERROR.value
         assert result.msg1 == "매도 주문 실패"  # 또는 다른 메시지
         self.mock_logger.error.assert_called()
@@ -74,7 +72,7 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
     async def test_place_sell_order_exception_logging(self):
         self.mock_broker_api_wrapper.place_stock_order.side_effect = Exception("예상치 못한 오류")
 
-        result = await self.trading_service.place_sell_order("005930", "70000", "10", "00")
+        result = await self.trading_service.place_sell_order("005930", "70000", "10")
 
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
         assert "예상치 못한 오류" in result.msg1
