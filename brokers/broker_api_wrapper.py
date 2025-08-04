@@ -173,9 +173,9 @@ class BrokerAPIWrapper:
         """주식 매도 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
         return await self._client.place_stock_order(code, price, quantity, "sell", "01")
 
-    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn) -> ResCommonResponse:
+    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type) -> ResCommonResponse:
         """범용 주식 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
-        return await self._client.place_stock_order(stock_code, order_price, order_qty, trade_type, order_dvsn)
+        return await self._client.place_stock_order(stock_code, order_price, order_qty, trade_type)
 
     # --- KoreaInvestApiClient / WebSocket API delegation ---
     async def connect_websocket(self, on_message_callback=None) -> Any:  # 실제 반환 값에 따라 타입 변경
