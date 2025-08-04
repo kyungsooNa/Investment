@@ -76,7 +76,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         self._headers["custtype"] = full_config['custtype']
         self._headers["gt_uid"] = os.urandom(16).hex()
 
-        order_dvsn = '00' if order_price > 0 else '01'  # 00: 지정가, 01: 시장가
+        order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
 
         data = {
             "CANO": full_config['stock_account_number'],

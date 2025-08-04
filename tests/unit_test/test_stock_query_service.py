@@ -83,7 +83,7 @@ async def test_handle_buy_stock_success(handler, mock_trading_service, print_out
 
     # get_user_input은 이제 handle_buy_stock 내부에서 호출되지 않으므로 assert_has_awaits는 제거
     # 대신 place_buy_order가 올바르게 호출되었는지 확인
-    mock_trading_service.place_buy_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input), "01")
+    mock_trading_service.place_buy_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input))
     assert "--- 주식 매수 주문 ---" in print_output_capture.getvalue()
     assert "주식 매수 주문 성공" in print_output_capture.getvalue()
 
@@ -130,7 +130,7 @@ async def test_handle_buy_stock_place_order_delegation_failure(handler, mock_tra
     )
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    mock_trading_service.place_buy_order.assert_awaited_once_with("005930", 70000, 10, "01")
+    mock_trading_service.place_buy_order.assert_awaited_once_with("005930", 70000, 10)
     assert "매수 주문 실패" in print_output_capture.getvalue()
     logged_msg = mock_logger.error.call_args[0][0]
     assert "매수 주문 실패" in logged_msg
@@ -150,7 +150,7 @@ async def test_handle_sell_stock_success(handler, mock_trading_service, print_ou
     )
     await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
-    mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5, "01")
+    mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5)
     assert "--- 주식 매도 주문 ---" in print_output_capture.getvalue()
     assert "주식 매도 주문 성공" in print_output_capture.getvalue()
 
@@ -198,7 +198,7 @@ async def test_handle_sell_stock_place_order_delegation_failure(handler, mock_tr
 
     await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
-    mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5, "01")
+    mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5)
     assert "매도 주문 실패" in print_output_capture.getvalue()
     logged_msg = mock_logger.error.call_args[0][0]
     assert "매도 주문 실패" in logged_msg
@@ -212,10 +212,10 @@ async def test_handle_place_buy_order_success(handler, mock_trading_service, pri
         msg1="주문 성공",
         data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
     )
-    result = await handler.handle_place_buy_order("005930", 70000, 10, "01")
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
 
     mock_trading_service.place_buy_order.assert_awaited_once_with(
-        "005930", 70000, 10, "01"
+        "005930", 70000, 10
     )
     assert "--- 주식 매수 주문 시도 ---" in print_output_capture.getvalue()
     assert "주식 매수 주문 성공" in print_output_capture.getvalue()
@@ -231,7 +231,7 @@ async def test_handle_place_buy_order_trading_service_failure(handler, mock_trad
         msg1="잔고 부족",
         data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
     )
-    result = await handler.handle_place_buy_order("005930", 70000, 10, "01")
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
 
     mock_logger.error.assert_called_once()
     assert result.rt_cd == "1"
@@ -245,10 +245,10 @@ async def test_handle_place_sell_order_success(handler, mock_trading_service, pr
         msg1="매도 성공",
         data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
     )
-    result = await handler.handle_place_sell_order("005930", 60000, 5, "01")
+    result = await handler.handle_place_sell_order("005930", 60000, 5)
 
     mock_trading_service.place_sell_order.assert_awaited_once_with(
-        "005930", 60000, 5, "01"
+        "005930", 60000, 5
     )
     assert "--- 주식 매도 주문 시도 ---" in print_output_capture.getvalue()
     assert "주식 매도 주문 성공" in print_output_capture.getvalue()
@@ -265,7 +265,7 @@ async def test_handle_place_sell_order_trading_service_failure(handler, mock_tra
         data=None
     )
 
-    result = await handler.handle_place_sell_order("005930", 60000, 5, "01")
+    result = await handler.handle_place_sell_order("005930", 60000, 5)
 
     assert "매도 주문 실패" in print_output_capture.getvalue()
     mock_logger.error.assert_called_once()
@@ -341,7 +341,7 @@ async def test_handle_buy_order_when_market_closed(handler, mock_time_manager, m
     """시장이 닫혀 있을 때 매수 주문이 제출되지 않는지 테스트합니다."""
     mock_time_manager.is_market_open.return_value = False
 
-    await handler.handle_place_buy_order("005930", 70000, 10, "01")
+    await handler.handle_place_buy_order("005930", 70000, 10)
 
     assert "WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.\n" in print_output_capture.getvalue()
     mock_logger.warning.assert_called_once_with("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")

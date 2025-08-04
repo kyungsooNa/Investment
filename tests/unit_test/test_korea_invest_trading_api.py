@@ -36,8 +36,7 @@ async def test_place_stock_order_buy_success():
         stock_code='005930',
         order_price='70000',
         order_qty='10',
-        trade_type='buy',
-        order_dvsn='00'
+        trade_type='buy'
     )
 
     assert result == {'status': 'success'}
@@ -59,7 +58,7 @@ async def test_place_stock_order_invalid_type():
         MagicMock(),  # token_manager 자리 추가
         mock_logger
     )
-    result = await trading_api.place_stock_order('005930', '70000', '10', '잘못된타입', '00')
+    result = await trading_api.place_stock_order('005930', '70000', '10', '잘못된타입')
     assert result is None
     mock_logger.error.assert_called_once()
 
@@ -169,8 +168,7 @@ async def test_place_stock_order_sell_success():
         stock_code='005930',
         order_price='70000',
         order_qty='10',
-        trade_type='sell',
-        order_dvsn='00'
+        trade_type='sell'
     )
 
     assert result == {"status": "sell_success"}

@@ -200,9 +200,9 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     wrapper._client.place_stock_order.reset_mock() # Reset mock for next call
 
     # place_stock_order (lines 115, 117) - calls self._client.place_stock_order
-    result = await wrapper.place_stock_order("005930", 69500, 15, "buy", "00")
+    result = await wrapper.place_stock_order("005930", 69500, 15, "buy")
     assert result == {"rt_cd": "0", "msg1": "주문 성공"}
-    wrapper._client.place_stock_order.assert_called_once_with("005930", 69500, 15, "buy", "00")
+    wrapper._client.place_stock_order.assert_called_once_with("005930", 69500, 15, "buy")
 
 
     # --- KoreaInvestApiClient / WebSocket API delegation ---
