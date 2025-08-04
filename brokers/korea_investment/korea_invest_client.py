@@ -41,14 +41,14 @@ class KoreaInvestApiClient:
 
     # --- Trading API delegation ---
     # KoreaInvestApiTrading의 place_stock_order도 ResCommonResponse를 반환하도록 수정 필요
-    async def buy_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn) -> ResCommonResponse:
-        return await self._trading.place_stock_order(stock_code, order_price, order_qty, "buy", order_dvsn)
+    async def buy_stock(self, stock_code: str, order_price, order_qty) -> ResCommonResponse:
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, "buy")
 
-    async def sell_stock(self, stock_code: str, order_price, order_qty, trade_type, order_dvsn) -> ResCommonResponse:
-        return await self._trading.place_stock_order(stock_code, order_price, order_qty, "sell", order_dvsn)
+    async def sell_stock(self, stock_code: str, order_price, order_qty) -> ResCommonResponse:
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, "sell")
 
-    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn) -> ResCommonResponse:
-        return await self._trading.place_stock_order(stock_code, order_price, order_qty, trade_type, order_dvsn)
+    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type) -> ResCommonResponse:
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, trade_type)
 
     # --- Quotations API delegation (Updated) ---
     # KoreaInvestApiQuotations의 모든 메서드가 ResCommonResponse를 반환하도록 이미 수정되었으므로, 해당 반환 타입을 반영

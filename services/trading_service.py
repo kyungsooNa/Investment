@@ -113,7 +113,7 @@ class TradingService:
         else:
             return await self._broker_api_wrapper.get_real_account_balance()
 
-    async def place_buy_order(self, stock_code, price, qty, order_dvsn) -> ResCommonResponse:
+    async def place_buy_order(self, stock_code, price, qty) -> ResCommonResponse:
         self._logger.info(
             f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
         )
@@ -123,8 +123,7 @@ class TradingService:
                 stock_code=stock_code,
                 order_price=price,
                 order_qty=qty,
-                trade_type="buy",
-                order_dvsn=order_dvsn
+                trade_type="buy"
             )
         except Exception as e:
             self._logger.error(f"Service - 매수 주문 중 오류 발생: {str(e)}")
@@ -141,7 +140,7 @@ class TradingService:
 
         return response_common
 
-    async def place_sell_order(self, stock_code, price, qty, order_dvsn) -> ResCommonResponse:
+    async def place_sell_order(self, stock_code, price, qty) -> ResCommonResponse:
         self._logger.info(
             f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
         )
@@ -151,8 +150,7 @@ class TradingService:
                 stock_code=stock_code,
                 order_price=price,
                 order_qty=qty,
-                trade_type="sell",
-                order_dvsn=order_dvsn
+                trade_type="sell"
             )
         except Exception as e:
             self._logger.error(f"Service - 매도 주문 중 오류 발생: {str(e)}")

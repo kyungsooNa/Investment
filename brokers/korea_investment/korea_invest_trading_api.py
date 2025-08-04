@@ -57,7 +57,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._logger.error(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
             return None
 
-    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type, order_dvsn):  # async def로 변경됨
+    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type):  # async def로 변경됨
         path = "/uapi/domestic-stock/v1/trading/order-cash"
 
         full_config = self._env.active_config
@@ -76,17 +76,19 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         self._headers["custtype"] = full_config['custtype']
         self._headers["gt_uid"] = os.urandom(16).hex()
 
+        order_dvsn = '00' if order_price > 0 else '01'  # 00: 지정가, 01: 시장가
+
         data = {
             "CANO": full_config['stock_account_number'],
             "ACNT_PRDT_CD": "01",
             "PDNO": stock_code,
-            "ORD_QTY": order_qty,
-            "ORD_UNPR": order_price,
-            "INQR_PSBL_QTY_DVN": "01",
             "ORD_DVSN": order_dvsn,
-            "LOCL_CSHR_PRCS_DVSN": "00",
-            "RPRS_SYS_DVSN": "00",
-            "TR_DVN": trade_type
+            "ORD_QTY": str(order_qty),
+            "ORD_UNPR": str(order_price),
+            # "INQR_PSBL_QTY_DVN": "01",
+            # "LOCL_CSHR_PRCS_DVSN": "00",
+            # "RPRS_SYS_DVSN": "00",
+            # "TR_DVN": trade_type
         }
 
         calculated_hashkey = await self._get_hashkey(data)

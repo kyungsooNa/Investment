@@ -13,7 +13,7 @@ class OrderExecutionService:
         self.logger = logger
         self.time_manager = time_manager
 
-    async def handle_place_buy_order(self, stock_code, price, qty, order_dvsn):
+    async def handle_place_buy_order(self, stock_code, price, qty):
         """주식 매수 주문 요청 및 결과 출력."""
         print(f"\n--- 주식 매수 주문 시도 ---")
         if not self.time_manager.is_market_open():
@@ -22,7 +22,7 @@ class OrderExecutionService:
             return None # 주문 실패 시 None 반환하도록 수정 (또는 실패 응답 딕셔너리)
 
         buy_order_result : ResCommonResponse = await self.trading_service.place_buy_order(
-            stock_code, price, qty, order_dvsn
+            stock_code, price, qty
         )
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
             print(f"주식 매수 주문 성공: {buy_order_result.data}")
@@ -32,7 +32,7 @@ class OrderExecutionService:
             self.logger.error(f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
         return buy_order_result
 
-    async def handle_place_sell_order(self, stock_code, price, qty, order_dvsn):
+    async def handle_place_sell_order(self, stock_code, price, qty):
         """주식 매도 주문 요청 및 결과 출력."""
         print(f"\n--- 주식 매도 주문 시도 ---")
         if not self.time_manager.is_market_open():
@@ -41,7 +41,7 @@ class OrderExecutionService:
             return None # 주문 실패 시 None 반환
 
         sell_order_result : ResCommonResponse = await self.trading_service.place_sell_order(
-            stock_code, price, qty, order_dvsn
+            stock_code, price, qty
         )
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
             print(f"주식 매도 주문 성공: {sell_order_result.data}")
@@ -62,14 +62,13 @@ class OrderExecutionService:
         try:
             qty = int(qty_input)
             price = int(price_input)
-            order_dvsn = '01' if price > 0 else '00' # 01: 지정가, 00: 시장가
         except ValueError:
             print("잘못된 수량 또는 가격 입력입니다.")
             self.logger.warning(f"잘못된 매수 입력: 수량={qty_input}, 가격={price_input}")
             return
 
         # handle_place_buy_order 호출
-        await self.handle_place_buy_order(stock_code, price, qty, order_dvsn)
+        await self.handle_place_buy_order(stock_code, price, qty)
 
     async def handle_sell_stock(self, stock_code, qty_input, price_input): # 파라미터 추가
         """
@@ -80,14 +79,13 @@ class OrderExecutionService:
         try:
             qty = int(qty_input)
             price = int(price_input)
-            order_dvsn = '01' if price > 0 else '00' # 01: 지정가, 00: 시장가
         except ValueError:
             print("잘못된 수량 또는 가격 입력입니다.")
             self.logger.warning(f"잘못된 매도 입력: 수량={qty_input}, 가격={price_input}")
             return
 
         # handle_place_sell_order 호출
-        await self.handle_place_sell_order(stock_code, price, qty, order_dvsn)
+        await self.handle_place_sell_order(stock_code, price, qty)
 
 
     async def handle_realtime_price_quote_stream(self, stock_code):
