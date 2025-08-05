@@ -39,7 +39,7 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
             stock_code="005930",
             order_price="70000",
             order_qty="10",
-            trade_type="sell"
+            is_buy=False
         )
 
     async def test_place_sell_order_failure(self):

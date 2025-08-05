@@ -17,27 +17,30 @@ def mock_env():
         'base_url': 'http://mock-base-url.com',
         'api_key': 'mock_api_key',
         'api_secret_key': 'mock_api_secret_key',
-        'access_token': 'mock_access_token_from_env', # <<-- 이 값을 추가
+        'access_token': 'mock_access_token_from_env',  # <<-- 이 값을 추가
         'custtype': 'P'
     }
     env.access_token = 'mock_token'
     return env
+
 
 @pytest.fixture
 def mock_logger():
     """모의 로거(Logger) 객체를 생성합니다."""
     return MagicMock()
 
+
 @pytest.fixture
 def mock_time_manager():
     """모의 로거(Logger) 객체를 생성합니다."""
     return MagicMock()
 
+
 # --- 테스트 케이스 ---
 
 @pytest.mark.asyncio
-@patch(f"{wrapper_module.__name__}.StockCodeMapper")              # 먼저 정의된 patch가
-@patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")         # 아래쪽 인자로 먼저 들어감!
+@patch(f"{wrapper_module.__name__}.StockCodeMapper")  # 먼저 정의된 patch가
+@patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")  # 아래쪽 인자로 먼저 들어감!
 async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger, mock_time_manager):
     """
     각 메서드가 내부의 올바른 객체로 호출을 위임하는지 테스트합니다.
@@ -73,13 +76,13 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
     mock_mapper.get_code_by_name.assert_called_once_with("삼성전자")
     mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930", "20250712", fid_period_div_code="D")
 
+
 @pytest.mark.asyncio
 async def test_inquire_daily_itemchartprice_delegation(mock_env, mock_logger):
     """
     inquire_daily_itemchartprice 메서드가 _client 객체의 동일 메서드에 정확히 위임되는지 검증합니다.
     """
     with patch('brokers.broker_api_wrapper') as MockBrokerWrapper:
-
         # Mock 객체 구성
         MockBrokerWrapper.inquire_daily_itemchartprice = AsyncMock(return_value=[{"stck_prpr": "70000"}])
 
@@ -112,8 +115,8 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
 
     # --- StockCodeMapper delegation (get_all_stock_codes) ---
     result = await wrapper.get_all_stock_codes()
-    assert result is mock_stock_mapper.df # df 객체 자체를 반환하는지 확인
-    mock_logger.error.assert_not_called() # 에러 로그가 찍히지 않는지 확인 (성공 경로)
+    assert result is mock_stock_mapper.df  # df 객체 자체를 반환하는지 확인
+    mock_logger.error.assert_not_called()  # 에러 로그가 찍히지 않는지 확인 (성공 경로)
 
     # --- StockCodeMapper delegation (get_all_stock_code_list) ---
     result = await wrapper.get_all_stock_code_list()
@@ -124,7 +127,6 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     result = await wrapper.get_all_stock_name_list()
     assert result == ['삼성전자', 'SK하이닉스']
     # get_all_stock_codes가 호출되었음을 간접적으로 확인 가능
-
 
     # --- KoreaInvestApiClient / Quotations API delegation ---
     # get_stock_info_by_code (lines 59, 61) - calls self._client.get_stock_info_by_code
@@ -170,40 +172,16 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     assert result == [{"stck_clpr": "70000_chart"}]
     mock_client.inquire_daily_itemchartprice.assert_called_once_with("005930", "20250101", fid_period_div_code="M")
 
-
     # --- KoreaInvestApiClient / Account API delegation ---
     # get_account_balance (lines 98, 100) - calls self._client.get_account_balance
     result = await wrapper.get_account_balance()
     assert result == {"output": {"dnca_tot_amt": "1000000"}}
     mock_client.get_account_balance.assert_called_once()
 
-    # --- KoreaInvestApiClient / Account API delegation ---
-    # get_real_account_balance - calls self._client.get_real_account_balance
-    mock_client.get_real_account_balance = AsyncMock(return_value={"output": {"dnca_tot_amt": "5000000"}})
-    result = await wrapper.get_real_account_balance()
-    assert result == {"output": {"dnca_tot_amt": "5000000"}}
-    mock_client.get_real_account_balance.assert_called_once()
-
-    # --- KoreaInvestApiClient / Trading API delegation ---
-    # buy_stock (lines 107, 109) - calls self._client.place_stock_order
-    result = await wrapper.buy_stock("005930", 10, 70000)
-    assert result == {"rt_cd": "0", "msg1": "주문 성공"}
-    wrapper._client.place_stock_order.assert_called_once_with("005930", 70000, 10, "buy", "01")
-
-    wrapper._client.place_stock_order.reset_mock() # Reset mock for next call
-
-    # sell_stock (lines 111, 113) - calls self._client.place_stock_order
-    result = await wrapper.sell_stock("005930", 5, 69000)
-    assert result == {"rt_cd": "0", "msg1": "주문 성공"}
-    wrapper._client.place_stock_order.assert_called_once_with("005930", 69000, 5, "sell", "01")
-
-    wrapper._client.place_stock_order.reset_mock() # Reset mock for next call
-
     # place_stock_order (lines 115, 117) - calls self._client.place_stock_order
-    result = await wrapper.place_stock_order("005930", 69500, 15, "buy")
+    result = await wrapper.place_stock_order("005930", 69500, 15, is_buy=True)
     assert result == {"rt_cd": "0", "msg1": "주문 성공"}
-    wrapper._client.place_stock_order.assert_called_once_with("005930", 69500, 15, "buy")
-
+    wrapper._client.place_stock_order.assert_called_once_with("005930", 69500, 15, True)
 
     # --- KoreaInvestApiClient / WebSocket API delegation ---
     # connect_websocket (lines 120, 122) - calls self._client.connect_websocket
@@ -212,7 +190,7 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     mock_client.connect_websocket.assert_called_once()
 
     # disconnect_websocket (lines 124, 126) - calls self._client.disconnect_websocket
-    mock_client.disconnect_websocket.return_value = True # Ensure this mock is set for the method
+    mock_client.disconnect_websocket.return_value = True  # Ensure this mock is set for the method
     result = await wrapper.disconnect_websocket()
     assert result is True
     mock_client.disconnect_websocket.assert_called_once()
@@ -237,6 +215,7 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     assert result is True
     mock_client.unsubscribe_realtime_quote.assert_called_once_with("005930")
 
+
 @pytest.fixture
 def broker_wrapper_instance(mock_env, mock_logger, mocker):
     """
@@ -256,14 +235,16 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
     mock_client_instance._account = AsyncMock()
     mock_client_instance._trading = AsyncMock()
     mock_client_instance._quotations = AsyncMock()
-    mock_client_instance._websocketAPI = AsyncMock() # public attribute
+    mock_client_instance._websocketAPI = AsyncMock()  # public attribute
 
     # KoreaInvestApiClient에서 위임하는 메서드들의 반환 값 설정 (예시)
     mock_client_instance.get_stock_info_by_code.return_value = {"hts_kor_isnm": "삼성전자_info"}
     mock_client_instance.get_current_price.return_value = {"output": {"stck_prpr": "70000"}}
-    mock_client_instance.get_price_summary.return_value = {"symbol": "005930", "open": 69000, "current": 70000, "change_rate": 1.45}
+    mock_client_instance.get_price_summary.return_value = {"symbol": "005930", "open": 69000, "current": 70000,
+                                                           "change_rate": 1.45}
     mock_client_instance.get_market_cap.return_value = 1234567890
-    mock_client_instance.get_top_market_cap_stocks_code.return_value = {"rt_cd": "0", "output": [{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "data_rank": "1"}]}
+    mock_client_instance.get_top_market_cap_stocks_code.return_value = {"rt_cd": "0", "output": [
+        {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "data_rank": "1"}]}
     mock_client_instance.get_previous_day_info = MagicMock(return_value={"prev_close": 68000, "prev_volume": 10000})
     mock_client_instance.get_filtered_stocks_by_momentum.return_value = [{"symbol": "005930_filtered"}]
     mock_client_instance.inquire_daily_itemchartprice.return_value = [{"stck_clpr": "70000_chart"}]
@@ -273,12 +254,12 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
     mock_client_instance.get_stock_info_by_code.return_value = {"hts_kor_isnm": "삼성전자_info"}
     mock_client_instance.get_current_price.return_value = {"output": {"stck_prpr": "70000"}}
     mock_client_instance.get_price_summary.return_value = {"symbol": "005930", "open": 69000,
-                                                                       "current": 70000, "change_rate": 1.45}
+                                                           "current": 70000, "change_rate": 1.45}
     mock_client_instance.get_market_cap.return_value = 1234567890
     mock_client_instance.get_top_market_cap_stocks_code.return_value = {"rt_cd": "0", "output": [
         {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "data_rank": "1"}]}
     mock_client_instance.get_previous_day_info.return_value = {"prev_close": 68000,
-                                                                           "prev_volume": 10000}  # This is sync, so return_value is direct
+                                                               "prev_volume": 10000}  # This is sync, so return_value is direct
     mock_client_instance.get_filtered_stocks_by_momentum.return_value = [{"symbol": "005930_filtered"}]
     mock_client_instance.inquire_daily_itemchartprice.return_value = [{"stck_clpr": "70000_chart"}]
 
@@ -321,9 +302,10 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
     # 사용자의 `broker_api_wrapper.py` 파일의 논리적 오류(self._client, self._client 미초기화)를
     # 회피하기 위해 해당 속성들을 직접 mock으로 할당하여 테스트가 통과하도록 합니다.
     # 실제 코드에서는 BrokerAPIWrapper의 __init__에서 self._client = self._client._client 등으로 할당되어야 합니다.
-    wrapper._client = mock_client_instance # _client의 _trading을 직접 할당
+    wrapper._client = mock_client_instance  # _client의 _trading을 직접 할당
 
     yield wrapper, mock_client_instance, mock_stock_mapper_instance, mock_logger
+
 
 # --- 테스트 케이스 ---
 
@@ -341,6 +323,7 @@ def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logg
     MockStockMapper.assert_called_once_with(logger=mock_logger)
     assert wrapper._broker == "korea_investment"
 
+
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeMapper")
 def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_logger):
@@ -356,7 +339,7 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
     assert wrapper._broker == "korea_investment"
     assert isinstance(wrapper._client, ClientWithCache)  # ✅ wrapping 여부 확인
     assert wrapper._client._client is mock_client.return_value  # ✅ 내부 원본 확인
-    assert wrapper._stock_mapper is mock_stock_mapper.return_value # _stock_mapper가 mock_stock_mapper 인스턴스를 참조하는지 확인
+    assert wrapper._stock_mapper is mock_stock_mapper.return_value  # _stock_mapper가 mock_stock_mapper 인스턴스를 참조하는지 확인
 
 
 def test_initialization_no_env_raises_error(mock_logger):
@@ -368,9 +351,10 @@ def test_initialization_no_env_raises_error(mock_logger):
         BrokerAPIWrapper(
             broker="korea_investment",
             env=None,  # env를 명시적으로 None으로 설정
-           
+
             logger=mock_logger
         )
+
 
 def test_initialization_unsupported_broker_raises_error(mock_env):
     """
@@ -379,6 +363,7 @@ def test_initialization_unsupported_broker_raises_error(mock_env):
     # Arrange, Act & Assert
     with pytest.raises(NotImplementedError, match="지원되지 않는 증권사: unsupported_broker"):
         BrokerAPIWrapper(broker="unsupported_broker", env=mock_env)
+
 
 # --- 추가적인 엣지 케이스 및 오류 경로 테스트 ---
 
@@ -393,12 +378,12 @@ async def test_get_all_stock_codes_no_df_attribute(broker_wrapper_instance, capl
     # _stock_mapper에서 df 속성을 제거하여 hasattr()이 False를 반환하도록 합니다.
     del mock_stock_mapper.df
 
-    with caplog.at_level(logging.ERROR): # 에러 로그를 캡처합니다.
+    with caplog.at_level(logging.ERROR):  # 에러 로그를 캡처합니다.
         result = await wrapper.get_all_stock_codes()
 
         assert result is None
         mock_logger.error.assert_called_once_with("StockCodeMapper가 초기화되지 않았거나 df 속성이 없습니다.")
-    caplog.clear() # 다음 테스트를 위해 로그 캡처 초기화
+    caplog.clear()  # 다음 테스트를 위해 로그 캡처 초기화
 
 
 @pytest.mark.asyncio
@@ -412,17 +397,19 @@ async def test_get_all_stock_code_list_edge_cases(broker_wrapper_instance):
     # Case 1: get_all_stock_codes()가 None을 반환할 때
     async def mock_get_all_stock_codes_returns_none():
         return None
-    wrapper.get_all_stock_codes = mock_get_all_stock_codes_returns_none # 메서드를 패치
+
+    wrapper.get_all_stock_codes = mock_get_all_stock_codes_returns_none  # 메서드를 패치
     result = await wrapper.get_all_stock_code_list()
     assert result == []
-    # wrapper.get_all_stock_codes = broker_wrapper_instance[0].get_all_stock_codes.__wrapped__ # 원래 함수로 복원 (선택 사항)
 
+    # wrapper.get_all_stock_codes = broker_wrapper_instance[0].get_all_stock_codes.__wrapped__ # 원래 함수로 복원 (선택 사항)
 
     # Case 2: DataFrame에 '종목코드' 컬럼이 없을 때
     async def mock_get_all_stock_codes_no_code_col():
         df = MagicMock()
-        df.columns = ['OtherColumn', '종목명'] # '종목코드' 없음
+        df.columns = ['OtherColumn', '종목명']  # '종목코드' 없음
         return df
+
     wrapper.get_all_stock_codes = mock_get_all_stock_codes_no_code_col
     result = await wrapper.get_all_stock_code_list()
     assert result == []
@@ -439,6 +426,7 @@ async def test_get_all_stock_name_list_edge_cases(broker_wrapper_instance):
     # Case 1: get_all_stock_codes()가 None을 반환할 때
     async def mock_get_all_stock_codes_returns_none():
         return None
+
     wrapper.get_all_stock_codes = mock_get_all_stock_codes_returns_none
     result = await wrapper.get_all_stock_name_list()
     assert result == []
@@ -446,8 +434,9 @@ async def test_get_all_stock_name_list_edge_cases(broker_wrapper_instance):
     # Case 2: DataFrame에 '종목명' 컬럼이 없을 때
     async def mock_get_all_stock_codes_no_name_col():
         df = MagicMock()
-        df.columns = ['종목코드', 'OtherColumn'] # '종목명' 없음
+        df.columns = ['종목코드', 'OtherColumn']  # '종목명' 없음
         return df
+
     wrapper.get_all_stock_codes = mock_get_all_stock_codes_no_name_col
     result = await wrapper.get_all_stock_name_list()
     assert result == []

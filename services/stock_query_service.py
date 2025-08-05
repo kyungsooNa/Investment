@@ -1,5 +1,6 @@
 # app/stock_query_service.py
-from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, ResMarketCapStockItem, ResStockFullInfoApiOutput
+from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, ResMarketCapStockItem, \
+    ResStockFullInfoApiOutput
 from typing import List, Dict
 
 
@@ -34,18 +35,12 @@ class StockQueryService:
             print(f"\n{stock_code} 현재가 조회 실패.")
             self.logger.error(f"{stock_code} 현재가 조회 실패: {current_price_result.data}")
 
-    async def handle_get_account_balance(self):
+    async def handle_get_account_balance(self) -> ResCommonResponse:
         """계좌 잔고 조회 요청 및 결과 출력."""
         print("\n--- 계좌 잔고 조회 ---")
-        account_balance: ResCommonResponse = await self.trading_service.get_account_balance()
-        if account_balance and account_balance.rt_cd == ErrorCode.SUCCESS.value:
-            print(f"\n계좌 잔고: {account_balance}")
-            self.logger.info(f"계좌 잔고 조회 성공: {account_balance.data}")
-        else:
-            print(f"\n계좌 잔고 조회 실패.")
-            self.logger.error(f"계좌 잔고 조회 실패: {account_balance.data}")
+        return await self.trading_service.get_account_balance()
 
-    async def handle_get_top_market_cap_stocks(self, market_code, count: int = None):
+    async def handle_get_top_market_cap_stocks_code(self, market_code, count: int = None) -> ResCommonResponse:
         """시가총액 상위 종목 조회 요청 및 결과 출력 (전체 목록)."""
         print("\n--- 시가총액 상위 종목 조회 시도 ---")
         top_market_cap_stocks: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
@@ -63,7 +58,9 @@ class StockQueryService:
             print(f"실패: 시가총액 상위 종목 조회.")
             self.logger.error(f"실패: 시가총액 상위 종목 조회: {top_market_cap_stocks}")
 
-    async def handle_get_top_10_market_cap_stocks_with_prices(self):
+        return top_market_cap_stocks
+
+    async def handle_get_top_10_market_cap_stocks_with_prices(self) -> ResCommonResponse:
         print("\n--- 시가총액 1~10위 종목 현재가 조회 시도 ---")
         self.logger.info("시가총액 1~10위 종목 현재가 조회 시도")
         try:
@@ -256,7 +253,6 @@ class StockQueryService:
             self.logger.warning("시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.")
             print("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n")
             return None  # None 반환하여 상위 호출자에게 실패 알림
-
 
         upper_limit_stocks_found = []
         try:

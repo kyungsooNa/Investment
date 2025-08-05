@@ -107,11 +107,7 @@ class TradingService:
         return await self._broker_api_wrapper.get_current_price(stock_code)
 
     async def get_account_balance(self) -> ResCommonResponse:
-        self._logger.info(f"Service - 계좌 잔고 조회 요청 (환경: {'모의투자' if self._env.is_paper_trading else '실전'})")
-        if self._env.is_paper_trading:
-            return await self._broker_api_wrapper.get_account_balance()
-        else:
-            return await self._broker_api_wrapper.get_real_account_balance()
+        return await self._broker_api_wrapper.get_account_balance()
 
     async def place_buy_order(self, stock_code, price, qty) -> ResCommonResponse:
         self._logger.info(
@@ -123,7 +119,7 @@ class TradingService:
                 stock_code=stock_code,
                 order_price=price,
                 order_qty=qty,
-                trade_type="buy"
+                is_buy=True
             )
         except Exception as e:
             self._logger.error(f"Service - 매수 주문 중 오류 발생: {str(e)}")
@@ -150,7 +146,7 @@ class TradingService:
                 stock_code=stock_code,
                 order_price=price,
                 order_qty=qty,
-                trade_type="sell"
+                is_buy=False
             )
         except Exception as e:
             self._logger.error(f"Service - 매도 주문 중 오류 발생: {str(e)}")

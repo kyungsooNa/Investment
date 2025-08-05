@@ -97,7 +97,10 @@ def setup_mock_app(mocker):
     app.env = mocker.MagicMock(spec=KoreaInvestApiEnv)
     app.env.get_access_token = mocker.AsyncMock(return_value="mock_access_token")  # 명시적으로 AsyncMock으로 설정
     app.env.invalidate_token = mocker.MagicMock()  # 명시적으로 AsyncMock으로 설정
-    # app.env.get_access_token = mocker.AsyncMock(return_value="mock_access_token") # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
+    app.env.get_full_config = mocker.MagicMock(return_value=mock_config)
+    app.env.set_trading_mode = MagicMock()  # set_trading_mode 메서드 명시적 목킹 추가
+    app.env.is_paper_trading = False
+
     # app._complete_api_initialization = AsyncMock(return_value=True) # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
     # app.select_environment = AsyncMock(return_value=True) # 이 줄은 테스트에서 필요에 따라 개별적으로 목킹
 
@@ -105,13 +108,10 @@ def setup_mock_app(mocker):
     app.broker = mocker.AsyncMock(spec=BrokerAPIWrapper)
     app.backtest_data_provider = mocker.AsyncMock(spec=BacktestDataProvider)
 
-    app.env.get_full_config = mocker.MagicMock(return_value=mock_config)
-    app.env.is_paper_trading = mock_config['is_paper_trading']
-    app.env.set_trading_mode = MagicMock()  # set_trading_mode 메서드 명시적 목킹 추가
 
     app.stock_query_service = mocker.AsyncMock(spec=StockQueryService)
     app.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices = AsyncMock()
-    app.stock_query_service.handle_get_top_market_cap_stocks = AsyncMock()
+    app.stock_query_service.handle_get_top_market_cap_stocks_code = AsyncMock()
     app.stock_query_service.handle_upper_limit_stocks = AsyncMock()
     app.stock_query_service.handle_get_current_stock_price = AsyncMock()
     app.stock_query_service.handle_display_stock_change_rate = AsyncMock()
@@ -121,6 +121,7 @@ def setup_mock_app(mocker):
     app.stock_query_service.handle_yesterday_upper_limit_stocks = AsyncMock()
     app.stock_query_service.handle_current_upper_limit_stocks = AsyncMock()
     app.stock_query_service.handle_realtime_stream = AsyncMock()
+    app.stock_query_service.handle_get_account_balance = AsyncMock()
 
     app.trading_service = mocker.AsyncMock(spec=TradingService)
     app.trading_service.get_code_by_name = AsyncMock()
@@ -391,7 +392,7 @@ class StrategyExecutor:  # StrategyExecutor 스펙 추가
 #     app.time_manager.is_market_open.return_value = True
 #
 #     # trading_service가 성공적인 시가총액 목록을 반환하도록 설정
-#     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+#     app.trading_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
 #         rt_cd="0",
 #         msg1="성공",
 #         data=[
@@ -427,7 +428,7 @@ class StrategyExecutor:  # StrategyExecutor 스펙 추가
 #     # --- Assert (검증) ---
 #     # 1. 의존성들이 올바르게 호출되었는지 확인합니다.
 #     app.cli_view.display_strategy_running_message.assert_called_once_with("모멘텀")
-#     app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
+#     app.trading_service.handle_get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
 #     app.cli_view.display_top_stocks_success.assert_called_once()
 #
 #     # 2. StrategyExecutor의 execute 메서드가 올바른 종목 코드로 호출되었는지 확인합니다.
@@ -472,7 +473,7 @@ async def test_execute_action_2_get_account_balance(setup_mock_app):
 
     # trading_service가 성공 응답을 반환하도록 설정
     mock_balance_data = {"dnca_tot_amt": "1000000", "tot_evlu_amt": "1200000"}
-    app.trading_service.get_account_balance.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="정상",
         data=mock_balance_data
@@ -485,10 +486,38 @@ async def test_execute_action_2_get_account_balance(setup_mock_app):
     
     # --- Assert (검증) ---
     # 1. trading_service의 메서드가 호출되었는지 확인합니다.
-    app.trading_service.get_account_balance.assert_awaited_once()
+    app.stock_query_service.handle_get_account_balance.assert_awaited_once()
 
     # 2. 성공 시 cli_view의 display_account_balance가 올바른 데이터로 호출되었는지 확인합니다.
     app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data)
+
+
+@pytest.mark.asyncio
+async def test_execute_action_2_account_balance_success(setup_mock_app):
+    """메뉴 '2' 선택 시 계좌 잔고 조회가 성공하고 결과가 표시되는지 테스트합니다."""
+    # --- Arrange (준비) ---
+    app = setup_mock_app
+
+    # trading_service가 성공 응답을 반환하도록 설정
+    mock_balance_data = {"dnca_tot_amt": "1000000"}
+    app.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=mock_balance_data
+    )
+
+    # --- Act (실행) ---
+    # 실제 _execute_action 메서드를 호출합니다.
+    executor = UserActionExecutor(app)
+    result = await executor.execute('2')
+
+    # --- Assert (검증) ---
+    # trading_service의 메서드가 호출되었는지 확인
+    app.stock_query_service.handle_get_account_balance.assert_awaited_once()
+    # 성공 시 cli_view의 display_account_balance가 호출되었는지 확인
+    app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data)
+    # 실패 메시지 메서드는 호출되지 않았는지 확인
+    app.cli_view.display_account_balance_failure.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -517,35 +546,6 @@ async def test_execute_action_3_place_buy_order(setup_mock_app):
 
     # 2. order_execution_service의 핸들러가 올바른 인자들로 호출되었는지 확인합니다.
     app.order_execution_service.handle_buy_stock.assert_awaited_once_with("005930", "10", "80000")
-
-
-@pytest.mark.asyncio
-async def test_execute_action_2_account_balance_success(setup_mock_app):
-    """메뉴 '2' 선택 시 계좌 잔고 조회가 성공하고 결과가 표시되는지 테스트합니다."""
-    # --- Arrange (준비) ---
-    app = setup_mock_app
-
-    # trading_service가 성공 응답을 반환하도록 설정
-    mock_balance_data = {"dnca_tot_amt": "1000000"}
-    app.trading_service.get_account_balance.return_value = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="정상",
-        data=mock_balance_data
-    )
-
-    # --- Act (실행) ---
-    # 실제 _execute_action 메서드를 호출합니다.
-    executor = UserActionExecutor(app)
-    result = await executor.execute('2')
-
-    # --- Assert (검증) ---
-    # trading_service의 메서드가 호출되었는지 확인
-    app.trading_service.get_account_balance.assert_awaited_once()
-    # 성공 시 cli_view의 display_account_balance가 호출되었는지 확인
-    app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data)
-    # 실패 메시지 메서드는 호출되지 않았는지 확인
-    app.cli_view.display_account_balance_failure.assert_not_called()
-
 
 @pytest.mark.asyncio
 async def test_execute_action_3_place_buy_order(setup_mock_app):
@@ -630,7 +630,7 @@ async def test_execute_action_13_get_top_market_cap_real(setup_mock_app):
     result = await executor.execute('13')
 
     # 올바른 서비스 메서드가 호출되었는지 확인
-    app.stock_query_service.handle_get_top_market_cap_stocks.assert_awaited_once_with("0000")
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
 
 
 @pytest.mark.asyncio
@@ -647,7 +647,7 @@ async def test_execute_action_13_get_top_market_cap_paper(setup_mock_app):
 
     # 경고가 표시되고 서비스 메서드는 호출되지 않았는지 확인
     app.cli_view.display_warning_paper_trading_not_supported.assert_called_once_with("시가총액 상위 종목 조회")
-    app.stock_query_service.handle_get_top_market_cap_stocks.assert_not_called()
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_not_called()
 
 
 
@@ -696,7 +696,7 @@ async def test_execute_action_0_change_environment_success(setup_mock_app):  # c
     app.select_environment = AsyncMock(return_value=True)
 
     # 실제 _execute_action 메서드 호출
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('0')
 
     # 검증
@@ -714,7 +714,7 @@ async def test_execute_action_1_stock_info_success(setup_mock_app):
     # 대신 stock_query_service.handle_get_current_stock_price가 호출됨
     app.stock_query_service.handle_get_current_stock_price.return_value = None  # handle_get_current_stock_price를 목킹
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('1')  # 1번 메뉴로 변경
 
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
@@ -726,16 +726,16 @@ async def test_execute_action_1_stock_info_success(setup_mock_app):
 @pytest.mark.asyncio
 async def test_execute_action_2_account_balance_failure(setup_mock_app, capsys):
     app = setup_mock_app
-    app.trading_service.get_account_balance.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
         rt_cd=ErrorCode.API_ERROR.value,
         msg1="잔고 조회 실패",
         data=None
     )
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('2')
 
-    app.trading_service.get_account_balance.assert_awaited_once()
+    app.stock_query_service.handle_get_account_balance.assert_awaited_once()
     app.cli_view.display_account_balance_failure.assert_called_once()  # CLIView 메서드 호출 확인
     assert result is True
 
@@ -746,7 +746,7 @@ async def test_execute_action_3_place_buy_order_success(setup_mock_app):
     # handle_buy_stock이 성공적으로 실행되도록 목(mock) 설정
     app.order_execution_service.handle_buy_stock.return_value = None  # 이 메서드는 반환값이 없음
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('3')
 
     # 검증
@@ -788,7 +788,7 @@ async def test_execute_action_5_display_stock_change_rate(setup_mock_app):
     app.cli_view.get_user_input.return_value = "005930"
     app.stock_query_service.handle_display_stock_change_rate.return_value = None
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('5')
 
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
@@ -802,7 +802,7 @@ async def test_execute_action_6_display_stock_vs_open_price(setup_mock_app):
     app.cli_view.get_user_input.return_value = "005930"  # 종목 코드 입력 시뮬레이션
     app.stock_query_service.handle_display_stock_vs_open_price.return_value = None  # 핸들러 목킹
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('6')
 
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
@@ -837,13 +837,13 @@ async def test_execute_action_7_get_asking_price(setup_mock_app):
 async def test_execute_action_13_get_top_market_cap_real_success(setup_mock_app):
     app = setup_mock_app
     app.env.is_paper_trading = False  # 실전 투자 모드로 설정
-    app.stock_query_service.handle_get_top_market_cap_stocks.return_value = None  # 반환값은 중요하지 않음
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = None  # 반환값은 중요하지 않음
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('13')
 
     # 검증
-    app.stock_query_service.handle_get_top_market_cap_stocks.assert_awaited_once_with("0000")  # 올바른 인자로 호출되었는지 확인
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_awaited_once_with("0000")  # 올바른 인자로 호출되었는지 확인
     assert result is True  # 앱은 계속 실행되어야 함
 
 @pytest.mark.asyncio
@@ -854,7 +854,7 @@ async def test_execute_action_14_top_10_market_cap_paper_mode(setup_mock_app):
     app.env.is_paper_trading = True  # 환경을 모의 투자 모드로 설정
 
     # --- Act (실행) ---
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('14')
 
     # --- Assert (검증) ---
@@ -889,7 +889,7 @@ async def test_execute_action_14_market_cap_query_failure_in_live_env():
     )
 
     # ─ Act ─
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("14")
 
     # ─ Assert ─
@@ -908,12 +908,12 @@ async def test_execute_action_20_momentum_strategy_market_closed(setup_mock_app,
     app.cli_view = MagicMock()
     app.cli_view.display_warning_strategy_market_closed = MagicMock()
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('20')
 
     app.cli_view.display_warning_strategy_market_closed.assert_called_once()
     app.logger.warning.assert_called_once_with("시장 미개장 상태에서 전략 실행 시도")
-    app.trading_service.get_top_market_cap_stocks_code.assert_not_called()
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_not_called()
     assert result is True
 
 
@@ -922,18 +922,18 @@ async def test_execute_action_20_momentum_strategy_top_stocks_failure(setup_mock
     app = setup_mock_app
     app.time_manager.is_market_open = MagicMock(return_value=True)
     # get_top_market_cap_stocks_code가 실패 응답을 반환하도록 목 설정
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="1",
         msg1="API 조회 실패",
         data=None
     )
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('20')
 
     # 검증
     app.cli_view.display_strategy_running_message.assert_called_once_with("모멘텀")
-    app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
     app.cli_view.display_top_stocks_failure.assert_called_once_with("API 조회 실패")  # 실패 메시지 확인
     app.logger.warning.assert_called()
     assert result is True  # 앱은 계속 실행되어야 함
@@ -947,11 +947,12 @@ async def test_execute_action_20_success(setup_mock_app):
     app.logger = MagicMock()
     app.time_manager = MagicMock()
     app.time_manager.is_market_open.return_value = True
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
+    app.env.is_paper_trading = False
 
     # ✅ 시총 상위 종목 응답 Mock
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="0",
         msg1="성공",
         data=[
@@ -1019,39 +1020,13 @@ async def test_execute_action_20_success(setup_mock_app):
     }
 
     # ─ Act ─
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("20")
 
     # ─ Assert ─
     app.cli_view.display_strategy_running_message.assert_called_once_with("모멘텀")
     app.cli_view.display_top_stocks_success.assert_called_once()
     assert result == True  # running_status 그대로 반환
-
-
-@pytest.mark.asyncio
-async def test_execute_action_20_market_closed(mocker):
-    """시장 미개장 상태에서 모멘텀 전략이 실행되지 않도록 한다."""
-
-    # ─ Arrange ─
-    app = object.__new__(TradingApp)
-    app.cli_view = MagicMock()
-    app.logger = MagicMock()
-    app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
-    app.broker = MagicMock()
-    app.env = MagicMock()
-
-    # 시장이 열려있지 않은 상태로 설정
-    app.time_manager.is_market_open.return_value = False
-
-    # ─ Act ─
-    result = executor = UserActionExecutor(app)
-    result = await executor.execute("20")
-
-    # ─ Assert ─
-    app.cli_view.display_warning_strategy_market_closed.assert_called_once()
-    app.logger.warning.assert_called_once_with("시장 미개장 상태에서 전략 실행 시도")
-    assert result is True  # running_status 반환값 유지 확인
 
 
 @pytest.mark.asyncio
@@ -1063,21 +1038,22 @@ async def test_execute_action_20_top_stock_api_failure(mocker):
     app.cli_view = MagicMock()
     app.logger = MagicMock()
     app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
 
     app.time_manager.is_market_open.return_value = True
 
     # API 실패 응답 모의 (rt_cd != '0')
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="1",
         msg1="API 오류",
         data=None
     )
 
     # ─ Act ─
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("20")
 
     # ─ Assert ─
@@ -1090,22 +1066,16 @@ async def test_execute_action_20_top_stock_api_failure(mocker):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_20_no_stocks_for_strategy(mocker):
+async def test_execute_action_20_no_stocks_for_strategy(setup_mock_app):
     """시가총액 종목 조회는 성공했지만 전략 대상 종목이 없을 때"""
 
     # ─ Arrange ─
-    app = object.__new__(TradingApp)
-    app.cli_view = MagicMock()
-    app.logger = MagicMock()
-    app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
-    app.broker = MagicMock()
-    app.env = MagicMock()
+    app = setup_mock_app
 
     app.time_manager.is_market_open.return_value = True
 
     # API 응답은 성공, 그러나 output은 mksc_shrn_iscd 없는 구조
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="0",
         msg1="성공",
         data=[
@@ -1121,7 +1091,7 @@ async def test_execute_action_20_no_stocks_for_strategy(mocker):
     )
 
     # ─ Act ─
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("20")
 
     # ─ Assert ─
@@ -1133,16 +1103,16 @@ async def test_execute_action_20_no_stocks_for_strategy(mocker):
 async def test_execute_action_21_momentum_backtest_invalid_count_input_value_error(setup_mock_app, capsys, mocker):
     app = setup_mock_app
     app.cli_view.get_user_input.return_value = "invalid_number"
-    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={"rt_cd": "0", "output": []})
+    app.stock_query_service.get_top_market_cap_stocks_code = AsyncMock(return_value={"rt_cd": "0", "output": []})
     # mocker.patch('strategies.momentum_strategy.MomentumStrategy') # 이 줄을 제거
     # mocker.patch('strategies.strategy_executor.StrategyExecutor') # 이 줄을 제거
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('21')
 
     app.cli_view.get_user_input.assert_awaited_once_with("시가총액 상위 몇 개 종목을 조회할까요? (기본값: 30): ")
     app.cli_view.display_invalid_input_warning.assert_called_once_with("숫자가 아닌 값이 입력되어 기본값 30을 사용합니다.")
-    app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", count=30)
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_awaited_once_with("0000", count=30)
     assert result is True
 
 
@@ -1150,15 +1120,15 @@ async def test_execute_action_21_momentum_backtest_invalid_count_input_value_err
 async def test_execute_action_21_momentum_backtest_zero_or_negative_count_input(setup_mock_app, capsys):
     app = setup_mock_app
     app.cli_view.get_user_input.return_value = "-5"  # 0 이하의 숫자 입력 시뮬레이션
-    app.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value={"rt_cd": "0", "output": []})
+    app.stock_query_service.get_top_market_cap_stocks_code = AsyncMock(return_value={"rt_cd": "0", "output": []})
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('21')
 
     # 검증
     app.cli_view.get_user_input.assert_awaited_once_with("시가총액 상위 몇 개 종목을 조회할까요? (기본값: 30): ")
     app.cli_view.display_invalid_input_warning.assert_called_once_with("0 이하의 수는 허용되지 않으므로 기본값 30을 사용합니다.")  # 경고 메시지 확인
-    app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", count=30)  # 기본값 30으로 호출되었는지 확인
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_awaited_once_with("0000", count=30)  # 기본값 30으로 호출되었는지 확인
     assert result is True  # 앱은 계속 실행되어야 함
 
 
@@ -1170,22 +1140,24 @@ async def test_execute_action_21_empty_top_codes_list(mocker):
     app.cli_view = MagicMock()
     app.logger = MagicMock()
     app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
+
 
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
     app.cli_view.get_user_input = AsyncMock(return_value="2")
 
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="0",
         msg1="정상",
         data=[]
     )
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("21")
 
     assert result is True
@@ -1214,7 +1186,7 @@ async def test_execute_action_21_empty_top_codes_list(mocker):
 #     app.cli_view.get_user_input = AsyncMock(return_value="2")
 # 
 #     # 시가총액 상위 종목 조회 결과를 Mocking
-#     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+#     app.trading_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
 #         rt_cd="0",
 #         msg1="정상",
 #         data=[
@@ -1243,7 +1215,7 @@ async def test_execute_action_21_empty_top_codes_list(mocker):
 #     mocker.patch('strategies.strategy_executor.StrategyExecutor', return_value=mock_executor)
 # 
 #     # ─ Act ─
-#     result = executor = UserActionExecutor(app)
+#     executor = UserActionExecutor(app)
 #     result = await executor.execute("21")
 # 
 #     # ─ Assert ─
@@ -1268,16 +1240,17 @@ async def test_execute_action_21_input_negative_number(mocker):
     app.cli_view = MagicMock()
     app.logger = MagicMock()
     app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
 
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
     app.cli_view.get_user_input = AsyncMock(return_value="-5")
 
-    app.trading_service.get_top_market_cap_stocks_code.return_value = [{"code": "005930"}]
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = [{"code": "005930"}]
 
     mock_executor = AsyncMock()
     mock_executor.execute.return_value = {"follow_through": [], "not_follow_through": []}
@@ -1285,7 +1258,7 @@ async def test_execute_action_21_input_negative_number(mocker):
     mocker.patch("strategies.momentum_strategy.MomentumStrategy", return_value=MagicMock())
     mocker.patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor)
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("21")
 
     assert result is True
@@ -1302,15 +1275,16 @@ async def test_execute_action_21_input_not_a_number(mocker):
     app.cli_view = MagicMock()
     app.logger = MagicMock()
     app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
 
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
     app.cli_view.get_user_input = AsyncMock(return_value="abc")
-    app.trading_service.get_top_market_cap_stocks_code.return_value = [{"code": "005930"}]
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = [{"code": "005930"}]
 
     mock_executor = AsyncMock()
     mock_executor.execute.return_value = {"follow_through": [], "not_follow_through": []}
@@ -1318,7 +1292,7 @@ async def test_execute_action_21_input_not_a_number(mocker):
     mocker.patch("strategies.momentum_strategy.MomentumStrategy", return_value=MagicMock())
     mocker.patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor)
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("21")
 
     assert result is True
@@ -1335,22 +1309,24 @@ async def test_execute_action_21_api_failure(mocker):
     app.cli_view = MagicMock()
     app.logger = MagicMock()
     app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
+
 
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
     app.cli_view.get_user_input = AsyncMock(return_value="2")
 
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="1",  # 실패
         msg1="오류 발생",
         data=None
     )
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("21")
 
     assert result is True
@@ -1365,15 +1341,16 @@ async def test_execute_action_21_strategy_exception(mocker):
     app.cli_view = MagicMock()
     app.logger = MagicMock()
     app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
 
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
 
     app.cli_view.get_user_input = AsyncMock(return_value="1")
-    app.trading_service.get_top_market_cap_stocks_code.return_value = [{"code": "005930"}]
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = [{"code": "005930"}]
 
     mock_strategy = MagicMock()
     mock_executor = AsyncMock()
@@ -1382,7 +1359,7 @@ async def test_execute_action_21_strategy_exception(mocker):
     mocker.patch("strategies.momentum_strategy.MomentumStrategy", return_value=mock_strategy)
     mocker.patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor)
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("21")
 
     assert result is True
@@ -1398,9 +1375,11 @@ async def test_execute_action_21_no_stock_codes_after_filtering(mocker):
     app.cli_view = MagicMock()
     app.logger = MagicMock()
     app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
+
 
     app.backtest_data_provider = MagicMock()
     app.backtest_data_provider.realistic_price_lookup = MagicMock()
@@ -1408,13 +1387,13 @@ async def test_execute_action_21_no_stock_codes_after_filtering(mocker):
     app.cli_view.get_user_input = AsyncMock(return_value="2")
 
     # 종목 정보가 있으나 'code' 필드가 없음 → 필터링 후 빈 리스트
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="0",
         msg1="정상",
         data=[{"ticker": "INVALID"}]  # mksc_shrn_iscd 없는 데이터
     )
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("21")
 
     assert result is True
@@ -1436,7 +1415,7 @@ async def test_execute_action_21_no_stock_codes_after_filtering(mocker):
 #     app.env = MagicMock()
 #
 #     # ─ Arrange ─
-#     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+#     app.trading_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
 #         rt_cd="0",
 #         msg1="정상",
 #         data=[
@@ -1483,16 +1462,17 @@ async def test_execute_action_22_response_format_error():
     app = object.__new__(TradingApp)
     app.cli_view = MagicMock()
     app.logger = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = MagicMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
 
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
         rt_cd="0",
         msg1="정상처리",
         data="INVALID"  # 올바른 리스트가 아닌 경우 (예외 케이스 유도)
     )
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("22")
 
     assert result is True
@@ -1506,24 +1486,20 @@ async def test_execute_action_22_no_stocks_for_strategy(mocker):
     app.cli_view = MagicMock()
     app.cli_view.get_user_input = AsyncMock(return_value="1")
     app.logger = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
 
-    app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-        rt_cd="0",
-        msg1="정상",
-        data=[]
+    app.stock_query_service.handle_get_top_market_cap_stocks_code = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="정상",
+            data=[]
+        )
     )
 
-    mock_strategy = MagicMock()
-    mock_executor = AsyncMock()
-    mock_executor.execute.side_effect = Exception("GapUpPullback 실행 오류")
-
-    mocker.patch("strategies.GapUpPullback_strategy.GapUpPullbackStrategy", return_value=mock_strategy)
-    mocker.patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor)
-
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("22")
 
     assert result is True
@@ -1535,11 +1511,12 @@ async def test_execute_action_22_strategy_exception(mocker):
     app = object.__new__(TradingApp)
     app.cli_view = MagicMock()
     app.logger = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
+    app.env.is_paper_trading = False
 
-    app.trading_service.get_top_market_cap_stocks_code.return_value = {
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = {
         "rt_cd": "0",
         "output": [{"mksc_shrn_iscd": "005930"}]
     }
@@ -1551,119 +1528,12 @@ async def test_execute_action_22_strategy_exception(mocker):
     mocker.patch("strategies.GapUpPullback_strategy.GapUpPullbackStrategy", return_value=mock_strategy)
     mocker.patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor)
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("22")
 
     assert result is True
     app.cli_view.display_strategy_error.assert_called_once()
     app.logger.error.assert_called_once()
-
-# tests/test_trading_app.py
-#
-# @pytest.mark.asyncio
-# async def test_execute_action_22_gap_up_pullback_strategy_success(setup_mock_app, mocker):
-#     """메뉴 '22' 선택 시 GapUpPullback 전략이 성공적으로 실행되는지 테스트합니다."""
-#     # --- Arrange (준비) ---
-#     app = setup_mock_app
-#     app.time_manager.is_market_open.return_value = True
-#
-#     # ✅ 1. 사용자 입력을 모의(Mock)하여 count가 1이 되도록 설정합니다.
-#     app.cli_view.get_user_input.return_value = "1"
-#
-#     # trading_service가 유효한 응답을 반환하도록 설정
-#     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-#         rt_cd="0",
-#         msg1="정상처리",
-#         data=[
-#             {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "data_rank": "1"},
-#             {"mksc_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "data_rank": "2"},
-#         ]
-#     )
-#
-#     # StrategyExecutor가 반환할 결과값을 미리 정의
-#     mock_strategy_instance = AsyncMock()
-#     mock_executor_instance = AsyncMock()
-#     expected_result = {
-#         "total_processed": 2,
-#         "buy_attempts": 1, # 예시 값 추가
-#         "buy_successes": 1, # 예시 값 추가
-#         "sell_attempts": 0, # 예시 값 추가
-#         "sell_successes": 0, # 예시 값 추가
-#         "execution_time": 1.23, # 예시 값 추가
-#         "gapup_pullback_selected": [{"name": "삼성전자", "code": "005930"}],
-#         "gapup_pullback_rejected": [{"name": "SK하이닉스", "code": "000660"}],
-#     }
-#     mock_executor_instance.execute.return_value = expected_result
-#
-#     # ✅ 2. 클래스가 사용되는 'trading_app' 모듈을 기준으로 패치 경로를 수정합니다.
-#     mocker.patch("strategies.GapUpPullback_strategy.GapUpPullbackStrategy", return_value=mock_strategy)
-#     mocker.patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor)
-#
-#     # --- Act (실행) ---
-#     executor = UserActionExecutor(app)
-#     result = await executor.execute('22')
-#
-#     # --- Assert (검증) ---
-#     app.cli_view.display_strategy_running_message.assert_called_once_with("GapUpPullback")
-#     app.trading_service.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", count=1)
-
-
-# @pytest.mark.asyncio
-# async def test_execute_action_22_list_format_extracts_codes_correctly(mocker):
-#     """top_codes가 list 형식일 때 'code' 필드를 가진 종목코드를 정확히 추출하는지 테스트"""
-#     # ─ Arrange ─
-#     app = object.__new__(TradingApp)
-#     app.logger = MagicMock()
-#     app.cli_view = MagicMock()
-#     app.cli_view.get_user_input = AsyncMock(return_value="2")
-#     app.cli_view.display_strategy_results = MagicMock()  # ✅ 명시적으로 mock
-#     app.broker = MagicMock()
-#     app.env = MagicMock()
-#     app.env.is_paper_trading = False  # ✅ 필수
-#
-#     app.trading_service = AsyncMock()
-#     app.trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-#         rt_cd="0",
-#         msg1="정상",
-#         data=[
-#             {"mksc_shrn_iscd": "123456"},
-#             {"mksc_shrn_iscd": "654321"},
-#             {"not_code": "000000"}  # 무시되어야 함
-#         ]
-#     )
-#
-#     mock_strategy = MagicMock()
-#     mock_executor = AsyncMock()
-#
-#     # ✅ display_strategy_results가 사용하는 키들을 포함한 완전한 결과 객체를 만듭니다.
-#     expected_result = {
-#         "total_processed": 2,
-#         "buy_attempts": 1,
-#         "buy_successes": 1,
-#         "sell_attempts": 0,
-#         "sell_successes": 0,
-#         "execution_time": 0.1,
-#         "gapup_pullback_selected": [{"code": "123456"}],
-#         "gapup_pullback_rejected": [{"code": "654321"}]
-#     }
-#     mock_executor.execute.return_value = expected_result
-#
-#     # ✅ 패치 경로를 클래스가 사용되는 'trading_app' 모듈로 수정합니다.
-#     mocker.patch("strategies.GapUpPullback_strategy.GapUpPullbackStrategy", return_value=mock_strategy)
-#     mocker.patch("strategies.strategy_executor.StrategyExecutor", return_value=mock_executor)
-#
-#     # ─ Act ─
-#     executor = UserActionExecutor(app)
-#     result = await executor.execute("22")
-#
-#     # ─ Assert ─
-#     assert result is True
-#
-#     # display_strategy_results가 올바른 인자로 호출되었는지 확인
-#     app.cli_view.display_strategy_results.assert_called_once_with("GapUpPullback", expected_result)
-#
-#     # executor.execute가 필터링된 종목 코드로 호출되었는지 확인
-#     mock_executor.execute.assert_called_once_with(["123456", "654321"])
 
 
 @pytest.mark.asyncio
@@ -1671,7 +1541,7 @@ async def test_execute_action_98_invalidate_token(setup_mock_app, capsys):
     app = setup_mock_app
     app.env.invalidate_token.return_value = None
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('98')
 
     app.env.invalidate_token.assert_called_once()
@@ -1704,7 +1574,7 @@ async def test_execute_action_99_exit_app(setup_mock_app):
 async def test_execute_action_999_invalid_menu_general(setup_mock_app):
     app = setup_mock_app
     # 유효하지 않은 임의의 메뉴 선택
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('999')
 
     # display_invalid_menu_choice가 호출되었는지 확인
@@ -1817,14 +1687,15 @@ async def test_execute_action_20_strategy_exception(mocker):
     app.cli_view = MagicMock()
     app.logger = MagicMock()
     app.time_manager = MagicMock()
-    app.trading_service = AsyncMock()
+    app.stock_query_service = AsyncMock()
     app.broker = MagicMock()
     app.env = MagicMock()
 
+    app.env.is_paper_trading = False
     app.time_manager.is_market_open.return_value = True
 
     # 정상적으로 종목 조회는 됨
-    app.trading_service.get_top_market_cap_stocks_code.return_value = {
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = {
         'rt_cd': '0',
         'output': [{'mksc_shrn_iscd': '005930'}]
     }
@@ -1844,7 +1715,7 @@ async def test_execute_action_20_strategy_exception(mocker):
     mocker.patch(f"{MODULE_PATH_EXECUTOR}.StrategyExecutor", return_value=mock_executor)
 
     # ─ Act ─
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("20")
 
     # ─ Assert ─
@@ -1988,12 +1859,11 @@ class TestTradingApp(unittest.IsolatedAsyncioTestCase):
         self.mock_env = MagicMock()
         self.mock_logger = MagicMock()
         self.mock_time_manager = MagicMock()
-        self.mock_trading_service = AsyncMock()  # TradingService Mock 추가
 
         # OrderExecutionService와 StockQueryService도 Mocking합니다.
         # 실제 인스턴스 대신 Mock을 사용합니다.
         self.mock_stock_query_service = MagicMock()
-        self.mock_stock_query_service = MagicMock()
+        self.mock_order_execution_service = MagicMock()
 
         # TradingApp 인스턴스를 __init__을 우회하여 생성하고 필요한 속성을 수동으로 Mocking합니다.
         self.app = object.__new__(TradingApp)
@@ -2001,9 +1871,8 @@ class TestTradingApp(unittest.IsolatedAsyncioTestCase):
         self.app.env = self.mock_env
         self.app.logger = self.mock_logger
         self.app.time_manager = self.mock_time_manager
-        self.app.trading_service = self.mock_trading_service  # TradingService 할당
-        self.app.stock_query_service = self.mock_stock_query_service  # OrderExecutionService 할당
-        self.app.stock_query_service = self.mock_stock_query_service  # StockQueryService 할당
+        self.app.stock_query_service = self.mock_stock_query_service # StockQueryService 할당
+        self.app.order_execution_service = self.mock_order_execution_service # OrderExecutionService 할당
 
         # _complete_api_initialization 및 select_environment를 Mocking하여 제어합니다.
         self.app._complete_api_initialization = AsyncMock(return_value=True)
@@ -2032,61 +1901,6 @@ class TestTradingApp(unittest.IsolatedAsyncioTestCase):
         self.app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
         # select_environment가 호출되었는지 확인
         self.app.select_environment.assert_awaited_once()
-
-    # @pytest.mark.asyncio # 이 데코레이터를 제거합니다.
-    async def test_execute_action_2_account_balance_success(self):
-        """
-        _execute_action 메서드에서 choice '2' (계좌 잔고 조회) 선택 시
-        계좌 잔고 조회가 성공하여 display_account_balance가 호출되는지 검증합니다 (182 라인).
-        """
-        # ─ 준비 (Arrange) ─
-        # trading_service.get_account_balance가 성공적인 잔고를 반환하도록 Mocking합니다.
-
-        mock_balance_data = ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value,
-            msg1="정상",
-            data={"dnca_tot_amt": "1234567"}  # 실제 구조에 맞게 조정
-        )
-        self.mock_trading_service.get_account_balance.return_value = mock_balance_data
-        self.app.cli_view.display_account_balance = MagicMock()
-
-        # ─ 실행 (Act) ─
-        # _execute_action을 '2' 선택으로 호출합니다.
-        executor = UserActionExecutor(self.app)
-        running_status = await executor.execute('2')
-
-        # ─ 검증 (Assert) ─
-        # trading_service.get_account_balance가 호출되었는지 확인
-        self.mock_trading_service.get_account_balance.assert_awaited_once()
-        # 182번 라인: cli_view.display_account_balance가 올바른 인자로 호출되었는지 확인
-        self.app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data.data)
-        # running_status가 True로 유지되었는지 확인 (기본값)
-        assert running_status is True
-
-    # @pytest.mark.asyncio # 이 데코레이터를 제거합니다.
-    async def test_execute_action_2_account_balance_failure(self):
-        """
-        _execute_action 메서드에서 choice '2' (계좌 잔고 조회) 선택 시
-        계좌 잔고 조회가 실패하여 display_account_balance_failure가 호출되는지 검증합니다.
-        """
-        # ─ 준비 (Arrange) ─
-        # trading_service.get_account_balance가 실패를 나타내는 None을 반환하도록 Mocking합니다.
-        self.mock_trading_service.get_account_balance.return_value = None
-
-        # ─ 실행 (Act) ─
-        # _execute_action을 '2' 선택으로 호출합니다.
-        executor = UserActionExecutor(self.app)
-        running_status = await executor.execute('2')
-
-        # ─ 검증 (Assert) ─
-        # trading_service.get_account_balance가 호출되었는지 확인
-        self.mock_trading_service.get_account_balance.assert_awaited_once()
-        # cli_view.display_account_balance가 호출되지 않았는지 확인
-        self.app.cli_view.display_account_balance.assert_not_called()
-        # cli_view.display_account_balance_failure가 호출되었는지 확인
-        self.app.cli_view.display_account_balance_failure.assert_called_once()
-        # running_status가 True로 유지되었는지 확인 (기본값)
-        assert running_status is True
 
     # @pytest.mark.asyncio # 이 데코레이터를 제거합니다.
     async def test_run_async_api_initialization_fails(self):
@@ -2160,7 +1974,7 @@ async def test_execute_action_16_calls_yesterday_upper_limit_handler_is_real(set
 
     # --- Act ---
     # Call the action for menu '16'.
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('16')
 
     # --- Assert ---
@@ -2182,7 +1996,7 @@ async def test_execute_action_17_calls_yesterday_upper_limit_handler_is_paper(se
     app.env.is_paper_trading = True
 
     # --- Act ---
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('17')
 
     # --- Assert ---
@@ -2205,7 +2019,7 @@ async def test_execute_action_17_calls_yesterday_upper_limit_handler_is_real(set
 
     # --- Act ---
     # Call the action for menu '16'.
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('17')
 
     # --- Assert ---
@@ -2309,15 +2123,15 @@ async def test_execute_action_2_get_account_balance_integration(setup_mock_app):
     mock_response = ResCommonResponse(rt_cd="0", msg1="성공", data=mock_balance_data)
 
     # ✅ 이 줄을 추가하여 trading_service가 준비된 응답을 반환하도록 설정합니다.
-    app.trading_service.get_account_balance.return_value = mock_response
+    app.stock_query_service.handle_get_account_balance.return_value = mock_response
 
     # 메뉴 '2' 액션을 실행합니다.
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute("2")
 
     # 검증
     assert result is True  # 액션 실행 후 앱은 계속 실행되어야 합니다.
-    app.trading_service.get_account_balance.assert_awaited_once()
+    app.stock_query_service.handle_get_account_balance.assert_awaited_once()
     app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data)
     app.cli_view.display_account_balance_failure.assert_not_called()
 
@@ -2335,7 +2149,7 @@ async def test_execute_action_18_realtime_stream_new_menu_option(setup_mock_app)
     # ✅ 검증할 메서드에 맞게 return_value 설정 (필수는 아니지만 좋은 습관)
     app.stock_query_service.handle_realtime_stream.return_value = None
 
-    result = executor = UserActionExecutor(app)
+    executor = UserActionExecutor(app)
     result = await executor.execute('18')
 
     calls = [call.args[0] for call in app.cli_view.get_user_input.await_args_list]

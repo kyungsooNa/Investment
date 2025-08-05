@@ -92,20 +92,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         with patch('builtins.print') as mock_print:
             await self.handler.handle_get_account_balance()
             mock_print.assert_called()
-            self.mock_logger.info.assert_called_once()
-            self.assertIn("계좌 잔고 조회 성공", self.mock_logger.info.call_args[0][0])
-
-    async def test_handle_get_account_balance_failure_rt_cd(self):
-        self.mock_trading_service.get_account_balance.return_value = ResCommonResponse(
-            rt_cd="1",
-            msg1="에러",
-            data={"output2": [{"dnca_tot_amt": "1000000"}]}
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_account_balance()
-            mock_print.assert_called()
-            self.mock_logger.error.assert_called_once()
-            self.assertIn("계좌 잔고 조회 실패", self.mock_logger.error.call_args[0][0])
 
     # --- handle_get_top_market_cap_stocks_code 함수 테스트 ---
     async def test_handle_get_top_market_cap_stocks_code_success(self):
@@ -118,7 +104,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             ]
         )
         with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_top_market_cap_stocks("0000", 2)
+            await self.handler.handle_get_top_market_cap_stocks_code("0000", 2)
             mock_print.assert_called()
             mock_print.assert_called()
             self.mock_logger.info.assert_called_once()
@@ -131,7 +117,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             data=[]
         )
         with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_top_market_cap_stocks("0000", 1)
+            await self.handler.handle_get_top_market_cap_stocks_code("0000", 1)
             mock_print.assert_called()
             self.mock_logger.info.assert_called_once()
             self.assertIn("시가총액 상위 종목 조회 성공", self.mock_logger.info.call_args[0][0])
@@ -143,7 +129,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             data=None
         )
         with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_top_market_cap_stocks("0000", 1)
+            await self.handler.handle_get_top_market_cap_stocks_code("0000", 1)
             mock_print.assert_called()
             self.mock_logger.error.assert_called_once()
             self.assertIn("실패: 시가총액 상위 종목 조회", self.mock_logger.error.call_args[0][0])
@@ -151,7 +137,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_get_top_market_cap_stocks_none_return(self):
         self.mock_trading_service.get_top_market_cap_stocks_code.return_value = None
         with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_top_market_cap_stocks("0000", 1)
+            await self.handler.handle_get_top_market_cap_stocks_code("0000", 1)
             mock_print.assert_called()
             self.mock_logger.error.assert_called_once_with("실패: 시가총액 상위 종목 조회: None")
 

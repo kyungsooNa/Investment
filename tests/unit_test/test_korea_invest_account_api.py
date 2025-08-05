@@ -14,6 +14,7 @@ async def test_get_account_balance():
 
     mock_logger = MagicMock()
     mock_env = MagicMock()
+    mock_env.is_paper_trading = True
     mock_api = KoreaInvestApiAccount(
         env=mock_env,
         logger=mock_logger
@@ -34,6 +35,7 @@ async def test_get_real_account_balance_with_dash():
     }
 
     mock_env = MagicMock()
+    mock_env.is_paper_trading = False
     mock_logger = MagicMock()
     mock_api = KoreaInvestApiAccount(
         env=mock_env,
@@ -41,10 +43,10 @@ async def test_get_real_account_balance_with_dash():
     )
     mock_api.call_api = AsyncMock(return_value={'result': 'real_success'})
 
-    result = await mock_api.get_real_account_balance()
+    result = await mock_api.get_account_balance()
 
     assert result == {'result': 'real_success'}
-    mock_logger.info.assert_called_with("실전 계좌 잔고 조회 시도...")
+    mock_logger.info.assert_called_with("실전투자 계좌 잔고 조회 시도...")
 
 @pytest.mark.asyncio
 async def test_get_real_account_balance_without_dash():
@@ -55,6 +57,7 @@ async def test_get_real_account_balance_without_dash():
     }
 
     mock_env = MagicMock()
+    mock_env.is_paper_trading = False
     mock_logger = MagicMock()
     mock_api = KoreaInvestApiAccount(
         env=mock_env,
@@ -62,7 +65,7 @@ async def test_get_real_account_balance_without_dash():
     )
     mock_api.call_api = AsyncMock(return_value={'result': 'real_success_without_dash'})
 
-    result = await mock_api.get_real_account_balance()
+    result = await mock_api.get_account_balance()
 
     assert result == {'result': 'real_success_without_dash'}
-    mock_logger.info.assert_called_with("실전 계좌 잔고 조회 시도...")
+    mock_logger.info.assert_called_with("실전투자 계좌 잔고 조회 시도...")

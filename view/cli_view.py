@@ -50,8 +50,8 @@ class CLIView:
             output1 = balance_info.get('output1', [])
             output2 = balance_info.get('output2', [])
 
-            if not output1 or not output2:
-                print("잔고 정보가 없습니다.")
+            if not output2:
+                print("게좌 정보가 없습니다.")
                 return
 
             asset_info = output2[0]
@@ -64,6 +64,10 @@ class CLIView:
             print(f"총 수익률: {float(asset_info.get('asst_icdc_erng_rt', 0)):.4%}")
             print(f"당일 매수 금액: {int(asset_info.get('thdt_buy_amt', 0)):,}원")
             print(f"당일 매도 금액: {int(asset_info.get('thdt_sll_amt', 0)):,}원")
+
+            if not output1:
+                print("보유 종목 정보가 없습니다.")
+                return
 
             # 보유 종목
             print("\n--- 보유 종목 목록 ---")

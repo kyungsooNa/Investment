@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, AsyncMock
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from common.types import ErrorCode, ResCommonResponse
 
+
 def test_korea_invest_api_client_initialization(korea_invest_client_instance):
     """KoreaInvestApiClient 초기화가 정상적으로 이루어지는지 테스트합니다."""
     client, mock_quotations, mock_account, mock_trading, mock_websocket_api, mock_logger, mock_env = korea_invest_client_instance
@@ -55,8 +56,6 @@ async def test_quotations_get_price_summary_success():
     assert result["open"] == 10000
     assert result["current"] == 10500
     assert abs(result["change_rate"] - 5.0) < 0.01
-
-
 
 
 @pytest.fixture
@@ -126,7 +125,6 @@ def korea_invest_client_instance(mocker):
     return client, mock_quotations_instance, mock_account_instance, mock_trading_instance, mock_websocket_api_instance, mock_logger, mock_env
 
 
-
 @pytest.mark.asyncio
 async def test_quotations_get_price_summary_success(korea_invest_client_instance):
     """get_price_summary 메서드 호출 성공 케이스를 테스트합니다."""
@@ -145,7 +143,7 @@ async def test_quotations_get_price_summary_success(korea_invest_client_instance
     )
 
     # get_price_summary 호출
-    result : ResCommonResponse = await client.get_price_summary("005930")
+    result: ResCommonResponse = await client.get_price_summary("005930")
 
     # 검증
     mock_quotations.get_price_summary.assert_awaited_once_with("005930")
@@ -169,51 +167,26 @@ async def test_get_account_balance_delegation(korea_invest_client_instance):
 
 
 @pytest.mark.asyncio
-async def test_get_real_account_balance_delegation(korea_invest_client_instance):
-    """get_real_account_balance 메서드가 _account.get_real_account_balance를 올바르게 호출하는지 테스트합니다."""
-    client, _, mock_account, _, _, _, _ = korea_invest_client_instance
-    mock_account.get_real_account_balance.return_value = {"output": "account_balance_real_data"}
-
-    result = await client.get_real_account_balance()
-
-    mock_account.get_real_account_balance.assert_awaited_once()
-    assert result == {"output": "account_balance_real_data"}
-
-
-# --- Trading API delegation 테스트 (라인 64, 67, 71 커버) ---
-@pytest.mark.asyncio
-async def test_buy_stock_delegation(korea_invest_client_instance):
-    """buy_stock 메서드가 _trading.place_stock_order를 'buy' 타입으로 호출하는지 테스트합니다."""
-    client, _, _, mock_trading, _, _, _ = korea_invest_client_instance
-    mock_trading.place_stock_order.return_value = {"rt_cd": "0", "msg1": "매수 주문 성공"}
-
-    result = await client.buy_stock("005930", 70000, 10)
-
-    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, "buy")
-    assert result == {"rt_cd": "0", "msg1": "매수 주문 성공"}
-
-
-@pytest.mark.asyncio
-async def test_sell_stock_delegation(korea_invest_client_instance):
-    """sell_stock 메서드가 _trading.place_stock_order를 'sell' 타입으로 호출하는지 테스트합니다."""
+async def test_place_stock_order_sell_delegation(korea_invest_client_instance):
+    """place_stock_order 메서드가 _trading.place_stock_order를 올바른 인자로 호출하는지 테스트합니다."""
     client, _, _, mock_trading, _, _, _ = korea_invest_client_instance
     mock_trading.place_stock_order.return_value = {"rt_cd": "0", "msg1": "매도 주문 성공"}
 
-    result = await client.sell_stock("005930", 69000, 5)
+    result = await client.place_stock_order("005930", 69000, 5, is_buy=False)  # 시장가 매수
 
-    mock_trading.place_stock_order.assert_awaited_once_with("005930", 69000, 5, "sell")
+    mock_trading.place_stock_order.assert_awaited_once_with("005930", 69000, 5, False)
     assert result == {"rt_cd": "0", "msg1": "매도 주문 성공"}
 
 
 @pytest.mark.asyncio
-async def test_place_stock_order_delegation(korea_invest_client_instance):
+async def test_place_stock_order_buy_delegation(korea_invest_client_instance):
     """place_stock_order 메서드가 _trading.place_stock_order를 올바른 인자로 호출하는지 테스트합니다."""
     client, _, _, mock_trading, _, _, _ = korea_invest_client_instance
     mock_trading.place_stock_order.return_value = {"rt_cd": "0", "msg1": "주문 성공"}
 
-    result = await client.place_stock_order("005930", 70000, 10, "buy")  # 시장가 매수
+    result = await client.place_stock_order("005930", 70000, 10, is_buy=True)  # 시장가 매수
 
-    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, "buy")
+    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, True)
     assert result == {"rt_cd": "0", "msg1": "주문 성공"}
 
 

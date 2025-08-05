@@ -67,7 +67,7 @@ def real_app_instance(mocker, get_mock_config):
     # 2. 실제 TradingApp 인스턴스를 생성합니다.
     #    이 과정에서 config.yaml 로드, Logger, TimeManager, Env, TokenManager 초기화가 자동으로 수행됩니다.
     app = TradingApp(logger=dummy_logger)
-    app.env.set_trading_mode(True) # 실전 투자 환경 테스트
+    app.env.set_trading_mode(True) # 모의 투자 환경 테스트
     app.config = get_mock_config
     app.logger = MagicMock()
 
@@ -372,7 +372,7 @@ async def test_display_stock_vs_open_price_full_integration(real_app_instance, m
     )
 
     mock_call_api = mocker.patch.object(
-        app.trading_service._broker_api_wrapper._client._client._quotations,
+        app.stock_query_service.trading_service._broker_api_wrapper._client._client._quotations,
         "call_api",
         return_value=mock_response
     )
@@ -670,9 +670,6 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration(real_ap
     # ✅ 시장을 연 상태로 설정
     app.time_manager.is_market_open = MagicMock(return_value=True)
 
-    # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(True)  # ← 이게 실제 API 내부 속성까지 반영
-
     # ✅ API 응답 모킹 (시가총액 상위 + 현재가)
     mock_top_response = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
@@ -758,9 +755,6 @@ async def test_handle_yesterday_upper_limit_stocks_full_integration(real_app_ins
     """
     app = real_app_instance
 
-    # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(True)
-
     # ✅ 모의 응답: 시가총액 상위 종목 코드 조회 → 종목 코드 리스트 반환
     mock_top_response = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
@@ -804,11 +798,8 @@ async def test_handle_current_upper_limit_stocks_full_integration(real_app_insta
     """
     app = real_app_instance
 
-    # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(True)
-
     mocker.patch.object(
-        app.trading_service._broker_api_wrapper,
+        app.stock_query_service.trading_service._broker_api_wrapper,
         "get_all_stock_codes",
         return_value=pd.DataFrame({
             "종목코드": ["005930", "000660"],
@@ -862,7 +853,7 @@ async def test_handle_realtime_stream_full_integration(real_app_instance, mocker
     app.cli_view.get_user_input.side_effect = ["005930", "price"]
 
     # ✅ 웹소켓 구독 함수 모킹
-    inner_client = app.trading_service._broker_api_wrapper._client._client
+    inner_client = app.stock_query_service.trading_service._broker_api_wrapper._client._client
 
     mock_subscribe = mocker.patch.object(
         inner_client._websocketAPI,
@@ -888,9 +879,6 @@ async def test_execute_action_momentum_strategy_success(real_app_instance, mocke
     TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code → StrategyExecutor.execute
     """
     app = real_app_instance
-
-    # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(True)
 
     # ✅ 시장 개장 상태로 설정
     mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
@@ -919,7 +907,7 @@ async def test_execute_action_momentum_strategy_success(real_app_instance, mocke
         ]
     )
 
-    inner_client = app.trading_service._broker_api_wrapper._client._client
+    inner_client = app.stock_query_service.trading_service._broker_api_wrapper._client._client
 
     mocker.patch.object(
         inner_client._quotations,
@@ -961,9 +949,6 @@ async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instanc
     """
     app = real_app_instance
 
-    # ✅ 실전 투자 환경으로 설정
-    app.env.set_trading_mode(True)
-
     # ✅ 시장 개장 상태로 설정
     mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
 
@@ -975,7 +960,7 @@ async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instanc
     )
 
     # ✅ 실패 응답 모킹
-    inner_client = app.trading_service._broker_api_wrapper._client._client
+    inner_client = app.stock_query_service.trading_service._broker_api_wrapper._client._client
 
     mocker.patch.object(
         inner_client._quotations,
@@ -984,7 +969,7 @@ async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instanc
         return_value=fail_response
     )
     # ✅ 메시지 출력 메서드 모킹
-    app.cli_view.display_top_stocks_failure = MagicMock()
+    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
     app.logger.warning = MagicMock()
 
     # --- Act ---
@@ -993,7 +978,7 @@ async def test_execute_action_momentum_strategy_market_cap_fail(real_app_instanc
 
     # --- Assert (검증) ---
     assert running_status == True
-    app.cli_view.display_top_stocks_failure.assert_called()
+    app.cli_view.display_warning_paper_trading_not_supported.assert_called()
     app.logger.warning.assert_called()
 
 
@@ -1021,7 +1006,7 @@ async def test_execute_action_momentum_backtest_strategy_success(real_app_instan
         ]
     )
 
-    inner_client = app.trading_service._broker_api_wrapper._client._client
+    inner_client = app.stock_query_service.trading_service._broker_api_wrapper._client._client
 
     mocker.patch.object(
         inner_client._quotations,
@@ -1042,7 +1027,7 @@ async def test_execute_action_momentum_backtest_strategy_success(real_app_instan
                  return_value=mock_strategy_result)
 
     # ✅ CLI 출력 함수 모킹
-    app.cli_view.display_strategy_running_message = MagicMock()
+    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
     app.cli_view.display_strategy_results = MagicMock()
     app.cli_view.display_follow_through_stocks = MagicMock()
     app.cli_view.display_not_follow_through_stocks = MagicMock()
@@ -1053,7 +1038,7 @@ async def test_execute_action_momentum_backtest_strategy_success(real_app_instan
 
     # --- 검증 ---
     assert running_status is True
-    app.cli_view.display_strategy_running_message.assert_called_once_with("모멘텀 백테스트")
+    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once_with("모멘텀 백테스트")
     app.cli_view.display_strategy_results.assert_not_called()
     app.cli_view.display_follow_through_stocks.assert_not_called()
     app.cli_view.display_not_follow_through_stocks.assert_not_called()
@@ -1083,7 +1068,7 @@ async def test_execute_action_gapup_pullback_strategy_success(real_app_instance,
         ]
     )
 
-    inner_client = app.trading_service._broker_api_wrapper._client._client
+    inner_client = app.stock_query_service.trading_service._broker_api_wrapper._client._client
 
     mocker.patch.object(
         inner_client._quotations,
@@ -1101,7 +1086,7 @@ async def test_execute_action_gapup_pullback_strategy_success(real_app_instance,
                  return_value=mock_strategy_result)
 
     # ✅ CLI 출력 메서드 모킹
-    app.cli_view.display_strategy_running_message = MagicMock()
+    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
     app.cli_view.display_strategy_results = MagicMock()
     app.cli_view.display_gapup_pullback_selected_stocks = MagicMock()
     app.cli_view.display_gapup_pullback_rejected_stocks = MagicMock()
@@ -1112,7 +1097,7 @@ async def test_execute_action_gapup_pullback_strategy_success(real_app_instance,
 
     # --- 검증 ---
     assert running_status is True
-    app.cli_view.display_strategy_running_message.assert_called_once_with("GapUpPullback")
+    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once_with("GapUpPullback")
     app.cli_view.display_strategy_results.assert_not_called()
     app.cli_view.display_gapup_pullback_selected_stocks.assert_not_called()
     app.cli_view.display_gapup_pullback_rejected_stocks.assert_not_called()
