@@ -5,7 +5,7 @@ import pandas as pd
 import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.stock_query_service import StockQueryService
+from services.stock_query_service import StockQueryService
 
 # 경로 문제를 피하기 위해, 테스트 실행 시 프로젝트 루트를 기준으로 import
 from market_data.stock_code_mapper import StockCodeMapper

@@ -7,7 +7,7 @@ from unittest.mock import call, ANY
 from common.types import ResCommonResponse, ErrorCode, ResBasicStockInfo
 
 # 테스트 대상 모듈 임포트
-from app.order_execution_service import OrderExecutionService
+from services.order_execution_service import OrderExecutionService
 
 # 테스트를 위한 MockLogger
 class MockLogger:
@@ -472,7 +472,7 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.print_patch = patch("builtins.print")
         self.mock_print = self.print_patch.start()
 
-        from app.stock_query_service import StockQueryService  # 필요 시 수정
+        from services.stock_query_service import StockQueryService  # 필요 시 수정
         self.service = StockQueryService(
             trading_service=self.mock_trading_service,
             logger=self.mock_logger,

@@ -644,7 +644,7 @@ async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
     api._async_session.post.assert_called_once_with(
         "http://test",
         headers=api._headers,  # api 인스턴스의 헤더를 사용합니다.
-        json={"x": "y"}  # httpx는 dict 데이터를 'json' 파라미터로 받습니다.
+        data=json.dumps({"x": "y"})  # ✅ 문자열로 바꿔야 함
     )
 
 

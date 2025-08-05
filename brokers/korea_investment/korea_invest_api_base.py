@@ -156,8 +156,7 @@ class KoreaInvestApiBase:
                 return await self._async_session.post(
                     url,
                     headers=self._headers,
-                    # data=json_body,
-                    json=data, # @TODO json으로 가능한지 확인.
+                    data=json_body, # json 넘기면 실패.
                 )
             else:
                 raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
