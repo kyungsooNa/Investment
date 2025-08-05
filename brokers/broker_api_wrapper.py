@@ -156,26 +156,12 @@ class BrokerAPIWrapper:
     # --- KoreaInvestApiClient / Account API delegation ---
     async def get_account_balance(self) -> ResCommonResponse:
         """계좌 잔고를 조회합니다 (KoreaInvestApiAccount 위임)."""
-        # KoreaInvestApiClient.get_account_balance도 ResCommonResponse를 반환하도록 수정 필요
         return await self._client.get_account_balance()
 
-    async def get_real_account_balance(self) -> ResCommonResponse:
-        """계좌 잔고를 조회합니다 (KoreaInvestApiAccount 위임)."""
-        # KoreaInvestApiClient.get_real_account_balance도 ResCommonResponse를 반환하도록 수정 필요
-        return await self._client.get_real_account_balance()
-
     # --- KoreaInvestApiClient / Trading API delegation ---
-    async def buy_stock(self, code: str, quantity: int, price: int) -> ResCommonResponse:
-        """주식 매수 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
-        return await self._client.place_stock_order(code, price, quantity, "buy", "01")
-
-    async def sell_stock(self, code: str, quantity: int, price: int) -> ResCommonResponse:
-        """주식 매도 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
-        return await self._client.place_stock_order(code, price, quantity, "sell", "01")
-
-    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type) -> ResCommonResponse:
+    async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool) -> ResCommonResponse:
         """범용 주식 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
-        return await self._client.place_stock_order(stock_code, order_price, order_qty, trade_type)
+        return await self._client.place_stock_order(stock_code, order_price, order_qty, is_buy)
 
     # --- KoreaInvestApiClient / WebSocket API delegation ---
     async def connect_websocket(self, on_message_callback=None) -> Any:  # 실제 반환 값에 따라 타입 변경

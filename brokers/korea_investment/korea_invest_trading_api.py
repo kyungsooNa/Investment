@@ -10,6 +10,8 @@ from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
 from typing import Optional
 
+from common.types import ResCommonResponse, ErrorCode
+
 
 class KoreaInvestApiTrading(KoreaInvestApiBase):
     def __init__(self, env: KoreaInvestApiEnv, logger, async_client: Optional[httpx.AsyncClient] = None):
@@ -29,6 +31,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         hashkey_headers["appkey"] = full_config['api_key']
         hashkey_headers["appsecret"] = full_config['api_secret_key']
         hashkey_headers["Content-Type"] = "application/json; charset=utf-8"
+        hash_response = None
 
         try:
             loop = asyncio.get_running_loop()
@@ -57,20 +60,19 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._logger.error(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
             return None
 
-    async def place_stock_order(self, stock_code, order_price, order_qty, trade_type):  # async def로 변경됨
+    async def place_stock_order(self, stock_code, order_price, order_qty,
+                                is_buy: bool) -> ResCommonResponse:  # async def로 변경됨
         path = "/uapi/domestic-stock/v1/trading/order-cash"
 
         full_config = self._env.active_config
 
-        if trade_type == "buy":
+        if is_buy:
             tr_id = full_config['tr_ids']['trading']['order_cash_buy_paper'] if full_config['is_paper_trading'] else \
                 full_config['tr_ids']['trading']['order_cash_buy_real']
-        elif trade_type == "sell":
+        else:
             tr_id = full_config['tr_ids']['trading']['order_cash_sell_paper'] if full_config['is_paper_trading'] else \
                 full_config['tr_ids']['trading']['order_cash_sell_real']
-        else:
-            self._logger.error("trade_type은 'buy' 또는 'sell'여야 합니다.")
-            return None
+
 
         self._headers["tr_id"] = tr_id
         self._headers["custtype"] = full_config['custtype']
@@ -93,8 +95,13 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
 
         calculated_hashkey = await self._get_hashkey(data)
         if not calculated_hashkey:
-            return None
-        self._headers["hashkey"] = calculated_hashkey
+            return ResCommonResponse(
+                rt_cd=ErrorCode.MISSING_KEY.value,
+                msg1=f"hashkey 계산 실패 - {calculated_hashkey}",
+                data=None
+            )
 
-        self._logger.info(f"주식 {trade_type} 주문 시도 - 종목: {stock_code}, 수량: {order_qty}, 가격: {order_price}")
+        self._headers["hashkey"] = calculated_hashkey
+        order_type = "매수" if is_buy else "매도"
+        self._logger.info(f"주식 {order_type} 주문 시도 - 종목: {stock_code}, 수량: {order_qty}, 가격: {order_price}")
         return await self.call_api('POST', path, data=data, retry_count=1)

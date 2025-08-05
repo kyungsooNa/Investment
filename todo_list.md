@@ -5,7 +5,7 @@
 
 ### 0. 불량
 2. 상한가 전체종목 조회는 너무 오래걸림 (6분)
-3. 2번 balance info 저장하는 ResType 생성
+
 ### 실전
 
 9. API 잘못됨
@@ -162,6 +162,7 @@ AttributeError: 'NoneType' object has no attribute 'get_price_summary'
 * **[세분화]** 재시도 로직의 세분화: API 응답 코드 또는 오류 유형에 따라 재시도 횟수나 지연 시간을 동적으로 조절하는 백오프(backoff) 전략 구현.
 
 ### 5. 테스트 (Tests)
+* **[개선 필요]** 실행시간이 오래걸리는 (10초는 너무 김) TC 개선필요 - sleep이 들어가있음.
 * **[개선 필요]** 코드 커버리지 100% 달성.
 
 ## Ⅱ. 중간 우선순위 (Medium Priority)

@@ -23,7 +23,7 @@ class TradingApp:
     def __init__(self, logger=None):
         self.env = None
         self.api_client = None
-        self.trading_service = None
+        # self.trading_service = None
         self.time_manager = None
         self.logger = logger if logger else Logger()  # ✅ 주입 가능한 구조
         self.cli_view = None  # CLIView는 여기서 초기화됩니다.
@@ -73,24 +73,15 @@ class TradingApp:
         try:
             self.logger.info("API 클라이언트 초기화 시작 (선택된 환경 기반)...")
 
-            # access_token = await self.env.get_access_token()
-            # if not access_token:
-            #     self.logger.critical("API 클라이언트 초기화 실패: API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
-            #     raise Exception("API 접근 토큰 발급에 실패했습니다. config.yaml 설정을 확인하세요.")
-
-            # KoreaInvestApiClient는 이제 BrokerAPIWrapper 내부에서 관리됩니다.
-            # 이 인스턴스를 직접 TradingService에 넘기지 않습니다.
-            # self.api_client = KoreaInvestApiClient(self.env, token_manager=self.token_manager, logger=self.logger) # 이 줄은 삭제 또는 주석 처리
-
             # BrokerAPIWrapper를 한 번만 생성합니다.
             self.broker_wrapper = BrokerAPIWrapper(env=self.env, logger=self.logger, time_manager=self.time_manager)
 
             # TradingService에 BrokerAPIWrapper를 전달하도록 수정
             # TradingService의 __init__ 시그니처도 변경되어야 합니다 (broker_wrapper를 받도록)
-            self.trading_service = TradingService(self.broker_wrapper, self.env, self.logger, self.time_manager)
+            trading_service = TradingService(self.broker_wrapper, self.env, self.logger, self.time_manager)
 
-            self.order_execution_service = OrderExecutionService(self.trading_service, self.logger, self.time_manager)
-            self.stock_query_service = StockQueryService(self.trading_service, self.logger, self.time_manager)
+            self.order_execution_service = OrderExecutionService(trading_service, self.logger, self.time_manager)
+            self.stock_query_service = StockQueryService(trading_service, self.logger, self.time_manager)
 
             # BacktestDataProvider에 BrokerAPIWrapper를 전달 (현재와 동일)
             self.backtest_data_provider = BacktestDataProvider(

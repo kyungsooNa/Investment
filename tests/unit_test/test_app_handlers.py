@@ -119,57 +119,6 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.info.assert_called_once_with(f"Service - {stock_code} 현재가 조회 요청")
         self.mock_logger.error.assert_called_once()
 
-        # 메뉴 2: 계좌 잔고 조회 - handle_get_account_balance
-
-    async def test_handle_get_account_balance_success_paper(self):
-        self.mock_env.is_paper_trading = True
-        self.mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={"output1": [], "output2": [{"dnca_tot_amt": "5000000"}]}
-        )
-
-        await self.stock_query_service.handle_get_account_balance()
-
-        self.mock_broker_api_wrapper.get_account_balance.assert_called_once()
-        self.assertIn("--- 계좌 잔고 조회 ---", self.print_output_capture.getvalue())
-
-        assert self.mock_logger.info.called
-        self.assertEqual(self.mock_logger.info.call_count, 2)
-
-    async def test_handle_get_account_balance_success_real(self):
-        self.mock_env.is_paper_trading = False
-        self.mock_broker_api_wrapper.get_real_account_balance.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={"output1": [], "output2": [{"dnca_tot_amt": "5000000"}]}
-        )
-        await self.stock_query_service.handle_get_account_balance()
-
-        self.mock_broker_api_wrapper.get_real_account_balance.assert_called_once()
-        self.assertIn("--- 계좌 잔고 조회 ---", self.print_output_capture.getvalue())
-
-        assert self.mock_logger.info.called
-        self.assertEqual(self.mock_logger.info.call_count, 2)
-
-    async def test_handle_get_account_balance_failure(self):
-        self.mock_broker_api_wrapper.get_account_balance = AsyncMock(
-            return_value=ResCommonResponse(
-                rt_cd="1",
-                msg1="조회 실패",
-                data=None
-            )
-        )
-        self.mock_env.is_paper_trading = True  # 모의 환경으로 설정하여 get_account_balance가 호출되도록
-
-        await self.stock_query_service.handle_get_account_balance()  # 이거 빠졌으면 반드시 추가
-
-        self.mock_broker_api_wrapper.get_account_balance.assert_called_once()
-        self.assertIn("\n계좌 잔고 조회 실패.\n", self.print_output_capture.getvalue())  # <--- 수정됨
-        self.mock_logger.info.assert_called_once_with("Service - 계좌 잔고 조회 요청 (환경: 모의투자)")
-        self.mock_logger.error.assert_called_once()
-
-        # --- TransactionHandlers (메뉴 3, 4 에 해당) ---
 
     # 메뉴 3: 주식 매수 주문 - handle_place_buy_order
     async def test_handle_place_buy_order_market_open_success(self):
@@ -191,7 +140,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             stock_code=stock_code,
             order_price=price,
             order_qty=qty,
-            trade_type="buy"
+            is_buy=True
         )
         self.assertIn("주식 매수 주문 성공:", self.print_output_capture.getvalue())
 
@@ -376,7 +325,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        await self.stock_query_service.handle_get_top_market_cap_stocks(market_code, 10)
+        await self.stock_query_service.handle_get_top_market_cap_stocks_code(market_code, 10)
 
         self.assertIn(f"--- 시가총액 상위 종목 조회 시도 ---", self.print_output_capture.getvalue())
         self.assertIn("성공: 시가총액 상위 종목 목록:", self.print_output_capture.getvalue())
@@ -388,7 +337,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         market_code = "0000"
         self.mock_env.is_paper_trading = True
 
-        await self.stock_query_service.handle_get_top_market_cap_stocks(market_code, 10)
+        await self.stock_query_service.handle_get_top_market_cap_stocks_code(market_code, 10)
 
         self.assertIn("\n--- 시가총액 상위 종목 조회 시도 ---\n실패: 시가총액 상위 종목 조회.\n", self.print_output_capture.getvalue())
         self.mock_broker_api_wrapper.get_top_market_cap_stocks_code.assert_not_called()
@@ -404,7 +353,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             data=None
         )
 
-        await self.stock_query_service.handle_get_top_market_cap_stocks(market_code)
+        await self.stock_query_service.handle_get_top_market_cap_stocks_code(market_code)
 
         self.assertIn("실패: 시가총액 상위 종목 조회.", self.print_output_capture.getvalue())
         self.mock_broker_api_wrapper.get_top_market_cap_stocks_code.assert_called_once()

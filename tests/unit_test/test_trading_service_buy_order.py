@@ -39,7 +39,7 @@ class TestTradingServiceBuyOrder(IsolatedAsyncioTestCase):
             stock_code="005930",
             order_price="70000",
             order_qty="10",
-            trade_type="buy"
+            is_buy=True
         )
 
         expected = ResCommonResponse(

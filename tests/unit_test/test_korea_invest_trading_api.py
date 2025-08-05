@@ -36,31 +36,12 @@ async def test_place_stock_order_buy_success():
         stock_code='005930',
         order_price='70000',
         order_qty='10',
-        trade_type='buy'
+        is_buy=True
     )
 
     assert result == {'status': 'success'}
     assert trading_api._headers["hashkey"] == 'mocked_hash'
     mock_logger.info.assert_called()
-
-
-@pytest.mark.asyncio
-async def test_place_stock_order_invalid_type():
-    mock_config = {
-        'tr_ids': {'trading': {}},
-        'custtype': 'P',
-        'stock_account_number': '12345678',
-        'is_paper_trading': True
-    }
-
-    mock_logger = MagicMock()
-    trading_api = KoreaInvestApiTrading(
-        MagicMock(),  # token_manager 자리 추가
-        mock_logger
-    )
-    result = await trading_api.place_stock_order('005930', '70000', '10', '잘못된타입')
-    assert result is None
-    mock_logger.error.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -168,7 +149,7 @@ async def test_place_stock_order_sell_success():
         stock_code='005930',
         order_price='70000',
         order_qty='10',
-        trade_type='sell'
+        is_buy=False
     )
 
     assert result == {"status": "sell_success"}
@@ -205,8 +186,7 @@ async def test_place_stock_order_sell_success():
             stock_code='005930',
             order_price='70000',
             order_qty='10',
-            trade_type='buy',
-            order_dvsn='00'
+            is_buy=True
         )
 
         # 검증: 해시 생성 실패로 인해 주문 시도 중단

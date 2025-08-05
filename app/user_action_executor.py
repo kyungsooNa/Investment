@@ -55,7 +55,7 @@ class UserActionExecutor:
         await self.app.stock_query_service.handle_get_current_stock_price(stock_code)
 
     async def handle_account_balance(self) -> None:
-        balance_response = await self.app.trading_service.get_account_balance()
+        balance_response = await self.app.stock_query_service.handle_get_account_balance()
         if balance_response is None:
             self.app.cli_view.display_account_balance_failure("잔고 조회 실패: 응답 없음")
             self.app.logger.warning("계좌 잔고 조회 실패 - 응답이 None입니다.")
@@ -107,7 +107,7 @@ class UserActionExecutor:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("시가총액 상위 종목 조회")
         else:
-            await self.app.stock_query_service.handle_get_top_market_cap_stocks("0000")
+            await self.app.stock_query_service.handle_get_top_market_cap_stocks_code("0000")
 
     async def handle_top_10_market_cap_stocks(self) -> None:
         if self.app.env.is_paper_trading:
@@ -146,6 +146,9 @@ class UserActionExecutor:
     async def handle_momentum_strategy(self) -> None:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("모멘텀")
+            self.app.logger.warning("모의투자환경에서 전략 실행 시도")
+            return
+
         if not self.app.time_manager.is_market_open():
             self.app.cli_view.display_warning_strategy_market_closed()
             self.app.logger.warning("시장 미개장 상태에서 전략 실행 시도")
@@ -154,7 +157,7 @@ class UserActionExecutor:
         self.app.cli_view.display_strategy_running_message("모멘텀")
 
         try:
-            top_codes_response: ResCommonResponse = await self.app.trading_service.get_top_market_cap_stocks_code("0000")
+            top_codes_response: ResCommonResponse = await self.app.stock_query_service.handle_get_top_market_cap_stocks_code("0000")
             if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:
                 self.app.cli_view.display_top_stocks_failure(top_codes_response.msg1 or "알 수 없는 오류")
                 self.app.logger.warning(f"시가총액 조회 실패. 응답: {top_codes_response}")
@@ -195,7 +198,10 @@ class UserActionExecutor:
 
     async def handle_momentum_backtest(self) -> None:
         if self.app.env.is_paper_trading:
-            self.app.cli_view.display_warning_paper_trading_not_supported("모멘텀")
+            self.app.cli_view.display_warning_paper_trading_not_supported("모멘텀 백테스트")
+            self.app.logger.warning("모의투자환경에서 전략 실행 시도")
+            return
+
         self.app.cli_view.display_strategy_running_message("모멘텀 백테스트")
 
         try:
@@ -209,8 +215,8 @@ class UserActionExecutor:
                 self.app.cli_view.display_invalid_input_warning("숫자가 아닌 값이 입력되어 기본값 30을 사용합니다.")
                 count = 30
 
-            top_codes_response: ResCommonResponse = await self.app.trading_service.get_top_market_cap_stocks_code("0000",
-                                                                                                             count=count)
+            top_codes_response: ResCommonResponse = await self.app.stock_query_service.handle_get_top_market_cap_stocks_code("0000",
+                                                                                                                             count=count)
             if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:
                 self.app.cli_view.display_top_stocks_failure(top_codes_response.msg1 or "알 수 없는 오류")
                 self.app.logger.warning(f"시가총액 조회 실패. 응답: {top_codes_response}")
@@ -251,6 +257,9 @@ class UserActionExecutor:
     async def handle_gapup_pullback(self) -> None:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("GapUpPullback")
+            self.app.logger.warning("모의투자환경에서 전략 실행 시도")
+            return
+
         self.app.cli_view.display_strategy_running_message("GapUpPullback")
 
         try:
@@ -264,8 +273,9 @@ class UserActionExecutor:
                 self.app.cli_view.display_invalid_input_warning("숫자가 아닌 값이 입력되어 기본값 30을 사용합니다.")
                 count = 30
 
-            top_codes_response: ResCommonResponse = await self.app.trading_service.get_top_market_cap_stocks_code("0000",
-                                                                                                             count=count)
+            top_codes_response: ResCommonResponse = await self.app.stock_query_service.handle_get_top_market_cap_stocks_code("0000",
+                                                                                                     count=count)
+
             if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:
                 self.app.cli_view.display_top_stocks_failure(top_codes_response.msg1 or "응답 형식 오류")
                 self.app.logger.warning(f"GapUpPullback 시가총액 조회 실패: {top_codes_response}")
