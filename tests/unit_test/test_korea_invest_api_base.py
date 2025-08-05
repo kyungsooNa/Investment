@@ -2,7 +2,7 @@
 import unittest
 import pytest
 import json
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch, call
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
@@ -795,8 +795,9 @@ async def test_call_api_no_env_instance(caplog):
     # 변경: api._session.request 대신 api._async_session.get을 모킹
     api._async_session.get = AsyncMock(return_value=response_mock)
 
-    with caplog.at_level(logging.ERROR, logger=logger_name):  # ERROR 레벨 로그만 캡처하는 컨텍스트
-        result = await api.call_api("GET", "/no-env")
+    with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        with caplog.at_level(logging.ERROR, logger=logger_name):  # ERROR 레벨 로그만 캡처하는 컨텍스트
+            result = await api.call_api("GET", "/no-env")
 
     # 디버깅을 위해 캡처된 로그 출력
     print("\n=== Captured Log ===")
@@ -814,6 +815,9 @@ async def test_call_api_no_env_instance(caplog):
     assert not any("API 비즈니스 오류" in r.message for r in caplog.records)
     assert any("모든 재시도 실패" in r.message for r in caplog.records)
     assert not any("예상치 못한 예외 발생" in r.message for r in caplog.records)  # 예상치 못한 예외 로그도 없어야 함
+
+    # ✅ sleep(3) 호출 확인
+    assert call(3) in mock_sleep.call_args_list
 
 
 @pytest.mark.asyncio
