@@ -1,7 +1,10 @@
+# strategies/GapUpPullback_strategy.py
+
 import logging
+from interfaces.strategy import Strategy
 from typing import List, Dict, Optional
 
-class GapUpPullbackStrategy:
+class GapUpPullbackStrategy(Strategy):
     def __init__(
         self,
         broker,

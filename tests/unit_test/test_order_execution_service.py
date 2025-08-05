@@ -2,11 +2,10 @@ import io
 import sys
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.stock_query_service import StockQueryService
+from services.stock_query_service import StockQueryService
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResStockFullInfoApiOutput, ErrorCode
-from types import SimpleNamespace
 
 
 # 모든 테스트를 하나의 AsyncioTestCase 클래스 내에 통합합니다.

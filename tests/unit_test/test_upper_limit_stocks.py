@@ -7,7 +7,7 @@ from io import StringIO
 import builtins
 
 # 테스트할 모듈 임포트
-from app.stock_query_service import StockQueryService
+from services.stock_query_service import StockQueryService
 from services.trading_service import TradingService
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading

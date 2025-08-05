@@ -1,17 +1,16 @@
 import unittest
 import unittest.mock as mock
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock
 import logging
 from io import StringIO
 import builtins
 from common.types import (
-    ResStockFullInfoApiOutput, ResCommonResponse, ErrorCode, ResMarketCapStockItem,
-    ResTopMarketCapApiItem,
+    ResStockFullInfoApiOutput, ResCommonResponse, ErrorCode, ResTopMarketCapApiItem,
 )
 
 # 테스트할 모듈 임포트
-from app.stock_query_service import StockQueryService
-from app.order_execution_service import OrderExecutionService
+from services.stock_query_service import StockQueryService
+from services.order_execution_service import OrderExecutionService
 # from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from services.trading_service import TradingService
 # from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations

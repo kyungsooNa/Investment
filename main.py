@@ -1,10 +1,9 @@
 # main.py (최종 버전)
-import os
 import asyncio # 비동기 처리를 위해 추가
 import sys # sys.exit를 위해 추가
 import traceback # 예외 추적을 위해 추가
 
-from trading_app import TradingApp # TradingApp 임포트
+from app.trading_app import TradingApp # TradingApp 임포트
 
 
 # main 함수를 비동기 함수로 선언
