@@ -1,6 +1,9 @@
 # self.app/user_action_executor.py
 from __future__ import annotations
 from typing import TYPE_CHECKING
+
+from pandas.io.common import get_handle
+
 if TYPE_CHECKING:
     from app.trading_app import TradingApp
 
@@ -18,6 +21,11 @@ class UserActionExecutor:
 
     async def execute(self,choice: str) -> bool:
         """사용자 입력(choice)에 따라 대응하는 액션 함수를 실행"""
+        handler = self.get_handler(choice)
+        result = await handler()
+        return result if isinstance(result, bool) else True
+
+    def get_handler(self, choice: str):
         handlers = {
             '0': self.handle_change_environment,
             '1': self.handle_get_current_price,
@@ -42,9 +50,7 @@ class UserActionExecutor:
             '99': self.handle_exit,
         }
 
-        handler = handlers.get(choice, self.handle_invalid_choice)
-        result = await handler()
-        return result if isinstance(result, bool) else True
+        return handlers.get(choice, self.handle_invalid_choice)
 
     async def handle_change_environment(self) -> bool:
         self.app.logger.info("거래 환경 변경을 시작합니다.")

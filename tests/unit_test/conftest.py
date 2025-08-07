@@ -1,5 +1,6 @@
 import os
 import stat
+import tempfile
 import shutil
 import pytest
 import time
@@ -8,7 +9,8 @@ from core.cache.cache_manager import CacheManager
 
 @pytest.fixture(scope="session")
 def test_cache_config():
-    test_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".cache"))
+    # test_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".cache"))
+    test_base_dir = tempfile.mktemp()
     return {
         "cache": {
             "base_dir": test_base_dir,
