@@ -8,17 +8,24 @@ from core.cache.cache_wrapper import cache_wrap_client
 from core.cache.cache_manager import CacheManager
 from datetime import datetime, timedelta
 from unittest.mock import ANY
+from common.types import ResCommonResponse, ErrorCode
 
 fake_time = (datetime.now() - timedelta(days=1)).isoformat()
 
 
 class DummyApiClient:
     async def get_data(self, x):
-        return f"result-{x}"
-
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="정상",
+            data={"key": f"value-{x}"}
+        )
     async def bypass_data(self, y):
-        return f"no_cache-{y}"
-
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="정상",
+            data={"key": f"no_cache-{y}"}
+        )
 
 @pytest.mark.asyncio
 async def test_cache_wrapper_hit_and_miss(cache_manager, test_cache_config):
@@ -53,8 +60,8 @@ async def test_cache_wrapper_hit_and_miss(cache_manager, test_cache_config):
     result2 = await wrapped.get_data(1)
 
     # ✅ 결과 값 검증
-    assert result1 == "result-1"
-    assert result2 == "result-1"
+    assert result1.data.get('key') == "value-1"
+    assert result2.data.get('key') == "value-1"
 
     # ✅ 로그 메시지 검증
     debug_logs = [call.args[0] for call in logger.debug.call_args_list]
@@ -96,7 +103,7 @@ async def test_cache_wrapper_expired_cache_removal(cache_manager, test_cache_con
 
     # 1. 최초 호출 → 캐시 저장
     result1 = await wrapped.get_data(1)
-    assert result1 == "result-1"
+    assert result1.data.get('key') == "value-1"
 
     # 2. 파일 직접 열어서 timestamp를 하루 전으로 조작
     key = "TEST_get_data_1"
@@ -114,7 +121,7 @@ async def test_cache_wrapper_expired_cache_removal(cache_manager, test_cache_con
 
     # 3. 재호출 → 만료되어 새로 생성되어야 함
     result2 = await wrapped.get_data(1)
-    assert result2 == "result-1"
+    assert result2.data.get('key') == "value-1"
 
     debug_logs = [call.args[0] for call in logger.debug.call_args_list]
     assert any("File Cache 무시 (만료됨)" in log for log in debug_logs)
@@ -137,7 +144,7 @@ async def test_cache_wrapper_bypass_for_non_cached_method(cache_manager, test_ca
     )
 
     result = await wrapped.bypass_data(9)
-    assert result == "no_cache-9"
+    assert result.data.get('key') == "no_cache-9"
 
     assert any("Bypass" in call.args[0] for call in logger.debug.call_args_list)
 
@@ -184,7 +191,7 @@ async def test_cache_wrapper_key_arg_str_empty_skip_append(cache_manager, test_c
 
     # ✅ 공백 문자열을 인자로 넘겨 arg_str이 비어 key_parts.append() 안 타도록 유도
     result = await wrapped.get_data("")
-    assert result == "result-"
+    assert result.data.get('key') == "value-"
 
     # ✅ logger.debug 메시지를 기반으로 key_parts에 arg_str이 포함되지 않았는지 검증
     debug_msgs = [call.args[0] for call in logger.debug.call_args_list]
@@ -218,14 +225,15 @@ async def test_client_with_cache_file_save(cache_manager, test_cache_config, tmp
 
     data = 7
     result = await wrapped.get_data(data)
-    assert result == f"result-{data}"
+    assert result.data.get('key') == f"value-{data}"
 
     expected_file = tmp_path / "TEST_get_data_7.json"
     assert expected_file.exists()
 
     with open(expected_file, encoding="utf-8") as f:
         payload = json.load(f)
-        assert payload == {
-            "data": "result-7",
-            "timestamp": ANY
-        }
+
+        assert payload["data"]["rt_cd"] == "0"
+        assert payload["data"]["msg1"] == "정상"
+        assert payload["data"]["data"]["key"] == f"value-{data}"
+        assert "timestamp" in payload
