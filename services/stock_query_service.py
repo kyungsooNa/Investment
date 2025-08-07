@@ -28,7 +28,7 @@ class StockQueryService:
         """주식 현재가 조회 요청 및 결과 출력."""
         print(f"\n--- {stock_code} 현재가 조회 ---")
         current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
-        if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
+        if current_price_result.rt_cd == ErrorCode.SUCCESS.value:
             print(f"\n{stock_code} 현재가: {current_price_result.data}")
             self.logger.info(f"{stock_code} 현재가 조회 성공: {current_price_result.data}")
         else:
