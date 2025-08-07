@@ -141,12 +141,6 @@ AttributeError: 'NoneType' object has no attribute 'get_price_summary'
 2025-07-22 10:17:33,566 - INFO - 실시간 스트림 종료
 2025-07-22 10:17:33,566 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:17:33 KST+0900)
 
-22.
-2025-07-22 10:18:51,586 - WARNING - Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.
-2025-07-22 10:18:51,586 - ERROR - [GapUpPullback] 전략 실행 오류: 'str' object has no attribute '응답 형식 오류'
-2025-07-22 10:18:51,591 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-07-22 10:18:51 KST+0900)
-
-
 ### 1. 환경 (Environment)
 
 ### 2. 성능 (Performance)
