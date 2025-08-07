@@ -635,8 +635,35 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers["tr_id"] = tr_id
         self._headers["custtype"] = full_config["custtype"]
 
+
+        screening_code: str = "20171"  #
+        input_iscd: str = "0000"  # 0000(전체) 기타(업종코드)
+        division_code: str = "0"  # 0(전체) 1(보통주) 2(우선주)
+        belonging_code: str = "0"  # 0 : 평균거래량 1:거래증가율 2:평균거래회전율 3:거래금액순 4:평균거래금액회전율
+        target_code: str = "0"  # 1 or 0 9자리 (차례대로 증거금 30% 40% 50% 60% 100% 신용보증금 30% 40% 50% 60%) # ex) "111111111"
+        exclusion_code: str = "0000000000"  # 1 or 0 10자리 (차례대로 투자위험/경고/주의 관리종목 정리매매 불성실공시 우선주 거래정지 ETF ETN 신용주문불가 SPAC) # ex) "0000000000"
+        price_range_1: str = ""     # 가격 ~
+                                    # ex) "0"
+                                    # 전체 가격 대상 조회 시 FID_INPUT_PRICE_1, FID_INPUT_PRICE_2 모두 ""(공란) 입력
+        price_range_2: str = ""     # ~ 가격
+                                    # ex) "1000000"
+                                    # 전체 가격 대상 조회 시 FID_INPUT_PRICE_1, FID_INPUT_PRICE_2 모두 ""(공란) 입력
+        volume_count: str = ""      # 거래량 ~
+                                    # ex) "100000"
+                                    # 전체 거래량 대상 조회 시 FID_VOL_CNT ""(공란) 입력
+
         params = {
-            "fid_cond_mrkt_div_code": market_code
+            "FID_COND_MRKT_DIV_CODE": market_code,
+            "FID_COND_SCR_DIV_CODE": screening_code,
+            "FID_INPUT_ISCD": input_iscd,
+            "FID_DIV_CLS_CODE": division_code,
+            "FID_BLNG_CLS_CODE": belonging_code,
+            "FID_TRGT_CLS_CODE": target_code,
+            "FID_TRGT_EXLS_CLS_CODE": exclusion_code,
+            "FID_INPUT_PRICE_1": price_range_1,
+            "FID_INPUT_PRICE_2": price_range_2,
+            "FID_VOL_CNT": volume_count,
+            "FID_INPUT_DATE_1": ""
         }
 
         self._logger.info(f"거래량 상위 종목 조회 시도...")

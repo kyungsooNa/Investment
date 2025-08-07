@@ -5,16 +5,16 @@ paths:
   inquire_daily_itemchartprice: /uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice
   asking_price: /uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn
   time_conclude: /uapi/domestic-stock/v1/quotations/inquire-time-itemconclusion
-  search_stock: /uapi/domestic-stock/v1/search/search-stock-info
-  ranking_rise: /uapi/domestic-stock/v1/ranking/inquire-rise
-  ranking_fall: /uapi/domestic-stock/v1/ranking/inquire-fall
-  ranking_volume: /uapi/domestic-stock/v1/ranking/inquire-volume
-  ranking_foreign: /uapi/domestic-stock/v1/ranking/inquire-foreign
-  item_news: /uapi/domestic-stock/v1/news/news-title
+  search_stock: /uapi/domestic-stock/v1/quotations/search-stock-info
+  ranking_rise: /uapi/domestic-stock/v1/quotations/inquire-rise
+  ranking_fall: /uapi/domestic-stock/v1/quotations/inquire-fall
+  ranking_volume: /uapi/domestic-stock/v1/quotations/volume-rank
+  ranking_foreign: /uapi/domestic-stock/v1/quotations/inquire-foreign
+  item_news: /uapi/domestic-stock/v1/quotations/news-title
   etf_info: /uapi/domestic-stock/v1/quotations/inquire-price
 
 params:
   fid_div_cls_code: "2"
   screening_code: "20174"
 
-market_code: "J"
+market_code: "J" # J: 코스피, Q: 코스닥

@@ -37,6 +37,7 @@ class UserActionExecutor:
             '7': self.handle_asking_price,
             '8': self.handle_time_conclude,
             '10': self.handle_etf_info,
+            '12': self.handle_top_30_volume,
             '13': self.handle_top_market_cap_stocks,
             '14': self.handle_top_10_market_cap_stocks,
             '15': self.handle_yesterday_upper_limit_500,
@@ -317,6 +318,12 @@ class UserActionExecutor:
         except Exception as e:
             self.app.logger.error(f"[GapUpPullback] 전략 실행 오류: {e}")
             self.app.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
+
+    async def handle_top_30_volume(self) -> None:
+        if self.app.env.is_paper_trading:
+            self.app.cli_view.display_warning_paper_trading_not_supported("거래량 ~30위 종목 조회")
+        else:
+            await self.app.stock_query_service.handle_get_top_stocks('volume')
 
     async def handle_exit(self) -> bool:
         self.app.cli_view.display_exit_message()
