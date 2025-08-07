@@ -27,7 +27,7 @@ class KoreaInvestApiBase:
         # self._headers = headers.copy()  # 초기화 시 전달받은 headers 복사하여 사용
         self._headers = {
             "Content-Type": "application/json",
-            # "User-Agent": self._env.my_agent,
+            "User-Agent": self._env.my_agent,
             "charset": "UTF-8",
             "Authorization": "",
             "appkey": "",

@@ -517,17 +517,19 @@ class StockQueryService:
 
         if response and response.rt_cd == ErrorCode.SUCCESS.value:
             stock_list = response.data.get('output', [])
-            print(f"\n성공: {title} 상위 10개 종목")
-            print("-" * 60)
-            print(f"{'순위':>4s} | {'종목명':<20s} | {'현재가':>10s} | {'등락률(%)':>10s}")
-            print("-" * 60)
-            for item in stock_list[:10]:
+            print(f"\n성공: {title} 상위 30개 종목")
+            print("-" * 90)
+            print(f"{'순위':<4} {'종목명':<30} {'현재가':>10} {'등락률(%)':>10} {'거래량':>15}")
+            print("-" * 90)
+            for item in stock_list[:30]:
                 rank = item.get('data_rank', 'N/A')
                 name = item.get('hts_kor_isnm', 'N/A')
                 price = item.get('stck_prpr', 'N/A')
                 rate = item.get('prdy_ctrt', 'N/A')
-                print(f"{rank:>4s} | {name:<20s} | {price:>10s} | {rate:>10s}")
-            print("-" * 60)
+                volume = item.get('acml_vol', 'N/A')  # 거래량 필드
+                print(f"{rank:<4} {name:<30} {price:>10} {rate:>10} {volume:>15}")
+
+            print("-" * 90)
             self.logger.info(f"{title} 상위 종목 조회 성공")
         else:
             msg = response.msg1 if response else "응답 없음"

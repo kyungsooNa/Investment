@@ -319,7 +319,7 @@ class UserActionExecutor:
             self.app.logger.error(f"[GapUpPullback] 전략 실행 오류: {e}")
             self.app.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
 
-    async def handle_top_30_volume(self) -> None: # @TODO 시장 열린시간에 다시 Test
+    async def handle_top_30_volume(self) -> None:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("거래량 ~30위 종목 조회")
         else:
