@@ -152,7 +152,6 @@ AttributeError: 'NoneType' object has no attribute 'get_price_summary'
 * **[일관성]** 로그 메시지의 일관성: 모든 중요한 예외 상황에서 `exc_info=True`를 사용하여 스택 트레이스를 일관되게 기록.
 
 ### 4. API 상호작용 (API Interaction)
-* **[일관성]** 동기/비동기 API 호출의 일관성: 모든 API 호출을 `httpx` 기반의 비동기 방식으로 통일.
 * **[세분화]** 재시도 로직의 세분화: API 응답 코드 또는 오류 유형에 따라 재시도 횟수나 지연 시간을 동적으로 조절하는 백오프(backoff) 전략 구현.
 
 ### 5. 테스트 (Tests)
