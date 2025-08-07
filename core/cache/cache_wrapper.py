@@ -1,5 +1,7 @@
 # core/cache_wrapper.py
 from typing import TypeVar, Callable, Optional
+
+from common.types import ResCommonResponse, ErrorCode
 from core.cache.cache_manager import CacheManager
 from core.cache.cache_config import load_cache_config
 from datetime import datetime
@@ -80,11 +82,14 @@ class ClientWithCache:
             self._logger.debug(f"🌐 실시간 API 호출: {key}")
             result = await orig_attr(*args, **kwargs)
 
-            # ✅ 3. 캐싱 데이터 저장
-            self._cache.set(key, {
-                "data": result,
-                "timestamp": datetime.now().isoformat()
-            }, save_to_file=True)
+            if isinstance(result, ResCommonResponse) and result.rt_cd == ErrorCode.SUCCESS.value:
+                # ✅ 3. 캐싱 데이터 저장
+                self._cache.set(key, {
+                    "data": result,
+                    "timestamp": datetime.now().isoformat()
+                }, save_to_file=True)
+            else:
+                self._logger.debug(f"응답 실패로 🧠📂 Cache Update 무시 : {key}")
 
             return result
 
