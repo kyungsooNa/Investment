@@ -11,7 +11,7 @@ tr_ids:
     search_stock: FHKST01010400
     ranking_rise: FHKUP03200000
     ranking_fall: FHKUP03300000
-    ranking_volume: FHKUP03400000
+    ranking_volume: FHPST01710000
     ranking_foreign: FHKUP03600000
     item_news: FHPST01040000
     etf_info: FHPST02400000

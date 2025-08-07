@@ -27,7 +27,7 @@ class KoreaInvestApiBase:
         # self._headers = headers.copy()  # 초기화 시 전달받은 headers 복사하여 사용
         self._headers = {
             "Content-Type": "application/json",
-            "User-Agent": self._env.my_agent,
+            # "User-Agent": self._env.my_agent,
             "charset": "UTF-8",
             "Authorization": "",
             "appkey": "",
@@ -236,3 +236,6 @@ class KoreaInvestApiBase:
         self._headers["Authorization"] = f"Bearer {access_token}"
         self._headers["appkey"] = self._env.active_config['api_key']
         self._headers["appsecret"] = self._env.active_config['api_secret_key']
+        print(self._headers["Authorization"])
+        print(self._headers["appkey"])
+        print(self._headers["appsecret"])
