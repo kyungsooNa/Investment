@@ -665,19 +665,6 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "FID_VOL_CNT": volume_count,
             "FID_INPUT_DATE_1": ""
         }
-        # params = {
-        #     "FID_COND_MRKT_DIV_CODE": "J",
-        #     "FID_COND_SCR_DIV_CODE": "",
-        #     "FID_INPUT_ISCD": "",
-        #     "FID_DIV_CLS_CODE": "",
-        #     "FID_BLNG_CLS_CODE": "",
-        #     "FID_TRGT_CLS_CODE": "",
-        #     "FID_TRGT_EXLS_CLS_CODE": "",
-        #     "FID_INPUT_PRICE_1": "",
-        #     "FID_INPUT_PRICE_2": "",
-        #     "FID_VOL_CNT": "",
-        #     "FID_INPUT_DATE_1": ""
-        # }
 
         self._logger.info(f"거래량 상위 종목 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
