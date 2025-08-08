@@ -465,33 +465,33 @@ class StockQueryService:
             print(f"\n실패: {stock_code} 시간대별 체결가 조회. ({msg})")
             self.logger.error(f"{stock_code} 시간대별 체결가 조회 실패: {msg}")
 
-    async def handle_search_stocks_by_keyword(self, keyword: str):
-        """키워드로 종목 검색 및 결과 출력."""
-        print(f"\n--- '{keyword}' 키워드 종목 검색 ---")
-        self.logger.info(f"Handler - '{keyword}' 키워드 종목 검색 요청")
-        response = await self.trading_service.search_stocks_by_keyword(keyword)
-
-        if response and response.rt_cd == ErrorCode.SUCCESS.value:
-            search_results = response.data.get('output', [])
-            if not search_results:
-                print(f"\n'{keyword}'에 대한 검색 결과가 없습니다.")
-                self.logger.info(f"'{keyword}' 키워드 검색 결과 없음")
-                return
-
-            print(f"\n성공: '{keyword}' 검색 결과")
-            print("-" * 40)
-            print(f"{'종목코드':<15} | {'종목명'}")
-            print("-" * 40)
-            for item in search_results:
-                code = item.get('iscd', 'N/A')
-                name = item.get('iscd_nm', 'N/A')
-                print(f"{code:<15} | {name}")
-            print("-" * 40)
-            self.logger.info(f"'{keyword}' 키워드 종목 검색 성공")
-        else:
-            msg = response.msg1 if response else "응답 없음"
-            print(f"\n실패: 종목 검색. ({msg})")
-            self.logger.error(f"종목 검색 실패: {msg}")
+    # async def handle_search_stocks_by_keyword(self, keyword: str):
+    #     """키워드로 종목 검색 및 결과 출력."""
+    #     print(f"\n--- '{keyword}' 키워드 종목 검색 ---")
+    #     self.logger.info(f"Handler - '{keyword}' 키워드 종목 검색 요청")
+    #     response = await self.trading_service.search_stocks_by_keyword(keyword)
+    #
+    #     if response and response.rt_cd == ErrorCode.SUCCESS.value:
+    #         search_results = response.data.get('output', [])
+    #         if not search_results:
+    #             print(f"\n'{keyword}'에 대한 검색 결과가 없습니다.")
+    #             self.logger.info(f"'{keyword}' 키워드 검색 결과 없음")
+    #             return
+    #
+    #         print(f"\n성공: '{keyword}' 검색 결과")
+    #         print("-" * 40)
+    #         print(f"{'종목코드':<15} | {'종목명'}")
+    #         print("-" * 40)
+    #         for item in search_results:
+    #             code = item.get('iscd', 'N/A')
+    #             name = item.get('iscd_nm', 'N/A')
+    #             print(f"{code:<15} | {name}")
+    #         print("-" * 40)
+    #         self.logger.info(f"'{keyword}' 키워드 종목 검색 성공")
+    #     else:
+    #         msg = response.msg1 if response else "응답 없음"
+    #         print(f"\n실패: 종목 검색. ({msg})")
+    #         self.logger.error(f"종목 검색 실패: {msg}")
 
     async def handle_get_top_stocks(self, category: str):
         """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수)."""
@@ -499,7 +499,7 @@ class StockQueryService:
             "rise": ("상승률", self.trading_service.get_top_rise_fall_stocks, True),
             "fall": ("하락률", self.trading_service.get_top_rise_fall_stocks, False),
             "volume": ("거래량", self.trading_service.get_top_volume_stocks, None),
-            "foreign": ("외국인 순매수", self.trading_service.get_top_foreign_buying_stocks, None),
+            # "foreign": ("외국인 순매수", self.trading_service.get_top_foreign_buying_stocks, None),
         }
 
         if category not in category_map:

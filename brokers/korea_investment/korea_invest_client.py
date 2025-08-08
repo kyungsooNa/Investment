@@ -79,11 +79,11 @@ class KoreaInvestApiClient:
         """
         return await self._quotations.get_time_concluded_prices(stock_code)
 
-    async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
-        """
-        키워드로 종목을 검색합니다.
-        """
-        return await self._quotations.search_stocks_by_keyword(keyword)
+    # async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
+    #     """
+    #     키워드로 종목을 검색합니다.
+    #     """
+    #     return await self._quotations.search_stocks_by_keyword(keyword)
 
     async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
         """
@@ -100,17 +100,17 @@ class KoreaInvestApiClient:
         """
         return await self._quotations.get_top_volume_stocks()
 
-    async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
-        """
-        외국인 순매수 상위 종목을 조회합니다.
-        """
-        return await self._quotations.get_top_foreign_buying_stocks()
-
-    async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
-        """
-        특정 종목의 뉴스를 조회합니다.
-        """
-        return await self._quotations.get_stock_news(stock_code)
+    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
+    #     """
+    #     외국인 순매수 상위 종목을 조회합니다.
+    #     """
+    #     return await self._quotations.get_top_foreign_buying_stocks()
+    #
+    # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
+    #     """
+    #     특정 종목의 뉴스를 조회합니다.
+    #     """
+    #     return await self._quotations.get_stock_news(stock_code)
 
     async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
         """

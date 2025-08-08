@@ -124,7 +124,7 @@ class KoreaInvestApiEnv:
             'tr_ids': tr_ids_from_config,
             'paths': self._config_data['paths'],
             'params': self._config_data['params'],
-            'market_code': self._config_data['market_code'],
+            # 'market_code': self._config_data['market_code'],
             '_env_instance': self  # <--- _env_instance는 KoreaInvestAPI로 전달하기 위해 여기에 추가
         }
 

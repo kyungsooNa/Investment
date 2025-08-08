@@ -66,9 +66,9 @@ class BrokerAPIWrapper:
         return []
 
     # --- KoreaInvestApiClient / Quotations API delegation ---
-    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
-        """종목코드로 종목의 전체 정보를 가져옵니다 (KoreaInvestApiQuotations 위임)."""
-        return await self._client.get_stock_info_by_code(stock_code)
+    # async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+    #     """종목코드로 종목의 전체 정보를 가져옵니다 (KoreaInvestApiQuotations 위임)."""
+    #     return await self._client.get_stock_info_by_code(stock_code)
 
     async def get_current_price(self, code: str) -> ResCommonResponse:
         """현재가를 조회합니다 (KoreaInvestApiQuotations 위임)."""
@@ -104,11 +104,11 @@ class BrokerAPIWrapper:
         """
         return await self._client.get_time_concluded_prices(stock_code)
 
-    async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
-        """
-        키워드로 종목을 검색합니다.
-        """
-        return await self._client.search_stocks_by_keyword(keyword)
+    # async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
+    #     """
+    #     키워드로 종목을 검색합니다.
+    #     """
+    #     return await self._client.search_stocks_by_keyword(keyword)
 
     async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
         """
@@ -125,17 +125,17 @@ class BrokerAPIWrapper:
         """
         return await self._client.get_top_volume_stocks()
 
-    async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
-        """
-        외국인 순매수 상위 종목을 조회합니다.
-        """
-        return await self._client.get_top_foreign_buying_stocks()
-
-    async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
-        """
-        특정 종목의 뉴스를 조회합니다.
-        """
-        return await self._client.get_stock_news(stock_code)
+    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
+    #     """
+    #     외국인 순매수 상위 종목을 조회합니다.
+    #     """
+    #     return await self._client.get_top_foreign_buying_stocks()
+    #
+    # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
+    #     """
+    #     특정 종목의 뉴스를 조회합니다.
+    #     """
+    #     return await self._client.get_stock_news(stock_code)
 
     async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
         """

@@ -3,9 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from common.types import (
     ResCommonResponse, ErrorCode,
-    ResPriceSummary, ResMomentumStock, ResMarketCapStockItem,
-    ResStockFullInfoApiOutput, ResTopMarketCapApiItem, ResDailyChartApiItem,
-    ResAccountBalanceApiOutput, ResStockOrderApiOutput, ResStockFullInfoApiOutput  # 추가될 수 있는 타입들
+    ResPriceSummary, ResTopMarketCapApiItem, ResDailyChartApiItem,
+    ResStockFullInfoApiOutput  # 추가될 수 있는 타입들
 )
 from dataclasses import fields
 from typing import List
@@ -781,16 +780,6 @@ async def test_get_time_concluded_prices_success(mock_quotations):
 
 
 @pytest.mark.asyncio
-async def test_search_stocks_by_keyword_success(mock_quotations):
-    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
-        rt_cd="0", msg1="Success", data={"output": [{"code": "005930"}]}
-    ))
-    result = await mock_quotations.search_stocks_by_keyword("삼성")
-    assert result.rt_cd == "0"
-    mock_quotations._logger.info.assert_called_once()
-
-
-@pytest.mark.asyncio
 async def test_get_top_rise_fall_stocks_success(mock_quotations):
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
         rt_cd="0", msg1="Success", data={"stocks": ["A", "B"]}
@@ -810,24 +799,24 @@ async def test_get_top_volume_stocks_success(mock_quotations):
     mock_quotations._logger.info.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_get_stock_news_success(mock_quotations):
-    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
-        rt_cd="0", msg1="Success", data={"news": ["기사1", "기사2"]}
-    ))
-    result = await mock_quotations.get_stock_news("005930")
-    assert result.rt_cd == "0"
-    mock_quotations._logger.info.assert_called_once()
+# @pytest.mark.asyncio
+# async def test_get_stock_news_success(mock_quotations):
+#     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+#         rt_cd="0", msg1="Success", data={"news": ["기사1", "기사2"]}
+#     ))
+#     result = await mock_quotations.get_stock_news("005930")
+#     assert result.rt_cd == "0"
+#     mock_quotations._logger.info.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_get_top_foreign_buying_stocks_success(mock_quotations):
-    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
-        rt_cd="0", msg1="Success", data={"foreign": "data"}
-    ))
-    result = await mock_quotations.get_top_foreign_buying_stocks()
-    assert result.rt_cd == "0"
-    mock_quotations._logger.info.assert_called_once()
+# @pytest.mark.asyncio
+# async def test_get_top_foreign_buying_stocks_success(mock_quotations):
+#     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+#         rt_cd="0", msg1="Success", data={"foreign": "data"}
+#     ))
+#     result = await mock_quotations.get_top_foreign_buying_stocks()
+#     assert result.rt_cd == "0"
+#     mock_quotations._logger.info.assert_called_once()
 
 
 @pytest.mark.asyncio

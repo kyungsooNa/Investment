@@ -6,7 +6,8 @@ import asyncio  # 비동기 처리를 위해 추가
 import httpx
 
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from brokers.korea_investment.korea_invest_params_provider import Params
 from typing import Optional
 from common.types import ResCommonResponse, ErrorCode
 

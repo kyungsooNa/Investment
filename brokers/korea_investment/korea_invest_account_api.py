@@ -2,7 +2,8 @@
 
 import httpx
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from brokers.korea_investment.korea_invest_params_provider import Params
 from typing import Optional
 from common.types import ResCommonResponse
 
@@ -34,19 +35,20 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
             cano = full_account_number
             acnt_prdt_cd = "01"
 
-        params = {
-            "CANO": cano,
-            "ACNT_PRDT_CD": acnt_prdt_cd,
-            "AFHR_FLPR_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "FUND_STTL_ICLD_YN": "N",
-            "INQR_DVSN": "01",
-            "OFL_YN": "N",
-            "PRCS_DVSN": "01",
-            "UNPR_DVSN": "01",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": ""
-        }
+        params = Params.account_balance(cano=cano, acnt_prdt_cd=acnt_prdt_cd)
+        # params = {
+        #     "CANO": cano,
+        #     "ACNT_PRDT_CD": acnt_prdt_cd,
+        #     "AFHR_FLPR_YN": "N",
+        #     "FNCG_AMT_AUTO_RDPT_YN": "N",
+        #     "FUND_STTL_ICLD_YN": "N",
+        #     "INQR_DVSN": "01",
+        #     "OFL_YN": "N",
+        #     "PRCS_DVSN": "01",
+        #     "UNPR_DVSN": "01",
+        #     "CTX_AREA_FK100": "",
+        #     "CTX_AREA_NK100": ""
+        # }
 
         mode_str = "모의투자" if is_paper else "실전투자"
         self._logger.info(f"{mode_str} 계좌 잔고 조회 시도...")

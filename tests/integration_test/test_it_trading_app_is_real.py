@@ -642,7 +642,7 @@ async def test_get_top_volume_full_integration(real_app_instance, mocker):
 
     # --- Act ---
     executor = UserActionExecutor(app)
-    running_status = await executor.execute("12")
+    running_status = await executor.execute("30")
 
     # --- Assert (검증) ---
     assert running_status == True

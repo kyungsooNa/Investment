@@ -15,7 +15,6 @@ cache:
     - get_top_foreign_buying_stocks
     - get_stock_news
     - get_etf_info
-    - search_stocks_by_keyword
   deserializable_classes:
     - common.types.ResCommonResponse
     - common.types.ResStockFullInfoApiOutput

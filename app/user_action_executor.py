@@ -37,7 +37,6 @@ class UserActionExecutor:
             '7': self.handle_asking_price,
             '8': self.handle_time_conclude,
             '10': self.handle_etf_info,
-            '12': self.handle_top_30_volume,
             '13': self.handle_top_market_cap_stocks,
             '14': self.handle_top_10_market_cap_stocks,
             '15': self.handle_yesterday_upper_limit_500,
@@ -47,6 +46,11 @@ class UserActionExecutor:
             '20': self.handle_momentum_strategy,
             '21': self.handle_momentum_backtest,
             '22': self.handle_gapup_pullback,
+
+            '30': self.handle_top_volume_30,
+            '31': self.handle_top_rise_30,
+            '32': self.handle_top_fall_30,
+
             '98': self.handle_invalidate_token,
             '99': self.handle_exit,
         }
@@ -319,12 +323,27 @@ class UserActionExecutor:
             self.app.logger.error(f"[GapUpPullback] 전략 실행 오류: {e}")
             self.app.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
 
-    async def handle_top_30_volume(self) -> None:
+    # @TODO 시장이 열려있을때도 유효한지 확인 필요.
+    async def handle_top_volume_30(self) -> None:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("거래량 ~30위 종목 조회")
         else:
             await self.app.stock_query_service.handle_get_top_stocks('volume')
 
+    # @TODO 시장이 열려있을때도 유효한지 확인 필요.
+    async def handle_top_rise_30(self) -> None:
+        if self.app.env.is_paper_trading:
+            self.app.cli_view.display_warning_paper_trading_not_supported("상승률 ~30위 종목 조회")
+        else:
+            await self.app.stock_query_service.handle_get_top_stocks('rise')
+
+    # @TODO 시장이 열려있을때도 유효한지 확인 필요.
+    async def handle_top_fall_30(self) -> None:
+        if self.app.env.is_paper_trading:
+            self.app.cli_view.display_warning_paper_trading_not_supported("하락률 ~30위 종목 조회")
+        else:
+            await self.app.stock_query_service.handle_get_top_stocks('fall')
+            
     async def handle_exit(self) -> bool:
         self.app.cli_view.display_exit_message()
         return False
