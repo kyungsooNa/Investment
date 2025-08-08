@@ -648,6 +648,70 @@ async def test_get_top_volume_full_integration(real_app_instance, mocker):
     assert running_status == True
     assert mock_call_api.await_count == 0  # 실제 API 호출은 없어야 함
 
+@pytest.mark.asyncio
+async def test_get_top_rise_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 상위 랭킹 조회 (rise): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ API 응답 모킹 (상위 랭킹 종목 리스트)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "output": [
+                {"code": "005930", "name": "삼성전자", "change_rate": "3.2"},
+                {"code": "000660", "name": "SK하이닉스", "change_rate": "2.7"}
+            ]
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- Act ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("31")
+
+    # --- Assert (검증) ---
+    assert running_status == True
+    assert mock_call_api.await_count == 0  # 실제 API 호출은 없어야 함
+
+
+@pytest.mark.asyncio
+async def test_get_top_fall_full_integration(real_app_instance, mocker):
+    """
+    (통합 테스트) 상위 랭킹 조회 (fall): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # ✅ API 응답 모킹 (상위 랭킹 종목 리스트)
+    mock_response = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "output": [
+                {"code": "005930", "name": "삼성전자", "change_rate": "3.2"},
+                {"code": "000660", "name": "SK하이닉스", "change_rate": "2.7"}
+            ]
+        }
+    )
+
+    mock_call_api = mocker.patch(
+        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
+        return_value=mock_response
+    )
+
+    # --- Act ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("32")
+
+    # --- Assert (검증) ---
+    assert running_status == True
+    assert mock_call_api.await_count == 0  # 실제 API 호출은 없어야 함
 
 @pytest.mark.asyncio
 async def test_get_top_market_cap_stocks_full_integration(real_app_instance, mocker):

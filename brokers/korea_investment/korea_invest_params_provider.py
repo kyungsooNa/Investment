@@ -412,6 +412,17 @@ class AccountBalanceParams:
             CTX_AREA_NK100=ctx_area_nk100,
         )
 
+@dataclass(frozen=True)
+class OrderCashBody:
+    CANO: str
+    ACNT_PRDT_CD: str
+    PDNO: str
+    ORD_DVSN: str  # 00 지정가 / 01 시장가 ...
+    ORD_QTY: str
+    ORD_UNPR: str  # 시장가일 땐 "0" 등 규약대로
+
+    def to_dict(self):
+        return asdict(self)
 
 # ---- 얇은 파사드: 기존 코드에서 함수 호출만으로 dict를 얻을 수 있게 ----
 
@@ -527,4 +538,16 @@ class Params:
             fund_sttl_icld_yn, inqr_dvsn, ofl_yn,
             prcs_dvsn, unpr_dvsn,
             ctx_area_fk100, ctx_area_nk100
+        ).to_dict()
+
+    @staticmethod
+    def order_cash_body(*, cano: str, acnt_prdt_cd: str, pdno: str,
+                        ord_dvsn: str, ord_qty: str | int, ord_unpr: str | int) -> dict:
+        return OrderCashBody(
+            CANO=cano,
+            ACNT_PRDT_CD=acnt_prdt_cd,
+            PDNO=pdno,
+            ORD_DVSN=ord_dvsn,
+            ORD_QTY=str(ord_qty),
+            ORD_UNPR=str(ord_unpr),
         ).to_dict()
