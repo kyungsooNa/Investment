@@ -236,6 +236,3 @@ class KoreaInvestApiBase:
         self._headers["Authorization"] = f"Bearer {access_token}"
         self._headers["appkey"] = self._env.active_config['api_key']
         self._headers["appsecret"] = self._env.active_config['api_secret_key']
-        print(self._headers["Authorization"])
-        print(self._headers["appkey"])
-        print(self._headers["appsecret"])

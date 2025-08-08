@@ -1,10 +1,42 @@
 import pytest
-import requests
 import json
-
+import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+from common.types import ErrorCode, ResCommonResponse
 
+
+def make_api():
+    api = KoreaInvestApiTrading(MagicMock(), MagicMock())
+    # _get_hashkey에서 path 구성할 때 active_config를 읽으므로 최소 필드 세팅
+    api._env.active_config = {
+        "base_url": "https://mock.api",
+        "api_key": "abc",
+        "api_secret_key": "def",
+    }
+    return api
+
+class FakeResp:
+    def __init__(self, payload, status_ok=True, text=None):
+        self._payload = payload
+        self.text = text if text is not None else json.dumps(payload)
+        self._status_ok = status_ok
+
+    def raise_for_status(self):
+        if not self._status_ok:
+            # 간단히 HTTPStatusError 흉내 (request/response None 처리 가능)
+            raise httpx.HTTPStatusError("boom", request=None, response=None)
+
+    def json(self):
+        return self._payload
+
+class FakeRespBadJson:
+    text = "not-json"
+    def raise_for_status(self):
+        return None
+    def json(self):
+        # _get_hashkey가 json.JSONDecodeError를 캐치하므로 정확히 그 예외를 던짐
+        raise json.JSONDecodeError("bad json", "doc", 0)
 
 @pytest.mark.asyncio
 async def test_place_stock_order_buy_success():
@@ -45,79 +77,63 @@ async def test_place_stock_order_buy_success():
 
 
 @pytest.mark.asyncio
-@patch("requests.post")
-async def test_get_hashkey_success(mock_post):
-    # Mock HTTP response
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {'HASH': 'abc123'}
-    mock_post.return_value = mock_response
+async def test_get_hashkey_success():
+    api = make_api()
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock()) as mock_call:
+        mock_call.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="ok",
+            data=FakeResp({"HASH": "abc123"})
+        )
+        out = await api._get_hashkey({"k":"v"})
+        assert out == "abc123"
+        mock_call.assert_awaited_once()
 
-    mock_config = {
-        'base_url': 'https://mock.api',
-        'api_key': 'abc',
-        'api_secret_key': 'def'
+@pytest.mark.asyncio
+async def test_get_hashkey_network_error():
+    api = make_api()
+    # call_api 자체가 네트워크 계열 예외를 던지도록 모킹
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(
+        side_effect=httpx.RequestError("network error")
+    )):
+        out = await api._get_hashkey({"k":"v"})
+        assert out is None
+
+@pytest.mark.asyncio
+async def test_get_hashkey_json_decode_error():
+    api = make_api()
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock()) as mock_call:
+        mock_call.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="ok",
+            data=FakeRespBadJson()
+        )
+        out = await api._get_hashkey({"k":"v"})
+        assert out is None
+
+@pytest.mark.asyncio
+async def test_get_hashkey_unexpected_exception():
+    api = KoreaInvestApiTrading(MagicMock(), MagicMock())
+    api._env.active_config = {
+        "base_url": "https://mock.api",
+        "api_key": "abc",
+        "api_secret_key": "def",
     }
 
-    trading_api = KoreaInvestApiTrading(MagicMock(), MagicMock())
-    result = await trading_api._get_hashkey({'test': 'value'})
-
-    assert result == 'abc123'
-
-
-@pytest.mark.asyncio
-@patch("requests.post", side_effect=requests.exceptions.RequestException("network error"))
-async def test_get_hashkey_network_error(mock_post):
-    trading_api = KoreaInvestApiTrading(MagicMock(), MagicMock())
-
-    result = await trading_api._get_hashkey({'test': 'value'})
-    assert result is None
-
+    # call_api가 예기치 못한 예외를 던지도록 모킹
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(side_effect=Exception("Unexpected Error"))):
+        result = await api._get_hashkey({"test": "value"})
+        assert result is None
 
 @pytest.mark.asyncio
-@patch("requests.post")
-async def test_get_hashkey_json_decode_error(mock_post):
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
-    mock_response.text = "invalid json"
-    mock_post.return_value = mock_response
-
-    trading_api = KoreaInvestApiTrading(MagicMock(), MagicMock())
-
-    result = await trading_api._get_hashkey({'test': 'value'})
-    assert result is None
-
-
-@pytest.mark.asyncio
-@patch("requests.post")
-async def test_get_hashkey_unexpected_exception(mock_post):
-    mock_post.side_effect = Exception("Unexpected Error")
-
-    trading_api = KoreaInvestApiTrading(MagicMock(), MagicMock())
-
-    result = await trading_api._get_hashkey({'test': 'value'})
-    assert result is None
-
-
-@pytest.mark.asyncio
-@patch("requests.post")
-async def test_get_hashkey_missing_hash_field(mock_post):
-    # 응답 JSON에 'HASH' 키가 없는 경우
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {'unexpected_key': 'value'}
-    mock_post.return_value = mock_response
-
-    mock_logger = MagicMock()
-
-    trading_api = KoreaInvestApiTrading(MagicMock(), mock_logger)
-
-    result = await trading_api._get_hashkey({'test': 'value'})
-
-    assert result is None
-    mock_logger.error.assert_called_with("Hashkey API 응답에 HASH 값이 없습니다: {'unexpected_key': 'value'}")
-
+async def test_get_hashkey_missing_hash_field():
+    api = make_api()
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock()) as mock_call:
+        # HASH 키가 없음
+        mock_call.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="ok",
+            data=FakeResp({"NO_HASH": "zzz"})
+        )
+        out = await api._get_hashkey({"k":"v"})
+        assert out is None
 
 @pytest.mark.asyncio
 async def test_place_stock_order_sell_success():
@@ -156,38 +172,45 @@ async def test_place_stock_order_sell_success():
     assert trading_api._headers["tr_id"] == "SELL_PAPER"
     mock_logger.info.assert_called()
 
-    @ pytest.mark.asyncio
-    async def test_place_stock_order_hashkey_none():
-        # mock_config = {
-        #     'base_url': 'https://mock.api',
-        #     'api_key': 'abc',
-        #     'api_secret_key': 'def',
-        #     'custtype': 'P',
-        #     'stock_account_number': '12345678',
-        #     'is_paper_trading': True,
-        #     'tr_ids': {
-        #         'trading': {
-        #             'order_cash_buy_paper': 'BUY_PAPER',
-        #             'order_cash_buy_real': 'BUY_REAL',
-        #             'order_cash_sell_paper': 'SELL_PAPER',
-        #             'order_cash_sell_real': 'SELL_REAL'
-        #         }
-        #     }
-        # }
+@pytest.mark.asyncio
+async def test_place_stock_order_hashkey_none():
+    mock_logger = MagicMock()
+    api = KoreaInvestApiTrading(MagicMock(), mock_logger)
 
-        mock_logger = MagicMock()
-        trading_api = KoreaInvestApiTrading(MagicMock(), mock_logger)
+    # 최소 config (TR_ID 접근 시 필요할 수 있음)
+    api._env.active_config = {
+        "base_url": "https://mock.api",
+        "api_key": "abc",
+        "api_secret_key": "def",
+        "custtype": "P",
+        "is_paper_trading": True,
+        "stock_account_number": "12345678",
+        "tr_ids": {
+            "trading": {
+                "order_cash_buy_paper": "VTTC0802U",
+                "order_cash_buy_real": "TTTC0802U",
+                "order_cash_sell_paper": "VTTC0801U",
+                "order_cash_sell_real": "TTTC0801U",
+            }
+        }
+    }
 
-        # 해시 생성 실패 상황을 모의
-        trading_api._get_hashkey = AsyncMock(return_value=None)
+    # 1) 해시키 실패 모킹
+    api._get_hashkey = AsyncMock(return_value=None)
 
-        # 실제 주문 시도
-        result = await trading_api.place_stock_order(
-            stock_code='005930',
-            order_price='70000',
-            order_qty='10',
-            is_buy=True
+    # 2) 주문 API가 호출되지 않아야 함
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock()) as mock_call:
+        result = await api.place_stock_order(
+            stock_code="005930",
+            order_price="70000",
+            order_qty="10",
+            is_buy=True,
         )
 
-        # 검증: 해시 생성 실패로 인해 주문 시도 중단
-        assert result is None
+        # 현재 구현 계약에 맞춘 검증
+        assert isinstance(result, ResCommonResponse)
+        assert result.rt_cd == ErrorCode.MISSING_KEY.value
+        assert "hashkey 계산 실패" in result.msg1
+
+        # 해시키 실패했으므로 실제 주문 API 호출 X
+        mock_call.assert_not_awaited()

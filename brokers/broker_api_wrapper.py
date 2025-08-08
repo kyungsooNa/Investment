@@ -86,16 +86,6 @@ class BrokerAPIWrapper:
         """시가총액 상위 종목 목록을 반환합니다 (KoreaInvestApiQuotations 위임)."""
         return await self._client.get_top_market_cap_stocks_code(market_code, count)
 
-    async def get_previous_day_info(self, code: str) -> ResCommonResponse:
-        """종목의 전일 종가, 전일 거래량을 조회합니다 (KoreaInvestApiQuotations 위임)."""
-        return self._client.get_previous_day_info(code)  #
-
-    async def get_filtered_stocks_by_momentum(
-            self, count=20, min_change_rate=10.0, min_volume_ratio=2.0
-    ) -> ResCommonResponse:  #
-        """거래량 급증 + 등락률 조건 기반 모멘텀 종목 필터링합니다 (KoreaInvestApiQuotations 위임)."""
-        return await self._client.get_filtered_stocks_by_momentum(count, min_change_rate, min_volume_ratio)
-
     async def inquire_daily_itemchartprice(self, stock_code: str, date: str,
                                            fid_period_div_code: str = 'D') -> ResCommonResponse:
         """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""

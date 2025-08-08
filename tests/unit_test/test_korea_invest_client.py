@@ -238,31 +238,6 @@ async def test_get_top_market_cap_stocks_code_delegation(korea_invest_client_ins
     mock_quotations.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", 1)
     assert result == {"rt_cd": "0", "output": [{"iscd": "005930"}]}
 
-
-def test_get_previous_day_info_delegation(korea_invest_client_instance):
-    """get_previous_day_info 메서드가 _quotations.get_previous_day_info를 호출하는지 테스트합니다."""
-    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
-
-    mock_quotations.get_previous_day_info = MagicMock(return_value={"prev_close": 65000, "prev_volume": 100000})
-
-    result = client.get_previous_day_info("005930")  # 동기 메서드
-
-    mock_quotations.get_previous_day_info.assert_called_once_with("005930")
-    assert result == {"prev_close": 65000, "prev_volume": 100000}
-
-
-@pytest.mark.asyncio
-async def test_get_filtered_stocks_by_momentum_delegation(korea_invest_client_instance):
-    """get_filtered_stocks_by_momentum 메서드가 _quotations.get_filtered_stocks_by_momentum을 호출하는지 테스트합니다."""
-    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
-    mock_quotations.get_filtered_stocks_by_momentum.return_value = [{"symbol": "005930", "change_rate": 15.0}]
-
-    result = await client.get_filtered_stocks_by_momentum(count=5, min_change_rate=10.0, min_volume_ratio=3.0)
-
-    mock_quotations.get_filtered_stocks_by_momentum.assert_awaited_once_with(5, 10.0, 3.0)
-    assert result == [{"symbol": "005930", "change_rate": 15.0}]
-
-
 @pytest.mark.asyncio
 async def test_inquire_daily_itemchartprice_delegation(korea_invest_client_instance):
     """inquire_daily_itemchartprice 메서드가 _quotations.inquire_daily_itemchartprice를 호출하는지 테스트합니다."""
