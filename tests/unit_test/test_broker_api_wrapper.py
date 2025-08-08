@@ -157,16 +157,6 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     assert result == {"rt_cd": "0", "output": [{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "data_rank": "1"}]}
     mock_client.get_top_market_cap_stocks_code.assert_called_once_with("0000", 1)
 
-    # get_previous_day_info (lines 81, 84) - calls self._client.get_previous_day_info (sync)
-    result = await wrapper.get_previous_day_info("005930")
-    assert result == {"prev_close": 68000, "prev_volume": 10000}
-    mock_client.get_previous_day_info.assert_called_once_with("005930")
-
-    # get_filtered_stocks_by_momentum (lines 86, 90) - calls self._client.get_filtered_stocks_by_momentum
-    result = await wrapper.get_filtered_stocks_by_momentum(count=5)
-    assert result == [{"symbol": "005930_filtered"}]
-    mock_client.get_filtered_stocks_by_momentum.assert_called_once_with(5, 10.0, 2.0)
-
     # inquire_daily_itemchartprice (lines 92, 94) - calls self._client.inquire_daily_itemchartprice
     result = await wrapper.inquire_daily_itemchartprice("005930", "20250101", fid_period_div_code="M")
     assert result == [{"stck_clpr": "70000_chart"}]

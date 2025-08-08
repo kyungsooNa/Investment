@@ -1,5 +1,4 @@
 # brokers/korea_investment/korea_invest_trading_api.py
-import requests
 import json
 import os
 import certifi
@@ -9,7 +8,6 @@ import httpx
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
 from typing import Optional
-
 from common.types import ResCommonResponse, ErrorCode
 
 
@@ -24,23 +22,17 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         """
         full_config = self._env.active_config
 
-        body_json_str = json.dumps(data)
-        hashkey_url = f"{full_config['base_url']}/uapi/hashkey"
-
-        hashkey_headers = self._headers.copy()
-        hashkey_headers["appkey"] = full_config['api_key']
-        hashkey_headers["appsecret"] = full_config['api_secret_key']
-        hashkey_headers["Content-Type"] = "application/json; charset=utf-8"
-        hash_response = None
+        path = f"{full_config['base_url']}/uapi/hashkey"
+        response = None
 
         try:
-            loop = asyncio.get_running_loop()
-            hash_response = await loop.run_in_executor(
-                None,
-                lambda: requests.post(hashkey_url, headers=hashkey_headers, data=body_json_str, verify=certifi.where())
-            )
-            hash_response.raise_for_status()
-            hash_data = hash_response.json()
+            response : ResCommonResponse = await self.call_api('POST', path, data=data, retry_count=1)
+
+            if response.rt_cd != ErrorCode.SUCCESS.value:
+                return response
+
+            response.data.raise_for_status()
+            hash_data = response.data.json()
             calculated_hashkey = hash_data.get('HASH')
 
             if not calculated_hashkey:
@@ -50,11 +42,16 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._logger.info(f"Hashkey 계산 성공: {calculated_hashkey}")
             return calculated_hashkey
 
-        except requests.exceptions.RequestException as e:
-            self._logger.error(f"Hashkey API 호출 중 네트워크 오류: {e}")
+        except httpx.TimeoutException as e:
+            self._logger.error(f"Hashkey API 타임아웃: {e}")
+            return None
+        except httpx.HTTPStatusError as e:
+            status = e.response.data.status_code if e.response is not None else "unknown"
+            body = e.response.data.text if e.response is not None else ""
+            self._logger.error(f"Hashkey API HTTP 오류: {status}, 응답: {body!r}")
             return None
         except json.JSONDecodeError:
-            self._logger.error(f"Hashkey API 응답 JSON 디코딩 실패: {hash_response.text}")
+            self._logger.error(f"Hashkey API 응답 JSON 디코딩 실패: {response.data.text!r}")
             return None
         except Exception as e:
             self._logger.error(f"Hashkey API 호출 중 알 수 없는 오류: {e}")

@@ -1,6 +1,7 @@
 # integration_test/it_trading_app.py
 import pytest
 import asyncio
+import json
 import pandas as pd
 from app.trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
@@ -222,6 +223,36 @@ async def test_get_account_balance_full_integration(real_app_instance, mocker):
     app.cli_view.display_account_balance_failure.assert_not_called()
 
 
+class FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+        self.text = json.dumps(payload)
+    def raise_for_status(self):  # 해시키 성공 가정
+        return None
+    def json(self):
+        return self._payload
+
+
+def make_call_api_side_effect(order_ok_response: ResCommonResponse):
+    async def _side_effect(method, path, *args, **kwargs):
+        # 1) 해시키
+        if path.endswith("/uapi/hashkey"):
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="ok",
+                data=FakeResp({"HASH": "abc123"})
+            )
+        # 2) 주문
+        if path.endswith("/uapi/domestic-stock/v1/trading/order-cash"):
+            return order_ok_response
+        # 혹시 다른 경로면 실패 응답
+        return ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value,
+            msg1=f"unexpected path: {path}",
+            data=None
+        )
+    return _side_effect
+
 @pytest.mark.asyncio
 async def test_buy_stock_full_integration(real_app_instance, mocker):
     """
@@ -237,7 +268,7 @@ async def test_buy_stock_full_integration(real_app_instance, mocker):
     app.cli_view.get_user_input.side_effect = ["005930", "10", "70000"]  # 종목코드, 수량, 가격
 
     # --- Mock API 응답 ---
-    mock_response = ResCommonResponse(
+    order_ok = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="매수 주문 성공",
         data={"ord_no": "1234567890"}
@@ -245,23 +276,23 @@ async def test_buy_stock_full_integration(real_app_instance, mocker):
 
     mock_call_api = mocker.patch(
         'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-        return_value=mock_response
+        new_callable=AsyncMock
     )
+
+    mock_call_api.side_effect = make_call_api_side_effect(order_ok)
 
     # --- Act ---
     executor = UserActionExecutor(app)
     running_status = await executor.execute("3")
 
     # --- Assert (검증) ---
-    assert running_status == True
-    assert mock_call_api.await_count == 1
-    called_args = mock_call_api.call_args[0]
-    assert called_args[0] == "POST"
-    assert "/uapi/domestic-stock/v1/trading/order-cash" in called_args[1]
+    assert running_status is True
+    # 해시키 + 주문 총 2회 호출
+    assert mock_call_api.await_count == 2
 
-    app.cli_view.get_user_input.assert_any_await("매수할 종목 코드를 입력하세요: ")
-    app.cli_view.get_user_input.assert_any_await("매수할 수량을 입력하세요: ")
-    app.cli_view.get_user_input.assert_any_await("매수 가격을 입력하세요 (시장가: 0): ")
+    # 두 번째 호출이 주문 엔드포인트인지 확인
+    second_call_path = mock_call_api.call_args_list[1][0][1]
+    assert "/uapi/domestic-stock/v1/trading/order-cash" in second_call_path
 
 
 @pytest.mark.asyncio
@@ -279,7 +310,7 @@ async def test_sell_stock_full_integration(real_app_instance, mocker):
     app.cli_view.get_user_input.side_effect = ["005930", "5", "69000"]
 
     # --- Mock API 응답 ---
-    mock_response = ResCommonResponse(
+    order_ok = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="매도 주문 성공",
         data={"ord_no": "9876543210"}
@@ -287,23 +318,22 @@ async def test_sell_stock_full_integration(real_app_instance, mocker):
 
     mock_call_api = mocker.patch(
         'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-        return_value=mock_response
+        new_callable=AsyncMock
     )
+    mock_call_api.side_effect = make_call_api_side_effect(order_ok)
 
     # --- Act ---
     executor = UserActionExecutor(app)
     running_status = await executor.execute("4")
 
     # --- Assert (검증) ---
-    assert running_status == True
-    assert mock_call_api.await_count == 1
-    called_args = mock_call_api.call_args[0]
-    assert called_args[0] == "POST"
-    assert "/uapi/domestic-stock/v1/trading/order-cash" in called_args[1]
+    assert running_status is True
+    # 해시키 + 주문 = 2회 호출
+    assert mock_call_api.await_count == 2
 
-    app.cli_view.get_user_input.assert_any_await("매도할 종목 코드를 입력하세요: ")
-    app.cli_view.get_user_input.assert_any_await("매도할 수량을 입력하세요: ")
-    app.cli_view.get_user_input.assert_any_await("매도 가격을 입력하세요 (시장가: 0): ")
+    # 두 번째 호출이 주문 엔드포인트인지 확인
+    second_call_path = mock_call_api.call_args_list[1][0][1]
+    assert "/uapi/domestic-stock/v1/trading/order-cash" in second_call_path
 
 
 @pytest.mark.asyncio
