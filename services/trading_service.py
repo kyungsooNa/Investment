@@ -408,10 +408,10 @@ class TradingService:
         self._logger.info(f"Service - {stock_code} 종목 시간대별 체결가 조회 요청")
         return await self._broker_api_wrapper.get_time_concluded_prices(stock_code)
 
-    async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
-        """키워드로 종목을 검색합니다."""
-        self._logger.info(f"Service - '{keyword}' 키워드로 종목 검색 요청")
-        return await self._broker_api_wrapper.search_stocks_by_keyword(keyword)
+    # async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
+    #     """키워드로 종목을 검색합니다."""
+    #     self._logger.info(f"Service - '{keyword}' 키워드로 종목 검색 요청")
+    #     return await self._broker_api_wrapper.search_stocks_by_keyword(keyword)
 
     async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
         """상승률 또는 하락률 상위 종목을 조회합니다."""
@@ -424,15 +424,15 @@ class TradingService:
         self._logger.info("Service - 거래량 상위 종목 조회 요청")
         return await self._broker_api_wrapper.get_top_volume_stocks()
 
-    async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
-        """외국인 순매수 상위 종목을 조회합니다."""
-        self._logger.info("Service - 외국인 순매수 상위 종목 조회 요청")
-        return await self._broker_api_wrapper.get_top_foreign_buying_stocks()
-
-    async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
-        """특정 종목의 뉴스를 조회합니다."""
-        self._logger.info(f"Service - {stock_code} 종목 뉴스 조회 요청")
-        return await self._broker_api_wrapper.get_stock_news(stock_code)
+    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
+    #     """외국인 순매수 상위 종목을 조회합니다."""
+    #     self._logger.info("Service - 외국인 순매수 상위 종목 조회 요청")
+    #     return await self._broker_api_wrapper.get_top_foreign_buying_stocks()
+    #
+    # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
+    #     """특정 종목의 뉴스를 조회합니다."""
+    #     self._logger.info(f"Service - {stock_code} 종목 뉴스 조회 요청")
+    #     return await self._broker_api_wrapper.get_stock_news(stock_code)
 
     async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
         """특정 ETF의 상세 정보를 조회합니다."""

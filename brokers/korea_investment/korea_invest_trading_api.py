@@ -6,7 +6,8 @@ import asyncio  # 비동기 처리를 위해 추가
 import httpx
 
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from brokers.korea_investment.korea_invest_params_provider import Params
 from typing import Optional
 from common.types import ResCommonResponse, ErrorCode
 
@@ -77,18 +78,14 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
 
         order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
 
-        data = {
-            "CANO": full_config['stock_account_number'],
-            "ACNT_PRDT_CD": "01",
-            "PDNO": stock_code,
-            "ORD_DVSN": order_dvsn,
-            "ORD_QTY": str(order_qty),
-            "ORD_UNPR": str(order_price),
-            # "INQR_PSBL_QTY_DVN": "01",
-            # "LOCL_CSHR_PRCS_DVSN": "00",
-            # "RPRS_SYS_DVSN": "00",
-            # "TR_DVN": trade_type
-        }
+        data = Params.order_cash_body(
+            cano=full_config['stock_account_number'],
+            acnt_prdt_cd="01",
+            pdno=stock_code,
+            ord_dvsn=order_dvsn,
+            ord_qty=order_qty,
+            ord_unpr=order_price,
+        )
 
         calculated_hashkey = await self._get_hashkey(data)
         if not calculated_hashkey:

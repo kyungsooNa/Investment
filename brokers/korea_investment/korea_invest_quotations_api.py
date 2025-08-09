@@ -2,7 +2,8 @@
 import httpx
 from typing import Dict, List, Union, Optional
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from brokers.korea_investment.korea_invest_params_provider import Params
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
     ResPriceSummary, ResMomentumStock, ResCommonResponse, ErrorCode,
@@ -72,10 +73,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers["tr_id"] = full_config['tr_ids']['quotations']['inquire_price']
         self._headers["custtype"] = full_config['custtype']
 
-        params = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": stock_code
-        }
+        params = Params.inquire_price(stock_code=stock_code)
         self._logger.info(f"{stock_code} 현재가 조회 시도...")
 
         response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=3)
@@ -223,17 +221,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         path = full_config["paths"]["market_cap"]
 
-        params = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_cond_scr_div_code": "20174",
-            "fid_div_cls_code": "0",
-            "fid_input_iscd": market_code,
-            "fid_trgt_cls_code": "20",
-            "fid_trgt_exls_cls_code": "20",
-            "fid_input_price_1": "",
-            "fid_input_price_2": "",
-            "fid_vol_cnt": ""
-        }
+        params = Params.top_market_cap()
 
         self._logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code}, 요청개수: {count})")
         response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
@@ -320,14 +308,15 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         headers = self._headers.copy()
         headers["tr_id"] = selected_tr_id
 
-        params = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": stock_code,
-            "fid_input_date_1": date,
-            "fid_input_date_2": date,
-            "fid_period_div_code": fid_period_div_code,
-            "fid_org_adj_prc": fid_org_adj_prc
-        }
+        params = Params.daily_itemchartprice_day(stock_code=stock_code, date=date)
+        # params = {
+        #     "fid_cond_mrkt_div_code": "J",
+        #     "fid_input_iscd": stock_code,
+        #     "fid_input_date_1": date,
+        #     "fid_input_date_2": date,
+        #     "fid_period_div_code": fid_period_div_code,
+        #     "fid_org_adj_prc": fid_org_adj_prc
+        # }
 
         response_data: ResCommonResponse = await self.call_api(method="GET",
                                                                path=full_config["paths"][
@@ -376,15 +365,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         path = full_config["paths"]["asking_price"]
         tr_id = full_config["tr_ids"]["quotations"]["asking_price"]
-        market_code = full_config.get("market_code", "J")
 
         self._headers["tr_id"] = tr_id
         self._headers["custtype"] = full_config["custtype"]
 
-        params = {
-            "fid_cond_mrkt_div_code": market_code,
-            "fid_input_iscd": stock_code
-        }
+        params = Params.asking_price(stock_code=stock_code)
 
         self._logger.info(f"{stock_code} 종목 호가잔량 조회 시도...")
 
@@ -404,15 +389,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         path = full_config["paths"]["time_conclude"]
         tr_id = full_config["tr_ids"]["quotations"]["time_conclude"]
-        market_code = full_config.get("market_code", "J")
 
         self._headers["tr_id"] = tr_id
         self._headers["custtype"] = full_config["custtype"]
 
-        params = {
-            "fid_cond_mrkt_div_code": market_code,
-            "fid_input_iscd": stock_code
-        }
+        params = Params.time_conclude(stock_code=stock_code)
 
         self._logger.info(f"{stock_code} 종목 체결가 조회 시도...")
         response: ResCommonResponse = await self.call_api("GET", path, params=params, retry_count=1)
@@ -423,48 +404,23 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         return response
 
-    async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
-        """
-        키워드로 종목 검색
-        """
-        full_config = self._env.active_config
-
-        path = full_config["paths"]["search_stock"]
-        tr_id = full_config["tr_ids"]["quotations"]["search_stock"]
-
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config["custtype"]
-
-        params = {
-            "word": keyword
-        }
-
-        self._logger.info(f"'{keyword}' 키워드로 종목 검색 시도...")
-        response = await self.call_api("GET", path, params=params, retry_count=1)
-
-        if response.rt_cd != ErrorCode.SUCCESS.value:
-            self._logger.warning(f"종목 검색 실패: {response.msg1}")
-            return response
-
-        return response
-
     async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
         """
         상승률/하락률 상위 종목 조회
         """
         full_config = self._env.active_config
 
-        key = "ranking_rise" if rise else "ranking_fall"
-        path = full_config["paths"][key]
-        tr_id = full_config["tr_ids"]["quotations"][key]
-        market_code = full_config.get("market_code", "J")
+        path = full_config["paths"]['ranking_fluctuation']
+        tr_id = full_config["tr_ids"]["quotations"]['ranking_fluctuation']
 
         self._headers["tr_id"] = tr_id
         self._headers["custtype"] = full_config["custtype"]
 
-        params = {
-            "fid_cond_mrkt_div_code": market_code
-        }
+        params = (
+            Params.fluctuation_rise()  # 상승률 상위
+            if rise
+            else Params.fluctuation_fall()  # 하락률 상위
+        )
 
         direction = "상승" if rise else "하락"
         self._logger.info(f"{direction}률 상위 종목 조회 시도...")
@@ -484,41 +440,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         path = full_config["paths"]["ranking_volume"]
         tr_id = full_config["tr_ids"]["quotations"]["ranking_volume"]
-        market_code = full_config.get("market_code", "J")
 
         self._headers["tr_id"] = tr_id
         self._headers["custtype"] = full_config["custtype"]
 
-
-        screening_code: str = "20171"  #
-        input_iscd: str = "0000"  # 0000(전체) 기타(업종코드)
-        division_code: str = "0"  # 0(전체) 1(보통주) 2(우선주)
-        belonging_code: str = "0"  # 0 : 평균거래량 1:거래증가율 2:평균거래회전율 3:거래금액순 4:평균거래금액회전율
-        target_code: str = "0"  # 1 or 0 9자리 (차례대로 증거금 30% 40% 50% 60% 100% 신용보증금 30% 40% 50% 60%) # ex) "111111111"
-        exclusion_code: str = "0000000000"  # 1 or 0 10자리 (차례대로 투자위험/경고/주의 관리종목 정리매매 불성실공시 우선주 거래정지 ETF ETN 신용주문불가 SPAC) # ex) "0000000000"
-        price_range_1: str = ""     # 가격 ~
-                                    # ex) "0"
-                                    # 전체 가격 대상 조회 시 FID_INPUT_PRICE_1, FID_INPUT_PRICE_2 모두 ""(공란) 입력
-        price_range_2: str = ""     # ~ 가격
-                                    # ex) "1000000"
-                                    # 전체 가격 대상 조회 시 FID_INPUT_PRICE_1, FID_INPUT_PRICE_2 모두 ""(공란) 입력
-        volume_count: str = ""      # 거래량 ~
-                                    # ex) "100000"
-                                    # 전체 거래량 대상 조회 시 FID_VOL_CNT ""(공란) 입력
-
-        params = {
-            "FID_COND_MRKT_DIV_CODE": market_code,
-            "FID_COND_SCR_DIV_CODE": screening_code,
-            "FID_INPUT_ISCD": input_iscd,
-            "FID_DIV_CLS_CODE": division_code,
-            "FID_BLNG_CLS_CODE": belonging_code,
-            "FID_TRGT_CLS_CODE": target_code,
-            "FID_TRGT_EXLS_CLS_CODE": exclusion_code,
-            "FID_INPUT_PRICE_1": price_range_1,
-            "FID_INPUT_PRICE_2": price_range_2,
-            "FID_VOL_CNT": volume_count,
-            "FID_INPUT_DATE_1": ""
-        }
+        params = Params.top_market_cap()
 
         self._logger.info(f"거래량 상위 종목 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
@@ -528,57 +454,57 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             return response
 
         return response
+    #
+    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
+    #     """
+    #     외국인 순매수 상위 종목 조회
+    #     """
+    #     full_config = self._env.active_config
+    #
+    #     path = full_config["paths"]["ranking_foreign"]
+    #     tr_id = full_config["tr_ids"]["quotations"]["ranking_foreign"]
+    #     market_code = full_config.get("market_code", "J")
+    #
+    #     self._headers["tr_id"] = tr_id
+    #     self._headers["custtype"] = full_config["custtype"]
+    #
+    #     params = {
+    #         "fid_cond_mrkt_div_code": market_code
+    #     }
+    #
+    #     self._logger.info("외국인 순매수 상위 종목 조회 시도...")
+    #     response = await self.call_api("GET", path, params=params, retry_count=1)
+    #
+    #     if response.rt_cd != ErrorCode.SUCCESS.value:
+    #         self._logger.warning(f"외국인 순매수 조회 실패: {response.msg1}")
+    #         return response
+    #
+    #     return response
 
-    async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
-        """
-        외국인 순매수 상위 종목 조회
-        """
-        full_config = self._env.active_config
-
-        path = full_config["paths"]["ranking_foreign"]
-        tr_id = full_config["tr_ids"]["quotations"]["ranking_foreign"]
-        market_code = full_config.get("market_code", "J")
-
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config["custtype"]
-
-        params = {
-            "fid_cond_mrkt_div_code": market_code
-        }
-
-        self._logger.info("외국인 순매수 상위 종목 조회 시도...")
-        response = await self.call_api("GET", path, params=params, retry_count=1)
-
-        if response.rt_cd != ErrorCode.SUCCESS.value:
-            self._logger.warning(f"외국인 순매수 조회 실패: {response.msg1}")
-            return response
-
-        return response
-
-    async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
-        """
-        종목 뉴스 조회
-        """
-        full_config = self._env.active_config
-
-        path = full_config["paths"]["item_news"]
-        tr_id = full_config["tr_ids"]["quotations"]["item_news"]
-
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config["custtype"]
-
-        params = {
-            "fid_input_iscd": stock_code
-        }
-
-        self._logger.info(f"{stock_code} 종목 뉴스 조회 시도...")
-        response = await self.call_api("GET", path, params=params, retry_count=1)
-
-        if response.rt_cd != ErrorCode.SUCCESS.value:
-            self._logger.warning(f"{stock_code} 종목 뉴스 조회 실패: {response.msg1}")
-            return response
-
-        return response
+    # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
+    #     """
+    #     종목 뉴스 조회
+    #     """
+    #     full_config = self._env.active_config
+    #
+    #     path = full_config["paths"]["item_news"]
+    #     tr_id = full_config["tr_ids"]["quotations"]["item_news"]
+    #
+    #     self._headers["tr_id"] = tr_id
+    #     self._headers["custtype"] = full_config["custtype"]
+    #
+    #     params = {
+    #         "fid_input_iscd": stock_code
+    #     }
+    #
+    #     self._logger.info(f"{stock_code} 종목 뉴스 조회 시도...")
+    #     response = await self.call_api("GET", path, params=params, retry_count=1)
+    #
+    #     if response.rt_cd != ErrorCode.SUCCESS.value:
+    #         self._logger.warning(f"{stock_code} 종목 뉴스 조회 실패: {response.msg1}")
+    #         return response
+    #
+    #     return response
 
     async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
         """
@@ -592,10 +518,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers["tr_id"] = tr_id
         self._headers["custtype"] = full_config["custtype"]
 
-        params = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": etf_code
-        }
+        params = Params.etf_info(etf_code=etf_code)
 
         self._logger.info(f"{etf_code} ETF 정보 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
