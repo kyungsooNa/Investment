@@ -18,4 +18,5 @@ cache:
   deserializable_classes:
     - common.types.ResCommonResponse
     - common.types.ResStockFullInfoApiOutput
+    - common.types.ResFluctuation
     - common.types.ResPriceSummary

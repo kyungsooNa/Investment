@@ -7,7 +7,7 @@ from brokers.korea_investment.korea_invest_params_provider import Params
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
     ResPriceSummary, ResMomentumStock, ResCommonResponse, ErrorCode,
-    ResStockFullInfoApiOutput, ResTopMarketCapApiItem, ResDailyChartApiItem,
+    ResStockFullInfoApiOutput, ResTopMarketCapApiItem, ResDailyChartApiItem, ResFluctuation,
 )
 
 
@@ -426,11 +426,21 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._logger.info(f"{direction}률 상위 종목 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
 
-        if response.rt_cd != ErrorCode.SUCCESS.value:
-            self._logger.warning(f"{direction}률 상위 조회 실패: {response.msg1}")
-            return response
-
-        return response
+        try:
+            stocks = [ResFluctuation.from_dict(row) for row in response.data.get("output", [])]
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
+                msg1="종목 정보 조회 성공",
+                data=stocks
+            )
+        except TypeError as e:
+            error_msg = f"등락률 응답 형식 오류: {e}, 응답: {response.data}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,  # Enum 값 사용
+                msg1=error_msg,
+                data=None
+            )
 
     async def get_top_volume_stocks(self) -> ResCommonResponse:
         """

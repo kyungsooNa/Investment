@@ -3,7 +3,7 @@ import unittest
 import io
 from unittest.mock import AsyncMock, MagicMock, patch
 from services.trading_service import TradingService
-from common.types import ErrorCode, ResCommonResponse, ResPriceSummary
+from common.types import ErrorCode, ResCommonResponse, ResPriceSummary, ResFluctuation, ResBasicStockInfo
 
 
 class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
@@ -20,183 +20,102 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_get_current_upper_limit_stocks_success(self):
-        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
-            # 상한가 종목
-            ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="정상 처리되었습니다.",
-                data=ResPriceSummary(
-                    symbol="000660",
-                    open=23077,
-                    current=30000,
-                    change_rate=29.99,
-                    prdy_ctrt=29.99
-                )
-            ),
-            # 상한가 아님
-            ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="정상 처리되었습니다.",
-                data=ResPriceSummary(
-                    symbol="005930",
-                    open=79600,
-                    current=80000,
-                    change_rate=0.5,
-                    prdy_ctrt=0.5
-                )
-            )
+        rise_stocks = [
+            ResFluctuation.from_dict({
+                "stck_shrn_iscd": "000660",
+                "hts_kor_isnm": "SK하이닉스",
+                "stck_prpr": "30000",
+                "prdy_ctrt": "29.99",  # 상한가 조건 충족
+                "prdy_vrss": "2999",
+                "data_rank": "1",
+            }),
+            ResFluctuation.from_dict({
+                "stck_shrn_iscd": "005930",
+                "hts_kor_isnm": "삼성전자",
+                "stck_prpr": "80000",
+                "prdy_ctrt": "0.5",  # 상한가 아님
+                "prdy_vrss": "400",
+                "data_rank": "2",
+            }),
         ]
 
-        self.mock_broker_api_wrapper.get_name_by_code.side_effect = ["SK하이닉스", "삼성전자"]
-
-        all_codes_input = ["000660", "005930"]
-
         # ─ Execute ─
-        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
+        result = await self.trading_service.get_current_upper_limit_stocks(rise_stocks)
 
         # ─ Assert ─
-        self.assertIsInstance(result, ResCommonResponse)
-        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
-        self.assertEqual(len(result.data), 1)
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert isinstance(result.data, list)
+        assert len(result.data) == 1
 
-        stock = result.data[0]
-        self.assertEqual(stock.code, "000660")
-        self.assertEqual(stock.name, "SK하이닉스")
-        self.assertEqual(stock.current_price, 30000)
-        self.assertAlmostEqual(stock.change_rate, 29.99)
-
-        self.mock_broker_api_wrapper.get_price_summary.assert_any_call("000660")
-        self.mock_broker_api_wrapper.get_price_summary.assert_any_call("005930")
-        self.assertEqual(self.mock_broker_api_wrapper.get_price_summary.call_count, 2)
-
-        self.mock_broker_api_wrapper.get_name_by_code.assert_any_call("000660")
-        self.mock_broker_api_wrapper.get_name_by_code.assert_any_call("005930")
-        self.assertEqual(self.mock_broker_api_wrapper.get_name_by_code.call_count, 2)
-
-        self.mock_logger.info.assert_not_called()
+        only: ResBasicStockInfo = result.data[0]
+        assert only.code == "000660"
+        assert only.name == "SK하이닉스"
+        assert only.current_price == 30000
+        assert only.prdy_ctrt == 29.99
 
     async def test_get_current_upper_limit_stocks_no_upper_limit(self):
-        # 모든 종목이 상한가 조건 불충족
-        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
-            ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="성공",
-                data=MagicMock(current=10000, open=9000, change_rate=5.0, prdy_ctrt=5.0)
-            ),
-            ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="성공",
-                data=MagicMock(current=20000, open=18000, change_rate=7.0, prdy_ctrt=7.0)
-            ),
+        # 모든 종목이 상한가 조건(>29.0) 미충족하도록 구성
+        rise_stocks = [
+            ResFluctuation.from_dict({
+                "stck_shrn_iscd": "000660",
+                "hts_kor_isnm": "종목A",
+                "stck_prpr": "10000",
+                "prdy_ctrt": "5.0",  # 상한가 아님
+                "prdy_vrss": "500",
+                "data_rank": "1",
+            }),
+            ResFluctuation.from_dict({
+                "stck_shrn_iscd": "005930",
+                "hts_kor_isnm": "종목B",
+                "stck_prpr": "20000",
+                "prdy_ctrt": "7.0",  # 상한가 아님
+                "prdy_vrss": "1400",
+                "data_rank": "2",
+            }),
         ]
 
-        self.mock_broker_api_wrapper.get_name_by_code.side_effect = [
-            "종목A", "종목B"
-        ]
+        # 이 경로에선 요약/이름 조회를 사용하지 않으므로 기존 모킹은 제거해도 됩니다.
+        result = await self.trading_service.get_current_upper_limit_stocks(rise_stocks)
 
-        all_codes_input = ["000660", "005930"]
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert isinstance(result.data, list)
+        assert len(result.data) == 0  # 상한가 종목 없음
 
-        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
-
-        self.assertIsInstance(result, ResCommonResponse)
-        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
-        self.assertEqual(result.data, [])  # ✅ 핵심 비교
-
-        self.assertEqual(self.mock_broker_api_wrapper.get_price_summary.call_count, 2)
-        self.assertEqual(self.mock_broker_api_wrapper.get_name_by_code.call_count, 2)
-        self.mock_logger.info.assert_not_called()
-
-    async def test_get_current_upper_limit_stocks_api_failure_for_some_stocks(self):
-        # CODEF → 예외, CODEC → 정상 (상한가)
-        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
-            Exception("API 오류 발생"),
-            ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="정상 처리되었습니다.",
-                data=ResPriceSummary(
-                    symbol="CODEC",
-                    open=30770,
-                    current=40000,
-                    change_rate=29.99,
-                    prdy_ctrt=29.99
-                )
-            )
-        ]
-
-        self.mock_broker_api_wrapper.get_name_by_code.side_effect = ["종목C"]
-
-        all_codes_input = ["CODEF", "CODEC"]
-
-        # ─ Execute ─
-        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
-
-        # ─ Assert ─
-        self.assertIsInstance(result, ResCommonResponse)
-        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
-        self.assertEqual(len(result.data), 1)
-
-        self.assertEqual(result.data[0].code, "CODEC")
-        self.assertEqual(result.data[0].name, "종목C")
-        self.assertEqual(result.data[0].current_price, 40000)
-        self.assertAlmostEqual(result.data[0].change_rate, 29.99)
-
-        self.mock_logger.warning.assert_called_once()
-        self.assertIn("CODEF 현재 상한가 필터링 중 오류", self.mock_logger.warning.call_args.args[0])
-
-    # ... (나머지 테스트 케이스도 유사하게 get_price_summary와 get_name_by_code 모의를 조정해야 합니다)
-    async def test_get_current_upper_limit_stocks_exception_during_iteration(self):
-        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
-            ResCommonResponse(  # ✅ 첫 번째 종목 정상 응답
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="정상 처리되었습니다.",
-                data=ResPriceSummary(
-                    symbol="CODED",
-                    open=38460,
-                    current=50000,
-                    change_rate=29.99,
-                    prdy_ctrt=29.99
-                )
-            ),
-            Exception("강제 API 예외")  # ✅ 두 번째 종목 예외
-        ]
-
-        self.mock_broker_api_wrapper.get_name_by_code.side_effect = ["종목D"]
-        all_codes_input = ["CODED", "CODEE"]
-
-        # ─ Execute ─
-        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
-
-        # ─ Assert ─
-        self.assertIsInstance(result, ResCommonResponse)
-        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
-        self.assertEqual(len(result.data), 1)
-
-        stock = result.data[0]
-        self.assertEqual(stock.code, "CODED")
-        self.assertEqual(stock.name, "종목D")
-        self.assertEqual(stock.current_price, 50000)
-        self.assertAlmostEqual(stock.change_rate, 29.99)
-
-        # 예외 로그 발생 여부 확인
-        self.mock_logger.warning.assert_called_with("CODEE 현재 상한가 필터링 중 오류: 강제 API 예외")
 
     @pytest.mark.asyncio
-    async def test_fetch_stock_data_success(self):
-        # Arrange
-        dummy_code = "123456"
-        dummy_price_info = {"current": 10000, "open": 9000, "change_rate": 11.1}
-        dummy_name = "테스트종목"
+    async def test_get_current_upper_limit_stocks_no_upper_limit(self):
+        # 모두 "잘못된 값"이라 파싱 실패 → 스킵되어 상한가 없음
+        rise_stocks = [
+            # 1) 현재가가 숫자가 아님 → int("N/A")에서 예외
+            ResFluctuation.from_dict({
+                "stck_shrn_iscd": "000660",
+                "hts_kor_isnm": "종목A",
+                "stck_prpr": "N/A",  # ← 고의로 잘못된 값
+                "prdy_ctrt": "30.0",  # (의미 없음, 위에서 이미 터짐)
+                "prdy_vrss": "0",
+                "data_rank": "1",
+            }),
+            # 2) 등락률이 숫자가 아님 → float("notnum")에서 예외
+            ResFluctuation.from_dict({
+                "stck_shrn_iscd": "005930",
+                "hts_kor_isnm": "종목B",
+                "stck_prpr": "20000",
+                "prdy_ctrt": "notnum",  # ← 고의로 잘못된 값
+                "prdy_vrss": "1400",
+                "data_rank": "2",
+            }),
+        ]
 
-        self.mock_broker_api_wrapper.get_price_summary = AsyncMock(return_value=dummy_price_info)
-        self.mock_broker_api_wrapper.get_name_by_code = AsyncMock(return_value=dummy_name)
+        # 이 경로에선 요약/이름 조회 호출 안 됨 → 기존 모킹 제거하거나, 남겨뒀다면 아래처럼 검증 가능
+        # self.mock_broker_api_wrapper.get_price_summary.assert_not_called()
+        # self.mock_broker_api_wrapper.get_name_by_code.assert_not_called()
 
-        # Act
-        result = await self.trading_service._fetch_stock_data(dummy_code)
+        result = await self.trading_service.get_current_upper_limit_stocks(rise_stocks)
 
-        # Assert
-        self.mock_broker_api_wrapper.get_price_summary.assert_called_once_with(dummy_code)
-        self.mock_broker_api_wrapper.get_name_by_code.assert_called_once_with(dummy_code)
-        self.assertEqual(result, (dummy_price_info, dummy_name))
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert isinstance(result.data, list)
+        assert len(result.data) == 0  # 모든 항목이 예외로 스킵 → 상한가 없음
+
 
     @pytest.mark.asyncio
     async def test_get_all_stocks_code_success(self):
@@ -245,84 +164,37 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
             time_manager=MagicMock()
         )
 
-    @patch('sys.stdout', new_callable=io.StringIO)
-    async def test_progress_message_output(self, mock_stdout):
-        # ─ Conditions ─
-        # 총 종목 수 5개로 설정하여 (idx + 1) == total_stocks 케이스가 명확히 터치되도록 함.
-        # progress_step은 max(1, 5 // 10) = 1 이므로, 모든 단계마다 메시지가 나옵니다.
-        total_stocks = 5
-        all_codes_input = [f"CODE{i:02d}" for i in range(total_stocks)]
-
-        # get_price_summary와 get_name_by_code는 성공적으로 모의합니다.
-        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
-            {"current": 10000 + i, "open": 9000 + i, "change_rate": 5.0} for i in range(total_stocks)
-        ]
-        self.mock_broker_api_wrapper.get_name_by_code.side_effect = [
-            f"종목{i}" for i in range(total_stocks)
-        ]
-
-        # ─ Execute ─
-        await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
-
-        # ─ Assert ─
-        output_value = mock_stdout.getvalue()
-
-        # 예상되는 출력 패턴: "처리 중... N% 완료 (X/Y)"
-        expected_messages = []
-        progress_step = max(1, total_stocks // 10)
-
-        for i in range(total_stocks):
-            # (idx + 1) % progress_step == 0 조건은 모든 단계에서 True
-            # (idx + 1) == total_stocks 조건은 마지막 단계에서 True (i=4일 때 5 == 5)
-            if (i + 1) % progress_step == 0 or (i + 1) == total_stocks:
-                percentage = ((i + 1) / total_stocks) * 100
-                expected_messages.append(f"처리 중... {percentage:.0f}% 완료 ({i + 1}/{total_stocks})")
-
-        # 각 예상 메시지가 실제 출력에 포함되어 있는지 확인
-        for msg in expected_messages:
-            self.assertIn(msg, output_value)
-
-        # 최종적으로 줄을 지우는 메시지가 있는지 확인
-        self.assertIn("\r" + " " * 80 + "\r", output_value)
 
     async def test_get_price_summary_returns_none_skips_stock(self):
-        self.mock_broker_api_wrapper.get_price_summary.side_effect = [
-            None,  # CODEF
-            ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="성공",
-                data=ResPriceSummary(
-                    symbol="CODEC",
-                    open=30770,
-                    current=40000,
-                    change_rate=29.99,
-                    prdy_ctrt=29.99
-                )
-            )
+        rise_stocks = [
+            ResFluctuation.from_dict({
+                "stck_shrn_iscd": "CODEF",
+                "hts_kor_isnm": "종목F",
+                "stck_prpr": "30770",
+                "prdy_ctrt": "28.0",  # ← 상한가 조건 미충족 → 스킵
+                "prdy_vrss": "0",
+            }),
+            ResFluctuation.from_dict({
+                "stck_shrn_iscd": "CODEC",
+                "hts_kor_isnm": "종목C",
+                "stck_prpr": "40000",
+                "prdy_ctrt": "30.0",  # ← 상한가 조건 만족
+                "prdy_vrss": "0",
+            }),
         ]
 
-        self.mock_broker_api_wrapper.get_name_by_code.side_effect = ["종목C"]
+        result = await self.trading_service.get_current_upper_limit_stocks(rise_stocks)
 
-        all_codes_input = ["CODEF", "CODEC"]
-
-        result = await self.trading_service.get_current_upper_limit_stocks(all_codes_input)
-
-        self.assertIsInstance(result, ResCommonResponse)
-        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
-        self.assertEqual(len(result.data), 1)  # ✅ 이제 통과됨
-
-        item = result.data[0]
-        self.assertEqual(item.code, "CODEC")
-        self.assertEqual(item.name, "종목C")
-        self.assertEqual(item.current_price, 40000)
-        self.assertAlmostEqual(item.change_rate, 29.99)
-
-        self.mock_broker_api_wrapper.get_price_summary.assert_any_call("CODEF")
-        self.mock_broker_api_wrapper.get_price_summary.assert_any_call("CODEC")
-        self.assertEqual(self.mock_broker_api_wrapper.get_price_summary.call_count, 2)
-        self.mock_broker_api_wrapper.get_name_by_code.assert_called_once_with("CODEC")
-        self.assertEqual(self.mock_logger.warning.call_count, 1)
-        self.assertIn("CODEF 현재 상한가 필터링 중 오류", self.mock_logger.warning.call_args.args[0])
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert isinstance(result.data, list)
+        # CODEF는 등락률 28.0 → 스킵, CODEC만 포함
+        assert len(result.data) == 1
+        only = result.data[0]
+        assert isinstance(only, ResBasicStockInfo)
+        assert only.code == "CODEC"
+        assert only.name == "종목C"
+        assert only.current_price == 40000
+        assert only.prdy_ctrt == 30.0
 
 
 class TestGetYesterdayUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
@@ -461,4 +333,3 @@ class TestGetYesterdayUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.trading_service._default_realtime_message_handler(data)
         self.mock_logger.debug.assert_called_once_with(
             "처리되지 않은 실시간 메시지: X0000001 - {'type': 'unknown_type', 'tr_id': 'X0000001', 'data': {}}")
-

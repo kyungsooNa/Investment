@@ -1,6 +1,7 @@
 import asyncio
 
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from common.types import ResFluctuation
 from core.logger import Logger
 from core.time_manager import TimeManager
 
@@ -15,6 +16,26 @@ class CLIView:
         self.time_manager = time_manager
         self.logger = logger
         self.env = env
+
+    def _print_common_header(self):
+        self._print_time_header()
+        self._print_current_mode()
+
+    def _print_current_mode(self):
+        """현재 모드를 출력하는 공통 헤더."""
+        env = self.env
+        if env.is_paper_trading is None:
+            mode = "None"
+        elif env.is_paper_trading is True:
+            mode = "모의투자"
+        else:
+            mode = "실전투자"
+        print(f"\n=== 현재 모드: [{mode}] ===")
+
+    def _print_time_header(self):
+        """현재 시각을 출력하는 공통 헤더."""
+        current_time = self.time_manager.get_current_kst_time().strftime("[%Y-%m-%d %H:%M:%S]")
+        print(current_time)
 
     def display_welcome_message(self):
         """환영 메시지를 표시합니다."""
@@ -285,22 +306,119 @@ class CLIView:
         self._print_common_header()
         print(f"\"{msg}\" 잘못된 환경 선택입니다.")
 
-    def _print_common_header(self):
-        self._print_time_header()
-        self._print_current_mode()
+    def display_current_upper_limit_stocks(self, stocks: list):
+        """현재 상한가 종목 리스트를 표시합니다."""
+        self._print_common_header()
+        print("\n--- 현재 상한가 종목 ---")
+        print(f"현재 상한가 종목 조회 성공. 총 {len(stocks)}개")
+        self.logger.info(f"현재 상한가 종목 조회 성공. 총 {len(stocks)}개")
+        self.logger.info("\n--- 현재 상한가 종목 ---")
+        for s in stocks:
+            # s가 dataclass(ResBasicStockInfo)거나 dict 둘 다 지원
+            code = getattr(s, "code", None) or (s.get("code") if isinstance(s, dict) else "N/A")
+            name = getattr(s, "name", None) or (s.get("name") if isinstance(s, dict) else "N/A")
+            price = getattr(s, "current_price", None) or (s.get("current_price") or s.get("price") if isinstance(s, dict) else "N/A")
+            prdy_ctrt = getattr(s, "prdy_ctrt", None) or (s.get("prdy_ctrt") if isinstance(s, dict) else "N/A")
 
-    def _print_current_mode(self):
-        """현재 모드를 출력하는 공통 헤더."""
-        env = self.env
-        if env.is_paper_trading is None:
-            mode = "None"
-        elif env.is_paper_trading is True:
-            mode = "모의투자"
-        else:
-            mode = "실전투자"
-        print(f"\n=== 현재 모드: [{mode}] ===")
+            print(f"  {name} ({code}): {price}원 (등락률: +{prdy_ctrt}%)")
+            self.logger.info(f"  {name} ({code}): {price}원 (등락률: +{prdy_ctrt}%)")
 
-    def _print_time_header(self):
-        """현재 시각을 출력하는 공통 헤더."""
-        current_time = self.time_manager.get_current_kst_time().strftime("[%Y-%m-%d %H:%M:%S]")
-        print(current_time)
+    def display_no_current_upper_limit_stocks(self):
+        """현재 상한가 종목이 없을 때 메시지."""
+        self._print_common_header()
+        print("현재 상한가에 해당하는 종목이 없습니다.")
+
+    def display_top_stocks_ranking(self, title: str, items: list[ResFluctuation]) -> None:
+        """상위 랭킹(상승/하락/거래량) 공통 표 출력."""
+        self._print_common_header()
+        print(f"\n--- {title} 상위 종목 조회 ---")
+
+        # items: dict 리스트 또는 ResFluctuation 리스트 모두 허용
+        def _get(d, key, default="N/A"):
+            if isinstance(d, dict):
+                return d.get(key, default)
+            # ResFluctuation 등 dataclass 지원
+            return getattr(d, key, default)
+
+        # 필요 시 dict(output=...) 포맷이 넘어오면 추출
+        if isinstance(items, dict) and "output" in items:
+            items = items["output"]
+
+        if not items:
+            print("표시할 종목이 없습니다.")
+            return
+
+        print("\n성공: {0} 상위 30개 종목".format(title))
+        print("-" * 90)
+        print(f"{'순위':<4} {'종목명':<30} {'현재가':>10} {'등락률(%)':>10} {'거래량':>15}")
+        print("-" * 90)
+
+        for item in items[:30]:
+            rank   = _get(item, "data_rank")
+            name   = _get(item, "hts_kor_isnm")
+            price  = _get(item, "stck_prpr")
+            rate   = _get(item, "prdy_ctrt")
+            volume = _get(item, "acml_vol")
+
+            rank_s   = str(rank)   if rank   not in (None, "") else "N/A"
+            name_s   = str(name)   if name   not in (None, "") else "N/A"
+            price_s  = str(price)  if price  not in (None, "") else "N/A"
+            rate_s   = str(rate)   if rate   not in (None, "") else "N/A"
+            volume_s = str(volume) if volume not in (None, "") else "N/A"
+            print(f"{rank_s:<4} {name_s:<30} {price_s:>10} {rate_s:>10} {volume_s:>15}")
+
+        print("-" * 90)
+
+    def display_top_stocks_ranking_error(self, title: str, msg: str) -> None:
+        self._print_common_header()
+        print(f"\n실패: {title} 상위 종목 조회. ({msg})")
+
+    def display_stock_news(self, stock_code: str, news_list: list) -> None:
+        self._print_common_header()
+        print(f"\n--- {stock_code} 종목 뉴스 조회 ---")
+
+        # dict(output=...) 포맷 대응
+        if isinstance(news_list, dict) and "output" in news_list:
+            news_list = news_list["output"]
+
+        if not news_list:
+            print(f"\n{stock_code}에 대한 뉴스가 없습니다.")
+            return
+
+        print(f"\n성공: {stock_code} 최신 뉴스 (최대 5건)")
+        print("-" * 70)
+        for item in news_list[:5]:
+            news_date = item.get('news_dt', '') if isinstance(item, dict) else getattr(item, 'news_dt', '')
+            news_time = item.get('news_tm', '') if isinstance(item, dict) else getattr(item, 'news_tm', '')
+            title     = item.get('news_tl', 'N/A') if isinstance(item, dict) else getattr(item, 'news_tl', 'N/A')
+            print(f"[{news_date} {news_time}] {title}")
+        print("-" * 70)
+
+    def display_stock_news_error(self, stock_code: str, msg: str) -> None:
+        self._print_common_header()
+        print(f"\n실패: {stock_code} 종목 뉴스 조회. ({msg})")
+
+    def display_etf_info(self, etf_code: str, etf_info: dict) -> None:
+        self._print_common_header()
+        print(f"\n--- {etf_code} ETF 정보 조회 ---")
+
+        # dict(output=...) 포맷 대응
+        if isinstance(etf_info, dict) and "output" in etf_info:
+            etf_info = etf_info["output"]
+
+        name        = etf_info.get('etf_rprs_bstp_kor_isnm', 'N/A')
+        price       = etf_info.get('stck_prpr', 'N/A')
+        nav         = etf_info.get('nav', 'N/A')
+        market_cap  = etf_info.get('stck_llam', 'N/A')
+
+        print(f"\n성공: {name} ({etf_code})")
+        print("-" * 40)
+        print(f"  현재가: {price} 원")
+        print(f"  NAV: {nav}")
+        print(f"  시가총액: {market_cap} 원")
+        print("-" * 40)
+
+    def display_etf_info_error(self, etf_code: str, msg: str) -> None:
+        self._print_common_header()
+        print(f"\n실패: {etf_code} ETF 정보 조회. ({msg})")
+

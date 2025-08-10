@@ -377,41 +377,25 @@ class StockQueryService:
         전체 종목 중 현재 상한가에 도달한 종목을 조회하여 출력합니다.
         trading_service 내부의 get_all_stocks_code 및 get_current_upper_limit_stocks 사용.
         """
-        print("\n--- 현재 상한가 종목 조회 ---")
         self.logger.info("Service - 현재 상한가 종목 조회 요청 ")
 
         try:
-            # 전체 종목 코드 조회
-            all_stock_codes: ResCommonResponse = await self.trading_service.get_all_stocks_code()
-
-            if all_stock_codes.rt_cd != ErrorCode.SUCCESS.value:
-                print("전체 종목 코드 조회 실패 또는 결과 없음.")
-                self.logger.warning("전체 종목 코드 없음.")
-                return
-
-            # 현재 상한가 종목 필터링
-            if not isinstance(all_stock_codes.data, list):
-                self.logger.error("get_all_stock_codes.data 리스트가 아님.")
-                return
+            rise_res: ResCommonResponse = await self.trading_service.get_top_rise_fall_stocks(rise=True)
+            if rise_res.rt_cd != ErrorCode.SUCCESS.value:
+                self.logger.warning("상승률 조회 실패.")
+                return rise_res
 
             upper_limit_stocks: ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(
-                all_stock_codes.data)
+                rise_res.data)
 
             if upper_limit_stocks.rt_cd != ErrorCode.SUCCESS.value:
-                print("현재 상한가에 해당하는 종목이 없습니다.")
                 self.logger.info("현재 상한가 종목 없음.")
-            else:
-                print("\n--- 현재 상한가 종목 ---")
-                for stock in upper_limit_stocks.data:
-                    if not isinstance(stock, ResBasicStockInfo):
-                        raise TypeError(f"ResBasicStockInfo 타입이 아님: {type(stock)}")
 
-                    print(f"  {stock.name} ({stock.code}): {stock.current_price}원 (등락률: +{stock.prdy_ctrt}%)")
-                self.logger.info(f"현재 상한가 종목 조회 성공. 총 {len(upper_limit_stocks.data)}개")
+            return upper_limit_stocks
 
         except Exception as e:
-            print(f"현재 상한가 종목 조회 중 오류 발생: {e}")
             self.logger.error(f"현재 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
+            raise
 
     async def handle_get_asking_price(self, stock_code: str):
         """종목의 실시간 호가 정보 조회 및 출력."""
@@ -493,7 +477,7 @@ class StockQueryService:
     #         print(f"\n실패: 종목 검색. ({msg})")
     #         self.logger.error(f"종목 검색 실패: {msg}")
 
-    async def handle_get_top_stocks(self, category: str):
+    async def handle_get_top_stocks(self, category: str) -> ResCommonResponse:
         """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수)."""
         category_map = {
             "rise": ("상승률", self.trading_service.get_top_rise_fall_stocks, True),
@@ -503,38 +487,26 @@ class StockQueryService:
         }
 
         if category not in category_map:
-            print(f"\n오류: 지원하지 않는 카테고리입니다. (사용 가능: rise, fall, volume, foreign)")
-            return
+            self.logger.error(f"지원하지 않는 카테고리: {category}")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1=f"지원하지 않는 카테고리: {category}",
+                data=None,
+            )
 
         title, service_func, param = category_map[category]
-        print(f"\n--- {title} 상위 종목 조회 ---")
         self.logger.info(f"Handler - {title} 상위 종목 조회 요청")
 
-        if param is not None:
-            response = await service_func(param)
-        else:
-            response = await service_func()
+        response = await (service_func(param) if param is not None else service_func())
 
         if response and response.rt_cd == ErrorCode.SUCCESS.value:
-            stock_list = response.data.get('output', [])
-            print(f"\n성공: {title} 상위 30개 종목")
-            print("-" * 90)
-            print(f"{'순위':<4} {'종목명':<30} {'현재가':>10} {'등락률(%)':>10} {'거래량':>15}")
-            print("-" * 90)
-            for item in stock_list[:30]:
-                rank = item.get('data_rank', 'N/A')
-                name = item.get('hts_kor_isnm', 'N/A')
-                price = item.get('stck_prpr', 'N/A')
-                rate = item.get('prdy_ctrt', 'N/A')
-                volume = item.get('acml_vol', 'N/A')  # 거래량 필드
-                print(f"{rank:<4} {name:<30} {price:>10} {rate:>10} {volume:>15}")
-
-            print("-" * 90)
             self.logger.info(f"{title} 상위 종목 조회 성공")
         else:
             msg = response.msg1 if response else "응답 없음"
-            print(f"\n실패: {title} 상위 종목 조회. ({msg})")
             self.logger.error(f"{title} 상위 종목 조회 실패: {msg}")
+
+        return response
+
 
     async def handle_get_stock_news(self, stock_code: str):
         """종목 뉴스 조회 및 출력."""

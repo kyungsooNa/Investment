@@ -68,7 +68,7 @@ class KoreaInvestApiBase:
                 if isinstance(result, ResponseStatus):
                     self._logger.error(f"복구 불가능한 오류 발생: {url}, 응답: {response.text}")
                     return ResCommonResponse(
-                        rt_cd=ErrorCode.PARSING_ERROR.value,
+                        rt_cd=str(result.value),
                         msg1=f"API 응답 파싱 실패 또는 처리 불가능 - {response.text}",
                         data=None
                     )
@@ -226,7 +226,7 @@ class KoreaInvestApiBase:
             # msg1이 있을 경우에만 로깅, 없을 경우 "None" 로깅 방지
             error_message = response_json.get('msg1', '알 수 없는 비즈니스 오류')
             self._logger.error(f"API 비즈니스 오류: {error_message}")
-            return response_json  # 비즈니스 오류 내용을 반환
+            return ResponseStatus.EMPTY_RTCD  # 비즈니스 오류 내용을 반환
 
         # 모든 검사를 통과한 최종 성공적인 응답
         self._logger.debug(f"API 응답 성공: {response.text}")

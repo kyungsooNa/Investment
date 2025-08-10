@@ -142,7 +142,11 @@ class UserActionExecutor:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("전일 상한가 종목 조회 (전체)")
         else:
-            await self.app.stock_query_service.handle_current_upper_limit_stocks()
+            upper_limit_stocks: ResCommonResponse = await self.app.stock_query_service.handle_current_upper_limit_stocks()
+            if upper_limit_stocks.rt_cd == ErrorCode.SUCCESS.value:
+                self.app.cli_view.display_current_upper_limit_stocks(upper_limit_stocks.data)
+            else:
+                self.app.cli_view.display_no_current_upper_limit_stocks()
 
     async def handle_realtime_stream(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("구독할 종목 코드를 입력하세요: ")
@@ -325,25 +329,40 @@ class UserActionExecutor:
 
     # @TODO 시장이 열려있을때도 유효한지 확인 필요.
     async def handle_top_volume_30(self) -> None:
+        title = 'volume'
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("거래량 ~30위 종목 조회")
         else:
-            await self.app.stock_query_service.handle_get_top_stocks('volume')
+            res: ResCommonResponse = await self.app.stock_query_service.handle_get_top_stocks(title)
+            if res.rt_cd == ErrorCode.SUCCESS.value:
+                self.app.cli_view.display_top_stocks_ranking(title, res.data)
+            else:
+                self.app.cli_view.display_top_stocks_ranking_error(title, res.msg1)
 
     # @TODO 시장이 열려있을때도 유효한지 확인 필요.
     async def handle_top_rise_30(self) -> None:
+        title = 'rise'
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("상승률 ~30위 종목 조회")
         else:
-            await self.app.stock_query_service.handle_get_top_stocks('rise')
+            res: ResCommonResponse = await self.app.stock_query_service.handle_get_top_stocks(title)
+            if res.rt_cd == ErrorCode.SUCCESS.value:
+                self.app.cli_view.display_top_stocks_ranking(title, res.data)
+            else:
+                self.app.cli_view.display_top_stocks_ranking_error(title, res.msg1)
 
     # @TODO 시장이 열려있을때도 유효한지 확인 필요.
     async def handle_top_fall_30(self) -> None:
+        title = 'fall'
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("하락률 ~30위 종목 조회")
         else:
-            await self.app.stock_query_service.handle_get_top_stocks('fall')
-            
+            res: ResCommonResponse = await self.app.stock_query_service.handle_get_top_stocks(title)
+            if res.rt_cd == ErrorCode.SUCCESS.value:
+                self.app.cli_view.display_top_stocks_ranking(title, res.data)
+            else:
+                self.app.cli_view.display_top_stocks_ranking_error(title, res.msg1)
+
     async def handle_exit(self) -> bool:
         self.app.cli_view.display_exit_message()
         return False

@@ -2,10 +2,9 @@
 import pytest
 import asyncio
 import json
-import pandas as pd
 from app.trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
-from common.types import ResCommonResponse, ResTopMarketCapApiItem, ErrorCode
+from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResFluctuation, ErrorCode
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from app.user_action_executor import UserActionExecutor
 
@@ -26,18 +25,6 @@ def get_mock_config():
         "custtype": "P",
         "market_code": "J",
         "is_paper_trading": False,
-        "tr_ids": {
-            "quotations": {
-                "search_info": "TR_ID_SEARCH_INFO"
-            }
-        },
-        "paths": {
-            "inquire_price": "/mock/inquire-price"
-        },
-        "params": {
-            "fid_div_cls_code": 2,
-            "screening_code": "20174"
-        }
     }
 
 
@@ -53,7 +40,8 @@ def real_app_instance(mocker, get_mock_config):
     mock_token_manager_instance.issue_token = AsyncMock(return_value={
         "access_token": "mock_integration_test_token", "expires_in": 86400
     })
-    mocker.patch('brokers.korea_investment.korea_invest_token_manager.TokenManager', return_value=mock_token_manager_instance)
+    mocker.patch('brokers.korea_investment.korea_invest_token_manager.TokenManager',
+                 return_value=mock_token_manager_instance)
 
     # 2. Hashkey 생성 로직 모킹
     mock_trading_api_instance = MagicMock()
@@ -67,7 +55,7 @@ def real_app_instance(mocker, get_mock_config):
     # 2. 실제 TradingApp 인스턴스를 생성합니다.
     #    이 과정에서 config.yaml 로드, Logger, TimeManager, Env, TokenManager 초기화가 자동으로 수행됩니다.
     app = TradingApp(logger=dummy_logger)
-    app.env.set_trading_mode(False) # 실전 투자 환경 테스트
+    app.env.set_trading_mode(False)  # 실전 투자 환경 테스트
     app.config = get_mock_config
     app.logger = MagicMock()
 
@@ -227,8 +215,10 @@ class FakeResp:
     def __init__(self, payload):
         self._payload = payload
         self.text = json.dumps(payload)
+
     def raise_for_status(self):  # 해시키 성공 가정
         return None
+
     def json(self):
         return self._payload
 
@@ -251,7 +241,9 @@ def make_call_api_side_effect(order_ok_response: ResCommonResponse):
             msg1=f"unexpected path: {path}",
             data=None
         )
+
     return _side_effect
+
 
 @pytest.mark.asyncio
 async def test_buy_stock_full_integration(real_app_instance, mocker):
@@ -618,31 +610,56 @@ async def test_get_top_volume_full_integration(real_app_instance, mocker):
     (통합 테스트) 상위 랭킹 조회 (volume): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
     """
     app = real_app_instance
+    # 🔑 실제 클라이언트의 _quotations
+    q_real = app.stock_query_service.trading_service._broker_api_wrapper._client._client._quotations
 
-    # ✅ API 응답 모킹 (상위 랭킹 종목 리스트)
-    mock_response = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="정상",
-        data={
-            "output": [
-                {"code": "005930", "name": "삼성전자", "change_rate": "3.2"},
-                {"code": "000660", "name": "SK하이닉스", "change_rate": "2.7"}
-            ]
-        }
+    # 최종 산출을 그대로: ResFluctuation 객체 리스트
+    top30 = [
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "005930",
+            "hts_kor_isnm": "삼성전자",
+            "stck_prpr": "70000",
+            "prdy_ctrt": "3.2",
+            "prdy_vrss": "2170",
+        }),
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "000660",
+            "hts_kor_isnm": "SK하이닉스",
+            "stck_prpr": "150000",
+            "prdy_ctrt": "2.7",
+            "prdy_vrss": "3950",
+        }),
+    ]
+
+    # ✅ 여기만 패치! call_api는 패치하지 마세요.
+    mock_get_volume = mocker.patch.object(
+        q_real, "get_top_volume_stocks",
+        AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=top30
+        ))
     )
 
-    mock_call_api = mocker.patch(
-        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-        return_value=mock_response
-    )
+    # (선택) CLI 출력 검증 원하면 모킹
+    app.cli_view.display_top_stocks_ranking = MagicMock()
+    app.cli_view.display_top_stocks_ranking_error = MagicMock()
 
-    # --- Act ---
     executor = UserActionExecutor(app)
-    running_status = await executor.execute("30")
+    running_status = await executor.execute("30")  # volume
 
-    # --- Assert (검증) ---
-    assert running_status == True
-    mock_call_api.assert_awaited_once()
+    assert running_status is True
+    mock_get_volume.assert_awaited_once()
+
+    # (선택) 출력 리스트 검증
+    app.cli_view.display_top_stocks_ranking.assert_called_once()
+    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
+    passed = app.cli_view.display_top_stocks_ranking.call_args[0][1]  # 보통 (title, list, ...)
+    assert isinstance(passed, list) and len(passed) == 2
+    assert {x.stck_shrn_iscd for x in passed} == {"005930", "000660"}
+
+    title_arg, items_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
+    assert title_arg == "volume"
+    assert items_arg is top30  # 동일 리스트 객체 전달 확인
+
 
 @pytest.mark.asyncio
 async def test_get_top_rise_full_integration(real_app_instance, mocker):
@@ -650,31 +667,45 @@ async def test_get_top_rise_full_integration(real_app_instance, mocker):
     (통합 테스트) 상위 랭킹 조회 (rise): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
     """
     app = real_app_instance
+    # 실제 클라이언트의 quotations 객체
+    q_real = app.stock_query_service.trading_service._broker_api_wrapper._client._client._quotations
 
-    # ✅ API 응답 모킹 (상위 랭킹 종목 리스트)
-    mock_response = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="정상",
-        data={
-            "output": [
-                {"code": "005930", "name": "삼성전자", "change_rate": "3.2"},
-                {"code": "000660", "name": "SK하이닉스", "change_rate": "2.7"}
-            ]
-        }
+    top30 = [
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",
+            "stck_prpr": "70000", "prdy_ctrt": "3.2", "prdy_vrss": "2170", "data_rank": "1"
+        }),
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스",
+            "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950", "data_rank": "2"
+        }),
+    ]
+
+    # ✅ 여기만 패치! (call_api 패치 제거)
+    mock_get_rise = mocker.patch.object(
+        q_real,
+        "get_top_rise_fall_stocks",
+        AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=top30
+        )),
     )
 
-    mock_call_api = mocker.patch(
-        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-        return_value=mock_response
-    )
 
-    # --- Act ---
-    executor = UserActionExecutor(app)
-    running_status = await executor.execute("31")
+    # 출력 모킹
+    app.cli_view.display_top_stocks_ranking = MagicMock()
+    app.cli_view.display_top_stocks_ranking_error = MagicMock()
 
-    # --- Assert (검증) ---
-    assert running_status == True
-    mock_call_api.assert_awaited_once()
+    # 실행 (31 = 상승률 ~30)
+    ok = await UserActionExecutor(app).execute("31")
+    assert ok is True
+    mock_get_rise.assert_awaited_once()
+
+    # ✅ 출력 검증
+    app.cli_view.display_top_stocks_ranking.assert_called_once()
+    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
+    title_arg, items_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
+    assert title_arg == "rise"
+    assert items_arg is top30  # 동일 리스트 객체 전달 확인
 
 
 @pytest.mark.asyncio
@@ -682,32 +713,49 @@ async def test_get_top_fall_full_integration(real_app_instance, mocker):
     """
     (통합 테스트) 상위 랭킹 조회 (fall): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
     """
+
     app = real_app_instance
+    # 실제 클라이언트의 quotations 객체
+    q_real = app.stock_query_service.trading_service._broker_api_wrapper._client._client._quotations
 
-    # ✅ API 응답 모킹 (상위 랭킹 종목 리스트)
-    mock_response = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="정상",
-        data={
-            "output": [
-                {"code": "005930", "name": "삼성전자", "change_rate": "3.2"},
-                {"code": "000660", "name": "SK하이닉스", "change_rate": "2.7"}
-            ]
-        }
+    top30 = [
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",
+            "stck_prpr": "70000", "prdy_ctrt": "3.2", "prdy_vrss": "2170", "data_rank": "1"
+        }),
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스",
+            "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950", "data_rank": "2"
+        }),
+    ]
+
+    # ✅ 여기만 패치! (call_api 패치 제거)
+    mock_get_fall = mocker.patch.object(
+        q_real,
+        "get_top_rise_fall_stocks",
+        AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=top30
+        )),
     )
 
-    mock_call_api = mocker.patch(
-        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-        return_value=mock_response
-    )
+    # 출력 모킹
+    app.cli_view.display_top_stocks_ranking = MagicMock()
+    app.cli_view.display_top_stocks_ranking_error = MagicMock()
 
     # --- Act ---
     executor = UserActionExecutor(app)
     running_status = await executor.execute("32")
 
     # --- Assert (검증) ---
-    assert running_status == True
-    mock_call_api.assert_awaited_once()
+    assert running_status is True
+    mock_get_fall.assert_awaited_once()
+
+    # ✅ 출력 검증
+    app.cli_view.display_top_stocks_ranking.assert_called_once()
+    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
+    title_arg, items_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
+    assert title_arg == "fall"
+    assert items_arg is top30  # 동일 리스트 객체 전달 확인
 
 
 @pytest.mark.asyncio
@@ -879,34 +927,47 @@ async def test_handle_current_upper_limit_stocks_full_integration(real_app_insta
     """
     app = real_app_instance
 
+    top30_sample = [
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "000001",
+            "hts_kor_isnm": "A",
+            "stck_prpr": "5590",
+            "stck_hgpr": "5590",  # 고가=현재가 → 상한가 조건
+            "prdy_ctrt": "30.00",
+            "prdy_vrss": "1290",
+        }),
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "000002",
+            "hts_kor_isnm": "B",
+            "stck_prpr": "20000",
+            "stck_hgpr": "20000",  # 고가=현재가 → 상한가 조건
+            "prdy_ctrt": "30.00",
+            "prdy_vrss": "3000",
+        }),
+        ResFluctuation.from_dict({
+            "stck_shrn_iscd": "000003",
+            "hts_kor_isnm": "C",
+            "stck_prpr": "15000",
+            "stck_hgpr": "16000",  # 상한가 아님
+            "prdy_ctrt": "8.50",
+            "prdy_vrss": "1170",
+        }),
+    ]
+
+    inner_client = app.stock_query_service.trading_service._broker_api_wrapper._client._client
     mocker.patch.object(
-        app.stock_query_service.trading_service._broker_api_wrapper,
-        "get_all_stock_codes",
-        return_value=pd.DataFrame({
-            "종목코드": ["005930", "000660"],
-            "종목명": ["삼성전자", "SK하이닉스"]
-        })
+        inner_client._quotations,
+        "get_top_rise_fall_stocks",
+        AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="정상",
+            data=top30_sample
+        ))
     )
 
-    # ── ② 각 종목 get_current_price() 용 mock (open·현재가·등락률 포함) ─────
-    price_payload = {
-        "stck_oprc": "69500",
-        "stck_prpr": "70500",
-        "prdy_ctrt": "29.85"
-    }
-    mock_price_response = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="정상",
-        data=price_payload
-    )
-
-    # ── call_api() 호출 순서: ① 코드-목록 → ② 삼성전자 → ③ SK하이닉스 ───────
-    mock_call_api = mocker.patch(
-        "brokers.korea_investment.korea_invest_api_base."
-        "KoreaInvestApiBase.call_api",
-        side_effect=[mock_price_response,
-                     mock_price_response]
-    )
+    # 3) CLI 출력 모킹
+    app.cli_view.display_current_upper_limit_stocks = MagicMock()
+    app.cli_view.display_no_current_upper_limit_stocks = MagicMock()
 
     # --- Act ---
     try:
@@ -917,8 +978,25 @@ async def test_handle_current_upper_limit_stocks_full_integration(real_app_insta
         running_status = None
 
     # --- Assert (검증) ---
-    assert running_status == True
-    assert mock_call_api.await_count == 2
+    assert running_status is True
+    app.cli_view.display_current_upper_limit_stocks.assert_called_once()
+    app.cli_view.display_no_current_upper_limit_stocks.assert_not_called()
+
+    # 전달된 리스트 검증 (서비스가 ResBasicStockInfo로 매핑했다고 가정)
+    lst = app.cli_view.display_current_upper_limit_stocks.call_args[0][0]
+    assert isinstance(lst, list) and len(lst) >= 2
+
+    # dataclass 또는 dict 모두 대응
+    def _code(x):
+        return getattr(x, "code", None) or (x.get("code") if isinstance(x, dict) else None)
+
+    def _name(x):
+        return getattr(x, "name", None) or (x.get("name") if isinstance(x, dict) else None)
+
+    codes = {_code(x) for x in lst}
+    names = {_name(x) for x in lst}
+    assert "000001" in codes and "000002" in codes
+    assert "A" in names and "B" in names
 
 
 @pytest.mark.asyncio

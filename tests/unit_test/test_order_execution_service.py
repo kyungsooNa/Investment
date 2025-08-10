@@ -1,773 +1,461 @@
-import io
-import sys
-import unittest
-from unittest.mock import MagicMock, AsyncMock, patch
-from services.stock_query_service import StockQueryService
-from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
-from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResStockFullInfoApiOutput, ErrorCode
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from io import StringIO
+import builtins
+from unittest.mock import call, ANY
+from common.types import ResCommonResponse
+from services.order_execution_service import OrderExecutionService
+
+# 테스트를 위한 MockLogger
+class MockLogger:
+    def __init__(self):
+        self.info = MagicMock()
+        self.debug = MagicMock()
+        self.warning = MagicMock()
+        self.error = MagicMock()
+        self.critical = MagicMock()
+
+@pytest.fixture
+def mock_trading_service():
+    """TradingService의 AsyncMock 인스턴스를 제공하는 픽스처."""
+    mock = AsyncMock()
+    # handle_buy_stock, handle_sell_stock 테스트를 위해 get_user_input 기본값 설정
+    mock.get_user_input.side_effect = ["005930", "10", "70000"]
+    # place_buy_order 및 place_sell_order의 기본 반환값 설정
+    mock.place_buy_order.return_value = {"rt_cd": "0", "msg1": "주문 성공"}
+    mock.place_sell_order.return_value = {"rt_cd": "0", "msg1": "매도 성공"}
+    return mock
+
+@pytest.fixture
+def mock_logger():
+    """MockLogger 인스턴스를 제공하는 픽스처."""
+    return MockLogger()
+
+@pytest.fixture
+def mock_time_manager():
+    """TimeManager의 MagicMock 인스턴스를 제공하는 픽스처."""
+    mock = MagicMock()
+    mock.is_market_open.return_value = True # 기본값 설정
+    return mock
+
+@pytest.fixture
+def print_output_capture():
+    """builtins.print를 캡처하는 픽스처."""
+    original_print = builtins.print
+    capture = StringIO()
+    builtins.print = lambda *args, **kwargs: capture.write(' '.join(map(str, args)) + '\n')
+    yield capture
+    builtins.print = original_print # 테스트 종료 후 print 복원
+    capture.close()
+
+@pytest.fixture
+def handler(mock_trading_service, mock_logger, mock_time_manager):
+    """TransactionHandlers 인스턴스를 제공하는 픽스처."""
+    handler_instance = OrderExecutionService(
+        trading_service=mock_trading_service,
+        logger=mock_logger,
+        time_manager=mock_time_manager
+    )
+    return handler_instance
+
+# --- Pytest 스타일 테스트 케이스 ---
+
+@pytest.mark.asyncio
+async def test_handle_buy_stock_success(handler, mock_trading_service, print_output_capture):
+    """handle_buy_stock 매수 성공 시나리오 테스트."""
+    # handle_buy_stock이 이제 인자를 받으므로, 여기에 직접 전달합니다.
+    # get_user_input의 side_effect와 일치시킵니다.
+    stock_code_input = "005930"
+    qty_input = "10"
+    price_input = "70000"
+
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="주문 성공",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
+    await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
+
+    # get_user_input은 이제 handle_buy_stock 내부에서 호출되지 않으므로 assert_has_awaits는 제거
+    # 대신 place_buy_order가 올바르게 호출되었는지 확인
+    mock_trading_service.place_buy_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input))
+    assert "--- 주식 매수 주문 ---" in print_output_capture.getvalue()
+    assert "주식 매수 주문 성공" in print_output_capture.getvalue()
+
+@pytest.mark.asyncio
+async def test_handle_buy_stock_market_closed(handler, mock_trading_service, mock_time_manager, print_output_capture, mock_logger):
+    """handle_buy_stock 시장 마감 시 매수 실패 테스트."""
+    stock_code_input = "005930"
+    qty_input = "10"
+    price_input = "70000"
+
+    mock_time_manager.is_market_open.return_value = False
+
+    await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
+
+    assert "WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.\n" in print_output_capture.getvalue()
+    mock_logger.warning.assert_called_with("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
+    mock_trading_service.place_buy_order.assert_not_awaited()
 
 
-# 모든 테스트를 하나의 AsyncioTestCase 클래스 내에 통합합니다.
-# asyncSetUp 메서드가 모든 비동기 테스트 케이스에 대해 올바르게 mock 객체를 초기화하도록 합니다.
-# 동기 메서드(_get_sign_from_code)도 이 클래스 내에서 테스트할 수 있습니다.
-class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
+@pytest.mark.asyncio
+async def test_handle_buy_stock_invalid_input(handler, mock_trading_service, print_output_capture, mock_logger):
+    """handle_buy_stock 유효하지 않은 입력 시 매수 실패 테스트."""
+    stock_code_input = "005930"
+    qty_input = "abc" # 잘못된 수량 입력
+    price_input = "70000"
 
-    async def asyncSetUp(self):
-        """
-        각 테스트 메서드 실행 전에 필요한 Mock 객체와 DataHandlers 인스턴스를 초기화합니다.
-        unittest.IsolatedAsyncioTestCase는 이 asyncSetUp을 각 async/sync 테스트 전에 실행합니다.
-        """
-        self.mock_trading_service = AsyncMock()
-        self.mock_logger = MagicMock()
-        self.mock_time_manager = MagicMock()
-        # _env 속성이 필요한 경우를 위해 AsyncMock으로 설정
-        self.mock_trading_service._env = AsyncMock()
-        self.print_output_capture = io.StringIO()
-        self._original_stdout = sys.stdout
-        sys.stdout = self.print_output_capture
+    await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-        self.handler = StockQueryService(self.mock_trading_service, self.mock_logger, self.mock_time_manager)
+    assert "잘못된 수량 또는 가격 입력입니다.\n" in print_output_capture.getvalue()
+    mock_logger.warning.assert_called_once()
+    mock_trading_service.place_buy_order.assert_not_awaited()
 
-        self.mock_env = MagicMock(spec=KoreaInvestApiEnv)
-        self.mock_env.my_agent = "MockUserAgent"
-        self.mock_env.my_app_key = "MockAppKey"
-        self.mock_env.my_app_secret = "MockAppSecret"
-        self.mock_env.my_custtype = "P"
-        self.mock_env.my_tr_id = "TR123456"
+@pytest.mark.asyncio
+async def test_handle_buy_stock_place_order_delegation_failure(handler, mock_trading_service, print_output_capture, mock_logger):
+    """handle_buy_stock 주문 위임 실패 시 테스트."""
+    stock_code_input = "005930"
+    qty_input = "10"
+    price_input = "70000"
 
-        self.api = KoreaInvestApiBase(
-            env=self.mock_env,
-            logger=self.mock_logger
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="주문 실패",
+        data=None
+    )
+    await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
+
+    mock_trading_service.place_buy_order.assert_awaited_once_with("005930", 70000, 10)
+    assert "매수 주문 실패" in print_output_capture.getvalue()
+    logged_msg = mock_logger.error.call_args[0][0]
+    assert "매수 주문 실패" in logged_msg
+    assert "005930" in logged_msg
+
+@pytest.mark.asyncio
+async def test_handle_sell_stock_success(handler, mock_trading_service, print_output_capture):
+    """handle_sell_stock 매도 성공 시나리오 테스트."""
+    stock_code_input = "005930"
+    qty_input = "5"
+    price_input = "60000"
+
+    mock_trading_service.place_sell_order.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="매도 성공",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
+    await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
+
+    mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5)
+    assert "--- 주식 매도 주문 ---" in print_output_capture.getvalue()
+    assert "주식 매도 주문 성공" in print_output_capture.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_handle_sell_stock_market_closed(handler, mock_trading_service, mock_time_manager, print_output_capture, mock_logger):
+    """handle_sell_stock 시장 마감 시 매도 실패 테스트."""
+    stock_code_input = "005930"
+    qty_input = "5"
+    price_input = "60000"
+
+    mock_time_manager.is_market_open.return_value = False
+
+    await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
+
+    assert "WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.\n" in print_output_capture.getvalue()
+    mock_logger.warning.assert_called_with("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
+    mock_trading_service.place_sell_order.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_handle_sell_stock_invalid_input(handler, mock_trading_service, print_output_capture, mock_logger):
+    """handle_sell_stock 유효하지 않은 입력 시 매도 실패 테스트."""
+    stock_code_input = "005930"
+    qty_input = "xyz"
+    price_input = "60000"
+
+    await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
+
+    assert "잘못된 수량 또는 가격 입력입니다.\n" in print_output_capture.getvalue()
+    mock_logger.warning.assert_called_once()
+    mock_trading_service.place_sell_order.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_handle_sell_stock_place_order_delegation_failure(handler, mock_trading_service, print_output_capture, mock_logger):
+    """handle_sell_stock 주문 위임 실패 시 테스트."""
+    stock_code_input = "005930"
+    qty_input = "5"
+    price_input = "60000"
+
+    mock_trading_service.place_sell_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="주문 실패",
+        data=None
+    )
+
+    await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
+
+    mock_trading_service.place_sell_order.assert_awaited_once_with("005930", 60000, 5)
+    assert "매도 주문 실패" in print_output_capture.getvalue()
+    logged_msg = mock_logger.error.call_args[0][0]
+    assert "매도 주문 실패" in logged_msg
+    assert "005930" in logged_msg
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_success(handler, mock_trading_service, print_output_capture, mock_logger):
+    """handle_place_buy_order 매수 주문 실행 성공 테스트."""
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="주문 성공",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+
+    mock_trading_service.place_buy_order.assert_awaited_once_with(
+        "005930", 70000, 10
+    )
+    assert "--- 주식 매수 주문 시도 ---" in print_output_capture.getvalue()
+    assert "주식 매수 주문 성공" in print_output_capture.getvalue()
+    mock_logger.info.assert_called_once()
+    assert result.rt_cd == "0"
+    assert result.msg1 == "주문 성공"
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_trading_service_failure(handler, mock_trading_service, print_output_capture, mock_logger):
+    """handle_place_buy_order 매수 주문 실행 실패 테스트."""
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="잔고 부족",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+
+    mock_logger.error.assert_called_once()
+    assert result.rt_cd == "1"
+    assert result.msg1 == "잔고 부족"
+
+@pytest.mark.asyncio
+async def test_handle_place_sell_order_success(handler, mock_trading_service, print_output_capture, mock_logger):
+    """handle_place_sell_order 매도 주문 실행 성공 테스트."""
+    mock_trading_service.place_sell_order.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="매도 성공",
+        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+    )
+    result = await handler.handle_place_sell_order("005930", 60000, 5)
+
+    mock_trading_service.place_sell_order.assert_awaited_once_with(
+        "005930", 60000, 5
+    )
+    assert "--- 주식 매도 주문 시도 ---" in print_output_capture.getvalue()
+    assert "주식 매도 주문 성공" in print_output_capture.getvalue()
+    mock_logger.info.assert_called_once()
+    assert result.rt_cd == "0"
+    assert result.msg1 == "매도 성공"
+
+@pytest.mark.asyncio
+async def test_handle_place_sell_order_trading_service_failure(handler, mock_trading_service, print_output_capture, mock_logger):
+    """handle_place_sell_order 매도 주문 실행 실패 테스트."""
+    mock_trading_service.place_sell_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="수량 부족",
+        data=None
+    )
+
+    result = await handler.handle_place_sell_order("005930", 60000, 5)
+
+    assert "매도 주문 실패" in print_output_capture.getvalue()
+    mock_logger.error.assert_called_once()
+    assert result.rt_cd == "1"
+    assert result.msg1 == "수량 부족"
+
+@pytest.mark.asyncio
+async def test_handle_realtime_price_quote_stream_success(handler, mock_trading_service, print_output_capture, mock_logger):
+    """실시간 스트림이 성공적으로 연결, 구독, 종료되는지 테스트합니다."""
+    mock_trading_service.connect_websocket.return_value = True
+    mock_trading_service.subscribe_realtime_price.return_value = True
+    mock_trading_service.subscribe_realtime_quote.return_value = True
+    mock_trading_service.unsubscribe_realtime_price.return_value = True
+    mock_trading_service.unsubscribe_realtime_quote.return_value = True
+    mock_trading_service.disconnect_websocket.return_value = True
+
+    with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.return_value = None
+
+        await handler.handle_realtime_price_quote_stream("005930")
+
+        mock_trading_service.connect_websocket.assert_awaited_once_with(
+            on_message_callback=ANY
         )
+        mock_trading_service.subscribe_realtime_price.assert_awaited_once_with("005930")
+        mock_trading_service.subscribe_realtime_quote.assert_awaited_once_with("005930")
+        mock_trading_service.unsubscribe_realtime_price.assert_awaited_once_with("005930")
+        mock_trading_service.unsubscribe_realtime_quote.assert_awaited_once_with("005930")
+        mock_trading_service.disconnect_websocket.assert_awaited_once()
+        assert "--- 실시간 주식 체결가/호가 구독 시작 (005930) ---" in print_output_capture.getvalue()
+        assert "실시간 주식 스트림을 종료했습니다." in print_output_capture.getvalue()
+        mock_logger.info.assert_called_once_with(f"실시간 주식 스트림 종료: 종목=005930")
 
-    # --- _get_sign_from_code 함수 테스트 (Synchronous) ---
-    def test_get_sign_from_code_plus(self):
-        self.assertEqual(self.handler._get_sign_from_code('1'), "+")
-        self.assertEqual(self.handler._get_sign_from_code('2'), "+")
+@pytest.mark.asyncio
+async def test_handle_realtime_price_quote_stream_connection_failure(handler, mock_trading_service, print_output_capture, mock_logger):
+    """웹소켓 연결에 실패했을 때 스트림이 시작되지 않고 오류 메시지가 출력되는지 테스트합니다."""
+    mock_trading_service.connect_websocket.return_value = False
 
-    def test_get_sign_from_code_minus(self):
-        self.assertEqual(self.handler._get_sign_from_code('4'), "-")
-        self.assertEqual(self.handler._get_sign_from_code('5'), "-")
+    await handler.handle_realtime_price_quote_stream("005930")
 
-    def test_get_sign_from_code_no_sign(self):
-        self.assertEqual(self.handler._get_sign_from_code('3'), "")
-        self.assertEqual(self.handler._get_sign_from_code('9'), "")
-        self.assertEqual(self.handler._get_sign_from_code('ABC'), "")
+    mock_trading_service.connect_websocket.assert_awaited_once_with(
+        on_message_callback=ANY
+    )
+    mock_trading_service.subscribe_realtime_price.assert_not_awaited()
+    assert "실시간 웹소켓 연결에 실패했습니다.\n" in print_output_capture.getvalue()
+    mock_logger.error.assert_called_once_with("실시간 웹소켓 연결 실패.")
 
-    # --- handle_get_current_stock_price 함수 테스트 ---
-    async def test_handle_get_current_stock_price_success(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={"stck_prpr": "75000", "stck_shrn_iscd": "005930"}
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_current_stock_price("005930")
-            mock_print.assert_called()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called_once()
-            self.assertIn("현재가 조회 성공", self.mock_logger.info.call_args[0][0])
+@pytest.mark.asyncio
+async def test_handle_realtime_price_quote_stream_keyboard_interrupt(handler, mock_trading_service, print_output_capture, mock_logger):
+    """스트림 수신 중 KeyboardInterrupt 발생 시 정상적으로 종료되는지 테스트합니다."""
+    mock_trading_service.connect_websocket.return_value = True
+    mock_trading_service.subscribe_realtime_price.return_value = True
+    mock_trading_service.subscribe_realtime_quote.return_value = True
+    mock_trading_service.unsubscribe_realtime_price.return_value = True
+    mock_trading_service.unsubscribe_realtime_quote.return_value = True
+    mock_trading_service.disconnect_websocket.return_value = True
 
-    async def test_handle_get_current_stock_price_failure_rt_cd(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="1",
-            msg1="실패",
-            data={"stck_prpr": "75000", "stck_shrn_iscd": "005930"}
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_current_stock_price("005930")
-            mock_print.assert_called()
-            self.mock_logger.error.assert_called_once()
-            self.assertIn("현재가 조회 실패", self.mock_logger.error.call_args[0][0])
+    with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.side_effect = KeyboardInterrupt
 
-    # --- handle_get_account_balance 함수 테스트 ---
-    async def test_handle_get_account_balance_success(self):
-        self.mock_trading_service.get_account_balance.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={"output2": [{"dnca_tot_amt": "1000000"}]}
-        )
+        await handler.handle_realtime_price_quote_stream("005930")
 
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_account_balance()
-            mock_print.assert_called()
+        assert "사용자에 의해 실시간 구독이 중단됩니다." in print_output_capture.getvalue()
+        mock_logger.info.assert_has_calls([
+            call("실시간 구독 중단 (KeyboardInterrupt)."),
+            call(f"실시간 주식 스트림 종료: 종목=005930")
+        ])
+        mock_trading_service.unsubscribe_realtime_price.assert_awaited_once()
+        mock_trading_service.disconnect_websocket.assert_awaited_once()
 
-    # --- handle_get_top_market_cap_stocks_code 함수 테스트 ---
-    async def test_handle_get_top_market_cap_stocks_code_success(self):
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[
-                {"data_rank": "1", "hts_kor_isnm": "삼성전자", "stck_avls": "400000000000000", "stck_prpr": "70000"},
-                {"data_rank": "2", "hts_kor_isnm": "SK하이닉스", "stck_avls": "100000000000000", "stck_prpr": "150000"}
-            ]
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_top_market_cap_stocks_code("0000", 2)
-            mock_print.assert_called()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called_once()
-            self.assertIn("시가총액 상위 종목 조회 성공", self.mock_logger.info.call_args[0][0])
+@pytest.mark.asyncio
+async def test_handle_buy_order_when_market_closed(handler, mock_time_manager, mock_logger, print_output_capture, mock_trading_service):
+    """시장이 닫혀 있을 때 매수 주문이 제출되지 않는지 테스트합니다."""
+    mock_time_manager.is_market_open.return_value = False
 
-    async def test_handle_get_top_market_cap_stocks_no_output(self):
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[]
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_top_market_cap_stocks_code("0000", 1)
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called_once()
-            self.assertIn("시가총액 상위 종목 조회 성공", self.mock_logger.info.call_args[0][0])
+    await handler.handle_place_buy_order("005930", 70000, 10)
 
-    async def test_handle_get_top_market_cap_stocks_failure_rt_cd(self):
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="1",
-            msg1="에러 발생",
-            data=None
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_top_market_cap_stocks_code("0000", 1)
-            mock_print.assert_called()
-            self.mock_logger.error.assert_called_once()
-            self.assertIn("실패: 시가총액 상위 종목 조회", self.mock_logger.error.call_args[0][0])
+    assert "WARNING: 시장이 닫혀 있어 주문을 제출할 수 없습니다.\n" in print_output_capture.getvalue()
+    mock_logger.warning.assert_called_once_with("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
+    mock_trading_service.place_buy_order.assert_not_awaited()
 
-    async def test_handle_get_top_market_cap_stocks_none_return(self):
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = None
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_get_top_market_cap_stocks_code("0000", 1)
-            mock_print.assert_called()
-            self.mock_logger.error.assert_called_once_with("실패: 시가총액 상위 종목 조회: None")
+# --- 콜백 함수 내부 로직 검증 테스트 ---
 
-    # --- handle_get_top_10_market_cap_stocks_with_prices 함수 테스트 ---
-    async def test_handle_get_top_10_market_cap_stocks_with_prices_success(self):
-        self.mock_trading_service.get_top_10_market_cap_stocks_with_prices.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[
-                {
-                    "rank": 1, "name": "삼성전자", "code": "005930", "current_price": "70000"
-                }
-            ]
-        )
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_get_top_10_market_cap_stocks_with_prices()
-            self.mock_logger.info.assert_called()
-            self.assertTrue(result)
+@pytest.mark.asyncio
+async def test_realtime_data_display_callback_logic(handler, mock_trading_service, print_output_capture, mock_logger):
+    """
+    realtime_data_display_callback 함수의 내부 로직을 다양한 데이터 타입으로 검증합니다.
+    """
+    mock_trading_service.connect_websocket.return_value = True
+    mock_trading_service.subscribe_realtime_price.return_value = True
+    mock_trading_service.subscribe_realtime_quote.return_value = True
+    mock_trading_service.unsubscribe_realtime_price.return_value = True
+    mock_trading_service.unsubscribe_realtime_quote.return_value = True
+    mock_trading_service.disconnect_websocket.return_value = True
 
-    async def test_handle_get_top_10_market_cap_stocks_with_prices_empty_list(self):
-        # TC 5.2
-        self.mock_trading_service.get_top_10_market_cap_stocks_with_prices.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[]
-        )
-        with patch('builtins.print'):  # patch 'builtins.print' but don't assert specific calls
-            result = await self.handler.handle_get_top_10_market_cap_stocks_with_prices()
-            self.mock_logger.info.assert_called()
-            self.assertTrue(result)  # 빈 리스트는 True로 평가됨
+    with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.return_value = None
+        await handler.handle_realtime_price_quote_stream("005930")
 
-    # --- handle_display_stock_change_rate 함수 테스트 ---
-    async def test_handle_display_stock_change_rate_increase(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "70000",
-                    "prdy_vrss": "1000",
-                    "prdy_vrss_sign": "2",
-                    "prdy_ctrt": "1.45"
-                })
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_change_rate("005930")
-            mock_print.assert_called()
-            mock_print.assert_called()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called_once()
+    realtime_callback = mock_trading_service.connect_websocket.call_args.kwargs['on_message_callback']
 
-    async def test_handle_display_stock_change_rate_decrease(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "68000",
-                    "prdy_vrss": "1000",
-                    "prdy_vrss_sign": "5",  # 하락
-                    "prdy_ctrt": "1.45"
-                })
-            }
-        )
+    # --- 테스트 시나리오 1: realtime_price (주식 체결) 데이터 ---
+    print_output_capture.truncate(0)
+    print_output_capture.seek(0)
+    mock_logger.info.reset_mock()
+    mock_logger.debug.reset_mock()
 
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_change_rate("005930")
-            mock_print.assert_called()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called_once()
-
-    async def test_handle_display_stock_change_rate_no_change(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "69000", "prdy_vrss": "0", "prdy_vrss_sign": "3", "prdy_ctrt": "0.00"
-                })
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_change_rate("005930")
-            mock_print.assert_called()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called_once()
-
-    async def test_handle_display_stock_change_rate_missing_fields(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "N/A",
-                    "prdy_vrss_sign": "N/A",
-                    "prdy_ctrt": "N/A",
-                    "prdy_vrss": "N/A"  # ✅ 누락된 필드 추가
-                })
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_change_rate("005930")
-            mock_print.assert_called()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called_once_with(
-                "005930 전일대비 등락률 조회 성공: 현재가=N/A, 전일대비=N/A, 등락률=N/A%"
-            )
-
-    async def test_handle_display_stock_change_rate_invalid_prdy_vrss(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "70000", "prdy_vrss": "ABC", "prdy_vrss_sign": "2", "prdy_ctrt": "1.45"
-                })
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_change_rate("005930")
-            # Corrected assertion: expecting "ABC" without a sign because it's not a valid number
-            mock_print.assert_called()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called_once_with(
-                "005930 전일대비 등락률 조회 성공: 현재가=70000, 전일대비=ABC, 등락률=1.45%"
-            )
-
-    async def test_handle_display_stock_change_rate_failure(self):
-        self.mock_trading_service.get_current_stock_price.return_value = {
-            "rt_cd": "1", "msg1": "API 에러"
+    price_data = {
+        'type': 'realtime_price',
+        'data': {
+            'STCK_PRPR': '75000',
+            'ACML_VOL': '123456',
+            'STCK_CNTG_HOUR': '100000',
+            'PRDY_VRSS': '500',
+            'PRDY_VRSS_SIGN': '2', # 상승
+            'PRDY_CTRT': '0.67'
         }
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="1",
-            msg1="API 에러",
-            data=None
-        )
+    }
+    realtime_callback(price_data)
+    output_str = print_output_capture.getvalue()
+    assert "현재가 75000원" in output_str
+    assert "누적량: 123456" in output_str
+    assert "전일대비: 2500 (0.67%)" in output_str
+    mock_logger.info.assert_not_called()
+    mock_logger.debug.assert_not_called()
 
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_change_rate("005930")
-            mock_print.assert_called()
-            self.mock_logger.error.assert_called_once()
-            self.assertIn("전일대비 등락률 조회 실패", self.mock_logger.error.call_args[0][0])
 
-    # --- handle_upper_limit_stocks 함수 테스트 ---
-    async def test_handle_upper_limit_stocks_market_closed(self):
-        # 모의투자 환경이 아님을 명시적으로 설정
-        self.mock_trading_service._env.is_paper_trading = False
+    # --- 테스트 시나리오 2: realtime_quote (주식 호가) 데이터 ---
+    print_output_capture.truncate(0)
+    print_output_capture.seek(0)
+    mock_logger.info.reset_mock()
+    mock_logger.debug.reset_mock()
 
-        self.mock_time_manager.is_market_open.return_value = False
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-            mock_print.assert_called()
-            self.mock_logger.warning.assert_called()
-            self.assertIsNone(result)
-            self.mock_trading_service.get_top_market_cap_stocks_code.assert_not_called()
-
-    async def test_handle_upper_limit_stocks_paper_trading(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = True
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-            mock_print.assert_called()
-            self.mock_logger.warning.assert_called()
-            self.assertEqual(result, {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."})
-            self.mock_trading_service.get_top_market_cap_stocks_code.assert_not_called()
-
-    async def test_handle_upper_limit_stocks_get_top_stocks_failure(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="1",
-            msg1="API 에러",
-            data=[]
-        )
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-            mock_print.assert_called()
-            self.mock_logger.error.assert_called_once()
-            self.assertIn("시가총액 상위 종목 목록 조회 실패", self.mock_logger.error.call_args[0][0])
-            self.assertIsNone(result)
-
-    async def test_handle_upper_limit_stocks_no_top_stocks(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[]
-        )
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called()
-            self.assertIsNone(result)
-
-    async def test_handle_upper_limit_stocks_found_one_upper_limit(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[
-                ResTopMarketCapApiItem(
-                    iscd="005930",
-                    mksc_shrn_iscd="005930",
-                    stck_avls="500000000000",
-                    data_rank="1",
-                    hts_kor_isnm="삼성전자",
-                    acc_trdvol="1000000"
-                )
-            ]
-        )
-
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": {
-                    "prdy_vrss_sign": "1",
-                    "stck_prpr": "70000",
-                    "prdy_ctrt": "30.00"
-                }
-            }
-
-        )
-
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called()
-            self.assertTrue(result)
-
-    async def test_handle_upper_limit_stocks_no_upper_limit_found(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = {
-            "rt_cd": "0",
-            "output": [
-                {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"},
-                {"mksc_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스"}
-            ]
+    quote_data = {
+        'type': 'realtime_quote',
+        'data': {
+            '매도호가1': '75050',
+            '매수호가1': '74950',
+            '영업시간': '100001'
         }
-        self.mock_trading_service.get_current_stock_price.side_effect = [
-            {"rt_cd": "0", "output": {"prdy_vrss_sign": "2", "stck_prpr": "70000", "prdy_ctrt": "1.45"}},
-            {"rt_cd": "0", "output": {"prdy_vrss_sign": "5", "stck_prpr": "150000", "prdy_ctrt": "-0.50"}}
-        ]
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called()
-            self.assertFalse(result)
+    }
+    realtime_callback(quote_data)
+    output_str = print_output_capture.getvalue()
+    assert "매도1: 75050" in output_str
+    assert "매수1: 74950" in output_str
+    mock_logger.info.assert_not_called()
+    mock_logger.debug.assert_not_called()
 
-    async def test_handle_upper_limit_stocks_individual_price_lookup_failure(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[
-                ResTopMarketCapApiItem(
-                    iscd="005930",
-                    mksc_shrn_iscd="005930",
-                    stck_avls="100000000000",
-                    data_rank="1",
-                    hts_kor_isnm="삼성전자",
-                    acc_trdvol="123456"
-                )]
-        )
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="1",
-            msg1="에러",
-            data=[]
-        )
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-            mock_print.assert_called()
-            self.mock_logger.warning.assert_called()
-            self.assertFalse(result)
 
-    async def test_handle_upper_limit_stocks_exception_handling(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks_code.side_effect = Exception("Test Exception")
+    # --- 테스트 시나리오 3: signing_notice (체결 통보) 데이터 ---
+    print_output_capture.truncate(0)
+    print_output_capture.seek(0)
+    mock_logger.info.reset_mock()
+    mock_logger.debug.reset_mock()
 
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-            mock_print.assert_called()
-            self.mock_logger.error.assert_called()
-            self.assertIsNone(result)
+    signing_notice_data = {
+        'type': 'signing_notice',
+        'data': {
+            '주문번호': '1234567890',
+            '체결수량': '10',
+            '체결단가': '75000',
+            '주식체결시간': '100002'
+        }
+    }
+    realtime_callback(signing_notice_data)
+    output_str = print_output_capture.getvalue()
+    assert "\n[체결통보] 주문: 1234567890, 수량: 10, 단가: 75000, 시간: 100002\n" in output_str
+    mock_logger.info.assert_not_called()
+    mock_logger.debug.assert_not_called()
 
-    async def test_handle_upper_limit_stocks_limit_parameter(self):
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-        top_market_cap_items = [
-            ResTopMarketCapApiItem(
-                iscd="000660",
-                mksc_shrn_iscd="000660",
-                stck_avls="300000000000",
-                data_rank="2",
-                hts_kor_isnm="SK하이닉스",
-                acc_trdvol="123456"
-            ),
-            ResTopMarketCapApiItem(
-                iscd="000020",
-                mksc_shrn_iscd="000020",
-                stck_avls="150000000000",
-                data_rank="3",
-                hts_kor_isnm="동화약품",
-                acc_trdvol="78901"
-            ),
-            ResTopMarketCapApiItem(
-                iscd="000030",
-                mksc_shrn_iscd="000030",
-                stck_avls="120000000000",
-                data_rank="4",
-                hts_kor_isnm="우리금융지주",
-                acc_trdvol="45678"
-            ),
-            ResTopMarketCapApiItem(
-                iscd="000040",
-                mksc_shrn_iscd="000040",
-                stck_avls="100000000000",
-                data_rank="5",
-                hts_kor_isnm="KR모터스",
-                acc_trdvol="34567"
-            ),
-        ]
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=top_market_cap_items
-        )
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={"prdy_vrss_sign": "2", "stck_prpr": "70000", "prdy_ctrt": "1.45"}
-        )
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks(limit=1)
-            self.assertEqual(self.mock_trading_service.get_current_stock_price.call_count, 1)
-            mock_print.assert_called()
-            mock_print.assert_called()
-            self.assertFalse(result)
 
-    # --- handle_display_stock_vs_open_price 함수 테스트 (Previously provided) ---
-    async def test_handle_display_stock_vs_open_price_increase(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "70000",
-                    "stck_oprc": "69000",
-                    "oprc_vrss_prpr_sign": "2"
-                })
-            }
-        )
+    # --- 테스트 시나리오 4: 처리되지 않은 메시지 (unknown type) ---
+    print_output_capture.truncate(0)
+    print_output_capture.seek(0)
+    mock_logger.info.reset_mock()
+    mock_logger.debug.reset_mock()
 
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_vs_open_price("005930")
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called()
+    unknown_data = {
+        'type': 'unknown_type',
+        'tr_id': 'UNKNOWN001',
+        'data': {'some_key': 'some_value'}
+    }
+    realtime_callback(unknown_data)
+    output_str = print_output_capture.getvalue()
+    assert output_str == ""
+    mock_logger.debug.assert_called_once_with(f"처리되지 않은 실시간 메시지: UNKNOWN001 - {{'type': 'unknown_type', 'tr_id': 'UNKNOWN001', 'data': {{'some_key': 'some_value'}}}}") # 데이터 전체를 포함하도록 수정
 
-    async def test_handle_display_stock_vs_open_price_decrease(self):
-        """TC: 시가대비 등락률이 하락하는 경우"""
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "68000",  # 현재가
-                    "stck_oprc": "69000",  # 시가
-                    "oprc_vrss_prpr_sign": "5"  # 시가대비 부호 (하락)
-                })
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_vs_open_price("005930")
-            mock_print.assert_any_call("  시가대비 등락률: -1000원 (-1.45%)")  # -1.449... -> -1.45
-            self.mock_logger.info.assert_called_once()
+    # --- 테스트 시나리오 5: 데이터가 dict가 아닌 경우 ---
+    print_output_capture.truncate(0)
+    print_output_capture.seek(0)
+    mock_logger.info.reset_mock()
+    mock_logger.debug.reset_mock()
 
-    async def test_handle_display_stock_vs_open_price_no_change(self):
-        """TC: 시가대비 등락률이 0인 경우 (보합)"""
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "69000",  # 현재가
-                    "stck_oprc": "69000",  # 시가
-                    "oprc_vrss_prpr_sign": "3"  # 시가대비 부호 (보합)
-                })
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_vs_open_price("005930")
-            mock_print.assert_any_call("  시가대비 등락률: 0원 (0.00%)")
-            self.mock_logger.info.assert_called_once()
-
-    async def test_handle_display_stock_vs_open_price_zero_open_price(self):
-        """TC: 시가가 0원인 경우 (나누기 0 방지 및 N/A 처리)"""
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "70000",
-                    "stck_oprc": "0",
-                })
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_vs_open_price("005930")
-            mock_print.assert_any_call("  시가대비 등락률: +70000원 (N/A)")  # 시가대비 금액은 계산되지만, 퍼센트는 N/A
-            self.mock_logger.info.assert_called_once()
-
-    async def test_handle_display_stock_vs_open_price_missing_price_data(self):
-        """TC: 현재가 또는 시가 데이터가 누락되거나 'N/A'일 경우"""
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "N/A",  # 현재가 누락
-                    "stck_oprc": "69000",
-                    "oprc_vrss_prpr_sign": "2"
-                })
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_vs_open_price("005930")
-            mock_print.assert_any_call("  현재가: N/A원")
-            mock_print.assert_any_call("  시가대비 등락률: N/A원 (N/A)")  # 둘 다 N/A로 출력
-            self.mock_logger.info.assert_called_once()
-
-    async def test_handle_display_stock_vs_open_price_failure(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="1",
-            msg1="API 에러",
-            data=None
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_vs_open_price("005930")
-            mock_print.assert_any_call("\n--- 005930 시가대비 조회 ---")
-            mock_print.assert_any_call("\n실패: 005930 시가대비 조회.")
-            self.mock_logger.error.assert_called_once()
-            self.assertIn("시가대비 조회 실패", self.mock_logger.error.call_args[0][0])
-
-    async def test_handle_display_stock_vs_open_price_output_data_missing(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict(
-                    {}  # ✅ 빈 딕셔너리라도 명시적으로 output 키가 있어야 함
-                )
-            }
-        )
-        with patch('builtins.print') as mock_print:
-            await self.handler.handle_display_stock_vs_open_price("005930")
-            mock_print.assert_called()
-            self.mock_logger.info.assert_called()
-
-    async def test_handle_get_top_10_market_cap_stocks_with_prices_exception_covered(self):
-        """
-        TC: 시가총액 1~10위 종목 현재가 조회 중 예외 발생 시,
-            except 블록이 실행되고 False를 반환하는지 테스트
-        """
-        # Arrange
-        # trading_service의 해당 메서드가 호출될 때 Exception을 발생시키도록 설정
-        self.mock_trading_service.get_top_10_market_cap_stocks_with_prices.side_effect = Exception("테스트 예외 발생")
-
-        # Act
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_get_top_10_market_cap_stocks_with_prices()
-
-            # Assert
-            # trading_service 메서드가 호출되었는지 확인
-            self.mock_trading_service.get_top_10_market_cap_stocks_with_prices.assert_awaited_once()
-
-            # print 함수가 호출되었는지 확인
-            mock_print.assert_any_call("\n--- 시가총액 1~10위 종목 현재가 조회 시도 ---")
-            mock_print.assert_any_call("\n실패: 시가총액 1~10위 종목 현재가 조회.")
-
-            # logger.error가 호출되었는지 확인 (exc_info=True는 제외하고 메시지만 검증)
-            self.mock_logger.error.assert_called_once()
-            self.assertIn("시가총액 1~10위 종목 현재가 조회 중 오류 발생: 테스트 예외 발생", self.mock_logger.error.call_args[0][0])
-
-            # ✅ 핵심 검증
-            self.assertIsInstance(result, ResCommonResponse)
-            self.assertEqual(result.rt_cd, ErrorCode.UNKNOWN_ERROR.value)
-            self.assertEqual(result.data, None)
-            self.assertIn("예외 발생", result.msg1)
-
-    async def test_handle_upper_limit_stocks_empty_top_stocks_list(self):
-        """top_stocks_list가 빈 리스트일 때 info 로그 및 메시지 출력 분기 검증"""
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[]
-        )
-
-        with patch('builtins.print') as mock_print:
-            result = await self.handler.handle_upper_limit_stocks()
-
-            # print 메시지 검증
-            mock_print.assert_any_call("조회된 시가총액 상위 종목이 없습니다.\n")
-
-            # 로그 호출 검증 (error 아님 → info)
-            self.mock_logger.info.assert_any_call("조회된 시가총액 상위 종목이 없습니다.")
-            self.mock_logger.error.assert_not_called()
-
-            # 반환값 None
-            self.assertIsNone(result)
-
-    async def test_handle_upper_limit_stocks_invalid_stock_code_in_output(self):
-        """stock_info 내에 mksc_shrn_iscd 키가 없을 때 warning 로그 발생"""
-
-        self.mock_time_manager.is_market_open.return_value = True
-        self.mock_trading_service._env.is_paper_trading = False
-
-        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data=[
-                {"hts_kor_isnm": "삼성전자"},  # mksc_shrn_iscd 없음
-                {"mksc_shrn_iscd": "", "hts_kor_isnm": "카카오"}  # 빈 문자열
-            ]
-        )
-
-        with patch("builtins.print"):
-            result = await self.handler.handle_upper_limit_stocks()
-
-            self.mock_logger.error.assert_called()
-            self.assertFalse(result)  # 유효한 종목이 없으므로 False 반환
-
-    async def test_handle_display_stock_change_rate_increase_sign_path(self):
-        handler = self.handler  # 기존 asyncSetUp에서 생성된 handler
-
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    "stck_prpr": "70000",
-                    "prdy_vrss": "1500",
-                    "prdy_vrss_sign": "2",
-                    "prdy_ctrt": "2.19"
-                })
-            }
-        )
-
-        with patch('builtins.print') as mock_print:
-            await handler.handle_display_stock_change_rate("005930")
-
-            # 부호가 붙은 메시지 출력 확인 → 부호 조건 분기 통과
-            # 개별적으로 부호와 등락률 출력이 분리되어 있는지 확인
-            mock_print.assert_any_call("  전일대비: +1500원")
-            mock_print.assert_any_call("  전일대비율: 2.19%")
-            self.mock_logger.info.assert_called_once()
-
-    async def test_handle_display_stock_change_rate_positive_change(self):
-        # Scenario 1: 양수 변화량
-        stock_code = "005930"
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    'stck_prpr': '70000',
-                    'prdy_vrss': '1500',  # 전일대비 +1500원
-                    'prdy_vrss_sign': '2',  # 2:상승
-                    'prdy_ctrt': '2.19'  # 전일대비율
-                })
-            }
-        )
-
-        # 테스트 실행
-        await self.handler.handle_display_stock_change_rate(stock_code)
-
-        # 출력 확인 (실제 콘솔 출력 대신, 로그나 내부 상태를 검증하는 방식이 더 견고함)
-        # 여기서는 로거가 올바르게 호출되었는지 확인
-        self.mock_logger.info.assert_called_with(
-            f"{stock_code} 전일대비 등락률 조회 성공: 현재가=70000, 전일대비=+1500, 등락률=2.19%"
-        )
-
-    async def test_handle_display_stock_change_rate_negative_change(self):
-        # Scenario 2: 음수 변화량
-        stock_code = "000660"
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    'stck_prpr': '90000',
-                    'prdy_vrss': '2000',  # 전일대비 -2000원
-                    'prdy_vrss_sign': '5',  # 5:하락
-                    'prdy_ctrt': '2.17'  # 전일대비율
-                })
-            }
-        )
-        await self.handler.handle_display_stock_change_rate(stock_code)
-
-        self.mock_logger.info.assert_called_with(
-            f"{stock_code} 전일대비 등락률 조회 성공: 현재가=90000, 전일대비=-2000, 등락률=2.17%"
-        )
-
-    async def test_handle_display_stock_change_rate_zero_change(self):
-        # Scenario 3: 변화량 0
-        stock_code = "000001"
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
-            rt_cd="0",
-            msg1="정상",
-            data={
-                "output": ResStockFullInfoApiOutput.from_dict({
-                    'stck_prpr': '50000',
-                    'prdy_vrss': '0',  # 전일대비 0원
-                    'prdy_vrss_sign': '3',  # 3:보합 (또는 기타)
-                    'prdy_ctrt': '0.00'  # 전일대비율
-                })
-            }
-        )
-
-        await self.handler.handle_display_stock_change_rate(stock_code)
-
-        self.mock_logger.info.assert_called_with(
-            f"{stock_code} 전일대비 등락률 조회 성공: 현재가=50000, 전일대비=0, 등락률=0.00%"
-        )
+    non_dict_data = "invalid_string_data"
+    realtime_callback(non_dict_data)
+    output_str = print_output_capture.getvalue()
+    assert output_str == ""
+    mock_logger.debug.assert_not_called()
