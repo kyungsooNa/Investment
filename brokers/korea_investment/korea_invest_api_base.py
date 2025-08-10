@@ -7,10 +7,10 @@ import logging
 import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
-import jwt
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
 from common.types import ErrorCode, ResCommonResponse, ResponseStatus
 from typing import Union, Optional
+from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, KoreaInvestHeaderProvider
 
 
 class KoreaInvestApiBase:
@@ -20,22 +20,12 @@ class KoreaInvestApiBase:
     """
 
     def __init__(self, env: KoreaInvestApiEnv,
-                 logger=None, async_client: Optional[httpx.AsyncClient] = None):
+                 logger=None, async_client: Optional[httpx.AsyncClient] = None,
+                 header_provider: Optional[KoreaInvestHeaderProvider] = None):
         self._logger = logger if logger else logging.getLogger(__name__)
         self._env = env
-
-        # self._headers = headers.copy()  # 초기화 시 전달받은 headers 복사하여 사용
-        self._headers = {
-            "Content-Type": "application/json",
-            "User-Agent": self._env.my_agent,
-            "charset": "UTF-8",
-            "Authorization": "",
-            "appkey": "",
-            "appsecret": "",
-        }
-        # self._session = requests.Session()  # requests.Session은 동기
         self._base_url = None
-        # self._config = config  # _config는 모든 설정(tr_ids, base_url 등)을 포함
+        self._headers: KoreaInvestHeaderProvider = header_provider or build_header_provider_from_env(env)
 
         if async_client:
             self._async_session = async_client
@@ -102,7 +92,7 @@ class KoreaInvestApiBase:
 
     def _log_headers(self):
         self._logger.debug("\nDEBUG: Headers being sent:")
-        for key, value in self._headers.items():
+        for key, value in self._headers.build().items():
             try:
                 encoded_value = str(value).encode('latin-1', errors='ignore')
             except UnicodeEncodeError:
@@ -131,31 +121,39 @@ class KoreaInvestApiBase:
             self._logger.error(f"예상치 못한 예외 발생: {e}")
 
     async def _execute_request(self, method, url, params, data):
+
         loop = asyncio.get_running_loop()
         response = None
         token_refreshed = False  # ✅ 토큰 재발급 여부 플래그
 
         async def make_request():
+            self._headers.sync_from_env(self._env)
+
             access_token: str = await self._env.get_access_token()
             # payload = jwt.decode(access_token, options={"verify_signature": False})
             # self._logger.debug(f"access_token payload: {payload}")
             if not isinstance(access_token, str) or access_token is None:
                 raise ValueError("접근 토큰이 없습니다. KoreaInvestEnv에서 먼저 토큰을 발급받아야 합니다.")
 
-            self._set_headers(access_token)
+            self._headers.set_auth_bearer(access_token)
+            self._headers.set_app_keys(self._env.active_config['api_key'], self._env.active_config['api_secret_key'])
+            headers = self._headers.build()
 
             if method.upper() == 'GET':
-                return await self._async_session.get(url, headers=self._headers, params=params)
+                self._logger.debug(f"[GET] 요청 Url: {url}")
+                self._logger.debug(f"[GET] 요청 Headers: {headers}")
+                self._logger.debug(f"[GET] 요청 Data: {params}")
+                return await self._async_session.get(url, headers=headers, params=params)
             elif method.upper() == 'POST':
                 json_body = json.dumps(data) if data else None
 
                 self._logger.debug(f"[POST] 요청 Url: {url}")
-                self._logger.debug(f"[POST] 요청 Headers: {self._headers}")
+                self._logger.debug(f"[POST] 요청 Headers: {headers}")
                 self._logger.debug(f"[POST] 요청 Data: {json_body}")
 
                 return await self._async_session.post(
                     url,
-                    headers=self._headers,
+                    headers=headers,
                     data=json_body, # json 넘기면 실패.
                 )
             else:
@@ -180,7 +178,7 @@ class KoreaInvestApiBase:
 
                 # ✅ 반드시 새로 가져온 토큰으로 Authorization 헤더 재세팅
                 new_token = await self._env.get_access_token()
-                self._headers["Authorization"] = f"Bearer {new_token}"
+                self._headers.set_auth_bearer(new_token)  # ✅ 메서드 사용
                 self._logger.debug(f"✅ 재발급 후 토큰 적용 확인: {new_token[:40]}...")
 
                 response = await make_request()
@@ -188,7 +186,8 @@ class KoreaInvestApiBase:
         except httpx.RequestError as e:
             if self._logger:
                 self._logger.error(f"요청 예외 발생 (httpx): {str(e)}")
-                self._logger.debug(f"[EGW00123 대응] 현재 Authorization 헤더: {self._headers['Authorization'][:40]}...")
+                auth = self._headers.build().get("Authorization", "")  # ✅ 안전 조회
+                self._logger.debug(f"[EGW00123 대응] 현재 Authorization 헤더: {auth[:40]}...")
             return ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1=str(e), data=None)
 
         return response
@@ -231,8 +230,3 @@ class KoreaInvestApiBase:
         # 모든 검사를 통과한 최종 성공적인 응답
         self._logger.debug(f"API 응답 성공: {response.text}")
         return response_json
-
-    def _set_headers(self, access_token):
-        self._headers["Authorization"] = f"Bearer {access_token}"
-        self._headers["appkey"] = self._env.active_config['api_key']
-        self._headers["appsecret"] = self._env.active_config['api_secret_key']

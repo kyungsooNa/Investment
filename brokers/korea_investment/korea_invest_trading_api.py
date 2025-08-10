@@ -8,13 +8,16 @@ import httpx
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_params_provider import Params
+from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
 from typing import Optional
 from common.types import ResCommonResponse, ErrorCode
 
 
 class KoreaInvestApiTrading(KoreaInvestApiBase):
-    def __init__(self, env: KoreaInvestApiEnv, logger, async_client: Optional[httpx.AsyncClient] = None):
-        super().__init__(env, logger, async_client=async_client)
+    def __init__(self, env: KoreaInvestApiEnv, logger,
+                 async_client: Optional[httpx.AsyncClient] = None,
+                 header_provider: Optional[KoreaInvestHeaderProvider] = None):
+        super().__init__(env, logger, async_client=async_client, header_provider=header_provider)
 
     async def _get_hashkey(self, data):  # async def로 변경됨
         """
@@ -27,7 +30,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         response = None
 
         try:
-            response : ResCommonResponse = await self.call_api('POST', path, data=data, retry_count=1)
+            response: ResCommonResponse = await self.call_api('POST', path, data=data, retry_count=1)
 
             if response.rt_cd != ErrorCode.SUCCESS.value:
                 return response
@@ -71,11 +74,6 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             tr_id = full_config['tr_ids']['trading']['order_cash_sell_paper'] if full_config['is_paper_trading'] else \
                 full_config['tr_ids']['trading']['order_cash_sell_real']
 
-
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config['custtype']
-        self._headers["gt_uid"] = os.urandom(16).hex()
-
         order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
 
         data = Params.order_cash_body(
@@ -95,7 +93,9 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
                 data=None
             )
 
-        self._headers["hashkey"] = calculated_hashkey
-        order_type = "매수" if is_buy else "매도"
-        self._logger.info(f"주식 {order_type} 주문 시도 - 종목: {stock_code}, 수량: {order_qty}, 가격: {order_price}")
-        return await self.call_api('POST', path, data=data, retry_count=1)
+        with self._headers.temp(tr_id=tr_id, custtype=full_config['custtype'], hashkey=calculated_hashkey):
+            # gt_uid는 temp에서 자동 생성(값 미지정 시)
+            self._headers.set_gt_uid()
+            self._logger.info(
+                f"주식 {'매수' if is_buy else '매도'} 주문 시도 - 종목:{stock_code}, 수량:{order_qty}, 가격:{order_price}")
+            return await self.call_api('POST', path, data=data, retry_count=1)
