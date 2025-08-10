@@ -4,6 +4,8 @@ from typing import Dict, List, Union, Optional
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_params_provider import Params
+from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
+
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
     ResPriceSummary, ResMomentumStock, ResCommonResponse, ErrorCode,
@@ -13,8 +15,9 @@ from common.types import (
 
 class KoreaInvestApiQuotations(KoreaInvestApiBase):
     def __init__(self, env: KoreaInvestApiEnv, logger=None,
-                 async_client: Optional[httpx.AsyncClient] = None):
-        super().__init__(env, logger, async_client=async_client)
+                 async_client: Optional[httpx.AsyncClient] = None,
+                 header_provider: Optional[KoreaInvestHeaderProvider] = None):
+        super().__init__(env, logger, async_client=async_client, header_provider=header_provider)
 
     async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
         """
@@ -25,8 +28,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         path = full_config["paths"]["search_info"]
 
-        self._headers["tr_id"] = full_config['tr_ids']['quotations']['search_info']
-        self._headers["custtype"] = full_config['custtype']
+        self._headers.set_tr_id(full_config['tr_ids']['quotations']['search_info'])
+        self._headers.set_custtype(full_config['custtype'])
 
         params = {
             "PDNO": stock_code,
@@ -70,8 +73,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         path = full_config["paths"]["inquire_price"]
 
-        self._headers["tr_id"] = full_config['tr_ids']['quotations']['inquire_price']
-        self._headers["custtype"] = full_config['custtype']
+        self._headers.set_tr_id(full_config['tr_ids']['quotations']['inquire_price'])
+        self._headers.set_custtype(full_config['custtype'])
 
         params = Params.inquire_price(stock_code=stock_code)
         self._logger.info(f"{stock_code} 현재가 조회 시도...")
@@ -216,8 +219,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self._logger.warning(f"요청 수 {count}는 최대 허용값 30을 초과하므로 30개로 제한됩니다.")
             count = 30
 
-        self._headers["tr_id"] = full_config['tr_ids']['quotations']['top_market_cap']
-        self._headers["custtype"] = full_config['custtype']
+        self._headers.set_tr_id(full_config['tr_ids']['quotations']['top_market_cap'])
+        self._headers.set_custtype(full_config['custtype'])
 
         path = full_config["paths"]["market_cap"]
 
@@ -247,8 +250,6 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
                 if not code or not raw_market_cap:
                     continue  #
-
-                market_cap = int(raw_market_cap.replace(",", "")) if raw_market_cap.replace(",", "").isdigit() else 0
 
                 results.append(ResTopMarketCapApiItem(
                     iscd=item.get("iscd", ""),
@@ -305,23 +306,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=[]
             )
 
-        headers = self._headers.copy()
-        headers["tr_id"] = selected_tr_id
-
-        params = Params.daily_itemchartprice_day(stock_code=stock_code, date=date)
-        # params = {
-        #     "fid_cond_mrkt_div_code": "J",
-        #     "fid_input_iscd": stock_code,
-        #     "fid_input_date_1": date,
-        #     "fid_input_date_2": date,
-        #     "fid_period_div_code": fid_period_div_code,
-        #     "fid_org_adj_prc": fid_org_adj_prc
-        # }
-
-        response_data: ResCommonResponse = await self.call_api(method="GET",
-                                                               path=full_config["paths"][
-                                                                   "inquire_daily_itemchartprice"],
-                                                               params=params, data=None)
+        with self._headers.temp(tr_id=selected_tr_id):
+            params = Params.daily_itemchartprice_day(stock_code=stock_code, date=date)
+            response_data: ResCommonResponse = await self.call_api(method="GET",
+                                                                   path=full_config["paths"][
+                                                                       "inquire_daily_itemchartprice"],
+                                                                   params=params, data=None)
 
         if response_data.rt_cd != ErrorCode.SUCCESS.value:
             error_msg = f"API 응답 비정상: None, 응답: {response_data.data}"
@@ -364,10 +354,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         full_config = self._env.active_config
 
         path = full_config["paths"]["asking_price"]
-        tr_id = full_config["tr_ids"]["quotations"]["asking_price"]
 
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config["custtype"]
+        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["asking_price"])
+        self._headers.set_custtype(full_config["custtype"])
 
         params = Params.asking_price(stock_code=stock_code)
 
@@ -388,10 +377,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         full_config = self._env.active_config
 
         path = full_config["paths"]["time_conclude"]
-        tr_id = full_config["tr_ids"]["quotations"]["time_conclude"]
 
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config["custtype"]
+        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["time_conclude"])
+        self._headers.set_custtype(full_config["custtype"])
 
         params = Params.time_conclude(stock_code=stock_code)
 
@@ -411,10 +399,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         full_config = self._env.active_config
 
         path = full_config["paths"]['ranking_fluctuation']
-        tr_id = full_config["tr_ids"]["quotations"]['ranking_fluctuation']
 
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config["custtype"]
+        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]['ranking_fluctuation'])
+        self._headers.set_custtype(full_config["custtype"])
 
         params = (
             Params.fluctuation_rise()  # 상승률 상위
@@ -449,10 +436,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         full_config = self._env.active_config
 
         path = full_config["paths"]["ranking_volume"]
-        tr_id = full_config["tr_ids"]["quotations"]["ranking_volume"]
 
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config["custtype"]
+        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["ranking_volume"])
+        self._headers.set_custtype(full_config["custtype"])
 
         params = Params.top_market_cap()
 
@@ -523,10 +509,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         full_config = self._env.active_config
 
         path = full_config["paths"]["etf_info"]
-        tr_id = full_config["tr_ids"]["quotations"]["etf_info"]
 
-        self._headers["tr_id"] = tr_id
-        self._headers["custtype"] = full_config["custtype"]
+        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["etf_info"])
+        self._headers.set_custtype(full_config["custtype"])
 
         params = Params.etf_info(etf_code=etf_code)
 

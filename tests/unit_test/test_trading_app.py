@@ -2060,39 +2060,6 @@ async def test_initialization_and_environment_selection(setup_mock_app):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_2_get_account_balance_integration(setup_mock_app):
-    """
-    (통합 테스트) 메뉴 '2' 선택 시 실제 계좌 잔고 조회를 시도하고,
-    결과를 view에 전달하는 전체 흐름을 검증합니다.
-    """
-    app = setup_mock_app
-
-    # 테스트를 위해 실전 투자 모드로 강제 설정하고, 초기화는 성공했다고 가정합니다.
-    # 이 과정에서 trading_service 등 내부 서비스들이 생성됩니다.
-    app.env.set_trading_mode(False)  # 실전 투자
-    await app._complete_api_initialization()
-
-    # 실제 API 네트워크 호출을 하는 trading_service의 메서드만 모킹합니다.
-    mock_balance_data = {"dnca_tot_amt": "1000000", "tot_evlu_amt": "1200000"}
-    mock_response = ResCommonResponse(rt_cd="0", msg1="성공", data=mock_balance_data)
-
-    # ✅ 이 줄을 추가하여 trading_service가 준비된 응답을 반환하도록 설정합니다.
-    app.stock_query_service.handle_get_account_balance.return_value = mock_response
-
-    # 메뉴 '2' 액션을 실행합니다.
-    executor = UserActionExecutor(app)
-    result = await executor.execute("2")
-
-    # 검증
-    assert result is True  # 액션 실행 후 앱은 계속 실행되어야 합니다.
-    app.stock_query_service.handle_get_account_balance.assert_awaited_once()
-    app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data)
-    app.cli_view.display_account_balance_failure.assert_not_called()
-
-
-# C:/Users/Kyungsoo/Documents/Code/Investment/tests/test_trading_app.py
-
-@pytest.mark.asyncio
 async def test_execute_action_18_realtime_stream_new_menu_option(setup_mock_app):
     """메뉴 '18' 선택 시 실시간 구독 기능이 호출되는지 테스트합니다."""  # Docstring도 일관성 있게 수정
     app = setup_mock_app

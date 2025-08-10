@@ -4,7 +4,8 @@ from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQ
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
-from brokers.korea_investment.korea_invest_token_manager import TokenManager  # TokenManager를 import
+from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env
+
 import certifi
 import logging
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
@@ -26,9 +27,14 @@ class KoreaInvestApiClient:
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         shared_client = httpx.AsyncClient(verify=ssl_context)
 
-        self._quotations = KoreaInvestApiQuotations(self._env, self._logger, async_client=shared_client)
-        self._account = KoreaInvestApiAccount(self._env, self._logger, async_client=shared_client)
-        self._trading = KoreaInvestApiTrading(self._env, self._logger, async_client=shared_client)
+        base_provider = build_header_provider_from_env(env)  # UA만 갖고 생성
+
+        self._quotations = KoreaInvestApiQuotations(self._env, self._logger, async_client=shared_client,
+                                                    header_provider=base_provider.fork())
+        self._account = KoreaInvestApiAccount(self._env, self._logger, async_client=shared_client,
+                                              header_provider=base_provider.fork())
+        self._trading = KoreaInvestApiTrading(self._env, self._logger, async_client=shared_client,
+                                              header_provider=base_provider.fork())
         self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger)
 
     # --- Account API delegation ---

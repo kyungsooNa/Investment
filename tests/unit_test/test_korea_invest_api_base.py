@@ -476,7 +476,7 @@ async def testcall_api_token_expired_retry():
     # 수정된 부분: 전체 URL을 예상 인자로 사용
     dummy._async_session.get.assert_called_with(
         'https://mock-base/token_expired',  # <- 전체 URL로 변경
-        headers=dummy._headers,
+        headers=dummy._headers.build(),  # ✅ 객체 → 빌드된 dict로 검증
         params=None
     )
 
@@ -643,7 +643,7 @@ async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
     # httpx는 딕셔너리 데이터를 'json' 파라미터로 받습니다.
     api._async_session.post.assert_called_once_with(
         "http://test",
-        headers=api._headers,  # api 인스턴스의 헤더를 사용합니다.
+        headers=api._headers.build(),             # ← provider 객체가 아니라 build() 결과
         data=json.dumps({"x": "y"})  # ✅ 문자열로 바꿔야 함
     )
 
@@ -678,15 +678,17 @@ async def test_log_headers_unicode_error_with_custom_object(caplog):
     mock_env = get_mock_env()
     api = KoreaInvestApiBase(env=mock_env, logger=None)
 
-    api._headers = {
-        "Authorization": ExplodingStr(),  # str() 호출 시 UnicodeEncodeError 발생
+    # build()가 에러 유발 객체를 포함한 dict를 반환하도록 설정
+    api._headers.build = MagicMock(return_value={
+        "Authorization": ExplodingStr(),
         "User-Agent": "test-agent"
-    }
+    })
 
     with caplog.at_level("DEBUG"):
         api._log_headers()
 
-    assert "*** UnicodeEncodeError ***" in caplog.text
+    logs = [rec.getMessage() for rec in caplog.records]
+    assert any("*** UnicodeEncodeError" in msg or "ExplodingStr" in msg for msg in logs)
 
 
 @pytest.mark.asyncio

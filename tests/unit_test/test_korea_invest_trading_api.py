@@ -62,7 +62,7 @@ async def test_place_stock_order_buy_success():
 
     # mock _get_hashkey and call_api
     trading_api._get_hashkey = AsyncMock(return_value='mocked_hash')
-    trading_api.call_api = AsyncMock(return_value={'status': 'success'})
+    trading_api.call_api = AsyncMock(return_value={'status': 'buy_success'})
 
     result = await trading_api.place_stock_order(
         stock_code='005930',
@@ -71,10 +71,20 @@ async def test_place_stock_order_buy_success():
         is_buy=True
     )
 
-    assert result == {'status': 'success'}
-    assert trading_api._headers["hashkey"] == 'mocked_hash'
-    mock_logger.info.assert_called()
+    # 1) 결과 확인
+    assert result == {'status': 'buy_success'}
 
+    # 2) hashkey를 계산하려고 _get_hashkey가 호출되었는지 확인
+    trading_api._get_hashkey.assert_awaited()
+    # 필요시 인자까지 확인하려면:
+    # args, kwargs = trading_api._get_hashkey.call_args
+    # assert 'ord_unpr' in args[0]  # 등등
+
+    # 3) API 호출이 1회 일어난 것 확인(헤더 적용은 내부에서 수행됨)
+    trading_api.call_api.assert_awaited_once()
+
+    # 4) 새 설계에서는 temp 컨텍스트 종료 후 hashkey가 지워지는 것이 정상
+    assert trading_api._headers.build().get('hashkey') is None
 
 @pytest.mark.asyncio
 async def test_get_hashkey_success():
@@ -167,10 +177,19 @@ async def test_place_stock_order_sell_success():
         order_qty='10',
         is_buy=False
     )
+    assert result == {'status': 'sell_success'}
 
-    assert result == {"status": "sell_success"}
-    assert trading_api._headers["tr_id"] == "SELL_PAPER"
-    mock_logger.info.assert_called()
+    # 2) hashkey를 계산하려고 _get_hashkey가 호출되었는지 확인
+    trading_api._get_hashkey.assert_awaited()
+    # 필요시 인자까지 확인하려면:
+    # args, kwargs = trading_api._get_hashkey.call_args
+    # assert 'ord_unpr' in args[0]  # 등등
+
+    # 3) API 호출이 1회 일어난 것 확인(헤더 적용은 내부에서 수행됨)
+    trading_api.call_api.assert_awaited_once()
+
+    # 4) 새 설계에서는 temp 컨텍스트 종료 후 hashkey가 지워지는 것이 정상
+    assert trading_api._headers.build().get('hashkey') is None
 
 @pytest.mark.asyncio
 async def test_place_stock_order_hashkey_none():
