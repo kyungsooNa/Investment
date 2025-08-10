@@ -240,7 +240,7 @@ class ResStockOrderApiOutput:
 class ResBasicStockInfo:
     code: str
     name: str
-    open_price: int
+    # open_price: int
     current_price: int
     change_rate: float
     prdy_ctrt: float
@@ -248,6 +248,43 @@ class ResBasicStockInfo:
     def to_dict(self):
         return asdict(self)
 
+@with_from_dict
+@dataclass
+class ResFluctuation:
+    stck_shrn_iscd: str    #주식 단축 종목코드
+    data_rank: str    #데이터 순위
+    hts_kor_isnm: str    #HTS 한글 종목명
+    stck_prpr: str    #주식 현재가
+    prdy_vrss: str    #전일 대비
+    prdy_vrss_sign: str    #전일 대비 부호
+    prdy_ctrt: str    #전일 대비율
+    acml_vol: str    #누적 거래량
+    stck_hgpr: str    #주식 최고가
+    hgpr_hour: str    #최고가 시간
+    acml_hgpr_date: str    #누적 최고가 일자
+    stck_lwpr: str    #주식 최저가
+    lwpr_hour: str    #최저가 시간
+    acml_lwpr_date: str    #누적 최저가 일자
+    lwpr_vrss_prpr_rate: str    #최저가 대비 현재가 비율
+    dsgt_date_clpr_vrss_prpr_rate: str    #지정 일자 종가 대비 현재가 비
+    cnnt_ascn_dynu: str    #연속 상승 일수
+    hgpr_vrss_prpr_rate: str    #최고가 대비 현재가 비율
+    cnnt_down_dynu: str    #연속 하락 일수
+    oprc_vrss_prpr_sign: str    #시가2 대비 현재가 부호
+    oprc_vrss_prpr: str    #시가2 대비 현재가
+    oprc_vrss_prpr_rate: str    #시가2 대비 현재가 비율
+    prd_rsfl: str    #기간 등락
+    prd_rsfl_rate: str    #기간 등락 비율
+
+    def to_dict(self):
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ResFluctuation":
+        init_kwargs = {}
+        for f in fields(cls):
+            init_kwargs[f.name] = data.get(f.name, None)  # 누락 시 None
+        return cls(**init_kwargs)
 
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
@@ -303,3 +340,4 @@ class ResponseStatus(Enum):
     FATAL_ERROR = auto()
     HTTP_ERROR = auto()
     PARSING_ERROR = auto()
+    EMPTY_RTCD = auto()
