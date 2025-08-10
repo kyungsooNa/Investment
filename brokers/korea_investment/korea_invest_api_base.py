@@ -121,7 +121,6 @@ class KoreaInvestApiBase:
             self._logger.error(f"예상치 못한 예외 발생: {e}")
 
     async def _execute_request(self, method, url, params, data):
-
         loop = asyncio.get_running_loop()
         response = None
         token_refreshed = False  # ✅ 토큰 재발급 여부 플래그
