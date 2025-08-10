@@ -23,7 +23,7 @@ class TradingService:
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
                  time_manager: TimeManager = None):
         self._broker_api_wrapper = broker_api_wrapper
-        self._env = env  # env는 그대로 유지
+        self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
 
@@ -101,6 +101,11 @@ class TradingService:
     async def unsubscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터 구독을 해지합니다."""
         return await self._broker_api_wrapper.unsubscribe_realtime_quote(stock_code)
+
+    async def get_price_summary(self, stock_code) -> ResCommonResponse:
+        """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
+        self._logger.info(f"Service - {stock_code} 종목 요약 정보 조회 요청")
+        return await self._broker_api_wrapper.get_price_summary(stock_code)
 
     async def get_current_stock_price(self, stock_code) -> ResCommonResponse:
         self._logger.info(f"Service - {stock_code} 현재가 조회 요청")
@@ -376,6 +381,13 @@ class TradingService:
         """종목의 시간대별 체결가 정보를 조회합니다."""
         self._logger.info(f"Service - {stock_code} 종목 시간대별 체결가 조회 요청")
         return await self._broker_api_wrapper.get_time_concluded_prices(stock_code)
+
+    async def inquire_daily_itemchartprice(self, stock_code: str, date: str,
+                                           fid_period_div_code: str = 'D') -> ResCommonResponse:
+        """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""
+        self._logger.info(f"Service - {stock_code} 종목 일별/분봉 주식 시세 차트 데이터를 조회 요청")
+        return await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code=stock_code, date=date,
+                                                                           fid_period_div_code=fid_period_div_code)
 
     # async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
     #     """키워드로 종목을 검색합니다."""

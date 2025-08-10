@@ -73,19 +73,15 @@ class TradingApp:
         try:
             self.logger.info("API 클라이언트 초기화 시작 (선택된 환경 기반)...")
 
-            # BrokerAPIWrapper를 한 번만 생성합니다.
-            self.broker_wrapper = BrokerAPIWrapper(env=self.env, logger=self.logger, time_manager=self.time_manager)
-
-            # TradingService에 BrokerAPIWrapper를 전달하도록 수정
-            # TradingService의 __init__ 시그니처도 변경되어야 합니다 (broker_wrapper를 받도록)
-            trading_service = TradingService(self.broker_wrapper, self.env, self.logger, self.time_manager)
+            broker_wrapper = BrokerAPIWrapper(env=self.env, logger=self.logger, time_manager=self.time_manager)
+            trading_service = TradingService(broker_wrapper, self.env, self.logger, self.time_manager)
 
             self.order_execution_service = OrderExecutionService(trading_service, self.logger, self.time_manager)
             self.stock_query_service = StockQueryService(trading_service, self.logger, self.time_manager)
 
             # BacktestDataProvider에 BrokerAPIWrapper를 전달 (현재와 동일)
             self.backtest_data_provider = BacktestDataProvider(
-                broker_api_wrapper=self.broker_wrapper,  # self.broker 대신 self.broker_wrapper 사용 (일관성을 위해)
+                trading_service=trading_service,
                 time_manager=self.time_manager,
                 logger=self.logger
             )
