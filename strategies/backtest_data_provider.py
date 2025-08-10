@@ -1,8 +1,8 @@
 # strategies/backtest_data_provider.py
 
 import logging
-from brokers.broker_api_wrapper import BrokerAPIWrapper
 from core.time_manager import TimeManager
+from services.trading_service import TradingService
 
 
 class BacktestDataProvider:
@@ -11,8 +11,8 @@ class BacktestDataProvider:
     모의(mock) 데이터 조회 및 실제 과거 데이터 조회 로직을 포함합니다.
     """
 
-    def __init__(self, broker_api_wrapper: BrokerAPIWrapper, time_manager: TimeManager, logger=None):
-        self._broker_api_wrapper = broker_api_wrapper
+    def __init__(self, trading_service: TradingService, time_manager: TimeManager, logger=None):
+        self.trading_service = trading_service
         self._time_manager = time_manager
         self._logger = logger if logger else logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class BacktestDataProvider:
         (실제로는 DB, CSV, 또는 API를 통해 특정 시점 데이터를 받아야 함)
         """
         try:
-            current_info = await self._broker_api_wrapper.get_price_summary(stock_code)
+            current_info = await self.trading_service.get_price_summary(stock_code)
             return current_info.data.get('current') * 1.05
         except Exception as e:
             self._logger.warning(f"[백테스트] {stock_code} 모의 가격 조회 실패: {e}")
@@ -42,7 +42,7 @@ class BacktestDataProvider:
 
             # BrokerAPIWrapper를 통해 분봉 데이터 조회 시 fid_period_div_code='M' 명시
             # <<< 이 부분이 수정되었습니다.
-            chart_data = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+            chart_data = await self.trading_service.inquire_daily_itemchartprice(
                 stock_code, backtest_date, fid_period_div_code='M'  # 분봉 데이터 요청을 위해 'M' 전달
             )
             # >>>
