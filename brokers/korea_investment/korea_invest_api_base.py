@@ -11,6 +11,7 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Token
 from common.types import ErrorCode, ResCommonResponse, ResponseStatus
 from typing import Union, Optional
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, KoreaInvestHeaderProvider
+from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 
 
 class KoreaInvestApiBase:
@@ -21,11 +22,13 @@ class KoreaInvestApiBase:
 
     def __init__(self, env: KoreaInvestApiEnv,
                  logger=None, async_client: Optional[httpx.AsyncClient] = None,
-                 header_provider: Optional[KoreaInvestHeaderProvider] = None):
+                 header_provider: Optional[KoreaInvestHeaderProvider] = None,
+                 url_provider: Optional[KoreaInvestUrlProvider] = None):
         self._logger = logger if logger else logging.getLogger(__name__)
         self._env = env
         self._base_url = None
         self._headers: KoreaInvestHeaderProvider = header_provider or build_header_provider_from_env(env)
+        self._url_provider: KoreaInvestUrlProvider = url_provider or KoreaInvestUrlProvider.from_env_and_kis_config(env)
 
         if async_client:
             self._async_session = async_client
@@ -37,9 +40,12 @@ class KoreaInvestApiBase:
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
         logging.getLogger('httpcore').setLevel(logging.WARNING)  # httpx의 하위 로거
 
-    async def call_api(self, method, path, params=None, data=None, retry_count=10, delay=1):
-        self._base_url = self._env.get_base_url()
-        url = f"{self._base_url}{path}"
+    # ✅ 하위 클래스가 URL 만들 때 쓰는 헬퍼
+    def url(self, key_or_path) -> str:
+        return self._url_provider.url(key_or_path)
+
+    async def call_api(self, method, key_or_path, params=None, data=None, retry_count=10, delay=1):
+        url = self.url(key_or_path)
 
         for attempt in range(1, retry_count + 1):
             try:

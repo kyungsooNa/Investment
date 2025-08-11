@@ -8,6 +8,18 @@ MarketCode = Literal["J", "Q"]  # J: 코스피(국내 주식), Q: 코스닥(필�
 # ---- 개별 파라미터 dataclass들 ----
 
 @dataclass(frozen=True)
+class SearchInfoParams:
+    pdno: str
+    prdt_type_cd: str  # 종목코드
+
+    @classmethod
+    def of(cls, stock_code: str, prdt_type_cd: prdt_type_cd):
+        return cls(pdno=stock_code, prdt_type_cd=prdt_type_cd)
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+@dataclass(frozen=True)
 class InquirePriceParams:
     fid_cond_mrkt_div_code: str  # "J"
     fid_input_iscd: str  # 종목코드
@@ -428,6 +440,10 @@ class OrderCashBody:
 
 class Params:
     """기존 코드 변경 최소화를 위한 dict 파사드"""
+
+    @staticmethod
+    def search_info(stock_code: str, prdt_type_cd: MarketCode) -> Dict[str, str]:
+        return SearchInfoParams.of(stock_code, prdt_type_cd).to_dict()
 
     @staticmethod
     def inquire_price(stock_code: str, market: MarketCode = "J") -> Dict[str, str]:

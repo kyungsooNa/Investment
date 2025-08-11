@@ -5,6 +5,8 @@ from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_params_provider import Params
 from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
+from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
+from brokers.korea_investment.korea_invest_url_keys import EndpointKey
 from typing import Optional
 from common.types import ResCommonResponse
 
@@ -12,15 +14,19 @@ from common.types import ResCommonResponse
 class KoreaInvestApiAccount(KoreaInvestApiBase):
     def __init__(self, env: KoreaInvestApiEnv, logger=None,
                  async_client: Optional[httpx.AsyncClient] = None,
-                 header_provider: Optional[KoreaInvestHeaderProvider] = None):
-        super().__init__(env, logger, async_client=async_client, header_provider=header_provider)
+                 header_provider: Optional[KoreaInvestHeaderProvider] = None,
+                 url_provider: Optional[KoreaInvestUrlProvider] = None):
+        super().__init__(env,
+                         logger,
+                         async_client=async_client,
+                         header_provider=header_provider,
+                         url_provider=url_provider)
 
     async def get_account_balance(self) -> ResCommonResponse:
         """
         모의투자 또는 실전투자 계좌의 잔고를 조회하는 메서드.
         투자환경(env)에 따라 자동 분기된다.
         """
-        path = "/uapi/domestic-stock/v1/trading/inquire-balance"
         full_config = self._env.active_config
 
         is_paper = self._env.is_paper_trading  # 모의투자 여부 판단
@@ -45,4 +51,4 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
 
         mode_str = "모의투자" if is_paper else "실전투자"
         self._logger.info(f"{mode_str} 계좌 잔고 조회 시도...")
-        return await self.call_api('GET', path, params=params, retry_count=1)
+        return await self.call_api('GET', EndpointKey.INQUIRE_BALANCE, params=params, retry_count=1)

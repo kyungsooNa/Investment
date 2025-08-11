@@ -12,6 +12,10 @@ paths:
   item_news: /uapi/domestic-stock/v1/quotations/news-title
   etf_info: /uapi/etfetn/v1/quotations/inquire-price
 
+  # 계좌/주문
+  inquire_balance: /uapi/domestic-stock/v1/trading/inquire-balance
+  order_cash: /uapi/domestic-stock/v1/trading/order-cash
+  hashkey: /uapi/hashkey   # 선택: 없으면 코드에서 리터럴로 써도 됨
 params:
   fid_div_cls_code: "2"
   screening_code: "20174"
