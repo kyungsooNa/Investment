@@ -6,6 +6,7 @@ from app.trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResFluctuation, ErrorCode
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+from brokers.korea_investment.korea_invest_url_keys import EndpointKey
 from app.user_action_executor import UserActionExecutor
 
 
@@ -147,9 +148,9 @@ async def test_get_current_price_full_integration(real_app_instance, mocker):
     assert running_status == True
     mock_call_api.assert_awaited_once()
 
-    method, path = mock_call_api.call_args[0][:2]
+    method, key_or_path= mock_call_api.call_args[0][:2]
     assert method == "GET"
-    assert path == "/uapi/domestic-stock/v1/quotations/inquire-price"
+    assert key_or_path== EndpointKey.INQUIRE_PRICE
 
     # 입력 프롬프트 호출 여부
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
@@ -196,10 +197,10 @@ async def test_get_account_balance_full_integration(real_app_instance, mocker):
     called_args, called_kwargs = mock_call_api.call_args
 
     method = called_args[0]
-    path = called_args[1]
+    key_or_key_or_path= called_args[1]
 
     assert method == "GET"
-    assert path == "/uapi/domestic-stock/v1/trading/inquire-balance"
+    assert key_or_key_or_path== EndpointKey.INQUIRE_BALANCE
 
     # 2. 성공 경로의 비즈니스 로직이 올바르게 수행되었는지 검증합니다.
     # ✅ 성공 로그가 올바른 데이터와 함께 기록되었는지 확인합니다.
@@ -277,8 +278,8 @@ async def test_buy_stock_full_integration(real_app_instance, mocker):
     assert mock_call_api.await_count == 2
 
     # 두 번째 호출이 주문 엔드포인트인지 확인
-    second_call_path = mock_call_api.call_args_list[1][0][1]
-    assert "/uapi/domestic-stock/v1/trading/order-cash" in second_call_path
+    key_or_path= mock_call_api.call_args_list[1][0][1]
+    assert EndpointKey.ORDER_CASH in key_or_path
 
 @pytest.mark.asyncio
 async def test_sell_stock_full_integration(real_app_instance, mocker):
@@ -317,8 +318,8 @@ async def test_sell_stock_full_integration(real_app_instance, mocker):
     assert mock_call_api.await_count == 2
 
     # 두 번째 호출이 주문 엔드포인트인지 확인
-    second_call_path = mock_call_api.call_args_list[1][0][1]
-    assert "/uapi/domestic-stock/v1/trading/order-cash" in second_call_path
+    key_or_path= mock_call_api.call_args_list[1][0][1]
+    assert EndpointKey.ORDER_CASH in key_or_path
 
 @pytest.mark.asyncio
 async def test_display_stock_change_rate_full_integration(real_app_instance, mocker):

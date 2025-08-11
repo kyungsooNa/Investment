@@ -168,7 +168,7 @@ def get_mock_config():
             'quotations': {
                 'inquire_price': 'FHKST01010100',
                 'search_info': 'FHKST01010500',
-                'top_market_cap': 'FHPST01740000',
+                'market_cap': 'FHPST01740000',
                 'daily_itemchartprice_day': 'FHKST03010100',
                 'daily_itemchartprice_minute': 'FHNKF03060000'
             },

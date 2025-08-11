@@ -115,7 +115,7 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
 
             # --- Act (실행) ---
             # call_api 메소드를 호출합니다.
-            final_result = await self.api_base.call_api(method='POST', path='/test-path')
+            final_result = await self.api_base.call_api('POST', '/test-path')
 
             # --- Assert (검증) ---
             # 1. 최종 결과 검증: 두 번째 시도의 성공적인 결과값이 반환되었는지 확인합니다.
@@ -240,6 +240,8 @@ async def testcall_api_success(caplog):
     mock_env = MagicMock()
     mock_env.get_access_token = AsyncMock(return_value="test-token-for-success-case")
     mock_env.my_agent = "test-agent"  # ✅ 필수 속성 설정
+    # ✅ base_url을 문자열로 명시
+    mock_env.get_base_url = MagicMock(return_value="https://api.test")
 
     # DummyAPI에 전달할 로거를 명시적인 MagicMock으로 생성합니다.
     dummy_logger = MagicMock()

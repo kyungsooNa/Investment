@@ -218,7 +218,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self._logger.warning(f"요청 수 {count}는 최대 허용값 30을 초과하므로 30개로 제한됩니다.")
             count = 30
 
-        self._headers.set_tr_id(full_config['tr_ids']['quotations']['top_market_cap'])
+        self._headers.set_tr_id(full_config['tr_ids']['quotations']['market_cap'])
         self._headers.set_custtype(full_config['custtype'])
 
         params = Params.top_market_cap()
