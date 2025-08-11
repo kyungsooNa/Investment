@@ -440,7 +440,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["ranking_volume"])
         self._headers.set_custtype(full_config["custtype"])
 
-        params = Params.top_market_cap()
+        params = Params.volume_rank()
 
         self._logger.info(f"거래량 상위 종목 조회 시도...")
         response = await self.call_api("GET", path, params=params, retry_count=1)
