@@ -5,6 +5,7 @@ from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAcco
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env
+from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 
 import certifi
 import logging
@@ -27,14 +28,30 @@ class KoreaInvestApiClient:
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         shared_client = httpx.AsyncClient(verify=ssl_context)
 
-        base_provider = build_header_provider_from_env(env)  # UA만 갖고 생성
+        header_provider = build_header_provider_from_env(env)  # UA만 갖고 생성
+        url_provider = KoreaInvestUrlProvider.from_env_and_kis_config(env=env)
 
-        self._quotations = KoreaInvestApiQuotations(self._env, self._logger, async_client=shared_client,
-                                                    header_provider=base_provider.fork())
-        self._account = KoreaInvestApiAccount(self._env, self._logger, async_client=shared_client,
-                                              header_provider=base_provider.fork())
-        self._trading = KoreaInvestApiTrading(self._env, self._logger, async_client=shared_client,
-                                              header_provider=base_provider.fork())
+        self._quotations = KoreaInvestApiQuotations(
+            self._env,
+            self._logger,
+            async_client=shared_client,
+            header_provider=header_provider.fork(),
+            url_provider=url_provider,
+        )
+        self._account = KoreaInvestApiAccount(
+            self._env,
+            self._logger,
+            async_client=shared_client,
+            header_provider=header_provider.fork(),
+            url_provider=url_provider,
+        )
+        self._trading = KoreaInvestApiTrading(
+            self._env,
+            self._logger,
+            async_client=shared_client,
+            header_provider=header_provider.fork(),
+            url_provider=url_provider,
+        )
         self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger)
 
     # --- Account API delegation ---

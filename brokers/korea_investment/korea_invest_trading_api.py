@@ -9,6 +9,8 @@ from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_params_provider import Params
 from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
+from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
+from brokers.korea_investment.korea_invest_url_keys import EndpointKey
 from typing import Optional
 from common.types import ResCommonResponse, ErrorCode
 
@@ -16,8 +18,13 @@ from common.types import ResCommonResponse, ErrorCode
 class KoreaInvestApiTrading(KoreaInvestApiBase):
     def __init__(self, env: KoreaInvestApiEnv, logger,
                  async_client: Optional[httpx.AsyncClient] = None,
-                 header_provider: Optional[KoreaInvestHeaderProvider] = None):
-        super().__init__(env, logger, async_client=async_client, header_provider=header_provider)
+                 header_provider: Optional[KoreaInvestHeaderProvider] = None,
+                 url_provider: Optional[KoreaInvestUrlProvider] = None):
+        super().__init__(env,
+                         logger,
+                         async_client=async_client,
+                         header_provider=header_provider,
+                         url_provider=url_provider)
 
     async def _get_hashkey(self, data):  # async def로 변경됨
         """
@@ -26,11 +33,11 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         """
         full_config = self._env.active_config
 
-        path = f"{full_config['base_url']}/uapi/hashkey"
+        # path = f"{full_config['base_url']}/uapi/hashkey"
         response = None
 
         try:
-            response: ResCommonResponse = await self.call_api('POST', path, data=data, retry_count=1)
+            response: ResCommonResponse = await self.call_api('POST', EndpointKey.HASHKEY, data=data, retry_count=1)
 
             if response.rt_cd != ErrorCode.SUCCESS.value:
                 return response
@@ -63,8 +70,6 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
 
     async def place_stock_order(self, stock_code, order_price, order_qty,
                                 is_buy: bool) -> ResCommonResponse:  # async def로 변경됨
-        path = "/uapi/domestic-stock/v1/trading/order-cash"
-
         full_config = self._env.active_config
 
         if is_buy:
@@ -98,4 +103,4 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._headers.set_gt_uid()
             self._logger.info(
                 f"주식 {'매수' if is_buy else '매도'} 주문 시도 - 종목:{stock_code}, 수량:{order_qty}, 가격:{order_price}")
-            return await self.call_api('POST', path, data=data, retry_count=1)
+            return await self.call_api('POST', EndpointKey.ORDER_CASH, data=data, retry_count=1)
