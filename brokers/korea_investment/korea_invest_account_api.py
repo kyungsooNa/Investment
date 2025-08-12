@@ -7,6 +7,7 @@ from brokers.korea_investment.korea_invest_params_provider import Params
 from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 from brokers.korea_investment.korea_invest_url_keys import EndpointKey
+from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 from typing import Optional
 from common.types import ResCommonResponse
 
@@ -15,12 +16,14 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
     def __init__(self, env: KoreaInvestApiEnv, logger=None,
                  async_client: Optional[httpx.AsyncClient] = None,
                  header_provider: Optional[KoreaInvestHeaderProvider] = None,
-                 url_provider: Optional[KoreaInvestUrlProvider] = None):
+                 url_provider: Optional[KoreaInvestUrlProvider] = None,
+                 trid_provider: Optional[KoreaInvestTrIdProvider] = None):
         super().__init__(env,
                          logger,
                          async_client=async_client,
                          header_provider=header_provider,
-                         url_provider=url_provider)
+                         url_provider=url_provider,
+                         trid_provider=trid_provider)
 
     async def get_account_balance(self) -> ResCommonResponse:
         """
@@ -30,11 +33,7 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
         full_config = self._env.active_config
 
         is_paper = self._env.is_paper_trading  # 모의투자 여부 판단
-        tr_id = (
-            full_config['tr_ids']['account']['inquire_balance_paper']
-            if is_paper else
-            full_config['tr_ids']['account']['inquire_balance_real']
-        )
+        tr_id = self._trid_provider.account_inquire_balance()  # 모드에 따라 자동
 
         # ✅ 요청 단위 임시 헤더 주입
         self._headers.set_tr_id(tr_id)
