@@ -5,7 +5,6 @@
 
 ### 0. 불량
 2. Test 결과만 저장하면 Test 전용 로거 추가 필요.
-3. tr_id도 추출하여 관리
 4. IntegrationTest의 Mocking을 execute_request로 변경.
 ### 실전
 
