@@ -327,7 +327,6 @@ class UserActionExecutor:
             self.app.logger.error(f"[GapUpPullback] 전략 실행 오류: {e}")
             self.app.cli_view.display_strategy_error(f"전략 실행 실패: {e}")
 
-    # @TODO 시장이 열려있을때도 유효한지 확인 필요.
     async def handle_top_volume_30(self) -> None:
         title = 'volume'
         if self.app.env.is_paper_trading:
@@ -339,7 +338,6 @@ class UserActionExecutor:
             else:
                 self.app.cli_view.display_top_stocks_ranking_error(title, res.msg1)
 
-    # @TODO 시장이 열려있을때도 유효한지 확인 필요.
     async def handle_top_rise_30(self) -> None:
         title = 'rise'
         if self.app.env.is_paper_trading:
@@ -351,7 +349,6 @@ class UserActionExecutor:
             else:
                 self.app.cli_view.display_top_stocks_ranking_error(title, res.msg1)
 
-    # @TODO 시장이 열려있을때도 유효한지 확인 필요.
     async def handle_top_fall_30(self) -> None:
         title = 'fall'
         if self.app.env.is_paper_trading:

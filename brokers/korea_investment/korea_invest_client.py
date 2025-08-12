@@ -6,6 +6,7 @@ from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrad
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
+from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 
 import certifi
 import logging
@@ -30,6 +31,7 @@ class KoreaInvestApiClient:
 
         header_provider = build_header_provider_from_env(env)  # UA만 갖고 생성
         url_provider = KoreaInvestUrlProvider.from_env_and_kis_config(env=env)
+        trid_provider = KoreaInvestTrIdProvider.from_config_loader(env=env)
 
         self._quotations = KoreaInvestApiQuotations(
             self._env,
@@ -37,6 +39,7 @@ class KoreaInvestApiClient:
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=url_provider,
+            trid_provider=trid_provider,
         )
         self._account = KoreaInvestApiAccount(
             self._env,
@@ -44,6 +47,7 @@ class KoreaInvestApiClient:
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=url_provider,
+            trid_provider=trid_provider,
         )
         self._trading = KoreaInvestApiTrading(
             self._env,
@@ -51,6 +55,7 @@ class KoreaInvestApiClient:
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=url_provider,
+            trid_provider=trid_provider,
         )
         self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger)
 

@@ -12,6 +12,7 @@ from common.types import ErrorCode, ResCommonResponse, ResponseStatus
 from typing import Union, Optional
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, KoreaInvestHeaderProvider
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
+from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 
 
 class KoreaInvestApiBase:
@@ -21,14 +22,17 @@ class KoreaInvestApiBase:
     """
 
     def __init__(self, env: KoreaInvestApiEnv,
-                 logger=None, async_client: Optional[httpx.AsyncClient] = None,
+                 logger=None,
+                 async_client: Optional[httpx.AsyncClient] = None,
                  header_provider: Optional[KoreaInvestHeaderProvider] = None,
-                 url_provider: Optional[KoreaInvestUrlProvider] = None):
+                 url_provider: Optional[KoreaInvestUrlProvider] = None,
+                 trid_provider: Optional[KoreaInvestTrIdProvider] = None):
         self._logger = logger if logger else logging.getLogger(__name__)
         self._env = env
         self._base_url = None
         self._headers: KoreaInvestHeaderProvider = header_provider or build_header_provider_from_env(env)
         self._url_provider: KoreaInvestUrlProvider = url_provider or KoreaInvestUrlProvider.from_env_and_kis_config(env)
+        self._trid_provider = trid_provider or KoreaInvestTrIdProvider.from_config_loader(env)
 
         if async_client:
             self._async_session = async_client

@@ -11,6 +11,7 @@ from brokers.korea_investment.korea_invest_params_provider import Params
 from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 from brokers.korea_investment.korea_invest_url_keys import EndpointKey
+from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 from typing import Optional
 from common.types import ResCommonResponse, ErrorCode
 
@@ -19,12 +20,14 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
     def __init__(self, env: KoreaInvestApiEnv, logger,
                  async_client: Optional[httpx.AsyncClient] = None,
                  header_provider: Optional[KoreaInvestHeaderProvider] = None,
-                 url_provider: Optional[KoreaInvestUrlProvider] = None):
+                 url_provider: Optional[KoreaInvestUrlProvider] = None,
+                 trid_provider: Optional[KoreaInvestTrIdProvider] = None):
         super().__init__(env,
                          logger,
                          async_client=async_client,
                          header_provider=header_provider,
-                         url_provider=url_provider)
+                         url_provider=url_provider,
+                         trid_provider=trid_provider)
 
     async def _get_hashkey(self, data):  # async def로 변경됨
         """
@@ -38,6 +41,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
 
         try:
             response: ResCommonResponse = await self.call_api('POST', EndpointKey.HASHKEY, data=data, retry_count=1)
+            # @TODO call_api로 바꾸고 hashkey 못받아옴.
 
             if response.rt_cd != ErrorCode.SUCCESS.value:
                 return response
@@ -72,12 +76,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
                                 is_buy: bool) -> ResCommonResponse:  # async def로 변경됨
         full_config = self._env.active_config
 
-        if is_buy:
-            tr_id = full_config['tr_ids']['trading']['order_cash_buy_paper'] if full_config['is_paper_trading'] else \
-                full_config['tr_ids']['trading']['order_cash_buy_real']
-        else:
-            tr_id = full_config['tr_ids']['trading']['order_cash_sell_paper'] if full_config['is_paper_trading'] else \
-                full_config['tr_ids']['trading']['order_cash_sell_real']
+        tr_id = self._trid_provider.trading_order_cash(is_buy=True)  # 모드에 따라 자동
 
         order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
 

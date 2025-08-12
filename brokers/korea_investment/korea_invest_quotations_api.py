@@ -7,6 +7,8 @@ from brokers.korea_investment.korea_invest_params_provider import Params
 from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 from brokers.korea_investment.korea_invest_url_keys import EndpointKey
+from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
+from brokers.korea_investment.korea_invest_trid_keys import TrIdLeaf
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
     ResPriceSummary, ResMomentumStock, ResCommonResponse, ErrorCode,
@@ -18,12 +20,14 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
     def __init__(self, env: KoreaInvestApiEnv, logger=None,
                  async_client: Optional[httpx.AsyncClient] = None,
                  header_provider: Optional[KoreaInvestHeaderProvider] = None,
-                 url_provider: Optional[KoreaInvestUrlProvider] = None):
+                 url_provider: Optional[KoreaInvestUrlProvider] = None,
+                 trid_provider: Optional[KoreaInvestTrIdProvider] = None):
         super().__init__(env,
                          logger,
                          async_client=async_client,
                          header_provider=header_provider,
-                         url_provider=url_provider)
+                         url_provider=url_provider,
+                         trid_provider=trid_provider)
 
     async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
         """
@@ -31,8 +35,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         ResCommonResponse 형태로 반환하며, data 필드에 ResStockFullInfoApiOutput 포함.
         """
         full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.SEARCH_INFO)  # 모드에 따라 자동
 
-        self._headers.set_tr_id(full_config['tr_ids']['quotations']['search_info'])
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config['custtype'])
 
         params = Params.search_info(stock_code=stock_code, prdt_type_cd=full_config["params"]["fid_div_cls_code"])
@@ -71,8 +76,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         현재가를 조회합니다. API 원본 응답을 ResCommonResponse의 data 필드에 담아 반환.
         """
         full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.INQUIRE_PRICE)  # 모드에 따라 자동
 
-        self._headers.set_tr_id(full_config['tr_ids']['quotations']['inquire_price'])
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config['custtype'])
 
         params = Params.inquire_price(stock_code=stock_code)
@@ -218,7 +224,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self._logger.warning(f"요청 수 {count}는 최대 허용값 30을 초과하므로 30개로 제한됩니다.")
             count = 30
 
-        self._headers.set_tr_id(full_config['tr_ids']['quotations']['market_cap'])
+        tr_id = self._trid_provider.quotations(TrIdLeaf.MARKET_CAP)
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config['custtype'])
 
         params = Params.top_market_cap()
@@ -287,23 +294,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=[]
             )
 
-        selected_tr_id = None
-        if fid_period_div_code == 'D':
-            selected_tr_id = full_config['tr_ids']['quotations']['daily_itemchartprice_day']
-        elif fid_period_div_code == 'M':
-            self._logger.debug(f"현재 _config['tr_ids'] 내용: {full_config.get('tr_ids')}")
-            selected_tr_id = full_config['tr_ids']['quotations']['daily_itemchartprice_minute']
+        tr_id = self._trid_provider.daily_itemchartprice(period=fid_period_div_code)  # 'D' or 'M'
 
-        if not selected_tr_id:
-            error_msg = f"TR_ID 설정을 찾을 수 없습니다. fid_period_div_code: {fid_period_div_code}"
-            self._logger.critical(error_msg)
-            return ResCommonResponse(
-                rt_cd=ErrorCode.INVALID_INPUT.value,  # Enum 값 사용
-                msg1=error_msg,
-                data=[]
-            )
-
-        with self._headers.temp(tr_id=selected_tr_id):
+        self._logger.debug(f"차트 조회 시도 현재 tr_id: {tr_id}")
+        with self._headers.temp(tr_id=tr_id):
             params = Params.daily_itemchartprice_day(stock_code=stock_code, date=date)
             response_data: ResCommonResponse = await self.call_api("GET",
                                                                    EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE,
@@ -348,8 +342,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         ResCommonResponse 형태로 반환되며, data는 원시 output 딕셔너리입니다.
         """
         full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.ASKING_PRICE)
 
-        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["asking_price"])
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
         params = Params.asking_price(stock_code=stock_code)
@@ -369,8 +364,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         종목의 시간대별 체결가/체결량 정보를 조회합니다.
         """
         full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.TIME_CONCLUDE)
 
-        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["time_conclude"])
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
         params = Params.time_conclude(stock_code=stock_code)
@@ -389,8 +385,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         상승률/하락률 상위 종목 조회
         """
         full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.RANKING_FLUCTUATION)
 
-        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]['ranking_fluctuation'])
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
         params = (
@@ -424,8 +421,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         거래량 상위 종목 조회
         """
         full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.RANKING_VOLUME)
 
-        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["ranking_volume"])
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
         params = Params.volume_rank()
@@ -496,8 +494,9 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         ETF 정보 조회
         """
         full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.ETF_INFO)
 
-        self._headers.set_tr_id(full_config["tr_ids"]["quotations"]["etf_info"])
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
         params = Params.etf_info(etf_code=etf_code)
