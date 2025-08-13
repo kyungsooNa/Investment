@@ -40,7 +40,8 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         response = None
 
         try:
-            response: ResCommonResponse = await self.call_api('POST', EndpointKey.HASHKEY, data=data, retry_count=1)
+            response: ResCommonResponse = await self.call_api('POST', EndpointKey.HASHKEY,
+                                                              data=data, expect_standard_schema=False, retry_count=1)
             # @TODO call_api로 바꾸고 hashkey 못받아옴.
 
             if response.rt_cd != ErrorCode.SUCCESS.value:

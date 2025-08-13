@@ -10,7 +10,8 @@ import ssl
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
 from common.types import ErrorCode, ResCommonResponse, ResponseStatus
 from typing import Union, Optional
-from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, KoreaInvestHeaderProvider
+from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, \
+    KoreaInvestHeaderProvider
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 
@@ -48,7 +49,14 @@ class KoreaInvestApiBase:
     def url(self, key_or_path) -> str:
         return self._url_provider.url(key_or_path)
 
-    async def call_api(self, method, key_or_path, params=None, data=None, retry_count=10, delay=1):
+    async def call_api(self,
+                       method,
+                       key_or_path,
+                       params=None,
+                       data=None,
+                       expect_standard_schema: bool = True,
+                       retry_count=10,
+                       delay=1):
         url = self.url(key_or_path)
 
         for attempt in range(1, retry_count + 1):
@@ -58,7 +66,7 @@ class KoreaInvestApiBase:
 
                 response = await self._execute_request(method, url, params, data)
 
-                result: Union[dict, ResponseStatus] = await self._handle_response(response)
+                result: Union[dict, ResponseStatus] = await self._handle_response(response, expect_standard_schema)
 
                 if result is ResponseStatus.RETRY:
                     self._logger.info(f"재시도 필요: {attempt}/{retry_count}, 지연 {delay}초")
@@ -163,7 +171,7 @@ class KoreaInvestApiBase:
                 return await self._async_session.post(
                     url,
                     headers=headers,
-                    data=json_body, # json 넘기면 실패.
+                    data=json_body,  # json 넘기면 실패.
                 )
             else:
                 raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
@@ -201,7 +209,7 @@ class KoreaInvestApiBase:
 
         return response
 
-    async def _handle_response(self, response) -> Union[dict, ResponseStatus]:
+    async def _handle_response(self, response, expect_standard_schema: bool = True) -> Union[dict, ResponseStatus]:
         """HTTP 응답을 처리하고, 오류 유형에 따라 재시도 여부를 결정합니다."""
         # 1. 호출 제한 오류 (Rate Limit) - 최상단에서 가장 먼저 검사하고 즉시 반환
         if response.status_code == 429 or \
@@ -227,6 +235,10 @@ class KoreaInvestApiBase:
             self._logger.error("최종 토큰 만료 오류(EGW00123) 감지.")
             self._env.invalidate_token()
             return ResponseStatus.RETRY
+
+        if not expect_standard_schema:
+            # ✅ 표준 스키마(rt_cd 등) 미적용 엔드포인트: 2xx면 성공으로 간주
+            return response_json
 
         # 5. API 비즈니스 로직 오류 (rt_cd가 '0'이 아님)
         # 이 검사는 429/500 rate limit 케이스에서는 도달하지 않아야 합니다.
