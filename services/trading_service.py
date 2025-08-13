@@ -441,7 +441,7 @@ class TradingService:
 
             start_time = datetime.now()
             while (datetime.now() - start_time) < timedelta(seconds=duration):
-                await asyncio.sleep(1)  # 단순 대기 (메시지는 내부 handler에서 자동 처리됨)
+                await self._time_manager.sleep(1)  # 단순 대기 (메시지는 내부 handler에서 자동 처리됨)
 
         except Exception as e:
             self._logger.error(f"실시간 스트림 처리 중 오류 발생: {str(e)}")

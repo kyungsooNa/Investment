@@ -17,13 +17,17 @@ from common.types import (
 
 
 class KoreaInvestApiQuotations(KoreaInvestApiBase):
-    def __init__(self, env: KoreaInvestApiEnv, logger=None,
+    def __init__(self,
+                 env: KoreaInvestApiEnv,
+                 logger=None,
+                 time_manager=None,
                  async_client: Optional[httpx.AsyncClient] = None,
                  header_provider: Optional[KoreaInvestHeaderProvider] = None,
                  url_provider: Optional[KoreaInvestUrlProvider] = None,
                  trid_provider: Optional[KoreaInvestTrIdProvider] = None):
         super().__init__(env,
                          logger,
+                         time_manager,
                          async_client=async_client,
                          header_provider=header_provider,
                          url_provider=url_provider,
@@ -84,7 +88,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         params = Params.inquire_price(stock_code=stock_code)
         self._logger.info(f"{stock_code} 현재가 조회 시도...")
 
-        response: ResCommonResponse = await self.call_api("GET", EndpointKey.INQUIRE_PRICE, params=params, retry_count=3)
+        response: ResCommonResponse = await self.call_api("GET", EndpointKey.INQUIRE_PRICE, params=params,
+                                                          retry_count=3)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning("현재가 조회 실패")
@@ -372,7 +377,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         params = Params.time_conclude(stock_code=stock_code)
 
         self._logger.info(f"{stock_code} 종목 체결가 조회 시도...")
-        response: ResCommonResponse = await self.call_api("GET", EndpointKey.TIME_CONCLUDE, params=params, retry_count=1)
+        response: ResCommonResponse = await self.call_api("GET", EndpointKey.TIME_CONCLUDE, params=params,
+                                                          retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning(f"{stock_code} 체결가 정보 조회 실패: {response.msg1}")
@@ -429,7 +435,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         params = Params.volume_rank()
 
         self._logger.info(f"거래량 상위 종목 조회 시도...")
-        response = await self.call_api("GET",  EndpointKey.RANKING_VOLUME, params=params, retry_count=1)
+        response = await self.call_api("GET", EndpointKey.RANKING_VOLUME, params=params, retry_count=1)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning(f"거래량 상위 조회 실패: {response.msg1}")

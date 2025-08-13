@@ -4,6 +4,7 @@ import tempfile
 import shutil
 import pytest
 import time
+import asyncio
 from core.cache.cache_manager import CacheManager
 
 
@@ -46,3 +47,17 @@ def clear_cache_files(test_cache_config):
 
     if os.path.exists(base_dir):
         shutil.rmtree(base_dir, onerror=on_rm_error)
+
+pytest.fixture(autouse=True)
+def fast_sleep(monkeypatch, request):
+    # 특정 TC만 원래 sleep을 쓰고 싶으면: @pytest.mark.real_sleep
+    if request.node.get_closest_marker("real_sleep"):
+        return
+
+    # sync sleep 제거
+    monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
+
+    # async sleep 제거
+    async def _fast_async_sleep(*a, **k): return None
+    monkeypatch.setattr(asyncio, "sleep", _fast_async_sleep)
+
