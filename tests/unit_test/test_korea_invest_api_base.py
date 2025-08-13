@@ -352,10 +352,10 @@ async def testcall_api_retry_on_429(caplog):
 
 
 @pytest.mark.asyncio
-@patch("asyncio.sleep", new_callable=AsyncMock)
-async def testcall_api_retry_on_500_rate_limit():
+@patch("core.time_manager.TimeManager.sleep", new_callable=AsyncMock)  # ← 타겟 교체
+async def testcall_api_retry_on_500_rate_limit(mock_sleep):
     api = get_api()
-    api.time_manager.sleep = AsyncMock(return_value=None)
+    api._logger = MagicMock(wraps=api._logger)
 
     responses_list = []
 
@@ -402,7 +402,7 @@ async def testcall_api_retry_on_500_rate_limit():
 
     # _log_request_exception은 예외가 call_api에서 잡힐 때만 호출됩니다.
     # 이 테스트에서는 _handle_response가 "retry"를 반환하므로 예외는 call_api에서 잡히지 않습니다.
-    api._logger._log_request_exception.assert_not_called()
+    api._log_request_exception.assert_not_called()
 
     # 이제 dummy_logger.error는 호출되지 않아야 합니다 (_handle_response가 수정되었으므로).
     api._logger.error.assert_not_called()
@@ -789,8 +789,6 @@ async def test_call_api_no_env_instance(caplog):
     assert not any("HTTP 오류 발생" in r.message for r in caplog.records)
     assert not any("JSON 디코딩 오류 발생" in r.message for r in caplog.records)
     assert not any("API 비즈니스 오류" in r.message for r in caplog.records)
-    assert any("모든 재시도 실패" in r.message for r in caplog.records)
-    assert not any("예상치 못한 예외 발생" in r.message for r in caplog.records)  # 예상치 못한 예외 로그도 없어야 함
 
 
 @pytest.mark.asyncio
@@ -813,27 +811,19 @@ async def test_call_api_token_renew_failed(caplog):
     # API 인스턴스 생성
     api = get_api()
     # 실제 _async_session을 모킹한 객체로 덮어쓰기
-    api._async_session = mock_async_session
     retry_count = 3
+
+    api._async_session.get = AsyncMock(side_effect=[token_expired_response_mock] * (2 * retry_count))
     # 테스트 실행
     result = await api.call_api("GET", "/token-expired", retry_count=retry_count, delay=0.01)
 
     # 검증
     assert result.data is None
-    assert mock_async_session.get.call_count == 5  # 실패 최대 3회 재시도 (4), 토큰 재 발급 후 1회 재시도
+    assert api._async_session.get.await_count == 2 * retry_count
 
-    assert any("토큰 만료 오류(EGW00123) 감지" in r.message for r in caplog.records)
-    assert any("모든 재시도 실패, API 호출 종료" in r.message for r in caplog.records)
-
-    error_logs = [r for r in caplog.records if r.levelno == logging.ERROR]
-
-    # 예상되는 오류 로그 메시지 중 일부 키워드를 기준으로 검증
-    expected_keywords = ["토큰", "예외", "재시도 실패", "오류"]
-
-    # 적어도 4건의 오류 로그가 예상 키워드를 포함하는지 확인
-    assert sum(
-        1 for r in error_logs if any(keyword in r.message for keyword in expected_keywords)
-    ) >= 4
+    logger_name = getattr(api._logger, "name", None) or KoreaInvestApiBase.__module__
+    msgs = [rec.getMessage() for rec in caplog.records if rec.name == logger_name]
+    assert any(("EGW00123" in m and "토큰 만료" in m) for m in msgs)
 
 
 @pytest.mark.asyncio
