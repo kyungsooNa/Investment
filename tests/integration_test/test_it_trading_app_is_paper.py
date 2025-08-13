@@ -30,7 +30,7 @@ def get_mock_config():
 
 
 @pytest.fixture
-def real_app_instance(mocker, get_mock_config):
+def real_app_instance(mocker, get_mock_config, test_logger):
     """
     통합 테스트를 위해 실제 TradingApp 인스턴스를 생성하고 초기화합니다.
     실제 네트워크 호출과 관련된 부분만 최소한으로 모킹합니다.
@@ -50,14 +50,14 @@ def real_app_instance(mocker, get_mock_config):
                  return_value=mock_trading_api_instance)
 
     # ✅ 3. logging.getLogger를 모킹하여 logger 핸들러 무력화
-    dummy_logger = MagicMock()
+    # dummy_logger = MagicMock()
 
     # 2. 실제 TradingApp 인스턴스를 생성합니다.
     #    이 과정에서 config.yaml 로드, Logger, TimeManager, Env, TokenManager 초기화가 자동으로 수행됩니다.
-    app = TradingApp(logger=dummy_logger)
+    app = TradingApp(logger=test_logger)
     app.env.set_trading_mode(True) # 모의 투자 환경 테스트
     app.config = get_mock_config
-    app.logger = MagicMock()
+    # app.logger = MagicMock()
 
     # 3. TradingService 등 주요 서비스들을 실제 객체로 초기화합니다.
     #    이 과정은 app.run_async()의 일부이며, 동기적으로 실행하여 테스트 준비를 마칩니다.

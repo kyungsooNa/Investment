@@ -1,10 +1,14 @@
+#tests/integration_test/conftest.py
+
 import os
 import stat
 import shutil
 import pytest
+import logging
 from core.cache.cache_manager import CacheManager
 from core.cache.cache_wrapper import ClientWithCache
-import logging
+from core.logger import Logger  # ⬅️ 추가
+from unittest.mock import MagicMock
 
 
 @pytest.fixture(autouse=True)
@@ -66,3 +70,30 @@ def clear_cache_files(test_cache_config):
 
     if os.path.exists(base_dir):
         shutil.rmtree(base_dir, onerror=on_rm_error)
+
+@pytest.fixture(scope="function")
+def test_logger(request):
+    # 📌 현재 conftest.py 기준 ./log 경로 생성
+    log_dir = os.path.join(os.path.dirname(__file__), "log")
+    logger = Logger(log_dir=log_dir)
+
+    # 실행되는 테스트 케이스 이름 로깅
+    tc_name = request.node.name
+    logger.operational_logger.info(f"===== [TEST START] {tc_name} =====")
+    logger.debug_logger.debug(f"===== [TEST START] {tc_name} =====")
+
+    # MagicMock으로 감싸 호출 검증도 가능하게
+    logger_proxy = MagicMock(wraps=logger)
+    yield logger_proxy
+
+    # 종료 로그 남기기
+    logger_proxy.operational_logger.info(f"===== [TEST END] {tc_name} =====")
+    logger_proxy.debug_logger.debug(f"===== [TEST END] {tc_name} =====")
+
+    # 핸들러 정리 (윈도우 잠금 방지)
+    for lg in (logger.operational_logger, logger.debug_logger):
+        for h in lg.handlers[:]:
+            try:
+                h.close()
+            finally:
+                lg.removeHandler(h)
