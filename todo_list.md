@@ -141,7 +141,6 @@ AttributeError: 'NoneType' object has no attribute 'get_price_summary'
 
 ### 2. 성능 (Performance)
 * **[개선 필요]** 시장이 닫혔으면 스레드를 통해 전체 종목을 백그라운드로 업데이트하여 RAM에 올려두게 하기.
-* **[최적화]** 반복적인 API 호출 최적화: `StockQueryService.handle_upper_limit_stocks`와 같이 반복적으로 개별 종목의 현재가를 조회하는 로직을 일괄 조회 또는 캐싱 전략으로 개선.
 
 ### 3. 오류 처리 (Error Handling)
 * **[강화]** API 응답 검증 강화: `_handle_response` 및 API 응답에서 `output` 데이터의 존재 여부 및 예상 형식에 대한 명시적인 검증 추가.
