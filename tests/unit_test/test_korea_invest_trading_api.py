@@ -7,7 +7,7 @@ from common.types import ErrorCode, ResCommonResponse
 
 
 def make_api():
-    api = KoreaInvestApiTrading(MagicMock(), MagicMock(), MagicMock())
+    api = KoreaInvestApiTrading(MagicMock(), MagicMock(), AsyncMock())
     # _get_hashkey에서 path 구성할 때 active_config를 읽으므로 최소 필드 세팅
     api._env.active_config = {
         "base_url": "https://mock.api",
