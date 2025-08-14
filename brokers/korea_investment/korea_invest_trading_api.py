@@ -46,7 +46,6 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         try:
             response: ResCommonResponse = await self.call_api('POST', EndpointKey.HASHKEY,
                                                               data=data, expect_standard_schema=False, retry_count=1)
-            # @TODO call_api로 바꾸고 hashkey 못받아옴.
 
             if response.rt_cd != ErrorCode.SUCCESS.value:
                 return response
@@ -81,7 +80,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
                                 is_buy: bool) -> ResCommonResponse:  # async def로 변경됨
         full_config = self._env.active_config
 
-        tr_id = self._trid_provider.trading_order_cash(is_buy=True)  # 모드에 따라 자동
+        tr_id = self._trid_provider.trading_order_cash(is_buy)  # 모드에 따라 자동
 
         order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
 
