@@ -16,6 +16,10 @@ paths:
   inquire_balance: /uapi/domestic-stock/v1/trading/inquire-balance
   order_cash: /uapi/domestic-stock/v1/trading/order-cash
   hashkey: /uapi/hashkey   # 선택: 없으면 코드에서 리터럴로 써도 됨
+
+  # websocket
+  approval_key: /oauth2/Approval
+  real_time_price: /tryitout/H0STCNT0
 params:
   fid_div_cls_code: "2"
   screening_code: "20174"

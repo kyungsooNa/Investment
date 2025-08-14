@@ -3,6 +3,7 @@ import json
 import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+from brokers.korea_investment.korea_invest_url_keys import EndpointKey
 from common.types import ErrorCode, ResCommonResponse
 
 
@@ -87,17 +88,32 @@ async def test_place_stock_order_buy_success():
     # 4) 새 설계에서는 temp 컨텍스트 종료 후 hashkey가 지워지는 것이 정상
     assert trading_api._headers.build().get('hashkey') is None
 
+
 @pytest.mark.asyncio
 async def test_get_hashkey_success():
     api = make_api()
+    body = {"k": "v"}
+
     with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock()) as mock_call:
+        # ✅ 실행 코드가 기대하는 형태: data 는 dict 이고 "HASH" 키가 존재
         mock_call.return_value = ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value, msg1="ok",
-            data=FakeResp({"HASH": "abc123"})
+            rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data={"HASH": "abc123"}
         )
-        out = await api._get_hashkey({"k":"v"})
+
+        out = await api._get_hashkey(body)
+
         assert out == "abc123"
+
+        # (옵션) _get_hashkey 내부 call_api 호출 인자까지 엄격 검증
         mock_call.assert_awaited_once()
+        args, kwargs = mock_call.call_args
+        # call_api(method, key_or_path, params=None, data=None, expect_standard_schema=True, retry_count=10, delay=1)
+        assert args[0] == "POST"
+        assert args[1] == EndpointKey.HASHKEY
+        assert kwargs.get("data") == body
+        assert kwargs.get("expect_standard_schema") is False
+        assert kwargs.get("retry_count") == 1
+
 
 @pytest.mark.asyncio
 async def test_get_hashkey_network_error():
