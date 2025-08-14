@@ -51,8 +51,8 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             if response.rt_cd != ErrorCode.SUCCESS.value:
                 return response
 
-            response.data.raise_for_status()
-            hash_data = response.data.json()
+            # response.data.raise_for_status()
+            hash_data = response.data
             calculated_hashkey = hash_data.get('HASH')
 
             if not calculated_hashkey:
@@ -102,6 +102,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
                 data=None
             )
 
+# @TODO real Sell 해도 Real Buy Tr이 들어감.
         with self._headers.temp(tr_id=tr_id, custtype=full_config['custtype'], hashkey=calculated_hashkey):
             # gt_uid는 temp에서 자동 생성(값 미지정 시)
             self._headers.set_gt_uid()
