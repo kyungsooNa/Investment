@@ -4,6 +4,11 @@
 이 항목들은 애플리케이션의 핵심 기능 안정성, 데이터 무결성, 그리고 기본적인 성능 및 개발 효율성에 직접적인 영향을 미칩니다.
 
 ### 0. 불량
+1. 전략들은 100번대로 옮기기.
+2. WebsocketAPi도 TRID_Provider, UrlProvider, HeaderProvdier 적용하기.
+3. 1초 넘는 tc 들 점검.
+4. api 확인해서 todo_list에 넣기
+5. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 ### 실전
 
 9. API 잘못됨
@@ -172,6 +177,7 @@ AttributeError: 'NoneType' object has no attribute 'get_price_summary'
 이 항목들은 애플리케이션의 가치를 확장하거나 장기적인 비전을 위한 것으로, 위의 우선순위 항목들이 충분히 안정화된 후에 고려하는 것이 좋습니다.
 
 ### 1. 기능 (Features)
+* **[신규 기능]** 주문 정정, 취소 기능 추가.
 * **[신규 기능]** 외국인 순매수 상위 종목 조회 기능 추가.
 * **[신규 기능]** 거래대금 상위 종목 조회 기능 추가.
 * **[신규 기능]** 웹 뷰어 생성.
