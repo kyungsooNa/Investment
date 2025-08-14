@@ -8,6 +8,7 @@
 2. WebsocketAPi도 TRID_Provider, UrlProvider, HeaderProvdier 적용하기.
 3. 1초 넘는 tc 들 점검.
 4. api 확인해서 todo_list에 넣기
+5. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 ### 실전
 
 9. API 잘못됨
