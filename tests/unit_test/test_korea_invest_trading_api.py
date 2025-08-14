@@ -7,7 +7,7 @@ from common.types import ErrorCode, ResCommonResponse
 
 
 def make_api():
-    api = KoreaInvestApiTrading(MagicMock(), MagicMock())
+    api = KoreaInvestApiTrading(MagicMock(), MagicMock(), AsyncMock())
     # _get_hashkey에서 path 구성할 때 active_config를 읽으므로 최소 필드 세팅
     api._env.active_config = {
         "base_url": "https://mock.api",
@@ -58,7 +58,8 @@ async def test_place_stock_order_buy_success():
     }
 
     mock_logger = MagicMock()
-    trading_api = KoreaInvestApiTrading(MagicMock(), mock_logger)
+    mock_time_manager = MagicMock()
+    trading_api = KoreaInvestApiTrading(MagicMock(), mock_logger, mock_time_manager)
 
     # mock _get_hashkey and call_api
     trading_api._get_hashkey = AsyncMock(return_value='mocked_hash')
@@ -121,7 +122,9 @@ async def test_get_hashkey_json_decode_error():
 
 @pytest.mark.asyncio
 async def test_get_hashkey_unexpected_exception():
-    api = KoreaInvestApiTrading(MagicMock(), MagicMock())
+    # api = KoreaInvestApiTrading(MagicMock(), MagicMock())
+    api = make_api()
+
     api._env.active_config = {
         "base_url": "https://mock.api",
         "api_key": "abc",
@@ -147,9 +150,9 @@ async def test_get_hashkey_missing_hash_field():
 
 @pytest.mark.asyncio
 async def test_place_stock_order_sell_success():
-    mock_logger = MagicMock()
-    mock_env = MagicMock()
-    mock_env.active_config = {
+    trading_api = make_api()
+    trading_api._env = MagicMock()
+    trading_api._env.active_config = {
         'base_url': 'https://mock.api',
         'api_key': 'abc',
         'api_secret_key': 'def',
@@ -165,8 +168,7 @@ async def test_place_stock_order_sell_success():
             }
         }
     }
-    mock_env.set_trading_mode(True)
-    trading_api = KoreaInvestApiTrading(mock_env, mock_logger)
+    trading_api._env.set_trading_mode(True)
 
     trading_api._get_hashkey = AsyncMock(return_value="hash123")
     trading_api.call_api = AsyncMock(return_value={"status": "sell_success"})
@@ -193,8 +195,7 @@ async def test_place_stock_order_sell_success():
 
 @pytest.mark.asyncio
 async def test_place_stock_order_hashkey_none():
-    mock_logger = MagicMock()
-    api = KoreaInvestApiTrading(MagicMock(), mock_logger)
+    api = make_api()
 
     # 최소 config (TR_ID 접근 시 필요할 수 있음)
     api._env.active_config = {

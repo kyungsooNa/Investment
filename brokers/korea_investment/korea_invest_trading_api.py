@@ -17,13 +17,17 @@ from common.types import ResCommonResponse, ErrorCode
 
 
 class KoreaInvestApiTrading(KoreaInvestApiBase):
-    def __init__(self, env: KoreaInvestApiEnv, logger,
+    def __init__(self,
+                 env: KoreaInvestApiEnv,
+                 logger,
+                 time_manager,
                  async_client: Optional[httpx.AsyncClient] = None,
                  header_provider: Optional[KoreaInvestHeaderProvider] = None,
                  url_provider: Optional[KoreaInvestUrlProvider] = None,
                  trid_provider: Optional[KoreaInvestTrIdProvider] = None):
         super().__init__(env,
                          logger,
+                         time_manager,
                          async_client=async_client,
                          header_provider=header_provider,
                          url_provider=url_provider,

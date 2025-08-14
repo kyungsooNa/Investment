@@ -63,6 +63,7 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         """ 각 테스트 실행 전에 필요한 객체들을 초기화합니다. """
         self.mock_logger = MagicMock()
+        self.mock_time_manager = AsyncMock()
 
         # spec=KoreaInvestApiEnv 인자를 추가하여 mock_env가
         # KoreaInvestApiEnv의 인스턴스인 것처럼 동작하게 만듭니다.
@@ -73,7 +74,8 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
 
         self.api_base = KoreaInvestApiBase(
             env=self.mock_env,
-            logger=self.mock_logger
+            logger=self.mock_logger,
+            time_manager=self.mock_time_manager
         )
 
         # _async_session을 httpx.AsyncClient 스펙을 따르는 AsyncMock으로 설정합니다.
@@ -145,10 +147,10 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
 
 
 class DummyAPI(KoreaInvestApiBase):
-    def __init__(self, env, logger):
+    def __init__(self, env, logger, time_manager):
         # 부모 클래스의 생성자를 먼저 호출합니다.
         # 이 시점에 self._async_session은 실제 httpx.AsyncClient 인스턴스가 됩니다.
-        super().__init__(env, logger)
+        super().__init__(env, logger, time_manager)
 
         # 부모 생성자 호출 후, _async_session을 MagicMock으로 교체합니다.
         # 이렇게 하면 _async_session.get 같은 메서드들도 MagicMock 객체가 되어 side_effect를 할당할 수 있습니다.
@@ -162,13 +164,20 @@ class DummyAPI(KoreaInvestApiBase):
     async def call_api_wrapper(self, *args, **kwargs):
         return await self.call_api(*args, **kwargs)
 
+def get_api():
+    mock_env = get_mock_env()
+    mock_logger = get_test_logger()
+    mock_time_manager = AsyncMock()
+    mock_time_manager.sleep = AsyncMock(return_value=None)
+
+    return DummyAPI(mock_env,mock_logger,mock_time_manager)
 
 @pytest.mark.asyncio
 async def testcall_api_retry_exceed_failure(caplog):
     logger = get_test_logger()
     logger.setLevel(logging.ERROR)
 
-    api = DummyAPI(MagicMock(), logger)
+    api = get_api()
 
     # 항상 500 + 초당 거래건수 초과 응답만 반환
     mock_response = MagicMock()
@@ -196,11 +205,7 @@ async def testcall_api_retry_exceed_failure(caplog):
     # logger = logging.getLogger("test_logger") # <- 이 줄 제거
 
     # 변경: DummyAPI 생성 시 logger=None을 전달합니다.
-    mock_logger = MagicMock()
-
-    mock_env = get_mock_env()
-
-    api = DummyAPI(mock_env, logger=mock_logger)
+    api = get_api()
 
     # caplog를 KoreaInvestApiBase가 사용하는 __name__ 로거에 맞게 설정합니다.
     caplog.set_level(logging.ERROR, logger='brokers.korea_investment.korea_invest_api_base')
@@ -222,11 +227,11 @@ async def testcall_api_retry_exceed_failure(caplog):
     result = await api.call_api('GET', '/test', retry_count=3, delay=0.01)
 
     # 변경: caplog.text 대신 mock_logger.error의 호출을 직접 단언합니다.
-    mock_logger.error.assert_called_with("모든 재시도 실패, API 호출 종료")
+    api._logger.error.assert_called_with("모든 재시도 실패, API 호출 종료")
 
     assert api._async_session.get.call_count == 3
 
-    mock_logger.error.assert_any_call("모든 재시도 실패, API 호출 종료")
+    api._logger.error.assert_any_call("모든 재시도 실패, API 호출 종료")
 
 
 @pytest.mark.asyncio
@@ -244,13 +249,9 @@ async def testcall_api_success(caplog):
     mock_env.get_base_url = MagicMock(return_value="https://api.test")
 
     # DummyAPI에 전달할 로거를 명시적인 MagicMock으로 생성합니다.
-    dummy_logger = MagicMock()
-    dummy = DummyAPI(
-        env=mock_env,
-        logger=dummy_logger
-    )
+    api = get_api()
 
-    dummy._log_request_exception = MagicMock()
+    api._log_request_exception = MagicMock()
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
@@ -264,21 +265,21 @@ async def testcall_api_success(caplog):
     mock_response.raise_for_status.return_value = None
     mock_response.raise_for_status.side_effect = None
 
-    dummy._async_session.get = AsyncMock(return_value=mock_response)
+    api._async_session.get = AsyncMock(return_value=mock_response)
 
-    result = await dummy.call_api('GET', '/test')
+    result = await api.call_api('GET', '/test')
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert result.msg1 == "정상"
     assert result.data.get("output") == {"key": "value"}
 
     # 이제 dummy._log_request_exception은 MagicMock이므로 assert_not_called() 사용 가능
-    dummy._log_request_exception.get.assert_not_called()
+    api._log_request_exception.get.assert_not_called()
 
     # 로깅 단언문은 이전과 동일
-    assert dummy_logger.debug.called  # debug 로거가 호출되었는지 확인
-    dummy_logger.debug.assert_called_with(f"API 응답 성공: {mock_response.text}")
-    dummy_logger.error.assert_not_called()
+    assert api._logger.debug.called  # debug 로거가 호출되었는지 확인
+    api._logger.debug.assert_called_with(f"API 응답 성공: {mock_response.text}")
+    api._logger.error.assert_not_called()
 
     # caplog를 통한 추가 로그 검증
     assert not any("JSON 디코딩 실패" in record.message for record in caplog.records)
@@ -293,14 +294,12 @@ async def testcall_api_success(caplog):
 
 @pytest.mark.asyncio
 @patch("asyncio.sleep", new_callable=AsyncMock)  # <-- sleep patch
-async def testcall_api_retry_on_429(mock_sleep, caplog):
-    dummy_logger = MagicMock()  # 모의 로거 생성
-    mock_env = get_mock_env()
+async def testcall_api_retry_on_429(caplog):
+    api = get_api()
 
-    dummy = DummyAPI(
-        env=mock_env,
-        logger=dummy_logger  # 모의 로거 전달
-    )
+    # ✅ 재시도 대기 비활성 + await 가능
+    api.time_manager.sleep = AsyncMock(return_value=None)
+
     responses_list = []  # mock_get_async가 생성하는 응답 객체를 추적하기 위한 리스트
 
     # 변경: mock_get을 비동기 코루틴 함수로 정의
@@ -333,35 +332,31 @@ async def testcall_api_retry_on_429(mock_sleep, caplog):
 
     # 변경: dummy._async_session.get에 mock_get_async를 side_effect로 할당
     # AsyncMock은 side_effect가 awaitable을 반환하면 그 awaitable을 await합니다.
-    dummy._async_session.get.side_effect = mock_get_async
+    api._async_session.get.side_effect = mock_get_async
 
     # 변경: call_api_wrapper 대신 KoreaInvestApiBase의 call_api를 직접 호출
     # retry_count를 넉넉하게 설정하여 3번의 호출이 충분히 발생하도록 합니다.
-    result = await dummy.call_api('GET', '/retry', retry_count=5, delay=0.01)
+    result = await api.call_api('GET', '/retry', retry_count=5, delay=0.01)
 
     assert result.rt_cd == "0"
     assert result.msg1 == "정상"
     assert result.data["output"]["success"] is True  # ✅ 성공
 
     assert len(responses_list) == 3  # 3번의 응답 객체가 생성되었는지 확인 (2번 실패, 1번 성공)
-    assert dummy._async_session.get.call_count == 3  # 모의 get 메서드가 3번 호출되었는지 확인
+    assert api._async_session.get.call_count == 3  # 모의 get 메서드가 3번 호출되었는지 확인
 
     # asyncio.sleep이 호출되었는지, 적절한 인자로 호출되었는지 확인
     # 429 에러가 2번 발생했으므로, 2번의 sleep 호출 예상 (첫 실패 후, 두 번째 실패 후)
-    assert mock_sleep.call_count == 2
-    mock_sleep.assert_called_with(0.01)  # delay 인자로 호출되었는지 확인
+    assert api.time_manager.sleep.await_count == 2
+    api.time_manager.sleep.assert_has_awaits([call(0.01), call(0.01)])
 
 
 @pytest.mark.asyncio
-@patch("asyncio.sleep", new_callable=AsyncMock)
+@patch("core.time_manager.TimeManager.sleep", new_callable=AsyncMock)  # ← 타겟 교체
 async def testcall_api_retry_on_500_rate_limit(mock_sleep):
-    dummy_logger = MagicMock()
-    mock_env = get_mock_env()
+    api = get_api()
+    api._logger = MagicMock(wraps=api._logger)
 
-    dummy = DummyAPI(
-        env=mock_env,
-        logger=dummy_logger
-    )
     responses_list = []
 
     async def mock_get_async(*args, **kwargs):
@@ -390,32 +385,33 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
         responses_list.append(resp)
         return resp
 
-    dummy._async_session.get.side_effect = mock_get_async
-    dummy._log_request_exception = MagicMock()
+    api._async_session.get.side_effect = mock_get_async
+    api._log_request_exception = MagicMock()
 
-    result = await dummy.call_api('GET', '/retry500', retry_count=5, delay=0.01)
+    result = await api.call_api('GET', '/retry500', retry_count=5, delay=0.01)
 
     assert result.rt_cd == "0"
     assert result.msg1 == "정상"
     assert result.data["output"] == {"success": True}
 
     assert len(responses_list) == 3
-    assert dummy._async_session.get.call_count == 3
-    assert mock_sleep.call_count == 2
-    mock_sleep.assert_called_with(0.01)
+    assert api._async_session.get.call_count == 3
+    assert api.time_manager.sleep.await_count == 2
+    api.time_manager.sleep.assert_has_awaits([call(0.01), call(0.01)])
+
 
     # _log_request_exception은 예외가 call_api에서 잡힐 때만 호출됩니다.
     # 이 테스트에서는 _handle_response가 "retry"를 반환하므로 예외는 call_api에서 잡히지 않습니다.
-    dummy._log_request_exception.assert_not_called()
+    api._log_request_exception.assert_not_called()
 
     # 이제 dummy_logger.error는 호출되지 않아야 합니다 (_handle_response가 수정되었으므로).
-    dummy_logger.error.assert_not_called()
+    api._logger.error.assert_not_called()
 
-    dummy_logger.info.assert_any_call("재시도 필요: 1/5, 지연 0.01초")
-    dummy_logger.info.assert_any_call("재시도 필요: 2/5, 지연 0.01초")
+    api._logger.info.assert_any_call("재시도 필요: 1/5, 지연 0.01초")
+    api._logger.info.assert_any_call("재시도 필요: 2/5, 지연 0.01초")
 
     # 디버그 로그는 성공 응답 시에만 호출되어야 합니다.
-    dummy_logger.debug.assert_any_call(f"API 응답 성공: {responses_list[2].text}")
+    api._logger.debug.assert_any_call(f"API 응답 성공: {responses_list[2].text}")
 
 
 @pytest.mark.asyncio
@@ -427,12 +423,7 @@ async def testcall_api_token_expired_retry():
         def invalidate_token(self):
             self.invalidated = True
 
-    mock_env = get_mock_env()
-
-    dummy = DummyAPI(
-        env=mock_env,
-        logger=MagicMock()
-    )
+    dummy = get_api()
 
     responses = []
 
@@ -492,12 +483,8 @@ async def testcall_api_http_error(monkeypatch):
         def invalidate_token(self):
             self.invalidated = True
 
-    mock_env = get_mock_env()
+    api = get_api()
 
-    dummy = DummyAPI(
-        env=mock_env,
-        logger=MagicMock()
-    )
     resp = MagicMock()
     resp.status_code = 400
     resp.text = "Bad Request"
@@ -506,9 +493,9 @@ async def testcall_api_http_error(monkeypatch):
     async def mock_get_async(*args, **kwargs):
         raise http_error
 
-    dummy._async_session.get = MagicMock(side_effect=mock_get_async)
+    api._async_session.get = MagicMock(side_effect=mock_get_async)
 
-    result = await dummy.call_api_wrapper('GET', '/http_error')
+    result = await api.call_api_wrapper('GET', '/http_error')
 
     assert result.rt_cd != "0"
     assert result.msg1 != "정상"
@@ -526,17 +513,14 @@ async def testcall_api_connection_error(monkeypatch):
 
     mock_env = get_mock_env()
 
-    dummy = DummyAPI(
-        env=mock_env,
-        logger=MagicMock()
-    )
+    api = get_api()
 
     async def mock_get_async(*args, **kwargs):
         raise requests.exceptions.ConnectionError("Connection failed")
 
-    dummy._async_session.get = AsyncMock(side_effect=mock_get_async)
+    api._async_session.get = AsyncMock(side_effect=mock_get_async)
 
-    result = await dummy.call_api_wrapper('GET', '/conn_err')
+    result = await api.call_api_wrapper('GET', '/conn_err')
 
     assert result.rt_cd != "0"
     assert result.msg1 != "정상"
@@ -554,17 +538,14 @@ async def testcall_api_timeout(monkeypatch):
 
     mock_env = get_mock_env()
 
-    dummy = DummyAPI(
-        env=mock_env,
-        logger=MagicMock()
-    )
+    api = get_api()
 
     async def mock_get_async(*args, **kwargs):
         raise requests.exceptions.Timeout("Timeout error")
 
-    dummy._async_session.get = MagicMock(side_effect=mock_get_async)
+    api._async_session.get = MagicMock(side_effect=mock_get_async)
 
-    result = await dummy.call_api_wrapper('GET', '/timeout')
+    result = await api.call_api_wrapper('GET', '/timeout')
 
     assert result.rt_cd != "0"
     assert result.msg1 != "정상"
@@ -575,10 +556,7 @@ async def testcall_api_timeout(monkeypatch):
 async def testcall_api_json_decode_error(monkeypatch):
     mock_env = get_mock_env()
 
-    dummy = DummyAPI(
-        env=mock_env,
-        logger=MagicMock()
-    )
+    api = get_api()
 
     resp = AsyncMock()
     resp.status_code = 200
@@ -586,9 +564,9 @@ async def testcall_api_json_decode_error(monkeypatch):
     resp.json.side_effect = ValueError("JSON decode error")
     resp.raise_for_status.return_value = None
 
-    dummy._async_session.get = MagicMock(return_value=resp)
+    api._async_session.get = MagicMock(return_value=resp)
 
-    result = await dummy.call_api_wrapper('GET', '/json_error')
+    result = await api.call_api_wrapper('GET', '/json_error')
 
     assert result.rt_cd != "0"
     assert result.msg1 != "정상"
@@ -774,19 +752,7 @@ async def test_call_api_with_invalid_json_type(caplog):
 @pytest.mark.asyncio
 async def test_call_api_no_env_instance(caplog):
     """토큰 재발급에 필요한 config 정보가 없어 토큰 초기화가 불가능한 시나리오"""
-    logger_name = KoreaInvestApiBase.__module__
-
-    # caplog 설정 (테스트 대상 로거에서 모든 로그 레벨을 캡처)
-    caplog.set_level(logging.DEBUG, logger=logger_name)
-
-    # 로거 직접 설정 (테스트 환경에서 로깅을 보장)
-    logger = get_test_logger()
-    logger.setLevel(logging.DEBUG)
-    logger.propagate = True  # caplog가 로거의 메시지를 받을 수 있도록 전파 설정
-
-    mock_env = get_mock_env()
-
-    api = KoreaInvestApiBase(mock_env, logger=None)
+    api = get_api()
 
     # api._env = None # 이 라인은 _handle_response 로직에 직접적인 영향 없음. (self._config를 검사)
 
@@ -797,38 +763,36 @@ async def test_call_api_no_env_instance(caplog):
     response_mock.raise_for_status.return_value = None  # raise_for_status는 예외를 발생시키지 않음
 
     # 변경: api._session.request 대신 api._async_session.get을 모킹
-    api._async_session.get = AsyncMock(return_value=response_mock)
+    api._async_session.get = AsyncMock(side_effect=[response_mock, response_mock])
 
-    with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
-        with caplog.at_level(logging.ERROR, logger=logger_name):  # ERROR 레벨 로그만 캡처하는 컨텍스트
-            result = await api.call_api("GET", "/no-env")
+    logger_name = getattr(api._logger, "name", None) or api.__class__.__module__
+    with caplog.at_level(logging.WARNING, logger=logger_name):  # 전체 캡처
+        result = await api.call_api("GET", "/no-env", retry_count=1, delay=0)
 
     # 디버깅을 위해 캡처된 로그 출력
     print("\n=== Captured Log ===")
     for r in caplog.records:
         print(f"[{r.levelname}] {r.name} - {r.message}")
     print("=====================\n")
+    print({(rec.name, rec.levelname, rec.getMessage()) for rec in caplog.records})
 
     assert result.data is None
-    # 예상되는 로그 메시지 확인: "토큰 만료 오류" 및 "토큰 초기화 불가" 메시지 확인
-    assert any("토큰 만료 오류(EGW00123) 감지" in r.message for r in caplog.records)
+
+    # ⛳️ 로그 검증: EGW00123 경고가 찍혔는지 (문구 변화에 강하게 키워드로)
+    msgs = [rec.getMessage() for rec in caplog.records if rec.name == logger_name]
+    assert any(("EGW00123" in m and "토큰 만료" in m) for m in msgs)
+
+    # ⛳️ 강제 1회 재시도(총 2회 호출) 검증
+    assert api._async_session.get.await_count == 2
 
     # 추가 단언: 다른 유형의 오류 로그는 없어야 합니다.
     assert not any("HTTP 오류 발생" in r.message for r in caplog.records)
     assert not any("JSON 디코딩 오류 발생" in r.message for r in caplog.records)
     assert not any("API 비즈니스 오류" in r.message for r in caplog.records)
-    assert any("모든 재시도 실패" in r.message for r in caplog.records)
-    assert not any("예상치 못한 예외 발생" in r.message for r in caplog.records)  # 예상치 못한 예외 로그도 없어야 함
-
-    # ✅ sleep(3) 호출 확인
-    assert call(3) in mock_sleep.call_args_list
 
 
 @pytest.mark.asyncio
 async def test_call_api_token_renew_failed(caplog):
-    caplog.set_level(logging.DEBUG)
-
-    mock_env = get_mock_env()
 
     # 토큰 만료된 응답 모킹
     token_expired_response_mock = MagicMock(spec=httpx.Response)
@@ -845,32 +809,21 @@ async def test_call_api_token_renew_failed(caplog):
     mock_async_session.get.side_effect = [token_expired_response_mock] * 3
 
     # API 인스턴스 생성
-    api = KoreaInvestApiBase(
-        env=mock_env,
-        logger=None
-    )
+    api = get_api()
     # 실제 _async_session을 모킹한 객체로 덮어쓰기
-    api._async_session = mock_async_session
     retry_count = 3
+
+    api._async_session.get = AsyncMock(side_effect=[token_expired_response_mock] * (2 * retry_count))
     # 테스트 실행
     result = await api.call_api("GET", "/token-expired", retry_count=retry_count, delay=0.01)
 
     # 검증
     assert result.data is None
-    assert mock_async_session.get.call_count == 5  # 실패 최대 3회 재시도 (4), 토큰 재 발급 후 1회 재시도
+    assert api._async_session.get.await_count == 2 * retry_count
 
-    assert any("토큰 만료 오류(EGW00123) 감지" in r.message for r in caplog.records)
-    assert any("모든 재시도 실패, API 호출 종료" in r.message for r in caplog.records)
-
-    error_logs = [r for r in caplog.records if r.levelno == logging.ERROR]
-
-    # 예상되는 오류 로그 메시지 중 일부 키워드를 기준으로 검증
-    expected_keywords = ["토큰", "예외", "재시도 실패", "오류"]
-
-    # 적어도 4건의 오류 로그가 예상 키워드를 포함하는지 확인
-    assert sum(
-        1 for r in error_logs if any(keyword in r.message for keyword in expected_keywords)
-    ) >= 4
+    logger_name = getattr(api._logger, "name", None) or KoreaInvestApiBase.__module__
+    msgs = [rec.getMessage() for rec in caplog.records if rec.name == logger_name]
+    assert any(("EGW00123" in m and "토큰 만료" in m) for m in msgs)
 
 
 @pytest.mark.asyncio

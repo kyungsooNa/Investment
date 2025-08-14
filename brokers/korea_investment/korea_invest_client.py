@@ -22,9 +22,10 @@ class KoreaInvestApiClient:
     각 도메인별 API 클래스를 통해 접근합니다.
     """
 
-    def __init__(self, env: KoreaInvestApiEnv, logger=None):
+    def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager=None):
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
+        self.time_manager = time_manager
 
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         shared_client = httpx.AsyncClient(verify=ssl_context)
@@ -36,6 +37,7 @@ class KoreaInvestApiClient:
         self._quotations = KoreaInvestApiQuotations(
             self._env,
             self._logger,
+            self.time_manager,
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=url_provider,
@@ -44,6 +46,7 @@ class KoreaInvestApiClient:
         self._account = KoreaInvestApiAccount(
             self._env,
             self._logger,
+            self.time_manager,
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=url_provider,
@@ -52,6 +55,7 @@ class KoreaInvestApiClient:
         self._trading = KoreaInvestApiTrading(
             self._env,
             self._logger,
+            self.time_manager,
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=url_provider,
