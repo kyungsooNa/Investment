@@ -11,9 +11,45 @@ from strategies.GapUpPullback_strategy import GapUpPullbackStrategy
 from strategies.momentum_strategy import MomentumStrategy
 from strategies.strategy_executor import StrategyExecutor
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem
+from collections import OrderedDict
 
 # === choice별 핸들러 함수 정의 ===
 class UserActionExecutor:
+    # 번호 -> (카테고리, 라벨, 핸들러명)
+    COMMANDS: dict[str, tuple[str, str, str]] = {
+        '0':  ('기본 기능',      '거래 환경 변경',                          'handle_change_environment'),
+        '1':  ('기본 기능',      '현재가 조회',                              'handle_get_current_price'),
+        '2':  ('기본 기능',      '계좌 잔고 조회',                          'handle_account_balance'),
+        '3':  ('기본 기능',      '주식 매수',                                'handle_buy_stock'),
+        '4':  ('기본 기능',      '주식 매도',                                'handle_sell_stock'),
+
+        '5':  ('시세 조회',      '전일대비 등락률 조회',                    'handle_stock_change_rate'),
+        '6':  ('시세 조회',      '시가대비 등락률 조회',                    'handle_open_vs_current_rate'),
+        '7':  ('시세 조회',      '실시간 호가 조회',                        'handle_asking_price'),
+        '8':  ('시세 조회',      '시간대별 체결가 조회',                    'handle_time_conclude'),
+        '10': ('시세 조회',      'ETF 정보 조회',                            'handle_etf_info'),
+
+        '13': ('랭킹/필터링',    '시가총액 상위 조회 (실전 전용)',           'handle_top_market_cap_stocks'),
+        '14': ('랭킹/필터링',    '시가총액 상위 10개 현재가 (실전 전용)',     'handle_top_10_market_cap_stocks'),
+        '15': ('랭킹/필터링',    '전일 상한가 종목 (상위 500) (실전 전용)',   'handle_yesterday_upper_limit_500'),
+        '16': ('랭킹/필터링',    '전일 상한가 종목 (상위) (실전 전용)',       'handle_yesterday_upper_limit'),
+        '17': ('랭킹/필터링',    '현재 상한가 종목 (실전 전용)',              'handle_current_upper_limit'),
+
+        '18': ('실시간 구독',    '실시간 체결가/호가 구독',                  'handle_realtime_stream'),
+
+        '30': ('랭킹/필터링2',   '거래량 상위 랭킹 (~30) (실전 전용)',        'handle_top_volume_30'),
+        '31': ('랭킹/필터링2',   '상승률 상위 랭킹 (~30) (실전 전용)',        'handle_top_rise_30'),
+        '32': ('랭킹/필터링2',   '하락률 상위 랭킹 (~30) (실전 전용)',        'handle_top_fall_30'),
+
+        # ⬇️ 실행기의 번호(100/101/102)를 그대로 사용해 메뉴와 동기화
+        '100': ('전략 실행', '모멘텀 전략 실행', 'handle_momentum_strategy'),
+        '101': ('전략 실행', '모멘텀 백테스트', 'handle_momentum_backtest'),
+        '102': ('전략 실행', 'GapUpPullback 전략 실행', 'handle_gapup_pullback'),
+
+        '998': ('기타',          '토큰 무효화',                               'handle_invalidate_token'),
+        '999': ('기타',          '종료',                                     'handle_exit'),
+    }
+
     def __init__(self, app: 'TradingApp'):
         self.app = app
 
@@ -25,37 +61,28 @@ class UserActionExecutor:
         result = await handler()
         return result if isinstance(result, bool) else True
 
+
     def get_handler(self, choice: str):
-        handlers = {
-            '0': self.handle_change_environment,
-            '1': self.handle_get_current_price,
-            '2': self.handle_account_balance,
-            '3': self.handle_buy_stock,
-            '4': self.handle_sell_stock,
-            '5': self.handle_stock_change_rate,
-            '6': self.handle_open_vs_current_rate,
-            '7': self.handle_asking_price,
-            '8': self.handle_time_conclude,
-            '10': self.handle_etf_info,
-            '13': self.handle_top_market_cap_stocks,
-            '14': self.handle_top_10_market_cap_stocks,
-            '15': self.handle_yesterday_upper_limit_500,
-            '16': self.handle_yesterday_upper_limit,
-            '17': self.handle_current_upper_limit,
-            '18': self.handle_realtime_stream,
-            '20': self.handle_momentum_strategy,
-            '21': self.handle_momentum_backtest,
-            '22': self.handle_gapup_pullback,
+        cmd = self.COMMANDS.get(choice)
+        if not cmd:
+            # 등록되지 않은 번호면 기본 무효 처리 핸들러 반환
+            return self.handle_invalid_choice
 
-            '30': self.handle_top_volume_30,
-            '31': self.handle_top_rise_30,
-            '32': self.handle_top_fall_30,
+        method_name = cmd[2]
+        # 혹시 method_name이 비었거나 오타가 있어도 안전하게 처리
+        if not isinstance(method_name, str) or not method_name:
+            return self.handle_invalid_choice
 
-            '98': self.handle_invalidate_token,
-            '99': self.handle_exit,
-        }
+        return getattr(self, method_name, self.handle_invalid_choice)
 
-        return handlers.get(choice, self.handle_invalid_choice)
+    def build_menu_items(self) -> dict[str, OrderedDict[str, str]]:
+        """CLIView에 넘길 메뉴 딕셔너리 생성 (카테고리별 그룹화, 번호 오름차순)."""
+        grouped: dict[str, OrderedDict[str, str]] = {}
+        # 번호 정렬(숫자형으로) 보장
+        for num in sorted(self.COMMANDS.keys(), key=lambda x: int(x)):
+            category, label, _ = self.COMMANDS[num]
+            grouped.setdefault(category, OrderedDict())[num] = label
+        return grouped
 
     async def handle_change_environment(self) -> bool:
         self.app.logger.info("거래 환경 변경을 시작합니다.")

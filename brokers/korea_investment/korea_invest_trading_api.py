@@ -38,9 +38,6 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         주문 요청 Body를 기반으로 Hashkey를 생성하여 반환합니다.
         이는 별도의 API 호출을 통해 이루어집니다.
         """
-        full_config = self._env.active_config
-
-        # path = f"{full_config['base_url']}/uapi/hashkey"
         response = None
 
         try:

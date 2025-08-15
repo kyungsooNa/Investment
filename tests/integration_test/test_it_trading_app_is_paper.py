@@ -1338,7 +1338,7 @@ async def test_execute_action_momentum_strategy_success_paper(real_app_instance,
     # ✅ 시장 개장 상태로 설정
     mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
 
-    await _assert_paper_blocked(app, "20", "모멘텀")
+    await _assert_paper_blocked(app, "100", "모멘텀")
 
 
 @pytest.mark.asyncio
@@ -1354,7 +1354,7 @@ async def test_execute_action_momentum_backtest_strategy_success(real_app_instan
     # ✅ 시장 개장 상태로 설정
     mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
 
-    await _assert_paper_blocked(app, "21", "모멘텀 백테스트")
+    await _assert_paper_blocked(app, "101", "모멘텀 백테스트")
 
 
 @pytest.mark.asyncio
@@ -1367,7 +1367,7 @@ async def test_execute_action_gapup_pullback_strategy_success(real_app_instance,
     """
     app = real_app_instance
 
-    await _assert_paper_blocked(app, "22", "GapUpPullback")
+    await _assert_paper_blocked(app, "102", "GapUpPullback")
 
 
 @pytest.mark.asyncio
@@ -1384,7 +1384,7 @@ async def test_execute_action_invalidate_token_success_paper(real_app_instance):
 
     # --- 실행 ---
     executor = UserActionExecutor(app)
-    running_status = await executor.execute("98")
+    running_status = await executor.execute("998")
 
     # --- 검증 ---
     app.env.invalidate_token.assert_called_once()
@@ -1405,7 +1405,7 @@ async def test_execute_action_exit_success_paper(real_app_instance):
 
     # --- 실행 ---
     executor = UserActionExecutor(app)
-    running_status = await executor.execute("99")
+    running_status = await executor.execute("999")
 
     # --- 검증 ---
     app.cli_view.display_exit_message.assert_called_once()
