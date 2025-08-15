@@ -10,6 +10,7 @@
 3. api 확인해서 todo_list에 넣기
 4. momentum_backtest 정상작동 확인
 5. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
+6. token을 무효화하고 바로 요청하면 못받아옴. server로부터 1분 대기시간이 필요한것으로보임.
 ### 실전
 
 9. API 잘못됨

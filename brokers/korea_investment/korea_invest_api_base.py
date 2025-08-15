@@ -64,7 +64,6 @@ class KoreaInvestApiBase:
         for attempt in range(1, retry_count + 1):
             try:
                 self._logger.debug(f"API 호출 시도 {attempt}/{retry_count} - {method} {url}")
-                self._log_headers()
 
                 response = await self._execute_request(method, url, params, data)
 
@@ -157,6 +156,7 @@ class KoreaInvestApiBase:
             self._headers.set_auth_bearer(access_token)
             self._headers.set_app_keys(self._env.active_config['api_key'], self._env.active_config['api_secret_key'])
             headers = self._headers.build()
+            # self._log_headers()
 
             if method.upper() == 'GET':
                 self._logger.debug(f"[GET] 요청 Url: {url}")
