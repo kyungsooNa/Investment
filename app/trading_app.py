@@ -120,63 +120,19 @@ class TradingApp:
         return True
 
     def _display_menu(self):
-        """사용자에게 메뉴 옵션을 출력하고 현재 상태를 표시합니다 (환경에 따라 동적)."""
         current_time = self.time_manager.get_current_kst_time()
         market_open_status = self.time_manager.is_market_open()
         market_status_str = "열려있음" if market_open_status else "닫혀있음"
         env_type = "모의투자" if self.env.is_paper_trading else "실전투자"
 
-        # CLIView가 메뉴 딕셔너리를 받아 출력하도록 수정하는 것을 권장합니다.
-        # 아래는 예시이며, 실제 CLIView 구현에 맞춰 조정이 필요할 수 있습니다.
-        menu_items = {
-            "기본 기능": {
-                "0": "거래 환경 변경",
-                "1": "현재가 조회",
-                "2": "계좌 잔고 조회",
-                "3": "주식 매수",
-                "4": "주식 매도",
-            },
-            "시세 조회": {
-                "5": "전일대비 등락률 조회",
-                "6": "시가대비 등락률 조회",
-                "7": "실시간 호가 조회",
-                "8": "시간대별 체결가 조회",
-                # "9": "종목 뉴스 조회",
-                "10": "ETF 정보 조회",
-                # "11": "키워드로 종목 검색",
-            },
-            "랭킹/필터링": {
-                "13": "시가총액 상위 조회 (실전 전용)",
-                "14": "시가총액 상위 10개 현재가 조회 (실전 전용)",
-                "15": "전일 상한가 종목 조회 (상위 500) (실전 전용)",
-                "16": "전일 상한가 종목 조회 (상위) (실전 전용)",
-                "17": "전일 상한가 종목 조회 (전체) (실전 전용)",
-            },
-            "실시간 구독": {
-                "18": "실시간 체결가/호가 구독",
-            },
-            "전략 실행": {
-                "20": "모멘텀 전략 실행",
-                "21": "모멘텀 백테스트",
-                "22": "GapUpPullback 전략 실행",
-            },
-            "랭킹/필터링2": {
-                # "12": "상위 랭킹 조회 (상승/하락/거래량 등)",
-                "30": "거래량 상위 랭킹 조회 (~30개) (실전 전용)",
-                "31": "상승률 상위 랭킹 조회 (~30개) (실전 전용)",
-                "32": "하락률 상위 랭킹 조회 (~30개) (실전 전용)",
-            },
-            "기타": {
-                "98": "토큰 무효화",
-                "99": "종료",
-            }
-        }
+        # ✅ 실행기 단일 출처에서 메뉴 구성
+        menu_items = self.executor.build_menu_items()
 
         self.cli_view.display_menu(
             env_type=env_type,
             current_time_str=current_time.strftime('%Y-%m-%d %H:%M:%S %Z%z'),
             market_status_str=market_status_str,
-            menu_items=menu_items  # 메뉴 데이터를 view로 전달
+            menu_items=menu_items
         )
 
     async def run_async(self):

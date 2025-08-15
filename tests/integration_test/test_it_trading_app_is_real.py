@@ -1402,7 +1402,7 @@ async def test_execute_action_momentum_strategy_success_real(real_app_instance, 
     app.cli_view.display_not_follow_through_stocks = MagicMock()
 
     # 실행
-    ok = await UserActionExecutor(app).execute("20")
+    ok = await UserActionExecutor(app).execute("100")
 
     # 검증
     assert ok is True
@@ -1430,7 +1430,7 @@ async def test_execute_action_momentum_strategy_market_cap_fail_real(real_app_in
     app.cli_view.display_top_stocks_failure = MagicMock()
     app.logger.warning = MagicMock()
 
-    ok = await UserActionExecutor(app).execute("20")
+    ok = await UserActionExecutor(app).execute("100")
 
     assert ok is True
     app.cli_view.display_top_stocks_failure.assert_called_once_with("시가총액 조회 실패")
@@ -1468,7 +1468,7 @@ async def test_execute_action_momentum_backtest_strategy_success_real(real_app_i
     app.cli_view.display_follow_through_stocks = MagicMock()
     app.cli_view.display_not_follow_through_stocks = MagicMock()
 
-    ok = await UserActionExecutor(app).execute("21")
+    ok = await UserActionExecutor(app).execute("101")
 
     assert ok is True
     app.cli_view.display_strategy_running_message.assert_called_once_with("모멘텀 백테스트")
@@ -1506,7 +1506,7 @@ async def test_execute_action_gapup_pullback_strategy_success_real(real_app_inst
     app.cli_view.display_gapup_pullback_selected_stocks = MagicMock()
     app.cli_view.display_gapup_pullback_rejected_stocks = MagicMock()
 
-    ok = await UserActionExecutor(app).execute("22")
+    ok = await UserActionExecutor(app).execute("102")
 
     assert ok is True
     app.cli_view.display_strategy_running_message.assert_called_once_with("GapUpPullback")
@@ -1531,7 +1531,7 @@ async def test_execute_action_invalidate_token_success_real(real_app_instance):
 
     # --- 실행 ---
     executor = UserActionExecutor(app)
-    running_status = await executor.execute("98")
+    running_status = await executor.execute("998")
 
     # --- 검증 ---
     app.env.invalidate_token.assert_called_once()
@@ -1552,7 +1552,7 @@ async def test_execute_action_exit_success_real(real_app_instance):
 
     # --- 실행 ---
     executor = UserActionExecutor(app)
-    running_status = await executor.execute("99")
+    running_status = await executor.execute("999")
 
     # --- 검증 ---
     app.cli_view.display_exit_message.assert_called_once()

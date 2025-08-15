@@ -6,9 +6,9 @@ from common.types import ResCommonResponse
 
 @pytest.mark.asyncio
 async def test_strategy_executor_with_mocked_quotations():
-    mock_quotations = AsyncMock()
-    # ... (mock_quotations의 나머지 설정은 동일) ...
-    mock_quotations.get_price_summary.side_effect = [
+    broker = AsyncMock()
+    # ... (broker 나머지 설정은 동일) ...
+    broker.get_price_summary.side_effect = [
         ResCommonResponse(rt_cd="0", msg1="정상",
                           data={"symbol": "0001", "open": 10000, "current": 11000, "change_rate": 10.0}),
         ResCommonResponse(rt_cd="0", msg1="정상",
@@ -29,15 +29,15 @@ async def test_strategy_executor_with_mocked_quotations():
             data=data_map.get(code, {"stck_prpr": 0})
         )
 
-    mock_quotations.get_current_price.side_effect = mock_get_current_price
-    mock_quotations.get_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
+    broker.get_current_price.side_effect = mock_get_current_price
+    broker.get_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
 
 
     # ▼▼▼▼▼ 핵심 수정 부분 ▼▼▼▼▼
     # 'quotations=' 대신 MomentumStrategy의 __init__에 정의된 실제 파라미터 이름을 사용해야 합니다.
     # (여기서는 'api_client'라고 가정)
     strategy = MomentumStrategy(
-        broker=mock_quotations,  # 'quotations=' -> 'api_client=' 로 변경
+        broker=broker,  # 'quotations=' -> 'api_client=' 로 변경
         min_change_rate=10.0,
         min_follow_through=3.0,
         min_follow_through_time=10,
@@ -61,8 +61,8 @@ async def test_strategy_executor_with_mocked_quotations():
 @pytest.mark.asyncio
 async def test_strategy_executor_in_backtest_mode():
     # 1. Mock Quotations 객체
-    mock_quotations = AsyncMock()
-    mock_quotations.get_price_summary.side_effect = [
+    broker = AsyncMock()
+    broker.get_price_summary.side_effect = [
         ResCommonResponse(
             rt_cd="0",
             msg1="정상",
@@ -74,7 +74,7 @@ async def test_strategy_executor_in_backtest_mode():
             data={"symbol": "000660", "open": 100000, "current": 105000, "change_rate": 5.0}
         )
     ]
-    mock_quotations.get_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
+    broker.get_name_by_code = AsyncMock(side_effect=lambda code: f"종목{code}")
 
     # 2. Mock backtest price lookup
     async def mock_backtest_lookup(code, summary, minutes):
@@ -85,7 +85,7 @@ async def test_strategy_executor_in_backtest_mode():
 
     # 3. 전략 생성 (backtest 모드)
     strategy = MomentumStrategy(
-        broker=mock_quotations,
+        broker=broker,
         min_change_rate=10.0,
         min_follow_through=3.0,
         min_follow_through_time=10,  # 10분 후 상승률 기준으로 판단
@@ -106,8 +106,8 @@ async def test_strategy_executor_in_backtest_mode():
 @pytest.mark.asyncio
 async def test_strategy_executor_backtest_mode_without_lookup_raises():
     # Mock Quotations 객체 생성
-    mock_quotations = AsyncMock()
-    mock_quotations.get_price_summary.return_value = {
+    broker = AsyncMock()
+    broker.get_price_summary.return_value = {
         "symbol": "005930",
         "open": 70000,
         "current": 77000,
@@ -116,7 +116,7 @@ async def test_strategy_executor_backtest_mode_without_lookup_raises():
 
     # backtest_lookup 없이 생성
     strategy = MomentumStrategy(
-        broker=mock_quotations,
+        broker=broker,
         mode="backtest"  # backtest 모드 설정
         # backtest_lookup intentionally omitted
     )
@@ -129,8 +129,8 @@ async def test_strategy_executor_backtest_mode_without_lookup_raises():
 
 @pytest.mark.asyncio
 async def test_strategy_executor_live_mode_without_backtest_lookup():
-    mock_quotations = AsyncMock()
-    mock_quotations.get_price_summary.return_value = ResCommonResponse(
+    broker = AsyncMock()
+    broker.get_price_summary.return_value = ResCommonResponse(
         rt_cd="0",
         msg1="정상",
         data={
@@ -141,17 +141,17 @@ async def test_strategy_executor_live_mode_without_backtest_lookup():
         }
     )
     # 실제 API 응답 구조에 맞게 dict로 반환
-    mock_quotations.get_current_price.return_value = ResCommonResponse(
+    broker.get_current_price.return_value = ResCommonResponse(
         rt_cd="0",
         msg1="정상",
         data={
             "stck_prpr": 80000
         }
     )
-    mock_quotations.get_name_by_code = AsyncMock(return_value="삼성전자")
+    broker.get_name_by_code = AsyncMock(return_value="삼성전자")
 
     strategy = MomentumStrategy(
-        broker=mock_quotations,
+        broker=broker,
         mode="live"
     )
 
