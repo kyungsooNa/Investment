@@ -431,3 +431,116 @@ async def test_select_environment_input(cli_view_instance):
 
         mock_to_thread.assert_awaited_once_with(builtins.input, "환경을 선택하세요 (숫자 입력): ")
         assert result == "1"
+
+def test_print_current_mode_none_branch(cli_view_instance, capsys, mock_env):
+    # env.is_paper_trading == None 분기 커버
+    mock_env.is_paper_trading = None
+    cli_view_instance.env = mock_env
+    cli_view_instance.display_market_status(True)  # 공통 헤더 안에서 호출됨
+    out = capsys.readouterr().out
+    assert "현재 모드: [None]" in out  # === 현재 모드: [None] ===
+
+def test_display_account_balance_no_output2(cli_view_instance, capsys):
+    # output2 없을 때 조기 반환
+    cli_view_instance.env.active_config = {"stock_account_number": "123-45-67890"}
+    balance_info = {
+        "output1": [{"prdt_name": "A", "pdno": "000000"}],
+        "output2": []
+    }
+    cli_view_instance.display_account_balance(balance_info)
+    out = capsys.readouterr().out
+    # 구현 문자열 그대로 확인(철자 주의: "게좌")
+    assert "게좌 정보가 없습니다" in out
+
+def test_display_account_balance_no_output1(cli_view_instance, capsys):
+    # output1 없을 때 조기 반환
+    cli_view_instance.env.active_config = {"stock_account_number": "123-45-67890"}
+    balance_info = {
+        "output1": [],
+        "output2": [{
+            "dnca_tot_amt": "1000000", "tot_evlu_amt": "1200000",
+            "evlu_pfls_smtl_amt": "0", "asst_icdc_erng_rt": "0.0",
+            "thdt_buy_amt": "0", "thdt_sll_amt": "0"
+        }]
+    }
+    cli_view_instance.display_account_balance(balance_info)
+    out = capsys.readouterr().out
+    assert "보유 종목 정보가 없습니다." in out
+
+def test_display_ohlcv_empty_rows(cli_view_instance, capsys):
+    cli_view_instance.display_ohlcv("005930", [])
+    out = capsys.readouterr().out
+    assert "005930 OHLCV" in out
+    assert "데이터가 없습니다" in out
+
+def test_display_ohlcv_preview_last_10(cli_view_instance, capsys):
+    # 11개 넣고 마지막 10개만 표에 노출되는지 헤더/샘플 행으로 확인
+    rows = []
+    for i in range(1, 12):  # 1..11
+        rows.append({
+            "date": f"202501{i:02d}",
+            "open": i*10, "high": i*10+1, "low": i*10-1,
+            "close": i*10+2, "volume": i*1000
+        })
+    cli_view_instance.display_ohlcv("005930", rows)
+    out = capsys.readouterr().out
+    # 표 헤더와 마지막(11일) 라인 일부 값 확인
+    assert "DATE" in out and "OPEN" in out and "VOLUME" in out
+    assert "20250111" in out
+    assert "close" not in out  # 키 이름이 아닌 값으로만 출력되는지 간접 확인
+
+def test_display_ohlcv_error(cli_view_instance, capsys):
+    cli_view_instance.display_ohlcv_error("005930", "에러 메시지")
+    out = capsys.readouterr().out
+    assert "실패: 005930 OHLCV 조회. (에러 메시지)" in out
+
+def test_display_invalid_environment_choice(cli_view_instance, capsys):
+    cli_view_instance.display_invalid_environment_choice("X")
+    out = capsys.readouterr().out
+    assert "\"X\" 잘못된 환경 선택입니다." in out
+
+def test_display_no_current_upper_limit_stocks(cli_view_instance, capsys):
+    """현재 상한가 종목이 없을 때 메시지 출력"""
+    cli_view_instance.display_no_current_upper_limit_stocks()
+    out = capsys.readouterr().out
+    # 함수가 출력하는 정확한 문구 검증
+    assert "현재 상한가에 해당하는 종목이 없습니다." in out
+
+
+def test_display_current_upper_limit_stocks_found_dict(cli_view_instance, capsys):
+    """상한가 종목 리스트(딕셔너리 입력) 출력"""
+    stocks = [
+        {"code": "005930", "name": "삼성전자", "current_price": "70500", "prdy_ctrt": "29.85"},
+        {"code": "000660", "name": "SK하이닉스", "current_price": "130000", "prdy_ctrt": "30.00"},
+    ]
+    cli_view_instance.display_current_upper_limit_stocks(stocks)
+    out = capsys.readouterr().out
+
+    # 헤더/요약 문구
+    assert "\n--- 현재 상한가 종목 ---" in out
+    assert "현재 상한가 종목 조회 성공. 총 2개" in out
+
+    # 각 행(이 함수는 '이름 (코드): 가격원 (등락률: +X%)' 형태로 출력)
+    assert "삼성전자 (005930): 70500원 (등락률: +29.85%)" in out
+    assert "SK하이닉스 (000660): 130000원 (등락률: +30.00%)" in out
+
+
+def test_display_current_upper_limit_stocks_found_object(cli_view_instance, capsys):
+    """상한가 종목 리스트(속성 객체 입력) 출력 - dict 아닌 dataclass/객체 경로도 커버"""
+
+    class StockObj:
+        def __init__(self, code, name, current_price, prdy_ctrt):
+            self.code = code
+            self.name = name
+            self.current_price = current_price
+            self.prdy_ctrt = prdy_ctrt
+
+    stocks = [
+        StockObj("035720", "카카오", "52000", "29.90"),
+    ]
+    cli_view_instance.display_current_upper_limit_stocks(stocks)
+    out = capsys.readouterr().out
+
+    assert "\n--- 현재 상한가 종목 ---" in out
+    assert "현재 상한가 종목 조회 성공. 총 1개" in out
+    assert "카카오 (035720): 52000원 (등락률: +29.90%)" in out

@@ -5,15 +5,17 @@
 
 ### 0. 불량
 
-1. WebsocketAPi도 TRID_Provider, UrlProvider, HeaderProvdier 적용하기.
-2. 1초 넘는 tc 들 점검.
-3. api 확인해서 todo_list에 넣기
-4. momentum_backtest 정상작동 확인
-5. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-6. token을 무효화하고 바로 요청하면 못받아옴. server로부터 1분 대기시간이 필요한것으로보임.
-7. ohlcv 추가, ohlcv 활용한 전략 추가
-8. IndicatorService(MA20, 52주 고가, 거래대금(=가격×거래량) 등 파생 지표 계산 전용)
-9. (옵션) MarketDataRepository / DataStore:
+1. TokenInvalidate 기능 사용시 API 호출하도록 수정.
+   (모의 Token이 Invalid면 새로 안받는 버그 있음. 실전도 동일한지 확인 필요.)
+2. WebsocketAPi도 TRID_Provider, UrlProvider, HeaderProvdier 적용하기.
+3. 1초 넘는 tc 들 점검.
+4. api 확인해서 todo_list에 넣기
+5. momentum_backtest 정상작동 확인
+6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
+7. token을 무효화하고 바로 요청하면 못받아옴. server로부터 1분 대기시간이 필요한것으로보임.
+8. ohlcv 추가, ohlcv 활용한 전략 추가
+9. IndicatorService(MA20, 52주 고가, 거래대금(=가격×거래량) 등 파생 지표 계산 전용)
+10. (옵션) MarketDataRepository / DataStore:
 최근에 받은 OHLCV/호가/스냅샷을 메모리/파일 캐시로 보관
 “API 다시 부르지 말고 기존 값 쓰자” 요구사항을 충족
 StockQueryService: 앱 레벨 오케스트레이션
