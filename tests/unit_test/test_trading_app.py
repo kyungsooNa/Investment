@@ -5,11 +5,13 @@ import logging
 import sys
 import os  # os 모듈 추가
 import unittest
+import inspect
 from unittest.mock import patch, call, AsyncMock, MagicMock
 from datetime import datetime
 from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem
 from app.trading_app import TradingApp
 from app.user_action_executor import UserActionExecutor
+
 
 def get_test_logger():
     logger = logging.getLogger("test_logger")
@@ -1008,35 +1010,59 @@ async def test_execute_action_momentum_top_stock_api_failure(mocker):
 @pytest.mark.asyncio
 async def test_execute_action_momentum_no_stocks_for_strategy(setup_mock_app):
     """시가총액 종목 조회는 성공했지만 전략 대상 종목이 없을 때"""
-
-    # ─ Arrange ─
     app = setup_mock_app
 
-    app.time_manager.is_market_open.return_value = True
+    # is_market_open 타입에 맞춰 패치 (async/sync 둘 다 커버)
+    if hasattr(app.time_manager, "is_market_open") and inspect.iscoroutinefunction(app.time_manager.is_market_open):
+        app.time_manager.is_market_open = AsyncMock(return_value=True)
+    else:
+        app.time_manager.is_market_open.return_value = True
 
-    # API 응답은 성공, 그러나 output은 mksc_shrn_iscd 없는 구조
-    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = ResCommonResponse(
-        rt_cd="0",
-        msg1="성공",
-        data=[
-            ResTopMarketCapApiItem(
-                iscd="ISCDX",
-                mksc_shrn_iscd="",  # or None
-                hts_kor_isnm="",
-                data_rank="",
-                stck_avls="",
-                acc_trdvol=""
-            )
-        ]
+    # viewer 호출만 검증
+    app.cli_view.display_no_stocks_for_strategy = MagicMock()
+
+    # 핵심: async 메서드는 AsyncMock 으로
+    # (리팩토링 후 이름이 바뀌었다면 아래 함수명을 현재 코드에 맞춰 바꾸세요)
+    app.stock_query_service.handle_get_top_market_cap_stocks_code = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="성공",
+            data=[
+                ResTopMarketCapApiItem(
+                    iscd="ISCDX",
+                    mksc_shrn_iscd="",  # 전략 대상 아님
+                    hts_kor_isnm="",
+                    data_rank="",
+                    stck_avls="",
+                    acc_trdvol=""
+                )
+            ]
+        )
     )
 
-    # ─ Act ─
-    executor = UserActionExecutor(app)
-    result = await executor.execute("100")
+    # 전략 실행이 별도 코루틴이면 이것도 await 대상 → 안전하게 AsyncMock
+    # (실제 코드 경로에 따라 필요 없을 수도 있음)
+    if hasattr(app, "strategy_executor") and hasattr(app.strategy_executor, "run_momentum"):
+        if inspect.iscoroutinefunction(app.strategy_executor.run_momentum):
+            app.strategy_executor.run_momentum = AsyncMock(return_value=[])
+        else:
+            # sync 함수면 MagicMock으로 유지
+            pass
 
-    # ─ Assert ─
-    app.cli_view.display_no_stocks_for_strategy.assert_called_once()
+    from app.user_action_executor import UserActionExecutor
+    executor = UserActionExecutor(app)
+
+    result = await executor.execute("100")  # 메뉴 번호는 실제 매핑과 일치해야 함
     assert result is True
+
+    # 성공 기준: 전략 대상 없음 메시지 1회
+    app.cli_view.display_no_stocks_for_strategy.assert_called_once()
+
+    # 보너스: 'await' 여부를 테스트로 강제 검증
+    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_awaited_once()
+    if hasattr(app, "strategy_executor") and hasattr(app.strategy_executor, "run_momentum") \
+       and isinstance(app.strategy_executor.run_momentum, AsyncMock):
+        app.strategy_executor.run_momentum.assert_awaited()
 
 
 @pytest.mark.asyncio
