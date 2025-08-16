@@ -705,6 +705,35 @@ async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mock_quo
 
 
 @pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_parses_output2(mocker, mock_quotations):
+    payload = {
+        "msg1": "정상처리 되었습니다.",
+        "msg_cd": "MCA00000",
+        "rt_cd": "0",
+        "output1": {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"},
+        "output2": [
+            {"stck_bsop_date": "20250814", "stck_oprc": "71900", "stck_hgpr": "71900",
+             "stck_lwpr": "71200", "stck_clpr": "71600", "acml_vol": "11946122"}
+        ]
+    }
+    # call_api 모킹
+    mocker.patch.object(
+        mock_quotations, "call_api",
+        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=payload)
+    )
+
+    res = await mock_quotations.inquire_daily_itemchartprice(
+        "005930", date="20250814", fid_period_div_code="D"
+    )
+    assert res.rt_cd == "0"
+    assert isinstance(res.data, list) and len(res.data) == 1
+    bar = res.data[0]
+    get = (lambda k: getattr(bar, k, None) if not isinstance(bar, dict) else bar.get(k))
+    assert get("stck_bsop_date") == "20250814"
+    assert get("stck_clpr") == "71600"
+
+
+@pytest.mark.asyncio
 async def test_get_current_price_success(mock_quotations):
     """
     get_current_price가 정상적인 응답을 반환하는 경우를 테스트합니다.

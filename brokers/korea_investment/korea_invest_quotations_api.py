@@ -287,8 +287,6 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         TRID: FHKST03010100 (일별), FHNKF03060000 (분봉)
         ResCommonResponse 형태로 반환하며, data 필드에 List[ResDailyChartApiItem] 포함.
         """
-        full_config = self._env.active_config
-
         valid_period_codes = {"D", "M"}
         if fid_period_div_code not in valid_period_codes:
             error_msg = f"지원하지 않는 fid_period_div_code: {fid_period_div_code}"
@@ -302,11 +300,16 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         tr_id = self._trid_provider.daily_itemchartprice(period=fid_period_div_code)  # 'D' or 'M'
 
         self._logger.debug(f"차트 조회 시도 현재 tr_id: {tr_id}")
-        with self._headers.temp(tr_id=tr_id):
+        # ✅ period에 맞춰 Params 분기 (분봉용 빌더가 없다면 day로 폴백)
+        if fid_period_div_code == "M" and hasattr(Params, "daily_itemchartprice_minute"):
+            params = Params.daily_itemchartprice_minute(stock_code=stock_code, date=date)
+        else:
             params = Params.daily_itemchartprice_day(stock_code=stock_code, date=date)
-            response_data: ResCommonResponse = await self.call_api("GET",
-                                                                   EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE,
-                                                                   params=params)
+
+        with self._headers.temp(tr_id=tr_id):
+            response_data: ResCommonResponse = await self.call_api(
+                "GET", EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE, params=params
+            )
 
         if response_data.rt_cd != ErrorCode.SUCCESS.value:
             error_msg = f"API 응답 비정상: None, 응답: {response_data.data}"
@@ -326,17 +329,31 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=[]
             )
 
-        output_list = response_data.data
+        raw = response_data.data
+        if isinstance(raw, dict):
+            # KIS 관례: output1 = 요약/메타, output2 = 캔들 리스트
+            output_list = raw.get("output2") or raw.get("output") or raw.get("output1") or []
+        else:
+            output_list = raw or []
+
+        # 리스트 보장
+        if not isinstance(output_list, list):
+            output_list = [output_list] if output_list else []
+
         chart_data_items: List[ResDailyChartApiItem] = []
         for item in output_list:
             try:
-                chart_data_items.append(ResDailyChartApiItem(**item))
-            except TypeError as e:
+                # from_dict가 있으면 쓰고, 없으면 **unpack
+                if hasattr(ResDailyChartApiItem, "from_dict"):
+                    chart_data_items.append(ResDailyChartApiItem.from_dict(item))
+                else:
+                    chart_data_items.append(ResDailyChartApiItem(**item))
+            except (TypeError, ValueError) as e:
                 self._logger.warning(f"차트 데이터 항목 파싱 오류: {e}, 항목: {item}")
                 continue
 
         return ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
+            rt_cd=ErrorCode.SUCCESS.value,
             msg1="일별/분봉 차트 데이터 조회 성공",
             data=chart_data_items
         )

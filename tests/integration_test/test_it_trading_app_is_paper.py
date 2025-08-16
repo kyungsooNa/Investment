@@ -849,175 +849,118 @@ async def test_get_etf_info_full_integration_paper(real_app_instance, mocker):
     assert prompt in called_prompt
 
 
-# @pytest.mark.asyncio
-# async def test_search_stocks_by_keyword_full_integration_paper(real_app_instance, mocker):
-#     """
-#     (통합 테스트) 키워드로 종목 검색: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
-#     """
-#     app = real_app_instance
-#
-#     # ✅ 사용자 입력 모킹
-#     mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
-#     app.cli_view.get_user_input.return_value = "삼성"
-#
-#     # ✅ API 응답 모킹 (검색 결과 포함)
-#     mock_response = ResCommonResponse(
-#         rt_cd=ErrorCode.SUCCESS.value,
-#         msg1="정상",
-#         data={
-#             "output": [
-#                 {"code": "005930", "name": "삼성전자"},
-#                 {"code": "005935", "name": "삼성전자우"}
-#             ]
-#         }
-#     )
-#
-#     mock_call_api = mocker.patch(
-#         'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-#         return_value=mock_response
-#     )
-#
-#     # --- Act ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("11")
-#
-#     # --- Assert (검증) ---
-#     assert running_status == True
-#     mock_call_api.assert_awaited_once()
-#     app.cli_view.get_user_input.assert_awaited_once_with("검색할 키워드를 입력하세요: ")
-
 
 @pytest.mark.asyncio
-async def test_get_top_volume_full_integration_paper(real_app_instance, mocker):
+async def test_get_ohlcv_day_full_integration_paper(real_app_instance, mocker):
     """
-    (통합 테스트-모의) 상위 거래량 랭킹:
-    TradingApp → StockQueryService → BrokerAPIWrapper → (quotations api) → call_api → _execute_request
+    (통합 테스트-모의) OHLCV 일봉:
+    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper →
+    KoreaInvestApiQuotations.inquire_daily_itemchartprice → call_api → _execute_request
     """
     app = real_app_instance
-
-    # 표준 스키마 'output'에 간단 페이로드
-    payload = {
-        "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
-        ]
-    }
-
-    # (선택) CLI 출력 검증
-    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
-
-    # 바인딩 + 시세 API
     ctx.ki.bind(app)
     quot_api = ctx.ki.quot
 
-    # ✅ call_api를 모킹하지 않습니다.
-    # _execute_request 스파이 + 세션 get 모킹
+    # HTTP 레이어 모킹: 일봉 응답 payload (표준 'output' 리스트)
+    # ✅ 표준 래퍼 + output2 로 교체
+    payload = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output2": [
+            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
+            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+        ]
+    }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행: 메뉴 "30" = volume 랭킹
-    ok = await UserActionExecutor(app).execute("30")
+    # 입력: 종목코드 / 기간 D / limit
+    code, period, limit = "005930", "D", "5"
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, period, limit]
+
+    # 출력 뷰어는 호출만 검증
+    app.cli_view.display_ohlcv = MagicMock()
+    app.cli_view.display_ohlcv_error = MagicMock()
+
+    # 실행 (메뉴 '11' = OHLCV 조회 가정)
+    ok = await UserActionExecutor(app).execute("11")
     assert ok is True
 
-    # 👉 모의환경에서는 네트워크 호출이 없어야 함
-    spy_exec.assert_not_called()
-    mock_get.assert_not_called()
+    # --- 최하단 호출 검증 ---
+    spy_exec.assert_called()
+    method, _ = spy_exec.call_args.args[:2]
+    assert method == "GET"
 
-    # 👉 경고 뷰가 정확히 1회 호출되어야 함
-    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once()
+    mock_get.assert_awaited_once()
+    g_args, g_kwargs = mock_get.call_args
+    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
 
-    # (선택) 혹시 다른 랭킹 뷰가 잘못 호출되지 않았는지도 방지
-    for name in ("display_top_stocks_ranking", "display_volume_ranking", "display_top_ranking"):
-        if hasattr(type(app.cli_view), name):
-            m = mocker.patch.object(type(app.cli_view), name, autospec=True)
-            m.assert_not_called()
+    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE)
+    trid_provider = ctx.ki.trid_quotations
+    expected_trid = trid_provider.daily_itemchartprice("D")  # 일봉
+    assert req_url == expected_url
+    assert req_headers.get("tr_id") == expected_trid
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code  # 종목 코드 전달
+
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_ohlcv.assert_called_once()
+    app.cli_view.display_ohlcv_error.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_get_top_rise_full_integration_paper(real_app_instance, mocker):
+async def test_get_ohlcv_minute_full_integration_paper(real_app_instance, mocker):
     """
-    (통합 테스트) 상위 랭킹 조회 (rise): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    (통합 테스트-모의) OHLCV 분봉: 위와 동일하나 TRID가 분봉용으로 바뀌는지만 확인
     """
     app = real_app_instance
-
-    # 표준 스키마 'output'에 간단 페이로드
-    payload = {
-        "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
-        ]
-    }
-
-    # (선택) CLI 출력 검증
-    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
-
-    # 바인딩 + 시세 API
     ctx.ki.bind(app)
     quot_api = ctx.ki.quot
 
-    # ✅ call_api를 모킹하지 않습니다.
-    # _execute_request 스파이 + 세션 get 모킹
-    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
-
-    # 실행: 메뉴 "31" = rise 랭킹
-    ok = await UserActionExecutor(app).execute("31")
-    assert ok is True
-
-    # 👉 모의환경에서는 네트워크 호출이 없어야 함
-    spy_exec.assert_not_called()
-    mock_get.assert_not_called()
-
-    # 👉 경고 뷰가 정확히 1회 호출되어야 함
-    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once()
-
-    # (선택) 혹시 다른 랭킹 뷰가 잘못 호출되지 않았는지도 방지
-    for name in ("display_top_stocks_ranking", "display_volume_ranking", "display_top_ranking"):
-        if hasattr(type(app.cli_view), name):
-            m = mocker.patch.object(type(app.cli_view), name, autospec=True)
-            m.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_get_top_fall_full_integration_paper(real_app_instance, mocker):
-    """
-    (통합 테스트) 상위 랭킹 조회 (fall): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
-    """
-    app = real_app_instance
-
-    # 표준 스키마 'output'에 간단 페이로드
     payload = {
-        "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output2": [
+            {"stck_bsop_date": "20250813", "stck_oprc": "71000", "stck_hgpr": "71300", "stck_lwpr": "70800",
+             "stck_clpr": "71200", "acml_vol": "55555"},
         ]
     }
-
-    # (선택) CLI 출력 검증
-    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
-
-    # 바인딩 + 시세 API
-    ctx.ki.bind(app)
-    quot_api = ctx.ki.quot
-
-    # ✅ call_api를 모킹하지 않습니다.
-    # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행: 메뉴 "32" = fall 랭킹
-    ok = await UserActionExecutor(app).execute("32")
+    code, period, limit = "005930", "M", "5"  # 분봉
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, period, limit]
+
+    app.cli_view.display_ohlcv = MagicMock()
+    app.cli_view.display_ohlcv_error = MagicMock()
+
+    ok = await UserActionExecutor(app).execute("11")
     assert ok is True
 
-    # 👉 모의환경에서는 네트워크 호출이 없어야 함
-    spy_exec.assert_not_called()
-    mock_get.assert_not_called()
+    spy_exec.assert_called()
+    method, _ = spy_exec.call_args.args[:2]
+    assert method == "GET"
 
-    # 👉 경고 뷰가 정확히 1회 호출되어야 함
-    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once()
+    mock_get.assert_awaited_once()
+    g_args, g_kwargs = mock_get.call_args
+    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
 
-    # (선택) 혹시 다른 랭킹 뷰가 잘못 호출되지 않았는지도 방지
-    for name in ("display_top_stocks_ranking", "display_volume_ranking", "display_top_ranking"):
-        if hasattr(type(app.cli_view), name):
-            m = mocker.patch.object(type(app.cli_view), name, autospec=True)
-            m.assert_not_called()
+    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE)
+    trid_provider = ctx.ki.trid_quotations
+    expected_trid = trid_provider.daily_itemchartprice("M")  # 분봉
+    assert req_url == expected_url
+    assert req_headers.get("tr_id") == expected_trid
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code
+
+    app.cli_view.display_ohlcv.assert_called_once()
+    app.cli_view.display_ohlcv_error.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1327,9 +1270,142 @@ async def test_handle_realtime_stream_deep_checks_paper(real_app_instance, mocke
 
 
 @pytest.mark.asyncio
+async def test_get_top_volume_full_integration_paper(real_app_instance, mocker):
+    """
+    (통합 테스트-모의) 상위 거래량 랭킹:
+    TradingApp → StockQueryService → BrokerAPIWrapper → (quotations api) → call_api → _execute_request
+    """
+    app = real_app_instance
+
+    # 표준 스키마 'output'에 간단 페이로드
+    payload = {
+        "output": [
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
+        ]
+    }
+
+    # (선택) CLI 출력 검증
+    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
+
+    # 바인딩 + 시세 API
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # ✅ call_api를 모킹하지 않습니다.
+    # _execute_request 스파이 + 세션 get 모킹
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 실행: 메뉴 "30" = volume 랭킹
+    ok = await UserActionExecutor(app).execute("30")
+    assert ok is True
+
+    # 👉 모의환경에서는 네트워크 호출이 없어야 함
+    spy_exec.assert_not_called()
+    mock_get.assert_not_called()
+
+    # 👉 경고 뷰가 정확히 1회 호출되어야 함
+    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once()
+
+    # (선택) 혹시 다른 랭킹 뷰가 잘못 호출되지 않았는지도 방지
+    for name in ("display_top_stocks_ranking", "display_volume_ranking", "display_top_ranking"):
+        if hasattr(type(app.cli_view), name):
+            m = mocker.patch.object(type(app.cli_view), name, autospec=True)
+            m.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_top_rise_full_integration_paper(real_app_instance, mocker):
+    """
+    (통합 테스트) 상위 랭킹 조회 (rise): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # 표준 스키마 'output'에 간단 페이로드
+    payload = {
+        "output": [
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
+        ]
+    }
+
+    # (선택) CLI 출력 검증
+    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
+
+    # 바인딩 + 시세 API
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # ✅ call_api를 모킹하지 않습니다.
+    # _execute_request 스파이 + 세션 get 모킹
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 실행: 메뉴 "31" = rise 랭킹
+    ok = await UserActionExecutor(app).execute("31")
+    assert ok is True
+
+    # 👉 모의환경에서는 네트워크 호출이 없어야 함
+    spy_exec.assert_not_called()
+    mock_get.assert_not_called()
+
+    # 👉 경고 뷰가 정확히 1회 호출되어야 함
+    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once()
+
+    # (선택) 혹시 다른 랭킹 뷰가 잘못 호출되지 않았는지도 방지
+    for name in ("display_top_stocks_ranking", "display_volume_ranking", "display_top_ranking"):
+        if hasattr(type(app.cli_view), name):
+            m = mocker.patch.object(type(app.cli_view), name, autospec=True)
+            m.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_top_fall_full_integration_paper(real_app_instance, mocker):
+    """
+    (통합 테스트) 상위 랭킹 조회 (fall): TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
+    """
+    app = real_app_instance
+
+    # 표준 스키마 'output'에 간단 페이로드
+    payload = {
+        "output": [
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
+        ]
+    }
+
+    # (선택) CLI 출력 검증
+    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
+
+    # 바인딩 + 시세 API
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # ✅ call_api를 모킹하지 않습니다.
+    # _execute_request 스파이 + 세션 get 모킹
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 실행: 메뉴 "32" = fall 랭킹
+    ok = await UserActionExecutor(app).execute("32")
+    assert ok is True
+
+    # 👉 모의환경에서는 네트워크 호출이 없어야 함
+    spy_exec.assert_not_called()
+    mock_get.assert_not_called()
+
+    # 👉 경고 뷰가 정확히 1회 호출되어야 함
+    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once()
+
+    # (선택) 혹시 다른 랭킹 뷰가 잘못 호출되지 않았는지도 방지
+    for name in ("display_top_stocks_ranking", "display_volume_ranking", "display_top_ranking"):
+        if hasattr(type(app.cli_view), name):
+            m = mocker.patch.object(type(app.cli_view), name, autospec=True)
+            m.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_execute_action_momentum_strategy_success_paper(real_app_instance, mocker):
     """
-    (통합 테스트) 메뉴 '20' - 모멘텀 전략 정상 실행 흐름 테스트
+    (통합 테스트) 메뉴 '100' - 모멘텀 전략 정상 실행 흐름 테스트
 
     TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code → StrategyExecutor.execute
     """
@@ -1344,7 +1420,7 @@ async def test_execute_action_momentum_strategy_success_paper(real_app_instance,
 @pytest.mark.asyncio
 async def test_execute_action_momentum_backtest_strategy_success(real_app_instance, mocker):
     """
-    (통합 테스트) 메뉴 '21' - 모멘텀 백테스트 전략 정상 실행 흐름 테스트
+    (통합 테스트) 메뉴 '101' - 모멘텀 백테스트 전략 정상 실행 흐름 테스트
 
     TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
     → StrategyExecutor.execute (백테스트 모드)
@@ -1360,7 +1436,7 @@ async def test_execute_action_momentum_backtest_strategy_success(real_app_instan
 @pytest.mark.asyncio
 async def test_execute_action_gapup_pullback_strategy_success(real_app_instance, mocker):
     """
-    (통합 테스트) 메뉴 '22' - GapUpPullback 전략 정상 실행 흐름 테스트
+    (통합 테스트) 메뉴 '102' - GapUpPullback 전략 정상 실행 흐름 테스트
 
     TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
     → StrategyExecutor.execute → 결과 출력까지 전 과정 검증
