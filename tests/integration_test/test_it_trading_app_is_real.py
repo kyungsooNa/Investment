@@ -764,267 +764,108 @@ async def test_get_etf_info_full_integration_real(real_app_instance, mocker):
     assert prompt in called_prompt
 
 
-# @pytest.mark.asyncio
-# async def test_search_stocks_by_keyword_full_integration_real(real_app_instance, mocker):
-#     """
-#     (통합 테스트) 키워드로 종목 검색: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
-#     """
-#     app = real_app_instance
-#
-#     # ✅ 사용자 입력 모킹
-#     mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
-#     app.cli_view.get_user_input.return_value = "삼성"
-#
-#     # ✅ API 응답 모킹 (검색 결과 포함)
-#     mock_response = ResCommonResponse(
-#         rt_cd=ErrorCode.SUCCESS.value,
-#         msg1="정상",
-#         data={
-#             "output": [
-#                 {"code": "005930", "name": "삼성전자"},
-#                 {"code": "005935", "name": "삼성전자우"}
-#             ]
-#         }
-#     )
-#
-#     mock_call_api = mocker.patch(
-#         'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-#         return_value=mock_response
-#     )
-#
-#     # --- Act ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("11")
-#
-#     # --- Assert (검증) ---
-#     assert running_status == True
-#     mock_call_api.assert_awaited_once()
-#     app.cli_view.get_user_input.assert_awaited_once_with("검색할 키워드를 입력하세요: ")
-#
-
 @pytest.mark.asyncio
-async def test_get_top_volume_full_integration_real(real_app_instance, mocker):
+async def test_get_ohlcv_day_full_integration_real(real_app_instance, mocker):
     """
-    (통합 테스트-실전) 상위 거래량 랭킹:
-    TradingApp → StockQueryService → BrokerAPIWrapper → (quotations api) → call_api → _execute_request
+    (통합 테스트-실전) OHLCV 일봉: call_api는 동일, TRID/헤더만 실전 환경 값으로 셋업됨
     """
     app = real_app_instance
-
-    # View 결과 검증을 원하면 모킹(선택)
-    app.cli_view.display_top_stocks_ranking = MagicMock()
-    app.cli_view.display_top_stocks_ranking_error = MagicMock()
-
-    # API 응답(payload) – 표준 스키마 'output' 리스트
-    payload = {
-        "rt_cd": "0",
-        "msg1": "정상",
-        "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_prpr": "70000", "prdy_ctrt": "3.2",
-             "prdy_vrss": "2170"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7",
-             "prdy_vrss": "3950"},
-        ]
-    }
-
-    # 바인딩 + 시세 API
     ctx.ki.bind(app)
     quot_api = ctx.ki.quot
 
-    # _execute_request 스파이 + 세션 get 모킹
+    payload = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output2": [
+            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
+            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+        ]
+    }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행: 메뉴 "30" = volume 랭킹
-    ok = await UserActionExecutor(app).execute("30")
+    code, period, limit = "005930", "D", "10"
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, period, limit]
+
+    app.cli_view.display_ohlcv = MagicMock()
+    app.cli_view.display_ohlcv_error = MagicMock()
+
+    ok = await UserActionExecutor(app).execute("11")
     assert ok is True
 
-    # _execute_request 호출/메서드 확인
     spy_exec.assert_called()
     method, _ = spy_exec.call_args.args[:2]
     assert method == "GET"
 
-    # 실제 세션 호출: 최종 URL/헤더/파라미터
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
     req_url     = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
     req_params  = g_kwargs.get("params") or {}
 
-    # ✅ 엄격: 고정 상수만 사용
-    expected_url  = ctx.expected_url_for_quotations(app, EndpointKey.RANKING_VOLUME)
-    expected_trid = ctx.ki.trid_quotations.quotations(TrIdLeaf.RANKING_VOLUME)
-
+    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE)
+    trid_provider = ctx.ki.trid_quotations
+    expected_trid = trid_provider.daily_itemchartprice("D")
     assert req_url == expected_url
     assert req_headers.get("tr_id") == expected_trid
     assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code
 
-    # volume 랭킹은 종목코드 입력이 필요 없으므로, 특정 코드 파라미터가 없어야 정상(프로젝트 규약에 맞춰 조정)
-    assert "fid_input_iscd" not in req_params
-
-    # (선택) View 호출 검증
-    app.cli_view.display_top_stocks_ranking.assert_called_once()
-    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
-
-    # 실행 코드(handle_top_volume_30)가 res.data 전체를 넘기므로 dict를 기대
-    title_arg, data_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
-
-    assert title_arg == "volume"
-    assert isinstance(data_arg, dict), f"뷰에 dict 형태의 payload 전체가 전달되어야 합니다. got={type(data_arg)}"
-    # 표준 스키마 키 포함
-    assert set(data_arg.keys()) >= {"rt_cd", "msg1", "output"}
-    # output 리스트 내부 값 확인
-    assert isinstance(data_arg["output"], list) and len(data_arg["output"]) == 2
-    assert {item["stck_shrn_iscd"] for item in data_arg["output"]} == {"005930", "000660"}
+    app.cli_view.display_ohlcv.assert_called_once()
+    app.cli_view.display_ohlcv_error.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_get_top_rise_full_integration_real(real_app_instance, mocker):
+async def test_get_ohlcv_minute_full_integration_real(real_app_instance, mocker):
     """
-    (통합 테스트-실전) 상위 랭킹 조회(rise):
-    TradingApp → StockQueryService → BrokerAPIWrapper → (quotations api) → call_api → _execute_request
+    (통합 테스트-실전) OHLCV 분봉
     """
     app = real_app_instance
-
-    # 표준 스키마 payload (뷰로는 res.data 그대로 전달됨)
-    payload = {
-        "rt_cd": "0",
-        "msg1": "정상",
-        "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",
-             "stck_prpr": "70000", "prdy_ctrt": "3.2", "prdy_vrss": "2170", "data_rank": "1"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스",
-             "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950", "data_rank": "2"},
-        ]
-    }
-
-    # 뷰 모킹(실행코드는 display_top_stocks_ranking(title, res.data) 호출)
-    app.cli_view.display_top_stocks_ranking = MagicMock()
-    app.cli_view.display_top_stocks_ranking_error = MagicMock()
-
-    # 바인딩 + 시세 API
     ctx.ki.bind(app)
     quot_api = ctx.ki.quot
 
-    # _execute_request 실행 + 세션 GET만 모킹
+    payload = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output2": [
+            {"stck_bsop_date": "20250813", "stck_oprc": "71000", "stck_hgpr": "71300", "stck_lwpr": "70800",
+             "stck_clpr": "71200", "acml_vol": "55555"},
+        ]
+    }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행: 메뉴 "31" = 상승률 ~30
-    ok = await UserActionExecutor(app).execute("31")
+    code, period, limit = "005930", "M", "10"
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, period, limit]
+
+    app.cli_view.display_ohlcv = MagicMock()
+    app.cli_view.display_ohlcv_error = MagicMock()
+
+    ok = await UserActionExecutor(app).execute("11")
     assert ok is True
 
-    # _execute_request 호출/메서드 확인
     spy_exec.assert_called()
     method, _ = spy_exec.call_args.args[:2]
     assert method == "GET"
 
-    # 실제 세션 호출: 최종 URL/헤더/파라미터 검증(엄격 상수)
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
     req_url     = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
     req_params  = g_kwargs.get("params") or {}
 
-    expected_url  = ctx.expected_url_for_quotations(app, EndpointKey.RANKING_FLUCTUATION)
-    expected_trid = ctx.ki.trid_quotations.quotations(TrIdLeaf.RANKING_FLUCTUATION)
-
+    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE)
+    trid_provider = ctx.ki.trid_quotations
+    expected_trid = trid_provider.daily_itemchartprice("M")
     assert req_url == expected_url
     assert req_headers.get("tr_id") == expected_trid
     assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code
 
-    # ✅ 파라미터 검증: '없어야 한다' 대신 '핵심 값이 맞다'로 엄격 검증
-    #   - 시장구분: 국내 주식 'J' (프로젝트 환경에 맞춰 조정 가능)
-    #   - 스크린 코드: 상승용 (실제 런타임에서 20170로 내려오는 것 확인됨)
-    assert req_params.get("fid_cond_mrkt_div_code") == "J"
-    assert req_params.get("fid_cond_scr_div_code") == "20170"
-
-    # === 뷰 검증: 실행코드는 상승 랭킹에서 리스트(ResFluctuation 리스트)를 넘김 ===
-    app.cli_view.display_top_stocks_ranking.assert_called_once()
-    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
-
-    title_arg, items_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
-    assert title_arg == "rise"
-
-    # 리스트 형태 + 각 원소는 ResFluctuation(또는 dict)인지 확인
-    assert isinstance(items_arg, list) and len(items_arg) == 2
-
-    # 객체/딕셔너리 모두 커버해서 종목코드 집합 확인
-    codes = {
-        (x.stck_shrn_iscd if hasattr(x, "stck_shrn_iscd") else x.get("stck_shrn_iscd"))
-        for x in items_arg
-    }
-    assert codes == {"005930", "000660"}
-
-
-@pytest.mark.asyncio
-async def test_get_top_fall_full_integration_real(real_app_instance, mocker):
-    """
-    (통합 테스트-실전) 상위 하락률 랭킹:
-    TradingApp → StockQueryService → BrokerAPIWrapper → (quotations api) → call_api → _execute_request
-    """
-    app = real_app_instance
-
-    # 표준 스키마 payload (HTTP 모킹용)
-    payload = {
-        "rt_cd": "0",
-        "msg1": "정상",
-        "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",
-             "stck_prpr": "70000", "prdy_ctrt": "-3.2", "prdy_vrss": "-2170", "data_rank": "1"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스",
-             "stck_prpr": "150000", "prdy_ctrt": "-2.7", "prdy_vrss": "-3950", "data_rank": "2"},
-        ]
-    }
-
-    # 뷰 모킹 (실행코드는 display_top_stocks_ranking(title, items) 호출)
-    app.cli_view.display_top_stocks_ranking = MagicMock()
-    app.cli_view.display_top_stocks_ranking_error = MagicMock()
-
-    # 바인딩 + 시세 API
-    ctx.ki.bind(app)
-    quot_api = ctx.ki.quot
-
-    # _execute_request 실행 + 세션 GET만 모킹
-    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
-
-    # 실행: 메뉴 "32" = 하락률 ~30
-    ok = await UserActionExecutor(app).execute("32")
-    assert ok is True
-
-    # _execute_request 호출/메서드 확인
-    spy_exec.assert_called()
-    method, _ = spy_exec.call_args.args[:2]
-    assert method == "GET"
-
-    # 실제 세션 호출: 최종 URL/헤더/파라미터 검증(엄격 상수)
-    mock_get.assert_awaited_once()
-    g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
-    req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
-
-    expected_url  = ctx.expected_url_for_quotations(app, EndpointKey.RANKING_FLUCTUATION)
-    expected_trid = ctx.ki.trid_quotations.quotations(TrIdLeaf.RANKING_FLUCTUATION)
-
-    assert req_url == expected_url
-    assert req_headers.get("tr_id") == expected_trid
-    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
-
-    # 파라미터: 시장코드는 고정, 스크린코드는 존재만 엄격 확인(값은 구현별)
-    assert req_params.get("fid_cond_mrkt_div_code") == "J"
-    assert req_params.get("fid_cond_scr_div_code")  # non-empty 존재
-
-    # === 뷰 검증: 리스트(ResFluctuation 리스트) 전달 ===
-    app.cli_view.display_top_stocks_ranking.assert_called_once()
-    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
-
-    title_arg, items_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
-    assert title_arg == "fall"
-    assert isinstance(items_arg, list) and len(items_arg) == 2
-
-    codes = {
-        (x.stck_shrn_iscd if hasattr(x, "stck_shrn_iscd") else x.get("stck_shrn_iscd"))
-        for x in items_arg
-    }
-    assert codes == {"005930", "000660"}
+    app.cli_view.display_ohlcv.assert_called_once()
+    app.cli_view.display_ohlcv_error.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1355,6 +1196,231 @@ async def test_handle_realtime_stream_deep_checks_real(real_app_instance, mocker
         c.args[:2] == (tr_id, "005930") and c.kwargs.get("tr_type") == "2"
         for c in calls
     ), f"해지 요청이 전송되지 않았습니다. calls={calls}"
+
+
+@pytest.mark.asyncio
+async def test_get_top_volume_full_integration_real(real_app_instance, mocker):
+    """
+    (통합 테스트-실전) 상위 거래량 랭킹:
+    TradingApp → StockQueryService → BrokerAPIWrapper → (quotations api) → call_api → _execute_request
+    """
+    app = real_app_instance
+
+    # View 결과 검증을 원하면 모킹(선택)
+    app.cli_view.display_top_stocks_ranking = MagicMock()
+    app.cli_view.display_top_stocks_ranking_error = MagicMock()
+
+    # API 응답(payload) – 표준 스키마 'output' 리스트
+    payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output": [
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_prpr": "70000", "prdy_ctrt": "3.2",
+             "prdy_vrss": "2170"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7",
+             "prdy_vrss": "3950"},
+        ]
+    }
+
+    # 바인딩 + 시세 API
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # _execute_request 스파이 + 세션 get 모킹
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 실행: 메뉴 "30" = volume 랭킹
+    ok = await UserActionExecutor(app).execute("30")
+    assert ok is True
+
+    # _execute_request 호출/메서드 확인
+    spy_exec.assert_called()
+    method, _ = spy_exec.call_args.args[:2]
+    assert method == "GET"
+
+    # 실제 세션 호출: 최종 URL/헤더/파라미터
+    mock_get.assert_awaited_once()
+    g_args, g_kwargs = mock_get.call_args
+    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
+
+    # ✅ 엄격: 고정 상수만 사용
+    expected_url  = ctx.expected_url_for_quotations(app, EndpointKey.RANKING_VOLUME)
+    expected_trid = ctx.ki.trid_quotations.quotations(TrIdLeaf.RANKING_VOLUME)
+
+    assert req_url == expected_url
+    assert req_headers.get("tr_id") == expected_trid
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+
+    # volume 랭킹은 종목코드 입력이 필요 없으므로, 특정 코드 파라미터가 없어야 정상(프로젝트 규약에 맞춰 조정)
+    assert "fid_input_iscd" not in req_params
+
+    # (선택) View 호출 검증
+    app.cli_view.display_top_stocks_ranking.assert_called_once()
+    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
+
+    # 실행 코드(handle_top_volume_30)가 res.data 전체를 넘기므로 dict를 기대
+    title_arg, data_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
+
+    assert title_arg == "volume"
+    assert isinstance(data_arg, dict), f"뷰에 dict 형태의 payload 전체가 전달되어야 합니다. got={type(data_arg)}"
+    # 표준 스키마 키 포함
+    assert set(data_arg.keys()) >= {"rt_cd", "msg1", "output"}
+    # output 리스트 내부 값 확인
+    assert isinstance(data_arg["output"], list) and len(data_arg["output"]) == 2
+    assert {item["stck_shrn_iscd"] for item in data_arg["output"]} == {"005930", "000660"}
+
+
+@pytest.mark.asyncio
+async def test_get_top_rise_full_integration_real(real_app_instance, mocker):
+    """
+    (통합 테스트-실전) 상위 랭킹 조회(rise):
+    TradingApp → StockQueryService → BrokerAPIWrapper → (quotations api) → call_api → _execute_request
+    """
+    app = real_app_instance
+
+    # 표준 스키마 payload (뷰로는 res.data 그대로 전달됨)
+    payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output": [
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",
+             "stck_prpr": "70000", "prdy_ctrt": "3.2", "prdy_vrss": "2170", "data_rank": "1"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스",
+             "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950", "data_rank": "2"},
+        ]
+    }
+
+    # 뷰 모킹(실행코드는 display_top_stocks_ranking(title, res.data) 호출)
+    app.cli_view.display_top_stocks_ranking = MagicMock()
+    app.cli_view.display_top_stocks_ranking_error = MagicMock()
+
+    # 바인딩 + 시세 API
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # _execute_request 실행 + 세션 GET만 모킹
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 실행: 메뉴 "31" = 상승률 ~30
+    ok = await UserActionExecutor(app).execute("31")
+    assert ok is True
+
+    # _execute_request 호출/메서드 확인
+    spy_exec.assert_called()
+    method, _ = spy_exec.call_args.args[:2]
+    assert method == "GET"
+
+    # 실제 세션 호출: 최종 URL/헤더/파라미터 검증(엄격 상수)
+    mock_get.assert_awaited_once()
+    g_args, g_kwargs = mock_get.call_args
+    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
+
+    expected_url  = ctx.expected_url_for_quotations(app, EndpointKey.RANKING_FLUCTUATION)
+    expected_trid = ctx.ki.trid_quotations.quotations(TrIdLeaf.RANKING_FLUCTUATION)
+
+    assert req_url == expected_url
+    assert req_headers.get("tr_id") == expected_trid
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+
+    # ✅ 파라미터 검증: '없어야 한다' 대신 '핵심 값이 맞다'로 엄격 검증
+    #   - 시장구분: 국내 주식 'J' (프로젝트 환경에 맞춰 조정 가능)
+    #   - 스크린 코드: 상승용 (실제 런타임에서 20170로 내려오는 것 확인됨)
+    assert req_params.get("fid_cond_mrkt_div_code") == "J"
+    assert req_params.get("fid_cond_scr_div_code") == "20170"
+
+    # === 뷰 검증: 실행코드는 상승 랭킹에서 리스트(ResFluctuation 리스트)를 넘김 ===
+    app.cli_view.display_top_stocks_ranking.assert_called_once()
+    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
+
+    title_arg, items_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
+    assert title_arg == "rise"
+
+    # 리스트 형태 + 각 원소는 ResFluctuation(또는 dict)인지 확인
+    assert isinstance(items_arg, list) and len(items_arg) == 2
+
+    # 객체/딕셔너리 모두 커버해서 종목코드 집합 확인
+    codes = {
+        (x.stck_shrn_iscd if hasattr(x, "stck_shrn_iscd") else x.get("stck_shrn_iscd"))
+        for x in items_arg
+    }
+    assert codes == {"005930", "000660"}
+
+
+@pytest.mark.asyncio
+async def test_get_top_fall_full_integration_real(real_app_instance, mocker):
+    """
+    (통합 테스트-실전) 상위 하락률 랭킹:
+    TradingApp → StockQueryService → BrokerAPIWrapper → (quotations api) → call_api → _execute_request
+    """
+    app = real_app_instance
+
+    # 표준 스키마 payload (HTTP 모킹용)
+    payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output": [
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",
+             "stck_prpr": "70000", "prdy_ctrt": "-3.2", "prdy_vrss": "-2170", "data_rank": "1"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스",
+             "stck_prpr": "150000", "prdy_ctrt": "-2.7", "prdy_vrss": "-3950", "data_rank": "2"},
+        ]
+    }
+
+    # 뷰 모킹 (실행코드는 display_top_stocks_ranking(title, items) 호출)
+    app.cli_view.display_top_stocks_ranking = MagicMock()
+    app.cli_view.display_top_stocks_ranking_error = MagicMock()
+
+    # 바인딩 + 시세 API
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # _execute_request 실행 + 세션 GET만 모킹
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 실행: 메뉴 "32" = 하락률 ~30
+    ok = await UserActionExecutor(app).execute("32")
+    assert ok is True
+
+    # _execute_request 호출/메서드 확인
+    spy_exec.assert_called()
+    method, _ = spy_exec.call_args.args[:2]
+    assert method == "GET"
+
+    # 실제 세션 호출: 최종 URL/헤더/파라미터 검증(엄격 상수)
+    mock_get.assert_awaited_once()
+    g_args, g_kwargs = mock_get.call_args
+    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
+
+    expected_url  = ctx.expected_url_for_quotations(app, EndpointKey.RANKING_FLUCTUATION)
+    expected_trid = ctx.ki.trid_quotations.quotations(TrIdLeaf.RANKING_FLUCTUATION)
+
+    assert req_url == expected_url
+    assert req_headers.get("tr_id") == expected_trid
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+
+    # 파라미터: 시장코드는 고정, 스크린코드는 존재만 엄격 확인(값은 구현별)
+    assert req_params.get("fid_cond_mrkt_div_code") == "J"
+    assert req_params.get("fid_cond_scr_div_code")  # non-empty 존재
+
+    # === 뷰 검증: 리스트(ResFluctuation 리스트) 전달 ===
+    app.cli_view.display_top_stocks_ranking.assert_called_once()
+    app.cli_view.display_top_stocks_ranking_error.assert_not_called()
+
+    title_arg, items_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
+    assert title_arg == "fall"
+    assert isinstance(items_arg, list) and len(items_arg) == 2
+
+    codes = {
+        (x.stck_shrn_iscd if hasattr(x, "stck_shrn_iscd") else x.get("stck_shrn_iscd"))
+        for x in items_arg
+    }
+    assert codes == {"005930", "000660"}
 
 
 @pytest.mark.asyncio

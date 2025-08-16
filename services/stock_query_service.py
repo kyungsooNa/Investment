@@ -507,7 +507,6 @@ class StockQueryService:
 
         return response
 
-
     async def handle_get_stock_news(self, stock_code: str):
         """종목 뉴스 조회 및 출력."""
         print(f"\n--- {stock_code} 종목 뉴스 조회 ---")
@@ -570,3 +569,18 @@ class StockQueryService:
         """
         self.logger.info(f"StockQueryService - 실시간 스트림 요청: 종목={stock_codes}, 필드={fields}, 시간={duration}s")
         await self.trading_service.handle_realtime_stream(stock_codes, fields, duration)
+
+    async def get_ohlcv(self, stock_code: str, period: str = "D", limit: int = 120) -> ResCommonResponse:
+        """
+        OHLCV 데이터를 TradingService에서 받아 그대로 반환.
+        (출력은 하지 않음: viewer로 위임)
+        """
+        self.logger.info(f"ServiceHandler - {stock_code} OHLCV 데이터 요청 period={period}, limit={limit}")
+        try:
+            resp: ResCommonResponse = await self.trading_service.get_ohlcv(
+                stock_code, period=period, limit=limit
+            )
+            return resp
+        except Exception as e:
+            self.logger.error(f"{stock_code} OHLCV 데이터 처리 중 오류: {e}", exc_info=True)
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=[])

@@ -455,3 +455,79 @@ class TradingService:
 
             await self.disconnect_websocket()
             self._logger.info("실시간 스트림 종료")
+
+    async def get_ohlcv(
+        self,
+        stock_code: str,
+        period: str = "D",            # "D"=일봉, "M"=분봉 (KIS 구현 기준)
+        limit: int = 120,
+        date: str | None = None,      # 기준일(YYYYMMDD). None이면 오늘
+    ) -> ResCommonResponse:
+        """
+        차트 API(일봉/분봉)를 호출해 표준 OHLCV(list[dict])로 정규화해서 반환합니다.
+        출력(프린트)은 하지 않으며, 로그만 남깁니다.
+        """
+        self._logger.info(
+            f"Service - {stock_code} OHLCV 데이터 요청 period={period}, limit={limit}, date={date}"
+        )
+
+        try:
+            # 기준일 결정 (TimeManager가 있으면 KST 기준, 없으면 시스템 시간)
+            call_date = (
+                self._time_manager.get_current_kst_time().strftime("%Y%m%d")
+                if (date is None and self._time_manager)
+                else (date or datetime.now().strftime("%Y%m%d"))
+            )
+
+            # 실제 API 호출 (Wrapper → Client → Quotations)
+            raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+                stock_code=stock_code,
+                date=call_date,
+                fid_period_div_code=(period or "D").upper(),
+            )
+
+            if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
+                # 하위 계층에서 이미 에러코드/메시지 세팅됨
+                return raw or ResCommonResponse(
+                    rt_cd=ErrorCode.API_ERROR.value,
+                    msg1="차트 API 실패",
+                    data=[],
+                )
+
+            items = raw.data or []
+
+            def _get(it, key, default=None):
+                return it.get(key, default) if isinstance(it, dict) else getattr(it, key, default)
+
+            # KIS 응답(ResDailyChartApiItem)을 표준 OHLCV로 정규화
+            rows = [
+                {
+                    "date":   _get(it, "stck_bsop_date"),  # YYYYMMDD
+                    "open":   _get(it, "stck_oprc"),
+                    "high":   _get(it, "stck_hgpr"),
+                    "low":    _get(it, "stck_lwpr"),
+                    "close":  _get(it, "stck_clpr"),
+                    "volume": _get(it, "acml_vol"),
+                }
+                for it in items
+                if it
+            ]
+
+            # 날짜 오름차순 정렬 후 마지막 N개
+            rows.sort(key=lambda r: (r.get("date") or ""))
+            if isinstance(limit, int) and limit > 0:
+                rows = rows[-limit:]
+
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1=f"OHLCV {len(rows)}건",
+                data=rows,
+            )
+
+        except Exception as e:
+            self._logger.error(f"Service - OHLCV 처리 예외: {e}", exc_info=True)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,
+                msg1=str(e),
+                data=[],
+            )

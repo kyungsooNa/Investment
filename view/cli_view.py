@@ -422,3 +422,31 @@ class CLIView:
         self._print_common_header()
         print(f"\n실패: {etf_code} ETF 정보 조회. ({msg})")
 
+    def display_ohlcv(self, stock_code: str, rows: list[dict]):
+        """OHLCV 표 출력 (최근 10개 미리보기)."""
+        self._print_common_header()
+        print(f"\n--- {stock_code} OHLCV ---")
+
+        if not rows:
+            print("데이터가 없습니다.")
+            return
+
+        preview = rows[-10:]
+        print("-" * 78)
+        print(f"{'DATE':<10} | {'OPEN':>10} | {'HIGH':>10} | {'LOW':>10} | {'CLOSE':>10} | {'VOLUME':>12}")
+        print("-" * 78)
+        for r in preview:
+            print(
+                f"{str(r.get('date','')):<10} | "
+                f"{str(r.get('open','')):>10} | "
+                f"{str(r.get('high','')):>10} | "
+                f"{str(r.get('low','')):>10} | "
+                f"{str(r.get('close','')):>10} | "
+                f"{str(r.get('volume','')):>12}"
+            )
+        print("-" * 78)
+
+    def display_ohlcv_error(self, stock_code: str, message: str):
+        """OHLCV 조회 실패 출력."""
+        self._print_common_header()
+        print(f"\n실패: {stock_code} OHLCV 조회. ({message})")

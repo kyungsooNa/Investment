@@ -27,7 +27,8 @@ class UserActionExecutor:
         '6':  ('시세 조회',      '시가대비 등락률 조회',                    'handle_open_vs_current_rate'),
         '7':  ('시세 조회',      '실시간 호가 조회',                        'handle_asking_price'),
         '8':  ('시세 조회',      '시간대별 체결가 조회',                    'handle_time_conclude'),
-        '10': ('시세 조회',      'ETF 정보 조회',                            'handle_etf_info'),
+        '10': ('시세 조회',      'ETF 정보 조회',                         'handle_etf_info'),
+        '11': ('시세 조회',      'OHLCV(차트) 조회',                      'handle_ohlcv'),
 
         '13': ('랭킹/필터링',    '시가총액 상위 조회 (실전 전용)',           'handle_top_market_cap_stocks'),
         '14': ('랭킹/필터링',    '시가총액 상위 10개 현재가 (실전 전용)',     'handle_top_10_market_cap_stocks'),
@@ -140,6 +141,31 @@ class UserActionExecutor:
     async def handle_etf_info(self) -> None:
         etf_code = await self.app.cli_view.get_user_input("정보를 조회할 ETF 코드를 입력하세요(나스닥 ETF: 133690): ")
         await self.app.stock_query_service.handle_get_etf_info(etf_code)
+
+    async def handle_ohlcv(self) -> None:
+        stock_code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
+        period = await self.app.cli_view.get_user_input("기간코드(D=일봉, M=분봉) [기본: D]: ")
+        limit_in = await self.app.cli_view.get_user_input("최근 몇 개 캔들을 볼까요? [기본: 120]: ")
+
+        period = (period or "D").strip().upper()
+        try:
+            limit = int(limit_in) if limit_in else 120
+            if limit <= 0:
+                self.app.cli_view.display_invalid_input_warning("0 이하 불가. 기본값 120 사용.")
+                limit = 120
+        except ValueError:
+            self.app.cli_view.display_invalid_input_warning("숫자가 아님. 기본값 120 사용.")
+            limit = 120
+
+        resp = await self.app.stock_query_service.get_ohlcv(stock_code, period=period, limit=limit)
+
+        # 3) 성공/실패 판단 후 출력은 전부 viewer로 위임
+        ok = bool(resp) and str(resp.rt_cd) == str(ErrorCode.SUCCESS.value)
+        if ok:
+            self.app.cli_view.display_ohlcv(stock_code, resp.data or [])
+        else:
+            msg = (resp.msg1 if resp else "응답 없음")
+            self.app.cli_view.display_ohlcv_error(stock_code, msg)
 
     async def handle_top_market_cap_stocks(self) -> None:
         if self.app.env.is_paper_trading:
