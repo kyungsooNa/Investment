@@ -431,7 +431,7 @@ class CLIView:
             print("데이터가 없습니다.")
             return
 
-        preview = rows[-10:]
+        preview = rows[-30:]
         print("-" * 78)
         print(f"{'DATE':<10} | {'OPEN':>10} | {'HIGH':>10} | {'LOW':>10} | {'CLOSE':>10} | {'VOLUME':>12}")
         print("-" * 78)

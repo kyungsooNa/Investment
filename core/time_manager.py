@@ -3,7 +3,7 @@ import time
 import pytz
 import logging
 import asyncio  # 비동기 sleep을 위해 추가
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 
 class TimeManager:
@@ -136,3 +136,19 @@ class TimeManager:
     def is_weekend_or_holiday(self, date: datetime) -> bool:
         # ✅ 필요 시 공휴일 판단 로직 추가
         return date.weekday() >= 5  # 토, 일
+
+    def to_yyyymmdd(self, val) -> str:
+        """여러 타입을 YYYYMMDD 문자열로 안전 변환"""
+        if val is None:
+            dt = self.get_current_kst_time()
+
+            return dt.strftime("%Y%m%d")
+        if isinstance(val, str):
+            return val  # 가정: 이미 'YYYYMMDD'
+        if isinstance(val, (datetime, date)):
+            return val.strftime("%Y%m%d")
+        if callable(val):  # 실수로 메서드 자체가 들어온 경우
+            return self.to_yyyymmdd(val())
+        # 숫자 등 기타
+        s = str(val)
+        return s

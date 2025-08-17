@@ -19,6 +19,7 @@ class SearchInfoParams:
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
 
+
 @dataclass(frozen=True)
 class InquirePriceParams:
     fid_cond_mrkt_div_code: str  # "J"
@@ -68,12 +69,12 @@ class DailyItemChartPriceParams:
     fid_org_adj_prc: Literal["0", "1"]  # 수정주가 여부
 
     @classmethod
-    def day(cls, stock_code: str, date: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0"):
+    def day(cls, stock_code: str, start_date: str, end_date: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0"):
         return cls(
             fid_cond_mrkt_div_code=market,
             fid_input_iscd=stock_code,
-            fid_input_date_1=date,
-            fid_input_date_2=date,
+            fid_input_date_1=start_date,
+            fid_input_date_2=end_date,
             fid_period_div_code="D",
             fid_org_adj_prc=adj,
         )
@@ -378,6 +379,7 @@ class FluctuationParams:
                          price_1=price_1, price_2=price_2, vol_cnt=vol_cnt,
                          trgt_cls=trgt_cls, trgt_exls=trgt_exls, div_cls=div_cls)
 
+
 @dataclass(frozen=True)
 class AccountBalanceParams:
     CANO: str  # 계좌번호 앞 8자리
@@ -424,6 +426,7 @@ class AccountBalanceParams:
             CTX_AREA_NK100=ctx_area_nk100,
         )
 
+
 @dataclass(frozen=True)
 class OrderCashBody:
     CANO: str
@@ -435,6 +438,7 @@ class OrderCashBody:
 
     def to_dict(self):
         return asdict(self)
+
 
 # ---- 얇은 파사드: 기존 코드에서 함수 호출만으로 dict를 얻을 수 있게 ----
 
@@ -458,12 +462,13 @@ class Params:
         return TimeConcludeParams.of(stock_code, market).to_dict()
 
     @staticmethod
-    def daily_itemchartprice_day(stock_code: str, date: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0") -> \
+    def daily_itemchartprice_day(stock_code: str, start_date: str, end_date: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0") -> \
             Dict[str, str]:
-        return DailyItemChartPriceParams.day(stock_code, date, market, adj).to_dict()
+        return DailyItemChartPriceParams.day(stock_code, start_date, end_date, market, adj).to_dict()
 
     @staticmethod
-    def daily_itemchartprice_min(stock_code: str, date: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0") -> \
+    def daily_itemchartprice_minute(stock_code: str, date: str, market: MarketCode = "J",
+                                    adj: Literal["0", "1"] = "0") -> \
             Dict[str, str]:
         return DailyItemChartPriceParams.minute(stock_code, date, market, adj).to_dict()
 
@@ -533,20 +538,19 @@ class Params:
             trgt_cls=trgt_cls, trgt_exls=trgt_exls, div_cls=div_cls
         ).to_dict()
 
-
     @staticmethod
     def account_balance(
-        cano: str,
-        acnt_prdt_cd: str = "01",
-        afhr_flpr_yn: str = "N",
-        fncg_amt_auto_rdpt_yn: str = "N",
-        fund_sttl_icld_yn: str = "N",
-        inqr_dvsn: str = "01",
-        ofl_yn: str = "N",
-        prcs_dvsn: str = "01",
-        unpr_dvsn: str = "01",
-        ctx_area_fk100: str = "",
-        ctx_area_nk100: str = "",
+            cano: str,
+            acnt_prdt_cd: str = "01",
+            afhr_flpr_yn: str = "N",
+            fncg_amt_auto_rdpt_yn: str = "N",
+            fund_sttl_icld_yn: str = "N",
+            inqr_dvsn: str = "01",
+            ofl_yn: str = "N",
+            prcs_dvsn: str = "01",
+            unpr_dvsn: str = "01",
+            ctx_area_fk100: str = "",
+            ctx_area_nk100: str = "",
     ) -> Dict[str, str]:
         return AccountBalanceParams.create(
             cano, acnt_prdt_cd,

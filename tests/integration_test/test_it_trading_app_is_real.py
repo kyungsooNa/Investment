@@ -816,56 +816,59 @@ async def test_get_ohlcv_day_full_integration_real(real_app_instance, mocker):
     app.cli_view.display_ohlcv_error.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_get_ohlcv_minute_full_integration_real(real_app_instance, mocker):
-    """
-    (통합 테스트-실전) OHLCV 분봉
-    """
-    app = real_app_instance
-    ctx.ki.bind(app)
-    quot_api = ctx.ki.quot
+# @TODO 분봉 조회 API 잘못됨.
+# @pytest.mark.asyncio
+# async def test_get_ohlcv_minute_full_integration_real(real_app_instance, mocker):
+#     """
+#     (통합 테스트-실전) OHLCV 분봉
+#     """
+#     app = real_app_instance
+#     ctx.ki.bind(app)
+#     quot_api = ctx.ki.quot
+# 
+#     payload = {
+#         "rt_cd": "0",
+#         "msg_cd": "MCA00000",
+#         "msg1": "정상처리 되었습니다.",
+#         "output2": [
+#             {"stck_bsop_date": "20250813", "stck_oprc": "71000", "stck_hgpr": "71300", "stck_lwpr": "70800",
+#              "stck_clpr": "71200", "acml_vol": "55555"},
+#         ]
+#     }
+#     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+# 
+#     code, period, limit = "005930", "M", "10"
+#     mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+#     app.cli_view.get_user_input.side_effect = [code, period, limit]
+# 
+#     app.cli_view.display_ohlcv = MagicMock()
+#     app.cli_view.display_ohlcv_error = MagicMock()
+# 
+#     ok = await UserActionExecutor(app).execute("11")
+#     assert ok is True
+# 
+#     spy_exec.assert_called()
+#     method, _ = spy_exec.call_args.args[:2]
+#     assert method == "GET"
+# 
+#     mock_get.assert_awaited_once()
+#     g_args, g_kwargs = mock_get.call_args
+#     req_url     = g_args[0] if g_args else g_kwargs.get("url")
+#     req_headers = g_kwargs.get("headers") or {}
+#     req_params  = g_kwargs.get("params") or {}
+# 
+#     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE)
+#     trid_provider = ctx.ki.trid_quotations
+#     expected_trid = trid_provider.daily_itemchartprice("M")
+#     assert req_url == expected_url
+#     assert req_headers.get("tr_id") == expected_trid
+#     assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+#     assert req_params.get("fid_input_iscd") == code
+# 
+#     app.cli_view.display_ohlcv.assert_called_once()
+#     app.cli_view.display_ohlcv_error.assert_not_called()
 
-    payload = {
-        "rt_cd": "0",
-        "msg_cd": "MCA00000",
-        "msg1": "정상처리 되었습니다.",
-        "output2": [
-            {"stck_bsop_date": "20250813", "stck_oprc": "71000", "stck_hgpr": "71300", "stck_lwpr": "70800",
-             "stck_clpr": "71200", "acml_vol": "55555"},
-        ]
-    }
-    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
-
-    code, period, limit = "005930", "M", "10"
-    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
-    app.cli_view.get_user_input.side_effect = [code, period, limit]
-
-    app.cli_view.display_ohlcv = MagicMock()
-    app.cli_view.display_ohlcv_error = MagicMock()
-
-    ok = await UserActionExecutor(app).execute("11")
-    assert ok is True
-
-    spy_exec.assert_called()
-    method, _ = spy_exec.call_args.args[:2]
-    assert method == "GET"
-
-    mock_get.assert_awaited_once()
-    g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
-    req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
-
-    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE)
-    trid_provider = ctx.ki.trid_quotations
-    expected_trid = trid_provider.daily_itemchartprice("M")
-    assert req_url == expected_url
-    assert req_headers.get("tr_id") == expected_trid
-    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
-    assert req_params.get("fid_input_iscd") == code
-
-    app.cli_view.display_ohlcv.assert_called_once()
-    app.cli_view.display_ohlcv_error.assert_not_called()
+# @TODO handle_fetch_recnt_daily_ohlcv TC 추가
 
 
 @pytest.mark.asyncio

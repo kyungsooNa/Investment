@@ -20,3 +20,4 @@ cache:
     - common.types.ResStockFullInfoApiOutput
     - common.types.ResFluctuation
     - common.types.ResPriceSummary
+    - common.types.ResDailyChartApiItem
