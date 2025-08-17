@@ -278,9 +278,11 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             data=results
         )
 
-    async def inquire_daily_itemchartprice(self, stock_code: str, date: str, fid_input_iscd: str = '00',
-                                           fid_input_date_1: str = '', fid_input_date_2: str = '',
+    async def inquire_daily_itemchartprice(self, stock_code: str,
+                                           start_date: str = '',
+                                           end_date: str = '',
                                            fid_period_div_code: str = 'D',
+                                           fid_input_iscd: str = '00',
                                            fid_org_adj_prc: str = '0') -> ResCommonResponse:
         """
         일별/주별/월별/분별/틱별 주식 시세 차트 데이터를 조회합니다.
@@ -304,7 +306,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         if fid_period_div_code == "M" and hasattr(Params, "daily_itemchartprice_minute"):
             params = Params.daily_itemchartprice_minute(stock_code=stock_code, date=date)
         else:
-            params = Params.daily_itemchartprice_day(stock_code=stock_code, date=date)
+            params = Params.daily_itemchartprice_day(stock_code=stock_code, start_date=start_date,end_date= end_date)
 
         with self._headers.temp(tr_id=tr_id):
             response_data: ResCommonResponse = await self.call_api(

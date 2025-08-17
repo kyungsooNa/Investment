@@ -21,6 +21,7 @@
 StockQueryService: 앱 레벨 오케스트레이션
 필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
 IndicatorService로 계산 → 데이터만 반환
+11. Cache On/Off 기능 추가 file_cache_enabled: true, memory_cache_enabled: true
 ### 실전
 
 9. API 잘못됨
@@ -191,15 +192,15 @@ AttributeError: 'NoneType' object has no attribute 'get_price_summary'
 ### 1. 기능 (Features)
 * **[신규 기능]** (주문/계좌) 
 * 주식주문(신용) 
-* 주식주문(정정취소)
-* 주식정정취소가능주문조회
+* 주식주문(정정취소)<
+* 주식정정취소가능주문조회<
 * 주식일별주문체결조회
-* 매수가능조회
-* 매도가능수량조회 
+* 매수가능조회<
+* 매도가능수량조회< 
 * 신용매수가능조회
-* 주식예약주문
-* 주식예약주문정정취소
-* 주식예약주문조회
+* 주식예약주문<
+* 주식예약주문정정취소<
+* 주식예약주문조회<
 * 주식잔고조회_실현손익
 * 투자계좌자산현황조회
 * 기간별손익일별합산조회
@@ -215,6 +216,8 @@ AttributeError: 'NoneType' object has no attribute 'get_price_summary'
 
 ### 2. 전략 (Strategy)
 * **[탐색 필요]** 다른 전략 탐색 (GPT 추천).
+* RVOLBreakout1020 전략 / 백테스트 추가
+* ConsolidationScanner 기능 추가.
 
 ### 3. 테스트 (Tests)
 * **[확장 필요]** 통합 테스트의 범위 확장: 실제 API 호출을 포함하는 제한된 통합 테스트 추가 (외부 API 안정성 보장 시).

@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from pandas.io.common import get_handle
 
+from config.DynamicConfig import DynamicConfig
+
 if TYPE_CHECKING:
     from app.trading_app import TradingApp
 
@@ -29,6 +31,7 @@ class UserActionExecutor:
         '8':  ('시세 조회',      '시간대별 체결가 조회',                    'handle_time_conclude'),
         '10': ('시세 조회',      'ETF 정보 조회',                         'handle_etf_info'),
         '11': ('시세 조회',      'OHLCV(차트) 조회',                      'handle_ohlcv'),
+        '12': ('시세 조회',      '최근 일봉 120개 조회',                   'handle_fetch_recnt_daily_ohlcv'),
 
         '13': ('랭킹/필터링',    '시가총액 상위 조회 (실전 전용)',           'handle_top_market_cap_stocks'),
         '14': ('랭킹/필터링',    '시가총액 상위 10개 현재가 (실전 전용)',     'handle_top_10_market_cap_stocks'),
@@ -145,22 +148,37 @@ class UserActionExecutor:
     async def handle_ohlcv(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
         period = await self.app.cli_view.get_user_input("기간코드(D=일봉, M=분봉) [기본: D]: ")
-        limit_in = await self.app.cli_view.get_user_input("최근 몇 개 캔들을 볼까요? [기본: 120]: ")
 
         period = (period or "D").strip().upper()
-        try:
-            limit = int(limit_in) if limit_in else 120
-            if limit <= 0:
-                self.app.cli_view.display_invalid_input_warning("0 이하 불가. 기본값 120 사용.")
-                limit = 120
-        except ValueError:
-            self.app.cli_view.display_invalid_input_warning("숫자가 아님. 기본값 120 사용.")
-            limit = 120
 
-        resp = await self.app.stock_query_service.get_ohlcv(stock_code, period=period, limit=limit)
+        resp = await self.app.stock_query_service.get_ohlcv(stock_code, period=period)
 
         # 3) 성공/실패 판단 후 출력은 전부 viewer로 위임
         ok = bool(resp) and str(resp.rt_cd) == str(ErrorCode.SUCCESS.value)
+        if ok:
+            self.app.cli_view.display_ohlcv(stock_code, resp.data or [])
+        else:
+            msg = (resp.msg1 if resp else "응답 없음")
+            self.app.cli_view.display_ohlcv_error(stock_code, msg)
+
+    async def handle_fetch_recnt_daily_ohlcv(self) -> None:
+        stock_code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
+        limit_in = await self.app.cli_view.get_user_input(f"최근 몇 개 일봉? [기본: {DynamicConfig.OHLCV.MAX_RANGE}]: ")
+
+        # 숫자 파싱 (기본 100)
+        try:
+            limit = int(limit_in) if limit_in else DynamicConfig.OHLCV.MAX_RANGE
+            if limit <= 0:
+                self.app.cli_view.display_invalid_input_warning("0 이하 불가. 기본값 100 사용.")
+                limit = DynamicConfig.OHLCV.MAX_RANGE
+        except ValueError:
+            self.app.cli_view.display_invalid_input_warning("숫자가 아님. 기본값 100 사용.")
+            limit = DynamicConfig.OHLCV.MAX_RANGE
+
+        # 서비스 호출 → 결과 출력은 전부 cli_view로 위임
+        resp = await self.app.stock_query_service.get_recent_daily_ohlcv(stock_code, limit=limit)
+        ok = bool(resp) and str(resp.rt_cd) == str(ErrorCode.SUCCESS.value)
+
         if ok:
             self.app.cli_view.display_ohlcv(stock_code, resp.data or [])
         else:

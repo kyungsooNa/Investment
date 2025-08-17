@@ -32,6 +32,7 @@ class ErrorCode(Enum):
     MISSING_KEY = "104"  # MISSING_KEY
     RETRY_LIMIT = "105"  # RETRY_LIMIT
     WRONG_RET_TYPE = "106"  # WRONG_RET_TYPE
+    EMPTY_VALUES = "107"  # 조회 결과 없음
     UNKNOWN_ERROR = "999"  # 기타 오류
 
 

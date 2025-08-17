@@ -244,9 +244,9 @@ async def test_inquire_daily_itemchartprice_delegation(korea_invest_client_insta
     client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
     mock_quotations.inquire_daily_itemchartprice.return_value = [{"date": "20230101", "price": "70000"}]
 
-    result = await client.inquire_daily_itemchartprice("005930", "20230101", "D")
+    result = await client.inquire_daily_itemchartprice("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
 
-    mock_quotations.inquire_daily_itemchartprice.assert_awaited_once_with("005930", "20230101", fid_period_div_code="D")
+    mock_quotations.inquire_daily_itemchartprice.assert_awaited_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
     assert result == [{"date": "20230101", "price": "70000"}]
 
 
