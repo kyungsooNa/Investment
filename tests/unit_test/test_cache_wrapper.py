@@ -3,7 +3,7 @@
 import pytest
 import json
 import pytz
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 from core.cache.cache_wrapper import cache_wrap_client
 from core.cache.cache_manager import CacheManager
 from datetime import datetime, timedelta
@@ -237,3 +237,146 @@ async def test_client_with_cache_file_save(cache_manager, test_cache_config, tmp
         assert payload["data"]["msg1"] == "정상"
         assert payload["data"]["data"]["key"] == f"value-{data}"
         assert "timestamp" in payload
+
+
+class _DummyApiClientForBypass:
+    async def get_data(self, x):
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data={"key": f"value-{x}"})
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_caching_disabled_bypass(tmp_path):
+    """둘 다 OFF면 매 호출마다 API로 바로 가야 하고 파일이 생성되면 안 됨"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": ["get_data"],
+            "deserializable_classes": [],
+            "memory_cache_enabled": False,
+            "file_cache_enabled": False,
+        }
+    }
+    cm = CacheManager(config=config)
+
+    logger = MagicMock()
+    time_manager = MagicMock()
+    time_manager.is_market_open.return_value = False  # 상관없지만 일관성 유지
+
+    wrapped = cache_wrap_client(
+        api_client=_DummyApiClientForBypass(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cm,
+        config=config
+    )
+
+    # 내부 API 메서드 호출 횟수 추적(실제로 두 번 호출되어야 함: 캐시가 없으므로)
+    wrapped._client.get_data = AsyncMock(side_effect=wrapped._client.get_data)
+
+    r1 = await wrapped.get_data(1)
+    r2 = await wrapped.get_data(1)
+    assert r1.data["key"] == "value-1"
+    assert r2.data["key"] == "value-1"
+    assert wrapped._client.get_data.await_count == 2  # 캐싱 없음
+
+    # 로그 확인
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("Caching disabled" in msg for msg in debug_logs)
+
+    # 파일 생성되지 않아야 함
+    assert not (tmp_path / "TEST_get_data_1.json").exists()
+
+class _DummyApiClient:
+    async def get_data(self, x):
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data={"key": f"value-{x}"})
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_memory_off_file_on_reads_file(tmp_path):
+    """메모리 OFF / 파일 ON → 두 번째 호출 시 파일 캐시 HIT"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": ["get_data"],
+            "deserializable_classes": [],
+            "memory_cache_enabled": False,
+            "file_cache_enabled": True,
+        }
+    }
+    cm = CacheManager(config=config)
+
+    logger = MagicMock()
+    tz = pytz.timezone("Asia/Seoul")
+    now = tz.localize(datetime.now())
+    time_manager = MagicMock(
+        is_market_open=MagicMock(return_value=False),
+        market_timezone=tz,
+        get_latest_market_close_time=MagicMock(return_value=now - timedelta(minutes=5)),
+        get_next_market_open_time=MagicMock(return_value=now + timedelta(hours=8)),
+        get_current_kst_time=MagicMock(return_value=now),
+    )
+
+    wrapped = cache_wrap_client(
+        api_client=_DummyApiClient(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cm,
+        config=config
+    )
+
+    # 1st call: save to file
+    await wrapped.get_data(7)
+    # 메모리 캐시가 없으므로, 2nd call은 파일 캐시 경로로 HIT
+    await wrapped.get_data(7)
+
+    # 파일 존재 확인
+    expected = tmp_path / "TEST_get_data_7.json"
+    assert expected.exists()
+
+    # 로그에 File Cache HIT 포함
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("File Cache HIT" in msg for msg in debug_logs)
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_file_off_memory_on_hits_memory(tmp_path):
+    """메모리 ON / 파일 OFF → 두 번째 호출 시 메모리 캐시 HIT, 파일은 생기지 않음"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": ["get_data"],
+            "deserializable_classes": [],
+            "memory_cache_enabled": True,
+            "file_cache_enabled": False,
+        }
+    }
+    cm = CacheManager(config=config)
+
+    logger = MagicMock()
+    tz = pytz.timezone("Asia/Seoul")
+    now = tz.localize(datetime.now())
+    time_manager = MagicMock(
+        is_market_open=MagicMock(return_value=False),
+        market_timezone=tz,
+        get_latest_market_close_time=MagicMock(return_value=now - timedelta(minutes=5)),
+        get_next_market_open_time=MagicMock(return_value=now + timedelta(hours=8)),
+        get_current_kst_time=MagicMock(return_value=now),
+    )
+
+    wrapped = cache_wrap_client(
+        api_client=_DummyApiClient(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cm,
+        config=config
+    )
+
+    await wrapped.get_data(5)   # 캐시 저장(메모리만)
+    await wrapped.get_data(5)   # 메모리 HIT 기대
+
+    # 파일이 없어야 함
+    assert not (tmp_path / "TEST_get_data_5.json").exists()
+
+    # 로그에 Memory Cache HIT 포함
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("Memory Cache HIT" in msg for msg in debug_logs)

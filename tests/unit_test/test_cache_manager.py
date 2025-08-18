@@ -182,3 +182,76 @@ def test_cache_manager_file_cache_clear(tmp_path):
     # ✅ 파일 캐시 제거 확인
     assert not path1.exists()
     assert not path2.exists()
+
+def test_cache_manager_memory_off_uses_file_only(tmp_path):
+    """memory_cache_enabled: false, file_cache_enabled: true → 파일 캐시만 동작"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": [],
+            "deserializable_classes": [],
+            "memory_cache_enabled": False,
+            "file_cache_enabled": True,
+        }
+    }
+    cm = CacheManager(config=config)
+
+    key = "mem_off_file_on"
+    payload = {"timestamp": datetime.now().isoformat(), "data": {"v": 1}}
+
+    # 메모리 OFF 상태에서 set(save_to_file=False)는 아무 것도 저장되지 않음
+    cm.set(key, payload, save_to_file=False)
+    assert cm.get_raw(key) is None
+
+    # 파일로 저장하면 이후 get_raw가 파일에서 읽어와야 함
+    cm.set(key, payload, save_to_file=True)
+    loaded, cache_type = cm.get_raw(key)
+    assert loaded["data"] == {"v": 1}
+    assert cache_type == "file"
+
+def test_cache_manager_file_off_uses_memory_only(tmp_path):
+    """memory_cache_enabled: true, file_cache_enabled: false → 메모리 캐시만 동작"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": [],
+            "deserializable_classes": [],
+            "memory_cache_enabled": True,
+            "file_cache_enabled": False,
+        }
+    }
+    cm = CacheManager(config=config)
+
+    key = "file_off_mem_on"
+    payload = {"timestamp": datetime.now().isoformat(), "data": {"v": 2}}
+
+    # save_to_file=True라도 파일 캐시 OFF면 디스크에 파일이 생기면 안 됨
+    cm.set(key, payload, save_to_file=True)
+    loaded, cache_type = cm.get_raw(key)
+    assert loaded["data"] == {"v": 2}
+    assert cache_type == "memory"
+    assert not (tmp_path / f"{key}.json").exists()
+
+def test_cache_manager_both_off_is_noop(tmp_path):
+    """둘 다 OFF면 set/get/delete/clear 모두 no-op이어야 함(예외 없이 안전 동작)"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": [],
+            "deserializable_classes": [],
+            "memory_cache_enabled": False,
+            "file_cache_enabled": False,
+        }
+    }
+    cm = CacheManager(config=config)
+
+    key = "both_off"
+    payload = {"timestamp": datetime.now().isoformat(), "data": {"v": 3}}
+
+    # set이 no-op
+    cm.set(key, payload, save_to_file=True)
+    assert cm.get_raw(key) is None
+
+    # delete/clear도 예외 없이 동작
+    cm.delete(key)
+    cm.clear()
