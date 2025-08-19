@@ -561,7 +561,7 @@ class TradingService:
     async def get_recent_daily_ohlcv(
             self,
             code: str,
-            limit: int = DynamicConfig.OHLCV.MAX_RANGE,
+            limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE,
             end_date: Optional[str] = None,
             start_date: Optional[str] = None,  # (옵션) 달력기준 시작일 강제 시 사용
     ) -> List[Dict[str, Any]]:
@@ -596,3 +596,39 @@ class TradingService:
         # 3) 최근 120개 슬라이스(거래일 기준 보장)
         rows = rows[-limit:] if limit and len(rows) > limit else rows
         return rows
+
+    async def get_intraday_minutes_today(self, *, stock_code: str, input_hour_1: str) -> ResCommonResponse:
+        """
+        URL: /quotations/inquire-time-itemchartprice
+        TR : FHKST03010200 (모의/실전 공통)
+        """
+        # 기본값들(필요시 조정): UN=통합, 과거데이터 포함, 기타구분 "0"
+        return await self._broker_api_wrapper.inquire_time_itemchartprice(
+            stock_code=stock_code,
+            input_hour_1=input_hour_1,
+            pw_data_incu_yn="Y",
+            etc_cls_code="0",
+        )
+
+    async def get_intraday_minutes_by_date(
+        self, *, stock_code: str, input_date_1: str, input_hour_1: str = ""
+    ) -> ResCommonResponse:
+        """
+        URL: /quotations/inquire-time-dailychartprice
+        TR : FHKST03010230 (실전만)
+        """
+        if self._env.is_paper_trading:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value,
+                msg1="일별 분봉(inquire-time-dailychartprice)은 모의투자 미지원입니다.",
+                data=[]
+            )
+
+        # 허봉 포함은 '공백 필수' 스펙
+        return await self._broker_api_wrapper.inquire_time_dailychartprice(
+            stock_code=stock_code,
+            input_date_1=input_date_1,
+            input_hour_1=input_hour_1,
+            pw_data_incu_yn="Y",
+            fake_tick_incu_yn="",   # 공백 필수
+        )

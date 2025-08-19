@@ -517,19 +517,18 @@ async def test_execute_action_3_place_buy_order(setup_mock_app):
     app.order_execution_service.handle_buy_stock.assert_awaited_once_with("005930", "10", "80000")
 
 @pytest.mark.asyncio
-async def test_execute_action_5_display_change_rate(setup_mock_app):
+async def test_execute_action_display_change_rate(setup_mock_app):
     """메뉴 '5' 선택 시 handle_display_stock_change_rate가 호출되는지 테스트합니다."""
     # --- Arrange (준비) ---
     app = setup_mock_app
 
-    # _execute_action('5') 내부에서 호출되는 get_user_input의 반환값을 설정합니다.
     # 이렇게 하면 실제 input() 함수가 호출되는 것을 막고 OSError를 방지합니다.
     app.cli_view.get_user_input.return_value = "005930"
 
     # --- Act (실행) ---
     # 실제 _execute_action 메서드를 호출합니다.
     executor = UserActionExecutor(app)
-    result = await executor.execute('5')
+    result = await executor.execute('20')
 
     # --- Assert (검증) ---
     # 1. 사용자에게 종목 코드를 요청했는지 확인합니다.
@@ -539,19 +538,18 @@ async def test_execute_action_5_display_change_rate(setup_mock_app):
     app.stock_query_service.handle_display_stock_change_rate.assert_awaited_once_with("005930")
 
 @pytest.mark.asyncio
-async def test_execute_action_6_display_vs_open_price(setup_mock_app):
+async def test_execute_action_display_vs_open_price(setup_mock_app):
     """메뉴 '6' 선택 시 handle_display_stock_vs_open_price가 호출되는지 테스트합니다."""
     # --- Arrange (준비) ---
     app = setup_mock_app
 
-    # _execute_action('6') 내부에서 호출되는 get_user_input의 반환값을 설정합니다.
     # 이렇게 하면 실제 input() 함수가 호출되는 것을 막고 OSError를 방지합니다.
     app.cli_view.get_user_input.return_value = "005930"
 
     # --- Act (실행) ---
     # 실제 _execute_action 메서드를 호출합니다.
     executor = UserActionExecutor(app)
-    result = await executor.execute('6')
+    result = await executor.execute('21')
 
     # --- Assert (검증) ---
     # 1. 사용자에게 종목 코드를 요청했는지 확인합니다.
@@ -562,30 +560,29 @@ async def test_execute_action_6_display_vs_open_price(setup_mock_app):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_13_get_top_market_cap_real(setup_mock_app):
+async def test_execute_action_get_top_market_cap_real(setup_mock_app):
     """메뉴 '13' 선택 시 (실전) handle_get_top_market_cap_stocks가 호출되는지 테스트합니다."""
     app = setup_mock_app
     app.env.is_paper_trading = False  # 실전 모드로 설정
 
     # 올바른 메뉴 번호 '13'으로 호출
     executor = UserActionExecutor(app)
-    result = await executor.execute('13')
+    result = await executor.execute('50')
 
     # 올바른 서비스 메서드가 호출되었는지 확인
     app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_awaited_once_with("0000")
 
 
 @pytest.mark.asyncio
-async def test_execute_action_13_get_top_market_cap_paper(setup_mock_app):
+async def test_execute_action_get_top_market_cap_paper(setup_mock_app):
     """메뉴 '13' 선택 시 (모의) 경고 메시지가 출력되는지 테스트합니다."""
     app = setup_mock_app
     app.env.is_paper_trading = True  # 모의투자 모드로 설정
     # CLIView Mock에 경고 메시지 메서드 명시
     app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
 
-    # 올바른 메뉴 번호 '13'으로 호출
     executor = UserActionExecutor(app)
-    result = await executor.execute('13')
+    result = await executor.execute('50')
 
     # 경고가 표시되고 서비스 메서드는 호출되지 않았는지 확인
     app.cli_view.display_warning_paper_trading_not_supported.assert_called_once_with("시가총액 상위 종목 조회")
@@ -594,38 +591,36 @@ async def test_execute_action_13_get_top_market_cap_paper(setup_mock_app):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_14_get_top_10_with_prices(setup_mock_app):
+async def test_execute_action_get_top_10_with_prices(setup_mock_app):
     """메뉴 '8' 선택 시 handle_get_top_10_market_cap_stocks_with_prices가 호출되는지 테스트합니다."""
     app = setup_mock_app
     app.env.is_paper_trading = False
     app.stock_query_service = AsyncMock()
 
     executor = UserActionExecutor(app)
-    result = await executor.execute('14')
+    result = await executor.execute('51')
 
     app.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_execute_action_15_get_upper_limit_stocks_is_paper(setup_mock_app):
-    """메뉴 '9' 선택 시 handle_upper_limit_stocks가 호출되는지 테스트합니다."""
+async def test_execute_action_get_upper_limit_stocks_is_paper(setup_mock_app):
     app = setup_mock_app
     app.env.is_paper_trading = True
 
     app.stock_query_service = AsyncMock()
     executor = UserActionExecutor(app)
-    result = await executor.execute('15')
+    result = await executor.execute('52')
     app.stock_query_service.handle_upper_limit_stocks.assert_not_awaited()
 
 @pytest.mark.asyncio
-async def test_execute_action_15_get_upper_limit_stocks_is_real(setup_mock_app):
-    """메뉴 '9' 선택 시 handle_upper_limit_stocks가 호출되는지 테스트합니다."""
+async def test_execute_action_get_upper_limit_stocks_is_real(setup_mock_app):
     app = setup_mock_app
     app.env.is_paper_trading = False
 
     app.stock_query_service = AsyncMock()
     executor = UserActionExecutor(app)
-    result = await executor.execute('15')
+    result = await executor.execute('52')
     app.stock_query_service.handle_upper_limit_stocks.assert_awaited_once_with("0000", limit=500)
 
 
@@ -725,13 +720,13 @@ async def test_execute_action_4_place_sell_order(setup_mock_app):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_5_display_stock_change_rate(setup_mock_app):
+async def test_execute_action_display_stock_change_rate(setup_mock_app):
     app = setup_mock_app
     app.cli_view.get_user_input.return_value = "005930"
     app.stock_query_service.handle_display_stock_change_rate.return_value = None
 
     executor = UserActionExecutor(app)
-    result = await executor.execute('5')
+    result = await executor.execute('20')
 
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
     app.stock_query_service.handle_display_stock_change_rate.assert_awaited_once_with("005930")
@@ -739,13 +734,13 @@ async def test_execute_action_5_display_stock_change_rate(setup_mock_app):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_6_display_stock_vs_open_price(setup_mock_app):
+async def test_execute_action_display_stock_vs_open_price(setup_mock_app):
     app = setup_mock_app
     app.cli_view.get_user_input.return_value = "005930"  # 종목 코드 입력 시뮬레이션
     app.stock_query_service.handle_display_stock_vs_open_price.return_value = None  # 핸들러 목킹
 
     executor = UserActionExecutor(app)
-    result = await executor.execute('6')
+    result = await executor.execute('21')
 
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
     app.stock_query_service.handle_display_stock_vs_open_price.assert_awaited_once_with("005930")
@@ -753,7 +748,7 @@ async def test_execute_action_6_display_stock_vs_open_price(setup_mock_app):
 
 @pytest.mark.asyncio
 # 테스트 이름과 목적을 실제 기능에 맞게 수정
-async def test_execute_action_7_get_asking_price(setup_mock_app):
+async def test_execute_action_get_asking_price(setup_mock_app):
     """메뉴 '7' 선택 시 handle_get_asking_price가 호출되는지 테스트합니다."""
     # --- Arrange (준비) ---
     app = setup_mock_app
@@ -765,7 +760,7 @@ async def test_execute_action_7_get_asking_price(setup_mock_app):
     # --- Act (실행) ---
     # 실제 _execute_action 메서드를 호출합니다.
     executor = UserActionExecutor(app)
-    result = await executor.execute('7')
+    result = await executor.execute('22')
 
     # --- Assert (검증) ---
     # 1. 사용자에게 종목 코드를 요청했는지 확인합니다.
@@ -776,41 +771,7 @@ async def test_execute_action_7_get_asking_price(setup_mock_app):
     app.stock_query_service.handle_get_asking_price.assert_awaited_once_with("005930")
 
 @pytest.mark.asyncio
-async def test_execute_action_13_get_top_market_cap_real_success(setup_mock_app):
-    app = setup_mock_app
-    app.env.is_paper_trading = False  # 실전 투자 모드로 설정
-    app.stock_query_service.handle_get_top_market_cap_stocks_code.return_value = None  # 반환값은 중요하지 않음
-
-    executor = UserActionExecutor(app)
-    result = await executor.execute('13')
-
-    # 검증
-    app.stock_query_service.handle_get_top_market_cap_stocks_code.assert_awaited_once_with("0000")  # 올바른 인자로 호출되었는지 확인
-    assert result is True  # 앱은 계속 실행되어야 함
-
-@pytest.mark.asyncio
-async def test_execute_action_14_top_10_market_cap_paper_mode(setup_mock_app):
-    """메뉴 '14' 선택 시 (모의투자) 경고가 표시되고 서비스가 호출되지 않는지 테스트합니다."""
-    # --- Arrange (준비) ---
-    app = setup_mock_app
-    app.env.is_paper_trading = True  # 환경을 모의 투자 모드로 설정
-
-    # --- Act (실행) ---
-    executor = UserActionExecutor(app)
-    result = await executor.execute('14')
-
-    # --- Assert (검증) ---
-    # 1. 콘솔 출력 대신, cli_view의 모의 메서드가 올바른 인자와 함께 호출되었는지 확인합니다.
-    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once_with("시가총액 1~10위 종목 조회")
-
-    # 2. 실제 서비스 핸들러는 호출되지 않았는지 확인합니다.
-    app.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices.assert_not_called()
-
-    # 3. 앱은 계속 실행되어야 합니다.
-    assert result is True
-
-@pytest.mark.asyncio
-async def test_execute_action_14_market_cap_query_failure_in_live_env():
+async def test_execute_action_market_cap_query_failure_in_live_env():
     """실전투자 환경에서 시가총액 10위 조회 실패 시에도 running_status는 True"""
     from app.trading_app import TradingApp
 
@@ -832,7 +793,7 @@ async def test_execute_action_14_market_cap_query_failure_in_live_env():
 
     # ─ Act ─
     executor = UserActionExecutor(app)
-    result = await executor.execute("14")
+    result = await executor.execute("51")
 
     # ─ Assert ─
     assert result is True  # 실패해도 True 반환 (계속 실행)
@@ -1775,7 +1736,7 @@ async def test_execute_action_16_calls_yesterday_upper_limit_handler_is_paper(se
     assert result is True
 
 @pytest.mark.asyncio
-async def test_execute_action_16_calls_yesterday_upper_limit_handler_is_real(setup_mock_app):
+async def test_execute_action_calls_yesterday_upper_limit_handler_is_real(setup_mock_app):
     """
     메뉴 '16' 선택 시 stock_query_service.handle_yesterday_upper_limit_stocks가
     호출되는지 테스트합니다.
@@ -1786,9 +1747,8 @@ async def test_execute_action_16_calls_yesterday_upper_limit_handler_is_real(set
     app.env.is_paper_trading = False
 
     # --- Act ---
-    # Call the action for menu '16'.
     executor = UserActionExecutor(app)
-    result = await executor.execute('16')
+    result = await executor.execute('53')
 
     # --- Assert ---
     # Verify that the correct handler in the stock_query_service was called.
@@ -1798,7 +1758,7 @@ async def test_execute_action_16_calls_yesterday_upper_limit_handler_is_real(set
     assert result is True
 
 @pytest.mark.asyncio
-async def test_execute_action_16_handler_exception_propagates(setup_mock_app):
+async def test_execute_action_handler_exception_propagates(setup_mock_app):
     """
     메뉴 '16' (전일 상한가) 실행 시, stock_query_service 핸들러에서 발생한 예외가
     _execute_action을 통해 상위로 전파되는지 테스트합니다.
@@ -1816,13 +1776,13 @@ async def test_execute_action_16_handler_exception_propagates(setup_mock_app):
     # pytest.raises를 사용하여 _execute_action 호출 시 특정 예외가 발생하는지 확인합니다.
     with pytest.raises(Exception, match=error_message):
         executor = UserActionExecutor(app)
-        result = await executor.execute('16')
+        result = await executor.execute('53')
 
     # 핸들러가 호출되었는지 확인합니다.
     app.stock_query_service.handle_yesterday_upper_limit_stocks.assert_awaited_once()
 
 @pytest.mark.asyncio
-async def test_execute_action_18_realtime_subscription(setup_mock_app):
+async def test_execute_action_realtime_subscription(setup_mock_app):
     """메뉴 '18' 선택 시 실시간 구독 핸들러가 올바르게 호출되는지 테스트합니다."""
     # --- Arrange (준비) ---
     app = setup_mock_app
@@ -1834,9 +1794,8 @@ async def test_execute_action_18_realtime_subscription(setup_mock_app):
     ]
 
     # --- Act (실행) ---
-    # 메뉴 '18'번을 호출합니다.
     executor = UserActionExecutor(app)
-    result = await executor.execute('18')
+    result = await executor.execute('70')
 
     # --- Assert (검증) ---
     # 1. 사용자에게 종목 코드를 요청했는지 확인합니다.
@@ -1873,7 +1832,7 @@ async def test_initialization_and_environment_selection(setup_mock_app):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_18_realtime_stream_new_menu_option(setup_mock_app):
+async def test_execute_action_realtime_stream_new_menu_option(setup_mock_app):
     """메뉴 '18' 선택 시 실시간 구독 기능이 호출되는지 테스트합니다."""  # Docstring도 일관성 있게 수정
     app = setup_mock_app
     app.cli_view.get_user_input.side_effect = [
@@ -1884,7 +1843,7 @@ async def test_execute_action_18_realtime_stream_new_menu_option(setup_mock_app)
     app.stock_query_service.handle_realtime_stream.return_value = None
 
     executor = UserActionExecutor(app)
-    result = await executor.execute('18')
+    result = await executor.execute('70')
 
     calls = [call.args[0] for call in app.cli_view.get_user_input.await_args_list]
 

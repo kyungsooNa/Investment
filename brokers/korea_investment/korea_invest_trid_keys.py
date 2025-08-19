@@ -6,13 +6,15 @@ class TrIdLeaf(str, Enum):
     SEARCH_INFO = "search_info"
     INQUIRE_PRICE = "inquire_price"
     MARKET_CAP = "market_cap"
-    DAILY_ITEMCHARTPRICE_DAY = "daily_itemchartprice_day"
-    DAILY_ITEMCHARTPRICE_MINUTE = "daily_itemchartprice_minute"
     ASKING_PRICE = "asking_price"
     TIME_CONCLUDE = "time_conclude"
     RANKING_FLUCTUATION = "ranking_fluctuation"
     RANKING_VOLUME = "ranking_volume"
     ETF_INFO = "etf_info"
+
+    DAILY_ITEMCHARTPRICE =      "inquire_daily_itemchartprice"           # 기간별 시세 (일/주/월/년)
+    TIME_ITEMCHARTPRICE =       "inquire_time_itemchartprice"             # 당일 분봉 조회
+    TIME_DAILY_ITEMCHARTPRICE = "inquire_time_daily_itemchartprice" # 일별 분봉 조회
 
     # ── 계좌(account) ───────────────────────────────────────────
     INQUIRE_BALANCE_REAL = "inquire_balance_real"

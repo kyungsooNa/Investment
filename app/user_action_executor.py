@@ -19,31 +19,38 @@ from collections import OrderedDict
 class UserActionExecutor:
     # 번호 -> (카테고리, 라벨, 핸들러명)
     COMMANDS: dict[str, tuple[str, str, str]] = {
-        '0':  ('기본 기능',      '거래 환경 변경',                          'handle_change_environment'),
-        '1':  ('기본 기능',      '현재가 조회',                              'handle_get_current_price'),
-        '2':  ('기본 기능',      '계좌 잔고 조회',                          'handle_account_balance'),
-        '3':  ('기본 기능',      '주식 매수',                                'handle_buy_stock'),
-        '4':  ('기본 기능',      '주식 매도',                                'handle_sell_stock'),
+        '0':  ('기본 기능',      '거래 환경 변경',                         'handle_change_environment'),
+        '1':  ('기본 기능',      '현재가 조회',                            'handle_get_current_price'),
+        '2':  ('기본 기능',      '계좌 잔고 조회',                         'handle_account_balance'),
+        '3':  ('기본 기능',      '주식 매수',                             'handle_buy_stock'),
+        '4':  ('기본 기능',      '주식 매도',                             'handle_sell_stock'),
 
-        '5':  ('시세 조회',      '전일대비 등락률 조회',                    'handle_stock_change_rate'),
-        '6':  ('시세 조회',      '시가대비 등락률 조회',                    'handle_open_vs_current_rate'),
-        '7':  ('시세 조회',      '실시간 호가 조회',                        'handle_asking_price'),
-        '8':  ('시세 조회',      '시간대별 체결가 조회',                    'handle_time_conclude'),
-        '10': ('시세 조회',      'ETF 정보 조회',                         'handle_etf_info'),
-        '11': ('시세 조회',      'OHLCV(차트) 조회',                      'handle_ohlcv'),
-        '12': ('시세 조회',      '최근 일봉 120개 조회',                   'handle_fetch_recnt_daily_ohlcv'),
 
-        '13': ('랭킹/필터링',    '시가총액 상위 조회 (실전 전용)',           'handle_top_market_cap_stocks'),
-        '14': ('랭킹/필터링',    '시가총액 상위 10개 현재가 (실전 전용)',     'handle_top_10_market_cap_stocks'),
-        '15': ('랭킹/필터링',    '전일 상한가 종목 (상위 500) (실전 전용)',   'handle_yesterday_upper_limit_500'),
-        '16': ('랭킹/필터링',    '전일 상한가 종목 (상위) (실전 전용)',       'handle_yesterday_upper_limit'),
-        '17': ('랭킹/필터링',    '현재 상한가 종목 (실전 전용)',              'handle_current_upper_limit'),
+        '20': ('시세 조회',      '전일대비 등락률 조회',                    'handle_stock_change_rate'),
+        '21': ('시세 조회',      '시가대비 등락률 조회',                    'handle_open_vs_current_rate'),
+        '22': ('시세 조회',      '실시간 호가 조회',                       'handle_asking_price'),
+        '23': ('시세 조회',      '시간대별 체결가 조회',                    'handle_time_conclude'),
+        '24': ('시세 조회',      'ETF 정보 조회',                         'handle_etf_info'),
+        '25': ('시세 조회',      'OHLCV(차트) 조회',                      'handle_ohlcv'),
+        '26': ('시세 조회',      '최근 일봉 조회',                         'handle_fetch_recnt_daily_ohlcv'),
+        '27': ('시세 조회',      '당일 분봉 조회',                         'handle_intraday_minutes_today'),
+        '28': ('시세 조회',      '일별 분봉 조회',                         'handle_intraday_minutes_by_date'),
 
-        '18': ('실시간 구독',    '실시간 체결가/호가 구독',                  'handle_realtime_stream'),
 
-        '30': ('랭킹/필터링2',   '거래량 상위 랭킹 (~30) (실전 전용)',        'handle_top_volume_30'),
-        '31': ('랭킹/필터링2',   '상승률 상위 랭킹 (~30) (실전 전용)',        'handle_top_rise_30'),
-        '32': ('랭킹/필터링2',   '하락률 상위 랭킹 (~30) (실전 전용)',        'handle_top_fall_30'),
+
+
+        '50': ('랭킹/필터링', '시가총액 상위 조회 (실전 전용)',             'handle_top_market_cap_stocks'),
+        '51': ('랭킹/필터링', '시가총액 상위 10개 현재가 (실전 전용)',      'handle_top_10_market_cap_stocks'),
+        '52': ('랭킹/필터링', '전일 상한가 종목 (상위 500) (실전 전용)',    'handle_yesterday_upper_limit_500'),
+        '53': ('랭킹/필터링', '전일 상한가 종목 (상위) (실전 전용)',        'handle_yesterday_upper_limit'),
+        '54': ('랭킹/필터링', '현재 상한가 종목 (실전 전용)',              'handle_current_upper_limit'),
+        '55': ('랭킹/필터링', '거래량 상위 랭킹 (~30) (실전 전용)',        'handle_top_volume_30'),
+        '56': ('랭킹/필터링', '상승률 상위 랭킹 (~30) (실전 전용)',        'handle_top_rise_30'),
+        '57': ('랭킹/필터링', '하락률 상위 랭킹 (~30) (실전 전용)',        'handle_top_fall_30'),
+
+
+        '70': ('실시간 구독', '실시간 체결가/호가 구독', 'handle_realtime_stream'),
+
 
         # ⬇️ 실행기의 번호(100/101/102)를 그대로 사용해 메뉴와 동기화
         '100': ('전략 실행', '모멘텀 전략 실행', 'handle_momentum_strategy'),
@@ -91,6 +98,13 @@ class UserActionExecutor:
     async def handle_change_environment(self) -> bool:
         self.app.logger.info("거래 환경 변경을 시작합니다.")
         return await self.app.select_environment()
+
+    async def handle_exit(self) -> bool:
+        self.app.cli_view.display_exit_message()
+        return False
+
+    async def handle_invalid_choice(self) -> None:
+        self.app.cli_view.display_invalid_menu_choice()
 
     async def handle_get_current_price(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
@@ -147,7 +161,7 @@ class UserActionExecutor:
 
     async def handle_ohlcv(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
-        period = await self.app.cli_view.get_user_input("기간코드(D=일봉, M=분봉) [기본: D]: ")
+        period = await self.app.cli_view.get_user_input("기간코드(D=일봉, W=주봉, M=월봉, Y=년봉) [기본: D]: ")
 
         period = (period or "D").strip().upper()
 
@@ -163,17 +177,17 @@ class UserActionExecutor:
 
     async def handle_fetch_recnt_daily_ohlcv(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
-        limit_in = await self.app.cli_view.get_user_input(f"최근 몇 개 일봉? [기본: {DynamicConfig.OHLCV.MAX_RANGE}]: ")
+        limit_in = await self.app.cli_view.get_user_input(f"최근 몇 개 일봉? [기본: {DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE}]: ")
 
         # 숫자 파싱 (기본 100)
         try:
-            limit = int(limit_in) if limit_in else DynamicConfig.OHLCV.MAX_RANGE
+            limit = int(limit_in) if limit_in else DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE
             if limit <= 0:
                 self.app.cli_view.display_invalid_input_warning("0 이하 불가. 기본값 100 사용.")
-                limit = DynamicConfig.OHLCV.MAX_RANGE
+                limit = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE
         except ValueError:
             self.app.cli_view.display_invalid_input_warning("숫자가 아님. 기본값 100 사용.")
-            limit = DynamicConfig.OHLCV.MAX_RANGE
+            limit = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE
 
         # 서비스 호출 → 결과 출력은 전부 cli_view로 위임
         resp = await self.app.stock_query_service.get_recent_daily_ohlcv(stock_code, limit=limit)
@@ -184,6 +198,46 @@ class UserActionExecutor:
         else:
             msg = (resp.msg1 if resp else "응답 없음")
             self.app.cli_view.display_ohlcv_error(stock_code, msg)
+
+    async def handle_intraday_minutes_today(self) -> None:
+        code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
+
+        # 입력 시간(옵션). 미입력 시 현재 KST 기준 'YYYYMMDDHH'로 자동 생성
+        hour_in = await self.app.cli_view.get_user_input("기준시간(옵션, 예: YYYYMMDDHH). 공란=현재시각: ")
+        if not hour_in:
+            now = self.app.time_manager.get_current_kst_time()
+            hour_in = now.strftime("%Y%m%d%H")
+
+        resp = await self.app.stock_query_service.get_intraday_minutes_today(code, input_hour_1=hour_in)
+
+        ok = bool(resp) and str(resp.rt_cd) == str(ErrorCode.SUCCESS.value)
+        if ok:
+            self.app.cli_view.display_intraday_minutes(code, resp.data or [], title="당일 분봉")
+        else:
+            msg = (resp.msg1 if resp else "응답 없음")
+            self.app.cli_view.display_intraday_error(code, msg)
+
+    async def handle_intraday_minutes_by_date(self) -> None:
+        if self.app.env.is_paper_trading:
+            self.app.cli_view.display_warning_paper_trading_not_supported("일별 분봉 조회")
+            return
+        
+        code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
+        ymd  = await self.app.cli_view.get_user_input("조회일자(YYYYMMDD, 예: 20241023): ")
+
+        # 입력 시간1(옵션) — 일부 환경은 HHMMSS 또는 HH만 사용. 공란 허용.
+        hour_in = await self.app.cli_view.get_user_input("입력시간1(옵션, 길이 10 권장. 예: 1300000000). 공란 허용: ") or ""
+
+        resp = await self.app.stock_query_service.get_intraday_minutes_by_date(
+            code, input_date_1=ymd, input_hour_1=hour_in
+        )
+
+        ok = bool(resp) and str(resp.rt_cd) == str(ErrorCode.SUCCESS.value)
+        if ok:
+            self.app.cli_view.display_intraday_minutes(code, resp.data or [], title=f"일별 분봉({ymd})")
+        else:
+            msg = (resp.msg1 if resp else "응답 없음")
+            self.app.cli_view.display_intraday_error(code, msg)
 
     async def handle_top_market_cap_stocks(self) -> None:
         if self.app.env.is_paper_trading:
@@ -430,12 +484,5 @@ class UserActionExecutor:
                 self.app.cli_view.display_top_stocks_ranking(title, res.data)
             else:
                 self.app.cli_view.display_top_stocks_ranking_error(title, res.msg1)
-
-    async def handle_exit(self) -> bool:
-        self.app.cli_view.display_exit_message()
-        return False
-
-    async def handle_invalid_choice(self) -> None:
-        self.app.cli_view.display_invalid_menu_choice()
 
 
