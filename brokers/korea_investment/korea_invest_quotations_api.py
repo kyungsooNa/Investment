@@ -370,6 +370,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         URL: /uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice
         TR:  FHKST03010200  (모의/실전 동일; TR 테이블에서 TIME_ITEMCHARTPRICE 로 매핑)
         """
+        # @TODO UT/IT 추가 필요.
         # TR-ID: minute leaf 사용(테이블에서 FHKST03010200 으로 매핑해두기)
         tr_id = self._trid_provider.time_itemchartprice()
         self._headers.set_tr_id(tr_id)
@@ -413,6 +414,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         URL : /uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice
         TRID: FHKST03010230 (REAL only)
         """
+        # @TODO UT/IT 추가 필요.
         if self._env.is_paper_trading:
             msg = "일변 분봉(inquire-time-dailychartprice)은 모의투자 미지원(FHKST03010230)입니다."
             self._logger.warning(msg)
