@@ -65,30 +65,66 @@ class DailyItemChartPriceParams:
     fid_input_iscd: str  # 종목코드
     fid_input_date_1: str  # 조회 시작일
     fid_input_date_2: str  # 조회 종료일
-    fid_period_div_code: Literal["D", "M"]  # 일/분
+    fid_period_div_code: str # 일/주/월/년
     fid_org_adj_prc: Literal["0", "1"]  # 수정주가 여부
 
     @classmethod
-    def day(cls, stock_code: str, start_date: str, end_date: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0"):
+    def daily_itemchartprice(cls, stock_code: str, start_date: str, end_date: str, period: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0"):
         return cls(
             fid_cond_mrkt_div_code=market,
             fid_input_iscd=stock_code,
             fid_input_date_1=start_date,
             fid_input_date_2=end_date,
-            fid_period_div_code="D",
+            fid_period_div_code=period,
             fid_org_adj_prc=adj,
         )
 
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+@dataclass(frozen=True)
+class TimeItemChartPriceParams:
+    fid_cond_mrkt_div_code: str  # 보통 "J"
+    fid_input_iscd: str  # 종목코드
+    fid_input_hour_1: str  # 입력시간
+    fid_pw_data_incu_yn: str # 과거 데이터 포함 여부
+    fid_etc_cls_code: str # 기타 구분 코드
+
     @classmethod
-    def minute(cls, stock_code: str, date: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0"):
+    def time_itemchartprice(cls, stock_code: str, fid_input_hour_1: str, fid_pw_data_incu_yn: str, fid_etc_cls_code: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0"):
         return cls(
             fid_cond_mrkt_div_code=market,
             fid_input_iscd=stock_code,
-            fid_input_date_1=date,
-            fid_input_date_2=date,
-            fid_period_div_code="M",
-            fid_org_adj_prc=adj,
+            fid_input_hour_1=fid_input_hour_1,
+            fid_pw_data_incu_yn=fid_pw_data_incu_yn,
+            fid_etc_cls_code=fid_etc_cls_code
         )
+
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+@dataclass(frozen=True)
+class TimeDailyItemChartPriceParams:
+    fid_cond_mrkt_div_code: str  # 보통 "J"
+    fid_input_iscd: str  # 종목코드
+    fid_input_hour_1: str  # 입력시간 (ex 13시 130000)
+    fid_input_date_1: str  # 입력날짜 (YYYYMMDD)
+    fid_pw_data_incu_yn: str # 과거 데이터 포함 여부
+    fid_fake_tick_incu_yn: str # 허봉 포함 여부
+
+    @classmethod
+    def time_daily_itemchartprice(cls, stock_code: str, fid_input_hour_1: str, fid_input_date_1: str, fid_pw_data_incu_yn: str, fid_fake_tick_incu_yn: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0"):
+        return cls(
+            fid_cond_mrkt_div_code=market,
+            fid_input_iscd=stock_code,
+            fid_input_hour_1=fid_input_hour_1,
+            fid_input_date_1=fid_input_date_1,
+            fid_pw_data_incu_yn=fid_pw_data_incu_yn,
+            fid_fake_tick_incu_yn=fid_fake_tick_incu_yn
+        )
+
 
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
@@ -462,15 +498,19 @@ class Params:
         return TimeConcludeParams.of(stock_code, market).to_dict()
 
     @staticmethod
-    def daily_itemchartprice_day(stock_code: str, start_date: str, end_date: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0") -> \
+    def daily_itemchartprice(stock_code: str, start_date: str, end_date: str, period: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0") -> \
             Dict[str, str]:
-        return DailyItemChartPriceParams.day(stock_code, start_date, end_date, market, adj).to_dict()
+        return DailyItemChartPriceParams.daily_itemchartprice(stock_code, start_date, end_date, period, market, adj).to_dict()
 
     @staticmethod
-    def daily_itemchartprice_minute(stock_code: str, date: str, market: MarketCode = "J",
-                                    adj: Literal["0", "1"] = "0") -> \
+    def time_itemchartprice(stock_code: str, input_hour: str,
+                            include_past: str, etc_cls_code: str, market: MarketCode = "J") -> dict:
+        return TimeItemChartPriceParams.time_itemchartprice(stock_code, input_hour, include_past, etc_cls_code, market).to_dict()
+
+    @staticmethod
+    def time_daily_itemchartprice(stock_code: str, input_hour: str, input_date: str, include_past: str, fid_pw_data_incu_yn: str, market: MarketCode = "J") -> \
             Dict[str, str]:
-        return DailyItemChartPriceParams.minute(stock_code, date, market, adj).to_dict()
+        return TimeDailyItemChartPriceParams.time_daily_itemchartprice(stock_code, input_hour, input_date, include_past, fid_pw_data_incu_yn, market).to_dict()
 
     @staticmethod
     def volume_rank(market: MarketCode = "J") -> Dict[str, str]:

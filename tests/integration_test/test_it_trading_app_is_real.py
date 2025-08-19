@@ -429,8 +429,7 @@ async def test_display_stock_change_rate_full_integration_real(real_app_instance
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행 (메뉴 '5' = 등락률 조회 가정)
-    ok = await UserActionExecutor(app).execute("5")
+    ok = await UserActionExecutor(app).execute("20")
     assert ok is True
 
     # _execute_request: 메서드만 확인(중복 최소화)
@@ -493,8 +492,7 @@ async def test_display_stock_vs_open_price_full_integration_real(real_app_instan
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행 (메뉴 '6' = 시가대비 등락률 조회 가정)
-    ok = await UserActionExecutor(app).execute("6")
+    ok = await UserActionExecutor(app).execute("21")
     assert ok is True
 
     # _execute_request: 메서드만 확인
@@ -557,8 +555,7 @@ async def test_get_asking_price_full_integration_real(real_app_instance, mocker)
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행 (메뉴 '7' = 호가 조회 가정)
-    ok = await UserActionExecutor(app).execute("7")
+    ok = await UserActionExecutor(app).execute("22")
     assert ok is True
 
     # _execute_request: 메서드만 확인(중복 최소화)
@@ -623,8 +620,7 @@ async def test_get_time_concluded_prices_full_integration_real(real_app_instance
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행 (메뉴 '8' = 시간대별 체결가 조회 가정)
-    ok = await UserActionExecutor(app).execute("8")
+    ok = await UserActionExecutor(app).execute("23")
     assert ok is True
 
     # _execute_request: 메서드만 확인
@@ -732,8 +728,7 @@ async def test_get_etf_info_full_integration_real(real_app_instance, mocker):
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행 (메뉴 '10' = ETF 정보 조회)
-    ok = await UserActionExecutor(app).execute("10")
+    ok = await UserActionExecutor(app).execute("24")
     assert ok is True
 
     # _execute_request: 메서드 확인
@@ -791,7 +786,7 @@ async def test_get_ohlcv_day_full_integration_real(real_app_instance, mocker):
     app.cli_view.display_ohlcv = MagicMock()
     app.cli_view.display_ohlcv_error = MagicMock()
 
-    ok = await UserActionExecutor(app).execute("11")
+    ok = await UserActionExecutor(app).execute("25")
     assert ok is True
 
     spy_exec.assert_called()
@@ -804,9 +799,9 @@ async def test_get_ohlcv_day_full_integration_real(real_app_instance, mocker):
     req_headers = g_kwargs.get("headers") or {}
     req_params  = g_kwargs.get("params") or {}
 
-    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE)
+    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.DAILY_ITEMCHARTPRICE)
     trid_provider = ctx.ki.trid_quotations
-    expected_trid = trid_provider.daily_itemchartprice("D")
+    expected_trid = trid_provider.daily_itemchartprice()
     assert req_url == expected_url
     assert req_headers.get("tr_id") == expected_trid
     assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
@@ -895,7 +890,7 @@ async def test_get_top_market_cap_stocks_full_integration_real(real_app_instance
     # _execute_request 스파이 + 세션 GET만 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    ok = await UserActionExecutor(app).execute("13")  # 시총 상위
+    ok = await UserActionExecutor(app).execute("50")  # 시총 상위
     assert ok is True
 
     # 메서드/URL/헤더 검증
@@ -968,7 +963,7 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration_real(re
     spy_exec = mocker.spy(quot_api, "_execute_request")
     mock_get = mocker.patch.object(quot_api._async_session, "get", new_callable=AsyncMock, side_effect=_get_side_effect)
 
-    ok = await UserActionExecutor(app).execute("14")  # 상위 10 + 현재가
+    ok = await UserActionExecutor(app).execute("51")  # 상위 10 + 현재가
     assert ok is True
 
     # 최소 3회 호출(1:시총상위 + 2:현재가들)
@@ -1026,7 +1021,7 @@ async def test_handle_upper_limit_stocks_full_integration_real(real_app_instance
 
     # --- Act ---
     executor = UserActionExecutor(app)
-    running_status = await executor.execute("15")
+    running_status = await executor.execute("52")
 
     # --- Assert (검증) ---
     assert running_status == True
@@ -1060,7 +1055,7 @@ async def test_handle_yesterday_upper_limit_stocks_full_integration_real(real_ap
         side_effect=[mock_top_response, mock_upper_response],
     )
 
-    ok = await UserActionExecutor(app).execute("16")
+    ok = await UserActionExecutor(app).execute("53")
     assert ok is True
     assert mock_call_api.await_count >= 2  # 내부 구현에 따라 2~3회 가능
 
@@ -1102,7 +1097,7 @@ async def test_handle_current_upper_limit_stocks_full_integration_real(real_app_
     app.cli_view.display_current_upper_limit_stocks = MagicMock()
     app.cli_view.display_no_current_upper_limit_stocks = MagicMock()
 
-    ok = await UserActionExecutor(app).execute("17")
+    ok = await UserActionExecutor(app).execute("54")
     assert ok is True
     app.cli_view.display_current_upper_limit_stocks.assert_called_once()
     app.cli_view.display_no_current_upper_limit_stocks.assert_not_called()
@@ -1147,7 +1142,7 @@ async def test_handle_realtime_stream_full_integration_real(real_app_instance, m
     sub_quote = mocker.patch.object(wsapi, "subscribe_realtime_quote", new_callable=AsyncMock, return_value=True)
 
     # 실행
-    ok = await UserActionExecutor(app).execute("18")
+    ok = await UserActionExecutor(app).execute("70")
     assert ok is True
 
     # 검증
@@ -1181,7 +1176,7 @@ async def test_handle_realtime_stream_deep_checks_real(real_app_instance, mocker
     mocker.patch.object(wsapi, "subscribe_realtime_quote", wraps=wsapi.subscribe_realtime_quote)
 
     # Act
-    ok = await UserActionExecutor(app).execute("18")
+    ok = await UserActionExecutor(app).execute("70")
     assert ok is True
 
     # Assert: 구독 요청이 올바른 TR_ID / 코드 / tr_type=1 로 나갔는지
@@ -1232,8 +1227,7 @@ async def test_get_top_volume_full_integration_real(real_app_instance, mocker):
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행: 메뉴 "30" = volume 랭킹
-    ok = await UserActionExecutor(app).execute("30")
+    ok = await UserActionExecutor(app).execute("55")
     assert ok is True
 
     # _execute_request 호출/메서드 확인
@@ -1306,8 +1300,7 @@ async def test_get_top_rise_full_integration_real(real_app_instance, mocker):
     # _execute_request 실행 + 세션 GET만 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행: 메뉴 "31" = 상승률 ~30
-    ok = await UserActionExecutor(app).execute("31")
+    ok = await UserActionExecutor(app).execute("56")
     assert ok is True
 
     # _execute_request 호출/메서드 확인
@@ -1384,8 +1377,7 @@ async def test_get_top_fall_full_integration_real(real_app_instance, mocker):
     # _execute_request 실행 + 세션 GET만 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # 실행: 메뉴 "32" = 하락률 ~30
-    ok = await UserActionExecutor(app).execute("32")
+    ok = await UserActionExecutor(app).execute("57")
     assert ok is True
 
     # _execute_request 호출/메서드 확인

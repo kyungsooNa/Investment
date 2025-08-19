@@ -1,11 +1,9 @@
 # core/tr_ids_config.yaml
 tr_ids:
   quotations:
-    inquire_price: "FHKST01010100" # 주식 현재가 조회 (실전/모의 공통)
-    search_info: "FHKST01010500" # 상품기본조회 (시가총액 등, 실전/모의 공통)
-    market_cap: "FHPST01740000" # 시가총액 상위 (실전 전용, 모의 미지원)
-    daily_itemchartprice_day: "FHKST03010100" # 일별 주식 시세 (차트)
-    daily_itemchartprice_minute: "FHNKF03060000" # 분별 주식 시세 (차트)
+    inquire_price: FHKST01010100 # 주식 현재가 조회 (실전/모의 공통)
+    search_info: FHKST01010500 # 상품기본조회 (시가총액 등, 실전/모의 공통)
+    market_cap: FHPST01740000 # 시가총액 상위 (실전 전용, 모의 미지원)
     asking_price: FHKST01010200
     time_conclude: FHKST01010300
     search_stock: FHKST01010400
@@ -14,16 +12,21 @@ tr_ids:
     ranking_foreign: FHKUP03600000
     item_news: FHPST01040000
     etf_info: FHPST02400000
+
+    inquire_daily_itemchartprice:      FHKST03010100 # 기간별 시세 (일/주/월/년)
+    inquire_time_itemchartprice:       FHKST03010200 # 당일 분봉 조회
+    inquire_time_daily_itemchartprice: FHKST03010230 # 일변 분봉 조회 (모의 미지원)
+
   account:
-    inquire_balance_real: "TTTC8434R" # 실전 계좌 잔고 조회
-    inquire_balance_paper: "VTTC8434R" # 모의 계좌 잔고 조회
+    inquire_balance_real: TTTC8434R # 실전 계좌 잔고 조회
+    inquire_balance_paper: VTTC8434R # 모의 계좌 잔고 조회
   trading:
-    order_cash_buy_real: "TTTC0012U" # 실전 주식 현금 매수
-    order_cash_sell_real: "TTTC0011U" # 실전 주식 현금 매도
-    order_cash_buy_paper: "VTTC0012U" # 모의 주식 현금 매수
-    order_cash_sell_paper: "VTTC0011U" # 모의 주식 현금 매도
+    order_cash_buy_real: TTTC0012U # 실전 주식 현금 매수
+    order_cash_sell_real: TTTC0011U # 실전 주식 현금 매도
+    order_cash_buy_paper: VTTC0012U # 모의 주식 현금 매수
+    order_cash_sell_paper: VTTC0011U # 모의 주식 현금 매도
   # --- 웹소켓 TR ID 추가 ---
   websocket:
-    approval_key: "실시간-000" # 웹소켓 접속키 발급 TR ID (문서에 명시된 값)
-    realtime_price: "H0STCNT0" # 실시간 주식체결 TR ID
-    realtime_quote: "H0STASP0" # 실시간 주식호가 TR ID
+    approval_key: 실시간-000 # 웹소켓 접속키 발급 TR ID (문서에 명시된 값)
+    realtime_price: H0STCNT0 # 실시간 주식체결 TR ID
+    realtime_quote: H0STASP0 # 실시간 주식호가 TR ID

@@ -80,9 +80,14 @@ class KoreaInvestTrIdProvider:
     def trading_order_cash(self, is_buy: bool) -> str:
         return self.get(TrId.ORDER_CASH_BUY if is_buy else TrId.ORDER_CASH_SELL)
 
-    def daily_itemchartprice(self, period: str = "D") -> str:
-        """
-        period: 'D' or 'M'
-        """
-        leaf = TrIdLeaf.DAILY_ITEMCHARTPRICE_DAY if period == "D" else TrIdLeaf.DAILY_ITEMCHARTPRICE_MINUTE
+    def daily_itemchartprice(self) -> str:
+        leaf = TrIdLeaf.DAILY_ITEMCHARTPRICE
+        return self.get_by_leaf(leaf)
+
+    def time_itemchartprice(self) -> str:
+        leaf = TrIdLeaf.TIME_ITEMCHARTPRICE
+        return self.get_by_leaf(leaf)
+
+    def time_daily_itemchartprice(self) -> str:
+        leaf = TrIdLeaf.TIME_DAILY_ITEMCHARTPRICE
         return self.get_by_leaf(leaf)

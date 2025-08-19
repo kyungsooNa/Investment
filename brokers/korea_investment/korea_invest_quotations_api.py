@@ -289,7 +289,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         TRID: FHKST03010100 (일별), FHNKF03060000 (분봉)
         ResCommonResponse 형태로 반환하며, data 필드에 List[ResDailyChartApiItem] 포함.
         """
-        valid_period_codes = {"D", "M"}
+        # @TODO W,M,Y에 대한 검증 부족, TC 추가도 필요.
+        valid_period_codes = {"D", "W", "M", "Y"}
         if fid_period_div_code not in valid_period_codes:
             error_msg = f"지원하지 않는 fid_period_div_code: {fid_period_div_code}"
             self._logger.error(error_msg)
@@ -299,18 +300,15 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=[]
             )
 
-        tr_id = self._trid_provider.daily_itemchartprice(period=fid_period_div_code)  # 'D' or 'M'
+        tr_id = self._trid_provider.daily_itemchartprice()
 
         self._logger.debug(f"차트 조회 시도 현재 tr_id: {tr_id}")
-        # ✅ period에 맞춰 Params 분기 (분봉용 빌더가 없다면 day로 폴백)
-        if fid_period_div_code == "M" and hasattr(Params, "daily_itemchartprice_minute"):
-            params = Params.daily_itemchartprice_minute(stock_code=stock_code, date=date)
-        else:
-            params = Params.daily_itemchartprice_day(stock_code=stock_code, start_date=start_date,end_date= end_date)
+
+        params = Params.daily_itemchartprice(stock_code=stock_code, start_date=start_date,end_date= end_date,period=fid_period_div_code)
 
         with self._headers.temp(tr_id=tr_id):
             response_data: ResCommonResponse = await self.call_api(
-                "GET", EndpointKey.INQUIRE_DAILY_ITEMCHARTPRICE, params=params
+                "GET", EndpointKey.DAILY_ITEMCHARTPRICE, params=params
             )
 
         if response_data.rt_cd != ErrorCode.SUCCESS.value:
@@ -359,6 +357,88 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             msg1="일별/분봉 차트 데이터 조회 성공",
             data=chart_data_items
         )
+
+    async def inquire_time_itemchartprice(
+        self,
+        stock_code: str,
+        input_hour: str,                 # "YYYYMMDDHH" (len=10)
+        include_past: str = "Y",       # 과거 데이터 포함 여부
+        etc_cls_code: str = "0",         # 기타 구분
+    ) -> ResCommonResponse:
+        """
+        분봉(시간) 차트 조회.
+        URL: /uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice
+        TR:  FHKST03010200  (모의/실전 동일; TR 테이블에서 TIME_ITEMCHARTPRICE 로 매핑)
+        """
+        # TR-ID: minute leaf 사용(테이블에서 FHKST03010200 으로 매핑해두기)
+        tr_id = self._trid_provider.time_itemchartprice()
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(self._env.active_config['custtype'])
+
+        params = Params.time_itemchartprice(
+            stock_code=stock_code,
+            input_hour=input_hour,
+            include_past=include_past,
+            etc_cls_code=etc_cls_code,
+        )
+
+        self._logger.info(f"[분봉] {stock_code} time-itemchartprice 조회 시도... (input_hour={input_hour})")
+        resp: ResCommonResponse = await self.call_api(
+            "GET", EndpointKey.TIME_ITEMCHARTPRICE, params=params, retry_count=1
+        )
+
+        if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+            msg = resp.msg1 or "분봉 차트 조회 실패"
+            self._logger.warning(f"[분봉] 조회 실패: {msg}")
+            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=msg, data=[])
+
+        raw = resp.data
+        # KIS 관례상 output2(리스트) 우선
+        rows = (raw.get("output2") or raw.get("output") or raw.get("output1") or []) if isinstance(raw, dict) else raw
+        if not isinstance(rows, list):
+            rows = [rows] if rows else []
+
+        # 분봉 스키마는 일봉과 다를 수 있으므로, 우선 원시 rows 를 그대로 반환
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="분봉 차트 조회 성공", data=rows)
+
+    async def inquire_time_dailychartprice(self,
+                                           stock_code: str,
+                                           input_hour: str, # 길이 10 권장 (당일 기준 시간)
+                                           input_date: str,  # "YYYYMMDDHH" (len=10)
+                                           include_past: str = "Y",  # 과거 데이터 포함 여부
+                                           fid_pw_data_incu_yn: str = "",  # 기타 구분
+                                           ):
+        """
+        일변 분봉(특정 일자) 조회  ※ 모의투자 미지원
+        URL : /uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice
+        TRID: FHKST03010230 (REAL only)
+        """
+        if self._env.is_paper_trading:
+            msg = "일변 분봉(inquire-time-dailychartprice)은 모의투자 미지원(FHKST03010230)입니다."
+            self._logger.warning(msg)
+            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=msg, data=[])
+
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.TIME_DAILY_ITEMCHARTPRICE)
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.time_daily_itemchartprice(
+            stock_code=stock_code,
+            input_hour=input_hour,
+            input_date=input_date,
+            include_past=include_past,
+            fid_pw_data_incu_yn=fid_pw_data_incu_yn,
+        )
+        self._logger.info(f"[분봉-일변] {stock_code} 조회 (hour={input_hour}) (date_1={input_date} ")
+        resp = await self.call_api("GET", EndpointKey.TIME_DAILY_ITEMCHARTPRICE, params=params, retry_count=1)
+
+        if resp.rt_cd != ErrorCode.SUCCESS.value:
+            return resp
+        raw = resp.data if isinstance(resp.data, dict) else {}
+        rows = raw.get("output2") or raw.get("output") or raw.get("output1") or []
+        rows = rows if isinstance(rows, list) else ([rows] if rows else [])
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="일변 분봉 조회 성공", data=rows)
 
     async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
         """

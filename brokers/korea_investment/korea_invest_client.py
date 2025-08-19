@@ -99,6 +99,46 @@ class KoreaInvestApiClient:
         return await self._quotations.inquire_daily_itemchartprice(stock_code, start_date=start_date, end_date=end_date,
                                                                    fid_period_div_code=fid_period_div_code)
 
+    async def inquire_time_itemchartprice(
+        self,
+        *,
+        stock_code: str,
+        input_hour_1: str,
+        pw_data_incu_yn: str = "Y",
+        etc_cls_code: str = "0",
+    ) -> ResCommonResponse:
+        """
+        당일 분봉 조회
+        URL : /uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice
+        TRID: FHKST03010200 (모의/실전 공통)
+        """
+        return await self._quotations.inquire_time_itemchartprice(
+            stock_code=stock_code,
+            input_hour=input_hour_1,
+            include_past=pw_data_incu_yn,
+            etc_cls_code=etc_cls_code)
+
+    async def inquire_time_dailychartprice(
+        self,
+        *,
+        stock_code: str,
+        input_date_1: str,          # "YYYYMMDD"
+        input_hour_1: str = "",     # 옵션(길이 10 권장)
+        pw_data_incu_yn: str = "Y",
+        fake_tick_incu_yn: str = "",  # 허봉 포함 여부: 공백 필수
+    ) -> ResCommonResponse:
+        """
+        일별(특정 일자) 분봉 조회
+        URL : /uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice
+        TRID: FHKST03010230 (모의투자 미지원)
+        """
+        return await self._quotations.inquire_time_dailychartprice(
+            stock_code=stock_code,
+            input_hour=input_hour_1,
+            input_date=input_date_1,
+            include_past=pw_data_incu_yn,
+            fid_pw_data_incu_yn=fake_tick_incu_yn)
+
     async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
         """
         종목의 실시간 호가(매도/매수 잔량 포함) 정보를 조회합니다.

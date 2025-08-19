@@ -2,6 +2,7 @@ import asyncio
 
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResFluctuation
+from config.DynamicConfig import DynamicConfig
 from core.logger import Logger
 from core.time_manager import TimeManager
 
@@ -450,3 +451,43 @@ class CLIView:
         """OHLCV 조회 실패 출력."""
         self._print_common_header()
         print(f"\n실패: {stock_code} OHLCV 조회. ({message})")
+
+    def display_intraday_minutes(self, stock_code: str, rows: list, title: str = "분봉"):
+        self._print_common_header()
+        print(f"\n--- {title} 조회 결과: {stock_code} ---")
+
+        if not rows:
+            print("데이터가 없습니다.")
+            return
+
+        count = DynamicConfig.OHLCV.TIME_DAILY_ITEMCHARTPRICE_MAX_RANGE
+        sample = rows[-count:] if len(rows) > count else rows
+
+        # @TODO 시간이 거꾸로 표시됨. 가장 과거일수록 1번으로 배치
+        # 항목마다 대표 필드 우선 표시(없으면 대체)
+        for i, r in enumerate(sample, 1):
+            if not isinstance(r, dict):
+                print(f"{i:>2}. {r}")
+                continue
+
+            dt   = r.get("stck_bsop_date") or r.get("bsop_date") or r.get("date") or ""
+            time = r.get("stck_cntg_hour") or r.get("cntg_hour") or r.get("time") or ""
+            o    = r.get("stck_oprc") or r.get("oprc") or r.get("open")
+            h    = r.get("stck_hgpr") or r.get("hgpr") or r.get("high")
+            l    = r.get("stck_lwpr") or r.get("lwpr") or r.get("low")
+            c    = r.get("stck_prpr") or r.get("prpr") or r.get("close") or r.get("price")
+            vol  = r.get("cntg_vol") or r.get("acml_vol") or r.get("volume")
+
+            # 포맷팅
+            dt_time = f"{dt} {time}".strip()
+            o = "-" if o is None else o
+            h = "-" if h is None else h
+            l = "-" if l is None else l
+            c = "-" if c is None else c
+            vol = "-" if vol is None else vol
+
+            print(f"{i:>2}. {dt_time} | O:{o} H:{h} L:{l} C:{c} V:{vol}")
+
+    def display_intraday_error(self, stock_code: str, message: str):
+        self._print_common_header()
+        print(f"\n❌ 분봉 조회 실패 - {stock_code}: {message}")

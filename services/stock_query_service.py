@@ -586,7 +586,7 @@ class StockQueryService:
             self.logger.error(f"{stock_code} OHLCV 데이터 처리 중 오류: {e}", exc_info=True)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=[])
 
-    async def get_recent_daily_ohlcv(self, stock_code: str, limit: int = DynamicConfig.OHLCV.MAX_RANGE) -> ResCommonResponse:
+    async def get_recent_daily_ohlcv(self, stock_code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE) -> ResCommonResponse:
         """
         타겟 종목의 최근 일봉을 limit개 반환.
         TradingService.get_recent_daily_ohlcv를 래핑하여 ResCommonResponse 형태로 통일.
@@ -600,3 +600,20 @@ class StockQueryService:
             self.logger.error(f"[OHLCV] {stock_code} 조회 실패: {e}", exc_info=True)
             return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1=str(e), data=[])
 
+    async def get_intraday_minutes_today(self, stock_code: str, *, input_hour_1: str) -> ResCommonResponse:
+        """
+        당일 분봉 조회. TradingService 위임.
+        """
+        return await self.trading_service.get_intraday_minutes_today(
+            stock_code=stock_code, input_hour_1=input_hour_1
+        )
+
+    async def get_intraday_minutes_by_date(
+        self, stock_code: str, *, input_date_1: str, input_hour_1: str = ""
+    ) -> ResCommonResponse:
+        """
+        일별(특정 일자) 분봉 조회. TradingService 위임.
+        """
+        return await self.trading_service.get_intraday_minutes_by_date(
+            stock_code=stock_code, input_date_1=input_date_1, input_hour_1=input_hour_1
+        )
