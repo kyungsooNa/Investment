@@ -21,7 +21,7 @@
 StockQueryService: 앱 레벨 오케스트레이션
 필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
 IndicatorService로 계산 → 데이터만 반환
-11. Cache On/Off 기능 추가 file_cache_enabled: true, memory_cache_enabled: true
+11. TC 중에 Fail 에러 발생했는데 통과해버리는게 있음. (ETF 등) 전체적으로 검토 필요.
 ### 실전
 
 9. API 잘못됨
