@@ -1,9 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Dict, Optional, Literal
+from core.time_manager import TimeManager
 
 MarketCode = Literal["J", "Q"]  # J: 코스피(국내 주식), Q: 코스닥(필요시 확장)
-
+tm = TimeManager()
 
 # ---- 개별 파라미터 dataclass들 ----
 
@@ -73,8 +74,8 @@ class DailyItemChartPriceParams:
         return cls(
             fid_cond_mrkt_div_code=market,
             fid_input_iscd=stock_code,
-            fid_input_date_1=start_date,
-            fid_input_date_2=end_date,
+            fid_input_date_1=tm.to_yyyymmdd(start_date),
+            fid_input_date_2=tm.to_yyyymmdd(end_date),
             fid_period_div_code=period,
             fid_org_adj_prc=adj,
         )

@@ -509,6 +509,40 @@ class TradingService:
         rows.sort(key=lambda r: r["date"])
         return rows
 
+    def _calc_range_by_period(self, period: str, end_dt: datetime | None, limit: int | None = None) -> tuple[str, str]:
+        """
+        period: 'D'|'W'|'M'
+        end_dt: 기준일(없으면 now KST)
+        limit : 원하는 봉 개수(없으면 합리적 기본값)
+        return: (start_yyyymmdd, end_yyyymmdd)
+        """
+        if end_dt is None:
+            # KST 기준 현재
+            end_dt = self._time_manager.get_current_kst_time()
+
+        period = (period or "D").upper()
+        if period == "D":
+            # 일봉: 최소 240일(약 1년) 확보. limit 있으면 2배 버퍼.
+            days = max((limit or 120) * 2, 240)
+            start_dt = end_dt - timedelta(days=days)
+
+        elif period == "W":
+            # 주봉: 최소 104주(약 2년) 확보. limit 있으면 2배 버퍼.
+            weeks = max((limit or 52) * 2, 104)
+            start_dt = end_dt - timedelta(weeks=weeks)
+
+        elif period == "M":
+            # 월봉: 개략치로 31일 기준 산정(외부 lib 없이). 최소 60개월(5년).
+            months = max((limit or 24) * 2, 60)
+            days = months * 31
+            start_dt = end_dt - timedelta(days=days)
+        else:
+            # 알 수 없는 값 → 일봉처럼 처리
+            days = max((limit or 120) * 2, 240)
+            start_dt = end_dt - timedelta(days=days)
+
+        return self._time_manager.to_yyyymmdd(start_dt), self._time_manager.to_yyyymmdd(end_dt)
+
     async def get_ohlcv(
             self,
             stock_code: str,
@@ -517,13 +551,16 @@ class TradingService:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
         """
-        ed = self._time_manager.get_current_kst_time()
-        sd = ed
+        start_yyyymmdd, end_yyyymmdd = self._calc_range_by_period(
+            period=period,
+            end_dt=self._time_manager.get_current_kst_time() if hasattr(self, "_time_manager") else datetime.now(),
+            limit=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE  # 사용자가 입력한 봉 개수 있으면 넘기고, 없으면 None
+        )
 
         raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
             stock_code=stock_code,
-            start_date=sd,
-            end_date=ed,
+            start_date=start_yyyymmdd,
+            end_date=end_yyyymmdd,
             fid_period_div_code=(period or "D").upper(),
         )
         if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:

@@ -810,6 +810,191 @@ async def test_get_ohlcv_day_full_integration_real(real_app_instance, mocker):
     app.cli_view.display_ohlcv.assert_called_once()
     app.cli_view.display_ohlcv_error.assert_not_called()
 
+
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_week_full_integration_paper(real_app_instance, mocker):
+    """
+    (통합 테스트-모의) OHLCV 일봉:
+    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper →
+    KoreaInvestApiQuotations.inquire_daily_itemchartprice → call_api → _execute_request
+    """
+    app = real_app_instance
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # HTTP 레이어 모킹: 일봉 응답 payload (표준 'output' 리스트)
+    # ✅ 표준 래퍼 + output2 로 교체
+    payload = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output2": [
+            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
+            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+        ]
+    }
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 입력: 종목코드 / 기간 D / limit
+    code, period, limit = "005930", "W", "5"
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, period, limit]
+
+    # 출력 뷰어는 호출만 검증
+    app.cli_view.display_ohlcv = MagicMock()
+    app.cli_view.display_ohlcv_error = MagicMock()
+
+    # 실행 (메뉴 '11' = OHLCV 조회 가정)
+    ok = await UserActionExecutor(app).execute("25")
+    assert ok is True
+
+    # --- 최하단 호출 검증 ---
+    spy_exec.assert_called()
+    method, _ = spy_exec.call_args.args[:2]
+    assert method == "GET"
+
+    mock_get.assert_awaited_once()
+    g_args, g_kwargs = mock_get.call_args
+    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
+
+    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.DAILY_ITEMCHARTPRICE)
+    trid_provider = ctx.ki.trid_quotations
+    expected_trid = trid_provider.daily_itemchartprice()  # 일봉
+    assert req_url == expected_url
+    assert req_headers.get("tr_id") == expected_trid
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code  # 종목 코드 전달
+
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_ohlcv.assert_called_once()
+    app.cli_view.display_ohlcv_error.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_month_full_integration_paper(real_app_instance, mocker):
+    """
+    (통합 테스트-모의) OHLCV 일봉:
+    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper →
+    KoreaInvestApiQuotations.inquire_daily_itemchartprice → call_api → _execute_request
+    """
+    app = real_app_instance
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # HTTP 레이어 모킹: 일봉 응답 payload (표준 'output' 리스트)
+    # ✅ 표준 래퍼 + output2 로 교체
+    payload = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output2": [
+            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
+            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+        ]
+    }
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 입력: 종목코드 / 기간 D / limit
+    code, period, limit = "005930", "M", "5"
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, period, limit]
+
+    # 출력 뷰어는 호출만 검증
+    app.cli_view.display_ohlcv = MagicMock()
+    app.cli_view.display_ohlcv_error = MagicMock()
+
+    # 실행 (메뉴 '11' = OHLCV 조회 가정)
+    ok = await UserActionExecutor(app).execute("25")
+    assert ok is True
+
+    # --- 최하단 호출 검증 ---
+    spy_exec.assert_called()
+    method, _ = spy_exec.call_args.args[:2]
+    assert method == "GET"
+
+    mock_get.assert_awaited_once()
+    g_args, g_kwargs = mock_get.call_args
+    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
+
+    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.DAILY_ITEMCHARTPRICE)
+    trid_provider = ctx.ki.trid_quotations
+    expected_trid = trid_provider.daily_itemchartprice()  # 일봉
+    assert req_url == expected_url
+    assert req_headers.get("tr_id") == expected_trid
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code  # 종목 코드 전달
+
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_ohlcv.assert_called_once()
+    app.cli_view.display_ohlcv_error.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_year_full_integration_paper(real_app_instance, mocker):
+    """
+    (통합 테스트-모의) OHLCV 일봉:
+    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper →
+    KoreaInvestApiQuotations.inquire_daily_itemchartprice → call_api → _execute_request
+    """
+    app = real_app_instance
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # HTTP 레이어 모킹: 일봉 응답 payload (표준 'output' 리스트)
+    # ✅ 표준 래퍼 + output2 로 교체
+    payload = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output2": [
+            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
+            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+        ]
+    }
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 입력: 종목코드 / 기간 D / limit
+    code, period, limit = "005930", "Y", "5"
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, period, limit]
+
+    # 출력 뷰어는 호출만 검증
+    app.cli_view.display_ohlcv = MagicMock()
+    app.cli_view.display_ohlcv_error = MagicMock()
+
+    # 실행 (메뉴 '11' = OHLCV 조회 가정)
+    ok = await UserActionExecutor(app).execute("25")
+    assert ok is True
+
+    # --- 최하단 호출 검증 ---
+    spy_exec.assert_called()
+    method, _ = spy_exec.call_args.args[:2]
+    assert method == "GET"
+
+    mock_get.assert_awaited_once()
+    g_args, g_kwargs = mock_get.call_args
+    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
+
+    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.DAILY_ITEMCHARTPRICE)
+    trid_provider = ctx.ki.trid_quotations
+    expected_trid = trid_provider.daily_itemchartprice()  # 일봉
+    assert req_url == expected_url
+    assert req_headers.get("tr_id") == expected_trid
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code  # 종목 코드 전달
+
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_ohlcv.assert_called_once()
+    app.cli_view.display_ohlcv_error.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_handle_fetch_recnt_daily_ohlcv_full_integration_paper(real_app_instance, mocker):
     """

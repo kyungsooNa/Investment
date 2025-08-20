@@ -289,7 +289,6 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         TRID: FHKST03010100 (일별), FHNKF03060000 (분봉)
         ResCommonResponse 형태로 반환하며, data 필드에 List[ResDailyChartApiItem] 포함.
         """
-        # @TODO W,M,Y에 대한 검증 부족, TC 추가도 필요.
         valid_period_codes = {"D", "W", "M", "Y"}
         if fid_period_div_code not in valid_period_codes:
             error_msg = f"지원하지 않는 fid_period_div_code: {fid_period_div_code}"
