@@ -34,7 +34,7 @@ class UserActionExecutor:
         '25': ('시세 조회',      'OHLCV(차트) 조회',                      'handle_ohlcv'),
         '26': ('시세 조회',      '최근 일봉 조회',                         'handle_fetch_recnt_daily_ohlcv'),
         '27': ('시세 조회',      '당일 분봉 조회',                         'handle_intraday_minutes_today'),
-        '28': ('시세 조회',      '일별 분봉 조회',                         'handle_intraday_minutes_by_date'),
+        '28': ('시세 조회',      '일별 분봉 조회 (실전 전용)',               'handle_intraday_minutes_by_date'),
 
 
 
