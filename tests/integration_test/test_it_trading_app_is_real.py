@@ -996,7 +996,7 @@ async def test_get_ohlcv_year_full_integration_paper(real_app_instance, mocker):
 
 
 @pytest.mark.asyncio
-async def test_handle_fetch_recnt_daily_ohlcv_full_integration_paper(real_app_instance, mocker):
+async def test_handle_fetch_recnt_daily_ohlcv_full_integration_real(real_app_instance, mocker):
     """
     (통합 테스트-모의) 최근 일봉 조회:
     TradingApp → UserActionExecutor(26) → StockQueryService → TradingService →
@@ -1072,7 +1072,7 @@ async def test_handle_fetch_recnt_daily_ohlcv_full_integration_paper(real_app_in
 
 
 @pytest.mark.asyncio
-async def test_intraday_minutes_today_menu_27_full_integration_paper(real_app_instance, mocker):
+async def test_intraday_minutes_today_full_integration_real(real_app_instance, mocker):
     """
     (통합-모의) 메뉴 27: 당일 분봉 조회
     TradingApp → UserActionExecutor(27) → StockQueryService → TradingService →
@@ -1093,8 +1093,8 @@ async def test_intraday_minutes_today_menu_27_full_integration_paper(real_app_in
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # --- 입력 프롬프트: 종목, 기준시간(YYYYMMDDHH) ---
-    code, hour = "005930", "2025082009"
+    # --- 입력 프롬프트: 종목, 기준시간(정규화 테스트용: YYYYMMDDHH 처럼 길게 줘도 됨) ---
+    code, hour = "005930", "2025082009"  # → HHMMSS로 정규화되며 '082009'가 기대됨
     mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
     app.cli_view.get_user_input.side_effect = [code, hour]
 
@@ -1142,7 +1142,8 @@ async def test_intraday_minutes_today_menu_27_full_integration_paper(real_app_in
 
     assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
     assert req_params.get("fid_input_iscd") == code
-    assert req_params.get("fid_input_hour_1") == hour
+    expected_hour = app.time_manager.to_hhmmss(hour)
+    assert req_params.get("fid_input_hour_1") == expected_hour
 
     # --- 출력 위임 ---
     app.cli_view.display_intraday_minutes.assert_called_once()
@@ -1153,7 +1154,7 @@ async def test_intraday_minutes_today_menu_27_full_integration_paper(real_app_in
 
 
 @pytest.mark.asyncio
-async def test_intraday_minutes_by_date_menu_28_full_integration_real(real_app_instance, mocker):
+async def test_intraday_minutes_by_date_full_integration_real(real_app_instance, mocker):
     """
     (통합-실전) 메뉴 28: 일별 분봉 조회
     - inquire-time-dailychartprice 호출 검증
@@ -1173,7 +1174,7 @@ async def test_intraday_minutes_by_date_menu_28_full_integration_real(real_app_i
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    code, ymd, hour = "005930", "20241023", "1300000000"  # 시간은 길이 10 예시
+    code, ymd, hour = "005930", "20241023", "00130000"  # 시간은 길이 10 예시
     mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
     app.cli_view.get_user_input.side_effect = [code, ymd, hour]
 
@@ -1226,11 +1227,117 @@ async def test_intraday_minutes_by_date_menu_28_full_integration_real(real_app_i
     assert req_params.get("fid_input_date_1") == ymd
     # 허봉 포함 여부: 공백 필수
     assert req_params.get("fid_fake_tick_incu_yn", "") == ""
-    # 시간1도 함께 전달(옵션) — 이번 TC에서는 제공함
-    assert req_params.get("fid_input_hour_1") == hour
+    expected_hour = app.time_manager.to_hhmmss(hour)
+    assert req_params.get("fid_input_hour_1") == expected_hour
 
     app.cli_view.display_intraday_minutes.assert_called_once()
     app.cli_view.display_intraday_error.assert_not_called()
+    assert app.cli_view.get_user_input.await_count == 3
+
+
+# =========================
+# (실전) 메뉴 29: 하루 분봉 조회 — ByDate 경로(get_intraday_minutes_by_date 기반)
+# - 집계 함수가 date_ymd를 받아 호출되었는지 확인
+# - EXTENDED 세션(08:00~20:00) 선택 확인
+# =========================
+@pytest.mark.asyncio
+async def test_day_intraday_minutes_real_by_date_calls_service(real_app_instance, mocker):
+    """
+    (통합-실전) 메뉴 29: 하루 분봉 조회
+    - 내부적으로 by_date(100개/배치) 경로를 사용 → inquire-time-dailychartprice 호출 검증
+    - TRID / 헤더 / 파라미터 검증
+    - 모킹은 quot_api만
+    """
+    app = real_app_instance
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # payload: start를 '0900' 포함시켜 첫 배치 이후 바로 종료되도록(루프 최소화)
+    payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output2": [
+            {"stck_bsop_date": "20241023", "stck_cntg_hour": "0900", "stck_prpr": "70100", "cntg_vol": "1000"},
+            {"stck_bsop_date": "20241023", "stck_cntg_hour": "0901", "stck_prpr": "70150", "cntg_vol": "800"},
+        ],
+    }
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 입력: 종목 / 범위(1=REGULAR 09:00~15:30) / 날짜(YYYYMMDD)
+    # REGULAR 세션에서는 첫 요청의 fid_input_hour_1이 '153000'이어야 함(end_hhmmss)
+    code, range_choice, ymd = "005930", "1", "20241023"
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, range_choice, ymd]
+
+    # 출력 뷰
+    # (전용 헬퍼가 있으면 우선 사용, 없으면 일반 출력)
+    if hasattr(app.cli_view, "display_intraday_minutes_full_day"):
+        app.cli_view.display_intraday_minutes_full_day = MagicMock()
+    app.cli_view.display_intraday_minutes = MagicMock()
+    app.cli_view.display_intraday_error = MagicMock()
+
+    # 실행
+    ok = await UserActionExecutor(app).execute("29")
+    assert ok is True
+
+    # 타겟 HTTP 호출 필터링 (by_date → inquire-time-dailychartprice)
+    assert mock_get.await_count >= 1
+    try:
+        from brokers.korea_investment.korea_invest_url_keys import EndpointKey as EKey
+        key = getattr(EKey, "TIME_DAILYCHARTPRICE", None)
+        if key:
+            expected_url = ctx.expected_url_for_quotations(app, key)
+            def is_target(call):
+                args, kwargs = call
+                url = args[0] if args else kwargs.get("url")
+                return str(url) == expected_url
+        else:
+            def is_target(call):
+                args, kwargs = call
+                url = args[0] if args else kwargs.get("url")
+                return "inquire-time-dailychartprice" in str(url)
+    except Exception:
+        def is_target(call):
+            args, kwargs = call
+            url = args[0] if args else kwargs.get("url")
+            return "inquire-time-dailychartprice" in str(url)
+
+    target_call = next((c for c in mock_get.call_args_list if is_target(c)), None)
+    assert target_call is not None, "GET to 'inquire-time-dailychartprice' was not captured."
+
+    # 파라미터/헤더 검증
+    g_args, g_kwargs = target_call
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
+
+    # TRID
+    trid_provider = ctx.ki.trid_quotations
+    leaf = getattr(TrIdLeaf, "TIME_DAILYCHARTPRICE", None)
+    if leaf is not None and hasattr(trid_provider, "quotations"):
+        expected_trid = trid_provider.quotations(leaf)
+        assert req_headers.get("tr_id") == expected_trid
+    else:
+        assert req_headers.get("tr_id")
+
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code
+    assert req_params.get("fid_input_date_1") == ymd
+    # 허봉 포함 여부: 공백
+    assert req_params.get("fid_fake_tick_incu_yn", "") == ""
+
+    # 메뉴 29 REGULAR: 첫 커서 = end_hhmmss = '153000'
+    expected_hour = "153000"
+    assert req_params.get("fid_input_hour_1") == expected_hour
+
+    # 출력 호출 확인
+    if hasattr(app.cli_view, "display_intraday_minutes_full_day"):
+        app.cli_view.display_intraday_minutes_full_day.assert_called_once()
+        app.cli_view.display_intraday_minutes.assert_not_called()
+    else:
+        app.cli_view.display_intraday_minutes.assert_called_once()
+    app.cli_view.display_intraday_error.assert_not_called()
+
+    # 입력 횟수(코드/범위/날짜)
     assert app.cli_view.get_user_input.await_count == 3
 
 

@@ -452,42 +452,87 @@ class CLIView:
         self._print_common_header()
         print(f"\n실패: {stock_code} OHLCV 조회. ({message})")
 
-    def display_intraday_minutes(self, stock_code: str, rows: list, title: str = "분봉"):
+    def display_intraday_minutes(self, stock_code: str, rows, title: str = "분봉"):
+        """
+        출력 방식:
+          - 시간 오름차순(가장 과거 → 최신)으로 정렬
+          - 전체 개수가 20개 초과 시: 앞 10개 출력 → 생략 표시 → 뒤 10개 출력
+          - 번호는 전체 인덱스(1-based) 기준으로 표기
+        rows는 list 또는 {"output2": [...]} dict 모두 수용
+        """
         self._print_common_header()
         print(f"\n--- {title} 조회 결과: {stock_code} ---")
+
+        # rows 정규화: dict로 온 경우 output2/rows/data 키에서 추출
+        if isinstance(rows, dict):
+            rows = rows.get("output2") or rows.get("rows") or rows.get("data") or []
+        if not isinstance(rows, list):
+            rows = []
 
         if not rows:
             print("데이터가 없습니다.")
             return
 
-        count = DynamicConfig.OHLCV.TIME_DAILY_ITEMCHARTPRICE_MAX_RANGE
-        sample = rows[-count:] if len(rows) > count else rows
+        tm = getattr(self, "time_manager", None)
 
-        # @TODO 시간이 거꾸로 표시됨. 가장 과거일수록 1번으로 배치
-        # 항목마다 대표 필드 우선 표시(없으면 대체)
-        for i, r in enumerate(sample, 1):
+        def _key(r):
+            if isinstance(r, dict):
+                d = str(r.get("stck_bsop_date") or r.get("bsop_date") or r.get("date") or "")
+                t_raw = r.get("stck_cntg_hour") or r.get("cntg_hour") or r.get("time") or ""
+                t = tm.to_hhmmss(t_raw) if tm else str(t_raw)
+                return (d, t)
+            return ("", "000000")
+
+        # 시간 오름차순 정렬
+        sorted_rows = sorted(rows, key=_key)
+        n = len(sorted_rows)
+        width = len(str(n))
+        top_n = 10
+        bottom_n = 10
+
+        def _print_row(idx: int, r):
             if not isinstance(r, dict):
-                print(f"{i:>2}. {r}")
-                continue
-
+                print(f"{idx:>{width}}. {r}")
+                return
             dt   = r.get("stck_bsop_date") or r.get("bsop_date") or r.get("date") or ""
             time = r.get("stck_cntg_hour") or r.get("cntg_hour") or r.get("time") or ""
+            if tm:
+                time = tm.to_hhmmss(time)
             o    = r.get("stck_oprc") or r.get("oprc") or r.get("open")
             h    = r.get("stck_hgpr") or r.get("hgpr") or r.get("high")
             l    = r.get("stck_lwpr") or r.get("lwpr") or r.get("low")
             c    = r.get("stck_prpr") or r.get("prpr") or r.get("close") or r.get("price")
             vol  = r.get("cntg_vol") or r.get("acml_vol") or r.get("volume")
-
             # 포맷팅
-            dt_time = f"{dt} {time}".strip()
             o = "-" if o is None else o
             h = "-" if h is None else h
             l = "-" if l is None else l
             c = "-" if c is None else c
             vol = "-" if vol is None else vol
+            dt_time = f"{dt} {time}".strip()
+            print(f"{idx:>{width}}. {dt_time} | O:{o} H:{h} L:{l} C:{c} V:{vol}")
 
-            print(f"{i:>2}. {dt_time} | O:{o} H:{h} L:{l} C:{c} V:{vol}")
+        if n <= top_n + bottom_n:
+            for i, r in enumerate(sorted_rows, 1):
+                _print_row(i, r)
+        else:
+            # 앞 10개
+            for i, r in enumerate(sorted_rows[:top_n], 1):
+                _print_row(i, r)
+            omitted = n - (top_n + bottom_n)
+            print(f"... ({omitted}개 생략) ...")
+            # 뒤 10개 (전체 인덱스로 번호 표시)
+            start_idx = n - bottom_n + 1
+            for offset, r in enumerate(sorted_rows[-bottom_n:], 0):
+                _print_row(start_idx + offset, r)
 
     def display_intraday_error(self, stock_code: str, message: str):
         self._print_common_header()
         print(f"\n❌ 분봉 조회 실패 - {stock_code}: {message}")
+
+    def display_intraday_minutes_full_day(self, stock_code: str, rows: list, date_ymd: str, session: str):
+        """하루치 분봉(세션 메타 포함) 출력 헬퍼. 내부적으로 display_intraday_minutes 재사용."""
+        session_label = "08:00~20:00" if str(session).upper() == "EXTENDED" else "09:00~15:30"
+        title = f"하루 분봉 ({date_ymd} {session_label})"
+        self.display_intraday_minutes(stock_code, rows, title=title)
+

@@ -1,8 +1,9 @@
 # app/stock_query_service.py
+from __future__ import annotations
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, ResMarketCapStockItem, \
     ResStockFullInfoApiOutput
-from typing import List, Dict
 from config.DynamicConfig import DynamicConfig
+from typing import List, Dict, Optional, Literal
 
 
 class StockQueryService:
@@ -617,3 +618,123 @@ class StockQueryService:
         return await self.trading_service.get_intraday_minutes_by_date(
             stock_code=stock_code, input_date_1=input_date_1, input_hour_1=input_hour_1
         )
+
+    async def get_day_intraday_minutes_list(
+        self,
+        stock_code: str,
+        *,
+        date_ymd: Optional[str] = None,                                    # None이면 '오늘'(KST) 조회
+        session: Literal["REGULAR", "EXTENDED"] = "REGULAR",                # REGULAR=09:00~15:30, EXTENDED=08:00~20:00
+        start_hhmmss: Optional[str] = None,
+        end_hhmmss: Optional[str] = None,
+        max_batches: int = 200
+    ) -> List[Dict]:
+        """
+        하루치 분봉(분봉 행 dict)의 '정규화된 리스트'를 반환한다. (출력은 호출부/cli_view에서)
+        - date_ymd=None: 오늘(KST) → get_intraday_minutes_today(배치당 30개; 모의/실전 모두 가능)
+        - date_ymd=YYYYMMDD: 지정일 → get_intraday_minutes_by_date(배치당 100개; 실전 전용)
+        - 시간 범위: session 프리셋으로 선택하거나 start/end를 직접 지정 가능
+        - 반환: 시간 오름차순(HHMMSS) 정렬된 리스트. 각 행은 최소 다음 키를 포함:
+          'stck_bsop_date'(YYYYMMDD), 'stck_cntg_hour'(HHMMSS), 나머지는 원본 필드 유지
+        """
+        # 세션 범위 결정
+        if not start_hhmmss or not end_hhmmss:
+            if session.upper() == "EXTENDED":
+                start_hhmmss = start_hhmmss or "080000"
+                end_hhmmss   = end_hhmmss   or "200000"
+            else:
+                start_hhmmss = start_hhmmss or "090000"
+                end_hhmmss   = end_hhmmss   or "153000"
+
+        start_hhmmss = self.time_manager.to_hhmmss(start_hhmmss)
+        end_hhmmss   = self.time_manager.to_hhmmss(end_hhmmss)
+
+        # 조회 날짜
+        if date_ymd:
+            ymd = date_ymd
+        else:
+            now_kst = self.time_manager.get_current_kst_time()
+            ymd = now_kst.strftime("%Y%m%d")
+
+        # 배치 호출 함수 선택
+        async def _fetch_batch(cursor_hhmmss: str):
+            cursor_hhmmss = self.time_manager.to_hhmmss(cursor_hhmmss)
+            if self.trading_service._env.is_paper_trading:
+                # 오늘(모의/실전; 배치당 30개)
+                return await self.get_intraday_minutes_today(
+                    stock_code, input_hour_1=cursor_hhmmss
+                )
+            else:
+                # 지정일(실전 전용; 배치당 100개)
+                return await self.get_intraday_minutes_by_date(
+                    stock_code, input_date_1=ymd, input_hour_1=cursor_hhmmss
+                )
+
+        def _extract_rows(resp_obj) -> list[dict]:
+            """resp.data가 list 또는 dict(output2/rows/data 키)인 모든 경우를 수용."""
+            data = getattr(resp_obj, "data", None)
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                rows = data.get("output2") or data.get("rows") or data.get("data") or []
+                return rows if isinstance(rows, list) else []
+            return []
+
+        # 커서: end부터 과거로 내려가며 수집
+        cursor = end_hhmmss
+        seen: set[tuple[str, str]] = set()   # (date, hhmmss)
+        collected: List[Dict] = []
+        batches = 0
+
+        while batches < max_batches:
+            batches += 1
+            resp = await _fetch_batch(cursor)
+            if not resp or str(getattr(resp, "rt_cd", "1")) != "0":
+                break
+
+            rows = _extract_rows(resp)
+            if not rows:
+                break
+
+            min_time_in_batch = None
+            added = 0
+
+            for row in rows:
+                d = str(row.get("stck_bsop_date") or ymd)
+                t = self.time_manager.to_hhmmss(row.get("stck_cntg_hour") or "")
+                # 범위 필터
+                if t < start_hhmmss or t > end_hhmmss:
+                    continue
+                key = (d, t)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                norm = dict(row)
+                norm["stck_bsop_date"] = d
+                norm["stck_cntg_hour"] = t
+                collected.append(norm)
+                added += 1
+
+                if (min_time_in_batch is None) or (t < min_time_in_batch):
+                    min_time_in_batch = t
+
+            if added == 0:
+                if min_time_in_batch:
+                    cursor = self.time_manager.dec_minute(min_time_in_batch, 1)
+                    if cursor < start_hhmmss:
+                        break
+                    continue
+                break
+
+            if min_time_in_batch:
+                cursor = self.time_manager.dec_minute(min_time_in_batch, 1)
+                if cursor < start_hhmmss:
+                    break
+            else:
+                break
+
+        # 최종 정렬(과거→현재)
+        collected.sort(key=lambda r: r.get("stck_cntg_hour", ""))
+
+        return collected

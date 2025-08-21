@@ -1171,7 +1171,7 @@ async def test_handle_fetch_recnt_daily_ohlcv_full_integration_paper(real_app_in
 
 
 @pytest.mark.asyncio
-async def test_intraday_minutes_today_menu_27_full_integration_paper(real_app_instance, mocker):
+async def test_intraday_minutes_today_full_integration_paper(real_app_instance, mocker):
     """
     (통합-모의) 메뉴 27: 당일 분봉 조회
     TradingApp → UserActionExecutor(27) → StockQueryService → TradingService →
@@ -1192,8 +1192,8 @@ async def test_intraday_minutes_today_menu_27_full_integration_paper(real_app_in
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-    # --- 입력 프롬프트: 종목, 기준시간(YYYYMMDDHH) ---
-    code, hour = "005930", "2025082009"
+    # --- 입력 프롬프트: 종목, 기준시간(정규화 테스트용: YYYYMMDDHH 처럼 길게 줘도 됨) ---
+    code, hour = "005930", "2025082009"  # → HHMMSS로 정규화되며 '082009'가 기대됨
     mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
     app.cli_view.get_user_input.side_effect = [code, hour]
 
@@ -1241,7 +1241,8 @@ async def test_intraday_minutes_today_menu_27_full_integration_paper(real_app_in
 
     assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
     assert req_params.get("fid_input_iscd") == code
-    assert req_params.get("fid_input_hour_1") == hour
+    expected_hour = app.time_manager.to_hhmmss(hour)
+    assert req_params.get("fid_input_hour_1") == expected_hour
 
     # --- 출력 위임 ---
     app.cli_view.display_intraday_minutes.assert_called_once()
@@ -1252,7 +1253,7 @@ async def test_intraday_minutes_today_menu_27_full_integration_paper(real_app_in
 
 
 @pytest.mark.asyncio
-async def test_intraday_minutes_by_date_menu_28_paper_shows_warning_and_no_http(real_app_instance, mocker):
+async def test_intraday_minutes_by_date_paper_shows_warning_and_no_http(real_app_instance, mocker):
     """
     (통합-모의) 메뉴 28: 일별 분봉 조회
     - 모의투자 미지원 → HTTP 호출 없음
@@ -1292,6 +1293,108 @@ async def test_intraday_minutes_by_date_menu_28_paper_shows_warning_and_no_http(
     # 성공/에러 뷰는 호출되지 않아야 함
     app.cli_view.display_intraday_minutes.assert_not_called()
     app.cli_view.display_intraday_error.assert_not_called()
+
+
+# =========================
+# (모의) 메뉴 29: 하루 분봉 조회 — Today 경로(get_intraday_minutes_today 기반)
+# - 서비스 집계 함수 호출 인자 검증
+# - CLI 출력 호출 검증
+# =========================
+@pytest.mark.asyncio
+async def test_day_intraday_minutes_today_calls_service_paper(real_app_instance, mocker):
+    """
+    (통합-모의) 메뉴 29: 하루 분봉 조회
+    - 내부적으로 today(30개/배치) 경로 사용 → inquire-time-itemchartprice 호출 검증
+    - TRID / 헤더 / 파라미터 검증
+    - 모킹은 quot_api만
+    """
+    app = real_app_instance
+    ctx.ki.bind(app)
+    quot_api = ctx.ki.quot
+
+    # 첫 배치로 종료되도록 간단한 payload
+    payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output2": [
+            {"stck_bsop_date":"20241023","stck_cntg_hour":"0900","stck_prpr":"70000","cntg_vol":"1000"},
+            {"stck_bsop_date":"20241023","stck_cntg_hour":"0901","stck_prpr":"70100","cntg_vol":"800"},
+        ]
+    }
+    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 입력: 종목 / 범위(1=REGULAR) / 날짜 공란 → Today 경로 사용
+    code = "005930"
+    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock)
+    app.cli_view.get_user_input.side_effect = [code, "1", ""]
+
+    # 출력 뷰 모킹
+    if hasattr(app.cli_view, "display_intraday_minutes_full_day"):
+        app.cli_view.display_intraday_minutes_full_day = MagicMock()
+    app.cli_view.display_intraday_minutes = MagicMock()
+    app.cli_view.display_intraday_error = MagicMock()
+
+    # 실행
+    ok = await UserActionExecutor(app).execute("29")
+    assert ok is True
+
+    # today → inquire-time-itemchartprice 호출 검증
+    assert mock_get.await_count >= 1
+    try:
+        from brokers.korea_investment.korea_invest_url_keys import EndpointKey as EKey
+        key = getattr(EKey, "TIME_ITEMCHARTPRICE", None) or getattr(EKey, "INQUIRE_TIME_ITEMCHARTPRICE", None)
+        if key:
+            expected_url = ctx.expected_url_for_quotations(app, key)
+            def is_target(call):
+                args, kwargs = call
+                url = args[0] if args else kwargs.get("url")
+                return str(url) == expected_url
+        else:
+            def is_target(call):
+                args, kwargs = call
+                url = args[0] if args else kwargs.get("url")
+                return "inquire-time-itemchartprice" in str(url)
+    except Exception:
+        def is_target(call):
+            args, kwargs = call
+            url = args[0] if args else kwargs.get("url")
+            return "inquire-time-itemchartprice" in str(url)
+
+    target_call = next((c for c in mock_get.call_args_list if is_target(c)), None)
+    assert target_call is not None, "GET to 'inquire-time-itemchartprice' was not captured."
+
+    g_args, g_kwargs = target_call
+    req_headers = g_kwargs.get("headers") or {}
+    req_params  = g_kwargs.get("params") or {}
+
+    # TRID 검증
+    trid_provider = ctx.ki.trid_quotations
+    leaf = getattr(TrIdLeaf, "TIME_ITEMCHARTPRICE", None) or getattr(TrIdLeaf, "INQUIRE_TIME_ITEMCHARTPRICE", None)
+    if leaf is not None and hasattr(trid_provider, "quotations"):
+        expected_trid = trid_provider.quotations(leaf)
+        assert req_headers.get("tr_id") == expected_trid
+    else:
+        assert req_headers.get("tr_id")
+
+    # 헤더/파라미터 검증
+    assert req_headers.get("custtype") == ctx.ki.env.active_config["custtype"]
+    assert req_params.get("fid_input_iscd") == code
+    # Today 경로: 날짜 파라미터 없이 동작(있어도 무시). 명시적으로 없음 확인.
+    assert "fid_input_date_1" not in req_params
+
+    # REGULAR 세션: 첫 커서 = end_hhmmss = '153000'
+    assert req_params.get("fid_input_hour_1") == "153000"
+
+    # 출력 호출 확인
+    if hasattr(app.cli_view, "display_intraday_minutes_full_day"):
+        app.cli_view.display_intraday_minutes_full_day.assert_called_once()
+        app.cli_view.display_intraday_minutes.assert_not_called()
+    else:
+        app.cli_view.display_intraday_minutes.assert_called_once()
+    app.cli_view.display_intraday_error.assert_not_called()
+
+    # 입력 3회(코드/범위/날짜)
+    assert app.cli_view.get_user_input.await_count == 3
 
 
 @pytest.mark.asyncio

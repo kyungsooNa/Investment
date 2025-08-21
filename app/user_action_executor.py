@@ -35,7 +35,7 @@ class UserActionExecutor:
         '26': ('시세 조회',      '최근 일봉 조회',                         'handle_fetch_recnt_daily_ohlcv'),
         '27': ('시세 조회',      '당일 분봉 조회',                         'handle_intraday_minutes_today'),
         '28': ('시세 조회',      '일별 분봉 조회 (실전 전용)',               'handle_intraday_minutes_by_date'),
-        # @TODO 당일 분봉 조회 기능을 활용해서 하루종일 (09:00~15:30)의 분볻 가지고 오는 API 구현
+        '29': ('시세 조회',      '하루 분봉 조회',                         'handle_day_intraday_minutes'),
 
 
 
@@ -204,9 +204,8 @@ class UserActionExecutor:
 
         # 입력 시간(옵션). 미입력 시 현재 KST 기준 'HHMMSS'로 자동 생성
         hour_in = await self.app.cli_view.get_user_input("기준시간(옵션, 예: HHMMSS). 공란=현재시각: ")
-        if not hour_in:
-            now = self.app.time_manager.get_current_kst_time()
-            hour_in = now.strftime("%H%M%S")  # ✅ HHMMSS 로 수정
+        tm = self.app.time_manager
+        hour_in = tm.to_hhmmss(hour_in) if hour_in else tm.to_hhmmss(None)
 
         resp = await self.app.stock_query_service.get_intraday_minutes_today(code, input_hour_1=hour_in)
 
@@ -227,9 +226,8 @@ class UserActionExecutor:
 
         # 입력 시간1(옵션) — 일부 환경은 HHMMSS 또는 HH만 사용. 공란 허용.
         hour_in = await self.app.cli_view.get_user_input("입력시간(옵션, 예: HHMMSS). 공란=현재시각: ")
-        if not hour_in:
-            now = self.app.time_manager.get_current_kst_time()
-            hour_in = now.strftime("%H%M%S")  # ✅ HHMMSS 로 수정
+        tm = self.app.time_manager
+        hour_in = tm.to_hhmmss(hour_in) if hour_in else tm.to_hhmmss(None)
 
         resp = await self.app.stock_query_service.get_intraday_minutes_by_date(
             code, input_date_1=ymd, input_hour_1=hour_in
@@ -241,6 +239,41 @@ class UserActionExecutor:
         else:
             msg = (resp.msg1 if resp else "응답 없음")
             self.app.cli_view.display_intraday_error(code, msg)
+
+    async def handle_day_intraday_minutes(self) -> None:
+        """
+        하루 전체 분봉(09:00~15:30 또는 08:00~20:00)을 list로 받아 CLI에 위임 출력.
+        - 실전: get_intraday_minutes_by_date(100개/배치)
+        - 모의: get_intraday_minutes_today(30개/배치)
+        """
+        code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
+        range_choice = await self.app.cli_view.get_user_input("시간범위 1) 09:00~15:30  2) 08:00~20:00  [기본: 1]: ") or "1"
+        session = "EXTENDED" if str(range_choice).strip() == "2" else "REGULAR"
+
+        ymd_in = await self.app.cli_view.get_user_input("조회일(YYYYMMDD, 공란=오늘): ")
+        if self.app.env.is_paper_trading and ymd_in:
+            # 모의에서는 by_date 불가 → 오늘로 강제
+            self.app.cli_view.display_warning_paper_trading_not_supported("일자 지정 하루 분봉 조회(모의) - 오늘로 조회합니다.")
+            ymd_in = ""
+
+        # 서비스 함수로 하루치 분봉 list 확보
+        rows = await self.app.stock_query_service.get_day_intraday_minutes_list(
+            stock_code=code,
+            date_ymd=(ymd_in or None),       # None이면 오늘(Today API)
+            session=session
+        )
+
+        title_suffix = "08:00~20:00" if session == "EXTENDED" else "09:00~15:30"
+        title = f"하루 분봉 ({(ymd_in or '오늘')} {title_suffix})"
+        if rows:
+            # 표시는 CLI에 위임
+            # 전용 타이틀 메서드가 있으면 사용, 없으면 기본 출력 사용
+            if hasattr(self.app.cli_view, "display_intraday_minutes_full_day"):
+                self.app.cli_view.display_intraday_minutes_full_day(code, rows, (ymd_in or "오늘"), session)
+            else:
+                self.app.cli_view.display_intraday_minutes(code, rows, title=title)
+        else:
+            self.app.cli_view.display_intraday_error(code, "데이터가 없습니다.")
 
     async def handle_top_market_cap_stocks(self) -> None:
         if self.app.env.is_paper_trading:
