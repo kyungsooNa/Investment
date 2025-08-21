@@ -202,11 +202,11 @@ class UserActionExecutor:
     async def handle_intraday_minutes_today(self) -> None:
         code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
 
-        # 입력 시간(옵션). 미입력 시 현재 KST 기준 'YYYYMMDDHH'로 자동 생성
-        hour_in = await self.app.cli_view.get_user_input("기준시간(옵션, 예: YYYYMMDDHH). 공란=현재시각: ")
+        # 입력 시간(옵션). 미입력 시 현재 KST 기준 'HHMMSS'로 자동 생성
+        hour_in = await self.app.cli_view.get_user_input("기준시간(옵션, 예: HHMMSS). 공란=현재시각: ")
         if not hour_in:
             now = self.app.time_manager.get_current_kst_time()
-            hour_in = now.strftime("%Y%m%d%H")
+            hour_in = now.strftime("%H%M%S")  # ✅ HHMMSS 로 수정
 
         resp = await self.app.stock_query_service.get_intraday_minutes_today(code, input_hour_1=hour_in)
 
@@ -226,7 +226,10 @@ class UserActionExecutor:
         ymd  = await self.app.cli_view.get_user_input("조회일자(YYYYMMDD, 예: 20241023): ")
 
         # 입력 시간1(옵션) — 일부 환경은 HHMMSS 또는 HH만 사용. 공란 허용.
-        hour_in = await self.app.cli_view.get_user_input("입력시간1(옵션, 길이 10 권장. 예: 1300000000). 공란 허용: ") or ""
+        hour_in = await self.app.cli_view.get_user_input("입력시간(옵션, 예: HHMMSS). 공란=현재시각: ")
+        if not hour_in:
+            now = self.app.time_manager.get_current_kst_time()
+            hour_in = now.strftime("%H%M%S")  # ✅ HHMMSS 로 수정
 
         resp = await self.app.stock_query_service.get_intraday_minutes_by_date(
             code, input_date_1=ymd, input_hour_1=hour_in

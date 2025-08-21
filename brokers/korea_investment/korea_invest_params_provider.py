@@ -505,11 +505,11 @@ class Params:
 
     @staticmethod
     def time_itemchartprice(stock_code: str, input_hour: str,
-                            include_past: str, etc_cls_code: str, market: MarketCode = "J") -> dict:
+                            include_past: str, etc_cls_code: str, market: MarketCode = "UN") -> dict:
         return TimeItemChartPriceParams.time_itemchartprice(stock_code, input_hour, include_past, etc_cls_code, market).to_dict()
 
     @staticmethod
-    def time_daily_itemchartprice(stock_code: str, input_hour: str, input_date: str, include_past: str, fid_pw_data_incu_yn: str, market: MarketCode = "J") -> \
+    def time_daily_itemchartprice(stock_code: str, input_hour: str, input_date: str, include_past: str, fid_pw_data_incu_yn: str, market: MarketCode = "UN") -> \
             Dict[str, str]:
         return TimeDailyItemChartPriceParams.time_daily_itemchartprice(stock_code, input_hour, input_date, include_past, fid_pw_data_incu_yn, market).to_dict()
 

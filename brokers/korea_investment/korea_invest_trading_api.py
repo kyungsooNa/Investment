@@ -98,7 +98,6 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
                 data=None
             )
 
-# @TODO real Sell 해도 Real Buy Tr이 들어감.
         with self._headers.temp(tr_id=tr_id, custtype=full_config['custtype'], hashkey=calculated_hashkey):
             # gt_uid는 temp에서 자동 생성(값 미지정 시)
             self._headers.set_gt_uid()

@@ -152,3 +152,29 @@ class TimeManager:
         # 숫자 등 기타
         s = str(val)
         return s
+
+    def to_hhmmss(self, t: str | int) -> str:
+        """
+        다양한 입력(YYYYMMDDHH, YYYYMMDDHHMM, HH, HHMM 등)을 안전하게 HHMMSS로 정규화.
+        규칙:
+          - 숫자/문자 어떤 형식이 와도 뒤 6자리만 취한다 (부족하면 0 패딩)
+          - HH만 오면 HH0000, HHMM이면 HHMM00
+        """
+        if t is None:
+            t = self.get_current_kst_time()
+
+        s = str(t).strip()
+        # 숫자 외 문자가 섞였을 수 있으니 필터링
+        s = ''.join(ch for ch in s if ch.isdigit())
+
+        # 뒤 6자리 취하되, 길이가 부족하면 앞에 0 채워 6자리로
+        s = s[-6:] if len(s) >= 6 else s.rjust(6, "0")
+
+        # HHMM 혹은 HH만 들어온 케이스를 추가 보정
+        # ex) '0930' -> '093000', '09' -> '090000'
+        if len(s) == 4:  # HHMM
+            return s + "00"
+        if len(s) == 2:  # HH
+            return s + "0000"
+
+        return s  # 이미 6자리(HHMMSS)
