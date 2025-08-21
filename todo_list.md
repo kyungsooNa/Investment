@@ -13,7 +13,7 @@
 5. momentum_backtest 정상작동 확인
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 7. token을 무효화하고 바로 요청하면 못받아옴. server로부터 1분 대기시간이 필요한것으로보임.
-8. ohlcv 추가, ohlcv 활용한 전략 추가
+8. ohlcv 활용한 전략 추가
 9. IndicatorService(MA20, 52주 고가, 거래대금(=가격×거래량) 등 파생 지표 계산 전용)
 10. (옵션) MarketDataRepository / DataStore:
 최근에 받은 OHLCV/호가/스냅샷을 메모리/파일 캐시로 보관
@@ -22,7 +22,7 @@ StockQueryService: 앱 레벨 오케스트레이션
 필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
 IndicatorService로 계산 → 데이터만 반환
 11. TC 중에 Fail 에러 발생했는데 통과해버리는게 있음. (ETF 등) 전체적으로 검토 필요.
-
+12. inquire_time_dailychartprice 의 캐시동작 확인필요.
 ## 불량
 ### 실전
 
