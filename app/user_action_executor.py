@@ -132,22 +132,26 @@ class UserActionExecutor:
             self.app.cli_view.display_account_balance_failure(balance_response.msg1)
             self.app.logger.warning(f"계좌 잔고 조회 실패: {balance_response.msg1}")
 
+    # @TODO cli_view로 출력 위임
     async def handle_buy_stock(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("매수할 종목 코드를 입력하세요: ")
         qty = await self.app.cli_view.get_user_input("매수할 수량을 입력하세요: ")
         price = await self.app.cli_view.get_user_input("매수 가격을 입력하세요 (시장가: 0): ")
         await self.app.order_execution_service.handle_buy_stock(stock_code, qty, price)
 
+    # @TODO cli_view로 출력 위임
     async def handle_sell_stock(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("매도할 종목 코드를 입력하세요: ")
         qty = await self.app.cli_view.get_user_input("매도할 수량을 입력하세요: ")
         price = await self.app.cli_view.get_user_input("매도 가격을 입력하세요 (시장가: 0): ")
         await self.app.order_execution_service.handle_sell_stock(stock_code, qty, price)
 
+    # @TODO cli_view로 출력 위임
     async def handle_stock_change_rate(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
         await self.app.stock_query_service.handle_display_stock_change_rate(stock_code)
 
+    # @TODO cli_view로 출력 위임
     async def handle_open_vs_current_rate(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
         await self.app.stock_query_service.handle_display_stock_vs_open_price(stock_code)

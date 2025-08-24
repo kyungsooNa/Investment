@@ -13,6 +13,7 @@ class OrderExecutionService:
         self.logger = logger
         self.time_manager = time_manager
 
+    # @TODO cli_view로 출력 위임
     async def handle_place_buy_order(self, stock_code, price, qty):
         """주식 매수 주문 요청 및 결과 출력."""
         print(f"\n--- 주식 매수 주문 시도 ---")
@@ -32,6 +33,7 @@ class OrderExecutionService:
             self.logger.error(f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
         return buy_order_result
 
+    # @TODO cli_view로 출력 위임
     async def handle_place_sell_order(self, stock_code, price, qty):
         """주식 매도 주문 요청 및 결과 출력."""
         print(f"\n--- 주식 매도 주문 시도 ---")
@@ -51,7 +53,7 @@ class OrderExecutionService:
             self.logger.error(f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
         return sell_order_result
 
-
+    # @TODO cli_view로 출력 위임
     async def handle_buy_stock(self, stock_code, qty_input, price_input): # 파라미터 추가
         """
         사용자 입력을 받아 주식 매수 주문을 처리합니다.
@@ -70,6 +72,7 @@ class OrderExecutionService:
         # handle_place_buy_order 호출
         await self.handle_place_buy_order(stock_code, price, qty)
 
+    # @TODO cli_view로 출력 위임
     async def handle_sell_stock(self, stock_code, qty_input, price_input): # 파라미터 추가
         """
         사용자 입력을 받아 주식 매도 주문을 처리합니다.

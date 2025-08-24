@@ -81,6 +81,7 @@ class StockQueryService:
         """계좌 잔고 조회 요청 및 결과 출력."""
         return await self.trading_service.get_account_balance()
 
+    # @TODO cli_view로 출력 위임
     async def handle_get_top_market_cap_stocks_code(self, market_code, count: int = None) -> ResCommonResponse:
         """시가총액 상위 종목 조회 요청 및 결과 출력 (전체 목록)."""
         print("\n--- 시가총액 상위 종목 조회 시도 ---")
@@ -101,6 +102,7 @@ class StockQueryService:
 
         return top_market_cap_stocks
 
+    # @TODO cli_view로 출력 위임
     async def handle_get_top_10_market_cap_stocks_with_prices(self) -> ResCommonResponse:
         self.logger.info("시가총액 1~10위 종목 현재가 조회 시도")
         try:
@@ -154,6 +156,7 @@ class StockQueryService:
                 data=None
             )
 
+    # @TODO cli_view로 출력 위임
     async def handle_display_stock_change_rate(self, stock_code):
         """
         주식 전일대비 등락률을 조회하고 콘솔에 출력합니다.
@@ -203,6 +206,7 @@ class StockQueryService:
             print(f"\n실패: {stock_code} 전일대비 등락률 조회.")
             self.logger.error(f"{stock_code} 전일대비 등락률 조회 실패: {current_price_result}")
 
+    # @TODO cli_view로 출력 위임
     async def handle_display_stock_vs_open_price(self, stock_code):
         """
         주식 시가대비 조회 및 결과 출력.
@@ -271,6 +275,7 @@ class StockQueryService:
             print(f"\n실패: {stock_code} 시가대비 조회.")
             self.logger.error(f"{stock_code} 시가대비 조회 실패: {current_price_result}")
 
+    # @TODO cli_view로 출력 위임
     async def handle_upper_limit_stocks(self, market_code: str = "0000", limit: int = 500):
         """
         시가총액 상위 종목 중 상한가에 도달한 종목을 조회하여 출력합니다.
@@ -368,6 +373,7 @@ class StockQueryService:
             print(f"실패: 상한가 종목 조회 중 오류 발생. {e}\n")
             return None  # 예외 발생 시 None 반환
 
+    # @TODO cli_view로 출력 위임
     async def handle_yesterday_upper_limit_stocks(self, market_code="0000", limit: int = 300):
         """
         시가총액 상위 종목 중 전일 상한가에 도달했던 종목을 조회하여 출력합니다.
@@ -555,7 +561,7 @@ class StockQueryService:
             self.logger.error(f"{etf_code} ETF 정보 조회 실패: {msg}")
             # data에는 최소한 식별 정보만 넣어두면 뷰에서 에러 메시지에 활용 가능
             return ResCommonResponse(
-                rt_cd=response.rt_cd if response else ErrorCode.FAIL.value,
+                rt_cd=response.rt_cd if response else ErrorCode.API_ERROR.value,
                 msg1=msg,
                 data={"code": etf_code}
             )
