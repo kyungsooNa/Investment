@@ -28,6 +28,12 @@ class ClientWithCache:
         if config is None:
             config = load_cache_config()
 
+        cache_cfg = config.get("cache", {})
+
+        self._file_enabled = bool(cache_cfg.get("file_cache_enabled", True))
+        self._memory_enabled = bool(cache_cfg.get("memory_cache_enabled", True))
+        self._caching_enabled = self._file_enabled or self._memory_enabled
+
         self._cache = cache_manager if cache_manager else CacheManager(config)
         self._cache.set_logger(self._logger)
         self.cached_methods = set(config["cache"]["enabled_methods"])
@@ -50,6 +56,11 @@ class ClientWithCache:
         async def wrapped(*args, **kwargs):
             mode = self._mode_fn() or "unknown"
             key = _build_cache_key(mode, name, args)
+
+            # 캐시 전체 비활성화면 즉시 API 호출
+            if not self._caching_enabled:
+                self._logger.debug(f"🧺 Caching disabled → direct API call: {key}")
+                return await orig_attr(*args, **kwargs)
 
             # ✅ 1. 메모리 or 파일 캐시 조회
             if self._time_manager.is_market_open():
