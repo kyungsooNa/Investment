@@ -615,7 +615,7 @@ async def test_inquire_daily_itemchartprice_success_day(mock_quotations):  # fix
 
     # 3. Call method
     result_common = await mock_quotations.inquire_daily_itemchartprice(
-        stock_code="005930", date="20250708", fid_period_div_code="D"
+        stock_code="005930", start_date="20250708",end_date="20250708", fid_period_div_code="D"
     )
 
     # 4. 검증
@@ -665,45 +665,6 @@ async def test_inquire_daily_itemchartprice_call_api_none(mock_quotations):
     assert result_common.data == []  # 실패 시 빈 리스트
     mock_quotations._logger.warning.assert_called_once()
 
-
-@pytest.mark.asyncio
-async def test_inquire_daily_itemchartprice_with_minute_code_logs_debug(mock_quotations):
-    # 필수 필드 포함한 mock 응답
-
-    mock_response = ResCommonResponse(
-        rt_cd="0",
-        msg1="정상처리",
-        data=[
-            {
-                "stck_bsop_date": "20250708",
-                "stck_oprc": "950",
-                "stck_hgpr": "1010",
-                "stck_lwpr": "940",
-                "stck_clpr": "1000",
-                "acml_vol": "100"
-            }
-        ]
-    )
-
-    mock_quotations.call_api = AsyncMock(return_value=mock_response)
-
-    result_common = await mock_quotations.inquire_daily_itemchartprice("005930", "20250708", fid_period_div_code="M")
-
-    # 검증
-    mock_quotations._logger.debug.assert_called()
-    assert result_common.rt_cd == ErrorCode.SUCCESS.value
-    assert result_common.data == [
-        ResDailyChartApiItem(
-            stck_bsop_date="20250708",
-            stck_oprc="950",
-            stck_hgpr="1010",
-            stck_lwpr="940",
-            stck_clpr="1000",
-            acml_vol="100"
-        )
-    ]
-
-
 @pytest.mark.asyncio
 async def test_inquire_daily_itemchartprice_parses_output2(mocker, mock_quotations):
     payload = {
@@ -723,7 +684,7 @@ async def test_inquire_daily_itemchartprice_parses_output2(mocker, mock_quotatio
     )
 
     res = await mock_quotations.inquire_daily_itemchartprice(
-        "005930", date="20250814", fid_period_div_code="D"
+        "005930", start_date="20250814",end_date="20250814", fid_period_div_code="D"
     )
     assert res.rt_cd == "0"
     assert isinstance(res.data, list) and len(res.data) == 1

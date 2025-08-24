@@ -86,11 +86,33 @@ class BrokerAPIWrapper:
         """시가총액 상위 종목 목록을 반환합니다 (KoreaInvestApiQuotations 위임)."""
         return await self._client.get_top_market_cap_stocks_code(market_code, count)
 
-    async def inquire_daily_itemchartprice(self, stock_code: str, date: str,
+    async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str,
                                            fid_period_div_code: str = 'D') -> ResCommonResponse:
         """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""
-        return await self._client.inquire_daily_itemchartprice(stock_code, date,
+        return await self._client.inquire_daily_itemchartprice(stock_code, start_date=start_date, end_date=end_date,
                                                                fid_period_div_code=fid_period_div_code)
+    async def inquire_time_itemchartprice(
+        self, *, stock_code: str, input_hour_1: str,
+        pw_data_incu_yn: str = "Y", etc_cls_code: str = "0"
+    ) -> ResCommonResponse:
+        return await self._client.inquire_time_itemchartprice(
+            stock_code=stock_code,
+            input_hour_1=input_hour_1,
+            pw_data_incu_yn=pw_data_incu_yn,
+            etc_cls_code=etc_cls_code,
+        )
+
+    async def inquire_time_dailychartprice(
+        self, *, stock_code: str, input_date_1: str, input_hour_1: str = "",
+        pw_data_incu_yn: str = "Y", fake_tick_incu_yn: str = ""
+    ) -> ResCommonResponse:
+        return await self._client.inquire_time_dailychartprice(
+            stock_code=stock_code,
+            input_date_1=input_date_1,
+            input_hour_1=input_hour_1,
+            pw_data_incu_yn=pw_data_incu_yn,
+            fake_tick_incu_yn=fake_tick_incu_yn,
+        )
 
     async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
         """

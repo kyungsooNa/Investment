@@ -3,7 +3,7 @@ import time
 import pytz
 import logging
 import asyncio  # 비동기 sleep을 위해 추가
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 
 class TimeManager:
@@ -136,3 +136,50 @@ class TimeManager:
     def is_weekend_or_holiday(self, date: datetime) -> bool:
         # ✅ 필요 시 공휴일 판단 로직 추가
         return date.weekday() >= 5  # 토, 일
+
+    def to_yyyymmdd(self, val) -> str:
+        """여러 타입을 YYYYMMDD 문자열로 안전 변환"""
+        if val is None:
+            dt = self.get_current_kst_time()
+
+            return dt.strftime("%Y%m%d")
+        if isinstance(val, str):
+            return val  # 가정: 이미 'YYYYMMDD'
+        if isinstance(val, (datetime, date)):
+            return val.strftime("%Y%m%d")
+        if callable(val):  # 실수로 메서드 자체가 들어온 경우
+            return self.to_yyyymmdd(val())
+        # 숫자 등 기타
+        s = str(val)
+        return s
+
+    def to_hhmmss(self, t: str | int) -> str:
+        """
+        다양한 입력(YYYYMMDDHH, YYYYMMDDHHMM, HH, HHMM 등)을 안전하게 HHMMSS로 정규화.
+        규칙:
+          - 긴 포맷은 뒤 6자리만 취함
+          - HH만 오면 HH0000, HHMM이면 HHMM00
+          - 애매한 길이(1/3/5자)는 왼쪽 0 패딩
+        """
+        if t is None:
+            t = self.get_current_kst_time()
+
+        s = ''.join(ch for ch in str(t).strip() if ch.isdigit())
+
+        # 1) 특수 케이스를 먼저 보정 (suffix zero padding)
+        if len(s) == 2:  # HH
+            return s + "0000"
+        if len(s) == 4:  # HHMM
+            return s + "00"
+
+        # 2) 그 외: 긴 포맷은 뒤 6자리, 짧은 포맷(1/3/5)은 왼쪽 0 패딩
+        if len(s) >= 6:
+            return s[-6:]
+        return s.rjust(6, "0")
+
+    def dec_minute(self, hhmmss: str, minutes: int = 1) -> str:
+        hh = int(hhmmss[0:2])
+        mm = int(hhmmss[2:4])
+        ss = int(hhmmss[4:6])
+        dt = datetime(2000, 1, 1, hh, mm, ss) - timedelta(minutes=minutes)
+        return dt.strftime("%H%M%S")

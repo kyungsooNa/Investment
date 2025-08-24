@@ -10,6 +10,8 @@ cache:
     - get_market_cap
     - get_filtered_stocks_by_momentum
     - inquire_daily_itemchartprice
+    - inquire_time_itemchartprice
+    - inquire_time_dailychartprice
     - get_top_rise_fall_stocks
     - get_top_volume_stocks
     - get_top_foreign_buying_stocks
@@ -20,3 +22,4 @@ cache:
     - common.types.ResStockFullInfoApiOutput
     - common.types.ResFluctuation
     - common.types.ResPriceSummary
+    - common.types.ResDailyChartApiItem

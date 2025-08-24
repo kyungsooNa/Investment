@@ -73,8 +73,8 @@ class TradingApp:
         try:
             self.logger.info("API 클라이언트 초기화 시작 (선택된 환경 기반)...")
 
-            broker_wrapper = BrokerAPIWrapper(env=self.env, logger=self.logger, time_manager=self.time_manager)
-            trading_service = TradingService(broker_wrapper, self.env, self.logger, self.time_manager)
+            self.broker = BrokerAPIWrapper(env=self.env, logger=self.logger, time_manager=self.time_manager)
+            trading_service = TradingService(self.broker, self.env, self.logger, self.time_manager)
 
             self.order_execution_service = OrderExecutionService(trading_service, self.logger, self.time_manager)
             self.stock_query_service = StockQueryService(trading_service, self.logger, self.time_manager)

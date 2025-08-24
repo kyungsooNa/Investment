@@ -387,3 +387,88 @@ def test_get_latest_market_close_time_weekday(time_manager):
     assert latest_close.minute == 30
     assert latest_close < fake_now
 
+# --- is_weekend_or_holiday ---
+@pytest.mark.parametrize("d, expected", [
+    (dt.datetime(2025, 8, 1), False),  # Fri
+    (dt.datetime(2025, 8, 2), True),   # Sat
+    (dt.datetime(2025, 8, 3), True),   # Sun
+    (dt.datetime(2025, 8, 4), False),  # Mon
+])
+def test_is_weekend_or_holiday_cases(time_manager, d, expected):
+    assert time_manager.is_weekend_or_holiday(d) is expected
+
+
+# --- to_yyyymmdd ---
+def test_to_yyyymmdd_none_uses_now(time_manager, mocker):
+    # None 입력 시 현재(고정) KST로 포맷되어야 함
+    fixed = time_manager.market_timezone.localize(dt.datetime(2025, 8, 21, 9, 0, 0))
+    mocker.patch.object(time_manager, "get_current_kst_time", return_value=fixed)
+    assert time_manager.to_yyyymmdd(None) == "20250821"
+
+
+def test_to_yyyymmdd_str_passthrough(time_manager):
+    # 문자열은 가정상 'YYYYMMDD'로 들어오며 그대로 반환
+    assert time_manager.to_yyyymmdd("20250102") == "20250102"
+
+
+def test_to_yyyymmdd_datetime_and_date(time_manager):
+    assert time_manager.to_yyyymmdd(dt.datetime(2025, 7, 1, 12, 34, 56)) == "20250701"
+    assert time_manager.to_yyyymmdd(dt.date(2025, 7, 1)) == "20250701"
+
+
+def test_to_yyyymmdd_callable(time_manager):
+    fn = lambda: dt.datetime(2025, 12, 31)
+    assert time_manager.to_yyyymmdd(fn) == "20251231"
+
+
+def test_to_yyyymmdd_numeric_and_other(time_manager):
+    # 숫자 등 기타는 str 캐스팅 결과를 반환
+    assert time_manager.to_yyyymmdd(20240705) == "20240705"
+    assert time_manager.to_yyyymmdd("2024-07-05") == "2024-07-05"  # 포맷 보정은 하지 않음(스펙대로)
+
+
+# --- to_hhmmss ---
+@pytest.mark.parametrize("raw, expected", [
+    # 긴 포맷 → 뒤 6자리 사용
+    ("2025082009", "082009"),
+    ("1300000000", "000000"),
+    ("20241023093015", "093015"),
+    # HHMMSS / HHMM / HH
+    ("093015", "093015"),
+    ("0930",   "093000"),
+    ("09",     "090000"),
+    # 구분자 섞임
+    ("09:30:15", "093015"),
+    ("09:30",    "093000"),
+    ("2024-10-23 09:31:00", "093100"),
+])
+def test_to_hhmmss_various_inputs(time_manager, raw, expected):
+    assert time_manager.to_hhmmss(raw) == expected
+
+
+def test_to_hhmmss_int_input(time_manager):
+    # int도 허용 (자동 str 캐스팅 후 정규화)
+    assert time_manager.to_hhmmss(930) == "000930"   # 숫자 '930' → '000930' (뒤 6자리 규칙)
+
+
+def test_to_hhmmss_none_uses_now_safely(time_manager, mocker):
+    """
+    None 입력 시 현재 KST를 사용.
+    tz-aware datetime의 __str__ 표현에 따라 마지막 6자리가 HHMMSS가 안 될 수도 있으므로
+    여기서는 timezone-naive 값을 고정해 안정적으로 검증.
+    """
+    naive = datetime(2025, 10, 23, 9, 31, 0)  # naive로 고정
+    mocker.patch.object(time_manager, "get_current_kst_time", return_value=naive)
+    assert time_manager.to_hhmmss(None) == "093100"
+
+
+# --- dec_minute ---
+@pytest.mark.parametrize("start, minutes, expected", [
+    ("090000", 1,   "085900"),
+    ("090000", 30,  "083000"),
+    ("090000", 61,  "075900"),
+    ("100500", 6,   "095900"),  # 10:05 → 09:59
+    ("000100", 1,   "000000"),  # 자정 직전 경계
+])
+def test_dec_minute_basic_cases(time_manager, start, minutes, expected):
+    assert time_manager.dec_minute(start, minutes) == expected

@@ -64,7 +64,7 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
     # 4. 실제 메서드 호출
     name_result = await wrapper.get_name_by_code("005930")
     code_result = await wrapper.get_code_by_name("삼성전자")
-    chart_result = await wrapper.inquire_daily_itemchartprice("005930", "20250712", fid_period_div_code="D")
+    chart_result = await wrapper.inquire_daily_itemchartprice("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
 
     # 5. 결과 검증
     assert name_result == "삼성전자"
@@ -74,7 +74,7 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
     # 6. 호출 여부 검증
     mock_mapper.get_name_by_code.assert_called_once_with("005930")
     mock_mapper.get_code_by_name.assert_called_once_with("삼성전자")
-    mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930", "20250712", fid_period_div_code="D")
+    mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930",start_date="20250101", end_date="20250111", fid_period_div_code="D")
 
 
 @pytest.mark.asyncio
@@ -158,9 +158,9 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     mock_client.get_top_market_cap_stocks_code.assert_called_once_with("0000", 1)
 
     # inquire_daily_itemchartprice (lines 92, 94) - calls self._client.inquire_daily_itemchartprice
-    result = await wrapper.inquire_daily_itemchartprice("005930", "20250101", fid_period_div_code="M")
+    result = await wrapper.inquire_daily_itemchartprice("005930", start_date="20250101", end_date="20250111", fid_period_div_code="M")
     assert result == [{"stck_clpr": "70000_chart"}]
-    mock_client.inquire_daily_itemchartprice.assert_called_once_with("005930", "20250101", fid_period_div_code="M")
+    mock_client.inquire_daily_itemchartprice.assert_called_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="M")
 
     # --- KoreaInvestApiClient / Account API delegation ---
     # get_account_balance (lines 98, 100) - calls self._client.get_account_balance
