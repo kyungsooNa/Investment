@@ -307,6 +307,34 @@ class CLIView:
         self._print_common_header()
         print(f"\"{msg}\" 잘못된 환경 선택입니다.")
 
+    def display_current_stock_price(self, view: dict):
+        code   = str(view.get("code", "N/A"))
+        price  = str(view.get("price", "N/A"))
+        change = str(view.get("change", "N/A"))
+        rate   = str(view.get("rate", "N/A"))
+        time_  = str(view.get("time", "N/A"))
+        open_  = str(view.get("open", "N/A"))
+        high   = str(view.get("high", "N/A"))
+        low    = str(view.get("low", "N/A"))
+        prev   = str(view.get("prev_close", "N/A"))
+        vol    = str(view.get("volume", "N/A"))
+
+        print(f"\n--- {code} 현재가 ---")
+        print(f"  현재가: {price}")
+        print(f"  전일대비: {change} ({rate}%)")
+        print(f"  체결시각: {time_}")
+        print("-" * 36)
+        print(f"  시가: {open_} / 고가: {high} / 저가: {low} / 전일종가: {prev}")
+        print(f"  거래량: {vol}")
+        print("-" * 36)
+
+    def display_current_stock_price_error(self, code: str, msg: str):
+        print(f"\n실패: {code} 현재가 조회. ({msg})")
+
+    # 테스트/호환용 래퍼 (기존 TC가 handle_*를 스파이할 수 있게)
+    def handle_get_current_stock_price(self, view: dict):
+        self.display_current_stock_price(view)
+
     def display_current_upper_limit_stocks(self, stocks: list):
         """현재 상한가 종목 리스트를 표시합니다."""
         self._print_common_header()
@@ -398,6 +426,53 @@ class CLIView:
     def display_stock_news_error(self, stock_code: str, msg: str) -> None:
         self._print_common_header()
         print(f"\n실패: {stock_code} 종목 뉴스 조회. ({msg})")
+
+    # ===== 호가 =====
+    def display_asking_price(self, view: dict):
+        code = view.get("code", "N/A")
+        rows = view.get("rows", [])
+        print(f"\n--- {code} 실시간 호가 ---")
+        print("-" * 40)
+        print(f"{'레벨':>4s} | {'매도잔량':>10s} | {'호가':>10s} | {'매수잔량':>10s} | {'호가':>10s}")
+        print("-" * 40)
+        for r in rows:
+            lv   = str(r.get("level", ""))
+            askr = str(r.get("ask_rem", "N/A"))
+            askp = str(r.get("ask_price", "N/A"))
+            bidr = str(r.get("bid_rem", "N/A"))
+            bidp = str(r.get("bid_price", "N/A"))
+            print(f"{lv:>4s} | {askr:>10s} | {askp:>10s} | {bidr:>10s} | {bidp:>10s}")
+        print("-" * 40)
+
+    def display_asking_price_error(self, code: str, msg: str):
+        print(f"\n실패: {code} 호가 정보 조회. ({msg})")
+
+    # 테스트/호환용 래퍼
+    def handle_get_asking_price(self, view: dict):
+        self.display_asking_price(view)
+
+    # ===== 시간대별 체결가 =====
+    def display_time_concluded_prices(self, view: dict):
+        code = view.get("code", "N/A")
+        rows = view.get("rows", [])
+        print(f"\n--- {code} 시간대별 체결 정보 (최근 {len(rows)}건) ---")
+        print("-" * 56)
+        print(f"{'체결시각':>10s} | {'체결가':>12s} | {'전일대비':>10s} | {'체결량':>10s}")
+        print("-" * 56)
+        for r in rows:
+            t = str(r.get("time", "N/A"))
+            p = str(r.get("price", "N/A"))
+            c = str(r.get("change", "N/A"))
+            v = str(r.get("volume", "N/A"))
+            print(f"{t:>10s} | {p:>12s} | {c:>10s} | {v:>10s}")
+        print("-" * 56)
+
+    def display_time_concluded_error(self, code: str, msg: str):
+        print(f"\n실패: {code} 시간대별 체결가 조회. ({msg})")
+
+    # 테스트/호환용 래퍼
+    def handle_get_time_concluded_prices(self, view: dict):
+        self.display_time_concluded_prices(view)
 
     def display_etf_info(self, etf_code: str, etf_info: dict) -> None:
         self._print_common_header()

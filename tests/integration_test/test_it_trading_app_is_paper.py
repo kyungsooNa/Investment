@@ -30,6 +30,7 @@ def get_mock_config():
         "is_paper_trading": True,
     }
 
+
 @pytest.fixture
 def real_app_instance(mocker, get_mock_config, test_logger):
     """
@@ -105,6 +106,7 @@ async def _assert_paper_blocked(app, menu_key: str, blocked_label: str):
     assert get_codes.await_count == 0
     assert exec_patch.await_count == 0
 
+
 @pytest.mark.asyncio
 async def test_execute_action_select_environment_success_paper(real_app_instance, mocker):
     """
@@ -158,10 +160,13 @@ async def test_get_current_price_full_integration_paper(real_app_instance, mocke
 
     # ✅ 표준 스키마(output 키)로 payload 구성
     payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
         "output": {
             "stck_prpr": "70500",
             "prdy_vrss": "1200",
             "prdy_ctrt": "1.73",
+            "stck_cntg_hour": "101500"   # 선택이지만 있으면 뷰표시 깔끔
         }
     }
 
@@ -170,10 +175,12 @@ async def test_get_current_price_full_integration_paper(real_app_instance, mocke
     quot_api = ctx.ki.quot
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
-
     # 입력 모킹
     test_stock_code = "005930"
     mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock, return_value=test_stock_code)
+
+    app.cli_view.display_current_stock_price = MagicMock()
+    app.cli_view.display_current_stock_price_error = MagicMock()
 
     # --- 실행 ---
     executor = UserActionExecutor(app)
@@ -190,7 +197,7 @@ async def test_get_current_price_full_integration_paper(real_app_instance, mocke
     g_args, g_kwargs = mock_get.call_args
     req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     trid_provider = ctx.ki.trid_quotations
     env = ctx.ki.env
@@ -203,6 +210,9 @@ async def test_get_current_price_full_integration_paper(real_app_instance, mocke
     assert req_headers.get("custtype") == custtype
     assert req_params.get("fid_input_iscd") == test_stock_code
 
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_current_stock_price.assert_called_once()
+    app.cli_view.display_current_stock_price_error.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_get_account_balance_full_integration_paper(real_app_instance, mocker):
@@ -258,9 +268,9 @@ async def test_get_account_balance_full_integration_paper(real_app_instance, moc
     # === 실제 세션 호출: 최종 URL/헤더/파라미터 검증 ===
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     expected_url = ctx.expected_url_for_account(app, EndpointKey.INQUIRE_BALANCE)
     trid_provider = ctx.ki.trid_account or ctx.ki.trid_quotations
@@ -277,7 +287,8 @@ async def test_get_account_balance_full_integration_paper(real_app_instance, moc
     # params 검증: 구현마다 다르므로 대표 키(CANO/ACNT_PRDT_CD) 기준으로 유연 체크
     # (프로젝트 구현 키에 맞춰 아래 집합을 조정하세요)
     must_keys = {"CANO", "ACNT_PRDT_CD"}
-    assert must_keys.issubset(set(req_params.keys())), f"params missing required keys: {must_keys - set(req_params.keys())}"
+    assert must_keys.issubset(
+        set(req_params.keys())), f"params missing required keys: {must_keys - set(req_params.keys())}"
 
     # 2. 성공 경로의 비즈니스 로직이 올바르게 수행되었는지 검증합니다.
     # 성공 로그 발생 여부 + 내용 검증(유연)
@@ -299,7 +310,6 @@ async def test_get_account_balance_full_integration_paper(real_app_instance, moc
     actual_arg = app.cli_view.display_account_balance.call_args.args[0]
 
     # 유연 검증: 원본 payload든 가공본이든 핵심 숫자만 확인
-
 
     src = ctx.extract_src_from_balance_payload(actual_arg)
     assert ctx.to_int(src.get("dnca_tot_amt")) == 1_000_000
@@ -526,9 +536,9 @@ async def test_display_stock_change_rate_full_integration_paper(real_app_instanc
     # 실제 세션 호출: 최종 URL/헤더/파라미터 검증
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_PRICE)
 
@@ -590,9 +600,9 @@ async def test_display_stock_vs_open_price_full_integration_paper(real_app_insta
     # 실제 세션 호출: 최종 URL/헤더/파라미터 검증
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_PRICE)
 
@@ -627,12 +637,19 @@ async def test_get_asking_price_full_integration_paper(real_app_instance, mocker
 
     # 시세 API 응답(payload) – 표준 스키마 'output'에 호가 정보 포함
     payload = {
-        "output": {
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output1": {
             "askp1": "70500",
             "bidp1": "70400",
             "askp_rsqn1": "100",
             "bidp_rsqn1": "120",
-        }
+            # (선택) 더 깊은 레벨을 보고 싶으면 아래처럼 추가
+            # "askp2": "70600", "bidp2": "70300",
+            # "askp_rsqn2": "80", "bidp_rsqn2": "150",
+        },
+        # (선택) 시간외 단일가가 필요하면 여기
+        # "output2": {...}
     }
 
     # 바인딩 + 시세 API
@@ -641,6 +658,9 @@ async def test_get_asking_price_full_integration_paper(real_app_instance, mocker
 
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    app.cli_view.display_asking_price = MagicMock()
+    app.cli_view.display_asking_price_error = MagicMock()
 
     # 실행 (메뉴 '7' = 호가 조회 가정)
     ok = await UserActionExecutor(app).execute("22")
@@ -654,9 +674,9 @@ async def test_get_asking_price_full_integration_paper(real_app_instance, mocker
     # 실제 세션 호출: 최종 URL/헤더/파라미터 검증
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.ASKING_PRICE)
 
@@ -678,6 +698,10 @@ async def test_get_asking_price_full_integration_paper(real_app_instance, mocker
     called_prompt = app.cli_view.get_user_input.await_args.args[0]
     assert "호가를 조회할 종목 코드를 입력하세요" in called_prompt
 
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_asking_price.assert_called_once()
+    app.cli_view.display_asking_price_error.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_get_time_concluded_prices_full_integration_paper(real_app_instance, mocker):
@@ -694,16 +718,25 @@ async def test_get_time_concluded_prices_full_integration_paper(real_app_instanc
 
     # 시세 API 응답(payload) – 표준 스키마 'output'에 필요한 필드 포함
     payload = {
-        "output": {
-            "stck_cntg_hour": "1015",
-            "stck_prpr": "70200",
-            "cntg_vol": "1000",
-        }
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output": [
+            {
+                "stck_bsop_date": "20250822",
+                "stck_cntg_hour": "101500",
+                "stck_prpr": "70200",
+                "prdy_vrss": "100",     # (선택) 전일 대비
+                "cntg_vol": "1000"
+            }
+        ]
     }
 
     # 바인딩 + 시세 API
     ctx.ki.bind(app)
     quot_api = ctx.ki.quot
+
+    app.cli_view.display_time_concluded_prices = MagicMock()
+    app.cli_view.display_time_concluded_error = MagicMock()
 
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
@@ -720,9 +753,9 @@ async def test_get_time_concluded_prices_full_integration_paper(real_app_instanc
     # 실제 세션 호출: 최종 URL/헤더/파라미터 검증
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     # ✅ 엔드포인트/트리아이디: 전용 상수 우선, 없으면 유연 폴백
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.TIME_CONCLUDE)
@@ -743,49 +776,9 @@ async def test_get_time_concluded_prices_full_integration_paper(real_app_instanc
     called_prompt = app.cli_view.get_user_input.await_args.args[0]
     assert prompt in called_prompt
 
-
-# @pytest.mark.asyncio
-# async def test_get_stock_news_full_integration_paper(real_app_instance, mocker):
-#     """
-#     (통합 테스트) 종목 뉴스 조회: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
-#     """
-#     app = real_app_instance
-#
-#     # ✅ 사용자 입력 모킹
-#     mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
-#     app.cli_view.get_user_input.return_value = "005930"
-#
-#     # ✅ API 응답 모킹 (뉴스 항목 일부 포함)
-#     mock_response = ResCommonResponse(
-#         rt_cd=ErrorCode.SUCCESS.value,
-#         msg1="정상",
-#         data={
-#             "output": [  # ✅ 이 구조가 필요
-#                 {
-#                     "news_title": "삼성전자, 2분기 실적 발표",
-#                     "news_date": "20250721",
-#                     "news_time": "093000",
-#                     "news_summary": "영업이익 증가 발표"
-#                 }
-#             ]
-#         }
-#     )
-#
-#     mock_call_api = mocker.patch(
-#         'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-#         return_value=mock_response
-#     )
-#
-#     # --- Act ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("9")
-#
-#     # --- Assert (검증) ---
-#     assert running_status == True
-#     mock_call_api.assert_awaited_once()
-#     app.cli_view.get_user_input.assert_awaited_once()
-#     called_args = app.cli_view.get_user_input.await_args.args[0]
-#     assert "뉴스를 조회할 종목 코드를 입력하세요" in called_args
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_time_concluded_prices.assert_called_once()
+    app.cli_view.display_time_concluded_error.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -803,9 +796,13 @@ async def test_get_etf_info_full_integration_paper(real_app_instance, mocker):
 
     # 표준 스키마 'output'로 응답 페이로드 구성
     payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
         "output": {
-            "etf_name": "KODEX 200",
+            "etf_rprs_bstp_kor_isnm": "KODEX 200",
+            "stck_prpr": "41510",
             "nav": "41500.00",
+            "stck_llam": "123456789000",
             "prdy_ctrt": "0.45",
         }
     }
@@ -816,6 +813,9 @@ async def test_get_etf_info_full_integration_paper(real_app_instance, mocker):
 
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    app.cli_view.display_etf_info = MagicMock()
+    app.cli_view.display_etf_info_error = MagicMock()
 
     # 실행 (메뉴 '10' = ETF 정보 조회)
     ok = await UserActionExecutor(app).execute("24")
@@ -829,9 +829,9 @@ async def test_get_etf_info_full_integration_paper(real_app_instance, mocker):
     # 실제 세션 호출: 최종 URL/헤더/파라미터 검증
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     # ✅ 엄격: 고정 상수만 사용
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.ETF_INFO)
@@ -848,6 +848,9 @@ async def test_get_etf_info_full_integration_paper(real_app_instance, mocker):
     called_prompt = app.cli_view.get_user_input.await_args.args[0]
     assert prompt in called_prompt
 
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_etf_info.assert_called_once()
+    app.cli_view.display_etf_info_error.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -868,8 +871,10 @@ async def test_get_ohlcv_day_full_integration_paper(real_app_instance, mocker):
         "msg_cd": "MCA00000",
         "msg1": "정상처리 되었습니다.",
         "output2": [
-            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
-            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+            {"stck_bsop_date": "20250812", "stck_oprc": "70000", "stck_hgpr": "71000", "stck_lwpr": "69500",
+             "stck_clpr": "70500", "acml_vol": "123456"},
+            {"stck_bsop_date": "20250813", "stck_oprc": "70500", "stck_hgpr": "71200", "stck_lwpr": "70100",
+             "stck_clpr": "71000", "acml_vol": "111111"},
         ]
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
@@ -894,9 +899,9 @@ async def test_get_ohlcv_day_full_integration_paper(real_app_instance, mocker):
 
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.DAILY_ITEMCHARTPRICE)
     trid_provider = ctx.ki.trid_quotations
@@ -929,8 +934,10 @@ async def test_get_ohlcv_week_full_integration_paper(real_app_instance, mocker):
         "msg_cd": "MCA00000",
         "msg1": "정상처리 되었습니다.",
         "output2": [
-            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
-            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+            {"stck_bsop_date": "20250812", "stck_oprc": "70000", "stck_hgpr": "71000", "stck_lwpr": "69500",
+             "stck_clpr": "70500", "acml_vol": "123456"},
+            {"stck_bsop_date": "20250813", "stck_oprc": "70500", "stck_hgpr": "71200", "stck_lwpr": "70100",
+             "stck_clpr": "71000", "acml_vol": "111111"},
         ]
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
@@ -955,9 +962,9 @@ async def test_get_ohlcv_week_full_integration_paper(real_app_instance, mocker):
 
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.DAILY_ITEMCHARTPRICE)
     trid_provider = ctx.ki.trid_quotations
@@ -990,8 +997,10 @@ async def test_get_ohlcv_month_full_integration_paper(real_app_instance, mocker)
         "msg_cd": "MCA00000",
         "msg1": "정상처리 되었습니다.",
         "output2": [
-            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
-            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+            {"stck_bsop_date": "20250812", "stck_oprc": "70000", "stck_hgpr": "71000", "stck_lwpr": "69500",
+             "stck_clpr": "70500", "acml_vol": "123456"},
+            {"stck_bsop_date": "20250813", "stck_oprc": "70500", "stck_hgpr": "71200", "stck_lwpr": "70100",
+             "stck_clpr": "71000", "acml_vol": "111111"},
         ]
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
@@ -1016,9 +1025,9 @@ async def test_get_ohlcv_month_full_integration_paper(real_app_instance, mocker)
 
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.DAILY_ITEMCHARTPRICE)
     trid_provider = ctx.ki.trid_quotations
@@ -1051,8 +1060,10 @@ async def test_get_ohlcv_year_full_integration_paper(real_app_instance, mocker):
         "msg_cd": "MCA00000",
         "msg1": "정상처리 되었습니다.",
         "output2": [
-            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
-            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+            {"stck_bsop_date": "20250812", "stck_oprc": "70000", "stck_hgpr": "71000", "stck_lwpr": "69500",
+             "stck_clpr": "70500", "acml_vol": "123456"},
+            {"stck_bsop_date": "20250813", "stck_oprc": "70500", "stck_hgpr": "71200", "stck_lwpr": "70100",
+             "stck_clpr": "71000", "acml_vol": "111111"},
         ]
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
@@ -1077,9 +1088,9 @@ async def test_get_ohlcv_year_full_integration_paper(real_app_instance, mocker):
 
     mock_get.assert_awaited_once()
     g_args, g_kwargs = mock_get.call_args
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.DAILY_ITEMCHARTPRICE)
     trid_provider = ctx.ki.trid_quotations
@@ -1111,8 +1122,10 @@ async def test_handle_fetch_recnt_daily_ohlcv_full_integration_paper(real_app_in
         "msg_cd": "MCA00000",
         "msg1": "정상처리 되었습니다.",
         "output2": [
-            {"stck_bsop_date":"20250812","stck_oprc":"70000","stck_hgpr":"71000","stck_lwpr":"69500","stck_clpr":"70500","acml_vol":"123456"},
-            {"stck_bsop_date":"20250813","stck_oprc":"70500","stck_hgpr":"71200","stck_lwpr":"70100","stck_clpr":"71000","acml_vol":"111111"},
+            {"stck_bsop_date": "20250812", "stck_oprc": "70000", "stck_hgpr": "71000", "stck_lwpr": "69500",
+             "stck_clpr": "70500", "acml_vol": "123456"},
+            {"stck_bsop_date": "20250813", "stck_oprc": "70500", "stck_hgpr": "71200", "stck_lwpr": "70100",
+             "stck_clpr": "71000", "acml_vol": "111111"},
         ]
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
@@ -1186,8 +1199,8 @@ async def test_intraday_minutes_today_full_integration_paper(real_app_instance, 
         "rt_cd": "0",
         "msg1": "정상",
         "output2": [
-            {"stck_bsop_date":"20250820","stck_cntg_hour":"0901","stck_prpr":"70500","cntg_vol":"1200"},
-            {"stck_bsop_date":"20250820","stck_cntg_hour":"0902","stck_prpr":"70550","cntg_vol":"900"},
+            {"stck_bsop_date": "20250820", "stck_cntg_hour": "0901", "stck_prpr": "70500", "cntg_vol": "1200"},
+            {"stck_bsop_date": "20250820", "stck_cntg_hour": "0902", "stck_prpr": "70550", "cntg_vol": "900"},
         ]
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
@@ -1212,6 +1225,7 @@ async def test_intraday_minutes_today_full_integration_paper(real_app_instance, 
     try:
         from brokers.korea_investment.korea_invest_url_keys import EndpointKey as EKey
         expected_url = ctx.expected_url_for_quotations(app, EKey.TIME_ITEMCHARTPRICE)
+
         def is_target(call):
             args, kwargs = call
             url = args[0] if args else kwargs.get("url")
@@ -1226,9 +1240,9 @@ async def test_intraday_minutes_today_full_integration_paper(real_app_instance, 
     assert target_call is not None, "GET to 'inquire-time-itemchartprice' was not captured."
 
     g_args, g_kwargs = target_call
-    req_url     = g_args[0] if g_args else g_kwargs.get("url")
+    req_url = g_args[0] if g_args else g_kwargs.get("url")
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     # TRID 검증 (상수 정리 전이면 존재성만)
     trid_provider = ctx.ki.trid_quotations
@@ -1266,7 +1280,6 @@ async def test_intraday_minutes_by_date_paper_shows_warning_and_no_http(real_app
     # GET 스파이 세팅 (다른 엔드포인트 호출이 있어도 필터링으로 검증)
     payload = {"rt_cd": "0", "msg1": "SKIP", "output2": []}
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
-
 
     # ⚠️ 모의 미지원 경고 뷰만 체크
     app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
@@ -1317,8 +1330,8 @@ async def test_day_intraday_minutes_today_calls_service_paper(real_app_instance,
         "rt_cd": "0",
         "msg1": "정상",
         "output2": [
-            {"stck_bsop_date":"20241023","stck_cntg_hour":"0900","stck_prpr":"70000","cntg_vol":"1000"},
-            {"stck_bsop_date":"20241023","stck_cntg_hour":"0901","stck_prpr":"70100","cntg_vol":"800"},
+            {"stck_bsop_date": "20241023", "stck_cntg_hour": "0900", "stck_prpr": "70000", "cntg_vol": "1000"},
+            {"stck_bsop_date": "20241023", "stck_cntg_hour": "0901", "stck_prpr": "70100", "cntg_vol": "800"},
         ]
     }
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
@@ -1345,6 +1358,7 @@ async def test_day_intraday_minutes_today_calls_service_paper(real_app_instance,
         key = getattr(EKey, "TIME_ITEMCHARTPRICE", None) or getattr(EKey, "INQUIRE_TIME_ITEMCHARTPRICE", None)
         if key:
             expected_url = ctx.expected_url_for_quotations(app, key)
+
             def is_target(call):
                 args, kwargs = call
                 url = args[0] if args else kwargs.get("url")
@@ -1365,7 +1379,7 @@ async def test_day_intraday_minutes_today_calls_service_paper(real_app_instance,
 
     g_args, g_kwargs = target_call
     req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+    req_params = g_kwargs.get("params") or {}
 
     # TRID 검증
     trid_provider = ctx.ki.trid_quotations
@@ -1451,7 +1465,7 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration_paper(r
         "msg1": "정상",
         "output": [
             {"mksc_shrn_iscd": "005930", "stck_avls": "1000000000", "hts_kor_isnm": "삼성전자", "data_rank": "1"},
-            {"mksc_shrn_iscd": "000660", "stck_avls": "500000000",  "hts_kor_isnm": "SK하이닉스", "data_rank": "2"},
+            {"mksc_shrn_iscd": "000660", "stck_avls": "500000000", "hts_kor_isnm": "SK하이닉스", "data_rank": "2"},
         ],
     }
     price_payload = {
@@ -1468,7 +1482,7 @@ async def test_get_top_10_market_cap_stocks_with_prices_full_integration_paper(r
     quot_api = ctx.ki.quot
 
     # URL 판별형 side_effect (세션 GET 레벨에서 분기)
-    market_cap_url  = ctx.expected_url_for_quotations(app, EndpointKey.MARKET_CAP)
+    market_cap_url = ctx.expected_url_for_quotations(app, EndpointKey.MARKET_CAP)
     inquire_price_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_PRICE)
 
     def _make_resp(obj):
@@ -1596,7 +1610,7 @@ async def test_handle_current_upper_limit_stocks_full_integration_paper(real_app
         }),
         ResFluctuation.from_dict({
             "stck_shrn_iscd": "000003", "hts_kor_isnm": "C",
-            "stck_prpr": "15000", "stck_hgpr": "16000", "prdy_ctrt": "8.50",  "prdy_vrss": "1170",
+            "stck_prpr": "15000", "stck_hgpr": "16000", "prdy_ctrt": "8.50", "prdy_vrss": "1170",
         }),
     ]
 
@@ -1714,8 +1728,10 @@ async def test_get_top_volume_full_integration_paper(real_app_instance, mocker):
     # 표준 스키마 'output'에 간단 페이로드
     payload = {
         "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_prpr": "70000", "prdy_ctrt": "3.2",
+             "prdy_vrss": "2170"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7",
+             "prdy_vrss": "3950"},
         ]
     }
 
@@ -1757,8 +1773,10 @@ async def test_get_top_rise_full_integration_paper(real_app_instance, mocker):
     # 표준 스키마 'output'에 간단 페이로드
     payload = {
         "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_prpr": "70000", "prdy_ctrt": "3.2",
+             "prdy_vrss": "2170"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7",
+             "prdy_vrss": "3950"},
         ]
     }
 
@@ -1800,8 +1818,10 @@ async def test_get_top_fall_full_integration_paper(real_app_instance, mocker):
     # 표준 스키마 'output'에 간단 페이로드
     payload = {
         "output": [
-            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자",   "stck_prpr": "70000",  "prdy_ctrt": "3.2", "prdy_vrss": "2170"},
-            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7", "prdy_vrss": "3950"},
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_prpr": "70000", "prdy_ctrt": "3.2",
+             "prdy_vrss": "2170"},
+            {"stck_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "stck_prpr": "150000", "prdy_ctrt": "2.7",
+             "prdy_vrss": "3950"},
         ]
     }
 

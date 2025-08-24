@@ -108,7 +108,16 @@ class UserActionExecutor:
 
     async def handle_get_current_price(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_get_current_stock_price(stock_code)
+
+        self.app.logger.info(f"Handler - {stock_code} 현재가 조회 요청")
+        result = await self.app.stock_query_service.handle_get_current_stock_price(stock_code)
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_current_stock_price(result.data)
+        else:
+            msg = result.msg1 if result else "응답 없음"
+            code = (result.data or {}).get("code", stock_code)
+            self.app.cli_view.display_current_stock_price_error(code, msg)
+            self.app.logger.error(f"{stock_code} 현재가 조회 실패: {msg}")
 
     async def handle_account_balance(self) -> None:
         balance_response = await self.app.stock_query_service.handle_get_account_balance()
@@ -145,11 +154,25 @@ class UserActionExecutor:
 
     async def handle_asking_price(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("호가를 조회할 종목 코드를 입력하세요(삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_get_asking_price(stock_code)
+        self.app.logger.info(f"Handler - {stock_code} 호가 정보 조회 요청")
+        result = await self.app.stock_query_service.handle_get_asking_price(stock_code)
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.handle_get_asking_price(result.data)
+        else:
+            msg = result.msg1 if result else "응답 없음"
+            code = (result.data or {}).get("code", stock_code)
+            self.app.cli_view.display_asking_price_error(code, msg)
 
     async def handle_time_conclude(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("시간대별 체결가를 조회할 종목 코드를 입력하세요(삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_get_time_concluded_prices(stock_code)
+        self.app.logger.info(f"Handler - {stock_code} 시간대별 체결가 조회 요청")
+        result = await self.app.stock_query_service.handle_get_time_concluded_prices(stock_code)
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.handle_get_time_concluded_prices(result.data)
+        else:
+            msg = result.msg1 if result else "응답 없음"
+            code = (result.data or {}).get("code", stock_code)
+            self.app.cli_view.display_time_concluded_error(code, msg)
 
     async def handle_invalidate_token(self) -> None:
         self.app.env.invalidate_token()
@@ -157,7 +180,16 @@ class UserActionExecutor:
 
     async def handle_etf_info(self) -> None:
         etf_code = await self.app.cli_view.get_user_input("정보를 조회할 ETF 코드를 입력하세요(나스닥 ETF: 133690): ")
-        await self.app.stock_query_service.handle_get_etf_info(etf_code)
+        self.app.logger.info(f"Handler - {etf_code} ETF 정보 조회 요청")
+
+        result = await self.app.stock_query_service.handle_get_etf_info(etf_code)
+
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_etf_info(etf_code, result.data)
+        else:
+            msg = result.msg1 if result else "응답 없음"
+            code = (result.data or {}).get("code", etf_code)
+            self.app.cli_view.display_etf_info_error(code, msg)
 
     async def handle_ohlcv(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")

@@ -122,10 +122,13 @@ async def test_get_current_price_full_integration_real(real_app_instance, mocker
 
     # ✅ 표준 스키마(output 키)로 payload 구성
     payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
         "output": {
             "stck_prpr": "70500",
             "prdy_vrss": "1200",
             "prdy_ctrt": "1.73",
+            "stck_cntg_hour": "101500"   # 선택이지만 있으면 뷰표시 깔끔
         }
     }
 
@@ -139,6 +142,12 @@ async def test_get_current_price_full_integration_real(real_app_instance, mocker
     # 입력 모킹
     test_stock_code = "005930"
     mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock, return_value=test_stock_code)
+
+    app.cli_view.handle_get_current_stock_price = MagicMock()
+    app.cli_view.display_etf_info_error = MagicMock()
+
+    app.cli_view.display_current_stock_price = MagicMock()
+    app.cli_view.display_current_stock_price_error = MagicMock()
 
     # --- 실행 ---
     executor = UserActionExecutor(app)
@@ -167,6 +176,10 @@ async def test_get_current_price_full_integration_real(real_app_instance, mocker
     assert req_headers.get("tr_id") == expected_trid
     assert req_headers.get("custtype") == custtype
     assert req_params.get("fid_input_iscd") == test_stock_code
+
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_current_stock_price.assert_called_once()
+    app.cli_view.display_current_stock_price_error.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -540,12 +553,19 @@ async def test_get_asking_price_full_integration_real(real_app_instance, mocker)
 
     # 시세 API 응답(payload) – 표준 스키마 'output'에 호가 정보 포함
     payload = {
-        "output": {
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output1": {
             "askp1": "70500",
             "bidp1": "70400",
             "askp_rsqn1": "100",
             "bidp_rsqn1": "120",
-        }
+            # (선택) 더 깊은 레벨을 보고 싶으면 아래처럼 추가
+            # "askp2": "70600", "bidp2": "70300",
+            # "askp_rsqn2": "80", "bidp_rsqn2": "150",
+        },
+        # (선택) 시간외 단일가가 필요하면 여기
+        # "output2": {...}
     }
 
     # 바인딩 + 시세 API
@@ -554,6 +574,9 @@ async def test_get_asking_price_full_integration_real(real_app_instance, mocker)
 
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    app.cli_view.display_asking_price = MagicMock()
+    app.cli_view.display_asking_price_error = MagicMock()
 
     ok = await UserActionExecutor(app).execute("22")
     assert ok is True
@@ -590,6 +613,10 @@ async def test_get_asking_price_full_integration_real(real_app_instance, mocker)
     called_prompt = app.cli_view.get_user_input.await_args.args[0]
     assert "호가를 조회할 종목 코드를 입력하세요" in called_prompt
 
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_asking_price.assert_called_once()
+    app.cli_view.display_asking_price_error.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_get_time_concluded_prices_full_integration_real(real_app_instance, mocker):
@@ -606,11 +633,17 @@ async def test_get_time_concluded_prices_full_integration_real(real_app_instance
 
     # 시세 API 응답(payload) – 표준 스키마 'output'에 필요한 필드 포함
     payload = {
-        "output": {
-            "stck_cntg_hour": "1015",
-            "stck_prpr": "70200",
-            "cntg_vol": "1000",
-        }
+        "rt_cd": "0",
+        "msg1": "정상",
+        "output": [
+            {
+                "stck_bsop_date": "20250822",
+                "stck_cntg_hour": "101500",
+                "stck_prpr": "70200",
+                "prdy_vrss": "100",     # (선택) 전일 대비
+                "cntg_vol": "1000"
+            }
+        ]
     }
 
     # 바인딩 + 시세 API
@@ -619,6 +652,9 @@ async def test_get_time_concluded_prices_full_integration_real(real_app_instance
 
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    app.cli_view.display_time_concluded_prices = MagicMock()
+    app.cli_view.display_time_concluded_error = MagicMock()
 
     ok = await UserActionExecutor(app).execute("23")
     assert ok is True
@@ -654,49 +690,9 @@ async def test_get_time_concluded_prices_full_integration_real(real_app_instance
     called_prompt = app.cli_view.get_user_input.await_args.args[0]
     assert prompt in called_prompt
 
-
-# @pytest.mark.asyncio
-# async def test_get_stock_news_full_integration_real(real_app_instance, mocker):
-#     """
-#     (통합 테스트) 종목 뉴스 조회: TradingApp → StockQueryService → BrokerAPIWrapper 흐름 테스트
-#     """
-#     app = real_app_instance
-#
-#     # ✅ 사용자 입력 모킹
-#     mocker.patch.object(app.cli_view, 'get_user_input', new_callable=AsyncMock)
-#     app.cli_view.get_user_input.return_value = "005930"
-#
-#     # ✅ API 응답 모킹 (뉴스 항목 일부 포함)
-#     mock_response = ResCommonResponse(
-#         rt_cd=ErrorCode.SUCCESS.value,
-#         msg1="정상",
-#         data={
-#             "output": [  # ✅ 이 구조가 필요
-#                 {
-#                     "news_title": "삼성전자, 2분기 실적 발표",
-#                     "news_date": "20250721",
-#                     "news_time": "093000",
-#                     "news_summary": "영업이익 증가 발표"
-#                 }
-#             ]
-#         }
-#     )
-#
-#     mock_call_api = mocker.patch(
-#         'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-#         return_value=mock_response
-#     )
-#
-#     # --- Act ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("9")
-#
-#     # --- Assert (검증) ---
-#     assert running_status == True
-#     mock_call_api.assert_awaited_once()
-#     app.cli_view.get_user_input.assert_awaited_once()
-#     called_args = app.cli_view.get_user_input.await_args.args[0]
-#     assert "뉴스를 조회할 종목 코드를 입력하세요" in called_args
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_time_concluded_prices.assert_called_once()
+    app.cli_view.display_time_concluded_error.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -714,9 +710,13 @@ async def test_get_etf_info_full_integration_real(real_app_instance, mocker):
 
     # 표준 스키마 'output'로 응답 페이로드 구성
     payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
         "output": {
-            "etf_name": "KODEX 200",
+            "etf_rprs_bstp_kor_isnm": "KODEX 200",
+            "stck_prpr": "41510",
             "nav": "41500.00",
+            "stck_llam": "123456789000",
             "prdy_ctrt": "0.45",
         }
     }
@@ -727,6 +727,9 @@ async def test_get_etf_info_full_integration_real(real_app_instance, mocker):
 
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    app.cli_view.display_etf_info = MagicMock()
+    app.cli_view.display_etf_info_error = MagicMock()
 
     ok = await UserActionExecutor(app).execute("24")
     assert ok is True
@@ -757,6 +760,10 @@ async def test_get_etf_info_full_integration_real(real_app_instance, mocker):
     app.cli_view.get_user_input.assert_awaited_once()
     called_prompt = app.cli_view.get_user_input.await_args.args[0]
     assert prompt in called_prompt
+
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_etf_info.assert_called_once()
+    app.cli_view.display_etf_info_error.assert_not_called()
 
 
 @pytest.mark.asyncio
