@@ -161,7 +161,7 @@ class UserActionExecutor:
         self.app.logger.info(f"Handler - {stock_code} 호가 정보 조회 요청")
         result = await self.app.stock_query_service.handle_get_asking_price(stock_code)
         if result and result.rt_cd == ErrorCode.SUCCESS.value:
-            self.app.cli_view.handle_get_asking_price(result.data)
+            self.app.cli_view.display_asking_price(result.data)
         else:
             msg = result.msg1 if result else "응답 없음"
             code = (result.data or {}).get("code", stock_code)
@@ -172,7 +172,7 @@ class UserActionExecutor:
         self.app.logger.info(f"Handler - {stock_code} 시간대별 체결가 조회 요청")
         result = await self.app.stock_query_service.handle_get_time_concluded_prices(stock_code)
         if result and result.rt_cd == ErrorCode.SUCCESS.value:
-            self.app.cli_view.handle_get_time_concluded_prices(result.data)
+            self.app.cli_view.display_time_concluded_prices(result.data)
         else:
             msg = result.msg1 if result else "응답 없음"
             code = (result.data or {}).get("code", stock_code)

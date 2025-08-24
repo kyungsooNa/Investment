@@ -447,10 +447,6 @@ class CLIView:
     def display_asking_price_error(self, code: str, msg: str):
         print(f"\n실패: {code} 호가 정보 조회. ({msg})")
 
-    # 테스트/호환용 래퍼
-    def handle_get_asking_price(self, view: dict):
-        self.display_asking_price(view)
-
     # ===== 시간대별 체결가 =====
     def display_time_concluded_prices(self, view: dict):
         code = view.get("code", "N/A")
@@ -469,10 +465,6 @@ class CLIView:
 
     def display_time_concluded_error(self, code: str, msg: str):
         print(f"\n실패: {code} 시간대별 체결가 조회. ({msg})")
-
-    # 테스트/호환용 래퍼
-    def handle_get_time_concluded_prices(self, view: dict):
-        self.display_time_concluded_prices(view)
 
     def display_etf_info(self, etf_code: str, etf_info: dict) -> None:
         self._print_common_header()

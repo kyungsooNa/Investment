@@ -89,6 +89,8 @@ def setup_mock_app(mocker):
     app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
     app.cli_view.display_warning_strategy_market_closed = MagicMock()
     app.cli_view.display_no_stocks_for_strategy = MagicMock()
+    app.cli_view.display_current_stock_price = MagicMock()
+    app.cli_view.display_current_stock_price_error = MagicMock()
 
 
     app.cli_view.get_user_input = AsyncMock()  # 이 줄은 유지
@@ -647,10 +649,14 @@ async def test_execute_action_0_change_environment_success(setup_mock_app):  # c
 async def test_execute_action_1_stock_info_success(setup_mock_app):
     app = setup_mock_app
     app.cli_view.get_user_input.return_value = "005930"  # 종목코드 직접 입력으로 변경
-    # trading_service.get_code_by_name과 get_price_summary는 이제 1번 메뉴에서 직접 호출되지 않음
-    # 대신 stock_query_service.handle_get_current_stock_price가 호출됨
-    app.stock_query_service.handle_get_current_stock_price.return_value = None  # handle_get_current_stock_price를 목킹
-
+    app.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="정상",
+        data={
+            "code": "005930",
+            "price": "70500",
+            "time": "101500",
+        }
+    )
     executor = UserActionExecutor(app)
     result = await executor.execute('1')  # 1번 메뉴로 변경
 
@@ -753,10 +759,23 @@ async def test_execute_action_get_asking_price(setup_mock_app):
     # --- Arrange (준비) ---
     app = setup_mock_app
 
-    # _execute_action('7') 내부에서 호출되는 get_user_input의 반환값을 설정합니다.
-    # 이렇게 하면 실제 input() 함수가 호출되는 것을 막고 OSError를 방지합니다.
     app.cli_view.get_user_input.return_value = "005930"
 
+    # (1) CLIView에 필요한 출력 메서드 붙이기
+    app.cli_view.display_asking_price = MagicMock()
+    app.cli_view.display_asking_price_error = MagicMock()
+
+    # (2) 서비스가 성공을 반환하도록 모킹 (실패 경로로 안 떨어지게)
+    app.stock_query_service.handle_get_asking_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="정상",
+        data={
+            "code": "005930",
+            "rows": [
+                {"level": 1, "ask_price": "70500", "ask_rem": "100", "bid_price": "70400", "bid_rem": "120"}
+            ],
+            "meta": {"prpr": "70450", "time": "101500"}
+        }
+    ))
     # --- Act (실행) ---
     # 실제 _execute_action 메서드를 호출합니다.
     executor = UserActionExecutor(app)
@@ -769,6 +788,9 @@ async def test_execute_action_get_asking_price(setup_mock_app):
 
     # 2. stock_query_service의 핸들러가 올바른 종목 코드로 호출되었는지 확인합니다.
     app.stock_query_service.handle_get_asking_price.assert_awaited_once_with("005930")
+
+    app.cli_view.display_asking_price.assert_called_once()
+    app.cli_view.display_asking_price_error.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_execute_action_market_cap_query_failure_in_live_env():

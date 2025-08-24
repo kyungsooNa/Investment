@@ -108,7 +108,7 @@ class TradingService:
         return await self._broker_api_wrapper.get_price_summary(stock_code)
 
     async def get_current_stock_price(self, stock_code) -> ResCommonResponse:
-        self._logger.info(f"Service - {stock_code} 현재가 조회 요청")
+        self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
         return await self._broker_api_wrapper.get_current_price(stock_code)
 
     async def get_account_balance(self) -> ResCommonResponse:

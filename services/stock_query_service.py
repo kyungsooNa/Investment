@@ -28,7 +28,7 @@ class StockQueryService:
 
     async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 조회 요청 및 결과 출력."""
-        self.logger.info(f"Service - {stock_code} 현재가 조회 요청")
+        self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 조회 요청")
         resp: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
