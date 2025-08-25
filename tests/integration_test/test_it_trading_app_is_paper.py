@@ -338,6 +338,10 @@ async def test_buy_stock_full_integration_paper(real_app_instance, mocker):
     # ✅ 해시키+주문 동시 패치
     spy_exec, mock_post, expected_order_url = ctx.patch_post_with_hash_and_order(order_api, mocker, payload)
 
+    # 출력 뷰어는 호출만 검증
+    app.cli_view.display_order_success = MagicMock()
+    app.cli_view.display_order_failure = MagicMock()
+
     ok = await UserActionExecutor(app).execute("3")
     assert ok is True
 
@@ -405,6 +409,10 @@ async def test_buy_stock_full_integration_paper(real_app_instance, mocker):
         # 문자열 본문일 경우 단순 포함 체크
         assert code in body and qty in body and price in body
 
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_order_success.assert_called_once()
+    app.cli_view.display_order_failure.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_sell_stock_full_integration_paper(real_app_instance, mocker):
@@ -426,6 +434,10 @@ async def test_sell_stock_full_integration_paper(real_app_instance, mocker):
 
     # 해시키 + 주문 동시 패치 (세션 post 단에서 URL별 분기)
     spy_exec, mock_post, expected_order_url = ctx.patch_post_with_hash_and_order(order_api, mocker, payload)
+
+    # 출력 뷰어는 호출만 검증
+    app.cli_view.display_order_success = MagicMock()
+    app.cli_view.display_order_failure = MagicMock()
 
     # === 실행 (메뉴 '4' = 매도 가정) ===
     ok = await UserActionExecutor(app).execute("4")
@@ -493,6 +505,10 @@ async def test_sell_stock_full_integration_paper(real_app_instance, mocker):
     else:
         # 문자열 본문일 경우 단순 포함 체크
         assert code in body and qty in body and price in body
+
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_order_success.assert_called_once()
+    app.cli_view.display_order_failure.assert_not_called()
 
 
 @pytest.mark.asyncio

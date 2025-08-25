@@ -91,6 +91,8 @@ def setup_mock_app(mocker):
     app.cli_view.display_no_stocks_for_strategy = MagicMock()
     app.cli_view.display_current_stock_price = MagicMock()
     app.cli_view.display_current_stock_price_error = MagicMock()
+    app.cli_view.display_order_success = MagicMock()
+    app.cli_view.display_order_failure = MagicMock()
 
 
     app.cli_view.get_user_input = AsyncMock()  # 이 줄은 유지
@@ -492,7 +494,7 @@ async def test_execute_action_3_place_buy_order(setup_mock_app):
     app.order_execution_service.handle_buy_stock.assert_awaited_once_with("005930", "10", "80000")
 
 @pytest.mark.asyncio
-async def test_execute_action_3_place_buy_order(setup_mock_app):
+async def test_execute_action_place_buy_order(setup_mock_app):
     """메뉴 '3' 선택 시 order_execution_service.handle_buy_stock이 호출되는지 테스트합니다."""
     # --- Arrange (준비) ---
     app = setup_mock_app
@@ -684,10 +686,14 @@ async def test_execute_action_2_account_balance_failure(setup_mock_app, capsys):
 
 
 @pytest.mark.asyncio
-async def test_execute_action_3_place_buy_order_success(setup_mock_app):
+async def test_execute_action_place_buy_order_success(setup_mock_app):
     app = setup_mock_app
     # handle_buy_stock이 성공적으로 실행되도록 목(mock) 설정
-    app.order_execution_service.handle_buy_stock.return_value = None  # 이 메서드는 반환값이 없음
+    app.order_execution_service.handle_buy_stock.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ord_no": "T123"},
+    )
 
     executor = UserActionExecutor(app)
     result = await executor.execute('3')
@@ -698,7 +704,7 @@ async def test_execute_action_3_place_buy_order_success(setup_mock_app):
 
 @pytest.mark.asyncio
 # 테스트 이름과 목적을 실제 기능에 맞게 수정
-async def test_execute_action_4_place_sell_order(setup_mock_app):
+async def test_execute_action_place_sell_order(setup_mock_app):
     """메뉴 '4' 선택 시 order_execution_service.handle_sell_stock이 호출되는지 테스트합니다."""
     # --- Arrange (준비) ---
     app = setup_mock_app

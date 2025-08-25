@@ -132,19 +132,25 @@ class UserActionExecutor:
             self.app.cli_view.display_account_balance_failure(balance_response.msg1)
             self.app.logger.warning(f"계좌 잔고 조회 실패: {balance_response.msg1}")
 
-    # @TODO cli_view로 출력 위임
     async def handle_buy_stock(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("매수할 종목 코드를 입력하세요: ")
         qty = await self.app.cli_view.get_user_input("매수할 수량을 입력하세요: ")
         price = await self.app.cli_view.get_user_input("매수 가격을 입력하세요 (시장가: 0): ")
-        await self.app.order_execution_service.handle_buy_stock(stock_code, qty, price)
+        response : ResCommonResponse = await self.app.order_execution_service.handle_buy_stock(stock_code, qty, price)
+        if response.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_order_success(order_type="buy",stock_code=stock_code,qty=qty,response=response)
+        else:
+            self.app.cli_view.display_order_failure(order_type="buy", stock_code=stock_code, response=response)
 
-    # @TODO cli_view로 출력 위임
     async def handle_sell_stock(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("매도할 종목 코드를 입력하세요: ")
         qty = await self.app.cli_view.get_user_input("매도할 수량을 입력하세요: ")
         price = await self.app.cli_view.get_user_input("매도 가격을 입력하세요 (시장가: 0): ")
-        await self.app.order_execution_service.handle_sell_stock(stock_code, qty, price)
+        response : ResCommonResponse = await self.app.order_execution_service.handle_sell_stock(stock_code, qty, price)
+        if response.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_order_success(order_type="sell",stock_code=stock_code,qty=qty,response=response)
+        else:
+            self.app.cli_view.display_order_failure(order_type="sell", stock_code=stock_code, response=response)
 
     # @TODO cli_view로 출력 위임
     async def handle_stock_change_rate(self) -> None:

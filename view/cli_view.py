@@ -126,6 +126,22 @@ class CLIView:
         else:
             print("종목 정보를 찾을 수 없습니다.")
 
+    def _label(self, order_type):
+        return "매수" if order_type == "buy" else "매도"
+
+    def display_order_success(self, order_type, stock_code, qty, response):
+        print(f"\n--- 주식 {self._label(order_type)} 주문 성공 ---")
+        print(f"종목={stock_code}, 수량={qty}, 결과={response.data}")
+        print(f"주문 번호: {response.data.get('ord_no', 'N/A')}")
+        print(f"주문 시각: {response.data.get('ord_tmd', 'N/A')}")
+
+    def display_order_failure(self, order_type, stock_code, response):
+        print(f"\n--- 주식 {self._label(order_type)} 주문 실패 ---")
+        if response:
+            print(f"종목={stock_code}, 결과={response.data}")
+        else:
+            print("응답이 없습니다.")
+
     def display_transaction_result(self, result: dict, action: str):
         """매수/매도 거래 결과를 표시합니다."""
         self._print_common_header()
