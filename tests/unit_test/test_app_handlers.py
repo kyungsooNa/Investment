@@ -188,8 +188,8 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_broker_api_wrapper.disconnect_websocket.assert_called_once()
         self.mock_logger.info.assert_called()
 
-    # 메뉴 5: 주식 전일대비 등락률 조회 - handle_display_stock_change_rate
-    async def test_handle_display_stock_change_rate_success(self):
+    # 메뉴 5: 주식 전일대비 등락률 조회 - get_stock_change_rate
+    async def test_get_stock_change_rate_success(self):
         stock_code = "005930"
         self.mock_broker_api_wrapper.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
@@ -203,7 +203,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
                 })
             }
         )
-        await self.stock_query_service.handle_display_stock_change_rate(stock_code)
+        await self.stock_query_service.get_stock_change_rate(stock_code)
 
         self.mock_logger.info.assert_has_calls([
             mock.call(f"Trading_Service - {stock_code} 현재가 조회 요청"),
@@ -211,21 +211,21 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         ])
         self.assertEqual(self.mock_logger.info.call_count, 2)
 
-    async def test_handle_display_stock_change_rate_failure(self):
+    async def test_get_stock_change_rate_failure(self):
         stock_code = "005930"
         self.mock_broker_api_wrapper.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.API_ERROR.value,  # 예: "100"
             msg1="조회 실패",
             data=None
         )
-        await self.stock_query_service.handle_display_stock_change_rate(stock_code)
+        await self.stock_query_service.get_stock_change_rate(stock_code)
 
         self.mock_logger.info.assert_called_once_with(f"Trading_Service - {stock_code} 현재가 조회 요청")
         self.mock_logger.error.assert_called_once()
 
-        # 메뉴 6: 주식 시가대비 조회 - handle_display_stock_vs_open_price
+        # 메뉴 6: 주식 시가대비 조회 - get_open_vs_current
 
-    async def test_handle_display_stock_vs_open_price_success(self):
+    async def test_get_open_vs_current_success(self):
         stock_code = "005930"
         self.mock_broker_api_wrapper.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
@@ -238,22 +238,22 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
                 })
             }
         )
-        await self.stock_query_service.handle_display_stock_vs_open_price(stock_code)
+        await self.stock_query_service.get_open_vs_current(stock_code)
 
         self.mock_logger.info.assert_has_calls([
             mock.call(f"Trading_Service - {stock_code} 현재가 조회 요청"),
-            mock.call(f"{stock_code} 시가대비 조회 성공: 현재가=70000, 시가=69000, 시가대비=+1000원 (+1.45%)")
+            mock.call(f"{stock_code} 시가대비 조회 성공: 현재가=70000, 시가=69000, 시가대비=+1000 (+1.45%)")
         ])
         self.assertEqual(self.mock_logger.info.call_count, 2)
 
-    async def test_handle_display_stock_vs_open_price_failure(self):
+    async def test_get_open_vs_current_failure(self):
         stock_code = "005930"
         self.mock_broker_api_wrapper.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.API_ERROR.value,
             msg1="조회 실패",
             data=None
         )
-        await self.stock_query_service.handle_display_stock_vs_open_price(stock_code)
+        await self.stock_query_service.get_open_vs_current(stock_code)
 
         self.mock_logger.info.assert_called_once_with(f"Trading_Service - {stock_code} 현재가 조회 요청")
         self.mock_logger.error.assert_called_once()

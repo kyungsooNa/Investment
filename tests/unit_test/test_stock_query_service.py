@@ -163,7 +163,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_change_rate("005930")
+        await self.handler.get_stock_change_rate("005930")
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_change_rate_decrease(self):
@@ -180,7 +180,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_change_rate("005930")
+        await self.handler.get_stock_change_rate("005930")
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_change_rate_no_change(self):
@@ -194,7 +194,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_change_rate("005930")
+        await self.handler.get_stock_change_rate("005930")
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_change_rate_missing_fields(self):
@@ -211,7 +211,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_change_rate("005930")
+        await self.handler.get_stock_change_rate("005930")
         self.mock_logger.info.assert_called_once_with(
             "005930 전일대비 등락률 조회 성공: 현재가=N/A, 전일대비=N/A, 등락률=N/A%"
         )
@@ -227,7 +227,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_change_rate("005930")
+        await self.handler.get_stock_change_rate("005930")
         # Corrected assertion: expecting "ABC" without a sign because it's not a valid number
         self.mock_logger.info.assert_called_once_with(
             "005930 전일대비 등락률 조회 성공: 현재가=70000, 전일대비=ABC, 등락률=1.45%"
@@ -243,7 +243,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             data=None
         )
 
-        await self.handler.handle_display_stock_change_rate("005930")
+        await self.handler.get_stock_change_rate("005930")
         self.mock_logger.error.assert_called_once()
         self.assertIn("전일대비 등락률 조회 실패", self.mock_logger.error.call_args[0][0])
 
@@ -451,7 +451,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_vs_open_price("005930")
+        await self.handler.get_open_vs_current("005930")
         self.mock_logger.info.assert_called()
 
     async def test_handle_display_stock_vs_open_price_decrease(self):
@@ -468,7 +468,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_vs_open_price("005930")
+        await self.handler.get_open_vs_current("005930")
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_vs_open_price_no_change(self):
@@ -485,7 +485,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_vs_open_price("005930")
+        await self.handler.get_open_vs_current("005930")
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_vs_open_price_zero_open_price(self):
@@ -501,7 +501,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_vs_open_price("005930")
+        await self.handler.get_open_vs_current("005930")
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_vs_open_price_missing_price_data(self):
@@ -518,7 +518,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_vs_open_price("005930")
+        await self.handler.get_open_vs_current("005930")
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_vs_open_price_failure(self):
@@ -528,7 +528,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             data=None
         )
 
-        await self.handler.handle_display_stock_vs_open_price("005930")
+        await self.handler.get_open_vs_current("005930")
         self.mock_logger.error.assert_called_once()
         self.assertIn("시가대비 조회 실패", self.mock_logger.error.call_args[0][0])
 
@@ -543,7 +543,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_vs_open_price("005930")
+        await self.handler.get_open_vs_current("005930")
         self.mock_logger.info.assert_called()
 
     async def test_handle_get_top_10_market_cap_stocks_with_prices_exception_covered(self):
@@ -628,7 +628,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await handler.handle_display_stock_change_rate("005930")
+        await handler.get_stock_change_rate("005930")
 
         self.mock_logger.info.assert_called_once()
 
@@ -649,7 +649,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         )
 
         # 테스트 실행
-        await self.handler.handle_display_stock_change_rate(stock_code)
+        await self.handler.get_stock_change_rate(stock_code)
 
         # 출력 확인 (실제 콘솔 출력 대신, 로그나 내부 상태를 검증하는 방식이 더 견고함)
         # 여기서는 로거가 올바르게 호출되었는지 확인
@@ -672,7 +672,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
                 })
             }
         )
-        await self.handler.handle_display_stock_change_rate(stock_code)
+        await self.handler.get_stock_change_rate(stock_code)
 
         self.mock_logger.info.assert_called_with(
             f"{stock_code} 전일대비 등락률 조회 성공: 현재가=90000, 전일대비=-2000, 등락률=2.17%"
@@ -694,7 +694,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        await self.handler.handle_display_stock_change_rate(stock_code)
+        await self.handler.get_stock_change_rate(stock_code)
 
         self.mock_logger.info.assert_called_with(
             f"{stock_code} 전일대비 등락률 조회 성공: 현재가=50000, 전일대비=0, 등락률=0.00%"

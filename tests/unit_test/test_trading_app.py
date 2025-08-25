@@ -93,6 +93,10 @@ def setup_mock_app(mocker):
     app.cli_view.display_current_stock_price_error = MagicMock()
     app.cli_view.display_order_success = MagicMock()
     app.cli_view.display_order_failure = MagicMock()
+    app.cli_view.display_stock_change_rate_success = MagicMock()
+    app.cli_view.display_stock_change_rate_failure = MagicMock()
+    app.cli_view.display_stock_vs_open_price_success = MagicMock()
+    app.cli_view.display_stock_vs_open_price_failure = MagicMock()
 
 
     app.cli_view.get_user_input = AsyncMock()  # 이 줄은 유지
@@ -120,8 +124,8 @@ def setup_mock_app(mocker):
     app.stock_query_service.handle_get_top_market_cap_stocks_code = AsyncMock()
     app.stock_query_service.handle_upper_limit_stocks = AsyncMock()
     app.stock_query_service.handle_get_current_stock_price = AsyncMock()
-    app.stock_query_service.handle_display_stock_change_rate = AsyncMock()
-    app.stock_query_service.handle_display_stock_vs_open_price = AsyncMock()
+    app.stock_query_service.get_stock_change_rate = AsyncMock()
+    app.stock_query_service.get_open_vs_current = AsyncMock()
     app.stock_query_service.handle_realtime_price_quote_stream = AsyncMock()
     app.stock_query_service.handle_get_asking_price = AsyncMock()
     app.stock_query_service.handle_yesterday_upper_limit_stocks = AsyncMock()
@@ -539,7 +543,7 @@ async def test_execute_action_display_change_rate(setup_mock_app):
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
 
     # 2. stock_query_service의 핸들러가 올바른 종목 코드로 호출되었는지 확인합니다.
-    app.stock_query_service.handle_display_stock_change_rate.assert_awaited_once_with("005930")
+    app.stock_query_service.get_stock_change_rate.assert_awaited_once_with("005930")
 
 @pytest.mark.asyncio
 async def test_execute_action_display_vs_open_price(setup_mock_app):
@@ -560,7 +564,7 @@ async def test_execute_action_display_vs_open_price(setup_mock_app):
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
 
     # 2. stock_query_service의 핸들러가 올바른 종목 코드로 호출되었는지 확인합니다.
-    app.stock_query_service.handle_display_stock_vs_open_price.assert_awaited_once_with("005930")
+    app.stock_query_service.get_open_vs_current.assert_awaited_once_with("005930")
 
 
 @pytest.mark.asyncio
@@ -735,13 +739,13 @@ async def test_execute_action_place_sell_order(setup_mock_app):
 async def test_execute_action_display_stock_change_rate(setup_mock_app):
     app = setup_mock_app
     app.cli_view.get_user_input.return_value = "005930"
-    app.stock_query_service.handle_display_stock_change_rate.return_value = None
+    app.stock_query_service.get_stock_change_rate.return_value = None
 
     executor = UserActionExecutor(app)
     result = await executor.execute('20')
 
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-    app.stock_query_service.handle_display_stock_change_rate.assert_awaited_once_with("005930")
+    app.stock_query_service.get_stock_change_rate.assert_awaited_once_with("005930")
     assert result is True
 
 
@@ -749,13 +753,13 @@ async def test_execute_action_display_stock_change_rate(setup_mock_app):
 async def test_execute_action_display_stock_vs_open_price(setup_mock_app):
     app = setup_mock_app
     app.cli_view.get_user_input.return_value = "005930"  # 종목 코드 입력 시뮬레이션
-    app.stock_query_service.handle_display_stock_vs_open_price.return_value = None  # 핸들러 목킹
+    app.stock_query_service.get_open_vs_current.return_value = None  # 핸들러 목킹
 
     executor = UserActionExecutor(app)
     result = await executor.execute('21')
 
     app.cli_view.get_user_input.assert_awaited_once_with("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-    app.stock_query_service.handle_display_stock_vs_open_price.assert_awaited_once_with("005930")
+    app.stock_query_service.get_open_vs_current.assert_awaited_once_with("005930")
     assert result is True
 
 @pytest.mark.asyncio
