@@ -142,6 +142,25 @@ class CLIView:
         else:
             print("응답이 없습니다.")
 
+    def display_stock_change_rate_success(self, stock_code, current_price, change_val, change_rate):
+        print(f"\n--- {stock_code} 전일대비 등락률 조회 ---")
+        print(f"성공: {stock_code} ({current_price}원)")
+        print(f"  전일대비: {change_val}원")
+        print(f"  전일대비율: {change_rate}%")
+
+    def display_stock_change_rate_failure(self, stock_code):
+        print(f"\n실패: {stock_code} 전일대비 등락률 조회.")
+
+    def display_stock_vs_open_price_success(self, stock_code, current_price, open_price, vs_val, vs_rate):
+        print(f"\n--- {stock_code} 시가대비 조회 ---")
+        print(f"성공: {stock_code}")
+        print(f"  현재가: {current_price}원")
+        print(f"  시가: {open_price}원")
+        print(f"  시가대비 등락률: {vs_val}원 ({vs_rate})")
+
+    def display_stock_vs_open_price_failure(self, stock_code):
+        print(f"\n실패: {stock_code} 시가대비 조회.")
+
     def display_transaction_result(self, result: dict, action: str):
         """매수/매도 거래 결과를 표시합니다."""
         self._print_common_header()

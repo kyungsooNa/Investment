@@ -444,10 +444,14 @@ async def test_display_stock_change_rate_full_integration_real(real_app_instance
 
     # 시세 API 응답(payload) – 표준 스키마
     payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
         "output": {
-            "stck_prpr": "70500",
-            "prdy_vrss": "1200",
-            "prdy_ctrt": "1.73",
+            "stck_prpr": "70500",  # 현재가
+            "stck_oprc": "70000",  # 시가 (open vs current 계산용)
+            "prdy_vrss": "1200",  # 전일대비
+            "prdy_ctrt": "1.73",  # 전일대비율(%)
+            "prdy_vrss_sign": "1",  # 부호 코드 (당신의 _get_sign_from_code 매핑에 맞춰 1=상승, 2=하락, 3=보합 등)
         }
     }
 
@@ -457,6 +461,10 @@ async def test_display_stock_change_rate_full_integration_real(real_app_instance
 
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 출력 뷰어는 호출만 검증
+    app.cli_view.display_stock_change_rate_success = MagicMock()
+    app.cli_view.display_stock_change_rate_failure = MagicMock()
 
     ok = await UserActionExecutor(app).execute("20")
     assert ok is True
@@ -490,6 +498,10 @@ async def test_display_stock_change_rate_full_integration_real(real_app_instance
     # 프롬프트가 정확히 사용되었는지
     app.cli_view.get_user_input.assert_awaited_once_with(prompt)
 
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_stock_change_rate_success.assert_called_once()
+    app.cli_view.display_stock_change_rate_failure.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_display_stock_vs_open_price_full_integration_real(real_app_instance, mocker):
@@ -506,6 +518,8 @@ async def test_display_stock_vs_open_price_full_integration_real(real_app_instan
 
     # 시세 API 응답(payload) – 표준 스키마에 현재가/시가 포함
     payload = {
+        "rt_cd": "0",
+        "msg1": "정상",
         "output": {
             "stck_prpr": "70500",  # 현재가
             "stck_oprc": "69500",  # 시가
@@ -520,6 +534,10 @@ async def test_display_stock_vs_open_price_full_integration_real(real_app_instan
 
     # _execute_request 스파이 + 세션 get 모킹
     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+
+    # 출력 뷰어는 호출만 검증
+    app.cli_view.display_stock_vs_open_price_success = MagicMock()
+    app.cli_view.display_stock_vs_open_price_failure = MagicMock()
 
     ok = await UserActionExecutor(app).execute("21")
     assert ok is True
@@ -553,6 +571,10 @@ async def test_display_stock_vs_open_price_full_integration_real(real_app_instan
 
     # 프롬프트 확인
     app.cli_view.get_user_input.assert_awaited_once_with(prompt)
+
+    # 뷰 호출(성공 경로)
+    app.cli_view.display_stock_vs_open_price_success.assert_called_once()
+    app.cli_view.display_stock_vs_open_price_failure.assert_not_called()
 
 
 @pytest.mark.asyncio

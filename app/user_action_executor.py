@@ -152,15 +152,36 @@ class UserActionExecutor:
         else:
             self.app.cli_view.display_order_failure(order_type="sell", stock_code=stock_code, response=response)
 
-    # @TODO cli_view로 출력 위임
     async def handle_stock_change_rate(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_display_stock_change_rate(stock_code)
+        res: ResCommonResponse = await self.app.stock_query_service.get_stock_change_rate(stock_code)
 
-    # @TODO cli_view로 출력 위임
+        if res and res.rt_cd == ErrorCode.SUCCESS.value:
+            d = res.data
+            self.app.cli_view.display_stock_change_rate_success(
+                d["stock_code"],
+                d["current_price"],
+                d["change_value_display"],
+                d["change_rate"],
+            )
+        else:
+            self.app.cli_view.display_stock_change_rate_failure(stock_code)
+
     async def handle_open_vs_current_rate(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_display_stock_vs_open_price(stock_code)
+        res: ResCommonResponse = await self.app.stock_query_service.get_open_vs_current(stock_code)
+
+        if res and res.rt_cd == ErrorCode.SUCCESS.value:
+            d = res.data
+            self.app.cli_view.display_stock_vs_open_price_success(
+                d["stock_code"],
+                d["current_price"],
+                d["open_price"],
+                d["vs_open_value_display"],
+                d["vs_open_rate_display"],
+            )
+        else:
+            self.app.cli_view.display_stock_vs_open_price_failure(stock_code)
 
     async def handle_asking_price(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("호가를 조회할 종목 코드를 입력하세요(삼성전자: 005930): ")

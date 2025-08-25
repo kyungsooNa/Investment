@@ -156,124 +156,107 @@ class StockQueryService:
                 data=None
             )
 
-    # @TODO cli_view로 출력 위임
-    async def handle_display_stock_change_rate(self, stock_code):
+    async def get_stock_change_rate(self, stock_code: str) -> ResCommonResponse:
         """
-        주식 전일대비 등락률을 조회하고 콘솔에 출력합니다.
-        TradingService를 통해 현재 주가 정보를 가져와 등락률을 표시합니다.
-        :param stock_code: 조회할 주식 종목코드 (예: "005930")
+        전일대비 등락률 조회. 출력 없음. 계산/포맷만 수행하여 ResCommonResponse로 반환.
+        data 예시:
+          {
+            "stock_code": "005930",
+            "current_price": "70400",
+            "change_value_display": "+500",   # 부호/0 처리 적용된 표시값
+            "change_rate": "0.71"             # API 그대로 문자열 유지
+          }
         """
-        print(f"\n--- {stock_code} 전일대비 등락률 조회 ---")
+        res: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        if not (res and res.rt_cd == ErrorCode.SUCCESS.value):
+            self.logger.error(f"{stock_code} 전일대비 등락률 조회 실패: {res}")
+            # 실패도 통일된 형태로 반환
+            return ResCommonResponse(rt_cd="1", msg1="조회 실패", data={"stock_code": stock_code})
 
-        current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        output = res.data.get("output") or {}
+        current_price = output.stck_prpr
+        change_val_str = output.prdy_vrss
+        change_sign_code = output.prdy_vrss_sign
+        change_rate_str = output.prdy_ctrt
 
-        if current_price_result.rt_cd == ErrorCode.SUCCESS.value:
-            output_data = current_price_result.data.get("output") or {}
-            current_price = output_data.stck_prpr
-            change_val_str = output_data.prdy_vrss
-            change_sign_code = output_data.prdy_vrss_sign
-            change_rate_str = output_data.prdy_ctrt
+        actual_sign = self._get_sign_from_code(change_sign_code)
 
-            # 부호 코드에 따른 실제 부호 문자열 결정
-            actual_change_sign = self._get_sign_from_code(change_sign_code)
+        display_change_val = change_val_str
+        try:
+            f = float(change_val_str)
+            if f > 0:
+                display_change_val = f"{actual_sign}{change_val_str}"
+            elif f == 0:
+                display_change_val = "0"
+        except (ValueError, TypeError):
+            # 숫자 아님 → 그대로 노출
+            pass
 
-            try:
-                float(change_val_str)
-                display_change_val = f"{actual_change_sign}{change_val_str}"
-            except (ValueError, TypeError):
-                display_change_val = change_val_str  # 그냥 "ABC"
+        data = {
+            "stock_code": stock_code,
+            "current_price": current_price,
+            "change_value_display": display_change_val,
+            "change_rate": change_rate_str,
+        }
+        self.logger.info(
+            f"{stock_code} 전일대비 등락률 조회 성공: 현재가={current_price}, "
+            f"전일대비={display_change_val}, 등락률={change_rate_str}%"
+        )
+        return ResCommonResponse(rt_cd="0", msg1="정상", data=data)
 
-            # 0원일 경우 부호 없이 0으로 표시
-            if change_val_str != 'N/A':
-                try:
-                    change_val_float = float(change_val_str)
-                    if change_val_float == 0:
-                        display_change_val = "0"
-                    else:
-                        display_change_val = f"{actual_change_sign}{change_val_str}"
-                except ValueError:
-                    pass  # 숫자로 변환 불가능하면 N/A 그대로 사용
+    async def get_open_vs_current(self, stock_code: str) -> ResCommonResponse:
+        """
+        시가 대비 등락률/금액 계산 후 반환. 출력 없음.
+        data 예시:
+          {
+            "stock_code": "005930",
+            "current_price": "70400",
+            "open_price": "70000",
+            "vs_open_value_display": "+400",   # 금액 부호/0 처리
+            "vs_open_rate_display": "+0.57%"   # 퍼센트 부호/0 처리
+          }
+        """
+        res: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        if not (res and res.rt_cd == ErrorCode.SUCCESS.value):
+            self.logger.error(f"{stock_code} 시가대비 조회 실패: {res}")
+            return ResCommonResponse(rt_cd="1", msg1="조회 실패", data={"stock_code": stock_code})
 
-            print(f"\n성공: {stock_code} ({current_price}원)")
-            print(f"  전일대비: {display_change_val}원")
-            print(f"  전일대비율: {change_rate_str}%")
+        output = res.data.get("output") or {}
+        cur_str = output.stck_prpr
+        open_str = output.stck_oprc
 
-            self.logger.info(
-                f"{stock_code} 전일대비 등락률 조회 성공: 현재가={current_price}, "
-                f"전일대비={display_change_val}, 등락률={change_rate_str}%"
+        try:
+            cur = float(cur_str) if cur_str not in (None, "N/A") else None
+            opn = float(open_str) if open_str not in (None, "N/A") else None
+        except (ValueError, TypeError):
+            self.logger.warning(
+                f"{stock_code} 시가대비 조회 실패: 가격 파싱 오류 (현재가={cur_str}, 시가={open_str})"
             )
-        else:
-            print(f"\n실패: {stock_code} 전일대비 등락률 조회.")
-            self.logger.error(f"{stock_code} 전일대비 등락률 조회 실패: {current_price_result}")
+            return ResCommonResponse(rt_cd="1", msg1="가격 파싱 오류", data={"stock_code": stock_code})
 
-    # @TODO cli_view로 출력 위임
-    async def handle_display_stock_vs_open_price(self, stock_code):
-        """
-        주식 시가대비 조회 및 결과 출력.
-        TradingService를 통해 현재 주가 정보를 가져와 시가 대비를 표시합니다.
-        :param stock_code: 조회할 주식 종목코드 (예: "005930")
-        """
-        print(f"\n--- {stock_code} 시가대비 조회 ---")
+        vs_val_disp = "N/A"
+        vs_rate_disp = "N/A"
 
-        current_price_result: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        if cur is not None and opn is not None:
+            diff = cur - opn
+            vs_val_disp = "0" if diff == 0 else f"{diff:+.0f}"
+            if opn != 0:
+                vs_rate_disp = f"{(diff / opn) * 100:+.2f}%"
+            else:
+                vs_rate_disp = "N/A"
 
-        if current_price_result and current_price_result.rt_cd == ErrorCode.SUCCESS.value:
-            output_data: ResStockFullInfoApiOutput = current_price_result.data.get("output") or {}
-            current_price_str = output_data.stck_prpr
-            open_price_str = output_data.stck_oprc
-
-            try:
-                try:
-                    current_price_float = float(current_price_str) if current_price_str not in (None, 'N/A') else None
-                    open_price_float = float(open_price_str) if open_price_str not in (None, 'N/A') else None
-                except (ValueError, TypeError):
-                    self.logger.warning(
-                        f"{stock_code} 시가대비 조회 실패: 가격 파싱 오류 (현재가={current_price_str}, 시가={open_price_str})")
-                    return
-
-                # 시가대비 등락률 퍼센트 계산
-                percentage_change_vs_open_formatted = "N/A"
-                if open_price_float is not None and current_price_float is not None and open_price_float != 0:
-                    percentage_change_vs_open = ((current_price_float - open_price_float) / open_price_float) * 100
-
-                    # 퍼센트 부호 적용 및 0.00% 처리
-                    if percentage_change_vs_open > 0:
-                        percentage_change_vs_open_formatted = f"+{percentage_change_vs_open:.2f}%"
-                    elif percentage_change_vs_open < 0:
-                        percentage_change_vs_open_formatted = f"{percentage_change_vs_open:.2f}%"
-                    else:
-                        percentage_change_vs_open_formatted = "0.00%"
-                else:
-                    percentage_change_vs_open_formatted = "N/A"
-
-                # 시가 대비 금액 계산 및 부호 적용, 0원 처리
-                display_vs_open_price_formatted = "N/A"
-                if open_price_float is not None and current_price_float is not None:
-                    calculated_vs_open_price = current_price_float - open_price_float
-
-                    # 금액 부호 적용 및 0원 처리
-                    if calculated_vs_open_price > 0:
-                        display_vs_open_price_formatted = f"+{calculated_vs_open_price:.0f}"
-                    elif calculated_vs_open_price < 0:
-                        display_vs_open_price_formatted = f"{calculated_vs_open_price:.0f}"
-                    else:
-                        display_vs_open_price_formatted = "0"
-
-                print(f"\n성공: {stock_code}")
-                print(f"  현재가: {current_price_str}원")
-                print(f"  시가: {open_price_str}원")
-                print(f"  시가대비 등락률: {display_vs_open_price_formatted}원 ({percentage_change_vs_open_formatted})")
-
-                self.logger.info(
-                    f"{stock_code} 시가대비 조회 성공: 현재가={current_price_str}, 시가={open_price_str}, "
-                    f"시가대비={display_vs_open_price_formatted}원 ({percentage_change_vs_open_formatted})"
-                )
-            except (TypeError, ValueError):
-                print("⚠️ 시가 또는 현재가 정보가 유효하지 않아 계산할 수 없습니다.")
-                return
-        else:
-            print(f"\n실패: {stock_code} 시가대비 조회.")
-            self.logger.error(f"{stock_code} 시가대비 조회 실패: {current_price_result}")
+        data = {
+            "stock_code": stock_code,
+            "current_price": cur_str,
+            "open_price": open_str,
+            "vs_open_value_display": vs_val_disp,
+            "vs_open_rate_display": vs_rate_disp,
+        }
+        self.logger.info(
+            f"{stock_code} 시가대비 조회 성공: 현재가={cur_str}, 시가={open_str}, "
+            f"시가대비={vs_val_disp} ({vs_rate_disp})"
+        )
+        return ResCommonResponse(rt_cd="0", msg1="정상", data=data)
 
     # @TODO cli_view로 출력 위임
     async def handle_upper_limit_stocks(self, market_code: str = "0000", limit: int = 500):
