@@ -20,8 +20,8 @@ class ClientWithCache:
             config: Optional[dict] = None
     ):
         self._client = client
-        self._logger = logger  # ✅ 로거 주입 @TODO 추후 Logger.get_instance()
-        self._time_manager = time_manager  # ✅ 로거 주입 @TODO 추후 TimeManager.get_instance()
+        self._logger = logger
+        self._time_manager = time_manager
         self._mode_fn = mode_fn  # 동적으로 모드 가져오기
 
         # ✅ 설정에서 읽기

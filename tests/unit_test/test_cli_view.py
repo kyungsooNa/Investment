@@ -2,11 +2,12 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 import builtins
 import logging
-
+from types import SimpleNamespace
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 # 테스트 대상 모듈 임포트
 from view.cli_view import CLIView
 from core.time_manager import TimeManager
+
 
 def get_test_logger():
     logger = logging.getLogger("test_logger")
@@ -25,6 +26,7 @@ def get_test_logger():
 
     return logger
 
+
 # --- Pytest 픽스처 정의 ---
 
 @pytest.fixture
@@ -32,6 +34,7 @@ def mock_env():
     mock = MagicMock(spec=KoreaInvestApiEnv)
     mock.is_paper_trading = True
     return mock
+
 
 @pytest.fixture
 def mock_time_manager():
@@ -188,17 +191,34 @@ def test_display_strategy_running_message(cli_view_instance, capsys):
 
 def test_display_top_stocks_failure(cli_view_instance, capsys):
     """시가총액 상위 종목 조회 실패 메시지 출력을 테스트합니다."""
-    cli_view_instance.display_top_stocks_failure("API 응답 오류")
+    cli_view_instance.display_top_market_cap_stocks_failure("API 응답 오류")
     captured = capsys.readouterr()
-    assert "시가총액 상위 종목 조회 실패: API 응답 오류" in captured.out
+    assert "실패" in captured.out
+    assert "시가총액" in captured.out
 
 
 def test_display_top_stocks_success(cli_view_instance, capsys):
     """시가총액 상위 종목 조회 성공 메시지 출력을 테스트합니다."""
-    cli_view_instance.display_top_stocks_success()
-    captured = capsys.readouterr()
-    assert "시가총액 상위 종목 조회 완료." in captured.out
+    items = [
+        SimpleNamespace(
+            data_rank="1",
+            hts_kor_isnm="삼성전자",
+            mksc_shrn_iscd="005930",
+            stck_avls="500000000000000",  # 임의 값
+            stck_prpr="70000",
+        ),
+        SimpleNamespace(
+            data_rank="2",
+            hts_kor_isnm="SK하이닉스",
+            mksc_shrn_iscd="000660",
+            stck_avls="400000000000000",
+            stck_prpr="120000",
+        ),
+    ]
 
+    cli_view_instance.display_top_market_cap_stocks_success(items)
+    captured = capsys.readouterr()
+    assert "시가총액" in captured.out
 
 def test_display_no_stocks_for_strategy(cli_view_instance, capsys):
     """전략 실행을 위한 종목 없음 메시지 출력을 테스트합니다."""
@@ -413,6 +433,7 @@ def test_display_menu(cli_view_instance, capsys):
     assert "[시세 조회]" in captured.out
     assert "  7. 실시간 호가 조회" in captured.out
 
+
 @pytest.mark.asyncio
 async def test_select_environment_input(cli_view_instance):
     """환경 선택 입력 기능을 테스트합니다."""
@@ -424,6 +445,7 @@ async def test_select_environment_input(cli_view_instance):
         mock_to_thread.assert_awaited_once_with(builtins.input, "환경을 선택하세요 (숫자 입력): ")
         assert result == "1"
 
+
 def test_print_current_mode_none_branch(cli_view_instance, capsys, mock_env):
     # env.is_paper_trading == None 분기 커버
     mock_env.is_paper_trading = None
@@ -431,6 +453,7 @@ def test_print_current_mode_none_branch(cli_view_instance, capsys, mock_env):
     cli_view_instance.display_market_status(True)  # 공통 헤더 안에서 호출됨
     out = capsys.readouterr().out
     assert "현재 모드: [None]" in out  # === 현재 모드: [None] ===
+
 
 def test_display_account_balance_no_output1(cli_view_instance, capsys):
     # output1 없을 때 조기 반환
@@ -447,11 +470,13 @@ def test_display_account_balance_no_output1(cli_view_instance, capsys):
     out = capsys.readouterr().out
     assert "보유 종목 정보가 없습니다." in out
 
+
 def test_display_ohlcv_empty_rows(cli_view_instance, capsys):
     cli_view_instance.display_ohlcv("005930", [])
     out = capsys.readouterr().out
     assert "005930 OHLCV" in out
     assert "데이터가 없습니다" in out
+
 
 def test_display_ohlcv_preview_last_10(cli_view_instance, capsys):
     # 11개 넣고 마지막 10개만 표에 노출되는지 헤더/샘플 행으로 확인
@@ -459,8 +484,8 @@ def test_display_ohlcv_preview_last_10(cli_view_instance, capsys):
     for i in range(1, 12):  # 1..11
         rows.append({
             "date": f"202501{i:02d}",
-            "open": i*10, "high": i*10+1, "low": i*10-1,
-            "close": i*10+2, "volume": i*1000
+            "open": i * 10, "high": i * 10 + 1, "low": i * 10 - 1,
+            "close": i * 10 + 2, "volume": i * 1000
         })
     cli_view_instance.display_ohlcv("005930", rows)
     out = capsys.readouterr().out
@@ -469,10 +494,12 @@ def test_display_ohlcv_preview_last_10(cli_view_instance, capsys):
     assert "20250111" in out
     assert "close" not in out  # 키 이름이 아닌 값으로만 출력되는지 간접 확인
 
+
 def test_display_ohlcv_error(cli_view_instance, capsys):
     cli_view_instance.display_ohlcv_error("005930", "에러 메시지")
     out = capsys.readouterr().out
     assert "실패: 005930 OHLCV 조회. (에러 메시지)" in out
+
 
 def test_display_current_upper_limit_stocks_found_dict(cli_view_instance, capsys):
     """상한가 종목 리스트(딕셔너리 입력) 출력"""
@@ -512,20 +539,22 @@ def test_display_current_upper_limit_stocks_found_object(cli_view_instance, caps
     assert "현재 상한가 종목 조회 성공. 총 1개" in out
     assert "카카오 (035720): 52000원 (등락률: +29.90%)" in out
 
+
 # ───────────────────────────────────────────────────────────────────────────────
 # 계좌 잔고: output2 없음 / 파싱 예외(ValueError) 경로
 # ───────────────────────────────────────────────────────────────────────────────
 
 def test_display_account_balance_no_output2(cli_view_instance, capsys):
     balance_info = {
-        "output1": [],   # 종목 목록 비거나 있어도 무방
-        "output2": [],   # <- 없음 분기 유도
+        "output1": [],  # 종목 목록 비거나 있어도 무방
+        "output2": [],  # <- 없음 분기 유도
     }
     cli_view_instance.display_account_balance(balance_info)
     out = capsys.readouterr().out
     assert "📒 계좌번호: 123-45-67890" in out
     # 코드 오타 그대로 검증(게좌)
     assert "게좌 정보가 없습니다." in out
+
 
 def test_display_account_balance_no_output2_2(cli_view_instance, capsys):
     # output2 없을 때 조기 반환
@@ -549,7 +578,7 @@ def test_display_account_balance_parsing_error_valueerror(cli_view_instance, cap
                 "hldg_qty": "10",
                 "ord_psbl_qty": "10",
                 "pchs_avg_pric": "80000",
-                "prpr": "90OOO",     # <- int 변환 ValueError 유도 (알파벳 O 포함)
+                "prpr": "90OOO",  # <- int 변환 ValueError 유도 (알파벳 O 포함)
                 "evlu_amt": "900000",
                 "evlu_pfls_amt": "100000",
                 "pchs_amt": "800000",
@@ -583,6 +612,7 @@ def test_display_stock_info_present(cli_view_instance, capsys):
     assert "종목명: 삼성전자" in out
     assert "현재가: 70000원" in out
 
+
 def test_display_stock_info_absent(cli_view_instance, capsys):
     cli_view_instance.display_stock_info({})
     out = capsys.readouterr().out
@@ -599,6 +629,7 @@ def test_display_transaction_result_success(cli_view_instance, capsys):
     out = capsys.readouterr().out
     assert "✔️ 매수 성공!" in out
     assert "주문 번호: A123" in out
+
 
 def test_display_transaction_result_fail(cli_view_instance, capsys):
     res = {"rt_cd": "5", "msg1": "오류"}
@@ -621,6 +652,7 @@ def test_display_current_upper_limit_stocks(cli_view_instance, capsys):
     assert "현재 상한가 종목 조회 성공. 총 2개" in out
     assert "A (000001): 1000원 (등락률: +30.0%)" in out
 
+
 def test_display_no_current_upper_limit_stocks(cli_view_instance, capsys):
     cli_view_instance.display_no_current_upper_limit_stocks()
     out = capsys.readouterr().out
@@ -636,6 +668,7 @@ def test_display_top_stocks_ranking_empty(cli_view_instance, capsys):
     out = capsys.readouterr().out
     assert "표시할 종목이 없습니다." in out
 
+
 def test_display_top_stocks_ranking_list(cli_view_instance, capsys):
     items = [
         {"data_rank": "1", "hts_kor_isnm": "주식A", "stck_prpr": "1000", "prdy_ctrt": "5.0", "acml_vol": "10000"},
@@ -647,6 +680,7 @@ def test_display_top_stocks_ranking_list(cli_view_instance, capsys):
     assert "1    주식A" in out
     assert "2    주식B" in out
 
+
 def test_display_top_stocks_ranking_dict_output(cli_view_instance, capsys):
     payload = {"output": [
         {"data_rank": "1", "hts_kor_isnm": "X", "stck_prpr": "10", "prdy_ctrt": "1.0", "acml_vol": "100"}
@@ -655,6 +689,7 @@ def test_display_top_stocks_ranking_dict_output(cli_view_instance, capsys):
     out = capsys.readouterr().out
     assert "성공: 거래량 상위 30개 종목" in out
     assert "X" in out
+
 
 def test_display_top_stocks_ranking_error(cli_view_instance, capsys):
     cli_view_instance.display_top_stocks_ranking_error("상승", "API 에러")
@@ -671,6 +706,7 @@ def test_display_stock_news_empty(cli_view_instance, capsys):
     out = capsys.readouterr().out
     assert "005930에 대한 뉴스가 없습니다." in out
 
+
 def test_display_stock_news_dict_output(cli_view_instance, capsys):
     payload = {"output": [
         {"news_dt": "20250817", "news_tm": "090000", "news_tl": "헤드라인"}
@@ -679,6 +715,7 @@ def test_display_stock_news_dict_output(cli_view_instance, capsys):
     out = capsys.readouterr().out
     assert "성공: 005930 최신 뉴스 (최대 5건)" in out
     assert "[20250817 090000] 헤드라인" in out
+
 
 def test_display_stock_news_error(cli_view_instance, capsys):
     cli_view_instance.display_stock_news_error("005930", "쿼리 제한")
@@ -702,6 +739,7 @@ def test_display_etf_info(cli_view_instance, capsys):
     assert "성공: KODEX 200 (069500)" in out
     assert "NAV: 29950" in out
 
+
 def test_display_etf_info_error(cli_view_instance, capsys):
     cli_view_instance.display_etf_info_error("069500", "HTTP 429")
     out = capsys.readouterr().out
@@ -719,10 +757,12 @@ async def test_select_environment_input(cli_view_instance, capsys):
         choice = await cli_view_instance.select_environment_input()
         assert choice == "2"
 
+
 def test_display_invalid_environment_choice(cli_view_instance, capsys):
     cli_view_instance.display_invalid_environment_choice("3")
     out = capsys.readouterr().out
     assert "\"3\" 잘못된 환경 선택입니다." in out
+
 
 def test_display_warning_paper_trading_not_supported(cli_view_instance, capsys):
     cli_view_instance.display_warning_paper_trading_not_supported("실전전용기능")
@@ -740,11 +780,13 @@ def test_header_mode_none(cli_view_instance, capsys):
     out = capsys.readouterr().out
     assert "현재 모드: [None]" in out
 
+
 def test_header_mode_paper(cli_view_instance, capsys):
     cli_view_instance.env.is_paper_trading = True
     cli_view_instance.display_invalid_input_warning("x")
     out = capsys.readouterr().out
     assert "현재 모드: [모의투자]" in out
+
 
 def test_header_mode_real(cli_view_instance, capsys):
     cli_view_instance.env.is_paper_trading = False

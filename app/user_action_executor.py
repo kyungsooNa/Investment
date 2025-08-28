@@ -41,8 +41,7 @@ class UserActionExecutor:
 
         '50': ('랭킹/필터링', '시가총액 상위 조회 (실전 전용)',             'handle_top_market_cap_stocks'),
         '51': ('랭킹/필터링', '시가총액 상위 10개 현재가 (실전 전용)',      'handle_top_10_market_cap_stocks'),
-        '52': ('랭킹/필터링', '전일 상한가 종목 (상위 500) (실전 전용)',    'handle_yesterday_upper_limit_500'),
-        '53': ('랭킹/필터링', '전일 상한가 종목 (상위) (실전 전용)',        'handle_yesterday_upper_limit'),
+
         '54': ('랭킹/필터링', '현재 상한가 종목 (실전 전용)',              'handle_current_upper_limit'),
         '55': ('랭킹/필터링', '거래량 상위 랭킹 (~30) (실전 전용)',        'handle_top_volume_30'),
         '56': ('랭킹/필터링', '상승률 상위 랭킹 (~30) (실전 전용)',        'handle_top_rise_30'),
@@ -53,9 +52,9 @@ class UserActionExecutor:
 
 
         # ⬇️ 실행기의 번호(100/101/102)를 그대로 사용해 메뉴와 동기화
-        '100': ('전략 실행', '모멘텀 전략 실행', 'handle_momentum_strategy'),
-        '101': ('전략 실행', '모멘텀 백테스트', 'handle_momentum_backtest'),
-        '102': ('전략 실행', 'GapUpPullback 전략 실행', 'handle_gapup_pullback'),
+        # '100': ('전략 실행', '모멘텀 전략 실행', 'handle_momentum_strategy'),
+        # '101': ('전략 실행', '모멘텀 백테스트', 'handle_momentum_backtest'),
+        # '102': ('전략 실행', 'GapUpPullback 전략 실행', 'handle_gapup_pullback'),
 
         '998': ('기타',          '토큰 무효화',                               'handle_invalidate_token'),
         '999': ('기타',          '종료',                                     'handle_exit'),
@@ -108,7 +107,16 @@ class UserActionExecutor:
 
     async def handle_get_current_price(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_get_current_stock_price(stock_code)
+
+        self.app.logger.info(f"Handler - {stock_code} 현재가 조회 요청")
+        result = await self.app.stock_query_service.handle_get_current_stock_price(stock_code)
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_current_stock_price(result.data)
+        else:
+            msg = result.msg1 if result else "응답 없음"
+            code = (result.data or {}).get("code", stock_code)
+            self.app.cli_view.display_current_stock_price_error(code, msg)
+            self.app.logger.error(f"{stock_code} 현재가 조회 실패: {msg}")
 
     async def handle_account_balance(self) -> None:
         balance_response = await self.app.stock_query_service.handle_get_account_balance()
@@ -127,29 +135,74 @@ class UserActionExecutor:
         stock_code = await self.app.cli_view.get_user_input("매수할 종목 코드를 입력하세요: ")
         qty = await self.app.cli_view.get_user_input("매수할 수량을 입력하세요: ")
         price = await self.app.cli_view.get_user_input("매수 가격을 입력하세요 (시장가: 0): ")
-        await self.app.order_execution_service.handle_buy_stock(stock_code, qty, price)
+        response : ResCommonResponse = await self.app.order_execution_service.handle_buy_stock(stock_code, qty, price)
+        if response.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_order_success(order_type="buy",stock_code=stock_code,qty=qty,response=response)
+        else:
+            self.app.cli_view.display_order_failure(order_type="buy", stock_code=stock_code, response=response)
 
     async def handle_sell_stock(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("매도할 종목 코드를 입력하세요: ")
         qty = await self.app.cli_view.get_user_input("매도할 수량을 입력하세요: ")
         price = await self.app.cli_view.get_user_input("매도 가격을 입력하세요 (시장가: 0): ")
-        await self.app.order_execution_service.handle_sell_stock(stock_code, qty, price)
+        response : ResCommonResponse = await self.app.order_execution_service.handle_sell_stock(stock_code, qty, price)
+        if response.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_order_success(order_type="sell",stock_code=stock_code,qty=qty,response=response)
+        else:
+            self.app.cli_view.display_order_failure(order_type="sell", stock_code=stock_code, response=response)
 
     async def handle_stock_change_rate(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_display_stock_change_rate(stock_code)
+        res: ResCommonResponse = await self.app.stock_query_service.get_stock_change_rate(stock_code)
+
+        if res and res.rt_cd == ErrorCode.SUCCESS.value:
+            d = res.data
+            self.app.cli_view.display_stock_change_rate_success(
+                d["stock_code"],
+                d["current_price"],
+                d["change_value_display"],
+                d["change_rate"],
+            )
+        else:
+            self.app.cli_view.display_stock_change_rate_failure(stock_code)
 
     async def handle_open_vs_current_rate(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("조회할 종목 코드를 입력하세요 (삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_display_stock_vs_open_price(stock_code)
+        res: ResCommonResponse = await self.app.stock_query_service.get_open_vs_current(stock_code)
+
+        if res and res.rt_cd == ErrorCode.SUCCESS.value:
+            d = res.data
+            self.app.cli_view.display_stock_vs_open_price_success(
+                d["stock_code"],
+                d["current_price"],
+                d["open_price"],
+                d["vs_open_value_display"],
+                d["vs_open_rate_display"],
+            )
+        else:
+            self.app.cli_view.display_stock_vs_open_price_failure(stock_code)
 
     async def handle_asking_price(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("호가를 조회할 종목 코드를 입력하세요(삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_get_asking_price(stock_code)
+        self.app.logger.info(f"Handler - {stock_code} 호가 정보 조회 요청")
+        result = await self.app.stock_query_service.handle_get_asking_price(stock_code)
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_asking_price(result.data)
+        else:
+            msg = result.msg1 if result else "응답 없음"
+            code = (result.data or {}).get("code", stock_code)
+            self.app.cli_view.display_asking_price_error(code, msg)
 
     async def handle_time_conclude(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("시간대별 체결가를 조회할 종목 코드를 입력하세요(삼성전자: 005930): ")
-        await self.app.stock_query_service.handle_get_time_concluded_prices(stock_code)
+        self.app.logger.info(f"Handler - {stock_code} 시간대별 체결가 조회 요청")
+        result = await self.app.stock_query_service.handle_get_time_concluded_prices(stock_code)
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_time_concluded_prices(result.data)
+        else:
+            msg = result.msg1 if result else "응답 없음"
+            code = (result.data or {}).get("code", stock_code)
+            self.app.cli_view.display_time_concluded_error(code, msg)
 
     async def handle_invalidate_token(self) -> None:
         self.app.env.invalidate_token()
@@ -157,7 +210,16 @@ class UserActionExecutor:
 
     async def handle_etf_info(self) -> None:
         etf_code = await self.app.cli_view.get_user_input("정보를 조회할 ETF 코드를 입력하세요(나스닥 ETF: 133690): ")
-        await self.app.stock_query_service.handle_get_etf_info(etf_code)
+        self.app.logger.info(f"Handler - {etf_code} ETF 정보 조회 요청")
+
+        result = await self.app.stock_query_service.handle_get_etf_info(etf_code)
+
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.app.cli_view.display_etf_info(etf_code, result.data)
+        else:
+            msg = result.msg1 if result else "응답 없음"
+            code = (result.data or {}).get("code", etf_code)
+            self.app.cli_view.display_etf_info_error(code, msg)
 
     async def handle_ohlcv(self) -> None:
         stock_code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
@@ -279,25 +341,31 @@ class UserActionExecutor:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("시가총액 상위 종목 조회")
         else:
-            await self.app.stock_query_service.handle_get_top_market_cap_stocks_code("0000")
+            count = await self.app.cli_view.get_user_input("조회 종목 개수 :")
+
+            res: ResCommonResponse = await self.app.stock_query_service.handle_get_top_market_cap_stocks_code(market_code="0000",limit=count)
+            if res and res.rt_cd == ErrorCode.SUCCESS.value:
+                items = res.data or []
+                if items:
+                    self.app.cli_view.display_top_market_cap_stocks_success(items)
+                else:
+                    self.app.cli_view.display_top_market_cap_stocks_empty()
+            else:
+                self.app.cli_view.display_top_market_cap_stocks_failure(res.msg1 if res else "조회 실패")
 
     async def handle_top_10_market_cap_stocks(self) -> None:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("시가총액 1~10위 종목 조회")
         else:
-            await self.app.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices()
-
-    async def handle_yesterday_upper_limit_500(self) -> None:
-        if self.app.env.is_paper_trading:
-            self.app.cli_view.display_warning_paper_trading_not_supported("전일 상한가 종목 조회 (상위 500)")
-        else:
-            await self.app.stock_query_service.handle_upper_limit_stocks("0000", limit=500)
-
-    async def handle_yesterday_upper_limit(self) -> None:
-        if self.app.env.is_paper_trading:
-            self.app.cli_view.display_warning_paper_trading_not_supported("전일 상한가 종목 조회 (상위)")
-        else:
-            await self.app.stock_query_service.handle_yesterday_upper_limit_stocks()
+            res: ResCommonResponse = await self.app.stock_query_service.handle_get_top_market_cap_stocks_code(market_code="0000",limit=10)
+            if res and res.rt_cd == ErrorCode.SUCCESS.value:
+                items = res.data or []
+                if items:
+                    self.app.cli_view.display_top10_market_cap_prices_success(items)
+                else:
+                    self.app.cli_view.display_top10_market_cap_prices_empty()
+            else:
+                self.app.cli_view.display_top10_market_cap_prices_failure(res.msg1 if res else "조회 실패")
 
     async def handle_current_upper_limit(self) -> None:
         if self.app.env.is_paper_trading:

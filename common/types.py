@@ -189,15 +189,70 @@ class ResStockFullInfoApiOutput:
 @with_from_dict
 @dataclass
 class ResTopMarketCapApiItem:
-    iscd: str
-    mksc_shrn_iscd: str
-    stck_avls: str
-    data_rank: str
-    hts_kor_isnm: Optional[str]
-    acc_trdvol: str
+    """
+    [시가총액 상위 종목 응답 아이템]
+    - 모든 수치는 API가 문자열(String)로 반환하므로 str 유지 (대형 정수/소수 정밀도 보존 목적)
+    - KIS 스펙(필드/의미/길이)을 주석으로 명시
+    """
+
+    # ── 필수/핵심 필드 ─────────────────────────────────────────────────────────────
+    mksc_shrn_iscd: str                  # 유가증권 단축 종목코드 (String, len<=9)          e.g. '005930'
+    data_rank: str                       # 데이터 순위 (String, len<=10)                   e.g. '1'
+    hts_kor_isnm: str                    # HTS 한글 종목명 (String, len<=40)               e.g. '삼성전자'
+    stck_avls: str                       # 시가총액 (String, len<=18)                      e.g. '467000000000000'
+
+    # ── 시세/등락 관련(옵셔널) ────────────────────────────────────────────────────
+    stck_prpr: Optional[str] = None      # 주식 현재가 (String, len<=10)
+    prdy_vrss: Optional[str] = None      # 전일 대비 (가격 차이) (String, len<=10)
+    prdy_vrss_sign: Optional[str] = None # 전일 대비 부호 (String, len<=1)               e.g. '1', '2', '3' 등
+    prdy_ctrt: Optional[str] = None      # 전일 대비율 (String, len<=82)                  e.g. '2.31'
+
+    # ── 거래/상장 관련(옵셔널) ────────────────────────────────────────────────────
+    acml_vol: Optional[str] = None       # 누적 거래량 (String, len<=18)
+    lstn_stcn: Optional[str] = None      # 상장 주수 (String, len<=18)
+
+    # ── 시장 비중(옵셔널) ────────────────────────────────────────────────────────
+    mrkt_whol_avls_rlim: Optional[str] = None  # 시장 전체 시총 대비 비중 (String, len<=52)
+
+    # ── 과거 코드 호환용 Alias (옵셔널) ──────────────────────────────────────────
+    # 기존 일부 로직/테스트가 참조하던 필드들:
+    iscd: Optional[str] = None           # (호환) 단축코드 별칭. 없으면 mksc_shrn_iscd로 채움
+    acc_trdvol: Optional[str] = None     # (호환) 누적 거래량 별칭. 없으면 acml_vol로 채움
+
+    def __post_init__(self):
+        # 과거 호환: iscd가 없으면 mksc_shrn_iscd로 보완
+        if not self.iscd:
+            self.iscd = self.mksc_shrn_iscd
+        # 과거 호환: acc_trdvol <-> acml_vol 동기화
+        if self.acc_trdvol and not self.acml_vol:
+            self.acml_vol = self.acc_trdvol
+        elif self.acml_vol and not self.acc_trdvol:
+            self.acc_trdvol = self.acml_vol
 
     def to_dict(self):
+        """Dict 직렬화(테스트/로그용)."""
         return asdict(self)
+
+    # 선택: 원시 API payload를 받아 alias 키까지 정규화하고 생성하고 싶다면 사용
+    @classmethod
+    def from_api(cls, payload: dict) -> "ResTopMarketCapApiItem":
+        """
+        - 공식 스펙 키 우선(mksc_shrn_iscd, data_rank, hts_kor_isnm, stck_avls, stck_prpr, prdy_vrss, prdy_vrss_sign,
+          prdy_ctrt, acml_vol, lstn_stcn, mrkt_whol_avls_rlim)
+        - 구키(alias)도 허용(iscd -> mksc_shrn_iscd, acc_trdvol -> acml_vol)
+        """
+        norm = dict(payload) if payload else {}
+
+        # 단축코드 alias
+        if "mksc_shrn_iscd" not in norm and "iscd" in norm:
+            norm["mksc_shrn_iscd"] = norm.get("iscd")
+
+        # 거래량 alias
+        if "acml_vol" not in norm and "acc_trdvol" in norm:
+            norm["acml_vol"] = norm.get("acc_trdvol")
+
+        # dataclass 생성
+        return cls(**norm)
 
 
 @with_from_dict

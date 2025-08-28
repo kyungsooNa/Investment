@@ -126,6 +126,41 @@ class CLIView:
         else:
             print("종목 정보를 찾을 수 없습니다.")
 
+    def _label(self, order_type):
+        return "매수" if order_type == "buy" else "매도"
+
+    def display_order_success(self, order_type, stock_code, qty, response):
+        print(f"\n--- 주식 {self._label(order_type)} 주문 성공 ---")
+        print(f"종목={stock_code}, 수량={qty}, 결과={response.data}")
+        print(f"주문 번호: {response.data.get('ord_no', 'N/A')}")
+        print(f"주문 시각: {response.data.get('ord_tmd', 'N/A')}")
+
+    def display_order_failure(self, order_type, stock_code, response):
+        print(f"\n--- 주식 {self._label(order_type)} 주문 실패 ---")
+        if response:
+            print(f"종목={stock_code}, 결과={response.data}")
+        else:
+            print("응답이 없습니다.")
+
+    def display_stock_change_rate_success(self, stock_code, current_price, change_val, change_rate):
+        print(f"\n--- {stock_code} 전일대비 등락률 조회 ---")
+        print(f"성공: {stock_code} ({current_price}원)")
+        print(f"  전일대비: {change_val}원")
+        print(f"  전일대비율: {change_rate}%")
+
+    def display_stock_change_rate_failure(self, stock_code):
+        print(f"\n실패: {stock_code} 전일대비 등락률 조회.")
+
+    def display_stock_vs_open_price_success(self, stock_code, current_price, open_price, vs_val, vs_rate):
+        print(f"\n--- {stock_code} 시가대비 조회 ---")
+        print(f"성공: {stock_code}")
+        print(f"  현재가: {current_price}원")
+        print(f"  시가: {open_price}원")
+        print(f"  시가대비 등락률: {vs_val}원 ({vs_rate})")
+
+    def display_stock_vs_open_price_failure(self, stock_code):
+        print(f"\n실패: {stock_code} 시가대비 조회.")
+
     def display_transaction_result(self, result: dict, action: str):
         """매수/매도 거래 결과를 표시합니다."""
         self._print_common_header()
@@ -147,15 +182,47 @@ class CLIView:
         self._print_common_header()
         print(f"\n--- {strategy_name} 전략 실행 시작 ---")
 
-    def display_top_stocks_failure(self, message: str):
-        """시가총액 상위 종목 조회 실패 메시지를 표시합니다."""
-        self._print_common_header()
-        print(f"시가총액 상위 종목 조회 실패: {message}")
+    # 시총 상위 전체
+    def display_top_market_cap_stocks_success(self, items):
+        print("\n--- 시가총액 상위 종목 목록 ---")
+        if not items:
+            print("시가총액 상위 종목이 없습니다.")
+            return
+        for s in items:
+            rank = getattr(s, "data_rank", "")
+            name = getattr(s, "hts_kor_isnm", "")
+            mktcap = getattr(s, "stck_avls", "")
+            price = getattr(s, "stck_prpr", "")
+            print(f"  순위: {rank}, 종목명: {name}, 시가총액: {mktcap}, 현재가: {price}")
+    def display_top_market_cap_stocks_empty(self):
+        print("\n시가총액 상위 종목이 없습니다.")
+    def display_top_market_cap_stocks_failure(self, msg: str):
+        print(f"\n실패: 시가총액 상위 종목 조회. 사유: {msg}")
 
-    def display_top_stocks_success(self):
-        """시가총액 상위 종목 조회 성공 메시지를 표시합니다."""
-        self._print_common_header()
-        print("시가총액 상위 종목 조회 완료.")
+    # 시총 TOP10 현재가
+    def display_top10_market_cap_prices_success(self, items):
+        print("\n성공: 시가총액 1~10위 종목 현재가:")
+        for s in items:
+            # ResMarketCapStockItem 기준
+            rank = getattr(s, "rank", "")
+            name = getattr(s, "name", "")
+            code = getattr(s, "code", "")
+            price = getattr(s, "current_price", "")
+            print(f"  순위: {rank}, 종목명: {name}, 종목코드: {code}, 현재가: {price}원")
+    def display_top10_market_cap_prices_empty(self):
+        print("\n성공: 시가총액 1~10위 종목 현재가 (조회된 종목 없음)")
+    def display_top10_market_cap_prices_failure(self, msg: str):
+        print(f"\n실패: 시가총액 1~10위 종목 현재가 조회. 사유: {msg}")
+
+    # 상한가 (당일)
+    def display_upper_limit_stocks_success(self, items: list[dict]):
+        print("\n--- 상한가 종목 목록 ---")
+        for s in items:
+            print(f"  {s['name']} ({s['code']}): {s['price']}원 (등락률: +{s['change_rate']}%)")
+    def display_upper_limit_stocks_empty(self):
+        print("\n현재 상한가에 도달한 종목이 없습니다.")
+    def display_upper_limit_stocks_failure(self, msg: str):
+        print(f"\n실패: 상한가 종목 조회. 사유: {msg}")
 
     def display_no_stocks_for_strategy(self):
         """전략 실행을 위한 종목이 없음을 알립니다."""
@@ -307,6 +374,34 @@ class CLIView:
         self._print_common_header()
         print(f"\"{msg}\" 잘못된 환경 선택입니다.")
 
+    def display_current_stock_price(self, view: dict):
+        code   = str(view.get("code", "N/A"))
+        price  = str(view.get("price", "N/A"))
+        change = str(view.get("change", "N/A"))
+        rate   = str(view.get("rate", "N/A"))
+        time_  = str(view.get("time", "N/A"))
+        open_  = str(view.get("open", "N/A"))
+        high   = str(view.get("high", "N/A"))
+        low    = str(view.get("low", "N/A"))
+        prev   = str(view.get("prev_close", "N/A"))
+        vol    = str(view.get("volume", "N/A"))
+
+        print(f"\n--- {code} 현재가 ---")
+        print(f"  현재가: {price}")
+        print(f"  전일대비: {change} ({rate}%)")
+        print(f"  체결시각: {time_}")
+        print("-" * 36)
+        print(f"  시가: {open_} / 고가: {high} / 저가: {low} / 전일종가: {prev}")
+        print(f"  거래량: {vol}")
+        print("-" * 36)
+
+    def display_current_stock_price_error(self, code: str, msg: str):
+        print(f"\n실패: {code} 현재가 조회. ({msg})")
+
+    # 테스트/호환용 래퍼 (기존 TC가 handle_*를 스파이할 수 있게)
+    def handle_get_current_stock_price(self, view: dict):
+        self.display_current_stock_price(view)
+
     def display_current_upper_limit_stocks(self, stocks: list):
         """현재 상한가 종목 리스트를 표시합니다."""
         self._print_common_header()
@@ -398,6 +493,45 @@ class CLIView:
     def display_stock_news_error(self, stock_code: str, msg: str) -> None:
         self._print_common_header()
         print(f"\n실패: {stock_code} 종목 뉴스 조회. ({msg})")
+
+    # ===== 호가 =====
+    def display_asking_price(self, view: dict):
+        code = view.get("code", "N/A")
+        rows = view.get("rows", [])
+        print(f"\n--- {code} 실시간 호가 ---")
+        print("-" * 40)
+        print(f"{'레벨':>4s} | {'매도잔량':>10s} | {'호가':>10s} | {'매수잔량':>10s} | {'호가':>10s}")
+        print("-" * 40)
+        for r in rows:
+            lv   = str(r.get("level", ""))
+            askr = str(r.get("ask_rem", "N/A"))
+            askp = str(r.get("ask_price", "N/A"))
+            bidr = str(r.get("bid_rem", "N/A"))
+            bidp = str(r.get("bid_price", "N/A"))
+            print(f"{lv:>4s} | {askr:>10s} | {askp:>10s} | {bidr:>10s} | {bidp:>10s}")
+        print("-" * 40)
+
+    def display_asking_price_error(self, code: str, msg: str):
+        print(f"\n실패: {code} 호가 정보 조회. ({msg})")
+
+    # ===== 시간대별 체결가 =====
+    def display_time_concluded_prices(self, view: dict):
+        code = view.get("code", "N/A")
+        rows = view.get("rows", [])
+        print(f"\n--- {code} 시간대별 체결 정보 (최근 {len(rows)}건) ---")
+        print("-" * 56)
+        print(f"{'체결시각':>10s} | {'체결가':>12s} | {'전일대비':>10s} | {'체결량':>10s}")
+        print("-" * 56)
+        for r in rows:
+            t = str(r.get("time", "N/A"))
+            p = str(r.get("price", "N/A"))
+            c = str(r.get("change", "N/A"))
+            v = str(r.get("volume", "N/A"))
+            print(f"{t:>10s} | {p:>12s} | {c:>10s} | {v:>10s}")
+        print("-" * 56)
+
+    def display_time_concluded_error(self, code: str, msg: str):
+        print(f"\n실패: {code} 시간대별 체결가 조회. ({msg})")
 
     def display_etf_info(self, etf_code: str, etf_info: dict) -> None:
         self._print_common_header()
