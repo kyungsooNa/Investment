@@ -182,15 +182,47 @@ class CLIView:
         self._print_common_header()
         print(f"\n--- {strategy_name} 전략 실행 시작 ---")
 
-    def display_top_stocks_failure(self, message: str):
-        """시가총액 상위 종목 조회 실패 메시지를 표시합니다."""
-        self._print_common_header()
-        print(f"시가총액 상위 종목 조회 실패: {message}")
+    # 시총 상위 전체
+    def display_top_market_cap_stocks_success(self, items):
+        print("\n--- 시가총액 상위 종목 목록 ---")
+        if not items:
+            print("시가총액 상위 종목이 없습니다.")
+            return
+        for s in items:
+            rank = getattr(s, "data_rank", "")
+            name = getattr(s, "hts_kor_isnm", "")
+            mktcap = getattr(s, "stck_avls", "")
+            price = getattr(s, "stck_prpr", "")
+            print(f"  순위: {rank}, 종목명: {name}, 시가총액: {mktcap}, 현재가: {price}")
+    def display_top_market_cap_stocks_empty(self):
+        print("\n시가총액 상위 종목이 없습니다.")
+    def display_top_market_cap_stocks_failure(self, msg: str):
+        print(f"\n실패: 시가총액 상위 종목 조회. 사유: {msg}")
 
-    def display_top_stocks_success(self):
-        """시가총액 상위 종목 조회 성공 메시지를 표시합니다."""
-        self._print_common_header()
-        print("시가총액 상위 종목 조회 완료.")
+    # 시총 TOP10 현재가
+    def display_top10_market_cap_prices_success(self, items):
+        print("\n성공: 시가총액 1~10위 종목 현재가:")
+        for s in items:
+            # ResMarketCapStockItem 기준
+            rank = getattr(s, "rank", "")
+            name = getattr(s, "name", "")
+            code = getattr(s, "code", "")
+            price = getattr(s, "current_price", "")
+            print(f"  순위: {rank}, 종목명: {name}, 종목코드: {code}, 현재가: {price}원")
+    def display_top10_market_cap_prices_empty(self):
+        print("\n성공: 시가총액 1~10위 종목 현재가 (조회된 종목 없음)")
+    def display_top10_market_cap_prices_failure(self, msg: str):
+        print(f"\n실패: 시가총액 1~10위 종목 현재가 조회. 사유: {msg}")
+
+    # 상한가 (당일)
+    def display_upper_limit_stocks_success(self, items: list[dict]):
+        print("\n--- 상한가 종목 목록 ---")
+        for s in items:
+            print(f"  {s['name']} ({s['code']}): {s['price']}원 (등락률: +{s['change_rate']}%)")
+    def display_upper_limit_stocks_empty(self):
+        print("\n현재 상한가에 도달한 종목이 없습니다.")
+    def display_upper_limit_stocks_failure(self, msg: str):
+        print(f"\n실패: 상한가 종목 조회. 사유: {msg}")
 
     def display_no_stocks_for_strategy(self):
         """전략 실행을 위한 종목이 없음을 알립니다."""

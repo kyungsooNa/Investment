@@ -1,6 +1,6 @@
 # app/stock_query_service.py
 from __future__ import annotations
-from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, ResMarketCapStockItem, \
+from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, \
     ResStockFullInfoApiOutput
 from config.DynamicConfig import DynamicConfig
 from typing import List, Dict, Optional, Literal
@@ -81,80 +81,86 @@ class StockQueryService:
         """계좌 잔고 조회 요청 및 결과 출력."""
         return await self.trading_service.get_account_balance()
 
-    # @TODO cli_view로 출력 위임
-    async def handle_get_top_market_cap_stocks_code(self, market_code, count: int = None) -> ResCommonResponse:
-        """시가총액 상위 종목 조회 요청 및 결과 출력 (전체 목록)."""
-        print("\n--- 시가총액 상위 종목 조회 시도 ---")
-        top_market_cap_stocks: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
-            market_code, count)
+    async def handle_get_top_market_cap_stocks_code(self, market_code: str = "0000", limit: int = 30) -> ResCommonResponse:
+        """
+        시가총액 상위 종목 중 상한가 도달 종목 조회 (출력 X).
+        data: List[dict(code,name,price,change_rate)]
+        """
+        self.logger.debug(f"상한가 스캔 요청 (시장={market_code}, limit={limit})")
 
-        if top_market_cap_stocks and top_market_cap_stocks.rt_cd == ErrorCode.SUCCESS.value:
-            print(f"성공: 시가총액 상위 종목 목록:")
-            for stock_info in top_market_cap_stocks.data:
-                print(f"  순위: {getattr(stock_info, 'data_rank', '')}, "
-                      f"종목명: {getattr(stock_info, 'hts_kor_isnm', '')}, "
-                      f"시가총액: {getattr(stock_info, 'stck_avls', '')}, "
-                      f"현재가: {getattr(stock_info, 'stck_prpr', '')}")
-            self.logger.info(f"시가총액 상위 종목 조회 성공 (시장: {market_code}), 결과: {top_market_cap_stocks}")
-        else:
-            print(f"실패: 시가총액 상위 종목 조회.")
-            self.logger.error(f"실패: 시가총액 상위 종목 조회: {top_market_cap_stocks}")
+        # 모의투자 / 장시간 검증
+        if getattr(self.trading_service._env, "is_paper_trading", False):
+            self.logger.warning("모의투자 환경에서는 상한가 조회 미지원")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value,
+                msg1="모의투자 미지원 API입니다.",
+                data=None
+            )
 
-        return top_market_cap_stocks
-
-    # @TODO cli_view로 출력 위임
-    async def handle_get_top_10_market_cap_stocks_with_prices(self) -> ResCommonResponse:
-        self.logger.info("시가총액 1~10위 종목 현재가 조회 시도")
         try:
-            response: ResCommonResponse = await self.trading_service.get_top_10_market_cap_stocks_with_prices()
-            stocks_data: List = response.data
-
-            if response.rt_cd != ErrorCode.SUCCESS.value:  # None은 조회 자체의 실패로 간주
-                print("\n실패: 시가총액 1~10위 종목 현재가 조회.")
-                self.logger.error(response.msg1)
+            # 상위 종목 조회
+            top_res: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code, limit)
+            if not top_res or top_res.rt_cd != ErrorCode.SUCCESS.value:
+                self.logger.error(f"상위 종목 목록 조회 실패: {top_res}")
                 return ResCommonResponse(
                     rt_cd=ErrorCode.API_ERROR.value,
-                    msg1="조회 실패: 데이터 None",
+                    msg1="상위 종목 목록 조회 실패",
                     data=None
                 )
-            elif not stocks_data:  # 빈 리스트는 조회 성공, 결과 없음으로 간주
-                # 성공했으나 데이터 없음
-                print("\n성공: 시가총액 1~10위 종목 현재가:")
-                print("  조회된 종목이 없습니다.")
-                self.logger.info("조회된 종목이 없습니다.")
+
+            top_list: List[ResTopMarketCapApiItem] = top_res.data or []
+            if not top_list:
+                self.logger.debug("상위 종목 없음")
                 return ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value,
                     msg1="조회 성공 (종목 없음)",
                     data=[]
                 )
-            else:  # 종목이 있는 경우
-                # 정상 조회
-                print("\n성공: 시가총액 1~10위 종목 현재가:")
-                for stock in stocks_data:
-                    if not isinstance(stock, ResMarketCapStockItem):
-                        raise TypeError(f"Stock가 ResMarketCapStockItem 타입이 아님: {type(stock)}")
 
-                    rank = stock.rank
-                    name = stock.name
-                    code = stock.code
-                    price = stock.current_price
-                    print(f"  순위: {rank}, 종목명: {name}, 종목코드: {code}, 현재가: {price}원")
+            targets = top_list[:limit]
+            found: list[dict] = []
 
-                self.logger.info(f"시가총액 1~10위 종목 현재가 조회 성공: {len(stocks_data)}개 종목")
-                return ResCommonResponse(
-                    rt_cd=ErrorCode.SUCCESS.value,
-                    msg1="조회 성공",
-                    data=stocks_data
-                )
+            for item in targets:
+                # dataclass(ResTopMarketCapApiItem)와 dict 모두 지원
+                get = (lambda k: getattr(item, k, None)) if not isinstance(item, dict) else item.get
+
+                code = get("mksc_shrn_iscd") or get("iscd")
+                name = get("hts_kor_isnm")
+                prdy_vrss_sign = get("prdy_vrss_sign")
+                stck_prpr = get("stck_prpr")
+                prdy_ctrt = get("prdy_ctrt")
+
+                if not code:
+                    self.logger.warning(f"유효하지 않은 종목코드: {item}")
+                    continue
+
+                # 정책: prdy_vrss_sign == '1'이면 상한으로 간주
+                if prdy_vrss_sign == "1":
+                    found.append({
+                        "code": code,
+                        "name": name,
+                        "price": str(stck_prpr) if stck_prpr is not None else None,
+                        "change_rate": str(prdy_ctrt) if prdy_ctrt is not None else None,
+                    })
+                    self.logger.debug(f"상한가 발견: {name}({code}) {stck_prpr}원 {prdy_ctrt}%")
+                else:
+                    # 필요시 디버그 로그만
+                    self.logger.debug(f"상한가 아님: {name}({code}) sign={prdy_vrss_sign}")
+
+            self.logger.info("시가총액 상위 종목 조회 성공")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="조회 성공",
+                data=found  # 빈 리스트 허용
+            )
 
         except Exception as e:
-            print(f"\n실패: 시가총액 1~10위 종목 현재가 조회.")
-            self.logger.error(f"시가총액 1~10위 종목 현재가 조회 중 오류 발생: {e}")
-            return ResCommonResponse(
-                rt_cd=ErrorCode.UNKNOWN_ERROR.value,
-                msg1=f"예외 발생: {e}",
-                data=None
-            )
+                self.logger.exception("상한가 조회 중 예외")
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.UNKNOWN_ERROR.value,
+                    msg1=f"예외 발생: {e}",
+                    data=None
+                )
 
     async def get_stock_change_rate(self, stock_code: str) -> ResCommonResponse:
         """
@@ -258,148 +264,35 @@ class StockQueryService:
         )
         return ResCommonResponse(rt_cd="0", msg1="정상", data=data)
 
-    # @TODO cli_view로 출력 위임
     async def handle_upper_limit_stocks(self, market_code: str = "0000", limit: int = 500):
         """
-        시가총액 상위 종목 중 상한가에 도달한 종목을 조회하여 출력합니다.
-        이 기능은 모의투자를 지원하지 않으며, 시장 개장 시에만 조회 가능합니다. (스냅샷 기준)
-        :param market_code: 시장 분류 코드 (예: "0000" 코스피)
-        :param limit: 조회할 상위 종목의 최대 개수
+        시가총액 상위 종목 조회 (출력 X). TradingService 결과를 표준 스키마로 반환.
+        data: List[ResTopMarketCapApiItem]
         """
-        print(f"\n--- 시가총액 상위 {limit}개 종목 중 상한가 종목 조회 ---")
-        # --- 추가된 로그 ---
-        self.logger.info(f"Service - 시가총액 상위 {limit}개 종목 중 상한가 종목 조회 요청")
-        # -------------------
-
-        # 시장 개장 및 모의투자 여부 확인
-        if self.trading_service._env.is_paper_trading:  # trading_service 내부의 env 확인
-            self.logger.warning("Service - 상한가 종목 조회는 모의투자를 지원하지 않습니다.")
-            print("WARNING: 모의투자 환경에서는 상한가 종목 조회를 지원하지 않습니다.\n")
-            return {"rt_cd": "1", "msg1": "모의투자 미지원 API입니다."}  # 오류 딕셔너리 반환
-
-        if not self.time_manager.is_market_open():
-            self.logger.warning("시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.")
-            print("WARNING: 시장이 닫혀 있어 상한가 종목 조회를 수행할 수 없습니다.\n")
-            return None  # None 반환하여 상위 호출자에게 실패 알림
-
-        upper_limit_stocks_found = []
-        try:
-            # 1. 시가총액 상위 종목 목록 조회 (TradingService 위임)
-            top_stocks_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
-                market_code)
-
-            if not top_stocks_response or top_stocks_response.rt_cd != ErrorCode.SUCCESS.value:
-                self.logger.error(f"시가총액 상위 종목 목록 조회 실패: {top_stocks_response}")
-                return None
-
-            top_stocks_list: List = top_stocks_response.data
-            if not top_stocks_list:
-                self.logger.info("조회된 시가총액 상위 종목이 없습니다.")
-                print("조회된 시가총액 상위 종목이 없습니다.\n")
-                return None
-
-            # 상위 limit 개수까지만 처리
-            top_stocks_to_check = top_stocks_list[:limit]
-
-            print(f"조회 대상 종목: 총 {len(top_stocks_to_check)}개")
-            current_checked_count = 0
-
-            # 2. 각 종목의 현재가 조회 및 상한가 여부 판단
-            for stock_info in top_stocks_to_check:
-                stock_code = stock_info.mksc_shrn_iscd
-                stock_name = stock_info.hts_kor_isnm
-
-                if stock_code:
-                    current_price_response: ResCommonResponse = await self.trading_service.get_current_stock_price(
-                        stock_code)
-                    current_checked_count += 1
-                    print(f"\r조회 중... {current_checked_count}/{len(top_stocks_to_check)}", end="")
-
-                    if current_price_response.rt_cd == ErrorCode.SUCCESS.value:
-                        output_data = current_price_response.data.get("output", {}) if isinstance(
-                            current_price_response.data, dict) else {}
-                        prdy_vrss_sign = output_data['prdy_vrss_sign']  # 전일대비 부호
-                        stck_prpr = output_data['stck_prpr']  # 현재가
-                        prdy_ctrt = output_data['prdy_ctrt']  # 전일대비율
-
-                        # 상한가 부호는 '1' (상한)
-                        if prdy_vrss_sign == '1':
-                            upper_limit_stocks_found.append({
-                                "code": stock_code,
-                                "name": stock_name,
-                                "price": stck_prpr,
-                                "change_rate": prdy_ctrt  # 상한가에서는 등락률도 중요
-                            })
-                            self.logger.info(
-                                f"상한가 종목 발견: {stock_name} ({stock_code}), 현재가: {stck_prpr}, 등락률: {prdy_ctrt}%")
-                    else:
-                        self.logger.warning(f"종목 {stock_name} ({stock_code}) 현재가 조회 실패: {current_price_response}")
-                else:
-                    self.logger.warning(f"유효한 종목코드를 찾을 수 없습니다: {stock_info}")
-
-            print("\r" + " " * 80 + "\r", end="")  # 진행 메시지 지우기
-
-            # 3. 결과 출력
-            if upper_limit_stocks_found:
-                print("\n--- 상한가 종목 목록 ---")
-                for stock in upper_limit_stocks_found:
-                    print(f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)\n")
-                self.logger.info(f"총 {len(upper_limit_stocks_found)}개의 상한가 종목 발견.")
-                return True  # 성공적으로 상한가 종목을 찾았거나 목록을 출력했음을 알림
-            else:
-                print("\n현재 상한가에 도달한 종목이 없습니다.\n")
-                self.logger.info("현재 상한가에 도달한 종목이 없습니다.")
-                return False  # 상한가 종목을 찾지 못했음을 알림
-
-        except Exception as e:
-            self.logger.error(f"상한가 종목 조회 중 예기치 않은 오류 발생: {e}")
-            print(f"실패: 상한가 종목 조회 중 오류 발생. {e}\n")
-            return None  # 예외 발생 시 None 반환
-
-    # @TODO cli_view로 출력 위임
-    async def handle_yesterday_upper_limit_stocks(self, market_code="0000", limit: int = 300):
-        """
-        시가총액 상위 종목 중 전일 상한가에 도달했던 종목을 조회하여 출력합니다.
-        trading_service 내부의 get_top_market_cap_stocks_code 및 get_yesterday_upper_limit_stocks 사용.
-        """
-        print(f"\n--- 전일 상한가 종목 조회 (상위 {limit}개) ---")
-        self.logger.info(f"Service - 전일 상한가 종목 조회 요청 (시장 코드: {market_code}, 수량: {limit})")
 
         try:
-            top_codes_response: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(
-                market_code)
-
-            if top_codes_response.rt_cd != ErrorCode.SUCCESS.value:
-                msg = top_codes_response.get("msg1", "조회 실패") if isinstance(top_codes_response, dict) else "응답 오류"
-                print(f"전일 상한가 종목 조회 실패: {msg}")
-                self.logger.warning(f"상위 종목 조회 실패: {top_codes_response}")
-                return
-
-            top_stock_codes = [
-                item.mksc_shrn_iscd
-                for item in top_codes_response.data
-                if isinstance(item, ResTopMarketCapApiItem) and item.mksc_shrn_iscd
-            ]
-
-            if not top_stock_codes:
-                print("전일 상한가 종목 조회 대상이 없습니다.")
-                self.logger.warning("조회된 시가총액 종목 코드 없음.")
-                return
-
-            upper_limit_stocks: ResCommonResponse = await self.trading_service.get_yesterday_upper_limit_stocks(
-                top_stock_codes)
-
-            if upper_limit_stocks.rt_cd != ErrorCode.SUCCESS.value:
-                print("현재 전일 상한가에 해당하는 종목이 없습니다.")
-                self.logger.info("전일 상한가 종목 없음.")
-            else:
-                print("\n--- 전일 상한가 종목 ---")
-                for stock in upper_limit_stocks.data:
-                    print(f"  {stock['name']} ({stock['code']}): {stock['price']}원 (등락률: +{stock['change_rate']}%)")
-                self.logger.info(f"전일 상한가 종목 조회 성공. 총 {len(upper_limit_stocks.data)}개")
+            res: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code, limit)
+            if not res or res.rt_cd != ErrorCode.SUCCESS.value:
+                self.logger.error(f"시가총액 상위 종목 조회 실패: {res}")
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.API_ERROR.value,
+                    msg1="시가총액 상위 종목 조회 실패",
+                    data=None
+                )
+            # 성공
+            self.logger.info(f"시가총액 상위 종목 조회 성공 (시장: {market_code}, 개수={len(res.data) if res.data else 0})")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="조회 성공",
+                data=res.data,   # 그대로 전달 (List[ResTopMarketCapApiItem])
+            )
         except Exception as e:
-            print(f"전일 상한가 종목 조회 중 오류 발생: {e}")
-            self.logger.error(f"전일 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
+            self.logger.exception("시가총액 상위 종목 조회 중 예외")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,
+                msg1=f"예외 발생: {e}",
+                data=None
+            )
 
     async def handle_current_upper_limit_stocks(self):
         """

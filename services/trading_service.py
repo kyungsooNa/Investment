@@ -9,7 +9,7 @@ from config.DynamicConfig import DynamicConfig
 
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
 from common.types import (
-    ResPriceSummary, ResCommonResponse, ErrorCode, ResMarketCapStockItem,
+    ResPriceSummary, ResCommonResponse, ErrorCode,
     ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation,ResDailyChartApiItem
 )
 
@@ -168,138 +168,22 @@ class TradingService:
 
         return response_common
 
-    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = None) -> ResCommonResponse:
+    async def get_top_market_cap_stocks_code(self, market_code: str, limit: int = None) -> ResCommonResponse:
         """
         시가총액 상위 종목을 조회하고 결과를 반환합니다 (모의투자 미지원).
         ResCommonResponse 형태로 반환하며, data 필드에 List[ResTopMarketCapApiItem] 포함.
         """
-        if count is None:
-            count = 10
-            self._logger.warning(f"[경고] count 파라미터가 명시되지 않아 기본값 10을 사용합니다. market_code={market_code}")
+        if limit is None:
+            limit = 30
+            self._logger.warning(f"[경고] count 파라미터가 명시되지 않아 기본값 30을 사용합니다. market_code={market_code}")
 
-        self._logger.info(f"Service - 시가총액 상위 종목 조회 요청 - 시장: {market_code}, 개수: {count}")
-
-        if self._env.is_paper_trading:
-            self._logger.warning("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
-            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1="모의투자 미지원 API입니다.", data=[])  # Enum 값 사용
-
-        return await self._broker_api_wrapper.get_top_market_cap_stocks_code(market_code, count)
-
-    async def get_top_10_market_cap_stocks_with_prices(self) -> ResCommonResponse:
-        """
-        시가총액 1~10위 종목의 현재가를 조회합니다.
-        시장 개장 여부를 확인하고, 모의투자 미지원 API입니다.
-        이제 시장 개장까지 기다리지 않고, 닫혀있으면 바로 None을 반환합니다.
-        ResCommonResponse 형태로 반환하며, data 필드에 List[ResMarketCapStockItem] 포함.
-        """
-        self._logger.info("Service - 시가총액 1~10위 종목 현재가 조회 요청")
-
-        if self._time_manager and not self._time_manager.is_market_open():
-            print("시장이 닫혀 있어 시가총액 1~10위 종목 현재가 조회를 수행할 수 없습니다.")
-            self._logger.warning("시장이 닫혀 있어 시가총액 1~10위 종목 현재가 조회를 수행할 수 없습니다.")
-            return ResCommonResponse(
-                rt_cd=ErrorCode.INVALID_INPUT.value,  # Enum 값 사용
-                msg1="시장이 닫혀 있어 조회 불가",
-                data=[]
-            )
+        self._logger.info(f"Service - 시가총액 상위 종목 조회 요청 - 시장: {market_code}, 개수: {limit}")
 
         if self._env.is_paper_trading:
             self._logger.warning("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1="모의투자 미지원 API입니다.", data=[])  # Enum 값 사용
 
-        top_stocks_response_common: ResCommonResponse = await self.get_top_market_cap_stocks_code("0000")
-        if top_stocks_response_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-            self._logger.error(f"시가총액 상위 종목 조회 실패: {top_stocks_response_common.msg1}")
-            return top_stocks_response_common
-
-        top_stocks_list: List[ResTopMarketCapApiItem] = top_stocks_response_common.data
-        if not top_stocks_list:
-            self._logger.info("시가총액 상위 종목 목록을 찾을 수 없습니다.")
-            return ResCommonResponse(
-                rt_cd=ErrorCode.API_ERROR.value,  # Enum 값 사용
-                msg1="시가총액 1~10위 종목 현재가 조회 결과 없음",
-                data=[]
-            )
-
-        results: List[ResMarketCapStockItem] = []
-        for i, stock_info_api_item in enumerate(top_stocks_list):
-            if i >= 10:
-                break
-
-            stock_code = stock_info_api_item.mksc_shrn_iscd
-            stock_name = stock_info_api_item.hts_kor_isnm or "N/A"
-            stock_rank = stock_info_api_item.data_rank or "N/A"
-
-            if stock_code:
-                current_price_response_common: ResCommonResponse = await self.get_current_stock_price(stock_code)
-                if current_price_response_common.rt_cd == ErrorCode.SUCCESS.value:  # Enum 값 사용
-                    current_price_output_data = current_price_response_common.data
-                    current_price = current_price_output_data.get('output').stck_prpr
-                    results.append(ResMarketCapStockItem(
-                        rank=stock_rank,
-                        name=stock_name,
-                        code=stock_code,
-                        current_price=current_price
-                    ))
-                    self._logger.debug(f"종목 {stock_code} ({stock_name}) 현재가 {current_price} 조회 성공.")
-                else:
-                    self._logger.error(
-                        f"종목 {stock_code} ({stock_name}) 현재가 조회 실패: {current_price_response_common.msg1}")
-            else:
-                self._logger.warning(f"시가총액 상위 종목 목록에서 유효한 종목코드를 찾을 수 없습니다: {stock_info_api_item}")
-
-        if results:
-            self._logger.info("시가총액 1~10위 종목 현재가 조회 성공 및 결과 반환.")
-            return ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
-                msg1="시가총액 1~10위 종목 현재가 조회 성공",
-                data=results
-            )
-        else:
-            self._logger.warning("시가총액 1~10위 종목 현재가 조회 결과 없음.")
-            return ResCommonResponse(
-                rt_cd=ErrorCode.API_ERROR.value,  # Enum 값 사용
-                msg1="시가총액 1~10위 종목 현재가 조회 결과 없음",
-                data=[]
-            )
-
-    async def get_yesterday_upper_limit_stocks(self, stock_codes: List[str]) -> ResCommonResponse:
-        """
-        전체 종목 리스트 중 어제 상한가에 도달한 종목을 필터링합니다. (TODO: 재검증 및 TC 추가 필요)
-        ResCommonResponse 형태로 반환하며, data 필드에 List[Dict] 포함.
-        """
-        results = []
-
-        for code in stock_codes:
-            try:
-                price_info_common: ResCommonResponse = await self._broker_api_wrapper.get_price_summary(code)
-                if price_info_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
-                    self._logger.warning(f"{code} 종목 가격 요약 정보 조회 실패: {price_info_common.msg1}. 필터링 제외.")
-                    continue
-
-                price_info: ResPriceSummary = price_info_common.data
-                if price_info is None:
-                    self._logger.warning(f"{code} 종목 가격 요약 정보 데이터가 None입니다. 필터링 제외.")
-                    continue
-
-                current_price = price_info.current
-                prdy_ctrt = price_info.prdy_ctrt
-
-                if prdy_ctrt >= 29.0:  # 29% 이상이면 상한가 근접으로 판단
-                    results.append({
-                        "code": code,
-                        "price": current_price,
-                        "change_rate": prdy_ctrt
-                    })
-            except Exception as e:
-                self._logger.warning(f"{code} 상한가 필터링 중 오류: {e}")
-                continue  #
-
-        return ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
-            msg1="어제 상한가 종목 필터링 성공 (임시 로직)",
-            data=results
-        )
+        return await self._broker_api_wrapper.get_top_market_cap_stocks_code(market_code, limit)
 
     async def get_current_upper_limit_stocks(self, rise_stocks: List) -> ResCommonResponse:
         """

@@ -251,32 +251,78 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         batch = response.data.get('output', '')[:count]
         self._logger.info(f"API로부터 수신한 종목 수: {len(batch)}")
 
-        results = []
-        for item in batch:
+        results: list[ResTopMarketCapApiItem] = []
+
+        for raw in batch:
             try:
-                code = item.get("iscd") or item.get("mksc_shrn_iscd")
-                raw_market_cap = item.get("stck_avls")
+                # 1) 필수키 정규화 (별칭 허용)
+                code = raw.get("mksc_shrn_iscd") or raw.get("iscd")
+                market_cap = raw.get("stck_avls")  # 문자열 숫자 유지
 
-                if not code or not raw_market_cap:
-                    continue  #
+                if not code or not market_cap:
+                    # 필수값 없으면 스킵
+                    continue
 
-                results.append(ResTopMarketCapApiItem(
-                    iscd=item.get("iscd", ""),
+                # 2) 선택/별칭 필드들까지 묶어서 안전 생성
+                #    - dataclass 내부 __post_init__에서 iscd/acc_trdvol ↔ mksc_shrn_iscd/acml_vol 보완
+                item = ResTopMarketCapApiItem(
                     mksc_shrn_iscd=code,
-                    stck_avls=raw_market_cap,
-                    data_rank=item.get("data_rank", ""),
-                    hts_kor_isnm=item.get("hts_kor_isnm", ""),
-                    acc_trdvol=item.get("acc_trdvol", "0")
-                ))
+                    stck_avls=str(market_cap),
+                    data_rank=str(raw.get("data_rank", "")),
+                    hts_kor_isnm=raw.get("hts_kor_isnm", ""),
+
+                    # 시세/등락(옵션)
+                    stck_prpr=str(raw.get("stck_prpr")) if raw.get("stck_prpr") is not None else None,
+                    prdy_vrss=str(raw.get("prdy_vrss")) if raw.get("prdy_vrss") is not None else None,
+                    prdy_vrss_sign=raw.get("prdy_vrss_sign"),
+                    prdy_ctrt=str(raw.get("prdy_ctrt")) if raw.get("prdy_ctrt") is not None else None,
+
+                    # 거래/상장(옵션)
+                    acml_vol=str(raw.get("acml_vol")) if raw.get("acml_vol") is not None else None,
+                    lstn_stcn=str(raw.get("lstn_stcn")) if raw.get("lstn_stcn") is not None else None,
+
+                    # 시장 비중(옵션)
+                    mrkt_whol_avls_rlim=str(raw.get("mrkt_whol_avls_rlim")) if raw.get(
+                        "mrkt_whol_avls_rlim") is not None else None,
+
+                    # 호환 alias (있으면 넣고, 없어도 __post_init__에서 보완)
+                    iscd=raw.get("iscd"),
+                    acc_trdvol=str(raw.get("acc_trdvol")) if raw.get("acc_trdvol") is not None else None,
+                )
+
+                results.append(item)
+
             except (ValueError, TypeError, KeyError) as e:
-                self._logger.warning(f"시가총액 상위 종목 개별 항목 파싱 오류: {e}, 항목: {item}")
+                self._logger.warning(f"시가총액 상위 종목 개별 항목 파싱 오류: {e}, 항목: {raw}")
                 continue
 
-        return ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
-            msg1="시가총액 상위 종목 조회 성공",
-            data=results
-        )
+        # (선택) 정렬: API가 정렬 보장 안 하면 rank 우선, 없으면 시총 내림차순
+        def _to_int_safe(s, default=10 ** 12):
+            try:
+                return int(str(s))
+            except Exception:
+                return default
+
+        if results:
+            # data_rank가 있으면 그걸로, 없으면 stck_avls(큰값 우선)
+            if any(r.data_rank for r in results):
+                results.sort(key=lambda r: _to_int_safe(r.data_rank, default=10 ** 12))
+            else:
+                results.sort(key=lambda r: _to_int_safe(r.stck_avls, default=0), reverse=True)
+
+        # 응답: 결과 없으면 "없음"으로 분기(뷰 로직에 맞춰 조정)
+        if results:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="시가총액 상위 종목 조회 성공",
+                data=results,
+            )
+        else:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.NO_DATA.value,  # 없으면 NO_DATA 등 내부 규약 코드 사용
+                msg1="시가총액 상위 종목 없음",
+                data=[],
+            )
 
     async def inquire_daily_itemchartprice(self, stock_code: str,
                                            start_date: str = '',

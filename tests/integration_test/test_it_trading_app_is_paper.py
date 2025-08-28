@@ -148,6 +148,48 @@ async def test_execute_action_select_environment_fail_paper(real_app_instance, m
 
 
 @pytest.mark.asyncio
+async def test_execute_action_invalidate_token_success_paper(real_app_instance):
+    """
+    (통합 테스트) 메뉴 '98' - 토큰 무효화 성공 흐름
+    TradingApp → TokenManager.invalidate_token → CLIView.display_token_invalidated_message
+    """
+    app = real_app_instance
+
+    # ✅ 의존성 모킹
+    app.env.invalidate_token = MagicMock()
+    app.cli_view.display_token_invalidated_message = MagicMock()
+
+    # --- 실행 ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("998")
+
+    # --- 검증 ---
+    app.env.invalidate_token.assert_called_once()
+    app.cli_view.display_token_invalidated_message.assert_called_once()
+    assert running_status is True
+
+
+@pytest.mark.asyncio
+async def test_execute_action_exit_success_paper(real_app_instance):
+    """
+    (통합 테스트) 메뉴 '99' - 프로그램 종료 처리 흐름
+    TradingApp → CLIView.display_exit_message → running_status=False 반환
+    """
+    app = real_app_instance
+
+    # ✅ 종료 메시지 출력 함수 모킹
+    app.cli_view.display_exit_message = MagicMock()
+
+    # --- 실행 ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("999")
+
+    # --- 검증 ---
+    app.cli_view.display_exit_message.assert_called_once()
+    assert running_status is False
+
+
+@pytest.mark.asyncio
 async def test_get_current_price_full_integration_paper(real_app_instance, mocker):
     """
     (통합 테스트) 현재가 조회 시 TradingApp → StockQueryService → BrokerAPIWrapper →
@@ -1587,101 +1629,6 @@ async def test_handle_upper_limit_stocks_full_integration_paper(real_app_instanc
 
 
 @pytest.mark.asyncio
-async def test_handle_yesterday_upper_limit_stocks_full_integration_paper(real_app_instance, mocker):
-    """
-    (통합 테스트) 전일 상한가 종목 조회 (상위):
-    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper 흐름 테스트
-    """
-    app = real_app_instance
-
-    # ✅ 모의 응답: 시가총액 상위 종목 코드 조회 → 종목 코드 리스트 반환
-    mock_top_response = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="정상",
-        data={
-            "output": [
-                {"mksc_shrn_iscd": "005930", "stck_avls": "492,000,000,000"},
-                {"mksc_shrn_iscd": "000660", "stck_avls": "110,000,000,000"}
-            ]
-        }
-    )
-
-    # ✅ 모의 응답: 전일 상한가 종목 조회 → 리스트 반환
-    mock_upper_response = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="정상",
-        data=[
-            {"code": "005930", "name": "삼성전자", "price": "70500", "change_rate": "29.85"}
-        ]
-    )
-
-    mock_call_api = mocker.patch(
-        'brokers.korea_investment.korea_invest_api_base.KoreaInvestApiBase.call_api',
-        side_effect=[mock_top_response, mock_upper_response]
-    )
-
-    # --- Act ---
-    executor = UserActionExecutor(app)
-    running_status = await executor.execute("16")
-
-    # --- Assert (검증) ---
-    assert running_status == True
-    assert mock_call_api.await_count == 0  # 실제 API 호출은 없어야 함
-
-
-@pytest.mark.asyncio
-async def test_handle_current_upper_limit_stocks_full_integration_paper(real_app_instance, mocker):
-    """
-    (통합 테스트) 전일 상한가 종목 조회 (전체):
-    TradingApp → StockQueryService → TradingService → BrokerAPIWrapper 흐름 테스트
-    """
-    app = real_app_instance
-
-    top30_sample = [
-        ResFluctuation.from_dict({
-            "stck_shrn_iscd": "000001", "hts_kor_isnm": "A",
-            "stck_prpr": "5590", "stck_hgpr": "5590", "prdy_ctrt": "30.00", "prdy_vrss": "1290",
-        }),
-        ResFluctuation.from_dict({
-            "stck_shrn_iscd": "000002", "hts_kor_isnm": "B",
-            "stck_prpr": "20000", "stck_hgpr": "20000", "prdy_ctrt": "30.00", "prdy_vrss": "3000",
-        }),
-        ResFluctuation.from_dict({
-            "stck_shrn_iscd": "000003", "hts_kor_isnm": "C",
-            "stck_prpr": "15000", "stck_hgpr": "16000", "prdy_ctrt": "8.50", "prdy_vrss": "1170",
-        }),
-    ]
-
-    # (선택) CLI 출력 검증
-    app.cli_view.display_warning_paper_trading_not_supported = MagicMock()
-
-    # 바인딩 후 quotations에 바로 패치
-    ctx.ki.bind(app)
-    quot_api = ctx.ki.quot
-
-    mocker.patch.object(
-        quot_api,
-        "get_top_rise_fall_stocks",
-        AsyncMock(return_value=ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=top30_sample
-        )),
-    )
-
-    app.cli_view.display_current_upper_limit_stocks = MagicMock()
-    app.cli_view.display_no_current_upper_limit_stocks = MagicMock()
-
-    ok = await UserActionExecutor(app).execute("52")
-    assert ok is True
-
-    # --- Assert (검증) ---
-
-    app.cli_view.display_current_upper_limit_stocks.assert_not_called()
-
-    # 👉 경고 뷰가 정확히 1회 호출되어야 함
-    app.cli_view.display_warning_paper_trading_not_supported.assert_called_once()
-
-
-@pytest.mark.asyncio
 async def test_handle_realtime_stream_full_integration_paper(real_app_instance, mocker):
     """
     (통합 테스트) 실시간 체결가/호가 구독:
@@ -1891,87 +1838,47 @@ async def test_get_top_fall_full_integration_paper(real_app_instance, mocker):
             m.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_execute_action_momentum_strategy_success_paper(real_app_instance, mocker):
-    """
-    (통합 테스트) 메뉴 '100' - 모멘텀 전략 정상 실행 흐름 테스트
-
-    TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code → StrategyExecutor.execute
-    """
-    app = real_app_instance
-
-    # ✅ 시장 개장 상태로 설정
-    mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
-
-    await _assert_paper_blocked(app, "100", "모멘텀")
-
-
-@pytest.mark.asyncio
-async def test_execute_action_momentum_backtest_strategy_success(real_app_instance, mocker):
-    """
-    (통합 테스트) 메뉴 '101' - 모멘텀 백테스트 전략 정상 실행 흐름 테스트
-
-    TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
-    → StrategyExecutor.execute (백테스트 모드)
-    """
-    app = real_app_instance
-
-    # ✅ 시장 개장 상태로 설정
-    mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
-
-    await _assert_paper_blocked(app, "101", "모멘텀 백테스트")
-
-
-@pytest.mark.asyncio
-async def test_execute_action_gapup_pullback_strategy_success(real_app_instance, mocker):
-    """
-    (통합 테스트) 메뉴 '102' - GapUpPullback 전략 정상 실행 흐름 테스트
-
-    TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
-    → StrategyExecutor.execute → 결과 출력까지 전 과정 검증
-    """
-    app = real_app_instance
-
-    await _assert_paper_blocked(app, "102", "GapUpPullback")
-
-
-@pytest.mark.asyncio
-async def test_execute_action_invalidate_token_success_paper(real_app_instance):
-    """
-    (통합 테스트) 메뉴 '98' - 토큰 무효화 성공 흐름
-    TradingApp → TokenManager.invalidate_token → CLIView.display_token_invalidated_message
-    """
-    app = real_app_instance
-
-    # ✅ 의존성 모킹
-    app.env.invalidate_token = MagicMock()
-    app.cli_view.display_token_invalidated_message = MagicMock()
-
-    # --- 실행 ---
-    executor = UserActionExecutor(app)
-    running_status = await executor.execute("998")
-
-    # --- 검증 ---
-    app.env.invalidate_token.assert_called_once()
-    app.cli_view.display_token_invalidated_message.assert_called_once()
-    assert running_status is True
+# @pytest.mark.asyncio
+# async def test_execute_action_momentum_strategy_success_paper(real_app_instance, mocker):
+#     """
+#     (통합 테스트) 메뉴 '100' - 모멘텀 전략 정상 실행 흐름 테스트
+#
+#     TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code → StrategyExecutor.execute
+#     """
+#     app = real_app_instance
+#
+#     # ✅ 시장 개장 상태로 설정
+#     mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
+#
+#     await _assert_paper_blocked(app, "100", "모멘텀")
+#
+#
+# @pytest.mark.asyncio
+# async def test_execute_action_momentum_backtest_strategy_success(real_app_instance, mocker):
+#     """
+#     (통합 테스트) 메뉴 '101' - 모멘텀 백테스트 전략 정상 실행 흐름 테스트
+#
+#     TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
+#     → StrategyExecutor.execute (백테스트 모드)
+#     """
+#     app = real_app_instance
+#
+#     # ✅ 시장 개장 상태로 설정
+#     mocker.patch.object(app.time_manager, "is_market_open", return_value=True)
+#
+#     await _assert_paper_blocked(app, "101", "모멘텀 백테스트")
+#
+#
+# @pytest.mark.asyncio
+# async def test_execute_action_gapup_pullback_strategy_success(real_app_instance, mocker):
+#     """
+#     (통합 테스트) 메뉴 '102' - GapUpPullback 전략 정상 실행 흐름 테스트
+#
+#     TradingApp → StockQueryService → TradingService.get_top_market_cap_stocks_code
+#     → StrategyExecutor.execute → 결과 출력까지 전 과정 검증
+#     """
+#     app = real_app_instance
+#
+#     await _assert_paper_blocked(app, "102", "GapUpPullback")
 
 
-@pytest.mark.asyncio
-async def test_execute_action_exit_success_paper(real_app_instance):
-    """
-    (통합 테스트) 메뉴 '99' - 프로그램 종료 처리 흐름
-    TradingApp → CLIView.display_exit_message → running_status=False 반환
-    """
-    app = real_app_instance
-
-    # ✅ 종료 메시지 출력 함수 모킹
-    app.cli_view.display_exit_message = MagicMock()
-
-    # --- 실행 ---
-    executor = UserActionExecutor(app)
-    running_status = await executor.execute("999")
-
-    # --- 검증 ---
-    app.cli_view.display_exit_message.assert_called_once()
-    assert running_status is False

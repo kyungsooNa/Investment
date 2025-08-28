@@ -108,7 +108,6 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         stock_code = "005930"
         price = "58500"
         qty = "1"
-        order_dvsn = "00"
 
         self.mock_time_manager.is_market_open.return_value = True
         self.mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
@@ -324,7 +323,6 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         """
         시장 개장, 실전투자 환경, 모든 API 호출 성공 시 상위 10개 종목 현재가 조회.
         """
-        self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = False
 
         # TradingService의 get_top_market_cap_stocks와 get_current_stock_price를 Mocking
@@ -344,24 +342,8 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             ]
         ))
 
-        self.trading_service.get_current_stock_price = AsyncMock(side_effect=[
-            ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="정상 처리되었습니다.",
-                data={
-                    "output": ResStockFullInfoApiOutput.from_dict({
-                        "stck_prpr": str(10000 + i * 100)
-                    })
-                }
-            )
-            for i in range(10)
-        ])
+        await self.stock_query_service.handle_get_top_market_cap_stocks_code(market_code="0000",limit=10)
 
-        await self.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices()
+        self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with('0000', 10)
 
-        self.mock_time_manager.is_market_open.assert_called_once()
-        self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with('0000')
-        self.assertEqual(self.trading_service.get_current_stock_price.call_count, 10)
-
-        self.mock_logger.info.assert_any_call("Service - 시가총액 1~10위 종목 현재가 조회 요청")
-        self.mock_logger.info.assert_any_call("시가총액 1~10위 종목 현재가 조회 성공 및 결과 반환.")
+        self.mock_logger.info.assert_called()

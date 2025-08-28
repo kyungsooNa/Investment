@@ -41,8 +41,7 @@ class UserActionExecutor:
 
         '50': ('랭킹/필터링', '시가총액 상위 조회 (실전 전용)',             'handle_top_market_cap_stocks'),
         '51': ('랭킹/필터링', '시가총액 상위 10개 현재가 (실전 전용)',      'handle_top_10_market_cap_stocks'),
-        '52': ('랭킹/필터링', '전일 상한가 종목 (상위 500) (실전 전용)',    'handle_yesterday_upper_limit_500'),
-        '53': ('랭킹/필터링', '전일 상한가 종목 (상위) (실전 전용)',        'handle_yesterday_upper_limit'),
+
         '54': ('랭킹/필터링', '현재 상한가 종목 (실전 전용)',              'handle_current_upper_limit'),
         '55': ('랭킹/필터링', '거래량 상위 랭킹 (~30) (실전 전용)',        'handle_top_volume_30'),
         '56': ('랭킹/필터링', '상승률 상위 랭킹 (~30) (실전 전용)',        'handle_top_rise_30'),
@@ -53,9 +52,9 @@ class UserActionExecutor:
 
 
         # ⬇️ 실행기의 번호(100/101/102)를 그대로 사용해 메뉴와 동기화
-        '100': ('전략 실행', '모멘텀 전략 실행', 'handle_momentum_strategy'),
-        '101': ('전략 실행', '모멘텀 백테스트', 'handle_momentum_backtest'),
-        '102': ('전략 실행', 'GapUpPullback 전략 실행', 'handle_gapup_pullback'),
+        # '100': ('전략 실행', '모멘텀 전략 실행', 'handle_momentum_strategy'),
+        # '101': ('전략 실행', '모멘텀 백테스트', 'handle_momentum_backtest'),
+        # '102': ('전략 실행', 'GapUpPullback 전략 실행', 'handle_gapup_pullback'),
 
         '998': ('기타',          '토큰 무효화',                               'handle_invalidate_token'),
         '999': ('기타',          '종료',                                     'handle_exit'),
@@ -342,25 +341,31 @@ class UserActionExecutor:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("시가총액 상위 종목 조회")
         else:
-            await self.app.stock_query_service.handle_get_top_market_cap_stocks_code("0000")
+            count = await self.app.cli_view.get_user_input("조회 종목 개수 :")
+
+            res: ResCommonResponse = await self.app.stock_query_service.handle_get_top_market_cap_stocks_code(market_code="0000",limit=count)
+            if res and res.rt_cd == ErrorCode.SUCCESS.value:
+                items = res.data or []
+                if items:
+                    self.app.cli_view.display_top_market_cap_stocks_success(items)
+                else:
+                    self.app.cli_view.display_top_market_cap_stocks_empty()
+            else:
+                self.app.cli_view.display_top_market_cap_stocks_failure(res.msg1 if res else "조회 실패")
 
     async def handle_top_10_market_cap_stocks(self) -> None:
         if self.app.env.is_paper_trading:
             self.app.cli_view.display_warning_paper_trading_not_supported("시가총액 1~10위 종목 조회")
         else:
-            await self.app.stock_query_service.handle_get_top_10_market_cap_stocks_with_prices()
-
-    async def handle_yesterday_upper_limit_500(self) -> None:
-        if self.app.env.is_paper_trading:
-            self.app.cli_view.display_warning_paper_trading_not_supported("전일 상한가 종목 조회 (상위 500)")
-        else:
-            await self.app.stock_query_service.handle_upper_limit_stocks("0000", limit=500)
-
-    async def handle_yesterday_upper_limit(self) -> None:
-        if self.app.env.is_paper_trading:
-            self.app.cli_view.display_warning_paper_trading_not_supported("전일 상한가 종목 조회 (상위)")
-        else:
-            await self.app.stock_query_service.handle_yesterday_upper_limit_stocks()
+            res: ResCommonResponse = await self.app.stock_query_service.handle_get_top_market_cap_stocks_code(market_code="0000",limit=10)
+            if res and res.rt_cd == ErrorCode.SUCCESS.value:
+                items = res.data or []
+                if items:
+                    self.app.cli_view.display_top10_market_cap_prices_success(items)
+                else:
+                    self.app.cli_view.display_top10_market_cap_prices_empty()
+            else:
+                self.app.cli_view.display_top10_market_cap_prices_failure(res.msg1 if res else "조회 실패")
 
     async def handle_current_upper_limit(self) -> None:
         if self.app.env.is_paper_trading:
