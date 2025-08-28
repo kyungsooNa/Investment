@@ -21,7 +21,6 @@
 StockQueryService: 앱 레벨 오케스트레이션
 필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
 IndicatorService로 계산 → 데이터만 반환
-11. TC 중에 Fail 에러 발생했는데 통과해버리는게 있음. (ETF 등) 전체적으로 검토 필요.
 12. inquire_time_dailychartprice 의 캐시동작 확인필요.
 ## 불량
 ### 실전
