@@ -638,3 +638,22 @@ class StockQueryService:
         collected.sort(key=lambda r: r.get("stck_cntg_hour", ""))
 
         return collected
+
+    async def handle_program_trading_stream(self, stock_code: str, duration: int = 60) -> None:
+        """
+        실시간 프로그램매매(H0STPGM0) 구독 → duration초 수신 → 해지.
+        UI는 UserActionExecutor에서만 처리하므로 이 레이어는 순수 위임만 수행.
+        """
+        # 1) 웹소켓 연결 (기본 콜백: TradingService 쪽 핸들러)
+        await self.trading_service.connect_websocket()
+
+        # 2) 구독
+        await self.trading_service.subscribe_program_trading(stock_code)
+
+        # 3) 지정 시간 대기
+        try:
+            await self.time_manager.sleep(duration)
+        finally:
+            # 4) 구독 해지 및 연결 해제 (예외가 나도 정리 보장)
+            await self.trading_service.unsubscribe_program_trading(stock_code)
+            await self.trading_service.disconnect_websocket()
