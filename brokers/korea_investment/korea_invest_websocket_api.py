@@ -208,6 +208,10 @@ class KoreaInvestWebSocketAPI:
                     self._logger.warning(f"체결통보 암호화 해제 실패: AES 키/IV 없음. TR_ID: {tr_id}, 메시지: {message[:50]}...")
                     return
 
+            elif tr_id == self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0'):
+                parsed_data = self._parse_program_trading_data(data_body)
+                message_type = 'realtime_program_trading'
+
             # 외부 콜백 함수로 파싱된 데이터 전달
             if self.on_realtime_message_callback:
                 self.on_realtime_message_callback({'type': message_type, 'tr_id': tr_id, 'data': parsed_data})
@@ -436,6 +440,57 @@ class KoreaInvestWebSocketAPI:
         keys = menulist.split('|')
         values = data_str.split('^')
         return dict(zip(keys, values[:len(keys)]))
+
+    # === 1) 파싱 유틸 ===
+    def _parse_program_trading_data(self, data_str: str) -> dict:
+        """
+        H0STPGM0 (국내주식 실시간 프로그램매매 KRX) 데이터 파싱
+        엑셀 명세 열 순서:
+        STCK_CNTG_HOUR, SELN_CNQN, SELN_TR_PBMN, SHNU_CNQN, SHNU_TR_PBMN,
+        NTBY_CNQN, NTBY_TR_PBMN, SELN_RSQN, SHNU_RSQN, WHOL_NTBY_QTY
+        """
+        recv = data_str.split('^')
+        # 안전 가드
+        while len(recv) < 10:
+            recv.append("")
+
+        return {
+            # 체결시각 (HHMMSS)
+            "STCK_CNTG_HOUR": recv[0],
+
+            # 매도/매수 체결 건수, 거래대금
+            "SELN_CNQN": recv[1],  # 매도 체결건수
+            "SELN_TR_PBMN": recv[2],  # 매도 거래대금
+            "SHNU_CNQN": recv[3],  # 매수 체결건수
+            "SHNU_TR_PBMN": recv[4],  # 매수 거래대금
+
+            # 순매수 건수/거래대금
+            "NTBY_CNQN": recv[5],  # 순매수 체결건수
+            "NTBY_TR_PBMN": recv[6],  # 순매수 거래대금
+
+            # 매도/매수 잔량, 전체 순매수 수량
+            "SELN_RSQN": recv[7],  # 매도 잔량
+            "SHNU_RSQN": recv[8],  # 매수 잔량
+            "WHOL_NTBY_QTY": recv[9],  # 전체 순매수 수량
+        }
+
+    # === 2) 구독/해지 메서드 ===
+    async def subscribe_program_trading(self, stock_code: str):
+        """
+        국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독
+        :param stock_code: 종목코드(단축)
+        """
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
+        self._logger.info(f"[프로그램매매] 종목 {stock_code} 구독 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
+
+    async def unsubscribe_program_trading(self, stock_code: str):
+        """
+        국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독 해지
+        """
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
+        self._logger.info(f"[프로그램매매] 종목 {stock_code} 구독 해지 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
     # --- 웹소켓 연결 및 해지 ---
     async def connect(self, on_message_callback=None):
