@@ -9,6 +9,7 @@ from config.DynamicConfig import DynamicConfig
 if TYPE_CHECKING:
     from app.trading_app import TradingApp
 
+from strategies.volume_breakout_strategy import VolumeBreakoutStrategy
 from strategies.GapUpPullback_strategy import GapUpPullbackStrategy
 from strategies.momentum_strategy import MomentumStrategy
 from strategies.strategy_executor import StrategyExecutor
@@ -52,7 +53,9 @@ class UserActionExecutor:
 
 
         # ⬇️ 실행기의 번호(100/101/102)를 그대로 사용해 메뉴와 동기화
-        # '100': ('전략 실행', '모멘텀 전략 실행', 'handle_momentum_strategy'),
+        '100': ('전략 실행', '거래량 돌파 백테스트(단일종목)', 'handle_backtest_intraday_open_threshold'),
+        '101': ('전략 실행', '거래량 돌파 백테스트(거래량,상승률 상위30)', 'handle_backtest_top30_volume_rise'),
+        '102': ('전략 실행', '거래량 돌파 백테스트(거래량+상승률 상위30)', 'handle_backtest_ranked_universe_open_threshold'),
         # '101': ('전략 실행', '모멘텀 백테스트', 'handle_momentum_backtest'),
         # '102': ('전략 실행', 'GapUpPullback 전략 실행', 'handle_gapup_pullback'),
 
@@ -589,4 +592,255 @@ class UserActionExecutor:
             else:
                 self.app.cli_view.display_top_stocks_ranking_error(title, res.msg1)
 
+    async def handle_backtest_intraday_open_threshold(self) -> None:
+        """사용자가 입력한 종목코드와 날짜로 단일일자 분봉 백테스트 실행"""
 
+        # 1) 사용자 입력 받기
+        code = await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
+        ymd  = await self.app.cli_view.get_user_input("조회일(YYYYMMDD, 공란=오늘): ")
+        # code = '008040' # await self.app.cli_view.get_user_input("종목코드(예: 005930): ")
+        # ymd  = '20250912' # await self.app.cli_view.get_user_input("조회일(YYYYMMDD, 공란=오늘): ")
+
+        # 2) 모의투자 환경에서 과거 날짜 입력 방지
+        if self.app.env.is_paper_trading and ymd:
+            self.app.cli_view.display_warning_paper_trading_not_supported("모의환경에서는 지정일 분봉 불가 - 오늘로 조회합니다.")
+            ymd = ""
+
+        # 3) VolumeBreakoutStrategy 인스턴스 생성 후 백테스트 실행
+        strategy = VolumeBreakoutStrategy(
+            stock_query_service=self.app.stock_query_service,
+            time_manager=self.app.time_manager,
+            logger=self.app.logger,
+        )
+        result = await strategy.backtest_open_threshold_intraday(
+            stock_code=code,
+            date_ymd=(ymd or None),
+            session="REGULAR",
+        )
+
+        # 4) 결과 출력 및 로그 기록
+        self.app.cli_view._print_common_header()
+        if not result.get("ok"):
+            msg = f"❌ 백테스트 실패: {result.get('message')}"
+            print(f"\n{msg}")
+            self.app.logger.info(msg)
+            return
+
+        header_msg = f"--- Intraday Open-Threshold Backtest ---\n종목: {result['stock_code']} 날짜: {result['date']}"
+        print(f"\n{header_msg}")
+        self.app.logger.info(header_msg)
+
+        trades = result.get("trades", [])
+        if not trades:
+            msg = "트레이드 없음 (트리거 미발생)"
+            print(msg)
+            self.app.logger.info(msg)
+            return
+
+        t = trades[0]
+        entry_msg = f"진입시각: {t['entry_time']} 진입가: {t['entry_px']}"
+        exit_msg = f"청산시각: {t['exit_time']} 청산가: {t['exit_px']} 결과: {t['outcome']}"
+        ret_msg = (f"수익률: {t['ret_pct']}% (시가: {t['open0']}, "
+                   f"트리거/TP/SL={t['trigger_pct']}/{t['tp_pct']}/{t['sl_pct']}%)")
+
+        print(entry_msg)
+        print(exit_msg)
+        print(ret_msg)
+
+        self.app.logger.info(entry_msg)
+        self.app.logger.info(exit_msg)
+        self.app.logger.info(ret_msg)
+
+    async def handle_backtest_top30_volume_rise(self, *_, **__) -> None:
+        """거래량 상위 30종목과 상승률 상위 30종목에 대해 하루치 백테스트 실행"""
+        # 1) 조회일 입력 받기
+        ymd = await self.app.cli_view.get_user_input("조회일(YYYYMMDD, 공란=오늘): ")
+        if self.app.env.is_paper_trading and ymd:
+            self.app.cli_view.display_warning_paper_trading_not_supported("모의환경에서는 지정일 분봉 불가 - 오늘로 조회합니다.")
+            ymd = ""
+        date_label = ymd or None
+
+        # 2) 상위 30 종목 리스트 가져오기 (거래량, 상승률)
+        # 거래량 상위 30
+        vol_res = await self.app.stock_query_service.handle_get_top_stocks('volume')
+        vol_codes = []
+        if vol_res.rt_cd == ErrorCode.SUCCESS.value:
+            items = vol_res.data
+        if isinstance(items, dict) and 'output' in items:
+            items = items['output']
+        for item in items[:30]:
+            code = getattr(item, 'mksc_shrn_iscd', None) or (
+                item.get('mksc_shrn_iscd') if isinstance(item, dict) else None)
+            if code:
+                vol_codes.append(code)
+
+        # 상승률 상위 30
+        rise_res = await self.app.stock_query_service.handle_get_top_stocks('rise')
+        rise_codes = []
+        if rise_res.rt_cd == ErrorCode.SUCCESS.value:
+            items = rise_res.data
+        if isinstance(items, dict) and 'output' in items:
+            items = items['output']
+        for item in items[:30]:
+            code = item.stck_shrn_iscd or (
+                item.get('stck_shrn_iscd') if isinstance(item, dict) else None)
+            if code:
+                rise_codes.append(code)
+
+        # vol_list = vol_res.data if hasattr(vol_res, 'data') else []
+        # rise_list = rise_res.data if hasattr(rise_res, 'data') else []
+        # vol_codes = [x.get('mksc_shrn_iscd') if isinstance(x, dict) else getattr(x, 'mksc_shrn_iscd', None) for x in vol_list][:30]
+        # rise_codes = [x.get('mksc_shrn_iscd') if isinstance(x, dict) else getattr(x, 'mksc_shrn_iscd', None) for x in rise_list][:30]
+        codes = list(set(vol_codes + rise_codes))
+
+        # 3) VolumeBreakoutStrategy 사용하여 각 종목 백테스트 실행
+        strategy = VolumeBreakoutStrategy(
+            stock_query_service=self.app.stock_query_service,
+            time_manager=self.app.time_manager,
+            logger=self.app.logger,
+        )
+
+        self.app.cli_view._print_common_header()
+        header_msg = f"거래량 상위30 및 상승률 상위30 종목 백테스트 (날짜: {ymd or '오늘'})"
+        print(f"\n{header_msg}")
+        self.app.logger.info(header_msg)
+
+        for code in codes:
+            result = await strategy.backtest_open_threshold_intraday(
+                stock_code=code,
+                date_ymd=date_label,
+                session="REGULAR",
+            )
+            if not result.get("ok"):
+                msg = f"❌ {code}: 백테스트 실패 - {result.get('message')}"
+                print(msg)
+                self.app.logger.info(msg)
+                continue
+            trades = result.get("trades", [])
+            if not trades:
+                msg = f"{code}: 트리거 미발생"
+                print(msg)
+                self.app.logger.info(msg)
+                continue
+            t = trades[0]
+            name = await self.app.broker.get_name_by_code(code)
+            ret_msg = (f"{code}({name}): 진입 {t['entry_time']}({t['entry_px']}), "
+                       f"청산 {t['exit_time']}({t['exit_px']}), 결과 {t['outcome']}, 수익률 {t['ret_pct']}%")
+            print(ret_msg)
+            self.app.logger.info(ret_msg)
+
+    async def handle_backtest_ranked_universe_open_threshold(self) -> None:
+        """거래량 상위 30 + 상승률 상위 30 유니버스 백테스트 (CLI 출력과 로그 info 둘 다 기록)"""
+        ymd = await self.app.cli_view.get_user_input("조회일(YYYYMMDD, 공란=오늘): ")
+        if self.app.env.is_paper_trading and ymd:
+            self.app.cli_view.display_warning_paper_trading_not_supported("모의환경에서는 지정일 분봉 불가 - 오늘로 조회합니다.")
+            ymd = ""
+
+        # 2) 상위 30 종목 리스트 가져오기 (거래량, 상승률)
+        # 거래량 상위 30
+        vol_res = await self.app.stock_query_service.handle_get_top_stocks('volume')
+        vol_codes = []
+        if vol_res.rt_cd == ErrorCode.SUCCESS.value:
+            items = vol_res.data
+        if isinstance(items, dict) and 'output' in items:
+            items = items['output']
+        for item in items[:30]:
+            code = getattr(item, 'mksc_shrn_iscd', None) or (
+                item.get('mksc_shrn_iscd') if isinstance(item, dict) else None)
+            if code:
+                vol_codes.append(code)
+
+        # 상승률 상위 30
+        rise_res = await self.app.stock_query_service.handle_get_top_stocks('rise')
+        rise_codes = []
+        if rise_res.rt_cd == ErrorCode.SUCCESS.value:
+            items = rise_res.data
+        if isinstance(items, dict) and 'output' in items:
+            items = items['output']
+        for item in items[:30]:
+            code = item.stck_shrn_iscd or (
+                item.get('stck_shrn_iscd') if isinstance(item, dict) else None)
+            if code:
+                rise_codes.append(code)
+
+        seen = set()
+        universe = []
+        for code in list(vol_codes) + list(rise_codes):
+            if code and code not in seen:
+                seen.add(code)
+                universe.append(code)
+
+        strategy = VolumeBreakoutStrategy(
+            stock_query_service=self.app.stock_query_service,
+            time_manager=self.app.time_manager,
+            logger=self.app.logger,
+        )
+
+        header_msg = (
+            f"--- Ranked Universe Backtest (Open-Threshold) ---\n"
+            f"조회일: {ymd or self.app.time_manager.get_current_kst_time().strftime('%Y%m%d')}\n"
+            f"유니버스 크기: {len(universe)} (VolTop30 ∪ RiseTop30)"
+        )
+        print("    " + header_msg)
+        self.app.logger.info(header_msg)
+
+        rows = []
+        wins = losses = closes = triggers = 0
+        equity = 1.0
+
+        for idx, code in enumerate(universe, 1):
+            try:
+                result = await strategy.backtest_open_threshold_intraday(
+                    stock_code=code,
+                    date_ymd=(ymd or None),
+                    session="REGULAR",
+                )
+            except Exception as e:
+                msg = f"[{idx:02d}] {code}: 백테스트 예외 {e}"
+                print(msg)
+                self.app.logger.info(msg)
+                continue
+
+            if not result.get("ok"):
+                msg = f"[{idx:02d}] {code}: 실패 - {result.get('message')}"
+                print(msg)
+                self.app.logger.info(msg)
+                continue
+
+            trade = (result.get("trades") or [None])[0]
+            if not trade:
+                msg = f"[{idx:02d}] {code}: 트리거 미발생"
+                print(msg)
+                self.app.logger.info(msg)
+                continue
+
+            triggers += 1
+            outcome = trade["outcome"]
+            ret_pct = trade["ret_pct"]
+            equity *= (1.0 + trade["ret"])
+
+            if outcome == "take_profit":
+                wins += 1
+            elif outcome == "stop_loss":
+                losses += 1
+            else:
+                closes += 1
+
+            line = f"[{idx:02d}] {code}: outcome={outcome:>11}  ret={ret_pct:>7.3f}%  entry={trade['entry_px']} -> exit={trade['exit_px']}"
+            print(line)
+            self.app.logger.info(line)
+            rows.append((code, outcome, ret_pct))
+
+        total = len(universe)
+        trig_rate = (triggers / total * 100.0) if total else 0.0
+        win_rate = (wins / triggers * 100.0) if triggers else 0.0
+        avg_ret = (sum(r for _, _, r in rows) / len(rows)) if rows else 0.0
+
+        summary = (
+            f"총 종목: {total}, 트리거 발생: {triggers} ({trig_rate:.1f}%)\n"
+            f"TP: {wins}, SL: {losses}, CloseExit: {closes}, 승률: {win_rate:.1f}%\n"
+            f"평균 수익률: {avg_ret:.3f}%\n"
+            f"누적 자본: {equity:.4f}"
+        )
+        print(summary)
+        self.app.logger.info(summary)
