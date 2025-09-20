@@ -876,10 +876,10 @@ async def execute_strategy_result(self, strategy_name, target_stocks):
         duration_in = await self.app.cli_view.get_user_input("수신 유지 시간(초, 기본 60): ")
 
         try:
-            duration = int(duration_in) if duration_in else 60
+            duration = int(duration_in.strip()) if duration_in and duration_in.strip() else 60
             if duration <= 0:
                 duration = 60
-        except ValueError:
+        except Exception:
             duration = 60
 
         # 서비스 호출 (UI 관련 없는 순수 로직)

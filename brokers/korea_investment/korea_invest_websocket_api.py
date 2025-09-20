@@ -477,18 +477,18 @@ class KoreaInvestWebSocketAPI:
     # === 2) 구독/해지 메서드 ===
     async def subscribe_program_trading(self, stock_code: str):
         """
-        국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독
+        국내주식 실시간 프로그램매매 동향 (H0UPPGM0) 구독
         :param stock_code: 종목코드(단축)
         """
-        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0UPPGM0')
         self._logger.info(f"[프로그램매매] 종목 {stock_code} 구독 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
 
     async def unsubscribe_program_trading(self, stock_code: str):
         """
-        국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독 해지
+        국내주식 실시간 프로그램매매 동향 (H0UPPGM0) 구독 해지
         """
-        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0UPPGM0')
         self._logger.info(f"[프로그램매매] 종목 {stock_code} 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
@@ -571,15 +571,17 @@ class KoreaInvestWebSocketAPI:
         header = {
             "approval_key": self.approval_key,
             "custtype": self._env.active_config['custtype'],
-            "id": tr_id,
-            "pwd": "",  # 빈 값
-            "gt_uid": os.urandom(16).hex()  # 32Byte UUID
+            "tr_type": tr_type,
+            "content_type": "application/json",
+
+            # "pwd": "",  # 빈 값
+            # "gt_uid": os.urandom(16).hex()  # 32Byte UUID
         }
         body = {
             "input": {
                 "tr_id": tr_id,
                 "tr_key": tr_key,
-                "rt_type": tr_type
+                # "rt_type": tr_type
             }
         }
 
