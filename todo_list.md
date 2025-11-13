@@ -21,7 +21,8 @@
 StockQueryService: 앱 레벨 오케스트레이션
 필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
 IndicatorService로 계산 → 데이터만 반환
-12. inquire_time_dailychartprice 의 캐시동작 확인필요.
+12. inquire_time_dailychartprice 의 캐시동작 확인필요
+13. VolmueBreakOut에서 수수료도 적용하여 수익률 계산
 ## 불량
 ### 실전
 
