@@ -1,0 +1,27 @@
+# config.yaml 예시 (실제 키/계좌번호는 config/config.yaml에 넣고 .git에 올리지 마세요)
+# 이 파일을 복사해 config.yaml 로 저장한 뒤 값을 채우면 앱 실행 가능합니다.
+# 복사: config/config.yaml.example -> config/config.yaml
+
+# 실전 투자
+api_key: "실전_API_KEY"
+api_secret_key: "실전_시크릿"
+stock_account_number: "실전_계좌번호"
+url: "https://openapi.koreainvestment.com:9443"
+websocket_url: "ws://ops.koreainvestment.com:21000"
+
+# 모의 투자
+paper_api_key: "모의_API_KEY"
+paper_api_secret_key: "모의_시크릿"
+paper_stock_account_number: "모의_계좌번호"
+paper_url: "https://openapivts.koreainvestment.com:29443"
+paper_websocket_url: "ws://ops.koreainvestment.com:31000"
+
+# 실전/모의 선택 (true: 모의, false: 실전)
+is_paper_trading: true
+
+# 선택
+htsid: ""
+custtype: "P"
+market_open_time: "09:00"
+market_close_time: "15:30"
+market_timezone: "Asia/Seoul"
