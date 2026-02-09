@@ -2,8 +2,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
-from pandas.io.common import get_handle
-
 from config.DynamicConfig import DynamicConfig
 
 if TYPE_CHECKING:

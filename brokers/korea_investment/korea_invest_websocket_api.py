@@ -141,8 +141,8 @@ class KoreaInvestWebSocketAPI:
             tr_id = recvstr[1]  # 두 번째 요소가 TR_ID
             data_body = recvstr[3]  # 네 번째 요소가 실제 데이터 본문
 
-            print("📩 받은 TR_ID:", tr_id)
-            print("🔍 비교 대상:", self._env.active_config['tr_ids']['websocket']['realtime_price'])
+            self._logger.debug(f"받은 TR_ID: {tr_id}")
+            self._logger.debug(f"비교 대상: {self._env.active_config['tr_ids']['websocket']['realtime_price']}")
 
             parsed_data = {}
             message_type = 'unknown'

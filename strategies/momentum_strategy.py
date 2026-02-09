@@ -31,6 +31,14 @@ class MomentumStrategy(Strategy):
         for code in stock_codes:
             summary : ResCommonResponse = await self.broker.get_price_summary(code)  # ✅ wrapper 통해 조회
 
+            if not summary:
+                self.logger.warning(f"종목 {code}: 가격 요약 데이터를 받지 못했습니다. 건너뜁니다.")
+                continue
+
+            if hasattr(summary, 'data') and summary.data is None:
+                self.logger.warning(f"종목 {code}: 가격 요약 데이터가 비어있습니다. 건너뜁니다.")
+                continue
+
             if self.mode == "backtest":
                 if not self.backtest_lookup:
                     raise ValueError("Backtest 모드에서는 backtest_lookup 함수가 필요합니다.")
@@ -43,12 +51,17 @@ class MomentumStrategy(Strategy):
                 after_price = await result if inspect.isawaitable(result) else result
             else:
                 price_data : ResCommonResponse = await self.broker.get_current_price(code)  # ✅ wrapper 통해 조회
-                after_price = int(price_data.data.get("stck_prpr", "0") or 0)
-            # @TODO after_price 못받아옴.
+                after_price = int(price_data.data.get("stck_prpr", "0") or 0) if price_data and price_data.data else 0
+
+            if after_price is None:
+                self.logger.warning(f"종목 {code}: after_price를 받지 못했습니다. 0으로 대체합니다.")
+                after_price = 0
+
             summary.data["after"] = after_price
+            current_price = summary.data.get("current", 0) or 0
             summary.data["after_rate"] = (
-                (after_price - summary.data["current"]) / summary.data["current"] * 100
-                if summary.data["current"] else 0
+                (after_price - current_price) / current_price * 100
+                if current_price else 0
             )
             results.append(summary.data)
 
