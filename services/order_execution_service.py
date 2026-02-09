@@ -27,8 +27,10 @@ class OrderExecutionService:
             self.logger.info(
                 f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
         else:
+            rt_cd = buy_order_result.rt_cd if buy_order_result else 'None'
+            msg1 = buy_order_result.msg1 if buy_order_result else '응답 없음'
             self.logger.error(
-                f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
+                f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
         return buy_order_result
 
     async def handle_place_sell_order(self, stock_code, price, qty):
@@ -44,8 +46,10 @@ class OrderExecutionService:
             self.logger.info(
                 f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
         else:
+            rt_cd = sell_order_result.rt_cd if sell_order_result else 'None'
+            msg1 = sell_order_result.msg1 if sell_order_result else '응답 없음'
             self.logger.error(
-                f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
+                f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
         return sell_order_result
 
     async def handle_buy_stock(self, stock_code, qty_input, price_input):  # 파라미터 추가
