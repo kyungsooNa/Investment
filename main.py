@@ -55,7 +55,16 @@ async def run_cli_main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    mode = select_view_mode()
+    # python main.py --web  → 웹 바로 실행
+    # python main.py --cli  → 콘솔 바로 실행
+    # python main.py        → 선택 메뉴
+    if "--web" in sys.argv:
+        mode = '2'
+    elif "--cli" in sys.argv:
+        mode = '1'
+    else:
+        mode = select_view_mode()
+
     if mode == '2':
         run_web()
     else:

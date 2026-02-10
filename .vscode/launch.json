@@ -2,19 +2,30 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run main.py (py310)",
+      "name": "Web (브라우저)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--web"],
+      "console": "integratedTerminal",
+      "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
+    },
+    {
+      "name": "Console (CLI)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--cli"],
+      "console": "integratedTerminal",
+      "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
+    },
+    {
+      "name": "선택 메뉴",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
       "console": "integratedTerminal",
       "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
-    },
-    {
-      "name": "Run main.py (현재 선택된 인터프리터)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/main.py",
-      "console": "integratedTerminal"
     }
   ]
 }

@@ -3,5 +3,9 @@
   "python.testing.unittestEnabled": false,
   "python.testing.pytestArgs": ["tests"],
   "python.terminal.activateEnvironment": true,
-  "python.defaultInterpreterPath": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
+  "python.defaultInterpreterPath": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe",
+  "code-runner.executorMap": {
+    "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe -u"
+  },
+  "code-runner.runInTerminal": true
 }
