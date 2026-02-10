@@ -161,23 +161,6 @@ class VolumeRankParams:
             FID_INPUT_DATE_1="",
         )
 
-    @classmethod
-    def trading_value(cls, market: MarketCode = "J"):
-        """거래대금 상위 종목 조회용 파라미터."""
-        return cls(
-            FID_COND_MRKT_DIV_CODE=market,
-            FID_COND_SCR_DIV_CODE="20176",
-            FID_INPUT_ISCD="0000",
-            FID_DIV_CLS_CODE="0",
-            FID_BLNG_CLS_CODE="0",
-            FID_TRGT_CLS_CODE="0",
-            FID_TRGT_EXLS_CLS_CODE="0000000000",
-            FID_INPUT_PRICE_1="",
-            FID_INPUT_PRICE_2="",
-            FID_VOL_CNT="",
-            FID_INPUT_DATE_1="",
-        )
-
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
 
@@ -534,9 +517,7 @@ class Params:
     def volume_rank(market: MarketCode = "J") -> Dict[str, str]:
         return VolumeRankParams.default(market).to_dict()
 
-    @staticmethod
-    def trading_value_rank(market: MarketCode = "J") -> Dict[str, str]:
-        return VolumeRankParams.trading_value(market).to_dict()
+
 
     @staticmethod
     def top_market_cap(market: MarketCode = "J", input_iscd: str = "0000") -> Dict[str, str]:

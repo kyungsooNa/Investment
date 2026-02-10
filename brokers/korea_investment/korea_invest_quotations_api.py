@@ -590,7 +590,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
     async def get_top_trading_value_stocks(self) -> ResCommonResponse:
         """
-        거래대금 상위 종목 조회
+        거래대금 상위 종목 조회 (거래량 API 호출 후 거래대금 기준 정렬)
         """
         full_config = self._env.active_config
         tr_id = self._trid_provider.quotations(TrIdLeaf.RANKING_VOLUME)
@@ -598,7 +598,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
-        params = Params.trading_value_rank()
+        params = Params.volume_rank()
 
         self._logger.info(f"거래대금 상위 종목 조회 시도...")
         response = await self.call_api("GET", EndpointKey.RANKING_VOLUME, params=params, retry_count=1)
@@ -608,6 +608,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             return response
 
         stocks = response.data.get("output", []) if response.data else []
+        # 거래대금(acml_tr_pbmn) 기준 내림차순 정렬 후 순위 재부여
+        stocks.sort(key=lambda x: int(x.get("acml_tr_pbmn", "0") or "0"), reverse=True)
+        for i, stock in enumerate(stocks, 1):
+            stock["data_rank"] = str(i)
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="거래대금 상위 종목 조회 성공",
