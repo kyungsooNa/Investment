@@ -223,16 +223,24 @@ async def get_ranking(category: str):
 
 
 @router.get("/top-market-cap")
-async def get_top_market_cap(limit: int = 10):
+async def get_top_market_cap(limit: int = 20):
     """시가총액 상위 종목."""
     ctx = _get_ctx()
-    resp = await ctx.stock_query_service.handle_get_top_market_cap_stocks_code("J", limit)
+    resp = await ctx.broker.get_top_market_cap_stocks_code("J", limit)
     if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
-        return {
-            "rt_cd": resp.rt_cd,
-            "msg1": resp.msg1,
-            "data": _serialize_list_items(resp.data)
-        }
+        items = resp.data or []
+        data = []
+        for item in items:
+            get = (lambda k: getattr(item, k, None)) if not isinstance(item, dict) else item.get
+            data.append({
+                "rank": get("data_rank") or "",
+                "name": get("hts_kor_isnm") or "",
+                "code": get("mksc_shrn_iscd") or get("iscd") or "",
+                "current_price": get("stck_prpr") or "0",
+                "change_rate": get("prdy_ctrt") or "0",
+                "market_cap": get("stck_avls") or "0",
+            })
+        return {"rt_cd": resp.rt_cd, "msg1": resp.msg1, "data": data}
     return _serialize_response(resp)
 
 

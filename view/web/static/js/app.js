@@ -10,6 +10,16 @@ function formatTradingValue(val) {
     return num.toLocaleString();
 }
 
+function formatMarketCap(val) {
+    // stck_avls는 억원 단위
+    const num = parseInt(val || '0');
+    if (num >= 10000) {
+        const jo = num / 10000;
+        return (jo >= 10 ? Math.round(jo).toLocaleString() : jo.toFixed(1)) + '조';
+    }
+    return num.toLocaleString() + '억';
+}
+
 // ==========================================
 // 1. 공통/초기화 로직
 // ==========================================
@@ -316,7 +326,7 @@ async function loadTopMarketCap() {
     const div = document.getElementById('marketcap-result');
     div.innerHTML = "로딩 중...";
     try {
-        const res = await fetch('/api/top-market-cap?limit=20');
+        const res = await fetch('/api/top-market-cap?limit=30');
         const json = await res.json();
         if (json.rt_cd !== "0") {
             div.innerHTML = `<p class="error">실패: ${json.msg1}</p>`;
@@ -324,16 +334,20 @@ async function loadTopMarketCap() {
         }
         let html = `
             <table class="data-table">
-            <thead><tr><th>순위</th><th>종목명</th><th>코드</th><th>현재가</th></tr></thead>
+            <thead><tr><th>순위</th><th>종목명</th><th>코드</th><th>현재가</th><th>시가총액</th></tr></thead>
             <tbody>
         `;
         json.data.forEach((item, idx) => {
+            const rate = parseFloat(item.change_rate || 0);
+            const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
+            const rateStr = rate > 0 ? `+${rate}%` : `${rate}%`;
             html += `
                 <tr>
                     <td>${item.rank || (idx+1)}</td>
                     <td>${item.name}</td>
                     <td><a href="#" onclick="searchStock('${item.code}'); return false;">${item.code}</a></td>
-                    <td>${parseInt(item.current_price).toLocaleString()}</td>
+                    <td>${parseInt(item.current_price).toLocaleString()} <small class="${color}">(${rateStr})</small></td>
+                    <td>${formatMarketCap(item.market_cap)}</td>
                 </tr>
             `;
         });
