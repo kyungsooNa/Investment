@@ -52,7 +52,7 @@ body {
 .badge.open { background: var(--positive); color: #000; }
 .badge.closed { background: var(--negative); color: #fff; }
 .badge.paper { background: var(--neutral); color: #000; }
-.badge.real { background: var(--accent); color: #fff; }
+.badge.real { background: var(--negative); color: #fff; }
 .badge.clickable { cursor: pointer; transition: opacity 0.2s; }
 .badge.clickable:hover { opacity: 0.7; }
 

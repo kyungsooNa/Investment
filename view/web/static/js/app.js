@@ -160,8 +160,17 @@ async function loadBalance() {
         // output1: 보유 종목
         const stocks = json.data.output1 || [];
 
+        // [추가됨] 계좌 정보 표시 로직
+        const accInfo = json.account_info || { number: '-', type: '-' };
+        // '실전투자'일 경우 빨간색(real), 모의투자는 노란색(paper) 뱃지 사용
+        const badgeClass = (accInfo.type === '실전투자') ? 'real' : 'paper';
+
         let html = `
             <div class="balance-summary">
+                <p>
+                    <strong>계좌번호:</strong> ${accInfo.number} 
+                    <span class="badge ${badgeClass}" style="margin-left:5px; font-size:0.8em;">${accInfo.type}</span>
+                </p>
                 <p><strong>총 평가금액:</strong> ${parseInt(summary.tot_evlu_amt || 0).toLocaleString()}원</p>
                 <p><strong>예수금:</strong> ${parseInt(summary.dnca_tot_amt || 0).toLocaleString()}원</p>
                 <p><strong>평가손익:</strong> ${parseInt(summary.evlu_pfls_smtl_amt || 0).toLocaleString()}원</p>

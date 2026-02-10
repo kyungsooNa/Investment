@@ -65,9 +65,10 @@ class CLIView:
         try:
             self._print_common_header()
 
-            # ✅ 계좌번호 출력
+            # [수정됨] 계좌번호 및 타입(모의/실전) 출력
             account_number = self.env.active_config.get("stock_account_number", "N/A")
-            print(f"\n📒 계좌번호: {account_number}")
+            account_type = "모의투자" if self.env.is_paper_trading else "실전투자"
+            print(f"\n📒 계좌번호: {account_number} ({account_type})")
 
             output1 = balance_info.get('output1', [])
             output2 = balance_info.get('output2', [])
