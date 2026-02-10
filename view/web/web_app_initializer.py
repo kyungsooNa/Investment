@@ -10,24 +10,27 @@ from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
 from core.time_manager import TimeManager
 from core.logger import Logger
-
+from view.web import web_api  # 임포트 확인
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
 
-    def __init__(self):
+    def __init__(self, app_context):
         self.logger = Logger()
-        self.env: KoreaInvestApiEnv = None
+        self.env = app_context.env if app_context else None
+        self.full_config = {}  # [추가] 전체 설정을 담을 그릇
         self.time_manager: TimeManager = None
         self.broker: BrokerAPIWrapper = None
         self.trading_service: TradingService = None
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
         self.initialized = False
+        web_api.set_ctx(self)
 
     def load_config_and_env(self):
         """설정 파일 로드 및 환경 초기화."""
         config_data = load_configs()
+        self.full_config = config_data  # 전체 설정 저장
         self.env = KoreaInvestApiEnv(config_data, self.logger)
         self.time_manager = TimeManager(
             market_open_time=config_data.get('market_open_time', "09:00"),

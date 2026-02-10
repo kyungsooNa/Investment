@@ -6,9 +6,44 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from common.types import ErrorCode
+from fastapi import APIRouter, Request, Form, Response, HTTPException, Depends
+from fastapi.responses import RedirectResponse, JSONResponse
 
 router = APIRouter(prefix="/api")
+_ctx = None  # 전역 변수로 선언
 
+@router.post("/auth/login")
+async def login(response: Response, username: str = Form(...), password: str = Form(...)):
+    ctx = _get_ctx()
+    auth_config = ctx.full_config.get("auth", {})
+
+    print(f"\n=== 로그인 시도 ===")
+    print(f"입력 ID: {username} / PW: {password}")
+    print(f"설정 ID: {auth_config.get('username')} / PW: {auth_config.get('password')}")
+    print(f"==================\n")
+
+    if username == auth_config.get("username") and password == auth_config.get("password"):
+        response = JSONResponse(content={"success": True})
+        # 쿠키 설정
+        response.set_cookie(
+            key="access_token", 
+            value=auth_config.get("secret_key"), 
+            httponly=True,
+            samesite="lax" # 로컬 테스트 시 안정성 위함
+        )
+        return response
+    
+    return JSONResponse(content={"success": False, "msg": "아이디 또는 비밀번호가 틀렸습니다."}, status_code=401)
+
+# 로그인 여부를 확인하는 공통 함수
+def check_auth(request: Request):
+    ctx = _get_ctx()
+    expected_token = ctx.env.active_config.get("auth", {}).get("secret_key")
+    token = request.cookies.get("access_token")
+    
+    if token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return True
 
 def _serialize_response(resp):
     """ResCommonResponse를 JSON 직렬화 가능한 dict로 변환."""
@@ -44,17 +79,15 @@ class EnvironmentRequest(BaseModel):
     is_paper: bool
 
 
-# --- 컨텍스트 참조 (web_main.py에서 설정) ---
-_ctx = None
-
-
-def set_context(ctx):
+def set_ctx(ctx): # set_context에서 set_ctx로 변경
     global _ctx
     _ctx = ctx
 
 
 def _get_ctx():
-    if _ctx is None or not _ctx.initialized:
+    if _ctx is None:
+        # 이 부분이 브라우저에 보이는 에러 메시지를 생성합니다.
+        from fastapi import HTTPException
         raise HTTPException(status_code=503, detail="서비스가 초기화되지 않았습니다.")
     return _ctx
 
@@ -64,7 +97,7 @@ def _get_ctx():
 @router.get("/status")
 async def get_status():
     """시장 상태 및 환경 정보."""
-    ctx = _ctx
+    ctx = _get_ctx()
     if ctx is None:
         return {"market_open": False, "env_type": "미설정", "current_time": "", "initialized": False}
     return {

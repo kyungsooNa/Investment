@@ -1779,16 +1779,13 @@ async def test_get_top_volume_full_integration_real(real_app_instance, mocker):
     app.cli_view.display_top_stocks_ranking.assert_called_once()
     app.cli_view.display_top_stocks_ranking_error.assert_not_called()
 
-    # 실행 코드(handle_top_volume_30)가 res.data 전체를 넘기므로 dict를 기대
+    # get_top_volume_stocks()가 output 리스트를 파싱하여 list로 반환
     title_arg, data_arg = app.cli_view.display_top_stocks_ranking.call_args[0][:2]
 
     assert title_arg == "volume"
-    assert isinstance(data_arg, dict), f"뷰에 dict 형태의 payload 전체가 전달되어야 합니다. got={type(data_arg)}"
-    # 표준 스키마 키 포함
-    assert set(data_arg.keys()) >= {"rt_cd", "msg1", "output"}
-    # output 리스트 내부 값 확인
-    assert isinstance(data_arg["output"], list) and len(data_arg["output"]) == 2
-    assert {item["stck_shrn_iscd"] for item in data_arg["output"]} == {"005930", "000660"}
+    assert isinstance(data_arg, list), f"뷰에 list 형태의 종목 데이터가 전달되어야 합니다. got={type(data_arg)}"
+    assert len(data_arg) == 2
+    assert {item["stck_shrn_iscd"] for item in data_arg} == {"005930", "000660"}
 
 
 @pytest.mark.asyncio

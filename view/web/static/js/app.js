@@ -1,6 +1,16 @@
 /* view/web/static/js/app.js */
 
 // ==========================================
+// 유틸리티 함수
+// ==========================================
+function formatTradingValue(val) {
+    const num = parseInt(val || '0');
+    if (num >= 1e8) return (num / 1e8).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '억';
+    if (num >= 1e4) return (num / 1e4).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '만';
+    return num.toLocaleString();
+}
+
+// ==========================================
 // 1. 공통/초기화 로직
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -270,21 +280,27 @@ async function loadRanking(category) {
             return;
         }
 
+        const isTradingValue = category === 'trading_value';
+        const lastColHeader = isTradingValue ? '거래대금' : '거래량';
+
         let html = `
             <table class="data-table">
-            <thead><tr><th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래량</th></tr></thead>
+            <thead><tr><th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>${lastColHeader}</th></tr></thead>
             <tbody>
         `;
         json.data.forEach(item => {
             const rate = parseFloat(item.prdy_ctrt || 0);
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
+            const lastCol = isTradingValue
+                ? formatTradingValue(item.acml_tr_pbmn)
+                : parseInt(item.acml_vol || 0).toLocaleString();
             html += `
                 <tr>
                     <td>${item.data_rank || item.rank || '-'}</td>
                     <td>${item.hts_kor_isnm || item.name}</td>
                     <td>${parseInt(item.stck_prpr || 0).toLocaleString()}</td>
                     <td class="${color}">${rate}%</td>
-                    <td>${parseInt(item.acml_vol || 0).toLocaleString()}</td>
+                    <td>${lastCol}</td>
                 </tr>
             `;
         });
