@@ -20,10 +20,20 @@ def select_view_mode():
 
 def run_web():
     """웹 서버 실행."""
+    import threading
+    import webbrowser
     import uvicorn
     from view.web.web_main import app
+
+    def open_browser():
+        """서버 시작 후 브라우저 자동 오픈."""
+        import time
+        time.sleep(1.5)
+        webbrowser.open("http://localhost:8000")
+
     print("\n[Web] http://localhost:8000 에서 접속 가능")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    threading.Thread(target=open_browser, daemon=True).start()
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 async def run_cli():

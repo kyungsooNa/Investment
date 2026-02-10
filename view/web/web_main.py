@@ -1,16 +1,8 @@
 """
 FastAPI 웹 서버 진입점.
-실행: python -m uvicorn view.web.web_main:app --reload --host 0.0.0.0 --port 8000
-  또는: python view/web/web_main.py
+실행: python main.py → 2(웹) 선택
 """
 import os
-import sys
-
-# 프로젝트 루트를 sys.path에 추가 (직접 실행 시 모듈 임포트 지원)
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -62,8 +54,3 @@ async def index(request: Request):
         "env_type": ctx.get_env_type(),
         "market_open": ctx.is_market_open(),
     })
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("view.web.web_main:app", host="0.0.0.0", port=8000, reload=True)
