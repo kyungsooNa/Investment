@@ -402,13 +402,34 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
 
     // 4. 요약 박스 업데이트
     const summaryBox = document.getElementById('virtual-summary-box');
+    
+    // 이전 슬림 버전보다 약 1.5배 키워 시인성을 높인 밸런스 조정 버전입니다.
     summaryBox.innerHTML = `
-        <div style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 5px;">[ ${strategyName} 결과 ]</div>
-        <strong>거래:</strong> ${totalTrades}건 (완료 ${soldTrades.length}) | 
-        <strong>승률:</strong> ${winRate.toFixed(1)}% | 
-        <strong>평균수익:</strong> <span class="${avgReturn > 0 ? 'text-positive' : (avgReturn < 0 ? 'text-negative' : '')}">
-            ${avgReturn.toFixed(2)}%
-        </span>
+        <div style="margin-bottom: 15px; margin-top: 5px;">
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 6px 18px; border-radius: 20px; border: 1.5px solid #e94560; display: inline-block; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
+                <span style="color: #e94560; margin-right: 6px; font-size: 1.1em;">📊</span>
+                <span style="font-size: 1.05em; font-weight: 700 !important; letter-spacing: 0.5px;">[ ${strategyName} 성과 요약 ]</span>
+            </div>
+        </div>
+        
+        <div style="display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">총 거래</div>
+                <div style="color: #ffffff !important;"><strong style="font-size: 1.35em;">${totalTrades}</strong> <span style="font-size: 1em;">건</span></div>
+            </div>
+            
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">승률</div>
+                <strong style="color: #ffffff !important; font-size: 1.35em;">${winRate.toFixed(1)}%</strong>
+            </div>
+            
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">평균수익</div>
+                <strong class="${avgReturn > 0 ? 'text-positive' : (avgReturn < 0 ? 'text-negative' : '')}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${avgReturn.toFixed(2)}%
+                </strong>
+            </div>
+        </div>
     `;
 
     // 5. 테이블 업데이트
