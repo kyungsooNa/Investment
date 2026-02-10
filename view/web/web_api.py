@@ -106,10 +106,10 @@ async def place_order(req: OrderRequest):
 
 @router.get("/ranking/{category}")
 async def get_ranking(category: str):
-    """랭킹 조회 (rise/fall/volume)."""
+    """랭킹 조회 (rise/fall/volume/trading_value)."""
     ctx = _get_ctx()
-    if category not in ("rise", "fall", "volume"):
-        raise HTTPException(status_code=400, detail="category는 rise, fall, volume 중 하나여야 합니다.")
+    if category not in ("rise", "fall", "volume", "trading_value"):
+        raise HTTPException(status_code=400, detail="category는 rise, fall, volume, trading_value 중 하나여야 합니다.")
 
     resp = await ctx.stock_query_service.handle_get_top_stocks(category)
 

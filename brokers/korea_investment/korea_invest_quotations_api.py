@@ -581,7 +581,38 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self._logger.warning(f"거래량 상위 조회 실패: {response.msg1}")
             return response
 
-        return response
+        stocks = response.data.get("output", []) if response.data else []
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="거래량 상위 종목 조회 성공",
+            data=stocks
+        )
+
+    async def get_top_trading_value_stocks(self) -> ResCommonResponse:
+        """
+        거래대금 상위 종목 조회
+        """
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.RANKING_VOLUME)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.trading_value_rank()
+
+        self._logger.info(f"거래대금 상위 종목 조회 시도...")
+        response = await self.call_api("GET", EndpointKey.RANKING_VOLUME, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self._logger.warning(f"거래대금 상위 조회 실패: {response.msg1}")
+            return response
+
+        stocks = response.data.get("output", []) if response.data else []
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="거래대금 상위 종목 조회 성공",
+            data=stocks
+        )
 
     #
     # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:

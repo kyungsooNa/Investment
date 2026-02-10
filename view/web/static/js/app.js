@@ -245,18 +245,23 @@ async function loadRanking(category) {
             resultDiv.innerHTML = '<p style="text-align:center; color:var(--text-secondary);">데이터 없음</p>';
             return;
         }
+        const isTradingValue = category === 'trading_value';
+        const lastColHeader = isTradingValue ? '거래대금' : '거래량';
         let html = `<table>
             <thead><tr>
-                <th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래량</th>
+                <th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>${lastColHeader}</th>
             </tr></thead><tbody>`;
         for (const item of items.slice(0, 30)) {
             const rate = item.prdy_ctrt || '0';
+            const lastCol = isTradingValue
+                ? formatNumber(item.acml_tr_pbmn)
+                : formatNumber(item.acml_vol);
             html += `<tr>
                 <td>${item.data_rank || '-'}</td>
                 <td>${item.hts_kor_isnm || '-'}</td>
                 <td>${formatNumber(item.stck_prpr)}</td>
                 <td class="${colorClass(rate)}">${rate}%</td>
-                <td>${formatNumber(item.acml_vol)}</td>
+                <td>${lastCol}</td>
             </tr>`;
         }
         html += '</tbody></table>';

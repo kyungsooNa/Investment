@@ -398,6 +398,7 @@ class StockQueryService:
             "rise": ("상승률", self.trading_service.get_top_rise_fall_stocks, True),
             "fall": ("하락률", self.trading_service.get_top_rise_fall_stocks, False),
             "volume": ("거래량", self.trading_service.get_top_volume_stocks, None),
+            "trading_value": ("거래대금", self.trading_service.get_top_trading_value_stocks, None),
             # "foreign": ("외국인 순매수", self.trading_service.get_top_foreign_buying_stocks, None),
         }
 

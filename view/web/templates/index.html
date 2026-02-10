@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Investment - Web View</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=2">
+    <link rel="stylesheet" href="/static/css/style.css?v=3">
 </head>
 <body>
 
@@ -84,6 +84,7 @@
                 <button class="btn ranking-tab active" data-cat="rise" onclick="loadRanking('rise')">상승률</button>
                 <button class="btn ranking-tab" data-cat="fall" onclick="loadRanking('fall')">하락률</button>
                 <button class="btn ranking-tab" data-cat="volume" onclick="loadRanking('volume')">거래량</button>
+                <button class="btn ranking-tab" data-cat="trading_value" onclick="loadRanking('trading_value')">거래대금</button>
             </div>
         </div>
         <div id="ranking-result"></div>
@@ -100,6 +101,6 @@
 
 </div>
 
-<script src="/static/js/app.js?v=2"></script>
+<script src="/static/js/app.js?v=3"></script>
 </body>
 </html>

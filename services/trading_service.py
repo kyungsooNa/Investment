@@ -289,6 +289,11 @@ class TradingService:
         self._logger.info("Service - 거래량 상위 종목 조회 요청")
         return await self._broker_api_wrapper.get_top_volume_stocks()
 
+    async def get_top_trading_value_stocks(self) -> ResCommonResponse:
+        """거래대금 상위 종목을 조회합니다."""
+        self._logger.info("Service - 거래대금 상위 종목 조회 요청")
+        return await self._broker_api_wrapper.get_top_trading_value_stocks()
+
     # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
     #     """외국인 순매수 상위 종목을 조회합니다."""
     #     self._logger.info("Service - 외국인 순매수 상위 종목 조회 요청")
