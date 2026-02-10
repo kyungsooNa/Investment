@@ -1,16 +1,51 @@
 # main.py (최종 버전)
-import asyncio # 비동기 처리를 위해 추가
-import sys # sys.exit를 위해 추가
-import traceback # 예외 추적을 위해 추가
+import asyncio
+import sys
+import traceback
 
-from app.trading_app import TradingApp # TradingApp 임포트
+from app.trading_app import TradingApp
 
 
-# main 함수를 비동기 함수로 선언
-async def main():
+def select_view_mode():
+    """뷰 모드 선택: 콘솔(CLI) 또는 웹."""
+    print("\n=== Investment Application ===")
+    print("1. 콘솔 (CLI)")
+    print("2. 웹 (브라우저)")
+    while True:
+        choice = input("실행 모드를 선택하세요 (1/2): ").strip()
+        if choice in ('1', '2'):
+            return choice
+        print("잘못된 입력입니다. 1 또는 2를 입력하세요.")
+
+
+def run_web():
+    """웹 서버 실행."""
+    import threading
+    import webbrowser
+    import uvicorn
+    from view.web.web_main import app
+
+    def open_browser():
+        """서버 시작 후 브라우저 자동 오픈."""
+        import time
+        time.sleep(1.5)
+        webbrowser.open("http://localhost:8000")
+
+    print("\n[Web] http://localhost:8000 에서 접속 가능")
+    print("[Web] 환경 전환은 웹 UI 상단 배지를 클릭하세요.")
+    threading.Thread(target=open_browser, daemon=True).start()
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+
+async def run_cli():
+    """콘솔 앱 실행."""
+    app = TradingApp()
+    await app.run_async()
+
+
+async def run_cli_main():
     try:
-        app = TradingApp()
-        await app.run_async() # <--- run_async 메서드 호출 (비동기)
+        await run_cli()
     except KeyboardInterrupt:
         print("\nKeyboardInterrupt 발생! 애플리케이션을 종료합니다.")
         sys.exit(0)
@@ -20,5 +55,8 @@ async def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    # 비동기 메인 함수 실행
-    asyncio.run(main())
+    mode = select_view_mode()
+    if mode == '2':
+        run_web()
+    else:
+        asyncio.run(run_cli_main())

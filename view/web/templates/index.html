@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investment - Web View</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=2">
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <h1>Investment</h1>
+    <div class="status-bar">
+        <span id="status-time">--</span>
+        <span id="status-market" class="badge closed">--</span>
+        <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>
+    </div>
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+    <button data-tab="stock" class="active">현재가 조회</button>
+    <button data-tab="balance">계좌 잔고</button>
+    <button data-tab="order">매수/매도</button>
+    <button data-tab="ranking">랭킹</button>
+    <button data-tab="marketcap">시가총액</button>
+</div>
+
+<!-- Main Content -->
+<div class="main">
+
+    <!-- 현재가 조회 -->
+    <div id="section-stock" class="section active">
+        <div class="card">
+            <h2>종목 현재가 조회</h2>
+            <div class="form-row">
+                <label>종목코드</label>
+                <input type="text" id="stock-code-input" placeholder="예: 005930" maxlength="6">
+                <button class="btn" onclick="searchStock()">조회</button>
+            </div>
+        </div>
+        <div id="stock-result"></div>
+    </div>
+
+    <!-- 계좌 잔고 -->
+    <div id="section-balance" class="section">
+        <div class="card">
+            <h2>계좌 잔고</h2>
+            <button class="btn" onclick="loadBalance()">잔고 조회</button>
+        </div>
+        <div id="balance-result"></div>
+    </div>
+
+    <!-- 매수/매도 -->
+    <div id="section-order" class="section">
+        <div class="card">
+            <h2>주식 주문</h2>
+            <div class="form-row">
+                <label>종목코드</label>
+                <input type="text" id="order-code" placeholder="예: 005930" maxlength="6">
+            </div>
+            <div class="form-row">
+                <label>수량</label>
+                <input type="number" id="order-qty" placeholder="수량" min="1">
+            </div>
+            <div class="form-row">
+                <label>가격</label>
+                <input type="number" id="order-price" placeholder="가격 (원)" min="0">
+            </div>
+            <div class="form-row">
+                <button class="btn btn-buy" onclick="placeOrder('buy')">매수</button>
+                <button class="btn btn-sell" onclick="placeOrder('sell')">매도</button>
+            </div>
+        </div>
+        <div id="order-result"></div>
+    </div>
+
+    <!-- 랭킹 -->
+    <div id="section-ranking" class="section">
+        <div class="card">
+            <h2>상위 종목 랭킹</h2>
+            <div class="form-row">
+                <button class="btn ranking-tab active" data-cat="rise" onclick="loadRanking('rise')">상승률</button>
+                <button class="btn ranking-tab" data-cat="fall" onclick="loadRanking('fall')">하락률</button>
+                <button class="btn ranking-tab" data-cat="volume" onclick="loadRanking('volume')">거래량</button>
+            </div>
+        </div>
+        <div id="ranking-result"></div>
+    </div>
+
+    <!-- 시가총액 -->
+    <div id="section-marketcap" class="section">
+        <div class="card">
+            <h2>시가총액 상위 종목</h2>
+            <button class="btn" onclick="loadTopMarketCap()">조회</button>
+        </div>
+        <div id="marketcap-result"></div>
+    </div>
+
+</div>
+
+<script src="/static/js/app.js?v=2"></script>
+</body>
+</html>
