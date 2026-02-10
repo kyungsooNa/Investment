@@ -61,6 +61,31 @@ async function updateStatus() {
     } catch (e) { /* 무시 */ }
 }
 
+// --- 환경 전환 ---
+async function toggleEnvironment() {
+    const envBadge = document.getElementById('status-env');
+    const currentEnv = envBadge.textContent;
+    const switchTo = currentEnv === '모의투자';  // 모의→실전, 실전→모의
+    const targetName = switchTo ? '실전투자' : '모의투자';
+
+    if (!confirm(`${targetName}로 전환하시겠습니까?`)) return;
+
+    envBadge.textContent = '전환 중...';
+    try {
+        const resp = await fetchApi(`${API}/environment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_paper: !switchTo })
+        });
+        if (resp.success) {
+            await updateStatus();
+        }
+    } catch (e) {
+        alert(`환경 전환 실패: ${e.message}`);
+        await updateStatus();
+    }
+}
+
 // --- 현재가 조회 ---
 async function searchStock() {
     const code = document.getElementById('stock-code-input').value.trim();

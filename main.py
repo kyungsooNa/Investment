@@ -32,6 +32,7 @@ def run_web():
         webbrowser.open("http://localhost:8000")
 
     print("\n[Web] http://localhost:8000 에서 접속 가능")
+    print("[Web] 환경 전환은 웹 UI 상단 배지를 클릭하세요.")
     threading.Thread(target=open_browser, daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=8000)
 
