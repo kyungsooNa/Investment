@@ -338,30 +338,32 @@ async function loadVirtualHistory() {
     const tbody = document.getElementById('virtual-history-body');
     const tabContainer = document.getElementById('virtual-strategy-tabs');
     
+    // 탭 컨테이너가 없으면(HTML 반영 전이면) 중단
+    if (!tabContainer) return;
+
     try {
         summaryBox.innerHTML = '<span>데이터 로드 중...</span>';
         
-        // 1. 전체 기록 가져오기
-        let allVirtualData = [];
+        // 1. 데이터 가져오기
         const listRes = await fetch('/api/virtual/history');
         if (listRes.ok) {
             allVirtualData = await listRes.json();
+        } else {
+            allVirtualData = [];
         }
 
-        // ▼ [수정됨] '수동매매'를 기본 전략에 포함시킵니다.
-        const defaultStrategies = ['수동매매', 'Momentum', 'VolumeBreakout', 'GapUpPullback'];
-        
-        // 데이터에 있는 전략 이름 + 기본 전략 이름을 합칩니다 (중복 제거)
-        const dataStrategies = allVirtualData ? allVirtualData.map(item => item.strategy) : [];
+        // 2. 탭 버튼 목록 생성
+        // '수동매매'는 항상 보이게 하고, 나머지는 데이터에서 추출
+        const defaultStrategies = ['수동매매']; 
+        const dataStrategies = allVirtualData.map(item => item.strategy);
         const strategies = ['ALL', ...new Set([...defaultStrategies, ...dataStrategies])];
 
-        // 3. 탭 버튼 생성
+        // 3. 버튼 HTML 생성 (CSS 클래스: sub-tab-btn 사용)
         tabContainer.innerHTML = strategies.map(strat => 
-            `<button class="btn sub-tab-btn" onclick="filterVirtualStrategy('${strat}', this)">${strat}</button>`
+            `<button class="sub-tab-btn" onclick="filterVirtualStrategy('${strat}', this)">${strat}</button>`
         ).join('');
 
-        // 4. 탭 활성화 로직
-        // 현재 활성화된 탭이 있으면 유지, 없으면 'ALL' 선택
+        // 4. 초기 탭 선택 (기존 선택 유지 또는 ALL)
         const currentActive = document.querySelector('#virtual-strategy-tabs .sub-tab-btn.active');
         if (currentActive) {
             filterVirtualStrategy(currentActive.innerText, currentActive);
@@ -376,9 +378,9 @@ async function loadVirtualHistory() {
     }
 }
 
-// 전역 스코프에 함수 등록 (onclick에서 접근 가능하도록)
+// 전역 함수로 등록 (onclick에서 호출 가능하도록)
 window.filterVirtualStrategy = function(strategyName, btnElement) {
-    // 1. 버튼 스타일 활성화
+    // 1. 버튼 스타일 업데이트 (모두 끄고 -> 클릭한 것만 켬)
     const buttons = document.querySelectorAll('#virtual-strategy-tabs .sub-tab-btn');
     buttons.forEach(b => b.classList.remove('active'));
     if(btnElement) btnElement.classList.add('active');
@@ -389,12 +391,11 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
         filteredData = allVirtualData.filter(item => item.strategy === strategyName);
     }
 
-    // 3. 통계 재계산
+    // 3. 통계 계산
     const totalTrades = filteredData.length;
     const soldTrades = filteredData.filter(item => item.status === 'SOLD');
     const winTrades = soldTrades.filter(item => item.return_rate > 0).length;
     
-    // 승률 & 수익률
     const winRate = soldTrades.length > 0 ? (winTrades / soldTrades.length * 100) : 0;
     const totalReturn = soldTrades.reduce((sum, item) => sum + (item.return_rate || 0), 0);
     const avgReturn = soldTrades.length > 0 ? (totalReturn / soldTrades.length) : 0;
@@ -402,10 +403,10 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
     // 4. 요약 박스 업데이트
     const summaryBox = document.getElementById('virtual-summary-box');
     summaryBox.innerHTML = `
-        <div style="font-size: 0.9em; color: #666; margin-bottom: 5px;">[ ${strategyName} 결과 ]</div>
+        <div style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 5px;">[ ${strategyName} 결과 ]</div>
         <strong>거래:</strong> ${totalTrades}건 (완료 ${soldTrades.length}) | 
         <strong>승률:</strong> ${winRate.toFixed(1)}% | 
-        <strong>평균수익:</strong> <span class="${avgReturn > 0 ? 'text-red' : (avgReturn < 0 ? 'text-blue' : '')}">
+        <strong>평균수익:</strong> <span class="${avgReturn > 0 ? 'text-positive' : (avgReturn < 0 ? 'text-negative' : '')}">
             ${avgReturn.toFixed(2)}%
         </span>
     `;
@@ -415,27 +416,32 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
     tbody.innerHTML = '';
 
     if (filteredData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center">해당 전략의 기록이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">기록이 없습니다.</td></tr>';
         return;
     }
 
-    filteredData.slice().reverse().forEach(item => { // 최신순 정렬
+    // 최신순 정렬 후 표시
+    filteredData.slice().reverse().forEach(item => {
         const ror = item.return_rate || 0;
-        const rorClass = ror > 0 ? 'text-red' : (ror < 0 ? 'text-blue' : '');
+        const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
         const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
         const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
+        
+        // 가격 포맷팅 유틸리티 활용
+        const buyPrice = typeof formatNumber === 'function' ? formatNumber(item.buy_price) : Number(item.buy_price).toLocaleString();
+        const sellPrice = item.sell_price ? (typeof formatNumber === 'function' ? formatNumber(item.sell_price) : Number(item.sell_price).toLocaleString()) : '-';
 
         const row = `
             <tr>
                 <td>${item.strategy}</td>
-                <td><a href="#" onclick="searchStock('${item.code}'); return false;">${item.code}</a></td>
+                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${item.code}</a></td>
                 <td>
                     <div>${buyDate}</div>
-                    <div class="small">${Number(item.buy_price).toLocaleString()}원</div>
+                    <div style="font-size:0.8em; color:var(--text-secondary);">${buyPrice}</div>
                 </td>
                 <td>
                     <div>${sellDate}</div>
-                    <div class="small">${item.sell_price ? Number(item.sell_price).toLocaleString() + '원' : '-'}</div>
+                    <div style="font-size:0.8em; color:var(--text-secondary);">${sellPrice}</div>
                 </td>
                 <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                 <td>

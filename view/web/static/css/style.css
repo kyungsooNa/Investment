@@ -279,24 +279,30 @@ tr:hover { background: rgba(255, 255, 255, 0.03); }
     justify-content: center;
 }
 
-.sub-tab-btn {
-    background-color: #fff;
-    border: 1px solid #ddd;
-    color: #666;
-    padding: 6px 12px;
-    font-size: 0.9em;
-    border-radius: 20px;
+/* 서브 탭(랭킹, 전략 필터 등) 공통 스타일 */
+.ranking-tab, .sub-tab-btn {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-secondary) !important;
+    border: 1px solid var(--border) !important;
+    padding: 8px 16px;
+    margin-right: 8px;
+    margin-bottom: 8px;
+    border-radius: 20px; /* 둥근 모서리 */
     cursor: pointer;
     transition: all 0.2s;
+    font-size: 0.9rem;
 }
 
-.sub-tab-btn:hover {
-    background-color: #f1f3f5;
+.ranking-tab:hover, .sub-tab-btn:hover {
+    background-color: var(--bg-card) !important;
+    color: var(--text-primary) !important;
 }
 
-.sub-tab-btn.active {
-    background-color: #495057;
-    color: white;
-    border-color: #495057;
-    font-weight: bold;
+/* 선택된 상태 (Active) - 강조색 적용 */
+.ranking-tab.active, .sub-tab-btn.active {
+    background-color: var(--accent) !important; /* 분홍/빨강 */
+    color: white !important;
+    border-color: var(--accent) !important;
+    font-weight: bold !important;
+    box-shadow: 0 2px 6px rgba(233, 69, 96, 0.4); /* 살짝 빛나는 효과 */
 }
