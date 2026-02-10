@@ -57,7 +57,7 @@ async function updateStatus() {
         marketBadge.className = `badge ${data.market_open ? 'open' : 'closed'}`;
         const envBadge = document.getElementById('status-env');
         envBadge.textContent = data.env_type;
-        envBadge.className = `badge ${data.env_type === '모의투자' ? 'paper' : 'real'}`;
+        envBadge.className = `badge clickable ${data.env_type === '모의투자' ? 'paper' : 'real'}`;
     } catch (e) { /* 무시 */ }
 }
 
