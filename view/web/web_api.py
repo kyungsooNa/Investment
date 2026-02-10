@@ -88,19 +88,86 @@ async def get_balance():
     """계좌 잔고 조회."""
     ctx = _get_ctx()
     resp = await ctx.stock_query_service.handle_get_account_balance()
-    return _serialize_response(resp)
+    
+    # 1. 기존 응답 직렬화
+    result = _serialize_response(resp)
+    
+    # 2. [수정됨] 환경 설정(env) 찾기 우선순위 적용
+    env = None
+    
+    # (1순위) 웹 앱 Context가 직접 가진 env 사용 (가장 확실)
+    if hasattr(ctx, 'env') and ctx.env:
+        env = ctx.env
+    # (2순위) Broker를 통해 env 접근 (1단계 적용 시 작동함)
+    elif hasattr(ctx, 'broker') and ctx.broker and hasattr(ctx.broker, 'env'):
+        env = ctx.broker.env
+    
+    # 3. 계좌 정보 추출
+    if env:
+        # 설정값 가져오기 (active_config가 없으면 전체 설정 로드 시도)
+        config = getattr(env, 'active_config', None) or {}
+        if not config and hasattr(env, 'get_full_config'):
+             try:
+                 config = env.get_full_config()
+             except:
+                 config = {}
+
+        # 계좌번호 키 찾기 (설정 파일마다 키 이름이 다를 수 있음)
+        acc_no = (
+            config.get("stock_account_number") or 
+            config.get("CANO") or 
+            config.get("account_number") or 
+            getattr(env, 'stock_account_number', None) or 
+            getattr(env, 'paper_stock_account_number', None) or
+            "번호없음"
+        )
+        
+        acc_type = "모의투자" if getattr(env, 'is_paper_trading', False) else "실전투자"
+        
+        result['account_info'] = {
+            "number": acc_no,
+            "type": acc_type
+        }
+    else:
+        result['account_info'] = {
+            "number": "연동실패",
+            "type": "Env Not Found"
+        }
+        
+    return result
 
 
 @router.post("/order")
 async def place_order(req: OrderRequest):
-    """매수/매도 주문."""
+    """매수/매도 주문 (성공 시 가상 매매 기록에도 '수동매매'로 저장)"""
     ctx = _get_ctx()
+    
+    # 1. 실제/모의 투자 주문 전송
     if req.side == "buy":
         resp = await ctx.order_execution_service.handle_buy_stock(req.code, req.qty, req.price)
     elif req.side == "sell":
         resp = await ctx.order_execution_service.handle_sell_stock(req.code, req.qty, req.price)
     else:
         raise HTTPException(status_code=400, detail="side는 'buy' 또는 'sell'이어야 합니다.")
+
+    # 2. [추가됨] 주문 성공 시 가상 매매 장부에도 기록 (전략명: "수동매매")
+    if resp and resp.rt_cd == "0":
+        # virtual_manager가 초기화되어 있는지 확인
+        if hasattr(ctx, 'virtual_manager') and ctx.virtual_manager:
+            try:
+                # 가격 형변환 (문자열 -> 숫자)
+                price_val = int(req.price) if req.price and req.price.isdigit() else 0
+                
+                if req.side == "buy":
+                    # 매수 기록 (전략명: 수동매매)
+                    ctx.virtual_manager.log_buy("수동매매", req.code, price_val)
+                elif req.side == "sell":
+                    # 매도 기록 (수익률 계산됨)
+                    ctx.virtual_manager.log_sell(req.code, price_val)
+                    
+            except Exception as e:
+                print(f"[WebAPI] 수동매매 기록 중 오류 발생: {e}")
+
     return _serialize_response(resp)
 
 
@@ -146,3 +213,23 @@ async def change_environment(req: EnvironmentRequest):
     if not success:
         raise HTTPException(status_code=500, detail="환경 전환 실패 (토큰 발급 오류)")
     return {"success": True, "env_type": ctx.get_env_type()}
+
+@router.get("/virtual/summary")
+async def get_virtual_summary():
+    """가상 매매 요약 정보 조회"""
+    ctx = _get_ctx()
+    # ctx에 virtual_manager가 초기화되어 있어야 합니다.
+    if not hasattr(ctx, 'virtual_manager'):
+        return {"total_trades": 0, "win_rate": 0, "avg_return": 0}
+        
+    return ctx.virtual_manager.get_summary()
+
+@router.get("/virtual/history")
+async def get_virtual_history():
+    """가상 매매 전체 기록 조회"""
+    ctx = _get_ctx()
+    if not hasattr(ctx, 'virtual_manager'):
+        return []
+        
+    # DataFrame을 dict list로 변환해서 반환
+    return ctx.virtual_manager.get_all_trades()

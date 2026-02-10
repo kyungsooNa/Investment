@@ -19,7 +19,8 @@ class BrokerAPIWrapper:
         self._logger = logger
         self._client = None
         self._stock_mapper = StockCodeMapper(logger=logger)
-
+        self.env = env
+        
         if broker == "korea_investment":
             if env is None:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")

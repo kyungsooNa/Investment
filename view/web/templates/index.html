@@ -4,11 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Investment - Web View</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=3">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
 </head>
 <body>
 
-<!-- Header -->
 <div class="header">
     <h1>Investment</h1>
     <div class="status-bar">
@@ -18,19 +17,17 @@
     </div>
 </div>
 
-<!-- Navigation -->
 <div class="nav">
     <button data-tab="stock" class="active">현재가 조회</button>
     <button data-tab="balance">계좌 잔고</button>
     <button data-tab="order">매수/매도</button>
     <button data-tab="ranking">랭킹</button>
     <button data-tab="marketcap">시가총액</button>
+    <button data-tab="virtual">모의투자 기록</button>
 </div>
 
-<!-- Main Content -->
 <div class="main">
 
-    <!-- 현재가 조회 -->
     <div id="section-stock" class="section active">
         <div class="card">
             <h2>종목 현재가 조회</h2>
@@ -43,7 +40,6 @@
         <div id="stock-result"></div>
     </div>
 
-    <!-- 계좌 잔고 -->
     <div id="section-balance" class="section">
         <div class="card">
             <h2>계좌 잔고</h2>
@@ -52,7 +48,6 @@
         <div id="balance-result"></div>
     </div>
 
-    <!-- 매수/매도 -->
     <div id="section-order" class="section">
         <div class="card">
             <h2>주식 주문</h2>
@@ -76,7 +71,6 @@
         <div id="order-result"></div>
     </div>
 
-    <!-- 랭킹 -->
     <div id="section-ranking" class="section">
         <div class="card">
             <h2>상위 종목 랭킹</h2>
@@ -90,7 +84,6 @@
         <div id="ranking-result"></div>
     </div>
 
-    <!-- 시가총액 -->
     <div id="section-marketcap" class="section">
         <div class="card">
             <h2>시가총액 상위 종목</h2>
@@ -99,8 +92,38 @@
         <div id="marketcap-result"></div>
     </div>
 
+    <div id="section-virtual" class="section">
+        <div class="card">
+            <h2>모의투자(전략 검증) 결과</h2>
+            
+            <div id="virtual-strategy-tabs" class="sub-nav-container"></div>
+
+            <div class="stats-box" id="virtual-summary-box">
+                <span>로딩 중...</span>
+            </div>
+            <button class="btn" onclick="loadVirtualHistory()">새로고침</button>
+        </div>
+        
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>전략명</th>
+                        <th>종목코드</th>
+                        <th>매수일/가</th>
+                        <th>매도일/가</th>
+                        <th>수익률</th>
+                        <th>상태</th>
+                    </tr>
+                </thead>
+                <tbody id="virtual-history-body">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+
 </div>
 
-<script src="/static/js/app.js?v=3"></script>
+<script src="/static/js/app.js?v=4"></script>
 </body>
 </html>

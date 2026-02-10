@@ -13,6 +13,7 @@ from strategies.momentum_strategy import MomentumStrategy
 from strategies.strategy_executor import StrategyExecutor
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem
 from collections import OrderedDict
+from managers.virtual_trade_manager import VirtualTradeManager
 
 # === choice별 핸들러 함수 정의 ===
 class UserActionExecutor:
@@ -63,6 +64,8 @@ class UserActionExecutor:
 
     def __init__(self, app: 'TradingApp'):
         self.app = app
+        self.virtual_manager = VirtualTradeManager()
+        self.is_simulation = True  # 이 값을 Config에서 읽어오게 설정
 
     # === dispatcher 함수 ===
 
@@ -842,3 +845,19 @@ class UserActionExecutor:
         )
         print(summary)
         self.app.logger.info(summary)
+
+async def execute_strategy_result(self, strategy_name, target_stocks):
+        """전략 결과 실행 (실제 or 가상)"""
+        
+        # 현재가 조회 (가상 매매를 위해서라도 현재가는 필요함)
+        current_prices = await self.stock_query_service.get_current_prices(target_stocks)
+
+        if self.is_simulation:
+            # [가상 매매 모드]
+            for code in target_stocks:
+                price = current_prices.get(code)
+                # 매수 기록
+                self.virtual_manager.log_buy(strategy_name, code, price)
+        else:
+            # [실제 매매 모드]
+            await self.order_service.buy_stocks(target_stocks)

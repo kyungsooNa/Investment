@@ -166,3 +166,10 @@ Traceback (most recent call last):
 ### 3. 테스트 (Tests)
 * **[확장 필요]** 통합 테스트의 범위 확장: 실제 API 호출을 포함하는 제한된 통합 테스트 추가 (외부 API 안정성 보장 시).
 * **[개선 필요]** Mock 객체의 일관성: 공통 픽스처 활용 또는 Mock 설정 유틸리티를 통해 Mock 객체 설정 중복 제거.
+
+### 4. 인프라 및 아키텍처 (Infrastructure & Architecture)
+* **[인프라]** 도커(Docker) 컨테이너화: `Dockerfile` 및 `docker-compose.yml` 작성을 통해 서버 배포 용이성 확보 및 로컬/서버 환경 불일치(OS 의존성 등) 문제 해결.
+* **[데이터]** DB(SQLite/SQLAlchemy) 도입: 매매 일지(Trade Journal) 영구 저장 및 봇 비정상 종료 시 재시작 후 상태 복구(State Recovery) 기능 구현.
+* **[안정성]** Pydantic 도입: `config.yaml` 로드 및 API 응답 데이터 처리 시 Pydantic 모델을 사용하여 유효성 검사(Validation) 및 타입 안정성 강화 (런타임 에러 방지).
+* **[아키텍처]** 이벤트 기반 아키텍처(Event-Driven): '전략(Signal)'과 '주문 실행(Execution Engine)'의 완전한 분리. 이를 통해 백테스팅 신뢰도를 높이고 향후 복합 주문 처리(Netting) 등의 고도화 기반 마련.
+* **[DevOps]** CI/CD 파이프라인 구축: GitHub Actions 등을 도입하여 코드 푸시 시 자동으로 단위/통합 테스트를 수행, 코드 변경에 따른 회귀(Regression) 방지.

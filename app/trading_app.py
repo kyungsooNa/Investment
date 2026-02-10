@@ -1,5 +1,5 @@
 from strategies.backtest_data_provider import BacktestDataProvider
-from view.cli_view import CLIView
+from view.cli.cli_view import CLIView
 from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from services.trading_service import TradingService

@@ -65,9 +65,10 @@ class CLIView:
         try:
             self._print_common_header()
 
-            # ✅ 계좌번호 출력
+            # [수정됨] 계좌번호 및 타입(모의/실전) 출력
             account_number = self.env.active_config.get("stock_account_number", "N/A")
-            print(f"\n📒 계좌번호: {account_number}")
+            account_type = "모의투자" if self.env.is_paper_trading else "실전투자"
+            print(f"\n📒 계좌번호: {account_number} ({account_type})")
 
             output1 = balance_info.get('output1', [])
             output2 = balance_info.get('output2', [])
@@ -670,3 +671,48 @@ class CLIView:
         title = f"하루 분봉 ({date_ymd} {session_label})"
         self.display_intraday_minutes(stock_code, rows, title=title)
 
+def display_virtual_trade_summary(self, summary: dict):
+        """가상 매매 요약 정보를 출력합니다."""
+        self._print_common_header()
+        print("\n=== 📊 가상 매매(Backtest/Paper) 요약 ===")
+        
+        total = summary.get('total_trades', 0)
+        wins = summary.get('win_trades', 0)
+        win_rate = summary.get('win_rate', 0.0)
+        avg_ret = summary.get('avg_return', 0.0)
+        
+        print(f"총 거래 횟수 : {total}회")
+        print(f"승리 횟수    : {wins}회")
+        print(f"승률         : {win_rate:.2f}%")
+        print(f"평균 수익률  : {avg_ret:.2f}%")
+        print("------------------------------------------")
+
+def display_virtual_trade_history(self, trades: list):
+    """가상 매매 상세 기록을 테이블 형태로 출력합니다."""
+    if not trades:
+        print("  (거래 기록이 없습니다)")
+        return
+
+    print(f"{'전략':<12} | {'종목':<8} | {'매수일':<10} | {'매수가':>8} | {'매도일':<10} | {'매도가':>8} | {'수익률':>7} | {'상태':<5}")
+    print("-" * 90)
+
+    for t in trades:
+        # 딕셔너리 키는 VirtualTradeManager 구현에 따라 다를 수 있음
+        strategy = t.get('strategy', 'N/A')[:10]
+        code = t.get('code', 'N/A')
+        buy_date = str(t.get('buy_date', ''))[:10]  # 날짜만 표시
+        buy_price = int(t.get('buy_price', 0))
+        
+        sell_date = str(t.get('sell_date', ''))[:10] if t.get('sell_date') else '-'
+        sell_price = int(t.get('sell_price', 0)) if t.get('sell_price') else 0
+        sell_price_str = f"{sell_price:>8,}" if sell_price > 0 else f"{'-':>8}"
+        
+        ror = t.get('return_rate', 0.0)
+        status = t.get('status', 'HOLD')
+        
+        # 수익률 포맷팅
+        ror_str = f"{ror:+.2f}%"
+        
+        print(f"{strategy:<12} | {code:<8} | {buy_date:<10} | {buy_price:>8,} | {sell_date:<10} | {sell_price_str} | {ror_str:>7} | {status:<5}")
+    
+    print("-" * 90)
