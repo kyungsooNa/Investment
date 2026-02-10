@@ -234,3 +234,69 @@ tr:hover { background: rgba(255, 255, 255, 0.03); }
 
 .summary-item .label { font-size: 0.75rem; color: var(--text-secondary); }
 .summary-item .value { font-size: 1.2rem; font-weight: 700; margin-top: 4px; }
+
+.stats-box {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    font-size: 1.1em;
+    text-align: center;
+    border: 1px solid #ddd;
+}
+
+.text-red { color: #e74c3c; }
+.text-blue { color: #3498db; }
+
+.small { font-size: 0.85em; color: #666; }
+
+.table-container {
+    overflow-x: auto;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+
+.data-table th, .data-table td {
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    text-align: center;
+}
+
+.data-table th {
+    background-color: #f1f3f5;
+    font-weight: bold;
+}
+
+.sub-nav-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 15px;
+    justify-content: center;
+}
+
+.sub-tab-btn {
+    background-color: #fff;
+    border: 1px solid #ddd;
+    color: #666;
+    padding: 6px 12px;
+    font-size: 0.9em;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sub-tab-btn:hover {
+    background-color: #f1f3f5;
+}
+
+.sub-tab-btn.active {
+    background-color: #495057;
+    color: white;
+    border-color: #495057;
+    font-weight: bold;
+}
