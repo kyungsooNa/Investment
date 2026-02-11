@@ -146,8 +146,26 @@ button.btn {
 button.btn:hover { opacity: 0.85; }
 button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+button.btn:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(233, 69, 96, 0.5);
+}
+
 button.btn-buy { background: var(--positive); color: #000; }
 button.btn-sell { background: var(--negative); color: #fff; }
+
+button.btn-buy:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(0, 210, 106, 0.5);
+}
+
+button.btn-sell:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(255, 71, 87, 0.5);
+}
 
 /* Tables */
 table {

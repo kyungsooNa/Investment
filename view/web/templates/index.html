@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Investment - Web View</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/css/style.css?v=5">
+    <link rel="stylesheet" href="/static/css/style.css?v=6">
 </head>
 <body>
 
@@ -34,7 +34,7 @@
             <h2>종목 현재가 조회</h2>
             <div class="form-row">
                 <label>종목코드</label>
-                <input type="text" id="stock-code-input" placeholder="예: 005930" maxlength="6">
+                <input type="text" id="stock-code-input" placeholder="예: 005930" maxlength="6" onkeydown="if(event.key==='Enter') searchStock()">
                 <button class="btn" onclick="searchStock()">조회</button>
             </div>
         </div>
@@ -54,15 +54,15 @@
             <h2>주식 주문</h2>
             <div class="form-row">
                 <label>종목코드</label>
-                <input type="text" id="order-code" placeholder="예: 005930" maxlength="6">
+                <input type="text" id="order-code" placeholder="예: 005930" maxlength="6" onkeydown="if(event.key==='Enter') document.getElementById('order-qty').focus()">
             </div>
             <div class="form-row">
                 <label>수량</label>
-                <input type="number" id="order-qty" placeholder="수량" min="1">
+                <input type="number" id="order-qty" placeholder="수량" min="1" onkeydown="if(event.key==='Enter') document.getElementById('order-price').focus()">
             </div>
             <div class="form-row">
                 <label>가격</label>
-                <input type="number" id="order-price" placeholder="가격 (원)" min="0">
+                <input type="number" id="order-price" placeholder="가격 (원)" min="0" onkeydown="if(event.key==='Enter') document.querySelector('.btn-buy').focus()">
             </div>
             <div class="form-row">
                 <button class="btn btn-buy" onclick="placeOrder('buy')">매수</button>
