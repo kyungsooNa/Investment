@@ -504,3 +504,90 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
         tbody.insertAdjacentHTML('beforeend', row);
     });
 };
+
+// ==========================================
+// 7. 프로그램매매 실시간
+// ==========================================
+let ptEventSource = null;
+let ptRowCount = 0;
+
+async function startProgramTrading() {
+    const code = document.getElementById('pt-code-input').value.trim();
+    if (!code) { alert('종목코드를 입력하세요.'); return; }
+
+    const statusDiv = document.getElementById('pt-status');
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<span>구독 요청 중...</span>';
+    document.getElementById('pt-body').innerHTML = '';
+    ptRowCount = 0;
+
+    try {
+        const res = await fetch('/api/program-trading/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+        });
+        const json = await res.json();
+        if (!json.success) {
+            statusDiv.innerHTML = '<span class="text-red">구독 실패</span>';
+            return;
+        }
+
+        // SSE 연결
+        ptEventSource = new EventSource('/api/program-trading/stream');
+        ptEventSource.onmessage = (event) => {
+            const d = JSON.parse(event.data);
+            appendProgramTradingRow(d);
+        };
+        ptEventSource.onerror = () => {
+            statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
+        };
+
+        statusDiv.innerHTML = `<span class="text-green">구독 중: ${code}</span>`;
+        document.getElementById('pt-start-btn').disabled = true;
+        document.getElementById('pt-stop-btn').disabled = false;
+    } catch (e) {
+        statusDiv.innerHTML = '<span class="text-red">오류: ' + e + '</span>';
+    }
+}
+
+async function stopProgramTrading() {
+    if (ptEventSource) {
+        ptEventSource.close();
+        ptEventSource = null;
+    }
+    try {
+        await fetch('/api/program-trading/unsubscribe', { method: 'POST' });
+    } catch (e) { /* ignore */ }
+
+    document.getElementById('pt-status').innerHTML = '<span>구독 중지됨</span>';
+    document.getElementById('pt-start-btn').disabled = false;
+    document.getElementById('pt-stop-btn').disabled = true;
+}
+
+function appendProgramTradingRow(d) {
+    const tbody = document.getElementById('pt-body');
+    const time = d['주식체결시간'] || '';
+    const fmtTime = time.length >= 6 ? time.slice(0,2)+':'+time.slice(2,4)+':'+time.slice(4,6) : time;
+    const ntby = parseInt(d['순매수체결량'] || '0');
+    const ntbyColor = ntby > 0 ? 'text-red' : (ntby < 0 ? 'text-blue' : '');
+
+    const row = `<tr>
+        <td>${d['유가증권단축종목코드'] || '-'}</td>
+        <td>${fmtTime}</td>
+        <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>
+        <td>${parseInt(d['매수2체결량'] || 0).toLocaleString()}</td>
+        <td class="${ntbyColor}">${ntby.toLocaleString()}</td>
+        <td>${formatTradingValue(d['순매수거래대금'])}</td>
+        <td>${parseInt(d['매도호가잔량'] || 0).toLocaleString()}</td>
+        <td>${parseInt(d['매수호가잔량'] || 0).toLocaleString()}</td>
+    </tr>`;
+
+    tbody.insertAdjacentHTML('afterbegin', row);
+    ptRowCount++;
+    // 최대 200행 유지
+    if (ptRowCount > 200) {
+        tbody.removeChild(tbody.lastElementChild);
+        ptRowCount--;
+    }
+}

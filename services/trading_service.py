@@ -77,8 +77,8 @@ class TradingService:
 
         elif data.get('type') == 'realtime_program_trading':
             d = data.get('data', {})
-            t = d.get('STCK_CNTG_HOUR', 'N/A')
-            ntby = d.get('NTBY_TR_PBMN', '0')
+            t = d.get('주식체결시간', 'N/A')
+            ntby = d.get('순매수거래대금', '0')
             msg = f"[프로그램매매 - {t}] 순매수거래대금: {ntby}"
             print(f"\r{msg}{' ' * max(0, 80 - len(msg))}", end="")
             self._logger.info(msg)
