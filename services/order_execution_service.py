@@ -18,7 +18,7 @@ class OrderExecutionService:
         """주식 매수 주문 요청 및 결과 출력."""
         if not self.time_manager.is_market_open():
             self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
-            return None  # 주문 실패 시 None 반환하도록 수정 (또는 실패 응답 딕셔너리)
+            return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         buy_order_result: ResCommonResponse = await self.trading_service.place_buy_order(
             stock_code, price, qty
@@ -37,7 +37,7 @@ class OrderExecutionService:
         """주식 매도 주문 요청 및 결과 출력."""
         if not self.time_manager.is_market_open():
             self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
-            return None  # 주문 실패 시 None 반환
+            return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         sell_order_result: ResCommonResponse = await self.trading_service.place_sell_order(
             stock_code, price, qty

@@ -44,7 +44,7 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
         self._headers.set_custtype(full_config['custtype'])
 
         full_account_number = full_config['stock_account_number']
-        if not is_paper and '-' in full_account_number and len(full_account_number.split('-')[1]) == 2:
+        if '-' in full_account_number and len(full_account_number.split('-')[1]) == 2:
             cano, acnt_prdt_cd = full_account_number.split('-')
         else:
             cano = full_account_number
