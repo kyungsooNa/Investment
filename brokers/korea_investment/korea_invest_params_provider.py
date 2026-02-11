@@ -161,6 +161,23 @@ class VolumeRankParams:
             FID_INPUT_DATE_1="",
         )
 
+    @classmethod
+    def trading_value(cls, market: MarketCode = "J"):
+        """거래대금 순위 (HTS [0171] 화면의 거래대금 탭)"""
+        return cls(
+            FID_COND_MRKT_DIV_CODE=market,
+            FID_COND_SCR_DIV_CODE="20173",
+            FID_INPUT_ISCD="0000",
+            FID_DIV_CLS_CODE="0",
+            FID_BLNG_CLS_CODE="0",
+            FID_TRGT_CLS_CODE="0",
+            FID_TRGT_EXLS_CLS_CODE="0000000000",
+            FID_INPUT_PRICE_1="",
+            FID_INPUT_PRICE_2="",
+            FID_VOL_CNT="",
+            FID_INPUT_DATE_1="",
+        )
+
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
 
@@ -516,6 +533,10 @@ class Params:
     @staticmethod
     def volume_rank(market: MarketCode = "J") -> Dict[str, str]:
         return VolumeRankParams.default(market).to_dict()
+
+    @staticmethod
+    def trading_value_rank(market: MarketCode = "J") -> Dict[str, str]:
+        return VolumeRankParams.trading_value(market).to_dict()
 
 
 

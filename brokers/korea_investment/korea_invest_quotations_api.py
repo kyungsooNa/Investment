@@ -591,66 +591,28 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
     async def get_top_trading_value_stocks(self) -> ResCommonResponse:
         """
         거래대금 상위 종목 조회
-        거래량 상위 30개 + 시가총액 상위 30개를 병합하여 거래대금 기준 정렬.
-        거래량 API만으로는 고가/저거래량 종목(예: SK하이닉스)이 누락될 수 있어
-        시가총액 상위 종목도 함께 조회하여 커버리지를 높인다.
+        거래량순위 API(FHPST01710000)의 FID_COND_SCR_DIV_CODE="20173"으로
+        거래대금 기준 정렬된 결과를 직접 조회한다.
         """
         full_config = self._env.active_config
 
-        # 1) 거래량 상위 30개 조회
-        tr_id_vol = self._trid_provider.quotations(TrIdLeaf.RANKING_VOLUME)
-        self._headers.set_tr_id(tr_id_vol)
+        tr_id = self._trid_provider.quotations(TrIdLeaf.RANKING_VOLUME)
+        self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
-        params_vol = Params.volume_rank()
+        params = Params.trading_value_rank()
 
-        self._logger.info("거래대금 상위 종목 조회 시도... (거래량 + 시가총액 병합)")
-        vol_response = await self.call_api("GET", EndpointKey.RANKING_VOLUME, params=params_vol, retry_count=1)
-        volume_stocks = []
-        if vol_response.rt_cd == ErrorCode.SUCCESS.value and vol_response.data:
-            volume_stocks = vol_response.data.get("output", [])
+        self._logger.info("거래대금 상위 종목 조회 시도... (FID_COND_SCR_DIV_CODE=20173)")
+        response = await self.call_api("GET", EndpointKey.RANKING_VOLUME, params=params, retry_count=1)
 
-        # 2) 시가총액 상위 30개 조회 (raw output)
-        tr_id_mc = self._trid_provider.quotations(TrIdLeaf.MARKET_CAP)
-        self._headers.set_tr_id(tr_id_mc)
-        self._headers.set_custtype(full_config["custtype"])
-        params_mc = Params.top_market_cap()
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self._logger.warning(f"거래대금 상위 조회 실패: {response.msg1}")
+            return response
 
-        mc_response = await self.call_api("GET", EndpointKey.MARKET_CAP, params=params_mc, retry_count=1)
-        mc_stocks = []
-        if mc_response.rt_cd == ErrorCode.SUCCESS.value and mc_response.data:
-            mc_stocks = mc_response.data.get("output", [])[:30]
-
-        # 3) 종목코드 기준 병합 (거래량 데이터 우선 — acml_tr_pbmn 포함)
-        merged = {}
-        for stock in volume_stocks:
-            code = stock.get("mksc_shrn_iscd") or stock.get("stck_shrn_iscd") or ""
-            if code:
-                merged[code] = stock
-
-        for stock in mc_stocks:
-            code = stock.get("mksc_shrn_iscd") or stock.get("stck_shrn_iscd") or ""
-            if code and code not in merged:
-                # 시가총액 API에 acml_tr_pbmn이 없으면 현재가 × 거래량으로 추정
-                if not stock.get("acml_tr_pbmn"):
-                    try:
-                        price = int(stock.get("stck_prpr", "0") or "0")
-                        vol = int(stock.get("acml_vol", "0") or "0")
-                        stock["acml_tr_pbmn"] = str(price * vol)
-                    except (ValueError, TypeError):
-                        stock["acml_tr_pbmn"] = "0"
-                merged[code] = stock
-
-        # 4) 거래대금 기준 내림차순 정렬, 상위 30개
-        result = list(merged.values())
-        result.sort(key=lambda x: int(x.get("acml_tr_pbmn", "0") or "0"), reverse=True)
-        result = result[:30]
-        for i, stock in enumerate(result, 1):
-            stock["data_rank"] = str(i)
-
+        stocks = response.data.get("output", []) if response.data else []
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="거래대금 상위 종목 조회 성공",
-            data=result
+            data=stocks
         )
 
     #
