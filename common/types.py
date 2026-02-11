@@ -37,6 +37,22 @@ class ErrorCode(Enum):
     UNKNOWN_ERROR = "999"  # 기타 오류
 
 
+# --- 전략 신호 ---
+@dataclass
+class TradeSignal:
+    """전략에서 생성하는 표준 매수/매도 신호."""
+    code: str
+    name: str
+    action: str  # "BUY" / "SELL"
+    price: int
+    qty: int = 1
+    reason: str = ""
+    strategy_name: str = ""
+
+    def to_dict(self):
+        return asdict(self)
+
+
 # --- 공통적으로 사용되는 데이터 응답 구조 ---
 @with_from_dict
 @dataclass
