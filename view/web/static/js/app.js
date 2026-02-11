@@ -142,16 +142,17 @@ async function searchStock(codeOverride) {
         }
 
         const data = json.data;
-        const changeClass = (parseInt(data.prdy_vrss) > 0) ? 'text-red' : (parseInt(data.prdy_vrss) < 0 ? 'text-blue' : '');
-        
+        const changeVal = parseInt(data.change) || 0;
+        const changeClass = (changeVal > 0) ? 'text-red' : (changeVal < 0 ? 'text-blue' : '');
+
         resultDiv.innerHTML = `
             <div class="stock-info-box">
-                <h3>${data.stck_shrn_iscd || code} (현재가)</h3>
-                <p class="price ${changeClass}">${parseInt(data.stck_prpr).toLocaleString()}원</p>
-                <p>전일대비: ${data.prdy_vrss}원 (${data.prdy_ctrt}%)</p>
-                <p>거래량: ${parseInt(data.acml_vol).toLocaleString()}</p>
+                <h3>${data.code || code} (현재가)</h3>
+                <p class="price ${changeClass}">${parseInt(data.price).toLocaleString()}원</p>
+                <p>전일대비: ${data.change}원 (${data.rate}%)</p>
+                <p>거래량: ${parseInt(data.volume).toLocaleString()}</p>
                 <hr>
-                <p>시가: ${data.stck_oprc} | 고가: ${data.stck_hgpr} | 저가: ${data.stck_lwpr}</p>
+                <p>시가: ${data.open} | 고가: ${data.high} | 저가: ${data.low}</p>
             </div>
         `;
         
