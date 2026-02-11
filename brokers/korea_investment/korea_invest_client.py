@@ -172,12 +172,6 @@ class KoreaInvestApiClient:
         """
         return await self._quotations.get_top_volume_stocks()
 
-    async def get_top_trading_value_stocks(self) -> ResCommonResponse:
-        """
-        거래대금 상위 종목을 조회합니다.
-        """
-        return await self._quotations.get_top_trading_value_stocks()
-
     # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
     #     """
     #     외국인 순매수 상위 종목을 조회합니다.

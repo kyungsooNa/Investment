@@ -290,9 +290,70 @@ class TradingService:
         return await self._broker_api_wrapper.get_top_volume_stocks()
 
     async def get_top_trading_value_stocks(self) -> ResCommonResponse:
-        """거래대금 상위 종목을 조회합니다."""
-        self._logger.info("Service - 거래대금 상위 종목 조회 요청")
-        return await self._broker_api_wrapper.get_top_trading_value_stocks()
+        """
+        거래대금 상위 종목 조회.
+        거래량/시가총액/상승률/하락률 4개 기존 API 결과를 병합하여
+        acml_tr_pbmn(거래대금) 기준 상위 30개를 반환한다.
+        """
+        self._logger.info("Service - 거래대금 상위 종목 조회 요청 (4개 소스 병합)")
+
+        # 기존 메서드 호출 (각각 캐싱 적용됨)
+        vol_resp = await self._broker_api_wrapper.get_top_volume_stocks()
+        mc_resp = await self._broker_api_wrapper.get_top_market_cap_stocks_code("J", 30)
+        rise_resp = await self._broker_api_wrapper.get_top_rise_fall_stocks(True)
+        fall_resp = await self._broker_api_wrapper.get_top_rise_fall_stocks(False)
+
+        # 거래량 데이터 (acml_tr_pbmn 포함, dict 리스트)
+        volume_stocks = vol_resp.data if vol_resp and vol_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        if isinstance(volume_stocks, dict):
+            volume_stocks = volume_stocks.get("output", [])
+
+        # 시가총액 데이터 (dict 또는 dataclass 리스트)
+        mc_stocks = mc_resp.data if mc_resp and mc_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
+        # 상승률/하락률 데이터 (ResFluctuation dataclass 리스트)
+        rise_stocks = rise_resp.data if rise_resp and rise_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        fall_stocks = fall_resp.data if fall_resp and fall_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
+        def _to_dict(item):
+            return item.to_dict() if hasattr(item, 'to_dict') else (item if isinstance(item, dict) else {})
+
+        def _get_code(d):
+            return d.get("mksc_shrn_iscd") or d.get("stck_shrn_iscd") or d.get("iscd") or ""
+
+        # 종목코드 기준 병합 (거래량 데이터 우선 — acml_tr_pbmn 정확)
+        merged = {}
+        for stock in volume_stocks:
+            d = _to_dict(stock)
+            code = _get_code(d)
+            if code:
+                merged[code] = d
+
+        for stock in list(mc_stocks or []) + list(rise_stocks or []) + list(fall_stocks or []):
+            d = _to_dict(stock)
+            code = _get_code(d)
+            if code and code not in merged:
+                if not d.get("acml_tr_pbmn"):
+                    try:
+                        price = int(d.get("stck_prpr", "0") or "0")
+                        vol = int(d.get("acml_vol", "0") or "0")
+                        d["acml_tr_pbmn"] = str(price * vol)
+                    except (ValueError, TypeError):
+                        d["acml_tr_pbmn"] = "0"
+                merged[code] = d
+
+        # 거래대금 기준 내림차순 정렬, 상위 30개
+        result = list(merged.values())
+        result.sort(key=lambda x: int(x.get("acml_tr_pbmn", "0") or "0"), reverse=True)
+        result = result[:30]
+        for i, stock in enumerate(result, 1):
+            stock["data_rank"] = str(i)
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="거래대금 상위 종목 조회 성공",
+            data=result
+        )
 
     # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
     #     """외국인 순매수 상위 종목을 조회합니다."""
