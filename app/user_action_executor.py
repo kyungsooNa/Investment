@@ -846,9 +846,9 @@ class UserActionExecutor:
         print(summary)
         self.app.logger.info(summary)
 
-async def execute_strategy_result(self, strategy_name, target_stocks):
+    async def execute_strategy_result(self, strategy_name, target_stocks):
         """전략 결과 실행 (실제 or 가상)"""
-        
+
         # 현재가 조회 (가상 매매를 위해서라도 현재가는 필요함)
         current_prices = await self.stock_query_service.get_current_prices(target_stocks)
 
@@ -861,3 +861,25 @@ async def execute_strategy_result(self, strategy_name, target_stocks):
         else:
             # [실제 매매 모드]
             await self.order_service.buy_stocks(target_stocks)
+
+    async def handle_program_trading_stream(self) -> None:
+        if self.app.env.is_paper_trading:
+            self.app.cli_view.display_warning_paper_trading_not_supported("실시간 프로그램매매 동향")
+            return
+
+        # 입력 받기
+        stock_code = await self.app.cli_view.get_user_input("구독할 종목 코드를 입력하세요 (예: 005930): ")
+        duration_in = await self.app.cli_view.get_user_input("수신 유지 시간(초, 기본 60): ")
+
+        try:
+            duration = int(duration_in.strip()) if duration_in and duration_in.strip() else 60
+            if duration <= 0:
+                duration = 60
+        except Exception:
+            duration = 60
+
+        # 서비스 호출 (UI 관련 없는 순수 로직)
+        await self.app.stock_query_service.handle_program_trading_stream(stock_code, duration)
+
+        # 종료 메시지 출력
+        self.app.cli_view.display_info_message(f"{stock_code} 프로그램매매 동향 구독이 완료되었습니다.")

@@ -208,6 +208,10 @@ class KoreaInvestWebSocketAPI:
                     self._logger.warning(f"체결통보 암호화 해제 실패: AES 키/IV 없음. TR_ID: {tr_id}, 메시지: {message[:50]}...")
                     return
 
+            elif tr_id == self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0'):
+                parsed_data = self._parse_program_trading_data(data_body)
+                message_type = 'realtime_program_trading'
+
             # 외부 콜백 함수로 파싱된 데이터 전달
             if self.on_realtime_message_callback:
                 self.on_realtime_message_callback({'type': message_type, 'tr_id': tr_id, 'data': parsed_data})
@@ -437,6 +441,25 @@ class KoreaInvestWebSocketAPI:
         values = data_str.split('^')
         return dict(zip(keys, values[:len(keys)]))
 
+    def _parse_program_trading_data(self, data_str: str) -> dict:
+        """H0STPGM0 (국내주식 실시간 프로그램매매) 데이터를 파싱합니다."""
+        menulist = "유가증권단축종목코드|주식체결시간|매도체결량|매도거래대금|매수2체결량|매수2거래대금|순매수체결량|순매수거래대금|매도호가잔량|매수호가잔량|전체순매수호가잔량"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        return dict(zip(keys, values[:len(keys)]))
+
+    async def subscribe_program_trading(self, stock_code: str):
+        """국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
+        self._logger.info(f"[프로그램매매] 종목 {stock_code} 구독 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
+
+    async def unsubscribe_program_trading(self, stock_code: str):
+        """국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독 해지."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
+        self._logger.info(f"[프로그램매매] 종목 {stock_code} 구독 해지 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
     # --- 웹소켓 연결 및 해지 ---
     async def connect(self, on_message_callback=None):
         """웹소켓 연결을 시작하고 실시간 데이터 수신을 준비합니다."""
@@ -516,19 +539,17 @@ class KoreaInvestWebSocketAPI:
         header = {
             "approval_key": self.approval_key,
             "custtype": self._env.active_config['custtype'],
-            "id": tr_id,
-            "pwd": "",  # 빈 값
-            "gt_uid": os.urandom(16).hex()  # 32Byte UUID
+            "tr_type": tr_type,
+            "content-type": "utf-8",
         }
         body = {
             "input": {
                 "tr_id": tr_id,
                 "tr_key": tr_key,
-                "rt_type": tr_type
             }
         }
 
-        request_message = [header, body]
+        request_message = {"header": header, "body": body}
         message_json = json.dumps(request_message)
 
         self._logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")

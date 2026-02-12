@@ -25,6 +25,7 @@
     <button data-tab="ranking">랭킹</button>
     <button data-tab="marketcap">시가총액</button>
     <button data-tab="virtual">모의투자 기록</button>
+    <button data-tab="program">프로그램매매</button>
 </div>
 
 <div class="main">
@@ -119,6 +120,36 @@
                 </thead>
                 <tbody id="virtual-history-body">
                     </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="section-program" class="section">
+        <div class="card">
+            <h2>프로그램매매 실시간 동향</h2>
+            <div class="form-row">
+                <label>종목코드</label>
+                <input type="text" id="pt-code-input" placeholder="예: 005930" maxlength="6" value="005930">
+                <button class="btn" id="pt-start-btn" onclick="startProgramTrading()">구독 시작</button>
+                <button class="btn btn-sell" id="pt-stop-btn" onclick="stopProgramTrading()" disabled>구독 중지</button>
+            </div>
+            <div id="pt-status" class="stats-box" style="display:none;"></div>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>종목코드</th>
+                        <th>시간</th>
+                        <th>매도체결량</th>
+                        <th>매수체결량</th>
+                        <th>순매수체결량</th>
+                        <th>순매수거래대금</th>
+                        <th>매도잔량</th>
+                        <th>매수잔량</th>
+                    </tr>
+                </thead>
+                <tbody id="pt-body"></tbody>
             </table>
         </div>
     </div>

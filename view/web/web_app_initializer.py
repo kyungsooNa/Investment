@@ -25,6 +25,9 @@ class WebAppContext:
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
         self.initialized = False
+        # 프로그램매매 실시간 스트리밍용
+        self._pt_queues: list = []
+        self._pt_code: str | None = None
         web_api.set_ctx(self)
 
     def load_config_and_env(self):
@@ -79,3 +82,32 @@ class WebAppContext:
         if self.time_manager is None:
             return ""
         return self.time_manager.get_current_kst_time().strftime('%Y-%m-%d %H:%M:%S')
+
+    # --- 프로그램매매 실시간 스트리밍 ---
+
+    def _web_realtime_callback(self, data):
+        """웹소켓 실시간 콜백: 기존 핸들러 + 웹 SSE 전달."""
+        if self.trading_service:
+            self.trading_service._default_realtime_message_handler(data)
+        if data.get('type') == 'realtime_program_trading':
+            item = data.get('data', {})
+            for q in list(self._pt_queues):
+                try:
+                    q.put_nowait(item)
+                except Exception:
+                    pass
+
+    async def start_program_trading(self, code: str) -> bool:
+        """프로그램매매 구독 시작 (웹소켓 연결 + 구독)."""
+        connected = await self.broker.connect_websocket(self._web_realtime_callback)
+        if not connected:
+            return False
+        await self.trading_service.subscribe_program_trading(code)
+        self._pt_code = code
+        return True
+
+    async def stop_program_trading(self):
+        """프로그램매매 구독 해지."""
+        if self._pt_code:
+            await self.trading_service.unsubscribe_program_trading(self._pt_code)
+            self._pt_code = None

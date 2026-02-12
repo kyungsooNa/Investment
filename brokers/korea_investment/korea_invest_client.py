@@ -216,3 +216,10 @@ class KoreaInvestApiClient:
     async def unsubscribe_realtime_quote(self, stock_code) -> Any:
         """실시간 주식호가 데이터 구독을 해지합니다."""
         return await self._websocketAPI.unsubscribe_realtime_quote(stock_code)
+
+
+    async def subscribe_program_trading(self, stock_code: str):
+        return await self._websocketAPI.subscribe_program_trading(stock_code)
+
+    async def unsubscribe_program_trading(self, stock_code: str):
+        return await self._websocketAPI.unsubscribe_program_trading(stock_code)

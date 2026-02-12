@@ -2,12 +2,12 @@
 FastAPI 라우터: 웹 뷰용 API 엔드포인트.
 서비스 레이어(StockQueryService, OrderExecutionService)를 직접 호출한다.
 """
-from fastapi import APIRouter, HTTPException
+import asyncio
+import json
+from fastapi import APIRouter, HTTPException, Request, Form, Response, Depends
+from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
 from common.types import ErrorCode
-from fastapi import APIRouter, Request, Form, Response, HTTPException, Depends
-from fastapi.responses import RedirectResponse, JSONResponse
 
 router = APIRouter(prefix="/api")
 _ctx = None  # 전역 변수로 선언
@@ -77,6 +77,10 @@ class OrderRequest(BaseModel):
 
 class EnvironmentRequest(BaseModel):
     is_paper: bool
+
+
+class ProgramTradingRequest(BaseModel):
+    code: str
 
 
 def set_ctx(ctx): # set_context에서 set_ctx로 변경
@@ -271,6 +275,60 @@ async def get_virtual_history():
     ctx = _get_ctx()
     if not hasattr(ctx, 'virtual_manager'):
         return []
-        
+
     # DataFrame을 dict list로 변환해서 반환
     return ctx.virtual_manager.get_all_trades()
+
+
+# --- 프로그램매매 실시간 스트리밍 ---
+
+@router.post("/program-trading/subscribe")
+async def subscribe_program_trading(req: ProgramTradingRequest):
+    """프로그램매매 실시간 구독 시작."""
+    ctx = _get_ctx()
+    success = await ctx.start_program_trading(req.code)
+    if not success:
+        raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
+    return {"success": True, "code": req.code}
+
+
+@router.post("/program-trading/unsubscribe")
+async def unsubscribe_program_trading():
+    """프로그램매매 실시간 구독 해지."""
+    ctx = _get_ctx()
+    await ctx.stop_program_trading()
+    return {"success": True}
+
+
+@router.get("/program-trading/status")
+async def get_program_trading_status():
+    """프로그램매매 구독 상태 확인."""
+    ctx = _get_ctx()
+    return {
+        "subscribed": ctx._pt_code is not None,
+        "code": ctx._pt_code,
+    }
+
+
+@router.get("/program-trading/stream")
+async def stream_program_trading(request: Request):
+    """SSE 스트리밍: 프로그램매매 실시간 데이터를 브라우저에 전달."""
+    ctx = _get_ctx()
+    queue = asyncio.Queue(maxsize=200)
+    ctx._pt_queues.append(queue)
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=5.0)
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            if queue in ctx._pt_queues:
+                ctx._pt_queues.remove(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

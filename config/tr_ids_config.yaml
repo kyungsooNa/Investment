@@ -30,3 +30,4 @@ tr_ids:
     approval_key: 실시간-000 # 웹소켓 접속키 발급 TR ID (문서에 명시된 값)
     realtime_price: H0STCNT0 # 실시간 주식체결 TR ID
     realtime_quote: H0STASP0 # 실시간 주식호가 TR ID
+    realtime_program_trading: "H0STPGM0"  # 👈 추가

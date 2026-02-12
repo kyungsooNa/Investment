@@ -74,6 +74,15 @@ class TradingService:
 
             print(f"\n[체결통보] 주문: {order_num}, 수량: {trade_qty}, 단가: {trade_price}, 시간: {trade_time}")
             self._logger.info(f"체결통보: 주문={order_num}, 수량={trade_qty}, 단가={trade_price}")
+
+        elif data.get('type') == 'realtime_program_trading':
+            d = data.get('data', {})
+            t = d.get('주식체결시간', 'N/A')
+            ntby = d.get('순매수거래대금', '0')
+            msg = f"[프로그램매매 - {t}] 순매수거래대금: {ntby}"
+            print(f"\r{msg}{' ' * max(0, 80 - len(msg))}", end="")
+            self._logger.info(msg)
+
         else:
             self._logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
 
@@ -101,6 +110,12 @@ class TradingService:
     async def unsubscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터 구독을 해지합니다."""
         return await self._broker_api_wrapper.unsubscribe_realtime_quote(stock_code)
+
+    async def subscribe_program_trading(self, stock_code: str):
+        return await self._broker_api_wrapper.subscribe_program_trading(stock_code)
+
+    async def unsubscribe_program_trading(self, stock_code: str):
+        return await self._broker_api_wrapper.unsubscribe_program_trading(stock_code)
 
     async def get_price_summary(self, stock_code) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
