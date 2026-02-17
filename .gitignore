@@ -211,3 +211,9 @@ logs/ # <--- logs 폴더 전체를 무시
 /data
 
 token*.json
+
+# 매매 기록 (개인 데이터)
+trade_journal.csv
+
+# Windows artifact
+nul
