@@ -274,7 +274,7 @@ async def get_virtual_history():
     """가상 매매 전체 기록 조회 (종목명 + HOLD 종목 현재가 포함)"""
     ctx = _get_ctx()
     if not hasattr(ctx, 'virtual_manager'):
-        return []
+        return {"trades": [], "weekly_changes": {}}
 
     trades = ctx.virtual_manager.get_all_trades()
 
@@ -308,28 +308,61 @@ async def get_virtual_history():
                         else:
                             price_str = str(resp.data.get('price', '0'))
                             price_val = int(price_str) if price_str.isdigit() else 0
+                            # 전일대비 등락률 추출
+                            rate_str = str(resp.data.get('rate', '0'))
+                            try:
+                                rate_val = float(rate_str) if rate_str not in ('N/A', '', 'None') else 0.0
+                            except ValueError:
+                                rate_val = 0.0
                             if price_val > 0:
-                                return code, price_val
+                                return code, price_val, rate_val
                             else:
                                 print(f"[WebAPI] 현재가 조회 실패 ({code}): price='{price_str}'")
                     except Exception as e:
                         print(f"[WebAPI] 현재가 조회 예외 ({code}): {e}")
-                    return code, None
+                    return code, None, 0.0
 
             results = await asyncio.gather(*[_fetch(c) for c in hold_codes])
-            price_map = {code: price for code, price in results if price is not None}
+            price_map = {code: (price, rate) for code, price, rate in results if price is not None}
 
-        # 3. HOLD 종목에 현재가/수익률 반영
+        # 3. HOLD 종목에 현재가/수익률/전일대비 반영
         for trade in trades:
             if trade['status'] == 'HOLD' and trade['code'] in price_map:
-                cur = price_map[trade['code']]
+                cur, daily_rate = price_map[trade['code']]
                 trade['current_price'] = cur
+                trade['daily_change_rate'] = daily_rate
                 bp = trade.get('buy_price', 0) or 0
                 trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
     except Exception as e:
         print(f"[WebAPI] virtual/history enrichment 오류: {e}")
 
-    return trades
+    # 4. 전략별 누적수익률 계산 + 스냅샷 저장 + 전일/전주대비 조회
+    daily_changes = {}
+    weekly_changes = {}
+    try:
+        strategies = list(set(t['strategy'] for t in trades if t.get('strategy')))
+        strategy_returns = {}
+
+        # ALL 누적수익률
+        all_rates = [t['return_rate'] for t in trades if t.get('return_rate') is not None]
+        strategy_returns["ALL"] = round(sum(all_rates) / len(all_rates), 2) if all_rates else 0
+
+        # 전략별 누적수익률
+        for strat in strategies:
+            rates = [t['return_rate'] for t in trades if t.get('strategy') == strat and t.get('return_rate') is not None]
+            strategy_returns[strat] = round(sum(rates) / len(rates), 2) if rates else 0
+
+        # 스냅샷 저장 + 전일/전주대비 조회
+        vm = ctx.virtual_manager
+        vm.save_daily_snapshot(strategy_returns)
+        for key in ["ALL"] + strategies:
+            cur = strategy_returns.get(key, 0)
+            daily_changes[key] = vm.get_daily_change(key, cur)
+            weekly_changes[key] = vm.get_weekly_change(key, cur)
+    except Exception as e:
+        print(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
+
+    return {"trades": trades, "daily_changes": daily_changes, "weekly_changes": weekly_changes}
 
 
 # --- 프로그램매매 실시간 스트리밍 ---

@@ -363,32 +363,39 @@ async function loadTopMarketCap() {
 // 4. 모의투자 (Virtual Trading)
 // ==========================================
 let allVirtualData = [];
+let dailyChanges = {};
+let weeklyChanges = {};
 
 async function loadVirtualHistory() {
     const summaryBox = document.getElementById('virtual-summary-box');
     const tabContainer = document.getElementById('virtual-strategy-tabs');
-    
+
     // 탭 컨테이너가 없으면(HTML 반영 전이면) 중단
     if (!tabContainer) return;
 
     try {
         summaryBox.innerHTML = '<span>데이터 로드 중...</span>';
-        
+
         // 1. 데이터 가져오기
         const listRes = await fetch('/api/virtual/history');
         console.log('[Virtual] response status:', listRes.status);
         if (listRes.ok) {
-            allVirtualData = await listRes.json();
+            const body = await listRes.json();
+            allVirtualData = body.trades || [];
+            dailyChanges = body.daily_changes || {};
+            weeklyChanges = body.weekly_changes || {};
             console.log('[Virtual] data count:', allVirtualData.length, 'sample:', allVirtualData[0]);
         } else {
             const errText = await listRes.text();
             console.error('[Virtual] API error:', listRes.status, errText);
             allVirtualData = [];
+            dailyChanges = {};
+            weeklyChanges = {};
         }
 
         // 2. 탭 버튼 목록 생성
         // '수동매매'는 항상 보이게 하고, 나머지는 데이터에서 추출
-        const defaultStrategies = ['수동매매']; 
+        const defaultStrategies = ['수동매매'];
         const dataStrategies = allVirtualData.map(item => item.strategy);
         const strategies = ['ALL', ...new Set([...defaultStrategies, ...dataStrategies])];
 
@@ -445,10 +452,16 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
 
     // 3. 통계 계산
     const totalTrades = filteredData.length;
-    const winTrades = soldData.filter(item => item.return_rate > 0).length;
-    const winRate = soldData.length > 0 ? (winTrades / soldData.length * 100) : 0;
-    const totalReturn = soldData.reduce((sum, item) => sum + (item.return_rate || 0), 0);
-    const avgReturn = soldData.length > 0 ? (totalReturn / soldData.length) : 0;
+    // 누적 수익률: 전체 trades의 return_rate 평균
+    const totalReturn = filteredData.reduce((sum, item) => sum + (item.return_rate || 0), 0);
+    const cumulativeReturn = totalTrades > 0 ? (totalReturn / totalTrades) : 0;
+    // 전일대비 / 전주대비: 백엔드 스냅샷 기반
+    const dailyChange = dailyChanges[strategyName] ?? cumulativeReturn;
+    const weeklyChange = weeklyChanges[strategyName];
+
+    // 색상 헬퍼
+    const colorClass = (val) => val > 0 ? 'text-positive' : (val < 0 ? 'text-negative' : '');
+    const signPrefix = (val) => val > 0 ? '+' : '';
 
     // 4. 요약 박스
     const summaryBox = document.getElementById('virtual-summary-box');
@@ -466,13 +479,21 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
                 <div style="color: #ffffff !important;"><strong style="font-size: 1.35em;">${totalTrades}</strong> <span style="font-size: 1em;">건</span></div>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
-                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">승률</div>
-                <strong style="color: #ffffff !important; font-size: 1.35em;">${winRate.toFixed(1)}%</strong>
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">누적 수익률</div>
+                <strong class="${colorClass(cumulativeReturn)}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${signPrefix(cumulativeReturn)}${cumulativeReturn.toFixed(2)}%
+                </strong>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
-                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">평균수익</div>
-                <strong class="${avgReturn > 0 ? 'text-positive' : (avgReturn < 0 ? 'text-negative' : '')}" style="font-size: 1.35em; font-weight: 800 !important;">
-                    ${avgReturn.toFixed(2)}%
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전일대비</div>
+                <strong class="${colorClass(dailyChange)}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${signPrefix(dailyChange)}${dailyChange.toFixed(2)}%
+                </strong>
+            </div>
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전주대비</div>
+                <strong class="${weeklyChange != null ? colorClass(weeklyChange) : ''}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${weeklyChange != null ? signPrefix(weeklyChange) + weeklyChange.toFixed(2) + '%' : '-'}
                 </strong>
             </div>
         </div>

@@ -214,6 +214,7 @@ token*.json
 
 # 매매 기록 (개인 데이터)
 data/trade_journal.csv
+data/portfolio_snapshots.json
 
 # Windows artifact
 nul

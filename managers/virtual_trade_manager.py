@@ -1,9 +1,10 @@
 # managers/virtual_trade_manager.py
 import pandas as pd
 import os
+import json
 import math
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -110,15 +111,94 @@ class VirtualTradeManager:
         return not df.loc[mask].empty
 
     def get_summary(self) -> dict:
-        """전체 매매 요약 통계."""
+        """전체 매매 요약 통계 (HOLD + SOLD 모두 포함)."""
         df = self._read()
+        total_trades = len(df)
         sold_df = df[df['status'] == 'SOLD']
-        total_trades = len(sold_df)
         win_trades = len(sold_df[sold_df['return_rate'] > 0])
-        win_rate = (win_trades / total_trades * 100) if total_trades > 0 else 0
-        avg_return = sold_df['return_rate'].mean() if total_trades > 0 else 0
+        win_rate = (win_trades / len(sold_df) * 100) if len(sold_df) > 0 else 0
+        avg_return = sold_df['return_rate'].mean() if len(sold_df) > 0 else 0
         return {
             "total_trades": total_trades,
             "win_rate": round(win_rate, 1),
             "avg_return": round(avg_return, 2)
         }
+
+    # ---- 포트폴리오 스냅샷 (전일/전주대비 계산용) ----
+    #
+    # JSON 구조:
+    # {
+    #   "daily": {"2026-02-13": {"ALL": 2.5, "수동매매": 2.5}, ...},
+    #   "prev_values": {"ALL": 0.0, "수동매매": 0.0}  ← 마지막 변동 전 기준값
+    # }
+
+    def _snapshot_path(self) -> str:
+        return os.path.join(os.path.dirname(self.filename), "portfolio_snapshots.json")
+
+    def _load_data(self) -> dict:
+        path = self._snapshot_path()
+        if not os.path.exists(path):
+            return {"daily": {}, "prev_values": {}}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # 이전 포맷(날짜가 최상위 키) → 새 포맷 마이그레이션
+            if "daily" not in data:
+                data = {"daily": data, "prev_values": {}}
+            return data
+        except (json.JSONDecodeError, IOError):
+            return {"daily": {}, "prev_values": {}}
+
+    def _save_data(self, data: dict):
+        path = self._snapshot_path()
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def save_daily_snapshot(self, strategy_returns: dict):
+        """오늘 스냅샷 저장 + prev_values(전일대비 기준점) 갱신."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        data = self._load_data()
+        daily = data["daily"]
+        prev_values = data.setdefault("prev_values", {})
+
+        # 오늘 이전 가장 최근 스냅샷과 비교 → 값이 변했으면 prev_values를 그 스냅샷 값으로 갱신
+        prev_dates = sorted([d for d in daily if d < today], reverse=True)
+        if prev_dates:
+            last_snapshot = daily[prev_dates[0]]
+            for key, cur_val in strategy_returns.items():
+                old_val = last_snapshot.get(key)
+                if old_val is not None and abs(cur_val - old_val) >= 0.01:
+                    prev_values[key] = old_val
+
+        # 오늘 스냅샷 저장 (같은 날 여러 번 호출 시 최신값으로 덮어쓰기)
+        daily[today] = strategy_returns
+
+        # 30일 이전 데이터 정리
+        cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        data["daily"] = {d: v for d, v in daily.items() if d >= cutoff}
+
+        self._save_data(data)
+
+    def get_daily_change(self, strategy: str, current_return: float) -> float:
+        """마지막 변동일 기준 전일대비. prev_values 없으면 누적수익률 자체 반환."""
+        data = self._load_data()
+        prev_val = data.get("prev_values", {}).get(strategy)
+        if prev_val is None:
+            return current_return
+        return round(current_return - prev_val, 2)
+
+    def get_weekly_change(self, strategy: str, current_return: float) -> float | None:
+        """7일 전 스냅샷 대비 변화. 스냅샷 없으면 None."""
+        data = self._load_data()
+        daily = data.get("daily", {})
+        today = datetime.now().strftime("%Y-%m-%d")
+        target = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+
+        candidates = sorted([d for d in daily if d <= target and d != today], reverse=True)
+        if not candidates:
+            return None
+
+        ref_val = daily[candidates[0]].get(strategy)
+        if ref_val is None:
+            return None
+        return round(current_return - ref_val, 2)
