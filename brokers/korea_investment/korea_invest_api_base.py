@@ -67,11 +67,15 @@ class KoreaInvestApiBase:
 
                 response = await self._execute_request(method, url, params, data)
 
+                # 네트워크 에러 시 ResCommonResponse가 반환될 수 있음 → 바로 리턴
+                if isinstance(response, ResCommonResponse):
+                    return response
+
                 result: Union[dict, ResponseStatus] = await self._handle_response(response, expect_standard_schema)
 
                 if result is ResponseStatus.RETRY:
                     self._logger.info(f"재시도 필요: {attempt}/{retry_count}, 지연 {delay}초")
-                    await self.time_manager.sleep(delay)  # 이 부분이 호출되어야 함
+                    await self.time_manager.async_sleep(delay)  # 이 부분이 호출되어야 함
                     continue
 
                 if isinstance(result, ResponseStatus):
@@ -92,7 +96,7 @@ class KoreaInvestApiBase:
                 self._log_request_exception(e)
                 if attempt < retry_count:
                     self._logger.info(f"예외 발생, 재시도: {attempt}/{retry_count}, 지연 {delay}초")
-                    await self.time_manager.sleep(delay)  # 이 부분이 호출되어야 함
+                    await self.time_manager.async_sleep(delay)  # 이 부분이 호출되어야 함
                     continue
                 else:
                     pass
@@ -181,14 +185,14 @@ class KoreaInvestApiBase:
         try:
             response = await make_request()
             if response is None:
-                raise ValueError("response is None")
+               raise ValueError("response is None")
 
             res_json = response.json()
 
             # ✅ 토큰 만료 응답 감지 시 재발급 + 재시도 (단 1회만)
             if isinstance(res_json, dict) and res_json.get("msg_cd") == "EGW00123" and not token_refreshed:
                 self._logger.warning("🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도")
-                await self.time_manager.sleep(3)
+                await self.time_manager.async_sleep(3)
                 await self._env.refresh_token()
                 token_refreshed = True  # ✅ 재시도 플래그 설정
 

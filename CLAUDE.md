@@ -104,7 +104,7 @@ View (CLIView / FastAPI)
 - `cache_config.yaml`에서 메서드별 활성화/비활성화 제어
 
 ## 수동매매 성과요약
-- **VirtualTradeManager** (`managers/virtual_trade_manager.py`): CSV(`trade_journal.csv`) 기반 거래 기록/통계
+- **VirtualTradeManager** (`managers/virtual_trade_manager.py`): CSV(`data/trade_journal.csv`) 기반 거래 기록/통계
   - `log_buy(strategy, code, price)` / `log_sell(code, price)` — 매수/매도 기록 (중복 매수 방지)
   - `get_summary()` → `{total_trades, win_rate, avg_return}` (SOLD 건만 집계)
   - `get_all_trades()` / `get_holds()` / `get_holds_by_strategy()` — 조회

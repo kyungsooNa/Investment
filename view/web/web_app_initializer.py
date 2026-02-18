@@ -8,6 +8,8 @@ from brokers.broker_api_wrapper import BrokerAPIWrapper
 from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
+from managers.virtual_trade_manager import VirtualTradeManager
+from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from core.logger import Logger
 from view.web import web_api  # 임포트 확인
@@ -24,6 +26,8 @@ class WebAppContext:
         self.trading_service: TradingService = None
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
+        self.virtual_manager = VirtualTradeManager()
+        self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.initialized = False
         # 프로그램매매 실시간 스트리밍용
         self._pt_queues: list = []

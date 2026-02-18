@@ -1,6 +1,7 @@
 # managers/virtual_trade_manager.py
 import pandas as pd
 import os
+import math
 import logging
 from datetime import datetime
 
@@ -10,13 +11,15 @@ COLUMNS = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price
 
 
 class VirtualTradeManager:
-    def __init__(self, filename="trade_journal.csv"):
+    def __init__(self, filename="data/trade_journal.csv"):
         self.filename = filename
         if not os.path.exists(self.filename):
             pd.DataFrame(columns=COLUMNS).to_csv(self.filename, index=False)
 
     def _read(self) -> pd.DataFrame:
-        return pd.read_csv(self.filename)
+        df = pd.read_csv(self.filename, dtype={'code': str})
+        df['return_rate'] = df['return_rate'].fillna(0.0)
+        return df
 
     def _write(self, df: pd.DataFrame):
         df.to_csv(self.filename, index=False)
@@ -80,9 +83,14 @@ class VirtualTradeManager:
     # ---- 조회 ----
 
     def get_all_trades(self) -> list:
-        """전체 거래 기록 반환 (웹 API용)."""
+        """전체 거래 기록 반환 (웹 API용). NaN→None 변환으로 JSON 직렬화 보장."""
         df = self._read()
-        return df.to_dict(orient='records')
+        records = df.to_dict(orient='records')
+        for record in records:
+            for key, value in record.items():
+                if isinstance(value, float) and math.isnan(value):
+                    record[key] = None
+        return records
 
     def get_holds(self) -> list:
         """전체 HOLD 포지션 반환."""

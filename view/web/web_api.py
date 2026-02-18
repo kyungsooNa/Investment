@@ -271,13 +271,65 @@ async def get_virtual_summary():
 
 @router.get("/virtual/history")
 async def get_virtual_history():
-    """가상 매매 전체 기록 조회"""
+    """가상 매매 전체 기록 조회 (종목명 + HOLD 종목 현재가 포함)"""
     ctx = _get_ctx()
     if not hasattr(ctx, 'virtual_manager'):
         return []
 
-    # DataFrame을 dict list로 변환해서 반환
-    return ctx.virtual_manager.get_all_trades()
+    trades = ctx.virtual_manager.get_all_trades()
+
+    # enrichment: 실패해도 기본 trades는 반환
+    try:
+        # 1. 종목명 enrichment
+        mapper = getattr(ctx, 'stock_code_mapper', None)
+        for trade in trades:
+            code = str(trade.get('code', ''))
+            trade['stock_name'] = mapper.get_name_by_code(code) if mapper else ''
+
+        # 2. HOLD 종목 현재가 조회 (숫자 코드만, 병렬)
+        hold_codes = list(set(
+            str(t['code']) for t in trades
+            if t['status'] == 'HOLD' and str(t['code']).strip()
+        ))
+        price_map = {}
+        if hold_codes and getattr(ctx, 'stock_query_service', None):
+            sem = asyncio.Semaphore(2)  # 동시 요청 2개로 제한 (rate limit 방지)
+
+            async def _fetch(code):
+                async with sem:
+                    try:
+                        resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
+                        if not resp:
+                            print(f"[WebAPI] 현재가 조회 실패 ({code}): 응답 None")
+                        elif resp.rt_cd != "0":
+                            print(f"[WebAPI] 현재가 조회 실패 ({code}): rt_cd={resp.rt_cd}, msg={resp.msg1}")
+                        elif not isinstance(resp.data, dict):
+                            print(f"[WebAPI] 현재가 조회 실패 ({code}): data 타입={type(resp.data)}, data={resp.data}")
+                        else:
+                            price_str = str(resp.data.get('price', '0'))
+                            price_val = int(price_str) if price_str.isdigit() else 0
+                            if price_val > 0:
+                                return code, price_val
+                            else:
+                                print(f"[WebAPI] 현재가 조회 실패 ({code}): price='{price_str}'")
+                    except Exception as e:
+                        print(f"[WebAPI] 현재가 조회 예외 ({code}): {e}")
+                    return code, None
+
+            results = await asyncio.gather(*[_fetch(c) for c in hold_codes])
+            price_map = {code: price for code, price in results if price is not None}
+
+        # 3. HOLD 종목에 현재가/수익률 반영
+        for trade in trades:
+            if trade['status'] == 'HOLD' and trade['code'] in price_map:
+                cur = price_map[trade['code']]
+                trade['current_price'] = cur
+                bp = trade.get('buy_price', 0) or 0
+                trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
+    except Exception as e:
+        print(f"[WebAPI] virtual/history enrichment 오류: {e}")
+
+    return trades
 
 
 # --- 프로그램매매 실시간 스트리밍 ---
