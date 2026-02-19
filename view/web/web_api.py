@@ -83,6 +83,10 @@ class ProgramTradingRequest(BaseModel):
     code: str
 
 
+class ProgramTradingUnsubscribeRequest(BaseModel):
+    code: str | None = None
+
+
 def set_ctx(ctx): # set_context에서 set_ctx로 변경
     global _ctx
     _ctx = ctx
@@ -194,7 +198,17 @@ async def place_order(req: OrderRequest):
             try:
                 # 가격 형변환 (문자열 -> 숫자)
                 price_val = int(req.price) if req.price and req.price.isdigit() else 0
-                
+
+                # 시장가 주문(price=0)인 경우 현재가를 조회하여 사용
+                if price_val == 0 and getattr(ctx, 'stock_query_service', None):
+                    try:
+                        price_resp = await ctx.stock_query_service.handle_get_current_stock_price(req.code)
+                        if price_resp and price_resp.rt_cd == "0" and isinstance(price_resp.data, dict):
+                            price_str = str(price_resp.data.get('price', '0'))
+                            price_val = int(price_str) if price_str.isdigit() else 0
+                    except Exception:
+                        pass
+
                 if req.side == "buy":
                     # 매수 기록 (전략명: 수동매매)
                     ctx.virtual_manager.log_buy("수동매매", req.code, price_val)
@@ -286,17 +300,18 @@ async def get_virtual_history():
             code = str(trade.get('code', ''))
             trade['stock_name'] = mapper.get_name_by_code(code) if mapper else ''
 
-        # 2. HOLD 종목 현재가 조회 (숫자 코드만, 병렬)
+        # 2. HOLD + SOLD 종목 현재가 조회 (숫자 코드만, 병렬)
         hold_codes = list(set(
             str(t['code']) for t in trades
-            if t['status'] == 'HOLD' and str(t['code']).strip()
+            if str(t['code']).strip()
         ))
         price_map = {}
         if hold_codes and getattr(ctx, 'stock_query_service', None):
-            sem = asyncio.Semaphore(2)  # 동시 요청 2개로 제한 (rate limit 방지)
+            sem = asyncio.Semaphore(1)  # 동시 요청 1개로 제한 (rate limit 방지)
 
             async def _fetch(code):
                 async with sem:
+                    await asyncio.sleep(0.1)  # API rate limit 보호 (초당 거래건수 초과 방지)
                     try:
                         resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
                         if not resp:
@@ -325,14 +340,27 @@ async def get_virtual_history():
             results = await asyncio.gather(*[_fetch(c) for c in hold_codes])
             price_map = {code: (price, rate) for code, price, rate in results if price is not None}
 
-        # 3. HOLD 종목에 현재가/수익률/전일대비 반영
+        # 3. 전체 종목에 현재가 반영 (HOLD는 수익률도 재계산)
         for trade in trades:
-            if trade['status'] == 'HOLD' and trade['code'] in price_map:
+            if trade['code'] in price_map:
                 cur, daily_rate = price_map[trade['code']]
                 trade['current_price'] = cur
-                trade['daily_change_rate'] = daily_rate
-                bp = trade.get('buy_price', 0) or 0
-                trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
+                if trade['status'] == 'HOLD':
+                    trade['daily_change_rate'] = daily_rate
+                    bp = trade.get('buy_price', 0) or 0
+                    trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
+                elif trade['status'] == 'SOLD':
+                    # sell_price가 0(시장가 매도)이면 CSV도 현재가로 보정
+                    sp = trade.get('sell_price') or 0
+                    if sp == 0 or (isinstance(sp, float) and sp == 0.0):
+                        trade['sell_price'] = cur
+                        bp = trade.get('buy_price', 0) or 0
+                        trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
+                        # CSV 원본도 수정
+                        try:
+                            ctx.virtual_manager.fix_sell_price(trade['code'], trade.get('buy_date', ''), cur)
+                        except Exception:
+                            pass
     except Exception as e:
         print(f"[WebAPI] virtual/history enrichment 오류: {e}")
 

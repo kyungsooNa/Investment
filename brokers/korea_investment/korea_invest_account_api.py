@@ -54,4 +54,4 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
 
         mode_str = "모의투자" if is_paper else "실전투자"
         self._logger.info(f"{mode_str} 계좌 잔고 조회 시도...")
-        return await self.call_api('GET', EndpointKey.INQUIRE_BALANCE, params=params, retry_count=1)
+        return await self.call_api('GET', EndpointKey.INQUIRE_BALANCE, params=params, retry_count=3)

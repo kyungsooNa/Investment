@@ -539,7 +539,7 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
             const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
             const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
             const buyPrice = Number(item.buy_price).toLocaleString();
-            const sellPrice = item.sell_price ? Number(item.sell_price).toLocaleString() : '-';
+            const sellPrice = (item.sell_price != null && item.sell_price > 0) ? Number(item.sell_price).toLocaleString() : '-';
             const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
             const days = calcDaysHeld(item.buy_date, item.sell_date);
 

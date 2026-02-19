@@ -110,6 +110,21 @@ class VirtualTradeManager:
         mask = (df['strategy'] == strategy_name) & (df['code'] == code) & (df['status'] == 'HOLD')
         return not df.loc[mask].empty
 
+    def fix_sell_price(self, code: str, buy_date: str, correct_price):
+        """sell_price가 0인 SOLD 기록의 매도가/수익률을 보정합니다."""
+        df = self._read()
+        mask = (df['code'] == code) & (df['status'] == 'SOLD') & (df['sell_price'] == 0)
+        if buy_date:
+            mask = mask & (df['buy_date'] == buy_date)
+        if df.loc[mask].empty:
+            return
+        for idx in df.loc[mask].index:
+            bp = df.loc[idx, 'buy_price']
+            df.loc[idx, 'sell_price'] = correct_price
+            df.loc[idx, 'return_rate'] = round(((correct_price - bp) / bp) * 100, 2) if bp else 0
+        self._write(df)
+        logger.info(f"[가상매매] {code} sell_price 보정 완료 → {correct_price}")
+
     def get_summary(self) -> dict:
         """전체 매매 요약 통계 (HOLD + SOLD 모두 포함)."""
         df = self._read()
