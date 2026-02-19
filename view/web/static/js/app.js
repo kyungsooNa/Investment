@@ -363,29 +363,39 @@ async function loadTopMarketCap() {
 // 4. 모의투자 (Virtual Trading)
 // ==========================================
 let allVirtualData = [];
+let dailyChanges = {};
+let weeklyChanges = {};
 
 async function loadVirtualHistory() {
     const summaryBox = document.getElementById('virtual-summary-box');
-    const tbody = document.getElementById('virtual-history-body');
     const tabContainer = document.getElementById('virtual-strategy-tabs');
-    
+
     // 탭 컨테이너가 없으면(HTML 반영 전이면) 중단
     if (!tabContainer) return;
 
     try {
         summaryBox.innerHTML = '<span>데이터 로드 중...</span>';
-        
+
         // 1. 데이터 가져오기
         const listRes = await fetch('/api/virtual/history');
+        console.log('[Virtual] response status:', listRes.status);
         if (listRes.ok) {
-            allVirtualData = await listRes.json();
+            const body = await listRes.json();
+            allVirtualData = body.trades || [];
+            dailyChanges = body.daily_changes || {};
+            weeklyChanges = body.weekly_changes || {};
+            console.log('[Virtual] data count:', allVirtualData.length, 'sample:', allVirtualData[0]);
         } else {
+            const errText = await listRes.text();
+            console.error('[Virtual] API error:', listRes.status, errText);
             allVirtualData = [];
+            dailyChanges = {};
+            weeklyChanges = {};
         }
 
         // 2. 탭 버튼 목록 생성
         // '수동매매'는 항상 보이게 하고, 나머지는 데이터에서 추출
-        const defaultStrategies = ['수동매매']; 
+        const defaultStrategies = ['수동매매'];
         const dataStrategies = allVirtualData.map(item => item.strategy);
         const strategies = ['ALL', ...new Set([...defaultStrategies, ...dataStrategies])];
 
@@ -409,9 +419,24 @@ async function loadVirtualHistory() {
     }
 }
 
+// 보유일 계산 유틸
+function calcDaysHeld(buyDateStr, endDateStr) {
+    if (!buyDateStr) return '-';
+    const buy = new Date(buyDateStr.split(' ')[0]);
+    const end = endDateStr ? new Date(endDateStr.split(' ')[0]) : new Date();
+    const diff = Math.floor((end - buy) / (1000 * 60 * 60 * 24));
+    return diff;
+}
+
+// 종목 표시명
+function stockLabel(item) {
+    const name = item.stock_name || '';
+    return name ? `${name}(${item.code})` : item.code;
+}
+
 // 전역 함수로 등록 (onclick에서 호출 가능하도록)
 window.filterVirtualStrategy = function(strategyName, btnElement) {
-    // 1. 버튼 스타일 업데이트 (모두 끄고 -> 클릭한 것만 켬)
+    // 1. 버튼 스타일 업데이트
     const buttons = document.querySelectorAll('#virtual-strategy-tabs .sub-tab-btn');
     buttons.forEach(b => b.classList.remove('active'));
     if(btnElement) btnElement.classList.add('active');
@@ -422,19 +447,25 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
         filteredData = allVirtualData.filter(item => item.strategy === strategyName);
     }
 
+    const holdData = filteredData.filter(item => item.status === 'HOLD');
+    const soldData = filteredData.filter(item => item.status === 'SOLD');
+
     // 3. 통계 계산
     const totalTrades = filteredData.length;
-    const soldTrades = filteredData.filter(item => item.status === 'SOLD');
-    const winTrades = soldTrades.filter(item => item.return_rate > 0).length;
-    
-    const winRate = soldTrades.length > 0 ? (winTrades / soldTrades.length * 100) : 0;
-    const totalReturn = soldTrades.reduce((sum, item) => sum + (item.return_rate || 0), 0);
-    const avgReturn = soldTrades.length > 0 ? (totalReturn / soldTrades.length) : 0;
+    // 누적 수익률: 전체 trades의 return_rate 평균
+    const totalReturn = filteredData.reduce((sum, item) => sum + (item.return_rate || 0), 0);
+    const cumulativeReturn = totalTrades > 0 ? (totalReturn / totalTrades) : 0;
+    // 전일대비 / 전주대비: 백엔드 스냅샷 기반
+    const dailyChange = dailyChanges[strategyName] ?? cumulativeReturn;
+    const weeklyChange = weeklyChanges[strategyName];
 
-    // 4. 요약 박스 업데이트
+    // 색상 헬퍼
+    const colorClass = (val) => val > 0 ? 'text-positive' : (val < 0 ? 'text-negative' : '');
+    const signPrefix = (val) => val > 0 ? '+' : '';
+
+    // 4. 요약 박스
     const summaryBox = document.getElementById('virtual-summary-box');
-    
-    // 이전 슬림 버전보다 약 1.5배 키워 시인성을 높인 밸런스 조정 버전입니다.
+    if (!summaryBox) { console.error('[Virtual] virtual-summary-box not found'); return; }
     summaryBox.innerHTML = `
         <div style="margin-bottom: 15px; margin-top: 5px;">
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 6px 18px; border-radius: 20px; border: 1.5px solid #e94560; display: inline-block; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
@@ -442,67 +473,87 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
                 <span style="font-size: 1.05em; font-weight: 700 !important; letter-spacing: 0.5px;">[ ${strategyName} 성과 요약 ]</span>
             </div>
         </div>
-        
         <div style="display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap;">
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">총 거래</div>
                 <div style="color: #ffffff !important;"><strong style="font-size: 1.35em;">${totalTrades}</strong> <span style="font-size: 1em;">건</span></div>
             </div>
-            
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
-                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">승률</div>
-                <strong style="color: #ffffff !important; font-size: 1.35em;">${winRate.toFixed(1)}%</strong>
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">누적 수익률</div>
+                <strong class="${colorClass(cumulativeReturn)}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${signPrefix(cumulativeReturn)}${cumulativeReturn.toFixed(2)}%
+                </strong>
             </div>
-            
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
-                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">평균수익</div>
-                <strong class="${avgReturn > 0 ? 'text-positive' : (avgReturn < 0 ? 'text-negative' : '')}" style="font-size: 1.35em; font-weight: 800 !important;">
-                    ${avgReturn.toFixed(2)}%
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전일대비</div>
+                <strong class="${colorClass(dailyChange)}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${signPrefix(dailyChange)}${dailyChange.toFixed(2)}%
+                </strong>
+            </div>
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전주대비</div>
+                <strong class="${weeklyChange != null ? colorClass(weeklyChange) : ''}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${weeklyChange != null ? signPrefix(weeklyChange) + weeklyChange.toFixed(2) + '%' : '-'}
                 </strong>
             </div>
         </div>
     `;
 
-    // 5. 테이블 업데이트
-    const tbody = document.getElementById('virtual-history-body');
-    tbody.innerHTML = '';
+    // 5. 보유 중 테이블
+    const holdBody = document.getElementById('virtual-hold-body');
+    if (!holdBody) { console.error('[Virtual] virtual-hold-body not found'); return; }
+    holdBody.innerHTML = '';
+    if (holdData.length === 0) {
+        holdBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">보유 종목이 없습니다.</td></tr>';
+    } else {
+        holdData.forEach(item => {
+            const ror = item.return_rate || 0;
+            const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
+            const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
+            const buyPrice = Number(item.buy_price).toLocaleString();
+            const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '-';
+            const days = calcDaysHeld(item.buy_date, null);
 
-    if (filteredData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">기록이 없습니다.</td></tr>';
-        return;
+            holdBody.insertAdjacentHTML('beforeend', `
+                <tr>
+                    <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                    <td>${buyPrice}</td>
+                    <td>${curPrice}</td>
+                    <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
+                    <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
+                </tr>
+            `);
+        });
     }
 
-    // 최신순 정렬 후 표시
-    filteredData.slice().reverse().forEach(item => {
-        const ror = item.return_rate || 0;
-        const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
-        const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
-        const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
-        
-        // 가격 포맷팅 유틸리티 활용
-        const buyPrice = typeof formatNumber === 'function' ? formatNumber(item.buy_price) : Number(item.buy_price).toLocaleString();
-        const sellPrice = item.sell_price ? (typeof formatNumber === 'function' ? formatNumber(item.sell_price) : Number(item.sell_price).toLocaleString()) : '-';
+    // 6. 매도 완료 테이블
+    const soldBody = document.getElementById('virtual-sold-body');
+    if (!soldBody) { console.error('[Virtual] virtual-sold-body not found'); return; }
+    soldBody.innerHTML = '';
+    if (soldData.length === 0) {
+        soldBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">매도 기록이 없습니다.</td></tr>';
+    } else {
+        soldData.slice().reverse().forEach(item => {
+            const ror = item.return_rate || 0;
+            const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
+            const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
+            const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
+            const buyPrice = Number(item.buy_price).toLocaleString();
+            const sellPrice = (item.sell_price != null && item.sell_price > 0) ? Number(item.sell_price).toLocaleString() : '-';
+            const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
+            const days = calcDaysHeld(item.buy_date, item.sell_date);
 
-        const row = `
-            <tr>
-                <td>${item.strategy}</td>
-                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${item.code}</a></td>
-                <td>
-                    <div>${buyDate}</div>
-                    <div style="font-size:0.8em; color:var(--text-secondary);">${buyPrice}</div>
-                </td>
-                <td>
-                    <div>${sellDate}</div>
-                    <div style="font-size:0.8em; color:var(--text-secondary);">${sellPrice}</div>
-                </td>
-                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
-                <td>
-                    <span class="badge ${item.status === 'SOLD' ? 'closed' : 'paper'}">${item.status}</span>
-                </td>
-            </tr>
-        `;
-        tbody.insertAdjacentHTML('beforeend', row);
-    });
+            soldBody.insertAdjacentHTML('beforeend', `
+                <tr>
+                    <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                    <td>${buyPrice}</td>
+                    <td>${curPrice ? curPrice + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
+                    <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
+                    <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
+                </tr>
+            `);
+        });
+    }
 };
 
 // ==========================================
@@ -510,16 +561,17 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
 // ==========================================
 let ptEventSource = null;
 let ptRowCount = 0;
+let ptSubscribedCodes = new Set();
 
-async function startProgramTrading() {
-    const code = document.getElementById('pt-code-input').value.trim();
+async function addProgramTrading() {
+    const input = document.getElementById('pt-code-input');
+    const code = input.value.trim();
     if (!code) { alert('종목코드를 입력하세요.'); return; }
+    if (ptSubscribedCodes.has(code)) { alert('이미 구독 중인 종목입니다.'); return; }
 
     const statusDiv = document.getElementById('pt-status');
     statusDiv.style.display = 'block';
     statusDiv.innerHTML = '<span>구독 요청 중...</span>';
-    document.getElementById('pt-body').innerHTML = '';
-    ptRowCount = 0;
 
     try {
         const res = await fetch('/api/program-trading/subscribe', {
@@ -533,36 +585,76 @@ async function startProgramTrading() {
             return;
         }
 
-        // SSE 연결
-        ptEventSource = new EventSource('/api/program-trading/stream');
-        ptEventSource.onmessage = (event) => {
-            const d = JSON.parse(event.data);
-            appendProgramTradingRow(d);
-        };
-        ptEventSource.onerror = () => {
-            statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
-        };
+        ptSubscribedCodes.add(code);
+        renderPtChips();
+        input.value = '';
 
-        statusDiv.innerHTML = `<span class="text-green">구독 중: ${code}</span>`;
-        document.getElementById('pt-start-btn').disabled = true;
-        document.getElementById('pt-stop-btn').disabled = false;
+        // SSE 연결 (최초 1회)
+        if (!ptEventSource) {
+            ptEventSource = new EventSource('/api/program-trading/stream');
+            ptEventSource.onmessage = (event) => {
+                const d = JSON.parse(event.data);
+                appendProgramTradingRow(d);
+            };
+            ptEventSource.onerror = () => {
+                statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
+            };
+        }
+
+        statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
     } catch (e) {
         statusDiv.innerHTML = '<span class="text-red">오류: ' + e + '</span>';
     }
 }
 
-async function stopProgramTrading() {
+async function removeProgramTrading(code) {
+    try {
+        await fetch('/api/program-trading/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+        });
+    } catch (e) { /* ignore */ }
+
+    ptSubscribedCodes.delete(code);
+    renderPtChips();
+
+    const statusDiv = document.getElementById('pt-status');
+    if (ptSubscribedCodes.size === 0) {
+        if (ptEventSource) { ptEventSource.close(); ptEventSource = null; }
+        statusDiv.innerHTML = '<span>구독 중지됨</span>';
+    } else {
+        statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
+    }
+}
+
+async function stopAllProgramTrading() {
     if (ptEventSource) {
         ptEventSource.close();
         ptEventSource = null;
     }
     try {
-        await fetch('/api/program-trading/unsubscribe', { method: 'POST' });
+        await fetch('/api/program-trading/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
     } catch (e) { /* ignore */ }
 
+    ptSubscribedCodes.clear();
+    renderPtChips();
     document.getElementById('pt-status').innerHTML = '<span>구독 중지됨</span>';
-    document.getElementById('pt-start-btn').disabled = false;
-    document.getElementById('pt-stop-btn').disabled = true;
+}
+
+function renderPtChips() {
+    const container = document.getElementById('pt-subscribed-list');
+    container.innerHTML = '';
+    for (const code of ptSubscribedCodes) {
+        const chip = document.createElement('span');
+        chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;background:var(--neutral);font-size:0.8rem;font-weight:600;';
+        chip.innerHTML = `${code} <span style="cursor:pointer;color:var(--negative);font-weight:bold;" onclick="removeProgramTrading('${code}')">&times;</span>`;
+        container.appendChild(chip);
+    }
 }
 
 function appendProgramTradingRow(d) {

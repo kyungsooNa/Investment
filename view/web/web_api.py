@@ -83,6 +83,10 @@ class ProgramTradingRequest(BaseModel):
     code: str
 
 
+class ProgramTradingUnsubscribeRequest(BaseModel):
+    code: str | None = None
+
+
 def set_ctx(ctx): # set_context에서 set_ctx로 변경
     global _ctx
     _ctx = ctx
@@ -194,7 +198,17 @@ async def place_order(req: OrderRequest):
             try:
                 # 가격 형변환 (문자열 -> 숫자)
                 price_val = int(req.price) if req.price and req.price.isdigit() else 0
-                
+
+                # 시장가 주문(price=0)인 경우 현재가를 조회하여 사용
+                if price_val == 0 and getattr(ctx, 'stock_query_service', None):
+                    try:
+                        price_resp = await ctx.stock_query_service.handle_get_current_stock_price(req.code)
+                        if price_resp and price_resp.rt_cd == "0" and isinstance(price_resp.data, dict):
+                            price_str = str(price_resp.data.get('price', '0'))
+                            price_val = int(price_str) if price_str.isdigit() else 0
+                    except Exception:
+                        pass
+
                 if req.side == "buy":
                     # 매수 기록 (전략명: 수동매매)
                     ctx.virtual_manager.log_buy("수동매매", req.code, price_val)
@@ -271,33 +285,135 @@ async def get_virtual_summary():
 
 @router.get("/virtual/history")
 async def get_virtual_history():
-    """가상 매매 전체 기록 조회"""
+    """가상 매매 전체 기록 조회 (종목명 + HOLD 종목 현재가 포함)"""
     ctx = _get_ctx()
     if not hasattr(ctx, 'virtual_manager'):
-        return []
+        return {"trades": [], "weekly_changes": {}}
 
-    # DataFrame을 dict list로 변환해서 반환
-    return ctx.virtual_manager.get_all_trades()
+    trades = ctx.virtual_manager.get_all_trades()
+
+    # enrichment: 실패해도 기본 trades는 반환
+    try:
+        # 1. 종목명 enrichment
+        mapper = getattr(ctx, 'stock_code_mapper', None)
+        for trade in trades:
+            code = str(trade.get('code', ''))
+            trade['stock_name'] = mapper.get_name_by_code(code) if mapper else ''
+
+        # 2. HOLD + SOLD 종목 현재가 조회 (숫자 코드만, 병렬)
+        hold_codes = list(set(
+            str(t['code']) for t in trades
+            if str(t['code']).strip()
+        ))
+        price_map = {}
+        if hold_codes and getattr(ctx, 'stock_query_service', None):
+            sem = asyncio.Semaphore(1)  # 동시 요청 1개로 제한 (rate limit 방지)
+
+            async def _fetch(code):
+                async with sem:
+                    await asyncio.sleep(0.1)  # API rate limit 보호 (초당 거래건수 초과 방지)
+                    try:
+                        resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
+                        if not resp:
+                            print(f"[WebAPI] 현재가 조회 실패 ({code}): 응답 None")
+                        elif resp.rt_cd != "0":
+                            print(f"[WebAPI] 현재가 조회 실패 ({code}): rt_cd={resp.rt_cd}, msg={resp.msg1}")
+                        elif not isinstance(resp.data, dict):
+                            print(f"[WebAPI] 현재가 조회 실패 ({code}): data 타입={type(resp.data)}, data={resp.data}")
+                        else:
+                            price_str = str(resp.data.get('price', '0'))
+                            price_val = int(price_str) if price_str.isdigit() else 0
+                            # 전일대비 등락률 추출
+                            rate_str = str(resp.data.get('rate', '0'))
+                            try:
+                                rate_val = float(rate_str) if rate_str not in ('N/A', '', 'None') else 0.0
+                            except ValueError:
+                                rate_val = 0.0
+                            if price_val > 0:
+                                return code, price_val, rate_val
+                            else:
+                                print(f"[WebAPI] 현재가 조회 실패 ({code}): price='{price_str}'")
+                    except Exception as e:
+                        print(f"[WebAPI] 현재가 조회 예외 ({code}): {e}")
+                    return code, None, 0.0
+
+            results = await asyncio.gather(*[_fetch(c) for c in hold_codes])
+            price_map = {code: (price, rate) for code, price, rate in results if price is not None}
+
+        # 3. 전체 종목에 현재가 반영 (HOLD는 수익률도 재계산)
+        for trade in trades:
+            if trade['code'] in price_map:
+                cur, daily_rate = price_map[trade['code']]
+                trade['current_price'] = cur
+                if trade['status'] == 'HOLD':
+                    trade['daily_change_rate'] = daily_rate
+                    bp = trade.get('buy_price', 0) or 0
+                    trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
+                elif trade['status'] == 'SOLD':
+                    # sell_price가 0(시장가 매도)이면 CSV도 현재가로 보정
+                    sp = trade.get('sell_price') or 0
+                    if sp == 0 or (isinstance(sp, float) and sp == 0.0):
+                        trade['sell_price'] = cur
+                        bp = trade.get('buy_price', 0) or 0
+                        trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
+                        # CSV 원본도 수정
+                        try:
+                            ctx.virtual_manager.fix_sell_price(trade['code'], trade.get('buy_date', ''), cur)
+                        except Exception:
+                            pass
+    except Exception as e:
+        print(f"[WebAPI] virtual/history enrichment 오류: {e}")
+
+    # 4. 전략별 누적수익률 계산 + 스냅샷 저장 + 전일/전주대비 조회
+    daily_changes = {}
+    weekly_changes = {}
+    try:
+        strategies = list(set(t['strategy'] for t in trades if t.get('strategy')))
+        strategy_returns = {}
+
+        # ALL 누적수익률
+        all_rates = [t['return_rate'] for t in trades if t.get('return_rate') is not None]
+        strategy_returns["ALL"] = round(sum(all_rates) / len(all_rates), 2) if all_rates else 0
+
+        # 전략별 누적수익률
+        for strat in strategies:
+            rates = [t['return_rate'] for t in trades if t.get('strategy') == strat and t.get('return_rate') is not None]
+            strategy_returns[strat] = round(sum(rates) / len(rates), 2) if rates else 0
+
+        # 스냅샷 저장 + 전일/전주대비 조회
+        vm = ctx.virtual_manager
+        vm.save_daily_snapshot(strategy_returns)
+        for key in ["ALL"] + strategies:
+            cur = strategy_returns.get(key, 0)
+            daily_changes[key] = vm.get_daily_change(key, cur)
+            weekly_changes[key] = vm.get_weekly_change(key, cur)
+    except Exception as e:
+        print(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
+
+    return {"trades": trades, "daily_changes": daily_changes, "weekly_changes": weekly_changes}
 
 
 # --- 프로그램매매 실시간 스트리밍 ---
 
 @router.post("/program-trading/subscribe")
 async def subscribe_program_trading(req: ProgramTradingRequest):
-    """프로그램매매 실시간 구독 시작."""
+    """프로그램매매 실시간 구독 시작 (다중 종목 추가 구독)."""
     ctx = _get_ctx()
     success = await ctx.start_program_trading(req.code)
     if not success:
         raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
-    return {"success": True, "code": req.code}
+    return {"success": True, "code": req.code, "codes": sorted(ctx._pt_codes)}
 
 
 @router.post("/program-trading/unsubscribe")
-async def unsubscribe_program_trading():
-    """프로그램매매 실시간 구독 해지."""
+async def unsubscribe_program_trading(req: ProgramTradingUnsubscribeRequest = None):
+    """프로그램매매 구독 해지. code 지정 시 개별 해지, 미지정 시 전체 해지."""
     ctx = _get_ctx()
-    await ctx.stop_program_trading()
-    return {"success": True}
+    if req and req.code:
+        await ctx.stop_program_trading(req.code)
+    else:
+        await ctx.stop_all_program_trading()
+    return {"success": True, "codes": sorted(ctx._pt_codes)}
 
 
 @router.get("/program-trading/status")
@@ -305,8 +421,8 @@ async def get_program_trading_status():
     """프로그램매매 구독 상태 확인."""
     ctx = _get_ctx()
     return {
-        "subscribed": ctx._pt_code is not None,
-        "code": ctx._pt_code,
+        "subscribed": len(ctx._pt_codes) > 0,
+        "codes": sorted(ctx._pt_codes),
     }
 
 

@@ -168,7 +168,7 @@ def get_api():
     mock_env = get_mock_env()
     mock_logger = get_test_logger()
     mock_time_manager = AsyncMock()
-    mock_time_manager.sleep = AsyncMock(return_value=None)
+    mock_time_manager.async_sleep = AsyncMock(return_value=None)
 
     return DummyAPI(mock_env,mock_logger,mock_time_manager)
 
@@ -298,7 +298,7 @@ async def testcall_api_retry_on_429(caplog):
     api = get_api()
 
     # ✅ 재시도 대기 비활성 + await 가능
-    api.time_manager.sleep = AsyncMock(return_value=None)
+    api.time_manager.async_sleep = AsyncMock(return_value=None)
 
     responses_list = []  # mock_get_async가 생성하는 응답 객체를 추적하기 위한 리스트
 
@@ -347,12 +347,12 @@ async def testcall_api_retry_on_429(caplog):
 
     # asyncio.sleep이 호출되었는지, 적절한 인자로 호출되었는지 확인
     # 429 에러가 2번 발생했으므로, 2번의 sleep 호출 예상 (첫 실패 후, 두 번째 실패 후)
-    assert api.time_manager.sleep.await_count == 2
-    api.time_manager.sleep.assert_has_awaits([call(0.01), call(0.01)])
+    assert api.time_manager.async_sleep.await_count == 2
+    api.time_manager.async_sleep.assert_has_awaits([call(0.01), call(0.01)])
 
 
 @pytest.mark.asyncio
-@patch("core.time_manager.TimeManager.sleep", new_callable=AsyncMock)  # ← 타겟 교체
+@patch("core.time_manager.TimeManager.async_sleep", new_callable=AsyncMock)  # ← 타겟 교체
 async def testcall_api_retry_on_500_rate_limit(mock_sleep):
     api = get_api()
     api._logger = MagicMock(wraps=api._logger)
@@ -396,8 +396,8 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
 
     assert len(responses_list) == 3
     assert api._async_session.get.call_count == 3
-    assert api.time_manager.sleep.await_count == 2
-    api.time_manager.sleep.assert_has_awaits([call(0.01), call(0.01)])
+    assert api.time_manager.async_sleep.await_count == 2
+    api.time_manager.async_sleep.assert_has_awaits([call(0.01), call(0.01)])
 
 
     # _log_request_exception은 예외가 call_api에서 잡힐 때만 호출됩니다.

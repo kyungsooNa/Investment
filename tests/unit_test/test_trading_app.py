@@ -677,6 +677,86 @@ async def test_execute_action_2_account_balance_failure(setup_mock_app, capsys):
 
 
 @pytest.mark.asyncio
+async def test_execute_action_2_account_balance_with_realistic_data(setup_mock_app):
+    """실제 API 응답 형식(output1, output2)으로 계좌 잔고 조회 성공 테스트.
+    기존 테스트는 간략한 mock 데이터만 사용하여 실제 응답 구조를 검증하지 못했음."""
+    app = setup_mock_app
+    mock_balance_data = {
+        "rt_cd": "0",
+        "msg_cd": "80000000",
+        "msg1": "정상처리",
+        "output1": [
+            {
+                "pdno": "005930", "prdt_name": "삼성전자",
+                "hldg_qty": "10", "ord_psbl_qty": "10",
+                "pchs_avg_pric": "70000.0000", "prpr": "72000",
+                "evlu_amt": "720000", "evlu_pfls_amt": "20000",
+                "pchs_amt": "700000", "trad_dvsn_name": "현금",
+                "evlu_pfls_rt": "2.86"
+            }
+        ],
+        "output2": [
+            {
+                "dnca_tot_amt": "5000000", "tot_evlu_amt": "5720000",
+                "evlu_pfls_smtl_amt": "20000", "asst_icdc_erng_rt": "0.0035",
+                "thdt_buy_amt": "0", "thdt_sll_amt": "0"
+            }
+        ]
+    }
+    app.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=mock_balance_data
+    )
+
+    executor = UserActionExecutor(app)
+    await executor.execute('2')
+
+    app.stock_query_service.handle_get_account_balance.assert_awaited_once()
+    # display_account_balance가 output1/output2를 포함한 데이터로 호출되었는지 확인
+    app.cli_view.display_account_balance.assert_called_once_with(mock_balance_data)
+    called_data = app.cli_view.display_account_balance.call_args[0][0]
+    assert "output1" in called_data, "실제 API 응답에는 output1 키가 있어야 합니다"
+    assert "output2" in called_data, "실제 API 응답에는 output2 키가 있어야 합니다"
+    assert len(called_data["output1"]) == 1
+    assert called_data["output1"][0]["pdno"] == "005930"
+    app.cli_view.display_account_balance_failure.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_action_2_account_balance_none_response(setup_mock_app):
+    """handle_get_account_balance가 None을 반환하는 경우 실패 처리 테스트."""
+    app = setup_mock_app
+    app.stock_query_service.handle_get_account_balance.return_value = None
+
+    executor = UserActionExecutor(app)
+    result = await executor.execute('2')
+
+    app.stock_query_service.handle_get_account_balance.assert_awaited_once()
+    app.cli_view.display_account_balance_failure.assert_called_once_with("잔고 조회 실패: 응답 없음")
+    app.cli_view.display_account_balance.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_action_2_account_balance_retry_limit(setup_mock_app):
+    """API rate limit 초과로 RETRY_LIMIT 에러 발생 시 실패 처리 테스트.
+    virtual/history 엔드포인트의 현재가 조회가 rate limit을 소진한 후
+    계좌잔고 조회가 실패하는 시나리오를 시뮬레이션."""
+    app = setup_mock_app
+    app.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.RETRY_LIMIT.value,
+        msg1="최대 재시도 횟수 초과",
+        data=None
+    )
+
+    executor = UserActionExecutor(app)
+    result = await executor.execute('2')
+
+    app.stock_query_service.handle_get_account_balance.assert_awaited_once()
+    # rt_cd가 "0"이 아니므로 실패 처리되어야 함
+    app.cli_view.display_account_balance_failure.assert_called_once_with("최대 재시도 횟수 초과")
+    app.cli_view.display_account_balance.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_execute_action_place_buy_order_success(setup_mock_app):
     app = setup_mock_app
     # handle_buy_stock이 성공적으로 실행되도록 목(mock) 설정

@@ -5,7 +5,7 @@ import logging
 from types import SimpleNamespace
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 # 테스트 대상 모듈 임포트
-from view.cli_view import CLIView
+from view.cli.cli_view import CLIView
 from core.time_manager import TimeManager
 
 

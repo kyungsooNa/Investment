@@ -8,6 +8,8 @@ from brokers.broker_api_wrapper import BrokerAPIWrapper
 from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
+from managers.virtual_trade_manager import VirtualTradeManager
+from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from core.logger import Logger
 from view.web import web_api  # 임포트 확인
@@ -24,10 +26,12 @@ class WebAppContext:
         self.trading_service: TradingService = None
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
+        self.virtual_manager = VirtualTradeManager()
+        self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.initialized = False
         # 프로그램매매 실시간 스트리밍용
         self._pt_queues: list = []
-        self._pt_code: str | None = None
+        self._pt_codes: set = set()
         web_api.set_ctx(self)
 
     def load_config_and_env(self):
@@ -98,16 +102,24 @@ class WebAppContext:
                     pass
 
     async def start_program_trading(self, code: str) -> bool:
-        """프로그램매매 구독 시작 (웹소켓 연결 + 구독)."""
+        """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""
+        if code in self._pt_codes:
+            return True
         connected = await self.broker.connect_websocket(self._web_realtime_callback)
         if not connected:
             return False
         await self.trading_service.subscribe_program_trading(code)
-        self._pt_code = code
+        self._pt_codes.add(code)
         return True
 
-    async def stop_program_trading(self):
-        """프로그램매매 구독 해지."""
-        if self._pt_code:
-            await self.trading_service.unsubscribe_program_trading(self._pt_code)
-            self._pt_code = None
+    async def stop_program_trading(self, code: str):
+        """특정 종목 프로그램매매 구독 해지."""
+        if code in self._pt_codes:
+            await self.trading_service.unsubscribe_program_trading(code)
+            self._pt_codes.discard(code)
+
+    async def stop_all_program_trading(self):
+        """모든 프로그램매매 구독 해지."""
+        for code in list(self._pt_codes):
+            await self.trading_service.unsubscribe_program_trading(code)
+        self._pt_codes.clear()
