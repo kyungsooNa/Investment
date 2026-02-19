@@ -257,7 +257,7 @@ async def test_get_top_market_cap_stocks_success(mock_quotations):
     args, kwargs = mock_quotations.call_api.call_args
     assert args[0] == "GET"
     assert kwargs["params"]["fid_input_iscd"] == "0000"
-    assert kwargs["retry_count"] == 1
+    assert kwargs["retry_count"] == 3
 
 
 @pytest.mark.asyncio
@@ -424,7 +424,7 @@ async def test_get_top_market_cap_stocks_success_revised(mock_quotations):
     args, kwargs = mock_quotations.call_api.call_args
     assert args[0] == "GET"
     assert kwargs["params"]["fid_input_iscd"] == "0000"
-    assert kwargs["retry_count"] == 1
+    assert kwargs["retry_count"] == 3
 
 
 @pytest.mark.asyncio

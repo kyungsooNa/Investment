@@ -236,7 +236,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         params = Params.top_market_cap()
 
         self._logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code}, 요청개수: {count})")
-        response: ResCommonResponse = await self.call_api("GET", EndpointKey.MARKET_CAP, params=params, retry_count=1)
+        response: ResCommonResponse = await self.call_api("GET", EndpointKey.MARKET_CAP, params=params, retry_count=3)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning(f"시가총액 응답 오류 또는 비어 있음: 시가총액 조회 실패")
@@ -544,7 +544,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         direction = "상승" if rise else "하락"
         self._logger.info(f"{direction}률 상위 종목 조회 시도...")
-        response = await self.call_api("GET", EndpointKey.RANKING_FLUCTUATION, params=params, retry_count=1)
+        response = await self.call_api("GET", EndpointKey.RANKING_FLUCTUATION, params=params, retry_count=3)
 
         try:
             stocks = [ResFluctuation.from_dict(row) for row in response.data.get("output", [])]
@@ -575,7 +575,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         params = Params.volume_rank()
 
         self._logger.info(f"거래량 상위 종목 조회 시도...")
-        response = await self.call_api("GET", EndpointKey.RANKING_VOLUME, params=params, retry_count=1)
+        response = await self.call_api("GET", EndpointKey.RANKING_VOLUME, params=params, retry_count=3)
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning(f"거래량 상위 조회 실패: {response.msg1}")

@@ -1,6 +1,7 @@
 # services/trading_service.py
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from core.time_manager import TimeManager
+import asyncio
 import logging
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from datetime import datetime, timedelta
@@ -304,19 +305,29 @@ class TradingService:
         self._logger.info("Service - 거래량 상위 종목 조회 요청")
         return await self._broker_api_wrapper.get_top_volume_stocks()
 
+    # ETF/ETN 브랜드명 — 종목명이 이 접두사로 시작하면 개별종목이 아님
+    _ETF_PREFIXES = (
+        "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
+        "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
+        "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
+    )
+
     async def get_top_trading_value_stocks(self) -> ResCommonResponse:
         """
         거래대금 상위 종목 조회.
         거래량/시가총액/상승률/하락률 4개 기존 API 결과를 병합하여
         acml_tr_pbmn(거래대금) 기준 상위 30개를 반환한다.
+        ETF/ETN 종목은 제외한다.
         """
         self._logger.info("Service - 거래대금 상위 종목 조회 요청 (4개 소스 병합)")
 
-        # 기존 메서드 호출 (각각 캐싱 적용됨)
-        vol_resp = await self._broker_api_wrapper.get_top_volume_stocks()
-        mc_resp = await self._broker_api_wrapper.get_top_market_cap_stocks_code("J", 30)
-        rise_resp = await self._broker_api_wrapper.get_top_rise_fall_stocks(True)
-        fall_resp = await self._broker_api_wrapper.get_top_rise_fall_stocks(False)
+        # 4개 API 병렬 호출
+        vol_resp, mc_resp, rise_resp, fall_resp = await asyncio.gather(
+            self._broker_api_wrapper.get_top_volume_stocks(),
+            self._broker_api_wrapper.get_top_market_cap_stocks_code("J", 30),
+            self._broker_api_wrapper.get_top_rise_fall_stocks(True),
+            self._broker_api_wrapper.get_top_rise_fall_stocks(False),
+        )
 
         # 거래량 데이터 (acml_tr_pbmn 포함, dict 리스트)
         volume_stocks = vol_resp.data if vol_resp and vol_resp.rt_cd == ErrorCode.SUCCESS.value else []
@@ -357,6 +368,12 @@ class TradingService:
                         d["acml_tr_pbmn"] = "0"
                 merged[code] = d
 
+        # ETF/ETN 제외
+        merged = {
+            code: d for code, d in merged.items()
+            if not self._is_etf(d)
+        }
+
         # 거래대금 기준 내림차순 정렬, 상위 30개
         result = list(merged.values())
         result.sort(key=lambda x: int(x.get("acml_tr_pbmn", "0") or "0"), reverse=True)
@@ -369,6 +386,11 @@ class TradingService:
             msg1="거래대금 상위 종목 조회 성공",
             data=result
         )
+
+    def _is_etf(self, stock: dict) -> bool:
+        """종목명 기반 ETF/ETN 여부 판별."""
+        name = stock.get("hts_kor_isnm") or stock.get("kor_shrt_ism") or ""
+        return any(name.startswith(prefix) for prefix in self._ETF_PREFIXES)
 
     # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
     #     """외국인 순매수 상위 종목을 조회합니다."""
