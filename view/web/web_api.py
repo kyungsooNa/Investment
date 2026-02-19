@@ -307,11 +307,11 @@ async def get_virtual_history():
         ))
         price_map = {}
         if hold_codes and getattr(ctx, 'stock_query_service', None):
-            sem = asyncio.Semaphore(1)  # 동시 요청 1개로 제한 (rate limit 방지)
+            sem = asyncio.Semaphore(5)  # 동시 요청 5개 (API 초당 20건 허용)
 
             async def _fetch(code):
                 async with sem:
-                    await asyncio.sleep(0.1)  # API rate limit 보호 (초당 거래건수 초과 방지)
+                    await asyncio.sleep(0.05)  # API rate limit 보호
                     try:
                         resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
                         if not resp:
@@ -380,13 +380,14 @@ async def get_virtual_history():
             rates = [t['return_rate'] for t in trades if t.get('strategy') == strat and t.get('return_rate') is not None]
             strategy_returns[strat] = round(sum(rates) / len(rates), 2) if rates else 0
 
-        # 스냅샷 저장 + 전일/전주대비 조회
+        # 스냅샷 저장 + 전일/전주대비 조회 (JSON 1회만 로드)
         vm = ctx.virtual_manager
         vm.save_daily_snapshot(strategy_returns)
+        snapshot_data = vm._load_data()
         for key in ["ALL"] + strategies:
             cur = strategy_returns.get(key, 0)
-            daily_changes[key] = vm.get_daily_change(key, cur)
-            weekly_changes[key] = vm.get_weekly_change(key, cur)
+            daily_changes[key] = vm.get_daily_change(key, cur, _data=snapshot_data)
+            weekly_changes[key] = vm.get_weekly_change(key, cur, _data=snapshot_data)
     except Exception as e:
         print(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
 

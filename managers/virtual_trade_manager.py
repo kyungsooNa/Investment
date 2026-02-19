@@ -194,17 +194,17 @@ class VirtualTradeManager:
 
         self._save_data(data)
 
-    def get_daily_change(self, strategy: str, current_return: float) -> float:
+    def get_daily_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> float:
         """마지막 변동일 기준 전일대비. prev_values 없으면 누적수익률 자체 반환."""
-        data = self._load_data()
+        data = _data or self._load_data()
         prev_val = data.get("prev_values", {}).get(strategy)
         if prev_val is None:
             return current_return
         return round(current_return - prev_val, 2)
 
-    def get_weekly_change(self, strategy: str, current_return: float) -> float | None:
+    def get_weekly_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> float | None:
         """7일 전 스냅샷 대비 변화. 스냅샷 없으면 None."""
-        data = self._load_data()
+        data = _data or self._load_data()
         daily = data.get("daily", {})
         today = datetime.now().strftime("%Y-%m-%d")
         target = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
