@@ -182,6 +182,35 @@ th {
     font-weight: 600;
 }
 
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 20px;
+}
+
+th.sortable:hover {
+    color: var(--text);
+}
+
+th.sortable::after {
+    content: '⇅';
+    position: absolute;
+    right: 4px;
+    opacity: 0.3;
+    font-size: 0.75em;
+}
+
+th.sortable.sort-asc::after {
+    content: '▲';
+    opacity: 0.8;
+}
+
+th.sortable.sort-desc::after {
+    content: '▼';
+    opacity: 0.8;
+}
+
 td {
     padding: 8px;
     border-bottom: 1px solid var(--border);
