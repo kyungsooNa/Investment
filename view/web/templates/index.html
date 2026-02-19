@@ -89,7 +89,10 @@
     <div id="section-marketcap" class="section">
         <div class="card">
             <h2>시가총액 상위 종목</h2>
-            <button class="btn" onclick="loadTopMarketCap()">조회</button>
+            <div class="form-row">
+                <button class="btn ranking-tab active" data-market="0001" onclick="loadTopMarketCap('0001')">코스피</button>
+                <button class="btn ranking-tab" data-market="1001" onclick="loadTopMarketCap('1001')">코스닥</button>
+            </div>
         </div>
         <div id="marketcap-result"></div>
     </div>
@@ -172,6 +175,6 @@
 
 </div>
 
-<script src="/static/js/app.js?v=8"></script>
+<script src="/static/js/app.js?v=10"></script>
 </body>
 </html>

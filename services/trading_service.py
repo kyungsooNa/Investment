@@ -315,16 +315,17 @@ class TradingService:
     async def get_top_trading_value_stocks(self) -> ResCommonResponse:
         """
         거래대금 상위 종목 조회.
-        거래량/시가총액/상승률/하락률 4개 기존 API 결과를 병합하여
+        거래량/코스피시가총액30/코스닥시가총액30/상승률/하락률 5개 기존 API 결과를 병합하여
         acml_tr_pbmn(거래대금) 기준 상위 30개를 반환한다.
         ETF/ETN 종목은 제외한다.
         """
-        self._logger.info("Service - 거래대금 상위 종목 조회 요청 (4개 소스 병합)")
+        self._logger.info("Service - 거래대금 상위 종목 조회 요청 (5개 소스 병합)")
 
-        # 4개 API 병렬 호출
-        vol_resp, mc_resp, rise_resp, fall_resp = await asyncio.gather(
+        # 5개 API 병렬 호출
+        vol_resp, mc_kospi_resp, mc_kosdaq_resp, rise_resp, fall_resp = await asyncio.gather(
             self._broker_api_wrapper.get_top_volume_stocks(),
-            self._broker_api_wrapper.get_top_market_cap_stocks_code("J", 30),
+            self._broker_api_wrapper.get_top_market_cap_stocks_code("0000", 30),
+            self._broker_api_wrapper.get_top_market_cap_stocks_code("1001", 30),
             self._broker_api_wrapper.get_top_rise_fall_stocks(True),
             self._broker_api_wrapper.get_top_rise_fall_stocks(False),
         )
@@ -334,8 +335,10 @@ class TradingService:
         if isinstance(volume_stocks, dict):
             volume_stocks = volume_stocks.get("output", [])
 
-        # 시가총액 데이터 (dict 또는 dataclass 리스트)
-        mc_stocks = mc_resp.data if mc_resp and mc_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        # 시가총액 데이터 - 코스피 + 코스닥 (dict 또는 dataclass 리스트)
+        mc_kospi = mc_kospi_resp.data if mc_kospi_resp and mc_kospi_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        mc_kosdaq = mc_kosdaq_resp.data if mc_kosdaq_resp and mc_kosdaq_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        mc_stocks = list(mc_kospi or []) + list(mc_kosdaq or [])
 
         # 상승률/하락률 데이터 (ResFluctuation dataclass 리스트)
         rise_stocks = rise_resp.data if rise_resp and rise_resp.rt_cd == ErrorCode.SUCCESS.value else []
@@ -355,7 +358,7 @@ class TradingService:
             if code:
                 merged[code] = d
 
-        for stock in list(mc_stocks or []) + list(rise_stocks or []) + list(fall_stocks or []):
+        for stock in mc_stocks + list(rise_stocks or []) + list(fall_stocks or []):
             d = _to_dict(stock)
             code = _get_code(d)
             if code and code not in merged:

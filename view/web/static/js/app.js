@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // 3) 탭별 초기 데이터 로드 (필요시)
             if (btn.dataset.tab === 'balance') loadBalance();
             if (btn.dataset.tab === 'ranking') loadRanking('rise'); // 기본값
-            if (btn.dataset.tab === 'marketcap') loadTopMarketCap();
+            if (btn.dataset.tab === 'marketcap') loadTopMarketCap('0001');
             if (btn.dataset.tab === 'virtual') loadVirtualHistory();
         });
     });
@@ -382,11 +382,17 @@ async function loadRanking(category) {
     }
 }
 
-async function loadTopMarketCap() {
+async function loadTopMarketCap(market = '0001') {
+    // 버튼 active 상태 전환
+    document.querySelectorAll('#section-marketcap .ranking-tab').forEach(b => {
+        b.classList.remove('active');
+        if (b.dataset.market === market) b.classList.add('active');
+    });
+
     const div = document.getElementById('marketcap-result');
     div.innerHTML = "로딩 중...";
     try {
-        const res = await fetch('/api/top-market-cap?limit=30');
+        const res = await fetch(`/api/top-market-cap?limit=30&market=${market}`);
         const json = await res.json();
         if (json.rt_cd !== "0") {
             div.innerHTML = `<p class="error">실패: ${json.msg1}</p>`;

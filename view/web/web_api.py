@@ -241,10 +241,12 @@ async def get_ranking(category: str):
 
 
 @router.get("/top-market-cap")
-async def get_top_market_cap(limit: int = 20):
-    """시가총액 상위 종목."""
+async def get_top_market_cap(limit: int = 20, market: str = "0001"):
+    """시가총액 상위 종목. market: 0001=거래소(코스피), 1001=코스닥"""
     ctx = _get_ctx()
-    resp = await ctx.broker.get_top_market_cap_stocks_code("J", limit)
+    if market not in ("0000", "0001", "1001", "2001"):
+        market = "0001"
+    resp = await ctx.broker.get_top_market_cap_stocks_code(market, limit)
     if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
         items = resp.data or []
         data = []

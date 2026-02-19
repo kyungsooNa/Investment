@@ -233,7 +233,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config['custtype'])
 
-        params = Params.top_market_cap()
+        params = Params.top_market_cap(input_iscd=market_code)
 
         self._logger.info(f"시가총액 상위 종목 조회 시도 (시장코드: {market_code}, 요청개수: {count})")
         response: ResCommonResponse = await self.call_api("GET", EndpointKey.MARKET_CAP, params=params, retry_count=3)
