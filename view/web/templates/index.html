@@ -145,9 +145,10 @@
             <div class="form-row">
                 <label>종목코드</label>
                 <input type="text" id="pt-code-input" placeholder="예: 005930" maxlength="6" value="005930">
-                <button class="btn" id="pt-start-btn" onclick="startProgramTrading()">구독 시작</button>
-                <button class="btn btn-sell" id="pt-stop-btn" onclick="stopProgramTrading()" disabled>구독 중지</button>
+                <button class="btn" id="pt-add-btn" onclick="addProgramTrading()">추가</button>
+                <button class="btn btn-sell" id="pt-stop-all-btn" onclick="stopAllProgramTrading()">전체 중지</button>
             </div>
+            <div id="pt-subscribed-list" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"></div>
             <div id="pt-status" class="stats-box" style="display:none;"></div>
         </div>
         <div class="table-container">

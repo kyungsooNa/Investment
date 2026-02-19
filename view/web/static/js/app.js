@@ -561,16 +561,17 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
 // ==========================================
 let ptEventSource = null;
 let ptRowCount = 0;
+let ptSubscribedCodes = new Set();
 
-async function startProgramTrading() {
-    const code = document.getElementById('pt-code-input').value.trim();
+async function addProgramTrading() {
+    const input = document.getElementById('pt-code-input');
+    const code = input.value.trim();
     if (!code) { alert('종목코드를 입력하세요.'); return; }
+    if (ptSubscribedCodes.has(code)) { alert('이미 구독 중인 종목입니다.'); return; }
 
     const statusDiv = document.getElementById('pt-status');
     statusDiv.style.display = 'block';
     statusDiv.innerHTML = '<span>구독 요청 중...</span>';
-    document.getElementById('pt-body').innerHTML = '';
-    ptRowCount = 0;
 
     try {
         const res = await fetch('/api/program-trading/subscribe', {
@@ -584,36 +585,76 @@ async function startProgramTrading() {
             return;
         }
 
-        // SSE 연결
-        ptEventSource = new EventSource('/api/program-trading/stream');
-        ptEventSource.onmessage = (event) => {
-            const d = JSON.parse(event.data);
-            appendProgramTradingRow(d);
-        };
-        ptEventSource.onerror = () => {
-            statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
-        };
+        ptSubscribedCodes.add(code);
+        renderPtChips();
+        input.value = '';
 
-        statusDiv.innerHTML = `<span class="text-green">구독 중: ${code}</span>`;
-        document.getElementById('pt-start-btn').disabled = true;
-        document.getElementById('pt-stop-btn').disabled = false;
+        // SSE 연결 (최초 1회)
+        if (!ptEventSource) {
+            ptEventSource = new EventSource('/api/program-trading/stream');
+            ptEventSource.onmessage = (event) => {
+                const d = JSON.parse(event.data);
+                appendProgramTradingRow(d);
+            };
+            ptEventSource.onerror = () => {
+                statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
+            };
+        }
+
+        statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
     } catch (e) {
         statusDiv.innerHTML = '<span class="text-red">오류: ' + e + '</span>';
     }
 }
 
-async function stopProgramTrading() {
+async function removeProgramTrading(code) {
+    try {
+        await fetch('/api/program-trading/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+        });
+    } catch (e) { /* ignore */ }
+
+    ptSubscribedCodes.delete(code);
+    renderPtChips();
+
+    const statusDiv = document.getElementById('pt-status');
+    if (ptSubscribedCodes.size === 0) {
+        if (ptEventSource) { ptEventSource.close(); ptEventSource = null; }
+        statusDiv.innerHTML = '<span>구독 중지됨</span>';
+    } else {
+        statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
+    }
+}
+
+async function stopAllProgramTrading() {
     if (ptEventSource) {
         ptEventSource.close();
         ptEventSource = null;
     }
     try {
-        await fetch('/api/program-trading/unsubscribe', { method: 'POST' });
+        await fetch('/api/program-trading/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
     } catch (e) { /* ignore */ }
 
+    ptSubscribedCodes.clear();
+    renderPtChips();
     document.getElementById('pt-status').innerHTML = '<span>구독 중지됨</span>';
-    document.getElementById('pt-start-btn').disabled = false;
-    document.getElementById('pt-stop-btn').disabled = true;
+}
+
+function renderPtChips() {
+    const container = document.getElementById('pt-subscribed-list');
+    container.innerHTML = '';
+    for (const code of ptSubscribedCodes) {
+        const chip = document.createElement('span');
+        chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;background:var(--neutral);font-size:0.8rem;font-weight:600;';
+        chip.innerHTML = `${code} <span style="cursor:pointer;color:var(--negative);font-weight:bold;" onclick="removeProgramTrading('${code}')">&times;</span>`;
+        container.appendChild(chip);
+    }
 }
 
 function appendProgramTradingRow(d) {

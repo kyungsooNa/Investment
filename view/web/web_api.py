@@ -397,20 +397,23 @@ async def get_virtual_history():
 
 @router.post("/program-trading/subscribe")
 async def subscribe_program_trading(req: ProgramTradingRequest):
-    """프로그램매매 실시간 구독 시작."""
+    """프로그램매매 실시간 구독 시작 (다중 종목 추가 구독)."""
     ctx = _get_ctx()
     success = await ctx.start_program_trading(req.code)
     if not success:
         raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
-    return {"success": True, "code": req.code}
+    return {"success": True, "code": req.code, "codes": sorted(ctx._pt_codes)}
 
 
 @router.post("/program-trading/unsubscribe")
-async def unsubscribe_program_trading():
-    """프로그램매매 실시간 구독 해지."""
+async def unsubscribe_program_trading(req: ProgramTradingUnsubscribeRequest = None):
+    """프로그램매매 구독 해지. code 지정 시 개별 해지, 미지정 시 전체 해지."""
     ctx = _get_ctx()
-    await ctx.stop_program_trading()
-    return {"success": True}
+    if req and req.code:
+        await ctx.stop_program_trading(req.code)
+    else:
+        await ctx.stop_all_program_trading()
+    return {"success": True, "codes": sorted(ctx._pt_codes)}
 
 
 @router.get("/program-trading/status")
@@ -418,8 +421,8 @@ async def get_program_trading_status():
     """프로그램매매 구독 상태 확인."""
     ctx = _get_ctx()
     return {
-        "subscribed": ctx._pt_code is not None,
-        "code": ctx._pt_code,
+        "subscribed": len(ctx._pt_codes) > 0,
+        "codes": sorted(ctx._pt_codes),
     }
 
 
