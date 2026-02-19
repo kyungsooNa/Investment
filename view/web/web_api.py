@@ -250,10 +250,10 @@ async def get_top_market_cap(limit: int = 20, market: str = "0001"):
     if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
         items = resp.data or []
         data = []
-        for item in items:
+        for idx, item in enumerate(items, 1):
             get = (lambda k: getattr(item, k, None)) if not isinstance(item, dict) else item.get
             data.append({
-                "rank": get("data_rank") or "",
+                "rank": str(idx),
                 "name": get("hts_kor_isnm") or "",
                 "code": get("mksc_shrn_iscd") or get("iscd") or "",
                 "current_price": get("stck_prpr") or "0",
