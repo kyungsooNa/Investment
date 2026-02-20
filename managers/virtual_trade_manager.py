@@ -14,6 +14,7 @@ COLUMNS = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price
 class VirtualTradeManager:
     def __init__(self, filename="data/trade_journal.csv"):
         self.filename = filename
+        os.makedirs(os.path.dirname(self.filename), exist_ok=True)  # 데이터 디렉토리 생성
         if not os.path.exists(self.filename):
             pd.DataFrame(columns=COLUMNS).to_csv(self.filename, index=False)
 
