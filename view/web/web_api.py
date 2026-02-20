@@ -488,7 +488,9 @@ async def subscribe_program_trading(req: ProgramTradingRequest):
     success = await ctx.start_program_trading(req.code)
     if not success:
         raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
-    return {"success": True, "code": req.code, "codes": sorted(ctx._pt_codes)}
+    mapper = getattr(ctx, 'stock_code_mapper', None)
+    stock_name = mapper.get_name_by_code(req.code) if mapper else ''
+    return {"success": True, "code": req.code, "stock_name": stock_name, "codes": sorted(ctx._pt_codes)}
 
 
 @router.post("/program-trading/unsubscribe")

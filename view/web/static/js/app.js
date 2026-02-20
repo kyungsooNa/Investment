@@ -833,6 +833,7 @@ window.forceUpdateStock = async function(code, event) {
 let ptEventSource = null;
 let ptRowCount = 0;
 let ptSubscribedCodes = new Set();
+let ptCodeNameMap = {};   // 종목코드 → 종목명 매핑
 let ptFilterCode = null;  // 선택된 필터 종목코드 (null이면 전체 표시)
 
 async function addProgramTrading() {
@@ -858,6 +859,7 @@ async function addProgramTrading() {
         }
 
         ptSubscribedCodes.add(code);
+        if (json.stock_name) ptCodeNameMap[code] = json.stock_name;
         renderPtChips();
         input.value = '';
 
@@ -889,6 +891,7 @@ async function removeProgramTrading(code) {
     } catch (e) { /* ignore */ }
 
     ptSubscribedCodes.delete(code);
+    delete ptCodeNameMap[code];
     if (ptFilterCode === code) ptFilterCode = null;
     renderPtChips();
 
@@ -915,6 +918,7 @@ async function stopAllProgramTrading() {
     } catch (e) { /* ignore */ }
 
     ptSubscribedCodes.clear();
+    ptCodeNameMap = {};
     ptFilterCode = null;
     renderPtChips();
     document.getElementById('pt-status').innerHTML = '<span>구독 중지됨</span>';
@@ -928,7 +932,8 @@ function renderPtChips() {
         const isActive = (ptFilterCode === code);
         chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;font-size:0.8rem;font-weight:600;cursor:pointer;transition:all 0.2s;`
             + (isActive ? 'background:#ff6b35;color:#fff;box-shadow:0 0 0 2px #ff6b35;' : 'background:var(--neutral);');
-        chip.innerHTML = `<span onclick="togglePtFilter('${code}')">${code}</span> <span style="cursor:pointer;color:var(--negative);font-weight:bold;margin-left:2px;" onclick="event.stopPropagation();removeProgramTrading('${code}')">&times;</span>`;
+        const label = ptCodeNameMap[code] ? `${ptCodeNameMap[code]}(${code})` : code;
+        chip.innerHTML = `<span onclick="togglePtFilter('${code}')">${label}</span> <span style="cursor:pointer;color:var(--negative);font-weight:bold;margin-left:2px;" onclick="event.stopPropagation();removeProgramTrading('${code}')">&times;</span>`;
         container.appendChild(chip);
     }
 }
@@ -957,7 +962,7 @@ function appendProgramTradingRow(d) {
     const stockCode = d['유가증권단축종목코드'] || '-';
     const hidden = (ptFilterCode && ptFilterCode !== stockCode) ? ' style="display:none"' : '';
     const row = `<tr data-code="${stockCode}"${hidden}>
-        <td>${stockCode}</td>
+        <td>${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</td>
         <td>${fmtTime}</td>
         <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>
         <td>${parseInt(d['매수2체결량'] || 0).toLocaleString()}</td>
