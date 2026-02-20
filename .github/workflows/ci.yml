@@ -34,6 +34,8 @@ jobs:
     # ==========================================
     - name: Create Mock Config
       run: cp config/config.yaml.example config/config.yaml
+    - name: Create data directory
+      run: mkdir -p data
 
     # 5. 테스트 코드 실행
     - name: Run tests with pytest
