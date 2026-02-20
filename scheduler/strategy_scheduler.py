@@ -34,6 +34,7 @@ class StrategySchedulerConfig:
     interval_minutes: int = 5       # 실행 주기 (분)
     max_positions: int = 3          # 최대 동시 보유 포지션 수
     order_qty: int = 1              # 주문 수량
+    enabled: bool = True            # 개별 전략 활성/비활성
 
 
 class StrategyScheduler:
@@ -114,6 +115,8 @@ class StrategyScheduler:
                 minutes_to_close = (close_time - now).total_seconds() / 60
 
                 for cfg in self._strategies:
+                    if not cfg.enabled:
+                        continue
                     name = cfg.strategy.name
                     last = self._last_run.get(name)
                     elapsed = (now - last).total_seconds() if last else float('inf')
@@ -232,6 +235,26 @@ class StrategyScheduler:
         if len(self._signal_history) > self.MAX_HISTORY:
             self._signal_history = self._signal_history[-self.MAX_HISTORY:]
 
+    # ── 개별 전략 제어 ──
+
+    def start_strategy(self, name: str) -> bool:
+        """개별 전략 활성화. 성공 시 True 반환."""
+        for cfg in self._strategies:
+            if cfg.strategy.name == name:
+                cfg.enabled = True
+                self._logger.info(f"[Scheduler] 전략 활성화: {name}")
+                return True
+        return False
+
+    def stop_strategy(self, name: str) -> bool:
+        """개별 전략 비활성화. 성공 시 True 반환."""
+        for cfg in self._strategies:
+            if cfg.strategy.name == name:
+                cfg.enabled = False
+                self._logger.info(f"[Scheduler] 전략 비활성화: {name}")
+                return True
+        return False
+
     # ── 상태 조회 ──
 
     def get_status(self) -> dict:
@@ -243,6 +266,7 @@ class StrategyScheduler:
                 "name": name,
                 "interval_minutes": cfg.interval_minutes,
                 "max_positions": cfg.max_positions,
+                "enabled": cfg.enabled,
                 "current_holds": len(self._vm.get_holds_by_strategy(name)),
                 "last_run": last.strftime("%H:%M:%S") if last else None,
             })
