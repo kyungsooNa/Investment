@@ -604,20 +604,71 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
         </div>
     `;
 
-    // 5. 보유 중 테이블
+    // 5. 데이터 캐시 후 렌더링
+    currentVirtualHoldData = holdData;
+    currentVirtualSoldData = soldData.slice().reverse();
+    renderVirtualHoldTable();
+    renderVirtualSoldTable();
+};
+
+function virtualSortCompare(data, key, dir) {
+    const sorted = data.slice();
+    const d = dir === 'asc' ? 1 : -1;
+    sorted.sort((a, b) => {
+        let va, vb;
+        if (key === 'name') {
+            va = (a.stock_name || a.code || '').toLowerCase();
+            vb = (b.stock_name || b.code || '').toLowerCase();
+            return d * va.localeCompare(vb);
+        } else if (key === 'buy_price') {
+            va = Number(a.buy_price || 0);
+            vb = Number(b.buy_price || 0);
+        } else if (key === 'current_price') {
+            va = Number(a.current_price || 0);
+            vb = Number(b.current_price || 0);
+        } else if (key === 'sell_price') {
+            va = Number(a.sell_price || 0);
+            vb = Number(b.sell_price || 0);
+        } else if (key === 'return_rate') {
+            va = Number(a.return_rate || 0);
+            vb = Number(b.return_rate || 0);
+        } else if (key === 'days') {
+            va = calcDaysHeld(a.buy_date, a.sell_date || null);
+            vb = calcDaysHeld(b.buy_date, b.sell_date || null);
+            va = typeof va === 'number' ? va : 0;
+            vb = typeof vb === 'number' ? vb : 0;
+        } else {
+            return 0;
+        }
+        return d * (va - vb);
+    });
+    return sorted;
+}
+
+function virtualSortClass(table, key) {
+    const state = table === 'hold' ? virtualHoldSortState : virtualSoldSortState;
+    if (state.key !== key) return 'sortable';
+    return `sortable sort-${state.dir}`;
+}
+
+function updateVirtualSortHeaders(table) {
+    const section = document.getElementById('section-virtual');
+    const tables = section.querySelectorAll('.data-table');
+    const target = table === 'hold' ? tables[0] : tables[1];
+    if (!target) return;
+    const ths = target.querySelectorAll('thead th');
+    const keys = table === 'hold'
+        ? ['name', 'buy_price', 'current_price', 'return_rate', 'days']
+        : ['name', 'buy_price', 'sell_price', 'return_rate', 'days'];
+    ths.forEach((th, i) => {
+        if (keys[i]) th.className = virtualSortClass(table, keys[i]);
+    });
+}
+
+function renderVirtualHoldTable() {
     const holdBody = document.getElementById('virtual-hold-body');
-    if (!holdBody) { console.error('[Virtual] virtual-hold-body not found'); return; }
+    if (!holdBody) return;
     holdBody.innerHTML = '';
-    if (holdData.length === 0) {
-        holdBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">보유 종목이 없습니다.</td></tr>';
-    } else {
-        holdData.forEach(item => {
-            const ror = item.return_rate || 0;
-            const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
-            const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
-            const buyPrice = Number(item.buy_price).toLocaleString();
-            const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '-';
-            const days = calcDaysHeld(item.buy_date, null);
 
             const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
             const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
@@ -634,15 +685,80 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
                     <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
                 </tr>
             `);
-        });
+        });    let data = currentVirtualHoldData;
+    if (virtualHoldSortState.key) {
+        data = virtualSortCompare(data, virtualHoldSortState.key, virtualHoldSortState.dir);
+
     }
 
-    // 6. 매도 완료 테이블
+    updateVirtualSortHeaders('hold');
+
+    if (data.length === 0) {
+        holdBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">보유 종목이 없습니다.</td></tr>';
+        return;
+    }
+    data.forEach(item => {
+        const ror = item.return_rate || 0;
+        const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
+        const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
+        const buyPrice = Number(item.buy_price).toLocaleString();
+        const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '-';
+        const days = calcDaysHeld(item.buy_date, null);
+
+        holdBody.insertAdjacentHTML('beforeend', `
+            <tr>
+                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                <td>${buyPrice}</td>
+                <td>${curPrice}</td>
+                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
+                <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
+            </tr>
+        `);
+    });
+}
+
+function renderVirtualSoldTable() {
     const soldBody = document.getElementById('virtual-sold-body');
-    if (!soldBody) { console.error('[Virtual] virtual-sold-body not found'); return; }
+    if (!soldBody) return;
     soldBody.innerHTML = '';
-    if (soldData.length === 0) {
+
+    let data = currentVirtualSoldData;
+    if (virtualSoldSortState.key) {
+        data = virtualSortCompare(data, virtualSoldSortState.key, virtualSoldSortState.dir);
+    }
+
+    updateVirtualSortHeaders('sold');
+
+    if (data.length === 0) {
         soldBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">매도 기록이 없습니다.</td></tr>';
+        return;
+    }
+    data.forEach(item => {
+        const ror = item.return_rate || 0;
+        const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
+        const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
+        const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
+        const buyPrice = Number(item.buy_price).toLocaleString();
+        const sellPrice = (item.sell_price != null && item.sell_price > 0) ? Number(item.sell_price).toLocaleString() : '-';
+        const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
+        const days = calcDaysHeld(item.buy_date, item.sell_date);
+
+        soldBody.insertAdjacentHTML('beforeend', `
+            <tr>
+                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                <td>${buyPrice}</td>
+                <td>${sellPrice}${curPrice ? '<div style="font-size:0.8em; color:var(--text-secondary);">' + curPrice + '</div>' : ''}</td>
+                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
+                <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
+            </tr>
+        `);
+    });
+}
+
+function sortVirtual(table, key) {
+    const state = table === 'hold' ? virtualHoldSortState : virtualSoldSortState;
+    if (state.key === key) {
+        state.dir = state.dir === 'asc' ? 'desc' : 'asc';
     } else {
         soldData.slice().reverse().forEach(item => {
             const ror = item.return_rate || 0;
@@ -670,12 +786,18 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
                 </tr>
             `);
         });
+        state.key = key;
+        state.dir = 'asc';
+
     }
 
     // [추가] 차트 업데이트 (virtual_chart.js의 함수 호출)
     if (typeof refreshVirtualChart === 'function') {
         refreshVirtualChart(strategyName);
     }
+    if (table === 'hold') renderVirtualHoldTable();
+    else renderVirtualSoldTable();
+}
 };
 
 // 특정 종목 강제 업데이트 함수
