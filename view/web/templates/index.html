@@ -72,6 +72,7 @@
     <button data-tab="ranking">랭킹</button>
     <button data-tab="marketcap">시가총액</button>
     <button data-tab="virtual">모의투자 기록</button>
+    <button data-tab="scheduler">전략 스케줄러</button>
     <button data-tab="program">프로그램매매</button>
 </div>
 
@@ -165,11 +166,11 @@
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th>종목</th>
-                        <th>매수가</th>
-                        <th>현재가</th>
-                        <th>수익률</th>
-                        <th>보유일(매수일)</th>
+                        <th class="sortable" onclick="sortVirtual('hold','name')">종목</th>
+                        <th class="sortable" onclick="sortVirtual('hold','buy_price')">매수가</th>
+                        <th class="sortable" onclick="sortVirtual('hold','current_price')">현재가</th>
+                        <th class="sortable" onclick="sortVirtual('hold','return_rate')">수익률</th>
+                        <th class="sortable" onclick="sortVirtual('hold','days')">보유일(매수일)</th>
                     </tr>
                 </thead>
                 <tbody id="virtual-hold-body"></tbody>
@@ -181,16 +182,33 @@
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th>종목</th>
-                        <th>매수가</th>
-                        <th>현재가/매도가</th>
-                        <th>수익률</th>
-                        <th>보유일(매수/매도)</th>
+                        <th class="sortable" onclick="sortVirtual('sold','name')">종목</th>
+                        <th class="sortable" onclick="sortVirtual('sold','buy_price')">매수가</th>
+                        <th class="sortable" onclick="sortVirtual('sold','sell_price')">현재가/매도가</th>
+                        <th class="sortable" onclick="sortVirtual('sold','return_rate')">수익률</th>
+                        <th class="sortable" onclick="sortVirtual('sold','days')">보유일(매수/매도)</th>
                     </tr>
                 </thead>
                 <tbody id="virtual-sold-body"></tbody>
             </table>
         </div>
+    </div>
+
+    <div id="section-scheduler" class="section">
+        <div class="card">
+            <h2>전략 스케줄러</h2>
+            <div class="form-row">
+                <span id="scheduler-status-badge" class="badge closed">정지</span>
+                <button class="btn btn-buy" id="scheduler-start-btn" onclick="startScheduler()">시작</button>
+                <button class="btn btn-sell" id="scheduler-stop-btn" onclick="stopScheduler()">정지</button>
+            </div>
+            <div id="scheduler-info" class="stats-box" style="margin-top:12px;">
+                <span>스케줄러가 초기화되지 않았습니다.</span>
+            </div>
+        </div>
+
+        <h3 style="margin:16px 0 8px; color:var(--text-primary);">등록된 전략</h3>
+        <div id="scheduler-strategies"></div>
     </div>
 
     <div id="section-program" class="section">
@@ -227,6 +245,6 @@
 </div>
 <div id="toast-container" class="toast-container"></div>
 <script src="/static/js/virtual_chart.js?v=1"></script>
-<script src="/static/js/app.js?v=10"></script>
+<script src="/static/js/app.js?v=11"></script>
 </body>
 </html>

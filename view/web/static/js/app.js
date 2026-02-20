@@ -70,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (btn.dataset.tab === 'ranking') loadRanking('rise'); // 기본값
             if (btn.dataset.tab === 'marketcap') loadTopMarketCap('0001');
             if (btn.dataset.tab === 'virtual') loadVirtualHistory();
+            if (btn.dataset.tab === 'scheduler') loadSchedulerStatus();
         });
     });
 });
@@ -455,6 +456,10 @@ async function loadTopMarketCap(market = '0001') {
 let allVirtualData = [];
 let dailyChanges = {};
 let weeklyChanges = {};
+let virtualHoldSortState = { key: null, dir: 'asc' };
+let virtualSoldSortState = { key: null, dir: 'asc' };
+let currentVirtualHoldData = [];
+let currentVirtualSoldData = [];
 
 async function loadVirtualHistory() {
     const summaryBox = document.getElementById('virtual-summary-box');
@@ -825,5 +830,94 @@ function appendProgramTradingRow(d) {
     if (ptRowCount > 200) {
         tbody.removeChild(tbody.lastElementChild);
         ptRowCount--;
+    }
+}
+
+// ==========================================
+// 8. 전략 스케줄러
+// ==========================================
+let schedulerPollingId = null;
+
+async function loadSchedulerStatus() {
+    try {
+        const res = await fetch('/api/scheduler/status');
+        const data = await res.json();
+        renderSchedulerStatus(data);
+    } catch (e) {
+        document.getElementById('scheduler-info').innerHTML = '<span>스케줄러 상태 조회 실패</span>';
+    }
+}
+
+function renderSchedulerStatus(data) {
+    const badge = document.getElementById('scheduler-status-badge');
+    const info = document.getElementById('scheduler-info');
+    const strategiesDiv = document.getElementById('scheduler-strategies');
+
+    if (data.running) {
+        badge.textContent = '실행 중';
+        badge.className = 'badge open';
+    } else {
+        badge.textContent = '정지';
+        badge.className = 'badge closed';
+    }
+
+    const dryLabel = data.dry_run ? ' (dry-run: CSV만 기록)' : ' (실제 주문 실행)';
+    info.innerHTML = `<span>상태: ${data.running ? '실행 중' : '정지'}${dryLabel}</span>`;
+
+    if (!data.strategies || data.strategies.length === 0) {
+        strategiesDiv.innerHTML = '<div class="card"><span>등록된 전략이 없습니다.</span></div>';
+        return;
+    }
+
+    strategiesDiv.innerHTML = data.strategies.map(s => `
+        <div class="card" style="margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <h3 style="margin:0;color:var(--text-primary);">${s.name}</h3>
+                <span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}">
+                    포지션 ${s.current_holds}/${s.max_positions}
+                </span>
+            </div>
+            <div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
+                실행 주기: ${s.interval_minutes}분
+            </div>
+        </div>
+    `).join('');
+}
+
+async function startScheduler() {
+    try {
+        const res = await fetch('/api/scheduler/start', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            renderSchedulerStatus(data.status);
+            startSchedulerPolling();
+        }
+    } catch (e) {
+        alert('스케줄러 시작 실패');
+    }
+}
+
+async function stopScheduler() {
+    try {
+        const res = await fetch('/api/scheduler/stop', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            renderSchedulerStatus(data.status);
+            stopSchedulerPolling();
+        }
+    } catch (e) {
+        alert('스케줄러 정지 실패');
+    }
+}
+
+function startSchedulerPolling() {
+    stopSchedulerPolling();
+    schedulerPollingId = setInterval(loadSchedulerStatus, 10000); // 10초마다
+}
+
+function stopSchedulerPolling() {
+    if (schedulerPollingId) {
+        clearInterval(schedulerPollingId);
+        schedulerPollingId = null;
     }
 }
