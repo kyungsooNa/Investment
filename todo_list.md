@@ -171,3 +171,4 @@ Traceback (most recent call last):
 * **[안정성]** Pydantic 도입: `config.yaml` 로드 및 API 응답 데이터 처리 시 Pydantic 모델을 사용하여 유효성 검사(Validation) 및 타입 안정성 강화 (런타임 에러 방지).
 * **[아키텍처]** 이벤트 기반 아키텍처(Event-Driven): '전략(Signal)'과 '주문 실행(Execution Engine)'의 완전한 분리. 이를 통해 백테스팅 신뢰도를 높이고 향후 복합 주문 처리(Netting) 등의 고도화 기반 마련.
 * **[DevOps]** CI/CD 파이프라인 구축: GitHub Actions 등을 도입하여 코드 푸시 시 자동으로 단위/통합 테스트를 수행, 코드 변경에 따른 회귀(Regression) 방지.
+.
