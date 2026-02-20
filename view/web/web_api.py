@@ -565,3 +565,12 @@ async def stop_scheduler():
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     await ctx.scheduler.stop()
     return {"success": True, "status": ctx.scheduler.get_status()}
+
+
+@router.get("/scheduler/history")
+async def get_scheduler_history(strategy: str = None):
+    """스케줄러 시그널 실행 이력 조회. ?strategy=전략명 으로 필터 가능."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        return {"history": []}
+    return {"history": ctx.scheduler.get_signal_history(strategy)}

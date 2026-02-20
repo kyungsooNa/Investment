@@ -199,6 +199,51 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.stop()
         self.assertFalse(scheduler._running)
 
+    async def test_signal_history_recorded(self):
+        """시그널 실행 시 이력이 기록되는지 테스트."""
+        scheduler, vm, oes, tm = self._make_scheduler(dry_run=True)
+
+        import pytz
+        from datetime import datetime
+        kst = pytz.timezone("Asia/Seoul")
+        tm.get_current_kst_time.return_value = kst.localize(datetime(2026, 2, 20, 10, 30))
+
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트매수", strategy_name="테스트전략"
+        )
+        await scheduler._execute_signal(signal)
+
+        history = scheduler.get_signal_history()
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["code"], "005930")
+        self.assertEqual(history[0]["action"], "BUY")
+        self.assertEqual(history[0]["reason"], "테스트매수")
+        self.assertEqual(history[0]["timestamp"], "2026-02-20 10:30:00")
+
+    async def test_signal_history_filter_by_strategy(self):
+        """전략별 이력 필터링 테스트."""
+        scheduler, vm, oes, tm = self._make_scheduler(dry_run=True)
+
+        import pytz
+        from datetime import datetime
+        kst = pytz.timezone("Asia/Seoul")
+        tm.get_current_kst_time.return_value = kst.localize(datetime(2026, 2, 20, 11, 0))
+
+        for name, strategy_name in [("삼성전자", "전략A"), ("SK하이닉스", "전략B")]:
+            signal = TradeSignal(
+                code="005930", name=name, action="BUY",
+                price=70000, qty=1, reason="테스트", strategy_name=strategy_name
+            )
+            await scheduler._execute_signal(signal)
+
+        all_history = scheduler.get_signal_history()
+        self.assertEqual(len(all_history), 2)
+
+        filtered = scheduler.get_signal_history("전략A")
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["strategy_name"], "전략A")
+
 
 if __name__ == "__main__":
     unittest.main()

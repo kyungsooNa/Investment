@@ -15,6 +15,19 @@ from core.time_manager import TimeManager
 
 
 @dataclass
+class SignalRecord:
+    """실행된 시그널 이력 레코드."""
+    strategy_name: str
+    code: str
+    name: str
+    action: str          # BUY / SELL
+    price: int
+    reason: str
+    timestamp: str       # ISO format
+    api_success: bool = True
+
+
+@dataclass
 class StrategySchedulerConfig:
     """전략별 스케줄링 설정."""
     strategy: LiveStrategy
@@ -52,6 +65,8 @@ class StrategyScheduler:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._last_run: Dict[str, datetime] = {}
+        self._signal_history: List[SignalRecord] = []
+        self.MAX_HISTORY = 200  # 최대 보관 이력 수
 
     # ── 전략 등록 ──
 
@@ -169,6 +184,8 @@ class StrategyScheduler:
         elif signal.action == "SELL":
             self._vm.log_sell_by_strategy(signal.strategy_name, signal.code, signal.price)
 
+        api_success = True
+
         # API 주문 (dry_run이 아닐 때)
         if not self._dry_run:
             try:
@@ -186,30 +203,71 @@ class StrategyScheduler:
                         f"[Scheduler] API 주문 성공: {signal.action} {signal.code}"
                     )
                 else:
+                    api_success = False
                     msg = resp.msg1 if resp else "응답 없음"
                     self._logger.warning(
                         f"[Scheduler] API 주문 실패: {signal.action} {signal.code} - {msg} "
                         f"(CSV는 기록됨)"
                     )
             except Exception as e:
+                api_success = False
                 self._logger.error(
                     f"[Scheduler] API 주문 예외: {signal.action} {signal.code} - {e} "
                     f"(CSV는 기록됨)"
                 )
 
+        # 시그널 이력 기록
+        now = self._tm.get_current_kst_time()
+        record = SignalRecord(
+            strategy_name=signal.strategy_name,
+            code=signal.code,
+            name=signal.name,
+            action=signal.action,
+            price=signal.price,
+            reason=signal.reason,
+            timestamp=now.strftime("%Y-%m-%d %H:%M:%S"),
+            api_success=api_success,
+        )
+        self._signal_history.append(record)
+        if len(self._signal_history) > self.MAX_HISTORY:
+            self._signal_history = self._signal_history[-self.MAX_HISTORY:]
+
     # ── 상태 조회 ──
 
     def get_status(self) -> dict:
+        strategies = []
+        for cfg in self._strategies:
+            name = cfg.strategy.name
+            last = self._last_run.get(name)
+            strategies.append({
+                "name": name,
+                "interval_minutes": cfg.interval_minutes,
+                "max_positions": cfg.max_positions,
+                "current_holds": len(self._vm.get_holds_by_strategy(name)),
+                "last_run": last.strftime("%H:%M:%S") if last else None,
+            })
         return {
             "running": self._running,
             "dry_run": self._dry_run,
-            "strategies": [
-                {
-                    "name": cfg.strategy.name,
-                    "interval_minutes": cfg.interval_minutes,
-                    "max_positions": cfg.max_positions,
-                    "current_holds": len(self._vm.get_holds_by_strategy(cfg.strategy.name)),
-                }
-                for cfg in self._strategies
-            ],
+            "strategies": strategies,
         }
+
+    def get_signal_history(self, strategy_name: str = None) -> list:
+        """시그널 실행 이력 반환. strategy_name 지정 시 해당 전략만 필터."""
+        records = self._signal_history
+        if strategy_name:
+            records = [r for r in records if r.strategy_name == strategy_name]
+        # 최신순으로 반환
+        return [
+            {
+                "strategy_name": r.strategy_name,
+                "code": r.code,
+                "name": r.name,
+                "action": r.action,
+                "price": r.price,
+                "reason": r.reason,
+                "timestamp": r.timestamp,
+                "api_success": r.api_success,
+            }
+            for r in reversed(records)
+        ]
