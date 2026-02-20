@@ -5,8 +5,10 @@
 // ==========================================
 function formatTradingValue(val) {
     const num = parseInt(val || '0');
-    if (num >= 1e8) return (num / 1e8).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '억';
-    if (num >= 1e4) return (num / 1e4).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '만';
+    const abs = Math.abs(num);
+    const sign = num < 0 ? '-' : '';
+    if (abs >= 1e8) return sign + (abs / 1e8).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '억';
+    if (abs >= 1e4) return sign + (abs / 1e4).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '만';
     return num.toLocaleString();
 }
 
