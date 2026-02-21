@@ -13,21 +13,15 @@ from unittest.mock import MagicMock, AsyncMock
 from typing import Any, Dict, Iterable, Optional
 from tests.integration_test import ctx  # ← 방금 만든 모듈
 
-
+# 수정 후
 @pytest.fixture(autouse=True)
-def patch_cache_wrap_client_for_tests(mocker):
+def patch_cache_wrap_client_for_tests(mocker, test_cache_config):  # 파라미터로 test_cache_config 추가
     def custom_cache_wrap_client(client, logger, time_manager, env_fn, config=None):
-        fake_config = {
-            "cache": {
-                "base_dir": os.path.abspath("tests/.cache"),
-                "enabled_methods": ["get_data"]
-            }
-        }
-        return ClientWithCache(client, logger, time_manager, env_fn, config=fake_config)
+        # 하드코딩된 fake_config를 버리고 주입받은 test_cache_config를 그대로 사용!
+        return ClientWithCache(client, logger, time_manager, env_fn, config=test_cache_config)
 
     mocker.patch("brokers.broker_api_wrapper.cache_wrap_client", side_effect=custom_cache_wrap_client)
-
-
+    
 @pytest.fixture(scope="session")
 def test_cache_config():
     test_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".cache"))
