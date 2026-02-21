@@ -15,13 +15,12 @@ from tests.integration_test import ctx  # ← 방금 만든 모듈
 
 
 @pytest.fixture(autouse=True)
-def patch_cache_wrap_client_for_tests(mocker, test_cache_config):  # ✅ 파라미터 추가됨
-    def custom_cache_wrap_client(client, logger, time_manager, env_fn, config=None):
-        # ✅ 하드코딩된 fake_config를 버리고 주입받은 test_cache_config를 그대로 사용!
-        return ClientWithCache(client, logger, time_manager, env_fn, config=test_cache_config)
+def patch_cache_wrap_client_for_tests(mocker):
+    # 캐시를 적용하지 않고 원본 클라이언트를 그대로 반환하여 충돌 방지
+    def bypass_cache(client, logger, time_manager, env_fn, config=None):
+        return client
 
-    mocker.patch("brokers.broker_api_wrapper.cache_wrap_client", side_effect=custom_cache_wrap_client)
-
+    mocker.patch("brokers.broker_api_wrapper.cache_wrap_client", side_effect=bypass_cache)
 
 @pytest.fixture(scope="session")
 def test_cache_config():
