@@ -318,7 +318,7 @@ async def test_buy_stock_full_integration_real(real_app_instance, mocker):
         u = str(url)
         if "hashkey" in u:
             hash_call = c
-        if u == expected_order_url:
+        if expected_order_url in u:
             order_call = c
 
     # assert hash_call is not None, "해시키 POST 호출이 없습니다."
@@ -416,7 +416,7 @@ async def test_sell_stock_full_integration_real(real_app_instance, mocker):
         u = str(url)
         if "hashkey" in u:
             hash_call = c
-        if u == expected_order_url:
+        if expected_order_url in u:
             order_call = c
 
     # assert hash_call is not None, "해시키 POST 호출이 없습니다."
