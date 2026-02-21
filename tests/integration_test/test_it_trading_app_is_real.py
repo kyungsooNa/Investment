@@ -2,6 +2,7 @@
 import pytest
 import asyncio
 import json
+import app
 from app.trading_app import TradingApp
 from unittest.mock import AsyncMock, MagicMock
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResFluctuation, ErrorCode
@@ -1659,7 +1660,6 @@ async def test_handle_realtime_stream_full_integration_real(real_app_instance, m
 
     # 3) 네트워크 차단 및 오타 수정
     mocker.patch.object(wsapi, "_get_approval_key", new_callable=AsyncMock, return_value="APPROVAL-KEY")
-    # 아래 줄의 중복 할당(= mocker.patch.object)을 제거하세요
     mock_connect = mocker.patch.object(wsapi, "connect", new_callable=AsyncMock, return_value=True)
     sub_price = mocker.patch.object(wsapi, "subscribe_realtime_price", new_callable=AsyncMock, return_value=True)
     sub_quote = mocker.patch.object(wsapi, "subscribe_realtime_quote", new_callable=AsyncMock, return_value=True)

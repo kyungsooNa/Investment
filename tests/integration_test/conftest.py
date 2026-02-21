@@ -16,7 +16,7 @@ from tests.integration_test import ctx  # ← 방금 만든 모듈
 
 @pytest.fixture(autouse=True)
 def patch_cache_wrap_client_for_tests(mocker):
-    # 캐시 래퍼를 완전히 제거하여 NoneType 에러 및 0 awaits 문제 원천 차단
+    # 캐시를 바이패스하여 NoneType 에러 원천 차단
     def bypass_cache(client, logger, time_manager, env_fn, config=None):
         return client
     mocker.patch("brokers.broker_api_wrapper.cache_wrap_client", side_effect=bypass_cache)
