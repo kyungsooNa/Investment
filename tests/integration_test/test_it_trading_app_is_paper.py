@@ -47,10 +47,10 @@ def real_app_instance(mocker, get_mock_config, test_logger):
                  return_value=mock_token_manager_instance)
 
     # 2. Hashkey 생성 로직 모킹
-    mock_trading_api_instance = MagicMock()
-    mock_trading_api_instance._get_hashkey.return_value = "mock_hashkey_for_it_test"
-    mocker.patch(f'{KoreaInvestApiTrading.__module__}.{KoreaInvestApiTrading.__name__}',
-                 return_value=mock_trading_api_instance)
+    # mock_trading_api_instance = MagicMock()
+    # mock_trading_api_instance._get_hashkey.return_value = "mock_hashkey_for_it_test"
+    # mocker.patch(f'{KoreaInvestApiTrading.__module__}.{KoreaInvestApiTrading.__name__}',
+    #              return_value=mock_trading_api_instance)
 
     # ✅ 3. logging.getLogger를 모킹하여 logger 핸들러 무력화
     # dummy_logger = MagicMock()
