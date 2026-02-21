@@ -16,10 +16,9 @@ from tests.integration_test import ctx  # ← 방금 만든 모듈
 
 @pytest.fixture(autouse=True)
 def patch_cache_wrap_client_for_tests(mocker):
-    # 캐시를 적용하지 않고 원본 클라이언트를 그대로 반환하여 충돌 방지
+    # 캐시 래퍼를 완전히 제거하여 NoneType 에러 및 0 awaits 문제 원천 차단
     def bypass_cache(client, logger, time_manager, env_fn, config=None):
         return client
-
     mocker.patch("brokers.broker_api_wrapper.cache_wrap_client", side_effect=bypass_cache)
 
 @pytest.fixture(scope="session")
@@ -72,6 +71,7 @@ def clear_cache_files(test_cache_config):
 def test_logger(request):
     # 📌 현재 conftest.py 기준 ./log 경로 생성
     log_dir = os.path.join(os.path.dirname(__file__), "log")
+    os.makedirs(log_dir, exist_ok=True)
     logger = Logger(log_dir=log_dir)
 
     # 실행되는 테스트 케이스 이름 로깅
