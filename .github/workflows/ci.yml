@@ -51,7 +51,7 @@ jobs:
     - name: Run tests with coverage
       run: |
         # 1) 터미널 출력(term-missing)을 파일로 저장하고, 동시에 xml도 만듭니다.
-        pytest --cov=. --cov-omit="brokers/*" --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov > coverage.txt
+        pytest --cov=. --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov > coverage.txt
         # [중요] 실제로 파일이 생겼는지 확인하기 위해 목록을 출력합니다.
         echo "Check if htmlcov exists:"
         ls -d htmlcov/ || echo "htmlcov directory NOT FOUND"
