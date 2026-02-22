@@ -46,7 +46,7 @@ jobs:
     - name: Run tests with coverage
       run: |
         # 1) 터미널 출력(term-missing)을 파일로 저장하고, 동시에 xml도 만듭니다.
-        pytest --cov=. --cov-report=term-missing --cov-report=xml > coverage.txt
+        pytest --cov=. --cov-report=term-missing --cov-report=xml --cov-report=html > coverage.txt
         # 터미널에도 결과가 보이게 출력해줍니다.
         cat coverage.txt
 
@@ -59,3 +59,11 @@ jobs:
         # 필요한 표 부분만 골라내거나 전체를 넣습니다.
         cat coverage.txt >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+    # 7. HTML 리포트를 Artifact로 저장 (브라우저 확인용)
+    - name: Upload HTML Coverage Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-coverage-report-html  # 다운로드 시 파일 이름
+        path: htmlcov/                     # pytest-cov가 생성하는 기본 HTML 폴더명
