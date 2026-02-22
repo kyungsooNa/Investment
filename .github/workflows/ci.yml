@@ -75,13 +75,13 @@ jobs:
 
     # 8. GitHub Pages에 리포트 배포 (웹에서 바로 확인용)
     - name: Deploy to GitHub Pages
-      if: github.ref == 'refs/heads/main' # 메인 브랜치일 때만 배포
+      if: github.ref == 'refs/heads/main'
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./htmlcov  # ✅ 생성된 리포트 폴더 경로
-        # destination_dir: coverage # ⚠️ 일단 경로를 단순화하기 위해 주석 처리를 권장합니다.
-        force_orphan: true      # ✅ 기존 배포 이력을 깔끔하게 정리하고 새로 올림
+        publish_dir: ./htmlcov  # ✅ 생성된 리포트 폴더
+        # destination_dir를 삭제하여 주소를 단순화합니다.
+        # 이제 주소는 .../Investment/index.html 입니다.
         user_name: 'github-actions[bot]'
         user_email: 'github-actions[bot]@users.noreply.github.com'
     
