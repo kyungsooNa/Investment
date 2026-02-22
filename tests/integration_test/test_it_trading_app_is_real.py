@@ -89,12 +89,31 @@ async def test_execute_action_select_environment_success_real(real_app_instance,
     app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
     assert running_status is True
 
+@pytest.mark.asyncio
+async def test_execute_action_select_environment_fail_real(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '0' - 거래 환경 변경 실패 시 running_status = False
+    """
+    app = real_app_instance
+
+    # ✅ _select_environment() 모킹: 실패
+    mocker.patch.object(app, "select_environment", new_callable=AsyncMock, return_value=False)
+    app.logger.info = MagicMock()
+
+    # --- 실행 ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("0")
+
+    # --- 검증 ---
+    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
+    assert running_status is False
+
 
 @pytest.mark.asyncio
 async def test_execute_action_invalidate_token_success_real(real_app_instance):
     """
     (통합 테스트) 메뉴 '98' - 토큰 무효화 성공 흐름
-    TradingApp → TokenManager.invalidate_token → CLIView.display_token_invalidated_message
+TradingApp → TokenManager.invalidate_token → CLIView.display_token_invalidated_message
     """
     app = real_app_instance
 
@@ -112,44 +131,25 @@ async def test_execute_action_invalidate_token_success_real(real_app_instance):
     assert running_status is True
 
 
-# @pytest.mark.asyncio
-# async def test_execute_action_exit_success_real(real_app_instance):
-#     """
-#     (통합 테스트) 메뉴 '99' - 프로그램 종료 처리 흐름
-#     TradingApp → CLIView.display_exit_message → running_status=False 반환
-#     """
-#     app = real_app_instance
+@pytest.mark.asyncio
+async def test_execute_action_exit_success_real(real_app_instance):
+    """
+    (통합 테스트) 메뉴 '99' - 프로그램 종료 처리 흐름
+    TradingApp → CLIView.display_exit_message → running_status=False 반환
+    """
+    app = real_app_instance
 
-#     # ✅ 종료 메시지 출력 함수 모킹
-#     app.cli_view.display_exit_message = MagicMock()
+    # ✅ 종료 메시지 출력 함수 모킹
+    app.cli_view.display_exit_message = MagicMock()
 
-#     # --- 실행 ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("999")
+    # --- 실행 ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("999")
 
-#     # --- 검증 ---
-#     app.cli_view.display_exit_message.assert_called_once()
-#     assert running_status is False
+    # --- 검증 ---
+    app.cli_view.display_exit_message.assert_called_once()
+    assert running_status is False
 
-
-# @pytest.mark.asyncio
-# async def test_execute_action_select_environment_fail_real(real_app_instance, mocker):
-#     """
-#     (통합 테스트) 메뉴 '0' - 거래 환경 변경 실패 시 running_status = False
-#     """
-#     app = real_app_instance
-
-#     # ✅ _select_environment() 모킹: 실패
-#     mocker.patch.object(app, "select_environment", new_callable=AsyncMock, return_value=False)
-#     app.logger.info = MagicMock()
-
-#     # --- 실행 ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("0")
-
-#     # --- 검증 ---
-#     app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
-#     assert running_status is False
 
 
 # @pytest.mark.asyncio

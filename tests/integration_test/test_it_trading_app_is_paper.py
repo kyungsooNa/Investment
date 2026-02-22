@@ -170,24 +170,24 @@ async def test_execute_action_invalidate_token_success_paper(real_app_instance):
     assert running_status is True
 
 
-# @pytest.mark.asyncio
-# async def test_execute_action_exit_success_paper(real_app_instance):
-#     """
-#     (통합 테스트) 메뉴 '99' - 프로그램 종료 처리 흐름
-#     TradingApp → CLIView.display_exit_message → running_status=False 반환
-#     """
-#     app = real_app_instance
+@pytest.mark.asyncio
+async def test_execute_action_exit_success_paper(real_app_instance):
+    """
+    (통합 테스트) 메뉴 '99' - 프로그램 종료 처리 흐름
+    TradingApp → CLIView.display_exit_message → running_status=False 반환
+    """
+    app = real_app_instance
 
-#     # ✅ 종료 메시지 출력 함수 모킹
-#     app.cli_view.display_exit_message = MagicMock()
+    # ✅ 종료 메시지 출력 함수 모킹
+    app.cli_view.display_exit_message = MagicMock()
 
-#     # --- 실행 ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("999")
+    # --- 실행 ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("999")
 
-#     # --- 검증 ---
-#     app.cli_view.display_exit_message.assert_called_once()
-#     assert running_status is False
+    # --- 검증 ---
+    app.cli_view.display_exit_message.assert_called_once()
+    assert running_status is False
 
 
 # @pytest.mark.asyncio
