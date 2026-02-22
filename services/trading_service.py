@@ -112,11 +112,25 @@ class TradingService:
         """실시간 주식호가 데이터 구독을 해지합니다."""
         return await self._broker_api_wrapper.unsubscribe_realtime_quote(stock_code)
 
-    async def subscribe_program_trading(self, stock_code: str):
-        return await self._broker_api_wrapper.subscribe_program_trading(stock_code)
+    async def subscribe_program_trading(self, stock_code: str) -> bool:
+        if not stock_code:
+            self._logger.warning("프로그램 매매 구독을 위한 종목 코드가 누락되었습니다.")
+            return False
+        try:
+            return await self._broker_api_wrapper.subscribe_program_trading(stock_code)
+        except Exception as e:
+            self._logger.error(f"프로그램 매매 구독 중 오류 발생: {e}")
+            return False
 
-    async def unsubscribe_program_trading(self, stock_code: str):
-        return await self._broker_api_wrapper.unsubscribe_program_trading(stock_code)
+    async def unsubscribe_program_trading(self, stock_code: str) -> bool:
+        if not stock_code:
+            self._logger.warning("프로그램 매매 구독 해지를 위한 종목 코드가 누락되었습니다.")
+            return False
+        try:
+            return await self._broker_api_wrapper.unsubscribe_program_trading(stock_code)
+        except Exception as e:
+            self._logger.error(f"프로그램 매매 구독 해지 중 오류 발생: {e}")
+            return False
 
     async def get_price_summary(self, stock_code) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
