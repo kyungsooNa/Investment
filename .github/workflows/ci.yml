@@ -86,3 +86,4 @@ jobs:
         title: "📊 코드 커버리지 리포트"
         badge-title: "Coverage"
         hide-comment: true # PR 댓글은 숨기고 README만 업데이트
+        github-token: ${{ secrets.GITHUB_TOKEN }} # ✅ 이 줄을 꼭 추가해야 로봇이 파일을 수정합니다!
