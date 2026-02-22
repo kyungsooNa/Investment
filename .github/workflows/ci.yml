@@ -73,8 +73,15 @@ jobs:
       with:
         path: htmlcov/ # 리포트가 생성된 폴더 경로
 
-    # 2) 별도의 브랜치 없이 GitHub Pages 서버에 즉시 배포합니다.
+    # 8) 별도의 브랜치 없이 GitHub Pages 서버에 즉시 배포합니다.
     - name: Deploy to GitHub Pages
       id: deployment
       uses: actions/deploy-pages@v4
     
+    - name: Pytest coverage comment
+      if: github.ref == 'refs/heads/main'
+      uses: MishaKav/pytest-coverage-comment@main
+      with:
+        pytest-xml-coverage-path: ./coverage.xml
+        title: "📊 코드 커버리지 리포트"
+        badge-title: "Coverage"
