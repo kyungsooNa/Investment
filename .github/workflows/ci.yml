@@ -13,6 +13,7 @@ jobs:
   
     permissions:
       contents: write  # GitHub Pages 배포를 위해 쓰기 권한 허용
+
     steps:
     # 1. GitHub 레포지토리의 코드를 가상 환경으로 가져옵니다.
     - name: Checkout repository
@@ -49,8 +50,10 @@ jobs:
       run: |
         # 1) 터미널 출력(term-missing)을 파일로 저장하고, 동시에 xml도 만듭니다.
         pytest --cov=. --cov-report=term-missing --cov-report=xml --cov-report=html > coverage.txt
-        # 터미널에도 결과가 보이게 출력해줍니다.
-        cat coverage.txt
+        # [중요] 실제로 파일이 생겼는지 확인하기 위해 목록을 출력합니다.
+        echo "Check if htmlcov exists:"
+        ls -d htmlcov/ || echo "htmlcov directory NOT FOUND"
+        ls -la htmlcov/
 
     - name: Post Coverage to Summary
       if: always()
