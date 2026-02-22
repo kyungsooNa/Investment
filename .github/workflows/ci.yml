@@ -84,12 +84,13 @@ jobs:
       uses: MishaKav/pytest-coverage-comment@main
       with:
         pytest-xml-coverage-path: ./coverage.xml
-        # 🚀 [강제 변화] 제목을 바꿔 로봇이 '새로운 내용'으로 인식하게 합니다.
-        badge-title: "Trading-App-Coverage" 
         title: "📊 상세 커버리지 리포트"
-        # 🚀 [필수] 아래 옵션들을 조합해 'Nothing to report'를 방지합니다.
-        report-only-changed-files: false
+        badge-title: "Coverage"
+        # 🚀 [핵심] 글자 수 초과 방지를 위해 상세 표와 댓글 기능을 완전히 끕니다.
+        hide-report: true
         hide-comment: true
-        hide-report: false # 리포트를 잠시 켜서 로봇이 일하게 만듭니다.
-        create-new-comment: false
+        # 🚀 100% 통과한 파일은 계산에서 제외하여 용량을 줄입니다.
+        xml-skip-covered: true
+        # 🚀 수치 변화가 없어도 업데이트를 시도합니다.
+        report-only-changed-files: false
         github-token: ${{ secrets.GITHUB_TOKEN }}
