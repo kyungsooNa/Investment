@@ -49,7 +49,7 @@ jobs:
         import xml.etree.ElementTree as ET
         import re
 
-        # XML에서 수치 추출
+        # 1. 수치 추출
         tree = ET.parse('coverage.xml')
         root = tree.getroot()
         percent = int(float(root.attrib['line-rate']) * 100)
@@ -59,24 +59,24 @@ jobs:
         with open('README.md', 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # 주석 사이 내용 교체
+        # 2. 중복 방지 로직: 파일 내 모든 기존 뱃지/주석을 찾아서 하나로 통합
+        # Begin부터 End까지의 패턴을 찾아서 딱 한 번만 교체합니다.
         pattern = r'.*?'
         replacement = f'\\n{badge}\\n'
         
         if '' in content:
-            new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+            # count=1을 주어 혹시 태그가 여러 개 있어도 첫 번째 것만 수정합니다.
+            new_content = re.sub(pattern, replacement, content, count=1, flags=re.DOTALL)
+            # 만약 태그가 또 남아있다면(중복) 나머지는 제거합니다.
+            new_content = re.sub(pattern, '', new_content, flags=re.DOTALL)
+            
             with open('README.md', 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            print(f'Successfully updated badge to {percent}%')
-        else:
-            print('Error: Tags not found in README.md')
+                f.write(new_content.strip() + '\\n')
         "
-
-        # 변경 사항 직접 푸시
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
         git add README.md
-        git commit -m "chore: update coverage badge [skip ci]" || echo "No changes"
+        git commit -m "chore: clean up and update badge [skip ci]" || echo "No changes"
         git push
 
     # 🚀 2. GitHub Pages 상세 리포트 배포 (유지)
