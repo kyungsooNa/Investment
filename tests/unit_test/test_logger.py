@@ -86,7 +86,7 @@ def test_logger_error_with_exc_info(clean_logger_instance):
     error() 메서드가 exc_info=True로 호출될 때의 로깅을 테스트합니다.
     """
     logger, log_dir = clean_logger_instance
-    message = "Test error with exception."
+    message = "Test error with exception"
     try:
         raise ValueError("Something went wrong")
     except ValueError as e:

@@ -430,3 +430,26 @@ async def test_get_all_stock_name_list_edge_cases(broker_wrapper_instance):
     wrapper.get_all_stock_codes = mock_get_all_stock_codes_no_name_col
     result = await wrapper.get_all_stock_name_list()
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_subscribe_program_trading_delegation(broker_wrapper_instance):
+    """subscribe_program_trading 메서드가 _client.subscribe_program_trading을 호출하는지 테스트합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+    mock_client.subscribe_program_trading.return_value = True
+
+    result = await wrapper.subscribe_program_trading("005930")
+
+    mock_client.subscribe_program_trading.assert_awaited_once_with("005930")
+    assert result is True
+
+@pytest.mark.asyncio
+async def test_unsubscribe_program_trading_delegation(broker_wrapper_instance):
+    """unsubscribe_program_trading 메서드가 _client.unsubscribe_program_trading을 호출하는지 테스트합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+    mock_client.unsubscribe_program_trading.return_value = True
+
+    result = await wrapper.unsubscribe_program_trading("005930")
+
+    mock_client.unsubscribe_program_trading.assert_awaited_once_with("005930")
+    assert result is True

@@ -322,3 +322,26 @@ async def test_unsubscribe_realtime_quote_delegation(korea_invest_client_instanc
 
     mock_websocket_api.unsubscribe_realtime_quote.assert_awaited_once_with("005930")
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_subscribe_program_trading_delegation(korea_invest_client_instance):
+    """subscribe_program_trading 메서드가 _websocketAPI.subscribe_program_trading을 호출하는지 테스트합니다."""
+    client, _, _, _, mock_websocket_api, _, _ = korea_invest_client_instance
+    mock_websocket_api.subscribe_program_trading.return_value = True
+
+    result = await client.subscribe_program_trading("005930")
+
+    mock_websocket_api.subscribe_program_trading.assert_awaited_once_with("005930")
+    assert result is True
+
+@pytest.mark.asyncio
+async def test_unsubscribe_program_trading_delegation(korea_invest_client_instance):
+    """unsubscribe_program_trading 메서드가 _websocketAPI.unsubscribe_program_trading을 호출하는지 테스트합니다."""
+    client, _, _, _, mock_websocket_api, _, _ = korea_invest_client_instance
+    mock_websocket_api.unsubscribe_program_trading.return_value = True
+
+    result = await client.unsubscribe_program_trading("005930")
+
+    mock_websocket_api.unsubscribe_program_trading.assert_awaited_once_with("005930")
+    assert result is True
