@@ -84,8 +84,10 @@ jobs:
       uses: MishaKav/pytest-coverage-comment@main
       with:
         pytest-xml-coverage-path: ./coverage.xml
-        readme-filename: README.md 
         title: "📊 코드 커버리지 리포트"
         badge-title: "Coverage"
-        hide-comment: true
+        # 🚀 [핵심 수정] 글자 수 초과를 막기 위해 상세 표를 숨깁니다.
+        hide-report: true 
+        # 🚀 100% 통과한 파일은 리스트에서 제외해 용량을 더 줄입니다.
+        xml-skip-covered: true
         github-token: ${{ secrets.GITHUB_TOKEN }}
