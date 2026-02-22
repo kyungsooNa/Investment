@@ -1,102 +1,90 @@
 name: Python CI
 
-# 워크플로우가 언제 실행될지 정의합니다 (트리거)
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
     branches: [ "main" ]
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest  # 최신 우분투 환경에서 실행
-  
+    runs-on: ubuntu-latest
+    
+    # 🔐 README 수정 및 Pages 배포를 위해 모든 쓰기 권한을 활성화합니다.
     permissions:
       contents: write
-      pages: write      # 추가됨
-      id-token: write   # 추가됨
+      pages: write
+      id-token: write
 
     steps:
-    # 1. GitHub 레포지토리의 코드를 가상 환경으로 가져옵니다.
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-    # 2. 파이썬 환경을 설정합니다. (현재 사용 중이신 3.10 버전)
     - name: Set up Python 3.10
       uses: actions/setup-python@v5
       with:
-        python-version: "3.10"
-        cache: 'pip' # 패키지 설치 속도를 높이기 위해 pip 캐시 적용
+        python-version: "3.10" #
+        cache: 'pip'
 
-    # 3. 프로젝트 실행에 필요한 패키지들을 설치합니다.
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    # ==========================================
-    # [여기를 추가하세요!] 4. 테스트용 가짜 설정 파일 복사
-    # ==========================================
-    - name: Create Mock Config
-      run: cp config/config.yaml.example config/config.yaml
-    - name: Create data directory
-      run: mkdir -p data
-
-    # 5. 테스트 코드 실행
-    - name: Run tests with pytest
+    - name: Create Mock Config and Data
       run: |
-        pytest
+        mkdir -p config data
+        cp config/config.yaml.example config/config.yaml || echo "No example config"
 
-    # 6. 커버리지(테스트 통과율)를 측정하고 싶다면 아래 명령어를 사용합니다.
     - name: Run tests with coverage
       run: |
-        # 1) 터미널 출력(term-missing)을 파일로 저장하고, 동시에 xml도 만듭니다.
-        pytest --cov=. --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov > coverage.txt
-        # [중요] 실제로 파일이 생겼는지 확인하기 위해 목록을 출력합니다.
-        echo "Check if htmlcov exists:"
-        ls -d htmlcov/ || echo "htmlcov directory NOT FOUND"
-        ls -la htmlcov/
-        ls -l coverage.xml
+        # XML(뱃지용)과 HTML(웹배포용) 리포트를 모두 생성합니다.
+        pytest --cov=. --cov-report=xml:coverage.xml --cov-report=html:htmlcov --cov-report=term-missing > coverage.txt
 
-    - name: Post Coverage to Summary
-      if: always()
-      run: |
-        echo "## 📊 코드 커버리지 리포트" >> $GITHUB_STEP_SUMMARY
-        echo "### 상세 현황" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`text" >> $GITHUB_STEP_SUMMARY
-        # 필요한 표 부분만 골라내거나 전체를 넣습니다.
-        cat coverage.txt >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
-    # 7. HTML 리포트를 Artifact로 저장 (브라우저 확인용)
-    - name: Upload Pages artifact
-      uses: actions/upload-pages-artifact@v3
-      with:
-        path: htmlcov/ # 리포트가 생성된 폴더 경로
-
-    # 8) 별도의 브랜치 없이 GitHub Pages 서버에 즉시 배포합니다.
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
-    
-    # 1️⃣ README 뱃지 강제 업데이트 (숫자만 표시)
+    # 🚀 1. README 뱃지 강제 업데이트 (파이썬 사용)
     - name: Force Update README Badge
       if: github.ref == 'refs/heads/main'
       run: |
-        PERCENT=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(int(float(root.attrib['line-rate'])*100))")
-        COLOR=$([ $PERCENT -ge 90 ] && echo "green" || ([ $PERCENT -ge 70 ] && echo "yellow" || echo "red"))
-        BADGE="![Coverage](https://img.shields.io/badge/Coverage-$PERCENT%25-$COLOR)"
-        sed -i "//,//c\\n$BADGE\n" README.md
+        python3 -c "
+        import xml.etree.ElementTree as ET
+        import re
+
+        # XML에서 수치 추출
+        tree = ET.parse('coverage.xml')
+        root = tree.getroot()
+        percent = int(float(root.attrib['line-rate']) * 100)
+        color = 'green' if percent >= 90 else 'yellow' if percent >= 70 else 'red'
+        badge = f'![Coverage](https://img.shields.io/badge/Coverage-{percent}%25-{color})'
+
+        with open('README.md', 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # 주석 사이 내용 교체
+        pattern = r'.*?'
+        replacement = f'\\n{badge}\\n'
+        
+        if '' in content:
+            new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+            with open('README.md', 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            print(f'Successfully updated badge to {percent}%')
+        else:
+            print('Error: Tags not found in README.md')
+        "
+
+        # 변경 사항 직접 푸시
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
         git add README.md
-        git commit -m "chore: update badge to $PERCENT% [skip ci]" || echo "No changes"
+        git commit -m "chore: update coverage badge [skip ci]" || echo "No changes"
         git push
 
-    # 2️⃣ 상세 웹 리포트 배포 (상세 차트 표시 - 선택 사항)
-    - name: Upload and Deploy Pages
+    # 🚀 2. GitHub Pages 상세 리포트 배포 (유지)
+    - name: Upload Pages artifact
       uses: actions/upload-pages-artifact@v3
       with:
         path: htmlcov/
+
     - name: Deploy to GitHub Pages
+      id: deployment
       uses: actions/deploy-pages@v4
