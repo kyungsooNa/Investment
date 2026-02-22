@@ -285,6 +285,18 @@ async def get_virtual_summary():
         
     return ctx.virtual_manager.get_summary()
 
+@router.get("/virtual/strategies")
+async def get_strategies():
+    """등록된 모든 전략 목록 반환 (UI 탭 생성용)"""
+    ctx = _get_ctx()
+    return ctx.virtual_manager.get_all_strategies()
+
+@router.get("/virtual/chart/{strategy_name}")
+async def get_strategy_chart(strategy_name: str):
+    """특정 전략의 수익률 히스토리(차트용) 반환"""
+    ctx = _get_ctx()
+    return ctx.virtual_manager.get_strategy_return_history(strategy_name)
+
 @router.get("/virtual/history")
 async def get_virtual_history():
     """가상 매매 전체 기록 조회 (종목명 + HOLD 종목 현재가 포함)"""
