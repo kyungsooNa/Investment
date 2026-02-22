@@ -51,11 +51,12 @@ jobs:
     - name: Run tests with coverage
       run: |
         # 1) 터미널 출력(term-missing)을 파일로 저장하고, 동시에 xml도 만듭니다.
-        pytest --cov=. --cov-report=term-missing --cov-report=xml --cov-report=html > coverage.txt
+        pytest --cov=. --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov > coverage.txt
         # [중요] 실제로 파일이 생겼는지 확인하기 위해 목록을 출력합니다.
         echo "Check if htmlcov exists:"
         ls -d htmlcov/ || echo "htmlcov directory NOT FOUND"
         ls -la htmlcov/
+        ls -l coverage.xml
 
     - name: Post Coverage to Summary
       if: always()
@@ -83,7 +84,8 @@ jobs:
       uses: MishaKav/pytest-coverage-comment@main
       with:
         pytest-xml-coverage-path: ./coverage.xml
+        readme-filename: README.md 
         title: "📊 코드 커버리지 리포트"
         badge-title: "Coverage"
-        hide-comment: true # PR 댓글은 숨기고 README만 업데이트
-        github-token: ${{ secrets.GITHUB_TOKEN }} # ✅ 이 줄을 꼭 추가해야 로봇이 파일을 수정합니다!
+        hide-comment: true
+        github-token: ${{ secrets.GITHUB_TOKEN }}
