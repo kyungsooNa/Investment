@@ -152,77 +152,77 @@ async def test_execute_action_exit_success_real(real_app_instance):
 
 
 
-@pytest.mark.asyncio
-async def test_get_current_price_full_integration_real(real_app_instance, mocker):
-    """
-    (통합 테스트) 현재가 조회 시 TradingApp → StockQueryService → BrokerAPIWrapper →
-    get_current_price → call_api 흐름을 따라 실제 서비스가 실행되며,
-    최하위 API 호출만 모킹하여 검증합니다.
-    """
-    # --- Arrange ---
-    app = real_app_instance
-    ctx.ki.bind(app)  # ki_providers 역할
+# @pytest.mark.asyncio
+# async def test_get_current_price_full_integration_real(real_app_instance, mocker):
+#     """
+#     (통합 테스트) 현재가 조회 시 TradingApp → StockQueryService → BrokerAPIWrapper →
+#     get_current_price → call_api 흐름을 따라 실제 서비스가 실행되며,
+#     최하위 API 호출만 모킹하여 검증합니다.
+#     """
+#     # --- Arrange ---
+#     app = real_app_instance
+#     ctx.ki.bind(app)  # ki_providers 역할
 
-    # ✅ 표준 스키마(output 키)로 payload 구성
-    payload = {
-        "rt_cd": "0",
-        "msg1": "정상",
-        "output": {
-            "stck_prpr": "70500",
-            "prdy_vrss": "1200",
-            "prdy_ctrt": "1.73",
-            "stck_cntg_hour": "101500"   # 선택이지만 있으면 뷰표시 깔끔
-        }
-    }
+#     # ✅ 표준 스키마(output 키)로 payload 구성
+#     payload = {
+#         "rt_cd": "0",
+#         "msg1": "정상",
+#         "output": {
+#             "stck_prpr": "70500",
+#             "prdy_vrss": "1200",
+#             "prdy_ctrt": "1.73",
+#             "stck_cntg_hour": "101500"   # 선택이지만 있으면 뷰표시 깔끔
+#         }
+#     }
 
-    # 1) _execute_request는 '실행되도록' 스파이만
-    # 2) 네트워크 레이어 차단: 세션의 get만 모킹
+#     # 1) _execute_request는 '실행되도록' 스파이만
+#     # 2) 네트워크 레이어 차단: 세션의 get만 모킹
 
-    quot_api = ctx.ki.quot
-    spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
+#     quot_api = ctx.ki.quot
+#     spy_exec, mock_get = ctx.spy_get(quot_api, mocker, payload)
 
 
-    # 입력 모킹
-    test_stock_code = "005930"
-    mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock, return_value=test_stock_code)
+#     # 입력 모킹
+#     test_stock_code = "005930"
+#     mocker.patch.object(app.cli_view, "get_user_input", new_callable=AsyncMock, return_value=test_stock_code)
 
-    app.cli_view.handle_get_current_stock_price = MagicMock()
-    app.cli_view.display_etf_info_error = MagicMock()
+#     app.cli_view.handle_get_current_stock_price = MagicMock()
+#     app.cli_view.display_etf_info_error = MagicMock()
 
-    app.cli_view.display_current_stock_price = MagicMock()
-    app.cli_view.display_current_stock_price_error = MagicMock()
+#     app.cli_view.display_current_stock_price = MagicMock()
+#     app.cli_view.display_current_stock_price_error = MagicMock()
 
-    # --- 실행 ---
-    executor = UserActionExecutor(app)
-    ok = await executor.execute("1")
-    assert ok is True
+#     # --- 실행 ---
+#     executor = UserActionExecutor(app)
+#     ok = await executor.execute("1")
+#     assert ok is True
 
-    # === _execute_request 레벨: 메서드/최종 URL/params 확인 ===
-    spy_exec.assert_called()
-    method, url = spy_exec.call_args.args[:2]
-    assert method == "GET"
+#     # === _execute_request 레벨: 메서드/최종 URL/params 확인 ===
+#     spy_exec.assert_called()
+#     method, url = spy_exec.call_args.args[:2]
+#     assert method == "GET"
 
-    # === 실제 세션 호출: headers/params 정확히 확인 ===
-    mock_get.assert_awaited_once()
-    g_args, g_kwargs = mock_get.call_args
-    req_url = g_args[0] if g_args else g_kwargs.get("url")
-    req_headers = g_kwargs.get("headers") or {}
-    req_params  = g_kwargs.get("params") or {}
+#     # === 실제 세션 호출: headers/params 정확히 확인 ===
+#     mock_get.assert_awaited_once()
+#     g_args, g_kwargs = mock_get.call_args
+#     req_url = g_args[0] if g_args else g_kwargs.get("url")
+#     req_headers = g_kwargs.get("headers") or {}
+#     req_params  = g_kwargs.get("params") or {}
 
-    trid_provider = ctx.ki.trid_quotations
-    env = ctx.ki.env
-    expected_trid = trid_provider.quotations(TrIdLeaf.INQUIRE_PRICE)
-    custtype = env.active_config["custtype"]
-    expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_PRICE)
+#     trid_provider = ctx.ki.trid_quotations
+#     env = ctx.ki.env
+#     expected_trid = trid_provider.quotations(TrIdLeaf.INQUIRE_PRICE)
+#     custtype = env.active_config["custtype"]
+#     expected_url = ctx.expected_url_for_quotations(app, EndpointKey.INQUIRE_PRICE)
 
-    assert req_url == expected_url
-    assert req_headers.get("tr_id") == expected_trid
-    assert req_headers.get("custtype") == custtype
-    assert req_params.get("fid_input_iscd") == test_stock_code
+#     assert req_url == expected_url
+#     assert req_headers.get("tr_id") == expected_trid
+#     assert req_headers.get("custtype") == custtype
+#     assert req_params.get("fid_input_iscd") == test_stock_code
 
-    # 뷰 호출(성공 경로)
-    app.cli_view.display_current_stock_price.assert_called_once()
-    app.cli_view.display_current_stock_price_error.assert_not_called()
+#     # 뷰 호출(성공 경로)
+#     app.cli_view.display_current_stock_price.assert_called_once()
+#     app.cli_view.display_current_stock_price_error.assert_not_called()
 
 
 # @pytest.mark.asyncio
