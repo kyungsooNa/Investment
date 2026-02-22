@@ -12,7 +12,9 @@ jobs:
     runs-on: ubuntu-latest  # 최신 우분투 환경에서 실행
   
     permissions:
-      contents: write  # GitHub Pages 배포를 위해 쓰기 권한 허용
+      contents: write
+      pages: write      # 추가됨
+      id-token: write   # 추가됨
 
     steps:
     # 1. GitHub 레포지토리의 코드를 가상 환경으로 가져옵니다.
@@ -66,22 +68,13 @@ jobs:
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
     # 7. HTML 리포트를 Artifact로 저장 (브라우저 확인용)
-    - name: Upload HTML Coverage Report
-      if: always()
-      uses: actions/upload-artifact@v4
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
       with:
-        name: python-coverage-report-html  # 다운로드 시 파일 이름
-        path: htmlcov/                     # pytest-cov가 생성하는 기본 HTML 폴더명
+        path: htmlcov/ # 리포트가 생성된 폴더 경로
 
-    # 8. GitHub Pages에 리포트 배포 (웹에서 바로 확인용)
+    # 2) 별도의 브랜치 없이 GitHub Pages 서버에 즉시 배포합니다.
     - name: Deploy to GitHub Pages
-      if: github.ref == 'refs/heads/main'
-      uses: peaceiris/actions-gh-pages@v4
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./htmlcov  # ✅ 생성된 리포트 폴더
-        # destination_dir를 삭제하여 주소를 단순화합니다.
-        # 이제 주소는 .../Investment/index.html 입니다.
-        user_name: 'github-actions[bot]'
-        user_email: 'github-actions[bot]@users.noreply.github.com'
+      id: deployment
+      uses: actions/deploy-pages@v4
     
