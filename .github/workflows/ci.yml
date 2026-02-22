@@ -49,7 +49,7 @@ jobs:
         import xml.etree.ElementTree as ET
         import re
 
-        # 1. 수치 추출 (기존과 동일)
+        # 1. 수치 추출
         tree = ET.parse('coverage.xml')
         root = tree.getroot()
         percent = int(float(root.attrib['line-rate']) * 100)
@@ -59,26 +59,26 @@ jobs:
         with open('README.md', 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # 2. 지능형 교체 로직: 첫 번째 태그 세트만 찾아 교체하고, 나머지는 제거
+        # 2. 세이프락 교체 로직
         pattern = r'.*?'
         replacement = f'\\n{badge}\\n'
         
-        # 첫 번째 일치 항목을 찾아 교체
-        match = re.search(pattern, content, flags=re.DOTALL)
-        if match:
-            # 첫 번째 태그 이전 내용 + 새 뱃지 + 첫 번째 태그 이후 내용
-            before = content[:match.start()]
-            after = content[match.end():]
-            # 혹시 뒤에 남아있을 중복 태그들은 빈 칸으로 치환하여 제거
-            after_cleaned = re.sub(pattern, '', after, flags=re.DOTALL)
+        if '' in content:
+            # [안전장치 1] 첫 번째 태그만 새 뱃지로 교체 (나머지 본문은 그대로 유지)
+            new_content = re.sub(pattern, replacement, content, count=1, flags=re.DOTALL)
             
-            new_content = before + replacement + after_cleaned
-            
+            # [안전장치 2] 혹시 뒤에 남아있을지 모를 중복 태그들만 선택적으로 제거
+            # 첫 번째 교체된 뱃지 이후의 내용에서만 중복을 찾습니다.
+            parts = new_content.split('', 1)
+            if len(parts) > 1:
+                after_content = re.sub(pattern, '', parts[1], flags=re.DOTALL)
+                new_content = parts[0] + '' + after_content
+
             with open('README.md', 'w', encoding='utf-8') as f:
                 f.write(new_content)
-            print(f'Badge updated to {percent}% without deleting other content.')
+            print(f'Successfully updated badge to {percent}% while preserving content.')
         else:
-            print('Tag not found.')
+            print('Tag not found. No changes made.')
         "
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
