@@ -86,8 +86,8 @@ jobs:
         pytest-xml-coverage-path: ./coverage.xml
         title: "📊 코드 커버리지 리포트"
         badge-title: "Coverage"
-        # 🚀 [핵심 수정] 글자 수 초과를 막기 위해 상세 표를 숨깁니다.
-        hide-report: true 
-        # 🚀 100% 통과한 파일은 리스트에서 제외해 용량을 더 줄입니다.
-        xml-skip-covered: true
+        hide-comment: true
+        hide-report: true
+        # 🚀 [추가] 변경된 파일이 없어도 무조건 뱃지를 업데이트합니다.
+        report-only-changed-files: false 
         github-token: ${{ secrets.GITHUB_TOKEN }}
