@@ -85,3 +85,4 @@ jobs:
         pytest-xml-coverage-path: ./coverage.xml
         title: "📊 코드 커버리지 리포트"
         badge-title: "Coverage"
+        hide-comment: true # PR 댓글은 숨기고 README만 업데이트
