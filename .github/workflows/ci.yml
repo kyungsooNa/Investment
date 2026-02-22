@@ -79,7 +79,9 @@ jobs:
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./htmlcov # 아까 생성한 HTML 폴더
-        destination_dir: coverage # 웹주소/coverage 로 접속 가능하게 함
-
+        publish_dir: ./htmlcov  # ✅ 생성된 리포트 폴더 경로
+        # destination_dir: coverage # ⚠️ 일단 경로를 단순화하기 위해 주석 처리를 권장합니다.
+        force_orphan: true      # ✅ 기존 배포 이력을 깔끔하게 정리하고 새로 올림
+        user_name: 'github-actions[bot]'
+        user_email: 'github-actions[bot]@users.noreply.github.com'
     
