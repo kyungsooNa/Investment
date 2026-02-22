@@ -90,26 +90,26 @@ async def test_execute_action_select_environment_success_real(real_app_instance,
     assert running_status is True
 
 
-# @pytest.mark.asyncio
-# async def test_execute_action_invalidate_token_success_real(real_app_instance):
-#     """
-#     (통합 테스트) 메뉴 '98' - 토큰 무효화 성공 흐름
-#     TradingApp → TokenManager.invalidate_token → CLIView.display_token_invalidated_message
-#     """
-#     app = real_app_instance
+@pytest.mark.asyncio
+async def test_execute_action_invalidate_token_success_real(real_app_instance):
+    """
+    (통합 테스트) 메뉴 '98' - 토큰 무효화 성공 흐름
+    TradingApp → TokenManager.invalidate_token → CLIView.display_token_invalidated_message
+    """
+    app = real_app_instance
 
-#     # ✅ 의존성 모킹
-#     app.env.invalidate_token = MagicMock()
-#     app.cli_view.display_token_invalidated_message = MagicMock()
+    # ✅ 의존성 모킹
+    app.env.invalidate_token = MagicMock()
+    app.cli_view.display_token_invalidated_message = MagicMock()
 
-#     # --- 실행 ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("998")
+    # --- 실행 ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("998")
 
-#     # --- 검증 ---
-#     app.env.invalidate_token.assert_called_once()
-#     app.cli_view.display_token_invalidated_message.assert_called_once()
-#     assert running_status is True
+    # --- 검증 ---
+    app.env.invalidate_token.assert_called_once()
+    app.cli_view.display_token_invalidated_message.assert_called_once()
+    assert running_status is True
 
 
 # @pytest.mark.asyncio
