@@ -108,44 +108,44 @@ async def _assert_paper_blocked(app, menu_key: str, blocked_label: str):
     assert exec_patch.await_count == 0
 
 
-# @pytest.mark.asyncio
-# async def test_execute_action_select_environment_success_paper(real_app_instance, mocker):
-#     """
-#     (통합 테스트) 메뉴 '0' - 거래 환경 변경 성공 시 running_status 유지
-#     """
-#     app = real_app_instance
+@pytest.mark.asyncio
+async def test_execute_action_select_environment_success_paper(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '0' - 거래 환경 변경 성공 시 running_status 유지
+    """
+    app = real_app_instance
 
-#     # ✅ _select_environment() 모킹: 성공
-#     mocker.patch.object(app, "select_environment", new_callable=AsyncMock, return_value=True)
-#     app.logger.info = MagicMock()
+    # ✅ _select_environment() 모킹: 성공
+    mocker.patch.object(app, "select_environment", new_callable=AsyncMock, return_value=True)
+    app.logger.info = MagicMock()
 
-#     # --- 실행 ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("0")
+    # --- 실행 ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("0")
 
-#     # --- 검증 ---
-#     app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
-#     assert running_status is True
+    # --- 검증 ---
+    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
+    assert running_status is True
 
 
-# @pytest.mark.asyncio
-# async def test_execute_action_select_environment_fail_paper(real_app_instance, mocker):
-#     """
-#     (통합 테스트) 메뉴 '0' - 거래 환경 변경 실패 시 running_status = False
-#     """
-#     app = real_app_instance
+@pytest.mark.asyncio
+async def test_execute_action_select_environment_fail_paper(real_app_instance, mocker):
+    """
+    (통합 테스트) 메뉴 '0' - 거래 환경 변경 실패 시 running_status = False
+    """
+    app = real_app_instance
 
-#     # ✅ _select_environment() 모킹: 실패
-#     mocker.patch.object(app, "select_environment", new_callable=AsyncMock, return_value=False)
-#     app.logger.info = MagicMock()
+    # ✅ _select_environment() 모킹: 실패
+    mocker.patch.object(app, "select_environment", new_callable=AsyncMock, return_value=False)
+    app.logger.info = MagicMock()
 
-#     # --- 실행 ---
-#     executor = UserActionExecutor(app)
-#     running_status = await executor.execute("0")
+    # --- 실행 ---
+    executor = UserActionExecutor(app)
+    running_status = await executor.execute("0")
 
-#     # --- 검증 ---
-#     app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
-#     assert running_status is False
+    # --- 검증 ---
+    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
+    assert running_status is False
 
 
 # @pytest.mark.asyncio
