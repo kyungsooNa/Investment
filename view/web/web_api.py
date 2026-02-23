@@ -5,7 +5,7 @@ FastAPI 라우터: 웹 뷰용 API 엔드포인트.
 import asyncio
 import json
 import time
-from fastapi import APIRouter, HTTPException, Request, Form, Response, Depends
+from fastapi import APIRouter, HTTPException, Request, Form, Response, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from common.types import ErrorCode
@@ -493,6 +493,19 @@ async def subscribe_program_trading(req: ProgramTradingRequest):
     return {"success": True, "code": req.code, "stock_name": stock_name, "codes": sorted(ctx._pt_codes)}
 
 
+@router.get("/program-trading/history/{code}")
+async def get_program_trading_history(code: str):
+    """프로그램 매매 추이 히스토리 조회 (차트용)."""
+    ctx = _get_ctx()
+    resp = await ctx.stock_query_service.handle_get_program_trading_history(code)
+    result = _serialize_response(resp)
+    
+    if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):
+        mapper = getattr(ctx, 'stock_code_mapper', None)
+        result["data"]["name"] = mapper.get_name_by_code(code) if mapper else ""
+    return result
+
+
 @router.post("/program-trading/unsubscribe")
 async def unsubscribe_program_trading(req: ProgramTradingUnsubscribeRequest = None):
     """프로그램매매 구독 해지. code 지정 시 개별 해지, 미지정 시 전체 해지."""
@@ -527,16 +540,32 @@ async def stream_program_trading(request: Request):
                 if await request.is_disconnected():
                     break
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=5.0)
+                    data = await asyncio.wait_for(queue.get(), timeout=0.1)
+                    if data is None:  # 테스트 종료 신호 (Poison Pill)
+                        break
                     yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        break
                     yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
         finally:
             if queue in ctx._pt_queues:
                 ctx._pt_queues.remove(queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+@router.websocket("/ws/echo")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket 테스트용 에코 엔드포인트."""
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await websocket.send_text(f"Message text was: {data}")
+    except WebSocketDisconnect:
+        pass
 
 # ── 전략 스케줄러 제어 ──
 
