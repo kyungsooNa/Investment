@@ -141,6 +141,12 @@ class WebAppContext:
             self.trading_service._default_realtime_message_handler(data)
         if data.get('type') == 'realtime_program_trading':
             item = data.get('data', {})
+            # [추가] 현재가 정보 주입
+            if self.trading_service and hasattr(self.trading_service, '_latest_prices'):
+                code = item.get('유가증권단축종목코드')
+                if code in self.trading_service._latest_prices:
+                    item['price'] = self.trading_service._latest_prices[code]
+
             for q in list(self._pt_queues):
                 try:
                     q.put_nowait(item)
@@ -155,6 +161,7 @@ class WebAppContext:
         if not connected:
             return False
         await self.trading_service.subscribe_program_trading(code)
+        await self.trading_service.subscribe_realtime_price(code) # [추가] 실시간 현재가 구독
         self._pt_codes.add(code)
         return True
 
@@ -162,10 +169,12 @@ class WebAppContext:
         """특정 종목 프로그램매매 구독 해지."""
         if code in self._pt_codes:
             await self.trading_service.unsubscribe_program_trading(code)
+            await self.trading_service.unsubscribe_realtime_price(code) # [추가]
             self._pt_codes.discard(code)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
         for code in list(self._pt_codes):
             await self.trading_service.unsubscribe_program_trading(code)
+            await self.trading_service.unsubscribe_realtime_price(code) # [추가]
         self._pt_codes.clear()

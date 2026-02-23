@@ -27,6 +27,7 @@ class TradingService:
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
+        self._latest_prices = {}
 
     def _default_realtime_message_handler(self, data):
         """
@@ -38,8 +39,12 @@ class TradingService:
         # 주식 체결 데이터 (H0STCNT0) 처리
         if data.get('type') == 'realtime_price':
             realtime_data = data.get('data', {})
-            stock_code = realtime_data.get('MKSC_SHRN_ISCD', 'N/A')
-            current_price = realtime_data.get('STCK_PRPR', 'N/A')
+            stock_code = realtime_data.get('MKSC_SHRN_ISCD')
+            current_price = realtime_data.get('STCK_PRPR')
+            
+            if stock_code and current_price:
+                self._latest_prices[stock_code] = current_price
+
             change = realtime_data.get('PRDY_VRSS', 'N/A')
             change_sign = realtime_data.get('PRDY_VRSS_SIGN', 'N/A')
             change_rate = realtime_data.get('PRDY_CTRT', 'N/A')

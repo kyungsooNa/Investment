@@ -1025,6 +1025,18 @@ function _initProgramTradingChart() {
                 tooltip: {
                     mode: 'index',
                     intersect: false,
+                    callbacks: {
+                        footer: function(tooltipItems) {
+                            if (tooltipItems.length > 0) {
+                                const item = tooltipItems[0];
+                                const price = item.raw.price;
+                                if (price) {
+                                    return `주가: ${parseInt(price).toLocaleString()}원`;
+                                }
+                            }
+                            return '';
+                        }
+                    }
                 }
             }
         }
@@ -1090,8 +1102,8 @@ function handleProgramTradingData(d) {
     now.setSeconds(parseInt(timeStr.slice(4, 6)));
     const timestamp = now.getTime();
 
-    ptChartData[code].valueData.push({ x: timestamp, y: ptChartData[code].totalValue });
-    ptChartData[code].volumeData.push({ x: timestamp, y: ptChartData[code].totalVolume });
+    ptChartData[code].valueData.push({ x: timestamp, y: ptChartData[code].totalValue, price: d.price });
+    ptChartData[code].volumeData.push({ x: timestamp, y: ptChartData[code].totalVolume, price: d.price });
     
     // 데이터 포인트 제한
     if (ptChartData[code].valueData.length > 1000) {
