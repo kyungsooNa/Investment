@@ -22,7 +22,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
       4. 통과 종목에 대해 BUY TradeSignal 반환
 
     check_exits():
-      - 익절: 시가 대비 >= take_profit_pct
+      - 익절: 당일 고가 대비 <= -trailing_stop_pct
       - 손절: 시가 대비 <= stop_loss_pct
       - 시간청산: 장 마감 15분 전
     """
@@ -123,20 +123,23 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 data = price_resp.data or {}
                 current = int(data.get("price", "0") or "0")
                 open_price = int(data.get("open", "0") or "0")
+                high_price = int(data.get("high", "0") or "0")
 
-                if current <= 0:
+                if current <= 0 or high_price <= 0:
                     continue
 
                 reason = ""
                 should_sell = False
 
-                if open_price > 0:
-                    change_from_open = (current / open_price - 1.0) * 100
+                # 익절 조건: 당일 고가 대비 설정된 비율(-8%) 이상 하락 시 (Trailing Stop)
+                drop_from_high = ((current - high_price) / high_price) * 100
+                if drop_from_high <= -self._cfg.trailing_stop_pct:
+                    reason = f"익절(트레일링): 고가({high_price:,})대비 {drop_from_high:.1f}%"
+                    should_sell = True
 
-                    if change_from_open >= self._cfg.take_profit_pct:
-                        reason = f"익절: 시가대비 +{change_from_open:.1f}%"
-                        should_sell = True
-                    elif change_from_open <= self._cfg.stop_loss_pct:
+                elif open_price > 0:
+                    change_from_open = (current / open_price - 1.0) * 100
+                    if change_from_open <= self._cfg.stop_loss_pct:
                         reason = f"손절: 시가대비 {change_from_open:+.1f}%"
                         should_sell = True
 

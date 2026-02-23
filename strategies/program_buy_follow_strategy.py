@@ -16,7 +16,7 @@ from core.time_manager import TimeManager
 class ProgramBuyFollowConfig:
     """프로그램 매수 추종 전략 설정."""
     min_program_net_buy: int = 0        # 프로그램 순매수 최소 기준 (> 0)
-    take_profit_pct: float = 5.0        # 매수가 대비 +5% 익절
+    trailing_stop_pct: float = 8.0      # 고가 대비 -8% 하락 시 익절
     stop_loss_pct: float = -3.0         # 매수가 대비 -3% 손절
 
 
@@ -132,17 +132,21 @@ class ProgramBuyFollowStrategy(LiveStrategy):
                     continue
 
                 current = self._get_int_field(output, "stck_prpr")
+                high = self._get_int_field(output, "stck_hgpr")
                 pgtr_ntby = self._get_int_field(output, "pgtr_ntby_qty")
 
-                if current <= 0:
+                if current <= 0 or high <= 0:
                     continue
 
                 pnl_pct = ((current - buy_price) / buy_price) * 100
+                drop_from_high = ((current - high) / high) * 100
+
                 reason = ""
                 should_sell = False
 
-                if pnl_pct >= self._cfg.take_profit_pct:
-                    reason = f"익절: 매수가대비 +{pnl_pct:.1f}%"
+                # 익절 조건: 당일 고가 대비 설정된 비율 이상 하락 시 (Trailing Stop)
+                if drop_from_high <= -self._cfg.trailing_stop_pct:
+                    reason = f"익절(트레일링): 고가({high:,})대비 {drop_from_high:.1f}%"
                     should_sell = True
                 elif pnl_pct <= self._cfg.stop_loss_pct:
                     reason = f"손절: 매수가대비 {pnl_pct:.1f}%"

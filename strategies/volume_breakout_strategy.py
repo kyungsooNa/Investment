@@ -11,7 +11,7 @@ class VolumeBreakoutConfig:
     """거래량 돌파 전략 및 백테스트용 설정"""
     trigger_pct: float = 10.0          # 시가 대비 +10% 도달 시 매수 트리거
     entry_push_pct: float = 2.0        # 신호 발생 후 추가 상승폭 (라이브 전략용)
-    take_profit_pct: float = 16.0      # 시가 대비 +16% 도달 시 익절
+    trailing_stop_pct: float = 8.0     # 고가 대비 -8% 하락 시 익절
     stop_loss_pct: float = 8.0         # 시가 대비 +8%로 하락 시 손절
     avg_vol_lookback_days: int = 20    # 평균 거래량 계산 기간 (거래일 기준 약 1개월)
     avg_vol_multiplier: float = 2.0    # 평균 거래량 대비 최소 배수 (≥2배)
@@ -69,14 +69,14 @@ class VolumeBreakoutStrategy:
         date_ymd: Optional[str] = None,
         session: Optional[Literal["REGULAR", "EXTENDED"]] = None,
         trigger_pct: Optional[float] = None,
-        tp_pct: Optional[float] = None,
+        trailing_stop_pct: Optional[float] = None,
         sl_pct: Optional[float] = None,
         price_getter: Optional[Callable[[Dict[str, Any]], Optional[float]]] = None,
     ) -> Dict[str, Any]:
         """하루치 분봉 데이터를 이용한 단일일자 백테스트 수행"""
         session = session or self.cfg.session
         trigger = self.cfg.trigger_pct if trigger_pct is None else trigger_pct
-        tp = self.cfg.take_profit_pct if tp_pct is None else tp_pct
+        ts_pct = self.cfg.trailing_stop_pct if trailing_stop_pct is None else trailing_stop_pct
         sl = self.cfg.stop_loss_pct if sl_pct is None else sl_pct
 
         # 1) 분봉 데이터 로드
@@ -123,14 +123,17 @@ class VolumeBreakoutStrategy:
         exit_idx = None
         exit_px = None
         outcome = "close_exit"
+        curr_high = entry_px
         for j in range(entry_idx + 1, len(rows)):
             p = pg(rows[j])
             if p is None:
                 continue
-            change = (p / open0 - 1.0) * 100.0
-            if change >= tp:
-                exit_idx, exit_px, outcome = j, p, "take_profit"
+            curr_high = max(curr_high, p)
+            drop_from_high = (p / curr_high - 1.0) * 100.0
+            if drop_from_high <= -ts_pct:
+                exit_idx, exit_px, outcome = j, p, "trailing_stop"
                 break
+            change = (p / open0 - 1.0) * 100.0
             if change <= sl:
                 exit_idx, exit_px, outcome = j, p, "stop_loss"
                 break
@@ -158,7 +161,7 @@ class VolumeBreakoutStrategy:
             "ret_pct": round(ret * 100.0, 3),
             "open0": float(open0),
             "trigger_pct": float(trigger),
-            "tp_pct": float(tp),
+            "trailing_stop_pct": float(ts_pct),
             "sl_pct": float(sl),
         }
 
