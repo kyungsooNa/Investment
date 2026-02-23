@@ -4,6 +4,7 @@ FastAPI 라우터: 웹 뷰용 API 엔드포인트.
 """
 import asyncio
 import json
+import time
 from fastapi import APIRouter, HTTPException, Request, Form, Response, Depends
 from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -11,6 +12,9 @@ from common.types import ErrorCode
 
 router = APIRouter(prefix="/api")
 _ctx = None  # 전역 변수로 선언
+
+# API 호출 실패 시 대처를 위한 전역 가격 캐시 (메모리)
+_PRICE_CACHE = {}  # {code: (price, rate, timestamp)}
 
 @router.post("/auth/login")
 async def login(response: Response, username: str = Form(...), password: str = Form(...)):
@@ -285,9 +289,65 @@ async def get_virtual_summary():
         
     return ctx.virtual_manager.get_summary()
 
+@router.get("/virtual/strategies")
+async def get_strategies():
+    """등록된 모든 전략 목록 반환 (UI 탭 생성용)"""
+    ctx = _get_ctx()
+    return ctx.virtual_manager.get_all_strategies()
+
+@router.get("/virtual/chart/{strategy_name}")
+async def get_strategy_chart(strategy_name: str):
+    """특정 전략의 수익률 히스토리(차트용) 반환 + 벤치마크(KOSPI200) 포함"""
+    ctx = _get_ctx()
+    vm = ctx.virtual_manager
+    
+    # 1. 히스토리 데이터 수집
+    if strategy_name == "ALL":
+        strategies = vm.get_all_strategies()
+        histories = {s: vm.get_strategy_return_history(s) for s in strategies}
+    else:
+        histories = {strategy_name: vm.get_strategy_return_history(strategy_name)}
+    
+    # 벤치마크 계산을 위한 기준 히스토리 (날짜 범위 추출용)
+    ref_history = histories.get(strategy_name) or histories.get("ALL") or (next(iter(histories.values())) if histories else [])
+    
+    if not ref_history:
+        return {"histories": {}, "benchmark": []}
+    
+    # 벤치마크 데이터 (KODEX 200: 069500)를 사용하여 시장 흐름 표시
+    benchmark_history = []
+    try:
+        start_date = ref_history[0]['date'].replace('-', '')
+        end_date = ref_history[-1]['date'].replace('-', '')
+        
+        # KODEX 200 일봉 데이터 조회
+        resp = await ctx.stock_query_service.trading_service.get_ohlcv_range(
+            "069500", period="D", start_date=start_date, end_date=end_date
+        )
+        
+        if resp and resp.rt_cd == "0" and resp.data:
+            ohlcv = resp.data
+            base_price = ohlcv[0]['close']
+            ohlcv_map = {item['date']: item['close'] for item in ohlcv}
+            
+            last_price = base_price
+            for h in ref_history:
+                date_key = h['date'].replace('-', '')
+                price = ohlcv_map.get(date_key, last_price)
+                last_price = price
+                
+                bench_return = round(((price - base_price) / base_price) * 100, 2) if base_price else 0
+                benchmark_history.append({"date": h['date'], "return_rate": bench_return})
+        else:
+            benchmark_history = [{"date": h['date'], "return_rate": 0} for h in ref_history]
+    except Exception:
+        benchmark_history = [{"date": h['date'], "return_rate": 0} for h in ref_history]
+
+    return {"histories": histories, "benchmark": benchmark_history}
+
 @router.get("/virtual/history")
-async def get_virtual_history():
-    """가상 매매 전체 기록 조회 (종목명 + HOLD 종목 현재가 포함)"""
+async def get_virtual_history(force_code: str = None):
+    """가상 매매 전체 기록 조회 (force_code 지정 시 해당 종목은 캐시 무시)"""
     ctx = _get_ctx()
     if not hasattr(ctx, 'virtual_manager'):
         return {"trades": [], "weekly_changes": {}}
@@ -312,6 +372,17 @@ async def get_virtual_history():
             sem = asyncio.Semaphore(5)  # 동시 요청 5개 (API 초당 20건 허용)
 
             async def _fetch(code):
+                # 캐시가 존재하고 1분(60초) 이내라면 캐시 반환 (단, force_code인 경우 무시)
+                now = time.time()
+                if code != force_code and code in _PRICE_CACHE:
+                    c_price, c_rate, c_ts = _PRICE_CACHE[code]
+                    if now - c_ts < 60:  # 1분(60초)으로 단축
+                        # 1분 이내의 신선한 데이터인 경우, API 호출을 건너뛰더라도 
+                        # 사용자에게 '실패/캐시' 아이콘을 보여주지 않기 위해 False 반환
+                        return code, c_price, c_rate, False, c_ts
+                elif code == force_code:
+                    print(f"[WebAPI] 종목 {code} 강제 업데이트: 캐시를 무시하고 API를 호출합니다.")
+
                 async with sem:
                     await asyncio.sleep(0.05)  # API rate limit 보호
                     try:
@@ -332,21 +403,30 @@ async def get_virtual_history():
                             except ValueError:
                                 rate_val = 0.0
                             if price_val > 0:
-                                return code, price_val, rate_val
+                                # 성공 시 캐시 업데이트
+                                _PRICE_CACHE[code] = (price_val, rate_val, time.time())
+                                return code, price_val, rate_val, False, time.time()
                             else:
                                 print(f"[WebAPI] 현재가 조회 실패 ({code}): price='{price_str}'")
                     except Exception as e:
                         print(f"[WebAPI] 현재가 조회 예외 ({code}): {e}")
-                    return code, None, 0.0
+                    
+                    # 실패 시 캐시된 값이 있다면 반환
+                    if code in _PRICE_CACHE:
+                        cached_price, cached_rate, cached_time = _PRICE_CACHE[code]
+                        return code, cached_price, cached_rate, True, cached_time
+                    return code, None, 0.0, False, 0
 
             results = await asyncio.gather(*[_fetch(c) for c in hold_codes])
-            price_map = {code: (price, rate) for code, price, rate in results if price is not None}
+            price_map = {code: (price, rate, cached, ts) for code, price, rate, cached, ts in results if price is not None}
 
         # 3. 전체 종목에 현재가 반영 (HOLD는 수익률도 재계산)
         for trade in trades:
             if trade['code'] in price_map:
-                cur, daily_rate = price_map[trade['code']]
+                cur, daily_rate, cached, ts = price_map[trade['code']]
                 trade['current_price'] = cur
+                trade['is_cached'] = cached
+                trade['cache_ts'] = ts
                 if trade['status'] == 'HOLD':
                     trade['daily_change_rate'] = daily_rate
                     bp = trade.get('buy_price', 0) or 0

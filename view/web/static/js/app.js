@@ -23,9 +23,34 @@ function formatMarketCap(val) {
 // ==========================================
 // 1. 공통/초기화 로직
 // ==========================================
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `<span>${type === 'success' ? '✅' : '❌'}</span> <span>${message}</span>`;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.add('fade-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     updateStatus();
     setInterval(updateStatus, 5000); // 5초마다 상태 갱신
+
+    // [수정] 모의투자 데이터 자동 갱신 (5분마다)
+    // 가만히 있을 때는 5분 주기로 업데이트하여 API 할당량을 보존합니다.
+    setInterval(() => {
+        const virtualSection = document.getElementById('section-virtual');
+        if (virtualSection && virtualSection.classList.contains('active')) {
+            loadVirtualHistory();
+        }
+    }, 300000);
 
     // 탭 전환 이벤트
     const navButtons = document.querySelectorAll('.nav button');
@@ -464,24 +489,34 @@ async function loadVirtualHistory() {
         const dataStrategies = allVirtualData.map(item => item.strategy);
         const strategies = ['ALL', ...new Set([...defaultStrategies, ...dataStrategies])];
 
+        // [수정] 현재 선택된 전략 이름을 미리 저장 (innerHTML 변경 시 기존 DOM의 .active 클래스가 사라짐)
+        const prevActiveBtn = tabContainer.querySelector('.sub-tab-btn.active');
+        const prevStrategy = prevActiveBtn ? prevActiveBtn.innerText : 'ALL';
+
         // 3. 버튼 HTML 생성 (CSS 클래스: sub-tab-btn 사용)
         tabContainer.innerHTML = strategies.map(strat => 
             `<button class="sub-tab-btn" onclick="filterVirtualStrategy('${strat}', this)">${strat}</button>`
         ).join('');
 
         // 4. 초기 탭 선택 (기존 선택 유지 또는 ALL)
-        const currentActive = document.querySelector('#virtual-strategy-tabs .sub-tab-btn.active');
-        if (currentActive) {
-            filterVirtualStrategy(currentActive.innerText, currentActive);
+        const newButtons = tabContainer.querySelectorAll('.sub-tab-btn');
+        const targetBtn = Array.from(newButtons).find(b => b.innerText === prevStrategy);
+
+        if (targetBtn) {
+            filterVirtualStrategy(prevStrategy, targetBtn);
         } else {
             const allBtn = tabContainer.querySelector('button');
             if (allBtn) filterVirtualStrategy('ALL', allBtn);
         }
 
+        // forceUpdateStock 등에서 결과를 확인할 수 있도록 데이터 반환
+        return allVirtualData.length > 0 ? { trades: allVirtualData } : null;
+
     } catch (e) {
         console.error("Virtual history error:", e);
         summaryBox.innerText = "데이터 로드 실패";
     }
+    return null;
 }
 
 // 보유일 계산 유틸
@@ -579,11 +614,17 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
             const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '-';
             const days = calcDaysHeld(item.buy_date, null);
 
+            const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
+            const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
+            const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
+            const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
+            const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
+
             holdBody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
                     <td>${buyPrice}</td>
-                    <td>${curPrice}</td>
+                    <td>${curPrice}${cacheLabel}${forceBtn}</td>
                     <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                     <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
                 </tr>
@@ -608,16 +649,54 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
             const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
             const days = calcDaysHeld(item.buy_date, item.sell_date);
 
+            const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
+            const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
+            const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
+            const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
+            const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
+
             soldBody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
                     <td>${buyPrice}</td>
-                    <td>${curPrice ? curPrice + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
+                    <td>${curPrice ? curPrice + cacheLabel + forceBtn + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
                     <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                     <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
                 </tr>
             `);
         });
+    }
+
+    // [추가] 차트 업데이트 (virtual_chart.js의 함수 호출)
+    if (typeof refreshVirtualChart === 'function') {
+        refreshVirtualChart(strategyName);
+    }
+};
+
+// 특정 종목 강제 업데이트 함수
+window.forceUpdateStock = async function(code, event) {
+    console.log(`[Virtual] 종목 강제 업데이트 시도: ${code}`);
+    if (event && event.currentTarget) {
+        event.currentTarget.classList.add('spinning');
+    }
+    
+    const data = await loadVirtualHistory(code);
+    
+    if (event && event.currentTarget) {
+        event.currentTarget.classList.remove('spinning');
+    }
+
+    if (data && data.trades) {
+        const item = data.trades.find(t => t.code === code);
+        if (item) {
+            if (item.is_cached) {
+                showToast(`${stockLabel(item)} 업데이트 실패 (캐시 데이터 사용)`, 'error');
+            } else {
+                showToast(`${stockLabel(item)} 최신가 업데이트 완료`, 'success');
+            }
+        }
+    } else {
+        showToast('네트워크 오류로 업데이트에 실패했습니다.', 'error');
     }
 };
 

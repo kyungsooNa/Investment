@@ -84,9 +84,8 @@ class VirtualTradeManager:
 
     # ---- 조회 ----
 
-    def get_all_trades(self) -> list:
-        """전체 거래 기록 반환 (웹 API용). NaN→None 변환으로 JSON 직렬화 보장."""
-        df = self._read()
+    def _to_json_records(self, df: pd.DataFrame) -> list:
+        """DataFrame을 JSON 직렬화 가능한 dict 리스트로 변환 (NaN -> None)."""
         records = df.to_dict(orient='records')
         for record in records:
             for key, value in record.items():
@@ -94,16 +93,26 @@ class VirtualTradeManager:
                     record[key] = None
         return records
 
+    def get_all_trades(self) -> list:
+        """전체 거래 기록 반환 (웹 API용)."""
+        df = self._read()
+        return self._to_json_records(df)
+
+    def get_solds(self) -> list:
+        """전체 SOLD 포지션 반환."""
+        df = self._read()
+        return self._to_json_records(df.loc[df['status'] == 'SOLD'])
+
     def get_holds(self) -> list:
         """전체 HOLD 포지션 반환."""
         df = self._read()
-        return df.loc[df['status'] == 'HOLD'].to_dict(orient='records')
+        return self._to_json_records(df.loc[df['status'] == 'HOLD'])
 
     def get_holds_by_strategy(self, strategy_name: str) -> list:
         """전략별 HOLD 포지션 반환."""
         df = self._read()
         mask = (df['strategy'] == strategy_name) & (df['status'] == 'HOLD')
-        return df.loc[mask].to_dict(orient='records')
+        return self._to_json_records(df.loc[mask])
 
     def is_holding(self, strategy_name: str, code: str) -> bool:
         """해당 전략에서 종목 보유 중인지 확인."""
@@ -218,3 +227,32 @@ class VirtualTradeManager:
         if ref_val is None:
             return None
         return round(current_return - ref_val, 2)
+
+    def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
+        """특정 전략의 누적 수익률 히스토리를 반환합니다 (그래프용)."""
+        data = self._load_data()
+        daily = data.get("daily", {})
+        all_dates = sorted(daily.keys())
+
+        history = []
+        last_val = None
+        for date in all_dates:
+            returns = daily[date]
+            if strategy_name in returns:
+                last_val = returns[strategy_name]
+                history.append({"date": date, "return_rate": last_val})
+            elif last_val is not None:
+                # 해당 전략의 기록이 시작된 이후인데, 특정 날짜 스냅샷에 해당 전략이 누락된 경우
+                # 마지막 수익률을 채워넣어(Forward Fill) 차트가 중간에 끊기지 않게 함
+                history.append({"date": date, "return_rate": last_val})
+
+        return history
+
+    def get_all_strategies(self) -> list[str]:
+        """저장된 스냅샷에 존재하는 모든 전략 이름을 반환합니다."""
+        data = self._load_data()
+        daily = data.get("daily", {})
+        strategies = set()
+        for returns in daily.values():
+            strategies.update(returns.keys())
+        return sorted(list(strategies))
