@@ -17,7 +17,7 @@ class ProgramBuyFollowConfig:
     """프로그램 매수 추종 전략 설정."""
     min_program_net_buy: int = 0        # 프로그램 순매수 최소 기준 (> 0)
     trailing_stop_pct: float = 8.0      # 고가 대비 -8% 하락 시 익절
-    stop_loss_pct: float = -3.0         # 매수가 대비 -3% 손절
+    stop_loss_pct: float = -5.0         # 매수가 대비 -5% 손절
 
 
 class ProgramBuyFollowStrategy(LiveStrategy):
@@ -29,7 +29,7 @@ class ProgramBuyFollowStrategy(LiveStrategy):
       3. 양수인 종목을 내림차순 정렬, BUY 시그널 반환
 
     check_exits():
-      - 익절: 매수가 대비 +take_profit_pct%
+      - 익절: 당일 고가 대비 <= -trailing_stop_pct
       - 손절: 매수가 대비 stop_loss_pct%
       - 프로그램 매도 전환: pgtr_ntby_qty < 0
       - 시간청산: 장 마감 15분 전

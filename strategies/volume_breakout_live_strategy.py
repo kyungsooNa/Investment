@@ -23,7 +23,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
 
     check_exits():
       - 익절: 당일 고가 대비 <= -trailing_stop_pct
-      - 손절: 시가 대비 <= stop_loss_pct
+      - 손절: 매수가 대비 <= stop_loss_pct
       - 시간청산: 장 마감 15분 전
     """
 
@@ -137,10 +137,10 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                     reason = f"익절(트레일링): 고가({high_price:,})대비 {drop_from_high:.1f}%"
                     should_sell = True
 
-                elif open_price > 0:
-                    change_from_open = (current / open_price - 1.0) * 100
-                    if change_from_open <= self._cfg.stop_loss_pct:
-                        reason = f"손절: 시가대비 {change_from_open:+.1f}%"
+                else:
+                    pnl_pct = ((current - buy_price) / buy_price) * 100
+                    if pnl_pct <= self._cfg.stop_loss_pct:
+                        reason = f"손절: 매수가대비 {pnl_pct:.1f}%"
                         should_sell = True
 
                 if not should_sell and minutes_to_close <= 15:

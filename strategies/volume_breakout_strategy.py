@@ -12,7 +12,7 @@ class VolumeBreakoutConfig:
     trigger_pct: float = 10.0          # 시가 대비 +10% 도달 시 매수 트리거
     entry_push_pct: float = 2.0        # 신호 발생 후 추가 상승폭 (라이브 전략용)
     trailing_stop_pct: float = 8.0     # 고가 대비 -8% 하락 시 익절
-    stop_loss_pct: float = 8.0         # 시가 대비 +8%로 하락 시 손절
+    stop_loss_pct: float = -5.0        # 매수가 대비 -5% 손절
     avg_vol_lookback_days: int = 20    # 평균 거래량 계산 기간 (거래일 기준 약 1개월)
     avg_vol_multiplier: float = 2.0    # 평균 거래량 대비 최소 배수 (≥2배)
     session: Literal["REGULAR", "EXTENDED"] = "REGULAR"  # 거래 세션 구분
@@ -23,8 +23,8 @@ class VolumeBreakoutConfig:
 class VolumeBreakoutStrategy:
     """
     거래량 돌파 전략 및 단일일자 분봉 백테스트 지원:
-      - 시가 대비 +10% 도달 시 매수
-      - 이후 +16% 도달 시 익절, +8%로 하락 시 손절
+      - 시가 대비 trigger_pct 도달 시 매수
+      - 이후 고가 대비 trailing_stop_pct 하락 시 익절, 매수가 대비 stop_loss_pct 하락 시 손절
       - 둘 다 도달하지 않으면 장 마감가로 청산
     """
 
@@ -133,8 +133,8 @@ class VolumeBreakoutStrategy:
             if drop_from_high <= -ts_pct:
                 exit_idx, exit_px, outcome = j, p, "trailing_stop"
                 break
-            change = (p / open0 - 1.0) * 100.0
-            if change <= sl:
+            pnl = (p / entry_px - 1.0) * 100.0
+            if pnl <= sl:
                 exit_idx, exit_px, outcome = j, p, "stop_loss"
                 break
 
