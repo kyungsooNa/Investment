@@ -10,6 +10,7 @@ class EndpointKey(str, Enum):
     TIME_CONCLUDE = "time_conclude"
     RANKING_FLUCTUATION = "ranking_fluctuation"             # ← YAML이 ranking_fluctuation이면 값만 바꿔주세요
     RANKING_VOLUME = "ranking_volume"
+    RANKING_PROGRAM = "ranking_program"
     ETF_INFO = "etf_info"
     DAILY_ITEMCHARTPRICE = "inquire_daily_itemchartprice"
     TIME_ITEMCHARTPRICE = "inquire_time_itemchartprice"

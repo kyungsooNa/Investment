@@ -226,6 +226,7 @@ class KoreaInvestApiBase:
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             self._logger.error(f"HTTP 오류 발생: {e.response.status_code} - {e.response.text}")
+            self._logger.error(f"!!!!!!!!!!!!!!! RAW RESPONSE TEXT: {response.text}")
             return ResponseStatus.HTTP_ERROR
 
         # 3. 성공적인 응답 처리 (JSON 디코딩)
@@ -251,6 +252,7 @@ class KoreaInvestApiBase:
             # msg1이 있을 경우에만 로깅, 없을 경우 "None" 로깅 방지
             error_message = response_json.get('msg1', '알 수 없는 비즈니스 오류')
             self._logger.error(f"API 비즈니스 오류: {error_message}")
+            self._logger.error(f"!!!!!!!!!!!!!!! RAW RESPONSE JSON: {response_json}")
             return ResponseStatus.EMPTY_RTCD  # 비즈니스 오류 내용을 반환
 
         # 모든 검사를 통과한 최종 성공적인 응답

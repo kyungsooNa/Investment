@@ -8,6 +8,7 @@ paths:
   ranking_fluctuation: /uapi/domestic-stock/v1/ranking/fluctuation
   ranking_volume: /uapi/domestic-stock/v1/quotations/volume-rank
   ranking_foreign: /uapi/domestic-stock/v1/quotations/inquire-foreign
+  ranking_program: /uapi/domestic-stock/v1/ranking/fluctuation
   item_news: /uapi/domestic-stock/v1/quotations/news-title
   etf_info: /uapi/etfetn/v1/quotations/inquire-price
   inquire_daily_itemchartprice: /uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice      # 기간별 시세 (일/주/월/년)

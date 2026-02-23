@@ -148,6 +148,13 @@ class BrokerAPIWrapper:
         """
         return await self._client.get_top_volume_stocks()
 
+    async def get_program_trading_ranking(self, buy_sell: str) -> ResCommonResponse:
+        """
+        프로그램 순매수/순매도 상위 종목을 조회합니다.
+        """
+        return await self._client.get_program_trading_ranking(buy_sell)
+
+
     # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
     #     """
     #     외국인 순매수 상위 종목을 조회합니다.

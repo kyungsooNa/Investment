@@ -10,6 +10,7 @@ class TrIdLeaf(str, Enum):
     TIME_CONCLUDE = "time_conclude"
     RANKING_FLUCTUATION = "ranking_fluctuation"
     RANKING_VOLUME = "ranking_volume"
+    RANKING_PROGRAM = "ranking_program"
     ETF_INFO = "etf_info"
 
     DAILY_ITEMCHARTPRICE =      "inquire_daily_itemchartprice"           # 기간별 시세 (일/주/월/년)

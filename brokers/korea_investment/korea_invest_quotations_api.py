@@ -594,6 +594,34 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             data=stocks
         )
 
+    async def get_program_trading_ranking(self, buy_sell: str = "buy", market_code: str = "J") -> ResCommonResponse:
+        """
+        프로그램 순매수/순매도 상위 종목 조회
+        """
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.RANKING_PROGRAM)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.program_rank(buy_sell=buy_sell, market=market_code)
+
+        direction = "순매수" if buy_sell == "buy" else "순매도"
+        self._logger.info(f"프로그램 {direction} 상위 종목 조회 시도...")
+        response = await self.call_api("GET", EndpointKey.RANKING_PROGRAM, params=params, retry_count=3)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self._logger.warning(f"프로그램 {direction} 상위 조회 실패: {response.msg1}")
+            return response
+
+        stocks = response.data.get("output", []) if response.data else []
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1=f"프로그램 {direction} 상위 종목 조회 성공",
+            data=stocks
+        )
+
+
 
     #
     # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
@@ -664,6 +692,28 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning(f"{etf_code} ETF 조회 실패: {response.msg1}")
+            return response
+
+        return response
+
+    async def get_program_trading_history(self, stock_code: str) -> ResCommonResponse:
+        """
+        종목별 프로그램 매매 추이 정보를 조회합니다.
+        TRID: FHKST03010500
+        """
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.PROGRAM_TRADING_HISTORY)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.program_trading_history(stock_code=stock_code)
+
+        self._logger.info(f"{stock_code} 프로그램 매매 추이 조회 시도...")
+        response: ResCommonResponse = await self.call_api("GET", EndpointKey.PROGRAM_TRADING_HISTORY, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self._logger.warning(f"{stock_code} 프로그램 매매 추이 조회 실패: {response.msg1}")
             return response
 
         return response

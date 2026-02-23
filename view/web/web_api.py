@@ -237,8 +237,8 @@ async def place_order(req: OrderRequest):
 async def get_ranking(category: str):
     """랭킹 조회 (rise/fall/volume/trading_value)."""
     ctx = _get_ctx()
-    if category not in ("rise", "fall", "volume", "trading_value"):
-        raise HTTPException(status_code=400, detail="category는 rise, fall, volume, trading_value 중 하나여야 합니다.")
+    if category not in ("rise", "fall", "volume", "trading_value", "program_buy", "program_sell"):
+        raise HTTPException(status_code=400, detail="유효하지 않은 랭킹 카테고리입니다.")
 
     resp = await ctx.stock_query_service.handle_get_top_stocks(category)
 

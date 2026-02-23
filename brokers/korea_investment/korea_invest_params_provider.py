@@ -183,6 +183,52 @@ class VolumeRankParams:
 
 
 @dataclass(frozen=True)
+class ProgramRankParams:
+    FID_COND_MRKT_DIV_CODE: str
+    FID_COND_SCR_DIV_CODE: str
+    FID_INPUT_ISCD: str
+    FID_DIV_CLS_CODE: str
+    FID_TRC_CLS_CODE: str
+    FID_RANK_SORT_CLS_CODE: str
+    FID_BLNG_CLS_CODE: str
+    FID_TRGT_CLS_CODE: str
+    FID_TRGT_EXLS_CLS_CODE: str
+    FID_INPUT_PRICE_1: str
+    FID_INPUT_PRICE_2: str
+    FID_VOL_CNT: str
+    FID_INPUT_DATE_1: str
+    FID_INPUT_OPTION_1: str
+    FID_INPUT_OPTION_2: str
+
+    @classmethod
+    def from_options(cls, market: MarketCode = "J", buy_sell: str = "buy"):
+        # FID_RANK_SORT_CLS_CODE: 0: 순매수(금액), 1: 순매수(수량), 2: 순매도(금액), 3: 순매도(수량)
+        sort_code = "0" if buy_sell == "buy" else "2"
+        today_str = tm.get_current_kst_time().strftime("%Y%m%d")
+
+        return cls(
+            FID_COND_MRKT_DIV_CODE=market,
+            FID_COND_SCR_DIV_CODE="20173",  # HTS [0173] 화면
+            FID_INPUT_ISCD="0000",
+            FID_DIV_CLS_CODE="0",  # 0: 전체
+            FID_TRC_CLS_CODE="1",  # 1: 프로그램
+            FID_RANK_SORT_CLS_CODE=sort_code,
+            FID_BLNG_CLS_CODE="0",  # 소속부 all
+            FID_TRGT_CLS_CODE="0",  # 대상 all
+            FID_TRGT_EXLS_CLS_CODE="0000000000",  # 제외
+            FID_INPUT_PRICE_1="",
+            FID_INPUT_PRICE_2="",
+            FID_VOL_CNT="",
+            FID_INPUT_DATE_1=today_str,
+            FID_INPUT_OPTION_1="",
+            FID_INPUT_OPTION_2="",
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MarketCapScreenParams:
     fid_cond_mrkt_div_code: str  # "J"
     fid_cond_scr_div_code: str  # "20174" (시총 상위 등)
@@ -537,6 +583,10 @@ class Params:
     @staticmethod
     def trading_value_rank(market: MarketCode = "J") -> Dict[str, str]:
         return VolumeRankParams.trading_value(market).to_dict()
+
+    @staticmethod
+    def program_rank(buy_sell: str = "buy", market: MarketCode = "J") -> Dict[str, str]:
+        return ProgramRankParams.from_options(market=market, buy_sell=buy_sell).to_dict()
 
 
 

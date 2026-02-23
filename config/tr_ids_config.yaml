@@ -10,6 +10,7 @@ tr_ids:
     ranking_fluctuation: FHPST01700000
     ranking_volume: FHPST01710000
     ranking_foreign: FHKUP03600000
+    ranking_program: FHPST01730000
     item_news: FHPST01040000
     etf_info: FHPST02400000
 

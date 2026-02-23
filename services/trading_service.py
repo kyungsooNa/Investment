@@ -337,6 +337,12 @@ class TradingService:
         self._logger.info("Service - 거래량 상위 종목 조회 요청")
         return await self._broker_api_wrapper.get_top_volume_stocks()
 
+    async def get_program_trading_ranking(self, buy_sell: str) -> ResCommonResponse:
+        """프로그램 순매수/순매도 상위 종목을 조회합니다."""
+        direction = "순매수" if buy_sell == "buy" else "순매도"
+        self._logger.info(f"Service - 프로그램 {direction} 상위 종목 조회 요청")
+        return await self._broker_api_wrapper.get_program_trading_ranking(buy_sell)
+
     # ETF/ETN 브랜드명 — 종목명이 이 접두사로 시작하면 개별종목이 아님
     _ETF_PREFIXES = (
         "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",

@@ -476,7 +476,15 @@ async function loadRanking(category) {
         }
 
         const isTradingValue = category === 'trading_value';
-        const lastColHeader = isTradingValue ? '거래대금' : '거래량';
+        const isProgramBuy = category === 'program_buy';
+        const isProgramSell = category === 'program_sell';
+
+        let lastColHeader = '거래량';
+        if (isTradingValue) {
+            lastColHeader = '거래대금';
+        } else if (isProgramBuy || isProgramSell) {
+            lastColHeader = '순매매대금';
+        }
 
         let html = `
             <table class="data-table">
@@ -486,9 +494,14 @@ async function loadRanking(category) {
         json.data.forEach(item => {
             const rate = parseFloat(item.prdy_ctrt || 0);
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
-            const lastCol = isTradingValue
-                ? formatTradingValue(item.acml_tr_pbmn)
-                : parseInt(item.acml_vol || 0).toLocaleString();
+            
+            let lastCol = parseInt(item.acml_vol || 0).toLocaleString();
+            if (isTradingValue) {
+                lastCol = formatTradingValue(item.acml_tr_pbmn);
+            } else if (isProgramBuy || isProgramSell) {
+                lastCol = formatTradingValue(item.prgm_smb_trdx);
+            }
+
             html += `
                 <tr>
                     <td>${item.data_rank || item.rank || '-'}</td>
