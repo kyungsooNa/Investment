@@ -27,54 +27,99 @@ class StockQueryService:
             return ""
 
     async def handle_get_current_stock_price(self, stock_code):
-        """주식 현재가 조회 요청 및 결과 출력."""
-        self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 조회 요청")
+        """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
+        self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
         resp: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
-            self.logger.error(f"{stock_code} 현재가 조회 실패: {msg}")
+            self.logger.error(f"{stock_code} 현재가 및 상세 정보 조회 실패: {msg}")
             return ResCommonResponse(
                 rt_cd=(resp.rt_cd if resp else ErrorCode.API_ERROR.value),
                 msg1=msg,
                 data={"code": stock_code},
             )
 
-        # --- output 추출 및 통일화(dict) ---
-        output = (resp.data or {}).get("output") if isinstance(resp.data, dict) else resp.data
+        # --- output 추출 및 통일화(ResStockFullInfoApiOutput) ---
+        output = (resp.data or {}).get("output") if isinstance(resp.data, dict) else None
 
-        if isinstance(output, ResStockFullInfoApiOutput):
-            raw = output.to_dict()          # 데이터클래스 → dict
-        elif isinstance(output, dict):
-            raw = output                    # 이미 dict
-        elif isinstance(output, list) and output and isinstance(output[0], dict):
-            raw = output[0]                 # 리스트면 0번만 사용(일반적으로 단일 레코드)
-        else:
-            raw = {}                        # 방어
+        if not isinstance(output, ResStockFullInfoApiOutput):
+            self.logger.error(f"잘못된 응답 데이터 타입 또는 output 없음: {type(output)}")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,
+                msg1=f"잘못된 응답 데이터 타입 또는 output 없음: {type(output)}",
+                data={"code": stock_code},
+            )
 
-        price = raw.get("stck_prpr") or raw.get("prpr") or raw.get("current") or "N/A"
-        change = raw.get("prdy_vrss") or raw.get("change") or "N/A"
-        rate   = raw.get("prdy_ctrt") or raw.get("rate")   or "N/A"
-        time_  = raw.get("stck_cntg_hour") or raw.get("time") or "N/A"
-        open_  = raw.get("stck_oprc") or raw.get("open")
-        high   = raw.get("stck_hgpr") or raw.get("high")
-        low    = raw.get("stck_lwpr") or raw.get("low")
-        prev   = raw.get("stck_prdy_clpr") or raw.get("prev_close")
-        vol    = raw.get("cntg_vol") or raw.get("volume")
+        status_code_map = {
+            "51": "관리종목", "52": "투자위험", "53": "투자경고", "54": "투자주의",
+            "55": "신용가능", "57": "증거금 100%", "58": "거래정지", "59": "단기과열"
+        }
+        status_description = status_code_map.get(output.iscd_stat_cls_code, "정보 없음")
 
         view = {
+            # 기본 정보
             "code": stock_code,
-            "price": price,
-            "change": change,
-            "rate": rate,
-            "time": time_,
-            "open": open_ or "N/A",
-            "high": high or "N/A",
-            "low": low or "N/A",
-            "prev_close": prev or "N/A",
-            "volume": vol or "N/A",
+            "name": await self.trading_service.get_name_by_code(stock_code),
+            "is_new_high": output.is_new_high, # 신고가 여부 추가
+            "price": output.stck_prpr,
+            "change": output.prdy_vrss,
+            "rate": output.prdy_ctrt,
+            "sign": self._get_sign_from_code(output.prdy_vrss_sign),
+            "time": self.time_manager.get_current_kst_time().strftime("%H:%M:%S"),
+            "bstp_kor_isnm": output.bstp_kor_isnm,
+            "iscd_stat_cls_code_desc": f"{status_description} ({output.iscd_stat_cls_code})",
+
+            # 거래 정보
+            "acml_tr_pbmn": output.acml_tr_pbmn,
+            "acml_vol": output.acml_vol,
+            "prdy_vrss_vol_rate": output.prdy_vrss_vol_rate,
+            "frgn_ntby_qty": output.frgn_ntby_qty,
+            "pgtr_ntby_qty": output.pgtr_ntby_qty,
+
+            # 당일 가격 정보
+            "open": output.stck_oprc,
+            "high": output.stck_hgpr,
+            "low": output.stck_lwpr,
+            "prev_close": output.stck_sdpr, # 기준가
+
+            # 투자 지표
+            "per": output.per,
+            "pbr": output.pbr,
+            "eps": output.eps,
+            "bps": output.bps,
+
+            # 250일 정보
+            "d250_hgpr": output.d250_hgpr,
+            "d250_hgpr_date": output.d250_hgpr_date,
+            "d250_hgpr_vrss_prpr_rate": output.d250_hgpr_vrss_prpr_rate,
+            "d250_lwpr": output.d250_lwpr,
+            "d250_lwpr_date": output.d250_lwpr_date,
+            "d250_lwpr_vrss_prpr_rate": output.d250_lwpr_vrss_prpr_rate,
+
+            # 연중 정보
+            "dryy_hgpr": output.stck_dryy_hgpr,
+            "dryy_hgpr_vrss_prpr_rate": output.dryy_hgpr_vrss_prpr_rate,
+            "dryy_hgpr_date": output.dryy_hgpr_date,
+            "dryy_lwpr": output.stck_dryy_lwpr,
+            "dryy_lwpr_vrss_prpr_rate": output.dryy_lwpr_vrss_prpr_rate,
+            "dryy_lwpr_date": output.dryy_lwpr_date,
+
+            # 52주 정보
+            "w52_hgpr": output.w52_hgpr,
+            "w52_hgpr_vrss_prpr_ctrt": output.w52_hgpr_vrss_prpr_ctrt,
+            "w52_hgpr_date": output.w52_hgpr_date,
+            "w52_lwpr": output.w52_lwpr,
+            "w52_lwpr_vrss_prpr_ctrt": output.w52_lwpr_vrss_prpr_ctrt,
+            "w52_lwpr_date": output.w52_lwpr_date,
+
+            # 기타 상태
+            "crdt_able_yn": "가능" if output.crdt_able_yn == "Y" else "불가능",
+            "short_over_yn": "예" if output.short_over_yn == "Y" else "아니오",
+            "sltr_yn": "예" if output.sltr_yn == "Y" else "아니오",
+            "mang_issu_cls_code": "예" if output.mang_issu_cls_code and output.mang_issu_cls_code.strip() else "아니오",
         }
-        self.logger.info(f"{stock_code} 현재가 조회 성공")
+        self.logger.info(f"{stock_code} 현재가 및 상세 정보 조회 성공")
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=view)
 
     async def handle_get_account_balance(self) -> ResCommonResponse:

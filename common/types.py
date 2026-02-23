@@ -203,6 +203,29 @@ class ResStockFullInfoApiOutput:
 
         return cls(**init_kwargs)
 
+    @property
+    def is_new_high(self) -> bool:
+        """당일 고가가 52주/250일 최고가와 같거나 높은지 확인하여 신고가 여부를 반환."""
+        try:
+            today_high = int(self.stck_hgpr)
+            w52_high = int(self.w52_hgpr)
+            d250_high = int(self.d250_hgpr)
+            
+            # 당일 고가가 0이거나 유효하지 않은 경우 신고가로 보지 않음
+            if today_high == 0:
+                return False
+                
+            # 52주 또는 250일 최고가 중 하나라도 오늘 고가보다 낮거나 같으면 신고가로 판단
+            if w52_high > 0 and today_high >= w52_high:
+                return True
+            if d250_high > 0 and today_high >= d250_high:
+                return True
+                
+        except (ValueError, TypeError):
+            # 숫자 변환 실패 시 신고가가 아닌 것으로 간주
+            return False
+        return False
+
 
 @with_from_dict
 @dataclass

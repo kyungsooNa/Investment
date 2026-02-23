@@ -376,24 +376,83 @@ class CLIView:
         print(f"\"{msg}\" 잘못된 환경 선택입니다.")
 
     def display_current_stock_price(self, view: dict):
-        code   = str(view.get("code", "N/A"))
-        price  = str(view.get("price", "N/A"))
-        change = str(view.get("change", "N/A"))
-        rate   = str(view.get("rate", "N/A"))
-        time_  = str(view.get("time", "N/A"))
-        open_  = str(view.get("open", "N/A"))
-        high   = str(view.get("high", "N/A"))
-        low    = str(view.get("low", "N/A"))
-        prev   = str(view.get("prev_close", "N/A"))
-        vol    = str(view.get("volume", "N/A"))
+        """종목의 현재가 및 상세 정보를 보기 좋게 출력합니다."""
+        
+        def fnum(n, suffix=""):
+            """Helper to format numbers with commas, handling N/A or non-numeric values."""
+            try:
+                val = float(str(n).replace(',', ''))
+                if val == int(val):
+                    return f"{int(val):,}{suffix}"
+                else:
+                    return f"{val:,.2f}{suffix}"
+            except (ValueError, TypeError):
+                return n if n is not None else "N/A"
 
-        print(f"\n--- {code} 현재가 ---")
-        print(f"  현재가: {price}")
-        print(f"  전일대비: {change} ({rate}%)")
-        print(f"  체결시각: {time_}")
-        print("-" * 36)
-        print(f"  시가: {open_} / 고가: {high} / 저가: {low} / 전일종가: {prev}")
-        print(f"  거래량: {vol}")
+        def frate(n, suffix="%"):
+            """Helper to format rates, adding a + sign for positive numbers."""
+            try:
+                val = float(str(n).replace(',', ''))
+                return f"{val:+.2f}{suffix}"
+            except (ValueError, TypeError):
+                return n if n is not None else "N/A"
+
+        def ftradeval(n):
+            """Helper to format trading value into '억' units."""
+            try:
+                val = float(str(n).replace(',', ''))
+                return f"{val / 1e8:,.0f}억원"
+            except (ValueError, TypeError):
+                return n if n is not None else "N/A"
+
+        # --- 기본 정보 ---
+        name = view.get('name', "N/A")
+        code = view.get('code', "N/A")
+        price = fnum(view.get('price', 'N/A'))
+        change = fnum(view.get('change', 'N/A'))
+        rate = frate(view.get('rate', 'N/A'))
+        sign = view.get('sign', '')
+        new_high_badge = "🔥 신고가" if view.get('is_new_high') else ""
+        
+        print(f"\n--- 📈 {name} ({code}) {new_high_badge} ---")
+        print(f"  현재가: {price} 원")
+        print(f"  전일대비: {sign}{change} ({rate})")
+        print(f"  업종: {view.get('bstp_kor_isnm', 'N/A')}")
+        print(f"  상태: {view.get('iscd_stat_cls_code_desc', 'N/A')}")
+        
+        # --- 당일 시세 ---
+        print("\n--- 📊 당일 시세 ---")
+        print(f"  시가: {fnum(view.get('open', 'N/A'))} / 고가: {fnum(view.get('high', 'N/A'))} / 저가: {fnum(view.get('low', 'N/A'))}")
+        print(f"  기준가: {fnum(view.get('prev_close', 'N/A'))}")
+        print(f"  누적 거래량: {fnum(view.get('acml_vol', 'N/A'), ' 주')}")
+        print(f"  누적 거래대금: {ftradeval(view.get('acml_tr_pbmn'))}")
+        print(f"  전일 대비 거래량 비율: {frate(view.get('prdy_vrss_vol_rate', 'N/A'))}")
+
+        # --- 수급 정보 ---
+        print("\n--- 🌐 수급 정보 ---")
+        print(f"  외국인 순매수: {fnum(view.get('frgn_ntby_qty', 'N/A'), ' 주')}")
+        print(f"  프로그램 순매수: {fnum(view.get('pgtr_ntby_qty', 'N/A'), ' 주')}")
+
+        # --- 투자 지표 ---
+        print("\n--- 💹 투자 지표 ---")
+        print(f"  PER: {frate(view.get('per', 'N/A'), ' 배')} / PBR: {frate(view.get('pbr', 'N/A'), ' 배')}")
+        print(f"  EPS: {fnum(view.get('eps', 'N/A'))} / BPS: {fnum(view.get('bps', 'N/A'))}")
+
+        # --- 주요 가격 정보 (52주, 250일, 연중) ---
+        print("\n--- 📅 주요 가격 정보 ---")
+        print(f"  52주 최고: {fnum(view.get('w52_hgpr', 'N/A'))} ({view.get('w52_hgpr_date', 'N/A')}) | 현재가 대비: {frate(view.get('w52_hgpr_vrss_prpr_ctrt', 'N/A'))}")
+        print(f"  52주 최저: {fnum(view.get('w52_lwpr', 'N/A'))} ({view.get('w52_lwpr_date', 'N/A')}) | 현재가 대비: {frate(view.get('w52_lwpr_vrss_prpr_ctrt', 'N/A'))}")
+        print(f"  250일 최고: {fnum(view.get('d250_hgpr', 'N/A'))} ({view.get('d250_hgpr_date', 'N/A')}) | 현재가 대비: {frate(view.get('d250_hgpr_vrss_prpr_rate', 'N/A'))}")
+        print(f"  250일 최저: {fnum(view.get('d250_lwpr', 'N/A'))} ({view.get('d250_lwpr_date', 'N/A')}) | 현재가 대비: {frate(view.get('d250_lwpr_vrss_prpr_rate', 'N/A'))}")
+        print(f"  연중 최고: {fnum(view.get('dryy_hgpr', 'N/A'))} ({view.get('dryy_hgpr_date', 'N/A')}) | 현재가 대비: {frate(view.get('dryy_hgpr_vrss_prpr_rate', 'N/A'))}")
+        print(f"  연중 최저: {fnum(view.get('dryy_lwpr', 'N/A'))} ({view.get('dryy_lwpr_date', 'N/A')}) | 현재가 대비: {frate(view.get('dryy_lwpr_vrss_prpr_rate', 'N/A'))}")
+
+        # --- 기타 상태 정보 ---
+        print("\n--- 📋 기타 상태 ---")
+        print(f"  신용 가능: {view.get('crdt_able_yn', 'N/A')}")
+        print(f"  관리 종목: {view.get('mang_issu_cls_code', 'N/A')}")
+        print(f"  단기 과열: {view.get('short_over_yn', 'N/A')}")
+        print(f"  정리 매매: {view.get('sltr_yn', 'N/A')}")
         print("-" * 36)
 
     def display_current_stock_price_error(self, code: str, msg: str):

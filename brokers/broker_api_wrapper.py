@@ -67,9 +67,9 @@ class BrokerAPIWrapper:
         return []
 
     # --- KoreaInvestApiClient / Quotations API delegation ---
-    # async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
-    #     """종목코드로 종목의 전체 정보를 가져옵니다 (KoreaInvestApiQuotations 위임)."""
-    #     return await self._client.get_stock_info_by_code(stock_code)
+    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+        """종목코드로 종목의 전체 정보를 가져옵니다 (KoreaInvestApiQuotations 위임)."""
+        return await self._client.get_stock_info_by_code(stock_code)
 
     async def get_current_price(self, code: str) -> ResCommonResponse:
         """현재가를 조회합니다 (KoreaInvestApiQuotations 위임)."""
