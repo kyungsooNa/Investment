@@ -12,6 +12,9 @@ from managers.virtual_trade_manager import VirtualTradeManager
 from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from core.logger import Logger
+from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
+from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
+from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from view.web import web_api  # 임포트 확인
 
 class WebAppContext:
@@ -28,6 +31,7 @@ class WebAppContext:
         self.order_execution_service: OrderExecutionService = None
         self.virtual_manager = VirtualTradeManager()
         self.stock_code_mapper = StockCodeMapper(logger=self.logger)
+        self.scheduler: StrategyScheduler = None
         self.initialized = False
         # 프로그램매매 실시간 스트리밍용
         self._pt_queues: list = []
@@ -86,6 +90,48 @@ class WebAppContext:
         if self.time_manager is None:
             return ""
         return self.time_manager.get_current_kst_time().strftime('%Y-%m-%d %H:%M:%S')
+
+    # --- 전략 스케줄러 ---
+
+    def initialize_scheduler(self):
+        """전략 스케줄러 생성 및 전략 등록 (자동 시작하지 않음, 웹 UI에서 수동 시작)."""
+        self.scheduler = StrategyScheduler(
+            virtual_manager=self.virtual_manager,
+            order_execution_service=self.order_execution_service,
+            time_manager=self.time_manager,
+            logger=self.logger,
+            dry_run=False,
+        )
+
+        # 거래량 돌파 전략 등록
+        vb_strategy = VolumeBreakoutLiveStrategy(
+            trading_service=self.trading_service,
+            stock_query_service=self.stock_query_service,
+            time_manager=self.time_manager,
+            logger=self.logger,
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=vb_strategy,
+            interval_minutes=5,
+            max_positions=3,
+            order_qty=1,
+        ))
+
+        # 프로그램 매수 추종 전략 등록
+        pbf_strategy = ProgramBuyFollowStrategy(
+            trading_service=self.trading_service,
+            stock_query_service=self.stock_query_service,
+            time_manager=self.time_manager,
+            logger=self.logger,
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=pbf_strategy,
+            interval_minutes=10,
+            max_positions=3,
+            order_qty=1,
+        ))
+
+        self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
     # --- 프로그램매매 실시간 스트리밍 ---
 

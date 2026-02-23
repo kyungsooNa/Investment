@@ -395,7 +395,10 @@ async def get_virtual_history(force_code: str = None):
                             print(f"[WebAPI] 현재가 조회 실패 ({code}): data 타입={type(resp.data)}, data={resp.data}")
                         else:
                             price_str = str(resp.data.get('price', '0'))
-                            price_val = int(price_str) if price_str.isdigit() else 0
+                            try:
+                                price_val = int(float(price_str))
+                            except (ValueError, TypeError):
+                                price_val = 0
                             # 전일대비 등락률 추출
                             rate_str = str(resp.data.get('rate', '0'))
                             try:
@@ -485,7 +488,9 @@ async def subscribe_program_trading(req: ProgramTradingRequest):
     success = await ctx.start_program_trading(req.code)
     if not success:
         raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
-    return {"success": True, "code": req.code, "codes": sorted(ctx._pt_codes)}
+    mapper = getattr(ctx, 'stock_code_mapper', None)
+    stock_name = mapper.get_name_by_code(req.code) if mapper else ''
+    return {"success": True, "code": req.code, "stock_name": stock_name, "codes": sorted(ctx._pt_codes)}
 
 
 @router.post("/program-trading/unsubscribe")
@@ -531,3 +536,43 @@ async def stream_program_trading(request: Request):
                 ctx._pt_queues.remove(queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ── 전략 스케줄러 제어 ──
+
+@router.get("/scheduler/status")
+async def get_scheduler_status():
+    """스케줄러 상태 조회."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        return {"running": False, "strategies": []}
+    return ctx.scheduler.get_status()
+
+
+@router.post("/scheduler/start")
+async def start_scheduler():
+    """스케줄러 시작."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
+    await ctx.scheduler.start()
+    return {"success": True, "status": ctx.scheduler.get_status()}
+
+
+@router.post("/scheduler/stop")
+async def stop_scheduler():
+    """스케줄러 정지."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
+    await ctx.scheduler.stop()
+    return {"success": True, "status": ctx.scheduler.get_status()}
+
+
+@router.get("/scheduler/history")
+async def get_scheduler_history(strategy: str = None):
+    """스케줄러 시그널 실행 이력 조회. ?strategy=전략명 으로 필터 가능."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        return {"history": []}
+    return {"history": ctx.scheduler.get_signal_history(strategy)}

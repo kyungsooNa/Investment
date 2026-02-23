@@ -5,8 +5,10 @@
 // ==========================================
 function formatTradingValue(val) {
     const num = parseInt(val || '0');
-    if (num >= 1e8) return (num / 1e8).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '억';
-    if (num >= 1e4) return (num / 1e4).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '만';
+    const abs = Math.abs(num);
+    const sign = num < 0 ? '-' : '';
+    if (abs >= 1e8) return sign + (abs / 1e8).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '억';
+    if (abs >= 1e4) return sign + (abs / 1e4).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '만';
     return num.toLocaleString();
 }
 
@@ -70,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (btn.dataset.tab === 'ranking') loadRanking('rise'); // 기본값
             if (btn.dataset.tab === 'marketcap') loadTopMarketCap('0001');
             if (btn.dataset.tab === 'virtual') loadVirtualHistory();
+            if (btn.dataset.tab === 'scheduler') loadSchedulerStatus();
         });
     });
 });
@@ -455,6 +458,10 @@ async function loadTopMarketCap(market = '0001') {
 let allVirtualData = [];
 let dailyChanges = {};
 let weeklyChanges = {};
+let virtualHoldSortState = { key: null, dir: 'asc' };
+let virtualSoldSortState = { key: null, dir: 'asc' };
+let currentVirtualHoldData = [];
+let currentVirtualSoldData = [];
 
 async function loadVirtualHistory() {
     const summaryBox = document.getElementById('virtual-summary-box');
@@ -599,79 +606,164 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
         </div>
     `;
 
-    // 5. 보유 중 테이블
-    const holdBody = document.getElementById('virtual-hold-body');
-    if (!holdBody) { console.error('[Virtual] virtual-hold-body not found'); return; }
-    holdBody.innerHTML = '';
-    if (holdData.length === 0) {
-        holdBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">보유 종목이 없습니다.</td></tr>';
-    } else {
-        holdData.forEach(item => {
-            const ror = item.return_rate || 0;
-            const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
-            const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
-            const buyPrice = Number(item.buy_price).toLocaleString();
-            const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '-';
-            const days = calcDaysHeld(item.buy_date, null);
-
-            const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
-            const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
-            const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
-            const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
-            const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
-
-            holdBody.insertAdjacentHTML('beforeend', `
-                <tr>
-                    <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
-                    <td>${buyPrice}</td>
-                    <td>${curPrice}${cacheLabel}${forceBtn}</td>
-                    <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
-                    <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
-                </tr>
-            `);
-        });
-    }
-
-    // 6. 매도 완료 테이블
-    const soldBody = document.getElementById('virtual-sold-body');
-    if (!soldBody) { console.error('[Virtual] virtual-sold-body not found'); return; }
-    soldBody.innerHTML = '';
-    if (soldData.length === 0) {
-        soldBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">매도 기록이 없습니다.</td></tr>';
-    } else {
-        soldData.slice().reverse().forEach(item => {
-            const ror = item.return_rate || 0;
-            const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
-            const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
-            const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
-            const buyPrice = Number(item.buy_price).toLocaleString();
-            const sellPrice = (item.sell_price != null && item.sell_price > 0) ? Number(item.sell_price).toLocaleString() : '-';
-            const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
-            const days = calcDaysHeld(item.buy_date, item.sell_date);
-
-            const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
-            const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
-            const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
-            const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
-            const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
-
-            soldBody.insertAdjacentHTML('beforeend', `
-                <tr>
-                    <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
-                    <td>${buyPrice}</td>
-                    <td>${curPrice ? curPrice + cacheLabel + forceBtn + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
-                    <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
-                    <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
-                </tr>
-            `);
-        });
-    }
-
-    // [추가] 차트 업데이트 (virtual_chart.js의 함수 호출)
-    if (typeof refreshVirtualChart === 'function') {
-        refreshVirtualChart(strategyName);
-    }
+    // 5. 데이터 캐시 후 렌더링
+    currentVirtualHoldData = holdData;
+    currentVirtualSoldData = soldData.slice().reverse();
+    renderVirtualHoldTable();
+    renderVirtualSoldTable();
 };
+
+function virtualSortCompare(data, key, dir) {
+    const sorted = data.slice();
+    const d = dir === 'asc' ? 1 : -1;
+    sorted.sort((a, b) => {
+        let va, vb;
+        if (key === 'name') {
+            va = (a.stock_name || a.code || '').toLowerCase();
+            vb = (b.stock_name || b.code || '').toLowerCase();
+            return d * va.localeCompare(vb);
+        } else if (key === 'buy_price') {
+            va = Number(a.buy_price || 0);
+            vb = Number(b.buy_price || 0);
+        } else if (key === 'current_price') {
+            va = Number(a.current_price || 0);
+            vb = Number(b.current_price || 0);
+        } else if (key === 'sell_price') {
+            va = Number(a.sell_price || 0);
+            vb = Number(b.sell_price || 0);
+        } else if (key === 'return_rate') {
+            va = Number(a.return_rate || 0);
+            vb = Number(b.return_rate || 0);
+        } else if (key === 'days') {
+            va = calcDaysHeld(a.buy_date, a.sell_date || null);
+            vb = calcDaysHeld(b.buy_date, b.sell_date || null);
+            va = typeof va === 'number' ? va : 0;
+            vb = typeof vb === 'number' ? vb : 0;
+        } else {
+            return 0;
+        }
+        return d * (va - vb);
+    });
+    return sorted;
+}
+
+function virtualSortClass(table, key) {
+    const state = table === 'hold' ? virtualHoldSortState : virtualSoldSortState;
+    if (state.key !== key) return 'sortable';
+    return `sortable sort-${state.dir}`;
+}
+
+function updateVirtualSortHeaders(table) {
+    const section = document.getElementById('section-virtual');
+    const tables = section.querySelectorAll('.data-table');
+    const target = table === 'hold' ? tables[0] : tables[1];
+    if (!target) return;
+    const ths = target.querySelectorAll('thead th');
+    const keys = table === 'hold'
+        ? ['name', 'buy_price', 'current_price', 'return_rate', 'days']
+        : ['name', 'buy_price', 'sell_price', 'return_rate', 'days'];
+    ths.forEach((th, i) => {
+        if (keys[i]) th.className = virtualSortClass(table, keys[i]);
+    });
+}
+
+function renderVirtualHoldTable() {
+    const holdBody = document.getElementById('virtual-hold-body');
+    if (!holdBody) return;
+    holdBody.innerHTML = '';
+    let data = currentVirtualHoldData;
+    if (virtualHoldSortState.key) {
+        data = virtualSortCompare(data, virtualHoldSortState.key, virtualHoldSortState.dir);
+    }
+
+    updateVirtualSortHeaders('hold');
+
+    if (data.length === 0) {
+        holdBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">보유 종목이 없습니다.</td></tr>';
+        return;
+    }
+    data.forEach(item => {
+        const ror = item.return_rate || 0;
+        const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
+        const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
+        const buyPrice = Number(item.buy_price).toLocaleString();
+        const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '-';
+        const days = calcDaysHeld(item.buy_date, null);
+        
+        const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
+        const isOldCache = item.is_cached && cacheAge > 60;
+        const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
+        const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
+        const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
+
+        holdBody.insertAdjacentHTML('beforeend', `
+            <tr>
+                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                <td>${buyPrice}</td>
+                <td>${curPrice}${cacheLabel}${forceBtn}</td>
+                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
+                <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
+            </tr>
+        `);
+    });
+}
+
+function renderVirtualSoldTable() {
+    const soldBody = document.getElementById('virtual-sold-body');
+    if (!soldBody) return;
+    soldBody.innerHTML = '';
+
+    let data = currentVirtualSoldData;
+    if (virtualSoldSortState.key) {
+        data = virtualSortCompare(data, virtualSoldSortState.key, virtualSoldSortState.dir);
+    }
+
+    updateVirtualSortHeaders('sold');
+
+    if (data.length === 0) {
+        soldBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">매도 기록이 없습니다.</td></tr>';
+        return;
+    }
+    data.forEach(item => {
+        const ror = item.return_rate || 0;
+        const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
+        const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
+        const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
+        const buyPrice = Number(item.buy_price).toLocaleString();
+        const sellPrice = (item.sell_price != null && item.sell_price > 0) ? Number(item.sell_price).toLocaleString() : '-';
+        const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
+        const days = calcDaysHeld(item.buy_date, item.sell_date);
+
+        const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
+        const isOldCache = item.is_cached && cacheAge > 60;
+        const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
+        const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
+        const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
+
+        soldBody.insertAdjacentHTML('beforeend', `
+            <tr>
+                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                <td>${buyPrice}</td>
+                <td>${curPrice ? curPrice + cacheLabel + forceBtn + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
+                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
+                <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
+            </tr>
+        `);
+    });
+}
+
+function sortVirtual(table, key) {
+    const state = table === 'hold' ? virtualHoldSortState : virtualSoldSortState;
+    if (state.key === key) {
+        state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        state.key = key;
+        state.dir = 'asc';
+    }
+
+    if (table === 'hold') renderVirtualHoldTable();
+    else renderVirtualSoldTable();
+}
 
 // 특정 종목 강제 업데이트 함수
 window.forceUpdateStock = async function(code, event) {
@@ -706,6 +798,8 @@ window.forceUpdateStock = async function(code, event) {
 let ptEventSource = null;
 let ptRowCount = 0;
 let ptSubscribedCodes = new Set();
+let ptCodeNameMap = {};   // 종목코드 → 종목명 매핑
+let ptFilterCode = null;  // 선택된 필터 종목코드 (null이면 전체 표시)
 
 async function addProgramTrading() {
     const input = document.getElementById('pt-code-input');
@@ -730,6 +824,7 @@ async function addProgramTrading() {
         }
 
         ptSubscribedCodes.add(code);
+        if (json.stock_name) ptCodeNameMap[code] = json.stock_name;
         renderPtChips();
         input.value = '';
 
@@ -761,6 +856,8 @@ async function removeProgramTrading(code) {
     } catch (e) { /* ignore */ }
 
     ptSubscribedCodes.delete(code);
+    delete ptCodeNameMap[code];
+    if (ptFilterCode === code) ptFilterCode = null;
     renderPtChips();
 
     const statusDiv = document.getElementById('pt-status');
@@ -786,6 +883,8 @@ async function stopAllProgramTrading() {
     } catch (e) { /* ignore */ }
 
     ptSubscribedCodes.clear();
+    ptCodeNameMap = {};
+    ptFilterCode = null;
     renderPtChips();
     document.getElementById('pt-status').innerHTML = '<span>구독 중지됨</span>';
 }
@@ -795,10 +894,27 @@ function renderPtChips() {
     container.innerHTML = '';
     for (const code of ptSubscribedCodes) {
         const chip = document.createElement('span');
-        chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;background:var(--neutral);font-size:0.8rem;font-weight:600;';
-        chip.innerHTML = `${code} <span style="cursor:pointer;color:var(--negative);font-weight:bold;" onclick="removeProgramTrading('${code}')">&times;</span>`;
+        const isActive = (ptFilterCode === code);
+        chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;font-size:0.8rem;font-weight:600;cursor:pointer;transition:all 0.2s;`
+            + (isActive ? 'background:#ff6b35;color:#fff;box-shadow:0 0 0 2px #ff6b35;' : 'background:var(--neutral);');
+        const label = ptCodeNameMap[code] ? `${ptCodeNameMap[code]}(${code})` : code;
+        chip.innerHTML = `<span onclick="togglePtFilter('${code}')">${label}</span> <span style="cursor:pointer;color:var(--negative);font-weight:bold;margin-left:2px;" onclick="event.stopPropagation();removeProgramTrading('${code}')">&times;</span>`;
         container.appendChild(chip);
     }
+}
+
+function togglePtFilter(code) {
+    ptFilterCode = (ptFilterCode === code) ? null : code;
+    renderPtChips();
+    // 기존 행들의 표시/숨김 토글
+    const rows = document.getElementById('pt-body').querySelectorAll('tr');
+    rows.forEach(row => {
+        if (!ptFilterCode || row.dataset.code === ptFilterCode) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
 }
 
 function appendProgramTradingRow(d) {
@@ -808,8 +924,10 @@ function appendProgramTradingRow(d) {
     const ntby = parseInt(d['순매수체결량'] || '0');
     const ntbyColor = ntby > 0 ? 'text-red' : (ntby < 0 ? 'text-blue' : '');
 
-    const row = `<tr>
-        <td>${d['유가증권단축종목코드'] || '-'}</td>
+    const stockCode = d['유가증권단축종목코드'] || '-';
+    const hidden = (ptFilterCode && ptFilterCode !== stockCode) ? ' style="display:none"' : '';
+    const row = `<tr data-code="${stockCode}"${hidden}>
+        <td>${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</td>
         <td>${fmtTime}</td>
         <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>
         <td>${parseInt(d['매수2체결량'] || 0).toLocaleString()}</td>
@@ -825,5 +943,123 @@ function appendProgramTradingRow(d) {
     if (ptRowCount > 200) {
         tbody.removeChild(tbody.lastElementChild);
         ptRowCount--;
+    }
+}
+
+// ==========================================
+// 8. 전략 스케줄러
+// ==========================================
+let schedulerPollingId = null;
+
+async function loadSchedulerStatus() {
+    try {
+        const [statusRes, historyRes] = await Promise.all([
+            fetch('/api/scheduler/status'),
+            fetch('/api/scheduler/history'),
+        ]);
+        const statusData = await statusRes.json();
+        const historyData = await historyRes.json();
+        renderSchedulerStatus(statusData);
+        renderSchedulerHistory(historyData.history || []);
+    } catch (e) {
+        document.getElementById('scheduler-info').innerHTML = '<span>스케줄러 상태 조회 실패</span>';
+    }
+}
+
+function renderSchedulerStatus(data) {
+    const badge = document.getElementById('scheduler-status-badge');
+    const info = document.getElementById('scheduler-info');
+    const strategiesDiv = document.getElementById('scheduler-strategies');
+
+    if (data.running) {
+        badge.textContent = '실행 중';
+        badge.className = 'badge open';
+    } else {
+        badge.textContent = '정지';
+        badge.className = 'badge closed';
+    }
+
+    const dryLabel = data.dry_run ? ' (dry-run: CSV만 기록)' : ' (실제 주문 실행)';
+    info.innerHTML = `<span>상태: ${data.running ? '실행 중' : '정지'}${dryLabel}</span>`;
+
+    if (!data.strategies || data.strategies.length === 0) {
+        strategiesDiv.innerHTML = '<div class="card"><span>등록된 전략이 없습니다.</span></div>';
+        return;
+    }
+
+    strategiesDiv.innerHTML = data.strategies.map(s => `
+        <div class="card" style="margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <h3 style="margin:0;color:var(--text-primary);">${s.name}</h3>
+                <span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}">
+                    포지션 ${s.current_holds}/${s.max_positions}
+                </span>
+            </div>
+            <div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
+                실행 주기: ${s.interval_minutes}분 | 마지막 실행: ${s.last_run || '-'}
+            </div>
+        </div>
+    `).join('');
+}
+
+async function startScheduler() {
+    try {
+        const res = await fetch('/api/scheduler/start', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            renderSchedulerStatus(data.status);
+            startSchedulerPolling();
+        }
+    } catch (e) {
+        alert('스케줄러 시작 실패');
+    }
+}
+
+async function stopScheduler() {
+    try {
+        const res = await fetch('/api/scheduler/stop', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            renderSchedulerStatus(data.status);
+            stopSchedulerPolling();
+        }
+    } catch (e) {
+        alert('스케줄러 정지 실패');
+    }
+}
+
+function renderSchedulerHistory(history) {
+    const tbody = document.getElementById('scheduler-history-body');
+    if (!tbody) return;
+
+    if (!history || history.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:15px;">실행 이력이 없습니다.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = history.map(h => {
+        const actionClass = h.action === 'BUY' ? 'text-red' : 'text-blue';
+        const actionLabel = h.action === 'BUY' ? '매수' : '매도';
+        const statusIcon = h.api_success ? '' : ' <span title="API 주문 실패" style="color:orange;">⚠</span>';
+        return `<tr>
+            <td style="white-space:nowrap;">${h.timestamp}</td>
+            <td>${h.strategy_name}</td>
+            <td>${h.name}(${h.code})</td>
+            <td class="${actionClass}"><strong>${actionLabel}</strong>${statusIcon}</td>
+            <td>${Number(h.price).toLocaleString()}</td>
+            <td style="font-size:0.85em;">${h.reason}</td>
+        </tr>`;
+    }).join('');
+}
+
+function startSchedulerPolling() {
+    stopSchedulerPolling();
+    schedulerPollingId = setInterval(loadSchedulerStatus, 10000); // 10초마다
+}
+
+function stopSchedulerPolling() {
+    if (schedulerPollingId) {
+        clearInterval(schedulerPollingId);
+        schedulerPollingId = null;
     }
 }
