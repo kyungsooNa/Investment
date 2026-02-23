@@ -62,6 +62,7 @@ class ResPriceSummary:
     current: int
     change_rate: float
     prdy_ctrt: float
+    new_high_low_status: Optional[str] = None
 
     def to_dict(self):
         return asdict(self)

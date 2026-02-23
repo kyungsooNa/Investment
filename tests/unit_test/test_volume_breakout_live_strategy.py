@@ -8,7 +8,7 @@ from strategies.volume_breakout_strategy import VolumeBreakoutConfig
 
 class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
-    def _make_strategy(self, trigger_pct=10.0, take_profit_pct=16.0, stop_loss_pct=8.0):
+    def _make_strategy(self, trigger_pct=10.0, trailing_stop_pct=8.0, stop_loss_pct=8.0):
         ts = MagicMock()
         ts.get_top_trading_value_stocks = AsyncMock()
         sqs = MagicMock()
@@ -17,7 +17,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
         config = VolumeBreakoutConfig(
             trigger_pct=trigger_pct,
-            take_profit_pct=take_profit_pct,
+            trailing_stop_pct=trailing_stop_pct,
             stop_loss_pct=stop_loss_pct,
         )
         strategy = VolumeBreakoutLiveStrategy(
@@ -78,9 +78,9 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         signals = await strategy.scan()
         self.assertEqual(len(signals), 0)
 
-    async def test_check_exits_take_profit(self):
-        """시가 대비 take_profit_pct 도달 시 SELL 시그널 생성 테스트."""
-        strategy, _, sqs, tm = self._make_strategy(take_profit_pct=16.0)
+    async def test_check_exits_trailing_stop(self):
+        """고가 대비 설정 비율(-8%) 하락 시 익절(트레일링) SELL 신호 테스트."""
+        strategy, _, sqs, tm = self._make_strategy(trailing_stop_pct=8.0)
 
         # 장 마감까지 충분한 시간 남음
         import pytz
@@ -91,17 +91,18 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         tm.get_current_kst_time.return_value = now
         tm.get_market_close_time.return_value = close
 
+        # 고가 80000원, 현재가 73600원 -> 고가 대비 -8%
         sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
-            data={"price": "82000", "open": "70000", "code": "005930"}  # +17.1%
+            data={"price": "73600", "open": "70000", "high": "80000", "code": "005930"}
         )
 
-        holdings = [{"code": "005930", "buy_price": 70000}]
+        holdings = [{"code": "005930", "buy_price": 72000}]
         signals = await strategy.check_exits(holdings)
 
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].action, "SELL")
-        self.assertIn("익절", signals[0].reason)
+        self.assertIn("익절(트레일링)", signals[0].reason)
 
     async def test_check_exits_time_exit(self):
         """장 마감 15분 전 시간청산 SELL 시그널 테스트."""
@@ -117,10 +118,10 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
         sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
-            data={"price": "78000", "open": "70000", "code": "005930"}  # +11.4% (TP 16%/SL 8% 사이)
+            data={"price": "78000", "open": "70000", "high": "79000", "code": "005930"}
         )
 
-        holdings = [{"code": "005930", "buy_price": 70000}]
+        holdings = [{"code": "005930", "buy_price": 72000}]
         signals = await strategy.check_exits(holdings)
 
         self.assertEqual(len(signals), 1)

@@ -23,76 +23,6 @@ StockQueryService: 앱 레벨 오케스트레이션
 IndicatorService로 계산 → 데이터만 반환
 12. inquire_time_dailychartprice 의 캐시동작 확인필요
 13. VolmueBreakOut에서 수수료도 적용하여 수익률 계산
-## 불량
-### 실전
-
-
-70.
-2025-08-21 12:45:06,399 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-08-21 12:45:06 KST+0900)
-2025-08-21 12:45:22,819 - INFO - StockQueryService - 실시간 스트림 요청: 종목=['005930'], 필드=['price'], 시간=30s
-2025-08-21 12:45:22,820 - INFO - 실시간 스트림 시작 - 종목: ['005930'], 필드: ['price'], 시간: 30s
-2025-08-21 12:45:22,820 - DEBUG - Bypass - connect_websocket 캐시 건너뜀
-2025-08-21 12:45:22,820 - INFO - 웹소켓 접속키 발급 시도...
-2025-08-21 12:45:23,501 - INFO - 웹소켓 접속키 발급 성공: e1158d3d-7...
-2025-08-21 12:45:23,501 - INFO - 웹소켓 연결 시작: ws://ops.koreainvestment.com:21000
-2025-08-21 12:45:23,613 - INFO - 웹소켓 연결 성공.
-2025-08-21 12:45:23,613 - DEBUG - Bypass - subscribe_realtime_price 캐시 건너뜀
-2025-08-21 12:45:23,614 - INFO - 종목 005930 실시간 체결 데이터 구독 요청 (H0STCNT0)...
-2025-08-21 12:45:23,614 - INFO - 실시간 요청 전송: TR_ID=H0STCNT0, TR_KEY=005930, TYPE=1
-2025-08-21 12:45:23,615 - INFO - 1.00초 동안 대기합니다 (동기).
-2025-08-21 12:45:24,627 - ERROR - trading_service.py:447 - 실시간 스트림 처리 중 오류 발생: object NoneType can't be used in 'await' expression
-2025-08-21 12:45:24,627 - DEBUG - Bypass - unsubscribe_realtime_price 캐시 건너뜀
-2025-08-21 12:45:24,628 - INFO - 종목 005930 실시간 체결 데이터 구독 해지 요청 (H0STCNT0)...
-2025-08-21 12:45:24,629 - INFO - 실시간 요청 전송: TR_ID=H0STCNT0, TR_KEY=005930, TYPE=2
-2025-08-21 12:45:24,629 - DEBUG - Bypass - disconnect_websocket 캐시 건너뜀
-2025-08-21 12:45:24,630 - INFO - 웹소켓 연결 종료 요청.
-2025-08-21 12:45:24,650 - ERROR - korea_invest_websocket_api.py:234 - 실시간 요청 응답 오류: TR_KEY=, RT_CD=9, MSG=JSON PARSING ERROR : header not found
-2025-08-21 12:45:24,652 - ERROR - korea_invest_websocket_api.py:234 - 실시간 요청 응답 오류: TR_KEY=, RT_CD=9, MSG=JSON PARSING ERROR : invalid tr_key
-2025-08-21 12:45:24,654 - ERROR - korea_invest_websocket_api.py:234 - 실시간 요청 응답 오류: TR_KEY=, RT_CD=9, MSG=JSON PARSING ERROR : header not found
-2025-08-21 12:45:24,656 - ERROR - korea_invest_websocket_api.py:122 - 웹소켓 연결이 예외적으로 종료되었습니다: sent 1000 (OK); no close frame received
-2025-08-21 12:45:24,656 - INFO - 웹소켓 연결 종료 완료.
-2025-08-21 12:45:24,657 - INFO - 실시간 스트림 종료
-
-100. 
-Traceback (most recent call last):
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\app\user_action_executor.py", line 329, in handle_momentum_strategy
-    result = await executor.execute(top_stock_codes)
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\strategies\strategy_executor.py", line 11, in execute
-    return await self.strategy.run(stock_codes)
-  File "C:\Users\Kyungsoo\Documents\Code\Investment\strategies\momentum_strategy.py", line 32, in run
-    summary : ResCommonResponse = await self.broker.get_price_summary(code)  # ✅ wrapper 통해 조회[오류] 전략 실행 중 문제 발생: 전략 실행 실패: 'NoneType' object has no attribute 'get_price_summary'
-     현재 시각: 2025-08-21 12:45:33
-[2025-08-21 12:45:33]
-
-
-### 모의
-70.
-2025-08-21 12:49:15,659 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-08-21 12:49:15 KST+0900)
-2025-08-21 12:49:23,537 - INFO - StockQueryService - 실시간 스트림 요청: 종목=['005930'], 필드=['price'], 시간=30s
-2025-08-21 12:49:23,537 - INFO - 실시간 스트림 시작 - 종목: ['005930'], 필드: ['price'], 시간: 30s
-2025-08-21 12:49:23,538 - DEBUG - Bypass - connect_websocket 캐시 건너뜀
-2025-08-21 12:49:23,538 - INFO - 웹소켓 접속키 발급 시도...
-2025-08-21 12:49:24,244 - INFO - 웹소켓 접속키 발급 성공: f7652b54-7...
-2025-08-21 12:49:24,244 - INFO - 웹소켓 연결 시작: ws://ops.koreainvestment.com:31000
-2025-08-21 12:49:24,335 - INFO - 웹소켓 연결 성공.
-2025-08-21 12:49:24,335 - DEBUG - Bypass - subscribe_realtime_price 캐시 건너뜀
-2025-08-21 12:49:24,335 - INFO - 종목 005930 실시간 체결 데이터 구독 요청 (H0STCNT0)...
-2025-08-21 12:49:24,336 - INFO - 실시간 요청 전송: TR_ID=H0STCNT0, TR_KEY=005930, TYPE=1
-2025-08-21 12:49:24,337 - INFO - 1.00초 동안 대기합니다 (동기).
-2025-08-21 12:49:25,998 - ERROR - trading_service.py:447 - 실시간 스트림 처리 중 오류 발생: object NoneType can't be used in 'await' expression
-2025-08-21 12:49:25,998 - DEBUG - Bypass - unsubscribe_realtime_price 캐시 건너뜀
-2025-08-21 12:49:25,998 - INFO - 종목 005930 실시간 체결 데이터 구독 해지 요청 (H0STCNT0)...
-2025-08-21 12:49:25,998 - INFO - 실시간 요청 전송: TR_ID=H0STCNT0, TR_KEY=005930, TYPE=2
-2025-08-21 12:49:25,999 - DEBUG - Bypass - disconnect_websocket 캐시 건너뜀
-2025-08-21 12:49:25,999 - INFO - 웹소켓 연결 종료 요청.
-2025-08-21 12:49:26,005 - ERROR - korea_invest_websocket_api.py:234 - 실시간 요청 응답 오류: TR_KEY=, RT_CD=9, MSG=JSON PARSING ERROR : header not found
-2025-08-21 12:49:26,007 - ERROR - korea_invest_websocket_api.py:234 - 실시간 요청 응답 오류: TR_KEY=, RT_CD=9, MSG=JSON PARSING ERROR : invalid tr_key
-2025-08-21 12:49:26,009 - ERROR - korea_invest_websocket_api.py:234 - 실시간 요청 응답 오류: TR_KEY=, RT_CD=9, MSG=JSON PARSING ERROR : header not found
-2025-08-21 12:49:26,011 - ERROR - korea_invest_websocket_api.py:122 - 웹소켓 연결이 예외적으로 종료되었습니다: sent 1000 (OK); no close frame received
-2025-08-21 12:49:26,012 - INFO - 웹소켓 연결 종료 완료.
-2025-08-21 12:49:26,012 - INFO - 실시간 스트림 종료
-2025-08-21 12:49:26,012 - INFO - 시장 상태 - 시장이 열려 있습니다. (현재: 2025-08-21 12:49:26 KST+0900)
-
 
 ### 1. 환경 (Environment)
 
@@ -150,8 +80,6 @@ Traceback (most recent call last):
 * 주식통합증거금 
 * 기간별계좌권리현황조회 
 * **[신규 기능]** 외국인 순매수 상위 종목 조회 기능 추가.
-* **[신규 기능]** 거래대금 상위 종목 조회 기능 추가.
-* **[완료]** 웹 뷰어 생성 (가상 매매 대시보드 및 실시간 모니터링).
 * **[신규 기능]** Kis Developers API 문서 크롤링해서 API의 tr_id, url, Header, Params, Body를 최신으로 업데이트 할 수 있는 기능 추가 
 * **[신규 기능]** Android App으로 거래결과, 서치 결과 알림 기능 추가. 
 

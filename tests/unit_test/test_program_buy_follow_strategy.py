@@ -7,7 +7,7 @@ from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy, Pro
 
 class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
-    def _make_strategy(self, take_profit=5.0, stop_loss=-3.0):
+    def _make_strategy(self, trailing_stop=8.0, stop_loss=-3.0):
         ts = MagicMock()
         ts.get_top_trading_value_stocks = AsyncMock()
         ts.get_current_stock_price = AsyncMock()
@@ -15,7 +15,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         tm = MagicMock()
 
         config = ProgramBuyFollowConfig(
-            take_profit_pct=take_profit,
+            trailing_stop_pct=trailing_stop,
             stop_loss_pct=stop_loss,
         )
         strategy = ProgramBuyFollowStrategy(
@@ -81,9 +81,9 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         signals = await strategy.scan()
         self.assertEqual(len(signals), 0)
 
-    async def test_check_exits_take_profit(self):
-        """매수가 대비 +5% 이상이면 익절 SELL 시그널 테스트."""
-        strategy, ts, _, tm = self._make_strategy(take_profit=5.0)
+    async def test_check_exits_trailing_stop(self):
+        """고가 대비 설정 비율(-8%) 이상 하락 시 익절(트레일링) SELL 신호 테스트."""
+        strategy, ts, _, tm = self._make_strategy(trailing_stop=8.0)
 
         import pytz
         from datetime import datetime
@@ -93,9 +93,15 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         tm.get_current_kst_time.return_value = now
         tm.get_market_close_time.return_value = close
 
+        # 고가 80000원, 현재가 73600원 -> -8% 하락
         ts.get_current_stock_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
-            data={"output": {"stck_prpr": "73600", "pgtr_ntby_qty": "1000", "bstp_kor_isnm": "전기전자"}}
+            data={"output": {
+                "stck_prpr": "73600",
+                "stck_hgpr": "80000",  # 고가
+                "pgtr_ntby_qty": "1000",
+                "bstp_kor_isnm": "전기전자"
+            }}
         )
 
         holdings = [{"code": "005930", "buy_price": 70000}]
@@ -103,7 +109,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].action, "SELL")
-        self.assertIn("익절", signals[0].reason)
+        self.assertIn("익절(트레일링)", signals[0].reason)
 
     async def test_check_exits_program_reversal(self):
         """프로그램 매도 전환 시 SELL 시그널 테스트."""
@@ -119,7 +125,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
         ts.get_current_stock_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
-            data={"output": {"stck_prpr": "71000", "pgtr_ntby_qty": "-500", "bstp_kor_isnm": "전기전자"}}
+            data={"output": {"stck_prpr": "71000", "stck_hgpr": "72000", "pgtr_ntby_qty": "-500", "bstp_kor_isnm": "전기전자"}}
         )
 
         holdings = [{"code": "005930", "buy_price": 70000}]
@@ -142,7 +148,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
         ts.get_current_stock_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
-            data={"output": {"stck_prpr": "67800", "pgtr_ntby_qty": "100", "bstp_kor_isnm": "전기전자"}}
+            data={"output": {"stck_prpr": "67800", "stck_hgpr": "70000", "pgtr_ntby_qty": "100", "bstp_kor_isnm": "전기전자"}}
         )
 
         holdings = [{"code": "005930", "buy_price": 70000}]
