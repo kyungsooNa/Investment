@@ -6,6 +6,52 @@
     <title>Investment - Web View</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/css/style.css?v=6">
+    <style>
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .spinning {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+            opacity: 1 !important;
+        }
+        /* Toast 알림 스타일 */
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            background: #1a1a2e;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            min-width: 250px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.9rem;
+            animation: toast-in 0.3s ease-out forwards;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes toast-in {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .toast.fade-out {
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease-in;
+        }
+    </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -179,6 +225,7 @@
     </div>
 
 </div>
+<div id="toast-container" class="toast-container"></div>
 <script src="/static/js/virtual_chart.js?v=1"></script>
 <script src="/static/js/app.js?v=10"></script>
 </body>

@@ -14,10 +14,10 @@
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 7. token을 무효화하고 바로 요청하면 못받아옴. server로부터 1분 대기시간이 필요한것으로보임.
 8. ohlcv 활용한 전략 추가
-9. IndicatorService(MA20, 52주 고가, 거래대금(=가격×거래량) 등 파생 지표 계산 전용)
+9. [진행중] IndicatorService(MA20, 52주 고가, 거래대금(=가격×거래량) 등 파생 지표 계산 전용)
 10. (옵션) MarketDataRepository / DataStore:
-최근에 받은 OHLCV/호가/스냅샷을 메모리/파일 캐시로 보관
-“API 다시 부르지 말고 기존 값 쓰자” 요구사항을 충족
+최근에 받은 OHLCV/호가/스냅샷을 메모리/파일 캐시로 보관 (Web API 레벨 캐싱 구현 완료)
+“API 다시 부르지 말고 기존 값 쓰자” 요구사항을 충족 (Throttling 및 Fallback 캐시 적용 완료)
 StockQueryService: 앱 레벨 오케스트레이션
 필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
 IndicatorService로 계산 → 데이터만 반환
@@ -151,7 +151,7 @@ Traceback (most recent call last):
 * 기간별계좌권리현황조회 
 * **[신규 기능]** 외국인 순매수 상위 종목 조회 기능 추가.
 * **[신규 기능]** 거래대금 상위 종목 조회 기능 추가.
-* **[신규 기능]** 웹 뷰어 생성.
+* **[완료]** 웹 뷰어 생성 (가상 매매 대시보드 및 실시간 모니터링).
 * **[신규 기능]** Kis Developers API 문서 크롤링해서 API의 tr_id, url, Header, Params, Body를 최신으로 업데이트 할 수 있는 기능 추가 
 * **[신규 기능]** Android App으로 거래결과, 서치 결과 알림 기능 추가. 
 

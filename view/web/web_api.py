@@ -377,7 +377,11 @@ async def get_virtual_history(force_code: str = None):
                 if code != force_code and code in _PRICE_CACHE:
                     c_price, c_rate, c_ts = _PRICE_CACHE[code]
                     if now - c_ts < 60:  # 1분(60초)으로 단축
-                        return code, c_price, c_rate, True, c_ts
+                        # 1분 이내의 신선한 데이터인 경우, API 호출을 건너뛰더라도 
+                        # 사용자에게 '실패/캐시' 아이콘을 보여주지 않기 위해 False 반환
+                        return code, c_price, c_rate, False, c_ts
+                elif code == force_code:
+                    print(f"[WebAPI] 종목 {code} 강제 업데이트: 캐시를 무시하고 API를 호출합니다.")
 
                 async with sem:
                     await asyncio.sleep(0.05)  # API rate limit 보호
