@@ -2,6 +2,12 @@
  * VirtualTradeManager 데이터를 이용한 수익률 차트 관리
  */
 let yieldChart = null;
+let activeVirtualStrategy = 'ALL';
+
+const STRATEGY_COLORS = [
+    '#4dabf7', '#ff6b6b', '#51cf66', '#fcc419', '#ae3ec9', 
+    '#1098ad', '#f06595', '#845ef7', '#339af0', '#20c997'
+];
 
 async function initVirtualChart() {
     const canvas = document.getElementById('virtualYieldChart');
@@ -12,16 +18,7 @@ async function initVirtualChart() {
         type: 'line',
         data: {
             labels: [],
-            datasets: [{
-                label: '누적 수익률 (%)',
-                data: [],
-                borderColor: '#4dabf7',
-                backgroundColor: 'rgba(77, 171, 247, 0.1)',
-                borderWidth: 2,
-                pointRadius: 3,
-                fill: true,
-                tension: 0.3
-            }]
+            datasets: []
         },
         options: {
             responsive: true,
@@ -38,52 +35,90 @@ async function initVirtualChart() {
                 }
             },
             plugins: {
-                legend: { display: false },
+                legend: { 
+                    display: true,
+                    labels: { color: '#868e96', boxWidth: 12, font: { size: 11 } }
+                },
                 tooltip: { mode: 'index', intersect: false }
             }
         }
     });
     
     // 초기 데이터 로드
-    await refreshVirtualChart();
+    await refreshVirtualChart('ALL');
 }
 
-async function refreshVirtualChart(strategyName = 'ALL') {
-    try {
-        const response = await fetch(`/api/virtual/chart/${strategyName}`);
-        const history = await response.json();
-        
-        if (!yieldChart) return;
-        
-        yieldChart.data.labels = history.map(h => h.date.substring(5)); // MM-DD 포맷
-        yieldChart.data.datasets[0].data = history.map(h => h.return_rate);
-        yieldChart.data.datasets[0].label = `${strategyName} 누적 수익률 (%)`;
-        
-        yieldChart.update();
-        await renderStrategyTabs();
-    } catch (error) {
-        console.error('Chart update failed:', error);
+window.refreshVirtualChart = async function(strategyName) {
+    if (strategyName) activeVirtualStrategy = strategyName;
+
+    // 차트 객체가 없으면 초기화를 먼저 시도하거나 대기
+    if (!yieldChart) {
+        console.log('[VirtualChart] 차트가 아직 준비되지 않아 초기화를 시도합니다.');
+        await initVirtualChart();
     }
-}
 
-async function renderStrategyTabs() {
-    const container = document.getElementById('virtual-strategy-tabs');
-    if (!container || container.children.length > 0) return; // 이미 생성됨
-    
-    const response = await fetch('/api/virtual/strategies');
-    const strategies = await response.json();
-    if (!strategies.includes('ALL')) strategies.unshift('ALL');
-    
-    container.innerHTML = strategies.map(s => `
-        <button class="btn ranking-tab ${s === 'ALL' ? 'active' : ''}" 
-                onclick="selectStrategyTab(this, '${s}')">${s}</button>
-    `).join('');
-}
+    try {
+        const response = await fetch(`/api/virtual/chart/${activeVirtualStrategy}`);
+        const data = await response.json();
+        
+        if (!yieldChart || !data.histories) return;
+        
+        const histories = data.histories;
+        const benchmark = data.benchmark || [];
+        const strategyNames = Object.keys(histories);
+        
+        // 1. 기준이 되는 전체 날짜 목록 생성 (ALL 전략 기준)
+        const refHistory = histories['ALL'] || Object.values(histories)[0] || [];
+        const globalDates = refHistory.map(h => h.date);
+        yieldChart.data.labels = globalDates.map(d => d.substring(5)); // MM-DD 포맷
 
-function selectStrategyTab(btn, strategyName) {
-    document.querySelectorAll('#virtual-strategy-tabs .ranking-tab').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    refreshVirtualChart(strategyName);
+        const newDatasets = [];
+
+        // 2. 각 전략별 데이터셋 생성 및 날짜 정렬(Alignment)
+        strategyNames.forEach((name, idx) => { 
+            const isAll = (name === 'ALL');
+            const strategyHistory = histories[name];
+            
+            // 날짜별 값을 매핑하여 정렬된 데이터 생성
+            const dateMap = {};
+            strategyHistory.forEach(h => { dateMap[h.date] = h.return_rate; });
+            
+            const alignedData = globalDates.map(date => {
+                const val = dateMap[date];
+                return val !== undefined ? val : null; // 데이터가 없는 날짜는 null 처리
+            });
+
+            newDatasets.push({
+                label: isAll ? '전체(ALL) %' : `${name} %`,
+                data: alignedData,
+                borderColor: isAll ? '#4dabf7' : STRATEGY_COLORS[(idx + 1) % STRATEGY_COLORS.length],
+                backgroundColor: isAll ? 'rgba(77, 171, 247, 0.1)' : 'transparent',
+                borderWidth: isAll ? 3 : 1.5,
+                pointRadius: isAll ? 3 : 0,
+                fill: isAll,
+                tension: 0.3
+            });
+        });
+
+        // 2. 벤치마크 데이터셋 추가
+        if (benchmark.length > 0) {
+            newDatasets.push({
+                label: '벤치마크(KOSPI200) %',
+                data: benchmark.map(b => b.return_rate),
+                borderColor: '#ff922b',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                fill: false,
+                pointRadius: 0,
+                tension: 0.3
+            });
+        }
+
+        yieldChart.data.datasets = newDatasets;
+        yieldChart.update();
+    } catch (error) {
+        console.error('[VirtualChart] 업데이트 실패:', error);
+    }
 }
 
 // 페이지 로드 시 실행

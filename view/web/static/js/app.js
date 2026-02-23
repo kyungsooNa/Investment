@@ -27,6 +27,15 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStatus();
     setInterval(updateStatus, 5000); // 5초마다 상태 갱신
 
+    // [수정] 모의투자 데이터 자동 갱신 (5분마다)
+    // 가만히 있을 때는 5분 주기로 업데이트하여 API 할당량을 보존합니다.
+    setInterval(() => {
+        const virtualSection = document.getElementById('section-virtual');
+        if (virtualSection && virtualSection.classList.contains('active')) {
+            loadVirtualHistory();
+        }
+    }, 300000);
+
     // 탭 전환 이벤트
     const navButtons = document.querySelectorAll('.nav button');
     navButtons.forEach(btn => {
@@ -579,11 +588,17 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
             const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '-';
             const days = calcDaysHeld(item.buy_date, null);
 
+            const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
+            const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
+            const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
+            const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
+            const forceBtn = `<span onclick="forceUpdateStock('${item.code}')" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5;">🔄</span>`;
+
             holdBody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
                     <td>${buyPrice}</td>
-                    <td>${curPrice}</td>
+                    <td>${curPrice}${cacheLabel}${forceBtn}</td>
                     <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                     <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
                 </tr>
@@ -608,17 +623,34 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
             const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
             const days = calcDaysHeld(item.buy_date, item.sell_date);
 
+            const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
+            const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
+            const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
+            const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
+            const forceBtn = `<span onclick="forceUpdateStock('${item.code}')" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5;">🔄</span>`;
+
             soldBody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
                     <td>${buyPrice}</td>
-                    <td>${curPrice ? curPrice + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
+                    <td>${curPrice ? curPrice + cacheLabel + forceBtn + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
                     <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                     <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
                 </tr>
             `);
         });
     }
+
+    // [추가] 차트 업데이트 (virtual_chart.js의 함수 호출)
+    if (typeof refreshVirtualChart === 'function') {
+        refreshVirtualChart(strategyName);
+    }
+};
+
+// 특정 종목 강제 업데이트 함수
+window.forceUpdateStock = function(code) {
+    console.log(`[Virtual] 종목 강제 업데이트 시도: ${code}`);
+    loadVirtualHistory(code);
 };
 
 // ==========================================

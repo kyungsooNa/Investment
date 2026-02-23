@@ -232,16 +232,20 @@ class VirtualTradeManager:
         """특정 전략의 누적 수익률 히스토리를 반환합니다 (그래프용)."""
         data = self._load_data()
         daily = data.get("daily", {})
+        all_dates = sorted(daily.keys())
 
         history = []
-        # 날짜순으로 정렬하여 데이터 수집
-        for date in sorted(daily.keys()):
+        last_val = None
+        for date in all_dates:
             returns = daily[date]
             if strategy_name in returns:
-                history.append({
-                    "date": date,
-                    "return_rate": returns[strategy_name]
-                })
+                last_val = returns[strategy_name]
+                history.append({"date": date, "return_rate": last_val})
+            elif last_val is not None:
+                # 해당 전략의 기록이 시작된 이후인데, 특정 날짜 스냅샷에 해당 전략이 누락된 경우
+                # 마지막 수익률을 채워넣어(Forward Fill) 차트가 중간에 끊기지 않게 함
+                history.append({"date": date, "return_rate": last_val})
+
         return history
 
     def get_all_strategies(self) -> list[str]:
