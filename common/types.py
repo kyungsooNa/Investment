@@ -180,12 +180,13 @@ class ResStockFullInfoApiOutput:
     w52_lwpr_vrss_prpr_ctrt: str  # 현재가 대비 52주 최저가 등락률 (%)
     wghn_avrg_stck_prc: str  # 가중평균주가
     whol_loan_rmnd_rate: str  # 전체 대주잔고 비율 (%)
+    new_hgpr_lwpr_cls_code: Optional[str] = None  # 신고가/신저가 구분 코드 (e.g., '1': 52주 신고가)
 
     def to_dict(self):
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict, log_missing: bool = True) -> "ResStockFullInfoApiOutput":
+    def from_dict(cls, data: dict, log_missing: bool = False) -> "ResStockFullInfoApiOutput":
         init_kwargs = {}
 
         for field_def in fields(cls):
@@ -208,23 +209,92 @@ class ResStockFullInfoApiOutput:
         """당일 고가가 52주/250일 최고가와 같거나 높은지 확인하여 신고가 여부를 반환."""
         try:
             today_high = int(self.stck_hgpr)
-            w52_high = int(self.w52_hgpr)
-            d250_high = int(self.d250_hgpr)
-            
-            # 당일 고가가 0이거나 유효하지 않은 경우 신고가로 보지 않음
             if today_high == 0:
                 return False
-                
-            # 52주 또는 250일 최고가 중 하나라도 오늘 고가보다 낮거나 같으면 신고가로 판단
-            if w52_high > 0 and today_high >= w52_high:
-                return True
-            if d250_high > 0 and today_high >= d250_high:
-                return True
-                
+
+            # 52주 최고가와 비교
+            try:
+                w52_high = int(self.w52_hgpr)
+                if w52_high > 0 and today_high >= w52_high:
+                    return True
+            except (ValueError, TypeError):
+                pass  # 52주 최고가 정보가 없거나 숫자가 아니면 무시
+
+            # 250일 최고가와 비교
+            try:
+                d250_high = int(self.d250_hgpr)
+                if d250_high > 0 and today_high >= d250_high:
+                    return True
+            except (ValueError, TypeError):
+                pass  # 250일 최고가 정보가 없거나 숫자가 아니면 무시
+
         except (ValueError, TypeError):
-            # 숫자 변환 실패 시 신고가가 아닌 것으로 간주
+            # today_high 변환 실패 시 신고가 아님
             return False
         return False
+
+    @property
+    def is_new_low(self) -> bool:
+        """당일 저가가 52주/250일 최저가와 같거나 낮은지 확인하여 신저가 여부를 반환."""
+        try:
+            today_low = int(self.stck_lwpr)
+            if today_low == 0:
+                return False
+            
+            # 52주 최저가와 비교
+            try:
+                w52_low = int(self.w52_lwpr)
+                if w52_low > 0 and today_low <= w52_low:
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+            # 250일 최저가와 비교
+            try:
+                d250_low = int(self.d250_lwpr)
+                if d250_low > 0 and today_low <= d250_low:
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+        except (ValueError, TypeError):
+            return False
+        return False
+
+    @property
+    def new_high_low_status(self) -> str:
+        """API에서 제공하는 신고/신저가 정보와 자체 계산 결과를 비교하여 상태 문자열을 반환."""
+        
+        api_status_map = {
+            '1': '52주 신고가(API)',
+            '2': '52주 신저가(API)',
+            '3': '연중 신고가(API)',
+            '4': '연중 신저가(API)',
+        }
+        
+        api_status = self.new_hgpr_lwpr_cls_code
+        api_status_str = api_status_map.get(api_status, 'N/A')
+
+        calculated_high = self.is_new_high
+        calculated_low = self.is_new_low
+        
+        calculated_str = "신고가" if calculated_high else ("신저가" if calculated_low else "N/A")
+
+        # API 상태와 계산된 상태가 다를 경우, 두 정보를 모두 표시
+        if (api_status in ['1', '3'] and not calculated_high) or \
+           (api_status in ['2', '4'] and not calculated_low):
+            return f"계산: {calculated_str} vs API: {api_status_str}"
+            
+        # 둘 중 하나라도 유의미한 정보가 있으면 그 정보를 우선 표시
+        if calculated_high:
+            return "신고가"
+        if calculated_low:
+            return "신저가"
+        if api_status_str != 'N/A':
+            return api_status_str
+
+        return "변동 없음"
+
 
 
 @with_from_dict
