@@ -671,26 +671,9 @@ function renderVirtualHoldTable() {
     const holdBody = document.getElementById('virtual-hold-body');
     if (!holdBody) return;
     holdBody.innerHTML = '';
-
-            const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
-            const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
-            const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
-            const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
-            const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
-
-            holdBody.insertAdjacentHTML('beforeend', `
-                <tr>
-                    <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
-                    <td>${buyPrice}</td>
-                    <td>${curPrice}${cacheLabel}${forceBtn}</td>
-                    <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
-                    <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
-                </tr>
-            `);
-        });    let data = currentVirtualHoldData;
+    let data = currentVirtualHoldData;
     if (virtualHoldSortState.key) {
         data = virtualSortCompare(data, virtualHoldSortState.key, virtualHoldSortState.dir);
-
     }
 
     updateVirtualSortHeaders('hold');
@@ -706,12 +689,18 @@ function renderVirtualHoldTable() {
         const buyPrice = Number(item.buy_price).toLocaleString();
         const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '-';
         const days = calcDaysHeld(item.buy_date, null);
+        
+        const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
+        const isOldCache = item.is_cached && cacheAge > 60;
+        const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
+        const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
+        const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
 
         holdBody.insertAdjacentHTML('beforeend', `
             <tr>
                 <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
                 <td>${buyPrice}</td>
-                <td>${curPrice}</td>
+                <td>${curPrice}${cacheLabel}${forceBtn}</td>
                 <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                 <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
             </tr>
@@ -745,11 +734,17 @@ function renderVirtualSoldTable() {
         const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
         const days = calcDaysHeld(item.buy_date, item.sell_date);
 
+        const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
+        const isOldCache = item.is_cached && cacheAge > 60;
+        const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
+        const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
+        const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
+
         soldBody.insertAdjacentHTML('beforeend', `
             <tr>
                 <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
                 <td>${buyPrice}</td>
-                <td>${sellPrice}${curPrice ? '<div style="font-size:0.8em; color:var(--text-secondary);">' + curPrice + '</div>' : ''}</td>
+                <td>${curPrice ? curPrice + cacheLabel + forceBtn + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
                 <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                 <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
             </tr>
@@ -762,45 +757,13 @@ function sortVirtual(table, key) {
     if (state.key === key) {
         state.dir = state.dir === 'asc' ? 'desc' : 'asc';
     } else {
-        soldData.slice().reverse().forEach(item => {
-            const ror = item.return_rate || 0;
-            const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
-            const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
-            const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
-            const buyPrice = Number(item.buy_price).toLocaleString();
-            const sellPrice = (item.sell_price != null && item.sell_price > 0) ? Number(item.sell_price).toLocaleString() : '-';
-            const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
-            const days = calcDaysHeld(item.buy_date, item.sell_date);
-
-            const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
-            const isOldCache = item.is_cached && cacheAge > 60; // 1분 초과 시 빨간색 경고
-            const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
-            const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
-            const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
-
-            soldBody.insertAdjacentHTML('beforeend', `
-                <tr>
-                    <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
-                    <td>${buyPrice}</td>
-                    <td>${curPrice ? curPrice + cacheLabel + forceBtn + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
-                    <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
-                    <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
-                </tr>
-            `);
-        });
         state.key = key;
         state.dir = 'asc';
-
     }
 
-    // [추가] 차트 업데이트 (virtual_chart.js의 함수 호출)
-    if (typeof refreshVirtualChart === 'function') {
-        refreshVirtualChart(strategyName);
-    }
     if (table === 'hold') renderVirtualHoldTable();
     else renderVirtualSoldTable();
 }
-};
 
 // 특정 종목 강제 업데이트 함수
 window.forceUpdateStock = async function(code, event) {
