@@ -1,3 +1,5 @@
+
+![Coverage](https://img.shields.io/badge/Coverage-66%25-red)
 # 📈 Investment Trading App
 
 <!-- Pytest Coverage Comment:Begin -->
