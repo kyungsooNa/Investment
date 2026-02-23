@@ -796,6 +796,10 @@ window.forceUpdateStock = async function(code, event) {
 // 7. 프로그램매매 실시간
 // ==========================================
 let ptEventSource = null;
+let ptChart = null; // [추가] 차트 객체
+let ptChartData = {}; // { code: { total: 0, data: [] } }
+const ptChartColors = ['#4BC0C0', '#FFB347', '#FF6384', '#36A2EB', '#9966FF', '#F2B1D0'];
+
 let ptRowCount = 0;
 let ptSubscribedCodes = new Set();
 let ptCodeNameMap = {};   // 종목코드 → 종목명 매핑
@@ -825,15 +829,20 @@ async function addProgramTrading() {
 
         ptSubscribedCodes.add(code);
         if (json.stock_name) ptCodeNameMap[code] = json.stock_name;
+        
+        // [추가] 차트 데이터 구조 초기화
+        if (!ptChartData[code]) {
+            ptChartData[code] = { total: 0, data: [] };
+        }
+
         renderPtChips();
         input.value = '';
 
-        // SSE 연결 (최초 1회)
         if (!ptEventSource) {
             ptEventSource = new EventSource('/api/program-trading/stream');
             ptEventSource.onmessage = (event) => {
                 const d = JSON.parse(event.data);
-                appendProgramTradingRow(d);
+                handleProgramTradingData(d); // 새 핸들러 호출
             };
             ptEventSource.onerror = () => {
                 statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
@@ -857,13 +866,17 @@ async function removeProgramTrading(code) {
 
     ptSubscribedCodes.delete(code);
     delete ptCodeNameMap[code];
+    delete ptChartData[code]; // [추가] 차트 데이터 삭제
     if (ptFilterCode === code) ptFilterCode = null;
+    
+    _updateProgramTradingChart(); // 차트 갱신
     renderPtChips();
 
     const statusDiv = document.getElementById('pt-status');
     if (ptSubscribedCodes.size === 0) {
         if (ptEventSource) { ptEventSource.close(); ptEventSource = null; }
         statusDiv.innerHTML = '<span>구독 중지됨</span>';
+        if (ptChart) { ptChart.destroy(); ptChart = null; } // 차트 파괴
     } else {
         statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
     }
@@ -885,6 +898,14 @@ async function stopAllProgramTrading() {
     ptSubscribedCodes.clear();
     ptCodeNameMap = {};
     ptFilterCode = null;
+
+    // [추가] 차트 초기화
+    if (ptChart) {
+        ptChart.destroy();
+        ptChart = null;
+    }
+    ptChartData = {};
+
     renderPtChips();
     document.getElementById('pt-status').innerHTML = '<span>구독 중지됨</span>';
 }
@@ -917,7 +938,7 @@ function togglePtFilter(code) {
     });
 }
 
-function appendProgramTradingRow(d) {
+function _appendProgramTradingTableRow(d) {
     const tbody = document.getElementById('pt-body');
     const time = d['주식체결시간'] || '';
     const fmtTime = time.length >= 6 ? time.slice(0,2)+':'+time.slice(2,4)+':'+time.slice(4,6) : time;
@@ -939,11 +960,110 @@ function appendProgramTradingRow(d) {
 
     tbody.insertAdjacentHTML('afterbegin', row);
     ptRowCount++;
-    // 최대 200행 유지
     if (ptRowCount > 200) {
         tbody.removeChild(tbody.lastElementChild);
         ptRowCount--;
     }
+}
+
+function _initProgramTradingChart() {
+    if (ptChart) return;
+    const ctx = document.getElementById('pt-chart').getContext('2d');
+    ptChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            datasets: []
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit: 'minute',
+                        tooltipFormat: 'HH:mm:ss',
+                        displayFormats: {
+                            minute: 'HH:mm'
+                        }
+                    },
+                    title: { display: false }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: '누적 순매수대금'
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return formatTradingValue(value);
+                        }
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                }
+            }
+        }
+    });
+}
+
+function _updateProgramTradingChart() {
+    if (!ptChart) return;
+
+    const datasets = [];
+    let colorIndex = 0;
+    for (const code of ptSubscribedCodes) {
+        if (ptChartData[code]) {
+            datasets.push({
+                label: ptCodeNameMap[code] || code,
+                data: ptChartData[code].data,
+                borderColor: ptChartColors[colorIndex % ptChartColors.length],
+                backgroundColor: ptChartColors[colorIndex % ptChartColors.length] + '33', // 투명도
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1
+            });
+            colorIndex++;
+        }
+    }
+    ptChart.data.datasets = datasets;
+    ptChart.update();
+}
+
+
+function handleProgramTradingData(d) {
+    _appendProgramTradingTableRow(d); // 테이블 업데이트
+
+    const code = d['유가증권단축종목코드'];
+    if (!ptChartData[code]) return;
+
+    // 누적 순매수대금 계산
+    const netValue = parseInt(d['순매수거래대금'] || '0');
+    ptChartData[code].total += netValue;
+
+    const timeStr = d['주식체결시간']; // "HHMMSS"
+    const now = new Date();
+    now.setHours(parseInt(timeStr.slice(0, 2)));
+    now.setMinutes(parseInt(timeStr.slice(2, 4)));
+    now.setSeconds(parseInt(timeStr.slice(4, 6)));
+
+    // 차트 데이터 추가
+    ptChartData[code].data.push({ x: now.getTime(), y: ptChartData[code].total });
+    
+    // 1000개 데이터 포인트 제한
+    if (ptChartData[code].data.length > 1000) {
+        ptChartData[code].data.shift();
+    }
+    
+    _initProgramTradingChart();
+    _updateProgramTradingChart();
 }
 
 // ==========================================
