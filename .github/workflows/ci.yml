@@ -49,41 +49,39 @@ jobs:
         import xml.etree.ElementTree as ET
         import re
 
-        # 1. 수치 추출
+        # 1. 커버리지 수치 가져오기
         try:
             tree = ET.parse('coverage.xml')
             root = tree.getroot()
             percent = int(float(root.attrib['line-rate']) * 100)
             color = 'green' if percent >= 90 else 'yellow' if percent >= 70 else 'red'
             badge = f'![Coverage](https://img.shields.io/badge/Coverage-{percent}%25-{color})'
-            
+
             # 2. README 읽기
             with open('README.md', 'r', encoding='utf-8') as f:
                 content = f.read()
 
-            # 3. 안전한 교체 로직 (정규표현식 사용)
-            begin_tag = ''
+            # 3. 본문 보존형 교체 로직
+            start_tag = ''
             end_tag = ''
-            
-            if begin_tag in content and end_tag in content:
-                # 첫 번째 태그 세트만 찾아 뱃지를 넣고, 혹시 모를 중복 태그는 모두 제거합니다.
-                pattern = re.escape(begin_tag) + r'.*?' + re.escape(end_tag)
-                replacement = f'{begin_tag}\\n{badge}\\n{end_tag}'
-                
-                # 먼저 첫 번째 위치에 뱃지 삽입
-                new_content = re.sub(pattern, replacement, content, count=1, flags=re.DOTALL)
-                
-                # 그 뒤에 남아있는 중복 태그들은 본문 보존을 위해 모두 삭제
-                # (첫 번째 replacement에 포함된 태그는 보호됩니다)
-                final_content = re.sub(pattern, '', new_content, flags=re.DOTALL) if new_content.count(begin_tag) > 1 else new_content
 
-                with open('README.md', 'w', encoding='utf-8') as f:
-                    f.write(final_content.strip() + '\\n')
-                print(f'Success: Updated to {percent}%')
+            if start_tag in content and end_tag in content:
+                # 표지판 사이의 내용만 타겟팅하는 정규표현식
+                pattern = re.escape(start_tag) + r'.*?' + re.escape(end_tag)
+                new_segment = f'{start_tag}\n{badge}\n{end_tag}'
+                
+                # 파일 전체(content)에서 해당 패턴만 딱 한 번(count=1) 교체
+                new_content = re.sub(pattern, new_segment, content, count=1, flags=re.DOTALL)
+
+                # [중요] 만약 결과가 비어있지 않을 때만 파일 쓰기
+                if new_content.strip():
+                    with open('README.md', 'w', encoding='utf-8') as f:
+                        f.write(new_content)
+                    print(f'성공: {percent}% 수치로 업데이트 완료!')
             else:
-                print('Warning: Tags missing in README.md. Skipping update.')
+                print('경고: README에서 표지판을 찾지 못해 수정을 취소합니다.')
         except Exception as e:
-            print(f'Error occurred: {e}')
+            print(f'에러 발생: {e}')
         "
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
