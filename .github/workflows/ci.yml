@@ -50,40 +50,45 @@ jobs:
         import re
 
         # 1. 수치 추출
-        tree = ET.parse('coverage.xml')
-        root = tree.getroot()
-        percent = int(float(root.attrib['line-rate']) * 100)
-        color = 'green' if percent >= 90 else 'yellow' if percent >= 70 else 'red'
-        badge = f'![Coverage](https://img.shields.io/badge/Coverage-{percent}%25-{color})'
-
-        with open('README.md', 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        # 2. 세이프락 교체 로직
-        pattern = r'.*?'
-        replacement = f'\\n{badge}\\n'
-        
-        if '' in content:
-            # [안전장치 1] 첫 번째 태그만 새 뱃지로 교체 (나머지 본문은 그대로 유지)
-            new_content = re.sub(pattern, replacement, content, count=1, flags=re.DOTALL)
+        try:
+            tree = ET.parse('coverage.xml')
+            root = tree.getroot()
+            percent = int(float(root.attrib['line-rate']) * 100)
+            color = 'green' if percent >= 90 else 'yellow' if percent >= 70 else 'red'
+            badge = f'![Coverage](https://img.shields.io/badge/Coverage-{percent}%25-{color})'
             
-            # [안전장치 2] 혹시 뒤에 남아있을지 모를 중복 태그들만 선택적으로 제거
-            # 첫 번째 교체된 뱃지 이후의 내용에서만 중복을 찾습니다.
-            parts = new_content.split('', 1)
-            if len(parts) > 1:
-                after_content = re.sub(pattern, '', parts[1], flags=re.DOTALL)
-                new_content = parts[0] + '' + after_content
+            # 2. README 읽기
+            with open('README.md', 'r', encoding='utf-8') as f:
+                content = f.read()
 
-            with open('README.md', 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            print(f'Successfully updated badge to {percent}% while preserving content.')
-        else:
-            print('Tag not found. No changes made.')
+            # 3. 안전한 교체 로직 (정규표현식 사용)
+            begin_tag = ''
+            end_tag = ''
+            
+            if begin_tag in content and end_tag in content:
+                # 첫 번째 태그 세트만 찾아 뱃지를 넣고, 혹시 모를 중복 태그는 모두 제거합니다.
+                pattern = re.escape(begin_tag) + r'.*?' + re.escape(end_tag)
+                replacement = f'{begin_tag}\\n{badge}\\n{end_tag}'
+                
+                # 먼저 첫 번째 위치에 뱃지 삽입
+                new_content = re.sub(pattern, replacement, content, count=1, flags=re.DOTALL)
+                
+                # 그 뒤에 남아있는 중복 태그들은 본문 보존을 위해 모두 삭제
+                # (첫 번째 replacement에 포함된 태그는 보호됩니다)
+                final_content = re.sub(pattern, '', new_content, flags=re.DOTALL) if new_content.count(begin_tag) > 1 else new_content
+
+                with open('README.md', 'w', encoding='utf-8') as f:
+                    f.write(final_content.strip() + '\\n')
+                print(f'Success: Updated to {percent}%')
+            else:
+                print('Warning: Tags missing in README.md. Skipping update.')
+        except Exception as e:
+            print(f'Error occurred: {e}')
         "
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
         git add README.md
-        git commit -m "chore: safe update coverage badge [skip ci]" || echo "No changes"
+        git commit -m "chore: safe update badge [skip ci]" || echo "No changes"
         git push
 
     # 🚀 2. GitHub Pages 상세 리포트 배포 (유지)
