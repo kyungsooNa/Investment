@@ -14,7 +14,7 @@ class SearchInfoParams:
     prdt_type_cd: str  # 종목코드
 
     @classmethod
-    def of(cls, stock_code: str, prdt_type_cd: prdt_type_cd):
+    def of(cls, stock_code: str, prdt_type_cd: prdt_type_cd): # type: ignore
         return cls(pdno=stock_code, prdt_type_cd=prdt_type_cd)
 
     def to_dict(self) -> Dict[str, str]:

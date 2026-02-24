@@ -137,6 +137,7 @@ class ResStockFullInfoApiOutput:
     mang_issu_cls_code: str  # 관리종목 구분 코드
     marg_rate: str  # 증거금율 (%)
     mrkt_warn_cls_code: str  # 시장경고종목 분류코드
+    new_hgpr_lwpr_cls_code: Optional[str]  # 신고가/신저가 구분 코드
     oprc_rang_cont_yn: str  # 시가 범위제 적용 여부
     ovtm_vi_cls_code: str  # 시간외 VI 발동 분류코드
     pbr: str  # 주가순자산비율 (Price to Book Ratio)
@@ -180,6 +181,22 @@ class ResStockFullInfoApiOutput:
     w52_lwpr_vrss_prpr_ctrt: str  # 현재가 대비 52주 최저가 등락률 (%)
     wghn_avrg_stck_prc: str  # 가중평균주가
     whol_loan_rmnd_rate: str  # 전체 대주잔고 비율 (%)
+
+    @property
+    def is_new_high(self) -> bool:
+        return self.new_hgpr_lwpr_cls_code == "1"
+
+    @property
+    def is_new_low(self) -> bool:
+        return self.new_hgpr_lwpr_cls_code == "2"
+
+    @property
+    def new_high_low_status(self) -> str:
+        if self.is_new_high:
+            return "신고가"
+        if self.is_new_low:
+            return "신저가"
+        return "-"
 
     def to_dict(self):
         return asdict(self)

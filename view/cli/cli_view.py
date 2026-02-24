@@ -378,8 +378,9 @@ class CLIView:
     def display_current_stock_price(self, view: dict):
         code   = str(view.get("code", "N/A"))
         price  = str(view.get("price", "N/A"))
-        change = str(view.get("change", "N/A"))
+        change = str(view.get("change_absolute", view.get("change", "N/A")))
         rate   = str(view.get("rate", "N/A"))
+        sign   = str(view.get("sign", ""))
         time_  = str(view.get("time", "N/A"))
         open_  = str(view.get("open", "N/A"))
         high   = str(view.get("high", "N/A"))
@@ -389,7 +390,7 @@ class CLIView:
 
         print(f"\n--- {code} 현재가 ---")
         print(f"  현재가: {price}")
-        print(f"  전일대비: {change} ({rate}%)")
+        print(f"  전일대비: {sign}{change} ({rate}%)")
         print(f"  체결시각: {time_}")
         print("-" * 36)
         print(f"  시가: {open_} / 고가: {high} / 저가: {low} / 전일종가: {prev}")

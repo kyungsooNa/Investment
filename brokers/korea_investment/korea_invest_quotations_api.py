@@ -158,12 +158,18 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         change_rate = (current_price - open_price) / open_price * 100 if open_price else 0
 
+        # 신고/신저가 상태 확인 및 로깅
+        new_high_low_status = output.new_high_low_status
+        if "vs" in new_high_low_status:
+            self._logger.warning(f"({stock_code}) 신고/신저가 불일치: {new_high_low_status}")
+
         price_summary_data = ResPriceSummary(
             symbol=stock_code,
             open=open_price,
             current=current_price,
             change_rate=round(change_rate, 2),
-            prdy_ctrt=prdy_ctrt
+            prdy_ctrt=prdy_ctrt,
+            new_high_low_status=new_high_low_status,
         )
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용

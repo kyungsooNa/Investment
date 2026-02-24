@@ -28,6 +28,9 @@ class TradingService:
         self._logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
         self._latest_prices = {}
+    async def get_name_by_code(self, code: str) -> str:
+        """종목코드로 종목명을 반환합니다 (BrokerAPIWrapper 위임)."""
+        return await self._broker_api_wrapper.get_name_by_code(code)
 
     def _default_realtime_message_handler(self, data):
         """
@@ -146,6 +149,11 @@ class TradingService:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
         self._logger.info(f"Service - {stock_code} 종목 요약 정보 조회 요청")
         return await self._broker_api_wrapper.get_price_summary(stock_code)
+
+    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+        """종목코드로 종목의 전체 정보를 가져옵니다 (BrokerAPIWrapper 위임)."""
+        self._logger.info(f"Service - {stock_code} 종목 상세 정보 조회 요청")
+        return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
 
     async def get_current_stock_price(self, stock_code) -> ResCommonResponse:
         self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")

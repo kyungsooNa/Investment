@@ -74,18 +74,74 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
     # 메뉴 1: 주식 현재가 조회 (삼성전자) - handle_get_current_stock_price
     async def test_handle_get_current_stock_price_success(self):
         stock_code = "005930"
+
+        # handle_get_current_stock_price에서 get_name_by_code를 호출하므로 Mocking
+        self.stock_query_service.trading_service.get_name_by_code = AsyncMock(return_value="삼성전자")
+
+        # get_current_price가 반환할 Mock 데이터 생성
+        # handle_get_current_stock_price 내부에서 필요한 모든 필드를 포함해야 함
+        mock_output = ResStockFullInfoApiOutput.from_dict({
+            "stck_prpr": "70000",
+            "prdy_vrss": "1000",
+            "prdy_ctrt": "1.45",
+            "prdy_vrss_sign": "2",
+            "bstp_kor_isnm": "반도체",
+            "iscd_stat_cls_code": "55",
+            "acml_tr_pbmn": "10000000000",
+            "acml_vol": "100000",
+            "prdy_vrss_vol_rate": "110.5",
+            "frgn_ntby_qty": "50000",
+            "pgtr_ntby_qty": "10000",
+            "stck_oprc": "69000",
+            "stck_hgpr": "71000",
+            "stck_lwpr": "68000",
+            "stck_sdpr": "69000",
+            "per": "15.5",
+            "pbr": "1.8",
+            "eps": "4500",
+            "bps": "38000",
+            "d250_hgpr": "80000",
+            "d250_hgpr_date": "20230101",
+            "d250_hgpr_vrss_prpr_rate": "-12.5",
+            "d250_lwpr": "60000",
+            "d250_lwpr_date": "20230601",
+            "d250_lwpr_vrss_prpr_rate": "16.67",
+            "stck_dryy_hgpr": "75000",
+            "dryy_hgpr_vrss_prpr_rate": "-6.67",
+            "dryy_hgpr_date": "20230301",
+            "stck_dryy_lwpr": "65000",
+            "dryy_lwpr_vrss_prpr_rate": "7.69",
+            "dryy_lwpr_date": "20230801",
+            "w52_hgpr": "78000",
+            "w52_hgpr_vrss_prpr_ctrt": "-10.26",
+            "w52_hgpr_date": "20230201",
+            "w52_lwpr": "62000",
+            "w52_lwpr_vrss_prpr_ctrt": "12.9",
+            "w52_lwpr_date": "20230701",
+            "crdt_able_yn": "Y",
+            "short_over_yn": "N",
+            "sltr_yn": "N",
+            "mang_issu_cls_code": "00"
+        })
+
         self.mock_broker_api_wrapper.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
-            data={"stck_prpr": "70000"}
+            data={"output": mock_output}
         )
 
         await self.stock_query_service.handle_get_current_stock_price(stock_code)
 
+        # Assertions
         self.mock_broker_api_wrapper.get_current_price.assert_called_once_with(stock_code)
-        assert self.mock_logger.info.called
-
+        self.stock_query_service.trading_service.get_name_by_code.assert_called_once_with(stock_code)
+        
+        # 로그 호출 횟수 검증
+        # 1. Stock_Query_Service - ... 상세 정보 조회 요청
+        # 2. Trading_Service - ... 현재가 조회 요청
+        # 3. ... 현재가 및 상세 정보 조회 성공
         self.assertEqual(self.mock_logger.info.call_count, 3)
+        self.mock_logger.error.assert_not_called()
 
     async def test_handle_get_current_stock_price_failure(self):
         stock_code = "005930"

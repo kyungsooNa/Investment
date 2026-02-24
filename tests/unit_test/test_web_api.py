@@ -1,4 +1,10 @@
 import pytest
+import sys
+from pathlib import Path
+
+# Add parent directories to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from common.types import ResCommonResponse
 
 def test_get_status(web_client, mock_web_ctx):
