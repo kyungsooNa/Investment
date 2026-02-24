@@ -60,6 +60,8 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
             time_manager=tm,
             config=config,
         )
+        # Clear position state to avoid cross-test pollution
+        strategy._position_state = {}
         return strategy, ts, sqs, tm, mapper
 
     def _make_ohlcv(self, days=20, base_close=10000, base_high=10500, base_vol=500000):
