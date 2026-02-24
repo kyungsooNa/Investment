@@ -2125,11 +2125,13 @@ async function loadAndRenderStockChart(code) {
     }
 
     try {
-        const [resChart, resMa5, resMa20, resMa60, resBB] = await Promise.all([
+        // [수정] MA120 추가 요청
+        const [resChart, resMa5, resMa20, resMa60, resMa120, resBB] = await Promise.all([
             fetch(`/api/chart/${code}?period=D`),
             fetch(`/api/indicator/ma/${code}?period=5`),
             fetch(`/api/indicator/ma/${code}?period=20`),
             fetch(`/api/indicator/ma/${code}?period=60`),
+            fetch(`/api/indicator/ma/${code}?period=120`),
             fetch(`/api/indicator/bollinger/${code}?period=20&std_dev=2.0`)
         ]);
 
@@ -2152,6 +2154,7 @@ async function loadAndRenderStockChart(code) {
             ma5: await parseIndicatorData(resMa5),
             ma20: await parseIndicatorData(resMa20),
             ma60: await parseIndicatorData(resMa60),
+            ma120: await parseIndicatorData(resMa120), // [추가]
             bb: await parseIndicatorData(resBB)
         };
         g_chartCode = code;
@@ -2205,6 +2208,7 @@ function renderStockChart(period) {
     const ma5 = sliceIndicator(g_chartIndicators.ma5);
     const ma20 = sliceIndicator(g_chartIndicators.ma20);
     const ma60 = sliceIndicator(g_chartIndicators.ma60);
+    const ma120 = sliceIndicator(g_chartIndicators.ma120); // [추가]
 
     const bbUpper = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.upper }));
     const bbLower = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.lower }));
@@ -2232,6 +2236,7 @@ function renderStockChart(period) {
                 { label: 'MA5', data: ma5, type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA20', data: ma20, type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA60', data: ma60, type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA120', data: ma120, type: 'line', borderColor: '#a29bfe', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] 보라색 계열
                 { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(200,200,200,0.5)', borderWidth: 1, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
                 { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(200,200,200,0.5)', borderWidth: 1, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
                 { label: '거래량', data: volumes, type: 'bar', yAxisID: 'y1', backgroundColor: 'rgba(200, 200, 200, 0.2)', order: 4 }
@@ -2243,14 +2248,23 @@ function renderStockChart(period) {
             interaction: { mode: 'index', intersect: false },
             scales: {
                 x: {
-                    // type: 'category' (기본값) - 인덱스 x값과 labels 배열을 통해 자동 매핑
+                    type: 'category', // [수정] 1970년 문제 해결을 위해 명시적 category 설정
                     ticks: { autoSkip: true, maxTicksLimit: 10 }
                 },
                 y: { type: 'linear', position: 'right', stack: 'stock', stackWeight: 4, grid: { color: 'rgba(255,255,255,0.1)' } },
                 y1: { type: 'linear', position: 'right', stack: 'stock', stackWeight: 1, grid: { drawOnChartArea: false }, ticks: { callback: v => (v/1000).toFixed(0)+'K' } }
             },
             plugins: {
-                legend: { display: false }, // 범례 숨김
+                legend: { 
+                    display: true, // [수정] 범례 표시
+                    labels: {
+                        color: '#a0a0b0',
+                        filter: function(item, chart) {
+                            // [수정] MA만 표시 (주가, 거래량, BB 제외)
+                            return item.text.includes('MA');
+                        }
+                    }
+                },
                 tooltip: {
                     callbacks: {
                         title: (items) => labels[items[0].dataIndex] // 툴팁에 날짜 표시
