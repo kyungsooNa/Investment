@@ -22,6 +22,15 @@ function formatMarketCap(val) {
     return num.toLocaleString() + '억';
 }
 
+function ensureTableInCard(table) {
+    if (table && !table.parentElement.classList.contains('card')) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        table.parentNode.insertBefore(card, table);
+        card.appendChild(table);
+    }
+}
+
 // ==========================================
 // 1. 공통/초기화 로직
 // ==========================================
@@ -176,18 +185,30 @@ async function searchStock(codeOverride) {
         const changeVal = parseInt(data.change) || 0;
         const changeClass = (changeVal > 0) ? 'text-red' : (changeVal < 0 ? 'text-blue' : '');
         const sign = data.sign || '';
-        const newHighBadge = data.is_new_high ? '<span class="badge new-high">🔥 신고가</span>' : '';
+        const newHighBadge = (data.is_new_high) ? '<span class="badge new-high">🔥 신고가</span>' : '';
+        const newLowBadge = (data.is_new_low) ? '<span class="badge new-low">💧 신저가</span>' : '';
 
         // Inject CSS for layout
         const styles = `
             <style>
-                .stock-title { display: flex; align-items: center; gap: 0.5rem; }
+                .stock-title { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
                 .badge.new-high { 
                     background-color: #ff6b35; 
                     color: white; 
                     font-size: 0.8em;
                     padding: 0.2em 0.6em;
                     border-radius: 10px;
+                    font-weight: bold;
+                    white-space: nowrap;
+                }
+                .badge.new-low { 
+                    background-color: #1e90ff; 
+                    color: white; 
+                    font-size: 0.8em;
+                    padding: 0.2em 0.6em;
+                    border-radius: 10px;
+                    font-weight: bold;
+                    white-space: nowrap;
                 }
                 .stock-info-box .stock-details {
                     display: grid;
@@ -225,8 +246,8 @@ async function searchStock(codeOverride) {
         `;
 
         resultDiv.innerHTML = styles + `
-            <div class="stock-info-box">
-                <h3 class="stock-title">${data.name} (${data.code}) ${newHighBadge}</h3>
+            <div class="card stock-info-box">
+                <h3 class="stock-title">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
                 <p class="price ${changeClass}">${fnum(data.price, '원')}</p>
                 <p class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
                 
@@ -281,7 +302,8 @@ async function searchStock(codeOverride) {
             </div>
         `;
         
-        document.getElementById('order-code').value = code;
+        const orderCodeInput = document.getElementById('order-code');
+        if (orderCodeInput) orderCodeInput.value = code;
 
     } catch (e) {
         console.error("Error in searchStock:", e);
@@ -335,6 +357,7 @@ function renderBalanceTable() {
     };
 
     let html = `
+        <div class="card">
         <div class="balance-summary">
             <p>
                 <strong>계좌번호:</strong> ${accInfo.number}
@@ -374,7 +397,7 @@ function renderBalanceTable() {
             `;
         });
     }
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
     div.innerHTML = html;
 }
 
@@ -479,6 +502,7 @@ async function loadRanking(category) {
         const lastColHeader = isTradingValue ? '거래대금' : '거래량';
 
         let html = `
+            <div class="card">
             <table class="data-table">
             <thead><tr><th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>${lastColHeader}</th></tr></thead>
             <tbody>
@@ -499,7 +523,7 @@ async function loadRanking(category) {
                 </tr>
             `;
         });
-        html += "</tbody></table>";
+        html += "</tbody></table></div>";
         div.innerHTML = html;
 
     } catch (e) {
@@ -524,6 +548,7 @@ async function loadTopMarketCap(market = '0001') {
             return;
         }
         let html = `
+            <div class="card">
             <table class="data-table">
             <thead><tr><th>순위</th><th>종목명</th><th>코드</th><th>현재가</th><th>시가총액</th></tr></thead>
             <tbody>
@@ -542,7 +567,7 @@ async function loadTopMarketCap(market = '0001') {
                 </tr>
             `;
         });
-        html += "</tbody></table>";
+        html += "</tbody></table></div>";
         div.innerHTML = html;
     } catch(e) {
         div.innerHTML = "오류: " + e;
@@ -612,6 +637,10 @@ async function loadVirtualHistory() {
             const allBtn = tabContainer.querySelector('button');
             if (allBtn) filterVirtualStrategy('ALL', allBtn);
         }
+
+        // [UI 개선] 테이블 가시성을 위해 card로 감싸기
+        const section = document.getElementById('section-virtual');
+        if (section) section.querySelectorAll('table').forEach(ensureTableInCard);
 
         // forceUpdateStock 등에서 결과를 확인할 수 있도록 데이터 반환
         return allVirtualData.length > 0 ? { trades: allVirtualData } : null;
@@ -1560,6 +1589,8 @@ function renderSchedulerHistory(history) {
     const tbody = document.getElementById('scheduler-history-body');
     if (!tbody) return;
 
+    ensureTableInCard(tbody.closest('table'));
+
     if (!history || history.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:15px;">실행 이력이 없습니다.</td></tr>';
         return;
@@ -1804,6 +1835,10 @@ function _renderPtTable() {
 async function initProgramTrading() {
     // [추가] 테이블 헤더 동적 수정 (현재가 컬럼 추가)
     _fixProgramTradingTableHeader();
+    
+    // [UI 개선] 테이블 가시성을 위해 card로 감싸기
+    const ptBody = document.getElementById('pt-body');
+    if (ptBody) ensureTableInCard(ptBody.closest('table'));
 
     // [통합] UI 요소 동적 추가 (백업 버튼 + 시간 단위 버튼)
     const ptHeader = document.querySelector('#section-program h2');

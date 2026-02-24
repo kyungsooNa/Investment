@@ -184,11 +184,11 @@ class ResStockFullInfoApiOutput:
 
     @property
     def is_new_high(self) -> bool:
-        return self.new_hgpr_lwpr_cls_code == "1"
+        return self.new_hgpr_lwpr_cls_code in ("1", "신고가")
 
     @property
     def is_new_low(self) -> bool:
-        return self.new_hgpr_lwpr_cls_code == "2"
+        return self.new_hgpr_lwpr_cls_code in ("2", "신저가")
 
     @property
     def new_high_low_status(self) -> str:
