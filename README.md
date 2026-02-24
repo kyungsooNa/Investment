@@ -1,4 +1,6 @@
 
+![Coverage](https://img.shields.io/badge/Coverage-69%25-red)
+
 ![Coverage](https://img.shields.io/badge/Coverage-68%25-red)
 
 ![Coverage](https://img.shields.io/badge/Coverage-67%25-red)
