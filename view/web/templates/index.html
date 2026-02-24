@@ -27,11 +27,11 @@
             gap: 10px;
         }
         .toast {
-            background: #1a1a2e;
-            color: #fff;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
             padding: 12px 20px;
             border-radius: 8px;
-            border: 1px solid var(--border-color);
+            border: 1px solid var(--border);
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
             min-width: 250px;
             display: flex;
@@ -62,6 +62,7 @@
         <span id="status-time">--</span>
         <span id="status-market" class="badge closed">--</span>
         <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>
+        <span id="btn-theme" class="badge clickable" onclick="toggleTheme()" title="테마 전환" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border);">🌙</span>
     </div>
 </header>
 
@@ -266,5 +267,20 @@
 <div id="toast-container" class="toast-container"></div>
 <script src="/static/js/virtual_chart.js?v=1"></script>
 <script src="/static/js/app.js?v=12"></script>
+<script>
+    function toggleTheme() {
+        document.body.classList.toggle('light-mode');
+        const isLight = document.body.classList.contains('light-mode');
+        document.getElementById('btn-theme').innerText = isLight ? '☀️' : '🌙';
+        localStorage.setItem('theme', isLight ? 'light' : 'dark');
+    }
+
+    // 초기 테마 로드
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'light') {
+        document.body.classList.add('light-mode');
+        document.getElementById('btn-theme').innerText = '☀️';
+    }
+</script>
 </body>
 </html>
