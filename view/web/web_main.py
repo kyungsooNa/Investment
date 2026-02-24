@@ -36,8 +36,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Trading App", lifespan=lifespan)
 
 # 2. 정적 파일 및 템플릿 설정
-app.mount("/static", StaticFiles(directory="view/web/static"), name="static")
-templates = Jinja2Templates(directory="view/web/templates")
+# 현재 파일(web_main.py)의 위치를 기준으로 절대 경로 설정하여 실행 위치에 영향받지 않도록 함
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 # 3. API 라우터 등록
 app.include_router(web_api.router)
