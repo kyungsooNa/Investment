@@ -56,16 +56,16 @@
 </head>
 <body>
 
-<div class="header">
+<header class="header">
     <h1>Investment</h1>
     <div class="status-bar">
         <span id="status-time">--</span>
         <span id="status-market" class="badge closed">--</span>
         <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>
     </div>
-</div>
+</header>
 
-<div class="nav">
+<nav class="nav">
     <button data-tab="stock" class="active">현재가 조회</button>
     <button data-tab="balance">계좌 잔고</button>
     <button data-tab="order">매수/매도</button>
@@ -74,9 +74,9 @@
     <button data-tab="virtual">모의투자 기록</button>
     <button data-tab="scheduler">전략 스케줄러</button>
     <button data-tab="program">프로그램매매</button>
-</div>
+</nav>
 
-<div class="main">
+<main class="main">
 
     <div id="section-stock" class="section active">
         <div class="card">
@@ -262,7 +262,7 @@
         </div>
     </div>
 
-</div>
+</main>
 <div id="toast-container" class="toast-container"></div>
 <script src="/static/js/virtual_chart.js?v=1"></script>
 <script src="/static/js/app.js?v=12"></script>
