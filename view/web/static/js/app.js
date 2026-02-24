@@ -811,7 +811,7 @@ window.forceUpdateStock = async function(code, event) {
 // 7. 프로그램매매 실시간
 // ==========================================
 let ptEventSource = null;
-let ptChart = null; // [추가] 차트 객체
+let ptChart = null; // [수정] 단일 차트 객체 (Stacked Scales 사용)
 let ptChartData = {}; // { code: { totalValue: 0, totalVolume: 0, valueData: [], volumeData: [] } }
 const ptChartColors = ['#4BC0C0', '#FFB347', '#FF6384', '#36A2EB', '#9966FF', '#F2B1D0'];
 
@@ -920,10 +920,8 @@ async function stopAllProgramTrading() {
     ptCodeNameMap = {};
     ptFilterCode = null;
 
-    if (ptChart) {
-        ptChart.destroy();
-        ptChart = null;
-    }
+    if (ptChart) { ptChart.destroy(); ptChart = null; }
+
     ptChartData = {};
     ptDataDirty = true; // [추가] 데이터 변경 표시
 
@@ -1003,83 +1001,92 @@ function _initProgramTradingChart() {
 
     const ctx = canvas.getContext('2d');
     ptChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            datasets: []
-        },
+        type: 'line',
+        data: { datasets: [] },
+        plugins: [{
+            id: 'splitLine',
+            afterDraw: (chart) => {
+                const { ctx, chartArea: { left, right }, scales: { y1 } } = chart;
+                if (y1) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(left, y1.bottom);
+                    ctx.lineTo(right, y1.bottom);
+                    ctx.lineWidth = 4;
+                    ctx.strokeStyle = 'rgba(200, 200, 200, 1.0)'; // [수정] 구분선 훨씬 더 진하게
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }],
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
             scales: {
                 x: {
-                    type: 'linear', // [수정] time -> linear (date adapter 의존성 제거)
+                    type: 'linear',
                     position: 'bottom',
-                    min: start.getTime(), // [추가] 09:00 시작
-                    max: maxTime,         // [추가] 현재 시간까지 표시
+                    min: start.getTime(),
+                    max: maxTime,
                     ticks: {
                         stepSize: 60000,
                         callback: function(value) {
                             const d = new Date(value);
-                            return d.toTimeString().slice(0, 5); // HH:mm (1분 단위)
+                            return d.toTimeString().slice(0, 5);
                         }
                     },
                     title: { display: false }
                 },
-                y: { // 왼쪽 Y축 (대금)
+                y: { // [수정] 순매수대금 (아래쪽, 비중 2)
                     type: 'linear',
                     display: true,
                     position: 'left',
-                    title: {
-                        display: true,
-                        text: '순매수대금'
-                    },
-                    ticks: {
-                        callback: function(value) {
-                            return formatTradingValue(value);
+                    stack: 'demo', // 같은 그룹끼리 스택
+                    stackWeight: 2, // 높이 비중 2
+                    title: { display: true, text: '순매수대금' },
+                    grid: {
+                        drawOnChartArea: true,
+                        color: (context) => {
+                            if (context.tick.value === 0) return 'rgba(200, 200, 200, 0.5)'; // [수정] 0선 강조
+                            return 'rgba(255, 255, 255, 0.1)';
                         }
-                    }
+                    },
+                    ticks: { callback: function(value) { return formatTradingValue(value); } }
                 },
-                y1: { // 오른쪽 Y축 (수량)
+                y1: { // [수정] 순매수량 (위쪽, 비중 1)
                     type: 'linear',
                     display: true,
-                    position: 'right',
-                    title: {
-                        display: true,
-                        text: '순매수량'
-                    },
-                    grid: {
-                        drawOnChartArea: false, // y1 축의 그리드 라인은 그리지 않음
-                    },
-                    ticks: {
-                        callback: function(value) {
-                            return value.toLocaleString();
+                    position: 'left',
+                    stack: 'demo', // 같은 그룹끼리 스택
+                    stackWeight: 1, // 높이 비중 1
+                    title: { display: true, text: '순매수량' },
+                    grid: { 
+                        drawOnChartArea: true,
+                        color: (context) => {
+                            if (context.tick.value === 0) return 'rgba(200, 200, 200, 0.5)';
+                            return 'rgba(255, 255, 255, 0.1)';
                         }
-                    }
+                    },
+                    ticks: { callback: function(value) { return value.toLocaleString(); } }
                 }
             },
             plugins: {
-                legend: {
-                    position: 'top',
-                    labels: {
-                        // order 값에 의한 정렬을 무시하고 데이터셋 추가 순서(종목별)대로 정렬
-                        sort: (a, b) => a.datasetIndex - b.datasetIndex
-                    }
-                },
+                legend: { position: 'top' },
                 tooltip: {
-                    mode: 'index',
-                    intersect: false,
                     callbacks: {
                         title: function(tooltipItems) {
                             const d = new Date(tooltipItems[0].parsed.x);
-                            return d.toTimeString().slice(0, 5); // HH:mm
+                            return d.toTimeString().slice(0, 5);
                         },
                         footer: function(tooltipItems) {
                             if (tooltipItems.length > 0) {
                                 const item = tooltipItems[0];
                                 const price = item.raw.price;
-                                if (price) {
-                                    return `주가: ${parseInt(price).toLocaleString()}원`;
-                                }
+                                if (price) return `주가: ${parseInt(price).toLocaleString()}원`;
                             }
                             return '';
                         }
@@ -1102,9 +1109,7 @@ function _updateProgramTradingChart() {
     if (now > end) maxTime = end.getTime();
     if (maxTime < start.getTime()) maxTime = start.getTime();
 
-    if (ptChart.options.scales.x.max < maxTime) {
-        ptChart.options.scales.x.max = maxTime;
-    }
+    if (ptChart.options.scales.x.max < maxTime) ptChart.options.scales.x.max = maxTime;
 
     const datasets = [];
     let colorIndex = 0;
@@ -1122,11 +1127,10 @@ function _updateProgramTradingChart() {
                 type: 'bar',
                 label: `${ptCodeNameMap[code] || code} (대금)`,
                 data: ptChartData[code].valueData,
-                backgroundColor: color + '80',
+                backgroundColor: color + 'B3',
                 borderColor: color,
                 borderWidth: 1,
-                yAxisID: 'y',
-                order: 2
+                yAxisID: 'y' // [수정] 대금 -> 아래쪽 축
             });
 
             // 수량 (Line)
@@ -1136,16 +1140,17 @@ function _updateProgramTradingChart() {
                 data: ptChartData[code].volumeData,
                 borderColor: color,
                 backgroundColor: color,
-                borderWidth: 1,
-                pointRadius: 2,
+                borderWidth: 2,
+                pointRadius: 2, // 점 표시
+                pointHoverRadius: 4,
                 tension: 0.1,
-                yAxisID: 'y1',
-                order: 1
+                yAxisID: 'y1' // [수정] 수량 -> 위쪽 축
             });
 
             colorIndex++;
         }
     }
+    
     ptChart.data.datasets = datasets;
     ptChart.update();
 }
