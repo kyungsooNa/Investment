@@ -1,5 +1,5 @@
 import pandas as pd
-from common.types import ResCommonResponse, ErrorCode, ResBollingerBand
+from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI
 from services.trading_service import TradingService
 
 class IndicatorService:
@@ -67,3 +67,59 @@ class IndicatorService:
 
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"볼린저 밴드 계산 중 오류: {str(e)}", data=None)
+
+    async def get_rsi(self, stock_code: str, period: int = 14, candle_type: str = "D") -> ResCommonResponse:
+        """
+        특정 종목의 RSI(상대강도지수)를 계산하여 반환합니다.
+        
+        :param stock_code: 종목코드
+        :param period: RSI 기간 (기본 14)
+        :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
+        """
+        # 1. OHLCV 데이터 조회
+        resp = await self.trading_service.get_ohlcv(stock_code, period=candle_type)
+        
+        if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+            return resp
+        
+        ohlcv_data = resp.data
+        
+        # 전일 대비 계산을 위해 최소 period + 1개 데이터 필요
+        if len(ohlcv_data) < period + 1:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.EMPTY_VALUES.value,
+                msg1=f"데이터 부족: {len(ohlcv_data)} < {period + 1}",
+                data=None
+            )
+
+        try:
+            df = pd.DataFrame(ohlcv_data)
+            if df['close'].dtype == object:
+                 df['close'] = pd.to_numeric(df['close'])
+
+            # 전일 대비 변동분
+            delta = df['close'].diff()
+            
+            # 상승분(U)과 하락분(D) 분리
+            u = delta.clip(lower=0)
+            d = -1 * delta.clip(upper=0)
+            
+            # Wilder's Smoothing (alpha=1/period) 적용
+            au = u.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+            ad = d.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+
+            # RS 및 RSI 계산
+            rs = au / ad
+            rsi = 100 - (100 / (1 + rs))
+            
+            latest = df.iloc[-1]
+            latest_rsi = rsi.iloc[-1]
+
+            if pd.isna(latest_rsi):
+                 return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
+
+            result = ResRSI(code=stock_code, date=str(latest['date']), close=float(latest['close']), rsi=float(latest_rsi))
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
+
+        except Exception as e:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"RSI 계산 중 오류: {str(e)}", data=None)

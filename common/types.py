@@ -390,6 +390,17 @@ class ResBollingerBand:
     def to_dict(self):
         return asdict(self)
 
+@with_from_dict
+@dataclass
+class ResRSI:
+    code: str
+    date: str
+    close: float
+    rsi: float
+
+    def to_dict(self):
+        return asdict(self)
+
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
 @with_from_dict

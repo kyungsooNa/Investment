@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 import pandas as pd
 from services.indicator_service import IndicatorService
-from common.types import ResCommonResponse, ErrorCode, ResBollingerBand
+from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI
 
 @pytest.fixture
 def indicator_service():
@@ -86,3 +86,30 @@ async def test_get_bollinger_bands_calculation_error(indicator_service):
     # pd.to_numeric 변환 실패로 ValueError 발생 -> UNKNOWN_ERROR 반환 예상
     assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
     assert "볼린저 밴드 계산 중 오류" in result.msg1
+
+@pytest.mark.asyncio
+async def test_get_rsi_success(indicator_service):
+    """RSI 계산 성공 시나리오"""
+    service, mock_ts = indicator_service
+    
+    # 30일치 데이터 생성 (14일 RSI 계산 가능하도록)
+    # 지속적인 상승 추세 -> RSI가 높게 나와야 함
+    data = []
+    for i in range(30):
+        data.append({
+            "date": f"202501{i+1:02d}",
+            "close": 10000 + i * 100, 
+            "open": 10000, "high": 10000, "low": 10000, "volume": 100
+        })
+    
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    result = await service.get_rsi("005930")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert isinstance(result.data, ResRSI)
+    assert result.data.code == "005930"
+    # 지속 상승했으므로 RSI는 50보다 커야 함 (실제로는 100에 가까움)
+    assert result.data.rsi > 50

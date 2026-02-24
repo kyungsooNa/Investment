@@ -256,3 +256,23 @@ async def test_get_bollinger_bands(web_client, mock_web_ctx):
     assert json_resp["data"]["upper"] == 71000.0
     
     mock_web_ctx.indicator_service.get_bollinger_bands.assert_awaited_once_with("005930", 20, 2.0)
+
+@pytest.mark.asyncio
+async def test_get_rsi(web_client, mock_web_ctx):
+    """GET /api/indicator/rsi/{code} 엔드포인트 테스트"""
+    from common.types import ResRSI
+    
+    # indicator_service Mock 설정
+    mock_web_ctx.indicator_service = AsyncMock()
+    
+    mock_rsi = ResRSI(code="005930", date="20250101", close=70000.0, rsi=65.5)
+    
+    mock_web_ctx.indicator_service.get_rsi.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=mock_rsi
+    )
+    
+    response = web_client.get("/api/indicator/rsi/005930?period=14")
+    
+    assert response.status_code == 200
+    assert response.json()["data"]["rsi"] == 65.5
+    mock_web_ctx.indicator_service.get_rsi.assert_awaited_once_with("005930", 14)
