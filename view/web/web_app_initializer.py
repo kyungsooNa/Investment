@@ -16,6 +16,7 @@ from core.logger import Logger
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
+from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
 from view.web import web_api  # 임포트 확인
 
 class WebAppContext:
@@ -132,6 +133,22 @@ class WebAppContext:
             strategy=pbf_strategy,
             interval_minutes=10,
             max_positions=3,
+            order_qty=1,
+            enabled=False,
+        ))
+
+        # 전통적 거래량 돌파 전략 등록
+        tvb_strategy = TraditionalVolumeBreakoutStrategy(
+            trading_service=self.trading_service,
+            stock_query_service=self.stock_query_service,
+            stock_code_mapper=self.stock_code_mapper,
+            time_manager=self.time_manager,
+            logger=self.logger,
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=tvb_strategy,
+            interval_minutes=1,
+            max_positions=5,
             order_qty=1,
             enabled=False,
         ))

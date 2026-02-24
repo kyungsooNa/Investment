@@ -172,7 +172,9 @@ class StrategyScheduler:
             buy_signals = await cfg.strategy.scan()
             remaining = cfg.max_positions - current_holds
             for sig in buy_signals[:remaining]:
-                sig.qty = cfg.order_qty
+                # 전략이 qty를 직접 계산한 경우(>1) 존중, 아니면 config 값 사용
+                if sig.qty <= 1:
+                    sig.qty = cfg.order_qty
                 await self._execute_signal(sig)
 
         self._logger.info(f"[Scheduler] {name} 실행 완료")

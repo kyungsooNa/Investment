@@ -86,3 +86,16 @@ class StockCodeMapper:
         if not code and self.logger:
             self.logger.warning(f"❗ 종목코드 없음: {name}")
         return code
+
+    def get_kosdaq_codes(self) -> list:
+        """코스닥 시장 종목코드 리스트 반환."""
+        if "시장구분" not in self.df.columns:
+            return []
+        return self.df[self.df["시장구분"] == "KOSDAQ"]["종목코드"].tolist()
+
+    def is_kosdaq(self, code: str) -> bool:
+        """해당 종목코드가 코스닥 시장인지 확인."""
+        if "시장구분" not in self.df.columns:
+            return False
+        row = self.df[self.df["종목코드"] == code]
+        return not row.empty and row.iloc[0]["시장구분"] == "KOSDAQ"
