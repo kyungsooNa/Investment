@@ -12,7 +12,10 @@
         </div>
         <div id="stock-result"></div>
         <div class="card" id="stock-chart-card" style="display: none; margin-top: 16px;">
-            <canvas id="stockChart" style="width: 100%; height: 500px;"></canvas>
+            <div id="chart-controls-area" style="text-align: right; margin-bottom: 10px; min-height: 24px;"></div>
+            <div style="position: relative; height: 650px; width: 100%;">
+                <canvas id="stockChart"></canvas>
+            </div>
         </div>
     </div>
 {% endblock %}
