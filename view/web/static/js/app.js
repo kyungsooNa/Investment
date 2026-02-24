@@ -1507,6 +1507,8 @@ function handleProgramTradingData(d) {
 // 8. 전략 스케줄러
 // ==========================================
 let schedulerPollingId = null;
+let allSchedulerHistory = [];
+let currentSchedulerFilter = '전체';
 
 async function loadSchedulerStatus() {
     try {
@@ -1517,9 +1519,13 @@ async function loadSchedulerStatus() {
         const statusData = await statusRes.json();
         const historyData = await historyRes.json();
         renderSchedulerStatus(statusData);
-        renderSchedulerHistory(historyData.history || []);
+
+        allSchedulerHistory = historyData.history || [];
+        buildSchedulerHistoryTabs(statusData.strategies || []);
+        filterSchedulerHistory(currentSchedulerFilter);
     } catch (e) {
-        document.getElementById('scheduler-info').innerHTML = '<span>스케줄러 상태 조회 실패</span>';
+        const info = document.getElementById('scheduler-info');
+        if (info) info.innerHTML = '<span>스케줄러 상태 조회 실패</span>';
     }
 }
 
@@ -1536,27 +1542,39 @@ function renderSchedulerStatus(data) {
         badge.className = 'badge closed';
     }
 
-    const dryLabel = data.dry_run ? ' (dry-run: CSV만 기록)' : ' (실제 주문 실행)';
-    info.innerHTML = `<span>상태: ${data.running ? '실행 중' : '정지'}${dryLabel}</span>`;
+    const dryLabel = data.dry_run ? 'dry-run: CSV만 기록' : '실제 주문 실행';
+    info.textContent = dryLabel;
 
     if (!data.strategies || data.strategies.length === 0) {
         strategiesDiv.innerHTML = '<div class="card"><span>등록된 전략이 없습니다.</span></div>';
         return;
     }
 
-    strategiesDiv.innerHTML = data.strategies.map(s => `
+    strategiesDiv.innerHTML = data.strategies.map(s => {
+        const enabledBadge = s.enabled
+            ? '<span class="badge open">활성</span>'
+            : '<span class="badge closed">비활성</span>';
+        const positionBadge = `<span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}">포지션 ${s.current_holds}/${s.max_positions}</span>`;
+        const toggleBtn = s.enabled
+            ? `<button class="btn btn-sell" style="padding:4px 12px;font-size:0.85em;" onclick="stopStrategy('${s.name}')">정지</button>`
+            : `<button class="btn btn-buy" style="padding:4px 12px;font-size:0.85em;" onclick="startStrategy('${s.name}')">시작</button>`;
+        return `
         <div class="card" style="margin-bottom:8px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-                <h3 style="margin:0;color:var(--text-primary);">${s.name}</h3>
-                <span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}">
-                    포지션 ${s.current_holds}/${s.max_positions}
-                </span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <h3 style="margin:0;color:var(--text-primary);">${s.name}</h3>
+                    ${enabledBadge}
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    ${positionBadge}
+                    ${toggleBtn}
+                </div>
             </div>
             <div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
                 실행 주기: ${s.interval_minutes}분 | 마지막 실행: ${s.last_run || '-'}
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
 async function startScheduler() {
@@ -1583,6 +1601,65 @@ async function stopScheduler() {
     } catch (e) {
         alert('스케줄러 정지 실패');
     }
+}
+
+async function startStrategy(name) {
+    try {
+        const res = await fetch(`/api/scheduler/strategy/${encodeURIComponent(name)}/start`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            renderSchedulerStatus(data.status);
+        } else {
+            alert(data.detail || '전략 시작 실패');
+        }
+    } catch (e) {
+        alert('전략 시작 실패');
+    }
+}
+
+async function stopStrategy(name) {
+    try {
+        const res = await fetch(`/api/scheduler/strategy/${encodeURIComponent(name)}/stop`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            renderSchedulerStatus(data.status);
+        } else {
+            alert(data.detail || '전략 정지 실패');
+        }
+    } catch (e) {
+        alert('전략 정지 실패');
+    }
+}
+
+function buildSchedulerHistoryTabs(strategies) {
+    const tabContainer = document.getElementById('scheduler-history-tabs');
+    if (!tabContainer) return;
+
+    const names = ['전체', ...strategies.map(s => s.name)];
+    tabContainer.innerHTML = names.map(name =>
+        `<button class="sub-tab-btn${name === currentSchedulerFilter ? ' active' : ''}" onclick="filterSchedulerHistory('${name}', this)">${name}</button>`
+    ).join('');
+}
+
+function filterSchedulerHistory(strategyName, btnElement) {
+    currentSchedulerFilter = strategyName;
+
+    // 탭 활성화 상태 업데이트
+    const tabContainer = document.getElementById('scheduler-history-tabs');
+    if (tabContainer) {
+        tabContainer.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
+        if (btnElement) {
+            btnElement.classList.add('active');
+        } else {
+            const match = Array.from(tabContainer.querySelectorAll('.sub-tab-btn')).find(b => b.textContent === strategyName);
+            if (match) match.classList.add('active');
+        }
+    }
+
+    const filtered = strategyName === '전체'
+        ? allSchedulerHistory
+        : allSchedulerHistory.filter(h => h.strategy_name === strategyName);
+    renderSchedulerHistory(filtered);
 }
 
 function renderSchedulerHistory(history) {

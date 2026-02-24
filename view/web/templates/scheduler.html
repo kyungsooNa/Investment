@@ -4,13 +4,11 @@
     <div id="section-scheduler" class="section">
         <div class="card">
             <h2>전략 스케줄러</h2>
-            <div class="form-row">
+            <div class="form-row" style="align-items:center;gap:10px;">
                 <span id="scheduler-status-badge" class="badge closed">정지</span>
-                <button class="btn btn-buy" id="scheduler-start-btn" onclick="startScheduler()">시작</button>
-                <button class="btn btn-sell" id="scheduler-stop-btn" onclick="stopScheduler()">정지</button>
-            </div>
-            <div id="scheduler-info" class="stats-box" style="margin-top:12px;">
-                <span>스케줄러가 초기화되지 않았습니다.</span>
+                <span id="scheduler-info" style="color:var(--text-secondary);font-size:0.9em;">스케줄러가 초기화되지 않았습니다.</span>
+                <button class="btn btn-buy" id="scheduler-start-btn" onclick="startScheduler()">전체 시작</button>
+                <button class="btn btn-sell" id="scheduler-stop-btn" onclick="stopScheduler()">전체 정지</button>
             </div>
         </div>
 
@@ -18,6 +16,7 @@
         <div id="scheduler-strategies"></div>
 
         <h3 style="margin:24px 0 8px; color:var(--text-primary);">시그널 실행 이력</h3>
+        <div id="scheduler-history-tabs" class="sub-nav-container" style="margin-bottom:12px;"></div>
         <div class="table-container">
             <table class="data-table">
                 <thead>
@@ -39,7 +38,7 @@
 {% block scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        updateSchedulerStatus();
+        loadSchedulerStatus();
     });
 </script>
 {% endblock %}

@@ -84,12 +84,16 @@ class StrategyScheduler:
         if self._running:
             self._logger.warning("[Scheduler] 이미 실행 중")
             return
+        for cfg in self._strategies:
+            cfg.enabled = True
         self._running = True
         self._task = asyncio.create_task(self._loop())
-        self._logger.info("[Scheduler] 시작")
+        self._logger.info("[Scheduler] 시작 (전체 전략 활성화)")
 
     async def stop(self):
         self._running = False
+        for cfg in self._strategies:
+            cfg.enabled = False
         if self._task:
             self._task.cancel()
             try:
@@ -97,7 +101,7 @@ class StrategyScheduler:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        self._logger.info("[Scheduler] 정지")
+        self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
 
     # ── 메인 루프 ──
 

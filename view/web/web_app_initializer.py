@@ -118,6 +118,7 @@ class WebAppContext:
             interval_minutes=5,
             max_positions=3,
             order_qty=1,
+            enabled=False,
         ))
 
         # 프로그램 매수 추종 전략 등록
@@ -132,6 +133,7 @@ class WebAppContext:
             interval_minutes=10,
             max_positions=3,
             order_qty=1,
+            enabled=False,
         ))
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
