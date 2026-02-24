@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div id="section-scheduler" class="section">
+        <div class="card">
+            <h2>전략 스케줄러</h2>
+            <div class="form-row">
+                <span id="scheduler-status-badge" class="badge closed">정지</span>
+                <button class="btn btn-buy" id="scheduler-start-btn" onclick="startScheduler()">시작</button>
+                <button class="btn btn-sell" id="scheduler-stop-btn" onclick="stopScheduler()">정지</button>
+            </div>
+            <div id="scheduler-info" class="stats-box" style="margin-top:12px;">
+                <span>스케줄러가 초기화되지 않았습니다.</span>
+            </div>
+        </div>
+
+        <h3 style="margin:16px 0 8px; color:var(--text-primary);">등록된 전략</h3>
+        <div id="scheduler-strategies"></div>
+
+        <h3 style="margin:24px 0 8px; color:var(--text-primary);">시그널 실행 이력</h3>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>시간</th>
+                        <th>전략</th>
+                        <th>종목</th>
+                        <th>매매</th>
+                        <th>가격</th>
+                        <th>사유</th>
+                    </tr>
+                </thead>
+                <tbody id="scheduler-history-body"></tbody>
+            </table>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        updateSchedulerStatus();
+    });
+</script>
+{% endblock %}

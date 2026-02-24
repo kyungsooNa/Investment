@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investment - Web View</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/css/style.css?v=7">
+    <style>
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .spinning { display: inline-block; animation: spin 1s linear infinite; opacity: 1 !important; }
+        .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; }
+        .toast { background: var(--bg-secondary); color: var(--text-primary); padding: 12px 20px; border-radius: 8px; border: 1px solid var(--border); box-shadow: 0 4px 15px rgba(0,0,0,0.5); min-width: 250px; display: flex; align-items: center; gap: 12px; font-size: 0.9rem; animation: toast-in 0.3s ease-out forwards; }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .toast.fade-out { opacity: 0; transform: translateX(100%); transition: all 0.3s ease-in; }
+        
+        /* 페이지 분리 후 섹션 표시 강제 */
+        .section { display: block !important; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<header class="header">
+    <h1>Investment</h1>
+    <div class="status-bar">
+        <span id="status-time">--</span>
+        <span id="status-market" class="badge closed">--</span>
+        <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>
+        <span id="btn-theme" class="badge clickable" onclick="toggleTheme()" title="테마 전환" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border);">🌙</span>
+    </div>
+</header>
+
+<nav class="nav">
+    <!-- Flask에서 active_page 변수를 넘겨주어 활성화 클래스 적용 -->
+    <a href="/" class="{% if active_page == 'stock' %}active{% endif %}">현재가 조회</a>
+    <a href="/balance" class="{% if active_page == 'balance' %}active{% endif %}">계좌 잔고</a>
+    <a href="/order" class="{% if active_page == 'order' %}active{% endif %}">매수/매도</a>
+    <a href="/ranking" class="{% if active_page == 'ranking' %}active{% endif %}">랭킹</a>
+    <a href="/marketcap" class="{% if active_page == 'marketcap' %}active{% endif %}">시가총액</a>
+    <a href="/virtual" class="{% if active_page == 'virtual' %}active{% endif %}">모의투자 기록</a>
+    <a href="/scheduler" class="{% if active_page == 'scheduler' %}active{% endif %}">전략 스케줄러</a>
+    <a href="/program" class="{% if active_page == 'program' %}active{% endif %}">프로그램매매</a>
+</nav>
+
+<main class="main">
+    {% block content %}
+    <!-- 각 페이지의 콘텐츠가 여기에 들어갑니다 -->
+    {% endblock %}
+</main>
+
+<div id="toast-container" class="toast-container"></div>
+
+<!-- 공통 스크립트 -->
+<script src="/static/js/virtual_chart.js?v=1"></script>
+<script src="/static/js/app.js?v=12"></script>
+<script>
+    function toggleTheme() {
+        document.body.classList.toggle('light-mode');
+        const isLight = document.body.classList.contains('light-mode');
+        document.getElementById('btn-theme').innerText = isLight ? '☀️' : '🌙';
+        localStorage.setItem('theme', isLight ? 'light' : 'dark');
+    }
+
+    // 초기 테마 로드
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'light') {
+        document.body.classList.add('light-mode');
+        document.getElementById('btn-theme').innerText = '☀️';
+    }
+
+    // 페이지 분리로 인해 탭 전환 로직이 불필요해졌으므로, 
+    // app.js의 setupTabs가 동작하지 않도록 하거나 무시됩니다.
+    // 대신 각 페이지별 초기화 로직을 아래 블록에 작성합니다.
+</script>
+
+{% block scripts %}
+<!-- 페이지별 추가 스크립트 -->
+{% endblock %}
+
+</body>
+</html>

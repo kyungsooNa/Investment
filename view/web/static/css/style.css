@@ -12,6 +12,16 @@
     --border: #2a2a4a;
 }
 
+/* Light Theme Override */
+body.light-mode {
+    --bg-primary: #f0f2f5;
+    --bg-secondary: #ffffff;
+    --bg-card: #ffffff;
+    --text-primary: #2c3e50;
+    --text-secondary: #596275;
+    --border: #dcdde1;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
@@ -64,7 +74,7 @@ body {
     overflow-x: auto;
 }
 
-.nav button {
+.nav button, .nav a {
     background: none;
     border: none;
     color: var(--text-secondary);
@@ -74,10 +84,13 @@ body {
     border-bottom: 2px solid transparent;
     white-space: nowrap;
     transition: all 0.2s;
+    text-decoration: none;
+    display: inline-block;
+    font-family: inherit;
 }
 
-.nav button:hover { color: var(--text-primary); }
-.nav button.active {
+.nav button:hover, .nav a:hover { color: var(--text-primary); }
+.nav button.active, .nav a.active {
     color: var(--accent);
     border-bottom-color: var(--accent);
 }

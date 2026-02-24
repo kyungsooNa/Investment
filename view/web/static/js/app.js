@@ -53,43 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
             loadVirtualHistory();
         }
     }, 300000);
-
-    // 탭 전환 이벤트
-    const navButtons = document.querySelectorAll('.nav button');
-    navButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            // 1) 버튼 활성화 스타일
-            navButtons.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-
-            // 2) 섹션 보이기/숨기기
-            const targetId = `section-${btn.dataset.tab}`;
-            document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
-            document.getElementById(targetId).classList.add('active');
-
-            // 3) 탭별 초기 데이터 로드 (필요시)
-            if (btn.dataset.tab === 'balance') loadBalance();
-            if (btn.dataset.tab === 'ranking') loadRanking('rise'); // 기본값
-            if (btn.dataset.tab === 'marketcap') loadTopMarketCap('0001');
-            if (btn.dataset.tab === 'virtual') loadVirtualHistory();
-            if (btn.dataset.tab === 'scheduler') loadSchedulerStatus();
-        });
-    });
-
-    // [추가] 프로그램 매매 데이터 복구 및 초기화
-    initProgramTrading();
-
-    // [추가] 프로그램 매매 백업 버튼 UI 동적 추가
-    const ptHeader = document.querySelector('#section-program h2');
-    if (ptHeader) {
-        const btnGroup = document.createElement('span');
-        btnGroup.style.cssText = 'font-size: 0.6em; margin-left: 15px; vertical-align: middle; font-weight: normal;';
-        btnGroup.innerHTML = `
-            <button onclick="exportPtDataToFile()" style="padding: 4px 8px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; margin-right: 5px;">💾 백업 저장</button>
-            <button onclick="importPtDataFromFile()" style="padding: 4px 8px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px;">📂 백업 불러오기</button>
-        `;
-        ptHeader.appendChild(btnGroup);
-    }
 });
 
 async function updateStatus() {
@@ -1842,40 +1805,57 @@ async function initProgramTrading() {
     // [추가] 테이블 헤더 동적 수정 (현재가 컬럼 추가)
     _fixProgramTradingTableHeader();
 
-    // [추가] 시간 단위 선택 버튼 UI 동적 추가
+    // [통합] UI 요소 동적 추가 (백업 버튼 + 시간 단위 버튼)
     const ptHeader = document.querySelector('#section-program h2');
     if (ptHeader) {
-        const intervalGroup = document.createElement('span');
-        intervalGroup.style.cssText = 'font-size: 0.6em; margin-left: 15px; vertical-align: middle; font-weight: normal;';
-        
-        const intervals = [1, 3, 5, 10, 30, 60];
-        let html = '<span style="margin-right:5px; color:#aaa;">|</span> ';
-        intervals.forEach(min => {
-            const activeClass = (min === ptTimeUnit) ? 'active' : '';
-            // CSS 클래스 pt-interval-btn은 style 태그나 css 파일에 정의 필요 (여기서는 인라인 스타일로 대체하거나 클래스 활용)
-            // 편의상 인라인 스타일과 클래스 병용
-            html += `<button class="pt-interval-btn ${activeClass}" data-interval="${min}" onclick="setPtTimeUnit(${min})" 
-                style="padding: 2px 6px; margin-right: 2px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 3px; font-size: 0.9em;">
-                ${min}분
-            </button>`;
-        });
-        intervalGroup.innerHTML = html;
-        
-        // 백업 버튼 그룹 앞에 삽입
-        const existingBtnGroup = ptHeader.querySelector('span'); 
-        if (existingBtnGroup) {
-            ptHeader.insertBefore(intervalGroup, existingBtnGroup);
-        } else {
-            ptHeader.appendChild(intervalGroup);
+        // 1. 백업 버튼 그룹 추가 (없으면 생성)
+        let backupGroup = ptHeader.querySelector('.pt-backup-group');
+        if (!backupGroup) {
+            backupGroup = document.createElement('span');
+            backupGroup.className = 'pt-backup-group';
+            backupGroup.style.cssText = 'font-size: 0.6em; margin-left: 15px; vertical-align: middle; font-weight: normal;';
+            backupGroup.innerHTML = `
+                <button onclick="exportPtDataToFile()" style="padding: 4px 8px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; margin-right: 5px;">💾 백업 저장</button>
+                <button onclick="importPtDataFromFile()" style="padding: 4px 8px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px;">📂 백업 불러오기</button>
+            `;
+            ptHeader.appendChild(backupGroup);
         }
 
-        // active 스타일 동적 추가 (head에 style 태그 삽입)
-        const style = document.createElement('style');
-        style.innerHTML = `
-            .pt-interval-btn.active { background-color: #e94560 !important; border-color: #e94560 !important; font-weight: bold; }
-            .pt-interval-btn:hover { background-color: #444; }
-        `;
-        document.head.appendChild(style);
+        // 2. 시간 단위 선택 버튼 UI 동적 추가 (없으면 생성)
+        if (!ptHeader.querySelector('.pt-interval-group')) {
+            const intervalGroup = document.createElement('span');
+            intervalGroup.className = 'pt-interval-group';
+            intervalGroup.style.cssText = 'font-size: 0.6em; margin-left: 15px; vertical-align: middle; font-weight: normal;';
+            
+            const intervals = [1, 3, 5, 10, 30, 60];
+            let html = '<span style="margin-right:5px; color:#aaa;">|</span> ';
+            intervals.forEach(min => {
+                const activeClass = (min === ptTimeUnit) ? 'active' : '';
+                html += `<button class="pt-interval-btn ${activeClass}" data-interval="${min}" onclick="setPtTimeUnit(${min})" 
+                    style="padding: 2px 6px; margin-right: 2px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 3px; font-size: 0.9em;">
+                    ${min}분
+                </button>`;
+            });
+            intervalGroup.innerHTML = html;
+            
+            // 백업 버튼 그룹 앞에 삽입
+            if (backupGroup) {
+                ptHeader.insertBefore(intervalGroup, backupGroup);
+            } else {
+                ptHeader.appendChild(intervalGroup);
+            }
+
+            // active 스타일 동적 추가 (head에 style 태그 삽입) - 중복 방지
+            if (!document.getElementById('pt-interval-style')) {
+                const style = document.createElement('style');
+                style.id = 'pt-interval-style';
+                style.innerHTML = `
+                    .pt-interval-btn.active { background-color: #e94560 !important; border-color: #e94560 !important; font-weight: bold; }
+                    .pt-interval-btn:hover { background-color: #444; }
+                `;
+                document.head.appendChild(style);
+            }
+        }
     }
 
     // 주기적 저장 (5초마다 변경사항이 있으면 저장)

@@ -142,7 +142,8 @@ async def test_get_price_summary(mock_quotations):
         open=10000,
         current=11000,
         change_rate=10.0,
-        prdy_ctrt=10.0  # prdy_ctrt 필드도 검증에 포함
+        prdy_ctrt=10.0,  # prdy_ctrt 필드도 검증에 포함
+        new_high_low_status="-"
     )
 
     # get_current_price가 올바른 인자로 호출되었는지 확인 (선택 사항)

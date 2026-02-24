@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, AsyncMock
 from view.web import web_api
+from view.web.web_main import page_router
 from core.cache.cache_manager import CacheManager
 
 
@@ -73,6 +74,7 @@ def test_app():
     """테스트용 FastAPI 앱 (Web API 라우터 포함)"""
     app = FastAPI()
     app.include_router(web_api.router)
+    app.include_router(page_router)
     return app
 
 @pytest.fixture

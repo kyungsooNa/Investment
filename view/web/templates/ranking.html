@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div id="section-ranking" class="section">
+        <div class="card">
+            <h2>상위 종목 랭킹</h2>
+            <div class="form-row">
+                <button class="btn ranking-tab active" data-cat="rise" onclick="loadRanking('rise')">상승률</button>
+                <button class="btn ranking-tab" data-cat="fall" onclick="loadRanking('fall')">하락률</button>
+                <button class="btn ranking-tab" data-cat="volume" onclick="loadRanking('volume')">거래량</button>
+                <button class="btn ranking-tab" data-cat="trading_value" onclick="loadRanking('trading_value')">거래대금</button>
+            </div>
+        </div>
+        <div id="ranking-result"></div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        loadRanking('rise');
+    });
+</script>
+{% endblock %}

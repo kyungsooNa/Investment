@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div id="section-balance" class="section">
+        <div class="card">
+            <h2>계좌 잔고</h2>
+            <button class="btn" onclick="loadBalance()">잔고 조회</button>
+        </div>
+        <div id="balance-result">
+            <div class="loading">데이터를 불러오는 중입니다...</div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // 페이지 로드 시 자동으로 잔고 조회 실행
+    document.addEventListener('DOMContentLoaded', function() {
+        loadBalance();
+    });
+</script>
+{% endblock %}

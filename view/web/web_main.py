@@ -1,6 +1,6 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -36,39 +36,74 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Trading App", lifespan=lifespan)
 
 # 2. 정적 파일 및 템플릿 설정
-app.mount("/static", StaticFiles(directory="view/web/static"), name="static")
-templates = Jinja2Templates(directory="view/web/templates")
+# 현재 파일(web_main.py)의 위치를 기준으로 절대 경로 설정하여 실행 위치에 영향받지 않도록 함
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 # 3. API 라우터 등록
 app.include_router(web_api.router)
 
-# 4. 메인 페이지 로직
-@app.get("/")
-async def index(request: Request):
+# 페이지 라우터 생성
+page_router = APIRouter()
+
+# 공통 페이지 렌더링 함수 (로그인 체크 포함)
+async def render_page(request: Request, template_name: str, active_page: str):
     try:
         ctx = web_api._get_ctx()
     except:
         return templates.TemplateResponse("login.html", {"request": request})
 
-    # [수정] use_login 설정 확인
     use_login = ctx.full_config.get("use_login", True)
-    if not use_login:
-        return templates.TemplateResponse("index.html", {"request": request})
-    auth_config = ctx.full_config.get("auth", {})
-    
-    # 로그인 체크 로직
-    expected_token = auth_config.get("secret_key")
-    token = request.cookies.get("access_token")
+    if use_login:
+        auth_config = ctx.full_config.get("auth", {})
+        expected_token = auth_config.get("secret_key")
+        token = request.cookies.get("access_token")
 
-    if not token or token != expected_token:
-        return templates.TemplateResponse("login.html", {"request": request})
+        if not token or token != expected_token:
+            return templates.TemplateResponse("login.html", {"request": request})
 
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(template_name, {"request": request, "active_page": active_page})
+
+# 4. 페이지 라우팅
+@page_router.get("/")
+async def index(request: Request):
+    return await render_page(request, "index.html", "stock")
+
+@page_router.get("/balance")
+async def balance(request: Request):
+    return await render_page(request, "balance.html", "balance")
+
+@page_router.get("/order")
+async def order(request: Request):
+    return await render_page(request, "order.html", "order")
+
+@page_router.get("/ranking")
+async def ranking(request: Request):
+    return await render_page(request, "ranking.html", "ranking")
+
+@page_router.get("/marketcap")
+async def marketcap(request: Request):
+    return await render_page(request, "marketcap.html", "marketcap")
+
+@page_router.get("/virtual")
+async def virtual(request: Request):
+    return await render_page(request, "virtual.html", "virtual")
+
+@page_router.get("/scheduler")
+async def scheduler(request: Request):
+    return await render_page(request, "scheduler.html", "scheduler")
+
+@page_router.get("/program")
+async def program(request: Request):
+    return await render_page(request, "program.html", "program")
 
 # 5. 로그아웃
-@app.get("/logout")
+@page_router.get("/logout")
 async def logout():
     from fastapi.responses import RedirectResponse
     response = RedirectResponse(url="/")
     response.delete_cookie("access_token")
     return response
+
+app.include_router(page_router)
