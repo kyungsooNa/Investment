@@ -649,15 +649,36 @@ class TradingService:
                 }
 
             # 2. 오늘 데이터 가져오기 (실시간 변동 반영을 위해 항상 조회)
+            # [변경] inquire_daily_itemchartprice 대신 get_current_stock_price 사용
             today_rows = []
-            resp = await self._broker_api_wrapper.inquire_daily_itemchartprice(
-                stock_code=stock_code,
-                start_date=today_str,
-                end_date=today_str,
-                fid_period_div_code="D"
-            )
-            if resp.rt_cd == ErrorCode.SUCCESS.value and resp.data:
-                today_rows = self._normalize_ohlcv_rows(resp.data)
+            try:
+                current_resp = await self.get_current_stock_price(stock_code)
+                if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
+                    output = current_resp.data.get('output')
+                    if output:
+                        # ResStockFullInfoApiOutput 객체 또는 dict 처리
+                        def _get_val(obj, attr_name):
+                            if isinstance(obj, dict):
+                                return obj.get(attr_name)
+                            return getattr(obj, attr_name, None)
+
+                        opn = _get_val(output, 'stck_oprc')
+                        high = _get_val(output, 'stck_hgpr')
+                        low = _get_val(output, 'stck_lwpr')
+                        close = _get_val(output, 'stck_prpr')
+                        vol = _get_val(output, 'acml_vol')
+
+                        if opn and high and low and close:
+                            today_rows.append({
+                                "date": today_str,
+                                "open": float(opn),
+                                "high": float(high),
+                                "low": float(low),
+                                "close": float(close),
+                                "volume": int(vol) if vol else 0
+                            })
+            except Exception as e:
+                self._logger.warning(f"오늘자 OHLCV 구성을 위한 현재가 조회 실패: {e}")
 
             # 3. 병합 및 정렬
             # past_rows는 이미 정렬됨. today_rows는 0개 또는 1개.

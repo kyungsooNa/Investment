@@ -10,6 +10,7 @@ from common.types import ErrorCode, ResCommonResponse, ResFluctuation, ResBasicS
 def mock_deps():
     broker = MagicMock()
     broker.inquire_daily_itemchartprice = AsyncMock()
+    broker.get_current_price = AsyncMock()  # [추가] 현재가 조회 Mock
     
     env = MagicMock()
     
@@ -69,17 +70,24 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     
     # 과거 데이터 Mock (한 번만 호출되도록 설정)
     past_data = [{"stck_bsop_date": "20250101", "stck_clpr": "1000"}]
-    # 오늘 데이터 Mock (매번 호출됨)
-    today_data = [{"stck_bsop_date": "20250102", "stck_clpr": "1010"}]
+    
+    # [수정] 오늘 데이터 Mock (현재가 조회 결과)
+    today_output = {
+        "stck_oprc": "1000", "stck_hgpr": "1020", "stck_lwpr": "990", 
+        "stck_prpr": "1010", "acml_vol": "500"
+    }
     
     broker.inquire_daily_itemchartprice.side_effect = [
         # _fetch_past_daily_ohlcv 내부 호출 (1회차)
         ResCommonResponse(rt_cd="0", msg1="", data=past_data),
         # _fetch_past_daily_ohlcv 내부 호출 (2회차 - 빈 데이터로 루프 종료)
         ResCommonResponse(rt_cd="0", msg1="", data=[]),
-        # get_ohlcv 내부 오늘 데이터 호출
-        ResCommonResponse(rt_cd="0", msg1="", data=today_data)
     ]
+    
+    # [추가] 현재가 조회 Mock 설정
+    broker.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="", data={"output": today_output}
+    )
     
     # Act 1: 첫 번째 호출
     resp1 = await trading_service.get_ohlcv("005930", period="D")
@@ -89,25 +97,25 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     assert "005930" in trading_service._daily_ohlcv_cache
     assert trading_service._daily_ohlcv_cache["005930"]["base_date"] == "20250102"
     
-    # API 호출 횟수 확인 (과거조회 2회 + 오늘조회 1회 = 3회)
-    assert broker.inquire_daily_itemchartprice.call_count == 3
+    # [수정] API 호출 횟수 확인 (과거조회 2회)
+    assert broker.inquire_daily_itemchartprice.call_count == 2
+    # [추가] 현재가 조회 1회
+    assert broker.get_current_price.call_count == 1
     
     # 2. 두 번째 호출: 캐시 있음 (같은 날짜)
     # 과거 데이터 API 호출은 스킵하고, 오늘 데이터 API만 호출해야 함
     
-    # 오늘 데이터 Mock 리셋 (새로운 호출을 위해)
-    broker.inquire_daily_itemchartprice.side_effect = [
-        ResCommonResponse(rt_cd="0", msg1="", data=today_data)
-    ]
     broker.inquire_daily_itemchartprice.call_count = 0 # 카운트 리셋
+    broker.get_current_price.call_count = 0
     
     # Act 2: 두 번째 호출
     resp2 = await trading_service.get_ohlcv("005930", period="D")
     
     assert resp2.rt_cd == "0"
     assert len(resp2.data) == 2
-    # API 호출 횟수 확인 (오늘조회 1회만 발생해야 함)
-    assert broker.inquire_daily_itemchartprice.call_count == 1
+    # [수정] API 호출 횟수 확인 (과거조회 0회, 현재가조회 1회)
+    assert broker.inquire_daily_itemchartprice.call_count == 0
+    assert broker.get_current_price.call_count == 1
 
 # --- Existing Tests (기존 테스트 복구) ---
 class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
