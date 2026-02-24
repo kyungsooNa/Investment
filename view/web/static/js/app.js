@@ -1156,12 +1156,19 @@ function getAggregatedPtData(code) {
     const aggVolume = [];
     const intervalMs = ptTimeUnit * 60 * 1000;
 
+    // [수정] 마지막 버킷 시작 시간 계산
+    const lastItem = rawValue[rawValue.length - 1];
+    const lastBucketStartTime = lastItem ? Math.floor(lastItem.x / intervalMs) * intervalMs : 0;
+
     let currentBucketStart = -1;
     let currentValItem = null;
     let currentVolItem = null;
 
-    for (let i = 0; i < rawValue.length; i++) {
+    let i = 0;
+    // 1. 현재 진행 중인 버킷(마지막 버킷) 전까지만 일반 집계
+    for (; i < rawValue.length; i++) {
         const item = rawValue[i];
+        if (item.x >= lastBucketStartTime) break; 
         const volItem = rawVolume[i];
         const bucketStart = Math.floor(item.x / intervalMs) * intervalMs;
 
@@ -1182,6 +1189,24 @@ function getAggregatedPtData(code) {
         aggVolume.push(currentVolItem);
     }
 
+    // 2. 마지막 버킷 처리: 시작점(Snap)과 끝점(Raw)만 표시
+    if (i < rawValue.length) {
+        const firstIdx = i;
+        const lastIdx = rawValue.length - 1;
+
+        // (1) 버킷 시작점 (예: 14:30) - 첫 데이터를 14:30으로 스냅
+        const firstVal = { ...rawValue[firstIdx], x: lastBucketStartTime };
+        const firstVol = { ...rawVolume[firstIdx], x: lastBucketStartTime };
+        aggValue.push(firstVal);
+        aggVolume.push(firstVol);
+
+        // (2) 버킷 현재점 (예: 14:37) - 마지막 데이터가 시작점과 다르면 추가
+        if (rawValue[lastIdx].x > lastBucketStartTime) {
+             aggValue.push(rawValue[lastIdx]);
+             aggVolume.push(rawVolume[lastIdx]);
+        }
+    }
+    
     return { value: aggValue, volume: aggVolume };
 }
 
