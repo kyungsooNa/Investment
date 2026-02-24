@@ -74,7 +74,7 @@ body {
     overflow-x: auto;
 }
 
-.nav button {
+.nav button, .nav a {
     background: none;
     border: none;
     color: var(--text-secondary);
@@ -84,10 +84,13 @@ body {
     border-bottom: 2px solid transparent;
     white-space: nowrap;
     transition: all 0.2s;
+    text-decoration: none;
+    display: inline-block;
+    font-family: inherit;
 }
 
-.nav button:hover { color: var(--text-primary); }
-.nav button.active {
+.nav button:hover, .nav a:hover { color: var(--text-primary); }
+.nav button.active, .nav a.active {
     color: var(--accent);
     border-bottom-color: var(--accent);
 }

@@ -42,28 +42,56 @@ templates = Jinja2Templates(directory="view/web/templates")
 # 3. API 라우터 등록
 app.include_router(web_api.router)
 
-# 4. 메인 페이지 로직
-@app.get("/")
-async def index(request: Request):
+# 공통 페이지 렌더링 함수 (로그인 체크 포함)
+async def render_page(request: Request, template_name: str, active_page: str):
     try:
         ctx = web_api._get_ctx()
     except:
         return templates.TemplateResponse("login.html", {"request": request})
 
-    # [수정] use_login 설정 확인
     use_login = ctx.full_config.get("use_login", True)
-    if not use_login:
-        return templates.TemplateResponse("index.html", {"request": request})
-    auth_config = ctx.full_config.get("auth", {})
-    
-    # 로그인 체크 로직
-    expected_token = auth_config.get("secret_key")
-    token = request.cookies.get("access_token")
+    if use_login:
+        auth_config = ctx.full_config.get("auth", {})
+        expected_token = auth_config.get("secret_key")
+        token = request.cookies.get("access_token")
 
-    if not token or token != expected_token:
-        return templates.TemplateResponse("login.html", {"request": request})
+        if not token or token != expected_token:
+            return templates.TemplateResponse("login.html", {"request": request})
 
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(template_name, {"request": request, "active_page": active_page})
+
+# 4. 페이지 라우팅
+@app.get("/")
+async def index(request: Request):
+    return await render_page(request, "index.html", "stock")
+
+@app.get("/balance")
+async def balance(request: Request):
+    return await render_page(request, "balance.html", "balance")
+
+@app.get("/order")
+async def order(request: Request):
+    return await render_page(request, "order.html", "order")
+
+@app.get("/ranking")
+async def ranking(request: Request):
+    return await render_page(request, "ranking.html", "ranking")
+
+@app.get("/marketcap")
+async def marketcap(request: Request):
+    return await render_page(request, "marketcap.html", "marketcap")
+
+@app.get("/virtual")
+async def virtual(request: Request):
+    return await render_page(request, "virtual.html", "virtual")
+
+@app.get("/scheduler")
+async def scheduler(request: Request):
+    return await render_page(request, "scheduler.html", "scheduler")
+
+@app.get("/program")
+async def program(request: Request):
+    return await render_page(request, "program.html", "program")
 
 # 5. 로그아웃
 @app.get("/logout")

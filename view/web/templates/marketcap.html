@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div id="section-marketcap" class="section">
+        <div class="card">
+            <h2>시가총액 상위 종목</h2>
+            <div class="form-row">
+                <button class="btn ranking-tab active" data-market="0001" onclick="loadTopMarketCap('0001')">코스피</button>
+                <button class="btn ranking-tab" data-market="1001" onclick="loadTopMarketCap('1001')">코스닥</button>
+            </div>
+        </div>
+        <div id="marketcap-result"></div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        loadTopMarketCap('0001');
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div id="section-order" class="section">
+        <div class="card">
+            <h2>주식 주문</h2>
+            <div class="form-row">
+                <label>종목코드</label>
+                <input type="text" id="order-code" placeholder="예: 005930" maxlength="6" onkeydown="if(event.key==='Enter') document.getElementById('order-qty').focus()">
+            </div>
+            <div class="form-row">
+                <label>수량</label>
+                <input type="number" id="order-qty" placeholder="수량" min="1" onkeydown="if(event.key==='Enter') document.getElementById('order-price').focus()">
+            </div>
+            <div class="form-row">
+                <label>가격</label>
+                <input type="number" id="order-price" placeholder="가격 (원)" min="0" onkeydown="if(event.key==='Enter') document.querySelector('.btn-buy').focus()">
+            </div>
+            <div class="form-row">
+                <button class="btn btn-buy" onclick="placeOrder('buy')">매수</button>
+                <button class="btn btn-sell" onclick="placeOrder('sell')">매도</button>
+            </div>
+        </div>
+        <div id="order-result"></div>
+    </div>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div id="section-virtual" class="section">
+        <div class="card">
+            <h2>모의투자(전략 검증) 결과</h2>
+
+            <div id="virtual-strategy-tabs" class="sub-nav-container"></div>
+
+            <div class="stats-box" id="virtual-summary-box">
+                <span>로딩 중...</span>
+            </div>
+
+            <div style="margin-top: 16px; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; border: 1px solid var(--border);">
+                <canvas id="virtualYieldChart" style="width: 100%; height: 250px;"></canvas>
+            </div>
+            <button class="btn" onclick="loadVirtualHistory()">새로고침</button>
+        </div>
+
+        <h3 style="margin:16px 0 8px; color:var(--text-primary);">보유 중</h3>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" onclick="sortVirtual('hold','name')">종목</th>
+                        <th class="sortable" onclick="sortVirtual('hold','buy_price')">매수가</th>
+                        <th class="sortable" onclick="sortVirtual('hold','current_price')">현재가</th>
+                        <th class="sortable" onclick="sortVirtual('hold','return_rate')">수익률</th>
+                        <th class="sortable" onclick="sortVirtual('hold','days')">보유일(매수일)</th>
+                    </tr>
+                </thead>
+                <tbody id="virtual-hold-body"></tbody>
+            </table>
+        </div>
+
+        <h3 style="margin:24px 0 8px; color:var(--text-primary);">매도 완료</h3>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" onclick="sortVirtual('sold','name')">종목</th>
+                        <th class="sortable" onclick="sortVirtual('sold','buy_price')">매수가</th>
+                        <th class="sortable" onclick="sortVirtual('sold','sell_price')">매도가/현재가</th>
+                        <th class="sortable" onclick="sortVirtual('sold','return_rate')">수익률</th>
+                        <th class="sortable" onclick="sortVirtual('sold','days')">보유일(매수/매도)</th>
+                    </tr>
+                </thead>
+                <tbody id="virtual-sold-body"></tbody>
+            </table>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        loadVirtualHistory();
+    });
+</script>
+{% endblock %}
