@@ -820,6 +820,7 @@ let ptSubscribedCodes = new Set();
 let ptCodeNameMap = {};   // 종목코드 → 종목명 매핑
 let ptFilterCode = null;  // 선택된 필터 종목코드 (null이면 전체 표시)
 let ptDataDirty = false;  // [추가] 데이터 변경 여부 플래그
+let ptTimeUnit = 1;       // [추가] 차트/표 시간 단위 (분)
 
 async function addProgramTrading() {
     const input = document.getElementById('pt-code-input');
@@ -957,6 +958,20 @@ function togglePtFilter(code) {
     _updateProgramTradingChart();
 }
 
+// [추가] 시간 단위 변경 함수
+function setPtTimeUnit(minutes) {
+    ptTimeUnit = minutes;
+    
+    // 버튼 스타일 업데이트
+    document.querySelectorAll('.pt-interval-btn').forEach(btn => {
+        if (parseInt(btn.dataset.interval) === minutes) btn.classList.add('active');
+        else btn.classList.remove('active');
+    });
+
+    _updateProgramTradingChart();
+    _renderPtTable();
+}
+
 function _appendProgramTradingTableRow(d) {
     const tbody = document.getElementById('pt-body');
     const time = d['주식체결시간'] || '';
@@ -964,11 +979,20 @@ function _appendProgramTradingTableRow(d) {
     const ntby = parseInt(d['순매수체결량'] || '0');
     const ntbyColor = ntby > 0 ? 'text-red' : (ntby < 0 ? 'text-blue' : '');
 
+    const price = d['price'] ? parseInt(d['price']).toLocaleString() : '-';
+    const rate = d['rate'] ? parseFloat(d['rate']).toFixed(2) + '%' : '';
+    const sign = d['sign'] || '3'; // 1,2:상승, 4,5:하락, 3:보합
+    
+    let priceClass = '';
+    if (sign === '1' || sign === '2') priceClass = 'text-red';
+    else if (sign === '4' || sign === '5') priceClass = 'text-blue';
+
     const stockCode = d['유가증권단축종목코드'] || '-';
     const hidden = (ptFilterCode && ptFilterCode !== stockCode) ? ' style="display:none"' : '';
     const row = `<tr data-code="${stockCode}"${hidden}>
         <td>${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</td>
         <td>${fmtTime}</td>
+        <td class="${priceClass}">${price}<br><small>${rate}</small></td>
         <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>
         <td>${parseInt(d['매수2체결량'] || 0).toLocaleString()}</td>
         <td class="${ntbyColor}">${ntby.toLocaleString()}</td>
@@ -1119,6 +1143,48 @@ function _initProgramTradingChart() {
     });
 }
 
+// [추가] 데이터 집계 함수 (차트/테이블 공용)
+function getAggregatedPtData(code) {
+    if (!ptChartData[code]) return { value: [], volume: [] };
+    
+    const rawValue = ptChartData[code].valueData;
+    const rawVolume = ptChartData[code].volumeData;
+    
+    if (ptTimeUnit === 1) return { value: rawValue, volume: rawVolume };
+
+    const aggValue = [];
+    const aggVolume = [];
+    const intervalMs = ptTimeUnit * 60 * 1000;
+
+    let currentBucketStart = -1;
+    let currentValItem = null;
+    let currentVolItem = null;
+
+    for (let i = 0; i < rawValue.length; i++) {
+        const item = rawValue[i];
+        const volItem = rawVolume[i];
+        const bucketStart = Math.floor(item.x / intervalMs) * intervalMs;
+
+        if (bucketStart !== currentBucketStart) {
+            if (currentValItem) {
+                aggValue.push(currentValItem);
+                aggVolume.push(currentVolItem);
+            }
+            currentBucketStart = bucketStart;
+        }
+        // 해당 버킷의 마지막 데이터로 갱신 (Snapshot)
+        currentValItem = { ...item, x: bucketStart };
+        currentVolItem = { ...volItem, x: bucketStart };
+    }
+    
+    if (currentValItem) {
+        aggValue.push(currentValItem);
+        aggVolume.push(currentVolItem);
+    }
+
+    return { value: aggValue, volume: aggVolume };
+}
+
 function _updateProgramTradingChart() {
     if (!ptChart) return;
 
@@ -1142,13 +1208,14 @@ function _updateProgramTradingChart() {
         }
 
         if (ptChartData[code]) {
+            const aggData = getAggregatedPtData(code); // [수정] 집계된 데이터 사용
             const color = ptChartColors[colorIndex % ptChartColors.length];
             
             // 대금 (Bar)
             datasets.push({
                 type: 'bar',
                 label: `${ptCodeNameMap[code] || code} (대금)`,
-                data: ptChartData[code].valueData,
+                data: aggData.value,
                 backgroundColor: color + 'B3',
                 borderColor: color,
                 borderWidth: 1,
@@ -1159,7 +1226,7 @@ function _updateProgramTradingChart() {
             datasets.push({
                 type: 'line',
                 label: `${ptCodeNameMap[code] || code} (수량)`,
-                data: ptChartData[code].volumeData,
+                data: aggData.volume,
                 borderColor: color,
                 backgroundColor: color,
                 borderWidth: 2,
@@ -1179,7 +1246,7 @@ function _updateProgramTradingChart() {
 
 
 function handleProgramTradingData(d) {
-    _appendProgramTradingTableRow(d); // 테이블 업데이트
+    // _appendProgramTradingTableRow(d); // [수정] 개별 행 추가 대신 전체 갱신으로 변경
 
     const code = d['유가증권단축종목코드'];
     if (!ptChartData[code]) return;
@@ -1208,13 +1275,40 @@ function handleProgramTradingData(d) {
     if (existingIdx >= 0) {
         valueData[existingIdx].y = netValue; // 덮어쓰기
         valueData[existingIdx].price = d.price;
+        valueData[existingIdx].rate = d.rate;
+        valueData[existingIdx].change = d.change;
+        valueData[existingIdx].sign = d.sign;
+        valueData[existingIdx].netVolume = netVolume; // [추가] 테이블 렌더링용
+        
+        // [추가] 상세 데이터 저장 (복원용)
+        valueData[existingIdx].sellVol = d['매도체결량'];
+        valueData[existingIdx].buyVol = d['매수2체결량'];
+        valueData[existingIdx].sellRem = d['매도호가잔량'];
+        valueData[existingIdx].buyRem = d['매수호가잔량'];
+
         if (volumeData[existingIdx]) {
             volumeData[existingIdx].y = netVolume;
             volumeData[existingIdx].price = d.price;
         }
     } else {
-        valueData.push({ x: timestamp, y: netValue, price: d.price });
-        volumeData.push({ x: timestamp, y: netVolume, price: d.price });
+        const point = { 
+            x: timestamp, 
+            y: netValue, 
+            price: d.price, 
+            rate: d.rate, 
+            change: d.change, 
+            sign: d.sign,
+            netVolume: netVolume, // [추가]
+            // [추가] 상세 데이터 저장
+            sellVol: d['매도체결량'],
+            buyVol: d['매수2체결량'],
+            sellRem: d['매도호가잔량'],
+            buyRem: d['매수호가잔량']
+        };
+        valueData.push(point);
+        
+        const volPoint = { x: timestamp, y: netVolume, price: d.price };
+        volumeData.push(volPoint);
         // 시간순 정렬 (Line 차트 꼬임 방지)
         valueData.sort((a, b) => a.x - b.x);
         volumeData.sort((a, b) => a.x - b.x);
@@ -1230,6 +1324,7 @@ function handleProgramTradingData(d) {
     // [수정] 필터링된 상태에서는 해당 종목 데이터가 들어왔을 때만 차트 업데이트
     if (!ptFilterCode || ptFilterCode === code) {
         _updateProgramTradingChart();
+        _renderPtTable(); // [추가] 테이블 갱신
     }
 }
 
@@ -1429,7 +1524,7 @@ function applyPtData(data) {
         ptCodeNameMap = data.codeNameMap || {};
         
         // [추가] 저장된 차트 데이터를 기반으로 테이블 복원
-        _restoreProgramTradingTable();
+        _renderPtTable(); // [수정] 통합된 렌더링 함수 사용
 
         return true;
     } catch (e) {
@@ -1438,16 +1533,45 @@ function applyPtData(data) {
     }
 }
 
-function _restoreProgramTradingTable() {
+function _fixProgramTradingTableHeader() {
+    const tbody = document.getElementById('pt-body');
+    if (!tbody) return;
+    const table = tbody.closest('table');
+    if (!table) return;
+    const thead = table.querySelector('thead tr');
+    if (!thead) return;
+    
+    const ths = Array.from(thead.querySelectorAll('th'));
+    const hasPrice = ths.some(th => th.innerText.includes('현재가'));
+    
+    if (!hasPrice) {
+        const timeTh = ths.find(th => th.innerText.includes('시간'));
+        if (timeTh) {
+            const priceTh = document.createElement('th');
+            priceTh.innerText = '현재가';
+            timeTh.after(priceTh);
+        }
+    }
+}
+
+// [추가] 테이블 전체 렌더링 함수 (집계 데이터 반영)
+function _renderPtTable() {
     const tbody = document.getElementById('pt-body');
     if (!tbody) return;
     tbody.innerHTML = '';
     ptRowCount = 0;
 
     let allRows = [];
-    for (const code in ptChartData) {
-        const vData = ptChartData[code].valueData || [];
-        const volData = ptChartData[code].volumeData || [];
+    
+    // 모든 구독 종목의 데이터를 수집
+    for (const code of ptSubscribedCodes) {
+        if (ptFilterCode && ptFilterCode !== code) continue;
+        if (!ptChartData[code]) continue;
+
+        // 집계된 데이터 가져오기
+        const aggData = getAggregatedPtData(code);
+        const vData = aggData.value || [];
+        const volData = aggData.volume || [];
         
         for (let i = 0; i < vData.length; i++) {
             const valItem = vData[i];
@@ -1458,18 +1582,24 @@ function _restoreProgramTradingTable() {
                 timestamp: valItem.x,
                 price: valItem.price,
                 netValue: valItem.y,
-                netVolume: volItem.y
+                netVolume: valItem.netVolume || volItem.y, // 저장된 netVolume 우선 사용
+                // [추가] 상세 데이터 복원
+                rate: valItem.rate,
+                change: valItem.change,
+                sign: valItem.sign,
+                sellVol: valItem.sellVol,
+                buyVol: valItem.buyVol,
+                sellRem: valItem.sellRem,
+                buyRem: valItem.buyRem
             });
         }
     }
 
-    // 시간 오름차순 정렬 (과거 -> 미래)
-    allRows.sort((a, b) => a.timestamp - b.timestamp);
+    // 시간 내림차순 정렬 (최신 -> 과거) - 테이블은 최신이 위로 오게
+    allRows.sort((a, b) => b.timestamp - a.timestamp);
 
     // 최근 200개만 유지
-    if (allRows.length > 200) {
-        allRows = allRows.slice(allRows.length - 200);
-    }
+    if (allRows.length > 200) allRows = allRows.slice(0, 200);
 
     for (const row of allRows) {
         const date = new Date(row.timestamp);
@@ -1482,17 +1612,89 @@ function _restoreProgramTradingTable() {
             '주식체결시간': timeStr,
             '순매수체결량': row.netVolume,
             '순매수거래대금': row.netValue,
-            '매도체결량': 0, 
-            '매수2체결량': 0,
-            '매도호가잔량': 0,
-            '매수호가잔량': 0,
-            'price': row.price
+            '매도체결량': row.sellVol || 0, 
+            '매수2체결량': row.buyVol || 0,
+            '매도호가잔량': row.sellRem || 0,
+            '매수호가잔량': row.buyRem || 0,
+            'price': row.price,
+            'rate': row.rate,
+            'change': row.change,
+            'sign': row.sign
         };
-        _appendProgramTradingTableRow(d);
+        
+        // _appendProgramTradingTableRow 로직을 인라인으로 포함 (방향은 appendChild)
+        const time = d['주식체결시간'] || '';
+        const fmtTime = time.length >= 6 ? time.slice(0,2)+':'+time.slice(2,4)+':'+time.slice(4,6) : time;
+        const ntby = parseInt(d['순매수체결량'] || '0');
+        const ntbyColor = ntby > 0 ? 'text-red' : (ntby < 0 ? 'text-blue' : '');
+
+        const price = d['price'] ? parseInt(d['price']).toLocaleString() : '-';
+        const rate = d['rate'] ? parseFloat(d['rate']).toFixed(2) + '%' : '';
+        const sign = d['sign'] || '3';
+        
+        let priceClass = '';
+        if (sign === '1' || sign === '2') priceClass = 'text-red';
+        else if (sign === '4' || sign === '5') priceClass = 'text-blue';
+
+        const stockCode = d['유가증권단축종목코드'] || '-';
+        const tr = document.createElement('tr');
+        tr.dataset.code = stockCode;
+        tr.innerHTML = `
+            <td>${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</td>
+            <td>${fmtTime}</td>
+            <td class="${priceClass}">${price}<br><small>${rate}</small></td>
+            <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>
+            <td>${parseInt(d['매수2체결량'] || 0).toLocaleString()}</td>
+            <td class="${ntbyColor}">${ntby.toLocaleString()}</td>
+            <td>${formatTradingValue(d['순매수거래대금'])}</td>
+            <td>${parseInt(d['매도호가잔량'] || 0).toLocaleString()}</td>
+            <td>${parseInt(d['매수호가잔량'] || 0).toLocaleString()}</td>
+        `;
+        tbody.appendChild(tr); // 내림차순 정렬되었으므로 appendChild
+        ptRowCount++;
     }
 }
 
 async function initProgramTrading() {
+    // [추가] 테이블 헤더 동적 수정 (현재가 컬럼 추가)
+    _fixProgramTradingTableHeader();
+
+    // [추가] 시간 단위 선택 버튼 UI 동적 추가
+    const ptHeader = document.querySelector('#section-program h2');
+    if (ptHeader) {
+        const intervalGroup = document.createElement('span');
+        intervalGroup.style.cssText = 'font-size: 0.6em; margin-left: 15px; vertical-align: middle; font-weight: normal;';
+        
+        const intervals = [1, 3, 5, 10, 30, 60];
+        let html = '<span style="margin-right:5px; color:#aaa;">|</span> ';
+        intervals.forEach(min => {
+            const activeClass = (min === ptTimeUnit) ? 'active' : '';
+            // CSS 클래스 pt-interval-btn은 style 태그나 css 파일에 정의 필요 (여기서는 인라인 스타일로 대체하거나 클래스 활용)
+            // 편의상 인라인 스타일과 클래스 병용
+            html += `<button class="pt-interval-btn ${activeClass}" data-interval="${min}" onclick="setPtTimeUnit(${min})" 
+                style="padding: 2px 6px; margin-right: 2px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 3px; font-size: 0.9em;">
+                ${min}분
+            </button>`;
+        });
+        intervalGroup.innerHTML = html;
+        
+        // 백업 버튼 그룹 앞에 삽입
+        const existingBtnGroup = ptHeader.querySelector('span'); 
+        if (existingBtnGroup) {
+            ptHeader.insertBefore(intervalGroup, existingBtnGroup);
+        } else {
+            ptHeader.appendChild(intervalGroup);
+        }
+
+        // active 스타일 동적 추가 (head에 style 태그 삽입)
+        const style = document.createElement('style');
+        style.innerHTML = `
+            .pt-interval-btn.active { background-color: #e94560 !important; border-color: #e94560 !important; font-weight: bold; }
+            .pt-interval-btn:hover { background-color: #444; }
+        `;
+        document.head.appendChild(style);
+    }
+
     // 주기적 저장 (5초마다 변경사항이 있으면 저장)
     setInterval(() => {
         if (ptDataDirty) {

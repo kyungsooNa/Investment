@@ -145,7 +145,14 @@ class WebAppContext:
             if self.trading_service and hasattr(self.trading_service, '_latest_prices'):
                 code = item.get('유가증권단축종목코드')
                 if code in self.trading_service._latest_prices:
-                    item['price'] = self.trading_service._latest_prices[code]
+                    price_data = self.trading_service._latest_prices[code]
+                    if isinstance(price_data, dict):
+                        item['price'] = price_data.get('price')
+                        item['change'] = price_data.get('change')
+                        item['rate'] = price_data.get('rate')
+                        item['sign'] = price_data.get('sign')
+                    else:
+                        item['price'] = price_data
 
             for q in list(self._pt_queues):
                 try:

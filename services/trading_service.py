@@ -43,7 +43,12 @@ class TradingService:
             current_price = realtime_data.get('주식현재가')
             
             if stock_code and current_price:
-                self._latest_prices[stock_code] = current_price
+                self._latest_prices[stock_code] = {
+                    "price": current_price,
+                    "change": realtime_data.get('전일대비', '0'),
+                    "rate": realtime_data.get('전일대비율', '0.00'),
+                    "sign": realtime_data.get('전일대비부호', '3')
+                }
 
             change = realtime_data.get('전일대비', 'N/A')
             change_sign = realtime_data.get('전일대비부호', 'N/A')
