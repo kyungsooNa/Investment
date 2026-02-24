@@ -251,6 +251,13 @@ async def get_ranking(category: str):
     return _serialize_response(resp)
 
 
+@router.get("/indicator/bollinger/{code}")
+async def get_bollinger_bands(code: str, period: int = 20, std_dev: float = 2.0):
+    """볼린저 밴드 조회 (기본: 20일, 2표준편차)"""
+    ctx = _get_ctx()
+    resp = await ctx.indicator_service.get_bollinger_bands(code, period, std_dev)
+    return _serialize_response(resp)
+
 @router.get("/top-market-cap")
 async def get_top_market_cap(limit: int = 20, market: str = "0001"):
     """시가총액 상위 종목. market: 0001=거래소(코스피), 1001=코스닥"""

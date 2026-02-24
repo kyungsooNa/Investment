@@ -376,6 +376,19 @@ class ResFluctuation:
         for f in fields(cls):
             init_kwargs[f.name] = data.get(f.name, None)  # 누락 시 None
         return cls(**init_kwargs)
+    
+@with_from_dict
+@dataclass
+class ResBollingerBand:
+    code: str
+    date: str
+    close: float
+    middle: float
+    upper: float
+    lower: float
+
+    def to_dict(self):
+        return asdict(self)
 
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
