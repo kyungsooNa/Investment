@@ -2126,9 +2126,10 @@ async function loadAndRenderStockChart(code) {
 
     try {
         // [수정] MA120 추가 요청
-        const [resChart, resMa5, resMa20, resMa60, resMa120, resBB] = await Promise.all([
+        const [resChart, resMa5, resMa10, resMa20, resMa60, resMa120, resBB] = await Promise.all([
             fetch(`/api/chart/${code}?period=D`),
             fetch(`/api/indicator/ma/${code}?period=5`),
+            fetch(`/api/indicator/ma/${code}?period=10`), // [추가] MA10
             fetch(`/api/indicator/ma/${code}?period=20`),
             fetch(`/api/indicator/ma/${code}?period=60`),
             fetch(`/api/indicator/ma/${code}?period=120`),
@@ -2152,6 +2153,7 @@ async function loadAndRenderStockChart(code) {
         g_chartRawData = jsonChart.data;
         g_chartIndicators = {
             ma5: await parseIndicatorData(resMa5),
+            ma10: await parseIndicatorData(resMa10), // [추가]
             ma20: await parseIndicatorData(resMa20),
             ma60: await parseIndicatorData(resMa60),
             ma120: await parseIndicatorData(resMa120), // [추가]
@@ -2206,11 +2208,13 @@ function renderStockChart(period) {
     // 지표 데이터 매핑 (인덱스 기준)
     const sliceIndicator = (data) => data.slice(startIndex).map((d, i) => ({ x: i, y: d.ma }));
     const ma5 = sliceIndicator(g_chartIndicators.ma5);
+    const ma10 = sliceIndicator(g_chartIndicators.ma10); // [추가]
     const ma20 = sliceIndicator(g_chartIndicators.ma20);
     const ma60 = sliceIndicator(g_chartIndicators.ma60);
     const ma120 = sliceIndicator(g_chartIndicators.ma120); // [추가]
 
     const bbUpper = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.upper }));
+    const bbMiddle = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.middle }));
     const bbLower = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.lower }));
 
     // 3. 차트 그리기
@@ -2234,11 +2238,13 @@ function renderStockChart(period) {
                     order: 1
                 },
                 { label: 'MA5', data: ma5, type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA10', data: ma10, type: 'line', borderColor: '#51cf66', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] Green
                 { label: 'MA20', data: ma20, type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA60', data: ma60, type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA120', data: ma120, type: 'line', borderColor: '#a29bfe', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] 보라색 계열
-                { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(200,200,200,0.5)', borderWidth: 1, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
-                { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(200,200,200,0.5)', borderWidth: 1, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
+                { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(200,200,200,0.8)', borderWidth: 2, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
+                { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(200,200,200,0.8)', borderWidth: 2, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
+                { label: 'BB Middle', data: bbMiddle, type: 'line', borderColor: 'rgba(255, 215, 0, 0.8)', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
                 { label: '거래량', data: volumes, type: 'bar', yAxisID: 'y1', backgroundColor: 'rgba(200, 200, 200, 0.2)', order: 4 }
             ]
         },
@@ -2260,8 +2266,8 @@ function renderStockChart(period) {
                     labels: {
                         color: '#a0a0b0',
                         filter: function(item, chart) {
-                            // [수정] MA만 표시 (주가, 거래량, BB 제외)
-                            return item.text.includes('MA');
+                            // [수정] MA와 BB 표시 (주가, 거래량 제외)
+                            return item.text.includes('MA') || item.text.includes('BB');
                         }
                     }
                 },
