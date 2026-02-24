@@ -1084,7 +1084,20 @@ function _initProgramTradingChart() {
                 }
             },
             plugins: {
-                legend: { position: 'top' },
+                legend: { 
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        generateLabels: (chart) => {
+                            const labels = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                            labels.forEach(label => {
+                                const dataset = chart.data.datasets[label.datasetIndex];
+                                label.pointStyle = (dataset.type === 'line') ? 'line' : 'rect';
+                            });
+                            return labels;
+                        }
+                    }
+                },
                 tooltip: {
                     callbacks: {
                         title: function(tooltipItems) {
