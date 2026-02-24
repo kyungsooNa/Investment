@@ -1058,7 +1058,7 @@ function _initProgramTradingChart() {
                     min: start.getTime(),
                     max: maxTime,
                     ticks: {
-                        stepSize: 60000,
+                        stepSize: ptTimeUnit * 60 * 1000,
                         callback: function(value) {
                             const d = new Date(value);
                             return d.toTimeString().slice(0, 5);
@@ -1196,6 +1196,9 @@ function _updateProgramTradingChart() {
     let maxTime = now.getTime();
     if (now > end) maxTime = end.getTime();
     if (maxTime < start.getTime()) maxTime = start.getTime();
+
+    // [추가] 시간 단위 변경 시 X축 눈금 간격 업데이트
+    ptChart.options.scales.x.ticks.stepSize = ptTimeUnit * 60 * 1000;
 
     if (ptChart.options.scales.x.max < maxTime) ptChart.options.scales.x.max = maxTime;
 
