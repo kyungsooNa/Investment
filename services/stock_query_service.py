@@ -57,6 +57,21 @@ class StockQueryService:
         }
         status_description = status_code_map.get(output.iscd_stat_cls_code, "정보 없음")
 
+        # 부호 처리 로직 추가
+        change_val = output.prdy_vrss
+        sign_code = output.prdy_vrss_sign
+        actual_sign = self._get_sign_from_code(sign_code)
+
+        display_change = change_val
+        try:
+            f = float(change_val)
+            if f != 0:
+                display_change = f"{abs(int(f))}"
+            else:
+                display_change = "0"
+        except (ValueError, TypeError):
+            pass
+
         view = {
             # 기본 정보
             "code": stock_code,
@@ -64,8 +79,9 @@ class StockQueryService:
             "is_new_high": output.is_new_high, # 신고가 여부 추가
             "price": output.stck_prpr,
             "change": output.prdy_vrss,
+            "change_absolute": display_change,
             "rate": output.prdy_ctrt,
-            "sign": self._get_sign_from_code(output.prdy_vrss_sign),
+            "sign": actual_sign,
             "time": self.time_manager.get_current_kst_time().strftime("%H:%M:%S"),
             "bstp_kor_isnm": output.bstp_kor_isnm,
             "iscd_stat_cls_code_desc": f"{status_description} ({output.iscd_stat_cls_code})",
@@ -235,8 +251,8 @@ class StockQueryService:
         display_change_val = change_val_str
         try:
             f = float(change_val_str)
-            if f > 0:
-                display_change_val = f"{actual_sign}{change_val_str}"
+            if f != 0:
+                display_change_val = f"{actual_sign}{abs(int(f))}"
             elif f == 0:
                 display_change_val = "0"
         except (ValueError, TypeError):
