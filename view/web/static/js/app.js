@@ -1028,6 +1028,42 @@ function _initProgramTradingChart() {
         type: 'line',
         data: { datasets: [] },
         plugins: [{
+            id: 'chartBackground',
+            beforeDraw: (chart) => {
+                if (!chart.chartArea) return;
+                const { ctx, chartArea: { left, width }, scales } = chart;
+                
+                ['y', 'y1'].forEach(axisId => {
+                    const scale = scales[axisId];
+                    if (!scale) return;
+
+                    const top = scale.top;
+                    const bottom = scale.bottom;
+                    const zeroPixel = scale.getPixelForValue(0);
+                    
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(left, top, width, bottom - top);
+                    ctx.clip();
+
+                    // 양수 영역 (Red Tint)
+                    if (zeroPixel > top) {
+                         ctx.fillStyle = 'rgba(255, 99, 132, 0.05)';
+                         const rectBottom = Math.min(zeroPixel, bottom);
+                         ctx.fillRect(left, top, width, rectBottom - top);
+                    }
+
+                    // 음수 영역 (Blue Tint)
+                    if (zeroPixel < bottom) {
+                        ctx.fillStyle = 'rgba(54, 162, 235, 0.05)';
+                        const rectTop = Math.max(zeroPixel, top);
+                        ctx.fillRect(left, rectTop, width, bottom - rectTop);
+                    }
+
+                    ctx.restore();
+                });
+            }
+        }, {
             id: 'splitLine',
             afterDraw: (chart) => {
                 const { ctx, chartArea: { left, right }, scales: { y_spacer } } = chart;
