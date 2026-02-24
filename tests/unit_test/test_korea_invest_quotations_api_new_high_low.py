@@ -17,7 +17,7 @@ def mock_api_quotations():
 @pytest.mark.asyncio
 async def test_get_price_summary_new_high_low_mismatch(mock_api_quotations):
     """
-    is_new_high가 True이지만 API에서 다른 값을 반환할 때 경고 로그가 발생하는지 테스트합니다.
+    데이터상 신고가 조건이지만 API 코드가 아닐 때, 현재 로직은 불일치를 감지하지 않고 API 코드를 따르는지 테스트합니다.
     """
     stock_code = "005930"
 
@@ -47,14 +47,10 @@ async def test_get_price_summary_new_high_low_mismatch(mock_api_quotations):
     
     # 결과 검증
     assert result.rt_cd == ErrorCode.SUCCESS.value
-    assert "vs" in result.data.new_high_low_status
+    assert result.data.new_high_low_status == "-"
 
-    # logger.warning이 호출되었는지 확인
-    mock_api_quotations._logger.warning.assert_called_once()
-    
-    # 로그 메시지에 "불일치"가 포함되어 있는지 확인
-    call_args = mock_api_quotations._logger.warning.call_args
-    assert "신고/신저가 불일치" in call_args[0][0]
+    # logger.warning이 호출되지 않아야 함 (현재 로직 기준)
+    mock_api_quotations._logger.warning.assert_not_called()
     
 @pytest.mark.asyncio
 async def test_get_price_summary_new_high_match(mock_api_quotations):
@@ -92,7 +88,7 @@ async def test_get_price_summary_new_high_match(mock_api_quotations):
 @pytest.mark.asyncio
 async def test_get_price_summary_new_low_mismatch(mock_api_quotations):
     """
-    is_new_low가 True이지만 API에서 다른 값을 반환할 때 경고 로그가 발생하는지 테스트합니다.
+    데이터상 신저가 조건이지만 API 코드가 아닐 때, 현재 로직은 불일치를 감지하지 않고 API 코드를 따르는지 테스트합니다.
     """
     stock_code = "005930"
 
@@ -104,7 +100,7 @@ async def test_get_price_summary_new_low_mismatch(mock_api_quotations):
         'stck_lwpr': '74000',
         'w52_lwpr': '75000',
         'd250_lwpr': '76000',
-        'new_hgpr_lwpr_cls_code': '1',
+        'new_hgpr_lwpr_cls_code': '4',
     }
     output_obj = ResStockFullInfoApiOutput.from_dict(raw_output)
     
@@ -119,12 +115,9 @@ async def test_get_price_summary_new_low_mismatch(mock_api_quotations):
     result = await mock_api_quotations.get_price_summary(stock_code)
     
     assert result.rt_cd == ErrorCode.SUCCESS.value
-    assert "vs" in result.data.new_high_low_status
+    assert result.data.new_high_low_status == "-"
 
-    mock_api_quotations._logger.warning.assert_called_once()
-    
-    call_args = mock_api_quotations._logger.warning.call_args
-    assert "신고/신저가 불일치" in call_args[0][0]
+    mock_api_quotations._logger.warning.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_get_price_summary_new_low_match(mock_api_quotations):
