@@ -789,6 +789,189 @@ async def test_unsubscribe_realtime_quote_success(websocket_api_instance):
         assert f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청" in logged_message
 
 
+@pytest.mark.asyncio
+async def test_receive_messages_max_retries_exceeded(websocket_api_instance):
+    """
+    웹소켓 재연결 시도가 최대 횟수를 초과했을 때,
+    에러 로그를 남기고 자동 재연결을 중단하는지 테스트합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False  # 연결 끊김 상태로 시작
+    api._auto_reconnect = True
+
+    # _establish_connection이 항상 실패(False 반환)하도록 설정
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False) as mock_est_conn, \
+         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
+        await api._receive_messages()
+
+        # 검증
+        # 1. 최대 재시도 횟수(30)만큼 연결 시도했는지 확인
+        assert mock_est_conn.call_count == 30
+
+        # 2. 대기(sleep)도 30번 호출되었는지 확인
+        assert mock_sleep.call_count == 30
+
+        # 3. 에러 로그 확인
+        api._logger.error.assert_called_with("웹소켓 재연결 실패: 최대 재시도 횟수(30)를 초과했습니다.")
+
+        # 4. 자동 재연결 플래그가 꺼졌는지 확인
+        assert api._auto_reconnect is False
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_stops_reconnect_when_market_closed(websocket_api_instance):
+    """
+    장 종료 시 자동 재연결을 중단하는지 테스트합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False  # 연결 끊김 상태
+    api._auto_reconnect = True
+
+    # TimeManager Mock 설정 (장 종료 상태)
+    api._time_manager = MagicMock()
+    api._time_manager.is_market_open.return_value = False
+
+    # _establish_connection이 호출되지 않아야 함
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock) as mock_est_conn, \
+         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
+        await api._receive_messages()
+
+        # 검증
+        # 1. 장 종료 로그 확인
+        api._logger.info.assert_called_with("장이 종료되어 자동 재연결을 중단합니다.")
+
+        # 2. 자동 재연결 플래그가 꺼졌는지 확인
+        assert api._auto_reconnect is False
+
+        # 3. 재연결 시도(연결 수립, 대기)가 없었는지 확인
+        mock_est_conn.assert_not_called()
+        mock_sleep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_websocket_keepalive_logic(websocket_api_instance):
+    """
+    웹소켓 연결 유지(Keep-alive)를 위한 설정(ping_interval)과
+    PINGPONG 메시지 수신 처리가 구현되어 있는지 검증합니다.
+    """
+    api = websocket_api_instance
+
+    # 1. 연결 시 ping_interval 설정 확인
+    patch_target = f"{KoreaInvestWebSocketAPI.__module__}.websockets.connect"
+    with patch(patch_target, new_callable=AsyncMock) as mock_connect, \
+         patch.object(api, "_get_approval_key", return_value="key"):
+        
+        await api.connect()
+        
+        # websockets.connect 호출 시 ping_interval이 설정되었는지 확인
+        _, kwargs = mock_connect.call_args
+        assert kwargs.get('ping_interval') == 20
+        assert kwargs.get('ping_timeout') == 20
+        
+    # 2. PINGPONG 메시지 수신 처리 확인
+    api._logger.info = MagicMock()
+    ping_msg = json.dumps({"header": {"tr_id": "PINGPONG"}})
+    api._handle_websocket_message(ping_msg)
+    
+    # 로그가 남는지 확인 (현재 구현은 로그만 남김)
+    api._logger.info.assert_called_with("PINGPONG 수신됨. PONG 응답.")
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_exponential_backoff(websocket_api_instance):
+    """
+    웹소켓 재연결 시 대기 시간이 지수 백오프 방식으로 증가하는지 테스트합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False
+    api._auto_reconnect = True
+
+    # 예상되는 지연 시간: 3, 6, 12, 24, 48, 60(최대)
+    expected_delays = [3, 6, 12, 24, 48, 60]
+    stop_after = len(expected_delays)
+    current_calls = 0
+
+    async def sleep_side_effect(delay):
+        nonlocal current_calls
+        current_calls += 1
+        if current_calls >= stop_after:
+            api._auto_reconnect = False
+
+    with patch("asyncio.sleep", new_callable=AsyncMock, side_effect=sleep_side_effect) as mock_sleep, \
+         patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False):
+
+        await api._receive_messages()
+
+        # 실제 호출된 delay 값 검증
+        actual_delays = [call.args[0] for call in mock_sleep.call_args_list]
+        assert actual_delays == expected_delays
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_reconnect_exception_logging(websocket_api_instance):
+    """
+    _receive_messages 실행 중 재연결 시도(_establish_connection)에서 예외가 발생했을 때
+    적절히 로깅되고 재시도 로직이 동작하는지 검증합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False
+    api._auto_reconnect = True
+
+    # websockets.connect가 예외를 발생시키도록 설정
+    patch_target = f"{KoreaInvestWebSocketAPI.__module__}.websockets.connect"
+
+    # 루프를 한 번만 돌고 종료하도록 sleep에서 플래그 변경
+    async def sleep_side_effect(delay):
+        api._auto_reconnect = False
+
+    with patch(patch_target, side_effect=Exception("Connection failed")) as mock_connect, \
+         patch("asyncio.sleep", new_callable=AsyncMock, side_effect=sleep_side_effect) as mock_sleep, \
+         patch.object(api, "_get_approval_key", new_callable=AsyncMock, return_value="key"):
+
+        await api._receive_messages()
+
+        # 1. 연결 시도 확인
+        mock_connect.assert_called()
+
+        # 2. 에러 로그 확인 (_establish_connection 내부)
+        error_logs = [c[0][0] for c in api._logger.error.call_args_list]
+        assert any("웹소켓 연결 중 오류 발생" in log and "Connection failed" in log for log in error_logs)
+
+        # 3. 재연결 대기 로그 확인 (_receive_messages 내부)
+        info_logs = [c[0][0] for c in api._logger.info.call_args_list]
+        assert any("웹소켓 재연결 대기 중" in log for log in info_logs)
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_resubscribe_failure(websocket_api_instance):
+    """
+    재연결 성공 후 구독 복구(_resubscribe_all) 중 예외가 발생했을 때,
+    에러 로그를 남기고 루프가 계속되는지(또는 적절히 처리되는지) 검증합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False
+    api._auto_reconnect = True
+
+    # 루프를 한 번만 돌고 종료하도록 sleep에서 플래그 변경
+    async def sleep_side_effect(delay):
+        api._auto_reconnect = False
+
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=True) as mock_est_conn, \
+         patch.object(api, "_resubscribe_all", new_callable=AsyncMock, side_effect=Exception("Resubscribe Error")) as mock_resub, \
+         patch("asyncio.sleep", new_callable=AsyncMock, side_effect=sleep_side_effect) as mock_sleep:
+
+        await api._receive_messages()
+
+        # 검증
+        mock_est_conn.assert_called_once()
+        mock_resub.assert_called_once()
+        
+        # 에러 로그 확인
+        api._logger.error.assert_called_with("구독 복구 중 오류 발생: Resubscribe Error")
+
+
 # _parse_stock_quote_data: 모든 필드 포함된 유효한 데이터 파싱 테스트
 def test_parse_stock_quote_data_valid_fields(websocket_api_instance):
     api = websocket_api_instance

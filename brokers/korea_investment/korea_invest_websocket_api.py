@@ -169,7 +169,10 @@ class KoreaInvestWebSocketAPI:
                 if await self._establish_connection():
                     self._logger.info("웹소켓 재연결 성공. 기존 구독 항목을 복구합니다.")
                     retry_count = 0  # 연결 성공 시 재시도 카운트 초기화
-                    await self._resubscribe_all()
+                    try:
+                        await self._resubscribe_all()
+                    except Exception as e:
+                        self._logger.error(f"구독 복구 중 오류 발생: {e}")
                 continue
 
             # 2. 메시지 수신
