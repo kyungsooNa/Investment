@@ -345,12 +345,13 @@ async def test_realtime_data_display_callback_logic(handler, mock_trading_servic
     price_data = {
         'type': 'realtime_price',
         'data': {
-            'STCK_PRPR': '75000',
-            'ACML_VOL': '123456',
-            'STCK_CNTG_HOUR': '100000',
-            'PRDY_VRSS': '500',
-            'PRDY_VRSS_SIGN': '2', # 상승
-            'PRDY_CTRT': '0.67'
+            '유가증권단축종목코드': '005930',
+            '주식현재가': '75000',
+            '누적거래량': '123456',
+            '주식체결시간': '100000',
+            '전일대비': '500',
+            '전일대비부호': '2', # 상승
+            '전일대비율': '0.67'
         }
     }
     realtime_callback(price_data)

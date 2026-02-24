@@ -1400,10 +1400,68 @@ function applyPtData(data) {
 
         ptSubscribedCodes = new Set(data.subscribedCodes || []);
         ptCodeNameMap = data.codeNameMap || {};
+        
+        // [추가] 저장된 차트 데이터를 기반으로 테이블 복원
+        _restoreProgramTradingTable();
+
         return true;
     } catch (e) {
         console.error('Failed to apply PT data', e);
         return false;
+    }
+}
+
+function _restoreProgramTradingTable() {
+    const tbody = document.getElementById('pt-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    ptRowCount = 0;
+
+    let allRows = [];
+    for (const code in ptChartData) {
+        const vData = ptChartData[code].valueData || [];
+        const volData = ptChartData[code].volumeData || [];
+        
+        for (let i = 0; i < vData.length; i++) {
+            const valItem = vData[i];
+            const volItem = volData[i] || { y: 0 };
+            
+            allRows.push({
+                code: code,
+                timestamp: valItem.x,
+                price: valItem.price,
+                netValue: valItem.y,
+                netVolume: volItem.y
+            });
+        }
+    }
+
+    // 시간 오름차순 정렬 (과거 -> 미래)
+    allRows.sort((a, b) => a.timestamp - b.timestamp);
+
+    // 최근 200개만 유지
+    if (allRows.length > 200) {
+        allRows = allRows.slice(allRows.length - 200);
+    }
+
+    for (const row of allRows) {
+        const date = new Date(row.timestamp);
+        const hh = String(date.getHours()).padStart(2, '0');
+        const mm = String(date.getMinutes()).padStart(2, '0');
+        const timeStr = `${hh}${mm}00`; 
+
+        const d = {
+            '유가증권단축종목코드': row.code,
+            '주식체결시간': timeStr,
+            '순매수체결량': row.netVolume,
+            '순매수거래대금': row.netValue,
+            '매도체결량': 0, 
+            '매수2체결량': 0,
+            '매도호가잔량': 0,
+            '매수호가잔량': 0,
+            'price': row.price
+        };
+        _appendProgramTradingTableRow(d);
     }
 }
 
