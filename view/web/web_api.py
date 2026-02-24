@@ -647,6 +647,28 @@ async def stop_scheduler():
     return {"success": True, "status": ctx.scheduler.get_status()}
 
 
+@router.post("/scheduler/strategy/{name}/start")
+async def start_strategy(name: str):
+    """개별 전략 활성화."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
+    if not ctx.scheduler.start_strategy(name):
+        raise HTTPException(status_code=404, detail=f"전략 '{name}'을 찾을 수 없습니다")
+    return {"success": True, "status": ctx.scheduler.get_status()}
+
+
+@router.post("/scheduler/strategy/{name}/stop")
+async def stop_strategy(name: str):
+    """개별 전략 비활성화."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
+    if not ctx.scheduler.stop_strategy(name):
+        raise HTTPException(status_code=404, detail=f"전략 '{name}'을 찾을 수 없습니다")
+    return {"success": True, "status": ctx.scheduler.get_status()}
+
+
 @router.get("/scheduler/history")
 async def get_scheduler_history(strategy: str = None):
     """스케줄러 시그널 실행 이력 조회. ?strategy=전략명 으로 필터 가능."""
