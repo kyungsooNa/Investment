@@ -244,7 +244,7 @@ async def test_get_bollinger_bands(web_client, mock_web_ctx):
     )
     
     mock_web_ctx.indicator_service.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="Success", data=mock_band
+        rt_cd="0", msg1="Success", data=[mock_band]
     )
     
     response = web_client.get("/api/indicator/bollinger/005930?period=20&std_dev=2.0")
@@ -252,8 +252,9 @@ async def test_get_bollinger_bands(web_client, mock_web_ctx):
     assert response.status_code == 200
     json_resp = response.json()
     assert json_resp["rt_cd"] == "0"
-    assert json_resp["data"]["code"] == "005930"
-    assert json_resp["data"]["upper"] == 71000.0
+    assert isinstance(json_resp["data"], list)
+    assert json_resp["data"][0]["code"] == "005930"
+    assert json_resp["data"][0]["upper"] == 71000.0
     
     mock_web_ctx.indicator_service.get_bollinger_bands.assert_awaited_once_with("005930", 20, 2.0)
 

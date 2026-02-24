@@ -132,6 +132,9 @@ async function toggleEnvironment() {
 // 2. 주식 조회 / 주문 / 잔고
 // ==========================================
 
+// 전역 차트 인스턴스 (재사용 및 파괴용)
+let stockChartInstance = null;
+
 // ... (기존 searchStock, loadBalance, placeOrder 함수들은 그대로 유지) ...
 async function searchStock(codeOverride) {
     const input = document.getElementById('stock-code-input');
@@ -144,6 +147,7 @@ async function searchStock(codeOverride) {
     input.value = code;
 
     const resultDiv = document.getElementById('stock-result');
+    const chartCard = document.getElementById('stock-chart-card');
     resultDiv.innerHTML = "조회 중...";
 
     try {
@@ -152,6 +156,7 @@ async function searchStock(codeOverride) {
             const errorText = await res.text();
             console.error("Server error response:", errorText);
             resultDiv.innerHTML = `<p class="error">조회 실패: 서버 오류 (HTTP ${res.status})</p>`;
+            if(chartCard) chartCard.style.display = 'none';
             return;
         }
 
@@ -159,6 +164,7 @@ async function searchStock(codeOverride) {
         
         if (json.rt_cd !== "0") {
             resultDiv.innerHTML = `<p class="error">조회 실패: ${json.msg1} (${json.rt_cd})</p>`;
+            if(chartCard) chartCard.style.display = 'none';
             return;
         }
 
@@ -303,11 +309,17 @@ async function searchStock(codeOverride) {
         `;
         
         const orderCodeInput = document.getElementById('order-code');
-        if (orderCodeInput) orderCodeInput.value = code;
+        if (orderCodeInput) {
+            orderCodeInput.value = code;
+        }
+        
+        // [추가] 차트 로드 및 렌더링
+        loadAndRenderStockChart(code);
 
     } catch (e) {
         console.error("Error in searchStock:", e);
         resultDiv.innerHTML = `<p class="error">오류 발생: ${e.message}</p>`;
+        if(chartCard) chartCard.style.display = 'none';
     }
 }
 
@@ -2025,6 +2037,223 @@ async function initProgramTrading() {
             }
             if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
         }
+    }
+}
+
+// ==========================================
+// [추가] 주식 캔들 차트 렌더링
+// ==========================================
+async function loadAndRenderStockChart(code) {
+    const chartCard = document.getElementById('stock-chart-card');
+    if (!chartCard) return;
+
+    try {
+        // [수정] 서버에서 OHLCV 및 이동평균선 데이터 병렬 요청
+        const [resChart, resMa5, resMa20, resMa60, resBB] = await Promise.all([
+            fetch(`/api/chart/${code}?period=D`),
+            fetch(`/api/indicator/ma/${code}?period=5`),
+            fetch(`/api/indicator/ma/${code}?period=20`),
+            fetch(`/api/indicator/ma/${code}?period=60`),
+            fetch(`/api/indicator/bollinger/${code}?period=20&std_dev=2.0`)
+        ]);
+
+        const jsonChart = await resChart.json();
+        
+        if (jsonChart.rt_cd !== "0" || !jsonChart.data || jsonChart.data.length === 0) {
+            chartCard.style.display = 'none';
+            return;
+        }
+
+        // 지표 데이터 파싱 헬퍼
+        const parseIndicatorData = async (res) => {
+            const json = await res.json();
+            if (json.rt_cd !== "0" || !json.data) return [];
+            return json.data;
+        };
+
+        const dataMa5 = await parseIndicatorData(resMa5);
+        const dataMa20 = await parseIndicatorData(resMa20);
+        const dataMa60 = await parseIndicatorData(resMa60);
+        const dataBB = await parseIndicatorData(resBB);
+
+        chartCard.style.display = 'block';
+        const rawData = jsonChart.data; // [{date, open, high, low, close, volume}, ...]
+
+        // 데이터 변환 (Chart.js Financial 포맷: t(time), o, h, l, c)
+        // 날짜 문자열(YYYYMMDD)을 파싱하여 타임스탬프로 변환
+        const parseDate = (str) => {
+            const y = parseInt(str.substring(0, 4));
+            const m = parseInt(str.substring(4, 6)) - 1;
+            const d = parseInt(str.substring(6, 8));
+            return new Date(y, m, d).getTime();
+        };
+
+        const candles = rawData.map(d => ({
+            x: parseDate(d.date),
+            o: d.open,
+            h: d.high,
+            l: d.low,
+            c: d.close
+        }));
+
+        const volumes = rawData.map(d => ({
+            x: parseDate(d.date),
+            y: d.volume
+        }));
+
+        // [수정] 서버 데이터 매핑 (calculateMA 함수 제거됨)
+        const mapMA = (data) => data.map(d => ({
+            x: parseDate(d.date),
+            y: d.ma // 서버에서 null 또는 float 값 반환
+        }));
+
+        const ma5 = mapMA(dataMa5);
+        const ma20 = mapMA(dataMa20);
+        const ma60 = mapMA(dataMa60);
+
+        // 볼린저 밴드 데이터 매핑
+        const mapBB = (data, key) => data.map(d => ({
+            x: parseDate(d.date),
+            y: d[key] // upper, middle, lower
+        }));
+        const bbUpper = mapBB(dataBB, 'upper');
+        const bbLower = mapBB(dataBB, 'lower');
+
+        const ctx = document.getElementById('stockChart').getContext('2d');
+
+        if (stockChartInstance) {
+            stockChartInstance.destroy();
+        }
+
+        stockChartInstance = new Chart(ctx, {
+            type: 'candlestick',
+            data: {
+                datasets: [
+                    {
+                        label: '주가',
+                        data: candles,
+                        yAxisID: 'y',
+                        order: 1
+                    },
+                    {
+                        label: 'MA5',
+                        data: ma5,
+                        type: 'line',
+                        borderColor: '#ff6b6b', // Red
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        yAxisID: 'y',
+                        order: 0
+                    },
+                    {
+                        label: 'MA20',
+                        data: ma20,
+                        type: 'line',
+                        borderColor: '#feca57', // Yellow
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        yAxisID: 'y',
+                        order: 0
+                    },
+                    {
+                        label: 'MA60',
+                        data: ma60,
+                        type: 'line',
+                        borderColor: '#54a0ff', // Blue
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        yAxisID: 'y',
+                        order: 0
+                    },
+                    {
+                        label: 'BB Upper',
+                        data: bbUpper,
+                        type: 'line',
+                        borderColor: 'rgba(100, 100, 100, 0.3)',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        yAxisID: 'y',
+                        fill: false, // 채우기 시작점
+                        order: 3
+                    },
+                    {
+                        label: 'BB Lower',
+                        data: bbLower,
+                        type: 'line',
+                        borderColor: 'rgba(100, 100, 100, 0.3)',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        yAxisID: 'y',
+                        fill: '-1', // 이전 데이터셋(BB Upper)까지 채우기
+                        backgroundColor: 'rgba(200, 200, 200, 0.1)',
+                        order: 3
+                    },
+                    {
+                        label: '거래량',
+                        data: volumes,
+                        type: 'bar',
+                        yAxisID: 'y1',
+                        backgroundColor: 'rgba(200, 200, 200, 0.3)',
+                        order: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'day',
+                            tooltipFormat: 'yyyy-MM-dd'
+                        },
+                        ticks: {
+                            source: 'auto'
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        position: 'right',
+                        stack: 'stock',
+                        stackWeight: 4, // 주가 영역 비중
+                        beginAtZero: false,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    y1: {
+                        type: 'linear',
+                        position: 'right',
+                        stack: 'stock',
+                        stackWeight: 1, // 거래량 영역 비중
+                        beginAtZero: true,
+                        grid: {
+                            drawOnChartArea: false // 거래량 그리드 숨김
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return value >= 1000000 ? (value/1000000).toFixed(1) + 'M' : value >= 1000 ? (value/1000).toFixed(1) + 'K' : value;
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: { color: '#a0a0b0' }
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false
+                    }
+                }
+            }
+        });
+
+    } catch (e) {
+        console.error("Chart rendering failed:", e);
+        chartCard.style.display = 'none';
     }
 }
 

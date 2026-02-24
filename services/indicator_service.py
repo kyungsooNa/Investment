@@ -1,5 +1,5 @@
 import pandas as pd
-from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI
+from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage
 from services.trading_service import TradingService
 
 class IndicatorService:
@@ -54,16 +54,20 @@ class IndicatorService:
             # 하단밴드 (LB) = MB - (std * k)
             df['LB'] = df['MB'] - (df['std'] * std_dev)
 
-            # 최신 데이터 (마지막 행)
-            latest = df.iloc[-1]
+            results = []
+            for i in range(len(df)):
+                row = df.iloc[i]
+                # NaN 처리 (데이터 부족 구간)
+                mb = float(row['MB']) if not pd.isna(row['MB']) else None
+                ub = float(row['UB']) if not pd.isna(row['UB']) else None
+                lb = float(row['LB']) if not pd.isna(row['LB']) else None
+                
+                results.append(ResBollingerBand(
+                    code=stock_code, date=str(row['date']), close=float(row['close']),
+                    middle=mb, upper=ub, lower=lb
+                ))
             
-            # NaN 체크 (데이터가 부족하여 계산되지 않은 경우)
-            if pd.isna(latest['MB']):
-                 return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
-
-            result = ResBollingerBand(code=stock_code, date=str(latest['date']), close=float(latest['close']), middle=float(latest['MB']), upper=float(latest['UB']), lower=float(latest['LB']))
-            
-            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"볼린저 밴드 계산 중 오류: {str(e)}", data=None)
@@ -123,3 +127,53 @@ class IndicatorService:
 
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"RSI 계산 중 오류: {str(e)}", data=None)
+
+    async def get_moving_average(self, stock_code: str, period: int = 20, method: str = "sma", candle_type: str = "D") -> ResCommonResponse:
+        """
+        특정 종목의 이동평균선(MA)을 계산하여 반환합니다.
+        
+        :param stock_code: 종목코드
+        :param period: 기간 (기본 20)
+        :param method: 방식 ('sma': 단순, 'ema': 지수)
+        :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
+        """
+        resp = await self.trading_service.get_ohlcv(stock_code, period=candle_type)
+        
+        if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+            return resp
+        
+        ohlcv_data = resp.data
+        
+        if len(ohlcv_data) < period:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.EMPTY_VALUES.value,
+                msg1=f"데이터 부족: {len(ohlcv_data)} < {period}",
+                data=None
+            )
+
+        try:
+            df = pd.DataFrame(ohlcv_data)
+            if df['close'].dtype == object:
+                 df['close'] = pd.to_numeric(df['close'])
+
+            if method.lower() == "ema":
+                ma_series = df['close'].ewm(span=period, adjust=False).mean()
+            else: # sma
+                ma_series = df['close'].rolling(window=period).mean()
+            
+            results = []
+            for i in range(len(df)):
+                val = ma_series.iloc[i]
+                ma_val = float(val) if not pd.isna(val) else None
+                
+                results.append(ResMovingAverage(
+                    code=stock_code,
+                    date=str(df.iloc[i]['date']),
+                    close=float(df.iloc[i]['close']),
+                    ma=ma_val
+                ))
+
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
+
+        except Exception as e:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"MA 계산 중 오류: {str(e)}", data=None)
