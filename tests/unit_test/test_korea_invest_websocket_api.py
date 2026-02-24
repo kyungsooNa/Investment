@@ -1926,3 +1926,57 @@ def test_handle_websocket_message_receives_aes_key_iv_success(websocket_api_inst
     assert api._aes_key == key_val
     assert api._aes_iv == iv_val
     api._logger.info.assert_any_call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
+
+
+@pytest.mark.asyncio
+async def test_websocket_reconnection_and_resubscription(websocket_api_instance):
+    """
+    웹소켓 연결이 끊어졌을 때 자동으로 재연결하고 구독을 복구하는지 테스트합니다.
+    """
+    api = websocket_api_instance
+
+    # 1. 초기 상태 설정
+    api._auto_reconnect = True
+    api._is_connected = True
+    mock_ws_initial = AsyncMock()
+    api.ws = mock_ws_initial
+
+    # 구독 항목 추가 (재연결 시 복구되어야 함)
+    tr_id = "H0STCNT0"
+    tr_key = "005930"
+    api._subscribed_items.add((tr_id, tr_key))
+
+    # 2. Mock 설정
+
+    # (1) asyncio.sleep: 대기 시간 스킵
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
+        # (2) _establish_connection: 재연결 성공 시뮬레이션
+        async def mock_establish_connection():
+            api._is_connected = True
+            api.ws = AsyncMock()
+            # 재연결 후 recv 호출 시 테스트 종료를 위해 CancelledError 발생
+            api.ws.recv.side_effect = asyncio.CancelledError("Test End")
+            return True
+
+        with patch.object(api, "_establish_connection", side_effect=mock_establish_connection) as mock_est_conn:
+
+            # (3) send_realtime_request: 구독 복구 요청 확인용
+            with patch.object(api, "send_realtime_request", new_callable=AsyncMock) as mock_send_request:
+
+                # (4) ws.recv: 첫 번째 호출에서 연결 끊김 예외 발생
+                mock_ws_initial.recv.side_effect = Exception("Connection lost")
+
+                # 3. 테스트 실행 (_receive_messages 루프 진입)
+                try:
+                    await api._receive_messages()
+                except asyncio.CancelledError:
+                    pass # 의도된 종료
+
+                # 4. 검증
+                # 재연결 대기 (sleep) 확인
+                mock_sleep.assert_called_with(3)
+                # 재연결 시도 확인
+                mock_est_conn.assert_called_once()
+                # 구독 복구 요청 확인 (_resubscribe_all -> send_realtime_request)
+                mock_send_request.assert_awaited_once_with(tr_id, tr_key, tr_type="1")

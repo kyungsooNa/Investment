@@ -12,6 +12,7 @@ from Crypto.Util.Padding import unpad
 from base64 import b64decode
 
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # KoreaInvestEnv 클래스 임포트
+from core.time_manager import TimeManager  # TimeManager 임포트
 
 
 class KoreaInvestWebSocketAPI:
@@ -20,8 +21,9 @@ class KoreaInvestWebSocketAPI:
     `websockets` 라이브러리(asyncio 기반)를 사용하며, 다양한 실시간 데이터 파싱을 포함합니다.
     """
 
-    def __init__(self, env: KoreaInvestApiEnv, logger=None):
+    def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None):
         self._env = env
+        self._time_manager = time_manager
         self._logger = logger if logger else logging.getLogger(__name__)
         # self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)
         # config에서 웹소켓 및 REST API 정보 가져오기
@@ -37,6 +39,7 @@ class KoreaInvestWebSocketAPI:
         self.ws = None  # 웹소켓 연결 객체 (websockets.WebSocketClientProtocol)
         self.approval_key = None  # 웹소켓 접속 키 (REST API로 발급)
         self._is_connected = False  # 웹소켓 연결 상태 플래그
+        self._auto_reconnect = False  # 자동 재연결 활성화 플래그
         self._receive_task = None  # 메시지 수신을 위한 asyncio.Task
 
         # 실시간 메시지 수신 시 외부에서 등록할 콜백 함수 (TradingService의 핸들러)
@@ -46,6 +49,9 @@ class KoreaInvestWebSocketAPI:
         # H0IFCNI0, H0STCNI0, H0MFCNI0, H0EUCNI0, H0STCNI9 등 통보 TR_ID 구독 시 서버로부터 수신
         self._aes_key = None
         self._aes_iv = None
+
+        # 재연결 시 복구를 위한 구독 목록 저장소 set((tr_id, tr_key))
+        self._subscribed_items = set()
 
     def _aes_cbc_base64_dec(self, key, iv, cipher_text):
         """
@@ -109,24 +115,72 @@ class KoreaInvestWebSocketAPI:
             self._logger.error(f"웹소켓 접속키 발급 중 알 수 없는 오류: {e}")
             return None
 
-    async def _receive_messages(self):
-        """웹소켓으로부터 메시지를 비동기적으로 계속 수신하는 내부 태스크."""
+    async def _establish_connection(self):
+        """웹소켓 연결을 수립하는 내부 메서드 (재연결 로직에서 재사용)."""
+        self._websocket_url = self._env.get_websocket_url()
+        
+        # 1. approval_key 발급 (없으면 발급)
+        if not self.approval_key:
+            self.approval_key = await self._get_approval_key()
+            if not self.approval_key:
+                self._logger.error("웹소켓 접속 키 발급 실패로 연결할 수 없습니다.")
+                return False
+
+        # 2. 웹소켓 연결
         try:
-            while self._is_connected:
-                # 메시지를 받을 때까지 대기
+            self._logger.info(f"웹소켓 연결 시도: {self._websocket_url}")
+            self.ws = await websockets.connect(self._websocket_url, ping_interval=20, ping_timeout=20)
+            self._is_connected = True
+            self._logger.info("웹소켓 연결 성공.")
+            return True
+        except Exception as e:
+            self._logger.error(f"웹소켓 연결 중 오류 발생: {e}")
+            self._is_connected = False
+            self.ws = None
+            return False
+
+    async def _receive_messages(self):
+        """웹소켓 메시지 수신 및 자동 재연결 루프."""
+        retry_count = 0
+        max_retries = 30     # 최대 재시도 횟수 (약 30분간 시도)
+        base_delay = 3       # 기본 대기 시간 (초)
+        max_delay = 60       # 최대 대기 시간 (초)
+
+        while self._auto_reconnect:
+            # 1. 연결이 끊겨있다면 재연결 시도
+            if not self._is_connected:
+                # 장 운영 시간 확인 (TimeManager가 있을 경우)
+                if self._time_manager and not self._time_manager.is_market_open():
+                    self._logger.info("장이 종료되어 자동 재연결을 중단합니다.")
+                    self._auto_reconnect = False
+                    break
+
+                if retry_count >= max_retries:
+                    self._logger.error(f"웹소켓 재연결 실패: 최대 재시도 횟수({max_retries})를 초과했습니다.")
+                    self._auto_reconnect = False
+                    break
+
+                delay = min(max_delay, base_delay * (2 ** retry_count))
+                self._logger.info(f"웹소켓 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
+                await asyncio.sleep(delay)
+                
+                retry_count += 1
+                
+                if await self._establish_connection():
+                    self._logger.info("웹소켓 재연결 성공. 기존 구독 항목을 복구합니다.")
+                    retry_count = 0  # 연결 성공 시 재시도 카운트 초기화
+                    await self._resubscribe_all()
+                continue
+
+            # 2. 메시지 수신
+            try:
                 message = await self.ws.recv()
                 self._handle_websocket_message(message)
-        except websockets.ConnectionClosedOK:
-            self._logger.info("웹소켓 연결이 정상적으로 종료되었습니다.")
-        except websockets.ConnectionClosedError as e:
-            self._logger.error(f"웹소켓 연결이 예외적으로 종료되었습니다: {e}")
-        except asyncio.CancelledError:
-            self._logger.info("웹소켓 메시지 수신 태스크가 취소되었습니다.")
-        except Exception as e:
-            self._logger.error(f"웹소켓 메시지 수신 중 예상치 못한 오류 발생: {e}")
-        finally:
-            self._is_connected = False
-            self.ws = None  # 웹소켓 객체 초기화 (재연결을 위해)
+            except (websockets.ConnectionClosed, Exception) as e:
+                if self._auto_reconnect:
+                    self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.")
+                self._is_connected = False
+                self.ws = None
 
     def _handle_websocket_message(self, message: str):
         """수신된 웹소켓 메시지를 파싱하고 등록된 콜백으로 전달."""
@@ -460,6 +514,13 @@ class KoreaInvestWebSocketAPI:
         self._logger.info(f"[프로그램매매] 종목 {stock_code} 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
+    async def _resubscribe_all(self):
+        """재연결 시 기존 구독 항목들을 다시 구독 요청합니다."""
+        for tr_id, tr_key in list(self._subscribed_items):
+            self._logger.info(f"구독 복구 요청: TR_ID={tr_id}, KEY={tr_key}")
+            # send_realtime_request 내부에서 _subscribed_items에 다시 추가하므로 중복 방지 로직 필요 없음 (Set이므로)
+            await self.send_realtime_request(tr_id, tr_key, tr_type="1")
+
     # --- 웹소켓 연결 및 해지 ---
     async def connect(self, on_message_callback=None):
         """웹소켓 연결을 시작하고 실시간 데이터 수신을 준비합니다."""
@@ -469,33 +530,19 @@ class KoreaInvestWebSocketAPI:
             return True
 
         self.on_realtime_message_callback = on_message_callback  # 외부 콜백 등록
+        self._auto_reconnect = True  # 자동 재연결 활성화
 
-        # 1. approval_key 발급 (비동기)
-        if not self.approval_key:
-            self.approval_key = await self._get_approval_key()
-            if not self.approval_key:
-                self._logger.error("웹소켓 접속 키 발급 실패로 연결할 수 없습니다.")
-                raise RuntimeError("approval_key 발급 실패")  # 추가
-
-        # 2. 웹소켓 연결 (async with 사용)
-        try:
-            self._logger.info(f"웹소켓 연결 시작: {self._websocket_url}")
-            self.ws = await websockets.connect(self._websocket_url, ping_interval=20, ping_timeout=20)
-            self._is_connected = True
-            self._logger.info("웹소켓 연결 성공.")
-
-            # 메시지 수신 태스크 시작 (백그라운드에서 계속 메시지 받기)
+        if await self._establish_connection():
+            # 메시지 수신 태스크 시작 (이미 실행 중이면 건너뜀)
+            if self._receive_task and not self._receive_task.done():
+                self._receive_task.cancel()
             self._receive_task = asyncio.create_task(self._receive_messages())
-
             return True
-        except Exception as e:
-            self._logger.error(f"웹소켓 연결 중 오류 발생: {e}")
-            self._is_connected = False
-            self.ws = None
-            return False
+        return False
 
     async def disconnect(self):
         """웹소켓 연결을 종료합니다."""
+        self._auto_reconnect = False  # 수동 종료 시 재연결 비활성화
         if self._is_connected and self.ws:
             self._logger.info("웹소켓 연결 종료 요청.")
             await self.ws.close()
@@ -555,6 +602,12 @@ class KoreaInvestWebSocketAPI:
         self._logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")
         try:
             await self.ws.send(message_json)
+            
+            # 구독 목록 관리
+            if tr_type == "1":
+                self._subscribed_items.add((tr_id, tr_key))
+            elif tr_type == "2":
+                self._subscribed_items.discard((tr_id, tr_key))
             return True
         except Exception as e:
             self._logger.error(f"실시간 요청 전송 중 오류 발생: {e}")
