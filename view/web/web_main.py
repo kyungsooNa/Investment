@@ -1,6 +1,6 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -44,6 +44,9 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 # 3. API 라우터 등록
 app.include_router(web_api.router)
 
+# 페이지 라우터 생성
+page_router = APIRouter()
+
 # 공통 페이지 렌더링 함수 (로그인 체크 포함)
 async def render_page(request: Request, template_name: str, active_page: str):
     try:
@@ -63,42 +66,44 @@ async def render_page(request: Request, template_name: str, active_page: str):
     return templates.TemplateResponse(template_name, {"request": request, "active_page": active_page})
 
 # 4. 페이지 라우팅
-@app.get("/")
+@page_router.get("/")
 async def index(request: Request):
     return await render_page(request, "index.html", "stock")
 
-@app.get("/balance")
+@page_router.get("/balance")
 async def balance(request: Request):
     return await render_page(request, "balance.html", "balance")
 
-@app.get("/order")
+@page_router.get("/order")
 async def order(request: Request):
     return await render_page(request, "order.html", "order")
 
-@app.get("/ranking")
+@page_router.get("/ranking")
 async def ranking(request: Request):
     return await render_page(request, "ranking.html", "ranking")
 
-@app.get("/marketcap")
+@page_router.get("/marketcap")
 async def marketcap(request: Request):
     return await render_page(request, "marketcap.html", "marketcap")
 
-@app.get("/virtual")
+@page_router.get("/virtual")
 async def virtual(request: Request):
     return await render_page(request, "virtual.html", "virtual")
 
-@app.get("/scheduler")
+@page_router.get("/scheduler")
 async def scheduler(request: Request):
     return await render_page(request, "scheduler.html", "scheduler")
 
-@app.get("/program")
+@page_router.get("/program")
 async def program(request: Request):
     return await render_page(request, "program.html", "program")
 
 # 5. 로그아웃
-@app.get("/logout")
+@page_router.get("/logout")
 async def logout():
     from fastapi.responses import RedirectResponse
     response = RedirectResponse(url="/")
     response.delete_cookie("access_token")
     return response
+
+app.include_router(page_router)

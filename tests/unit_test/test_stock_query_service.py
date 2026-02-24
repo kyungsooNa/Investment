@@ -56,15 +56,24 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     # --- handle_get_current_stock_price 함수 테스트 ---
     async def test_handle_get_current_stock_price_success(self):
+        # ResStockFullInfoApiOutput 객체로 감싸서 반환해야 함
+        mock_output = ResStockFullInfoApiOutput.from_dict({
+            "stck_prpr": "75000",
+            "stck_shrn_iscd": "005930",
+            "prdy_vrss": "1000",
+            "prdy_vrss_sign": "2",
+            "prdy_ctrt": "1.35"
+        })
+
         self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
-            data={"stck_prpr": "75000", "stck_shrn_iscd": "005930"}
+            data={"output": mock_output}
         )
 
         await self.stockQueryService.handle_get_current_stock_price("005930")
         self.mock_logger.info.assert_called()
-        self.assertIn("현재가 조회 성공", self.mock_logger.info.call_args[0][0])
+        self.assertIn("현재가 및 상세 정보 조회 성공", self.mock_logger.info.call_args[0][0])
 
     async def test_handle_get_current_stock_price_failure_rt_cd(self):
         self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
@@ -75,7 +84,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         await self.stockQueryService.handle_get_current_stock_price("005930")
         self.mock_logger.error.assert_called()
-        self.assertIn("현재가 조회 실패", self.mock_logger.error.call_args[0][0])
+        self.assertIn("현재가 및 상세 정보 조회 실패", self.mock_logger.error.call_args[0][0])
 
     # --- handle_get_top_market_cap_stocks_code 함수 테스트 ---
     async def test_handle_get_top_market_cap_stocks_code_success(self):
@@ -714,4 +723,3 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.error.assert_called()
         # (선택) 메시지 내용까지 확인하고 싶으면:
         assert any("오류 발생" in str(call.args[0]) for call in self.mock_logger.error.call_args_list)
-
