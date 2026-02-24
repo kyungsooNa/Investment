@@ -265,7 +265,7 @@ async function searchStock(codeOverride) {
             <div class="stock-info-box">
                 <h3 class="stock-title">${data.name} (${data.code}) ${newHighBadge}</h3>
                 <p class="price ${changeClass}">${fnum(data.price, '원')}</p>
-                <p class="change-rate">전일대비: ${sign}${fnum(data.change)} (${frate(data.rate)})</p>
+                <p class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
                 
                 <div class="stock-details">
                     <div class="detail-group">
