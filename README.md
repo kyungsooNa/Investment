@@ -3,6 +3,8 @@
 
 ![Coverage](https://img.shields.io/badge/Coverage-75%25-yellow)
 
+![Coverage](https://img.shields.io/badge/Coverage-75%25-yellow)
+
 ![Coverage](https://img.shields.io/badge/Coverage-73%25-yellow)
 # 📈 Investment Trading App
 
