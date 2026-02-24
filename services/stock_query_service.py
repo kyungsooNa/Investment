@@ -77,6 +77,7 @@ class StockQueryService:
             "code": stock_code,
             "name": await self.trading_service.get_name_by_code(stock_code),
             "is_new_high": output.is_new_high, # 신고가 여부 추가
+            "is_new_low": output.is_new_low,   # 신저가 여부 추가
             "price": output.stck_prpr,
             "change": output.prdy_vrss,
             "change_absolute": display_change,

@@ -1,7 +1,7 @@
 cache:
   default_ttl: 300
-  file_cache_enabled: 1
-  memory_cache_enabled: 1
+  file_cache_enabled: 0
+  memory_cache_enabled: 0
   enabled_methods: # 실시간성 필요 없는 함수 list
     - get_stock_info_by_code
     - get_top_market_cap_stocks_code

@@ -598,6 +598,36 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             f"{stock_code} 전일대비 등락률 조회 성공: 현재가=50000, 전일대비=0, 등락률=0.00%"
         )
 
+    async def test_handle_get_current_stock_price_check_new_high_low(self):
+        """신고가/신저가 필드가 뷰 모델에 올바르게 매핑되는지 테스트"""
+        # Case 1: 신고가 ("1")
+        mock_output_high = ResStockFullInfoApiOutput.from_dict({
+            "stck_prpr": "10000",
+            "new_hgpr_lwpr_cls_code": "1"
+        })
+        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="정상", data={"output": mock_output_high}
+        )
+        
+        resp = await self.stockQueryService.handle_get_current_stock_price("005930")
+        self.assertEqual(resp.rt_cd, ErrorCode.SUCCESS.value)
+        self.assertTrue(resp.data["is_new_high"])
+        self.assertFalse(resp.data["is_new_low"])
+
+        # Case 2: 신저가 ("신저가") - 문자열로 오는 경우
+        mock_output_low = ResStockFullInfoApiOutput.from_dict({
+            "stck_prpr": "5000",
+            "new_hgpr_lwpr_cls_code": "신저가"
+        })
+        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="정상", data={"output": mock_output_low}
+        )
+        
+        resp = await self.stockQueryService.handle_get_current_stock_price("005930")
+        self.assertEqual(resp.rt_cd, ErrorCode.SUCCESS.value)
+        self.assertFalse(resp.data["is_new_high"])
+        self.assertTrue(resp.data["is_new_low"])
+
 
 class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
