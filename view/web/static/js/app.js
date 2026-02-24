@@ -75,6 +75,21 @@ document.addEventListener('DOMContentLoaded', () => {
             if (btn.dataset.tab === 'scheduler') loadSchedulerStatus();
         });
     });
+
+    // [추가] 프로그램 매매 데이터 복구 및 초기화
+    initProgramTrading();
+
+    // [추가] 프로그램 매매 백업 버튼 UI 동적 추가
+    const ptHeader = document.querySelector('#section-program h2');
+    if (ptHeader) {
+        const btnGroup = document.createElement('span');
+        btnGroup.style.cssText = 'font-size: 0.6em; margin-left: 15px; vertical-align: middle; font-weight: normal;';
+        btnGroup.innerHTML = `
+            <button onclick="exportPtDataToFile()" style="padding: 4px 8px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; margin-right: 5px;">💾 백업 저장</button>
+            <button onclick="importPtDataFromFile()" style="padding: 4px 8px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px;">📂 백업 불러오기</button>
+        `;
+        ptHeader.appendChild(btnGroup);
+    }
 });
 
 async function updateStatus() {
@@ -804,6 +819,7 @@ let ptRowCount = 0;
 let ptSubscribedCodes = new Set();
 let ptCodeNameMap = {};   // 종목코드 → 종목명 매핑
 let ptFilterCode = null;  // 선택된 필터 종목코드 (null이면 전체 표시)
+let ptDataDirty = false;  // [추가] 데이터 변경 여부 플래그
 
 async function addProgramTrading() {
     const input = document.getElementById('pt-code-input');
@@ -833,6 +849,11 @@ async function addProgramTrading() {
         if (!ptChartData[code]) {
             ptChartData[code] = { totalValue: 0, totalVolume: 0, valueData: [], volumeData: [] };
         }
+
+        ptDataDirty = true; // [추가] 데이터 변경 표시
+        // [수정] 구독 즉시 차트 초기화 (데이터 수신 대기 중에도 차트 표시)
+        _initProgramTradingChart();
+        _updateProgramTradingChart();
 
         renderPtChips();
         input.value = '';
@@ -867,6 +888,7 @@ async function removeProgramTrading(code) {
     delete ptCodeNameMap[code];
     delete ptChartData[code];
     if (ptFilterCode === code) ptFilterCode = null;
+    ptDataDirty = true; // [추가] 데이터 변경 표시
     
     _updateProgramTradingChart();
     renderPtChips();
@@ -903,6 +925,7 @@ async function stopAllProgramTrading() {
         ptChart = null;
     }
     ptChartData = {};
+    ptDataDirty = true; // [추가] 데이터 변경 표시
 
     renderPtChips();
     document.getElementById('pt-status').innerHTML = '<span>구독 중지됨</span>';
@@ -933,6 +956,7 @@ function togglePtFilter(code) {
             row.style.display = 'none';
         }
     });
+    _updateProgramTradingChart();
 }
 
 function _appendProgramTradingTableRow(d) {
@@ -965,9 +989,21 @@ function _appendProgramTradingTableRow(d) {
 
 function _initProgramTradingChart() {
     if (ptChart) return;
-    const ctx = document.getElementById('pt-chart').getContext('2d');
+    const canvas = document.getElementById('pt-chart');
+    if (!canvas) return;
+
+    // [추가] X축 범위 설정 (09:00 ~ 현재/15:30)
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 15, 30, 0);
+    
+    let maxTime = now.getTime();
+    if (now > end) maxTime = end.getTime(); // 15:30 이후면 고정
+    if (maxTime < start.getTime()) maxTime = start.getTime(); // 09:00 이전이면 09:00 고정
+
+    const ctx = canvas.getContext('2d');
     ptChart = new Chart(ctx, {
-        type: 'bar', // 기본 타입을 'bar'로 설정
+        type: 'bar',
         data: {
             datasets: []
         },
@@ -976,12 +1012,15 @@ function _initProgramTradingChart() {
             maintainAspectRatio: false,
             scales: {
                 x: {
-                    type: 'time',
-                    time: {
-                        unit: 'minute',
-                        tooltipFormat: 'HH:mm:ss',
-                        displayFormats: {
-                            minute: 'HH:mm'
+                    type: 'linear', // [수정] time -> linear (date adapter 의존성 제거)
+                    position: 'bottom',
+                    min: start.getTime(), // [추가] 09:00 시작
+                    max: maxTime,         // [추가] 현재 시간까지 표시
+                    ticks: {
+                        stepSize: 60000,
+                        callback: function(value) {
+                            const d = new Date(value);
+                            return d.toTimeString().slice(0, 5); // HH:mm (1분 단위)
                         }
                     },
                     title: { display: false }
@@ -992,7 +1031,7 @@ function _initProgramTradingChart() {
                     position: 'left',
                     title: {
                         display: true,
-                        text: '누적 순매수대금'
+                        text: '순매수대금'
                     },
                     ticks: {
                         callback: function(value) {
@@ -1006,7 +1045,7 @@ function _initProgramTradingChart() {
                     position: 'right',
                     title: {
                         display: true,
-                        text: '누적 순매수량'
+                        text: '순매수량'
                     },
                     grid: {
                         drawOnChartArea: false, // y1 축의 그리드 라인은 그리지 않음
@@ -1021,11 +1060,19 @@ function _initProgramTradingChart() {
             plugins: {
                 legend: {
                     position: 'top',
+                    labels: {
+                        // order 값에 의한 정렬을 무시하고 데이터셋 추가 순서(종목별)대로 정렬
+                        sort: (a, b) => a.datasetIndex - b.datasetIndex
+                    }
                 },
                 tooltip: {
                     mode: 'index',
                     intersect: false,
                     callbacks: {
+                        title: function(tooltipItems) {
+                            const d = new Date(tooltipItems[0].parsed.x);
+                            return d.toTimeString().slice(0, 5); // HH:mm
+                        },
                         footer: function(tooltipItems) {
                             if (tooltipItems.length > 0) {
                                 const item = tooltipItems[0];
@@ -1046,34 +1093,54 @@ function _initProgramTradingChart() {
 function _updateProgramTradingChart() {
     if (!ptChart) return;
 
+    // [추가] 시간 흐름에 따라 X축 max 갱신
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 15, 30, 0);
+    
+    let maxTime = now.getTime();
+    if (now > end) maxTime = end.getTime();
+    if (maxTime < start.getTime()) maxTime = start.getTime();
+
+    if (ptChart.options.scales.x.max < maxTime) {
+        ptChart.options.scales.x.max = maxTime;
+    }
+
     const datasets = [];
     let colorIndex = 0;
     for (const code of ptSubscribedCodes) {
+        if (ptFilterCode && ptFilterCode !== code) {
+            colorIndex++;
+            continue;
+        }
+
         if (ptChartData[code]) {
             const color = ptChartColors[colorIndex % ptChartColors.length];
             
-            // 대금 (Line)
-            datasets.push({
-                type: 'line',
-                label: `${ptCodeNameMap[code] || code} (대금)`,
-                data: ptChartData[code].valueData,
-                borderColor: color,
-                backgroundColor: color + '33',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.1,
-                yAxisID: 'y'
-            });
-
-            // 수량 (Bar)
+            // 대금 (Bar)
             datasets.push({
                 type: 'bar',
-                label: `${ptCodeNameMap[code] || code} (수량)`,
-                data: ptChartData[code].volumeData,
-                backgroundColor: color + '80', // 막대그래프는 좀 더 진한 투명도
+                label: `${ptCodeNameMap[code] || code} (대금)`,
+                data: ptChartData[code].valueData,
+                backgroundColor: color + '80',
                 borderColor: color,
                 borderWidth: 1,
-                yAxisID: 'y1'
+                yAxisID: 'y',
+                order: 2
+            });
+
+            // 수량 (Line)
+            datasets.push({
+                type: 'line',
+                label: `${ptCodeNameMap[code] || code} (수량)`,
+                data: ptChartData[code].volumeData,
+                borderColor: color,
+                backgroundColor: color,
+                borderWidth: 1,
+                pointRadius: 2,
+                tension: 0.1,
+                yAxisID: 'y1',
+                order: 1
             });
 
             colorIndex++;
@@ -1092,27 +1159,51 @@ function handleProgramTradingData(d) {
 
     const netValue = parseInt(d['순매수거래대금'] || '0');
     const netVolume = parseInt(d['순매수체결량'] || '0');
-    ptChartData[code].totalValue += netValue;
-    ptChartData[code].totalVolume += netVolume;
+    // ptChartData[code].totalValue += netValue; // [수정] 대금은 틱별 데이터로 변경 (누적 X)
+    // ptChartData[code].totalVolume += netVolume; // [수정] 수량도 서버에서 누적된 값을 주므로 클라이언트 누적 제거
 
     const timeStr = d['주식체결시간']; // "HHMMSS"
+    if (!timeStr || timeStr.length < 4) return;
+
     const now = new Date();
     now.setHours(parseInt(timeStr.slice(0, 2)));
     now.setMinutes(parseInt(timeStr.slice(2, 4)));
-    now.setSeconds(parseInt(timeStr.slice(4, 6)));
+    now.setSeconds(0); // [수정] 차트는 1분 단위로 표시 (초 절삭)
+    now.setMilliseconds(0);
     const timestamp = now.getTime();
 
-    ptChartData[code].valueData.push({ x: timestamp, y: ptChartData[code].totalValue, price: d.price });
-    ptChartData[code].volumeData.push({ x: timestamp, y: ptChartData[code].totalVolume, price: d.price });
-    
-    // 데이터 포인트 제한
-    if (ptChartData[code].valueData.length > 1000) {
-        ptChartData[code].valueData.shift();
-        ptChartData[code].volumeData.shift();
+    const valueData = ptChartData[code].valueData;
+    const volumeData = ptChartData[code].volumeData;
+
+    // [수정] 같은 분(Minute) 데이터 찾기 (lastItem만 비교하면 순서 꼬일 시 중복 발생 가능)
+    const existingIdx = valueData.findIndex(item => item.x === timestamp);
+
+    if (existingIdx >= 0) {
+        valueData[existingIdx].y = netValue; // 덮어쓰기
+        valueData[existingIdx].price = d.price;
+        if (volumeData[existingIdx]) {
+            volumeData[existingIdx].y = netVolume;
+            volumeData[existingIdx].price = d.price;
+        }
+    } else {
+        valueData.push({ x: timestamp, y: netValue, price: d.price });
+        volumeData.push({ x: timestamp, y: netVolume, price: d.price });
+        // 시간순 정렬 (Line 차트 꼬임 방지)
+        valueData.sort((a, b) => a.x - b.x);
+        volumeData.sort((a, b) => a.x - b.x);
     }
     
-    _initProgramTradingChart();
-    _updateProgramTradingChart();
+    // 데이터 포인트 제한
+    if (valueData.length > 1000) {
+        valueData.shift();
+        volumeData.shift();
+    }
+    ptDataDirty = true; // [추가] 데이터 변경 표시
+    
+    // [수정] 필터링된 상태에서는 해당 종목 데이터가 들어왔을 때만 차트 업데이트
+    if (!ptFilterCode || ptFilterCode === code) {
+        _updateProgramTradingChart();
+    }
 }
 
 // ==========================================
@@ -1231,4 +1322,202 @@ function stopSchedulerPolling() {
         clearInterval(schedulerPollingId);
         schedulerPollingId = null;
     }
+}
+
+// ==========================================
+// 9. 데이터 영속성 (LocalStorage)
+// ==========================================
+async function savePtData() {
+    const data = {
+        chartData: ptChartData,
+        subscribedCodes: Array.from(ptSubscribedCodes),
+        codeNameMap: ptCodeNameMap,
+        savedAt: new Date().toISOString()
+    };
+    
+    // 1. 브라우저 LocalStorage 저장 (빠른 접근)
+    localStorage.setItem('ptData', JSON.stringify(data));
+
+    // 2. 서버 파일 저장 (안정성)
+    try {
+        await fetch('/api/program-trading/save-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+            keepalive: true // [추가] 페이지 종료 시에도 요청 유지
+        });
+    } catch (e) {
+        console.warn('Server save failed:', e);
+    }
+}
+
+async function loadPtData() {
+    // 1. 서버에서 로드 시도
+    try {
+        const res = await fetch('/api/program-trading/load-data');
+        const json = await res.json();
+        if (json.success && json.data) {
+            console.log("[PT] Loaded data from Server file");
+            return applyPtData(json.data);
+        }
+    } catch (e) {
+        console.warn("[PT] Server load failed, trying LocalStorage...", e);
+    }
+
+    // 2. 실패 시 LocalStorage 사용
+    const raw = localStorage.getItem('ptData');
+    if (raw) {
+        try {
+            const data = JSON.parse(raw);
+            console.log("[PT] Loaded data from LocalStorage");
+            return applyPtData(data);
+        } catch (e) {
+            console.error('Failed to parse LocalStorage data', e);
+        }
+    }
+    return false;
+}
+
+function applyPtData(data) {
+    try {
+        // [수정] 당일 데이터만 필터링하여 로드 (시간축은 오늘 기준으로 유지)
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayTs = todayStart.getTime();
+
+        const rawChartData = data.chartData || {};
+        ptChartData = {};
+
+        Object.keys(rawChartData).forEach(code => {
+            const entry = rawChartData[code];
+            ptChartData[code] = {
+                totalValue: 0,
+                totalVolume: 0,
+                valueData: (entry.valueData || []).filter(d => d.x >= todayTs),
+                volumeData: (entry.volumeData || []).filter(d => d.x >= todayTs)
+            };
+        });
+
+        ptSubscribedCodes = new Set(data.subscribedCodes || []);
+        ptCodeNameMap = data.codeNameMap || {};
+        return true;
+    } catch (e) {
+        console.error('Failed to apply PT data', e);
+        return false;
+    }
+}
+
+async function initProgramTrading() {
+    // 주기적 저장 (5초마다 변경사항이 있으면 저장)
+    setInterval(() => {
+        if (ptDataDirty) {
+            savePtData();
+            ptDataDirty = false;
+        }
+    }, 5000);
+
+    // [추가] 페이지 종료(탭 닫기, 새로고침) 직전에 변경사항 저장
+    window.addEventListener('beforeunload', () => {
+        if (ptDataDirty) {
+            savePtData();
+        }
+    });
+
+    // loadPtData가 async이므로 await 사용
+    if (await loadPtData()) {
+        ptDataDirty = true; // [추가] 필터링된 데이터로 갱신하기 위해 저장 플래그 설정
+        renderPtChips();
+        _initProgramTradingChart();
+        _updateProgramTradingChart();
+        
+        if (ptSubscribedCodes.size > 0) {
+            const statusDiv = document.getElementById('pt-status');
+            if (statusDiv) {
+                statusDiv.style.display = 'block';
+                statusDiv.innerHTML = '<span>이전 구독 복구 중...</span>';
+            }
+            
+            // SSE 연결 및 재구독 요청은 addProgramTrading 로직을 일부 재사용하거나 직접 수행
+            // 여기서는 SSE 연결이 없으면 생성하고, 각 종목에 대해 subscribe API 호출
+            if (!ptEventSource) {
+                ptEventSource = new EventSource('/api/program-trading/stream');
+                ptEventSource.onmessage = (event) => {
+                    const d = JSON.parse(event.data);
+                    handleProgramTradingData(d);
+                };
+                ptEventSource.onerror = () => {
+                    if (statusDiv) statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
+                };
+            }
+
+            for (const code of ptSubscribedCodes) {
+                try {
+                    await fetch('/api/program-trading/subscribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code })
+                    });
+                } catch (e) {
+                    console.error(`Failed to resubscribe ${code}`, e);
+                }
+            }
+            if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
+        }
+    }
+}
+
+// ==========================================
+// 10. 데이터 파일 백업 (Export/Import)
+// ==========================================
+function exportPtDataToFile() {
+    const data = {
+        chartData: ptChartData,
+        subscribedCodes: Array.from(ptSubscribedCodes),
+        codeNameMap: ptCodeNameMap,
+        savedAt: new Date().toLocaleString()
+    };
+    const jsonStr = JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `program_trading_backup_${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function importPtDataFromFile() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = event => {
+            try {
+                const data = JSON.parse(event.target.result);
+                if (data.chartData && data.subscribedCodes) {
+                    if(!confirm(`[${data.savedAt}] 시점의 데이터를 불러오시겠습니까?\n현재 데이터는 덮어씌워집니다.`)) return;
+
+                    ptChartData = data.chartData;
+                    ptSubscribedCodes = new Set(data.subscribedCodes);
+                    ptCodeNameMap = data.codeNameMap || {};
+                    
+                    savePtData(); // 로컬 스토리지 즉시 반영
+                    location.reload(); // 깔끔하게 새로고침하여 반영
+                } else {
+                    alert('올바르지 않은 데이터 파일입니다.');
+                }
+            } catch (err) {
+                alert('파일 읽기 오류: ' + err);
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
 }

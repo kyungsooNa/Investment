@@ -5,6 +5,7 @@ FastAPI 라우터: 웹 뷰용 API 엔드포인트.
 import asyncio
 import json
 import time
+import os
 from fastapi import APIRouter, HTTPException, Request, Form, Response, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -89,6 +90,12 @@ class ProgramTradingRequest(BaseModel):
 
 class ProgramTradingUnsubscribeRequest(BaseModel):
     code: str | None = None
+
+class ProgramTradingDataModel(BaseModel):
+    chartData: dict
+    subscribedCodes: list
+    codeNameMap: dict
+    savedAt: str | None = None
 
 
 def set_ctx(ctx): # set_context에서 set_ctx로 변경
@@ -555,6 +562,34 @@ async def stream_program_trading(request: Request):
                 ctx._pt_queues.remove(queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.post("/program-trading/save-data")
+async def save_pt_data(data: ProgramTradingDataModel):
+    """프로그램 매매 데이터를 서버 파일(data/pt_data.json)에 저장"""
+    try:
+        file_path = "data/pt_data.json"
+        os.makedirs("data", exist_ok=True)
+        # Pydantic 모델을 dict로 변환하여 저장
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data.dict(), f, ensure_ascii=False, indent=2)
+        return {"success": True}
+    except Exception as e:
+        print(f"[WebAPI] PT Data Save Error: {e}")
+        return {"success": False, "msg": str(e)}
+
+@router.get("/program-trading/load-data")
+async def load_pt_data():
+    """서버 파일에서 프로그램 매매 데이터 로드"""
+    file_path = "data/pt_data.json"
+    if not os.path.exists(file_path):
+        return {"success": False, "msg": "File not found"}
+    
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {"success": True, "data": data}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
 
 @router.websocket("/ws/echo")
 async def websocket_endpoint(websocket: WebSocket):
