@@ -1006,12 +1006,13 @@ function _initProgramTradingChart() {
         plugins: [{
             id: 'splitLine',
             afterDraw: (chart) => {
-                const { ctx, chartArea: { left, right }, scales: { y1 } } = chart;
-                if (y1) {
+                const { ctx, chartArea: { left, right }, scales: { y_spacer } } = chart;
+                if (y_spacer) {
+                    const centerY = (y_spacer.top + y_spacer.bottom) / 2;
                     ctx.save();
                     ctx.beginPath();
-                    ctx.moveTo(left, y1.bottom);
-                    ctx.lineTo(right, y1.bottom);
+                    ctx.moveTo(left, centerY);
+                    ctx.lineTo(right, centerY);
                     ctx.lineWidth = 4;
                     ctx.strokeStyle = 'rgba(200, 200, 200, 1.0)'; // [수정] 구분선 훨씬 더 진하게
                     ctx.stroke();
@@ -1056,6 +1057,14 @@ function _initProgramTradingChart() {
                         }
                     },
                     ticks: { callback: function(value) { return formatTradingValue(value); } }
+                },
+                y_spacer: { // [추가] 두 차트 사이의 간격 확보용 더미 축
+                    type: 'linear',
+                    display: false, // 화면에 표시하지 않음
+                    position: 'left',
+                    stack: 'demo',
+                    stackWeight: 0.2, // 간격 크기 (비중)
+                    grid: { drawOnChartArea: false }
                 },
                 y1: { // [수정] 순매수량 (위쪽, 비중 1)
                     type: 'linear',
