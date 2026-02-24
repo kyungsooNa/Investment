@@ -134,8 +134,9 @@ async def test_websocket_api_connect_failure_due_to_approval_key(websocket_api_i
 
     with patch(patch_target, new_callable=AsyncMock) as mock_connect, \
             patch.object(api, "_get_approval_key", new_callable=AsyncMock, return_value=None):
-        with pytest.raises(Exception, match="approval_key 발급 실패"):
-            await api.connect()
+        result = await api.connect()
+        assert result is False
+        api._logger.error.assert_called_with("웹소켓 접속 키 발급 실패로 연결할 수 없습니다.")
 
 
 @pytest.mark.asyncio
@@ -576,21 +577,33 @@ async def test_get_approval_key_general_exception(websocket_api_instance):
 async def test_receive_messages_connection_closed_ok(websocket_api_instance):
     api = websocket_api_instance
     api._is_connected = True
+    api._auto_reconnect = True  # 루프 진입을 위해 True 설정
     api.ws = AsyncMock()
 
     # Close frame 생성
     close_frame = Close(code=1000, reason="OK")
 
     # ConnectionClosedOK 예외를 side_effect로 설정
-    api.ws.recv.side_effect = websockets.ConnectionClosedOK(
+    exception = websockets.ConnectionClosedOK(
         rcvd=close_frame,
         sent=close_frame,
         rcvd_then_sent=True
     )
+    api.ws.recv.side_effect = exception
 
-    await api._receive_messages()
+    # 재연결 대기 시간(sleep)에 호출될 때 루프를 종료하도록 설정
+    async def stop_loop(*args, **kwargs):
+        api._auto_reconnect = False
 
-    api._logger.info.assert_called_once_with("웹소켓 연결이 정상적으로 종료되었습니다.")
+    with patch("asyncio.sleep", side_effect=stop_loop):
+        await api._receive_messages()
+
+    # 변경된 로직: ConnectionClosedOK도 예외로 잡혀서 재연결 시도 로그(warning)가 출력됨
+    api._logger.warning.assert_called()
+    log_msg = api._logger.warning.call_args[0][0]
+    assert "웹소켓 연결 끊김" in log_msg
+    assert "재연결을 시도합니다" in log_msg
+
     assert api._is_connected is False
     assert api.ws is None
 
@@ -600,14 +613,20 @@ async def test_receive_messages_connection_closed_ok(websocket_api_instance):
 async def test_receive_messages_connection_closed_error(websocket_api_instance):
     api = websocket_api_instance
     api._is_connected = True
+    api._auto_reconnect = True
     api.ws = AsyncMock()
     api.ws.recv.side_effect = Exception("Abnormal closure")
 
-    await api._receive_messages()
+    async def stop_loop(*args, **kwargs):
+        api._auto_reconnect = False
 
-    api._logger.error.assert_called_once()
-    logged_message = api._logger.error.call_args[0][0]
-    assert "웹소켓 메시지 수신 중 예상치 못한 오류 발생" in logged_message
+    with patch("asyncio.sleep", side_effect=stop_loop):
+        await api._receive_messages()
+
+    api._logger.warning.assert_called()
+    logged_message = api._logger.warning.call_args[0][0]
+    assert "웹소켓 연결 끊김" in logged_message
+    assert "재연결을 시도합니다" in logged_message
     assert api._is_connected is False
     assert api.ws is None
 
@@ -617,14 +636,12 @@ async def test_receive_messages_connection_closed_error(websocket_api_instance):
 async def test_receive_messages_cancelled_error(websocket_api_instance):
     api = websocket_api_instance
     api._is_connected = True
+    api._auto_reconnect = True
     api.ws = AsyncMock()
     api.ws.recv.side_effect = asyncio.CancelledError  # 작업 취소
 
-    await api._receive_messages()
-
-    api._logger.info.assert_called_once_with("웹소켓 메시지 수신 태스크가 취소되었습니다.")
-    assert api._is_connected is False
-    assert api.ws is None
+    with pytest.raises(asyncio.CancelledError):
+        await api._receive_messages()
 
 
 # _receive_messages: 일반 Exception 처리 테스트
@@ -632,14 +649,20 @@ async def test_receive_messages_cancelled_error(websocket_api_instance):
 async def test_receive_messages_general_exception(websocket_api_instance):
     api = websocket_api_instance
     api._is_connected = True
+    api._auto_reconnect = True
     api.ws = AsyncMock()
     api.ws.recv.side_effect = Exception("General receive error")  # 일반 예외
 
-    await api._receive_messages()
+    async def stop_loop(*args, **kwargs):
+        api._auto_reconnect = False
 
-    api._logger.error.assert_called_once()
-    logged_message = api._logger.error.call_args[0][0]
-    assert "웹소켓 메시지 수신 중 예상치 못한 오류 발생:" in logged_message
+    with patch("asyncio.sleep", side_effect=stop_loop):
+        await api._receive_messages()
+
+    api._logger.warning.assert_called()
+    logged_message = api._logger.warning.call_args[0][0]
+    assert "웹소켓 연결 끊김" in logged_message
+    assert "General receive error" in logged_message
     assert api._is_connected is False
     assert api.ws is None
 
@@ -764,6 +787,189 @@ async def test_unsubscribe_realtime_quote_success(websocket_api_instance):
         api._logger.info.assert_called_once()
         logged_message = api._logger.info.call_args[0][0]
         assert f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청" in logged_message
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_max_retries_exceeded(websocket_api_instance):
+    """
+    웹소켓 재연결 시도가 최대 횟수를 초과했을 때,
+    에러 로그를 남기고 자동 재연결을 중단하는지 테스트합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False  # 연결 끊김 상태로 시작
+    api._auto_reconnect = True
+
+    # _establish_connection이 항상 실패(False 반환)하도록 설정
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False) as mock_est_conn, \
+         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
+        await api._receive_messages()
+
+        # 검증
+        # 1. 최대 재시도 횟수(30)만큼 연결 시도했는지 확인
+        assert mock_est_conn.call_count == 30
+
+        # 2. 대기(sleep)도 30번 호출되었는지 확인
+        assert mock_sleep.call_count == 30
+
+        # 3. 에러 로그 확인
+        api._logger.error.assert_called_with("웹소켓 재연결 실패: 최대 재시도 횟수(30)를 초과했습니다.")
+
+        # 4. 자동 재연결 플래그가 꺼졌는지 확인
+        assert api._auto_reconnect is False
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_stops_reconnect_when_market_closed(websocket_api_instance):
+    """
+    장 종료 시 자동 재연결을 중단하는지 테스트합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False  # 연결 끊김 상태
+    api._auto_reconnect = True
+
+    # TimeManager Mock 설정 (장 종료 상태)
+    api._time_manager = MagicMock()
+    api._time_manager.is_market_open.return_value = False
+
+    # _establish_connection이 호출되지 않아야 함
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock) as mock_est_conn, \
+         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
+        await api._receive_messages()
+
+        # 검증
+        # 1. 장 종료 로그 확인
+        api._logger.info.assert_called_with("장이 종료되어 자동 재연결을 중단합니다.")
+
+        # 2. 자동 재연결 플래그가 꺼졌는지 확인
+        assert api._auto_reconnect is False
+
+        # 3. 재연결 시도(연결 수립, 대기)가 없었는지 확인
+        mock_est_conn.assert_not_called()
+        mock_sleep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_websocket_keepalive_logic(websocket_api_instance):
+    """
+    웹소켓 연결 유지(Keep-alive)를 위한 설정(ping_interval)과
+    PINGPONG 메시지 수신 처리가 구현되어 있는지 검증합니다.
+    """
+    api = websocket_api_instance
+
+    # 1. 연결 시 ping_interval 설정 확인
+    patch_target = f"{KoreaInvestWebSocketAPI.__module__}.websockets.connect"
+    with patch(patch_target, new_callable=AsyncMock) as mock_connect, \
+         patch.object(api, "_get_approval_key", return_value="key"):
+        
+        await api.connect()
+        
+        # websockets.connect 호출 시 ping_interval이 설정되었는지 확인
+        _, kwargs = mock_connect.call_args
+        assert kwargs.get('ping_interval') == 20
+        assert kwargs.get('ping_timeout') == 20
+        
+    # 2. PINGPONG 메시지 수신 처리 확인
+    api._logger.info = MagicMock()
+    ping_msg = json.dumps({"header": {"tr_id": "PINGPONG"}})
+    api._handle_websocket_message(ping_msg)
+    
+    # 로그가 남는지 확인 (현재 구현은 로그만 남김)
+    api._logger.info.assert_called_with("PINGPONG 수신됨. PONG 응답.")
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_exponential_backoff(websocket_api_instance):
+    """
+    웹소켓 재연결 시 대기 시간이 지수 백오프 방식으로 증가하는지 테스트합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False
+    api._auto_reconnect = True
+
+    # 예상되는 지연 시간: 3, 6, 12, 24, 48, 60(최대)
+    expected_delays = [3, 6, 12, 24, 48, 60]
+    stop_after = len(expected_delays)
+    current_calls = 0
+
+    async def sleep_side_effect(delay):
+        nonlocal current_calls
+        current_calls += 1
+        if current_calls >= stop_after:
+            api._auto_reconnect = False
+
+    with patch("asyncio.sleep", new_callable=AsyncMock, side_effect=sleep_side_effect) as mock_sleep, \
+         patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False):
+
+        await api._receive_messages()
+
+        # 실제 호출된 delay 값 검증
+        actual_delays = [call.args[0] for call in mock_sleep.call_args_list]
+        assert actual_delays == expected_delays
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_reconnect_exception_logging(websocket_api_instance):
+    """
+    _receive_messages 실행 중 재연결 시도(_establish_connection)에서 예외가 발생했을 때
+    적절히 로깅되고 재시도 로직이 동작하는지 검증합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False
+    api._auto_reconnect = True
+
+    # websockets.connect가 예외를 발생시키도록 설정
+    patch_target = f"{KoreaInvestWebSocketAPI.__module__}.websockets.connect"
+
+    # 루프를 한 번만 돌고 종료하도록 sleep에서 플래그 변경
+    async def sleep_side_effect(delay):
+        api._auto_reconnect = False
+
+    with patch(patch_target, side_effect=Exception("Connection failed")) as mock_connect, \
+         patch("asyncio.sleep", new_callable=AsyncMock, side_effect=sleep_side_effect) as mock_sleep, \
+         patch.object(api, "_get_approval_key", new_callable=AsyncMock, return_value="key"):
+
+        await api._receive_messages()
+
+        # 1. 연결 시도 확인
+        mock_connect.assert_called()
+
+        # 2. 에러 로그 확인 (_establish_connection 내부)
+        error_logs = [c[0][0] for c in api._logger.error.call_args_list]
+        assert any("웹소켓 연결 중 오류 발생" in log and "Connection failed" in log for log in error_logs)
+
+        # 3. 재연결 대기 로그 확인 (_receive_messages 내부)
+        info_logs = [c[0][0] for c in api._logger.info.call_args_list]
+        assert any("웹소켓 재연결 대기 중" in log for log in info_logs)
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_resubscribe_failure(websocket_api_instance):
+    """
+    재연결 성공 후 구독 복구(_resubscribe_all) 중 예외가 발생했을 때,
+    에러 로그를 남기고 루프가 계속되는지(또는 적절히 처리되는지) 검증합니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = False
+    api._auto_reconnect = True
+
+    # 루프를 한 번만 돌고 종료하도록 sleep에서 플래그 변경
+    async def sleep_side_effect(delay):
+        api._auto_reconnect = False
+
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=True) as mock_est_conn, \
+         patch.object(api, "_resubscribe_all", new_callable=AsyncMock, side_effect=Exception("Resubscribe Error")) as mock_resub, \
+         patch("asyncio.sleep", new_callable=AsyncMock, side_effect=sleep_side_effect) as mock_sleep:
+
+        await api._receive_messages()
+
+        # 검증
+        mock_est_conn.assert_called_once()
+        mock_resub.assert_called_once()
+        
+        # 에러 로그 확인
+        api._logger.error.assert_called_with("구독 복구 중 오류 발생: Resubscribe Error")
 
 
 # _parse_stock_quote_data: 모든 필드 포함된 유효한 데이터 파싱 테스트
@@ -899,6 +1105,7 @@ async def test_disconnect_with_receive_task_cancelled(websocket_api_instance):
 async def test_disconnect_with_receive_task_exception(websocket_api_instance):
     api = websocket_api_instance
     api._is_connected = True
+    api._auto_reconnect = True  # 루프 진입을 위해 True 설정
     api.ws = AsyncMock()
     api.ws.close = AsyncMock()
 
@@ -919,12 +1126,12 @@ async def test_disconnect_with_receive_task_exception(websocket_api_instance):
     # disconnect 메서드 호출
     await api.disconnect()
 
-    # 로거에 기록된 에러 로그를 확인합니다.
-    error_logs = [call[0][0] for call in api._logger.error.call_args_list]
-    print("📌 로그들:", error_logs)
-
-    # 이제 _receive_messages 내부에서 발생한 예외 로그를 확인해야 합니다.
-    assert any("웹소켓 메시지 수신 중 예상치 못한 오류 발생" in msg for msg in error_logs)
+    # 로거에 기록된 경고 로그를 확인합니다. (재연결 로직으로 변경됨)
+    warning_logs = [call[0][0] for call in api._logger.warning.call_args_list]
+    
+    # 예외 발생 및 재연결 시도 로그 확인
+    assert any("웹소켓 연결 끊김" in msg and "테스트용 예외" in msg for msg in warning_logs)
+    
     assert api._is_connected is False
     assert api.ws is None
 
@@ -1025,33 +1232,40 @@ def test_aes_cbc_base64_dec_success(websocket_api_instance):
 async def test_receive_messages_connection_closed_error_korea_invest(websocket_api_instance):
     """
     KoreaInvestWebSocketAPI의 _receive_messages 메서드에서 websockets.ConnectionClosedError 발생 시
-    logger.error가 올바른 메시지로 호출되고 상태가 정리되는지 검증합니다.
+    logger.warning이 올바른 메시지로 호출되고 재연결 로직으로 진입하는지 검증합니다.
     """
     api = websocket_api_instance  # 픽스처에서 가져온 인스턴스
+    api._is_connected = True
+    api._auto_reconnect = True  # 루프 진입을 위해 True 설정
     mock_ws = AsyncMock()
     api.ws = mock_ws
-    api._is_connected = True  # 루프 진입 조건
 
     # ConnectionClosedError에 필요한 close 프레임 준비
     rcvd_close_frame = Close(code=1006, reason="Abnormal closure")
     sent_close_frame = Close(code=1006, reason="Abnormal closure")
 
     # recv() 호출 시 예외 발생하도록 설정
-    mock_ws.recv.side_effect = websockets.ConnectionClosedError(
+    exception = websockets.ConnectionClosedError(
         rcvd=rcvd_close_frame, sent=sent_close_frame, rcvd_then_sent=False
     )
+    mock_ws.recv.side_effect = exception
 
-    await api._receive_messages()
+    # 재연결 대기 시간(sleep)에 호출될 때 루프를 종료하도록 설정
+    async def stop_loop(*args, **kwargs):
+        api._auto_reconnect = False
+
+    with patch("asyncio.sleep", side_effect=stop_loop):
+        await api._receive_messages()
 
     # 상태 확인
     assert not api._is_connected
+    assert api.ws is None
 
     # 로그 호출 확인
-    api._logger.error.assert_called_once()
-    logged_msg = api._logger.error.call_args[0][0]
-
-    # ✅ 수정 후 (실제 코드의 메시지 반영)
-    assert "웹소켓 연결이 예외적으로 종료되었습니다" in logged_msg
+    api._logger.warning.assert_called()
+    logged_msg = api._logger.warning.call_args[0][0]
+    assert "웹소켓 연결 끊김" in logged_msg
+    assert "재연결을 시도합니다" in logged_msg
 
 
 def test_handle_websocket_message_parse_realtime_price(websocket_api_instance):
@@ -1722,11 +1936,12 @@ def test_handle_websocket_message_exception_during_processing(websocket_api_inst
 async def test_receive_messages_while_loop_enters_once(websocket_api_instance):
     api = websocket_api_instance
     api._is_connected = True
+    api._auto_reconnect = True
     api.ws = AsyncMock()
 
-    # 첫 호출 시 _is_connected를 False로 바꿔 루프 1회만 실행되도록
+    # 첫 호출 시 _auto_reconnect를 False로 바꿔 루프 1회만 실행되도록
     def side_effect_recv():
-        api._is_connected = False
+        api._auto_reconnect = False
         return "0|H0STCNT0|000660|some_data"
 
     api.ws.recv.side_effect = side_effect_recv
@@ -1926,3 +2141,57 @@ def test_handle_websocket_message_receives_aes_key_iv_success(websocket_api_inst
     assert api._aes_key == key_val
     assert api._aes_iv == iv_val
     api._logger.info.assert_any_call(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
+
+
+@pytest.mark.asyncio
+async def test_websocket_reconnection_and_resubscription(websocket_api_instance):
+    """
+    웹소켓 연결이 끊어졌을 때 자동으로 재연결하고 구독을 복구하는지 테스트합니다.
+    """
+    api = websocket_api_instance
+
+    # 1. 초기 상태 설정
+    api._auto_reconnect = True
+    api._is_connected = True
+    mock_ws_initial = AsyncMock()
+    api.ws = mock_ws_initial
+
+    # 구독 항목 추가 (재연결 시 복구되어야 함)
+    tr_id = "H0STCNT0"
+    tr_key = "005930"
+    api._subscribed_items.add((tr_id, tr_key))
+
+    # 2. Mock 설정
+
+    # (1) asyncio.sleep: 대기 시간 스킵
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
+        # (2) _establish_connection: 재연결 성공 시뮬레이션
+        async def mock_establish_connection():
+            api._is_connected = True
+            api.ws = AsyncMock()
+            # 재연결 후 recv 호출 시 테스트 종료를 위해 CancelledError 발생
+            api.ws.recv.side_effect = asyncio.CancelledError("Test End")
+            return True
+
+        with patch.object(api, "_establish_connection", side_effect=mock_establish_connection) as mock_est_conn:
+
+            # (3) send_realtime_request: 구독 복구 요청 확인용
+            with patch.object(api, "send_realtime_request", new_callable=AsyncMock) as mock_send_request:
+
+                # (4) ws.recv: 첫 번째 호출에서 연결 끊김 예외 발생
+                mock_ws_initial.recv.side_effect = Exception("Connection lost")
+
+                # 3. 테스트 실행 (_receive_messages 루프 진입)
+                try:
+                    await api._receive_messages()
+                except asyncio.CancelledError:
+                    pass # 의도된 종료
+
+                # 4. 검증
+                # 재연결 대기 (sleep) 확인
+                mock_sleep.assert_called_with(3)
+                # 재연결 시도 확인
+                mock_est_conn.assert_called_once()
+                # 구독 복구 요청 확인 (_resubscribe_all -> send_realtime_request)
+                mock_send_request.assert_awaited_once_with(tr_id, tr_key, tr_type="1")

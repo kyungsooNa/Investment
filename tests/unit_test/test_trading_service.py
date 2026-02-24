@@ -202,20 +202,20 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
             "type": "realtime_price",
             "tr_id": "H0STCNT0",
             "data": {
-                "MKSC_SHRN_ISCD": "005930",
-                "STCK_PRPR": "80000",
-                "PRDY_VRSS": "+500",
-                "PRDY_VRSS_SIGN": "2",
-                "PRDY_CTRT": "0.6",
-                "ACML_VOL": "120000",
-                "STCK_CNTG_HOUR": "093015"
+                "유가증권단축종목코드": "005930",
+                "주식현재가": "80000",
+                "전일대비": "+500",
+                "전일대비부호": "2",
+                "전일대비율": "0.6",
+                "누적거래량": "120000",
+                "주식체결시간": "093015"
             }
         }
 
         self.trading_service._default_realtime_message_handler(data)
         self.mock_logger.info.assert_any_call(
-            "실시간 데이터 수신: Type=realtime_price, TR_ID=H0STCNT0, Data={'MKSC_SHRN_ISCD': '005930', 'STCK_PRPR': '80000', "
-            "'PRDY_VRSS': '+500', 'PRDY_VRSS_SIGN': '2', 'PRDY_CTRT': '0.6', 'ACML_VOL': '120000', 'STCK_CNTG_HOUR': '093015'}"
+            "실시간 데이터 수신: Type=realtime_price, TR_ID=H0STCNT0, Data={'유가증권단축종목코드': '005930', '주식현재가': '80000', "
+            "'전일대비': '+500', '전일대비부호': '2', '전일대비율': '0.6', '누적거래량': '120000', '주식체결시간': '093015'}"
         )
 
     def test_handle_realtime_quote(self):
