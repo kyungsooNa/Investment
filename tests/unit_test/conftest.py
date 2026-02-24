@@ -5,6 +5,10 @@ import shutil
 import pytest
 import time
 import asyncio
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from unittest.mock import MagicMock, AsyncMock
+from view.web import web_api
 from core.cache.cache_manager import CacheManager
 
 
@@ -61,3 +65,44 @@ def fast_sleep(monkeypatch, request):
     async def _fast_async_sleep(*a, **k): return None
     monkeypatch.setattr(asyncio, "sleep", _fast_async_sleep)
 
+
+# --- Web API 관련 공통 Fixture ---
+
+@pytest.fixture
+def test_app():
+    """테스트용 FastAPI 앱 (Web API 라우터 포함)"""
+    app = FastAPI()
+    app.include_router(web_api.router)
+    return app
+
+@pytest.fixture
+def web_client(test_app):
+    """FastAPI TestClient"""
+    return TestClient(test_app)
+
+@pytest.fixture
+def mock_web_ctx():
+    """WebAppContext Mock 객체 및 전역 주입"""
+    ctx = MagicMock()
+    
+    # 기본 속성 설정
+    ctx.is_market_open.return_value = True
+    ctx.get_env_type.return_value = "모의투자"
+    ctx.get_current_time_str.return_value = "2025-01-01 12:00:00"
+    ctx.initialized = True
+    
+    # 하위 서비스 Mocking
+    ctx.stock_query_service = AsyncMock()
+    ctx.order_execution_service = AsyncMock()
+    ctx.broker = AsyncMock()
+    ctx.virtual_manager = MagicMock()
+    ctx.scheduler = AsyncMock()
+    
+    # 환경 설정 Mocking
+    ctx.env = MagicMock()
+    ctx.env.active_config = {"auth": {"username": "admin", "password": "password", "secret_key": "secret"}}
+    ctx.full_config = {"auth": {"username": "admin", "password": "password"}}
+    
+    # 전역 컨텍스트 설정
+    web_api.set_ctx(ctx)
+    return ctx

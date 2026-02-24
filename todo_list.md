@@ -23,6 +23,7 @@ StockQueryService: 앱 레벨 오케스트레이션
 IndicatorService로 계산 → 데이터만 반환
 12. inquire_time_dailychartprice 의 캐시동작 확인필요
 13. VolmueBreakOut에서 수수료도 적용하여 수익률 계산
+14. [프로그램매매] 선택한 종목바꿀때 차트만 잘바뀌고 표는 제대로 반영이 안됨.
 
 ### 1. 환경 (Environment)
 
