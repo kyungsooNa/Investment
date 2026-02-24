@@ -28,6 +28,7 @@ class TradingService:
         self._logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
         self._latest_prices = {}
+        self._daily_ohlcv_cache = {}  # {code: {'base_date': 'YYYYMMDD', 'data': [...]}}
     async def get_name_by_code(self, code: str) -> str:
         """종목코드로 종목명을 반환합니다 (BrokerAPIWrapper 위임)."""
         return await self._broker_api_wrapper.get_name_by_code(code)
@@ -544,8 +545,8 @@ class TradingService:
 
         period = (period or "D").upper()
         if period == "D":
-            # 일봉: 최소 240일(약 1년) 확보. limit 있으면 2배 버퍼.
-            days = max((limit or 120) * 2, 240)
+            # 일봉: MA120 등 장기 이평선 계산을 위해 충분한 데이터(약 2년) 확보
+            days = max((limit or 365) * 2, 730)
             start_dt = end_dt - timedelta(days=days)
 
         elif period == "W":
@@ -565,6 +566,58 @@ class TradingService:
 
         return self._time_manager.to_yyyymmdd(start_dt), self._time_manager.to_yyyymmdd(end_dt)
 
+    async def _fetch_past_daily_ohlcv(self, stock_code: str, end_yyyymmdd: str, max_loops: int = 8) -> List[dict]:
+        """
+        과거 일봉 데이터를 반복 조회하여 수집합니다.
+        :param end_yyyymmdd: 조회 종료일 (보통 어제 날짜)
+        :param max_loops: 반복 횟수 (기본 8회 * 100일 = 약 800일 ≈ 2.2년)
+        """
+        all_rows = []
+        curr_end_dt = datetime.strptime(end_yyyymmdd, "%Y%m%d")
+        # 시작일은 종료일로부터 충분히 과거로 설정 (max_loops 기반)
+        # 단순히 루프를 돌며 데이터를 모으는 구조이므로 target_start_dt는 루프 종료 조건으로만 사용
+        target_start_dt = curr_end_dt - timedelta(days=max_loops * 100 + 50)
+
+        loop_cnt = 0
+        
+        while loop_cnt < max_loops:
+            loop_cnt += 1
+            
+            # 한 번에 요청할 시작일 (종료일 - 100일)
+            curr_start_dt = curr_end_dt - timedelta(days=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE)
+            
+            s_date = self._time_manager.to_yyyymmdd(curr_start_dt)
+            e_date = self._time_manager.to_yyyymmdd(curr_end_dt)
+            
+            raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+                stock_code=stock_code,
+                start_date=s_date,
+                end_date=e_date,
+                fid_period_div_code="D",
+            )
+            
+            if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
+                break
+            
+            rows = self._normalize_ohlcv_rows(raw.data)
+            if not rows:
+                break
+            
+            # 병합: all_rows(미래) 앞에 rows(과거)를 붙임
+            if all_rows:
+                first_existing_date = all_rows[0]['date']
+                rows = [r for r in rows if r['date'] < first_existing_date]
+            
+            if not rows:
+                break
+                
+            all_rows = rows + all_rows
+            
+            # 다음 루프를 위해 종료일 갱신
+            curr_end_dt = curr_start_dt - timedelta(days=1)
+            
+        return all_rows
+
     async def get_ohlcv(
             self,
             stock_code: str,
@@ -573,23 +626,69 @@ class TradingService:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
         """
-        start_yyyymmdd, end_yyyymmdd = self._calc_range_by_period(
-            period=period,
-            end_dt=self._time_manager.get_current_kst_time() if hasattr(self, "_time_manager") else datetime.now(),
-            limit=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE  # 사용자가 입력한 봉 개수 있으면 넘기고, 없으면 None
-        )
+        # [수정] 일봉(D)인 경우 캐싱 및 최적화 적용
+        if (period or "D").upper() == "D":
+            now_dt = self._time_manager.get_current_kst_time()
+            today_str = now_dt.strftime("%Y%m%d")
+            yesterday_str = (now_dt - timedelta(days=1)).strftime("%Y%m%d")
 
-        raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
-            stock_code=stock_code,
-            start_date=start_yyyymmdd,
-            end_date=end_yyyymmdd,
-            fid_period_div_code=(period or "D").upper(),
-        )
-        if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
-            return raw or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="차트 API 실패", data=[])
+            # 1. 과거 데이터 가져오기 (캐시 활용)
+            past_rows = []
+            cached = self._daily_ohlcv_cache.get(stock_code)
 
-        rows = self._normalize_ohlcv_rows(raw.data)
-        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(rows)}건", data=rows)
+            # 캐시가 있고, 기준일(base_date)이 오늘이라면 (즉, 어제까지의 데이터가 이미 로드됨)
+            if cached and cached.get('base_date') == today_str:
+                past_rows = cached['data']
+            else:
+                # 캐시 없거나 날짜 변경됨 -> 어제까지의 데이터 대량 조회 (약 2년치)
+                past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=8)
+                # 캐시 업데이트
+                self._daily_ohlcv_cache[stock_code] = {
+                    'base_date': today_str,
+                    'data': past_rows
+                }
+
+            # 2. 오늘 데이터 가져오기 (실시간 변동 반영을 위해 항상 조회)
+            today_rows = []
+            resp = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+                stock_code=stock_code,
+                start_date=today_str,
+                end_date=today_str,
+                fid_period_div_code="D"
+            )
+            if resp.rt_cd == ErrorCode.SUCCESS.value and resp.data:
+                today_rows = self._normalize_ohlcv_rows(resp.data)
+
+            # 3. 병합 및 정렬
+            # past_rows는 이미 정렬됨. today_rows는 0개 또는 1개.
+            # 중복 방지를 위해 dict 사용 (날짜 키)
+            merged_map = {r['date']: r for r in past_rows}
+            for r in today_rows:
+                merged_map[r['date']] = r
+            
+            final_rows = sorted(merged_map.values(), key=lambda x: x['date'])
+            
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(final_rows)}건", data=final_rows)
+
+        else:
+            # 주봉/월봉 등은 기존 단일 호출 유지
+            start_yyyymmdd, end_yyyymmdd = self._calc_range_by_period(
+                period=period,
+                end_dt=self._time_manager.get_current_kst_time() if hasattr(self, "_time_manager") else datetime.now(),
+                limit=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE
+            )
+            
+            raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+                stock_code=stock_code,
+                start_date=start_yyyymmdd,
+                end_date=end_yyyymmdd,
+                fid_period_div_code=(period or "D").upper(),
+            )
+            if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
+                return raw or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="차트 API 실패", data=[])
+
+            rows = self._normalize_ohlcv_rows(raw.data)
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(rows)}건", data=rows)
 
     async def get_ohlcv_range(
             self,
@@ -626,35 +725,71 @@ class TradingService:
     ) -> List[Dict[str, Any]]:
         """
         최근 'limit'개 *거래일* 일봉을 반환.
-        API는 시작/종료일 범위를 요구하므로 넉넉한 범위로 받아서 슬라이스로 120개 보장.
+        API는 시작/종료일 범위를 요구하므로 넉넉한 범위로 받아서 슬라이스로 limit개 보장.
+        한국투자증권 API 특성상 긴 기간(1년 이상) 조회 시 데이터가 잘릴 수 있으므로,
+        1년 단위로 끊어서 반복 호출하여 병합한다.
         """
-        ed = self._time_manager.to_yyyymmdd(end_date)
-        # start_date 없으면 넉넉히 과거로 (달력 240일)
-        sd = self._time_manager.to_yyyymmdd(start_date) if start_date else (
-            (datetime.strptime(ed, "%Y%m%d") - timedelta(days=240)).strftime("%Y%m%d")
-        )
+        # 1. 기준 종료일 설정
+        if end_date:
+            current_ed_dt = datetime.strptime(end_date, "%Y%m%d")
+        else:
+            current_ed_dt = self._time_manager.get_current_kst_time()
 
-        resp = await self.get_ohlcv_range(code, period="D", start_date=sd, end_date=ed)
-        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+        all_rows = []
+        
+        # start_date가 명시된 경우: 해당 기간만 조회 (단일 호출 시도)
+        if start_date:
+            resp = await self.get_ohlcv_range(code, period="D", start_date=start_date, end_date=self._time_manager.to_yyyymmdd(current_ed_dt))
+            if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                return resp.data or []
             return []
 
-        rows = resp.data or []
+        # 2. limit 개수를 채울 때까지 반복 호출 (최대 20회 = 약 5.5년치 제한)
+        # 한 번에 요청하는 기간은 100일로 제한하여 API 안정성 확보
+        max_loops = 20
+        for _ in range(max_loops):
+            if len(all_rows) >= limit:
+                break
 
-        # 2) 모자라면(예: 긴 휴장 구간) 과거로 더 확장해서 한 번 더 시도
-        attempts = 0
-        while len(rows) < limit and attempts < 2:
-            # 더 과거로 240일 확장
-            new_ed = (datetime.strptime(sd, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-            new_sd = (datetime.strptime(new_ed, "%Y%m%d") - timedelta(days=max(limit * 2, 240))).strftime("%Y%m%d")
-            more = await self.get_ohlcv_range(code, period="D", start_date=new_sd, end_date=new_ed)
-            if more and more.rt_cd == ErrorCode.SUCCESS.value and more.data:
-                rows = (more.data or []) + rows
-            sd = new_sd
-            attempts += 1
+            # 이번 요청의 종료일 문자열
+            ed_str = self._time_manager.to_yyyymmdd(current_ed_dt)
+            
+            # 이번 요청의 시작일 = 종료일 - 100일
+            current_sd_dt = current_ed_dt - timedelta(days=100)
+            sd_str = self._time_manager.to_yyyymmdd(current_sd_dt)
 
-        # 3) 최근 120개 슬라이스(거래일 기준 보장)
-        rows = rows[-limit:] if limit and len(rows) > limit else rows
-        return rows
+            # API 호출
+            resp = await self.get_ohlcv_range(code, period="D", start_date=sd_str, end_date=ed_str)
+            
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                break # 에러 시 중단
+            
+            rows = resp.data or []
+            if not rows:
+                break # 데이터 없으면 중단 (상장 이전 등)
+
+            # 중복 제거 및 병합
+            # rows는 오름차순(과거->최신)으로 온다고 가정
+            # all_rows(뒤쪽/최신) 앞에 rows(앞쪽/과거)를 붙임
+            if all_rows:
+                # 겹치는 날짜 제거 (rows의 뒷부분이 all_rows의 앞부분과 겹칠 수 있음)
+                first_existing_date = all_rows[0]['date']
+                rows = [r for r in rows if r['date'] < first_existing_date]
+            
+            if not rows:
+                # 겹치는거 제거했더니 남은게 없으면 더 이상 과거 데이터가 없거나 이미 다 가져온 것
+                break
+
+            all_rows = rows + all_rows
+            
+            # 다음 루프를 위해 종료일 갱신 (이번 시작일의 하루 전)
+            current_ed_dt = current_sd_dt - timedelta(days=1)
+
+        # 3. 최근 limit개 슬라이스
+        if len(all_rows) > limit:
+            all_rows = all_rows[-limit:]
+            
+        return all_rows
 
     async def get_intraday_minutes_today(self, *, stock_code: str, input_hour_1: str) -> ResCommonResponse:
         """
