@@ -10,6 +10,7 @@ from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
 from managers.virtual_trade_manager import VirtualTradeManager
 from market_data.stock_code_mapper import StockCodeMapper
+from services.indicator_service import IndicatorService
 from core.time_manager import TimeManager
 from core.logger import Logger
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
@@ -29,6 +30,7 @@ class WebAppContext:
         self.trading_service: TradingService = None
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
+        self.indicator_service: IndicatorService = None
         self.virtual_manager = VirtualTradeManager()
         self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.scheduler: StrategyScheduler = None
@@ -71,6 +73,7 @@ class WebAppContext:
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager
         )
+        self.indicator_service = IndicatorService(self.trading_service)
         self.initialized = True
         mode = "모의투자" if is_paper_trading else "실전투자"
         self.logger.info(f"웹 앱: 서비스 초기화 완료 ({mode})")

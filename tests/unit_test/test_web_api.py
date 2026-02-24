@@ -229,3 +229,30 @@ async def test_get_strategy_chart(web_client, mock_web_ctx):
     assert "benchmark" in data
     assert "StrategyA" in data["histories"]
     assert len(data["benchmark"]) == 2
+
+@pytest.mark.asyncio
+async def test_get_bollinger_bands(web_client, mock_web_ctx):
+    """GET /api/indicator/bollinger/{code} 엔드포인트 테스트"""
+    from common.types import ResBollingerBand
+    
+    # indicator_service Mock 설정 (conftest.py의 mock_web_ctx에 기본적으로 포함되지 않았을 수 있으므로 추가)
+    mock_web_ctx.indicator_service = AsyncMock()
+    
+    mock_band = ResBollingerBand(
+        code="005930", date="20250101", close=70000.0,
+        middle=69000.0, upper=71000.0, lower=67000.0
+    )
+    
+    mock_web_ctx.indicator_service.get_bollinger_bands.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=mock_band
+    )
+    
+    response = web_client.get("/api/indicator/bollinger/005930?period=20&std_dev=2.0")
+    
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["rt_cd"] == "0"
+    assert json_resp["data"]["code"] == "005930"
+    assert json_resp["data"]["upper"] == 71000.0
+    
+    mock_web_ctx.indicator_service.get_bollinger_bands.assert_awaited_once_with("005930", 20, 2.0)
