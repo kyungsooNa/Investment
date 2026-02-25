@@ -11,13 +11,16 @@ v1 범위:
   - 매도: 손절(-5%) / 시간손절(5일 박스권 횡보) / 트레일링(-8%) / 추세이탈(10MA)
 
 v2 예정 (TODO):
-  - Pool A/B 분리 유니버스, 스코어링 시스템 (RS/업종/영업이익)
+  - Pool A/B 분리 유니버스 (Pool A: 전일 기준 30종목, Pool B: 장중 거래대금 30종목)
+  - 스코어링 시스템: RS(3개월 상대강도 상위10% → +30점), 업종 소분류 주도 → +20점
+  - 분기 영업이익 25% 이상 증가 → +20점: /uapi/domestic-stock/v1/finance/financial-ratio
+  - 스코어 상위 10~15종목만 집중 감시 (스코어링 갱신: 08:50, 10:00, 12:00, 14:00)
   - 체결강도(>=120%), 고래 탐지(>=5000만원): REST inquire-ccnl 또는 WS H0STOUP0
-  - 분기 영업이익: /uapi/domestic-stock/v1/finance/financial-ratio
   - 코스닥/코스피 지수 직접 조회 (ETF 프록시 대체)
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -43,7 +46,11 @@ class OneilSqueezeConfig(BaseStrategyConfig):
     # 유니버스 필터
     min_avg_trading_value_5d: int = 10_000_000_000  # 5일 평균 거래대금 100억 원
     near_52w_high_pct: float = 20.0                  # 52주 최고가 대비 20% 이내
-    max_watchlist: int = 50                           # 최대 감시 종목 수
+    max_watchlist: int = 60                           # 최대 감시 종목 수
+
+    # 워치리스트 갱신 시각 (장 시작 후 경과 분)
+    # 프로그램 시작 시 최초 1회 + 아래 시각에 미갱신이면 갱신
+    watchlist_refresh_minutes: tuple = (10, 30, 60, 90)
 
     # 매수 조건 — 볼린저 밴드 스퀴즈
     bb_period: int = 20
@@ -98,6 +105,7 @@ class OSBWatchlistItem:
     prev_bb_width: float    # 전일 BB 밴드폭
     w52_hgpr: int           # 52주 최고가
     avg_trading_value_5d: float  # 5일 평균 거래대금
+    market_cap: int = 0         # 시가총액 (stck_llam)
 
 
 # ── 포지션 상태 ──────────────────────────────────────────
@@ -117,8 +125,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     """오닐식 스퀴즈 주도주 돌파매매 전략.
 
     scan():
-      1. 당일 첫 호출 시 워치리스트 빌드
-         (거래대금 상위 → 정배열·52주고가 필터 → BB 스퀴즈 계산)
+      1. 워치리스트 빌드/갱신 (첫 호출 + 장시작 후 10분/30분/1시간/1시간30분)
+         3가지 랭킹(거래대금/상승률/거래량 상위30) 병합 → 필터 → 회전율 정렬
       2. 마켓 타이밍 확인 (시장별 ETF 20일 MA 3일 연속 상승)
       3. 워치리스트 종목별 돌파 조건 체크
          (스퀴즈 + 가격돌파 + 거래량돌파 + 프로그램필터)
@@ -153,6 +161,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         # 내부 상태
         self._watchlist: Dict[str, OSBWatchlistItem] = {}
         self._watchlist_date: str = ""
+        self._watchlist_refresh_done: set = set()  # 당일 완료된 갱신 시각(분)
         self._position_state: Dict[str, OSBPositionState] = {}
 
         # 마켓 타이밍 캐시 (일 1회 계산)
@@ -173,11 +182,16 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
 
-        # 1) 워치리스트 빌드 (당일 1회)
+        # 1) 워치리스트 빌드/갱신
         today = self._tm.get_current_kst_time().strftime("%Y%m%d")
         if self._watchlist_date != today:
+            # 새 날: 초기화 후 첫 빌드
+            self._watchlist_refresh_done = set()
             await self._build_watchlist()
             self._watchlist_date = today
+        elif self._should_refresh_watchlist():
+            # 장중 갱신 시점 도래 (기존 워치리스트에 신규 종목 추가)
+            await self._build_watchlist()
 
         if not self._watchlist:
             self._logger.info({"event": "scan_skipped", "reason": "워치리스트 비어있음"})
@@ -506,26 +520,52 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     # ════════════════════════════════════════════════════════
 
     async def _build_watchlist(self):
-        """거래대금 상위 → 정배열/52주고가 필터 → BB 스퀴즈 계산."""
-        self._watchlist.clear()
+        """3가지 랭킹(거래대금/상승률/거래량) 소스를 병합하여 워치리스트 구성.
+
+        1) 거래대금 상위 30 + 상승률 상위 30 + 거래량 상위 30 → 중복 제거 후 최대 ~90개 후보
+        2) 각 후보를 _analyze_candidate()로 필터 (정배열/52주고가/BB)
+        3) 거래대금/시총 비율(회전율) 내림차순 정렬 → 상위 max_watchlist개 선택
+        """
         self._logger.info({"event": "build_watchlist_started"})
 
-        # 1) 거래대금 상위 종목 조회
-        resp = await self._ts.get_top_trading_value_stocks()
-        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
-            self._logger.warning({"event": "build_watchlist_failed", "reason": "거래대금 상위 조회 실패"})
-            return
+        # 1) 3가지 랭킹 소스 병렬 조회
+        trading_val_resp, rise_resp, volume_resp = await asyncio.gather(
+            self._ts.get_top_trading_value_stocks(),
+            self._ts.get_top_rise_fall_stocks(rise=True),
+            self._ts.get_top_volume_stocks(),
+            return_exceptions=True,
+        )
 
-        candidates = resp.data or []
-        self._logger.info({"event": "watchlist_candidates_fetched", "count": len(candidates)})
+        # 종목코드 → {code, name} 중복 제거 병합
+        candidate_map: Dict[str, str] = {}  # code → name
 
-        items: List[OSBWatchlistItem] = []
-
-        for stock in candidates:
-            code = stock.get("mksc_shrn_iscd") or stock.get("stck_shrn_iscd") or ""
-            if not code:
+        for resp in [trading_val_resp, rise_resp, volume_resp]:
+            if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
                 continue
-            stock_name = stock.get("hts_kor_isnm", "") or self._mapper.get_name_by_code(code) or code
+            for stock in (resp.data or []):
+                if isinstance(stock, dict):
+                    code = stock.get("mksc_shrn_iscd") or stock.get("stck_shrn_iscd") or ""
+                    name = stock.get("hts_kor_isnm", "")
+                else:
+                    code = getattr(stock, "mksc_shrn_iscd", "") or getattr(stock, "stck_shrn_iscd", "")
+                    name = getattr(stock, "hts_kor_isnm", "")
+                if code and code not in candidate_map:
+                    candidate_map[code] = name or self._mapper.get_name_by_code(code) or code
+
+        self._logger.info({
+            "event": "watchlist_candidates_merged",
+            "total_unique": len(candidate_map),
+        })
+
+        # 2) 각 후보 분석 (기존 워치리스트에 있으면 스킵)
+        items: List[OSBWatchlistItem] = []
+        existing_codes = set(self._watchlist.keys())
+
+        for code, stock_name in candidate_map.items():
+            if code in existing_codes:
+                # 이미 워치리스트에 있는 종목은 유지
+                items.append(self._watchlist[code])
+                continue
 
             try:
                 item = await self._analyze_candidate(code, stock_name)
@@ -536,18 +576,29 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     "event": "build_watchlist_error", "code": code, "error": str(e),
                 }, exc_info=True)
 
+        # 3) 우선순위 정렬: 거래대금/시총 비율(회전율) 내림차순
+        #    회전율이 높을수록 시장의 관심이 집중된 종목
+        items.sort(key=lambda x: self._calc_turnover_ratio(x), reverse=True)
+
+        # TODO [v2] 스코어링: RS(3개월 상대강도 상위10% +30점), 업종 소분류 주도(+20점),
+        #   분기 영업이익 25%↑(+20점, /uapi/domestic-stock/v1/finance/financial-ratio)
+        #   스코어 상위 10~15종목만 집중 감시
         self._watchlist = {
             item.code: item for item in items[:self._cfg.max_watchlist]
         }
         self._logger.info({
             "event": "build_watchlist_finished",
-            "initial_candidates": len(candidates),
+            "total_candidates_analyzed": len(candidate_map),
             "final_watchlist_count": len(self._watchlist),
             "watchlist_codes": list(self._watchlist.keys()),
         })
 
     async def _analyze_candidate(self, code: str, name: str) -> Optional[OSBWatchlistItem]:
-        """종목의 OHLCV + BB 분석. 조건 충족 시 OSBWatchlistItem 반환."""
+        """종목의 OHLCV + BB 분석. 조건 충족 시 OSBWatchlistItem 반환.
+
+        TODO [v2] RS(상대강도) 계산: 3개월 수익률을 구해 전체 워치리스트 내 상위10%에 +30점
+        TODO [v2] 스코어 필드를 OSBWatchlistItem에 추가하고, 여기서 산출
+        """
         # 50일 MA 계산을 위해 충분한 데이터 필요
         ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=60)
         if not ohlcv or len(ohlcv) < 50:
@@ -600,6 +651,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return None
 
         w52_hgpr = self._get_int_field(output, "w52_hgpr")
+        stck_llam = self._get_int_field(output, "stck_llam")  # 시가총액
         if w52_hgpr > 0:
             distance_pct = ((w52_hgpr - prev_close) / w52_hgpr) * 100
             if distance_pct > self._cfg.near_52w_high_pct:
@@ -636,6 +688,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             avg_vol_20d=avg_vol_20d,
             bb_width_min_20d=bb_width_min_20d, prev_bb_width=prev_bb_width,
             w52_hgpr=w52_hgpr, avg_trading_value_5d=avg_trading_value_5d,
+            market_cap=stck_llam,
         )
 
     # ════════════════════════════════════════════════════════
@@ -688,6 +741,35 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         except Exception as e:
             self._logger.warning({"event": "etf_ma_check_error", "etf_code": etf_code, "error": str(e)})
             return False
+
+    # ════════════════════════════════════════════════════════
+    # 워치리스트 갱신 판정
+    # ════════════════════════════════════════════════════════
+
+    def _should_refresh_watchlist(self) -> bool:
+        """장중 갱신 시점이 도래했고 아직 갱신하지 않았으면 True."""
+        now = self._tm.get_current_kst_time()
+        open_time = self._tm.get_market_open_time()
+        elapsed_minutes = (now - open_time).total_seconds() / 60
+
+        for target_min in self._cfg.watchlist_refresh_minutes:
+            if elapsed_minutes >= target_min and target_min not in self._watchlist_refresh_done:
+                self._watchlist_refresh_done.add(target_min)
+                self._logger.info({
+                    "event": "watchlist_refresh_triggered",
+                    "elapsed_minutes": round(elapsed_minutes, 1),
+                    "target_minutes": target_min,
+                })
+                return True
+        return False
+
+    @staticmethod
+    def _calc_turnover_ratio(item: OSBWatchlistItem) -> float:
+        """거래대금/시총 비율(회전율). 높을수록 시장 관심 집중."""
+        if item.market_cap > 0:
+            return item.avg_trading_value_5d / item.market_cap
+        # 시총 정보 없으면 거래대금 절대값으로 폴백
+        return item.avg_trading_value_5d
 
     # ════════════════════════════════════════════════════════
     # 유틸리티

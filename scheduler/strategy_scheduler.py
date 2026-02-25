@@ -35,6 +35,7 @@ class StrategySchedulerConfig:
     max_positions: int = 3          # 최대 동시 보유 포지션 수
     order_qty: int = 1              # 주문 수량
     enabled: bool = True            # 개별 전략 활성/비활성
+    force_exit_on_close: bool = False       # 당일 청산 여부
 
 
 class StrategyScheduler:
@@ -127,7 +128,9 @@ class StrategyScheduler:
 
                     # 정규 주기 도래 또는 장 마감 전 강제 실행
                     should_run = elapsed >= cfg.interval_minutes * 60
-                    force_exit = minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE
+                    force_exit = False
+                    if cfg.force_exit_on_close and (minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE):
+                        force_exit = True
 
                     if should_run or force_exit:
                         self._last_run[name] = now
