@@ -68,13 +68,14 @@ class WebAppContext:
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager
         )
+        self.indicator_service = IndicatorService(self.trading_service)
         self.stock_query_service = StockQueryService(
-            self.trading_service, self.logger, self.time_manager
+            self.trading_service, self.logger, self.time_manager,
+            indicator_service=self.indicator_service
         )
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager
         )
-        self.indicator_service = IndicatorService(self.trading_service)
         self.initialized = True
         mode = "모의투자" if is_paper_trading else "실전투자"
         self.logger.info(f"웹 앱: 서비스 초기화 완료 ({mode})")

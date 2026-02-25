@@ -383,9 +383,9 @@ class ResBollingerBand:
     code: str
     date: str
     close: float
-    middle: float
-    upper: float
-    lower: float
+    middle: Optional[float]
+    upper: Optional[float]
+    lower: Optional[float]
 
     def to_dict(self):
         return asdict(self)
@@ -397,6 +397,17 @@ class ResRSI:
     date: str
     close: float
     rsi: float
+
+    def to_dict(self):
+        return asdict(self)
+
+@with_from_dict
+@dataclass
+class ResMovingAverage:
+    code: str
+    date: str
+    close: float
+    ma: Optional[float]
 
     def to_dict(self):
         return asdict(self)

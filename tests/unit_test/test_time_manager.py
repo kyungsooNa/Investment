@@ -359,6 +359,16 @@ def test_get_market_close_time(time_manager):
     assert close_time.date() == now.date()
 
 
+def test_get_market_open_time(time_manager):
+    now = time_manager.get_current_kst_time()
+    open_time = time_manager.get_market_open_time()
+
+    assert open_time.hour == 9
+    assert open_time.minute == 0
+    assert open_time.tzinfo.zone == "Asia/Seoul"
+    assert open_time.date() == now.date()
+
+
 def test_get_market_close_time_on(time_manager):
     test_date = datetime(2025, 8, 1)
     close_time = time_manager.get_market_close_time_on(test_date)

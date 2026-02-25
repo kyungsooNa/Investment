@@ -134,6 +134,15 @@ async def get_stock_price(code: str):
     resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
     return _serialize_response(resp)
 
+@router.get("/chart/{code}")
+async def get_stock_chart(code: str, period: str = "D", indicators: bool = False):
+    """종목의 OHLCV 차트 데이터 조회 (기본 일봉). indicators=true 시 MA+BB 지표 포함."""
+    ctx = _get_ctx()
+    if indicators:
+        resp = await ctx.stock_query_service.get_ohlcv_with_indicators(code, period)
+    else:
+        resp = await ctx.stock_query_service.get_ohlcv(code, period)
+    return _serialize_response(resp)
 
 @router.get("/balance")
 async def get_balance():
@@ -263,6 +272,13 @@ async def get_rsi(code: str, period: int = 14):
     """RSI 조회 (기본: 14일)"""
     ctx = _get_ctx()
     resp = await ctx.indicator_service.get_rsi(code, period)
+    return _serialize_response(resp)
+
+@router.get("/indicator/ma/{code}")
+async def get_moving_average(code: str, period: int = 20, method: str = "sma"):
+    """이동평균선 조회 (기본: 20일, sma)"""
+    ctx = _get_ctx()
+    resp = await ctx.indicator_service.get_moving_average(code, period, method)
     return _serialize_response(resp)
 
 @router.get("/top-market-cap")

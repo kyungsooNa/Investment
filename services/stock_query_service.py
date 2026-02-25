@@ -12,10 +12,11 @@ class StockQueryService:
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
     """
 
-    def __init__(self, trading_service, logger, time_manager):
+    def __init__(self, trading_service, logger, time_manager, indicator_service=None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
+        self.indicator_service = indicator_service
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -548,6 +549,51 @@ class StockQueryService:
         except Exception as e:
             self.logger.error(f"{stock_code} OHLCV 데이터 처리 중 오류: {e}", exc_info=True)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=[])
+
+    async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D") -> ResCommonResponse:
+        """
+        OHLCV 데이터를 1회 조회한 후, 해당 데이터로 MA5/10/20/60/120 + 볼린저밴드를 한번에 계산하여 반환.
+        차트 렌더링 시 7개 API 호출을 1개로 통합하기 위한 메서드.
+        """
+        self.logger.info(f"ServiceHandler - {stock_code} OHLCV+지표 통합 조회 period={period}")
+        try:
+            # 1. OHLCV 1회 조회
+            resp = await self.trading_service.get_ohlcv(stock_code, period=period)
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+                return resp or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="OHLCV 조회 실패", data=None)
+
+            ohlcv_data = resp.data
+
+            # 2. 지표 계산 (OHLCV 데이터를 직접 전달하여 API 재호출 방지)
+            indicator_service = self.indicator_service
+            ma5_resp = await indicator_service.get_moving_average(stock_code, period=5, ohlcv_data=ohlcv_data)
+            ma10_resp = await indicator_service.get_moving_average(stock_code, period=10, ohlcv_data=ohlcv_data)
+            ma20_resp = await indicator_service.get_moving_average(stock_code, period=20, ohlcv_data=ohlcv_data)
+            ma60_resp = await indicator_service.get_moving_average(stock_code, period=60, ohlcv_data=ohlcv_data)
+            ma120_resp = await indicator_service.get_moving_average(stock_code, period=120, ohlcv_data=ohlcv_data)
+            bb_resp = await indicator_service.get_bollinger_bands(stock_code, period=20, std_dev=2.0, ohlcv_data=ohlcv_data)
+
+            def _to_dict_list(r):
+                if r.rt_cd != ErrorCode.SUCCESS.value or not r.data:
+                    return []
+                return [item.to_dict() if hasattr(item, 'to_dict') else item for item in r.data]
+
+            result = {
+                "ohlcv": ohlcv_data,
+                "indicators": {
+                    "ma5": _to_dict_list(ma5_resp),
+                    "ma10": _to_dict_list(ma10_resp),
+                    "ma20": _to_dict_list(ma20_resp),
+                    "ma60": _to_dict_list(ma60_resp),
+                    "ma120": _to_dict_list(ma120_resp),
+                    "bb": _to_dict_list(bb_resp),
+                }
+            }
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV+지표 {len(ohlcv_data)}건", data=result)
+
+        except Exception as e:
+            self.logger.error(f"{stock_code} OHLCV+지표 통합 조회 중 오류: {e}", exc_info=True)
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
     async def get_recent_daily_ohlcv(self, stock_code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE) -> ResCommonResponse:
         """
