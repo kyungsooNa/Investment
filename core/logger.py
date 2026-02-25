@@ -79,7 +79,7 @@ def get_strategy_logger(strategy_name: str, log_dir="logs"):
     log_file = os.path.join(strategy_log_dir, f"{timestamp}_{strategy_name}.log.json")
     file_handler = RotatingFileHandler(
         log_file,
-        mode='w',
+        mode='a',
         encoding='utf-8',
         maxBytes=LOG_MAX_BYTES,
         backupCount=LOG_BACKUP_COUNT
@@ -162,7 +162,7 @@ class Logger:
                     except Exception:
                         pass  # 삭제 실패(권한 문제, 파일 잠김 등) 시 무시
 
-    def _setup_logger(self, name, log_file, level, mode='w'):
+    def _setup_logger(self, name, log_file, level, mode='a'):
         """단일 로거를 설정합니다."""
         logger = logging.getLogger(name)
         logger.setLevel(level)
