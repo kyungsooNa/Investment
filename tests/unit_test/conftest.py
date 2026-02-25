@@ -96,7 +96,7 @@ def fast_sleep(request):
 
 # --- Web API 관련 공통 Fixture ---
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def test_app():
     """테스트용 FastAPI 앱 (Web API 라우터 포함)"""
     app = FastAPI()

@@ -2,6 +2,7 @@
 import yaml
 import os
 import json
+from functools import lru_cache
 
 # config.yaml 및 tr_ids_config.yaml 파일 경로 설정
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +19,7 @@ KIS_CONFIG_PATH = os.path.join(BASE_DIR, 'kis_config.yaml')
 #         return yaml.safe_load(f)
 #
 #
-
+@lru_cache(maxsize=None)
 def load_configs() -> dict:
     main_config_data = load_config(MAIN_CONFIG_PATH)
     tr_ids_data = load_config(TR_IDS_CONFIG_PATH)
@@ -31,7 +32,7 @@ def load_configs() -> dict:
 
     return config_data
 
-
+@lru_cache(maxsize=None)
 def load_config(file_path):
     """지정된 경로에서 YAML 또는 JSON 설정 파일을 로드합니다."""
     try:
