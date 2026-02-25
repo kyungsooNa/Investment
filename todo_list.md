@@ -4,31 +4,23 @@
 이 항목들은 애플리케이션의 핵심 기능 안정성, 데이터 무결성, 그리고 기본적인 성능 및 개발 효율성에 직접적인 영향을 미칩니다.
 
 ### 0. 불량
-
-1. TokenInvalidate 기능 사용시 API 호출하도록 수정.
-   (모의 Token이 Invalid면 새로 안받는 버그 있음. 실전도 동일한지 확인 필요.)
-2. WebsocketAPi도 TRID_Provider, UrlProvider, HeaderProvdier 적용하기.
 3. 1초 넘는 tc 들 점검.
 4. api 확인해서 todo_list에 넣기
 5. momentum_backtest 정상작동 확인
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-7. token을 무효화하고 바로 요청하면 못받아옴. server로부터 1분 대기시간이 필요한것으로보임.
-8. ohlcv 활용한 전략 추가
-9. [진행중] IndicatorService(MA20, 52주 고가, 거래대금(=가격×거래량) 등 파생 지표 계산 전용)
 10. (옵션) MarketDataRepository / DataStore:
 최근에 받은 OHLCV/호가/스냅샷을 메모리/파일 캐시로 보관 (Web API 레벨 캐싱 구현 완료)
 “API 다시 부르지 말고 기존 값 쓰자” 요구사항을 충족 (Throttling 및 Fallback 캐시 적용 완료)
 StockQueryService: 앱 레벨 오케스트레이션
 필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
 IndicatorService로 계산 → 데이터만 반환
-12. inquire_time_dailychartprice 의 캐시동작 확인필요
 13. VolmueBreakOut에서 수수료도 적용하여 수익률 계산
 14. [프로그램매매] 선택한 종목바꿀때 차트만 잘바뀌고 표는 제대로 반영이 안됨.
+  + 현재 websocket을 구독중임에도 다른 page를 보고있으면 data가 차트에 표기가 안되는걸로 보임. 구독중인 data는 따로 저장하면서 프로그램 매매 실시간 동향 page에 가면 저장중이던 page를 차트와 표에 그리기만 하면 되도록 수정.
 15. [현재가차트] 불량
 - 차트의 캔들 색상을 한국 주식 시장 관행(상승: 빨강, 하락: 파랑)에 맞게 변경안됨.
 - 차트내, 고가 저가 표기 (현재가 대비 등락률 %도 표기)
 - 주가차트, 거래량bar 차트를 구분할 수 있게 중간에 공간을 넣자 (program 매매 수급추이 차트와 동일하게 하도록 참고)
-- 기존에 원래 있던 신고가 표기가 차트넣으면서 없어졌네
 - 3개월/6개월/1년의 필터링이 제대로 안됨.
 - 이동평균선 차트가 제대로 그려지지 않음. OHLCV를 제대로 가지고 오지 못하는거 같음.
 
