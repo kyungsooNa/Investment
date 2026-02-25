@@ -2217,9 +2217,8 @@ function renderStockChart(period) {
                     type: 'candlestick',
                     yAxisID: 'y',
                     // 한국식 캔들 색상 (상승: 빨강, 하락: 파랑)
-                    color: { up: '#ff0000', down: '#0000ff', unchanged: '#777777' },
-                    borderColor: { up: '#ff0000', down: '#0000ff', unchanged: '#777777' },
-                    wickColor: { up: '#ff0000', down: '#0000ff', unchanged: '#777777' },
+                    backgroundColors: { up: '#ff0000', down: '#0000ff', unchanged: '#777777' },
+                    borderColors: { up: '#ff0000', down: '#0000ff', unchanged: '#777777' },
                     order: 1
                 },
                 { label: 'MA5', data: ma5, type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
