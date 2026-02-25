@@ -1,10 +1,16 @@
 # core/logger.py
 import logging
 import os
+import time
 from datetime import datetime
 import http.client
 import inspect
 import json
+from logging.handlers import RotatingFileHandler
+
+# --- Log Rotation Constants ---
+LOG_MAX_BYTES = 10 * 1024 * 1024  # 10MB
+LOG_BACKUP_COUNT = 20
 
 # --- Timestamp Singleton ---
 _log_timestamp = None
@@ -71,7 +77,13 @@ def get_strategy_logger(strategy_name: str, log_dir="logs"):
     
     # 1. JSON 파일 핸들러 (실행마다 새로 생성)
     log_file = os.path.join(strategy_log_dir, f"{timestamp}_{strategy_name}.log.json")
-    file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+    file_handler = RotatingFileHandler(
+        log_file,
+        mode='a',
+        encoding='utf-8',
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT
+    )
     file_handler.setFormatter(JsonFormatter())
     logger.addHandler(file_handler)
 
@@ -114,6 +126,9 @@ class Logger:
         if not os.path.exists(self.strategy_log_dir):
             os.makedirs(self.strategy_log_dir, exist_ok=True)
 
+        # 오래된 로그 파일 정리 (30일 경과)
+        self._cleanup_old_logs(days=30)
+
         # 로그 파일 경로 설정 (logs/common/ 하위)
         self.operational_log_path = os.path.join(self.common_log_dir, f"{timestamp}_operational.log")
         self.debug_log_path = os.path.join(self.common_log_dir, f"{timestamp}_debug.log")
@@ -129,7 +144,25 @@ class Logger:
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
         http.client.HTTPConnection.debuglevel = 0  # HTTP 통신 디버그 레벨 비활성화
 
-    def _setup_logger(self, name, log_file, level, mode='w'):
+    def _cleanup_old_logs(self, days=30):
+        """
+        로그 디렉토리를 순회하며 지정된 일수(days)보다 오래된 파일을 삭제합니다.
+        """
+        now = time.time()
+        cutoff = now - (days * 86400)
+
+        for root, _, files in os.walk(self.log_dir):
+            for filename in files:
+                # 로그 파일 확장자 또는 패턴 확인
+                if ".log" in filename or ".json" in filename:
+                    file_path = os.path.join(root, filename)
+                    try:
+                        if os.path.getmtime(file_path) < cutoff:
+                            os.remove(file_path)
+                    except Exception:
+                        pass  # 삭제 실패(권한 문제, 파일 잠김 등) 시 무시
+
+    def _setup_logger(self, name, log_file, level, mode='a'):
         """단일 로거를 설정합니다."""
         logger = logging.getLogger(name)
         logger.setLevel(level)
@@ -138,7 +171,13 @@ class Logger:
         if logger.handlers:
             return logger
 
-        file_handler = logging.FileHandler(log_file, mode=mode, encoding='utf-8')
+        file_handler = RotatingFileHandler(
+            log_file,
+            mode=mode,
+            encoding='utf-8',
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT
+        )
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         logger.addHandler(file_handler)
 

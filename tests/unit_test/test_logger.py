@@ -1,7 +1,9 @@
 import os
+import time
 import logging
 import json
 from unittest.mock import patch, MagicMock
+from logging.handlers import RotatingFileHandler
 
 import pytest
 
@@ -257,7 +259,7 @@ def test_get_strategy_logger(tmp_path):
     assert len(log_files) == 1
     log_file_path = log_files[0]
     assert file_handler.baseFilename == str(log_file_path)
-    assert file_handler.mode == 'w'
+    assert file_handler.mode == 'a'
 
     # 3. 스트림 핸들러 검증
     stream_handler = next((h for h in logger.handlers if isinstance(h, logging.StreamHandler)), None)
@@ -297,3 +299,92 @@ def test_get_strategy_logger(tmp_path):
     reset_log_timestamp_for_test()
 
 
+def test_log_rotation(clean_logger_instance):
+    """
+    RotatingFileHandler가 설정된 크기를 초과하면 로그 파일을 회전시키는지 테스트합니다.
+    """
+    logger, common_log_dir = clean_logger_instance
+    
+    # operational_logger의 RotatingFileHandler 찾기
+    handler = next(h for h in logger.operational_logger.handlers if isinstance(h, RotatingFileHandler))
+    
+    # 테스트를 위해 maxBytes를 매우 작게 설정 (예: 100 바이트)
+    # 기본 포맷터 헤더 등을 고려하여 100바이트로 설정
+    handler.maxBytes = 100
+    
+    # 1. 첫 번째 로그 기록 (약 50바이트 메시지 + 헤더 -> 80~90바이트 예상)
+    msg = "A" * 50
+    logger.info(msg)
+    
+    # 파일이 하나만 있어야 함
+    log_files = list(common_log_dir.glob("*_operational.log*"))
+    assert len(log_files) == 1
+    
+    # 2. 두 번째 로그 기록 (누적 100바이트 초과 -> 회전 발생 예상)
+    logger.info(msg)
+    
+    # 백업 파일(.log.1)이 생성되었는지 확인
+    log_files = list(common_log_dir.glob("*_operational.log*"))
+    # 원본 파일 + 백업 파일(.1)
+    assert len(log_files) >= 2
+    assert any(f.name.endswith(".1") for f in log_files)
+
+
+def test_log_cleanup(tmp_path):
+    """
+    Logger 초기화 시 오래된 로그 파일(30일 이상)이 삭제되는지 테스트합니다.
+    """
+    # 1. 테스트용 로그 디렉토리 준비
+    log_dir = tmp_path / "logs_cleanup_test"
+    common_dir = log_dir / "common"
+    strategies_dir = log_dir / "strategies"
+    os.makedirs(common_dir)
+    os.makedirs(strategies_dir)
+    
+    # 2. 파일 생성
+    # A. 삭제되어야 할 오래된 파일 (31일 전)
+    old_log = common_dir / "old_app.log"
+    old_log.touch()
+    old_json = strategies_dir / "old_strat.log.json"
+    old_json.touch()
+    
+    days_ago_31 = time.time() - (31 * 86400)
+    os.utime(old_log, (days_ago_31, days_ago_31))
+    os.utime(old_json, (days_ago_31, days_ago_31))
+    
+    # B. 유지되어야 할 최신 파일 (1일 전)
+    recent_log = common_dir / "recent_app.log"
+    recent_log.touch()
+    
+    days_ago_1 = time.time() - (1 * 86400)
+    os.utime(recent_log, (days_ago_1, days_ago_1))
+    
+    # C. 로그 파일이 아닌 파일 (삭제되지 않아야 함)
+    other_file = common_dir / "readme.txt"
+    other_file.touch()
+    os.utime(other_file, (days_ago_31, days_ago_31))
+
+    # 3. Logger 초기화 (이때 _cleanup_old_logs가 실행됨)
+    # 기존 핸들러 정리 (안전장치)
+    reset_log_timestamp_for_test()
+    original_handlers = logging.root.handlers[:]
+    logging.root.handlers = []
+    
+    try:
+        Logger(log_dir=str(log_dir))
+        
+        # 4. 검증
+        assert not old_log.exists(), "30일 지난 .log 파일은 삭제되어야 합니다."
+        assert not old_json.exists(), "30일 지난 .json 파일은 삭제되어야 합니다."
+        assert recent_log.exists(), "최신 로그 파일은 유지되어야 합니다."
+        assert other_file.exists(), "로그 확장자가 아닌 파일은 유지되어야 합니다."
+        
+    finally:
+        # 정리: 생성된 로거의 핸들러를 닫아야 파일 잠금이 해제됨
+        for name in ['operational_logger', 'debug_logger']:
+            logger = logging.getLogger(name)
+            for h in logger.handlers[:]:
+                h.close()
+                logger.removeHandler(h)
+        
+        logging.root.handlers = original_handlers
