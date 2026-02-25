@@ -583,22 +583,15 @@ async def test_receive_messages_connection_closed_ok(websocket_api_instance):
     close_frame = Close(code=1000, reason="OK")
     exception = websockets.ConnectionClosedOK(rcvd=close_frame, sent=close_frame, rcvd_then_sent=True)
 
-    call_count = 0
-    async def recv_side_effect():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise exception
-        await asyncio.sleep(0.1)
-
-    api.ws.recv.side_effect = recv_side_effect
+    api.ws.recv.side_effect = exception
 
     _real_sleep = asyncio.sleep
     async def fast_sleep(delay):
         api._auto_reconnect = False
         await _real_sleep(0.001)
 
-    with patch('brokers.korea_investment.korea_invest_websocket_api.asyncio.sleep', side_effect=fast_sleep):
+    with patch('brokers.korea_investment.korea_invest_websocket_api.asyncio.sleep', side_effect=fast_sleep), \
+         patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False):
         await api._receive_messages()
 
     api._logger.warning.assert_called()
@@ -617,22 +610,15 @@ async def test_receive_messages_connection_closed_error(websocket_api_instance):
     api._auto_reconnect = True
     api.ws = AsyncMock()
 
-    call_count = 0
-    async def recv_side_effect():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise Exception("Abnormal closure")
-        await asyncio.sleep(0.1)
-
-    api.ws.recv.side_effect = recv_side_effect
+    api.ws.recv.side_effect = Exception("Abnormal closure")
 
     _real_sleep = asyncio.sleep
     async def fast_sleep(delay):
         api._auto_reconnect = False
         await _real_sleep(0.001)
 
-    with patch('brokers.korea_investment.korea_invest_websocket_api.asyncio.sleep', side_effect=fast_sleep):
+    with patch('brokers.korea_investment.korea_invest_websocket_api.asyncio.sleep', side_effect=fast_sleep), \
+         patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False):
         await api._receive_messages()
 
     api._logger.warning.assert_called()
@@ -664,22 +650,15 @@ async def test_receive_messages_general_exception(websocket_api_instance):
     api._auto_reconnect = True
     api.ws = AsyncMock()
 
-    call_count = 0
-    async def recv_side_effect():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise Exception("General receive error")
-        await asyncio.sleep(0.1)
-
-    api.ws.recv.side_effect = recv_side_effect
+    api.ws.recv.side_effect = Exception("General receive error")
 
     _real_sleep = asyncio.sleep
     async def fast_sleep(delay):
         api._auto_reconnect = False
         await _real_sleep(0.001)
 
-    with patch('brokers.korea_investment.korea_invest_websocket_api.asyncio.sleep', side_effect=fast_sleep):
+    with patch('brokers.korea_investment.korea_invest_websocket_api.asyncio.sleep', side_effect=fast_sleep), \
+         patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False):
         await api._receive_messages()
 
     api._logger.warning.assert_called()
