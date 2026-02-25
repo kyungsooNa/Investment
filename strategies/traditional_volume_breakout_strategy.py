@@ -17,10 +17,11 @@ from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
+from strategies.base_strategy_config import BaseStrategyConfig
 
 
 @dataclass
-class TraditionalVBConfig:
+class TraditionalVBConfig(BaseStrategyConfig):
     """전통적 거래량 돌파 전략 설정."""
     # 유니버스 필터
     min_avg_trading_value_5d: int = 10_000_000_000  # 5일 평균 거래대금 100억 원
@@ -426,6 +427,10 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
     # ... (이하 유틸리티 함수는 로깅 추가 불필요) ...
     def _calculate_qty(self, price: int) -> int:
         """포트폴리오 비중 기반 주문 수량 계산."""
+        # [테스트용] 고정 수량 모드일 경우 무조건 1주 반환
+        if self._cfg.use_fixed_qty:
+            return 1
+
         if price <= 0:
             return self._cfg.min_qty
         budget = self._cfg.total_portfolio_krw * (self._cfg.position_size_pct / 100)
