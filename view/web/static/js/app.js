@@ -2331,17 +2331,15 @@ function renderStockChart(period) {
                     labels: {
                         color: '#a0a0b0',
                         usePointStyle: true,
-                        pointStyle: 'rectRounded',
-                        boxWidth: 10,
-                        boxHeight: 10,
+                        pointStyle: 'line',
+                        boxWidth: 20,
                         filter: function(item, chart) {
                             return item.text.includes('MA') || item.text.includes('BB');
                         },
                         generateLabels: function(chart) {
                             const original = Chart.defaults.plugins.legend.labels.generateLabels(chart);
                             return original.filter(item => item.text.includes('MA') || item.text.includes('BB')).map(item => {
-                                item.fillStyle = item.strokeStyle;
-                                item.lineWidth = 0;
+                                item.pointStyle = 'line';
                                 return item;
                             });
                         }

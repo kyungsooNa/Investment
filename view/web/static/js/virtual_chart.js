@@ -37,7 +37,24 @@ async function initVirtualChart() {
             plugins: {
                 legend: { 
                     display: true,
-                    labels: { color: '#868e96', boxWidth: 12, font: { size: 11 } }
+                    labels: { 
+                        color: '#a0a0b0', 
+                        usePointStyle: true, 
+                        pointStyle: 'line', 
+                        boxWidth: 20, 
+                        font: { size: 11 },
+                        generateLabels: function(chart) {
+                            const original = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                            return original.map(item => {
+                                const dataset = chart.data.datasets[item.datasetIndex];
+                                item.pointStyle = 'line';
+                                if (dataset.borderDash && dataset.borderDash.length > 0) {
+                                    item.lineDash = dataset.borderDash;
+                                }
+                                return item;
+                            });
+                        }
+                    }
                 },
                 tooltip: { mode: 'index', intersect: false }
             }
