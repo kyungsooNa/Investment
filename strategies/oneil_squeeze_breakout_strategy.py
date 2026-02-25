@@ -11,9 +11,11 @@ v1 범위:
   - 매도: 손절(-5%) / 시간손절(5일 박스권 횡보) / 트레일링(-8%) / 추세이탈(10MA)
 
 v2 예정 (TODO):
-  - Pool A/B 분리 유니버스, 스코어링 시스템 (RS/업종/영업이익)
+  - Pool A/B 분리 유니버스 (Pool A: 전일 기준 30종목, Pool B: 장중 거래대금 30종목)
+  - 스코어링 시스템: RS(3개월 상대강도 상위10% → +30점), 업종 소분류 주도 → +20점
+  - 분기 영업이익 25% 이상 증가 → +20점: /uapi/domestic-stock/v1/finance/financial-ratio
+  - 스코어 상위 10~15종목만 집중 감시 (스코어링 갱신: 08:50, 10:00, 12:00, 14:00)
   - 체결강도(>=120%), 고래 탐지(>=5000만원): REST inquire-ccnl 또는 WS H0STOUP0
-  - 분기 영업이익: /uapi/domestic-stock/v1/finance/financial-ratio
   - 코스닥/코스피 지수 직접 조회 (ETF 프록시 대체)
 """
 from __future__ import annotations
@@ -536,6 +538,10 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     "event": "build_watchlist_error", "code": code, "error": str(e),
                 }, exc_info=True)
 
+        # TODO [v2] 스코어링: RS(3개월 상대강도 상위10% +30점), 업종 소분류 주도(+20점),
+        #   분기 영업이익 25%↑(+20점, /uapi/domestic-stock/v1/finance/financial-ratio)
+        #   스코어 상위 10~15종목만 집중 감시
+        # TODO [v1.1] 우선순위 정렬: 거래대금/시총 비율 또는 이격도 순으로 정렬 후 상위 선택
         self._watchlist = {
             item.code: item for item in items[:self._cfg.max_watchlist]
         }
@@ -547,7 +553,11 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         })
 
     async def _analyze_candidate(self, code: str, name: str) -> Optional[OSBWatchlistItem]:
-        """종목의 OHLCV + BB 분석. 조건 충족 시 OSBWatchlistItem 반환."""
+        """종목의 OHLCV + BB 분석. 조건 충족 시 OSBWatchlistItem 반환.
+
+        TODO [v2] RS(상대강도) 계산: 3개월 수익률을 구해 전체 워치리스트 내 상위10%에 +30점
+        TODO [v2] 스코어 필드를 OSBWatchlistItem에 추가하고, 여기서 산출
+        """
         # 50일 MA 계산을 위해 충분한 데이터 필요
         ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=60)
         if not ohlcv or len(ohlcv) < 50:
