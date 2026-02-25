@@ -2227,8 +2227,8 @@ function renderStockChart(period) {
                 { label: 'MA20', data: ma20, type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA60', data: ma60, type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA120', data: ma120, type: 'line', borderColor: '#a29bfe', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] 보라색 계열
-                { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(200,200,200,0.8)', borderWidth: 2, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
-                { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(200,200,200,0.8)', borderWidth: 2, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
+                { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
+                { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
                 { label: 'BB Middle', data: bbMiddle, type: 'line', borderColor: 'rgba(255, 215, 0, 0.8)', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y', fill: false, order: 3, hidden: true }, // [수정] MA20과 중복되므로 기본 숨김
                 { label: '거래량', data: volumes, type: 'bar', yAxisID: 'y1', backgroundColor: 'rgba(200, 200, 200, 0.2)', order: 4 }
             ]
