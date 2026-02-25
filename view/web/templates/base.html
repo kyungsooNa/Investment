@@ -18,6 +18,34 @@
         
         /* 페이지 분리 후 섹션 표시 강제 */
         .section { display: block !important; }
+
+        #notification-board {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-right: 15px;
+        }
+        .notification-item {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 0.8rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 300px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .notification-item:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        .notification-item.notification-info { border-left: 3px solid #36a2eb; }
+        .notification-item.notification-success { border-left: 3px solid #51cf66; }
+        .notification-item.notification-warning { border-left: 3px solid #ffb347; }
+        .notification-item.notification-error { border-left: 3px solid #ff6b6b; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
@@ -28,6 +56,7 @@
 <header class="header">
     <h1>Investment</h1>
     <div class="status-bar">
+        <div id="notification-board"></div>
         <span id="status-time">--</span>
         <span id="status-market" class="badge closed">--</span>
         <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>

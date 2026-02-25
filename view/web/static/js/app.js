@@ -50,6 +50,55 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
+// ==========================================
+// 1.5. 알림판 (Notification Board)
+// ==========================================
+const MAX_NOTIFICATIONS = 5;
+const NOTIFICATION_TIMEOUT = 10000; // 10초
+
+function addNotification(message, type = 'info') {
+    const board = document.getElementById('notification-board');
+    if (!board) return;
+
+    // 오래된 알림 제거
+    if (board.children.length >= MAX_NOTIFICATIONS) {
+        board.removeChild(board.firstChild);
+    }
+
+    const item = document.createElement('div');
+    item.className = `notification-item notification-${type}`;
+    item.innerText = message;
+    item.title = message; // 전체 메시지 툴팁
+
+    // 클릭하면 닫기
+    item.onclick = () => item.remove();
+    
+    board.appendChild(item);
+
+    // 일정 시간 후 자동 제거
+    setTimeout(() => {
+        item.style.opacity = '0';
+        setTimeout(() => item.remove(), 500);
+    }, NOTIFICATION_TIMEOUT);
+}
+
+function setupEventSource() {
+    const eventSource = new EventSource('/api/events');
+    eventSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        addNotification(data.message, data.type);
+    };
+    eventSource.onerror = function(err) {
+        console.error("EventSource failed:", err);
+        // 연결이 끊어지면 5초 후 재연결 시도
+        setTimeout(setupEventSource, 5000);
+    };
+    // 페이지를 떠날때 EventSource 연결을 닫습니다.
+    window.addEventListener('beforeunload', () => {
+        eventSource.close();
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // [Theme] 기본 테마를 light-mode로 설정
     const savedTheme = localStorage.getItem('theme') || 'light';
@@ -57,6 +106,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateStatus();
     setInterval(updateStatus, 5000); // 5초마다 상태 갱신
+
+    setupEventSource(); // 이벤트 수신 시작
 
     // [수정] 모의투자 데이터 자동 갱신 (5분마다)
     // 가만히 있을 때는 5분 주기로 업데이트하여 API 할당량을 보존합니다.

@@ -18,12 +18,15 @@ from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
 from view.web import web_api  # 임포트 확인
+from services.notification_service import notification_service
+
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
 
     def __init__(self, app_context):
         self.logger = Logger()
+        self.notification_service = notification_service
         self.env = app_context.env if app_context else None
         self.full_config = {}  # [추가] 전체 설정을 담을 그릇
         self.time_manager: TimeManager = None

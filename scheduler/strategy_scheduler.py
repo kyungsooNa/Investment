@@ -12,6 +12,7 @@ from common.types import TradeSignal, ErrorCode
 from managers.virtual_trade_manager import VirtualTradeManager
 from services.order_execution_service import OrderExecutionService
 from core.time_manager import TimeManager
+from services.notification_service import notification_service
 
 
 @dataclass
@@ -187,6 +188,10 @@ class StrategyScheduler:
             f"@ {signal.price:,}원 | {signal.reason}"
         )
 
+        action_kor = "매수" if signal.action == "BUY" else "매도"
+        signal_message = f"[{signal.strategy_name}] {signal.name}({signal.code}) {action_kor} 신호"
+        await notification_service.send_notification(signal_message, type='info')
+
         # CSV 기록 (항상)
         if signal.action == "BUY":
             self._vm.log_buy(signal.strategy_name, signal.code, signal.price)
@@ -211,6 +216,8 @@ class StrategyScheduler:
                     self._logger.info(
                         f"[Scheduler] API 주문 성공: {signal.action} {signal.code}"
                     )
+                    order_message = f"[{signal.strategy_name}] {signal.name} {action_kor} 주문 성공"
+                    await notification_service.send_notification(order_message, type='success')
                 else:
                     api_success = False
                     msg = resp.msg1 if resp else "응답 없음"
@@ -218,12 +225,16 @@ class StrategyScheduler:
                         f"[Scheduler] API 주문 실패: {signal.action} {signal.code} - {msg} "
                         f"(CSV는 기록됨)"
                     )
+                    order_message = f"[{signal.strategy_name}] 주문 실패: {msg}"
+                    await notification_service.send_notification(order_message, type='error')
             except Exception as e:
                 api_success = False
                 self._logger.error(
                     f"[Scheduler] API 주문 예외: {signal.action} {signal.code} - {e} "
                     f"(CSV는 기록됨)"
                 )
+                order_message = f"[{signal.strategy_name}] 주문 예외: {e}"
+                await notification_service.send_notification(order_message, type='error')
 
         # 시그널 이력 기록
         now = self._tm.get_current_kst_time()

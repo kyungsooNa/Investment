@@ -8,8 +8,10 @@ import time
 import os
 from fastapi import APIRouter, HTTPException, Request, Form, Response, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
 from common.types import ErrorCode
+from services.notification_service import notification_service, web_ui_handler
 
 router = APIRouter(prefix="/api")
 _ctx = None  # 전역 변수로 선언
@@ -202,6 +204,16 @@ async def get_balance():
 async def place_order(req: OrderRequest):
     """매수/매도 주문 (성공 시 가상 매매 기록에도 '수동매매'로 저장)"""
     ctx = _get_ctx()
+
+    action_kor = "매수" if req.side == "buy" else "매도"
+    mapper = getattr(ctx, 'stock_code_mapper', None)
+    stock_name = mapper.get_name_by_code(req.code) if mapper else req.code
+    display_name = f"{stock_name}({req.code})" if stock_name else req.code
+
+    await notification_service.send_notification(
+        f"[{display_name}] {action_kor} 주문 실행",
+        type='info'
+    )
     
     # 1. 실제/모의 투자 주문 전송
     if req.side == "buy":
@@ -213,6 +225,10 @@ async def place_order(req: OrderRequest):
 
     # 2. [추가됨] 주문 성공 시 가상 매매 장부에도 기록 (전략명: "수동매매")
     if resp and resp.rt_cd == "0":
+        await notification_service.send_notification(
+            f"[{display_name}] {action_kor} 주문 성공",
+            type='success'
+        )
         # virtual_manager가 초기화되어 있는지 확인
         if hasattr(ctx, 'virtual_manager') and ctx.virtual_manager:
             try:
@@ -238,6 +254,12 @@ async def place_order(req: OrderRequest):
                     
             except Exception as e:
                 print(f"[WebAPI] 수동매매 기록 중 오류 발생: {e}")
+    else:
+        msg = resp.msg1 if resp else "응답 없음"
+        await notification_service.send_notification(
+            f"[{display_name}] {action_kor} 주문 실패: {msg}",
+            type='error'
+        )
 
     return _serialize_response(resp)
 
@@ -389,6 +411,15 @@ async def get_virtual_history(force_code: str = None):
     if not hasattr(ctx, 'virtual_manager'):
         return {"trades": [], "weekly_changes": {}}
 
+    if force_code:
+        mapper = getattr(ctx, 'stock_code_mapper', None)
+        stock_name = mapper.get_name_by_code(force_code) if mapper else ''
+        display_name = f"{stock_name}({force_code})" if stock_name else force_code
+        await notification_service.send_notification(
+            f"[{display_name}] 현재가 강제 업데이트 실행",
+            type='info'
+        )
+
     trades = ctx.virtual_manager.get_all_trades()
 
     # enrichment: 실패해도 기본 trades는 반환
@@ -516,17 +547,54 @@ async def get_virtual_history(force_code: str = None):
     return {"trades": trades, "daily_changes": daily_changes, "weekly_changes": weekly_changes}
 
 
+@router.get("/events")
+async def stream_events(request: Request):
+    """SSE 스트리밍: 애플리케이션의 주요 이벤트를 알림판에 전달."""
+    queue = asyncio.Queue(maxsize=10)
+    await web_ui_handler.add_client(queue)
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        break
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            web_ui_handler.remove_client(queue)
+
+    return EventSourceResponse(event_generator())
+
+
 # --- 프로그램매매 실시간 스트리밍 ---
 
 @router.post("/program-trading/subscribe")
 async def subscribe_program_trading(req: ProgramTradingRequest):
     """프로그램매매 실시간 구독 시작 (다중 종목 추가 구독)."""
     ctx = _get_ctx()
-    success = await ctx.start_program_trading(req.code)
-    if not success:
-        raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
     mapper = getattr(ctx, 'stock_code_mapper', None)
     stock_name = mapper.get_name_by_code(req.code) if mapper else ''
+    display_name = f"{stock_name}({req.code})" if stock_name else req.code
+
+    success = await ctx.start_program_trading(req.code)
+    if not success:
+        await notification_service.send_notification(
+            f"[{display_name}] 프로그램매매 구독 실패",
+            type='error'
+        )
+        raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
+
+    await notification_service.send_notification(
+        f"[{display_name}] 프로그램매매 구독 시작",
+        type='success'
+    )
     return {"success": True, "code": req.code, "stock_name": stock_name, "codes": sorted(ctx._pt_codes)}
 
 
@@ -549,8 +617,19 @@ async def unsubscribe_program_trading(req: ProgramTradingUnsubscribeRequest = No
     ctx = _get_ctx()
     if req and req.code:
         await ctx.stop_program_trading(req.code)
+        mapper = getattr(ctx, 'stock_code_mapper', None)
+        stock_name = mapper.get_name_by_code(req.code) if mapper else ''
+        display_name = f"{stock_name}({req.code})" if stock_name else req.code
+        await notification_service.send_notification(
+            f"[{display_name}] 프로그램매매 구독 해지",
+            type='info'
+        )
     else:
         await ctx.stop_all_program_trading()
+        await notification_service.send_notification(
+            "모든 프로그램매매 구독 해지",
+            type='info'
+        )
     return {"success": True, "codes": sorted(ctx._pt_codes)}
 
 
