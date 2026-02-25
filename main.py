@@ -4,6 +4,7 @@ import sys
 import traceback
 
 from app.trading_app import TradingApp
+from config.config_loader import load_configs
 
 
 def select_view_mode():
@@ -25,16 +26,22 @@ def run_web():
     import uvicorn
     from view.web.web_main import app
 
+    # 설정 로드
+    configs = load_configs()
+    web_config = configs.get("web", {})
+    host = web_config.get("host", "127.0.0.1")
+    port = web_config.get("port", 8001)
+
     def open_browser():
         """서버 시작 후 브라우저 자동 오픈."""
         import time
         time.sleep(1.5)
-        webbrowser.open("http://localhost:8000")
+        webbrowser.open(f"http://{host}:{port}")
 
-    print("\n[Web] http://localhost:8000 에서 접속 가능")
+    print(f"\n[Web] http://{host}:{port} 에서 접속 가능")
     print("[Web] 환경 전환은 웹 UI 상단 배지를 클릭하세요.")
     threading.Thread(target=open_browser, daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host=host, port=port)
 
 
 async def run_cli():

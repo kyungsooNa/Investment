@@ -51,6 +51,10 @@ function showToast(message, type = 'success') {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    // [Theme] 기본 테마를 light-mode로 설정
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.body.classList.toggle('light-mode', savedTheme === 'light');
+
     updateStatus();
     setInterval(updateStatus, 5000); // 5초마다 상태 갱신
 
@@ -125,6 +129,11 @@ async function toggleEnvironment() {
     } catch(e) {
         alert("요청 중 오류 발생: " + e);
     }
+}
+
+function toggleTheme() {
+    const isLight = document.body.classList.toggle('light-mode');
+    localStorage.setItem('theme', isLight ? 'light' : 'dark');
 }
 
 
