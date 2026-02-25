@@ -319,9 +319,6 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
             if not code:
                 continue
 
-            if not self._mapper.is_kosdaq(code):
-                continue
-
             stock_name = stock.get("hts_kor_isnm", "") or self._mapper.get_name_by_code(code) or code
 
             try:
