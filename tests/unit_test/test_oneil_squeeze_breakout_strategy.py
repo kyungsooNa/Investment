@@ -61,6 +61,8 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
     def _make_strategy(self, **config_overrides):
         ts = MagicMock()
         ts.get_top_trading_value_stocks = AsyncMock()
+        ts.get_top_rise_fall_stocks = AsyncMock()
+        ts.get_top_volume_stocks = AsyncMock()
         ts.get_current_stock_price = AsyncMock()
         ts.get_recent_daily_ohlcv = AsyncMock()
         sqs = MagicMock()
@@ -126,13 +128,25 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         """정배열 + 거래대금 + 52주고가 + BB 조건 통과 종목만 워치리스트에 포함."""
         strategy, ts, indicator, mapper, _ = self._make_strategy()
 
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        # 3가지 소스: 거래대금/상승률/거래량
+        trading_val_data = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data=[
                 {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"},
+            ]
+        )
+        rise_data = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[
                 {"mksc_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스"},
             ]
         )
+        volume_data = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
+        )
+        ts.get_top_trading_value_stocks.return_value = trading_val_data
+        ts.get_top_rise_fall_stocks.return_value = rise_data
+        ts.get_top_volume_stocks.return_value = volume_data
 
         # 005930: 정배열 O, 거래대금 O
         ohlcv_good = _make_ohlcv(n=60, base_close=50000, base_vol=300000)
@@ -151,11 +165,11 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
             if code == "005930":
                 return ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
-                    data={"output": {"w52_hgpr": "55000", "stck_prpr": "52950"}},
+                    data={"output": {"w52_hgpr": "55000", "stck_prpr": "52950", "stck_llam": "300000000000"}},
                 )
             return ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
-                data={"output": {"w52_hgpr": "200", "stck_prpr": "105"}},
+                data={"output": {"w52_hgpr": "200", "stck_prpr": "105", "stck_llam": "1000000"}},
             )
 
         ts.get_current_stock_price.side_effect = mock_price
@@ -185,6 +199,7 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
             )
         }
         strategy._watchlist_date = "20260225"
+        strategy._watchlist_refresh_done = {10, 30, 60, 90}
 
         # 마켓 타이밍 통과
         strategy._market_timing_cache = {"KOSDAQ": True, "KOSPI": True}
@@ -225,6 +240,7 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
             )
         }
         strategy._watchlist_date = "20260225"
+        strategy._watchlist_refresh_done = {10, 30, 60, 90}
         strategy._market_timing_cache = {"KOSDAQ": True}
         strategy._market_timing_date = "20260225"
 
@@ -245,6 +261,7 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
             )
         }
         strategy._watchlist_date = "20260225"
+        strategy._watchlist_refresh_done = {10, 30, 60, 90}
         strategy._market_timing_cache = {"KOSDAQ": False}  # 타이밍 실패
         strategy._market_timing_date = "20260225"
 
@@ -265,6 +282,7 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
             )
         }
         strategy._watchlist_date = "20260225"
+        strategy._watchlist_refresh_done = {10, 30, 60, 90}
         strategy._market_timing_cache = {"KOSDAQ": True}
         strategy._market_timing_date = "20260225"
 
@@ -297,6 +315,7 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
             )
         }
         strategy._watchlist_date = "20260225"
+        strategy._watchlist_refresh_done = {10, 30, 60, 90}
         strategy._market_timing_cache = {"KOSDAQ": True}
         strategy._market_timing_date = "20260225"
 
