@@ -3,14 +3,43 @@ import stat
 import tempfile
 import shutil
 import pytest
+import pandas as pd
+import httpx
 import time
 import asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from unittest import mock
 from unittest.mock import MagicMock, AsyncMock
 from view.web import web_api
 from view.web.web_main import page_router
 from core.cache.cache_manager import CacheManager
+
+@pytest.fixture(autouse=True)
+def mock_heavy_io(monkeypatch):
+    """
+    테스트 속도 저하를 유발하는 무거운 I/O 및 네트워크 리소스 정리 작업을 모킹합니다.
+    """
+    # 1. pandas.read_csv: 대용량 주식 코드 리스트 로딩 방지
+    original_read_csv = pd.read_csv
+    def _mock_read_csv(*args, **kwargs):
+        # stock_code_list.csv 파일 로딩 시 테스트용 가벼운 데이터 반환
+        if args and isinstance(args[0], str) and 'stock_code_list.csv' in args[0]:
+            return pd.DataFrame({
+                "종목코드": ["005930", "000660"],
+                "종목명": ["삼성전자", "SK하이닉스"],
+                "시장구분": ["KOSPI", "KOSPI"],
+                "상장주식수": [1000, 500]
+            })
+        return original_read_csv(*args, **kwargs)
+    monkeypatch.setattr(pd, "read_csv", _mock_read_csv)
+
+    # 2. httpx.AsyncClient.aclose: 세션 종료 시 불필요한 대기 제거
+    async def _mock_aclose(*args, **kwargs):
+        return None
+    monkeypatch.setattr(httpx.AsyncClient, "aclose", _mock_aclose)
+
+# --- Web API 관련 공통 Fixture ---
 
 
 @pytest.fixture(scope="session")
@@ -53,18 +82,16 @@ def clear_cache_files(test_cache_config):
     if os.path.exists(base_dir):
         shutil.rmtree(base_dir, onerror=on_rm_error)
 
-pytest.fixture(autouse=True)
-def fast_sleep(monkeypatch, request):
+@pytest.fixture(autouse=True)
+def fast_sleep(request):
     # 특정 TC만 원래 sleep을 쓰고 싶으면: @pytest.mark.real_sleep
     if request.node.get_closest_marker("real_sleep"):
+        yield
         return
 
-    # sync sleep 제거
-    monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
-
-    # async sleep 제거
-    async def _fast_async_sleep(*a, **k): return None
-    monkeypatch.setattr(asyncio, "sleep", _fast_async_sleep)
+    # unittest.TestCase 호환성을 위해 mock.patch 사용
+    with mock.patch("time.sleep"), mock.patch("asyncio.sleep", new_callable=AsyncMock):
+        yield
 
 
 # --- Web API 관련 공통 Fixture ---

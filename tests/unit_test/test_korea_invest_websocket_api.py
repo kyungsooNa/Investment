@@ -1110,21 +1110,26 @@ async def test_disconnect_with_receive_task_exception(websocket_api_instance):
     api.ws.close = AsyncMock()
 
     # _receive_messages 태스크가 실행되다가 예외를 발생시키도록 ws.recv를 모의(mock)합니다.
-    api.ws.recv.side_effect = [
-        "0|H0STCNT0|000660|some_data",  # 첫 번째 메시지는 정상적으로 수신
-        Exception("테스트용 예외")  # 두 번째 ws.recv 호출 시 예외 발생
-    ]
+    api.ws.recv.side_effect = Exception("테스트용 예외")
 
-    # 실제 _receive_messages 태스크를 생성하여 실행합니다.
-    api._receive_task = asyncio.create_task(api._receive_messages())
+    # _establish_connection을 모킹하여 재연결 시도가 테스트를 방해하지 않도록 함
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False):
+        # 실제 _receive_messages 태스크를 생성하여 실행합니다.
+        api._receive_task = asyncio.create_task(api._receive_messages())
 
-    # 태스크가 실행되어 예외를 발생시킬 시간을 주기 위해 짧게 대기합니다.
-    # await asyncio.sleep(0)은 이벤트 루프에 제어권을 넘겨주어 태스크가 스케줄되도록 합니다.
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+        # 태스크가 실행되어 예외를 발생시킬 시간을 주기 위해 짧게 대기합니다.
+        # fast_sleep이 적용된 상태에서도 루프를 회전시키기 위해 여러 번 await 합니다.
+        for _ in range(5):
+            await asyncio.sleep(0)
 
-    # disconnect 메서드 호출
-    await api.disconnect()
+        # disconnect 메서드 호출
+        await api.disconnect()
+
+        # 태스크가 확실히 종료될 때까지 대기 (cleanup)
+        try:
+            await api._receive_task
+        except asyncio.CancelledError:
+            pass
 
     # 로거에 기록된 경고 로그를 확인합니다. (재연결 로직으로 변경됨)
     warning_logs = [call[0][0] for call in api._logger.warning.call_args_list]

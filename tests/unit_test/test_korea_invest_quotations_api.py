@@ -104,10 +104,13 @@ def mock_quotations():
         'market_code': 'J',
     }
 
-    return KoreaInvestApiQuotations(
-        env=mock_env,
-        logger=mock_logger
-    )
+    # httpx.AsyncClient 생성을 모킹하여 초기화 속도 개선 (실제 네트워크 연결 방지)
+    with patch("brokers.korea_investment.korea_invest_api_base.httpx.AsyncClient"):
+        api = KoreaInvestApiQuotations(
+            env=mock_env,
+            logger=mock_logger
+        )
+    return api
 
 
 @pytest.mark.asyncio
