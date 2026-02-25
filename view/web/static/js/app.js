@@ -2123,44 +2123,22 @@ async function loadAndRenderStockChart(code) {
     }
 
     try {
-        // [수정] MA120 추가 요청
-        const [resChart, resMa5, resMa10, resMa20, resMa60, resMa120, resBB] = await Promise.all([
-            fetch(`/api/chart/${code}?period=D`),
-            fetch(`/api/indicator/ma/${code}?period=5`),
-            fetch(`/api/indicator/ma/${code}?period=10`), // [추가] MA10
-            fetch(`/api/indicator/ma/${code}?period=20`),
-            fetch(`/api/indicator/ma/${code}?period=60`),
-            fetch(`/api/indicator/ma/${code}?period=120`),
-            fetch(`/api/indicator/bollinger/${code}?period=20&std_dev=2.0`)
-        ]);
+        // [최적화] 7개 API 호출 → 1개 통합 API로 변경 (OHLCV + 지표 한번에 조회)
+        const res = await fetch(`/api/chart/${code}?period=D&indicators=true`);
+        const json = await res.json();
 
-        const jsonChart = await resChart.json();
-        
-        if (jsonChart.rt_cd !== "0" || !jsonChart.data || jsonChart.data.length === 0) {
+        if (json.rt_cd !== "0" || !json.data || !json.data.ohlcv || json.data.ohlcv.length === 0) {
             chartCard.style.display = 'none';
             return;
         }
 
-        const parseIndicatorData = async (res) => {
-            const json = await res.json();
-            if (json.rt_cd !== "0" || !json.data) return [];
-            return json.data;
-        };
-
         // 전역 변수에 데이터 저장
-        g_chartRawData = jsonChart.data;
-        g_chartIndicators = {
-            ma5: await parseIndicatorData(resMa5),
-            ma10: await parseIndicatorData(resMa10), // [추가]
-            ma20: await parseIndicatorData(resMa20),
-            ma60: await parseIndicatorData(resMa60),
-            ma120: await parseIndicatorData(resMa120), // [추가]
-            bb: await parseIndicatorData(resBB)
-        };
+        g_chartRawData = json.data.ohlcv;
+        g_chartIndicators = json.data.indicators || {};
         g_chartCode = code;
 
         chartCard.style.display = 'block';
-        
+
         // 기본 3개월 렌더링
         renderStockChart('3M');
 

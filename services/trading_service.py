@@ -29,6 +29,7 @@ class TradingService:
         self._time_manager = time_manager
         self._latest_prices = {}
         self._daily_ohlcv_cache = {}  # {code: {'base_date': 'YYYYMMDD', 'data': [...]}}
+        self._ohlcv_locks: Dict[str, asyncio.Lock] = {}  # 종목코드별 Lock (race condition 방지)
     async def get_name_by_code(self, code: str) -> str:
         """종목코드로 종목명을 반환합니다 (BrokerAPIWrapper 위임)."""
         return await self._broker_api_wrapper.get_name_by_code(code)
@@ -632,21 +633,26 @@ class TradingService:
             today_str = now_dt.strftime("%Y%m%d")
             yesterday_str = (now_dt - timedelta(days=1)).strftime("%Y%m%d")
 
-            # 1. 과거 데이터 가져오기 (캐시 활용)
-            past_rows = []
-            cached = self._daily_ohlcv_cache.get(stock_code)
+            # 종목코드별 Lock 획득 (동시 요청 시 race condition 방지)
+            if stock_code not in self._ohlcv_locks:
+                self._ohlcv_locks[stock_code] = asyncio.Lock()
 
-            # 캐시가 있고, 기준일(base_date)이 오늘이라면 (즉, 어제까지의 데이터가 이미 로드됨)
-            if cached and cached.get('base_date') == today_str:
-                past_rows = cached['data']
-            else:
-                # 캐시 없거나 날짜 변경됨 -> 어제까지의 데이터 대량 조회 (약 2년치)
-                past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=8)
-                # 캐시 업데이트
-                self._daily_ohlcv_cache[stock_code] = {
-                    'base_date': today_str,
-                    'data': past_rows
-                }
+            async with self._ohlcv_locks[stock_code]:
+                # 1. 과거 데이터 가져오기 (캐시 활용)
+                past_rows = []
+                cached = self._daily_ohlcv_cache.get(stock_code)
+
+                # 캐시가 있고, 기준일(base_date)이 오늘이라면 (즉, 어제까지의 데이터가 이미 로드됨)
+                if cached and cached.get('base_date') == today_str:
+                    past_rows = cached['data']
+                else:
+                    # 캐시 없거나 날짜 변경됨 -> 어제까지의 데이터 대량 조회 (약 2년치)
+                    past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=8)
+                    # 캐시 업데이트
+                    self._daily_ohlcv_cache[stock_code] = {
+                        'base_date': today_str,
+                        'data': past_rows
+                    }
 
             # 2. 오늘 데이터 가져오기 (실시간 변동 반영을 위해 항상 조회)
             # [변경] inquire_daily_itemchartprice 대신 get_current_stock_price 사용
