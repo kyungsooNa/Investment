@@ -122,6 +122,7 @@ class WebAppContext:
             max_positions=3,
             order_qty=1,
             enabled=False,
+            force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
         ))
 
         # 프로그램 매수 추종 전략 등록
@@ -137,6 +138,7 @@ class WebAppContext:
             max_positions=3,
             order_qty=1,
             enabled=False,
+            force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
         ))
 
         # 전통적 거래량 돌파 전략 등록
@@ -153,6 +155,7 @@ class WebAppContext:
             max_positions=5,
             order_qty=1,
             enabled=False,
+            force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
         ))
 
         # 오닐 스퀴즈 돌파 전략 등록
@@ -170,6 +173,7 @@ class WebAppContext:
             max_positions=5,
             order_qty=1,
             enabled=False,
+            force_exit_on_close=False,  # 👈 오닐 전략은 오버나잇(홀딩) 허용!
         ))
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
