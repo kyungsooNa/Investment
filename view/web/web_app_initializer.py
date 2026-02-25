@@ -12,7 +12,7 @@ from managers.virtual_trade_manager import VirtualTradeManager
 from market_data.stock_code_mapper import StockCodeMapper
 from services.indicator_service import IndicatorService
 from core.time_manager import TimeManager
-from core.logger import Logger
+from core.logger import Logger, get_strategy_logger
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -104,7 +104,7 @@ class WebAppContext:
             virtual_manager=self.virtual_manager,
             order_execution_service=self.order_execution_service,
             time_manager=self.time_manager,
-            logger=self.logger,
+            logger=get_strategy_logger('StrategyScheduler'),
             dry_run=False,
         )
 
@@ -113,7 +113,7 @@ class WebAppContext:
             trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             time_manager=self.time_manager,
-            logger=self.logger,
+            logger=get_strategy_logger('VolumeBreakoutLive'),
         )
         self.scheduler.register(StrategySchedulerConfig(
             strategy=vb_strategy,
@@ -128,7 +128,7 @@ class WebAppContext:
             trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             time_manager=self.time_manager,
-            logger=self.logger,
+            logger=get_strategy_logger('ProgramBuyFollow'),
         )
         self.scheduler.register(StrategySchedulerConfig(
             strategy=pbf_strategy,
@@ -144,7 +144,7 @@ class WebAppContext:
             stock_query_service=self.stock_query_service,
             stock_code_mapper=self.stock_code_mapper,
             time_manager=self.time_manager,
-            logger=self.logger,
+            logger=get_strategy_logger('TraditionalVolumeBreakout'),
         )
         self.scheduler.register(StrategySchedulerConfig(
             strategy=tvb_strategy,

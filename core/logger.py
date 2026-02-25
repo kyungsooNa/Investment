@@ -4,6 +4,91 @@ import os
 from datetime import datetime
 import http.client
 import inspect
+import json
+
+# --- Timestamp Singleton ---
+_log_timestamp = None
+
+def get_log_timestamp():
+    """애플리케이션 실행 당 한 번만 타임스탬프를 생성하고, 이후에는 동일한 값을 반환합니다."""
+    global _log_timestamp
+    if _log_timestamp is None:
+        _log_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return _log_timestamp
+
+def reset_log_timestamp_for_test():
+    """테스트 격리를 위해 전역 타임스탬프를 리셋합니다."""
+    global _log_timestamp
+    _log_timestamp = None
+# -------------------------
+
+
+class JsonFormatter(logging.Formatter):
+    """
+    로그 레코드를 JSON 형식으로 변환하는 포맷터.
+    """
+    def format(self, record):
+        log_object = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "name": record.name,
+        }
+        # message가 dict 형태이면, 그대로 data 필드로 추가
+        if isinstance(record.msg, dict):
+            log_object["data"] = record.msg
+        else:
+            log_object["message"] = record.getMessage()
+
+        # 예외 정보가 있으면 추가
+        if record.exc_info:
+            log_object['exc_info'] = self.formatException(record.exc_info)
+
+        return json.dumps(log_object, ensure_ascii=False)
+
+
+def get_strategy_logger(strategy_name: str, log_dir="logs"):
+    """
+    전략별 전용 로거를 생성하고 반환합니다.
+    - 실행 시마다 타임스탬프가 찍힌 JSON 파일 핸들러 생성
+    - 콘솔 스트림 핸들러
+    """
+    logger = logging.getLogger(f"strategy.{strategy_name}")
+    
+    if logger.handlers:
+        # 이미 핸들러가 설정된 경우, 새 실행을 위해 기존 핸들러를 제거하고 다시 설정
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
+
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    strategy_log_dir = os.path.join(log_dir, "strategies")
+    if not os.path.exists(strategy_log_dir):
+        os.makedirs(strategy_log_dir, exist_ok=True)
+
+    timestamp = get_log_timestamp()
+    
+    # 1. JSON 파일 핸들러 (실행마다 새로 생성)
+    log_file = os.path.join(strategy_log_dir, f"{timestamp}_{strategy_name}.log.json")
+    file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+    file_handler.setFormatter(JsonFormatter())
+    logger.addHandler(file_handler)
+
+    # 2. 콘솔 스트림 핸들러 (디버깅 편의용)
+    stream_handler = logging.StreamHandler()
+    class DictFormatter(logging.Formatter):
+        def formatMessage(self, record):
+            if isinstance(record.msg, dict):
+                return json.dumps(record.msg, ensure_ascii=False, indent=2)
+            return super().formatMessage(record)
+    
+    stream_handler.setFormatter(DictFormatter(
+        f'%(asctime)s - %(levelname)s - [{strategy_name}] - %(message)s'
+    ))
+    logger.addHandler(stream_handler)
+    
+    return logger
 
 
 class Logger:
@@ -15,18 +100,23 @@ class Logger:
 
     def __init__(self, log_dir="logs"):
         self.log_dir = log_dir
+        self.common_log_dir = os.path.join(self.log_dir, "common")
+        self.strategy_log_dir = os.path.join(self.log_dir, "strategies")
 
-        # 현재 실행 시간을 기반으로 로그 파일명에 사용할 타임스탬프 생성
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 공유 타임스탬프 생성
+        timestamp = get_log_timestamp()
 
-        # 로그 디렉토리(logs/)가 없으면 생성
+        # 로그 디렉토리(logs/, logs/common, logs/strategies)가 없으면 생성
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
+        if not os.path.exists(self.common_log_dir):
+            os.makedirs(self.common_log_dir, exist_ok=True)
+        if not os.path.exists(self.strategy_log_dir):
+            os.makedirs(self.strategy_log_dir, exist_ok=True)
 
-        # 로그 파일 경로 설정 (파일명에 타임스탬프 포함)
-        # 파일명 형식을 YYYYMMDD_HHMMSS_debug.log, YYYYMMDD_HHMMSS_operational.log 로 변경
-        self.operational_log_path = os.path.join(self.log_dir, f"{timestamp}_operational.log")  # <--- 파일명 형식 수정
-        self.debug_log_path = os.path.join(self.log_dir, f"{timestamp}_debug.log")  # <--- 파일명 형식 수정
+        # 로그 파일 경로 설정 (logs/common/ 하위)
+        self.operational_log_path = os.path.join(self.common_log_dir, f"{timestamp}_operational.log")
+        self.debug_log_path = os.path.join(self.common_log_dir, f"{timestamp}_debug.log")
 
         # 로거 인스턴스 생성
         self.operational_logger = self._setup_logger('operational_logger', self.operational_log_path, logging.INFO)
@@ -39,54 +129,48 @@ class Logger:
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
         http.client.HTTPConnection.debuglevel = 0  # HTTP 통신 디버그 레벨 비활성화
 
-    def _setup_logger(self, name, log_file, level):
+    def _setup_logger(self, name, log_file, level, mode='w'):
         """단일 로거를 설정합니다."""
         logger = logging.getLogger(name)
         logger.setLevel(level)
-        logger.propagate = False  # 상위 로거로 전파 방지 (중복 출력 방지)
+        logger.propagate = False
 
-        # 파일 핸들러 설정
-        # 'w': write mode, 매번 새로운 파일 생성 (매 실행마다 파일이 분리되므로)
-        file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+        if logger.handlers:
+            return logger
+
+        file_handler = logging.FileHandler(log_file, mode=mode, encoding='utf-8')
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         logger.addHandler(file_handler)
 
         return logger
 
     def info(self, message):
-        """운영 및 디버깅 로그에 INFO 레벨 메시지를 기록합니다."""
         self.operational_logger.info(message)
         self.debug_logger.info(message)
 
     def debug(self, message):
-        """디버깅 로그에 DEBUG 레벨 메시지를 기록합니다."""
         self.debug_logger.debug(message)
 
     def warning(self, message):
-        """운영 및 디버깅 로그에 WARNING 레벨 메시지를 기록합니다."""
         self.operational_logger.warning(message)
         self.debug_logger.warning(message)
 
-    def error(self, message, exc_info=False):  # <<< exc_info 인자 추가
-        """운영 및 디버깅 로그에 ERROR 레벨 메시지를 기록합니다."""
-        self.operational_logger.error(message, exc_info=exc_info)  # <<< exc_info 전달
+    def error(self, message, exc_info=False):
+        self.operational_logger.error(message, exc_info=exc_info)
         caller_info = self._get_caller_info()
         full_message = f"{caller_info} - {message}"
-        self.debug_logger.error(full_message, exc_info=exc_info)  # <<< exc_info 전달
+        self.debug_logger.error(full_message, exc_info=exc_info)
 
-    def critical(self, message, exc_info=False):  # <<< exc_info 인자 추가
-        """운영 및 디버깅 로그에 CRITICAL 레벨 메시지를 기록합니다."""
-        self.operational_logger.critical(message, exc_info=exc_info)  # <<< exc_info 전달
+    def critical(self, message, exc_info=False):
+        self.operational_logger.critical(message, exc_info=exc_info)
         caller_info = self._get_caller_info()
         full_message = f"{caller_info} - {message}"
-        self.debug_logger.critical(full_message, exc_info=exc_info)  # <<< exc_info 전달
+        self.debug_logger.critical(full_message, exc_info=exc_info)
 
     def _get_caller_info(self):
-        """호출한 파일명과 라인 번호를 반환 (디버깅용)."""
         frame = inspect.currentframe()
         while frame:
             info = inspect.getframeinfo(frame)
-            # 현재 logger.py 내부가 아닌 외부 호출 지점을 찾음
             if "logger.py" not in info.filename:
                 filename = os.path.basename(info.filename)
                 return f"{filename}:{info.lineno}"

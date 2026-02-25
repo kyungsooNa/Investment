@@ -1,11 +1,12 @@
 import os
 import logging
+import json
 from unittest.mock import patch, MagicMock
 
 import pytest
 
 # 실제 core.logger 경로에 맞게 수정
-from core.logger import Logger
+from core.logger import Logger, get_strategy_logger, JsonFormatter, reset_log_timestamp_for_test
 
 
 @pytest.fixture
@@ -16,8 +17,11 @@ def clean_logger_instance(tmp_path):
     """
     # 테스트 로거 디렉토리 설정
     log_dir = tmp_path / "logs"
-    os.makedirs(log_dir, exist_ok=True)
+    # Logger 클래스가 common 디렉토리를 생성하므로 미리 만들 필요 없음
 
+    # 전역 타임스탬프 리셋
+    reset_log_timestamp_for_test()
+    
     # 기존 root 로거 핸들러 백업 및 제거
     original_handlers = logging.root.handlers[:]
     for handler in logging.root.handlers[:]:
@@ -26,7 +30,7 @@ def clean_logger_instance(tmp_path):
     # 로거 인스턴스 생성
     logger_instance = Logger(log_dir=str(log_dir))
 
-    yield logger_instance, log_dir # 로거 인스턴스와 로그 디렉토리 반환
+    yield logger_instance, log_dir.joinpath("common") # 검증을 위해 common 디렉토리 경로 반환
 
     # 테스트 후 정리
     # 로거 핸들러 닫기 (파일 잠금 해제)
@@ -42,7 +46,7 @@ def clean_logger_instance(tmp_path):
 
 
 def test_logger_creates_log_files(clean_logger_instance):
-    logger, log_dir = clean_logger_instance
+    logger, common_log_dir = clean_logger_instance
 
     # When
     logger.info("info message")
@@ -52,7 +56,8 @@ def test_logger_creates_log_files(clean_logger_instance):
     logger.critical("critical message")
 
     # Then
-    log_files = list(log_dir.glob("*.log"))
+    # `logs/common` 디렉토리에서 로그 파일 검색
+    log_files = list(common_log_dir.glob("*.log"))
     assert len(log_files) == 2  # operational, debug
 
     # 파일 이름 형식 확인
@@ -85,7 +90,7 @@ def test_logger_error_with_exc_info(clean_logger_instance):
     """
     error() 메서드가 exc_info=True로 호출될 때의 로깅을 테스트합니다.
     """
-    logger, log_dir = clean_logger_instance
+    logger, common_log_dir = clean_logger_instance
     message = "Test error with exception"
     try:
         raise ValueError("Something went wrong")
@@ -93,7 +98,7 @@ def test_logger_error_with_exc_info(clean_logger_instance):
         logger.error(message, exc_info=True)
 
     # Then
-    log_files = list(log_dir.glob("*.log"))
+    log_files = list(common_log_dir.glob("*.log"))
     assert len(log_files) == 2
 
     for f in log_files:
@@ -107,7 +112,7 @@ def test_logger_critical_with_exc_info(clean_logger_instance):
     """
     critical() 메서드가 exc_info=True로 호출될 때의 로깅을 테스트합니다.
     """
-    logger, log_dir = clean_logger_instance
+    logger, common_log_dir = clean_logger_instance
     message = "Test critical with exception"
     try:
         raise RuntimeError("Critical error occurred")
@@ -115,7 +120,7 @@ def test_logger_critical_with_exc_info(clean_logger_instance):
         logger.critical(message, exc_info=True)
 
     # Then
-    log_files = list(log_dir.glob("*.log"))
+    log_files = list(common_log_dir.glob("*.log"))
     assert len(log_files) == 2
 
     for f in log_files:
@@ -198,11 +203,14 @@ def test_logger_creates_log_dir_if_not_exists(tmp_path):
     original_handlers = logging.root.handlers[:]
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
-
+    
+    reset_log_timestamp_for_test()
     logger = Logger(log_dir=str(non_existent_log_dir))
 
     # then: 로그 디렉토리가 성공적으로 생성되었는지 확인
     assert non_existent_log_dir.is_dir() # 디렉토리가 존재하는지 확인
+    assert (non_existent_log_dir / "common").is_dir()
+    assert (non_existent_log_dir / "strategies").is_dir()
 
     # cleanup: 테스트 후 로거 핸들러 및 디렉토리 정리
     for handler in logging.getLogger('operational_logger').handlers:
@@ -217,4 +225,75 @@ def test_logger_creates_log_dir_if_not_exists(tmp_path):
         shutil.rmtree(non_existent_log_dir)
 
     logging.root.handlers = original_handlers
+
+
+def test_get_strategy_logger(tmp_path):
+    """
+    get_strategy_logger가 타임스탬프가 포함된 JSON 파일 핸들러를 올바르게 생성하는지 테스트합니다.
+    """
+    strategy_name = "TestStrategy"
+    log_dir = tmp_path / "logs"
+    
+    # 테스트 격리를 위해 타임스탬프 리셋
+    reset_log_timestamp_for_test()
+
+    # 로거 생성
+    logger = get_strategy_logger(strategy_name, log_dir=str(log_dir))
+
+    # 1. 로거 속성 검증
+    assert isinstance(logger, logging.Logger)
+    assert logger.name == f"strategy.{strategy_name}"
+    assert not logger.propagate
+    assert len(logger.handlers) == 2
+
+    # 2. 파일 핸들러 검증
+    file_handler = next((h for h in logger.handlers if isinstance(h, logging.FileHandler)), None)
+    assert file_handler is not None
+    assert isinstance(file_handler.formatter, JsonFormatter)
+    
+    # 파일명에 타임스탬프가 포함되므로 glob으로 검색
+    strategy_log_dir = log_dir / "strategies"
+    log_files = list(strategy_log_dir.glob(f"*_{strategy_name}.log.json"))
+    assert len(log_files) == 1
+    log_file_path = log_files[0]
+    assert file_handler.baseFilename == str(log_file_path)
+    assert file_handler.mode == 'w'
+
+    # 3. 스트림 핸들러 검증
+    stream_handler = next((h for h in logger.handlers if isinstance(h, logging.StreamHandler)), None)
+    assert stream_handler is not None
+    assert isinstance(stream_handler.formatter, logging.Formatter)
+
+    # 4. 로깅 동작 검증
+    dict_message = {"event": "test_event", "data": {"code": "005930", "price": 80000}}
+    str_message = "This is a simple string message."
+    logger.info(dict_message)
+    logger.warning(str_message)
+
+    # 핸들러를 닫아 파일에 내용이 기록되도록 함
+    for handler in logger.handlers[:]:
+        handler.close()
+
+    # 5. 로그 파일 내용 검증
+    assert log_file_path.exists()
+    with open(log_file_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    assert len(lines) == 2
+
+    log1 = json.loads(lines[0])
+    assert log1['level'] == 'INFO'
+    assert log1['data'] == dict_message
+
+    log2 = json.loads(lines[1])
+    assert log2['level'] == 'WARNING'
+    assert log2['message'] == str_message
+    
+    # 6. 핸들러 정리 (테스트 격리)
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # 전역 타임스탬프 다시 리셋
+    reset_log_timestamp_for_test()
+
 

@@ -47,17 +47,29 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
 
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
+        self._logger.info({"event": "scan_started", "strategy_name": self.name})
 
         # 1) 거래대금 상위 종목 조회
         resp = await self._ts.get_top_trading_value_stocks()
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
-            self._logger.warning(f"[{self.name}] 거래대금 상위 조회 실패")
+            self._logger.warning({
+                "event": "scan_failed",
+                "reason": "Failed to get top trading value stocks",
+                "response": vars(resp) if resp else None,
+            })
             return signals
 
         candidates = resp.data or []
+        self._logger.info({
+            "event": "scan_candidates_fetched",
+            "count": len(candidates),
+        })
 
         for stock in candidates:
             code = stock.get("mksc_shrn_iscd") or stock.get("stck_shrn_iscd") or ""
+            stock_name = stock.get("hts_kor_isnm", code)
+            log_data = {"code": code, "name": stock_name}
+
             if not code:
                 continue
 
@@ -65,46 +77,68 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 # 2) 현재가/시가 조회
                 price_resp = await self._sqs.handle_get_current_stock_price(code)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
+                    log_data.update({"reason": "Failed to get current price"})
+                    self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
 
                 data = price_resp.data or {}
                 current = int(data.get("price", "0") or "0")
                 open_price = int(data.get("open", "0") or "0")
+                current_vol = int(stock.get("acml_vol", "0") or "0")
+
+                log_data.update({
+                    "current_price": current,
+                    "open_price": open_price,
+                    "volume": current_vol,
+                })
 
                 if open_price <= 0 or current <= 0:
+                    log_data.update({"reason": "Invalid price data (open or current is zero)"})
+                    self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
 
                 # 3) 시가 대비 변동률 체크
                 change_from_open = (current / open_price - 1.0) * 100
+                log_data["change_from_open_pct"] = round(change_from_open, 2)
+
                 if change_from_open < self._cfg.trigger_pct:
+                    log_data.update({"reason": f"Change from open {change_from_open:.2f}% < trigger {self._cfg.trigger_pct}%"})
+                    self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
 
-                # 4) 거래량 체크
-                current_vol = int(stock.get("acml_vol", "0") or "0")
-                # 간소화: 거래대금 상위 진입 자체가 거래량 필터 역할
-                # 추후 일봉 평균 거래량 비교 로직 추가 가능
-
-                stock_name = stock.get("hts_kor_isnm", code)
+                # 4) 거래량 체크 (현재는 스킵, 추후 추가 가능)
+                
+                # BUY 신호 생성
+                reason_msg = f"시가대비 +{change_from_open:.1f}%, 거래량 {current_vol:,}"
                 signals.append(TradeSignal(
-                    code=code,
-                    name=stock_name,
-                    action="BUY",
-                    price=current,
-                    qty=1,
-                    reason=(
-                        f"시가대비 +{change_from_open:.1f}%, "
-                        f"거래량 {current_vol:,}"
-                    ),
-                    strategy_name=self.name,
+                    code=code, name=stock_name, action="BUY", price=current, qty=1,
+                    reason=reason_msg, strategy_name=self.name,
                 ))
+                self._logger.info({
+                    "event": "buy_signal_generated",
+                    "strategy_name": self.name,
+                    "code": code,
+                    "name": stock_name,
+                    "price": current,
+                    "reason": reason_msg,
+                    "data": log_data,
+                })
 
             except Exception as e:
-                self._logger.warning(f"[{self.name}] {code} 스캔 오류: {e}")
+                self._logger.error({
+                    "event": "scan_error",
+                    "strategy_name": self.name,
+                    "code": code,
+                    "error": str(e),
+                }, exc_info=True)
 
+        self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
+        self._logger.info({"event": "check_exits_started", "holdings_count": len(holdings)})
+        
         now = self._tm.get_current_kst_time()
         close_time = self._tm.get_market_close_time()
         minutes_to_close = (close_time - now).total_seconds() / 60
@@ -112,18 +146,26 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
         for hold in holdings:
             code = str(hold.get("code", ""))
             buy_price = hold.get("buy_price", 0)
+            stock_name = hold.get("name", code)
+            log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
+
             if not code or not buy_price:
                 continue
 
             try:
                 price_resp = await self._sqs.handle_get_current_stock_price(code)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
+                    self._logger.warning({
+                        "event": "check_exits_failed",
+                        "reason": "Failed to get current price for holding",
+                        **log_data,
+                    })
                     continue
 
                 data = price_resp.data or {}
                 current = int(data.get("price", "0") or "0")
-                open_price = int(data.get("open", "0") or "0")
                 high_price = int(data.get("high", "0") or "0")
+                log_data.update({"current_price": current, "day_high": high_price})
 
                 if current <= 0 or high_price <= 0:
                     continue
@@ -136,8 +178,8 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 if drop_from_high <= -self._cfg.trailing_stop_pct:
                     reason = f"익절(트레일링): 고가({high_price:,})대비 {drop_from_high:.1f}%"
                     should_sell = True
-
                 else:
+                    # 손절 조건
                     pnl_pct = ((current - buy_price) / buy_price) * 100
                     if pnl_pct <= self._cfg.stop_loss_pct:
                         reason = f"손절: 매수가대비 {pnl_pct:.1f}%"
@@ -148,18 +190,34 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                     should_sell = True
 
                 if should_sell:
-                    stock_name = data.get("code", code)
                     signals.append(TradeSignal(
-                        code=code,
-                        name=stock_name,
-                        action="SELL",
-                        price=current,
-                        qty=1,
-                        reason=reason,
-                        strategy_name=self.name,
+                        code=code, name=stock_name, action="SELL", price=current, qty=1,
+                        reason=reason, strategy_name=self.name,
                     ))
+                    self._logger.info({
+                        "event": "sell_signal_generated",
+                        "strategy_name": self.name,
+                        "code": code,
+                        "name": stock_name,
+                        "price": current,
+                        "reason": reason,
+                        "data": {**log_data, "pnl_pct": round(pnl_pct, 2), "drop_from_high_pct": round(drop_from_high, 2)},
+                    })
+                else:
+                     self._logger.info({
+                        "event": "hold_checked",
+                        "code": code,
+                        "reason": "No exit condition met",
+                        "data": log_data,
+                    })
 
             except Exception as e:
-                self._logger.warning(f"[{self.name}] {code} 청산 체크 오류: {e}")
-
+                self._logger.error({
+                    "event": "check_exits_error",
+                    "strategy_name": self.name,
+                    "code": code,
+                    "error": str(e),
+                }, exc_info=True)
+        
+        self._logger.info({"event": "check_exits_finished", "signals_found": len(signals)})
         return signals
