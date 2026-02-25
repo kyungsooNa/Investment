@@ -62,8 +62,8 @@ jobs:
                 content = f.read()
 
             # 3. 본문 보존형 교체 로직
-            start_tag = ''
-            end_tag = ''
+            start_tag = '<!-- Pytest Coverage Comment:Begin -->'
+            end_tag = '<!-- Pytest Coverage Comment:End -->'
 
             if start_tag in content and end_tag in content:
                 # 표지판 사이의 내용만 타겟팅하는 정규표현식

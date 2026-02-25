@@ -1,21 +1,8 @@
 
-![Coverage](https://img.shields.io/badge/Coverage-76%25-yellow)
-
-![Coverage](https://img.shields.io/badge/Coverage-76%25-yellow)
-
-![Coverage](https://img.shields.io/badge/Coverage-76%25-yellow)
-
-![Coverage](https://img.shields.io/badge/Coverage-75%25-yellow)
-
-![Coverage](https://img.shields.io/badge/Coverage-75%25-yellow)
-
-![Coverage](https://img.shields.io/badge/Coverage-75%25-yellow)
-
-![Coverage](https://img.shields.io/badge/Coverage-73%25-yellow)
 # 📈 Investment Trading App
 
 <!-- Pytest Coverage Comment:Begin -->
-
+![Coverage](https://img.shields.io/badge/Coverage-76%25-yellow)
 <!-- Pytest Coverage Comment:End -->
 
 ## 🚀 프로젝트 소개
