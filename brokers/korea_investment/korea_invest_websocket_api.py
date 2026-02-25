@@ -563,6 +563,14 @@ class KoreaInvestWebSocketAPI:
             self.ws = None
         else:
             self._logger.info("웹소켓이 연결되어 있지 않습니다.")
+            if self._receive_task:
+                self._receive_task.cancel()
+                try:
+                    await self._receive_task
+                except asyncio.CancelledError:
+                    self._logger.info("웹소켓 수신 태스크 취소됨.")
+                except Exception as e:
+                    self._logger.error(f"웹소켓 수신 태스크 종료 중 오류: {e}")
             self._is_connected = False
             self.ws = None
 

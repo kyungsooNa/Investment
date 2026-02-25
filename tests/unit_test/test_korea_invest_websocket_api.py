@@ -1102,6 +1102,7 @@ async def test_disconnect_with_receive_task_cancelled(websocket_api_instance):
 
 
 @pytest.mark.asyncio
+@pytest.mark.real_sleep
 async def test_disconnect_with_receive_task_exception(websocket_api_instance):
     api = websocket_api_instance
     api._is_connected = True
@@ -1112,15 +1113,27 @@ async def test_disconnect_with_receive_task_exception(websocket_api_instance):
     # _receive_messages 태스크가 실행되다가 예외를 발생시키도록 ws.recv를 모의(mock)합니다.
     api.ws.recv.side_effect = Exception("테스트용 예외")
 
+    # 원본 asyncio.sleep을 보존 (이벤트 루프 양보용)
+    _real_sleep = asyncio.sleep
+
+    # 프로덕션 코드의 asyncio.sleep만 즉시 반환하되 이벤트 루프에 제어권을 양보하도록 만듭니다.
+    async def fast_sleep(delay):
+        await _real_sleep(0)
+
     # _establish_connection을 모킹하여 재연결 시도가 테스트를 방해하지 않도록 함
-    with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False):
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False), \
+         patch("asyncio.sleep", side_effect=fast_sleep):
         # 실제 _receive_messages 태스크를 생성하여 실행합니다.
         api._receive_task = asyncio.create_task(api._receive_messages())
 
         # 태스크가 실행되어 예외를 발생시킬 시간을 주기 위해 짧게 대기합니다.
-        # fast_sleep이 적용된 상태에서도 루프를 회전시키기 위해 여러 번 await 합니다.
-        for _ in range(5):
-            await asyncio.sleep(0)
+        for _ in range(10):
+            await _real_sleep(0)
+            if not api._is_connected:
+                break
+
+        # _is_connected가 False가 되었다면 예외 처리가 완료된 것입니다.
+        assert api._is_connected is False, "태스크가 예외를 처리하지 못했습니다."
 
         # disconnect 메서드 호출
         await api.disconnect()
@@ -1133,11 +1146,10 @@ async def test_disconnect_with_receive_task_exception(websocket_api_instance):
 
     # 로거에 기록된 경고 로그를 확인합니다. (재연결 로직으로 변경됨)
     warning_logs = [call[0][0] for call in api._logger.warning.call_args_list]
-    
+
     # 예외 발생 및 재연결 시도 로그 확인
     assert any("웹소켓 연결 끊김" in msg and "테스트용 예외" in msg for msg in warning_logs)
-    
-    assert api._is_connected is False
+
     assert api.ws is None
 
 
