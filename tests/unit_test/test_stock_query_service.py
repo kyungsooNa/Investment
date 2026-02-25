@@ -35,10 +35,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_env.my_custtype = "P"
         self.mock_env.my_tr_id = "TR123456"
 
-        self.api = KoreaInvestApiBase(
-            env=self.mock_env,
-            logger=self.mock_logger
-        )
+        with patch("brokers.korea_investment.korea_invest_api_base.httpx.AsyncClient"):
+            self.api = KoreaInvestApiBase(
+                env=self.mock_env,
+                logger=self.mock_logger
+            )
 
     # --- _get_sign_from_code 함수 테스트 (Synchronous) ---
     def test_get_sign_from_code_plus(self):
