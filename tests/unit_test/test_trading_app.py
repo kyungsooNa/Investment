@@ -1489,25 +1489,24 @@ async def test_execute_action_999_invalid_menu_general(setup_mock_app):
 async def test_complete_api_initialization_success(setup_mock_app, mocker):
     app = setup_mock_app
 
-    # _complete_api_initialization의 내부에서 호출되는 종속성들을 목킹
-    # 클래스 자체를 목킹하여 생성자 호출을 추적할 수 있도록 함
-    mock_trading_service_cls = mocker.patch('app.trading_app.TradingService')
-    mock_order_execution_service_cls = mocker.patch('app.trading_app.OrderExecutionService')
-    mock_stock_query_service_cls = mocker.patch('app.trading_app.StockQueryService')
-    mock_broker_wrapper_cls = mocker.patch('app.trading_app.BrokerAPIWrapper')
-    mock_backtest_provider_cls = mocker.patch('app.trading_app.BacktestDataProvider')
+    # AppInitializer.initialize_services를 모킹하여 AppContext 반환
+    mock_app_context = mocker.MagicMock()
+    # 개별 서비스 속성 접근을 위해 mock 객체 설정
+    mock_app_context.broker = mocker.MagicMock()
+    mock_app_context.order_execution_service = mocker.MagicMock()
+    mock_app_context.stock_query_service = mocker.MagicMock()
+    mock_app_context.backtest_data_provider = mocker.MagicMock()
+
+    # app.trading_app 모듈 내의 AppInitializer를 패치
+    mock_initializer = mocker.patch('app.trading_app.AppInitializer')
+    mock_initializer.initialize_services.return_value = mock_app_context
 
     # 실제 _complete_api_initialization 메서드 호출
     result = await app._complete_api_initialization()
 
     # 검증
-    mock_trading_service_cls.assert_called_once()  # TradingService 생성자 호출 확인
-    mock_order_execution_service_cls.assert_called_once()  # OrderExecutionService 생성자 호출 확인
-    mock_stock_query_service_cls.assert_called_once()  # StockQueryService 생성자 호출 확인
-    mock_broker_wrapper_cls.assert_called_once()  # BrokerAPIWrapper 생성자 호출 확인
-    mock_backtest_provider_cls.assert_called_once()  # BacktestDataProvider 생성자 호출 확인
-
-    app.logger.info.assert_called_with(mocker.ANY)  # info 로깅 호출 확인
+    mock_initializer.initialize_services.assert_called_once()
+    assert app.app_context == mock_app_context
     assert result is True
 
 
@@ -1674,52 +1673,40 @@ async def test_run_async_main_loop():
     app.select_environment = AsyncMock(return_value=True)
     # _display_menu는 동기 메서드이므로 MagicMock으로 충분합니다.
     app._display_menu = MagicMock()
-    # _execute_action은 사용자의 선택에 따라 루프를 계속할지(True) 종료할지(False)를 반환합니다.
-    app.executor = AsyncMock()
-    app.executor.execute = AsyncMock()
 
     # 사용자 입력을 시뮬레이션합니다.
     # 첫 번째 입력: '1' (예: 현재가 조회)
     # 두 번째 입력: '99' (종료)
     app.cli_view.get_user_input = AsyncMock(side_effect=["1", "99"])
+    
+    # UserActionExecutor를 패치하여 run_async 내부에서 생성되는 인스턴스를 제어합니다.
+    with patch('app.trading_app.UserActionExecutor') as MockExecutor:
+        mock_executor_instance = MockExecutor.return_value
+        # execute 메서드가 비동기여야 하므로 AsyncMock 설정
+        mock_executor_instance.execute = AsyncMock(side_effect=[True, False])
 
-    # _execute_action의 반환 값을 시뮬레이션합니다.
-    # 첫 번째 액션('1')은 루프를 계속하게 하고 (True),
-    # 두 번째 액션('99')은 루프를 종료하게 합니다 (False).
-    app.executor.execute.side_effect = [True, False]
+        # ─ 실행 (Act) ─
+        await app.run_async()
 
-    # ─ 실행 (Act) ─
-    await app.run_async()
+        # ─ 검증 (Assert) ─
 
-    # ─ 검증 (Assert) ─
+        # 1. 애플리케이션 시작 및 초기화 단계 검증
+        app.cli_view.display_welcome_message.assert_called_once()
+        app._complete_api_initialization.assert_awaited_once()
+        app.select_environment.assert_awaited_once()
 
-    # 1. 애플리케이션 시작 및 초기화 단계 검증
-    # 환영 메시지가 한 번 표시되었는지 확인
-    app.cli_view.display_welcome_message.assert_called_once()
-    # API 초기화가 한 번 호출되고 await되었는지 확인
-    app._complete_api_initialization.assert_awaited_once()
-    # 환경 선택이 한 번 호출되고 await되었는지 확인
-    app.select_environment.assert_awaited_once()
+        # 2. 메인 루프의 반복 횟수 및 호출 검증
+        assert app.cli_view.display_current_time.call_count == 2
+        assert app._display_menu.call_count == 2
+        assert app.cli_view.get_user_input.call_count == 2
 
-    # 2. 메인 루프의 반복 횟수 및 호출 검증
-    # 루프는 '1' 입력 후 한 번, '99' 입력 후 한 번 더 실행되므로 총 두 번 반복됩니다.
-    # 따라서 다음 메서드들은 두 번씩 호출되어야 합니다.
-    assert app.cli_view.display_current_time.call_count == 2
-    assert app._display_menu.call_count == 2
-    assert app.cli_view.get_user_input.call_count == 2
+        # execute가 올바른 인자로 두 번 호출되었는지 확인
+        mock_executor_instance.execute.assert_has_calls([
+            call("1"),
+            call("99")
+        ])
+        assert mock_executor_instance.execute.call_count == 2
 
-    # _execute_action이 올바른 인자로 두 번 호출되었는지 확인
-    # 첫 번째 호출은 "1"로, 두 번째 호출은 "99"로 이루어져야 합니다.
-    app.executor.execute.assert_has_calls([
-        call("1"),
-        call("99")
-    ])
-    # _execute_action이 정확히 두 번 호출되었는지 확인
-    assert app.executor.execute.call_count == 2
-
-    # 추가 검증 (선택 사항):
-    # 예를 들어, 로거가 특정 메시지를 기록했는지 확인할 수 있습니다.
-    # app.logger.info.assert_any_call("애플리케이션 종료.") # 만약 종료 로그가 있다면
 
 
 # 기존 TestTradingApp 클래스에 이 메서드들을 추가합니다.
