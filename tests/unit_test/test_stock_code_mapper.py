@@ -31,13 +31,15 @@ def mock_logger():
 
 # --- StockCodeMapper 클래스 테스트 ---
 
+@patch('os.path.exists')
 @patch('pandas.read_csv')
-def test_initialization_with_explicit_path(mock_read_csv, mock_stock_df, mock_logger):
+def test_initialization_with_explicit_path(mock_read_csv, mock_exists, mock_stock_df, mock_logger):
     """
     명시적인 CSV 경로로 초기화가 정상적으로 동작하는지 테스트합니다.
     """
     # Arrange: pd.read_csv가 모의 데이터프레임을 반환하도록 설정
     mock_read_csv.return_value = mock_stock_df
+    mock_exists.return_value = True  # 파일이 항상 존재한다고 가정
     csv_path = "fake/path/to/codes.csv"
 
     # Act
@@ -55,14 +57,16 @@ def test_initialization_with_explicit_path(mock_read_csv, mock_stock_df, mock_lo
     calls = [call.args[0] for call in mock_logger.info.call_args_list]
     assert f"🔄 종목코드 매핑 CSV 로드 완료: {csv_path}" in calls
 
+@patch('os.path.exists')
 @patch('pandas.read_csv')
 @patch('os.path.abspath')
-def test_initialization_with_default_path(mock_abspath, mock_read_csv, mock_stock_df):
+def test_initialization_with_default_path(mock_abspath, mock_read_csv, mock_exists, mock_stock_df):
     """
     기본 CSV 경로로 초기화가 정상적으로 동작하는지 테스트합니다.
     """
     # Arrange
     mock_read_csv.return_value = mock_stock_df
+    mock_exists.return_value = True # 파일이 항상 존재한다고 가정
     # os.path.abspath가 예측 가능한 경로를 반환하도록 설정
     mock_abspath.return_value = "/project_root"
     expected_path = os.path.join("/project_root", "data", "stock_code_list.csv")
@@ -75,28 +79,32 @@ def test_initialization_with_default_path(mock_abspath, mock_read_csv, mock_stoc
     assert mapper.code_to_name['005930'] == '삼성전자'
 
 
-@patch('pandas.read_csv')
-def test_initialization_file_not_found(mock_read_csv, mock_logger):
+@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('os.path.exists')
+def test_initialization_file_not_found(mock_exists, mock_save_stock_code_list, mock_logger):
     """
-    CSV 파일을 찾지 못했을 때 예외가 발생하는지 테스트합니다.
+    CSV 파일을 찾지 못하고 생성에도 실패했을 때 예외가 발생하는지 테스트합니다.
     """
-    # Arrange: pd.read_csv가 FileNotFoundError를 발생시키도록 설정
-    error_message = "File not found"
-    mock_read_csv.side_effect = FileNotFoundError(error_message)
+    # Arrange
+    mock_exists.return_value = False  # 파일이 존재하지 않는다고 설정
+    error_message = "File generation failed"
+    mock_save_stock_code_list.side_effect = FileNotFoundError(error_message)
 
     # Act & Assert
     with pytest.raises(FileNotFoundError):
         StockCodeMapper(logger=mock_logger)
 
-    # 로거가 에러 메시지를 기록했는지 확인
-    mock_logger.error.assert_called_once_with(f"❌ 종목코드 매핑 CSV 로드 실패: {error_message}")
+    # 로거가 파일 생성 실패 에러 메시지를 기록했는지 확인
+    mock_logger.error.assert_called_once_with(f"❌ 종목코드 매핑 CSV 파일 생성 실패: {error_message}")
 
 
+@patch('os.path.exists')
 @patch('pandas.read_csv')
-def test_get_name_by_code(mock_read_csv, mock_stock_df, mock_logger):
+def test_get_name_by_code(mock_read_csv, mock_exists, mock_stock_df, mock_logger):
     """get_name_by_code 메서드의 성공/실패 시나리오를 테스트합니다."""
     # Arrange
     mock_read_csv.return_value = mock_stock_df
+    mock_exists.return_value = True
     mapper = StockCodeMapper(logger=mock_logger)
 
     # --- 성공 케이스 ---
@@ -114,11 +122,13 @@ def test_get_name_by_code(mock_read_csv, mock_stock_df, mock_logger):
     mock_logger.warning.assert_called_once_with("❗ 종목명 없음: 999999")
 
 
+@patch('os.path.exists')
 @patch('pandas.read_csv')
-def test_get_code_by_name(mock_read_csv, mock_stock_df, mock_logger):
+def test_get_code_by_name(mock_read_csv, mock_exists, mock_stock_df, mock_logger):
     """get_code_by_name 메서드의 성공/실패 시나리오를 테스트합니다."""
     # Arrange
     mock_read_csv.return_value = mock_stock_df
+    mock_exists.return_value = True
     mapper = StockCodeMapper(logger=mock_logger)
 
     # --- 성공 케이스 ---
@@ -135,13 +145,15 @@ def test_get_code_by_name(mock_read_csv, mock_stock_df, mock_logger):
     # 실패 시 로거가 호출되었는지 확인
     mock_logger.warning.assert_called_once_with("❗ 종목코드 없음: 없는회사")
 
-@patch('pandas.read_csv')
-def test_initialization_file_not_found_without_logger(mock_read_csv):
+@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('os.path.exists')
+def test_initialization_file_not_found_without_logger(mock_exists, mock_save):
     """
     CSV 로드 실패 시 logger가 없더라도 정상적으로 예외가 발생하는지 테스트합니다 (line 24 분기 타기).
     """
     # Arrange: FileNotFoundError 유도
-    mock_read_csv.side_effect = FileNotFoundError("파일 없음")
+    mock_exists.return_value = False
+    mock_save.side_effect = FileNotFoundError("파일 없음")
 
     # Act & Assert
     with pytest.raises(FileNotFoundError):
