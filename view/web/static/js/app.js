@@ -2202,12 +2202,85 @@ function renderStockChart(period) {
     const bbMiddle = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.middle }));
     const bbLower = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.lower }));
 
-    // 3. 차트 그리기
+    // 3. 고가/저가 캔들 인덱스 및 등락률 계산
+    const currentPrice = slicedRaw[slicedRaw.length - 1].close;
+    let highestPrice = -Infinity, lowestPrice = Infinity;
+    let highIdx = 0, lowIdx = 0;
+    slicedRaw.forEach((d, i) => {
+        if (d.high > highestPrice) { highestPrice = d.high; highIdx = i; }
+        if (d.low < lowestPrice) { lowestPrice = d.low; lowIdx = i; }
+    });
+    const highPct = ((highestPrice - currentPrice) / currentPrice * 100).toFixed(1);
+    const lowPct = ((lowestPrice - currentPrice) / currentPrice * 100).toFixed(1);
+
+    // 고가/저가 마커 플러그인 (해당 캔들 위/아래에만 표기)
+    const highLowPlugin = {
+        id: 'highLowMarker',
+        afterDatasetsDraw(chart) {
+            const { ctx: c, scales: { y } } = chart;
+            const meta = chart.getDatasetMeta(0); // 캔들스틱 데이터셋
+            if (!meta || !meta.data) return;
+
+            // 고가 표기: 가격 (날짜) 등락률 → ↓
+            const highBar = meta.data[highIdx];
+            if (highBar) {
+                const hx = highBar.x;
+                const hy = y.getPixelForValue(highestPrice);
+                const highDate = labels[highIdx];
+                const highSign = highPct > 0 ? '+' : '';
+                c.save();
+                c.font = 'bold 11px sans-serif';
+                c.textAlign = 'center';
+                c.fillStyle = '#ff4444';
+                c.fillText(`${highestPrice.toLocaleString()} (${highDate}) ${highSign}${highPct}%`, hx, hy - 20);
+                c.fillText('↓', hx, hy - 8);
+                c.restore();
+            }
+
+            // 저가 표기: ↑ → 가격 (날짜) 등락률
+            const lowBar = meta.data[lowIdx];
+            if (lowBar) {
+                const lx = lowBar.x;
+                const ly = y.getPixelForValue(lowestPrice);
+                const lowDate = labels[lowIdx];
+                const lowSign = lowPct > 0 ? '+' : '';
+                c.save();
+                c.font = 'bold 11px sans-serif';
+                c.textAlign = 'center';
+                c.fillStyle = '#4488ff';
+                c.fillText('↑', lx, ly + 14);
+                c.fillText(`${lowestPrice.toLocaleString()} (${lowDate}) ${lowSign}${lowPct}%`, lx, ly + 26);
+                c.restore();
+            }
+        }
+    };
+
+    // [추가] 차트 구분선 플러그인 (주가/거래량 사이)
+    const splitLinePlugin = {
+        id: 'splitLine',
+        afterDraw: (chart) => {
+            const { ctx, chartArea: { left, right }, scales: { y_spacer } } = chart;
+            if (y_spacer) {
+                const centerY = (y_spacer.top + y_spacer.bottom) / 2;
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(left, centerY);
+                ctx.lineTo(right, centerY);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = 'rgba(128, 128, 128, 0.5)';
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+    };
+
+    // 4. 차트 그리기
     const ctx = document.getElementById('stockChart').getContext('2d');
     if (stockChartInstance) stockChartInstance.destroy();
 
     stockChartInstance = new Chart(ctx, {
         type: 'candlestick',
+        plugins: [highLowPlugin, splitLinePlugin],
         data: {
             labels: labels, // X축 라벨 (날짜)
             datasets: [
@@ -2242,16 +2315,35 @@ function renderStockChart(period) {
                     ticks: { autoSkip: true, maxTicksLimit: 10 }
                 },
                 y: { type: 'linear', position: 'right', stack: 'stock', stackWeight: 4, grid: { color: 'rgba(255,255,255,0.1)' } },
+                y_spacer: { // [추가] 주가/거래량 사이 간격
+                    type: 'linear',
+                    display: false,
+                    position: 'right',
+                    stack: 'stock',
+                    stackWeight: 0.2,
+                    grid: { drawOnChartArea: false }
+                },
                 y1: { type: 'linear', position: 'right', stack: 'stock', stackWeight: 1, grid: { drawOnChartArea: false }, ticks: { callback: v => (v/1000).toFixed(0)+'K' } }
             },
             plugins: {
-                legend: { 
-                    display: true, // [수정] 범례 표시
+                legend: {
+                    display: true,
                     labels: {
                         color: '#a0a0b0',
+                        usePointStyle: true,
+                        pointStyle: 'rectRounded',
+                        boxWidth: 10,
+                        boxHeight: 10,
                         filter: function(item, chart) {
-                            // [수정] MA와 BB 표시 (주가, 거래량 제외)
                             return item.text.includes('MA') || item.text.includes('BB');
+                        },
+                        generateLabels: function(chart) {
+                            const original = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                            return original.filter(item => item.text.includes('MA') || item.text.includes('BB')).map(item => {
+                                item.fillStyle = item.strokeStyle;
+                                item.lineWidth = 0;
+                                return item;
+                            });
                         }
                     }
                 },
