@@ -88,22 +88,22 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     def test_calculate_qty_normal(self):
         """포트폴리오 1000만 × 5% = 50만 / 주가 10000 = 50주."""
-        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=5.0)
+        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=5.0, use_fixed_qty=False)
         self.assertEqual(strategy._calculate_qty(10000), 50)
 
     def test_calculate_qty_expensive_stock(self):
         """고가주: 50만 / 60만 = 0 → min_qty=1."""
-        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=5.0)
+        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=5.0, use_fixed_qty=False)
         self.assertEqual(strategy._calculate_qty(600000), 1)
 
     def test_calculate_qty_zero_price(self):
         """가격 0일 때 min_qty 반환."""
-        strategy, *_ = self._make_strategy()
+        strategy, *_ = self._make_strategy(use_fixed_qty=False)
         self.assertEqual(strategy._calculate_qty(0), 1)
 
     def test_calculate_qty_low_pct(self):
         """position_size_pct=1.0이면 1000만×1%=10만 / 10000=10주."""
-        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=1.0)
+        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=1.0, use_fixed_qty=False)
         self.assertEqual(strategy._calculate_qty(10000), 10)
 
     # ── 워치리스트 빌드 ──
@@ -208,7 +208,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_buy_signal_price_and_volume_breakout(self):
         """가격+거래량 돌파 AND 조건 충족 시 BUY 시그널."""
-        strategy, ts, sqs, tm, mapper = self._make_strategy()
+        strategy, ts, sqs, tm, mapper = self._make_strategy(use_fixed_qty=False)
 
         # 워치리스트 수동 설정
         strategy._watchlist = {
