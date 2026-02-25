@@ -198,11 +198,11 @@ config/config.yaml
 
 # KIS API Token files
 # KIS_TOKEN_*.yaml (기존)
-KIS_ACCESS_*.yaml # <--- 새롭게 추가된 토큰 파일 형식
-kis_access_token.yaml # <--- 고정된 토큰 파일명 추가
+KIS_ACCESS_*.yaml
+kis_access_token.yaml
 
 # Log files generated per run
-logs/ # <--- logs 폴더 전체를 무시
+logs/
 
 /kis_access_token.yaml
 /.idea/workspace.xml
