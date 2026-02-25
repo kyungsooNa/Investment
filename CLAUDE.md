@@ -21,6 +21,9 @@ pytest tests/integration_test -v    # 통합 테스트
 ```
 - pytest 설정: `asyncio_mode=auto`, `pytest-xdist -n auto` 병렬 실행
 
+## Pytest 실행 방법 예시
+cd /c/Users/Kyungsoo/Documents/Code/Investment && /c/Users/Kyungsoo/anaconda3/envs/py310/python.exe -m pytest tests/unit_test/test_korea_invest_websocket_api.py::test_disconnect_with_receive_task_exception -v 2>&1 | tail -50
+
 ## 디렉토리 구조
 ```
 Investment/
