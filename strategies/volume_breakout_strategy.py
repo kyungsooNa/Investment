@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Literal, Callable
+from strategies.base_strategy_config import BaseStrategyConfig
 
 # ===============================
 # 거래량 돌파 전략 설정 클래스
 # ===============================
 @dataclass
-class VolumeBreakoutConfig:
+class VolumeBreakoutConfig(BaseStrategyConfig):
     """거래량 돌파 전략 및 백테스트용 설정"""
     trigger_pct: float = 10.0          # 시가 대비 +10% 도달 시 매수 트리거
     entry_push_pct: float = 2.0        # 신호 발생 후 추가 상승폭 (라이브 전략용)

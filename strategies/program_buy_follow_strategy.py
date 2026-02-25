@@ -10,10 +10,11 @@ from common.types import TradeSignal, ErrorCode, ResStockFullInfoApiOutput
 from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
+from strategies.base_strategy_config import BaseStrategyConfig
 
 
 @dataclass
-class ProgramBuyFollowConfig:
+class ProgramBuyFollowConfig(BaseStrategyConfig):
     """프로그램 매수 추종 전략 설정."""
     min_program_net_buy: int = 0        # 프로그램 순매수 최소 기준 (> 0)
     trailing_stop_pct: float = 8.0      # 고가 대비 -8% 하락 시 익절
