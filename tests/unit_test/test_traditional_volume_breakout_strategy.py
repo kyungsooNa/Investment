@@ -1,6 +1,10 @@
 # tests/unit_test/strategies/test_traditional_volume_breakout_strategy.py
+from datetime import datetime
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock
+
+import pytz
 
 from strategies.traditional_volume_breakout_strategy import (
     TraditionalVolumeBreakoutStrategy,
@@ -44,6 +48,12 @@ async def test_scan_skips_already_held_stock(strategy_instance: TraditionalVolum
     strategy = strategy_instance
     test_code = "005930"
     test_name = "삼성전자"
+    
+    # Ensure time_manager returns valid datetimes
+    kst = pytz.timezone('Asia/Seoul')
+    strategy._tm.get_current_kst_time.return_value = datetime(2023, 1, 1, 12, 0, 0, tzinfo=kst)
+    strategy._tm.get_market_open_time.return_value = datetime(2023, 1, 1, 9, 0, 0, tzinfo=kst)
+    strategy._tm.get_market_close_time.return_value = datetime(2023, 1, 1, 15, 30, 0, tzinfo=kst)
 
     # 워치리스트에 매수 조건이 충족될 종목 추가
     strategy._watchlist = {
@@ -94,6 +104,10 @@ async def test_scan_generates_signal_for_new_stock(strategy_instance: Traditiona
     """
     # 1. Setup
     strategy = strategy_instance
+    kst = pytz.timezone('Asia/Seoul')
+    strategy._tm.get_current_kst_time.return_value = datetime(2023, 1, 1, 12, 0, 0, tzinfo=kst)
+    strategy._tm.get_market_open_time.return_value = datetime(2023, 1, 1, 9, 0, 0, tzinfo=kst)
+    strategy._tm.get_market_close_time.return_value = datetime(2023, 1, 1, 15, 30, 0, tzinfo=kst)
     test_code = "005930"
     test_name = "삼성전자"
 
