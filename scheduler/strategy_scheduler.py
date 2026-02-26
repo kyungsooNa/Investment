@@ -246,12 +246,17 @@ class StrategyScheduler:
 
     # ── 개별 전략 제어 ──
 
-    def start_strategy(self, name: str) -> bool:
-        """개별 전략 활성화. 성공 시 True 반환."""
+    async def start_strategy(self, name: str) -> bool:
+        """개별 전략 활성화. 루프가 돌고 있지 않으면 자동 시작. 성공 시 True 반환."""
         for cfg in self._strategies:
             if cfg.strategy.name == name:
                 cfg.enabled = True
                 self._logger.info(f"[Scheduler] 전략 활성화: {name}")
+                # 루프가 안 돌고 있으면 자동으로 시작
+                if not self._running:
+                    self._running = True
+                    self._task = asyncio.create_task(self._loop())
+                    self._logger.info("[Scheduler] 루프 자동 시작 (개별 전략 활성화)")
                 return True
         return False
 

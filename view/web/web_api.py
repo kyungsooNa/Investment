@@ -669,7 +669,7 @@ async def start_strategy(name: str):
     ctx = _get_ctx()
     if not ctx.scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
-    if not ctx.scheduler.start_strategy(name):
+    if not await ctx.scheduler.start_strategy(name):
         raise HTTPException(status_code=404, detail=f"전략 '{name}'을 찾을 수 없습니다")
     return {"success": True, "status": ctx.scheduler.get_status()}
 
