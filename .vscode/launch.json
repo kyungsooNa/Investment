@@ -11,15 +11,6 @@
       "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
     },
     {
-      "name": "Console (CLI)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/main.py",
-      "args": ["--cli"],
-      "console": "integratedTerminal",
-      "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
-    },
-    {
       "name": "선택 메뉴",
       "type": "debugpy",
       "request": "launch",
