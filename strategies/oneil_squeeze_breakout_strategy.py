@@ -10,13 +10,19 @@ v1 범위:
   - 매수: 마켓타이밍 + 스퀴즈 + 가격돌파 + 거래량돌파 + 프로그램필터
   - 매도: 손절(-5%) / 시간손절(5일 박스권 횡보) / 트레일링(-8%) / 추세이탈(10MA)
 
+v2 완료:
+  - [v2-1] 스코어링 시스템: RS(3개월 상대강도 상위10% → +30점), 영업이익 25%↑ → +20점
+  - [v2-2] Pool A/B 분리 유니버스:
+    - Pool A: 전체 CSV 종목 스캔 → 시총 2,000억~2조 중소형주 → 스코어 상위 KOSPI 15 + KOSDAQ 15
+      (장 마감 후 수동 generate_pool_a() 호출, JSON 저장)
+    - Pool B: 3개 랭킹(거래대금/상승률/거래량) 병합 → 필터 → 스코어 상위 30종목
+    - Pool A 없으면 Pool B만 사용 (graceful fallback)
+
 v2 예정 (TODO):
-  - Pool A/B 분리 유니버스 (Pool A: 전일 기준 30종목, Pool B: 장중 거래대금 30종목)
-  - 스코어링 시스템: RS(3개월 상대강도 상위10% → +30점), 업종 소분류 주도 → +20점
-  - 분기 영업이익 25% 이상 증가 → +20점: /uapi/domestic-stock/v1/finance/financial-ratio
   - 스코어 상위 10~15종목만 집중 감시 (스코어링 갱신: 08:50, 10:00, 12:00, 14:00)
   - 체결강도(>=120%), 고래 탐지(>=5000만원): REST inquire-ccnl 또는 WS H0STOUP0
   - 코스닥/코스피 지수 직접 조회 (ETF 프록시 대체)
+  - Pool A 멀티시세 조회 API 최적화 (intstock-multprice, 30종목/1회)
 """
 from __future__ import annotations
 
@@ -35,6 +41,12 @@ from services.indicator_service import IndicatorService
 from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from strategies.base_strategy_config import BaseStrategyConfig
+
+
+def _chunked(lst, size):
+    """리스트를 size 크기의 청크로 분할."""
+    for i in range(0, len(lst), size):
+        yield lst[i:i + size]
 
 
 # ── 설정 ────────────────────────────────────────────────
@@ -92,6 +104,13 @@ class OneilSqueezeConfig(BaseStrategyConfig):
     profit_growth_score_points: float = 20.0   # 영업이익 점수
     score_top_n: int = 15                      # 스코어 상위 N종목만 감시
     api_chunk_size: int = 10                   # TPS 방어용 API 청크 크기
+
+    # V2 Pool A/B 분리 유니버스
+    pool_a_file: str = os.path.join("data", "osb_pool_a.json")
+    pool_a_size_per_market: int = 15                    # Pool A: 시장별 상위 N종목
+    pool_a_market_cap_min: int = 200_000_000_000        # Pool A 시총 하한 2,000억
+    pool_a_market_cap_max: int = 2_000_000_000_000      # Pool A 시총 상한 2조
+    pool_b_size: int = 30                               # Pool B: 당일 실시간 상위 N종목
 
     # TODO [v2] 체결강도/고래 탐지 임계값
     # execution_strength_min: float = 120.0      # REST inquire-ccnl 또는 WS H0STOUP0
@@ -178,6 +197,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         self._watchlist_date: str = ""
         self._watchlist_refresh_done: set = set()  # 당일 완료된 갱신 시각(분)
         self._position_state: Dict[str, OSBPositionState] = {}
+        self._pool_a_loaded: bool = False
+        self._pool_a_items: Dict[str, OSBWatchlistItem] = {}
 
         # 마켓 타이밍 캐시 (일 1회 계산)
         self._market_timing_cache: Dict[str, bool] = {}  # "KOSPI" -> True/False
@@ -202,6 +223,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if self._watchlist_date != today:
             # 새 날: 초기화 후 첫 빌드
             self._watchlist_refresh_done = set()
+            self._pool_a_loaded = False
+            self._pool_a_items = {}
             await self._build_watchlist()
             self._watchlist_date = today
         elif self._should_refresh_watchlist():
@@ -731,14 +754,60 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     # ════════════════════════════════════════════════════════
 
     async def _build_watchlist(self):
-        """3가지 랭킹(거래대금/상승률/거래량) 소스를 병합하여 워치리스트 구성.
+        """Pool A (전일 기준) + Pool B (당일 실시간) 병합하여 워치리스트 구성.
 
-        1) 거래대금 상위 30 + 상승률 상위 30 + 거래량 상위 30 → 중복 제거 후 최대 ~90개 후보
-        2) 각 후보를 _analyze_candidate()로 필터 (정배열/52주고가/BB)
-        3) 거래대금/시총 비율(회전율) 내림차순 정렬 → 상위 max_watchlist개 선택
+        Pool A: 전일 장 마감 후 generate_pool_a()로 생성된 JSON에서 로드 (없으면 스킵).
+        Pool B: 3가지 랭킹(거래대금/상승률/거래량) 병합 → 필터 → 스코어링.
+        병합: Pool A 우선 + Pool B 보충, 중복 제거, max_watchlist 상한.
         """
         self._logger.info({"event": "build_watchlist_started"})
 
+        # 1) Pool A 로드 (새 날 첫 호출 시 1회만)
+        if not self._pool_a_loaded:
+            raw = self._load_pool_a()
+            self._pool_a_items = {item.code: item for item in raw}
+            self._pool_a_loaded = True
+            if self._pool_a_items:
+                self._logger.info({
+                    "event": "pool_a_applied",
+                    "count": len(self._pool_a_items),
+                    "codes": list(self._pool_a_items.keys()),
+                })
+            else:
+                self._logger.info({"event": "pool_a_empty_using_pool_b_only"})
+
+        # 2) Pool B 빌드 (기존 3가지 랭킹 병합 파이프라인)
+        pool_b_items = await self._build_pool_b()
+
+        # 3) 병합: Pool A 우선 + Pool B 보충, 중복 제거
+        merged: Dict[str, OSBWatchlistItem] = dict(self._pool_a_items)
+        for code, item in pool_b_items.items():
+            if code not in merged:
+                merged[code] = item
+
+        # 4) 최종: score 정렬 → max_watchlist 상한 적용
+        sorted_items = sorted(
+            merged.values(),
+            key=lambda x: (x.total_score, self._calc_turnover_ratio(x)),
+            reverse=True,
+        )
+        self._watchlist = {
+            item.code: item for item in sorted_items[:self._cfg.max_watchlist]
+        }
+        self._logger.info({
+            "event": "build_watchlist_finished",
+            "pool_a_count": len(self._pool_a_items),
+            "pool_b_count": len(pool_b_items),
+            "merged_count": len(merged),
+            "final_watchlist_count": len(self._watchlist),
+            "watchlist_codes": list(self._watchlist.keys()),
+        })
+
+    async def _build_pool_b(self) -> Dict[str, OSBWatchlistItem]:
+        """Pool B: 3가지 랭킹(거래대금/상승률/거래량) 병합 → 필터 → 스코어링 → 상위 pool_b_size개.
+
+        Pool A에 이미 있는 종목은 제외.
+        """
         # 1) 3가지 랭킹 소스 병렬 조회
         trading_val_resp, rise_resp, volume_resp = await asyncio.gather(
             self._ts.get_top_trading_value_stocks(),
@@ -764,18 +833,19 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     candidate_map[code] = name or self._mapper.get_name_by_code(code) or code
 
         self._logger.info({
-            "event": "watchlist_candidates_merged",
+            "event": "pool_b_candidates_merged",
             "total_unique": len(candidate_map),
         })
 
-        # 2) 각 후보 분석 (기존 워치리스트에 있으면 스킵)
+        # 2) 각 후보 분석 (Pool A 및 기존 워치리스트에 있으면 스킵)
         items: List[OSBWatchlistItem] = []
-        existing_codes = set(self._watchlist.keys())
+        skip_codes = set(self._pool_a_items.keys()) | set(self._watchlist.keys())
 
         for code, stock_name in candidate_map.items():
-            if code in existing_codes:
-                # 이미 워치리스트에 있는 종목은 유지
-                items.append(self._watchlist[code])
+            if code in skip_codes:
+                # Pool A에 있는 종목은 Pool B에서 중복 빌드하지 않음
+                if code in self._watchlist:
+                    items.append(self._watchlist[code])
                 continue
 
             try:
@@ -798,21 +868,21 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             reverse=True,
         )
 
-        self._watchlist = {
-            item.code: item for item in items[:self._cfg.score_top_n]
+        pool_b = {
+            item.code: item for item in items[:self._cfg.pool_b_size]
         }
         self._logger.info({
-            "event": "build_watchlist_finished",
+            "event": "pool_b_built",
             "total_candidates_analyzed": len(candidate_map),
-            "final_watchlist_count": len(self._watchlist),
-            "watchlist_codes": list(self._watchlist.keys()),
+            "pool_b_count": len(pool_b),
             "top_scores": [
                 {"code": item.code, "name": item.name, "total_score": item.total_score,
                  "rs_score": item.rs_score, "profit_score": item.profit_growth_score,
                  "rs_return_3m": round(item.rs_return_3m, 1)}
-                for item in items[:self._cfg.score_top_n]
+                for item in items[:self._cfg.pool_b_size]
             ],
         })
+        return pool_b
 
     async def _analyze_candidate(self, code: str, name: str) -> Optional[OSBWatchlistItem]:
         """종목의 OHLCV + BB 분석. 조건 충족 시 OSBWatchlistItem 반환.
@@ -1307,3 +1377,207 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except (IOError, OSError) as e:
             self._logger.warning({"event": "save_state_failed", "error": str(e)})
+
+    # ── Pool A 저장/복원 ──
+
+    def _save_pool_a(
+        self,
+        kospi_items: List[OSBWatchlistItem],
+        kosdaq_items: List[OSBWatchlistItem],
+    ) -> None:
+        """Pool A를 JSON 파일에 저장."""
+        try:
+            path = self._cfg.pool_a_file
+            dir_name = os.path.dirname(path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            today = self._tm.get_current_kst_time().strftime("%Y%m%d")
+            data = {
+                "generated_date": today,
+                "kospi": [asdict(item) for item in kospi_items],
+                "kosdaq": [asdict(item) for item in kosdaq_items],
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            self._logger.info({
+                "event": "pool_a_saved",
+                "kospi_count": len(kospi_items),
+                "kosdaq_count": len(kosdaq_items),
+                "file": path,
+                "date": today,
+            })
+        except (IOError, OSError) as e:
+            self._logger.warning({"event": "save_pool_a_failed", "error": str(e)})
+
+    def _load_pool_a(self) -> List[OSBWatchlistItem]:
+        """Pool A JSON 로드. 파일 없음/파싱 실패/날짜 오래됨 → 빈 리스트 반환."""
+        path = self._cfg.pool_a_file
+        if not os.path.exists(path):
+            self._logger.info({"event": "pool_a_not_found", "file": path})
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # 날짜 유효성: 오늘 또는 어제 생성분만 허용
+            generated = data.get("generated_date", "")
+            today = self._tm.get_current_kst_time().strftime("%Y%m%d")
+            from datetime import datetime, timedelta
+            try:
+                gen_dt = datetime.strptime(generated, "%Y%m%d")
+                today_dt = datetime.strptime(today, "%Y%m%d")
+                if (today_dt - gen_dt).days > 1:
+                    self._logger.info({
+                        "event": "pool_a_stale",
+                        "generated_date": generated,
+                        "today": today,
+                    })
+                    return []
+            except ValueError:
+                self._logger.warning({"event": "pool_a_invalid_date", "date": generated})
+                return []
+
+            items: List[OSBWatchlistItem] = []
+            for market_key in ("kospi", "kosdaq"):
+                for item_dict in data.get(market_key, []):
+                    try:
+                        items.append(OSBWatchlistItem(**item_dict))
+                    except (TypeError, KeyError) as e:
+                        self._logger.warning({
+                            "event": "pool_a_item_parse_error",
+                            "market": market_key,
+                            "error": str(e),
+                        })
+            self._logger.info({
+                "event": "pool_a_loaded",
+                "count": len(items),
+                "generated_date": generated,
+            })
+            return items
+        except (json.JSONDecodeError, IOError, KeyError, TypeError) as e:
+            self._logger.warning({"event": "load_pool_a_failed", "error": str(e)})
+            return []
+
+    # ── Pool A 생성 (전체 종목 스캔) ──
+
+    async def generate_pool_a(self) -> dict:
+        """Pool A 수동 생성: 전체 종목 CSV → 시총/거래대금 1차 필터 → 2차 분석 → 스코어링 → JSON 저장.
+
+        장 마감 후 수동 호출. 다음 거래일 scan()에서 자동 로드됨.
+        Returns: 생성 결과 요약 dict.
+        """
+        self._logger.info({"event": "generate_pool_a_started"})
+
+        # 1) CSV에서 전체 종목코드 + 시장구분 로드
+        all_stocks = []
+        for _, row in self._mapper.df.iterrows():
+            code = row.get("종목코드", "")
+            name = row.get("종목명", "")
+            market = row.get("시장구분", "")
+            if code and market in ("KOSPI", "KOSDAQ"):
+                all_stocks.append((code, name, market))
+
+        self._logger.info({
+            "event": "pool_a_csv_loaded",
+            "total_stocks": len(all_stocks),
+        })
+
+        # 2) 1차 필터: 시총 + 거래대금 (저비용 API, 청크 단위)
+        cap_min = self._cfg.pool_a_market_cap_min
+        cap_max = self._cfg.pool_a_market_cap_max
+        min_trading_value = self._cfg.min_avg_trading_value_5d
+        passed_first = []
+        first_filter_count = 0
+
+        for chunk in _chunked(all_stocks, self._cfg.api_chunk_size):
+            tasks = [self._ts.get_current_stock_price(code) for code, _, _ in chunk]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for (code, name, market), resp in zip(chunk, results):
+                first_filter_count += 1
+                if isinstance(resp, Exception):
+                    continue
+                if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                    continue
+                output = self._extract_output(resp)
+                if not output:
+                    continue
+                stck_llam = self._get_int_field(output, "stck_llam")
+                acml_tr_pbmn = self._get_int_field(output, "acml_tr_pbmn")
+                if not (cap_min <= stck_llam <= cap_max):
+                    continue
+                if acml_tr_pbmn < min_trading_value:
+                    continue
+                passed_first.append((code, name, market))
+            await asyncio.sleep(1.1)  # TPS 방어
+
+        self._logger.info({
+            "event": "pool_a_first_filter_done",
+            "scanned": first_filter_count,
+            "passed": len(passed_first),
+            "market_cap_range": f"{cap_min / 1e8:,.0f}억 ~ {cap_max / 1e8:,.0f}억",
+        })
+
+        # 3) 2차 필터: _analyze_candidate() (OHLCV + 정배열 + 52주 + BB + RS)
+        items: List[OSBWatchlistItem] = []
+        for chunk in _chunked(passed_first, self._cfg.api_chunk_size):
+            for code, name, market in chunk:
+                try:
+                    item = await self._analyze_candidate(code, name)
+                    if item:
+                        items.append(item)
+                except Exception as e:
+                    self._logger.error({
+                        "event": "pool_a_analyze_error",
+                        "code": code, "error": str(e),
+                    })
+            await asyncio.sleep(1.1)  # TPS 방어
+
+        self._logger.info({
+            "event": "pool_a_second_filter_done",
+            "analyzed": len(passed_first),
+            "passed": len(items),
+        })
+
+        # 4) 스코어링
+        self._compute_rs_scores(items)
+        await self._compute_profit_growth_scores(items)
+        self._compute_total_scores(items)
+
+        # 5) 시장별 분리 → 상위 N
+        sort_key = lambda x: (x.total_score, self._calc_turnover_ratio(x))
+        kosdaq = sorted(
+            [i for i in items if i.market == "KOSDAQ"],
+            key=sort_key, reverse=True,
+        )
+        kospi = sorted(
+            [i for i in items if i.market != "KOSDAQ"],
+            key=sort_key, reverse=True,
+        )
+        n = self._cfg.pool_a_size_per_market
+        kospi_final = kospi[:n]
+        kosdaq_final = kosdaq[:n]
+
+        # 6) JSON 저장
+        self._save_pool_a(kospi_final, kosdaq_final)
+
+        result = {
+            "kospi_count": len(kospi_final),
+            "kosdaq_count": len(kosdaq_final),
+            "total": len(kospi_final) + len(kosdaq_final),
+            "file": self._cfg.pool_a_file,
+            "scanned": len(all_stocks),
+            "first_filter_passed": len(passed_first),
+            "second_filter_passed": len(items),
+            "market_cap_filter": f"{cap_min / 1e8:,.0f}억 ~ {cap_max / 1e8:,.0f}억",
+            "top_kospi": [
+                {"code": i.code, "name": i.name, "score": i.total_score,
+                 "market_cap_억": round(i.market_cap / 1e8)}
+                for i in kospi_final[:5]
+            ],
+            "top_kosdaq": [
+                {"code": i.code, "name": i.name, "score": i.total_score,
+                 "market_cap_억": round(i.market_cap / 1e8)}
+                for i in kosdaq_final[:5]
+            ],
+        }
+        self._logger.info({"event": "generate_pool_a_finished", **result})
+        return result

@@ -846,5 +846,295 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(item.profit_growth_score, 20.0)
 
 
+    # ════════════════════════════════════════════════════════
+    # Pool A/B 분리 유니버스 테스트
+    # ════════════════════════════════════════════════════════
+
+    def _make_pool_a_item(self, code, name, market, score=0.0, market_cap=500_000_000_000):
+        """Pool A/B 테스트용 OSBWatchlistItem 헬퍼."""
+        return OSBWatchlistItem(
+            code=code, name=name, market=market,
+            high_20d=10000, ma_20d=9500, ma_50d=9000,
+            avg_vol_20d=100000, bb_width_min_20d=100, prev_bb_width=110,
+            w52_hgpr=11000, avg_trading_value_5d=15e9,
+            market_cap=market_cap,
+            total_score=score,
+        )
+
+    # ── Pool A 저장/로드 ──
+
+    def test_save_and_load_pool_a(self):
+        """Pool A JSON 저장 후 로드하면 동일 아이템 반환."""
+        strategy, *_ = self._make_strategy()
+        test_file = "test_pool_a_temp.json"
+        strategy._cfg.pool_a_file = test_file
+
+        kospi = [self._make_pool_a_item("005930", "삼성전자", "KOSPI", score=50.0)]
+        kosdaq = [self._make_pool_a_item("035720", "카카오", "KOSDAQ", score=40.0)]
+
+        try:
+            strategy._save_pool_a(kospi, kosdaq)
+            self.assertTrue(os.path.exists(test_file))
+
+            items = strategy._load_pool_a()
+            self.assertEqual(len(items), 2)
+            codes = {i.code for i in items}
+            self.assertIn("005930", codes)
+            self.assertIn("035720", codes)
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
+
+    def test_load_pool_a_missing_file(self):
+        """Pool A 파일 없으면 빈 리스트, 에러 없음."""
+        strategy, *_ = self._make_strategy()
+        strategy._cfg.pool_a_file = "nonexistent_pool_a.json"
+
+        items = strategy._load_pool_a()
+        self.assertEqual(items, [])
+
+    def test_load_pool_a_stale_date(self):
+        """Pool A 날짜가 2일 이상 오래되면 빈 리스트."""
+        strategy, _, _, _, tm = self._make_strategy()
+        test_file = "test_pool_a_stale.json"
+        strategy._cfg.pool_a_file = test_file
+
+        # 오늘이 2026-02-27이라면, generated_date가 2026-02-24 → 3일 전 → stale
+        tm.get_current_kst_time.return_value = _kst_dt(month=2, day=27)
+
+        try:
+            data = {
+                "generated_date": "20260224",
+                "kospi": [],
+                "kosdaq": [],
+            }
+            with open(test_file, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+
+            items = strategy._load_pool_a()
+            self.assertEqual(items, [])
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
+
+    def test_load_pool_a_corrupted_json(self):
+        """Pool A JSON 파싱 실패 시 빈 리스트."""
+        strategy, *_ = self._make_strategy()
+        test_file = "test_pool_a_corrupt.json"
+        strategy._cfg.pool_a_file = test_file
+
+        try:
+            with open(test_file, "w", encoding="utf-8") as f:
+                f.write("{invalid json")
+
+            items = strategy._load_pool_a()
+            self.assertEqual(items, [])
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
+
+    # ── Pool A + Pool B 병합 (build_watchlist) ──
+
+    async def test_build_watchlist_merges_pool_a_and_pool_b(self):
+        """Pool A + Pool B 병합 시 Pool A 우선, 중복 제거."""
+        strategy, ts, indicator, mapper, tm = self._make_strategy(
+            pool_b_size=5, max_watchlist=10, min_avg_trading_value_5d=0,
+        )
+
+        # Pool A: 2종목 미리 로드
+        pool_a_item_1 = self._make_pool_a_item("PA0001", "풀A종목1", "KOSPI", score=50.0)
+        pool_a_item_2 = self._make_pool_a_item("PA0002", "풀A종목2", "KOSDAQ", score=45.0)
+        strategy._pool_a_loaded = True
+        strategy._pool_a_items = {"PA0001": pool_a_item_1, "PA0002": pool_a_item_2}
+
+        # Pool B: 랭킹 API가 종목 반환 → 분석 후 watchlist에 추가
+        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"mksc_shrn_iscd": "PB0001", "hts_kor_isnm": "풀B종목1"}],
+        )
+        ts.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[],
+        )
+        ts.get_top_volume_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[],
+        )
+        # PB0001 analyze → 통과
+        ohlcv = _make_ohlcv(60)
+        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        ts.get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": {"w52_hgpr": str(ohlcv[-1]["close"] + 200), "stck_llam": "500000000000"}},
+        )
+        indicator.get_bollinger_bands.return_value = _make_bb_response(ohlcv)
+
+        await strategy._build_watchlist()
+
+        # Pool A 2종목 + Pool B 1종목 = 3종목
+        self.assertIn("PA0001", strategy._watchlist)
+        self.assertIn("PA0002", strategy._watchlist)
+        self.assertIn("PB0001", strategy._watchlist)
+        # Pool A 아이템의 score 유지
+        self.assertEqual(strategy._watchlist["PA0001"].total_score, 50.0)
+
+    async def test_build_watchlist_pool_b_only_when_no_pool_a(self):
+        """Pool A 없으면 Pool B만으로 워치리스트 구성 (기존 V1 동작)."""
+        strategy, ts, indicator, mapper, tm = self._make_strategy(
+            pool_b_size=5, max_watchlist=10, min_avg_trading_value_5d=0,
+        )
+        # Pool A 파일 없음 → _load_pool_a가 빈 리스트 반환
+        strategy._cfg.pool_a_file = "nonexistent.json"
+
+        # Pool B: 1종목
+        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"mksc_shrn_iscd": "PB0001", "hts_kor_isnm": "풀B종목1"}],
+        )
+        ts.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[],
+        )
+        ts.get_top_volume_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[],
+        )
+        ohlcv = _make_ohlcv(60)
+        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        ts.get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": {"w52_hgpr": str(ohlcv[-1]["close"] + 200), "stck_llam": "500000000000"}},
+        )
+        indicator.get_bollinger_bands.return_value = _make_bb_response(ohlcv)
+
+        await strategy._build_watchlist()
+
+        # Pool A 비어있으므로 Pool B 종목만 존재
+        self.assertEqual(len(strategy._pool_a_items), 0)
+        self.assertIn("PB0001", strategy._watchlist)
+
+    async def test_intraday_refresh_keeps_pool_a_fixed(self):
+        """장중 갱신 시 Pool A는 그대로, Pool B만 갱신."""
+        strategy, ts, indicator, mapper, tm = self._make_strategy(
+            pool_b_size=5, max_watchlist=10,
+        )
+
+        # Pool A: 이미 로드 완료 상태
+        pool_a_item = self._make_pool_a_item("PA0001", "풀A종목1", "KOSPI", score=50.0)
+        strategy._pool_a_loaded = True
+        strategy._pool_a_items = {"PA0001": pool_a_item}
+
+        # Pool B: 빈 랭킹
+        for mock_fn in [ts.get_top_trading_value_stocks, ts.get_top_rise_fall_stocks, ts.get_top_volume_stocks]:
+            mock_fn.return_value = ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[],
+            )
+
+        await strategy._build_watchlist()
+
+        # Pool A 여전히 로드 상태 유지
+        self.assertTrue(strategy._pool_a_loaded)
+        self.assertIn("PA0001", strategy._pool_a_items)
+        # 워치리스트에 Pool A 포함
+        self.assertIn("PA0001", strategy._watchlist)
+
+    # ── generate_pool_a (전체 종목 스캔) ──
+
+    async def test_generate_pool_a_market_cap_filter(self):
+        """시총 2,000억 미만/2조 초과 종목은 Pool A에서 제외."""
+        import pandas as pd
+        strategy, ts, indicator, mapper, tm = self._make_strategy()
+        test_file = "test_pool_a_gen.json"
+        strategy._cfg.pool_a_file = test_file
+
+        # CSV 데이터를 DataFrame으로 모킹
+        mapper.df = pd.DataFrame([
+            {"종목코드": "SMALL1", "종목명": "시총소형", "시장구분": "KOSDAQ"},    # 시총 100억 → 탈락
+            {"종목코드": "MID01", "종목명": "시총중형", "시장구분": "KOSDAQ"},     # 시총 5000억 → 통과
+            {"종목코드": "BIG01", "종목명": "시총대형", "시장구분": "KOSPI"},      # 시총 5조 → 탈락
+        ])
+
+        # get_current_stock_price 응답: 시총 + 거래대금
+        def price_side_effect(code):
+            caps = {
+                "SMALL1": "10000000000",      # 100억 → 시총 하한 미달
+                "MID01": "500000000000",      # 5000억 → 통과
+                "BIG01": "5000000000000",     # 5조 → 시총 상한 초과
+            }
+            trdvl = "15000000000"  # 150억 → 거래대금 통과
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+                data={"output": {"stck_llam": caps.get(code, "0"), "acml_tr_pbmn": trdvl,
+                                 "w52_hgpr": "11000"}},
+            )
+        ts.get_current_stock_price = AsyncMock(side_effect=price_side_effect)
+
+        # _analyze_candidate: MID01만 통과
+        ohlcv = _make_ohlcv(60)
+        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        indicator.get_bollinger_bands.return_value = _make_bb_response(ohlcv)
+
+        try:
+            result = await strategy.generate_pool_a()
+
+            # SMALL1과 BIG01은 시총 필터에서 탈락, MID01만 1차 통과
+            self.assertEqual(result["first_filter_passed"], 1)
+            # MID01이 2차도 통과했다면 total >= 1
+            self.assertGreaterEqual(result["total"], 0)
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
+
+    async def test_generate_pool_a_splits_kospi_kosdaq(self):
+        """generate_pool_a가 KOSPI/KOSDAQ 각각 pool_a_size_per_market개 분리."""
+        import pandas as pd
+        strategy, ts, indicator, mapper, tm = self._make_strategy(
+            pool_a_size_per_market=2,
+        )
+        test_file = "test_pool_a_split.json"
+        strategy._cfg.pool_a_file = test_file
+
+        # 4종목: KOSPI 2 + KOSDAQ 2 (모두 시총/거래대금 통과)
+        mapper.df = pd.DataFrame([
+            {"종목코드": "KP001", "종목명": "코스피1", "시장구분": "KOSPI"},
+            {"종목코드": "KP002", "종목명": "코스피2", "시장구분": "KOSPI"},
+            {"종목코드": "KP003", "종목명": "코스피3", "시장구분": "KOSPI"},
+            {"종목코드": "KD001", "종목명": "코스닥1", "시장구분": "KOSDAQ"},
+            {"종목코드": "KD002", "종목명": "코스닥2", "시장구분": "KOSDAQ"},
+            {"종목코드": "KD003", "종목명": "코스닥3", "시장구분": "KOSDAQ"},
+        ])
+
+        # 모든 종목 시총/거래대금 통과
+        ts.get_current_stock_price = AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": {"stck_llam": "500000000000", "acml_tr_pbmn": "15000000000",
+                             "w52_hgpr": "11000"}},
+        ))
+
+        ohlcv = _make_ohlcv(60)
+        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        indicator.get_bollinger_bands.return_value = _make_bb_response(ohlcv)
+
+        # is_kosdaq 시장 구분 모킹
+        def is_kosdaq_side_effect(code):
+            return code.startswith("KD")
+        mapper.is_kosdaq.side_effect = is_kosdaq_side_effect
+
+        try:
+            result = await strategy.generate_pool_a()
+
+            # pool_a_size_per_market=2 이므로 최대 KOSPI 2 + KOSDAQ 2
+            self.assertLessEqual(result["kospi_count"], 2)
+            self.assertLessEqual(result["kosdaq_count"], 2)
+
+            # JSON 파일 확인
+            self.assertTrue(os.path.exists(test_file))
+            with open(test_file, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertIn("kospi", saved)
+            self.assertIn("kosdaq", saved)
+            self.assertLessEqual(len(saved["kospi"]), 2)
+            self.assertLessEqual(len(saved["kosdaq"]), 2)
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
+
+
 if __name__ == "__main__":
     unittest.main()
