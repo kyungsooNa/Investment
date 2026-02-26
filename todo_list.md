@@ -46,7 +46,6 @@ IndicatorService로 계산 → 데이터만 반환
 * **[개선]** 콜백 핸들링 개선: `KoreaInvestWebSocketAPI` 내 `on_realtime_message_callback`에서 직접 `print` 문 대신 `CLIView`와 같은 UI 레이어로 메시지 전달 분리.
 
 ### 2. 로깅 (Logging)
-* **[관리]** 로그 파일 관리: 로그 회전(log rotation) 기능 또는 날짜별/크기별 로그 파일 관리 전략 추가.
 * **[세분화]** 로그 상세 수준: `DEBUG` 레벨 로그 세분화 또는 특정 모듈에 대한 상세 로깅 제어 기능 추가.
 
 ### 3. 코드 가독성 및 유지보수성 (Code Readability & Maintainability)
