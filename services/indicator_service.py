@@ -1,6 +1,6 @@
 import pandas as pd
 from typing import List, Dict, Optional
-from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage
+from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
 from services.trading_service import TradingService
 
 class IndicatorService:
@@ -187,3 +187,59 @@ class IndicatorService:
 
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"MA 계산 중 오류: {str(e)}", data=None)
+
+    async def get_relative_strength(self, stock_code: str, period_days: int = 63,
+                                     candle_type: str = "D",
+                                     ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
+        """N일 수익률(상대강도 원시값)을 계산하여 반환합니다.
+
+        오닐의 RS 지수는 전 상장 종목 대비 상대 순위이나,
+        API 제약상 호출 측에서 후보군 내 퍼센타일을 별도로 산출해야 합니다.
+        이 메서드는 개별 종목의 절대 N일 수익률만 반환합니다.
+
+        :param stock_code: 종목코드
+        :param period_days: 수익률 계산 기간 (기본 63 ≈ 3개월)
+        :param candle_type: 봉 타입 ('D':일봉)
+        :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
+        """
+        data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
+        if err:
+            return err
+
+        if len(data) < period_days:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.EMPTY_VALUES.value,
+                msg1=f"데이터 부족: {len(data)} < {period_days}",
+                data=None
+            )
+
+        try:
+            df = pd.DataFrame(data)
+            if df['close'].dtype == object:
+                df['close'] = pd.to_numeric(df['close'])
+
+            recent_close = float(df['close'].iloc[-1])
+            past_close = float(df['close'].iloc[-period_days])
+
+            if past_close <= 0:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.EMPTY_VALUES.value,
+                    msg1=f"과거 종가가 0 이하: {past_close}",
+                    data=None
+                )
+
+            return_pct = ((recent_close - past_close) / past_close) * 100
+
+            result = ResRelativeStrength(
+                code=stock_code,
+                date=str(df['date'].iloc[-1]),
+                return_pct=round(return_pct, 2),
+            )
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
+
+        except Exception as e:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,
+                msg1=f"상대강도 계산 중 오류: {str(e)}",
+                data=None
+            )

@@ -667,3 +667,28 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             return response
 
         return response
+
+    async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
+        """기업 재무비율 조회 (영업이익 증가율 등).
+
+        TR ID: FHKST66430300 (KIS 문서 확인 필요, 실전 전용 가능성)
+        모의투자 환경에서 미지원 시 API_ERROR 반환 → 호출 측에서 graceful degradation.
+        """
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.FINANCIAL_RATIO)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config['custtype'])
+
+        params = Params.financial_ratio(stock_code=stock_code)
+
+        self._logger.info(f"{stock_code} 기업 재무비율 조회 시도...")
+        response: ResCommonResponse = await self.call_api(
+            "GET", EndpointKey.FINANCIAL_RATIO, params=params, retry_count=1,
+        )
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self._logger.warning(f"{stock_code} 재무비율 조회 실패: {response.msg1}")
+            return response
+
+        return response

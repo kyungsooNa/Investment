@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 import pandas as pd
 from services.indicator_service import IndicatorService
-from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage
+from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
 
 @pytest.fixture
 def indicator_service():
@@ -184,3 +184,80 @@ async def test_get_moving_average_not_enough_data(indicator_service):
 
     assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
     assert "데이터 부족" in result.msg1
+
+
+# ═══════════════════════════════════════════════════════
+# RS (상대강도) 테스트
+# ═══════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_get_relative_strength_success(indicator_service):
+    """3개월 수익률 정상 계산"""
+    service, mock_ts = indicator_service
+
+    # 70일치 데이터 (period_days=63 충분)
+    data = []
+    for i in range(70):
+        data.append({
+            "date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}",
+            "close": 10000 + i * 50,  # 10000 → 13450 선형 상승
+            "open": 10000, "high": 10000, "low": 10000, "volume": 100,
+        })
+
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data is not None
+    assert isinstance(result.data, ResRelativeStrength)
+    assert result.data.code == "005930"
+    # 최근종가=data[-1].close, 63일전종가=data[-63].close
+    # 수익률 ≈ 29~31% (인덱싱에 따라 약간 다를 수 있음)
+    assert result.data.return_pct > 25.0
+    assert result.data.return_pct < 35.0
+
+
+@pytest.mark.asyncio
+async def test_get_relative_strength_insufficient_data(indicator_service):
+    """데이터 부족 시 EMPTY_VALUES 반환"""
+    service, mock_ts = indicator_service
+
+    # 30일치만 (period_days=63 필요)
+    data = [{"date": f"2025010{i+1}", "close": 10000 + i * 100,
+             "open": 10000, "high": 10000, "low": 10000, "volume": 100}
+            for i in range(30)]
+
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
+
+    assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
+    assert "데이터 부족" in result.msg1
+
+
+@pytest.mark.asyncio
+async def test_get_relative_strength_with_ohlcv_data_no_api_call(indicator_service):
+    """ohlcv_data 직접 전달 시 API 호출 안함"""
+    service, mock_ts = indicator_service
+
+    data = [{"date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}",
+             "close": 10000, "open": 10000, "high": 10000, "low": 10000, "volume": 100}
+            for i in range(70)]
+
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data.return_pct == 0.0  # 종가 일정 → 수익률 0%
+    mock_ts.get_ohlcv.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_relative_strength_zero_past_close(indicator_service):
+    """과거 종가가 0이면 EMPTY_VALUES 반환"""
+    service, mock_ts = indicator_service
+
+    data = [{"date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}",
+             "close": 0 if i < 10 else 10000,
+             "open": 10000, "high": 10000, "low": 10000, "volume": 100}
+            for i in range(70)]
+
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
+
+    assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
