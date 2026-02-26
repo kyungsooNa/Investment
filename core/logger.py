@@ -87,19 +87,6 @@ def get_strategy_logger(strategy_name: str, log_dir="logs"):
     file_handler.setFormatter(JsonFormatter())
     logger.addHandler(file_handler)
 
-    # 2. 콘솔 스트림 핸들러 (디버깅 편의용)
-    stream_handler = logging.StreamHandler()
-    class DictFormatter(logging.Formatter):
-        def formatMessage(self, record):
-            if isinstance(record.msg, dict):
-                return json.dumps(record.msg, ensure_ascii=False, indent=2)
-            return super().formatMessage(record)
-    
-    stream_handler.setFormatter(DictFormatter(
-        f'%(asctime)s - %(levelname)s - [{strategy_name}] - %(message)s'
-    ))
-    logger.addHandler(stream_handler)
-    
     return logger
 
 

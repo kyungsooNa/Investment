@@ -22,15 +22,16 @@ async def lifespan(app: FastAPI):
     # 3. web_api에 완성된 ctx 연결 (이게 없어서 503 에러가 났던 것임)
     web_api.set_ctx(ctx)
 
-    # 4. 전략 스케줄러 초기화 (자동 시작 아님, 웹 UI에서 수동 시작)
+    # 4. 전략 스케줄러 초기화 + 이전 상태 복원
     ctx.initialize_scheduler()
+    await ctx.scheduler.restore_state()
 
     print("=== 웹 서비스 초기화 완료 ===")
     yield
 
-    # 종료 시 스케줄러 정지
+    # 종료 시 스케줄러 상태 저장 후 정지
     if ctx.scheduler and ctx.scheduler._running:
-        await ctx.scheduler.stop()
+        await ctx.scheduler.stop(save_state=True)
 
 # 1. FastAPI 앱 인스턴스 생성 (lifespan 추가)
 app = FastAPI(title="Trading App", lifespan=lifespan)

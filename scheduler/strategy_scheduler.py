@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -12,6 +15,10 @@ from common.types import TradeSignal, ErrorCode
 from managers.virtual_trade_manager import VirtualTradeManager
 from services.order_execution_service import OrderExecutionService
 from core.time_manager import TimeManager
+
+SIGNAL_HISTORY_FILE = "data/signal_history.csv"
+SIGNAL_COLUMNS = ["strategy_name", "code", "name", "action", "price", "reason", "timestamp", "api_success"]
+SCHEDULER_STATE_FILE = "data/scheduler_state.json"
 
 
 @dataclass
@@ -67,8 +74,8 @@ class StrategyScheduler:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._last_run: Dict[str, datetime] = {}
-        self._signal_history: List[SignalRecord] = []
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
+        self._signal_history: List[SignalRecord] = self._load_signal_history()
 
     # ── 전략 등록 ──
 
@@ -91,7 +98,9 @@ class StrategyScheduler:
         self._task = asyncio.create_task(self._loop())
         self._logger.info("[Scheduler] 시작 (전체 전략 활성화)")
 
-    async def stop(self):
+    async def stop(self, save_state: bool = False):
+        if save_state:
+            self._save_scheduler_state()
         self._running = False
         for cfg in self._strategies:
             cfg.enabled = False
@@ -228,7 +237,7 @@ class StrategyScheduler:
                     f"(CSV는 기록됨)"
                 )
 
-        # 시그널 이력 기록
+        # 시그널 이력 기록 (메모리 + CSV 영속화)
         now = self._tm.get_current_kst_time()
         record = SignalRecord(
             strategy_name=signal.strategy_name,
@@ -243,15 +252,21 @@ class StrategyScheduler:
         self._signal_history.append(record)
         if len(self._signal_history) > self.MAX_HISTORY:
             self._signal_history = self._signal_history[-self.MAX_HISTORY:]
+        self._append_signal_csv(record)
 
     # ── 개별 전략 제어 ──
 
-    def start_strategy(self, name: str) -> bool:
-        """개별 전략 활성화. 성공 시 True 반환."""
+    async def start_strategy(self, name: str) -> bool:
+        """개별 전략 활성화. 루프가 돌고 있지 않으면 자동 시작. 성공 시 True 반환."""
         for cfg in self._strategies:
             if cfg.strategy.name == name:
                 cfg.enabled = True
                 self._logger.info(f"[Scheduler] 전략 활성화: {name}")
+                # 루프가 안 돌고 있으면 자동으로 시작
+                if not self._running:
+                    self._running = True
+                    self._task = asyncio.create_task(self._loop())
+                    self._logger.info("[Scheduler] 루프 자동 시작 (개별 전략 활성화)")
                 return True
         return False
 
@@ -284,6 +299,103 @@ class StrategyScheduler:
             "dry_run": self._dry_run,
             "strategies": strategies,
         }
+
+    # ── CSV 영속화 ──
+
+    def _load_signal_history(self) -> List[SignalRecord]:
+        """서버 시작 시 CSV에서 시그널 이력 복원."""
+        if not os.path.exists(SIGNAL_HISTORY_FILE):
+            return []
+        records: List[SignalRecord] = []
+        try:
+            with open(SIGNAL_HISTORY_FILE, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    records.append(SignalRecord(
+                        strategy_name=row["strategy_name"],
+                        code=row["code"],
+                        name=row["name"],
+                        action=row["action"],
+                        price=int(row["price"]),
+                        reason=row["reason"],
+                        timestamp=row["timestamp"],
+                        api_success=row.get("api_success", "True") == "True",
+                    ))
+            # MAX_HISTORY 초과 시 최근 것만 유지
+            if len(records) > self.MAX_HISTORY:
+                records = records[-self.MAX_HISTORY:]
+            self._logger.info(f"[Scheduler] 시그널 이력 {len(records)}건 로드 완료")
+        except Exception as e:
+            self._logger.error(f"[Scheduler] 시그널 이력 로드 실패: {e}")
+            records = []
+        return records
+
+    def _save_scheduler_state(self):
+        """종료 시 활성 전략 목록을 JSON으로 저장."""
+        enabled_names = [
+            cfg.strategy.name for cfg in self._strategies if cfg.enabled
+        ]
+        state = {"running": self._running, "enabled_strategies": enabled_names}
+        try:
+            with open(SCHEDULER_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False)
+            self._logger.info(f"[Scheduler] 상태 저장 완료: {enabled_names}")
+        except Exception as e:
+            self._logger.error(f"[Scheduler] 상태 저장 실패: {e}")
+
+    def clear_saved_state(self):
+        """저장된 상태 파일 삭제 (수동 정지 시 호출)."""
+        if os.path.exists(SCHEDULER_STATE_FILE):
+            os.remove(SCHEDULER_STATE_FILE)
+            self._logger.info("[Scheduler] 저장된 상태 파일 삭제")
+
+    async def restore_state(self):
+        """이전 실행 상태 복원. 활성 전략이 있으면 자동 시작."""
+        if not os.path.exists(SCHEDULER_STATE_FILE):
+            return
+        try:
+            with open(SCHEDULER_STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            enabled_names = state.get("enabled_strategies", [])
+            if not enabled_names:
+                return
+
+            # 개별 전략 활성화
+            restored = []
+            for cfg in self._strategies:
+                if cfg.strategy.name in enabled_names:
+                    cfg.enabled = True
+                    restored.append(cfg.strategy.name)
+
+            if restored:
+                self._running = True
+                self._task = asyncio.create_task(self._loop())
+                self._logger.info(
+                    f"[Scheduler] 이전 상태 복원 — 자동 시작: {restored}"
+                )
+        except Exception as e:
+            self._logger.error(f"[Scheduler] 상태 복원 실패: {e}")
+
+    def _append_signal_csv(self, record: SignalRecord):
+        """시그널 1건을 CSV에 append."""
+        file_exists = os.path.exists(SIGNAL_HISTORY_FILE)
+        try:
+            with open(SIGNAL_HISTORY_FILE, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=SIGNAL_COLUMNS)
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow({
+                    "strategy_name": record.strategy_name,
+                    "code": record.code,
+                    "name": record.name,
+                    "action": record.action,
+                    "price": record.price,
+                    "reason": record.reason,
+                    "timestamp": record.timestamp,
+                    "api_success": record.api_success,
+                })
+        except Exception as e:
+            self._logger.error(f"[Scheduler] 시그널 CSV 저장 실패: {e}")
 
     def get_signal_history(self, strategy_name: str = None) -> list:
         """시그널 실행 이력 반환. strategy_name 지정 시 해당 전략만 필터."""
