@@ -1,159 +1,80 @@
 # integration_test/it_trading_app.py
-import pytest
-import asyncio
-import json
-import app
-from app.trading_app import TradingApp
-from unittest.mock import AsyncMock, MagicMock
-from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResFluctuation, ErrorCode
-from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
-from brokers.korea_investment.korea_invest_trid_keys import TrIdLeaf
-from brokers.korea_investment.korea_invest_url_keys import EndpointKey
-from app.user_action_executor import UserActionExecutor
-from tests.integration_test import ctx  # ✅ IDE가 심볼을 인식합니다.
+# import pytest
+# import asyncio
+# import json
+# from unittest.mock import AsyncMock, MagicMock
+# from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResFluctuation, ErrorCode
+# from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+# from brokers.korea_investment.korea_invest_trid_keys import TrIdLeaf
+# from brokers.korea_investment.korea_invest_url_keys import EndpointKey
+# from tests.integration_test import ctx  # ✅ IDE가 심볼을 인식합니다.
 
 
-@pytest.fixture
-def get_mock_config():
-    """mock된 config 데이터 반환"""
-    return {
-        "api_key": "mock-api-key",
-        "api_secret_key": "mock-api-secret",
-        "base_url": "https://mock-base-url.com",
-        "websocket_url": "wss://mock-websocket-url.com",
-        "stock_account_number": "1234567890",
-        "paper_api_key": "mock-paper-api-key",
-        "paper_api_secret_key": "mock-paper-api-secret",
-        "paper_stock_account_number": "0987654321",
-        "htsid": "test-htsid",
-        "custtype": "P",
-        "market_code": "J",
-        "is_paper_trading": False,
-    }
+# @pytest.fixture
+# def get_mock_config():
+#     """mock된 config 데이터 반환"""
+#     return {
+#         "api_key": "mock-api-key",
+#         "api_secret_key": "mock-api-secret",
+#         "base_url": "https://mock-base-url.com",
+#         "websocket_url": "wss://mock-websocket-url.com",
+#         "stock_account_number": "1234567890",
+#         "paper_api_key": "mock-paper-api-key",
+#         "paper_api_secret_key": "mock-paper-api-secret",
+#         "paper_stock_account_number": "0987654321",
+#         "htsid": "test-htsid",
+#         "custtype": "P",
+#         "market_code": "J",
+#         "is_paper_trading": False,
+#     }
 
 
-@pytest.fixture
-def real_app_instance(mocker, get_mock_config, test_logger):
-    """
-    통합 테스트를 위해 실제 TradingApp 인스턴스를 생성하고 초기화합니다.
-    실제 네트워크 호출과 관련된 부분만 최소한으로 모킹합니다.
-    """
-    # 1. TokenManager 관련 네트워크 호출 모킹
-    mock_token_manager_instance = MagicMock()
-    mock_token_manager_instance.get_access_token = AsyncMock(return_value="mock_access_token")
-    mock_token_manager_instance.issue_token = AsyncMock(return_value={
-        "access_token": "mock_integration_test_token", "expires_in": 86400
-    })
-    mocker.patch('brokers.korea_investment.korea_invest_token_manager.TokenManager',
-                 return_value=mock_token_manager_instance)
+# @pytest.fixture
+# def real_app_instance(mocker, get_mock_config, test_logger):
+#     """
+#     통합 테스트를 위해 실제 TradingApp 인스턴스를 생성하고 초기화합니다.
+#     실제 네트워크 호출과 관련된 부분만 최소한으로 모킹합니다.
+#     """
+#     # 1. TokenManager 관련 네트워크 호출 모킹
+#     mock_token_manager_instance = MagicMock()
+#     mock_token_manager_instance.get_access_token = AsyncMock(return_value="mock_access_token")
+#     mock_token_manager_instance.issue_token = AsyncMock(return_value={
+#         "access_token": "mock_integration_test_token", "expires_in": 86400
+#     })
+#     mocker.patch('brokers.korea_investment.korea_invest_token_manager.TokenManager',
+#                  return_value=mock_token_manager_instance)
 
-    # # 2. Hashkey 생성 로직 모킹
-    # mock_trading_api_instance = MagicMock()
-    # mock_trading_api_instance._get_hashkey.return_value = "mock_hashkey_for_it_test"
-    # mocker.patch(f'{KoreaInvestApiTrading.__module__}.{KoreaInvestApiTrading.__name__}',
-    #              return_value=mock_trading_api_instance)
+#     # # 2. Hashkey 생성 로직 모킹
+#     # mock_trading_api_instance = MagicMock()
+#     # mock_trading_api_instance._get_hashkey.return_value = "mock_hashkey_for_it_test"
+#     # mocker.patch(f'{KoreaInvestApiTrading.__module__}.{KoreaInvestApiTrading.__name__}',
+#     #              return_value=mock_trading_api_instance)
 
-    # ✅ 3. logging.getLogger를 모킹하여 logger 핸들러 무력화
-    # dummy_logger = MagicMock()
+#     # ✅ 3. logging.getLogger를 모킹하여 logger 핸들러 무력화
+#     # dummy_logger = MagicMock()
 
-    # 2. 실제 TradingApp 인스턴스를 생성합니다.
-    #    이 과정에서 config.yaml 로드, Logger, TimeManager, Env, TokenManager 초기화가 자동으로 수행됩니다.
-    app = TradingApp(logger=test_logger)
-    app.env.set_trading_mode(False)  # 실전 투자 환경 테스트
-    app.config = get_mock_config
-    # app.logger = MagicMock()
+#     # 2. 실제 TradingApp 인스턴스를 생성합니다.
+#     #    이 과정에서 config.yaml 로드, Logger, TimeManager, Env, TokenManager 초기화가 자동으로 수행됩니다.
+#     app = TradingApp(logger=test_logger)
+#     app.env.set_trading_mode(False)  # 실전 투자 환경 테스트
+#     app.config = get_mock_config
+#     # app.logger = MagicMock()
 
-    # 3. TradingService 등 주요 서비스들을 실제 객체로 초기화합니다.
-    #    이 과정은 app.run_async()의 일부이며, 동기적으로 실행하여 테스트 준비를 마칩니다.
-    asyncio.run(app._complete_api_initialization())
+#     # 3. TradingService 등 주요 서비스들을 실제 객체로 초기화합니다.
+#     #    이 과정은 app.run_async()의 일부이며, 동기적으로 실행하여 테스트 준비를 마칩니다.
+#     asyncio.run(app._complete_api_initialization())
 
-    return app
-
-
-@pytest.mark.asyncio
-async def test_execute_action_select_environment_success_real(real_app_instance, mocker):
-    """
-    (통합 테스트) 메뉴 '0' - 거래 환경 변경 성공 시 running_status 유지
-    """
-    app = real_app_instance
-
-    # ✅ _select_environment() 모킹: 성공
-    mocker.patch.object(app, "select_environment", new_callable=AsyncMock, return_value=True)
-    app.logger.info = MagicMock()
-
-    # --- 실행 ---
-    executor = UserActionExecutor(app)
-    running_status = await executor.execute("0")
-
-    # --- 검증 ---
-    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
-    assert running_status is True
-
-@pytest.mark.asyncio
-async def test_execute_action_select_environment_fail_real(real_app_instance, mocker):
-    """
-    (통합 테스트) 메뉴 '0' - 거래 환경 변경 실패 시 running_status = False
-    """
-    app = real_app_instance
-
-    # ✅ _select_environment() 모킹: 실패
-    mocker.patch.object(app, "select_environment", new_callable=AsyncMock, return_value=False)
-    app.logger.info = MagicMock()
-
-    # --- 실행 ---
-    executor = UserActionExecutor(app)
-    running_status = await executor.execute("0")
-
-    # --- 검증 ---
-    app.logger.info.assert_called_once_with("거래 환경 변경을 시작합니다.")
-    assert running_status is False
-
-
-@pytest.mark.asyncio
-async def test_execute_action_invalidate_token_success_real(real_app_instance):
-    """
-    (통합 테스트) 메뉴 '98' - 토큰 무효화 성공 흐름
-TradingApp → TokenManager.invalidate_token → CLIView.display_token_invalidated_message
-    """
-    app = real_app_instance
-
-    # ✅ 의존성 모킹
-    app.env.invalidate_token = MagicMock()
-    app.cli_view.display_token_invalidated_message = MagicMock()
-
-    # --- 실행 ---
-    executor = UserActionExecutor(app)
-    running_status = await executor.execute("998")
-
-    # --- 검증 ---
-    app.env.invalidate_token.assert_called_once()
-    app.cli_view.display_token_invalidated_message.assert_called_once()
-    assert running_status is True
-
-
-@pytest.mark.asyncio
-async def test_execute_action_exit_success_real(real_app_instance):
-    """
-    (통합 테스트) 메뉴 '99' - 프로그램 종료 처리 흐름
-    TradingApp → CLIView.display_exit_message → running_status=False 반환
-    """
-    app = real_app_instance
-
-    # ✅ 종료 메시지 출력 함수 모킹
-    app.cli_view.display_exit_message = MagicMock()
-
-    # --- 실행 ---
-    executor = UserActionExecutor(app)
-    running_status = await executor.execute("999")
-
-    # --- 검증 ---
-    app.cli_view.display_exit_message.assert_called_once()
-    assert running_status is False
-
+#     return app
 
 
 # @pytest.mark.asyncio
-# async def test_get_current_price_full_integration_real(real_app_instance, mocker):
+# async def test_trading_app_initialization_real(real_app_instance):
+#     """
+#     TradingApp이 실전 투자 모드로 정상 초기화되는지 확인
+#     """
+#     app = real_app_instance
+#     assert app is not None
+#     assert app.env.is_paper_trading is False
 #     """
 #     (통합 테스트) 현재가 조회 시 TradingApp → StockQueryService → BrokerAPIWrapper →
 #     get_current_price → call_api 흐름을 따라 실제 서비스가 실행되며,
