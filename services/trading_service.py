@@ -444,6 +444,11 @@ class TradingService:
         self._logger.info(f"Service - {etf_code} ETF 정보 조회 요청")
         return await self._broker_api_wrapper.get_etf_info(etf_code)
 
+    async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
+        """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
+        self._logger.info(f"Service - {stock_code} 재무비율 조회 요청")
+        return await self._broker_api_wrapper.get_financial_ratio(stock_code)
+
     async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
         """
         실시간 데이터 스트림을 구독하고 지정된 시간 동안 수신합니다.
