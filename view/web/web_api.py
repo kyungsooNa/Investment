@@ -332,9 +332,51 @@ async def get_strategies():
     ctx = _get_ctx()
     return ctx.virtual_manager.get_all_strategies()
 
+async def _calculate_benchmark(ctx, code: str, ref_history: list, start_date: str, end_date: str) -> list:
+    """Helper to calculate benchmark history for a given ETF code."""
+    try:
+        resp = await ctx.stock_query_service.trading_service.get_ohlcv_range(
+            code, period="D", start_date=start_date, end_date=end_date
+        )
+        
+        # API 실패 또는 데이터 없는 경우 0으로 채운 리스트 반환
+        if not resp or resp.rt_cd != "0" or not resp.data:
+            return [{"date": h['date'], "return_rate": 0} for h in ref_history]
+
+        ohlcv = resp.data
+        
+        # 첫 거래일의 종가를 기준가로 설정
+        base_price = ohlcv[0]['close']
+        if not isinstance(base_price, (int, float)) or base_price <= 0:
+             return [{"date": h['date'], "return_rate": 0} for h in ref_history]
+
+        ohlcv_map = {item['date']: item['close'] for item in ohlcv}
+        
+        benchmark_history = []
+        last_price = base_price
+        for h in ref_history:
+            date_key = h['date'].replace('-', '')
+            price = ohlcv_map.get(date_key, last_price)
+            
+            # 가격 데이터가 없는 경우(get 실패), 마지막 가격 유지
+            if not isinstance(price, (int, float)):
+                price = last_price
+            else:
+                last_price = price
+
+            bench_return = round(((price - base_price) / base_price) * 100, 2)
+            benchmark_history.append({"date": h['date'], "return_rate": bench_return})
+        
+        return benchmark_history
+
+    except Exception:
+        # 예외 발생 시 로깅하고 0으로 채운 리스트 반환
+        return [{"date": h['date'], "return_rate": 0} for h in ref_history]
+
+
 @router.get("/virtual/chart/{strategy_name}")
 async def get_strategy_chart(strategy_name: str):
-    """특정 전략의 수익률 히스토리(차트용) 반환 + 벤치마크(KOSPI200) 포함"""
+    """특정 전략의 수익률 히스토리(차트용) 반환 + 벤치마크(KOSPI200, KOSDAQ150) 포함"""
     ctx = _get_ctx()
     vm = ctx.virtual_manager
     
@@ -349,38 +391,21 @@ async def get_strategy_chart(strategy_name: str):
     ref_history = histories.get(strategy_name) or histories.get("ALL") or (next(iter(histories.values())) if histories else [])
     
     if not ref_history:
-        return {"histories": {}, "benchmark": []}
+        return {"histories": {}, "benchmarks": {}}
     
-    # 벤치마크 데이터 (KODEX 200: 069500)를 사용하여 시장 흐름 표시
-    benchmark_history = []
-    try:
-        start_date = ref_history[0]['date'].replace('-', '')
-        end_date = ref_history[-1]['date'].replace('-', '')
-        
-        # KODEX 200 일봉 데이터 조회
-        resp = await ctx.stock_query_service.trading_service.get_ohlcv_range(
-            "069500", period="D", start_date=start_date, end_date=end_date
-        )
-        
-        if resp and resp.rt_cd == "0" and resp.data:
-            ohlcv = resp.data
-            base_price = ohlcv[0]['close']
-            ohlcv_map = {item['date']: item['close'] for item in ohlcv}
-            
-            last_price = base_price
-            for h in ref_history:
-                date_key = h['date'].replace('-', '')
-                price = ohlcv_map.get(date_key, last_price)
-                last_price = price
-                
-                bench_return = round(((price - base_price) / base_price) * 100, 2) if base_price else 0
-                benchmark_history.append({"date": h['date'], "return_rate": bench_return})
-        else:
-            benchmark_history = [{"date": h['date'], "return_rate": 0} for h in ref_history]
-    except Exception:
-        benchmark_history = [{"date": h['date'], "return_rate": 0} for h in ref_history]
+    start_date = ref_history[0]['date'].replace('-', '')
+    end_date = ref_history[-1]['date'].replace('-', '')
 
-    return {"histories": histories, "benchmark": benchmark_history}
+    # 벤치마크 데이터 (KOSPI 200, KOSDAQ 150)
+    kospi_benchmark = await _calculate_benchmark(ctx, "069500", ref_history, start_date, end_date)
+    kosdaq_benchmark = await _calculate_benchmark(ctx, "229200", ref_history, start_date, end_date)
+
+    benchmarks = {
+        "KOSPI200": kospi_benchmark,
+        "KOSDAQ150": kosdaq_benchmark,
+    }
+
+    return {"histories": histories, "benchmarks": benchmarks}
 
 @router.get("/virtual/history")
 async def get_virtual_history(force_code: str = None):
