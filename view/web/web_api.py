@@ -645,43 +645,47 @@ async def get_scheduler_status():
 
 @router.post("/scheduler/start")
 async def start_scheduler():
-    """스케줄러 시작."""
+    """스케줄러 시작 (상태 저장 — 재시작 시 자동 복원)."""
     ctx = _get_ctx()
     if not ctx.scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     await ctx.scheduler.start()
+    ctx.scheduler._save_scheduler_state()
     return {"success": True, "status": ctx.scheduler.get_status()}
 
 
 @router.post("/scheduler/stop")
 async def stop_scheduler():
-    """스케줄러 정지."""
+    """스케줄러 정지 (수동 정지 — 재시작 시 자동 실행 안 함)."""
     ctx = _get_ctx()
     if not ctx.scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
-    await ctx.scheduler.stop()
+    await ctx.scheduler.stop(save_state=False)
+    ctx.scheduler.clear_saved_state()
     return {"success": True, "status": ctx.scheduler.get_status()}
 
 
 @router.post("/scheduler/strategy/{name}/start")
 async def start_strategy(name: str):
-    """개별 전략 활성화."""
+    """개별 전략 활성화 (상태 저장 — 재시작 시 자동 복원)."""
     ctx = _get_ctx()
     if not ctx.scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     if not await ctx.scheduler.start_strategy(name):
         raise HTTPException(status_code=404, detail=f"전략 '{name}'을 찾을 수 없습니다")
+    ctx.scheduler._save_scheduler_state()
     return {"success": True, "status": ctx.scheduler.get_status()}
 
 
 @router.post("/scheduler/strategy/{name}/stop")
 async def stop_strategy(name: str):
-    """개별 전략 비활성화."""
+    """개별 전략 비활성화 (상태 저장 — 재시작 시 반영)."""
     ctx = _get_ctx()
     if not ctx.scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     if not ctx.scheduler.stop_strategy(name):
         raise HTTPException(status_code=404, detail=f"전략 '{name}'을 찾을 수 없습니다")
+    ctx.scheduler._save_scheduler_state()
     return {"success": True, "status": ctx.scheduler.get_status()}
 
 
