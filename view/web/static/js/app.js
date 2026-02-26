@@ -623,7 +623,7 @@ let virtualSoldSortState = { key: null, dir: 'asc' };
 let currentVirtualHoldData = [];
 let currentVirtualSoldData = [];
 
-async function loadVirtualHistory() {
+async function loadVirtualHistory(forceCode = null) {
     const summaryBox = document.getElementById('virtual-summary-box');
     const tabContainer = document.getElementById('virtual-strategy-tabs');
 
@@ -634,7 +634,8 @@ async function loadVirtualHistory() {
         summaryBox.innerHTML = '<span>데이터 로드 중...</span>';
 
         // 1. 데이터 가져오기
-        const listRes = await fetch('/api/virtual/history');
+        const url = forceCode ? `/api/virtual/history?force_code=${forceCode}` : '/api/virtual/history';
+        const listRes = await fetch(url);
         console.log('[Virtual] response status:', listRes.status);
         if (listRes.ok) {
             const body = await listRes.json();
