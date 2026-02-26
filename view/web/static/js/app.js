@@ -1597,6 +1597,9 @@ function renderSchedulerStatus(data) {
         const toggleBtn = s.enabled
             ? `<button class="btn btn-sell" style="padding:4px 12px;font-size:0.85em;" onclick="stopStrategy('${s.name}')">정지</button>`
             : `<button class="btn btn-buy" style="padding:4px 12px;font-size:0.85em;" onclick="startStrategy('${s.name}')">시작</button>`;
+        const poolABtn = s.name === '오닐스퀴즈돌파'
+            ? `<button class="btn" style="padding:4px 12px;font-size:0.85em;background:var(--accent);" onclick="generatePoolA(this)">Pool A 생성</button>`
+            : '';
         return `
         <div class="card" style="margin-bottom:8px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -1605,6 +1608,7 @@ function renderSchedulerStatus(data) {
                     ${enabledBadge}
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
+                    ${poolABtn}
                     ${positionBadge}
                     ${toggleBtn}
                 </div>
@@ -1667,6 +1671,27 @@ async function stopStrategy(name) {
         }
     } catch (e) {
         alert('전략 정지 실패');
+    }
+}
+
+async function generatePoolA(btnEl) {
+    const origText = btnEl.textContent;
+    btnEl.disabled = true;
+    btnEl.textContent = 'Pool A 생성 중...';
+    try {
+        const res = await fetch('/api/scheduler/strategy/%EC%98%A4%EB%8B%90%EC%8A%A4%ED%80%B4%EC%A6%88%EB%8F%8C%ED%8C%8C/generate-pool-a', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            const r = data.result;
+            alert(`Pool A 생성 완료!\n\n스캔: ${r.scanned}종목\n1차 통과: ${r.first_filter_passed}종목\n2차 통과: ${r.second_filter_passed}종목\n\nKOSPI: ${r.kospi_count}종목\nKOSDAQ: ${r.kosdaq_count}종목\n시총 범위: ${r.market_cap_filter}`);
+        } else {
+            alert(data.detail || 'Pool A 생성 실패');
+        }
+    } catch (e) {
+        alert('Pool A 생성 실패: ' + e.message);
+    } finally {
+        btnEl.disabled = false;
+        btnEl.textContent = origText;
     }
 }
 

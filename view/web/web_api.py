@@ -721,3 +721,15 @@ async def get_scheduler_history(strategy: str = None):
     if not ctx.scheduler:
         return {"history": []}
     return {"history": ctx.scheduler.get_signal_history(strategy)}
+
+
+@router.post("/scheduler/strategy/오닐스퀴즈돌파/generate-pool-a")
+async def generate_osb_pool_a():
+    """오닐 스퀴즈 전략 Pool A 생성 (장 마감 후 수동 실행)."""
+    ctx = _get_ctx()
+    if not ctx.initialized:
+        raise HTTPException(status_code=503, detail="서비스가 초기화되지 않았습니다.")
+    if not hasattr(ctx, "osb_strategy") or not ctx.osb_strategy:
+        raise HTTPException(status_code=404, detail="오닐스퀴즈돌파 전략 인스턴스를 찾을 수 없습니다.")
+    result = await ctx.osb_strategy.generate_pool_a()
+    return {"success": True, "result": result}
