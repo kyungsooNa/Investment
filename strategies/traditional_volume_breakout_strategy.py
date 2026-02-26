@@ -131,6 +131,11 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
 
         # 3) 각 종목 돌파 조건 체크
         for code, item in self._watchlist.items():
+            # 이미 보유중인 종목은 매수 대상에서 제외
+            if code in self._position_state:
+                self._logger.debug({"event": "scan_skipped_already_holding", "code": code, "name": item.name})
+                continue
+
             log_data = {"code": code, "name": item.name, "watchlist_item": asdict(item)}
             try:
                 price_resp = await self._sqs.handle_get_current_stock_price(code)

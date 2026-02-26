@@ -220,6 +220,11 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         # 4) 종목별 돌파 조건 체크
         for code, item in self._watchlist.items():
+            # 이미 보유중인 종목은 매수 대상에서 제외
+            if code in self._position_state:
+                self._logger.debug({"event": "scan_skipped_already_holding", "code": code, "name": item.name})
+                continue
+
             try:
                 signal = await self._check_buy_conditions(code, item, market_progress)
                 if signal:

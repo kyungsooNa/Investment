@@ -80,6 +80,7 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         tm.get_market_open_time.return_value = open_time
         tm.get_market_close_time.return_value = close_time
 
+        logger = MagicMock()
         config = OneilSqueezeConfig(**config_overrides)
         strategy = OneilSqueezeBreakoutStrategy(
             trading_service=ts,
@@ -88,6 +89,7 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
             stock_code_mapper=mapper,
             time_manager=tm,
             config=config,
+            logger=logger,
         )
         return strategy, ts, indicator, mapper, tm
 
@@ -333,6 +335,49 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
 
         signals = await strategy.scan()
         self.assertEqual(len(signals), 0)
+
+    async def test_scan_skips_already_held_stock(self):
+        """scan()이 이미 보유 중인 종목에 대해 매수 신호를 생성하지 않는지 검증."""
+        # 1. Setup
+        strategy, ts, *_ = self._make_strategy()
+        test_code = "005930"
+
+        # 워치리스트에 종목 추가 (모든 조건 통과 가능하도록)
+        strategy._watchlist = {
+            test_code: OSBWatchlistItem(
+                code=test_code, name="삼성전자", market="KOSDAQ",
+                high_20d=70000, ma_20d=65000, ma_50d=60000,
+                avg_vol_20d=100000, bb_width_min_20d=1000.0,
+                prev_bb_width=1100.0,  # Squeeze OK
+                w52_hgpr=75000, avg_trading_value_5d=20_000_000_000,
+            )
+        }
+        strategy._watchlist_date = "20260225"
+        strategy._watchlist_refresh_done = {10, 30, 60, 90}
+
+        # 이미 보유 중인 것으로 상태 설정
+        strategy._position_state = {
+            test_code: OSBPositionState(
+                entry_price=71000, entry_date="20260224",
+                peak_price=72000, breakout_level=70000
+            )
+        }
+
+        # 마켓 타이밍 OK로 설정
+        strategy._market_timing_cache = {"KOSDAQ": True}
+        strategy._market_timing_date = "20260225"
+
+        # 2. Execute
+        signals = await strategy.scan()
+
+        # 3. Assert
+        self.assertEqual(len(signals), 0)
+        ts.get_current_stock_price.assert_not_called()
+        strategy._logger.debug.assert_called_with({
+            "event": "scan_skipped_already_holding",
+            "code": test_code,
+            "name": "삼성전자",
+        })
 
     # ── 매도 조건 ──
 
