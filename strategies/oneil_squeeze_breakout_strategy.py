@@ -1004,21 +1004,34 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     # ════════════════════════════════════════════════════════
 
     def _should_refresh_watchlist(self) -> bool:
-        """장중 갱신 시점이 도래했고 아직 갱신하지 않았으면 True."""
+        """장중 갱신 시점이 도래했고 아직 갱신하지 않았으면 True.
+
+        이미 지난 시점은 한꺼번에 done 처리하여, 장 중간에 시작해도
+        과거 시점마다 반복 빌드되지 않도록 한다.
+        """
         now = self._tm.get_current_kst_time()
         open_time = self._tm.get_market_open_time()
         elapsed_minutes = (now - open_time).total_seconds() / 60
 
+        triggered = False
         for target_min in self._cfg.watchlist_refresh_minutes:
             if elapsed_minutes >= target_min and target_min not in self._watchlist_refresh_done:
                 self._watchlist_refresh_done.add(target_min)
-                self._logger.info({
-                    "event": "watchlist_refresh_triggered",
-                    "elapsed_minutes": round(elapsed_minutes, 1),
-                    "target_minutes": target_min,
-                })
-                return True
-        return False
+                if not triggered:
+                    # 실제 갱신은 1회만
+                    triggered = True
+                    self._logger.info({
+                        "event": "watchlist_refresh_triggered",
+                        "elapsed_minutes": round(elapsed_minutes, 1),
+                        "target_minutes": target_min,
+                    })
+                else:
+                    # 이미 지난 시점은 done 처리만
+                    self._logger.info({
+                        "event": "watchlist_refresh_skipped_past",
+                        "target_minutes": target_min,
+                    })
+        return triggered
 
     @staticmethod
     def _calc_turnover_ratio(item: OSBWatchlistItem) -> float:
