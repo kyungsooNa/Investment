@@ -246,13 +246,13 @@ def test_get_strategy_logger(tmp_path):
     assert isinstance(logger, logging.Logger)
     assert logger.name == f"strategy.{strategy_name}"
     assert not logger.propagate
-    assert len(logger.handlers) == 2
+    assert len(logger.handlers) == 1  # JSON 파일 핸들러만 존재 (콘솔 핸들러 제거됨)
 
     # 2. 파일 핸들러 검증
     file_handler = next((h for h in logger.handlers if isinstance(h, logging.FileHandler)), None)
     assert file_handler is not None
     assert isinstance(file_handler.formatter, JsonFormatter)
-    
+
     # 파일명에 타임스탬프가 포함되므로 glob으로 검색
     strategy_log_dir = log_dir / "strategies"
     log_files = list(strategy_log_dir.glob(f"*_{strategy_name}.log.json"))
@@ -261,12 +261,7 @@ def test_get_strategy_logger(tmp_path):
     assert file_handler.baseFilename == str(log_file_path)
     assert file_handler.mode == 'a'
 
-    # 3. 스트림 핸들러 검증
-    stream_handler = next((h for h in logger.handlers if isinstance(h, logging.StreamHandler)), None)
-    assert stream_handler is not None
-    assert isinstance(stream_handler.formatter, logging.Formatter)
-
-    # 4. 로깅 동작 검증
+    # 3. 로깅 동작 검증
     dict_message = {"event": "test_event", "data": {"code": "005930", "price": 80000}}
     str_message = "This is a simple string message."
     logger.info(dict_message)

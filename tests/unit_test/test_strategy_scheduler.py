@@ -44,12 +44,15 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         tm = MagicMock()
         tm.is_market_open.return_value = True
 
-        scheduler = StrategyScheduler(
-            virtual_manager=vm,
-            order_execution_service=oes,
-            time_manager=tm,
-            dry_run=dry_run,
-        )
+        # CSV 파일 I/O를 차단하여 테스트 격리
+        with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
+            scheduler = StrategyScheduler(
+                virtual_manager=vm,
+                order_execution_service=oes,
+                time_manager=tm,
+                dry_run=dry_run,
+            )
+        scheduler._append_signal_csv = MagicMock()
         return scheduler, vm, oes, tm
 
     def test_register_strategy(self):
