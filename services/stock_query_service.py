@@ -760,7 +760,7 @@ class StockQueryService:
 
         # 3) 지정 시간 대기
         try:
-            await self.time_manager.sleep(duration)
+            await self.time_manager.async_sleep(duration)
         finally:
             # 4) 구독 해지 및 연결 해제 (예외가 나도 정리 보장)
             await self.trading_service.unsubscribe_program_trading(stock_code)
