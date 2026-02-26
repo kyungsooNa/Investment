@@ -65,9 +65,15 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         ts.get_top_volume_stocks = AsyncMock()
         ts.get_current_stock_price = AsyncMock()
         ts.get_recent_daily_ohlcv = AsyncMock()
+        ts.get_financial_ratio = AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="not available", data=None,
+        ))
         sqs = MagicMock()
         indicator = MagicMock()
         indicator.get_bollinger_bands = AsyncMock()
+        indicator.get_relative_strength = AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 부족", data=None,
+        ))
         mapper = MagicMock()
         mapper.is_kosdaq.return_value = True
         mapper.get_name_by_code.return_value = "테스트종목"
@@ -594,6 +600,250 @@ class TestOneilSqueezeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         # budget = 10,000,000 * 5% = 500,000
         # qty = 500,000 / 50,000 = 10
         self.assertEqual(strategy._calculate_qty(50000), 10)
+
+
+    # ════════════════════════════════════════════════════════
+    # V2 스코어링 테스트
+    # ════════════════════════════════════════════════════════
+
+    def test_rs_score_top_10_percent(self):
+        """RS 상위 10% 종목에 30점 부여."""
+        strategy, *_ = self._make_strategy()
+
+        # 20개 종목: rs_return_3m = 1~20
+        items = []
+        for i in range(20):
+            items.append(OSBWatchlistItem(
+                code=f"{i:06d}", name=f"종목{i}", market="KOSDAQ",
+                high_20d=10000, ma_20d=9000, ma_50d=8000,
+                avg_vol_20d=100000, bb_width_min_20d=100, prev_bb_width=110,
+                w52_hgpr=11000, avg_trading_value_5d=10e9,
+                rs_return_3m=float(i + 1),
+            ))
+
+        strategy._compute_rs_scores(items)
+
+        # 상위 10% = 상위 2개 (rs_return_3m = 19, 20)
+        scored = [it for it in items if it.rs_score > 0]
+        self.assertGreaterEqual(len(scored), 2)
+        # 최상위는 반드시 30점
+        top_item = max(items, key=lambda x: x.rs_return_3m)
+        self.assertEqual(top_item.rs_score, 30.0)
+        # 최하위는 0점
+        bottom_item = min(items, key=lambda x: x.rs_return_3m)
+        self.assertEqual(bottom_item.rs_score, 0.0)
+
+    def test_rs_score_empty_items(self):
+        """빈 리스트에서 에러 없이 동작."""
+        strategy, *_ = self._make_strategy()
+        strategy._compute_rs_scores([])  # 에러 없어야 함
+
+    async def test_profit_growth_score_above_25pct(self):
+        """영업이익 25%↑ → 20점 부여."""
+        strategy, ts, *_ = self._make_strategy()
+
+        ts.get_financial_ratio.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": [{"bsop_prti_icdc": "30.5"}]},
+        )
+
+        item = OSBWatchlistItem(
+            code="005930", name="삼성전자", market="KOSDAQ",
+            high_20d=70000, ma_20d=65000, ma_50d=60000,
+            avg_vol_20d=100000, bb_width_min_20d=1000, prev_bb_width=1100,
+            w52_hgpr=75000, avg_trading_value_5d=20e9,
+        )
+
+        await strategy._fetch_profit_growth(item)
+
+        self.assertEqual(item.profit_growth_score, 20.0)
+
+    async def test_profit_growth_below_threshold(self):
+        """영업이익 25% 미만 → 0점."""
+        strategy, ts, *_ = self._make_strategy()
+
+        ts.get_financial_ratio.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": [{"bsop_prti_icdc": "15.0"}]},
+        )
+
+        item = OSBWatchlistItem(
+            code="005930", name="삼성전자", market="KOSDAQ",
+            high_20d=70000, ma_20d=65000, ma_50d=60000,
+            avg_vol_20d=100000, bb_width_min_20d=1000, prev_bb_width=1100,
+            w52_hgpr=75000, avg_trading_value_5d=20e9,
+        )
+
+        await strategy._fetch_profit_growth(item)
+
+        self.assertEqual(item.profit_growth_score, 0.0)
+
+    async def test_profit_growth_api_failure_graceful(self):
+        """API 실패 시 0점 (전략 중단 안됨)."""
+        strategy, ts, *_ = self._make_strategy()
+
+        ts.get_financial_ratio.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="서버 오류", data=None,
+        )
+
+        item = OSBWatchlistItem(
+            code="005930", name="삼성전자", market="KOSDAQ",
+            high_20d=70000, ma_20d=65000, ma_50d=60000,
+            avg_vol_20d=100000, bb_width_min_20d=1000, prev_bb_width=1100,
+            w52_hgpr=75000, avg_trading_value_5d=20e9,
+        )
+
+        await strategy._fetch_profit_growth(item)  # 에러 없어야 함
+        self.assertEqual(item.profit_growth_score, 0.0)
+
+    async def test_profit_growth_exception_graceful(self):
+        """API 호출 중 예외 발생 시에도 0점 (전략 중단 안됨)."""
+        strategy, ts, *_ = self._make_strategy()
+
+        ts.get_financial_ratio.side_effect = Exception("네트워크 오류")
+
+        item = OSBWatchlistItem(
+            code="005930", name="삼성전자", market="KOSDAQ",
+            high_20d=70000, ma_20d=65000, ma_50d=60000,
+            avg_vol_20d=100000, bb_width_min_20d=1000, prev_bb_width=1100,
+            w52_hgpr=75000, avg_trading_value_5d=20e9,
+        )
+
+        await strategy._fetch_profit_growth(item)  # 에러 없어야 함
+        self.assertEqual(item.profit_growth_score, 0.0)
+
+    def test_watchlist_sorted_by_total_score(self):
+        """total_score 내림차순 정렬 확인."""
+        strategy, *_ = self._make_strategy()
+
+        items = []
+        scores = [0, 30, 50, 20]
+        for i, score in enumerate(scores):
+            item = OSBWatchlistItem(
+                code=f"{i:06d}", name=f"종목{i}", market="KOSDAQ",
+                high_20d=10000, ma_20d=9000, ma_50d=8000,
+                avg_vol_20d=100000, bb_width_min_20d=100, prev_bb_width=110,
+                w52_hgpr=11000, avg_trading_value_5d=10e9,
+                total_score=float(score),
+            )
+            items.append(item)
+
+        items.sort(
+            key=lambda x: (x.total_score, strategy._calc_turnover_ratio(x)),
+            reverse=True,
+        )
+
+        self.assertEqual(items[0].total_score, 50.0)
+        self.assertEqual(items[1].total_score, 30.0)
+        self.assertEqual(items[2].total_score, 20.0)
+        self.assertEqual(items[3].total_score, 0.0)
+
+    def test_watchlist_tiebreaker_by_turnover(self):
+        """동점 시 회전율 높은 종목이 앞에."""
+        strategy, *_ = self._make_strategy()
+
+        # 동점(30점) 2개, 회전율이 다름
+        item_low_turnover = OSBWatchlistItem(
+            code="000001", name="저회전율", market="KOSDAQ",
+            high_20d=10000, ma_20d=9000, ma_50d=8000,
+            avg_vol_20d=100000, bb_width_min_20d=100, prev_bb_width=110,
+            w52_hgpr=11000, avg_trading_value_5d=5e9,
+            market_cap=500e9,  # 회전율: 5e9/500e9 = 0.01
+            total_score=30.0,
+        )
+        item_high_turnover = OSBWatchlistItem(
+            code="000002", name="고회전율", market="KOSDAQ",
+            high_20d=10000, ma_20d=9000, ma_50d=8000,
+            avg_vol_20d=100000, bb_width_min_20d=100, prev_bb_width=110,
+            w52_hgpr=11000, avg_trading_value_5d=50e9,
+            market_cap=500e9,  # 회전율: 50e9/500e9 = 0.1
+            total_score=30.0,
+        )
+
+        items = [item_low_turnover, item_high_turnover]
+        items.sort(
+            key=lambda x: (x.total_score, strategy._calc_turnover_ratio(x)),
+            reverse=True,
+        )
+
+        self.assertEqual(items[0].code, "000002")  # 고회전율이 앞
+        self.assertEqual(items[1].code, "000001")
+
+    def test_compute_total_scores(self):
+        """합산 점수 계산 확인."""
+        strategy, *_ = self._make_strategy()
+
+        items = [
+            OSBWatchlistItem(
+                code="000001", name="A", market="KOSDAQ",
+                high_20d=10000, ma_20d=9000, ma_50d=8000,
+                avg_vol_20d=100000, bb_width_min_20d=100, prev_bb_width=110,
+                w52_hgpr=11000, avg_trading_value_5d=10e9,
+                rs_score=30.0, profit_growth_score=20.0,
+            ),
+            OSBWatchlistItem(
+                code="000002", name="B", market="KOSDAQ",
+                high_20d=10000, ma_20d=9000, ma_50d=8000,
+                avg_vol_20d=100000, bb_width_min_20d=100, prev_bb_width=110,
+                w52_hgpr=11000, avg_trading_value_5d=10e9,
+                rs_score=30.0, profit_growth_score=0.0,
+            ),
+        ]
+
+        strategy._compute_total_scores(items)
+
+        self.assertEqual(items[0].total_score, 50.0)
+        self.assertEqual(items[1].total_score, 30.0)
+
+    def test_extract_op_profit_growth_from_output_list(self):
+        """재무 API 응답에서 영업이익 증가율 추출 (output 리스트)."""
+        strategy, *_ = self._make_strategy()
+
+        data = {"output": [{"bsop_prti_icdc": "35.2"}]}
+        result = strategy._extract_op_profit_growth(data)
+        self.assertAlmostEqual(result, 35.2)
+
+    def test_extract_op_profit_growth_missing_field(self):
+        """필드 없으면 0.0 반환."""
+        strategy, *_ = self._make_strategy()
+
+        data = {"output": [{"some_other_field": "10"}]}
+        result = strategy._extract_op_profit_growth(data)
+        self.assertEqual(result, 0.0)
+
+    def test_extract_op_profit_growth_from_flat_dict(self):
+        """flat dict에서도 추출 가능."""
+        strategy, *_ = self._make_strategy()
+
+        data = {"bsop_prti_icdc": "28.5"}
+        result = strategy._extract_op_profit_growth(data)
+        self.assertAlmostEqual(result, 28.5)
+
+    async def test_profit_growth_tps_chunking(self):
+        """TPS 청크 호출 검증: api_chunk_size=2 → 4개 종목이면 2회 청크."""
+        strategy, ts, *_ = self._make_strategy(api_chunk_size=2)
+
+        ts.get_financial_ratio.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": [{"bsop_prti_icdc": "30"}]},
+        )
+
+        items = []
+        for i in range(4):
+            items.append(OSBWatchlistItem(
+                code=f"{i:06d}", name=f"종목{i}", market="KOSDAQ",
+                high_20d=10000, ma_20d=9000, ma_50d=8000,
+                avg_vol_20d=100000, bb_width_min_20d=100, prev_bb_width=110,
+                w52_hgpr=11000, avg_trading_value_5d=10e9,
+            ))
+
+        await strategy._compute_profit_growth_scores(items)
+
+        # 4개 종목 모두 호출됨
+        self.assertEqual(ts.get_financial_ratio.call_count, 4)
+        # 모든 종목에 20점 부여
+        for item in items:
+            self.assertEqual(item.profit_growth_score, 20.0)
 
 
 if __name__ == "__main__":

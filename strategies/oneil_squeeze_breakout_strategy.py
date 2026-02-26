@@ -84,6 +84,15 @@ class OneilSqueezeConfig(BaseStrategyConfig):
     position_size_pct: float = 5.0
     min_qty: int = 1
 
+    # V2 스코어링
+    rs_period_days: int = 63                   # RS 계산 기간 (~3개월, 약 63거래일)
+    rs_top_percentile: float = 10.0            # 상위 10%에 RS 점수 부여
+    rs_score_points: float = 30.0              # RS 점수
+    profit_growth_threshold_pct: float = 25.0  # 영업이익 성장률 임계값 (%)
+    profit_growth_score_points: float = 20.0   # 영업이익 점수
+    score_top_n: int = 15                      # 스코어 상위 N종목만 감시
+    api_chunk_size: int = 10                   # TPS 방어용 API 청크 크기
+
     # TODO [v2] 체결강도/고래 탐지 임계값
     # execution_strength_min: float = 120.0      # REST inquire-ccnl 또는 WS H0STOUP0
     # whale_order_min_krw: int = 50_000_000      # REST inquire-ccnl 또는 WS H0STOUP0
@@ -106,6 +115,12 @@ class OSBWatchlistItem:
     w52_hgpr: int           # 52주 최고가
     avg_trading_value_5d: float  # 5일 평균 거래대금
     market_cap: int = 0         # 시가총액 (stck_llam)
+
+    # V2 스코어링
+    rs_return_3m: float = 0.0         # 3개월 수익률 (RS 원시값, %)
+    rs_score: float = 0.0             # RS 점수 (0 or 30)
+    profit_growth_score: float = 0.0  # 영업이익 성장 점수 (0 or 20)
+    total_score: float = 0.0          # 합산 점수
 
 
 # ── 포지션 상태 ──────────────────────────────────────────
@@ -772,31 +787,41 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     "event": "build_watchlist_error", "code": code, "error": str(e),
                 }, exc_info=True)
 
-        # 3) 우선순위 정렬: 거래대금/시총 비율(회전율) 내림차순
-        #    회전율이 높을수록 시장의 관심이 집중된 종목
-        items.sort(key=lambda x: self._calc_turnover_ratio(x), reverse=True)
+        # 3) V2 스코어링: RS 퍼센타일 + 영업이익 성장률 + 합산 + 2단계 정렬
+        self._compute_rs_scores(items)
+        await self._compute_profit_growth_scores(items)
+        self._compute_total_scores(items)
 
-        # TODO [v2] 스코어링: RS(3개월 상대강도 상위10% +30점), 업종 소분류 주도(+20점),
-        #   분기 영업이익 25%↑(+20점, /uapi/domestic-stock/v1/finance/financial-ratio)
-        #   스코어 상위 10~15종목만 집중 감시
+        # 1차: total_score 내림차순, 2차: 회전율 내림차순 (동점자 해소)
+        items.sort(
+            key=lambda x: (x.total_score, self._calc_turnover_ratio(x)),
+            reverse=True,
+        )
+
         self._watchlist = {
-            item.code: item for item in items[:self._cfg.max_watchlist]
+            item.code: item for item in items[:self._cfg.score_top_n]
         }
         self._logger.info({
             "event": "build_watchlist_finished",
             "total_candidates_analyzed": len(candidate_map),
             "final_watchlist_count": len(self._watchlist),
             "watchlist_codes": list(self._watchlist.keys()),
+            "top_scores": [
+                {"code": item.code, "name": item.name, "total_score": item.total_score,
+                 "rs_score": item.rs_score, "profit_score": item.profit_growth_score,
+                 "rs_return_3m": round(item.rs_return_3m, 1)}
+                for item in items[:self._cfg.score_top_n]
+            ],
         })
 
     async def _analyze_candidate(self, code: str, name: str) -> Optional[OSBWatchlistItem]:
         """종목의 OHLCV + BB 분석. 조건 충족 시 OSBWatchlistItem 반환.
 
-        TODO [v2] RS(상대강도) 계산: 3개월 수익률을 구해 전체 워치리스트 내 상위10%에 +30점
-        TODO [v2] 스코어 필드를 OSBWatchlistItem에 추가하고, 여기서 산출
+        V2: RS(상대강도) 원시 수익률도 함께 계산하여 rs_return_3m에 저장.
+        퍼센타일 기반 점수 부여는 _build_watchlist()에서 전체 후보 대상으로 수행.
         """
-        # 50일 MA 계산을 위해 충분한 데이터 필요
-        ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=60)
+        # 50일 MA + 3개월 RS 계산을 위해 충분한 데이터 필요 (90일)
+        ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=90)
         if not ohlcv or len(ohlcv) < 50:
             self._logger.info({
                 "event": "watchlist_filter_rejected",
@@ -929,6 +954,14 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             **log_data,
         })
 
+        # V2: RS(3개월 수익률) 계산 (ohlcv 재사용 → 추가 API 호출 없음)
+        rs_return_3m = 0.0
+        rs_resp = await self._indicator.get_relative_strength(
+            code, period_days=self._cfg.rs_period_days, ohlcv_data=ohlcv,
+        )
+        if rs_resp and rs_resp.rt_cd == ErrorCode.SUCCESS.value and rs_resp.data:
+            rs_return_3m = rs_resp.data.return_pct
+
         return OSBWatchlistItem(
             code=code, name=name, market=market,
             high_20d=high_20d, ma_20d=ma_20d, ma_50d=ma_50d,
@@ -936,6 +969,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             bb_width_min_20d=bb_width_min_20d, prev_bb_width=prev_bb_width,
             w52_hgpr=w52_hgpr, avg_trading_value_5d=avg_trading_value_5d,
             market_cap=stck_llam,
+            rs_return_3m=rs_return_3m,
         )
 
     # ════════════════════════════════════════════════════════
@@ -1045,6 +1079,127 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return item.avg_trading_value_5d / item.market_cap
         # 시총 정보 없으면 거래대금 절대값으로 폴백
         return item.avg_trading_value_5d
+
+    # ════════════════════════════════════════════════════════
+    # V2 스코어링
+    # ════════════════════════════════════════════════════════
+
+    def _compute_rs_scores(self, items: List[OSBWatchlistItem]) -> None:
+        """RS 수익률 퍼센타일 → 상위 10%에 30점 부여 (in-place).
+
+        주의: 오닐의 원래 RS 지수는 전 상장 종목 대비 상대 순위이나,
+        여기서는 API 제약상 '1차 필터 통과 워치리스트 내부(30~60개)에서의 상위 10%'로
+        산출하는 Proxy 방식을 사용한다. 전종목 대상이 아님을 인지할 것.
+        """
+        if not items:
+            return
+
+        sorted_returns = sorted(item.rs_return_3m for item in items)
+        # 상위 10% 컷오프: 예) 20개 중 상위 10% = 상위 2개 → cutoff_idx = 18
+        cutoff_idx = min(
+            max(1, int(len(sorted_returns) * (1 - self._cfg.rs_top_percentile / 100))),
+            len(sorted_returns) - 1,
+        )
+        cutoff_value = sorted_returns[cutoff_idx]
+
+        for item in items:
+            item.rs_score = self._cfg.rs_score_points if item.rs_return_3m >= cutoff_value else 0.0
+
+        rs_count = sum(1 for item in items if item.rs_score > 0)
+        self._logger.info({
+            "event": "rs_scores_computed",
+            "total_items": len(items),
+            "cutoff_value": round(cutoff_value, 2),
+            "rs_scored_count": rs_count,
+        })
+
+    async def _compute_profit_growth_scores(self, items: List[OSBWatchlistItem]) -> None:
+        """영업이익 성장률 API 조회 → 25%↑이면 20점 (in-place).
+
+        TPS 20 제한 방어: api_chunk_size개씩 청크 호출 + 1.1초 딜레이.
+        API 실패 시 graceful skip (0점).
+        """
+        chunk_size = self._cfg.api_chunk_size
+        scored_count = 0
+
+        for i in range(0, len(items), chunk_size):
+            chunk = items[i:i + chunk_size]
+            tasks = [self._fetch_profit_growth(item) for item in chunk]
+            await asyncio.gather(*tasks, return_exceptions=True)
+            # TPS 방어: 다음 청크가 있으면 대기
+            if i + chunk_size < len(items):
+                await asyncio.sleep(1.1)
+
+        scored_count = sum(1 for item in items if item.profit_growth_score > 0)
+        self._logger.info({
+            "event": "profit_growth_scores_computed",
+            "total_items": len(items),
+            "scored_count": scored_count,
+        })
+
+    async def _fetch_profit_growth(self, item: OSBWatchlistItem) -> None:
+        """단일 종목 영업이익 성장률 조회 → 점수 부여."""
+        try:
+            resp = await self._ts.get_financial_ratio(item.code)
+            if resp and resp.rt_cd == ErrorCode.SUCCESS.value and resp.data:
+                growth = self._extract_op_profit_growth(resp.data)
+                if growth >= self._cfg.profit_growth_threshold_pct:
+                    item.profit_growth_score = self._cfg.profit_growth_score_points
+                    self._logger.debug({
+                        "event": "profit_growth_scored",
+                        "code": item.code, "name": item.name,
+                        "growth_pct": round(growth, 1),
+                    })
+        except Exception as e:
+            self._logger.warning({
+                "event": "profit_growth_fetch_failed",
+                "code": item.code, "error": str(e),
+            })
+
+    @staticmethod
+    def _extract_op_profit_growth(data) -> float:
+        """재무비율 API 응답에서 영업이익 증가율(%) 추출.
+
+        KIS API 응답 구조에 따라 필드명이 다를 수 있음.
+        응답이 리스트인 경우 최근 분기의 영업이익 증가율을 반환.
+        """
+        try:
+            # API 응답이 dict인 경우
+            if isinstance(data, dict):
+                # 가능한 필드명: bsop_prti_icdc (영업이익증감률) 등
+                for key in ("bsop_prti_icdc", "sale_totl_prfi_icdc", "op_profit_growth"):
+                    val = data.get(key)
+                    if val is not None:
+                        return float(val)
+                # output 안에 있을 수 있음
+                output = data.get("output") or data.get("output1")
+                if isinstance(output, list) and output:
+                    latest = output[0]
+                    for key in ("bsop_prti_icdc", "sale_totl_prfi_icdc", "op_profit_growth"):
+                        val = latest.get(key)
+                        if val is not None:
+                            return float(val)
+                elif isinstance(output, dict):
+                    for key in ("bsop_prti_icdc", "sale_totl_prfi_icdc", "op_profit_growth"):
+                        val = output.get(key)
+                        if val is not None:
+                            return float(val)
+            # API 응답이 리스트인 경우
+            elif isinstance(data, list) and data:
+                latest = data[0]
+                if isinstance(latest, dict):
+                    for key in ("bsop_prti_icdc", "sale_totl_prfi_icdc", "op_profit_growth"):
+                        val = latest.get(key)
+                        if val is not None:
+                            return float(val)
+        except (ValueError, TypeError, IndexError, AttributeError):
+            pass
+        return 0.0
+
+    def _compute_total_scores(self, items: List[OSBWatchlistItem]) -> None:
+        """합산 점수 계산 (in-place)."""
+        for item in items:
+            item.total_score = item.rs_score + item.profit_growth_score
 
     # ════════════════════════════════════════════════════════
     # 유틸리티
