@@ -81,7 +81,7 @@ window.refreshVirtualChart = async function(strategyName) {
         if (!yieldChart || !data.histories) return;
         
         const histories = data.histories;
-        const benchmark = data.benchmark || [];
+        const benchmarks = data.benchmarks || {};
         const strategyNames = Object.keys(histories);
         
         // 1. 기준이 되는 전체 날짜 목록 생성 (ALL 전략 기준)
@@ -117,14 +117,26 @@ window.refreshVirtualChart = async function(strategyName) {
             });
         });
 
-        // 2. 벤치마크 데이터셋 추가
-        if (benchmark.length > 0) {
+        // 3. 벤치마크 데이터셋 추가
+        if (benchmarks.KOSPI200 && benchmarks.KOSPI200.length > 0) {
             newDatasets.push({
                 label: '벤치마크(KOSPI200) %',
-                data: benchmark.map(b => b.return_rate),
+                data: benchmarks.KOSPI200.map(b => b.return_rate),
                 borderColor: '#ff922b',
                 borderWidth: 2,
                 borderDash: [5, 5],
+                fill: false,
+                pointRadius: 0,
+                tension: 0.3
+            });
+        }
+        if (benchmarks.KOSDAQ150 && benchmarks.KOSDAQ150.length > 0) {
+            newDatasets.push({
+                label: '벤치마크(KOSDAQ150) %',
+                data: benchmarks.KOSDAQ150.map(b => b.return_rate),
+                borderColor: '#8ce99a',
+                borderWidth: 2,
+                borderDash: [2, 2],
                 fill: false,
                 pointRadius: 0,
                 tension: 0.3
