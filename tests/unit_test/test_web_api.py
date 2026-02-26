@@ -226,9 +226,10 @@ async def test_get_strategy_chart(web_client, mock_web_ctx):
     assert response.status_code == 200
     data = response.json()
     assert "histories" in data
-    assert "benchmark" in data
+    assert "benchmarks" in data
     assert "StrategyA" in data["histories"]
-    assert len(data["benchmark"]) == 2
+    assert "KOSPI200" in data["benchmarks"]
+    assert len(data["benchmarks"]["KOSPI200"]) == 2
 
 @pytest.mark.asyncio
 async def test_get_bollinger_bands(web_client, mock_web_ctx):
