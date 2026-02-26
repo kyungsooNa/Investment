@@ -183,6 +183,7 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 👈 오닐 전략은 오버나잇(홀딩) 허용!
         ))
+        self.osb_strategy = osb_strategy  # Pool A 생성용 참조
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
