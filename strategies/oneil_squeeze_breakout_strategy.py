@@ -207,7 +207,16 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         # 3) 장중 경과 비율
         market_progress = self._get_market_progress_ratio()
         if market_progress <= 0:
+            self._logger.info({
+                "event": "scan_skipped",
+                "reason": f"장중 경과 비율 0 이하 (market_progress={market_progress:.3f})",
+            })
             return signals
+        self._logger.info({
+            "event": "scan_market_progress",
+            "market_progress": round(market_progress, 3),
+            "market_timing": dict(self._market_timing_cache),
+        })
 
         # 4) 종목별 돌파 조건 체크
         for code, item in self._watchlist.items():
@@ -231,22 +240,65 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         log_data = {"code": code, "name": item.name, "market": item.market}
 
         # ── 조건 1: 마켓 타이밍 ──
-        if not self._market_timing_cache.get(item.market, False):
+        market_ok = self._market_timing_cache.get(item.market, False)
+        if not market_ok:
+            self._logger.info({
+                "event": "buy_condition_rejected",
+                "condition": "마켓타이밍",
+                "reason": f"{item.market} 시장 MA 상승 추세 아님",
+                **log_data,
+            })
             return None
 
         # ── 조건 2: 스퀴즈 (전일 BB 폭이 20일 최소폭의 1.2배 이내) ──
         if item.bb_width_min_20d <= 0:
+            self._logger.info({
+                "event": "buy_condition_rejected",
+                "condition": "스퀴즈",
+                "reason": f"BB 최소폭 데이터 없음 (bb_width_min_20d={item.bb_width_min_20d})",
+                **log_data,
+            })
             return None
-        if item.prev_bb_width > item.bb_width_min_20d * self._cfg.squeeze_tolerance:
+        squeeze_threshold = item.bb_width_min_20d * self._cfg.squeeze_tolerance
+        if item.prev_bb_width > squeeze_threshold:
+            self._logger.info({
+                "event": "buy_condition_rejected",
+                "condition": "스퀴즈",
+                "reason": (
+                    f"BB폭 수축 부족: 전일BB폭={item.prev_bb_width:.1f} > "
+                    f"기준={squeeze_threshold:.1f} "
+                    f"(최소폭{item.bb_width_min_20d:.1f} × {self._cfg.squeeze_tolerance})"
+                ),
+                **log_data,
+            })
             return None
+        self._logger.debug({
+            "event": "buy_condition_passed",
+            "condition": "스퀴즈",
+            "prev_bb_width": round(item.prev_bb_width, 1),
+            "squeeze_threshold": round(squeeze_threshold, 1),
+            **log_data,
+        })
 
         # ── 현재가 조회 ──
         full_resp = await self._ts.get_current_stock_price(code)
         if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
+            self._logger.warning({
+                "event": "buy_condition_rejected",
+                "condition": "현재가조회",
+                "reason": "현재가 API 응답 실패",
+                **log_data,
+            })
             return None
 
         output = self._extract_output(full_resp)
         if output is None:
+            self._logger.warning({
+                "event": "buy_condition_rejected",
+                "condition": "현재가조회",
+                "reason": "API 응답에서 output 추출 실패",
+                **log_data,
+            })
             return None
 
         current = self._get_int_field(output, "stck_prpr")
@@ -256,6 +308,12 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         stck_llam = self._get_int_field(output, "stck_llam")
 
         if current <= 0:
+            self._logger.warning({
+                "event": "buy_condition_rejected",
+                "condition": "현재가조회",
+                "reason": f"현재가 비정상: {current}",
+                **log_data,
+            })
             return None
 
         log_data.update({
@@ -265,20 +323,50 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         # ── 조건 3: 가격 돌파 (현재가 > 20일 최고가) ──
         if current <= item.high_20d:
+            self._logger.info({
+                "event": "buy_condition_rejected",
+                "condition": "가격돌파",
+                "reason": f"현재가({current:,}) <= 20일최고가({item.high_20d:,})",
+                **log_data,
+            })
             return None
+        self._logger.debug({
+            "event": "buy_condition_passed",
+            "condition": "가격돌파",
+            "current": current, "high_20d": item.high_20d,
+            **log_data,
+        })
 
         # ── 조건 4: 거래량 돌파 (환산 거래량 >= 20일 평균 × 1.5) ──
         projected_vol = acml_vol / market_progress
         vol_threshold = item.avg_vol_20d * self._cfg.volume_breakout_multiplier
         if projected_vol < vol_threshold:
-            log_data["reason"] = f"거래량 부족: 환산 {projected_vol:,.0f} < 기준 {vol_threshold:,.0f}"
-            self._logger.info({"event": "candidate_rejected", **log_data})
+            self._logger.info({
+                "event": "buy_condition_rejected",
+                "condition": "거래량돌파",
+                "reason": f"환산거래량({projected_vol:,.0f}) < 기준({vol_threshold:,.0f})",
+                "market_progress": round(market_progress, 3),
+                "acml_vol": acml_vol,
+                "avg_vol_20d": round(item.avg_vol_20d),
+                **log_data,
+            })
             return None
+        self._logger.debug({
+            "event": "buy_condition_passed",
+            "condition": "거래량돌파",
+            "projected_vol": round(projected_vol),
+            "vol_threshold": round(vol_threshold),
+            **log_data,
+        })
 
         # ── 조건 5: 프로그램 필터 (2중 스마트 머니) ──
         if pgtr_ntby <= self._cfg.program_net_buy_min:
-            log_data["reason"] = f"프로그램 순매수 부족: {pgtr_ntby}"
-            self._logger.info({"event": "candidate_rejected", **log_data})
+            self._logger.info({
+                "event": "buy_condition_rejected",
+                "condition": "프로그램필터",
+                "reason": f"프로그램 순매수 부족: {pgtr_ntby}주 <= {self._cfg.program_net_buy_min}주",
+                **log_data,
+            })
             return None
 
         pgtr_value = pgtr_ntby * current
@@ -286,17 +374,33 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if acml_tr_pbmn > 0:
             pgtr_to_tv = (pgtr_value / acml_tr_pbmn) * 100
             if pgtr_to_tv < self._cfg.program_to_trade_value_pct:
-                log_data["reason"] = f"프로그램/거래대금 비율 부족: {pgtr_to_tv:.1f}% < {self._cfg.program_to_trade_value_pct}%"
-                self._logger.info({"event": "candidate_rejected", **log_data})
+                self._logger.info({
+                    "event": "buy_condition_rejected",
+                    "condition": "프로그램/거래대금비율",
+                    "reason": f"비율 부족: {pgtr_to_tv:.1f}% < {self._cfg.program_to_trade_value_pct}%",
+                    "pgtr_value": pgtr_value, "acml_tr_pbmn": acml_tr_pbmn,
+                    **log_data,
+                })
                 return None
 
         # 프로그램순매수금 / 시가총액 >= 0.5%
         if stck_llam > 0:
             pgtr_to_mc = (pgtr_value / stck_llam) * 100
             if pgtr_to_mc < self._cfg.program_to_market_cap_pct:
-                log_data["reason"] = f"프로그램/시총 비율 부족: {pgtr_to_mc:.2f}% < {self._cfg.program_to_market_cap_pct}%"
-                self._logger.info({"event": "candidate_rejected", **log_data})
+                self._logger.info({
+                    "event": "buy_condition_rejected",
+                    "condition": "프로그램/시총비율",
+                    "reason": f"비율 부족: {pgtr_to_mc:.2f}% < {self._cfg.program_to_market_cap_pct}%",
+                    "pgtr_value": pgtr_value, "stck_llam": stck_llam,
+                    **log_data,
+                })
                 return None
+        self._logger.debug({
+            "event": "buy_condition_passed",
+            "condition": "프로그램필터",
+            "pgtr_ntby": pgtr_ntby, "pgtr_value": pgtr_value,
+            **log_data,
+        })
 
         # TODO [v2] 체결강도 >= 120%
         # REST: /uapi/domestic-stock/v1/quotations/inquire-ccnl
@@ -389,6 +493,15 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 pnl_pct = ((current - buy_price) / buy_price) * 100
                 log_data["pnl_pct"] = round(pnl_pct, 2)
 
+                self._logger.info({
+                    "event": "exit_evaluation_started",
+                    "code": code, "name": stock_name,
+                    "buy_price": buy_price, "current_price": current,
+                    "pnl_pct": round(pnl_pct, 2),
+                    "peak_price": state.peak_price,
+                    "entry_date": state.entry_date,
+                })
+
                 reason = ""
                 should_sell = False
 
@@ -396,6 +509,21 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 if pnl_pct <= self._cfg.stop_loss_pct:
                     reason = f"손절: 매수가({buy_price:,}) 대비 {pnl_pct:.1f}%"
                     should_sell = True
+                    self._logger.info({
+                        "event": "exit_condition_triggered",
+                        "condition": "손절",
+                        "code": code, "name": stock_name,
+                        "pnl_pct": round(pnl_pct, 2),
+                        "threshold": self._cfg.stop_loss_pct,
+                    })
+                else:
+                    self._logger.debug({
+                        "event": "exit_condition_not_met",
+                        "condition": "손절",
+                        "code": code,
+                        "pnl_pct": round(pnl_pct, 2),
+                        "threshold": self._cfg.stop_loss_pct,
+                    })
 
                 # 2) 시간 손절: 5거래일 박스권 횡보
                 if not should_sell:
@@ -406,6 +534,20 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                             f"(폭 < {self._cfg.time_stop_box_range_pct}%)"
                         )
                         should_sell = True
+                        self._logger.info({
+                            "event": "exit_condition_triggered",
+                            "condition": "시간손절",
+                            "code": code, "name": stock_name,
+                            "entry_date": state.entry_date,
+                            "time_stop_days": self._cfg.time_stop_days,
+                        })
+                    else:
+                        self._logger.debug({
+                            "event": "exit_condition_not_met",
+                            "condition": "시간손절",
+                            "code": code,
+                            "entry_date": state.entry_date,
+                        })
 
                 # 3) 트레일링 스탑: 최고가 대비 -8%
                 if not should_sell and state.peak_price > 0:
@@ -417,11 +559,34 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                             f"{drop_from_peak:.1f}%"
                         )
                         should_sell = True
+                        self._logger.info({
+                            "event": "exit_condition_triggered",
+                            "condition": "트레일링스탑",
+                            "code": code, "name": stock_name,
+                            "peak_price": state.peak_price,
+                            "drop_from_peak_pct": round(drop_from_peak, 2),
+                            "threshold": -self._cfg.trailing_stop_pct,
+                        })
+                    else:
+                        self._logger.debug({
+                            "event": "exit_condition_not_met",
+                            "condition": "트레일링스탑",
+                            "code": code,
+                            "peak_price": state.peak_price,
+                            "drop_from_peak_pct": round(drop_from_peak, 2),
+                            "threshold": -self._cfg.trailing_stop_pct,
+                        })
 
                 # 4) 추세 이탈: 현재가 < 10일 MA + 대량 거래량 확인
                 if not should_sell:
                     ma_10d = await self._get_current_ma(code, self._cfg.trend_exit_ma_period)
                     if ma_10d and current < ma_10d:
+                        self._logger.info({
+                            "event": "exit_trend_break_detected",
+                            "code": code, "name": stock_name,
+                            "current": current, "ma_10d": round(ma_10d),
+                            "detail": "현재가 < 10일MA, 대량거래량 확인 중",
+                        })
                         # 대량 거래량 동반 여부 확인
                         market_progress = self._get_market_progress_ratio()
                         if market_progress > 0:
@@ -435,6 +600,32 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                                         f"10일MA({ma_10d:,.0f}), 대량거래량 확인"
                                     )
                                     should_sell = True
+                                    self._logger.info({
+                                        "event": "exit_condition_triggered",
+                                        "condition": "추세이탈",
+                                        "code": code, "name": stock_name,
+                                        "current": current, "ma_10d": round(ma_10d),
+                                        "projected_vol": round(projected_vol),
+                                        "avg_vol_20d": round(avg_vol),
+                                    })
+                                else:
+                                    self._logger.info({
+                                        "event": "exit_condition_not_met",
+                                        "condition": "추세이탈",
+                                        "code": code,
+                                        "detail": (
+                                            f"MA 하회하나 거래량 부족: "
+                                            f"환산{projected_vol:,.0f} <= 평균{avg_vol:,.0f}"
+                                        ),
+                                    })
+                    elif ma_10d:
+                        self._logger.debug({
+                            "event": "exit_condition_not_met",
+                            "condition": "추세이탈",
+                            "code": code,
+                            "current": current, "ma_10d": round(ma_10d),
+                            "detail": "현재가 >= 10일MA",
+                        })
 
                 if should_sell:
                     self._position_state.pop(code, None)
@@ -602,6 +793,12 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         # 50일 MA 계산을 위해 충분한 데이터 필요
         ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=60)
         if not ohlcv or len(ohlcv) < 50:
+            self._logger.info({
+                "event": "watchlist_filter_rejected",
+                "filter": "OHLCV데이터",
+                "code": code, "name": name,
+                "reason": f"OHLCV 데이터 부족: {len(ohlcv) if ohlcv else 0}개 < 50개",
+            })
             return None
 
         period = self._cfg.high_breakout_period  # 20
@@ -610,6 +807,12 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         volumes = [r.get("volume", 0) for r in ohlcv[-period:] if r.get("volume")]
 
         if len(closes) < 50 or len(highs) < period or len(volumes) < period:
+            self._logger.info({
+                "event": "watchlist_filter_rejected",
+                "filter": "OHLCV데이터",
+                "code": code, "name": name,
+                "reason": f"유효 데이터 부족: closes={len(closes)}, highs={len(highs)}, volumes={len(volumes)}",
+            })
             return None
 
         # 이동평균
@@ -634,17 +837,39 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         # 필터 1: 5일 평균 거래대금 >= 100억
         if avg_trading_value_5d < self._cfg.min_avg_trading_value_5d:
-            self._logger.debug({"event": "filter_rejected", **log_data, "reason": "거래대금 부족"})
+            self._logger.info({
+                "event": "watchlist_filter_rejected",
+                "filter": "거래대금",
+                "reason": (
+                    f"5일평균거래대금({avg_trading_value_5d / 1e8:,.0f}억) < "
+                    f"기준({self._cfg.min_avg_trading_value_5d / 1e8:,.0f}억)"
+                ),
+                **log_data,
+            })
             return None
 
         # 필터 2: 정배열 (종가 > 20일 MA > 50일 MA)
         if not (prev_close > ma_20d > ma_50d):
-            self._logger.debug({"event": "filter_rejected", **log_data, "reason": "정배열 아님"})
+            self._logger.info({
+                "event": "watchlist_filter_rejected",
+                "filter": "정배열",
+                "reason": (
+                    f"종가({prev_close:,}) > 20MA({ma_20d:,.0f}) > 50MA({ma_50d:,.0f}) "
+                    f"조건 불충족"
+                ),
+                **log_data,
+            })
             return None
 
         # 필터 3: 52주 최고가 대비 20% 이내
         full_resp = await self._ts.get_current_stock_price(code)
         if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
+            self._logger.warning({
+                "event": "watchlist_filter_rejected",
+                "filter": "52주고가",
+                "reason": "현재가 API 응답 실패",
+                **log_data,
+            })
             return None
         output = self._extract_output(full_resp)
         if output is None:
@@ -655,9 +880,15 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if w52_hgpr > 0:
             distance_pct = ((w52_hgpr - prev_close) / w52_hgpr) * 100
             if distance_pct > self._cfg.near_52w_high_pct:
-                self._logger.debug({
-                    "event": "filter_rejected", **log_data,
-                    "reason": f"52주 고가 거리 {distance_pct:.1f}% > {self._cfg.near_52w_high_pct}%",
+                self._logger.info({
+                    "event": "watchlist_filter_rejected",
+                    "filter": "52주고가",
+                    "reason": (
+                        f"52주고가 거리 {distance_pct:.1f}% > "
+                        f"기준 {self._cfg.near_52w_high_pct}%"
+                    ),
+                    "w52_hgpr": w52_hgpr, "prev_close": prev_close,
+                    **log_data,
                 })
                 return None
 
@@ -668,6 +899,12 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         )
         bb_widths = self._extract_bb_widths(bb_resp)
         if len(bb_widths) < period:
+            self._logger.info({
+                "event": "watchlist_filter_rejected",
+                "filter": "BB스퀴즈",
+                "reason": f"BB 데이터 부족: {len(bb_widths)}개 < {period}개",
+                **log_data,
+            })
             return None
 
         recent_bb_widths = bb_widths[-period:]
@@ -676,10 +913,15 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         market = "KOSDAQ" if self._mapper.is_kosdaq(code) else "KOSPI"
 
-        self._logger.debug({
-            "event": "filter_passed", **log_data,
-            "bb_width_min_20d": bb_width_min_20d, "prev_bb_width": prev_bb_width,
+        self._logger.info({
+            "event": "watchlist_filter_passed",
+            "bb_width_min_20d": round(bb_width_min_20d, 1),
+            "prev_bb_width": round(prev_bb_width, 1),
+            "squeeze_ratio": round(prev_bb_width / bb_width_min_20d, 2) if bb_width_min_20d > 0 else 0,
             "market": market,
+            "w52_hgpr": w52_hgpr,
+            "market_cap_억": round(stck_llam / 1e8) if stck_llam > 0 else 0,
+            **log_data,
         })
 
         return OSBWatchlistItem(
@@ -716,6 +958,12 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         try:
             ohlcv = await self._ts.get_recent_daily_ohlcv(etf_code, limit=period + days + 2)
             if not ohlcv or len(ohlcv) < period + days:
+                self._logger.warning({
+                    "event": "etf_ma_data_insufficient",
+                    "etf_code": etf_code,
+                    "data_count": len(ohlcv) if ohlcv else 0,
+                    "required": period + days,
+                })
                 return False
 
             closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
@@ -732,11 +980,20 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 ma_values.append(sum(window) / period)
 
             # 연속 상승 확인
+            is_rising = True
             for j in range(1, len(ma_values)):
                 if ma_values[j] <= ma_values[j - 1]:
-                    return False
+                    is_rising = False
+                    break
 
-            return True
+            self._logger.info({
+                "event": "etf_ma_check_result",
+                "etf_code": etf_code,
+                "ma_values": [round(v, 2) for v in ma_values],
+                "is_rising": is_rising,
+                "period": period, "rising_days": days,
+            })
+            return is_rising
 
         except Exception as e:
             self._logger.warning({"event": "etf_ma_check_error", "etf_code": etf_code, "error": str(e)})
