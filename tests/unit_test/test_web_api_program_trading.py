@@ -7,13 +7,13 @@ import asyncio
 async def test_subscribe_program_trading(web_client, mock_web_ctx):
     """POST /api/program-trading/subscribe 엔드포인트 테스트"""
     
-    # 프로그램 매매 관련 상태 초기화
-    mock_web_ctx._pt_codes = set()
-    mock_web_ctx._pt_queues = []
+    # RealtimeDataManager Mock 설정
+    mock_rdm = MagicMock()
+    mock_web_ctx.realtime_data_manager = mock_rdm
 
     # 구독 성공 Mocking
     mock_web_ctx.start_program_trading = AsyncMock(return_value=True)
-    mock_web_ctx._pt_codes = {"005930"} # 구독 후 상태 시뮬레이션
+    mock_rdm.get_subscribed_codes.return_value = ["005930"] # 구독 후 상태 시뮬레이션
     
     response = web_client.post("/api/program-trading/subscribe", json={"code": "005930"})
     
@@ -23,49 +23,58 @@ async def test_subscribe_program_trading(web_client, mock_web_ctx):
     mock_web_ctx.start_program_trading.assert_awaited_once_with("005930")
 
 def test_save_pt_data(web_client, mock_web_ctx):
-    """POST /api/program-trading/save-data 엔드포인트 테스트 (파일 저장)"""
+    """POST /api/program-trading/save-data 엔드포인트 테스트"""
     
-    # 파일 시스템 조작 Mocking
-    with patch("builtins.open", new_callable=MagicMock) as mock_open, \
-         patch("os.makedirs") as mock_makedirs, \
-         patch("json.dump") as mock_json_dump:
-        
-        data = {
-            "chartData": {"005930": {"valueData": []}},
-            "subscribedCodes": ["005930"],
-            "codeNameMap": {"005930": "삼성전자"}
-        }
-        
-        response = web_client.post("/api/program-trading/save-data", json=data)
-        
-        assert response.status_code == 200
-        assert response.json()["success"] is True
-        mock_makedirs.assert_called_with("data", exist_ok=True)
-        mock_open.assert_called_with("data/pt_data.json", "w", encoding="utf-8")
-        mock_json_dump.assert_called()
+    # RealtimeDataManager Mock 설정
+    mock_rdm = MagicMock()
+    mock_web_ctx.realtime_data_manager = mock_rdm
+    
+    data = {
+        "chartData": {"005930": {"valueData": []}},
+        "subscribedCodes": ["005930"],
+        "codeNameMap": {"005930": "삼성전자"}
+    }
+    
+    response = web_client.post("/api/program-trading/save-data", json=data)
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    
+    # 매니저의 save_snapshot 호출 확인
+    mock_rdm.save_snapshot.assert_called_once()
+    # 인자 검증 (dict로 변환되어 전달됨)
+    args, _ = mock_rdm.save_snapshot.call_args
+    assert args[0]["subscribedCodes"] == ["005930"]
 
 def test_load_pt_data_success(web_client, mock_web_ctx):
     """GET /api/program-trading/load-data 엔드포인트 테스트 (성공 시)"""
     
     mock_data = {"chartData": {}, "subscribedCodes": []}
     
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", new_callable=MagicMock) as mock_open, \
-         patch("json.load", return_value=mock_data):
-        
-        response = web_client.get("/api/program-trading/load-data")
-        
-        assert response.status_code == 200
-        assert response.json()["success"] is True
-        assert response.json()["data"] == mock_data
+    # RealtimeDataManager Mock 설정
+    mock_rdm = MagicMock()
+    mock_web_ctx.realtime_data_manager = mock_rdm
+    mock_rdm.load_snapshot.return_value = mock_data
+    
+    response = web_client.get("/api/program-trading/load-data")
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"] == mock_data
+    mock_rdm.load_snapshot.assert_called_once()
 
 def test_load_pt_data_file_not_found(web_client, mock_web_ctx):
     """GET /api/program-trading/load-data 엔드포인트 테스트 (파일 없음)"""
-    with patch("os.path.exists", return_value=False):
-        response = web_client.get("/api/program-trading/load-data")
-        assert response.status_code == 200
-        assert response.json()["success"] is False
-        assert response.json()["msg"] == "File not found"
+    
+    # RealtimeDataManager Mock 설정
+    mock_rdm = MagicMock()
+    mock_web_ctx.realtime_data_manager = mock_rdm
+    mock_rdm.load_snapshot.return_value = None
+    
+    response = web_client.get("/api/program-trading/load-data")
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["msg"] == "File not found"
 
 @pytest.mark.asyncio
 async def test_stream_program_trading_logic(mock_web_ctx):
@@ -101,23 +110,25 @@ async def test_stream_program_trading_logic(mock_web_ctx):
     mock_request = AsyncMock(spec=Request)
     mock_request.is_disconnected = AsyncMock(return_value=False)
 
-    # 3. mock_web_ctx 초기화
-    mock_web_ctx._pt_queues = []
-    mock_web_ctx.is_market_open = MagicMock(return_value=True)
+    # 3. RealtimeDataManager 및 Queue Mocking
+    mock_rdm = MagicMock()
+    mock_web_ctx.realtime_data_manager = mock_rdm
+    
+    # 실제 asyncio.Queue 사용 (테스트 제어용)
+    test_queue = asyncio.Queue()
+    mock_rdm.create_subscriber_queue.return_value = test_queue
+    mock_rdm.get_history_data.return_value = {} # 히스토리 없음 가정
 
     # 4. 핸들러 호출 (StreamingResponse 반환)
     # _get_ctx()를 mock_web_ctx로 패치하여 테스트 컨텍스트를 사용하도록 함
     with patch("view.web.web_api._get_ctx", return_value=mock_web_ctx):
         response = await stream_program_trading(mock_request)
 
-    # 5. 큐 확인 및 데이터 주입
-    assert len(mock_web_ctx._pt_queues) == 1
-    queue = mock_web_ctx._pt_queues[0]
     iterator = response.body_iterator
     
     # 5. 데이터 주입 및 검증 루프
     for data in test_datasets:
-        await queue.put(data)
+        await test_queue.put(data)
         
         # 제너레이터에서 청크 가져오기
         chunk = await iterator.__anext__()
@@ -134,12 +145,12 @@ async def test_stream_program_trading_logic(mock_web_ctx):
         assert received_data == data
 
     # 6. 종료 신호 (Poison Pill)
-    await queue.put(None)
+    await test_queue.put(None)
     with pytest.raises(StopAsyncIteration):
         await iterator.__anext__()
         
     # 7. 정리 확인 (finally 블록 실행 확인)
-    assert len(mock_web_ctx._pt_queues) == 0
+    mock_rdm.remove_subscriber_queue.assert_called_with(test_queue)
 
 @pytest.mark.asyncio
 async def test_stream_program_trading_keepalive(mock_web_ctx):
@@ -154,14 +165,18 @@ async def test_stream_program_trading_keepalive(mock_web_ctx):
     mock_request = AsyncMock(spec=Request)
     mock_request.is_disconnected.return_value = False
 
-    # Context 초기화
-    mock_web_ctx._pt_queues = []
+    # RealtimeDataManager Mock
+    mock_rdm = MagicMock()
+    mock_web_ctx.realtime_data_manager = mock_rdm
+    
+    test_queue = asyncio.Queue()
+    mock_rdm.create_subscriber_queue.return_value = test_queue
+    mock_rdm.get_history_data.return_value = {}
 
     # 핸들러 호출
     with patch("view.web.web_api._get_ctx", return_value=mock_web_ctx):
         response = await stream_program_trading(mock_request)
 
-    queue = mock_web_ctx._pt_queues[0]
     iterator = response.body_iterator
 
     # 1. 데이터 없이 대기 -> 타임아웃 발생 -> keepalive 메시지 수신 예상
@@ -171,7 +186,13 @@ async def test_stream_program_trading_keepalive(mock_web_ctx):
     # Keepalive 메시지 포맷 검증 (SSE comment 형식)
     assert chunk == ": keepalive\n\n"
 
-    # 2. 종료
-    await queue.put(None)
-    with pytest.raises(StopAsyncIteration):
-        await iterator.__anext__()
+    # 2. 종료 유도
+    mock_request.is_disconnected.return_value = True
+    
+    try:
+        # 타임아웃 후 루프 돌면서 종료 체크
+        await asyncio.wait_for(iterator.__anext__(), timeout=0.2)
+    except (StopAsyncIteration, asyncio.TimeoutError):
+        pass
+        
+    mock_rdm.remove_subscriber_queue.assert_called_with(test_queue)

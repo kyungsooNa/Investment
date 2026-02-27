@@ -26,8 +26,14 @@ async def lifespan(app: FastAPI):
     ctx.initialize_scheduler()
     await ctx.scheduler.restore_state()
 
+    # 백그라운드 태스크 시작 (데이터 Flush 등)
+    ctx.start_background_tasks()
+
     print("=== 웹 서비스 초기화 완료 ===")
     yield
+
+    # 종료 시 정리 (데이터 Flush)
+    await ctx.shutdown()
 
     # 종료 시 스케줄러 상태 저장 후 정지
     if ctx.scheduler and ctx.scheduler._running:

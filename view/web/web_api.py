@@ -552,7 +552,8 @@ async def subscribe_program_trading(req: ProgramTradingRequest):
         raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
     mapper = getattr(ctx, 'stock_code_mapper', None)
     stock_name = mapper.get_name_by_code(req.code) if mapper else ''
-    return {"success": True, "code": req.code, "stock_name": stock_name, "codes": sorted(ctx._pt_codes)}
+    # [변경] 매니저 사용
+    return {"success": True, "code": req.code, "stock_name": stock_name, "codes": ctx.realtime_data_manager.get_subscribed_codes()}
 
 
 @router.get("/program-trading/history/{code}")
@@ -576,16 +577,19 @@ async def unsubscribe_program_trading(req: ProgramTradingUnsubscribeRequest = No
         await ctx.stop_program_trading(req.code)
     else:
         await ctx.stop_all_program_trading()
-    return {"success": True, "codes": sorted(ctx._pt_codes)}
+    # [변경] 매니저 사용
+    return {"success": True, "codes": ctx.realtime_data_manager.get_subscribed_codes()}
 
 
 @router.get("/program-trading/status")
 async def get_program_trading_status():
     """프로그램매매 구독 상태 확인."""
     ctx = _get_ctx()
+    # [변경] 매니저 사용
+    codes = ctx.realtime_data_manager.get_subscribed_codes()
     return {
-        "subscribed": len(ctx._pt_codes) > 0,
-        "codes": sorted(ctx._pt_codes),
+        "subscribed": len(codes) > 0,
+        "codes": codes,
     }
 
 
@@ -593,11 +597,19 @@ async def get_program_trading_status():
 async def stream_program_trading(request: Request):
     """SSE 스트리밍: 프로그램매매 실시간 데이터를 브라우저에 전달."""
     ctx = _get_ctx()
-    queue = asyncio.Queue(maxsize=200)
-    ctx._pt_queues.append(queue)
+    # [변경] 매니저를 통해 큐 생성 및 등록
+    queue = ctx.realtime_data_manager.create_subscriber_queue()
 
     async def event_generator():
         try:
+            # 1. [추가] 저장된 과거 데이터 먼저 전송 (Replay)
+            # [변경] 매니저에서 히스토리 가져오기
+            history = ctx.realtime_data_manager.get_history_data()
+            for code, items in list(history.items()):
+                for item in list(items):
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.0001)
+
             while True:
                 if await request.is_disconnected():
                     break
@@ -613,20 +625,18 @@ async def stream_program_trading(request: Request):
         except asyncio.CancelledError:
             pass
         finally:
-            if queue in ctx._pt_queues:
-                ctx._pt_queues.remove(queue)
+            # [변경] 매니저를 통해 큐 제거
+            ctx.realtime_data_manager.remove_subscriber_queue(queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/program-trading/save-data")
 async def save_pt_data(data: ProgramTradingDataModel):
-    """프로그램 매매 데이터를 서버 파일(data/pt_data.json)에 저장"""
+    """프로그램 매매 데이터를 서버 파일(data/program_subscribe/pt_data.json)에 저장"""
     try:
-        file_path = "data/pt_data.json"
-        os.makedirs("data", exist_ok=True)
-        # Pydantic 모델을 dict로 변환하여 저장
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data.dict(), f, ensure_ascii=False, indent=2)
+        # [변경] 매니저를 통해 스냅샷 저장
+        ctx = _get_ctx()
+        ctx.realtime_data_manager.save_snapshot(data.dict())
         return {"success": True}
     except Exception as e:
         print(f"[WebAPI] PT Data Save Error: {e}")
@@ -635,16 +645,13 @@ async def save_pt_data(data: ProgramTradingDataModel):
 @router.get("/program-trading/load-data")
 async def load_pt_data():
     """서버 파일에서 프로그램 매매 데이터 로드"""
-    file_path = "data/pt_data.json"
-    if not os.path.exists(file_path):
-        return {"success": False, "msg": "File not found"}
+    # [변경] 매니저를 통해 스냅샷 로드
+    ctx = _get_ctx()
+    data = ctx.realtime_data_manager.load_snapshot()
     
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return {"success": True, "data": data}
-    except Exception as e:
-        return {"success": False, "msg": str(e)}
+    if data is None:
+        return {"success": False, "msg": "File not found"}
+    return {"success": True, "data": data}
 
 @router.websocket("/ws/echo")
 async def websocket_endpoint(websocket: WebSocket):

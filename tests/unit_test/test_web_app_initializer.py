@@ -15,6 +15,7 @@ def mock_deps():
          patch("view.web.web_app_initializer.VirtualTradeManager") as mock_vtm, \
          patch("view.web.web_app_initializer.StockCodeMapper") as mock_scm, \
          patch("view.web.web_app_initializer.StrategyScheduler") as mock_sched, \
+         patch("view.web.web_app_initializer.RealtimeDataManager") as mock_rdm, \
          patch("view.web.web_app_initializer.web_api") as mock_web_api:
         
         mock_load.return_value = {
@@ -33,6 +34,7 @@ def mock_deps():
             "vtm": mock_vtm,
             "scm": mock_scm,
             "sched": mock_sched,
+            "rdm": mock_rdm,
             "web_api": mock_web_api
         }
 
@@ -126,6 +128,11 @@ def test_initialize_scheduler(mock_deps):
 async def test_program_trading_subscription(mock_deps):
     """프로그램 매매 구독/해지 로직 검증"""
     ctx = WebAppContext(None)
+    
+    # RealtimeDataManager Mock 인스턴스 설정
+    mock_rdm_instance = ctx.realtime_data_manager
+    mock_rdm_instance.is_subscribed.return_value = False
+
     ctx.broker = MagicMock()
     ctx.broker.connect_websocket = AsyncMock(return_value=True)
     ctx.trading_service = MagicMock()
@@ -138,13 +145,14 @@ async def test_program_trading_subscription(mock_deps):
     await ctx.start_program_trading("005930")
     ctx.broker.connect_websocket.assert_awaited_once()
     ctx.trading_service.subscribe_program_trading.assert_awaited_with("005930")
-    assert "005930" in ctx._pt_codes
+    mock_rdm_instance.add_subscribed_code.assert_called_with("005930")
     
     # 2. 중복 구독 시도 (API 호출 없어야 함)
+    mock_rdm_instance.is_subscribed.return_value = True
     await ctx.start_program_trading("005930")
     assert ctx.trading_service.subscribe_program_trading.call_count == 1
     
     # 3. 구독 해지
     await ctx.stop_program_trading("005930")
     ctx.trading_service.unsubscribe_program_trading.assert_awaited_with("005930")
-    assert "005930" not in ctx._pt_codes
+    mock_rdm_instance.remove_subscribed_code.assert_called_with("005930")

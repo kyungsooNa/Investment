@@ -1427,13 +1427,15 @@ function _updateProgramTradingChart() {
             
             // 대금 (Bar)
             datasets.push({
-                type: 'bar',
+                type: 'line', // [수정] 누적 데이터이므로 Line 차트가 적절
                 label: `${ptCodeNameMap[code] || code} (대금)`,
                 data: aggData.value,
-                backgroundColor: color + 'B3',
+                backgroundColor: color + '20', // [수정] 연한 배경색 (Area Chart 효과)
                 borderColor: color,
-                borderWidth: 1,
-                yAxisID: 'y' // [수정] 대금 -> 아래쪽 축
+                borderWidth: 2,
+                pointRadius: 0, // [추가] 선을 깔끔하게
+                fill: true, // [추가] 영역 채우기
+                yAxisID: 'y'
             });
 
             // 수량 (Line)
@@ -1442,9 +1444,10 @@ function _updateProgramTradingChart() {
                 label: `${ptCodeNameMap[code] || code} (수량)`,
                 data: aggData.volume,
                 borderColor: color,
-                backgroundColor: color,
+                backgroundColor: color + '20', // [수정] 연한 배경색 (Area Chart 효과)
                 borderWidth: 2,
-                pointRadius: 2, // 점 표시
+                pointRadius: 0, // [수정] 선을 깔끔하게
+                fill: true, // [추가] 영역 채우기
                 pointHoverRadius: 4,
                 tension: 0.1,
                 yAxisID: 'y1' // [수정] 수량 -> 위쪽 축
@@ -1467,8 +1470,7 @@ function handleProgramTradingData(d) {
 
     const netValue = parseInt(d['순매수거래대금'] || '0');
     const netVolume = parseInt(d['순매수체결량'] || '0');
-    // ptChartData[code].totalValue += netValue; // [수정] 대금은 틱별 데이터로 변경 (누적 X)
-    // ptChartData[code].totalVolume += netVolume; // [수정] 수량도 서버에서 누적된 값을 주므로 클라이언트 누적 제거
+    // API 데이터가 이미 누적치이므로 그대로 사용합니다.
 
     const timeStr = d['주식체결시간']; // "HHMMSS"
     if (!timeStr || timeStr.length < 4) return;
