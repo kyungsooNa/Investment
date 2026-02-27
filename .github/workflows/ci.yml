@@ -20,7 +20,8 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-
+        token: ${{ secrets.GH_PAT }}  # <--- 이 줄을 추가합니다!
+        
     - name: Set up Python 3.10
       uses: actions/setup-python@v5
       with:
