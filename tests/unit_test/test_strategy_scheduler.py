@@ -350,6 +350,29 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                         self.assertTrue(scheduler._running)
                         self.assertTrue(config.enabled)
 
+    async def test_restore_state_file_not_found(self):
+        """상태 파일이 없을 때 복원 시도 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        with patch("os.path.exists", return_value=False):
+            await scheduler.restore_state()
+            self.assertFalse(scheduler._running)
+
+    async def test_restore_state_corrupted_file(self):
+        """상태 파일이 손상되었을 때 복원 시도 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="{invalid_json")):
+                await scheduler.restore_state()
+                scheduler._logger.error.assert_called()
+                self.assertFalse(scheduler._running)
+
+    def test_save_state_exception(self):
+        """상태 저장 중 예외 발생 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        with patch("builtins.open", side_effect=IOError("Disk full")):
+            scheduler._save_scheduler_state()
+            scheduler._logger.error.assert_called()
+
     async def test_clear_saved_state(self):
         """저장된 상태 삭제 테스트."""
         scheduler, _, _, _ = self._make_scheduler()

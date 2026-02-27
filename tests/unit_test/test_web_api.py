@@ -204,6 +204,43 @@ async def test_scheduler_endpoints(web_client, mock_web_ctx):
     assert response.json()["history"] == []
 
 @pytest.mark.asyncio
+async def test_get_scheduler_history_name_correction(web_client, mock_web_ctx):
+    """
+    GET /api/scheduler/history 엔드포인트가 잘못된 종목명을 올바르게 보정하는지 테스트.
+    스케줄러 이력에 종목명 대신 업종명이 들어간 경우, StockCodeMapper를 통해 최신 종목명으로 덮어쓰는지 확인.
+    """
+    # 1. Mock 데이터 설정
+    # 스케줄러는 '반도체'라는 잘못된 이름으로 이력을 반환
+    incorrect_history = [
+        {
+            "code": "005930",
+            "name": "반도체",  # 잘못된 이름 (업종명)
+            "action": "BUY",
+            "price": 70000,
+            "reason": "Test Signal",
+            "strategy_name": "TestStrategy",
+            "timestamp": "2023-01-01 10:00:00",
+            "api_success": True
+        }
+    ]
+    mock_web_ctx.scheduler.get_signal_history.return_value = incorrect_history
+
+    # StockCodeMapper Mock 설정
+    mock_mapper = MagicMock()
+    mock_mapper.get_name_by_code.return_value = "삼성전자"  # '005930'에 대해 '삼성전자'를 반환
+    mock_web_ctx.stock_code_mapper = mock_mapper
+
+    # 2. API 호출
+    response = web_client.get("/api/scheduler/history")
+
+    # 3. 검증
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["history"]) == 1
+    assert data["history"][0]["name"] == "삼성전자"
+    mock_mapper.get_name_by_code.assert_called_once_with("005930")
+
+@pytest.mark.asyncio
 async def test_get_strategy_chart(web_client, mock_web_ctx):
     """GET /api/virtual/chart/{strategy_name} 엔드포인트 테스트"""
     # 1. 가상 매매 매니저 Mocking (전략 히스토리 반환)

@@ -727,4 +727,17 @@ async def get_scheduler_history(strategy: str = None):
     ctx = _get_ctx()
     if not ctx.scheduler:
         return {"history": []}
-    return {"history": ctx.scheduler.get_signal_history(strategy)}
+
+    history = ctx.scheduler.get_signal_history(strategy)
+
+    # [BugFix] 종목명 보정: 스케줄러 이력에 저장된 이름이 부정확할 수 있으므로 Mapper를 통해 최신 종목명으로 덮어씀
+    mapper = getattr(ctx, 'stock_code_mapper', None)
+    if mapper:
+        for item in history:
+            code = str(item.get('code', ''))
+            if code:
+                real_name = mapper.get_name_by_code(code)
+                if real_name:
+                    item['name'] = real_name
+
+    return {"history": history}
