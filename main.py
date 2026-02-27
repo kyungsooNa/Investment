@@ -18,7 +18,7 @@ def run_web():
     def open_browser():
         """서버 시작 후 브라우저 자동 오픈."""
         import time
-        time.sleep(0.5)
+        time.sleep(1)
         webbrowser.open(f"http://{host}:{port}")
 
     print(f"\n[Web] http://{host}:{port} 에서 접속 가능")
