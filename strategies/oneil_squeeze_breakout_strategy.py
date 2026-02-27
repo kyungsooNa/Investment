@@ -62,7 +62,7 @@ class OneilSqueezeConfig(BaseStrategyConfig):
 
     # 워치리스트 갱신 시각 (장 시작 후 경과 분)
     # 프로그램 시작 시 최초 1회 + 아래 시각에 미갱신이면 갱신
-    watchlist_refresh_minutes: tuple = (10, 30, 60, 90)
+    watchlist_refresh_minutes: tuple = (10, 30, 60, 90, 60*3, 60*5)
 
     # 매수 조건 — 볼린저 밴드 스퀴즈
     bb_period: int = 20
