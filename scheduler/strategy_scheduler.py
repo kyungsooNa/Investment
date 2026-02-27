@@ -144,7 +144,7 @@ class StrategyScheduler:
                     if should_run or force_exit:
                         self._last_run[name] = now
                         try:
-                            await self._run_strategy(cfg, force_exit_only=force_exit and not should_run)
+                            await self._run_strategy(cfg, force_exit_only=force_exit)
                         except Exception as e:
                             self._logger.error(
                                 f"[Scheduler] {name} 실행 오류: {e}", exc_info=True
