@@ -604,12 +604,27 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             self._logger.warning(f"거래량 상위 조회 실패: {response.msg1}")
             return response
 
-        stocks = response.data.get("output", []) if response.data else []
-        return ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value,
-            msg1="거래량 상위 종목 조회 성공",
-            data=stocks
-        )
+        try:
+            if not isinstance(response.data, dict):
+                raise TypeError(f"Expected dict for response data, but got {type(response.data)}")
+
+            stocks = response.data.get("output", [])
+            if not isinstance(stocks, list):
+                raise TypeError(f"Expected 'output' to be a list, but got {type(stocks)}")
+
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="거래량 상위 종목 조회 성공",
+                data=stocks
+            )
+        except (TypeError, AttributeError) as e:
+            error_msg = f"거래량 상위 응답 형식 오류: {e}, 응답: {response.data!r}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,
+                msg1=error_msg,
+                data=None
+            )
 
 
     #

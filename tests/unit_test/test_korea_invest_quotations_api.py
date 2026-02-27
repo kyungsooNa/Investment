@@ -989,3 +989,41 @@ async def test_get_top_rise_fall_stocks_parsing_error(mock_quotations, invalid_d
     assert "등락률 응답 형식 오류" in result.msg1
     assert result.data is None
     api._logger.error.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_get_top_volume_stocks_api_failure(mock_quotations):
+    """get_top_volume_stocks: API 호출 실패 시 에러 응답 반환 테스트"""
+    # Arrange
+    api = mock_quotations
+    error_response = ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="API Error")
+    api.call_api = AsyncMock(return_value=error_response)
+
+    # Act
+    result = await api.get_top_volume_stocks()
+
+    # Assert
+    assert result == error_response
+    api._logger.warning.assert_called_with("거래량 상위 조회 실패: API Error")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_data", [
+    "not a dict",
+    {"output": "not a list"},
+])
+async def test_get_top_volume_stocks_parsing_error(mock_quotations, invalid_data):
+    """get_top_volume_stocks: 응답 데이터 파싱 실패 시 PARSING_ERROR 반환 테스트"""
+    # Arrange
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=invalid_data
+    ))
+
+    # Act
+    result = await api.get_top_volume_stocks()
+
+    # Assert
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    assert "거래량 상위 응답 형식 오류" in result.msg1
+    assert result.data is None
+    api._logger.error.assert_called_once()
