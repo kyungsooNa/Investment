@@ -250,3 +250,37 @@ async def test_place_stock_order_hashkey_none():
 
         # 해시키 실패했으므로 실제 주문 API 호출 X
         mock_call.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_get_hashkey_timeout_exception():
+    api = make_api()
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(side_effect=httpx.TimeoutException("Timeout"))):
+        result = await api._get_hashkey({"k": "v"})
+        assert result is None
+
+@pytest.mark.asyncio
+async def test_get_hashkey_http_status_error():
+    api = make_api()
+    
+    # 코드에서 e.response.data.status_code로 접근하므로 이에 맞춘 Mock 구성
+    mock_response_data = MagicMock()
+    mock_response_data.status_code = 500
+    mock_response_data.text = "Server Error"
+    
+    mock_response = MagicMock()
+    mock_response.data = mock_response_data
+    
+    error = httpx.HTTPStatusError("Error", request=MagicMock(), response=mock_response)
+    
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(side_effect=error)):
+        result = await api._get_hashkey({"k": "v"})
+        assert result is None
+
+@pytest.mark.asyncio
+async def test_get_hashkey_api_failure_response():
+    api = make_api()
+    failure_response = ResCommonResponse(rt_cd="1", msg1="Failure", data={})
+    
+    with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(return_value=failure_response)):
+        result = await api._get_hashkey({"k": "v"})
+        assert result == failure_response
