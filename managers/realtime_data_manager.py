@@ -87,7 +87,7 @@ class RealtimeDataManager:
         """15분마다 데이터를 파일에 Flush."""
         try:
             while True:
-                await asyncio.sleep(900/(15))  # 15분
+                await asyncio.sleep(900)  # 15분
                 self._flush_pt_history()
         except asyncio.CancelledError:
             pass
