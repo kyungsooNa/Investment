@@ -315,3 +315,146 @@ async def test_get_rsi(web_client, mock_web_ctx):
     assert response.status_code == 200
     assert response.json()["data"]["rsi"] == 65.5
     mock_web_ctx.indicator_service.get_rsi.assert_awaited_once_with("005930", 14)
+
+def test_login_failure(web_client, mock_web_ctx):
+    """POST /api/auth/login 로그인 실패 테스트"""
+    response = web_client.post("/api/auth/login", data={"username": "wrong", "password": "wrong"})
+    assert response.status_code == 401
+    assert response.json()["success"] is False
+
+def test_get_ctx_uninitialized(web_client):
+    """서비스 초기화 전 호출 시 503 에러 테스트"""
+    from view.web import web_api
+    original_ctx = web_api._ctx
+    web_api.set_ctx(None)
+    
+    try:
+        # get_status calls _get_ctx which raises 503
+        response = web_client.get("/api/status")
+        assert response.status_code == 503
+    finally:
+        web_api.set_ctx(original_ctx)
+
+@pytest.mark.asyncio
+async def test_get_stock_chart(web_client, mock_web_ctx):
+    """GET /api/chart/{code} 엔드포인트 테스트"""
+    mock_web_ctx.stock_query_service.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=[{"date": "20250101", "close": 100}]
+    )
+    response = web_client.get("/api/chart/005930?period=D")
+    assert response.status_code == 200
+    assert response.json()["data"][0]["close"] == 100
+
+@pytest.mark.asyncio
+async def test_get_moving_average(web_client, mock_web_ctx):
+    """GET /api/indicator/ma/{code} 엔드포인트 테스트"""
+    # indicator_service가 mock_web_ctx에 없을 수 있으므로 확인 및 설정
+    if not hasattr(mock_web_ctx, 'indicator_service') or not isinstance(mock_web_ctx.indicator_service, AsyncMock):
+        mock_web_ctx.indicator_service = AsyncMock()
+        
+    mock_web_ctx.indicator_service.get_moving_average.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=[{"ma": 100}]
+    )
+    response = web_client.get("/api/indicator/ma/005930")
+    assert response.status_code == 200
+    assert response.json()["data"][0]["ma"] == 100
+
+@pytest.mark.asyncio
+async def test_place_order_sell(web_client, mock_web_ctx):
+    """POST /api/order (매도) 엔드포인트 테스트"""
+    mock_web_ctx.order_execution_service.handle_sell_stock.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Order Placed", data={"ord_no": "12345"}
+    )
+    payload = {"code": "005930", "price": "70000", "qty": "10", "side": "sell"}
+    response = web_client.post("/api/order", json=payload)
+    assert response.status_code == 200
+    mock_web_ctx.order_execution_service.handle_sell_stock.assert_awaited_once()
+    mock_web_ctx.virtual_manager.log_sell.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_place_order_invalid_side(web_client, mock_web_ctx):
+    """POST /api/order 잘못된 side 테스트"""
+    payload = {"code": "005930", "price": "70000", "qty": "10", "side": "invalid"}
+    response = web_client.post("/api/order", json=payload)
+    assert response.status_code == 400
+
+@pytest.mark.asyncio
+async def test_change_environment_failure(web_client, mock_web_ctx):
+    """POST /api/environment 실패 테스트"""
+    mock_web_ctx.initialize_services = AsyncMock(return_value=False)
+    response = web_client.post("/api/environment", json={"is_paper": True})
+    assert response.status_code == 500
+
+@pytest.mark.asyncio
+async def test_program_trading_endpoints(web_client, mock_web_ctx):
+    """프로그램 매매 관련 엔드포인트 테스트"""
+    # realtime_data_manager Mock 설정
+    mock_web_ctx.realtime_data_manager = MagicMock()
+    
+    # Subscribe
+    mock_web_ctx.start_program_trading = AsyncMock(return_value=True)
+    mock_web_ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
+    
+    resp = web_client.post("/api/program-trading/subscribe", json={"code": "005930"})
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    
+    # Status
+    resp = web_client.get("/api/program-trading/status")
+    assert resp.status_code == 200
+    assert resp.json()["subscribed"] is True
+    
+    # History
+    mock_web_ctx.stock_query_service.handle_get_program_trading_history.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={}
+    )
+    resp = web_client.get("/api/program-trading/history/005930")
+    assert resp.status_code == 200
+    
+    # Unsubscribe
+    mock_web_ctx.stop_program_trading = AsyncMock()
+    resp = web_client.post("/api/program-trading/unsubscribe", json={"code": "005930"})
+    assert resp.status_code == 200
+    mock_web_ctx.stop_program_trading.assert_awaited_with("005930")
+
+@pytest.mark.asyncio
+async def test_scheduler_strategy_control(web_client, mock_web_ctx):
+    """스케줄러 개별 전략 제어 테스트"""
+    # Start Strategy
+    mock_web_ctx.scheduler.start_strategy = AsyncMock(return_value=True)
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={})
+    
+    resp = web_client.post("/api/scheduler/strategy/TestStrat/start")
+    assert resp.status_code == 200
+    mock_web_ctx.scheduler.start_strategy.assert_awaited_with("TestStrat")
+    
+    # Stop Strategy
+    mock_web_ctx.scheduler.stop_strategy = MagicMock(return_value=True)
+    resp = web_client.post("/api/scheduler/strategy/TestStrat/stop")
+    assert resp.status_code == 200
+    mock_web_ctx.scheduler.stop_strategy.assert_called_with("TestStrat")
+
+@pytest.mark.asyncio
+async def test_get_balance_fallback_env(web_client, mock_web_ctx):
+    """GET /api/balance 환경 설정 폴백 테스트"""
+    # ctx.env가 없을 때 broker.env를 사용하는지 확인
+    mock_web_ctx.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={}
+    )
+    
+    # ctx.env 제거 (임시)
+    original_env = mock_web_ctx.env
+    del mock_web_ctx.env
+    
+    # broker.env 설정
+    mock_web_ctx.broker.env = MagicMock()
+    mock_web_ctx.broker.env.active_config = {"stock_account_number": "9999"}
+    mock_web_ctx.broker.env.is_paper_trading = True
+    
+    try:
+        response = web_client.get("/api/balance")
+        assert response.status_code == 200
+        assert response.json()["account_info"]["number"] == "9999"
+    finally:
+        # 복구
+        mock_web_ctx.env = original_env
