@@ -438,10 +438,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             "GET", EndpointKey.TIME_ITEMCHARTPRICE, params=params, retry_count=1
         )
 
-        if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
-            msg = resp.msg1 or "분봉 차트 조회 실패"
-            self._logger.warning(f"[분봉] 조회 실패: {msg}")
-            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=msg, data=[])
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+            original_msg = resp.msg1 if resp else "응답 없음"
+            error_msg = f"분봉 차트 조회 실패: {original_msg}"
+            self._logger.warning(f"[분봉] 조회 실패: {original_msg}")
+            # 원래의 에러 코드를 유지하면서, 컨텍스트를 추가한 메시지를 반환합니다.
+            return ResCommonResponse(rt_cd=resp.rt_cd if resp else ErrorCode.API_ERROR.value, msg1=error_msg, data=[])
 
         raw = resp.data
         # KIS 관례상 output2(리스트) 우선
@@ -552,15 +554,30 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._logger.info(f"{direction}률 상위 종목 조회 시도...")
         response = await self.call_api("GET", EndpointKey.RANKING_FLUCTUATION, params=params, retry_count=3)
 
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            return response
+
         try:
-            stocks = [ResFluctuation.from_dict(row) for row in response.data.get("output", [])]
+            if not isinstance(response.data, dict):
+                raise TypeError(f"Expected dict for response data, but got {type(response.data)}")
+
+            output_list = response.data.get("output", [])
+            if not isinstance(output_list, list):
+                raise TypeError(f"Expected 'output' to be a list, but got {type(output_list)}")
+
+            stocks = []
+            for row in output_list:
+                if not isinstance(row, dict):
+                    raise TypeError(f"Expected item in 'output' to be a dict, but got {type(row)}")
+                stocks.append(ResFluctuation.from_dict(row))
+
             return ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
                 msg1="종목 정보 조회 성공",
                 data=stocks
             )
-        except TypeError as e:
-            error_msg = f"등락률 응답 형식 오류: {e}, 응답: {response.data}"
+        except (TypeError, AttributeError) as e:
+            error_msg = f"등락률 응답 형식 오류: {e}, 응답: {response.data!r}"
             self._logger.error(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.PARSING_ERROR.value,  # Enum 값 사용

@@ -821,3 +821,171 @@ async def test_get_etf_info_success(mock_quotations):
     result = await mock_quotations.get_etf_info("ETF12345")
     assert result.rt_cd == "0"
     mock_quotations._logger.info.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_inquire_time_itemchartprice_success(mock_quotations):
+    """inquire_time_itemchartprice: 성공적인 분봉 데이터 조회 테스트"""
+    # Arrange
+    api = mock_quotations
+    stock_code = "005930"
+    input_hour = "2025010110"
+
+    mock_response_data = {
+        "output2": [
+            {"stck_cntg_hour": "100000", "stck_prpr": "70000"},
+            {"stck_cntg_hour": "100100", "stck_prpr": "70100"},
+        ]
+    }
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_response_data
+    ))
+
+    # Act
+    result = await api.inquire_time_itemchartprice(stock_code, input_hour)
+
+    # Assert
+    api.call_api.assert_awaited_once()
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.msg1 == "분봉 차트 조회 성공"
+    assert isinstance(result.data, list)
+    assert len(result.data) == 2
+    assert result.data[0]["stck_prpr"] == "70000"
+
+@pytest.mark.asyncio
+async def test_inquire_time_itemchartprice_api_failure(mock_quotations):
+    """inquire_time_itemchartprice: API 호출 실패 시 에러 응답 반환 테스트"""
+    # Arrange
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="API Error", data=None
+    ))
+
+    # Act
+    result = await api.inquire_time_itemchartprice("005930", "2025010110")
+
+    # Assert
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert "분봉 차트 조회 실패" in result.msg1
+    assert result.data == []
+    api._logger.warning.assert_called_with("[분봉] 조회 실패: API Error")
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data_key", ["output", "output1"])
+async def test_inquire_time_itemchartprice_fallback_data_keys(mock_quotations, data_key):
+    """inquire_time_itemchartprice: output2가 없을 때 output, output1 키로 폴백하는지 테스트"""
+    # Arrange
+    api = mock_quotations
+    mock_response_data = {
+        data_key: [{"stck_cntg_hour": "100000", "stck_prpr": "70000"}]
+    }
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_response_data
+    ))
+
+    # Act
+    result = await api.inquire_time_itemchartprice("005930", "2025010110")
+
+    # Assert
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 1
+    assert result.data[0]["stck_prpr"] == "70000"
+
+@pytest.mark.asyncio
+async def test_inquire_time_dailychartprice_success(mock_quotations):
+    """inquire_time_dailychartprice: 성공적인 일별 분봉 데이터 조회 테스트"""
+    # Arrange
+    api = mock_quotations
+    stock_code = "005930"
+    input_date = "20250101"
+    input_hour = "100000"
+
+    mock_response_data = {
+        "output2": [
+            {"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "stck_prpr": "70000"},
+            {"stck_bsop_date": "20250101", "stck_cntg_hour": "100100", "stck_prpr": "70100"},
+        ]
+    }
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_response_data
+    ))
+
+    # Act
+    result = await api.inquire_time_dailychartprice(stock_code, input_hour, input_date)
+
+    # Assert
+    api.call_api.assert_awaited_once()
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.msg1 == "일변 분봉 조회 성공"
+    assert isinstance(result.data, list)
+    assert len(result.data) == 2
+    assert result.data[0]["stck_prpr"] == "70000"
+
+@pytest.mark.asyncio
+async def test_inquire_time_dailychartprice_api_failure(mock_quotations):
+    """inquire_time_dailychartprice: API 호출 실패 시 에러 응답 그대로 반환 테스트"""
+    # Arrange
+    api = mock_quotations
+    error_response = ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="API Error", data=None)
+    api.call_api = AsyncMock(return_value=error_response)
+
+    # Act
+    result = await api.inquire_time_dailychartprice("005930", "100000", "20250101")
+
+    # Assert
+    assert result == error_response
+
+@pytest.mark.asyncio
+async def test_inquire_time_dailychartprice_data_not_dict(mock_quotations):
+    """inquire_time_dailychartprice: 응답 data가 dict가 아닐 때 빈 리스트 반환 테스트"""
+    # Arrange
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data="not a dict"
+    ))
+
+    # Act
+    result = await api.inquire_time_dailychartprice("005930", "100000", "20250101")
+
+    # Assert
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data == []
+
+@pytest.mark.asyncio
+async def test_get_top_rise_fall_stocks_api_failure(mock_quotations):
+    """get_top_rise_fall_stocks: API 호출 실패 시 에러 응답 반환 테스트"""
+    # Arrange
+    api = mock_quotations
+    error_response = ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="API Error")
+    api.call_api = AsyncMock(return_value=error_response)
+
+    # Act
+    result = await api.get_top_rise_fall_stocks(rise=True)
+
+    # Assert
+    assert result == error_response
+    api._logger.info.assert_called_with("상승률 상위 종목 조회 시도...")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_data", [
+    "not a dict",  # data가 dict가 아닌 경우
+    {"output": "not a list"},  # output이 list가 아닌 경우
+    {"output": ["not a dict"]},  # output list의 item이 dict가 아닌 경우
+])
+async def test_get_top_rise_fall_stocks_parsing_error(mock_quotations, invalid_data):
+    """get_top_rise_fall_stocks: 응답 데이터 파싱 실패 시 PARSING_ERROR 반환 테스트"""
+    # Arrange
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=invalid_data
+    ))
+
+    # Act
+    result = await api.get_top_rise_fall_stocks(rise=False)
+
+    # Assert
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    assert "등락률 응답 형식 오류" in result.msg1
+    assert result.data is None
+    api._logger.error.assert_called_once()
