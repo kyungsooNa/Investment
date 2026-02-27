@@ -52,7 +52,7 @@ class StrategyScheduler:
     발생한 TradeSignal을 CSV 기록 + API 주문으로 처리한다.
     """
 
-    LOOP_INTERVAL_SEC = 10          # 메인 루프 깨어나는 주기
+    LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
     FORCE_EXIT_MINUTES_BEFORE = 15  # 장 마감 N분 전 강제 청산
 
@@ -101,6 +101,7 @@ class StrategyScheduler:
     async def stop(self, save_state: bool = False):
         if save_state:
             self._save_scheduler_state()
+
         self._running = False
         for cfg in self._strategies:
             cfg.enabled = False
@@ -111,6 +112,10 @@ class StrategyScheduler:
             except asyncio.CancelledError:
                 pass
             self._task = None
+
+        for cfg in self._strategies:
+            await self.stop_strategy(cfg.strategy.name)
+
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
 
     # ── 메인 루프 ──
@@ -254,6 +259,34 @@ class StrategyScheduler:
             self._signal_history = self._signal_history[-self.MAX_HISTORY:]
         self._append_signal_csv(record)
 
+    async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
+        """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""
+        name = cfg.strategy.name
+        holdings = self._vm.get_holds_by_strategy(name)
+        if not holdings:
+            return
+
+        self._logger.info(f"[Scheduler] {name} 종료로 인한 강제 청산 실행 (보유 {len(holdings)}건)")
+
+        for hold in holdings:
+            code = hold.get("code")
+            if not code:
+                continue
+
+            stock_name = hold.get("name", code)
+            
+            # 시장가 매도를 위해 가격 0 설정
+            signal = TradeSignal(
+                strategy_name=name,
+                code=code,
+                name=stock_name,
+                action="SELL",
+                price=0,  # 시장가
+                qty=cfg.order_qty,
+                reason="전략 종료 강제 청산 (시장가)"
+            )
+            await self._execute_signal(signal)
+
     # ── 개별 전략 제어 ──
 
     async def start_strategy(self, name: str) -> bool:
@@ -270,10 +303,13 @@ class StrategyScheduler:
                 return True
         return False
 
-    def stop_strategy(self, name: str) -> bool:
+    async def stop_strategy(self, name: str) -> bool:
         """개별 전략 비활성화. 성공 시 True 반환."""
         for cfg in self._strategies:
             if cfg.strategy.name == name:
+                if cfg.enabled and cfg.force_exit_on_close:
+                    await self._force_liquidate_strategy(cfg)
+
                 cfg.enabled = False
                 self._logger.info(f"[Scheduler] 전략 비활성화: {name}")
                 return True
