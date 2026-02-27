@@ -228,3 +228,56 @@ async def test_periodic_flush_loop(manager):
         assert mock_sleep.call_count == 3
         # flush가 2번 호출되었는지 확인 (sleep 후 호출되므로 2번 성공)
         assert manager._flush_pt_history.call_count == 2
+
+def test_load_pt_history_corrupted_json(manager):
+    """손상된 JSON 라인이 포함된 파일 로드 테스트 (커버리지 향상)"""
+    # 정상 라인 + 손상된 라인
+    mock_data = '{"유가증권단축종목코드": "005930", "price": 100}\n{invalid_json}\n'
+    
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=mock_data)):
+        
+        manager._load_pt_history()
+        
+        # 정상 데이터는 로드되어야 함
+        assert "005930" in manager._pt_history
+        assert len(manager._pt_history["005930"]) == 1
+
+def test_flush_pt_history_exception(manager):
+    """플러시 중 파일 쓰기 예외 발생 테스트 (커버리지 향상)"""
+    manager._pt_history_buffer.append({"data": 1})
+    
+    with patch("os.makedirs"), \
+         patch("builtins.open", side_effect=IOError("Disk full")):
+        
+        # 예외가 발생해도 크래시되지 않아야 함
+        manager._flush_pt_history()
+        
+        # 에러 로그 확인
+        manager.logger.error.assert_called()
+
+def test_cleanup_old_pt_history_exception(manager):
+    """오래된 파일 삭제 중 예외 발생 테스트 (커버리지 향상)"""
+    today = datetime.now()
+    old_date = today - timedelta(days=31)
+    old_filename = f"pt_history_{old_date.strftime('%Y%m%d')}.jsonl"
+    
+    with patch("os.path.exists", return_value=True), \
+         patch("os.listdir", return_value=[old_filename]), \
+         patch("os.remove", side_effect=OSError("Permission denied")):
+        
+        manager._cleanup_old_pt_history(retention_days=30)
+        
+        # 에러 로그 확인
+        manager.logger.error.assert_called()
+
+def test_on_data_received_missing_key(manager):
+    """필수 키가 없는 데이터 수신 시 무시하는지 테스트 (커버리지 향상)"""
+    # "유가증권단축종목코드" 키가 없는 데이터
+    invalid_data = {"price": 100}
+    
+    manager.on_data_received(invalid_data)
+    
+    # 저장되지 않아야 함
+    assert len(manager._pt_history) == 0
+    assert len(manager._pt_history_buffer) == 0

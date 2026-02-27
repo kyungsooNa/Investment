@@ -156,3 +156,85 @@ async def test_program_trading_subscription(mock_deps):
     await ctx.stop_program_trading("005930")
     ctx.trading_service.unsubscribe_program_trading.assert_awaited_with("005930")
     mock_rdm_instance.remove_subscribed_code.assert_called_with("005930")
+
+def test_time_manager_methods(mock_deps):
+    """TimeManager 관련 메서드 테스트 (None 체크 포함)"""
+    ctx = WebAppContext(None)
+    
+    # 1. time_manager가 없을 때
+    ctx.time_manager = None
+    assert ctx.is_market_open() is False
+    assert ctx.get_current_time_str() == ""
+    
+    # 2. time_manager가 있을 때
+    ctx.time_manager = MagicMock()
+    ctx.time_manager.is_market_open.return_value = True
+    
+    # datetime 객체 모킹
+    mock_dt = MagicMock()
+    mock_dt.strftime.return_value = "2025-01-01 12:00:00"
+    ctx.time_manager.get_current_kst_time.return_value = mock_dt
+    
+    assert ctx.is_market_open() is True
+    assert ctx.get_current_time_str() == "2025-01-01 12:00:00"
+
+@pytest.mark.asyncio
+async def test_lifecycle_methods(mock_deps):
+    """백그라운드 태스크 시작 및 종료 테스트"""
+    ctx = WebAppContext(None)
+    ctx.realtime_data_manager = MagicMock()
+    ctx.realtime_data_manager.shutdown = AsyncMock()
+    
+    # Start
+    ctx.start_background_tasks()
+    ctx.realtime_data_manager.start_background_tasks.assert_called_once()
+    
+    # Shutdown
+    await ctx.shutdown()
+    ctx.realtime_data_manager.shutdown.assert_awaited_once()
+
+def test_web_realtime_callback(mock_deps):
+    """웹소켓 콜백 처리 테스트"""
+    ctx = WebAppContext(None)
+    ctx.trading_service = MagicMock()
+    ctx.trading_service._default_realtime_message_handler = MagicMock()
+    ctx.realtime_data_manager = MagicMock()
+    
+    # 1. 일반 데이터 (program trading 아님)
+    data_normal = {"type": "realtime_price", "data": {}}
+    ctx._web_realtime_callback(data_normal)
+    ctx.trading_service._default_realtime_message_handler.assert_called_with(data_normal)
+    ctx.realtime_data_manager.on_data_received.assert_not_called()
+    
+    # 2. 프로그램 매매 데이터 (가격 정보 주입 - dict 형태)
+    ctx.trading_service._latest_prices = {
+        "005930": {"price": "70000", "change": "100", "rate": "0.1", "sign": "2"}
+    }
+    
+    data_pt = {
+        "type": "realtime_program_trading",
+        "data": {"유가증권단축종목코드": "005930"}
+    }
+    ctx._web_realtime_callback(data_pt)
+    
+    # 데이터가 주입되었는지 확인
+    received_data = ctx.realtime_data_manager.on_data_received.call_args[0][0]
+    assert received_data["price"] == "70000"
+    assert received_data["rate"] == "0.1"
+
+@pytest.mark.asyncio
+async def test_stop_all_program_trading(mock_deps):
+    """모든 프로그램 매매 구독 해지 테스트"""
+    ctx = WebAppContext(None)
+    ctx.realtime_data_manager = MagicMock()
+    ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930", "000660"]
+    
+    ctx.trading_service = MagicMock()
+    ctx.trading_service.unsubscribe_program_trading = AsyncMock()
+    ctx.trading_service.unsubscribe_realtime_price = AsyncMock()
+    
+    await ctx.stop_all_program_trading()
+    
+    assert ctx.trading_service.unsubscribe_program_trading.call_count == 2
+    assert ctx.trading_service.unsubscribe_realtime_price.call_count == 2
+    ctx.realtime_data_manager.clear_subscribed_codes.assert_called_once()
