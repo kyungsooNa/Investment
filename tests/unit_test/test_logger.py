@@ -8,7 +8,7 @@ from logging.handlers import RotatingFileHandler
 import pytest
 
 # 실제 core.logger 경로에 맞게 수정
-from core.logger import Logger, get_strategy_logger, JsonFormatter, reset_log_timestamp_for_test
+from core.logger import Logger, get_strategy_logger, JsonFormatter, reset_log_timestamp_for_test, _log_rotation_namer
 
 
 @pytest.fixture
@@ -294,6 +294,24 @@ def test_get_strategy_logger(tmp_path):
     reset_log_timestamp_for_test()
 
 
+def test_log_rotation_namer_logic():
+    """
+    _log_rotation_namer 함수가 파일명을 올바르게 변환하는지 테스트합니다.
+    """
+    # Case 1: 일반적인 로그 파일 (.log.1 -> _1.log)
+    assert _log_rotation_namer("app.log.1") == "app_1.log"
+    assert _log_rotation_namer("/var/logs/app.log.1") == "/var/logs/app_1.log"
+
+    # Case 2: 백업 번호가 두 자리 이상일 때
+    assert _log_rotation_namer("debug.log.10") == "debug_10.log"
+
+    # Case 3: 확장자가 복잡한 경우 (my.app.log.1 -> my.app_1.log)
+    assert _log_rotation_namer("my.app.log.1") == "my.app_1.log"
+
+    # Case 4: 변경 대상이 아닌 경우 (백업 번호 없음)
+    assert _log_rotation_namer("app.log") == "app.log"
+
+
 def test_log_rotation(clean_logger_instance):
     """
     RotatingFileHandler가 설정된 크기를 초과하면 로그 파일을 회전시키는지 테스트합니다.
@@ -318,11 +336,13 @@ def test_log_rotation(clean_logger_instance):
     # 2. 두 번째 로그 기록 (누적 100바이트 초과 -> 회전 발생 예상)
     logger.info(msg)
     
-    # 백업 파일(.log.1)이 생성되었는지 확인
-    log_files = list(common_log_dir.glob("*_operational.log*"))
-    # 원본 파일 + 백업 파일(.1)
+    # 백업 파일이 생성되었는지 확인 (namer 적용으로 .log.1 대신 _1.log)
+    # glob 패턴은 원본(*.log)과 백업(*.log*)을 모두 포함
+    log_files = list(common_log_dir.glob("*_operational*.log*"))
+    
     assert len(log_files) >= 2
-    assert any(f.name.endswith(".1") for f in log_files)
+    # 기존 .log.1 대신 _1.log 패턴이 존재하는지 확인
+    assert any(f.name.endswith("_1.log") for f in log_files)
 
 
 def test_log_cleanup(tmp_path):
