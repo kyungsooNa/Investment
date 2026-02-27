@@ -1,8 +1,9 @@
 # tests/unit_test/test_strategy_scheduler.py
 import unittest
-from unittest.mock import MagicMock, AsyncMock, patch
+import asyncio
+from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 from common.types import TradeSignal, ErrorCode, ResCommonResponse
-from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
+from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SCHEDULER_STATE_FILE
 from interfaces.live_strategy import LiveStrategy
 
 
@@ -44,12 +45,15 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         tm = MagicMock()
         tm.is_market_open.return_value = True
 
+        mock_logger = MagicMock()
+
         # CSV 파일 I/O를 차단하여 테스트 격리
         with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
             scheduler = StrategyScheduler(
                 virtual_manager=vm,
                 order_execution_service=oes,
                 time_manager=tm,
+                logger=mock_logger,
                 dry_run=dry_run,
             )
         scheduler._append_signal_csv = MagicMock()
@@ -247,6 +251,211 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0]["strategy_name"], "전략A")
 
+    async def test_execute_signal_api_failure(self):
+        """API 주문 실패 시 처리 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+
+        # API 실패 응답 설정
+        oes.handle_place_buy_order.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="주문 실패"
+        )
+
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략"
+        )
+        await scheduler._execute_signal(signal)
+
+        # 로그에 경고가 남았는지 확인 (API 주문 실패)
+        scheduler._logger.warning.assert_called()
+        # 히스토리에 실패로 기록되었는지 확인
+        self.assertFalse(scheduler._signal_history[-1].api_success)
+
+    async def test_execute_signal_api_exception(self):
+        """API 주문 중 예외 발생 시 처리 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        # 로거 Mock 강제 설정 (AttributeError 방지)
+        scheduler._logger = MagicMock()
+
+        # API 예외 설정
+        oes.handle_place_buy_order.side_effect = Exception("Network Error")
+
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략"
+        )
+        await scheduler._execute_signal(signal)
+
+        # 로그에 에러가 남았는지 확인
+        scheduler._logger.error.assert_called()
+        # 히스토리에 실패로 기록되었는지 확인
+        self.assertFalse(scheduler._signal_history[-1].api_success)
+
+    async def test_individual_strategy_control(self):
+        """개별 전략 시작/정지 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy)
+        scheduler.register(config)
+
+        # 정지
+        self.assertTrue(scheduler.stop_strategy("전략A"))
+        self.assertFalse(scheduler._strategies[0].enabled)
+
+        # 없는 전략 정지
+        self.assertFalse(scheduler.stop_strategy("없는전략"))
+
+        # 시작 (루프가 안 돌고 있으면 시작됨)
+        self.assertFalse(scheduler._running)
+        with patch.object(scheduler, '_loop', new_callable=AsyncMock):  # loop 실행 방지
+            self.assertTrue(await scheduler.start_strategy("전략A"))
+            self.assertTrue(scheduler._strategies[0].enabled)
+            self.assertTrue(scheduler._running)
+            self.assertIsNotNone(scheduler._task)
+
+        # 이미 실행 중일 때 전략만 활성화
+        scheduler._strategies[0].enabled = False
+        self.assertTrue(await scheduler.start_strategy("전략A"))
+        self.assertTrue(scheduler._strategies[0].enabled)
+
+    async def test_persistence_save_restore(self):
+        """상태 저장 및 복원 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy)
+        scheduler.register(config)
+        scheduler._running = True
+        config.enabled = True
+
+        # Save State
+        with patch("builtins.open", new_callable=MagicMock) as mock_open_func:
+            with patch("json.dump") as mock_json_dump:
+                scheduler._save_scheduler_state()
+                mock_open_func.assert_called_with(SCHEDULER_STATE_FILE, "w", encoding="utf-8")
+                mock_json_dump.assert_called()
+                args, _ = mock_json_dump.call_args
+                self.assertEqual(args[0]["enabled_strategies"], ["전략A"])
+
+        # Restore State
+        scheduler._running = False
+        config.enabled = False
+
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", new_callable=MagicMock):
+                with patch("json.load", return_value={"running": True, "enabled_strategies": ["전략A"]}):
+                    with patch.object(scheduler, '_loop', new_callable=AsyncMock):  # loop 실행 방지
+                        await scheduler.restore_state()
+
+                        self.assertTrue(scheduler._running)
+                        self.assertTrue(config.enabled)
+
+    async def test_clear_saved_state(self):
+        """저장된 상태 삭제 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        with patch("os.path.exists", return_value=True):
+            with patch("os.remove") as mock_remove:
+                scheduler.clear_saved_state()
+                mock_remove.assert_called_with(SCHEDULER_STATE_FILE)
+
+    def test_load_signal_history_real(self):
+        """CSV 파일에서 시그널 이력 로드 테스트 (mocking open)."""
+        # _make_scheduler는 _load_signal_history를 patch하지만 __init__ 동안만 유효하므로
+        # 생성된 객체에서는 원본 메서드를 호출할 수 있음.
+        scheduler, _, _, _ = self._make_scheduler()
+
+        csv_content = "strategy_name,code,name,action,price,reason,timestamp,api_success\n" \
+                      "전략A,005930,삼성전자,BUY,70000,테스트,2023-01-01 10:00:00,True"
+
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data=csv_content)):
+                records = scheduler._load_signal_history()
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0].code, "005930")
+                self.assertTrue(records[0].api_success)
+
+    async def test_loop_market_closed(self):
+        """장 마감 시 루프 대기 테스트."""
+        scheduler, _, _, tm = self._make_scheduler()
+        tm.is_market_open.return_value = False
+
+        scheduler._running = True
+
+        # asyncio.sleep을 mock하여 루프를 한 번 돌고 종료하도록 설정 (CancelledError 발생)
+        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]) as mock_sleep:
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+            # sleep이 MARKET_CLOSED_SLEEP_SEC 만큼 호출되었는지 확인
+            mock_sleep.assert_called_with(scheduler.MARKET_CLOSED_SLEEP_SEC)
+
+    async def test_loop_force_exit(self):
+        """장 마감 임박 시 강제 청산 로직 테스트 (전략별 설정 구분 확인)."""
+        scheduler, vm, _, tm = self._make_scheduler()
+
+        # 전략 A: 강제 청산 설정 O
+        strategy_a = MockStrategy(name="전략A")
+        config_a = StrategySchedulerConfig(strategy=strategy_a, force_exit_on_close=True, interval_minutes=60)
+        scheduler.register(config_a)
+
+        # 전략 B: 강제 청산 설정 X
+        strategy_b = MockStrategy(name="전략B")
+        config_b = StrategySchedulerConfig(strategy=strategy_b, force_exit_on_close=False, interval_minutes=60)
+        scheduler.register(config_b)
+
+        tm.is_market_open.return_value = True
+
+        # 현재 시간: 15:20, 마감 시간: 15:30 (10분 남음 -> FORCE_EXIT_MINUTES_BEFORE(15) 이내)
+        import pytz
+        from datetime import datetime
+        kst = pytz.timezone("Asia/Seoul")
+        now = kst.localize(datetime(2023, 1, 1, 15, 20))
+        close_time = kst.localize(datetime(2023, 1, 1, 15, 30))
+
+        tm.get_current_kst_time.return_value = now
+        tm.get_market_close_time.return_value = close_time
+
+        scheduler._running = True
+
+        # _run_strategy가 force_exit_only=True로 호출되는지 확인하기 위해 spy/mock
+        with patch.object(scheduler, '_run_strategy', new_callable=AsyncMock) as mock_run:
+            with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+                try:
+                    await scheduler._loop()
+                except asyncio.CancelledError:
+                    pass
+
+            # 전략 A는 강제 청산 모드(True)로 실행되어야 함
+            mock_run.assert_any_call(config_a, force_exit_only=True)
+            
+            # 전략 B는 일반 모드(False)로 실행되어야 함 (should_run=True 조건에 의해 실행됨)
+            mock_run.assert_any_call(config_b, force_exit_only=False)
+
+    async def test_loop_exception_handling(self):
+        """루프 내 예외 발생 시 계속 실행되는지 테스트."""
+        scheduler, _, _, tm = self._make_scheduler()
+        tm.is_market_open.return_value = True
+        
+        # 전략 실행 시 예외 발생
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy, interval_minutes=0) # 즉시 실행
+        scheduler.register(config)
+        
+        scheduler._running = True
+        
+        # _run_strategy가 예외를 던지도록 설정
+        with patch.object(scheduler, '_run_strategy', side_effect=Exception("Strategy Error")):
+            # sleep 호출 시 CancelledError로 루프 종료
+            with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+                try:
+                    await scheduler._loop()
+                except asyncio.CancelledError:
+                    pass
+        
+        # 에러 로그가 호출되었는지 확인
+        scheduler._logger.error.assert_called()
 
 if __name__ == "__main__":
     unittest.main()
