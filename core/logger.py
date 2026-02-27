@@ -26,6 +26,22 @@ def reset_log_timestamp_for_test():
     """테스트 격리를 위해 전역 타임스탬프를 리셋합니다."""
     global _log_timestamp
     _log_timestamp = None
+
+def _log_rotation_namer(default_name):
+    """
+    RotatingFileHandler의 백업 파일 이름을 변경하는 namer 함수.
+    기본 동작인 'filename.log.1' 대신 'filename_1.log' 형태로 변경합니다.
+    """
+    # default_name: /path/to/file.log.1
+    base_path, backup_num_ext = os.path.splitext(default_name)
+    
+    # 백업 번호 확인 (.1, .2 등)
+    if len(backup_num_ext) > 1 and backup_num_ext[1:].isdigit():
+        backup_num = backup_num_ext[1:]
+        # 원본 파일명에서 확장자 분리
+        file_root, file_ext = os.path.splitext(base_path)
+        return f"{file_root}_{backup_num}{file_ext}"
+    return default_name
 # -------------------------
 
 
@@ -84,6 +100,7 @@ def get_strategy_logger(strategy_name: str, log_dir="logs"):
         maxBytes=LOG_MAX_BYTES,
         backupCount=LOG_BACKUP_COUNT
     )
+    file_handler.namer = _log_rotation_namer
     file_handler.setFormatter(JsonFormatter())
     logger.addHandler(file_handler)
 
@@ -165,6 +182,7 @@ class Logger:
             maxBytes=LOG_MAX_BYTES,
             backupCount=LOG_BACKUP_COUNT
         )
+        file_handler.namer = _log_rotation_namer
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         logger.addHandler(file_handler)
 
