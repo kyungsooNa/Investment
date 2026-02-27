@@ -2,7 +2,7 @@
 # 📈 Investment Trading App
 
 <!-- Pytest Coverage Comment:Begin -->
-![Coverage](https://img.shields.io/badge/Coverage-88%25-yellow)
+![Coverage](https://img.shields.io/badge/Coverage-90%25-green)
 <!-- Pytest Coverage Comment:End -->
 
 ## 🚀 프로젝트 소개
