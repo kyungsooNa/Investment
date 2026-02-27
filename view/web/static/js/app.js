@@ -1444,9 +1444,10 @@ function _updateProgramTradingChart() {
                 label: `${ptCodeNameMap[code] || code} (수량)`,
                 data: aggData.volume,
                 borderColor: color,
-                backgroundColor: color,
+                backgroundColor: color + '20', // [수정] 연한 배경색 (Area Chart 효과)
                 borderWidth: 2,
-                pointRadius: 2, // 점 표시
+                pointRadius: 0, // [수정] 선을 깔끔하게
+                fill: true, // [추가] 영역 채우기
                 pointHoverRadius: 4,
                 tension: 0.1,
                 yAxisID: 'y1' // [수정] 수량 -> 위쪽 축
