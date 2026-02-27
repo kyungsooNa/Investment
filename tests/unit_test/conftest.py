@@ -125,7 +125,12 @@ def mock_web_ctx():
     ctx.order_execution_service = AsyncMock()
     ctx.broker = AsyncMock()
     ctx.virtual_manager = MagicMock()
-    ctx.scheduler = AsyncMock()
+    
+    # scheduler는 동기/비동기 메서드가 혼재하므로 MagicMock 기반에 비동기 메서드만 AsyncMock 할당
+    ctx.scheduler = MagicMock()
+    ctx.scheduler.start = AsyncMock()
+    ctx.scheduler.stop = AsyncMock()
+    ctx.scheduler.start_strategy = AsyncMock()
     
     # 환경 설정 Mocking
     ctx.env = MagicMock()
