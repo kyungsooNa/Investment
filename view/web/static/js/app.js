@@ -776,6 +776,11 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
     currentVirtualSoldData = soldData.slice().reverse();
     renderVirtualHoldTable();
     renderVirtualSoldTable();
+
+    // 6. 차트도 선택된 전략에 맞게 업데이트
+    if (typeof refreshVirtualChart === 'function') {
+        refreshVirtualChart(strategyName);
+    }
 };
 
 function virtualSortCompare(data, key, dir) {

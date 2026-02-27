@@ -4,10 +4,22 @@
 let yieldChart = null;
 let activeVirtualStrategy = 'ALL';
 
-const STRATEGY_COLORS = [
-    '#4dabf7', '#ff6b6b', '#51cf66', '#fcc419', '#ae3ec9', 
+const STRATEGY_COLORS_PALETTE = [
+    '#ff6b6b', '#51cf66', '#fcc419', '#ae3ec9',
     '#1098ad', '#f06595', '#845ef7', '#339af0', '#20c997'
 ];
+const ALL_COLOR = '#4dabf7';
+
+// 전략명 → 색상 고정 매핑 (전략 순서가 바뀌어도 동일 색상 유지)
+const strategyColorMap = {};
+function getStrategyColor(name) {
+    if (name === 'ALL') return ALL_COLOR;
+    if (!strategyColorMap[name]) {
+        const idx = Object.keys(strategyColorMap).length;
+        strategyColorMap[name] = STRATEGY_COLORS_PALETTE[idx % STRATEGY_COLORS_PALETTE.length];
+    }
+    return strategyColorMap[name];
+}
 
 async function initVirtualChart() {
     const canvas = document.getElementById('virtualYieldChart');
@@ -92,7 +104,7 @@ window.refreshVirtualChart = async function(strategyName) {
         const newDatasets = [];
 
         // 2. 각 전략별 데이터셋 생성 및 날짜 정렬(Alignment)
-        strategyNames.forEach((name, idx) => { 
+        strategyNames.forEach((name) => {
             const isAll = (name === 'ALL');
             const strategyHistory = histories[name];
             
@@ -108,7 +120,7 @@ window.refreshVirtualChart = async function(strategyName) {
             newDatasets.push({
                 label: isAll ? '전체(ALL) %' : `${name} %`,
                 data: alignedData,
-                borderColor: isAll ? '#4dabf7' : STRATEGY_COLORS[(idx + 1) % STRATEGY_COLORS.length],
+                borderColor: getStrategyColor(name),
                 backgroundColor: isAll ? 'rgba(77, 171, 247, 0.1)' : 'transparent',
                 borderWidth: isAll ? 3 : 1.5,
                 pointRadius: isAll ? 3 : 0,
