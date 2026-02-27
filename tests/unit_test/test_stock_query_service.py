@@ -4,8 +4,6 @@ import unittest
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from services.stock_query_service import StockQueryService
-from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ResTopMarketCapApiItem, ResStockFullInfoApiOutput, ErrorCode, ResBasicStockInfo, ResFluctuation
 
 
@@ -31,19 +29,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.stockQueryService = StockQueryService(
             self.mock_trading_service, self.mock_logger, self.mock_time_manager, self.mock_indicator_service
         )
-
-        self.mock_env = MagicMock(spec=KoreaInvestApiEnv)
-        self.mock_env.my_agent = "MockUserAgent"
-        self.mock_env.my_app_key = "MockAppKey"
-        self.mock_env.my_app_secret = "MockAppSecret"
-        self.mock_env.my_custtype = "P"
-        self.mock_env.my_tr_id = "TR123456"
-
-        with patch("brokers.korea_investment.korea_invest_api_base.httpx.AsyncClient"):
-            self.api = KoreaInvestApiBase(
-                env=self.mock_env,
-                logger=self.mock_logger
-            )
 
     # --- _get_sign_from_code 함수 테스트 (Synchronous) ---
     def test_get_sign_from_code_plus(self):
