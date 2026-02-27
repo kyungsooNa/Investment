@@ -4,11 +4,11 @@ import pytest
 import pandas as pd
 import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, call
 from services.stock_query_service import StockQueryService
 
 # 경로 문제를 피하기 위해, 테스트 실행 시 프로젝트 루트를 기준으로 import
-from market_data.stock_code_mapper import StockCodeMapper
+from market_data.stock_code_mapper import StockCodeMapper, _write_minimal_csv
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem
 
 # --- 테스트를 위한 모의(Mock) 데이터 및 Fixture ---
@@ -158,3 +158,241 @@ def test_initialization_file_not_found_without_logger(mock_exists, mock_save):
     # Act & Assert
     with pytest.raises(FileNotFoundError):
         StockCodeMapper(logger=None)  # logger 없이 초기화
+
+# --- 추가 테스트 케이스 (Coverage 향상) ---
+
+def test_write_minimal_csv(tmp_path):
+    """_write_minimal_csv 함수가 정상적으로 최소 CSV를 생성하는지 테스트합니다."""
+    csv_path = tmp_path / "minimal.csv"
+    logger = MagicMock()
+    
+    _write_minimal_csv(str(csv_path), logger)
+    
+    assert csv_path.exists()
+    df = pd.read_csv(csv_path)
+    assert not df.empty
+    assert "종목코드" in df.columns
+    assert df.iloc[0]["종목코드"] == "000000"
+    logger.warning.assert_called_once()
+
+@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_init_creates_file_success(mock_read_csv, mock_exists, mock_save, mock_logger, mock_stock_df):
+    """CSV 파일이 없을 때 생성을 시도하고 성공하는 케이스를 테스트합니다."""
+    mock_exists.return_value = False
+    mock_read_csv.return_value = mock_stock_df
+    
+    StockCodeMapper(logger=mock_logger)
+    
+    mock_save.assert_called_once_with(force_update=True)
+    # 로그 메시지 확인
+    assert any("생성 완료" in call.args[0] for call in mock_logger.info.call_args_list)
+
+@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_load_df_empty_csv_recovery_success(mock_read_csv, mock_exists, mock_save, mock_logger, mock_stock_df):
+    """CSV가 비어있을 때 갱신을 시도하여 성공하는 케이스를 테스트합니다."""
+    mock_exists.return_value = True
+    
+    # 첫 번째 읽기: 빈 데이터프레임 -> ValueError 발생 -> except 블록 진입
+    # 두 번째 읽기: 정상 데이터프레임
+    mock_read_csv.side_effect = [pd.DataFrame(), mock_stock_df]
+    
+    mapper = StockCodeMapper(logger=mock_logger)
+    
+    mock_save.assert_called_once_with(force_update=True)
+    assert mapper.code_to_name['005930'] == '삼성전자'
+    # 경고 로그 확인
+    assert any("비어 있음" in call.args[0] for call in mock_logger.warning.call_args_list)
+
+@patch('market_data.stock_code_mapper._write_minimal_csv')
+@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_load_df_empty_csv_recovery_fail_minimal(mock_read_csv, mock_exists, mock_save, mock_write_minimal, mock_logger):
+    """CSV가 비어있고 갱신도 실패했을 때 최소 CSV를 사용하는 케이스를 테스트합니다."""
+    mock_exists.return_value = True
+    
+    # 1. 첫 읽기: 빈 DF -> ValueError("비어")
+    # 2. 갱신 시도: Exception 발생
+    # 3. 최소 CSV 작성 호출
+    # 4. 재읽기: 최소 DF 반환
+    minimal_df = pd.DataFrame([{"종목코드": "000000", "종목명": "(종목목록 없음)"}])
+    mock_read_csv.side_effect = [pd.DataFrame(), minimal_df]
+    mock_save.side_effect = Exception("Update Failed")
+    
+    mapper = StockCodeMapper(logger=mock_logger)
+    
+    mock_write_minimal.assert_called_once()
+    assert mapper.code_to_name['000000'] == '(종목목록 없음)'
+    assert any("최소 CSV" in call.args[0] for call in mock_logger.warning.call_args_list)
+
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_load_df_generic_exception(mock_read_csv, mock_exists, mock_logger):
+    """비어있는 에러가 아닌 일반적인 에러 발생 시 예외를 다시 던지는지 테스트합니다."""
+    mock_exists.return_value = True
+    mock_read_csv.side_effect = Exception("Critical IO Error")
+    
+    with pytest.raises(Exception, match="Critical IO Error"):
+        StockCodeMapper(logger=mock_logger)
+    
+    mock_logger.error.assert_called()
+
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_kosdaq_methods(mock_read_csv, mock_exists, mock_logger):
+    """get_kosdaq_codes 및 is_kosdaq 메서드를 테스트합니다."""
+    mock_exists.return_value = True
+    data = {
+        '종목코드': ['005930', '123456'],
+        '종목명': ['삼성전자', '코스닥종목'],
+        '시장구분': ['KOSPI', 'KOSDAQ']
+    }
+    mock_read_csv.return_value = pd.DataFrame(data)
+    
+    mapper = StockCodeMapper(logger=mock_logger)
+    
+    # get_kosdaq_codes
+    kosdaq = mapper.get_kosdaq_codes()
+    assert '123456' in kosdaq
+    assert '005930' not in kosdaq
+    
+    # is_kosdaq
+    assert mapper.is_kosdaq('123456') is True
+    assert mapper.is_kosdaq('005930') is False
+    assert mapper.is_kosdaq('999999') is False
+
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_kosdaq_methods_missing_column(mock_read_csv, mock_exists, mock_logger, mock_stock_df):
+    """시장구분 컬럼이 없을 때 KOSDAQ 관련 메서드가 안전하게 동작하는지 테스트합니다."""
+    mock_exists.return_value = True
+    # mock_stock_df에는 '시장구분' 컬럼이 없음
+    mock_read_csv.return_value = mock_stock_df
+    
+    mapper = StockCodeMapper(logger=mock_logger)
+    
+    assert mapper.get_kosdaq_codes() == []
+    assert mapper.is_kosdaq('005930') is False
+
+# --- 추가 테스트 케이스 (Coverage 향상) ---
+
+def test_write_minimal_csv(tmp_path):
+    """_write_minimal_csv 함수가 정상적으로 최소 CSV를 생성하는지 테스트합니다."""
+    csv_path = tmp_path / "minimal.csv"
+    logger = MagicMock()
+    
+    _write_minimal_csv(str(csv_path), logger)
+    
+    assert csv_path.exists()
+    df = pd.read_csv(csv_path, dtype={"종목코드": str})
+    assert not df.empty
+    assert "종목코드" in df.columns
+    assert df.iloc[0]["종목코드"] == "000000"
+    logger.warning.assert_called_once()
+
+@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_init_creates_file_success(mock_read_csv, mock_exists, mock_save, mock_logger, mock_stock_df):
+    """CSV 파일이 없을 때 생성을 시도하고 성공하는 케이스를 테스트합니다."""
+    mock_exists.return_value = False
+    mock_read_csv.return_value = mock_stock_df
+    
+    StockCodeMapper(logger=mock_logger)
+    
+    mock_save.assert_called_once_with(force_update=True)
+    # 로그 메시지 확인
+    assert any("생성 완료" in call.args[0] for call in mock_logger.info.call_args_list)
+
+@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_load_df_empty_csv_recovery_success(mock_read_csv, mock_exists, mock_save, mock_logger, mock_stock_df):
+    """CSV가 비어있을 때 갱신을 시도하여 성공하는 케이스를 테스트합니다."""
+    mock_exists.return_value = True
+    
+    # 첫 번째 읽기: 빈 데이터프레임 -> ValueError 발생 -> except 블록 진입
+    # 두 번째 읽기: 정상 데이터프레임
+    mock_read_csv.side_effect = [pd.DataFrame(), mock_stock_df]
+    
+    mapper = StockCodeMapper(logger=mock_logger)
+    
+    mock_save.assert_called_once_with(force_update=True)
+    assert mapper.code_to_name['005930'] == '삼성전자'
+    # 경고 로그 확인
+    assert any("비어 있음" in call.args[0] for call in mock_logger.warning.call_args_list)
+
+@patch('market_data.stock_code_mapper._write_minimal_csv')
+@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_load_df_empty_csv_recovery_fail_minimal(mock_read_csv, mock_exists, mock_save, mock_write_minimal, mock_logger):
+    """CSV가 비어있고 갱신도 실패했을 때 최소 CSV를 사용하는 케이스를 테스트합니다."""
+    mock_exists.return_value = True
+    
+    # 1. 첫 읽기: 빈 DF -> ValueError("비어")
+    # 2. 갱신 시도: Exception 발생
+    # 3. 최소 CSV 작성 호출
+    # 4. 재읽기: 최소 DF 반환
+    minimal_df = pd.DataFrame([{"종목코드": "000000", "종목명": "(종목목록 없음)"}])
+    mock_read_csv.side_effect = [pd.DataFrame(), minimal_df]
+    mock_save.side_effect = Exception("Update Failed")
+    
+    mapper = StockCodeMapper(logger=mock_logger)
+    
+    mock_write_minimal.assert_called_once()
+    assert mapper.code_to_name['000000'] == '(종목목록 없음)'
+    assert any("최소 CSV" in call.args[0] for call in mock_logger.warning.call_args_list)
+
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_load_df_generic_exception(mock_read_csv, mock_exists, mock_logger):
+    """비어있는 에러가 아닌 일반적인 에러 발생 시 예외를 다시 던지는지 테스트합니다."""
+    mock_exists.return_value = True
+    mock_read_csv.side_effect = Exception("Critical IO Error")
+    
+    with pytest.raises(Exception, match="Critical IO Error"):
+        StockCodeMapper(logger=mock_logger)
+    
+    mock_logger.error.assert_called()
+
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_kosdaq_methods(mock_read_csv, mock_exists, mock_logger):
+    """get_kosdaq_codes 및 is_kosdaq 메서드를 테스트합니다."""
+    mock_exists.return_value = True
+    data = {
+        '종목코드': ['005930', '123456'],
+        '종목명': ['삼성전자', '코스닥종목'],
+        '시장구분': ['KOSPI', 'KOSDAQ']
+    }
+    mock_read_csv.return_value = pd.DataFrame(data)
+    
+    mapper = StockCodeMapper(logger=mock_logger)
+    
+    # get_kosdaq_codes
+    kosdaq = mapper.get_kosdaq_codes()
+    assert '123456' in kosdaq
+    assert '005930' not in kosdaq
+    
+    # is_kosdaq
+    assert mapper.is_kosdaq('123456') is True
+    assert mapper.is_kosdaq('005930') is False
+    assert mapper.is_kosdaq('999999') is False
+
+@patch('os.path.exists')
+@patch('pandas.read_csv')
+def test_kosdaq_methods_missing_column(mock_read_csv, mock_exists, mock_logger, mock_stock_df):
+    """시장구분 컬럼이 없을 때 KOSDAQ 관련 메서드가 안전하게 동작하는지 테스트합니다."""
+    mock_exists.return_value = True
+    # mock_stock_df에는 '시장구분' 컬럼이 없음
+    mock_read_csv.return_value = mock_stock_df
+    
+    mapper = StockCodeMapper(logger=mock_logger)
+    
+    assert mapper.get_kosdaq_codes() == []
+    assert mapper.is_kosdaq('005930') is False
