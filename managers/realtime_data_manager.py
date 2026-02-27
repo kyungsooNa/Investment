@@ -22,6 +22,12 @@ class RealtimeDataManager:
         # 백그라운드 태스크
         self._flush_task = None
         
+        # 초기화 시 디렉토리 생성 보장
+        try:
+            os.makedirs(self._get_base_dir(), exist_ok=True)
+        except Exception as e:
+            self.logger.error(f"데이터 디렉토리 생성 실패: {e}")
+
         # 초기화
         self._load_pt_history()
 
@@ -81,7 +87,7 @@ class RealtimeDataManager:
         """15분마다 데이터를 파일에 Flush."""
         try:
             while True:
-                await asyncio.sleep(900)  # 15분
+                await asyncio.sleep(900/(15))  # 15분
                 self._flush_pt_history()
         except asyncio.CancelledError:
             pass
