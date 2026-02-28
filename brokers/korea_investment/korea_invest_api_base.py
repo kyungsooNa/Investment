@@ -93,8 +93,12 @@ class KoreaInvestApiBase:
                 )
 
             except ApiRetryError as e:
-                wait_time = e.delay if e.delay > 0 else delay
-                self._logger.info(f"재시도 필요: {attempt}/{retry_count}, 사유: {e}, 지연 {wait_time}초")
+                # 지수 백오프 적용: 기본 delay * 2^(attempt-1)
+                if e.delay > 0:
+                    wait_time = e.delay
+                else:
+                    wait_time = delay * (2 ** (attempt - 1))
+                self._logger.warning(f"재시도 필요: {attempt}/{retry_count}, 사유: {e}, 지연 {wait_time}초")
                 await self.time_manager.async_sleep(wait_time)
                 continue
 
