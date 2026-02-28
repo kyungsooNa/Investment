@@ -459,11 +459,3 @@ class ResCommonResponse(Generic[T]):
             "msg1": self.msg1,
             "data": data_serialized
         }
-
-
-class ResponseStatus(Enum):
-    RETRY = auto()
-    FATAL_ERROR = auto()
-    HTTP_ERROR = auto()
-    PARSING_ERROR = auto()
-    EMPTY_RTCD = auto()
