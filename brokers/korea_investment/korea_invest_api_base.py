@@ -235,6 +235,11 @@ class KoreaInvestApiBase:
             self._logger.error(f"응답 JSON 디코딩 실패: {response.text}")
             return ResponseStatus.PARSING_ERROR
 
+        # 3-1. 응답 형식 검증 (dict 여부)
+        if not isinstance(response_json, dict):
+            self._logger.error(f"API 응답 형식이 dict가 아님: {type(response_json)}")
+            return ResponseStatus.PARSING_ERROR
+
         # 4. 토큰 만료 오류 처리 (API 응답 내용 기반)
         if response_json.get('msg_cd') == 'EGW00123':
             self._logger.error("최종 토큰 만료 오류(EGW00123) 감지.")
@@ -252,6 +257,11 @@ class KoreaInvestApiBase:
             error_message = response_json.get('msg1', '알 수 없는 비즈니스 오류')
             self._logger.error(f"API 비즈니스 오류: {error_message}")
             return ResponseStatus.EMPTY_RTCD  # 비즈니스 오류 내용을 반환
+
+        # 6. 데이터 존재 여부 검증 (성공 응답인 경우)
+        if not any(key in response_json for key in ["output", "output1", "output2"]):
+            self._logger.error(f"API 응답에 output 데이터가 없습니다: {response.text}")
+            return ResponseStatus.PARSING_ERROR
 
         # 모든 검사를 통과한 최종 성공적인 응답
         self._logger.debug(f"API 응답 성공: {response.text}")
