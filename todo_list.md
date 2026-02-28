@@ -10,6 +10,7 @@
 4. api 확인해서 todo_list에 넣기
 5. momentum_backtest 정상작동 확인
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
+7. [현재가차트] 장마감 이후 최근날짜 candle 차트가 2개 만들어지는 불량.
 10. (옵션) MarketDataRepository / DataStore:
 최근에 받은 OHLCV/호가/스냅샷을 메모리/파일 캐시로 보관 (Web API 레벨 캐싱 구현 완료)
 “API 다시 부르지 말고 기존 값 쓰자” 요구사항을 충족 (Throttling 및 Fallback 캐시 적용 완료)
