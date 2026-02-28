@@ -1,7 +1,7 @@
 # tests/unit_test/test_strategy_scheduler.py
 import unittest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch, mock_open
+from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
 from common.types import TradeSignal, ErrorCode, ResCommonResponse
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SCHEDULER_STATE_FILE
 from interfaces.live_strategy import LiveStrategy
@@ -31,8 +31,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
     def _make_scheduler(self, dry_run=True):
         vm = MagicMock()
         vm.get_holds_by_strategy.return_value = []
-        vm.log_buy = MagicMock()
-        vm.log_sell_by_strategy = MagicMock()
+        vm.log_buy_async = AsyncMock()
+        vm.log_sell_by_strategy_async = AsyncMock()
 
         oes = MagicMock()
         oes.handle_place_buy_order = AsyncMock(
@@ -56,7 +56,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                 logger=mock_logger,
                 dry_run=dry_run,
             )
-        scheduler._append_signal_csv = MagicMock()
+        scheduler._append_signal_csv = AsyncMock()
         return scheduler, vm, oes, tm
 
     def test_register_strategy(self):
@@ -98,7 +98,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler._execute_signal(signal)
 
-        vm.log_buy.assert_called_once_with("테스트전략", "005930", 70000)
+        vm.log_buy_async.assert_awaited_once_with("테스트전략", "005930", 70000, 1)
         oes.handle_place_buy_order.assert_not_called()
 
     async def test_execute_sell_signal_dry_run(self):
@@ -111,7 +111,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler._execute_signal(signal)
 
-        vm.log_sell_by_strategy.assert_called_once_with("테스트전략", "005930", 72000)
+        vm.log_sell_by_strategy_async.assert_awaited_once_with("테스트전략", "005930", 72000, 1)
         oes.handle_place_sell_order.assert_not_called()
 
     async def test_execute_buy_signal_with_api(self):
@@ -124,7 +124,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler._execute_signal(signal)
 
-        vm.log_buy.assert_called_once_with("테스트전략", "005930", 70000)
+        vm.log_buy_async.assert_awaited_once_with("테스트전략", "005930", 70000, 1)
         oes.handle_place_buy_order.assert_called_once_with("005930", 70000, 1)
 
     async def test_run_strategy_scan_respects_max_positions(self):
@@ -149,7 +149,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._run_strategy(config)
 
         # max_positions 도달 → log_buy 호출 안됨
-        vm.log_buy.assert_not_called()
+        vm.log_buy_async.assert_not_called()
 
     async def test_run_strategy_processes_exit_signals(self):
         """보유 종목의 청산 시그널이 실행되는지 테스트."""
@@ -167,7 +167,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         await scheduler._run_strategy(config)
 
-        vm.log_sell_by_strategy.assert_called_once_with("테스트전략", "005930", 80000)
+        vm.log_sell_by_strategy_async.assert_awaited_once_with("테스트전략", "005930", 80000, 1)
 
     async def test_run_strategy_limits_buys_to_remaining_slots(self):
         """남은 슬롯 수만큼만 매수 시그널을 실행하는지 테스트."""
@@ -191,8 +191,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._run_strategy(config)
 
         # remaining=1이므로 첫 번째만 매수
-        self.assertEqual(vm.log_buy.call_count, 1)
-        vm.log_buy.assert_called_with("테스트전략", "000660", 120000)
+        self.assertEqual(vm.log_buy_async.call_count, 1)
+        vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1)
 
     async def test_start_and_stop(self):
         """스케줄러 start/stop 생명주기 테스트."""
@@ -513,7 +513,35 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 2. API 매도 주문은 가격 0(시장가)으로 호출됨
         oes.handle_place_sell_order.assert_called_once_with("005930", 0, 5)
         # 3. VM 로그 기록은 조회된 현재가(60000)로 기록됨
-        vm.log_sell_by_strategy.assert_called_once_with("TestStrategy", "005930", 60000)
+        vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrategy", "005930", 60000, 5)
+
+    async def test_force_liquidate_uses_holding_qty(self):
+        """강제 청산 시 설정된 주문 수량이 아닌 실제 보유 수량을 사용하는지 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+
+        # OES 내부에 trading_service Mock 설정
+        oes.trading_service = MagicMock()
+        oes.trading_service.get_current_stock_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}}
+            )
+        )
+
+        strategy = MockStrategy(name="TestStrategy")
+        # 설정된 주문 수량은 10 (기본값보다 큰 값으로 설정하여 차이 확인)
+        config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True, order_qty=10)
+
+        # Mock: 보유 종목 1개 존재, 실제 보유 수량은 3 (설정값과 다르게 설정)
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "name": "Samsung", "buy_price": 50000, "qty": 3}
+        ]
+
+        await scheduler._force_liquidate_strategy(config)
+
+        # API 매도 주문은 실제 보유 수량인 3으로 호출되어야 함 (설정값 10 무시)
+        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 3)
+        # VM 로그 기록도 3으로 기록되어야 함
+        vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrategy", "005930", 60000, 3)
 
     async def test_stop_strategy_triggers_liquidation(self):
         """stop_strategy 호출 시 강제 청산 옵션이 켜져 있으면 청산 수행."""
@@ -613,7 +641,73 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 2. 주문은 0원(시장가)으로 나갔는지 확인
         oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10)
         # 3. 로그는 조회된 80000원으로 기록되었는지 확인
-        vm.log_sell_by_strategy.assert_called_once_with("TestStrat", "000660", 80000)
+        vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrat", "000660", 80000, 10)
+
+    async def test_run_strategy_concurrent_execution(self):
+        """_run_strategy가 여러 시그널을 동시(concurrent)에 처리하는지 테스트."""
+        scheduler, vm, _, _ = self._make_scheduler()
+        
+        # 3개의 매수 시그널 생성
+        buy_signals = [
+            TradeSignal(code=f"0000{i}", name=f"Stock{i}", action="BUY", price=1000, qty=1, reason="Test", strategy_name="TestStrat")
+            for i in range(3)
+        ]
+        
+        strategy = MockStrategy(scan_signals=buy_signals)
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=10) # 충분한 슬롯
+        
+        # _execute_signal을 감시
+        with patch.object(scheduler, '_execute_signal', new_callable=AsyncMock) as mock_exec:
+            await scheduler._run_strategy(config)
+            
+            # 3번 호출되었는지 확인
+            self.assertEqual(mock_exec.await_count, 3)
+            # 호출된 인자 확인 (순서는 보장되지 않으므로 any_order=True)
+            expected_calls = [call(sig) for sig in buy_signals]
+            mock_exec.assert_has_awaits(expected_calls, any_order=True)
+
+    async def test_append_signal_csv_thread_execution(self):
+        """_append_signal_csv가 asyncio.to_thread를 사용하여 동기 메서드를 실행하는지 테스트."""
+        vm = MagicMock()
+        oes = MagicMock()
+        tm = MagicMock()
+        
+        # 파일 로드 방지
+        with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
+            scheduler = StrategyScheduler(vm, oes, tm, dry_run=True)
+        
+        record = MagicMock()
+        
+        with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+            await scheduler._append_signal_csv(record)
+            
+            # asyncio.to_thread가 호출되었는지 확인
+            mock_to_thread.assert_awaited_once_with(scheduler._append_signal_csv_sync, record)
+
+    async def test_run_strategy_concurrent_execution_with_exception(self):
+        """_run_strategy에서 asyncio.as_completed 사용 시 예외가 발생하면 전파되는지 테스트."""
+        scheduler, vm, _, _ = self._make_scheduler()
+        
+        buy_signals = [
+            TradeSignal(code="00001", name="S1", action="BUY", price=1000, qty=1, reason="T", strategy_name="S"),
+            TradeSignal(code="00002", name="S2", action="BUY", price=1000, qty=1, reason="T", strategy_name="S"),
+        ]
+        
+        strategy = MockStrategy(scan_signals=buy_signals)
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=10)
+        
+        # _execute_signal 모킹: 하나는 성공, 하나는 예외
+        async def mock_execute(signal):
+            if signal.code == "00001":
+                raise ValueError("Test Error")
+            return
+
+        with patch.object(scheduler, '_execute_signal', side_effect=mock_execute) as mock_exec:
+            with self.assertRaises(ValueError):
+                await scheduler._run_strategy(config)
+            
+            # 두 시그널 모두에 대해 _execute_signal이 호출되어 코루틴이 생성되었는지 확인
+            self.assertEqual(mock_exec.call_count, 2)
 
 if __name__ == "__main__":
     unittest.main()

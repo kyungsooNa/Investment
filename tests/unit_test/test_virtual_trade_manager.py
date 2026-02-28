@@ -3,8 +3,9 @@ import os
 import pandas as pd
 import json
 import math
+import concurrent.futures
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from managers.virtual_trade_manager import VirtualTradeManager
 
 @pytest.fixture
@@ -224,3 +225,52 @@ def test_log_buy_date_format(manager):
     buy_date = df.iloc[0]['buy_date']
     # 예: 2025-01-01 12:00:00 -> 하이픈(-)이 포함되어야 함
     assert buy_date[4] == '-' and buy_date[7] == '-'
+
+@pytest.mark.asyncio
+async def test_log_buy_async(manager):
+    """비동기 매수 기록 메서드 테스트"""
+    await manager.log_buy_async("AsyncStrategy", "005930", 70000, qty=5)
+    df = manager._read()
+    assert len(df) == 1
+    assert df.iloc[0]['strategy'] == "AsyncStrategy"
+    assert df.iloc[0]['qty'] == 5
+
+def test_log_buy_thread_safety(manager):
+    """여러 스레드에서 동시에 log_buy 호출 시 데이터 무결성 테스트 (Lock 작동 확인)."""
+    def worker(idx):
+        # 각 스레드가 서로 다른 종목을 매수한다고 가정
+        manager.log_buy("ConcurrentStrat", f"0000{idx}", 1000 * idx)
+
+    thread_count = 10
+    with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+        futures = [executor.submit(worker, i) for i in range(thread_count)]
+        for future in concurrent.futures.as_completed(futures):
+            future.result() # 예외 발생 시 여기서 raise됨
+
+    df = manager._read()
+    # 10개의 레코드가 있어야 함 (Lock이 없으면 race condition으로 일부가 덮어씌워져 누락될 수 있음)
+    assert len(df) == 10
+    # 중복 없이 모두 기록되었는지 확인
+    codes = set(df['code'])
+    assert len(codes) == 10
+
+@pytest.mark.asyncio
+async def test_log_buy_async_thread_execution(manager):
+    """log_buy_async가 asyncio.to_thread를 사용하여 log_buy를 실행하는지 테스트."""
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        await manager.log_buy_async("S1", "005930", 1000, 10)
+        mock_to_thread.assert_awaited_once_with(manager.log_buy, "S1", "005930", 1000, 10)
+
+@pytest.mark.asyncio
+async def test_log_sell_async_thread_execution(manager):
+    """log_sell_async가 asyncio.to_thread를 사용하여 log_sell을 실행하는지 테스트."""
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        await manager.log_sell_async("005930", 1200, 5)
+        mock_to_thread.assert_awaited_once_with(manager.log_sell, "005930", 1200, 5)
+
+@pytest.mark.asyncio
+async def test_log_sell_by_strategy_async_thread_execution(manager):
+    """log_sell_by_strategy_async가 asyncio.to_thread를 사용하여 실행하는지 테스트."""
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        await manager.log_sell_by_strategy_async("S1", "005930", 1200, 5)
+        mock_to_thread.assert_awaited_once_with(manager.log_sell_by_strategy, "S1", "005930", 1200, 5)

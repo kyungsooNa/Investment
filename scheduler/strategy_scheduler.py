@@ -6,6 +6,7 @@ import csv
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -76,6 +77,7 @@ class StrategyScheduler:
         self._last_run: Dict[str, datetime] = {}
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
+        self._csv_lock = threading.Lock()
 
     # ── 전략 등록 ──
 
@@ -177,8 +179,10 @@ class StrategyScheduler:
         holdings = self._vm.get_holds_by_strategy(name)
         if holdings:
             sell_signals = await cfg.strategy.check_exits(holdings)
-            for sig in sell_signals:
-                await self._execute_signal(sig)
+            if sell_signals:
+                tasks = [self._execute_signal(sig) for sig in sell_signals]
+                for f in asyncio.as_completed(tasks):
+                    await f
 
         # 2) 새 매수 스캔 (강제 청산 모드가 아닐 때만)
         if not force_exit_only:
@@ -192,11 +196,16 @@ class StrategyScheduler:
 
             buy_signals = await cfg.strategy.scan()
             remaining = cfg.max_positions - current_holds
-            for sig in buy_signals[:remaining]:
-                # 전략이 qty를 직접 계산한 경우(>1) 존중, 아니면 config 값 사용
-                if sig.qty <= 1:
-                    sig.qty = cfg.order_qty
-                await self._execute_signal(sig)
+            
+            target_signals = buy_signals[:remaining]
+            if target_signals:
+                for sig in target_signals:
+                    if sig.qty <= 1:
+                        sig.qty = cfg.order_qty
+                
+                tasks = [self._execute_signal(sig) for sig in target_signals]
+                for f in asyncio.as_completed(tasks):
+                    await f
 
         self._logger.info(f"[Scheduler] {name} 실행 완료")
 
@@ -225,9 +234,9 @@ class StrategyScheduler:
 
         # CSV 기록 (항상)
         if signal.action == "BUY":
-            self._vm.log_buy(signal.strategy_name, signal.code, log_price)
+            await self._vm.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
         elif signal.action == "SELL":
-            self._vm.log_sell_by_strategy(signal.strategy_name, signal.code, log_price)
+            await self._vm.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
 
         api_success = True
 
@@ -276,7 +285,7 @@ class StrategyScheduler:
         self._signal_history.append(record)
         if len(self._signal_history) > self.MAX_HISTORY:
             self._signal_history = self._signal_history[-self.MAX_HISTORY:]
-        self._append_signal_csv(record)
+        await self._append_signal_csv(record)
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""
@@ -294,6 +303,12 @@ class StrategyScheduler:
 
             stock_name = hold.get("name", code)
             
+            # 보유 수량 조회 (VirtualTradeManager가 qty를 반환해야 함)
+            # 만약 qty 정보가 없다면 설정된 주문 수량(cfg.order_qty)을 fallback으로 사용
+            holding_qty = int(hold.get("qty") or 0)
+            if holding_qty <= 0:
+                holding_qty = cfg.order_qty
+
             # 시장가 매도를 위해 가격 0 설정
             signal = TradeSignal(
                 strategy_name=name,
@@ -301,7 +316,7 @@ class StrategyScheduler:
                 name=stock_name,
                 action="SELL",
                 price=0,  # 시장가
-                qty=cfg.order_qty,
+                qty=holding_qty,
                 reason="전략 종료 강제 청산 (시장가)"
             )
             await self._execute_signal(signal)
@@ -442,26 +457,31 @@ class StrategyScheduler:
         except Exception as e:
             self._logger.error(f"[Scheduler] 상태 복원 실패: {e}")
 
-    def _append_signal_csv(self, record: SignalRecord):
-        """시그널 1건을 CSV에 append."""
-        file_exists = os.path.exists(SIGNAL_HISTORY_FILE)
-        try:
-            with open(SIGNAL_HISTORY_FILE, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=SIGNAL_COLUMNS)
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow({
-                    "strategy_name": record.strategy_name,
-                    "code": record.code,
-                    "name": record.name,
-                    "action": record.action,
-                    "price": record.price,
-                    "reason": record.reason,
-                    "timestamp": record.timestamp,
-                    "api_success": record.api_success,
-                })
-        except Exception as e:
-            self._logger.error(f"[Scheduler] 시그널 CSV 저장 실패: {e}")
+    async def _append_signal_csv(self, record: SignalRecord):
+        """시그널 1건을 CSV에 append (비동기 래퍼)."""
+        await asyncio.to_thread(self._append_signal_csv_sync, record)
+
+    def _append_signal_csv_sync(self, record: SignalRecord):
+        """시그널 1건을 CSV에 append (동기 구현)."""
+        with self._csv_lock:
+            file_exists = os.path.exists(SIGNAL_HISTORY_FILE)
+            try:
+                with open(SIGNAL_HISTORY_FILE, "a", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=SIGNAL_COLUMNS)
+                    if not file_exists:
+                        writer.writeheader()
+                    writer.writerow({
+                        "strategy_name": record.strategy_name,
+                        "code": record.code,
+                        "name": record.name,
+                        "action": record.action,
+                        "price": record.price,
+                        "reason": record.reason,
+                        "timestamp": record.timestamp,
+                        "api_success": record.api_success,
+                    })
+            except Exception as e:
+                self._logger.error(f"[Scheduler] 시그널 CSV 저장 실패: {e}")
 
     def get_signal_history(self, strategy_name: str = None) -> list:
         """시그널 실행 이력 반환. strategy_name 지정 시 해당 전략만 필터."""
