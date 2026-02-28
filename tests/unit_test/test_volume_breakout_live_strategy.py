@@ -14,6 +14,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         sqs = MagicMock()
         sqs.handle_get_current_stock_price = AsyncMock()
         tm = MagicMock()
+        logger = MagicMock()
 
         config = VolumeBreakoutConfig(
             trigger_pct=trigger_pct,
@@ -25,6 +26,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
             stock_query_service=sqs,
             time_manager=tm,
             config=config,
+            logger=logger,
         )
         return strategy, ts, sqs, tm
 
@@ -119,7 +121,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         # 매수가 72000, 현재가 66200 -> -8.05%
         sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
-            data={"price": "66200", "open": "70000", "high": "73000", "code": "005930"}
+            data={"price": "66200", "open": "70000", "high": "71500", "code": "005930"}
         )
         holdings = [{"code": "005930", "buy_price": 72000}]
         signals = await strategy.check_exits(holdings)

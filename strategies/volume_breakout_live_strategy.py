@@ -173,17 +173,17 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 reason = ""
                 should_sell = False
 
-                # 익절 조건: 당일 고가 대비 설정된 비율(-8%) 이상 하락 시 (Trailing Stop)
+                # 손익률과 고점 대비 하락률을 먼저 계산
+                pnl_pct = ((current - buy_price) / buy_price) * 100
                 drop_from_high = ((current - high_price) / high_price) * 100
+
+                # 익절 조건: 당일 고가 대비 설정된 비율(-8%) 이상 하락 시 (Trailing Stop)
                 if drop_from_high <= -self._cfg.trailing_stop_pct:
                     reason = f"익절(트레일링): 고가({high_price:,})대비 {drop_from_high:.1f}%"
                     should_sell = True
-                else:
-                    # 손절 조건
-                    pnl_pct = ((current - buy_price) / buy_price) * 100
-                    if pnl_pct <= self._cfg.stop_loss_pct:
-                        reason = f"손절: 매수가대비 {pnl_pct:.1f}%"
-                        should_sell = True
+                elif pnl_pct <= self._cfg.stop_loss_pct:
+                    reason = f"손절: 매수가대비 {pnl_pct:.1f}%"
+                    should_sell = True
 
                 if not should_sell and minutes_to_close <= 15:
                     reason = f"시간청산: 장마감 {minutes_to_close:.0f}분전"
