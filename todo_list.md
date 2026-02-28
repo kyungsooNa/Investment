@@ -7,17 +7,9 @@
 1. [전략스케줄러] 전략에서 매수/매도 API를 실패하는 경우가 종종 있음. 1차로 사실 실패하면 log만되고, web에 남는 history는 저장이 안되는게 맞을거같고 2번쨰로는 실패하는경우에는 retry를 해야할거같음. retry 하는 queue를 만들어서 재시도하는 logic 추가가 필요.
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 3. [모의투자결과View] 현재가 조회하는데 오래걸리는걸로 보이는데, 어떻게 할지 고민필요.
-4. api 확인해서 todo_list에 넣기
-5. momentum_backtest 정상작동 확인
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-7. [현재가차트] 장마감 이후 최근날짜 candle 차트가 2개 만들어지는 불량.
-10. (옵션) MarketDataRepository / DataStore:
-최근에 받은 OHLCV/호가/스냅샷을 메모리/파일 캐시로 보관 (Web API 레벨 캐싱 구현 완료)
-“API 다시 부르지 말고 기존 값 쓰자” 요구사항을 충족 (Throttling 및 Fallback 캐시 적용 완료)
-StockQueryService: 앱 레벨 오케스트레이션
-필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
-IndicatorService로 계산 → 데이터만 반환
-13. VolmueBreakOut에서 수수료도 적용하여 수익률 계산
+7. [현재가차트] 장마감 이후 최근날짜 candle 차트가 2개 만들어지는 불량. (by claude)
+13. [투자결과] 수수료도 적용하여 수익률 계산
 14. [프로그램매매] 구독한 종목 여러개를 선택할 수 있도록 수정.
 15. [모의투자기록] 특정 전략을 골르면 차트에도 해당 전략에 해당하는 line만 남도록 수정 필요.
 
@@ -85,6 +77,7 @@ IndicatorService로 계산 → 데이터만 반환
 * **[신규 기능]** 종목 추천 기능 추가.(Web에서 AI API를 바로 활용 가능한지?)
 * **[신규 기능]** Kis Developers API 문서 크롤링해서 API의 tr_id, url, Header, Params, Body를 최신으로 업데이트 할 수 있는 기능 추가 
 * **[신규 기능]** Android App으로 거래결과, 서치 결과 알림 기능 추가. 
+* **[신규 기능]** Backtest 기능 추가
 
 
 ### 2. 전략 (Strategy)
