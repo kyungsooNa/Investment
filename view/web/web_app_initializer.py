@@ -21,7 +21,8 @@ from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerCon
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
-from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
+from strategies.oneil.breakout_strategy import OneilSqueezeBreakoutStrategy
+from strategies.oneil.universe_service import OneilUniverseService
 from managers.realtime_data_manager import RealtimeDataManager
 from view.web import web_api  # 임포트 확인
 
@@ -42,6 +43,7 @@ class WebAppContext:
         self.virtual_manager.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
         self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.scheduler: StrategyScheduler = None
+        self.oneil_universe_service: OneilUniverseService = None
         self.initialized = False
         
         # [변경] 실시간 데이터 관리자 도입
@@ -84,6 +86,17 @@ class WebAppContext:
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager
         )
+        
+        # [신규] 오닐 유니버스 서비스 초기화
+        self.oneil_universe_service = OneilUniverseService(
+            trading_service=self.trading_service,
+            stock_query_service=self.stock_query_service,
+            indicator_service=self.indicator_service,
+            stock_code_mapper=self.stock_code_mapper,
+            time_manager=self.time_manager,
+            logger=self.logger
+        )
+
         self.initialized = True
         mode = "모의투자" if is_paper_trading else "실전투자"
         self.logger.info(f"웹 앱: 서비스 초기화 완료 ({mode})")
@@ -169,9 +182,7 @@ class WebAppContext:
         # 오닐 스퀴즈 돌파 전략 등록
         osb_strategy = OneilSqueezeBreakoutStrategy(
             trading_service=self.trading_service,
-            stock_query_service=self.stock_query_service,
-            indicator_service=self.indicator_service,
-            stock_code_mapper=self.stock_code_mapper,
+            universe_service=self.oneil_universe_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('OneilSqueezeBreakout'),
         )
@@ -183,7 +194,6 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 👈 오닐 전략은 오버나잇(홀딩) 허용!
         ))
-        self.osb_strategy = osb_strategy  # Pool A 생성용 참조
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
@@ -251,5 +261,5 @@ class WebAppContext:
         # [변경] 매니저에서 구독 목록 가져오기
         for code in self.realtime_data_manager.get_subscribed_codes():
             await self.trading_service.unsubscribe_program_trading(code)
-            await self.trading_service.unsubscribe_realtime_price(code) # [추가]
+            await self.trading_service.unsubscribe_realtime_price(code)
         self.realtime_data_manager.clear_subscribed_codes()
