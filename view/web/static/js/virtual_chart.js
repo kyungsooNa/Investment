@@ -224,15 +224,7 @@ window.refreshVirtualChart = async function(selectedStrategies) {
         const benchmarks = data.benchmarks || {};
         const isAll = selectedStrategies.includes('ALL');
 
-        const refHistory = allHistories['ALL'] || Object.values(allHistories)[0] || [];
-        const globalDates = refHistory.map(h => h.date);
-        if (globalDates.length === 0) return;
-
-        const labels = globalDates.map(d => d.substring(5));
-        yieldChart.data.labels = labels;
-
-        const newDatasets = [];
-
+        // 색상 맵 초기화 — 전체 전략 순서대로 색상 할당 (필터 전에 호출)
         const allStrategyNames = Object.keys(allHistories).filter(n => n !== 'ALL');
         allStrategyNames.forEach(name => getStrategyColor(name));
 
@@ -240,7 +232,25 @@ window.refreshVirtualChart = async function(selectedStrategies) {
             ? Object.keys(allHistories)
             : selectedStrategies.filter(s => allHistories[s]);
 
-        const isSparse = globalDates.length <= 2;
+        // X축 날짜: 선택된 전략들의 실제 날짜 합집합 (빈 날짜 제거)
+        let activeDates;
+        if (isAll) {
+            const refHistory = allHistories['ALL'] || Object.values(allHistories)[0] || [];
+            activeDates = refHistory.map(h => h.date);
+        } else {
+            const dateSet = new Set();
+            displayStrategies.forEach(name => {
+                (allHistories[name] || []).forEach(h => dateSet.add(h.date));
+            });
+            activeDates = [...dateSet].sort();
+        }
+        if (activeDates.length === 0) return;
+
+        const labels = activeDates.map(d => d.substring(5));
+        yieldChart.data.labels = labels;
+
+        const newDatasets = [];
+        const isSparse = activeDates.length <= 2;
 
         displayStrategies.forEach((name) => {
             const isAllLine = (name === 'ALL');
@@ -250,7 +260,7 @@ window.refreshVirtualChart = async function(selectedStrategies) {
             const dateMap = {};
             strategyHistory.forEach(h => { dateMap[h.date] = h.return_rate; });
 
-            const alignedData = globalDates.map(date => {
+            const alignedData = activeDates.map(date => {
                 const val = dateMap[date];
                 return val !== undefined ? val : null;
             });
@@ -267,10 +277,20 @@ window.refreshVirtualChart = async function(selectedStrategies) {
             });
         });
 
+        // 벤치마크를 activeDates에 맞춰 align
+        function alignBenchmark(bmData) {
+            const bmMap = {};
+            bmData.forEach(b => { bmMap[b.date] = b.return_rate; });
+            return activeDates.map(date => {
+                const val = bmMap[date];
+                return val !== undefined ? val : null;
+            });
+        }
+
         if (benchmarks.KOSPI200 && benchmarks.KOSPI200.length > 0) {
             newDatasets.push({
                 label: '벤치마크(KOSPI200) %',
-                data: benchmarks.KOSPI200.map(b => b.return_rate),
+                data: alignBenchmark(benchmarks.KOSPI200),
                 borderColor: '#ff922b',
                 borderWidth: 2,
                 borderDash: [5, 5],
@@ -282,7 +302,7 @@ window.refreshVirtualChart = async function(selectedStrategies) {
         if (benchmarks.KOSDAQ150 && benchmarks.KOSDAQ150.length > 0) {
             newDatasets.push({
                 label: '벤치마크(KOSDAQ150) %',
-                data: benchmarks.KOSDAQ150.map(b => b.return_rate),
+                data: alignBenchmark(benchmarks.KOSDAQ150),
                 borderColor: '#8ce99a',
                 borderWidth: 2,
                 borderDash: [2, 2],
@@ -295,7 +315,7 @@ window.refreshVirtualChart = async function(selectedStrategies) {
         yieldChart.data.datasets = newDatasets;
 
         // annotation 업데이트
-        const annotations = buildAnnotations(labels, globalDates, allHistories, displayStrategies);
+        const annotations = buildAnnotations(labels, activeDates, allHistories, displayStrategies);
         yieldChart.options.plugins.annotation.annotations = annotations;
 
         yieldChart.update();
