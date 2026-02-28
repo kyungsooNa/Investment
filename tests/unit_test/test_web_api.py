@@ -1,12 +1,19 @@
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add parent directories to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.types import ResCommonResponse
+
+@pytest.fixture(autouse=True)
+def mock_signal_history_file(tmp_path):
+    """테스트 중 실제 signal_history.csv 파일 접근 방지"""
+    temp_file = tmp_path / "temp_signal_history.csv"
+    with patch("scheduler.strategy_scheduler.SIGNAL_HISTORY_FILE", str(temp_file)):
+        yield
 
 def test_get_status(web_client, mock_web_ctx):
     """GET /api/status 엔드포인트 테스트"""

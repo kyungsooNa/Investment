@@ -1,6 +1,9 @@
 # tests/unit_test/test_strategy_scheduler.py
 import unittest
 import asyncio
+import os
+import tempfile
+import shutil
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
 from common.types import TradeSignal, ErrorCode, ResCommonResponse
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SCHEDULER_STATE_FILE
@@ -27,6 +30,16 @@ class MockStrategy(LiveStrategy):
 
 
 class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.test_signal_file = os.path.join(self.test_dir, "test_signal_history.csv")
+        self.patcher = patch("scheduler.strategy_scheduler.SIGNAL_HISTORY_FILE", self.test_signal_file)
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+        shutil.rmtree(self.test_dir)
 
     def _make_scheduler(self, dry_run=True):
         vm = MagicMock()
@@ -62,7 +75,6 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                 logger=mock_logger,
                 dry_run=dry_run,
             )
-        scheduler._append_signal_csv = AsyncMock()
         return scheduler, vm, oes, tm
 
     def test_register_strategy(self):
