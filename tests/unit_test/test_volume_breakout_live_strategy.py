@@ -104,6 +104,30 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(signals[0].action, "SELL")
         self.assertIn("익절(트레일링)", signals[0].reason)
 
+    async def test_check_exits_stop_loss(self):
+        """매수가 대비 설정 비율(-8%) 이하 시 손절 SELL 신호 테스트."""
+        strategy, _, sqs, tm = self._make_strategy(stop_loss_pct=-8.0)
+        # 장 마감까지 충분한 시간 남음
+        import pytz
+        from datetime import datetime
+        kst = pytz.timezone("Asia/Seoul")
+        now = kst.localize(datetime(2026, 2, 20, 10, 0))
+        close = kst.localize(datetime(2026, 2, 20, 15, 30))
+        tm.get_current_kst_time.return_value = now
+        tm.get_market_close_time.return_value = close
+
+        # 매수가 72000, 현재가 66200 -> -8.05%
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"price": "66200", "open": "70000", "high": "73000", "code": "005930"}
+        )
+        holdings = [{"code": "005930", "buy_price": 72000}]
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].action, "SELL")
+        self.assertIn("손절", signals[0].reason)
+
     async def test_check_exits_time_exit(self):
         """장 마감 15분 전 시간청산 SELL 시그널 테스트."""
         strategy, _, sqs, tm = self._make_strategy()
@@ -127,6 +151,75 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].action, "SELL")
         self.assertIn("시간청산", signals[0].reason)
+
+    async def test_check_exits_skips_holding_with_no_code(self):
+        """check_exits: 코드 없는 보유 종목은 건너뛰는지 테스트."""
+        strategy, _, sqs, _ = self._make_strategy()
+        holdings = [{"name": "코드없는종목", "buy_price": 10000}]
+        signals = await strategy.check_exits(holdings)
+        self.assertEqual(len(signals), 0)
+        sqs.handle_get_current_stock_price.assert_not_called()
+
+    async def test_check_exits_skips_on_price_api_failure(self):
+        """check_exits: 현재가 조회 실패 시 해당 보유 종목을 건너뛰는지 테스트."""
+        strategy, _, sqs, _ = self._make_strategy()
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="Error"
+        )
+        holdings = [{"code": "005930", "buy_price": 70000}]
+        signals = await strategy.check_exits(holdings)
+        self.assertEqual(len(signals), 0)
+        strategy._logger.warning.assert_called_once()
+
+    async def test_check_exits_no_signal_when_conditions_not_met(self):
+        """check_exits: 어떤 청산 조건도 충족하지 않으면 신호 없음 (HOLD)."""
+        strategy, _, sqs, tm = self._make_strategy(trailing_stop_pct=8.0, stop_loss_pct=-8.0)
+        # 장 마감까지 충분한 시간 남음
+        import pytz
+        from datetime import datetime
+        kst = pytz.timezone("Asia/Seoul")
+        now = kst.localize(datetime(2026, 2, 20, 10, 0))
+        close = kst.localize(datetime(2026, 2, 20, 15, 30))
+        tm.get_current_kst_time.return_value = now
+        tm.get_market_close_time.return_value = close
+
+        # 매수가 72000, 고가 75000, 현재가 74000
+        # 손절(-8%) 아님, 트레일링(-8%) 아님, 시간청산 아님
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"price": "74000", "open": "70000", "high": "75000", "code": "005930"}
+        )
+        holdings = [{"code": "005930", "buy_price": 72000}]
+        signals = await strategy.check_exits(holdings)
+        self.assertEqual(len(signals), 0)
+        strategy._logger.info.assert_any_call({
+            "event": "hold_checked",
+            "code": "005930",
+            "reason": "No exit condition met",
+            "data": {"code": "005930", "name": "005930", "buy_price": 72000, "current_price": 74000, "day_high": 75000},
+        })
+
+    async def test_check_exits_handles_exception_in_loop(self):
+        """check_exits: 루프 내에서 예외 발생 시에도 다음 보유 종목을 처리하는지 테스트."""
+        strategy, _, sqs, _ = self._make_strategy()
+        async def mock_price(code):
+            if code == "000001":
+                raise ValueError("Test Exception")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+                data={"price": "66200", "open": "70000", "high": "73000", "code": "005930"}
+            )
+        sqs.handle_get_current_stock_price.side_effect = mock_price
+
+        holdings = [
+            {"code": "000001", "buy_price": 10000}, # 예외 발생
+            {"code": "005930", "buy_price": 72000}, # 손절 조건 충족
+        ]
+        signals = await strategy.check_exits(holdings)
+        # 예외 발생한 종목은 건너뛰고, 정상 종목에 대한 청산 신호는 생성되어야 함
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].code, "005930")
+        strategy._logger.error.assert_called_once()
 
 
 if __name__ == "__main__":
