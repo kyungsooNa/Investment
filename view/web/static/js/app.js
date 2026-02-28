@@ -844,6 +844,8 @@ function applyVirtualFilter() {
     renderVirtualSoldTable();
 
     // 5. 차트도 선택된 전략에 맞게 업데이트
+    console.log('[applyVirtualFilter] refreshVirtualChart 호출 예정, selectedArray:', selectedArray,
+        'refreshVirtualChart 존재:', typeof refreshVirtualChart);
     if (typeof refreshVirtualChart === 'function') {
         refreshVirtualChart(selectedArray);
     }

@@ -39,6 +39,7 @@ class WebAppContext:
         self.order_execution_service: OrderExecutionService = None
         self.indicator_service: IndicatorService = None
         self.virtual_manager = VirtualTradeManager()
+        self.virtual_manager.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
         self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.scheduler: StrategyScheduler = None
         self.initialized = False

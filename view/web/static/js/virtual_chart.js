@@ -2,8 +2,10 @@
  * VirtualTradeManager 데이터를 이용한 수익률 차트 관리
  * - 멀티셀렉트 전략 필터링 지원
  * - 전략별 고정 색상 매핑
+ * - 전일/전주 기준선 annotation
  */
 let yieldChart = null;
+let chartInitPromise = null;
 
 const STRATEGY_COLORS_PALETTE = [
     '#ff6b6b', '#51cf66', '#fcc419', '#ae3ec9',
@@ -11,7 +13,6 @@ const STRATEGY_COLORS_PALETTE = [
 ];
 const ALL_COLOR = '#4dabf7';
 
-// 전략명 → 색상 고정 매핑 (전략 순서가 바뀌어도 동일 색상 유지)
 const strategyColorMap = {};
 function getStrategyColor(name) {
     if (name === 'ALL') return ALL_COLOR;
@@ -22,7 +23,6 @@ function getStrategyColor(name) {
     return strategyColorMap[name];
 }
 
-// 캐시: ALL 데이터를 한 번만 fetch
 let cachedAllChartData = null;
 
 async function initVirtualChart() {
@@ -32,21 +32,38 @@ async function initVirtualChart() {
     const ctx = canvas.getContext('2d');
     yieldChart = new Chart(ctx, {
         type: 'line',
-        data: {
-            labels: [],
-            datasets: []
-        },
+        data: { labels: [], datasets: [] },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-                x: { grid: { display: false }, ticks: { color: '#868e96' } },
-                y: {
-                    beginAtZero: true,
-                    grid: { color: 'rgba(255,255,255,0.05)' },
+                x: {
+                    grid: {
+                        display: true,
+                        drawOnChartArea: true,
+                        color: 'rgba(255,255,255,0.15)',
+                        lineWidth: 1,
+                        drawTicks: true
+                    },
                     ticks: {
                         color: '#868e96',
-                        callback: value => value.toFixed(1) + '%'
+                        maxRotation: 45,
+                        autoSkip: false,
+                        font: { size: 10 }
+                    }
+                },
+                y: {
+                    grid: {
+                        display: true,
+                        drawOnChartArea: true,
+                        color: 'rgba(255,255,255,0.15)',
+                        lineWidth: 1,
+                        drawTicks: true
+                    },
+                    ticks: {
+                        color: '#868e96',
+                        callback: value => value.toFixed(1) + '%',
+                        stepSize: 5
                     }
                 }
             },
@@ -72,59 +89,159 @@ async function initVirtualChart() {
                         }
                     }
                 },
-                tooltip: { mode: 'index', intersect: false }
+                tooltip: { mode: 'index', intersect: false },
+                annotation: { annotations: {} }
             }
         }
     });
-
-    // 초기 데이터 로드
-    await refreshVirtualChart(['ALL']);
 }
 
 /**
- * @param {string[]} selectedStrategies - 선택된 전략명 배열 (e.g. ['ALL'] 또는 ['수동매매', '모멘텀'])
+ * 전일/전주 기준 annotation 생성
+ * @param {string[]} labels - MM-DD 포맷 라벨 배열
+ * @param {string[]} globalDates - YYYY-MM-DD 원본 날짜 배열
+ * @param {object} allHistories - { strategyName: [{date, return_rate}, ...] }
+ * @param {string[]} displayStrategies - 현재 표시 중인 전략 목록
  */
+function buildAnnotations(labels, globalDates, allHistories, displayStrategies) {
+    const annotations = {};
+    if (globalDates.length < 2) return annotations;
+
+    const todayIdx = globalDates.length - 1;
+    const todayDate = globalDates[todayIdx];
+
+    // 전일: 오늘 바로 이전 데이터 포인트
+    const prevDayIdx = todayIdx - 1;
+    // 전주: 7일 이상 전인 가장 가까운 데이터 포인트
+    const todayMs = new Date(todayDate).getTime();
+    let prevWeekIdx = -1;
+    for (let i = todayIdx - 1; i >= 0; i--) {
+        const diff = todayMs - new Date(globalDates[i]).getTime();
+        if (diff >= 6 * 24 * 60 * 60 * 1000) { // 6일 이상 (전주)
+            prevWeekIdx = i;
+            break;
+        }
+    }
+
+    // ALL 전략 기준 수익률 변동 계산
+    const refName = displayStrategies.includes('ALL') ? 'ALL' : displayStrategies[0];
+    const refHistory = allHistories[refName] || [];
+    const refDateMap = {};
+    refHistory.forEach(h => { refDateMap[h.date] = h.return_rate; });
+
+    const todayVal = refDateMap[todayDate];
+    if (todayVal === undefined) return annotations;
+
+    // 전일 annotation (세로선 + 라벨)
+    if (prevDayIdx >= 0) {
+        const prevDate = globalDates[prevDayIdx];
+        const prevVal = refDateMap[prevDate];
+        if (prevVal !== undefined) {
+            const change = todayVal - prevVal;
+            const sign = change >= 0 ? '+' : '';
+            annotations.prevDayLine = {
+                type: 'line',
+                xMin: labels[prevDayIdx],
+                xMax: labels[prevDayIdx],
+                borderColor: 'rgba(255, 183, 77, 0.6)',
+                borderWidth: 2,
+                label: {
+                    display: true,
+                    content: `전일 (${prevDate.substring(5)}) ${sign}${change.toFixed(2)}%`,
+                    position: 'start',
+                    backgroundColor: 'rgba(255, 183, 77, 0.15)',
+                    color: '#ffb74d',
+                    font: { size: 10, weight: 'bold' },
+                    padding: { top: 3, bottom: 3, left: 6, right: 6 },
+                    borderRadius: 3
+                }
+            };
+        }
+    }
+
+    // 전주 annotation (세로선 + 라벨)
+    if (prevWeekIdx >= 0) {
+        const prevWeekDate = globalDates[prevWeekIdx];
+        const prevWeekVal = refDateMap[prevWeekDate];
+        if (prevWeekVal !== undefined) {
+            const change = todayVal - prevWeekVal;
+            const sign = change >= 0 ? '+' : '';
+            annotations.prevWeekLine = {
+                type: 'line',
+                xMin: labels[prevWeekIdx],
+                xMax: labels[prevWeekIdx],
+                borderColor: 'rgba(129, 199, 132, 0.6)',
+                borderWidth: 2,
+                label: {
+                    display: true,
+                    content: `전주 (${prevWeekDate.substring(5)}) ${sign}${change.toFixed(2)}%`,
+                    position: 'start',
+                    backgroundColor: 'rgba(129, 199, 132, 0.15)',
+                    color: '#81c784',
+                    font: { size: 10, weight: 'bold' },
+                    padding: { top: 3, bottom: 3, left: 6, right: 6 },
+                    borderRadius: 3,
+                    yAdjust: -20
+                }
+            };
+        }
+    }
+
+    // 0% 기준 수평선
+    annotations.zeroLine = {
+        type: 'line',
+        yMin: 0,
+        yMax: 0,
+        borderColor: 'rgba(255, 255, 255, 0.25)',
+        borderWidth: 1,
+        borderDash: [3, 3]
+    };
+
+    return annotations;
+}
+
 window.refreshVirtualChart = async function(selectedStrategies) {
     if (!selectedStrategies) selectedStrategies = ['ALL'];
 
-    // 차트 객체가 없으면 초기화를 먼저 시도
     if (!yieldChart) {
-        console.log('[VirtualChart] 차트가 아직 준비되지 않아 초기화를 시도합니다.');
-        await initVirtualChart();
-        return; // initVirtualChart 내부에서 refreshVirtualChart를 호출하므로 중복 방지
+        if (!chartInitPromise) {
+            chartInitPromise = initVirtualChart();
+        }
+        await chartInitPromise;
+        if (!yieldChart) return;
     }
 
     try {
-        // 항상 ALL 데이터를 fetch (캐시 활용)
         if (!cachedAllChartData) {
             const response = await fetch('/api/virtual/chart/ALL');
             cachedAllChartData = await response.json();
         }
 
         const data = cachedAllChartData;
-        if (!yieldChart || !data.histories) return;
+        if (!data.histories || Object.keys(data.histories).length === 0) return;
 
         const allHistories = data.histories;
         const benchmarks = data.benchmarks || {};
         const isAll = selectedStrategies.includes('ALL');
 
-        // 1. 기준 날짜 목록 (ALL 전략 기준)
         const refHistory = allHistories['ALL'] || Object.values(allHistories)[0] || [];
         const globalDates = refHistory.map(h => h.date);
-        yieldChart.data.labels = globalDates.map(d => d.substring(5));
+        if (globalDates.length === 0) return;
+
+        const labels = globalDates.map(d => d.substring(5));
+        yieldChart.data.labels = labels;
 
         const newDatasets = [];
 
-        // 2. 색상 맵 초기화 — ALL fetch 시 전체 전략 순서대로 색상 할당
         const allStrategyNames = Object.keys(allHistories).filter(n => n !== 'ALL');
         allStrategyNames.forEach(name => getStrategyColor(name));
 
-        // 3. 표시할 전략 결정
         const displayStrategies = isAll
             ? Object.keys(allHistories)
             : selectedStrategies.filter(s => allHistories[s]);
 
-        // ALL이 선택되면 ALL 라인도 포함, 아니면 개별 전략만
+        const isSparse = globalDates.length <= 2;
+
         displayStrategies.forEach((name) => {
             const isAllLine = (name === 'ALL');
             const strategyHistory = allHistories[name];
@@ -144,13 +261,12 @@ window.refreshVirtualChart = async function(selectedStrategies) {
                 borderColor: getStrategyColor(name),
                 backgroundColor: isAllLine ? 'rgba(77, 171, 247, 0.1)' : 'transparent',
                 borderWidth: isAllLine ? 3 : 1.5,
-                pointRadius: isAllLine ? 3 : 0,
+                pointRadius: isSparse ? 4 : (isAllLine ? 3 : 0),
                 fill: isAllLine,
                 tension: 0.3
             });
         });
 
-        // 4. 벤치마크 데이터셋 추가
         if (benchmarks.KOSPI200 && benchmarks.KOSPI200.length > 0) {
             newDatasets.push({
                 label: '벤치마크(KOSPI200) %',
@@ -177,16 +293,19 @@ window.refreshVirtualChart = async function(selectedStrategies) {
         }
 
         yieldChart.data.datasets = newDatasets;
+
+        // annotation 업데이트
+        const annotations = buildAnnotations(labels, globalDates, allHistories, displayStrategies);
+        yieldChart.options.plugins.annotation.annotations = annotations;
+
         yieldChart.update();
     } catch (error) {
         console.error('[VirtualChart] 업데이트 실패:', error);
     }
 }
 
-// 차트 캐시 무효화 (새 거래 기록 시 호출)
 window.invalidateVirtualChartCache = function() {
     cachedAllChartData = null;
 }
 
-// 페이지 로드 시 실행
 document.addEventListener('DOMContentLoaded', initVirtualChart);

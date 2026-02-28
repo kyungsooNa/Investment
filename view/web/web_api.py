@@ -384,11 +384,21 @@ async def get_strategy_chart(strategy_name: str):
     if strategy_name == "ALL":
         strategies = vm.get_all_strategies()
         histories = {s: vm.get_strategy_return_history(s) for s in strategies}
+        # ALL 합산 히스토리 생성: 전 전략의 날짜별 평균 수익률
+        all_dates_map: dict[str, list[float]] = {}
+        for hist in histories.values():
+            for entry in hist:
+                all_dates_map.setdefault(entry['date'], []).append(entry['return_rate'])
+        if all_dates_map:
+            histories["ALL"] = [
+                {"date": d, "return_rate": sum(vals) / len(vals)}
+                for d, vals in sorted(all_dates_map.items())
+            ]
     else:
         histories = {strategy_name: vm.get_strategy_return_history(strategy_name)}
-    
+
     # 벤치마크 계산을 위한 기준 히스토리 (날짜 범위 추출용)
-    ref_history = histories.get(strategy_name) or histories.get("ALL") or (next(iter(histories.values())) if histories else [])
+    ref_history = histories.get("ALL") or histories.get(strategy_name) or (next(iter(histories.values())) if histories else [])
     
     if not ref_history:
         return {"histories": {}, "benchmarks": {}}
