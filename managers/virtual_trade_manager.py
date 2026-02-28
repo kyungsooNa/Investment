@@ -1,19 +1,24 @@
 # managers/virtual_trade_manager.py
 import pandas as pd
+import asyncio
+import threading
 import os
 import json
 import math
 import logging
 from datetime import datetime, timedelta
 
+from core.time_manager import TimeManager
 logger = logging.getLogger(__name__)
 
-COLUMNS = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price", "return_rate", "status"]
+COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
 
 
 class VirtualTradeManager:
-    def __init__(self, filename="data/trade_journal.csv"):
+    def __init__(self, filename="data/trade_journal.csv", time_manager: TimeManager = None):
         self.filename = filename
+        self.tm = time_manager if time_manager else TimeManager()
+        self._lock = threading.Lock()
         os.makedirs(os.path.dirname(self.filename), exist_ok=True)  # 데이터 디렉토리 생성
         if not os.path.exists(self.filename):
             pd.DataFrame(columns=COLUMNS).to_csv(self.filename, index=False)
@@ -21,6 +26,9 @@ class VirtualTradeManager:
     def _read(self) -> pd.DataFrame:
         df = pd.read_csv(self.filename, dtype={'code': str})
         df['return_rate'] = df['return_rate'].fillna(0.0)
+        # 기존 파일 호환성: qty 컬럼이 없으면 기본값 1로 채움
+        if 'qty' not in df.columns:
+            df['qty'] = 1
         return df
 
     def _write(self, df: pd.DataFrame):
@@ -28,59 +36,75 @@ class VirtualTradeManager:
 
     # ---- 매수/매도 ----
 
-    def log_buy(self, strategy_name: str, code: str, current_price):
+    def log_buy(self, strategy_name: str, code: str, current_price, qty: int = 1):
         """가상 매수 기록. 동일 전략+종목 중복 매수 방지."""
-        df = self._read()
-        if self.is_holding(strategy_name, code):
-            logger.info(f"[가상매매] {strategy_name}/{code} 이미 보유 중 — 매수 스킵")
-            return
-        new_trade = {
-            "strategy": strategy_name,
-            "code": code,
-            "buy_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "buy_price": current_price,
-            "sell_date": None,
-            "sell_price": None,
-            "return_rate": 0.0,
-            "status": "HOLD"
-        }
-        df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
-        self._write(df)
-        logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price})")
+        with self._lock:
+            df = self._read()
+            if self.is_holding(strategy_name, code):
+                logger.info(f"[가상매매] {strategy_name}/{code} 이미 보유 중 — 매수 스킵")
+                return
+            new_trade = {
+                "strategy": strategy_name,
+                "code": code,
+                "buy_date": self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S"),
+                "buy_price": current_price,
+                "qty": qty,
+                "sell_date": None,
+                "sell_price": None,
+                "return_rate": 0.0,
+                "status": "HOLD"
+            }
+            df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
+            self._write(df)
+            logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
-    def log_sell(self, code: str, current_price):
+    async def log_buy_async(self, strategy_name: str, code: str, current_price, qty: int = 1):
+        """log_buy의 비동기 래퍼 (스레드 실행)."""
+        await asyncio.to_thread(self.log_buy, strategy_name, code, current_price, qty)
+
+    def log_sell(self, code: str, current_price, qty: int = 1):
         """가상 매도 — 해당 종목 가장 최근 HOLD 건."""
-        df = self._read()
-        mask = (df['code'] == code) & (df['status'] == 'HOLD')
-        if df.loc[mask].empty:
-            logger.warning(f"[가상매매] {code} 매도 실패: 보유 내역 없음")
-            return
-        idx = df.loc[mask].index[-1]
-        buy_price = df.loc[idx, 'buy_price']
-        return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
-        df.loc[idx, 'sell_date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        df.loc[idx, 'sell_price'] = current_price
-        df.loc[idx, 'return_rate'] = round(return_rate, 2)
-        df.loc[idx, 'status'] = 'SOLD'
-        self._write(df)
-        logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%)")
+        with self._lock:
+            df = self._read()
+            mask = (df['code'] == code) & (df['status'] == 'HOLD')
+            if df.loc[mask].empty:
+                logger.warning(f"[가상매매] {code} 매도 실패: 보유 내역 없음")
+                return
+            idx = df.loc[mask].index[-1]
+            buy_price = df.loc[idx, 'buy_price']
+            return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
+            df.loc[idx, 'sell_date'] = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
+            df.loc[idx, 'sell_price'] = current_price
+            df.loc[idx, 'return_rate'] = round(return_rate, 2)
+            df.loc[idx, 'status'] = 'SOLD'
+            self._write(df)
+            logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%)")
 
-    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price):
+    async def log_sell_async(self, code: str, current_price, qty: int = 1):
+        """log_sell의 비동기 래퍼 (스레드 실행)."""
+        await asyncio.to_thread(self.log_sell, code, current_price, qty)
+
+    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1):
         """전략+종목 매칭 매도."""
-        df = self._read()
-        mask = (df['strategy'] == strategy_name) & (df['code'] == code) & (df['status'] == 'HOLD')
-        if df.loc[mask].empty:
-            logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
-            return
-        idx = df.loc[mask].index[-1]
-        buy_price = df.loc[idx, 'buy_price']
-        return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
-        df.loc[idx, 'sell_date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        df.loc[idx, 'sell_price'] = current_price
-        df.loc[idx, 'return_rate'] = round(return_rate, 2)
-        df.loc[idx, 'status'] = 'SOLD'
-        self._write(df)
-        logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {return_rate:.2f}%)")
+        with self._lock:
+            df = self._read()
+            mask = (df['strategy'] == strategy_name) & (df['code'] == code) & (df['status'] == 'HOLD')
+            if df.loc[mask].empty:
+                logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
+                return
+            idx = df.loc[mask].index[-1]
+            buy_price = df.loc[idx, 'buy_price']
+            return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
+            df.loc[idx, 'sell_date'] = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
+            df.loc[idx, 'sell_price'] = current_price
+            df.loc[idx, 'return_rate'] = round(return_rate, 2)
+            df.loc[idx, 'status'] = 'SOLD'
+            self._write(df)
+            logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {return_rate:.2f}%)")
+
+    async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1):
+        """log_sell_by_strategy의 비동기 래퍼 (스레드 실행)."""
+        await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty)
 
     # ---- 조회 ----
 
@@ -122,18 +146,19 @@ class VirtualTradeManager:
 
     def fix_sell_price(self, code: str, buy_date: str, correct_price):
         """sell_price가 0인 SOLD 기록의 매도가/수익률을 보정합니다."""
-        df = self._read()
-        mask = (df['code'] == code) & (df['status'] == 'SOLD') & (df['sell_price'] == 0)
-        if buy_date:
-            mask = mask & (df['buy_date'] == buy_date)
-        if df.loc[mask].empty:
-            return
-        for idx in df.loc[mask].index:
-            bp = df.loc[idx, 'buy_price']
-            df.loc[idx, 'sell_price'] = correct_price
-            df.loc[idx, 'return_rate'] = round(((correct_price - bp) / bp) * 100, 2) if bp else 0
-        self._write(df)
-        logger.info(f"[가상매매] {code} sell_price 보정 완료 → {correct_price}")
+        with self._lock:
+            df = self._read()
+            mask = (df['code'] == code) & (df['status'] == 'SOLD') & (df['sell_price'] == 0)
+            if buy_date:
+                mask = mask & (df['buy_date'] == buy_date)
+            if df.loc[mask].empty:
+                return
+            for idx in df.loc[mask].index:
+                bp = df.loc[idx, 'buy_price']
+                df.loc[idx, 'sell_price'] = correct_price
+                df.loc[idx, 'return_rate'] = round(((correct_price - bp) / bp) * 100, 2) if bp else 0
+            self._write(df)
+            logger.info(f"[가상매매] {code} sell_price 보정 완료 → {correct_price}")
 
     def get_summary(self) -> dict:
         """전체 매매 요약 통계 (HOLD + SOLD 모두 포함)."""
@@ -181,7 +206,7 @@ class VirtualTradeManager:
 
     def save_daily_snapshot(self, strategy_returns: dict):
         """오늘 스냅샷 저장 + prev_values(전일대비 기준점) 갱신."""
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
         data = self._load_data()
         daily = data["daily"]
         prev_values = data.setdefault("prev_values", {})
@@ -199,7 +224,7 @@ class VirtualTradeManager:
         daily[today] = strategy_returns
 
         # 30일 이전 데이터 정리
-        cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        cutoff = (self.tm.get_current_kst_time() - timedelta(days=30)).strftime("%Y-%m-%d")
         data["daily"] = {d: v for d, v in daily.items() if d >= cutoff}
 
         self._save_data(data)
@@ -216,8 +241,8 @@ class VirtualTradeManager:
         """7일 전 스냅샷 대비 변화. 스냅샷 없으면 None."""
         data = _data or self._load_data()
         daily = data.get("daily", {})
-        today = datetime.now().strftime("%Y-%m-%d")
-        target = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
+        target = (self.tm.get_current_kst_time() - timedelta(days=7)).strftime("%Y-%m-%d")
 
         candidates = sorted([d for d in daily if d <= target and d != today], reverse=True)
         if not candidates:

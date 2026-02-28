@@ -6,6 +6,7 @@ import csv
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -14,6 +15,7 @@ from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
 from managers.virtual_trade_manager import VirtualTradeManager
 from services.order_execution_service import OrderExecutionService
+from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
 
 SIGNAL_HISTORY_FILE = "data/signal_history.csv"
@@ -52,7 +54,7 @@ class StrategyScheduler:
     발생한 TradeSignal을 CSV 기록 + API 주문으로 처리한다.
     """
 
-    LOOP_INTERVAL_SEC = 10          # 메인 루프 깨어나는 주기
+    LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
     FORCE_EXIT_MINUTES_BEFORE = 15  # 장 마감 N분 전 강제 청산
 
@@ -60,12 +62,14 @@ class StrategyScheduler:
         self,
         virtual_manager: VirtualTradeManager,
         order_execution_service: OrderExecutionService,
+        stock_query_service: StockQueryService,
         time_manager: TimeManager,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
     ):
         self._vm = virtual_manager
         self._oes = order_execution_service
+        self._sqs = stock_query_service
         self._tm = time_manager
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
@@ -76,6 +80,7 @@ class StrategyScheduler:
         self._last_run: Dict[str, datetime] = {}
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
+        self._csv_lock = threading.Lock()
 
     # ── 전략 등록 ──
 
@@ -101,6 +106,7 @@ class StrategyScheduler:
     async def stop(self, save_state: bool = False):
         if save_state:
             self._save_scheduler_state()
+
         self._running = False
         for cfg in self._strategies:
             cfg.enabled = False
@@ -111,6 +117,14 @@ class StrategyScheduler:
             except asyncio.CancelledError:
                 pass
             self._task = None
+
+        # 상태 저장을 동반한 종료(재시작 등)라면 강제 청산을 하지 않는다.
+        # save_state=True -> perform_exit=False (청산 스킵)
+        # save_state=False -> perform_exit=True (청산 수행)
+        perform_exit = not save_state
+        for cfg in self._strategies:
+            await self.stop_strategy(cfg.strategy.name, perform_force_exit=perform_exit)
+
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
 
     # ── 메인 루프 ──
@@ -168,8 +182,10 @@ class StrategyScheduler:
         holdings = self._vm.get_holds_by_strategy(name)
         if holdings:
             sell_signals = await cfg.strategy.check_exits(holdings)
-            for sig in sell_signals:
-                await self._execute_signal(sig)
+            if sell_signals:
+                tasks = [self._execute_signal(sig) for sig in sell_signals]
+                for f in asyncio.as_completed(tasks):
+                    await f
 
         # 2) 새 매수 스캔 (강제 청산 모드가 아닐 때만)
         if not force_exit_only:
@@ -183,11 +199,16 @@ class StrategyScheduler:
 
             buy_signals = await cfg.strategy.scan()
             remaining = cfg.max_positions - current_holds
-            for sig in buy_signals[:remaining]:
-                # 전략이 qty를 직접 계산한 경우(>1) 존중, 아니면 config 값 사용
-                if sig.qty <= 1:
-                    sig.qty = cfg.order_qty
-                await self._execute_signal(sig)
+            
+            target_signals = buy_signals[:remaining]
+            if target_signals:
+                for sig in target_signals:
+                    if sig.qty <= 1:
+                        sig.qty = cfg.order_qty
+                
+                tasks = [self._execute_signal(sig) for sig in target_signals]
+                for f in asyncio.as_completed(tasks):
+                    await f
 
         self._logger.info(f"[Scheduler] {name} 실행 완료")
 
@@ -199,11 +220,26 @@ class StrategyScheduler:
             f"@ {signal.price:,}원 | {signal.reason}"
         )
 
+        # 기록용 가격 결정 (시장가 0원인 경우 현재가 조회 시도하여 기록 정확도 향상)
+        log_price = signal.price
+        if log_price == 0:
+            try:
+                # StockQueryService를 통해 현재가 조회
+                resp = await self._sqs.get_current_price(signal.code)
+                if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                    data = resp.data
+                    output = data.get("output") if isinstance(data, dict) else getattr(data, "output", None)
+                    if output:
+                        val = output.get("stck_prpr") if isinstance(output, dict) else getattr(output, "stck_prpr", 0)
+                        log_price = int(val)
+            except Exception:
+                pass  # 조회 실패 시 0원으로 기록 유지
+
         # CSV 기록 (항상)
         if signal.action == "BUY":
-            self._vm.log_buy(signal.strategy_name, signal.code, signal.price)
+            await self._vm.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
         elif signal.action == "SELL":
-            self._vm.log_sell_by_strategy(signal.strategy_name, signal.code, signal.price)
+            await self._vm.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
 
         api_success = True
 
@@ -252,7 +288,41 @@ class StrategyScheduler:
         self._signal_history.append(record)
         if len(self._signal_history) > self.MAX_HISTORY:
             self._signal_history = self._signal_history[-self.MAX_HISTORY:]
-        self._append_signal_csv(record)
+        await self._append_signal_csv(record)
+
+    async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
+        """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""
+        name = cfg.strategy.name
+        holdings = self._vm.get_holds_by_strategy(name)
+        if not holdings:
+            return
+
+        self._logger.info(f"[Scheduler] {name} 종료로 인한 강제 청산 실행 (보유 {len(holdings)}건)")
+
+        for hold in holdings:
+            code = hold.get("code")
+            if not code:
+                continue
+
+            stock_name = hold.get("name", code)
+            
+            # 보유 수량 조회 (VirtualTradeManager가 qty를 반환해야 함)
+            # 만약 qty 정보가 없다면 설정된 주문 수량(cfg.order_qty)을 fallback으로 사용
+            holding_qty = int(hold.get("qty") or 0)
+            if holding_qty <= 0:
+                holding_qty = cfg.order_qty
+
+            # 시장가 매도를 위해 가격 0 설정
+            signal = TradeSignal(
+                strategy_name=name,
+                code=code,
+                name=stock_name,
+                action="SELL",
+                price=0,  # 시장가
+                qty=holding_qty,
+                reason="전략 종료 강제 청산 (시장가)"
+            )
+            await self._execute_signal(signal)
 
     # ── 개별 전략 제어 ──
 
@@ -270,10 +340,13 @@ class StrategyScheduler:
                 return True
         return False
 
-    def stop_strategy(self, name: str) -> bool:
+    async def stop_strategy(self, name: str, perform_force_exit: bool = True) -> bool:
         """개별 전략 비활성화. 성공 시 True 반환."""
         for cfg in self._strategies:
             if cfg.strategy.name == name:
+                if perform_force_exit and cfg.enabled and cfg.force_exit_on_close:
+                    await self._force_liquidate_strategy(cfg)
+
                 cfg.enabled = False
                 self._logger.info(f"[Scheduler] 전략 비활성화: {name}")
                 return True
@@ -335,11 +408,17 @@ class StrategyScheduler:
         enabled_names = [
             cfg.strategy.name for cfg in self._strategies if cfg.enabled
         ]
-        state = {"running": self._running, "enabled_strategies": enabled_names}
+        # 현재 보유 포지션 정보도 함께 저장 (안전장치)
+        current_positions = self._vm.get_holds()
+        state = {
+            "running": self._running,
+            "enabled_strategies": enabled_names,
+            "current_positions": current_positions
+        }
         try:
             with open(SCHEDULER_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False)
-            self._logger.info(f"[Scheduler] 상태 저장 완료: {enabled_names}")
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            self._logger.info(f"[Scheduler] 상태 저장 완료: {enabled_names}, 보유종목 {len(current_positions)}건")
         except Exception as e:
             self._logger.error(f"[Scheduler] 상태 저장 실패: {e}")
 
@@ -357,6 +436,11 @@ class StrategyScheduler:
             with open(SCHEDULER_STATE_FILE, "r", encoding="utf-8") as f:
                 state = json.load(f)
             enabled_names = state.get("enabled_strategies", [])
+            saved_positions = state.get("current_positions", [])
+
+            if saved_positions:
+                self._logger.info(f"[Scheduler] 이전 상태 파일에 저장된 보유 포지션: {len(saved_positions)}건")
+
             if not enabled_names:
                 return
 
@@ -376,26 +460,31 @@ class StrategyScheduler:
         except Exception as e:
             self._logger.error(f"[Scheduler] 상태 복원 실패: {e}")
 
-    def _append_signal_csv(self, record: SignalRecord):
-        """시그널 1건을 CSV에 append."""
-        file_exists = os.path.exists(SIGNAL_HISTORY_FILE)
-        try:
-            with open(SIGNAL_HISTORY_FILE, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=SIGNAL_COLUMNS)
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow({
-                    "strategy_name": record.strategy_name,
-                    "code": record.code,
-                    "name": record.name,
-                    "action": record.action,
-                    "price": record.price,
-                    "reason": record.reason,
-                    "timestamp": record.timestamp,
-                    "api_success": record.api_success,
-                })
-        except Exception as e:
-            self._logger.error(f"[Scheduler] 시그널 CSV 저장 실패: {e}")
+    async def _append_signal_csv(self, record: SignalRecord):
+        """시그널 1건을 CSV에 append (비동기 래퍼)."""
+        await asyncio.to_thread(self._append_signal_csv_sync, record)
+
+    def _append_signal_csv_sync(self, record: SignalRecord):
+        """시그널 1건을 CSV에 append (동기 구현)."""
+        with self._csv_lock:
+            file_exists = os.path.exists(SIGNAL_HISTORY_FILE)
+            try:
+                with open(SIGNAL_HISTORY_FILE, "a", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=SIGNAL_COLUMNS)
+                    if not file_exists:
+                        writer.writeheader()
+                    writer.writerow({
+                        "strategy_name": record.strategy_name,
+                        "code": record.code,
+                        "name": record.name,
+                        "action": record.action,
+                        "price": record.price,
+                        "reason": record.reason,
+                        "timestamp": record.timestamp,
+                        "api_success": record.api_success,
+                    })
+            except Exception as e:
+                self._logger.error(f"[Scheduler] 시그널 CSV 저장 실패: {e}")
 
     def get_signal_history(self, strategy_name: str = None) -> list:
         """시그널 실행 이력 반환. strategy_name 지정 시 해당 전략만 필터."""

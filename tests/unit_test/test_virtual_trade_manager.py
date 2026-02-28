@@ -3,8 +3,9 @@ import os
 import pandas as pd
 import json
 import math
+import concurrent.futures
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from managers.virtual_trade_manager import VirtualTradeManager
 
 @pytest.fixture
@@ -16,9 +17,16 @@ def temp_journal(tmp_path):
     return str(journal_file)
 
 @pytest.fixture
-def manager(temp_journal):
+def mock_time_manager():
+    """TimeManager Mock 생성"""
+    tm = MagicMock()
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    return tm
+
+@pytest.fixture
+def manager(temp_journal, mock_time_manager):
     """VirtualTradeManager 인스턴스 생성"""
-    return VirtualTradeManager(filename=temp_journal)
+    return VirtualTradeManager(filename=temp_journal, time_manager=mock_time_manager)
 
 def test_init_creates_directory_and_file(temp_journal):
     """초기화 시 디렉토리와 파일이 생성되는지 확인"""
@@ -26,7 +34,7 @@ def test_init_creates_directory_and_file(temp_journal):
     assert os.path.exists(os.path.dirname(temp_journal))
     assert os.path.exists(temp_journal)
     df = pd.read_csv(temp_journal)
-    expected_cols = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price", "return_rate", "status"]
+    expected_cols = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
     assert list(df.columns) == expected_cols
 
 def test_log_buy_success(manager):
@@ -37,6 +45,7 @@ def test_log_buy_success(manager):
     assert df.iloc[0]['strategy'] == "TestStrategy"
     assert df.iloc[0]['code'] == "005930"
     assert df.iloc[0]['status'] == "HOLD"
+    assert df.iloc[0]['qty'] == 1
     assert manager.is_holding("TestStrategy", "005930") is True
 
 def test_log_buy_duplicate_skips(manager):
@@ -45,6 +54,13 @@ def test_log_buy_duplicate_skips(manager):
     manager.log_buy("StrategyA", "005930", 71000)
     df = manager._read()
     assert len(df) == 1
+
+def test_log_buy_with_qty(manager):
+    """매수 시 수량(qty)이 정상적으로 기록되는지 확인"""
+    manager.log_buy("TestStrategy", "005930", 70000, qty=10)
+    df = manager._read()
+    assert len(df) == 1
+    assert df.iloc[0]['qty'] == 10
 
 def test_log_sell_success(manager):
     """매도 기록 및 수익률 계산 확인"""
@@ -97,15 +113,14 @@ def test_fix_sell_price_logic(manager):
     assert df.iloc[0]['sell_price'] == 15000
     assert df.iloc[0]['return_rate'] == 50.0
 
-@patch('managers.virtual_trade_manager.datetime')
-def test_save_daily_snapshot_and_prev_values(mock_dt, manager):
+def test_save_daily_snapshot_and_prev_values(manager):
     """일일 스냅샷 저장 및 기준값(prev_values) 갱신 확인"""
     # 1일차
-    mock_dt.now.return_value = datetime(2025, 1, 1)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
     manager.save_daily_snapshot({"ALL": 1.0})
     
     # 2일차 - 변동 발생 (0.01 이상)
-    mock_dt.now.return_value = datetime(2025, 1, 2)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 2)
     manager.save_daily_snapshot({"ALL": 2.5})
     
     data = manager._load_data()
@@ -121,10 +136,9 @@ def test_get_daily_change_calculation(manager):
     change = manager.get_daily_change("S1", 1.5, _data=data)
     assert change == 1.0 # 1.5 - 0.5
 
-@patch('managers.virtual_trade_manager.datetime')
-def test_get_weekly_change_logic(mock_dt, manager):
+def test_get_weekly_change_logic(manager):
     """7일 전 스냅샷 대비 변동폭 계산 확인"""
-    mock_dt.now.return_value = datetime(2025, 1, 10)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 10)
     data = {
         "daily": {
             "2025-01-01": {"S1": 10.0}, # 9일 전
@@ -189,3 +203,89 @@ def test_get_all_strategies_logic(manager):
     strategies = manager.get_all_strategies()
     # 중복 제거 및 알파벳 순 정렬 확인
     assert strategies == ["S1", "S2", "S3"]
+
+def test_read_adds_qty_column_if_missing(temp_journal):
+    """기존 파일에 qty 컬럼이 없을 경우 읽기 시 기본값 1로 추가되는지 확인"""
+    # qty 없는 구버전 파일 생성
+    old_cols = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price", "return_rate", "status"]
+    df = pd.DataFrame(columns=old_cols)
+    df.loc[0] = ["S1", "005930", "2025-01-01", 1000, None, None, 0.0, "HOLD"]
+    df.to_csv(temp_journal, index=False)
+    
+    manager = VirtualTradeManager(filename=temp_journal)
+    df_read = manager._read()
+    
+    assert "qty" in df_read.columns
+    assert df_read.iloc[0]['qty'] == 1
+
+def test_log_buy_date_format(manager):
+    """매수 기록의 날짜 포맷이 YYYY-MM-DD HH:MM:SS 인지 확인 (호환성 유지)"""
+    manager.log_buy("TestStrategy", "005930", 70000)
+    df = manager._read()
+    buy_date = df.iloc[0]['buy_date']
+    # 예: 2025-01-01 12:00:00 -> 하이픈(-)이 포함되어야 함
+    assert buy_date[4] == '-' and buy_date[7] == '-'
+
+@pytest.mark.asyncio
+async def test_log_buy_async(manager):
+    """비동기 매수 기록 메서드 테스트"""
+    await manager.log_buy_async("AsyncStrategy", "005930", 70000, qty=5)
+    df = manager._read()
+    assert len(df) == 1
+    assert df.iloc[0]['strategy'] == "AsyncStrategy"
+    assert df.iloc[0]['qty'] == 5
+
+def test_log_buy_thread_safety(manager):
+    """여러 스레드에서 동시에 log_buy 호출 시 데이터 무결성 테스트 (Lock 작동 확인)."""
+    def worker(idx):
+        # 각 스레드가 서로 다른 종목을 매수한다고 가정
+        manager.log_buy("ConcurrentStrat", f"0000{idx}", 1000 * idx)
+
+    thread_count = 10
+    with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+        futures = [executor.submit(worker, i) for i in range(thread_count)]
+        for future in concurrent.futures.as_completed(futures):
+            future.result() # 예외 발생 시 여기서 raise됨
+
+    df = manager._read()
+    # 10개의 레코드가 있어야 함 (Lock이 없으면 race condition으로 일부가 덮어씌워져 누락될 수 있음)
+    assert len(df) == 10
+    # 중복 없이 모두 기록되었는지 확인
+    codes = set(df['code'])
+    assert len(codes) == 10
+
+@pytest.mark.asyncio
+async def test_log_buy_async_thread_execution(manager):
+    """log_buy_async가 asyncio.to_thread를 사용하여 log_buy를 실행하는지 테스트."""
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        await manager.log_buy_async("S1", "005930", 1000, 10)
+        mock_to_thread.assert_awaited_once_with(manager.log_buy, "S1", "005930", 1000, 10)
+
+@pytest.mark.asyncio
+async def test_log_sell_async_thread_execution(manager):
+    """log_sell_async가 asyncio.to_thread를 사용하여 log_sell을 실행하는지 테스트."""
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        await manager.log_sell_async("005930", 1200, 5)
+        mock_to_thread.assert_awaited_once_with(manager.log_sell, "005930", 1200, 5)
+
+@pytest.mark.asyncio
+async def test_log_sell_by_strategy_async_thread_execution(manager):
+    """log_sell_by_strategy_async가 asyncio.to_thread를 사용하여 실행하는지 테스트."""
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        await manager.log_sell_by_strategy_async("S1", "005930", 1200, 5)
+        mock_to_thread.assert_awaited_once_with(manager.log_sell_by_strategy, "S1", "005930", 1200, 5)
+
+def test_get_holds_by_strategy_missing_qty_field(temp_journal):
+    """get_holds_by_strategy 호출 시 파일에 qty 필드가 없어도 기본값 1로 반환되는지 확인"""
+    # qty 없는 구버전 파일 생성
+    old_cols = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price", "return_rate", "status"]
+    df = pd.DataFrame(columns=old_cols)
+    df.loc[0] = ["StrategyA", "005930", "2025-01-01", 1000, None, None, 0.0, "HOLD"]
+    df.to_csv(temp_journal, index=False)
+
+    manager = VirtualTradeManager(filename=temp_journal)
+    holds = manager.get_holds_by_strategy("StrategyA")
+
+    assert len(holds) == 1
+    assert holds[0]['code'] == "005930"
+    assert holds[0]['qty'] == 1
