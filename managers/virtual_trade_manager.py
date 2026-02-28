@@ -6,14 +6,16 @@ import math
 import logging
 from datetime import datetime, timedelta
 
+from core.time_manager import TimeManager
 logger = logging.getLogger(__name__)
 
 COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
 
 
 class VirtualTradeManager:
-    def __init__(self, filename="data/trade_journal.csv"):
+    def __init__(self, filename="data/trade_journal.csv", time_manager: TimeManager = None):
         self.filename = filename
+        self.tm = time_manager if time_manager else TimeManager()
         os.makedirs(os.path.dirname(self.filename), exist_ok=True)  # 데이터 디렉토리 생성
         if not os.path.exists(self.filename):
             pd.DataFrame(columns=COLUMNS).to_csv(self.filename, index=False)
@@ -40,7 +42,7 @@ class VirtualTradeManager:
         new_trade = {
             "strategy": strategy_name,
             "code": code,
-            "buy_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "buy_date": self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S"),
             "buy_price": current_price,
             "qty": qty,
             "sell_date": None,
@@ -62,7 +64,7 @@ class VirtualTradeManager:
         idx = df.loc[mask].index[-1]
         buy_price = df.loc[idx, 'buy_price']
         return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
-        df.loc[idx, 'sell_date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        df.loc[idx, 'sell_date'] = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
         df.loc[idx, 'sell_price'] = current_price
         df.loc[idx, 'return_rate'] = round(return_rate, 2)
         df.loc[idx, 'status'] = 'SOLD'
@@ -79,7 +81,7 @@ class VirtualTradeManager:
         idx = df.loc[mask].index[-1]
         buy_price = df.loc[idx, 'buy_price']
         return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
-        df.loc[idx, 'sell_date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        df.loc[idx, 'sell_date'] = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
         df.loc[idx, 'sell_price'] = current_price
         df.loc[idx, 'return_rate'] = round(return_rate, 2)
         df.loc[idx, 'status'] = 'SOLD'
@@ -185,7 +187,7 @@ class VirtualTradeManager:
 
     def save_daily_snapshot(self, strategy_returns: dict):
         """오늘 스냅샷 저장 + prev_values(전일대비 기준점) 갱신."""
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
         data = self._load_data()
         daily = data["daily"]
         prev_values = data.setdefault("prev_values", {})
@@ -203,7 +205,7 @@ class VirtualTradeManager:
         daily[today] = strategy_returns
 
         # 30일 이전 데이터 정리
-        cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        cutoff = (self.tm.get_current_kst_time() - timedelta(days=30)).strftime("%Y-%m-%d")
         data["daily"] = {d: v for d, v in daily.items() if d >= cutoff}
 
         self._save_data(data)
@@ -220,8 +222,8 @@ class VirtualTradeManager:
         """7일 전 스냅샷 대비 변화. 스냅샷 없으면 None."""
         data = _data or self._load_data()
         daily = data.get("daily", {})
-        today = datetime.now().strftime("%Y-%m-%d")
-        target = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
+        target = (self.tm.get_current_kst_time() - timedelta(days=7)).strftime("%Y-%m-%d")
 
         candidates = sorted([d for d in daily if d <= target and d != today], reverse=True)
         if not candidates:

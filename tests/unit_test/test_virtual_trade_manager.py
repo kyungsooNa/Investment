@@ -16,9 +16,16 @@ def temp_journal(tmp_path):
     return str(journal_file)
 
 @pytest.fixture
-def manager(temp_journal):
+def mock_time_manager():
+    """TimeManager Mock 생성"""
+    tm = MagicMock()
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    return tm
+
+@pytest.fixture
+def manager(temp_journal, mock_time_manager):
     """VirtualTradeManager 인스턴스 생성"""
-    return VirtualTradeManager(filename=temp_journal)
+    return VirtualTradeManager(filename=temp_journal, time_manager=mock_time_manager)
 
 def test_init_creates_directory_and_file(temp_journal):
     """초기화 시 디렉토리와 파일이 생성되는지 확인"""
@@ -105,15 +112,14 @@ def test_fix_sell_price_logic(manager):
     assert df.iloc[0]['sell_price'] == 15000
     assert df.iloc[0]['return_rate'] == 50.0
 
-@patch('managers.virtual_trade_manager.datetime')
-def test_save_daily_snapshot_and_prev_values(mock_dt, manager):
+def test_save_daily_snapshot_and_prev_values(manager):
     """일일 스냅샷 저장 및 기준값(prev_values) 갱신 확인"""
     # 1일차
-    mock_dt.now.return_value = datetime(2025, 1, 1)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
     manager.save_daily_snapshot({"ALL": 1.0})
     
     # 2일차 - 변동 발생 (0.01 이상)
-    mock_dt.now.return_value = datetime(2025, 1, 2)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 2)
     manager.save_daily_snapshot({"ALL": 2.5})
     
     data = manager._load_data()
@@ -129,10 +135,9 @@ def test_get_daily_change_calculation(manager):
     change = manager.get_daily_change("S1", 1.5, _data=data)
     assert change == 1.0 # 1.5 - 0.5
 
-@patch('managers.virtual_trade_manager.datetime')
-def test_get_weekly_change_logic(mock_dt, manager):
+def test_get_weekly_change_logic(manager):
     """7일 전 스냅샷 대비 변동폭 계산 확인"""
-    mock_dt.now.return_value = datetime(2025, 1, 10)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 10)
     data = {
         "daily": {
             "2025-01-01": {"S1": 10.0}, # 9일 전
@@ -211,3 +216,11 @@ def test_read_adds_qty_column_if_missing(temp_journal):
     
     assert "qty" in df_read.columns
     assert df_read.iloc[0]['qty'] == 1
+
+def test_log_buy_date_format(manager):
+    """매수 기록의 날짜 포맷이 YYYY-MM-DD HH:MM:SS 인지 확인 (호환성 유지)"""
+    manager.log_buy("TestStrategy", "005930", 70000)
+    df = manager._read()
+    buy_date = df.iloc[0]['buy_date']
+    # 예: 2025-01-01 12:00:00 -> 하이픈(-)이 포함되어야 함
+    assert buy_date[4] == '-' and buy_date[7] == '-'
