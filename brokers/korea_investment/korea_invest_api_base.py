@@ -8,13 +8,25 @@ import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
-from common.types import ErrorCode, ResCommonResponse, ResponseStatus
+from common.types import ErrorCode, ResCommonResponse
 from typing import Union, Optional
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, \
     KoreaInvestHeaderProvider
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 
+
+class ApiRetryError(Exception):
+    """재시도 가능한 API 오류 (예: 일시적 네트워크 오류, Rate Limit, 토큰 만료)"""
+    def __init__(self, message, delay=0.0):
+        super().__init__(message)
+        self.delay = delay
+
+class ApiFatalError(Exception):
+    """복구 불가능한 API 오류 (예: 파싱 실패, 비즈니스 로직 오류)"""
+    def __init__(self, message, rt_cd=None):
+        super().__init__(message)
+        self.rt_cd = rt_cd
 
 class KoreaInvestApiBase:
     """
@@ -71,25 +83,31 @@ class KoreaInvestApiBase:
                 if isinstance(response, ResCommonResponse):
                     return response
 
-                result: Union[dict, ResponseStatus] = await self._handle_response(response, expect_standard_schema)
-
-                if result is ResponseStatus.RETRY:
-                    self._logger.info(f"재시도 필요: {attempt}/{retry_count}, 지연 {delay}초")
-                    await self.time_manager.async_sleep(delay)  # 이 부분이 호출되어야 함
-                    continue
-
-                if isinstance(result, ResponseStatus):
-                    self._logger.error(f"복구 불가능한 오류 발생: {url}, 응답: {response.text}")
-                    return ResCommonResponse(
-                        rt_cd=str(result.value),
-                        msg1=f"API 응답 파싱 실패 또는 처리 불가능 - {response.text}",
-                        data=None
-                    )
+                # 예외 기반 처리: 성공 시 dict 반환, 실패 시 예외 발생
+                result_data = await self._handle_response(response, expect_standard_schema)
 
                 return ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value,
                     msg1="정상",
-                    data=result
+                    data=result_data
+                )
+
+            except ApiRetryError as e:
+                # 지수 백오프 적용: 기본 delay * 2^(attempt-1)
+                if e.delay > 0:
+                    wait_time = e.delay
+                else:
+                    wait_time = delay * (2 ** (attempt - 1))
+                self._logger.warning(f"재시도 필요: {attempt}/{retry_count}, 사유: {e}, 지연 {wait_time}초")
+                await self.time_manager.async_sleep(wait_time)
+                continue
+
+            except ApiFatalError as e:
+                self._logger.error(f"복구 불가능한 오류 발생: {url}, 사유: {e}")
+                return ResCommonResponse(
+                    rt_cd=str(e.rt_cd) if e.rt_cd else ErrorCode.PARSING_ERROR.value,
+                    msg1=f"API 오류: {e}",
+                    data=None
                 )
 
             except Exception as e:
@@ -214,37 +232,37 @@ class KoreaInvestApiBase:
 
         return response
 
-    async def _handle_response(self, response, expect_standard_schema: bool = True) -> Union[dict, ResponseStatus]:
+    async def _handle_response(self, response, expect_standard_schema: bool = True) -> dict:
         """HTTP 응답을 처리하고, 오류 유형에 따라 재시도 여부를 결정합니다."""
         # 1. 호출 제한 오류 (Rate Limit) - 최상단에서 가장 먼저 검사하고 즉시 반환
         if response.status_code == 429 or \
                 (response.status_code == 500 and "초당 거래건수를 초과하였습니다" in response.text):
-            return ResponseStatus.RETRY  # <--- 이 조건이 만족되면 다른 검사 없이 즉시 반환
+            raise ApiRetryError("Rate limit exceeded")
 
         # 2. 그 외의 HTTP 오류 (HTTP 상태 코드 자체로 인한 오류)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             self._logger.error(f"HTTP 오류 발생: {e.response.status_code} - {e.response.text}")
-            return ResponseStatus.HTTP_ERROR
+            raise ApiFatalError(f"HTTP Error {e.response.status_code}", rt_cd=ErrorCode.NETWORK_ERROR.value)
 
         # 3. 성공적인 응답 처리 (JSON 디코딩)
         try:
             response_json = response.json()
         except (json.JSONDecodeError, ValueError):
             self._logger.error(f"응답 JSON 디코딩 실패: {response.text}")
-            return ResponseStatus.PARSING_ERROR
+            raise ApiFatalError("JSON Decode Error", rt_cd=ErrorCode.PARSING_ERROR.value)
 
         # 3-1. 응답 형식 검증 (dict 여부)
         if not isinstance(response_json, dict):
             self._logger.error(f"API 응답 형식이 dict가 아님: {type(response_json)}")
-            return ResponseStatus.PARSING_ERROR
+            raise ApiFatalError("Response is not a dict", rt_cd=ErrorCode.PARSING_ERROR.value)
 
         # 4. 토큰 만료 오류 처리 (API 응답 내용 기반)
         if response_json.get('msg_cd') == 'EGW00123':
             self._logger.error("최종 토큰 만료 오류(EGW00123) 감지.")
             self._env.invalidate_token()
-            return ResponseStatus.RETRY
+            raise ApiRetryError("Token expired")
 
         if not expect_standard_schema:
             # ✅ 표준 스키마(rt_cd 등) 미적용 엔드포인트: 2xx면 성공으로 간주
@@ -256,12 +274,12 @@ class KoreaInvestApiBase:
             # msg1이 있을 경우에만 로깅, 없을 경우 "None" 로깅 방지
             error_message = response_json.get('msg1', '알 수 없는 비즈니스 오류')
             self._logger.error(f"API 비즈니스 오류: {error_message}")
-            return ResponseStatus.EMPTY_RTCD  # 비즈니스 오류 내용을 반환
+            raise ApiFatalError(f"Business Error: {error_message}", rt_cd=ErrorCode.API_ERROR.value)
 
         # 6. 데이터 존재 여부 검증 (성공 응답인 경우)
         if not any(key in response_json for key in ["output", "output1", "output2"]):
             self._logger.error(f"API 응답에 output 데이터가 없습니다: {response.text}")
-            return ResponseStatus.PARSING_ERROR
+            raise ApiFatalError("Missing output data", rt_cd=ErrorCode.PARSING_ERROR.value)
 
         # 모든 검사를 통과한 최종 성공적인 응답
         self._logger.debug(f"API 응답 성공: {response.text}")

@@ -9,7 +9,7 @@ from brokers.korea_investment.korea_invest_token_manager import TokenManager
 import requests
 import logging
 import httpx  # 에러 시뮬레이션을 위해 import
-from common.types import ErrorCode, ResponseStatus
+from common.types import ErrorCode
 
 
 def get_test_logger():
@@ -348,7 +348,8 @@ async def testcall_api_retry_on_429(caplog):
     # asyncio.sleep이 호출되었는지, 적절한 인자로 호출되었는지 확인
     # 429 에러가 2번 발생했으므로, 2번의 sleep 호출 예상 (첫 실패 후, 두 번째 실패 후)
     assert api.time_manager.async_sleep.await_count == 2
-    api.time_manager.async_sleep.assert_has_awaits([call(0.01), call(0.01)])
+    # 지수 백오프 적용: 1회차 0.01, 2회차 0.02
+    api.time_manager.async_sleep.assert_has_awaits([call(0.01), call(0.02)])
 
 
 @pytest.mark.asyncio
@@ -397,7 +398,8 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
     assert len(responses_list) == 3
     assert api._async_session.get.call_count == 3
     assert api.time_manager.async_sleep.await_count == 2
-    api.time_manager.async_sleep.assert_has_awaits([call(0.01), call(0.01)])
+    # 지수 백오프 적용: 1회차 0.01, 2회차 0.02
+    api.time_manager.async_sleep.assert_has_awaits([call(0.01), call(0.02)])
 
 
     # _log_request_exception은 예외가 call_api에서 잡힐 때만 호출됩니다.
@@ -407,8 +409,9 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
     # 이제 dummy_logger.error는 호출되지 않아야 합니다 (_handle_response가 수정되었으므로).
     api._logger.error.assert_not_called()
 
-    api._logger.info.assert_any_call("재시도 필요: 1/5, 지연 0.01초")
-    api._logger.info.assert_any_call("재시도 필요: 2/5, 지연 0.01초")
+    # 로그 메시지 포맷 변경 반영 (사유 포함)
+    assert any("재시도 필요: 1/5" in str(c) for c in api._logger.warning.call_args_list)
+    assert any("재시도 필요: 2/5" in str(c) for c in api._logger.warning.call_args_list)
 
     # 디버그 로그는 성공 응답 시에만 호출되어야 합니다.
     api._logger.debug.assert_any_call(f"API 응답 성공: {responses_list[2].text}")
