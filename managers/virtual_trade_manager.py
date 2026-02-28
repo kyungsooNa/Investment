@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-COLUMNS = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price", "return_rate", "status"]
+COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
 
 
 class VirtualTradeManager:
@@ -21,6 +21,9 @@ class VirtualTradeManager:
     def _read(self) -> pd.DataFrame:
         df = pd.read_csv(self.filename, dtype={'code': str})
         df['return_rate'] = df['return_rate'].fillna(0.0)
+        # 기존 파일 호환성: qty 컬럼이 없으면 기본값 1로 채움
+        if 'qty' not in df.columns:
+            df['qty'] = 1
         return df
 
     def _write(self, df: pd.DataFrame):
@@ -28,7 +31,7 @@ class VirtualTradeManager:
 
     # ---- 매수/매도 ----
 
-    def log_buy(self, strategy_name: str, code: str, current_price):
+    def log_buy(self, strategy_name: str, code: str, current_price, qty: int = 1):
         """가상 매수 기록. 동일 전략+종목 중복 매수 방지."""
         df = self._read()
         if self.is_holding(strategy_name, code):
@@ -39,6 +42,7 @@ class VirtualTradeManager:
             "code": code,
             "buy_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "buy_price": current_price,
+            "qty": qty,
             "sell_date": None,
             "sell_price": None,
             "return_rate": 0.0,
@@ -46,9 +50,9 @@ class VirtualTradeManager:
         }
         df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
         self._write(df)
-        logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price})")
+        logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
-    def log_sell(self, code: str, current_price):
+    def log_sell(self, code: str, current_price, qty: int = 1):
         """가상 매도 — 해당 종목 가장 최근 HOLD 건."""
         df = self._read()
         mask = (df['code'] == code) & (df['status'] == 'HOLD')
@@ -65,7 +69,7 @@ class VirtualTradeManager:
         self._write(df)
         logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%)")
 
-    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price):
+    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1):
         """전략+종목 매칭 매도."""
         df = self._read()
         mask = (df['strategy'] == strategy_name) & (df['code'] == code) & (df['status'] == 'HOLD')

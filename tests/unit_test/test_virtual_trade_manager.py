@@ -26,7 +26,7 @@ def test_init_creates_directory_and_file(temp_journal):
     assert os.path.exists(os.path.dirname(temp_journal))
     assert os.path.exists(temp_journal)
     df = pd.read_csv(temp_journal)
-    expected_cols = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price", "return_rate", "status"]
+    expected_cols = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
     assert list(df.columns) == expected_cols
 
 def test_log_buy_success(manager):
@@ -37,6 +37,7 @@ def test_log_buy_success(manager):
     assert df.iloc[0]['strategy'] == "TestStrategy"
     assert df.iloc[0]['code'] == "005930"
     assert df.iloc[0]['status'] == "HOLD"
+    assert df.iloc[0]['qty'] == 1
     assert manager.is_holding("TestStrategy", "005930") is True
 
 def test_log_buy_duplicate_skips(manager):
@@ -45,6 +46,13 @@ def test_log_buy_duplicate_skips(manager):
     manager.log_buy("StrategyA", "005930", 71000)
     df = manager._read()
     assert len(df) == 1
+
+def test_log_buy_with_qty(manager):
+    """매수 시 수량(qty)이 정상적으로 기록되는지 확인"""
+    manager.log_buy("TestStrategy", "005930", 70000, qty=10)
+    df = manager._read()
+    assert len(df) == 1
+    assert df.iloc[0]['qty'] == 10
 
 def test_log_sell_success(manager):
     """매도 기록 및 수익률 계산 확인"""
@@ -189,3 +197,17 @@ def test_get_all_strategies_logic(manager):
     strategies = manager.get_all_strategies()
     # 중복 제거 및 알파벳 순 정렬 확인
     assert strategies == ["S1", "S2", "S3"]
+
+def test_read_adds_qty_column_if_missing(temp_journal):
+    """기존 파일에 qty 컬럼이 없을 경우 읽기 시 기본값 1로 추가되는지 확인"""
+    # qty 없는 구버전 파일 생성
+    old_cols = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price", "return_rate", "status"]
+    df = pd.DataFrame(columns=old_cols)
+    df.loc[0] = ["S1", "005930", "2025-01-01", 1000, None, None, 0.0, "HOLD"]
+    df.to_csv(temp_journal, index=False)
+    
+    manager = VirtualTradeManager(filename=temp_journal)
+    df_read = manager._read()
+    
+    assert "qty" in df_read.columns
+    assert df_read.iloc[0]['qty'] == 1
