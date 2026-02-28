@@ -1,19 +1,15 @@
 import pytest
 import sys
+import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # Add parent directories to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.types import ResCommonResponse
-
-@pytest.fixture(autouse=True)
-def mock_signal_history_file(tmp_path):
-    """테스트 중 실제 signal_history.csv 파일 접근 방지"""
-    temp_file = tmp_path / "temp_signal_history.csv"
-    with patch("scheduler.strategy_scheduler.SIGNAL_HISTORY_FILE", str(temp_file)):
-        yield
+from view.web import web_api
+from fastapi import HTTPException, Request
 
 def test_get_status(web_client, mock_web_ctx):
     """GET /api/status 엔드포인트 테스트"""
@@ -465,3 +461,383 @@ async def test_get_balance_fallback_env(web_client, mock_web_ctx):
     finally:
         # 복구
         mock_web_ctx.env = original_env
+
+def test_check_auth(mock_web_ctx):
+    """check_auth 함수 테스트"""
+    # Mock Request
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"access_token": "secret"}
+    
+    # Config setup
+    mock_web_ctx.env.active_config = {"auth": {"secret_key": "secret"}}
+    
+    # Success
+    assert web_api.check_auth(mock_request) is True
+    
+    # Fail
+    mock_request.cookies = {"access_token": "wrong"}
+    with pytest.raises(HTTPException) as exc:
+        web_api.check_auth(mock_request)
+    assert exc.value.status_code == 401
+
+def test_serialize_helpers():
+    """_serialize_response 및 _serialize_list_items 헬퍼 함수 테스트"""
+    # _serialize_response
+    assert web_api._serialize_response(None)["rt_cd"] == "999"
+    
+    class MockResp:
+        def to_dict(self): return {"a": 1}
+    assert web_api._serialize_response(MockResp()) == {"a": 1}
+    
+    class MockResp2:
+        rt_cd = "1"
+        msg1 = "msg"
+        data = "data"
+    assert web_api._serialize_response(MockResp2()) == {"rt_cd": "1", "msg1": "msg", "data": "data"}
+
+    # _serialize_list_items
+    items = [MockResp(), {"b": 2}, "string_item"]
+    serialized = web_api._serialize_list_items(items)
+    assert serialized[0] == {"a": 1}
+    assert serialized[1] == {"b": 2}
+    assert serialized[2] == "string_item"
+
+@pytest.mark.asyncio
+async def test_get_stock_chart_indicators(web_client, mock_web_ctx):
+    """GET /api/chart/{code} indicators=True 테스트"""
+    mock_web_ctx.stock_query_service.get_ohlcv_with_indicators.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={}
+    )
+    response = web_client.get("/api/chart/005930?period=D&indicators=true")
+    assert response.status_code == 200
+    mock_web_ctx.stock_query_service.get_ohlcv_with_indicators.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_get_balance_no_env(web_client, mock_web_ctx):
+    """GET /api/balance 환경 설정 없음 테스트"""
+    # ctx.env, ctx.broker 제거
+    if hasattr(mock_web_ctx, 'env'): del mock_web_ctx.env
+    if hasattr(mock_web_ctx, 'broker'): del mock_web_ctx.broker
+    
+    mock_web_ctx.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={}
+    )
+    
+    response = web_client.get("/api/balance")
+    assert response.status_code == 200
+    assert response.json()["account_info"]["type"] == "Env Not Found"
+
+@pytest.mark.asyncio
+async def test_place_order_market_price_and_exception(web_client, mock_web_ctx):
+    """POST /api/order 시장가(0) 주문 및 로깅 예외 테스트"""
+    mock_web_ctx.order_execution_service.handle_buy_stock.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={}
+    )
+    # 현재가 조회 Mock
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"price": "50000"}
+    )
+    
+    # 1. 시장가 주문 -> 현재가 조회 호출 확인
+    payload = {"code": "005930", "price": "0", "qty": "1", "side": "buy"}
+    response = web_client.post("/api/order", json=payload)
+    assert response.status_code == 200
+    mock_web_ctx.virtual_manager.log_buy.assert_called_with("수동매매", "005930", 50000)
+
+    # 2. 로깅 중 예외 발생 테스트
+    mock_web_ctx.virtual_manager.log_buy.side_effect = Exception("Logging Error")
+    response = web_client.post("/api/order", json=payload)
+    assert response.status_code == 200  # 예외가 발생해도 API는 성공해야 함
+
+@pytest.mark.asyncio
+async def test_get_ranking_failure(web_client, mock_web_ctx):
+    """GET /api/ranking 실패 응답 테스트"""
+    mock_web_ctx.stock_query_service.handle_get_top_stocks.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Error", data=None
+    )
+    response = web_client.get("/api/ranking/rise")
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "1"
+
+@pytest.mark.asyncio
+async def test_get_top_market_cap_fallback(web_client, mock_web_ctx):
+    """GET /api/top-market-cap 잘못된 market 코드 테스트"""
+    mock_web_ctx.broker.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=[]
+    )
+    response = web_client.get("/api/top-market-cap?market=9999")
+    assert response.status_code == 200
+    mock_web_ctx.broker.get_top_market_cap_stocks_code.assert_awaited_with("0001", 20)
+
+@pytest.mark.asyncio
+async def test_get_virtual_summary_no_manager(web_client, mock_web_ctx):
+    """GET /api/virtual/summary 매니저 없음 테스트"""
+    if hasattr(mock_web_ctx, 'virtual_manager'): del mock_web_ctx.virtual_manager
+    response = web_client.get("/api/virtual/summary")
+    assert response.status_code == 200
+    assert response.json()["total_trades"] == 0
+
+@pytest.mark.asyncio
+async def test_get_strategy_chart_all_and_failure(web_client, mock_web_ctx):
+    """GET /api/virtual/chart/ALL 및 벤치마크 실패 테스트"""
+    mock_web_ctx.virtual_manager.get_all_strategies.return_value = ["StratA"]
+    mock_web_ctx.virtual_manager.get_strategy_return_history.return_value = [{"date": "2025-01-01", "return_rate": 0}]
+    
+    # 벤치마크 API 실패 Mock
+    mock_web_ctx.stock_query_service.trading_service.get_ohlcv_range.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Fail", data=None
+    )
+    
+    response = web_client.get("/api/virtual/chart/ALL")
+    assert response.status_code == 200
+    data = response.json()
+    assert "StratA" in data["histories"]
+    # 벤치마크 데이터가 0으로 채워져서 반환되어야 함
+    assert data["benchmarks"]["KOSPI200"][0]["return_rate"] == 0
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_complex(web_client, mock_web_ctx):
+    """GET /api/virtual/history 복합 테스트 (캐시, SOLD 보정, 매니저 없음)"""
+    # 1. 매니저 없음
+    if hasattr(mock_web_ctx, 'virtual_manager'): 
+        vm = mock_web_ctx.virtual_manager
+        del mock_web_ctx.virtual_manager
+    resp = web_client.get("/api/virtual/history")
+    assert resp.json()["trades"] == []
+    
+    # 매니저 복구
+    mock_web_ctx.virtual_manager = vm
+    
+    # 2. 캐시 히트 및 SOLD 보정 테스트
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"},
+        {"code": "000660", "status": "SOLD", "sell_price": 0, "buy_price": 1000, "strategy": "A"}
+    ]
+    
+    # 캐시 설정 (005930은 캐시 히트)
+    web_api._PRICE_CACHE["005930"] = (50000, 5.0, time.time())
+    
+    # API Mock (000660은 API 호출 -> SOLD 가격 보정용)
+    async def mock_get_price(code):
+        if code == "000660": return ResCommonResponse(rt_cd="0", msg1="OK", data={"price": "1100", "rate": "10.0"})
+        return None
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.side_effect = mock_get_price
+    mock_web_ctx.virtual_manager.fix_sell_price = MagicMock()
+    
+    # 스냅샷 관련 Mock
+    mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_manager._load_data.return_value = {}
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = 0.0
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = 0.0
+
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    
+    trades = response.json()["trades"]
+    # 005930: 캐시된 값 확인
+    hold_trade = next(t for t in trades if t["code"] == "005930")
+    assert hold_trade["current_price"] == 50000
+    # 구현상 1분 이내의 최신 캐시는 is_cached=False를 반환함 (UI 표시용)
+    assert hold_trade["is_cached"] is False
+    
+    # 000660: SOLD 가격 보정 확인 (0 -> 1100)
+    sold_trade = next(t for t in trades if t["code"] == "000660")
+    assert sold_trade["sell_price"] == 1100
+    mock_web_ctx.virtual_manager.fix_sell_price.assert_called()
+    
+    # Cleanup
+    web_api._PRICE_CACHE.clear()
+
+@pytest.mark.asyncio
+async def test_program_trading_save_load(web_client, mock_web_ctx):
+    """프로그램 매매 데이터 저장/로드 테스트"""
+    mock_web_ctx.realtime_data_manager = MagicMock()
+    
+    # Save
+    payload = {"chartData": {}, "subscribedCodes": [], "codeNameMap": {}, "savedAt": "2025-01-01"}
+    resp = web_client.post("/api/program-trading/save-data", json=payload)
+    assert resp.status_code == 200
+    mock_web_ctx.realtime_data_manager.save_snapshot.assert_called()
+    
+    # Load
+    mock_web_ctx.realtime_data_manager.load_snapshot.return_value = payload
+    resp = web_client.get("/api/program-trading/load-data")
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+@pytest.mark.asyncio
+async def test_scheduler_not_initialized(web_client, mock_web_ctx):
+    """스케줄러 미초기화 상태 테스트"""
+    mock_web_ctx.scheduler = None
+    
+    assert web_client.get("/api/scheduler/status").json()["running"] is False
+    assert web_client.post("/api/scheduler/start").status_code == 503
+    assert web_client.post("/api/scheduler/stop").status_code == 503
+    assert web_client.post("/api/scheduler/strategy/A/start").status_code == 503
+    assert web_client.post("/api/scheduler/strategy/A/stop").status_code == 503
+    assert web_client.get("/api/scheduler/history").json()["history"] == []
+
+@pytest.mark.asyncio
+async def test_get_balance_full_config_fallback(web_client, mock_web_ctx):
+    """GET /api/balance active_config 없음 -> get_full_config 폴백 테스트"""
+    # ctx.env 설정
+    mock_web_ctx.env.active_config = None
+    mock_web_ctx.env.get_full_config = MagicMock(return_value={"stock_account_number": "1234-fallback"})
+    
+    mock_web_ctx.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={}
+    )
+    
+    response = web_client.get("/api/balance")
+    assert response.status_code == 200
+    assert response.json()["account_info"]["number"] == "1234-fallback"
+
+@pytest.mark.asyncio
+async def test_get_balance_full_config_exception(web_client, mock_web_ctx):
+    """GET /api/balance get_full_config 예외 발생 테스트"""
+    mock_web_ctx.env.active_config = None
+    mock_web_ctx.env.get_full_config.side_effect = Exception("Config Error")
+    # MagicMock이 속성 접근 시 Mock 객체를 반환하여 "번호없음" 대신 반환되는 것을 방지
+    mock_web_ctx.env.stock_account_number = None
+    mock_web_ctx.env.paper_stock_account_number = None
+    
+    mock_web_ctx.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={}
+    )
+    
+    response = web_client.get("/api/balance")
+    assert response.status_code == 200
+    # config가 {}가 되므로 계좌번호는 "번호없음"이 됨
+    assert response.json()["account_info"]["number"] == "번호없음"
+
+@pytest.mark.asyncio
+async def test_place_order_market_price_api_fail(web_client, mock_web_ctx):
+    """POST /api/order 시장가(0) 주문 시 현재가 조회 실패 테스트"""
+    mock_web_ctx.order_execution_service.handle_buy_stock.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={}
+    )
+    # 현재가 조회 실패 Mock
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Fail", data=None
+    )
+    
+    payload = {"code": "005930", "price": "0", "qty": "1", "side": "buy"}
+    response = web_client.post("/api/order", json=payload)
+    assert response.status_code == 200
+    
+    # 가격이 0으로 전달되었는지 확인 (API 실패 시 0 유지)
+    mock_web_ctx.virtual_manager.log_buy.assert_called_with("수동매매", "005930", 0)
+
+@pytest.mark.asyncio
+async def test_calculate_benchmark_zero_base_price(web_client, mock_web_ctx):
+    """_calculate_benchmark 기준가 0일 때 테스트"""
+    # 전략 히스토리 설정
+    mock_web_ctx.virtual_manager.get_all_strategies.return_value = ["StratA"]
+    mock_web_ctx.virtual_manager.get_strategy_return_history.return_value = [
+        {"date": "2025-01-01", "return_rate": 0}
+    ]
+    
+    # 벤치마크 데이터 조회 Mock (첫 데이터 0)
+    mock_web_ctx.stock_query_service.trading_service.get_ohlcv_range.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=[{"date": "20250101", "close": 0}]
+    )
+    
+    response = web_client.get("/api/virtual/chart/ALL")
+    assert response.status_code == 200
+    data = response.json()
+    # 벤치마크 수익률이 0으로 채워져야 함
+    assert data["benchmarks"]["KOSPI200"][0]["return_rate"] == 0
+
+@pytest.mark.asyncio
+async def test_calculate_benchmark_invalid_base_price(web_client, mock_web_ctx):
+    """_calculate_benchmark 기준가가 유효하지 않을 때 테스트"""
+    mock_web_ctx.virtual_manager.get_all_strategies.return_value = ["StratA"]
+    mock_web_ctx.virtual_manager.get_strategy_return_history.return_value = [
+        {"date": "2025-01-01", "return_rate": 0}
+    ]
+    
+    # 벤치마크 데이터 조회 Mock (close가 문자열)
+    mock_web_ctx.stock_query_service.trading_service.get_ohlcv_range.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=[{"date": "20250101", "close": "invalid"}]
+    )
+    
+    response = web_client.get("/api/virtual/chart/ALL")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["benchmarks"]["KOSPI200"][0]["return_rate"] == 0
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_force_update(web_client, mock_web_ctx):
+    """GET /api/virtual/history force_code 테스트"""
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
+    ]
+    
+    # 캐시 설정 (최신)
+    web_api._PRICE_CACHE["005930"] = (50000, 5.0, time.time())
+    
+    # API Mock
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"price": "51000", "rate": "2.0"}
+    )
+    
+    # force_code 지정 -> 캐시 무시하고 API 호출 예상
+    response = web_client.get("/api/virtual/history?force_code=005930")
+    assert response.status_code == 200
+    
+    trades = response.json()["trades"]
+    # API 호출 결과인 51000이 반영되어야 함 (캐시 50000 아님)
+    assert trades[0]["current_price"] == 51000
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_with("005930")
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_api_exception(web_client, mock_web_ctx):
+    """GET /api/virtual/history API 예외 발생 테스트"""
+    # 이전 테스트의 캐시가 남아있을 수 있으므로 초기화
+    web_api._PRICE_CACHE.clear()
+
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
+    ]
+    
+    # API Exception Mock
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.side_effect = Exception("API Error")
+    
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    
+    trades = response.json()["trades"]
+    # 예외 발생 시 enrichment 실패, 기본값 또는 None
+    assert "current_price" not in trades[0] or trades[0]["current_price"] is None
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_price_parsing_error(web_client, mock_web_ctx):
+    """GET /api/virtual/history 가격 파싱 에러 테스트"""
+    # 이전 테스트의 캐시가 남아있을 수 있으므로 초기화
+    web_api._PRICE_CACHE.clear()
+
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
+    ]
+    
+    # API Mock returns invalid price string
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"price": "invalid", "rate": "0.0"}
+    )
+    
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    trades = response.json()["trades"]
+    # price_val becomes 0 -> not updated in price_map -> current_price missing or None
+    assert "current_price" not in trades[0] or trades[0]["current_price"] is None
+
+@pytest.mark.asyncio
+async def test_get_top_market_cap_failure(web_client, mock_web_ctx):
+    """GET /api/top-market-cap 실패 응답 테스트"""
+    mock_web_ctx.broker.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Fail", data=None
+    )
+    
+    response = web_client.get("/api/top-market-cap")
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "1"
