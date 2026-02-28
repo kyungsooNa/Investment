@@ -281,3 +281,126 @@ def test_on_data_received_missing_key(manager):
     # 저장되지 않아야 함
     assert len(manager._pt_history) == 0
     assert len(manager._pt_history_buffer) == 0
+
+def test_init_makedirs_failure():
+    """초기화 시 디렉토리 생성 실패 테스트"""
+    mock_logger = MagicMock()
+    # _load_pt_history도 모킹하여 불필요한 파일 접근 방지
+    with patch("os.makedirs", side_effect=OSError("Permission denied")), \
+         patch("managers.realtime_data_manager.RealtimeDataManager._load_pt_history"):
+        
+        mgr = RealtimeDataManager(logger=mock_logger)
+        mock_logger.error.assert_called()
+        assert "데이터 디렉토리 생성 실패" in mock_logger.error.call_args[0][0]
+
+def test_load_pt_history_file_not_found(manager):
+    """히스토리 파일이 없을 때 로드 시도 (조기 리턴)"""
+    # manager fixture 생성 시 이미 호출되었을 수 있으므로 로거 리셋
+    manager.logger.reset_mock()
+    
+    with patch("os.path.exists", return_value=False):
+        manager._load_pt_history()
+        
+        # 파일이 없으면 로그 없이 리턴해야 함
+        manager.logger.info.assert_not_called()
+        manager.logger.error.assert_not_called()
+
+def test_load_pt_history_general_exception(manager):
+    """히스토리 로드 중 일반 예외 발생 테스트"""
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", side_effect=Exception("Unexpected error")):
+        
+        manager._load_pt_history()
+        manager.logger.error.assert_called()
+        assert "히스토리 로드 중 오류" in manager.logger.error.call_args[0][0]
+
+def test_flush_pt_history_empty_buffer(manager):
+    """버퍼가 비어있을 때 flush 호출 (아무 일도 안 함)"""
+    manager._pt_history_buffer = []
+    with patch("builtins.open") as mock_file:
+        manager._flush_pt_history()
+        mock_file.assert_not_called()
+
+def test_cleanup_old_pt_history_dir_not_found(manager):
+    """디렉토리가 없을 때 cleanup 호출 (조기 리턴)"""
+    with patch("os.path.exists", return_value=False):
+        manager._cleanup_old_pt_history()
+        # 에러 로그 없어야 함
+        manager.logger.error.assert_not_called()
+
+def test_cleanup_old_pt_history_invalid_filename(manager):
+    """파일명 형식이 안 맞을 때 무시하는지 테스트"""
+    with patch("os.path.exists", return_value=True), \
+         patch("os.listdir", return_value=["invalid_file.txt", "pt_history_invalid.jsonl"]), \
+         patch("os.remove") as mock_remove:
+        
+        manager._cleanup_old_pt_history()
+        mock_remove.assert_not_called()
+
+def test_cleanup_old_pt_history_listdir_exception(manager):
+    """os.listdir 예외 발생 시 테스트"""
+    with patch("os.path.exists", return_value=True), \
+         patch("os.listdir", side_effect=OSError("Read error")):
+        
+        manager._cleanup_old_pt_history()
+        manager.logger.error.assert_called()
+        assert "히스토리 정리 중 오류" in manager.logger.error.call_args[0][0]
+
+def test_on_data_received_queue_exception(manager):
+    """큐 put 중 예외 발생 시 테스트"""
+    queue = MagicMock()
+    queue.put_nowait.side_effect = Exception("Queue error")
+    manager._pt_queues.append(queue)
+    
+    test_data = {"유가증권단축종목코드": "005930"}
+    
+    # 예외가 발생해도 크래시되지 않아야 함 (내부적으로 pass 처리됨)
+    manager.on_data_received(test_data)
+    
+    # 큐가 여전히 리스트에 있는지 확인
+    assert queue in manager._pt_queues
+
+def test_remove_subscriber_queue_not_found(manager):
+    """존재하지 않는 큐 제거 시도"""
+    queue = asyncio.Queue()
+    # 등록하지 않고 제거 시도
+    manager.remove_subscriber_queue(queue)
+    # 에러 없이 통과해야 함
+    assert len(manager._pt_queues) == 0
+
+def test_save_snapshot_exception(manager):
+    """스냅샷 저장 중 예외 발생 테스트"""
+    data = {"test": "data"}
+    with patch("os.makedirs"), \
+         patch("builtins.open", side_effect=IOError("Write failed")):
+        
+        with pytest.raises(IOError):
+            manager.save_snapshot(data)
+        
+        manager.logger.error.assert_called()
+        assert "스냅샷 저장 실패" in manager.logger.error.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_start_background_tasks_already_running(manager):
+    """이미 실행 중일 때 중복 실행 방지 테스트"""
+    mock_task = asyncio.Future()
+    # Future는 기본적으로 pending 상태이므로 done()은 False
+    manager._flush_task = mock_task
+    
+    with patch("asyncio.create_task") as mock_create_task:
+        manager.start_background_tasks()
+        mock_create_task.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_shutdown_no_task(manager):
+    """태스크가 없을 때 shutdown 호출"""
+    manager._flush_task = None
+    
+    # flush 호출 확인을 위해 버퍼에 데이터 추가
+    manager._pt_history_buffer.append({"data": 1})
+    
+    with patch("os.makedirs"), patch("builtins.open", mock_open()):
+        await manager.shutdown()
+        
+        # 마지막 플러시는 수행되어야 함
+        assert len(manager._pt_history_buffer) == 0
