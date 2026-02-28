@@ -390,11 +390,17 @@ class StrategyScheduler:
         enabled_names = [
             cfg.strategy.name for cfg in self._strategies if cfg.enabled
         ]
-        state = {"running": self._running, "enabled_strategies": enabled_names}
+        # 현재 보유 포지션 정보도 함께 저장 (안전장치)
+        current_positions = self._vm.get_holds()
+        state = {
+            "running": self._running,
+            "enabled_strategies": enabled_names,
+            "current_positions": current_positions
+        }
         try:
             with open(SCHEDULER_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False)
-            self._logger.info(f"[Scheduler] 상태 저장 완료: {enabled_names}")
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            self._logger.info(f"[Scheduler] 상태 저장 완료: {enabled_names}, 보유종목 {len(current_positions)}건")
         except Exception as e:
             self._logger.error(f"[Scheduler] 상태 저장 실패: {e}")
 
@@ -412,6 +418,11 @@ class StrategyScheduler:
             with open(SCHEDULER_STATE_FILE, "r", encoding="utf-8") as f:
                 state = json.load(f)
             enabled_names = state.get("enabled_strategies", [])
+            saved_positions = state.get("current_positions", [])
+
+            if saved_positions:
+                self._logger.info(f"[Scheduler] 이전 상태 파일에 저장된 보유 포지션: {len(saved_positions)}건")
+
             if not enabled_names:
                 return
 
