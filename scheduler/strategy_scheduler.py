@@ -113,8 +113,12 @@ class StrategyScheduler:
                 pass
             self._task = None
 
+        # 상태 저장을 동반한 종료(재시작 등)라면 강제 청산을 하지 않는다.
+        # save_state=True -> perform_exit=False (청산 스킵)
+        # save_state=False -> perform_exit=True (청산 수행)
+        perform_exit = not save_state
         for cfg in self._strategies:
-            await self.stop_strategy(cfg.strategy.name)
+            await self.stop_strategy(cfg.strategy.name, perform_force_exit=perform_exit)
 
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
 
@@ -318,11 +322,11 @@ class StrategyScheduler:
                 return True
         return False
 
-    async def stop_strategy(self, name: str) -> bool:
+    async def stop_strategy(self, name: str, perform_force_exit: bool = True) -> bool:
         """개별 전략 비활성화. 성공 시 True 반환."""
         for cfg in self._strategies:
             if cfg.strategy.name == name:
-                if cfg.enabled and cfg.force_exit_on_close:
+                if perform_force_exit and cfg.enabled and cfg.force_exit_on_close:
                     await self._force_liquidate_strategy(cfg)
 
                 cfg.enabled = False

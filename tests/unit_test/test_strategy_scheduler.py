@@ -145,8 +145,27 @@ async def test_scheduler_stop_calls_stop_strategy(scheduler, mock_components):
         
         assert mock_stop_strat.call_count == 2
         # 호출 인자 확인 (순서는 보장되지 않을 수 있으므로 any_call 사용)
-        mock_stop_strat.assert_any_call("S1")
-        mock_stop_strat.assert_any_call("S2")
+        # stop(save_state=False) 이므로 perform_force_exit=True
+        mock_stop_strat.assert_any_call("S1", perform_force_exit=True)
+        mock_stop_strat.assert_any_call("S2", perform_force_exit=True)
+
+@pytest.mark.asyncio
+async def test_stop_with_save_state_skips_liquidation(scheduler, mock_components):
+    """
+    scheduler.stop(save_state=True) 호출 시(재시작 상황), 강제 청산 옵션은 꺼진 채로 stop_strategy가 호출되어야 한다.
+    """
+    mock_strategy = MagicMock()
+    mock_strategy.name = "RestartStrategy"
+    config = StrategySchedulerConfig(strategy=mock_strategy, force_exit_on_close=True, enabled=True)
+    scheduler.register(config)
+
+    # stop_strategy를 스파이
+    with patch.object(scheduler, 'stop_strategy', new_callable=AsyncMock) as mock_stop_strat:
+        # 상태 저장 모드로 정지
+        await scheduler.stop(save_state=True)
+        
+        # perform_force_exit=False로 호출되었는지 확인
+        mock_stop_strat.assert_called_once_with("RestartStrategy", perform_force_exit=False)
 
 @pytest.mark.asyncio
 async def test_execute_signal_market_price_logging(scheduler, mock_components):
