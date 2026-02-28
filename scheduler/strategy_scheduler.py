@@ -204,11 +204,26 @@ class StrategyScheduler:
             f"@ {signal.price:,}원 | {signal.reason}"
         )
 
+        # 기록용 가격 결정 (시장가 0원인 경우 현재가 조회 시도하여 기록 정확도 향상)
+        log_price = signal.price
+        if log_price == 0:
+            try:
+                # OrderExecutionService -> TradingService 접근하여 현재가 조회
+                resp = await self._oes.trading_service.get_current_stock_price(signal.code)
+                if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                    data = resp.data
+                    output = data.get("output") if isinstance(data, dict) else getattr(data, "output", None)
+                    if output:
+                        val = output.get("stck_prpr") if isinstance(output, dict) else getattr(output, "stck_prpr", 0)
+                        log_price = int(val)
+            except Exception:
+                pass  # 조회 실패 시 0원으로 기록 유지
+
         # CSV 기록 (항상)
         if signal.action == "BUY":
-            self._vm.log_buy(signal.strategy_name, signal.code, signal.price)
+            self._vm.log_buy(signal.strategy_name, signal.code, log_price)
         elif signal.action == "SELL":
-            self._vm.log_sell_by_strategy(signal.strategy_name, signal.code, signal.price)
+            self._vm.log_sell_by_strategy(signal.strategy_name, signal.code, log_price)
 
         api_success = True
 
