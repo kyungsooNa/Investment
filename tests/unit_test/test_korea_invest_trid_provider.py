@@ -13,9 +13,9 @@ def mock_env():
 def mock_tr_ids():
     return {
         "quotations": {
-            "daily_itemchartprice": "TR_DAILY_CHART",
-            "time_itemchartprice": "TR_TIME_CHART",
-            "time_daily_itemchartprice": "TR_TIME_DAILY_CHART",
+            "inquire_daily_itemchartprice": "TR_DAILY_CHART",
+            "inquire_time_itemchartprice": "TR_TIME_CHART",
+            "inquire_time_daily_itemchartprice": "TR_TIME_DAILY_CHART",
         },
         "account": {
             "inquire_balance_paper": "TR_BALANCE_PAPER",
@@ -59,7 +59,7 @@ def test_from_config_loader_fallback(mock_env):
 
 def test_get_leaf_value_found(mock_env, mock_tr_ids):
     provider = KoreaInvestTrIdProvider(mock_env, mock_tr_ids)
-    assert provider._get_leaf_value("daily_itemchartprice") == "TR_DAILY_CHART"
+    assert provider._get_leaf_value("inquire_daily_itemchartprice") == "TR_DAILY_CHART"
     assert provider._get_leaf_value("inquire_balance_paper") == "TR_BALANCE_PAPER"
 
 def test_get_leaf_value_not_found(mock_env, mock_tr_ids):

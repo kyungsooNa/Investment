@@ -152,6 +152,101 @@ async def test_get_moving_average_sma_success(indicator_service):
     assert first_item.ma is None
 
 @pytest.mark.asyncio
+async def test_get_bollinger_bands_with_preloaded_data(indicator_service):
+    """ohlcv_data를 미리 전달하여 API 호출을 건너뛰는지 테스트"""
+    service, mock_ts = indicator_service
+    
+    # 20일치 데이터 생성
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 10} for i in range(20)]
+    
+    # ohlcv_data를 직접 전달
+    result = await service.get_bollinger_bands("005930", ohlcv_data=data)
+
+    # API가 호출되지 않았는지 확인
+    mock_ts.get_ohlcv.assert_not_called()
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 20
+    # 첫 19개 데이터는 MA, std 등이 NaN이므로 middle, upper, lower가 None이어야 함
+    assert result.data[0].middle is None
+    assert result.data[18].middle is None
+    # 마지막 데이터는 값이 있어야 함
+    assert result.data[19].middle is not None
+
+@pytest.mark.asyncio
+async def test_get_rsi_not_enough_data(indicator_service):
+    """RSI 계산에 데이터가 부족한 경우 (period + 1 미만)"""
+    service, mock_ts = indicator_service
+    
+    # 14일 RSI 계산에 10개 데이터만 제공
+    data = [{"date": "20250101", "close": 10000}] * 10
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    result = await service.get_rsi("005930", period=14)
+
+    assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
+    assert "데이터 부족" in result.msg1
+
+@pytest.mark.asyncio
+async def test_get_rsi_api_failure(indicator_service):
+    """RSI 계산 시 OHLCV API 호출 실패"""
+    service, mock_ts = indicator_service
+    
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="Fail", data=None
+    )
+
+    result = await service.get_rsi("005930")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+
+@pytest.mark.asyncio
+async def test_get_rsi_calculation_error(indicator_service):
+    """RSI 계산 중 예외 발생 (예: 숫자가 아닌 데이터)"""
+    service, mock_ts = indicator_service
+    
+    data_invalid = [{"date": f"202501{i+1:02d}", "close": "invalid"} for i in range(30)]
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data_invalid
+    )
+    result = await service.get_rsi("005930")
+
+    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+    assert "RSI 계산 중 오류" in result.msg1
+
+@pytest.mark.asyncio
+async def test_get_moving_average_with_preloaded_data(indicator_service):
+    """get_moving_average에 ohlcv_data를 미리 전달하여 API 호출을 건너뛰는지 테스트"""
+    service, mock_ts = indicator_service
+    
+    data = [{"date": f"202501{i+1:02d}", "close": "10000"} for i in range(20)]
+    
+    result = await service.get_moving_average("005930", ohlcv_data=data)
+
+    mock_ts.get_ohlcv.assert_not_called()
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 20
+    # close가 문자열이어도 내부적으로 pd.to_numeric으로 처리되는지 확인
+    assert result.data[-1].ma == 10000.0
+
+@pytest.mark.asyncio
+async def test_get_moving_average_calculation_error(indicator_service):
+    """get_moving_average 계산 중 예외 발생"""
+    service, mock_ts = indicator_service
+    
+    data_invalid = [{"date": f"202501{i+1:02d}", "close": "invalid"} for i in range(20)]
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data_invalid
+    )
+    
+    result = await service.get_moving_average("005930")
+
+    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+    assert "MA 계산 중 오류" in result.msg1
+
+@pytest.mark.asyncio
 async def test_get_moving_average_ema_success(indicator_service):
     """이동평균선(EMA) 계산 성공 시나리오"""
     service, mock_ts = indicator_service
