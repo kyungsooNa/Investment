@@ -110,6 +110,7 @@ class WebAppContext:
         self.scheduler = StrategyScheduler(
             virtual_manager=self.virtual_manager,
             order_execution_service=self.order_execution_service,
+            stock_query_service=self.stock_query_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('StrategyScheduler'),
             dry_run=False,

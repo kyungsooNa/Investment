@@ -134,6 +134,7 @@ IndicatorService로 계산 → 데이터만 반환
 ### 3. 테스트 (Tests)
 * **[확장 필요]** 통합 테스트의 범위 확장: 실제 API 호출을 포함하는 제한된 통합 테스트 추가 (외부 API 안정성 보장 시).
 * **[개선 필요]** Mock 객체의 일관성: 공통 픽스처 활용 또는 Mock 설정 유틸리티를 통해 Mock 객체 설정 중복 제거.
+* **[개선 필요]** 현재 존재하는 IT들은 CLI 기반의 IT만 되어있음. CLI 제거하면서 IT가 다 사라졌는데, web_api 기반의 it로 수정 필요.
 
 ### 4. 인프라 및 아키텍처 (Infrastructure & Architecture)
 * **[인프라]** 도커(Docker) 컨테이너화: `Dockerfile` 및 `docker-compose.yml` 작성을 통해 서버 배포 용이성 확보 및 로컬/서버 환경 불일치(OS 의존성 등) 문제 해결.

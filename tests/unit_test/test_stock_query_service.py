@@ -94,6 +94,33 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("잘못된 응답 데이터 타입 또는 output 없음", result.msg1)
         self.mock_logger.error.assert_called()
 
+    # --- get_current_price 함수 테스트 ---
+    async def test_get_current_price_success(self):
+        """get_current_price 성공 케이스 테스트"""
+        # Arrange
+        expected_response = ResCommonResponse(rt_cd="0", msg1="정상", data={"stck_prpr": "10000"})
+        self.mock_trading_service.get_current_stock_price.return_value = expected_response
+
+        # Act
+        result = await self.stockQueryService.get_current_price("005930")
+
+        # Assert
+        self.mock_trading_service.get_current_stock_price.assert_awaited_once_with("005930")
+        self.assertEqual(result, expected_response)
+
+    async def test_get_current_price_failure(self):
+        """get_current_price 실패 케이스 테스트"""
+        # Arrange
+        expected_response = ResCommonResponse(rt_cd="1", msg1="실패", data=None)
+        self.mock_trading_service.get_current_stock_price.return_value = expected_response
+
+        # Act
+        result = await self.stockQueryService.get_current_price("005930")
+
+        # Assert
+        self.mock_trading_service.get_current_stock_price.assert_awaited_once_with("005930")
+        self.assertEqual(result, expected_response)
+
     # --- handle_get_account_balance 함수 테스트 ---
 
     # --- handle_get_top_market_cap_stocks_code 함수 테스트 ---

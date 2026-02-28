@@ -15,6 +15,7 @@ from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
 from managers.virtual_trade_manager import VirtualTradeManager
 from services.order_execution_service import OrderExecutionService
+from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
 
 SIGNAL_HISTORY_FILE = "data/signal_history.csv"
@@ -61,12 +62,14 @@ class StrategyScheduler:
         self,
         virtual_manager: VirtualTradeManager,
         order_execution_service: OrderExecutionService,
+        stock_query_service: StockQueryService,
         time_manager: TimeManager,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
     ):
         self._vm = virtual_manager
         self._oes = order_execution_service
+        self._sqs = stock_query_service
         self._tm = time_manager
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
@@ -221,8 +224,8 @@ class StrategyScheduler:
         log_price = signal.price
         if log_price == 0:
             try:
-                # OrderExecutionService -> TradingService 접근하여 현재가 조회
-                resp = await self._oes.trading_service.get_current_stock_price(signal.code)
+                # StockQueryService를 통해 현재가 조회
+                resp = await self._sqs.get_current_price(signal.code)
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     data = resp.data
                     output = data.get("output") if isinstance(data, dict) else getattr(data, "output", None)

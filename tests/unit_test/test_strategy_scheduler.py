@@ -42,6 +42,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK")
         )
 
+        sqs = MagicMock()
+        sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}})
+        )
+
         tm = MagicMock()
         tm.is_market_open.return_value = True
 
@@ -52,6 +57,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             scheduler = StrategyScheduler(
                 virtual_manager=vm,
                 order_execution_service=oes,
+                stock_query_service=sqs,
                 time_manager=tm,
                 logger=mock_logger,
                 dry_run=dry_run,
@@ -492,9 +498,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         """강제 청산 실행 시: 현재가 조회 후 시장가 매도 주문 및 로깅 확인."""
         scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
         
-        # OES 내부에 trading_service Mock 설정
-        oes.trading_service = MagicMock()
-        oes.trading_service.get_current_stock_price = AsyncMock(
+        # SQS Mock 설정
+        scheduler._sqs.get_current_price = AsyncMock(
             return_value=ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}}
             )
@@ -509,7 +514,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._force_liquidate_strategy(config)
 
         # 1. 현재가 조회 호출됨
-        oes.trading_service.get_current_stock_price.assert_called_with("005930")
+        scheduler._sqs.get_current_price.assert_called_with("005930")
         # 2. API 매도 주문은 가격 0(시장가)으로 호출됨
         oes.handle_place_sell_order.assert_called_once_with("005930", 0, 5)
         # 3. VM 로그 기록은 조회된 현재가(60000)로 기록됨
@@ -519,9 +524,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         """강제 청산 시 설정된 주문 수량이 아닌 실제 보유 수량을 사용하는지 테스트."""
         scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
 
-        # OES 내부에 trading_service Mock 설정
-        oes.trading_service = MagicMock()
-        oes.trading_service.get_current_stock_price = AsyncMock(
+        # SQS Mock 설정
+        scheduler._sqs.get_current_price = AsyncMock(
             return_value=ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}}
             )
@@ -621,9 +625,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         """시그널 가격이 0(시장가)일 때, 현재가를 조회하여 로그에 남기는지 테스트."""
         scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
 
-        # OES 내부에 trading_service Mock 설정
-        oes.trading_service = MagicMock()
-        oes.trading_service.get_current_stock_price = AsyncMock(
+        # SQS Mock 설정
+        scheduler._sqs.get_current_price = AsyncMock(
             return_value=ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value, msg1="Success", data={"output": {"stck_prpr": "80000"}}
             )
@@ -637,7 +640,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._execute_signal(signal)
 
         # 1. 현재가 조회 수행 확인
-        oes.trading_service.get_current_stock_price.assert_called_with("000660")
+        scheduler._sqs.get_current_price.assert_called_with("000660")
         # 2. 주문은 0원(시장가)으로 나갔는지 확인
         oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10)
         # 3. 로그는 조회된 80000원으로 기록되었는지 확인
@@ -670,11 +673,12 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         """_append_signal_csv가 asyncio.to_thread를 사용하여 동기 메서드를 실행하는지 테스트."""
         vm = MagicMock()
         oes = MagicMock()
+        sqs = MagicMock()
         tm = MagicMock()
         
         # 파일 로드 방지
         with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
-            scheduler = StrategyScheduler(vm, oes, tm, dry_run=True)
+            scheduler = StrategyScheduler(vm, oes, sqs, tm, dry_run=True)
         
         record = MagicMock()
         
@@ -708,6 +712,29 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             
             # 두 시그널 모두에 대해 _execute_signal이 호출되어 코루틴이 생성되었는지 확인
             self.assertEqual(mock_exec.call_count, 2)
+
+    async def test_execute_signal_market_price_exception_handling(self):
+        """_execute_signal에서 현재가 조회 중 예외 발생 시 0원으로 처리되는지 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+
+        # SQS Mock 설정: 예외 발생
+        scheduler._sqs.get_current_price.side_effect = Exception("API Error")
+
+        signal = TradeSignal(
+            strategy_name="TestStrat", code="000660", name="Hynix",
+            action="SELL", price=0, qty=10, reason="Market Sell"
+        )
+
+        await scheduler._execute_signal(signal)
+
+        # 1. 현재가 조회 수행 확인 (예외 발생했음)
+        scheduler._sqs.get_current_price.assert_called_with("000660")
+        
+        # 2. 주문은 0원(시장가)으로 나갔는지 확인
+        oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10)
+        
+        # 3. 로그는 0원으로 기록되었는지 확인 (조회 실패 시 fallback)
+        vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrat", "000660", 0, 10)
 
 if __name__ == "__main__":
     unittest.main()

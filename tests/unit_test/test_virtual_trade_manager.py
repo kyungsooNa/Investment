@@ -274,3 +274,18 @@ async def test_log_sell_by_strategy_async_thread_execution(manager):
     with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         await manager.log_sell_by_strategy_async("S1", "005930", 1200, 5)
         mock_to_thread.assert_awaited_once_with(manager.log_sell_by_strategy, "S1", "005930", 1200, 5)
+
+def test_get_holds_by_strategy_missing_qty_field(temp_journal):
+    """get_holds_by_strategy 호출 시 파일에 qty 필드가 없어도 기본값 1로 반환되는지 확인"""
+    # qty 없는 구버전 파일 생성
+    old_cols = ["strategy", "code", "buy_date", "buy_price", "sell_date", "sell_price", "return_rate", "status"]
+    df = pd.DataFrame(columns=old_cols)
+    df.loc[0] = ["StrategyA", "005930", "2025-01-01", 1000, None, None, 0.0, "HOLD"]
+    df.to_csv(temp_journal, index=False)
+
+    manager = VirtualTradeManager(filename=temp_journal)
+    holds = manager.get_holds_by_strategy("StrategyA")
+
+    assert len(holds) == 1
+    assert holds[0]['code'] == "005930"
+    assert holds[0]['qty'] == 1
