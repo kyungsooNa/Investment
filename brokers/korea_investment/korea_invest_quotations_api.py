@@ -159,6 +159,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         change_rate = (current_price - open_price) / open_price * 100 if open_price else 0
 
         # 신고/신저가 상태 확인 및 로깅
+        raw_status_code = str(getattr(output, 'new_hgpr_lwpr_cls_code', ''))
+        if "vs" in raw_status_code:
+            self._logger.warning(f"({stock_code}) 신고/신저가 불일치: {raw_status_code}")
+        # 최종 응답에는 가공된 값을 사용
         new_high_low_status = output.new_high_low_status
         if "vs" in new_high_low_status:
             self._logger.warning(f"({stock_code}) 신고/신저가 불일치: {new_high_low_status}")
@@ -325,7 +329,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
         else:
             return ResCommonResponse(
-                rt_cd=ErrorCode.NO_DATA.value,  # 없으면 NO_DATA 등 내부 규약 코드 사용
+                rt_cd=ErrorCode.EMPTY_VALUES.value,  # 없으면 EMPTY_VALUES 등 내부 규약 코드 사용
                 msg1="시가총액 상위 종목 없음",
                 data=[],
             )
@@ -394,6 +398,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         chart_data_items: List[ResDailyChartApiItem] = []
         for item in output_list:
             try:
+                if not isinstance(item, dict):
+                    raise TypeError(f"Chart data item is not a dictionary: {type(item)}")
                 # from_dict가 있으면 쓰고, 없으면 **unpack
                 if hasattr(ResDailyChartApiItem, "from_dict"):
                     chart_data_items.append(ResDailyChartApiItem.from_dict(item))

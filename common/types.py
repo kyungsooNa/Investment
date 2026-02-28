@@ -97,7 +97,6 @@ class ResMarketCapStockItem:
 # --- 한국투자증권 API 특화 응답 구조 (종목 상세정보) ---
 
 
-@with_from_dict
 @dataclass
 class ResStockFullInfoApiOutput:
     acml_tr_pbmn: str  # 누적 거래 대금 (원)
