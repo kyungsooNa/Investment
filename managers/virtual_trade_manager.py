@@ -12,10 +12,11 @@ from core.time_manager import TimeManager
 logger = logging.getLogger(__name__)
 
 COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
+SNAPSHOT_FILENAME = "portfolio_snapshots.json"
 
 
 class VirtualTradeManager:
-    def __init__(self, filename="data/trade_journal.csv", time_manager: TimeManager = None):
+    def __init__(self, filename="data/VirtualTradeManager/trade_journal.csv", time_manager: TimeManager = None):
         self.filename = filename
         self.tm = time_manager if time_manager else TimeManager()
         self._lock = threading.Lock()
@@ -183,7 +184,7 @@ class VirtualTradeManager:
     # }
 
     def _snapshot_path(self) -> str:
-        return os.path.join(os.path.dirname(self.filename), "portfolio_snapshots.json")
+        return os.path.join(os.path.dirname(self.filename), SNAPSHOT_FILENAME)
 
     def _load_data(self) -> dict:
         path = self._snapshot_path()

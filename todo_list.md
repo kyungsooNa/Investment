@@ -17,11 +17,10 @@
 StockQueryService: 앱 레벨 오케스트레이션
 필요 시 Repository에서 데이터 꺼내거나(없으면 TradingService로 fetch)
 IndicatorService로 계산 → 데이터만 반환
-12. [전략스케줄러] history에 종목명이 제대로 표기안되는 버그
 13. VolmueBreakOut에서 수수료도 적용하여 수익률 계산
 14. [프로그램매매] 구독한 종목 여러개를 선택할 수 있도록 수정.
 15. [모의투자기록] 특정 전략을 골르면 차트에도 해당 전략에 해당하는 line만 남도록 수정 필요.
-16. [개별전략] 개별 전략 관련 TEST 실행 시 실제 data인 signal_history.csv에 직접 접근하는 TC가 있는데, test는 test용 파일에 만 접근하도록 수정 필요.
+
 
 ### 1. 환경 (Environment)
 * 

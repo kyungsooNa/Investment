@@ -18,9 +18,9 @@ from services.order_execution_service import OrderExecutionService
 from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
 
-SIGNAL_HISTORY_FILE = "data/signal_history.csv"
+SIGNAL_HISTORY_FILE = "data/StrategyScheduler/signal_history.csv"
 SIGNAL_COLUMNS = ["strategy_name", "code", "name", "action", "price", "reason", "timestamp", "api_success"]
-SCHEDULER_STATE_FILE = "data/scheduler_state.json"
+SCHEDULER_STATE_FILE = "data/StrategyScheduler/scheduler_state.json"
 
 
 @dataclass
@@ -73,6 +73,10 @@ class StrategyScheduler:
         self._tm = time_manager
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
+
+        # 데이터 디렉토리 생성
+        os.makedirs(os.path.dirname(SIGNAL_HISTORY_FILE), exist_ok=True)
+        os.makedirs(os.path.dirname(SCHEDULER_STATE_FILE), exist_ok=True)
 
         self._strategies: List[StrategySchedulerConfig] = []
         self._running = False

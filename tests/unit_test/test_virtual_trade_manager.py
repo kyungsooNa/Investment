@@ -11,8 +11,8 @@ from managers.virtual_trade_manager import VirtualTradeManager
 @pytest.fixture
 def temp_journal(tmp_path):
     """테스트용 임시 저널 파일 경로 생성"""
-    journal_dir = tmp_path / "data"
-    journal_dir.mkdir()
+    journal_dir = tmp_path / "data" / "VirtualTradeManager"
+    journal_dir.mkdir(parents=True)
     journal_file = journal_dir / "trade_journal.csv"
     return str(journal_file)
 
@@ -151,13 +151,15 @@ def test_get_weekly_change_logic(manager):
 
 def test_snapshot_migration_from_old_format(tmp_path):
     """이전 JSON 포맷 마이그레이션 확인"""
-    snapshot_file = tmp_path / "portfolio_snapshots.json"
+    journal_dir = tmp_path / "data" / "VirtualTradeManager"
+    journal_dir.mkdir(parents=True)
+    snapshot_file = journal_dir / "portfolio_snapshots.json"
     old_data = {"2025-01-01": {"ALL": 1.0}}
     with open(snapshot_file, 'w', encoding='utf-8') as f:
         json.dump(old_data, f)
         
     # VirtualTradeManager는 filename의 디렉토리를 기준으로 snapshot 파일을 찾음
-    manager = VirtualTradeManager(filename=str(tmp_path / "journal.csv"))
+    manager = VirtualTradeManager(filename=str(journal_dir / "trade_journal.csv"))
     data = manager._load_data()
     
     assert "daily" in data
