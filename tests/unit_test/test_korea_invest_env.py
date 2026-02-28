@@ -222,3 +222,78 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
             # When: 현재 실전 투자 모드에서 다시 실전 투자 모드로 설정 (다른 방법)
             self.env.set_trading_mode(False)
             self.logger.info.assert_called_once_with("거래 모드가 이미 실전투자 환경으로 설정되어 있습니다.")
+
+    async def test_get_access_token_no_manager_raises_error(self):
+        """
+        TC: TokenManager가 설정되지 않은 상태에서 get_access_token 호출 시 RuntimeError 발생 검증
+        """
+        self.env._token_manager = None
+        with self.assertRaisesRegex(RuntimeError, "TokenManager가 초기화되지 않았습니다"):
+            await self.env.get_access_token()
+
+    def test_save_access_token_no_manager_raises_error(self):
+        """
+        TC: TokenManager가 설정되지 않은 상태에서 save_access_token 호출 시 RuntimeError 발생 검증
+        """
+        self.env._token_manager = None
+        with self.assertRaisesRegex(RuntimeError, "TokenManager가 초기화되지 않았습니다"):
+            self.env.save_access_token("token")
+
+    def test_save_access_token_delegates(self):
+        """
+        TC: save_access_token 호출 시 TokenManager로 위임되는지 검증
+        """
+        self.env._token_manager = MagicMock()
+        self.env.save_access_token("new_token")
+        self.env._token_manager.save_access_token.assert_called_once_with("new_token")
+
+    def test_invalidate_token_delegates(self):
+        """
+        TC: invalidate_token 호출 시 TokenManager로 위임되는지 검증
+        """
+        self.env._token_manager = MagicMock()
+        self.env.invalidate_token()
+        self.env._token_manager.invalidate_token.assert_called_once()
+
+    def test_invalidate_token_no_manager(self):
+        """
+        TC: TokenManager가 없을 때 invalidate_token 호출 시 에러 없이 넘어가는지 검증
+        """
+        self.env._token_manager = None
+        # 에러가 발생하지 않아야 함
+        self.env.invalidate_token()
+
+    async def test_refresh_token_delegates(self):
+        """
+        TC: refresh_token 호출 시 TokenManager로 위임되는지 검증
+        """
+        self.env.set_trading_mode(False) # active_config 설정을 위해
+        self.env._token_manager = AsyncMock()
+        
+        await self.env.refresh_token()
+        
+        self.env._token_manager.refresh_token.assert_awaited_once()
+        call_kwargs = self.env._token_manager.refresh_token.call_args.kwargs
+        self.assertEqual(call_kwargs['base_url'], self.mock_config_data['url'])
+        self.assertEqual(call_kwargs['app_key'], self.mock_config_data['api_key'])
+        self.assertEqual(call_kwargs['app_secret'], self.mock_config_data['api_secret_key'])
+
+    async def test_refresh_token_no_manager(self):
+        """
+        TC: TokenManager가 없을 때 refresh_token 호출 시 에러 없이 넘어가는지 검증
+        """
+        self.env._token_manager = None
+        # 에러가 발생하지 않아야 함
+        await self.env.refresh_token()
+
+    def test_get_urls(self):
+        """
+        TC: get_base_url, get_websocket_url 메서드 검증
+        """
+        self.env.set_trading_mode(False)
+        self.assertEqual(self.env.get_base_url(), self.mock_config_data['url'])
+        self.assertEqual(self.env.get_websocket_url(), self.mock_config_data['websocket_url'])
+        
+        self.env.set_trading_mode(True)
+        self.assertEqual(self.env.get_base_url(), self.mock_config_data['paper_url'])
+        self.assertEqual(self.env.get_websocket_url(), self.mock_config_data['paper_websocket_url'])
