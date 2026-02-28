@@ -3,8 +3,8 @@
 import pytest
 import json
 import pytz
-from unittest.mock import MagicMock, AsyncMock
-from core.cache.cache_wrapper import cache_wrap_client
+from unittest.mock import MagicMock, AsyncMock, patch
+from core.cache.cache_wrapper import cache_wrap_client, ClientWithCache
 from core.cache.cache_manager import CacheManager
 from datetime import datetime, timedelta
 from unittest.mock import ANY
@@ -380,3 +380,174 @@ async def test_cache_wrapper_file_off_memory_on_hits_memory(tmp_path):
     # 로그에 Memory Cache HIT 포함
     debug_logs = [c.args[0] for c in logger.debug.call_args_list]
     assert any("Memory Cache HIT" in msg for msg in debug_logs)
+
+@pytest.mark.asyncio
+async def test_init_default_config_loading():
+    """config가 None일 때 load_cache_config 호출 확인"""
+    with patch("core.cache.cache_wrapper.load_cache_config") as mock_load:
+        mock_load.return_value = {
+            "cache": {
+                "base_dir": "dummy",
+                "enabled_methods": [],
+                "file_cache_enabled": False,
+                "memory_cache_enabled": False
+            }
+        }
+        # cache_manager도 None으로 주어서 내부 생성 유도
+        with patch("core.cache.cache_wrapper.CacheManager"):
+            ClientWithCache(
+                client=MagicMock(),
+                logger=MagicMock(),
+                time_manager=MagicMock(),
+                mode_fn=lambda: "TEST",
+                cache_manager=None,
+                config=None
+            )
+        mock_load.assert_called_once()
+
+def test_getattr_private_attr(cache_manager, test_cache_config):
+    """_로 시작하는 속성 접근 테스트"""
+    client = DummyApiClient()
+    wrapped = cache_wrap_client(
+        api_client=client,
+        logger=MagicMock(),
+        time_manager=MagicMock(),
+        mode_getter=lambda: "TEST",
+        cache_manager=cache_manager,
+        config=test_cache_config
+    )
+    # _client는 ClientWithCache의 속성임
+    assert wrapped._client == client
+    # 존재하지 않는 _private 속성 접근 시 AttributeError 발생해야 함 (object.__getattribute__ 동작)
+    with pytest.raises(AttributeError):
+        _ = wrapped._non_existent_private
+
+@pytest.mark.asyncio
+async def test_market_open_bypasses_cache(cache_manager, test_cache_config):
+    """시장이 열려있으면 캐시가 있어도 API를 호출해야 함"""
+    logger = MagicMock()
+    time_manager = MagicMock()
+    time_manager.is_market_open.return_value = True  # 시장 열림
+
+    client = DummyApiClient()
+    # API 호출 여부 확인을 위해 spy
+    client.get_data = AsyncMock(wraps=client.get_data)
+
+    wrapped = cache_wrap_client(
+        api_client=client,
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cache_manager,
+        config=test_cache_config
+    )
+
+    # 1. 캐시 강제 주입
+    key = "TEST_get_data_999"
+    cache_manager.set(key, {
+        "timestamp": datetime.now().isoformat(),
+        "data": {"key": "cached_value"}
+    })
+
+    # 2. 호출
+    result = await wrapped.get_data(999)
+
+    # 3. 검증
+    # 캐시된 값이 아니라 API 리턴값이어야 함 ("value-999")
+    assert result.data["key"] == "value-999"
+    # API가 실제로 호출되었어야 함
+    client.get_data.assert_awaited_once()
+    # 로그 확인
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("시장 개장 중 → 캐시 우회" in msg for msg in debug_logs)
+
+@pytest.mark.asyncio
+async def test_parse_timestamp_edge_cases(cache_manager, test_cache_config):
+    """_parse_timestamp 메서드의 다양한 케이스 테스트"""
+    logger = MagicMock()
+    time_manager = MagicMock()
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    time_manager.market_timezone = seoul_tz
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cache_manager,
+        config=test_cache_config
+    )
+
+    # 1. None or Empty
+    assert wrapped._parse_timestamp(None) is None
+    assert wrapped._parse_timestamp("") is None
+
+    # 2. Invalid Format
+    assert wrapped._parse_timestamp("invalid-date") is None
+    logger.warning.assert_called()
+    assert "잘못된 timestamp 포맷" in logger.warning.call_args[0][0]
+
+    # 3. Naive Datetime (timezone 없는 경우 localize 호출 확인)
+    naive_iso = "2025-01-01T12:00:00"
+    dt = wrapped._parse_timestamp(naive_iso)
+    assert dt is not None
+    assert dt.tzinfo is not None # localize 되었는지 확인
+    assert str(dt.tzinfo) == str(seoul_tz)
+
+@pytest.mark.asyncio
+async def test_api_failure_skips_cache_update(cache_manager, test_cache_config):
+    """API 응답이 실패(rt_cd != 0)면 캐시 저장 안 함"""
+    logger = MagicMock()
+    time_manager = MagicMock()
+    time_manager.is_market_open.return_value = False
+
+    class FailClient:
+        async def get_data(self, x):
+            return ResCommonResponse(rt_cd="1", msg1="Error", data=None)
+
+    wrapped = cache_wrap_client(
+        api_client=FailClient(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cache_manager,
+        config=test_cache_config
+    )
+
+    key = "TEST_get_data_1"
+    
+    # 호출
+    await wrapped.get_data(1)
+
+    # 캐시에 저장되지 않았어야 함
+    assert cache_manager.get_raw(key) is None
+    
+    # 로그 확인
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("응답 실패로" in msg and "Cache Update 무시" in msg for msg in debug_logs)
+
+@pytest.mark.asyncio
+async def test_mode_unknown(cache_manager, test_cache_config):
+    """mode_getter가 None을 반환할 때 unknown 모드로 동작"""
+    logger = MagicMock()
+    time_manager = MagicMock()
+    time_manager.is_market_open.return_value = False
+
+    client = DummyApiClient()
+    wrapped = cache_wrap_client(
+        api_client=client,
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: None, # None 반환
+        cache_manager=cache_manager,
+        config=test_cache_config
+    )
+
+    await wrapped.get_data(1)
+
+    # 키가 unknown_get_data_1 로 생성되었는지 확인 (캐시 매니저를 통해)
+    # get_raw로 확인
+    key = "unknown_get_data_1"
+    loaded, _ = cache_manager.get_raw(key)
+    assert loaded is not None
+    assert loaded["data"].data["key"] == "value-1"
