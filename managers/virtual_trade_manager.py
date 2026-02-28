@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
 SNAPSHOT_FILENAME = "portfolio_snapshots.json"
+PRICE_CACHE_FILENAME = "close_price_cache.json"
 
 
 class VirtualTradeManager:
@@ -174,6 +175,177 @@ class VirtualTradeManager:
             "win_rate": round(win_rate, 1),
             "avg_return": round(avg_return, 2)
         }
+
+    # ---- 종가 캐시 (backfill용) ----
+
+    def _price_cache_path(self) -> str:
+        return os.path.join(os.path.dirname(self.filename), PRICE_CACHE_FILENAME)
+
+    def _load_price_cache(self) -> dict:
+        """로컬 종가 캐시 로드. 구조: { "005930": {"2026-02-13": 56000, ...}, ... }"""
+        path = self._price_cache_path()
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
+
+    def _save_price_cache(self, cache: dict):
+        path = self._price_cache_path()
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+
+    def _fetch_close_prices(self, codes: list[str], start_date: str, end_date: str) -> dict:
+        """pykrx로 종가 조회 후 캐시에 병합. 캐시에 이미 있으면 API 스킵.
+        Returns: { code: { "YYYY-MM-DD": close_price, ... }, ... }
+        """
+        from pykrx import stock as pykrx_stock
+
+        cache = self._load_price_cache()
+        start_fmt = start_date.replace('-', '')
+        end_fmt = end_date.replace('-', '')
+        fetched = 0
+
+        for code in codes:
+            # 캐시에 해당 종목+기간 데이터가 이미 있는지 확인
+            if code in cache:
+                cached_dates = set(cache[code].keys())
+                # start~end 범위의 영업일 중 누락된 날짜가 없으면 스킵
+                needed_dates = set(
+                    d.strftime('%Y-%m-%d')
+                    for d in pd.date_range(start_date, end_date, freq='B')
+                )
+                if needed_dates.issubset(cached_dates):
+                    continue
+
+            try:
+                df = pykrx_stock.get_market_ohlcv_by_date(start_fmt, end_fmt, code)
+                if df.empty:
+                    continue
+
+                if code not in cache:
+                    cache[code] = {}
+
+                for date_idx, row in df.iterrows():
+                    day_str = date_idx.strftime('%Y-%m-%d')
+                    cache[code][day_str] = int(row['종가'])
+
+                fetched += 1
+            except Exception as e:
+                logger.warning(f"[가상매매] pykrx 종가 조회 실패 {code}: {e}")
+                continue
+
+        if fetched > 0:
+            self._save_price_cache(cache)
+            logger.info(f"[가상매매] 종가 캐시 업데이트: {fetched}개 종목 조회")
+
+        return cache
+
+    # ---- backfill ----
+
+    def backfill_snapshots(self):
+        """CSV 거래 기록을 기반으로 과거 일별 스냅샷을 역산하여 채웁니다.
+        이미 스냅샷이 존재하는 날짜는 덮어쓰지 않습니다.
+
+        계산 방식 (web_api.py의 save_daily_snapshot과 동일):
+        - 해당 날짜 기준 '활성 거래' = 매수일 <= day인 모든 거래
+          - SOLD: sell_day <= day → 확정 return_rate 사용
+          - HOLD(당시 기준): 당일 종가 기준 수익률 (pykrx 조회, 로컬 캐시)
+        - 전략별 평균 return_rate 저장
+        """
+        df = self._read()
+        if df.empty:
+            return
+
+        data = self._load_data()
+        daily = data["daily"]
+
+        # 1. 날짜 전처리
+        df['_buy_day'] = pd.to_datetime(df['buy_date']).dt.strftime('%Y-%m-%d')
+        sell_mask = df['sell_date'].notna() & (df['sell_date'] != '')
+        df['_sell_day'] = None
+        df.loc[sell_mask, '_sell_day'] = pd.to_datetime(df.loc[sell_mask, 'sell_date']).dt.strftime('%Y-%m-%d')
+
+        all_days = set(df['_buy_day'].dropna().tolist())
+        all_days |= set(df.loc[sell_mask, '_sell_day'].dropna().tolist())
+
+        min_day = min(all_days)
+        max_day = max(all_days)
+
+        # backfill이 필요한 날짜 확인
+        date_range = pd.date_range(min_day, max_day, freq='D')
+        date_strs = [d.strftime('%Y-%m-%d') for d in date_range]
+        missing_days = [d for d in date_strs if d not in daily]
+
+        if not missing_days:
+            return  # backfill 불필요
+
+        # 2. 종가 캐시 조회 (HOLD 포지션 수익률 계산용)
+        all_codes = df['code'].unique().tolist()
+        price_cache = self._fetch_close_prices(all_codes, min_day, max_day)
+
+        # 3. 날짜별 스냅샷 생성
+        added = 0
+        for day in missing_days:
+            strategy_returns = {}
+            strategies = df['strategy'].unique()
+
+            for strat in strategies:
+                strat_df = df[df['strategy'] == strat]
+
+                # 해당 날짜 이전에 매수된 거래만 (활성 거래)
+                bought_before = strat_df[strat_df['_buy_day'] <= day]
+                if bought_before.empty:
+                    continue
+
+                rates = []
+                for _, row in bought_before.iterrows():
+                    sell_day = row['_sell_day']
+                    if sell_day and sell_day <= day:
+                        # 매도 완료 → 확정 수익률
+                        rates.append(row['return_rate'])
+                    else:
+                        # 보유 중 → 당일 종가 기준 수익률
+                        code = str(row['code'])
+                        buy_price = row['buy_price']
+                        close = (price_cache.get(code) or {}).get(day)
+                        if close and buy_price:
+                            ret = round(((close - buy_price) / buy_price) * 100, 2)
+                            rates.append(ret)
+                        else:
+                            # 종가 데이터 없는 경우 (휴장일 등) → 직전 종가 사용
+                            prev_close = self._find_prev_close(price_cache, code, day)
+                            if prev_close and buy_price:
+                                ret = round(((prev_close - buy_price) / buy_price) * 100, 2)
+                                rates.append(ret)
+                            else:
+                                rates.append(0.0)
+
+                if rates:
+                    strategy_returns[strat] = round(sum(rates) / len(rates), 2)
+
+            if strategy_returns:
+                all_vals = list(strategy_returns.values())
+                strategy_returns['ALL'] = round(sum(all_vals) / len(all_vals), 2)
+                daily[day] = strategy_returns
+                added += 1
+
+        if added > 0:
+            cutoff = (self.tm.get_current_kst_time() - timedelta(days=30)).strftime("%Y-%m-%d")
+            data["daily"] = {d: v for d, v in sorted(daily.items()) if d >= cutoff}
+            self._save_data(data)
+            logger.info(f"[가상매매] 스냅샷 backfill 완료: {added}일 추가")
+
+    @staticmethod
+    def _find_prev_close(price_cache: dict, code: str, day: str):
+        """해당 날짜 이전 가장 가까운 종가를 찾습니다 (휴장일 대응)."""
+        code_prices = price_cache.get(code)
+        if not code_prices:
+            return None
+        prev_dates = sorted([d for d in code_prices if d < day], reverse=True)
+        return code_prices[prev_dates[0]] if prev_dates else None
 
     # ---- 포트폴리오 스냅샷 (전일/전주대비 계산용) ----
     #

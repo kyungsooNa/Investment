@@ -505,6 +505,7 @@ async function placeOrder(side) {
         
         if (json.rt_cd === "0") {
             resDiv.innerHTML = `<p class="success">주문 성공! (주문번호: ${json.data.ord_no})</p>`;
+            if (typeof invalidateVirtualChartCache === 'function') invalidateVirtualChartCache();
         } else {
             resDiv.innerHTML = `<p class="error">주문 실패: ${json.msg1}</p>`;
         }
@@ -620,6 +621,8 @@ let dailyChanges = {};
 let weeklyChanges = {};
 let virtualHoldSortState = { key: null, dir: 'asc' };
 let virtualSoldSortState = { key: null, dir: 'asc' };
+let selectedVirtualStrategies = new Set(['ALL']); // 멀티셀렉트 상태
+let allVirtualStrategies = []; // 전체 전략 목록 (ALL 제외)
 let currentVirtualHoldData = [];
 let currentVirtualSoldData = [];
 
@@ -655,27 +658,28 @@ async function loadVirtualHistory(forceCode = null) {
         // '수동매매'는 항상 보이게 하고, 나머지는 데이터에서 추출
         const defaultStrategies = ['수동매매'];
         const dataStrategies = allVirtualData.map(item => item.strategy);
-        const strategies = ['ALL', ...new Set([...defaultStrategies, ...dataStrategies])];
+        const individualStrategies = [...new Set([...defaultStrategies, ...dataStrategies])];
+        allVirtualStrategies = individualStrategies;
+        const strategies = ['ALL', ...individualStrategies];
 
-        // [수정] 현재 선택된 전략 이름을 미리 저장 (innerHTML 변경 시 기존 DOM의 .active 클래스가 사라짐)
-        const prevActiveBtn = tabContainer.querySelector('.sub-tab-btn.active');
-        const prevStrategy = prevActiveBtn ? prevActiveBtn.innerText : 'ALL';
-
-        // 3. 버튼 HTML 생성 (CSS 클래스: sub-tab-btn 사용)
-        tabContainer.innerHTML = strategies.map(strat => 
-            `<button class="sub-tab-btn" onclick="filterVirtualStrategy('${strat}', this)">${strat}</button>`
+        // 3. 버튼 HTML 생성 (멀티셀렉트 지원)
+        tabContainer.innerHTML = strategies.map(strat =>
+            `<button class="sub-tab-btn" onclick="toggleVirtualStrategy('${strat}', this)">${strat}</button>`
         ).join('');
 
-        // 4. 초기 탭 선택 (기존 선택 유지 또는 ALL)
+        // 4. 초기 탭 선택 (기존 멀티셀렉트 상태 복원 또는 ALL)
         const newButtons = tabContainer.querySelectorAll('.sub-tab-btn');
-        const targetBtn = Array.from(newButtons).find(b => b.innerText === prevStrategy);
-
-        if (targetBtn) {
-            filterVirtualStrategy(prevStrategy, targetBtn);
-        } else {
-            const allBtn = tabContainer.querySelector('button');
-            if (allBtn) filterVirtualStrategy('ALL', allBtn);
+        // 이전 선택 상태가 없거나 ALL이면 ALL 선택
+        if (selectedVirtualStrategies.has('ALL') || selectedVirtualStrategies.size === 0) {
+            selectedVirtualStrategies = new Set(['ALL']);
         }
+        // 버튼 active 상태 복원
+        newButtons.forEach(btn => {
+            if (selectedVirtualStrategies.has(btn.innerText)) {
+                btn.classList.add('active');
+            }
+        });
+        applyVirtualFilter();
 
         // [UI 개선] 테이블 가시성을 위해 card로 감싸기
         const section = document.getElementById('section-virtual');
@@ -706,43 +710,105 @@ function stockLabel(item) {
     return name ? `${name}(${item.code})` : item.code;
 }
 
-// 전역 함수로 등록 (onclick에서 호출 가능하도록)
-window.filterVirtualStrategy = function(strategyName, btnElement) {
-    // 1. 버튼 스타일 업데이트
+// 전략 멀티셀렉트 토글
+window.toggleVirtualStrategy = function(strategyName, btnElement) {
     const buttons = document.querySelectorAll('#virtual-strategy-tabs .sub-tab-btn');
-    buttons.forEach(b => b.classList.remove('active'));
-    if(btnElement) btnElement.classList.add('active');
 
-    // 2. 데이터 필터링
+    if (strategyName === 'ALL') {
+        // ALL 클릭: 전체 선택 ↔ 전체 해제 토글
+        if (selectedVirtualStrategies.has('ALL')) {
+            // 이미 ALL 선택 → 아무것도 안 함 (최소 1개는 선택)
+            return;
+        }
+        selectedVirtualStrategies = new Set(['ALL']);
+        buttons.forEach(b => b.classList.remove('active'));
+        if (btnElement) btnElement.classList.add('active');
+    } else {
+        // 개별 전략 토글
+        // ALL이 선택된 상태에서 개별 클릭 → ALL 해제하고 해당 전략만 선택
+        if (selectedVirtualStrategies.has('ALL')) {
+            selectedVirtualStrategies = new Set([strategyName]);
+            buttons.forEach(b => b.classList.remove('active'));
+            if (btnElement) btnElement.classList.add('active');
+        } else if (selectedVirtualStrategies.has(strategyName)) {
+            // 이미 선택된 전략 해제
+            if (selectedVirtualStrategies.size <= 1) {
+                // 마지막 하나는 해제 불가 → ALL로 복귀
+                selectedVirtualStrategies = new Set(['ALL']);
+                buttons.forEach(b => b.classList.remove('active'));
+                const allBtn = buttons[0]; // ALL 버튼
+                if (allBtn) allBtn.classList.add('active');
+            } else {
+                selectedVirtualStrategies.delete(strategyName);
+                if (btnElement) btnElement.classList.remove('active');
+            }
+        } else {
+            // 새 전략 추가 선택
+            selectedVirtualStrategies.add(strategyName);
+            if (btnElement) btnElement.classList.add('active');
+        }
+
+        // 모든 개별 전략이 선택되면 ALL로 전환
+        if (allVirtualStrategies.length > 0 &&
+            allVirtualStrategies.every(s => selectedVirtualStrategies.has(s))) {
+            selectedVirtualStrategies = new Set(['ALL']);
+            buttons.forEach(b => b.classList.remove('active'));
+            const allBtn = buttons[0];
+            if (allBtn) allBtn.classList.add('active');
+        }
+    }
+
+    applyVirtualFilter();
+};
+
+// 현재 선택 상태 기반으로 테이블 + 요약 + 차트 갱신
+function applyVirtualFilter() {
+    const isAll = selectedVirtualStrategies.has('ALL');
+    const selectedArray = isAll ? ['ALL'] : [...selectedVirtualStrategies];
+    const displayLabel = isAll ? 'ALL' : selectedArray.join(', ');
+
+    // 1. 데이터 필터링
     let filteredData = allVirtualData;
-    if (strategyName !== 'ALL') {
-        filteredData = allVirtualData.filter(item => item.strategy === strategyName);
+    if (!isAll) {
+        filteredData = allVirtualData.filter(item => selectedVirtualStrategies.has(item.strategy));
     }
 
     const holdData = filteredData.filter(item => item.status === 'HOLD');
     const soldData = filteredData.filter(item => item.status === 'SOLD');
 
-    // 3. 통계 계산
+    // 2. 통계 계산
     const totalTrades = filteredData.length;
-    // 누적 수익률: 전체 trades의 return_rate 평균
     const totalReturn = filteredData.reduce((sum, item) => sum + (item.return_rate || 0), 0);
     const cumulativeReturn = totalTrades > 0 ? (totalReturn / totalTrades) : 0;
-    // 전일대비 / 전주대비: 백엔드 스냅샷 기반
-    const dailyChange = dailyChanges[strategyName] ?? cumulativeReturn;
-    const weeklyChange = weeklyChanges[strategyName];
+
+    // 전일/전주대비: 멀티셀렉트일 때는 선택된 전략들의 평균
+    let dailyChange, weeklyChange;
+    if (isAll) {
+        dailyChange = dailyChanges['ALL'] ?? cumulativeReturn;
+        weeklyChange = weeklyChanges['ALL'];
+    } else if (selectedArray.length === 1) {
+        dailyChange = dailyChanges[selectedArray[0]] ?? cumulativeReturn;
+        weeklyChange = weeklyChanges[selectedArray[0]];
+    } else {
+        // 여러 전략 선택: 선택된 전략들의 평균
+        const dailyVals = selectedArray.map(s => dailyChanges[s]).filter(v => v != null);
+        dailyChange = dailyVals.length > 0 ? dailyVals.reduce((a, b) => a + b, 0) / dailyVals.length : cumulativeReturn;
+        const weeklyVals = selectedArray.map(s => weeklyChanges[s]).filter(v => v != null);
+        weeklyChange = weeklyVals.length > 0 ? weeklyVals.reduce((a, b) => a + b, 0) / weeklyVals.length : null;
+    }
 
     // 색상 헬퍼
     const colorClass = (val) => val > 0 ? 'text-positive' : (val < 0 ? 'text-negative' : '');
     const signPrefix = (val) => val > 0 ? '+' : '';
 
-    // 4. 요약 박스
+    // 3. 요약 박스
     const summaryBox = document.getElementById('virtual-summary-box');
     if (!summaryBox) { console.error('[Virtual] virtual-summary-box not found'); return; }
     summaryBox.innerHTML = `
         <div style="margin-bottom: 15px; margin-top: 5px;">
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 6px 18px; border-radius: 20px; border: 1.5px solid #e94560; display: inline-block; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
                 <span style="color: #e94560; margin-right: 6px; font-size: 1.1em;">📊</span>
-                <span style="font-size: 1.05em; font-weight: 700 !important; letter-spacing: 0.5px;">[ ${strategyName} 성과 요약 ]</span>
+                <span style="font-size: 1.05em; font-weight: 700 !important; letter-spacing: 0.5px;">[ ${displayLabel} 성과 요약 ]</span>
             </div>
         </div>
         <div style="display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap;">
@@ -771,12 +837,19 @@ window.filterVirtualStrategy = function(strategyName, btnElement) {
         </div>
     `;
 
-    // 5. 데이터 캐시 후 렌더링
+    // 4. 데이터 캐시 후 렌더링
     currentVirtualHoldData = holdData;
     currentVirtualSoldData = soldData.slice().reverse();
     renderVirtualHoldTable();
     renderVirtualSoldTable();
-};
+
+    // 5. 차트도 선택된 전략에 맞게 업데이트
+    console.log('[applyVirtualFilter] refreshVirtualChart 호출 예정, selectedArray:', selectedArray,
+        'refreshVirtualChart 존재:', typeof refreshVirtualChart);
+    if (typeof refreshVirtualChart === 'function') {
+        refreshVirtualChart(selectedArray);
+    }
+}
 
 function virtualSortCompare(data, key, dir) {
     const sorted = data.slice();
