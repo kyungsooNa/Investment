@@ -49,13 +49,15 @@ class ClientWithCache:
             self._logger.debug(f"Bypass - {name} 캐시 건너뜀")
             return orig_attr
 
-        def _build_cache_key(mode: str, func_name: str, args: tuple) -> str:
+        def _build_cache_key(mode: str, func_name: str, args: tuple, kwargs: dict) -> str:
             arg_str = "_".join(map(str, args)) if args else ""
-            return f"{mode}_{func_name}_{arg_str}"
+            kwarg_str = "_".join(f"{k}={v}" for k, v in sorted(kwargs.items())) if kwargs else ""
+            parts = [p for p in [mode, func_name, arg_str, kwarg_str] if p]
+            return "_".join(parts)
 
         async def wrapped(*args, **kwargs):
             mode = self._mode_fn() or "unknown"
-            key = _build_cache_key(mode, name, args)
+            key = _build_cache_key(mode, name, args, kwargs)
 
             # 캐시 전체 비활성화면 즉시 API 호출
             if not self._caching_enabled:

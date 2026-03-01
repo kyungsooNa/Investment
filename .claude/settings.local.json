@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python -m pytest tests/unit_test/test_strategy_scheduler.py -v)",
       "Bash(conda run -n py310 python -m pytest tests/unit_test/test_strategy_scheduler.py -v)",
-      "Bash(/c/Users/Kyungsoo/anaconda3/envs/py310/python.exe -m pytest tests/unit_test/test_strategy_scheduler.py -v)"
+      "Bash(/c/Users/Kyungsoo/anaconda3/envs/py310/python.exe -m pytest tests/unit_test/test_strategy_scheduler.py -v)",
+      "Bash(/c/Users/Kyungsoo/anaconda3/envs/py310/python.exe -m pytest tests/unit_test -v -k trading_service)"
     ]
   }
 }
