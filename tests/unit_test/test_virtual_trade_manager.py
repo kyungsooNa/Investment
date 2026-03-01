@@ -1,4 +1,5 @@
 import pytest
+import sys
 import os
 import pandas as pd
 import json
@@ -276,6 +277,236 @@ async def test_log_sell_by_strategy_async_thread_execution(manager):
     with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         await manager.log_sell_by_strategy_async("S1", "005930", 1200, 5)
         mock_to_thread.assert_awaited_once_with(manager.log_sell_by_strategy, "S1", "005930", 1200, 5)
+
+def test_log_sell_failure_no_hold(manager):
+    """보유하지 않은 종목 매도 시도 시 처리 확인"""
+    with patch("managers.virtual_trade_manager.logger") as mock_logger:
+        manager.log_sell("999999", 10000)
+        mock_logger.warning.assert_called()
+        
+    df = manager._read()
+    assert df.empty
+
+def test_log_sell_by_strategy_failure_no_hold(manager):
+    """전략별 매도 시 보유하지 않은 경우 처리 확인"""
+    with patch("managers.virtual_trade_manager.logger") as mock_logger:
+        manager.log_sell_by_strategy("S1", "999999", 10000)
+        mock_logger.warning.assert_called()
+
+def test_get_solds_and_holds(manager):
+    """get_solds와 get_holds 메서드 확인"""
+    manager.log_buy("S1", "A", 1000)
+    manager.log_buy("S1", "B", 2000)
+    manager.log_sell("A", 1100)
+    
+    solds = manager.get_solds()
+    holds = manager.get_holds()
+    
+    assert len(solds) == 1
+    assert solds[0]['code'] == "A"
+    assert len(holds) == 1
+    assert holds[0]['code'] == "B"
+
+def test_price_cache_operations(manager):
+    """가격 캐시 저장 및 로드 확인"""
+    cache_data = {"005930": {"2025-01-01": 70000}}
+    manager._save_price_cache(cache_data)
+    
+    loaded = manager._load_price_cache()
+    assert loaded == cache_data
+    
+    # 파일 경로 확인
+    assert manager._price_cache_path().endswith("close_price_cache.json")
+
+def test_find_prev_close(manager):
+    """_find_prev_close 로직 확인"""
+    cache = {
+        "005930": {
+            "2025-01-01": 70000,
+            "2025-01-03": 72000
+        }
+    }
+    # 1월 2일 데이터는 없음 -> 1월 1일 데이터 반환해야 함
+    price = manager._find_prev_close(cache, "005930", "2025-01-02")
+    assert price == 70000
+    
+    # 이전 데이터가 아예 없는 경우
+    price = manager._find_prev_close(cache, "005930", "2024-12-31")
+    assert price is None
+
+def test_backfill_snapshots(manager):
+    """과거 스냅샷 backfill 로직 확인"""
+    # 1. 거래 기록 생성
+    # A: 1/1 매수 -> 1/3 매도
+    # B: 1/2 매수 -> 보유
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
+    manager.log_buy("S1", "A", 1000)
+    
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 2)
+    manager.log_buy("S2", "B", 2000)
+    
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 3)
+    manager.log_sell("A", 1100) # 10% 수익
+    
+    # 2. 가격 캐시 Mocking
+    # A: 1/1(1000), 1/2(1050), 1/3(1100)
+    # B: 1/2(2000), 1/3(1900)
+    price_cache = {
+        "A": {"2025-01-01": 1000, "2025-01-02": 1050, "2025-01-03": 1100},
+        "B": {"2025-01-02": 2000, "2025-01-03": 1900}
+    }
+    
+    # _fetch_close_prices를 Mock하여 위 캐시를 반환하도록 함
+    with patch.object(manager, '_fetch_close_prices', return_value=price_cache):
+        manager.backfill_snapshots()
+        
+    data = manager._load_data()
+    daily = data["daily"]
+    
+    # 1/1: A 보유 (매수가 1000, 종가 1000 -> 0%)
+    assert daily["2025-01-01"]["S1"] == 0.0
+    
+    # 1/2: A 보유 (매수가 1000, 종가 1050 -> 5%), B 보유 (매수가 2000, 종가 2000 -> 0%)
+    assert daily["2025-01-02"]["S1"] == 5.0
+    assert daily["2025-01-02"]["S2"] == 0.0
+    
+    # 1/3: A 매도 (확정 10%), B 보유 (매수가 2000, 종가 1900 -> -5%)
+    assert daily["2025-01-03"]["S1"] == 10.0
+    assert daily["2025-01-03"]["S2"] == -5.0
+
+def test_load_data_corrupted(manager, tmp_path):
+    """손상된 스냅샷 파일 로드 시 빈 데이터 반환 확인"""
+    snapshot_file = manager._snapshot_path()
+    with open(snapshot_file, 'w') as f:
+        f.write("{invalid json")
+        
+    data = manager._load_data()
+    assert data == {"daily": {}, "prev_values": {}}
+
+def test_backfill_snapshots_empty_df(manager):
+    """거래 내역이 없을 때 backfill 수행 안함"""
+    with patch.object(manager, '_fetch_close_prices') as mock_fetch:
+        manager.backfill_snapshots()
+        mock_fetch.assert_not_called()
+
+def test_load_price_cache_corrupted(manager):
+    """가격 캐시 파일이 손상되었을 때 빈 딕셔너리 반환 확인"""
+    cache_path = manager._price_cache_path()
+    # Ensure dir exists
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, 'w') as f:
+        f.write("{invalid json")
+    
+    loaded = manager._load_price_cache()
+    assert loaded == {}
+
+def test_fetch_close_prices_cache_hit(manager):
+    """캐시에 데이터가 이미 있으면 API 호출 스킵"""
+    cache_data = {"005930": {"2025-01-01": 70000, "2025-01-02": 71000, "2025-01-03": 72000}}
+    manager._save_price_cache(cache_data)
+    
+    mock_pykrx_stock = MagicMock()
+    mock_pykrx = MagicMock()
+    mock_pykrx.stock = mock_pykrx_stock
+    
+    with patch.dict("sys.modules", {"pykrx": mock_pykrx, "pykrx.stock": mock_pykrx_stock}):
+        result = manager._fetch_close_prices(["005930"], "2025-01-01", "2025-01-03")
+        assert result == cache_data
+        mock_pykrx_stock.get_market_ohlcv_by_date.assert_not_called()
+
+def test_fetch_close_prices_api_call(manager):
+    """캐시가 없으면 API 호출 후 저장"""
+    if os.path.exists(manager._price_cache_path()):
+        os.remove(manager._price_cache_path())
+        
+    mock_pykrx_stock = MagicMock()
+    mock_df = pd.DataFrame({'종가': [70000, 71000]}, index=pd.to_datetime(['2025-01-01', '2025-01-02']))
+    mock_pykrx_stock.get_market_ohlcv_by_date.return_value = mock_df
+    
+    mock_pykrx = MagicMock()
+    mock_pykrx.stock = mock_pykrx_stock
+    
+    with patch.dict("sys.modules", {"pykrx": mock_pykrx, "pykrx.stock": mock_pykrx_stock}):
+        result = manager._fetch_close_prices(["005930"], "2025-01-01", "2025-01-02")
+        
+        assert "005930" in result
+        assert result["005930"]["2025-01-01"] == 70000
+        assert result["005930"]["2025-01-02"] == 71000
+        mock_pykrx_stock.get_market_ohlcv_by_date.assert_called_once()
+        
+        loaded = manager._load_price_cache()
+        assert loaded["005930"]["2025-01-01"] == 70000
+
+def test_fetch_close_prices_api_empty(manager):
+    """API 응답이 비어있을 때 처리"""
+    mock_pykrx_stock = MagicMock()
+    mock_pykrx_stock.get_market_ohlcv_by_date.return_value = pd.DataFrame()
+    
+    mock_pykrx = MagicMock()
+    mock_pykrx.stock = mock_pykrx_stock
+    
+    with patch.dict("sys.modules", {"pykrx": mock_pykrx, "pykrx.stock": mock_pykrx_stock}):
+        result = manager._fetch_close_prices(["005930"], "2025-01-01", "2025-01-01")
+        assert "005930" not in result
+        mock_pykrx_stock.get_market_ohlcv_by_date.assert_called_once()
+
+def test_fetch_close_prices_api_exception(manager):
+    """API 호출 중 예외 발생 시 처리"""
+    mock_pykrx_stock = MagicMock()
+    mock_pykrx_stock.get_market_ohlcv_by_date.side_effect = Exception("API Error")
+    
+    mock_pykrx = MagicMock()
+    mock_pykrx.stock = mock_pykrx_stock
+    
+    with patch.dict("sys.modules", {"pykrx": mock_pykrx, "pykrx.stock": mock_pykrx_stock}):
+        with patch("managers.virtual_trade_manager.logger") as mock_logger:
+            result = manager._fetch_close_prices(["005930"], "2025-01-01", "2025-01-01")
+            assert "005930" not in result
+            mock_logger.warning.assert_called()
+
+def test_backfill_snapshots_missing_price_logic(manager):
+    """backfill_snapshots: 종가 데이터 누락 시 직전 종가 사용 및 데이터 아예 없을 때 0.0 처리 검증"""
+    # 1. 거래 기록 생성
+    # A: 1/1 매수 (1000원) -> 1/3 매도 (1300원)
+    # B: 1/1 매수 (1000원) -> 1/3 매도 (1300원)
+    # 이렇게 하면 backfill 범위가 1/1 ~ 1/3이 됨
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
+    manager.log_buy("S1", "A", 1000)
+    manager.log_buy("S2", "B", 1000)
+    
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 3)
+    manager.log_sell("A", 1300)
+    manager.log_sell("B", 1300)
+    
+    # 2. 가격 캐시 Mocking
+    # A: 1/1(1100), 1/2(데이터 없음 -> 1/1의 1100 사용 예상), 1/3(1200)
+    # B: 데이터 아예 없음 (1/1, 1/2 모두 없음)
+    price_cache = {
+        "A": {"2025-01-01": 1100, "2025-01-03": 1200},
+        # B는 키조차 없거나 비어있음
+    }
+    
+    with patch.object(manager, '_fetch_close_prices', return_value=price_cache):
+        manager.backfill_snapshots()
+        
+    data = manager._load_data()
+    daily = data["daily"]
+    
+    # 1/1: A(1100) -> 10%, B(없음) -> 0%
+    assert daily["2025-01-01"]["S1"] == 10.0
+    assert daily["2025-01-01"]["S2"] == 0.0
+    
+    # 1/2: A(데이터 없음 -> 직전 1/1의 1100) -> 10%, B(없음) -> 0%
+    # 여기가 핵심 검증 포인트 (lines 318-324)
+    assert daily["2025-01-02"]["S1"] == 10.0
+    assert daily["2025-01-02"]["S2"] == 0.0
+    
+    # 1/3: 매도 완료된 상태 (확정 수익률 사용)
+    # A: (1300-1000)/1000 = 30%
+    # B: (1300-1000)/1000 = 30%
+    assert daily["2025-01-03"]["S1"] == 30.0
+    assert daily["2025-01-03"]["S2"] == 30.0
+    
 
 def test_get_holds_by_strategy_missing_qty_field(temp_journal):
     """get_holds_by_strategy 호출 시 파일에 qty 필드가 없어도 기본값 1로 반환되는지 확인"""
