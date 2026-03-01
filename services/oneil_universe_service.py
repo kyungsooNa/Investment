@@ -15,6 +15,7 @@ from services.indicator_service import IndicatorService
 from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
+from core.logger import get_strategy_logger
 
 
 def _chunked(lst, size):
@@ -177,21 +178,24 @@ class OneilUniverseService:
         items.sort(key=lambda x: (x.total_score, self._calc_turnover_ratio(x)), reverse=True)
         return {item.code: item for item in items[:self._cfg.pool_b_size]}
 
-    async def _analyze_candidate(self, code: str, name: str) -> Optional[OSBWatchlistItem]:
+    async def _analyze_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
         """개별 종목 분석 (OHLCV, BB, RS 등)."""
         ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=90)
         if not ohlcv:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "no_ohlcv"})
             return None
 
         period = self._cfg.high_breakout_period
         closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
         if len(closes) < 50:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "insufficient_data_len", "len": len(closes)})
             return None
 
         highs = [r.get("high", 0) for r in ohlcv[-period:] if r.get("high") is not None]
         volumes = [r.get("volume", 0) for r in ohlcv[-period:] if r.get("volume") is not None]
 
         if not highs or not volumes:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "missing_high_or_volume"})
             return None
 
         ma_20d = sum(closes[-20:]) / 20
@@ -204,16 +208,22 @@ class OneilUniverseService:
         recent_5 = ohlcv[-5:]
         tv_5d = sum([(r.get("volume",0)*r.get("close",0)) for r in recent_5]) / len(recent_5)
         if tv_5d < self._cfg.min_avg_trading_value_5d:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "low_trading_value", "value": tv_5d})
             return None
         if not (prev_close > ma_20d > ma_50d):
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "not_uptrend", "close": prev_close, "ma20": ma_20d, "ma50": ma_50d})
             return None
+        
+        if logger: logger.debug({"event": "pass_trend", "code": code, "reason": "uptrend_and_volume_ok"})
 
         # 필터: 52주 고가 근접
         full_resp = await self._ts.get_current_stock_price(code)
         if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "current_price_api_fail"})
             return None
         output = full_resp.data.get("output") if full_resp.data else None
         if not output:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "no_price_output"})
             return None
         
         if isinstance(output, dict):
@@ -227,7 +237,10 @@ class OneilUniverseService:
         if w52_hgpr > 0:
             dist = ((w52_hgpr - prev_close) / w52_hgpr) * 100
             if dist > self._cfg.near_52w_high_pct:
+                if logger: logger.debug({"event": "drop", "code": code, "reason": "far_from_52w_high", "dist": dist})
                 return None
+        
+        if logger: logger.debug({"event": "pass_52w", "code": code, "dist": dist if w52_hgpr > 0 else 0})
 
         # BB 스퀴즈
         bb_resp = await self._indicator.get_bollinger_bands(
@@ -239,10 +252,25 @@ class OneilUniverseService:
                 widths.append(band.upper - band.lower)
         
         if len(widths) < period:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "insufficient_bb_data"})
             return None
         
         bb_min = min(widths[-period:])
         prev_width = widths[-1]
+
+        # 스퀴즈 조건 체크 (전일 BB폭 <= 20일 최소폭 * 1.2)
+        if prev_width > bb_min * self._cfg.squeeze_tolerance:
+            if logger: logger.debug({
+                "event": "drop", "code": code, "reason": "no_squeeze",
+                "prev_width": prev_width, "bb_min": bb_min,
+                "ratio": round(prev_width / bb_min, 2) if bb_min > 0 else 0
+            })
+            return None
+        
+        if logger: logger.debug({
+            "event": "pass_squeeze", "code": code,
+            "prev_width": prev_width, "bb_min": bb_min
+        })
         
         # RS 계산
         rs_return = 0.0
@@ -253,6 +281,8 @@ class OneilUniverseService:
             rs_return = rs_resp.data.return_pct
 
         market = "KOSDAQ" if self._mapper.is_kosdaq(code) else "KOSPI"
+
+        if logger: logger.debug({"event": "selected", "code": code, "name": name})
 
         return OSBWatchlistItem(
             code=code, name=name, market=market,
@@ -266,7 +296,13 @@ class OneilUniverseService:
 
     async def generate_pool_a(self) -> dict:
         """전체 종목 스캔 -> Pool A 생성 및 파일 저장."""
+        # 전용 로거 생성 (logs/strategies/oneil/YYYYMMDD_HHMMSS_generate_poolA.log.json)
+        pool_a_logger = get_strategy_logger("generate_poolA", sub_dir="oneil")
+        pool_a_logger.setLevel(logging.DEBUG)
+
         self._logger.info({"event": "generate_pool_a_started"})
+        pool_a_logger.info({"event": "generate_pool_a_started"})
+
         start_time = time.time()
         start_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
         
@@ -281,6 +317,7 @@ class OneilUniverseService:
 
         total_stocks = len(all_stocks)
         print(f"[Pool A 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
+        pool_a_logger.info({"event": "1st_filter_start", "total_stocks": total_stocks})
 
         # 2. 1차 필터 (시총)
         passed_first = []
@@ -310,16 +347,23 @@ class OneilUniverseService:
                 
                 if self._cfg.pool_a_market_cap_min <= cap <= self._cfg.pool_a_market_cap_max:
                     passed_first.append((code, name, market))
+                    pool_a_logger.debug({"event": "pass_1st", "code": code, "name": name, "market_cap(억)": cap/100_000_000})
+                else:
+                    # pool_a_logger.debug({"event": "drop_1st", "code": code, "reason": "market_cap", "cap": cap})
+                    pass
             
             processed_count += len(chunk)
             if processed_count % 50 == 0 or processed_count >= total_stocks:
                 pct = (processed_count / total_stocks * 100) if total_stocks > 0 else 0.0
                 elapsed = time.time() - start_time
                 print(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
+                pool_a_logger.info({"event": "1st_filter_progress", "processed": processed_count, "total": total_stocks, "passed": len(passed_first)})
 
             await asyncio.sleep(1.1)
 
         print(f"[Pool A 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
+        pool_a_logger.info({"event": "1st_filter_done", "passed": len(passed_first)})
+        pool_a_logger.info({"event": "2nd_filter_start", "total_candidates": len(passed_first)})
 
         # 3. 2차 필터 (상세 분석)
         items = []
@@ -327,7 +371,7 @@ class OneilUniverseService:
         processed_count_2 = 0
         for chunk in _chunked(passed_first, self._cfg.api_chunk_size):
             for code, name, market in chunk:
-                item = await self._analyze_candidate(code, name)
+                item = await self._analyze_candidate(code, name, logger=pool_a_logger)
                 if item:
                     items.append(item)
             
@@ -336,22 +380,28 @@ class OneilUniverseService:
                 pct2 = (processed_count_2 / total_passed * 100) if total_passed > 0 else 0.0
                 elapsed = time.time() - start_time
                 print(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
+                pool_a_logger.info({"event": "2nd_filter_progress", "processed": processed_count_2, "total": total_passed, "selected": len(items)})
 
             await asyncio.sleep(1.1)
+
+        pool_a_logger.info({"event": "2nd_filter_done", "selected": len(items)})
 
         # 4. 스코어링 및 저장
         self._compute_rs_scores(items)
         await self._compute_profit_growth_scores(items)
         self._compute_total_scores(items)
+        pool_a_logger.info({"event": "scoring_done"})
 
         sort_key = lambda x: (x.total_score, self._calc_turnover_ratio(x))
         kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_market]
         kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_market]
 
         self._save_pool_a(kospi, kosdaq)
+        pool_a_logger.info({"event": "save_done", "kospi_count": len(kospi), "kosdaq_count": len(kosdaq)})
 
         total_elapsed = time.time() - start_time
         print(f"[Pool A 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
+        pool_a_logger.info({"event": "generate_pool_a_finished", "elapsed_seconds": total_elapsed})
         
         return {
             "kospi_count": len(kospi), "kosdaq_count": len(kosdaq),
