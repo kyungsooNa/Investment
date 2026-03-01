@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from dataclasses import asdict
 from typing import Dict, List, Optional
 
@@ -12,7 +13,7 @@ from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
 from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
-from strategies.oneil.common_types import OneilUniverseConfig, OSBWatchlistItem
+from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 
 
 def _chunked(lst, size):
@@ -175,13 +176,19 @@ class OneilUniverseService:
     async def _analyze_candidate(self, code: str, name: str) -> Optional[OSBWatchlistItem]:
         """개별 종목 분석 (OHLCV, BB, RS 등)."""
         ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=90)
-        if not ohlcv or len(ohlcv) < 50:
+        if not ohlcv:
             return None
 
         period = self._cfg.high_breakout_period
         closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
-        highs = [r.get("high", 0) for r in ohlcv[-period:] if r.get("high")]
-        volumes = [r.get("volume", 0) for r in ohlcv[-period:] if r.get("volume")]
+        if len(closes) < 50:
+            return None
+
+        highs = [r.get("high", 0) for r in ohlcv[-period:] if r.get("high") is not None]
+        volumes = [r.get("volume", 0) for r in ohlcv[-period:] if r.get("volume") is not None]
+
+        if not highs or not volumes:
+            return None
 
         ma_20d = sum(closes[-20:]) / 20
         ma_50d = sum(closes[-50:]) / 50
@@ -205,8 +212,14 @@ class OneilUniverseService:
         if not output:
             return None
         
-        w52_hgpr = int(output.get("w52_hgpr") or 0)
-        stck_llam = int(output.get("stck_llam") or 0)
+        if isinstance(output, dict):
+            w52_hgpr = int(output.get("w52_hgpr") or 0)
+            # hts_avls: 시가총액(억), stck_llam: 상장주식수(주) - 시가총액 우선 사용 및 억 단위 보정
+            cap_billion = int(output.get("hts_avls") or output.get("stck_llam") or 0)
+        else:
+            w52_hgpr = int(getattr(output, "w52_hgpr", 0) or 0)
+            cap_billion = int(getattr(output, "hts_avls", 0) or getattr(output, "stck_llam", 0) or 0)
+        stck_llam = cap_billion * 100_000_000  # 억 단위 -> 원 단위 변환
         if w52_hgpr > 0:
             dist = ((w52_hgpr - prev_close) / w52_hgpr) * 100
             if dist > self._cfg.near_52w_high_pct:
@@ -250,6 +263,8 @@ class OneilUniverseService:
     async def generate_pool_a(self) -> dict:
         """전체 종목 스캔 -> Pool A 생성 및 파일 저장."""
         self._logger.info({"event": "generate_pool_a_started"})
+        start_time = time.time()
+        start_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
         
         # 1. 전체 종목 로드
         all_stocks = []
@@ -260,8 +275,12 @@ class OneilUniverseService:
             if code and market in ("KOSPI", "KOSDAQ"):
                 all_stocks.append((code, name, market))
 
-        # 2. 1차 필터 (시총/거래대금)
+        total_stocks = len(all_stocks)
+        print(f"[Pool A 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
+
+        # 2. 1차 필터 (시총)
         passed_first = []
+        processed_count = 0
         for chunk in _chunked(all_stocks, self._cfg.api_chunk_size):
             tasks = [self._ts.get_current_stock_price(c) for c, _, _ in chunk]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -271,21 +290,42 @@ class OneilUniverseService:
                 out = resp.data.get("output") if resp.data else None
                 if not out: continue
                 
-                cap = int(out.get("stck_llam") or 0)
-                val = int(out.get("acml_tr_pbmn") or 0)
+                if isinstance(out, dict):
+                    # hts_avls: 시가총액(억), stck_llam: 상장주식수(주) - 시가총액 우선 사용 및 억 단위 보정
+                    cap_billion = int(out.get("hts_avls") or out.get("stck_llam") or 0)
+                else:
+                    cap_billion = int(getattr(out, "hts_avls", 0) or getattr(out, "stck_llam", 0) or 0)
+                cap = cap_billion * 100_000_000  # 억 단위 -> 원 단위 변환
                 
                 if self._cfg.pool_a_market_cap_min <= cap <= self._cfg.pool_a_market_cap_max:
-                    if val >= self._cfg.min_avg_trading_value_5d:
-                        passed_first.append((code, name, market))
+                    passed_first.append((code, name, market))
+            
+            processed_count += len(chunk)
+            if processed_count % 50 == 0 or processed_count >= total_stocks:
+                pct = (processed_count / total_stocks * 100) if total_stocks > 0 else 0.0
+                elapsed = time.time() - start_time
+                print(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
+
             await asyncio.sleep(1.1)
+
+        print(f"[Pool A 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
 
         # 3. 2차 필터 (상세 분석)
         items = []
+        total_passed = len(passed_first)
+        processed_count_2 = 0
         for chunk in _chunked(passed_first, self._cfg.api_chunk_size):
             for code, name, market in chunk:
                 item = await self._analyze_candidate(code, name)
                 if item:
                     items.append(item)
+            
+            processed_count_2 += len(chunk)
+            if processed_count_2 % 10 == 0 or processed_count_2 >= total_passed:
+                pct2 = (processed_count_2 / total_passed * 100) if total_passed > 0 else 0.0
+                elapsed = time.time() - start_time
+                print(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
+
             await asyncio.sleep(1.1)
 
         # 4. 스코어링 및 저장
@@ -298,10 +338,14 @@ class OneilUniverseService:
         kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_market]
 
         self._save_pool_a(kospi, kosdaq)
+
+        total_elapsed = time.time() - start_time
+        print(f"[Pool A 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
         
         return {
             "kospi_count": len(kospi), "kosdaq_count": len(kosdaq),
-            "total_scanned": len(all_stocks), "passed_first": len(passed_first)
+            "total_scanned": len(all_stocks), "passed_first": len(passed_first),
+            "total_elapsed_seconds": total_elapsed
         }
 
     # ── 헬퍼 메서드 ───────────────────────────────────────────────

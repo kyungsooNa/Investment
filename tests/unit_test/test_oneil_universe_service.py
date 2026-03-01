@@ -1,12 +1,32 @@
-# tests/unit_test/strategies/oneil/test_universe_service.py
+# tests/unit_test/test_oneil_universe_service.py
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
 import pandas as pd
 
 from common.types import ResCommonResponse, ErrorCode
+from common.types import ResStockFullInfoApiOutput, ResBollingerBand, ResRelativeStrength
 from services.oneil_universe_service import OneilUniverseService
 from strategies.oneil_common_types import OSBWatchlistItem
+
+def create_mock_ohlcv(length=90, zero_volume_days=0, no_high_days=0):
+    """테스트 목적에 맞는 OHLCV 목 데이터를 생성합니다."""
+    data = []
+    for i in range(length):
+        day_index = length - 1 - i
+        is_zero_vol = i < zero_volume_days
+        is_no_high = i < no_high_days
+
+        data.append({
+            "date": f"202312{31-day_index:02d}",
+            "open": 10000 + i * 10,
+            "high": None if is_no_high else 10100 + i * 10,
+            "low": 9900 + i * 10,
+            "close": 10050 + i * 10,
+            "volume": 0 if is_zero_vol else 10000 + i * 100
+        })
+    return data
+
 
 @pytest.fixture
 def mock_deps():
@@ -26,6 +46,39 @@ def mock_deps():
     
     return ts, sqs, indicator, mapper, tm, logger
 
+@pytest.fixture
+def oneil_service_fixture():
+    """OneilUniverseService와 Mock 종속성을 제공하는 픽스처입니다."""
+    mock_ts = AsyncMock()
+    mock_sqs = AsyncMock()
+    mock_indicator = AsyncMock()
+    mock_mapper = MagicMock()
+    mock_tm = MagicMock()
+    mock_logger = MagicMock()
+
+    service = OneilUniverseService(
+        trading_service=mock_ts,
+        stock_query_service=mock_sqs,
+        indicator_service=mock_indicator,
+        stock_code_mapper=mock_mapper,
+        time_manager=mock_tm,
+        logger=mock_logger
+    )
+    # 공통 Mock 응답 설정
+    mock_price_output = ResStockFullInfoApiOutput(w52_hgpr="12000", hts_avls="1000")
+    mock_ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, data={"output": mock_price_output}
+    )
+    mock_indicator.get_bollinger_bands.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        data=[ResBollingerBand(code="TEST", date="20231231", close=1, upper=1, lower=1, middle=1)] * 90
+    )
+    mock_indicator.get_relative_strength.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        data=ResRelativeStrength(code="TEST", date="20231231", return_pct=10.0)
+    )
+    return service, mock_ts, mock_indicator
+
 @pytest.mark.asyncio
 async def test_analyze_candidate_success(mock_deps):
     """_analyze_candidate: 모든 필터 조건을 통과하는 경우 검증."""
@@ -39,8 +92,9 @@ async def test_analyze_candidate_success(mock_deps):
     
     # 2. 현재가 Mock (52주 고가 대비 20% 이내)
     # 현재가(prev_close)는 약 1099. 52주 고가 1200이면 통과.
+    # 시가총액 1000억으로 가정 (hts_avls는 억 단위)
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", data={"output": {"w52_hgpr": "1200", "stck_llam": "100000000000"}}
+        rt_cd="0", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
     )
     
     # 3. BB Mock (스퀴즈 데이터 계산용)
@@ -95,8 +149,10 @@ async def test_generate_pool_a(mock_deps):
     # StockA: 통과, StockB: 탈락 (거래대금 부족)
     async def mock_get_price(code):
         if code == "000001":
-            return ResCommonResponse(rt_cd="0", data={"output": {"stck_llam": "500000000000", "acml_tr_pbmn": "20000000000"}})
-        return ResCommonResponse(rt_cd="0", data={"output": {"stck_llam": "10000000", "acml_tr_pbmn": "100"}})
+            # 시가총액 5000억, 거래대금 200억 (hts_avls는 억 단위)
+            return ResCommonResponse(rt_cd="0", data={"output": {"hts_avls": "5000", "acml_tr_pbmn": "20000000000"}})
+        # 시가총액 10억, 거래대금 100원
+        return ResCommonResponse(rt_cd="0", data={"output": {"hts_avls": "10", "acml_tr_pbmn": "100"}})
     
     ts.get_current_stock_price.side_effect = mock_get_price
     
@@ -149,3 +205,41 @@ async def test_get_watchlist_refresh_logic(mock_deps):
             await service.get_watchlist()
             mock_build.assert_awaited_once()
             assert 30 in service._watchlist_refresh_done
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_with_zero_volume(oneil_service_fixture):
+    """
+    _analyze_candidate가 최근 거래량이 모두 0인 종목을 처리할 때 ZeroDivisionError 없이 None을 반환하는지 테스트합니다.
+    """
+    # Arrange
+    service, mock_ts, _ = oneil_service_fixture
+    # 최근 20일간의 거래량이 모두 0인 OHLCV 데이터를 모킹합니다.
+    mock_ohlcv = create_mock_ohlcv(length=90, zero_volume_days=20)
+    mock_ts.get_recent_daily_ohlcv.return_value = mock_ohlcv
+
+    # Act
+    result = await service._analyze_candidate("TESTCODE", "Test Stock")
+
+    # Assert
+    # 함수는 오류를 발생시키지 않고 None을 반환해야 합니다.
+    assert result is None
+    mock_ts.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=90)
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_with_no_high_data(oneil_service_fixture):
+    """
+    _analyze_candidate가 최근 고가(high) 데이터가 없는 경우 None을 반환하는지 테스트합니다.
+    """
+    # Arrange
+    service, mock_ts, _ = oneil_service_fixture
+    mock_ohlcv = create_mock_ohlcv(length=90, no_high_days=20)
+    mock_ts.get_recent_daily_ohlcv.return_value = mock_ohlcv
+
+    # Act
+    result = await service._analyze_candidate("TESTCODE", "Test Stock")
+
+    # Assert
+    assert result is None
+    mock_ts.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=90)
+    # 조기 반환되므로 추가 API 호출이 없어야 합니다.
+    mock_ts.get_current_stock_price.assert_not_called()

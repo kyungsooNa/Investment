@@ -21,8 +21,8 @@ from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerCon
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
-from strategies.oneil.breakout_strategy import OneilSqueezeBreakoutStrategy
-from strategies.oneil.universe_service import OneilUniverseService
+from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
+from services.oneil_universe_service import OneilUniverseService
 from managers.realtime_data_manager import RealtimeDataManager
 from view.web import web_api  # 임포트 확인
 
@@ -194,6 +194,9 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 👈 오닐 전략은 오버나잇(홀딩) 허용!
         ))
+        
+        self.osb_strategy = osb_strategy # (웹 API 하위 호환성 유지용)
+        self.oneil_universe_service_ref = self.oneil_universe_service
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
