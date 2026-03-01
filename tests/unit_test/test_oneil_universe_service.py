@@ -9,6 +9,7 @@ from common.types import ResCommonResponse, ErrorCode
 from common.types import ResStockFullInfoApiOutput, ResBollingerBand, ResRelativeStrength
 from services.oneil_universe_service import OneilUniverseService
 from strategies.oneil_common_types import OSBWatchlistItem
+from core.logger import get_strategy_logger
 
 def create_mock_ohlcv(length=90, zero_volume_days=0, no_high_days=0):
     """테스트 목적에 맞는 OHLCV 목 데이터를 생성합니다."""
@@ -135,7 +136,7 @@ async def test_analyze_candidate_filter_trading_value(mock_deps):
     assert item is None
 
 @pytest.mark.asyncio
-async def test_generate_pool_a(mock_deps):
+async def test_generate_pool_a(mock_deps, tmp_path):
     """generate_pool_a: 전체 종목 스캔 및 파일 저장 로직 검증."""
     ts, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
@@ -158,9 +159,14 @@ async def test_generate_pool_a(mock_deps):
     
     ts.get_current_stock_price.side_effect = mock_get_price
     
+    # Redirect logs to tmp_path
+    def mock_get_logger_side_effect(name, sub_dir=None):
+        return get_strategy_logger(name, log_dir=str(tmp_path), sub_dir=sub_dir)
+
     # 3. 2차 필터 (_analyze_candidate) Mock
     # StockA 통과 가정
-    with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze:
+    with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze, \
+         patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect):
         mock_analyze.return_value = OSBWatchlistItem(
             code="000001", name="StockA", market="KOSPI",
             high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=10000,
@@ -247,7 +253,7 @@ async def test_analyze_candidate_with_no_high_data(oneil_service_fixture):
     mock_ts.get_current_stock_price.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_generate_pool_a_sorting_with_tie_score(mock_deps):
+async def test_generate_pool_a_sorting_with_tie_score(mock_deps, tmp_path):
     """generate_pool_a: 총점이 같을 경우 회전율(거래대금/시총)이 높은 순으로 정렬되는지 검증."""
     ts, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
@@ -291,12 +297,17 @@ async def test_generate_pool_a_sorting_with_tie_score(mock_deps):
         if code == "B": return item_b
         return None
 
+    # Redirect logs to tmp_path
+    def mock_get_logger_side_effect(name, sub_dir=None):
+        return get_strategy_logger(name, log_dir=str(tmp_path), sub_dir=sub_dir)
+
     # 내부 메서드 모킹
     with patch.object(service, '_analyze_candidate', side_effect=mock_analyze), \
          patch.object(service, '_compute_rs_scores'), \
          patch.object(service, '_compute_profit_growth_scores', new_callable=AsyncMock), \
          patch.object(service, '_compute_total_scores'), \
-         patch.object(service, '_save_pool_a') as mock_save:
+         patch.object(service, '_save_pool_a') as mock_save, \
+         patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect):
         
         await service.generate_pool_a()
         
@@ -453,6 +464,45 @@ def test_compute_rs_scores_logic(mock_deps):
         else:
             assert item.rs_score == 0.0
 
+def test_compute_rs_scores_edge_cases(mock_deps):
+    """_compute_rs_scores: 경계 조건(빈 리스트, 단일 아이템, 동점) 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # Case 1: 빈 리스트
+    items = []
+    service._compute_rs_scores(items)
+    assert len(items) == 0 # 에러 없이 통과
+
+    # Case 2: 단일 아이템
+    # 설정: 상위 10%에게 점수 부여
+    service._cfg.rs_top_percentile = 10.0
+    service._cfg.rs_score_points = 20.0
+    
+    item = OSBWatchlistItem(
+        code="A", name="StockA", market="KOSPI",
+        high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+        bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0,
+        rs_return_3m=50.0
+    )
+    items = [item]
+    
+    service._compute_rs_scores(items)
+    
+    # 로직상 1개 리스트에서는 항상 cutoff 조건을 만족하게 됨 (자기 자신이 cutoff)
+    assert item.rs_score == 20.0
+
+    # Case 3: 모든 RS가 동일한 경우
+    items = [
+        OSBWatchlistItem(code="A", name="A", market="KOSPI", high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0, bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0, rs_return_3m=10.0),
+        OSBWatchlistItem(code="B", name="B", market="KOSPI", high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0, bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0, rs_return_3m=10.0),
+    ]
+    service._compute_rs_scores(items)
+    
+    # 모두 점수 획득해야 함
+    for item in items:
+        assert item.rs_score == 20.0
+
 @pytest.mark.asyncio
 async def test_compute_profit_growth_scores_api_failure(mock_deps):
     """_compute_profit_growth_scores: API 호출 실패 시 점수 미부여 검증."""
@@ -499,3 +549,119 @@ async def test_compute_profit_growth_scores_exception(mock_deps):
 
     # 검증: 점수가 0이어야 함 (예외가 발생해도 크래시되지 않고 0점 처리)
     assert item.profit_growth_score == 0.0
+
+@pytest.mark.asyncio
+async def test_check_etf_ma_rising_logic(mock_deps):
+    """_check_etf_ma_rising: ETF 이동평균 상승 여부 판단 로직 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # Case 1: 데이터 부족
+    ts.get_recent_daily_ohlcv.return_value = [{"close": 100}] * 10 # period(20) + days(3) 보다 적음
+    assert await service._check_etf_ma_rising("000000") is False
+    
+    # Case 2: 상승 추세 (MA가 3일 연속 상승)
+    # period=20, days=3. 총 23일치 데이터 필요.
+    # 간단히 close 가격이 계속 상승한다고 가정하면 MA도 상승함.
+    data = [{"close": 100 + i} for i in range(30)]
+    ts.get_recent_daily_ohlcv.return_value = data
+    assert await service._check_etf_ma_rising("000000") is True
+    
+    # Case 3: 하락 추세
+    data = [{"close": 100 - i} for i in range(30)]
+    ts.get_recent_daily_ohlcv.return_value = data
+    assert await service._check_etf_ma_rising("000000") is False
+
+@pytest.mark.asyncio
+async def test_build_pool_b_logic(mock_deps):
+    """_build_pool_b: 실시간 랭킹 기반 Pool B 생성 및 필터링 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    
+    # Ensure methods are AsyncMock
+    ts.get_top_trading_value_stocks = AsyncMock()
+    ts.get_top_rise_fall_stocks = AsyncMock()
+    ts.get_top_volume_stocks = AsyncMock()
+    
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # Mock API responses
+    # 1. 거래대금 상위: A, B
+    # 2. 상승률 상위: B, C
+    # 3. 거래량 상위: Exception 발생 (네트워크 오류 등)
+    ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": "A", "hts_kor_isnm": "StockA"}]
+    )
+    ts.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": "B", "hts_kor_isnm": "StockB"}]
+    )
+    ts.get_top_volume_stocks.side_effect = Exception("Network Error")
+    
+    # Pool A에 이미 "A"가 있다고 가정 -> "A"는 스킵되어야 함
+    service._pool_a_items = {"A": MagicMock()}
+    
+    # _analyze_candidate Mock
+    # B는 통과, C는 없음(위에서 C는 정의 안함, B만 정의함)
+    # analyze는 B에 대해서만 호출될 것임 (A는 스킵)
+    async def mock_analyze(code, name, logger=None):
+        if code == "B":
+            return OSBWatchlistItem(code="B", name="StockB", market="KOSPI",
+                                    high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=1000,
+                                    bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200, avg_trading_value_5d=100)
+        return None
+        
+    with patch.object(service, '_analyze_candidate', side_effect=mock_analyze):
+        pool_b = await service._build_pool_b()
+        
+        assert "A" not in pool_b # Pool A 중복 제외
+        assert "B" in pool_b     # 분석 통과
+        assert len(pool_b) == 1
+
+def test_extract_op_profit_growth_logic(mock_deps):
+    """_extract_op_profit_growth: 다양한 데이터 포맷 처리 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # Case 1: List of dicts
+    data1 = [{"bsop_prti_icdc": "25.5"}]
+    assert service._extract_op_profit_growth(data1) == 25.5
+    
+    # Case 2: Dict
+    data2 = {"sale_totl_prfi_icdc": "10.0"}
+    assert service._extract_op_profit_growth(data2) == 10.0
+    
+    # Case 3: Invalid data
+    assert service._extract_op_profit_growth(None) == 0.0
+    assert service._extract_op_profit_growth([]) == 0.0
+    assert service._extract_op_profit_growth({}) == 0.0
+    assert service._extract_op_profit_growth({"invalid_key": "100"}) == 0.0
+
+@pytest.mark.asyncio
+async def test_save_load_pool_a_exceptions(mock_deps):
+    """_save_pool_a, _load_pool_a: 예외 처리 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # Save Exception
+    with patch("builtins.open", side_effect=IOError("Disk full")):
+        service._save_pool_a([], [])
+        logger.error.assert_called() # 에러 로그 호출 확인
+        
+    # Load Exception (Invalid JSON)
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data="{invalid_json")):
+        items = service._load_pool_a()
+        assert items == [] # 빈 리스트 반환
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_insufficient_data(mock_deps):
+    """_analyze_candidate: 데이터 부족 시 None 반환 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # 데이터가 50개 미만
+    ts.get_recent_daily_ohlcv.return_value = [{"close": 100}] * 40
+    
+    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    assert item is None
+    # 로그가 호출되었는지 확인 (debug 레벨)
+    logger.debug.assert_called()
