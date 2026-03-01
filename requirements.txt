@@ -14,9 +14,10 @@ uvicorn[standard]>=0.22.0
 jinja2>=3.1.0
 python-multipart>=0.0.6
 itsdangerous>=2.1.0
-pytest
-pytest-cov
-pytest-xdist
-pytest-mock
-pytest-asyncio
-pykrx
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-xdist>=3.3.0
+pytest-mock>=3.11.0
+pytest-asyncio>=0.21.0
+pykrx>=1.0.45
+pytest-playwright>=0.4.0
