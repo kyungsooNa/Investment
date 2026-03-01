@@ -6,9 +6,8 @@
 ### 0. 불량
 1. [전략스케줄러] 전략에서 매수/매도 API를 실패하는 경우가 종종 있음. 1차로 사실 실패하면 log만되고, web에 남는 history는 저장이 안되는게 맞을거같고 2번쨰로는 실패하는경우에는 retry를 해야할거같음. retry 하는 queue를 만들어서 재시도하는 logic 추가가 필요.
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
-3. [모의투자결과View] 현재가 조회하는데 오래걸리는걸로 보이는데, 어떻게 할지 고민필요.
+3. [모의투자결과View] 현재가 조회하는데 오래걸리는걸로 보이는데, 어떻게 할지 고민필요. (멀종종목조회 기능 추가 필요 /uapi/domestic-stock/v1/quotations/intstock-multprice, 실전 TR ID	FHKST11300006)
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-7. [현재가차트] 장마감 이후 최근날짜 candle 차트가 2개 만들어지는 불량. (by claude)
 13. [투자결과] 수수료도 적용하여 수익률 계산
 14. [프로그램매매] 구독한 종목 여러개를 선택할 수 있도록 수정. (by claude)
   - 그리고 program_chart도 virtual_chart.js 처럼 분리하자.

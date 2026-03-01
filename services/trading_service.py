@@ -686,6 +686,21 @@ class TradingService:
             except Exception as e:
                 self._logger.warning(f"오늘자 OHLCV 구성을 위한 현재가 조회 실패: {e}")
 
+            # 비거래일(주말) 체크: 현재가 API가 마지막 거래일 데이터를 반환하므로 중복 방지
+            if today_rows and now_dt.weekday() >= 5:
+                today_rows = []
+
+            # 추가 안전장치: 공휴일 등 비거래일에서 OHLCV가 동일하면 중복 제거
+            if today_rows and past_rows:
+                last_past = past_rows[-1]
+                today = today_rows[0]
+                if (today['date'] != last_past['date'] and
+                    today['open'] == last_past['open'] and
+                    today['high'] == last_past['high'] and
+                    today['low'] == last_past['low'] and
+                    today['close'] == last_past['close']):
+                    today_rows = []
+
             # 3. 병합 및 정렬
             # past_rows는 이미 정렬됨. today_rows는 0개 또는 1개.
             # 중복 방지를 위해 dict 사용 (날짜 키)
