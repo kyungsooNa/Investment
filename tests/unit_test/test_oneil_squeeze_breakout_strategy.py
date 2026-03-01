@@ -35,6 +35,10 @@ def scan_setup(mock_strategy_deps, breakout_candidate_item):
     ts, universe, tm, logger = mock_strategy_deps
     strategy = OneilSqueezeBreakoutStrategy(ts, universe, tm, logger=logger)
     
+    # 테스트 격리를 위해 상태 초기화 및 파일 저장 방지
+    strategy._position_state = {}
+    strategy._save_state = MagicMock()
+    
     # 1. 워치리스트 Mock (감시 대상 종목)
     universe.get_watchlist.return_value = {"005930": breakout_candidate_item}
     
@@ -125,6 +129,7 @@ async def test_check_exits_stop_loss(mock_strategy_deps):
     """check_exits: 손절 조건(-5%) 도달 시 매도 시그널 검증."""
     ts, universe, tm, logger = mock_strategy_deps
     strategy = OneilSqueezeBreakoutStrategy(ts, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
     
     # 1. 보유 상태 설정
     strategy._position_state["005930"] = OSBPositionState(
@@ -152,6 +157,7 @@ async def test_check_exits_trailing_stop(mock_strategy_deps):
     """check_exits: 트레일링 스탑(-8%) 조건 도달 시 매도 시그널 검증."""
     ts, universe, tm, logger = mock_strategy_deps
     strategy = OneilSqueezeBreakoutStrategy(ts, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
     
     # 1. 보유 상태 설정 (매수가 10000, 최고가 12000)
     strategy._position_state["005930"] = OSBPositionState(
@@ -178,6 +184,7 @@ async def test_check_exits_peak_price_update(mock_strategy_deps):
     """check_exits: 최고가 갱신 로직 검증."""
     ts, universe, tm, logger = mock_strategy_deps
     strategy = OneilSqueezeBreakoutStrategy(ts, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
     
     # 1. 보유 상태 설정 (최고가 11000)
     strategy._position_state["005930"] = OSBPositionState(

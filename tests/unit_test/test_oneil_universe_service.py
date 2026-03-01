@@ -1,8 +1,9 @@
 # tests/unit_test/test_oneil_universe_service.py
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 from datetime import datetime
 import pandas as pd
+import json
 
 from common.types import ResCommonResponse, ErrorCode
 from common.types import ResStockFullInfoApiOutput, ResBollingerBand, ResRelativeStrength
@@ -65,16 +66,16 @@ def oneil_service_fixture():
         logger=mock_logger
     )
     # 공통 Mock 응답 설정
-    mock_price_output = ResStockFullInfoApiOutput(w52_hgpr="12000", hts_avls="1000")
+    mock_price_output = ResStockFullInfoApiOutput.from_dict({"w52_hgpr": "12000", "hts_avls": "1000"})
     mock_ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value, data={"output": mock_price_output}
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": mock_price_output}
     )
     mock_indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
         data=[ResBollingerBand(code="TEST", date="20231231", close=1, upper=1, lower=1, middle=1)] * 90
     )
     mock_indicator.get_relative_strength.return_value = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
         data=ResRelativeStrength(code="TEST", date="20231231", return_pct=10.0)
     )
     return service, mock_ts, mock_indicator
@@ -87,24 +88,25 @@ async def test_analyze_candidate_success(mock_deps):
     
     # 1. OHLCV Mock (정배열 조건: Close > MA20 > MA50)
     # 최근 50일 데이터 생성
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 10000} for i in range(100)]
+    # 거래대금 조건(100억)을 만족하기 위해 volume을 충분히 크게 설정 (1000원 * 15,000,000주 = 150억)
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
     ts.get_recent_daily_ohlcv.return_value = ohlcv
     
     # 2. 현재가 Mock (52주 고가 대비 20% 이내)
     # 현재가(prev_close)는 약 1099. 52주 고가 1200이면 통과.
     # 시가총액 1000억으로 가정 (hts_avls는 억 단위)
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
     )
     
     # 3. BB Mock (스퀴즈 데이터 계산용)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
     )
     
     # 4. RS Mock
     indicator.get_relative_strength.return_value = ResCommonResponse(
-        rt_cd="0", data=MagicMock(return_pct=10.0)
+        rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
     )
     
     mapper.is_kosdaq.return_value = True
@@ -150,9 +152,9 @@ async def test_generate_pool_a(mock_deps):
     async def mock_get_price(code):
         if code == "000001":
             # 시가총액 5000억, 거래대금 200억 (hts_avls는 억 단위)
-            return ResCommonResponse(rt_cd="0", data={"output": {"hts_avls": "5000", "acml_tr_pbmn": "20000000000"}})
+            return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "5000", "acml_tr_pbmn": "20000000000"}})
         # 시가총액 10억, 거래대금 100원
-        return ResCommonResponse(rt_cd="0", data={"output": {"hts_avls": "10", "acml_tr_pbmn": "100"}})
+        return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "10", "acml_tr_pbmn": "100"}})
     
     ts.get_current_stock_price.side_effect = mock_get_price
     
@@ -243,3 +245,107 @@ async def test_analyze_candidate_with_no_high_data(oneil_service_fixture):
     mock_ts.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=90)
     # 조기 반환되므로 추가 API 호출이 없어야 합니다.
     mock_ts.get_current_stock_price.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_generate_pool_a_sorting_with_tie_score(mock_deps):
+    """generate_pool_a: 총점이 같을 경우 회전율(거래대금/시총)이 높은 순으로 정렬되는지 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+
+    # 1. 전체 종목 리스트 Mock
+    mapper.df = pd.DataFrame({
+        "종목코드": ["A", "B"],
+        "종목명": ["StockA", "StockB"],
+        "시장구분": ["KOSPI", "KOSPI"]
+    })
+
+    # 2. 1차 필터 통과 가정 (get_current_stock_price)
+    # 시가총액 조건 통과를 위해 적절한 값 반환
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"hts_avls": "5000", "stck_llam": "5000"}} 
+    )
+
+    # 3. 2차 필터 (_analyze_candidate) Mock
+    # 두 종목 모두 total_score는 50점으로 동일하게 설정
+    # StockA: 시총 1000, 거래대금 100 -> 회전율 0.1
+    # StockB: 시총 1000, 거래대금 500 -> 회전율 0.5 (더 높음) -> B가 먼저 와야 함
+    item_a = OSBWatchlistItem(
+        code="A", name="StockA", market="KOSPI",
+        high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=10000,
+        bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200,
+        avg_trading_value_5d=100, 
+        market_cap=1000,         
+        total_score=50.0
+    )
+    item_b = OSBWatchlistItem(
+        code="B", name="StockB", market="KOSPI",
+        high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=10000,
+        bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200,
+        avg_trading_value_5d=500, 
+        market_cap=1000,         
+        total_score=50.0
+    )
+
+    async def mock_analyze(code, name):
+        if code == "A": return item_a
+        if code == "B": return item_b
+        return None
+
+    # 내부 메서드 모킹
+    with patch.object(service, '_analyze_candidate', side_effect=mock_analyze), \
+         patch.object(service, '_compute_rs_scores'), \
+         patch.object(service, '_compute_profit_growth_scores', new_callable=AsyncMock), \
+         patch.object(service, '_compute_total_scores'), \
+         patch.object(service, '_save_pool_a') as mock_save:
+        
+        await service.generate_pool_a()
+        
+        # _save_pool_a(kospi, kosdaq) 호출 시 kospi 리스트의 순서 확인
+        args, _ = mock_save.call_args
+        kospi_list = args[0]
+        
+        assert len(kospi_list) == 2
+        assert kospi_list[0].code == "B"  # 회전율 높은 B가 먼저
+        assert kospi_list[1].code == "A"
+
+@pytest.mark.asyncio
+async def test_load_pool_a_date_validation(mock_deps):
+    """_load_pool_a: 날짜 유효성 검사 로직 검증 (경계값 테스트)."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # 테스트용 파일 데이터 생성 함수
+    def create_file_data(date_str):
+        return json.dumps({
+            "generated_date": date_str,
+            "kospi": [],
+            "kosdaq": []
+        })
+
+    # Case 1: 오늘 날짜 (유효)
+    tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=create_file_data("20240105"))):
+        result = service._load_pool_a()
+        assert isinstance(result, list)
+
+    # Case 2: 어제 날짜 (유효 - 차이 1일)
+    tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=create_file_data("20240104"))):
+        result = service._load_pool_a()
+        assert isinstance(result, list)
+
+    # Case 3: 2일 전 날짜 (무효)
+    tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=create_file_data("20240103"))):
+        result = service._load_pool_a()
+        assert result == []
+
+    # Case 4: 연도가 바뀌는 경우 (12월 31일 생성 -> 1월 2일 로드: 2일 차이 -> 무효)
+    tm.get_current_kst_time.return_value = datetime(2024, 1, 2, 10, 0, 0)
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=create_file_data("20231231"))):
+        result = service._load_pool_a()
+        assert result == []

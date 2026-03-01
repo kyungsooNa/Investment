@@ -34,23 +34,23 @@ async def test_analyze_candidate_success(mock_deps):
     
     # 1. OHLCV Mock (정배열 조건: Close > MA20 > MA50)
     # 최근 50일 데이터 생성
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 10000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
     ts.get_recent_daily_ohlcv.return_value = ohlcv
     
     # 2. 현재가 Mock (52주 고가 대비 20% 이내)
     # 현재가(prev_close)는 약 1099. 52주 고가 1200이면 통과.
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", data={"output": {"w52_hgpr": "1200", "stck_llam": "100000000000"}}
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "stck_llam": "100000000000"}}
     )
     
     # 3. BB Mock (스퀴즈 데이터 계산용)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
     )
     
     # 4. RS Mock
     indicator.get_relative_strength.return_value = ResCommonResponse(
-        rt_cd="0", data=MagicMock(return_pct=10.0)
+        rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
     )
     
     mapper.is_kosdaq.return_value = True
@@ -95,8 +95,8 @@ async def test_generate_pool_a(mock_deps):
     # StockA: 통과, StockB: 탈락 (거래대금 부족)
     async def mock_get_price(code):
         if code == "000001":
-            return ResCommonResponse(rt_cd="0", data={"output": {"stck_llam": "500000000000", "acml_tr_pbmn": "20000000000"}})
-        return ResCommonResponse(rt_cd="0", data={"output": {"stck_llam": "10000000", "acml_tr_pbmn": "100"}})
+            return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_llam": "500000000000", "acml_tr_pbmn": "20000000000"}})
+        return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_llam": "10000000", "acml_tr_pbmn": "100"}})
     
     ts.get_current_stock_price.side_effect = mock_get_price
     
