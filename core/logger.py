@@ -68,7 +68,7 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(log_object, ensure_ascii=False)
 
 
-def get_strategy_logger(strategy_name: str, log_dir="logs"):
+def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None):
     """
     전략별 전용 로거를 생성하고 반환합니다.
     - 실행 시마다 타임스탬프가 찍힌 JSON 파일 핸들러 생성
@@ -86,6 +86,8 @@ def get_strategy_logger(strategy_name: str, log_dir="logs"):
     logger.propagate = False
 
     strategy_log_dir = os.path.join(log_dir, "strategies")
+    if sub_dir:
+        strategy_log_dir = os.path.join(strategy_log_dir, sub_dir)
     if not os.path.exists(strategy_log_dir):
         os.makedirs(strategy_log_dir, exist_ok=True)
 
