@@ -553,7 +553,7 @@ async def test_unsubscribe_program_trading_exception(trading_service_fixture, mo
     
     assert result is False
     broker.unsubscribe_program_trading.assert_awaited_once_with("005930")
-    logger.error.assert_called_with("프로그램 매매 구독 해지 중 오류 발생: Network Error")
+    logger.exception.assert_called_with("프로그램 매매 구독 해지 중 오류 발생: Network Error")
 
 @pytest.mark.asyncio
 async def test_get_price_summary(trading_service_fixture, mock_deps):
@@ -726,7 +726,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.rt_cd, ErrorCode.UNKNOWN_ERROR.value)
         self.assertIn("전체 종목 코드 조회 실패", result.msg1)
-        self.mock_logger.error.assert_called_once()
+        self.mock_logger.exception.assert_called_once()
 
 
 class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):

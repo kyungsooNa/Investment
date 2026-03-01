@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 from services.indicator_service import IndicatorService
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage
@@ -83,11 +83,16 @@ async def test_get_bollinger_bands_calculation_error(indicator_service):
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
-    result = await service.get_bollinger_bands("005930")
-    
-    # pd.to_numeric 변환 실패로 ValueError 발생 -> UNKNOWN_ERROR 반환 예상
-    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
-    assert "볼린저 밴드 계산 중 오류" in result.msg1
+    with patch("services.indicator_service.logging.getLogger") as mock_get_logger:
+        mock_logger = MagicMock()
+        mock_get_logger.return_value = mock_logger
+
+        result = await service.get_bollinger_bands("005930")
+        
+        # pd.to_numeric 변환 실패로 ValueError 발생 -> PARSING_ERROR 반환 예상
+        assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+        assert "데이터 변환 실패" in result.msg1
+        mock_logger.exception.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_get_rsi_success(indicator_service):
@@ -211,10 +216,16 @@ async def test_get_rsi_calculation_error(indicator_service):
     mock_ts.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data_invalid
     )
-    result = await service.get_rsi("005930")
+    
+    with patch("services.indicator_service.logging.getLogger") as mock_get_logger:
+        mock_logger = MagicMock()
+        mock_get_logger.return_value = mock_logger
 
-    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
-    assert "RSI 계산 중 오류" in result.msg1
+        result = await service.get_rsi("005930")
+
+        assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+        assert "데이터 변환 실패" in result.msg1
+        mock_logger.exception.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_get_moving_average_with_preloaded_data(indicator_service):
@@ -241,10 +252,15 @@ async def test_get_moving_average_calculation_error(indicator_service):
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data_invalid
     )
     
-    result = await service.get_moving_average("005930")
+    with patch("services.indicator_service.logging.getLogger") as mock_get_logger:
+        mock_logger = MagicMock()
+        mock_get_logger.return_value = mock_logger
 
-    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
-    assert "MA 계산 중 오류" in result.msg1
+        result = await service.get_moving_average("005930")
+
+        assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+        assert "데이터 변환 실패" in result.msg1
+        mock_logger.exception.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_get_moving_average_ema_success(indicator_service):

@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 from typing import List, Dict, Optional
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage
@@ -80,7 +81,12 @@ class IndicatorService:
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
+        except ValueError as e:
+            logging.getLogger(__name__).exception(f"볼린저 밴드 계산 데이터 변환 실패: {str(e)}")
+            return ResCommonResponse(rt_cd=ErrorCode.PARSING_ERROR.value, msg1=f"데이터 변환 실패: {str(e)}", data=None)
+
         except Exception as e:
+            logging.getLogger(__name__).exception(f"볼린저 밴드 계산 중 오류: {str(e)}")
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"볼린저 밴드 계산 중 오류: {str(e)}", data=None)
 
     async def get_rsi(self, stock_code: str, period: int = 14, candle_type: str = "D") -> ResCommonResponse:
@@ -136,7 +142,12 @@ class IndicatorService:
             result = ResRSI(code=stock_code, date=str(latest['date']), close=float(latest['close']), rsi=float(latest_rsi))
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
+        except ValueError as e:
+            logging.getLogger(__name__).exception(f"RSI 계산 데이터 변환 실패: {str(e)}")
+            return ResCommonResponse(rt_cd=ErrorCode.PARSING_ERROR.value, msg1=f"데이터 변환 실패: {str(e)}", data=None)
+
         except Exception as e:
+            logging.getLogger(__name__).exception(f"RSI 계산 중 오류: {str(e)}")
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"RSI 계산 중 오류: {str(e)}", data=None)
 
     async def get_moving_average(self, stock_code: str, period: int = 20, method: str = "sma",
@@ -185,5 +196,10 @@ class IndicatorService:
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
+        except ValueError as e:
+            logging.getLogger(__name__).exception(f"MA 계산 데이터 변환 실패: {str(e)}")
+            return ResCommonResponse(rt_cd=ErrorCode.PARSING_ERROR.value, msg1=f"데이터 변환 실패: {str(e)}", data=None)
+
         except Exception as e:
+            logging.getLogger(__name__).exception(f"MA 계산 중 오류: {str(e)}")
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"MA 계산 중 오류: {str(e)}", data=None)

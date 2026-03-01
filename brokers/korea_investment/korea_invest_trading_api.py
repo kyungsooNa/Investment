@@ -59,18 +59,18 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             return calculated_hashkey
 
         except httpx.TimeoutException as e:
-            self._logger.error(f"Hashkey API 타임아웃: {e}")
+            self._logger.exception(f"Hashkey API 타임아웃: {e}")
             return None
         except httpx.HTTPStatusError as e:
-            status = e.response.data.status_code if e.response is not None else "unknown"
-            body = e.response.data.text if e.response is not None else ""
-            self._logger.error(f"Hashkey API HTTP 오류: {status}, 응답: {body!r}")
+            status = e.response.status_code if e.response is not None else "unknown"
+            body = e.response.text if e.response is not None else ""
+            self._logger.exception(f"Hashkey API HTTP 오류: {status}, 응답: {body!r}")
             return None
         except json.JSONDecodeError:
-            self._logger.error(f"Hashkey API 응답 JSON 디코딩 실패: {response.data.text!r}")
+            self._logger.exception(f"Hashkey API 응답 JSON 디코딩 실패: {response.data.text!r}")
             return None
         except Exception as e:
-            self._logger.error(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
+            self._logger.exception(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
             return None
 
     async def place_stock_order(self, stock_code, order_price, order_qty,

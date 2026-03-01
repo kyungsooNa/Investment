@@ -211,6 +211,13 @@ class Logger:
         full_message = f"{caller_info} - {message}"
         self.debug_logger.critical(full_message, exc_info=exc_info)
 
+    def exception(self, message):
+        """
+        예외 정보를 포함하여 ERROR 레벨로 로그를 남깁니다.
+        주로 except 블록 안에서 사용합니다.
+        """
+        self.error(message, exc_info=True)
+
     def _get_caller_info(self):
         frame = inspect.currentframe()
         while frame:

@@ -403,3 +403,23 @@ def test_log_cleanup(tmp_path):
                 logger.removeHandler(h)
         
         logging.root.handlers = original_handlers
+
+
+def test_logger_exception_method(clean_logger_instance):
+    """
+    exception() 메서드가 예외 정보를 포함하여 ERROR 레벨로 로그를 남기는지 테스트합니다.
+    """
+    logger, common_log_dir = clean_logger_instance
+    message = "Test exception method"
+    try:
+        raise ValueError("Exception method test")
+    except ValueError:
+        logger.exception(message)
+
+    # Then
+    log_files = list(common_log_dir.glob("*.log"))
+    for f in log_files:
+        content = f.read_text(encoding='utf-8')
+        assert message in content
+        assert "ValueError: Exception method test" in content
+        assert "Traceback" in content
