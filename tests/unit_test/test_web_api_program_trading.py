@@ -153,6 +153,66 @@ async def test_stream_program_trading_logic(mock_web_ctx):
     mock_rdm.remove_subscriber_queue.assert_called_with(test_queue)
 
 @pytest.mark.asyncio
+async def test_program_trading_endpoints(web_client, mock_web_ctx):
+    """프로그램 매매 관련 엔드포인트 테스트"""
+    # realtime_data_manager Mock 설정
+    mock_web_ctx.realtime_data_manager = MagicMock()
+
+    # Subscribe
+    mock_web_ctx.start_program_trading = AsyncMock(return_value=True)
+    mock_web_ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
+
+    resp = web_client.post("/api/program-trading/subscribe", json={"code": "005930"})
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+    # Status
+    resp = web_client.get("/api/program-trading/status")
+    assert resp.status_code == 200
+    assert resp.json()["subscribed"] is True
+
+    # History
+    from common.types import ResCommonResponse
+    mock_web_ctx.stock_query_service.handle_get_program_trading_history.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={}
+    )
+    resp = web_client.get("/api/program-trading/history/005930")
+    assert resp.status_code == 200
+
+    # Unsubscribe
+    mock_web_ctx.stop_program_trading = AsyncMock()
+    resp = web_client.post("/api/program-trading/unsubscribe", json={"code": "005930"})
+    assert resp.status_code == 200
+    mock_web_ctx.stop_program_trading.assert_awaited_with("005930")
+
+
+@pytest.mark.asyncio
+async def test_program_trading_save_load(web_client, mock_web_ctx):
+    """프로그램 매매 데이터 저장/로드 테스트"""
+    mock_web_ctx.realtime_data_manager = MagicMock()
+
+    # Save
+    payload = {"chartData": {}, "subscribedCodes": [], "codeNameMap": {}, "savedAt": "2025-01-01"}
+    resp = web_client.post("/api/program-trading/save-data", json=payload)
+    assert resp.status_code == 200
+    mock_web_ctx.realtime_data_manager.save_snapshot.assert_called()
+
+    # Load
+    mock_web_ctx.realtime_data_manager.load_snapshot.return_value = payload
+    resp = web_client.get("/api/program-trading/load-data")
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+
+def test_websocket_echo_endpoint(web_client):
+    """WebSocket /api/ws/echo 엔드포인트 테스트"""
+    with web_client.websocket_connect("/api/ws/echo") as websocket:
+        websocket.send_text("테스트 메시지")
+        data = websocket.receive_text()
+        assert data == "Message text was: 테스트 메시지"
+
+
+@pytest.mark.asyncio
 async def test_stream_program_trading_keepalive(mock_web_ctx):
     """
     GET /api/program-trading/stream 엔드포인트의 Keepalive 동작 테스트.
