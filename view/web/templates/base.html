@@ -32,7 +32,6 @@
         <span id="status-time">--</span>
         <span id="status-market" class="badge closed">--</span>
         <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>
-        <span id="btn-theme" class="badge clickable" onclick="toggleTheme()" title="테마 전환" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border);">🌙</span>
     </div>
 </header>
 
@@ -60,20 +59,6 @@
 <script src="/static/js/virtual_chart.js?v=6"></script>
 <script src="/static/js/app.js?v=14"></script>
 <script>
-    function toggleTheme() {
-        document.body.classList.toggle('light-mode');
-        const isLight = document.body.classList.contains('light-mode');
-        document.getElementById('btn-theme').innerText = isLight ? '☀️' : '🌙';
-        localStorage.setItem('theme', isLight ? 'light' : 'dark');
-    }
-
-    // 초기 테마 로드
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'light') {
-        document.body.classList.add('light-mode');
-        document.getElementById('btn-theme').innerText = '☀️';
-    }
-
     // 페이지 분리로 인해 탭 전환 로직이 불필요해졌으므로, 
     // app.js의 setupTabs가 동작하지 않도록 하거나 무시됩니다.
     // 대신 각 페이지별 초기화 로직을 아래 블록에 작성합니다.

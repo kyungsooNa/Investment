@@ -1,24 +1,14 @@
-/* Investment Web View - Dark Theme */
+/* Investment Web View - Light Theme (Default) */
 :root {
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --bg-card: #0f3460;
-    --text-primary: #e0e0e0;
-    --text-secondary: #a0a0b0;
-    --accent: #e94560;
-    --positive: #00d26a;
-    --negative: #ff4757;
-    --neutral: #ffa502;
-    --border: #2a2a4a;
-}
-
-/* Light Theme Override */
-body.light-mode {
     --bg-primary: #f0f2f5;
     --bg-secondary: #ffffff;
     --bg-card: #ffffff;
     --text-primary: #2c3e50;
     --text-secondary: #596275;
+    --accent: #e94560;
+    --positive: #00d26a;
+    --negative: #ff4757;
+    --neutral: #ffa502;
     --border: #dcdde1;
 }
 
@@ -60,7 +50,7 @@ body {
 }
 
 .badge.open { background: var(--positive); color: #000; }
-.badge.closed { background: var(--negative); color: #fff; }
+.badge.closed { background: #7f8c8d; color: #fff; }
 .badge.paper { background: var(--neutral); color: #000; }
 .badge.real { background: var(--negative); color: #fff; }
 .badge.clickable { cursor: pointer; transition: opacity 0.2s; }
@@ -229,7 +219,7 @@ td {
     border-bottom: 1px solid var(--border);
 }
 
-tr:hover { background: rgba(255, 255, 255, 0.03); }
+tr:hover { background: rgba(0, 0, 0, 0.03); }
 
 .text-positive { color: var(--positive); }
 .text-negative { color: var(--negative); }
