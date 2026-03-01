@@ -286,7 +286,7 @@ async def test_generate_pool_a_sorting_with_tie_score(mock_deps):
         total_score=50.0
     )
 
-    async def mock_analyze(code, name):
+    async def mock_analyze(code, name, logger=None):
         if code == "A": return item_a
         if code == "B": return item_b
         return None
@@ -349,3 +349,153 @@ async def test_load_pool_a_date_validation(mock_deps):
          patch("builtins.open", mock_open(read_data=create_file_data("20231231"))):
         result = service._load_pool_a()
         assert result == []
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_rs_calculation(mock_deps):
+    """_analyze_candidate: RS 값 계산 및 매핑 로직 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+
+    # 1. 기본 Mock 설정 (필터 통과용)
+    # 거래대금 조건(100억)을 만족하기 위해 volume을 충분히 크게 설정
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+    )
+    indicator.get_bollinger_bands.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+    )
+
+    # 2. RS Mock 설정 (특정 수익률 반환)
+    expected_rs = 15.5
+    indicator.get_relative_strength.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=MagicMock(return_pct=expected_rs)
+    )
+    
+    mapper.is_kosdaq.return_value = False
+
+    # 실행
+    item = await service._analyze_candidate("005930", "Samsung")
+
+    # 검증
+    assert item is not None
+    assert item.rs_return_3m == expected_rs
+    # indicator 서비스가 올바른 파라미터로 호출되었는지 확인
+    indicator.get_relative_strength.assert_awaited_once()
+    call_args = indicator.get_relative_strength.call_args
+    assert call_args[0][0] == "005930" # code
+    assert call_args[1]['period_days'] == service._cfg.rs_period_days
+    assert call_args[1]['ohlcv_data'] == ohlcv
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_rs_calculation_failure(mock_deps):
+    """_analyze_candidate: RS 계산 실패 시 0.0 처리 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+
+    # 기본 Mock 설정 (필터 통과용)
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+    )
+    indicator.get_bollinger_bands.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+    )
+
+    # RS Mock 설정 (실패 응답)
+    indicator.get_relative_strength.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Fail", data=None
+    )
+    
+    mapper.is_kosdaq.return_value = False
+
+    # 실행
+    item = await service._analyze_candidate("005930", "Samsung")
+
+    # 검증
+    assert item is not None
+    assert item.rs_return_3m == 0.0
+
+def test_compute_rs_scores_logic(mock_deps):
+    """_compute_rs_scores: 상위 퍼센타일에 점수 부여 로직 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # 설정: 상위 20%에게 점수 부여
+    service._cfg.rs_top_percentile = 20.0
+    service._cfg.rs_score_points = 30.0
+
+    # 10개의 아이템 생성 (RS 수익률 10~100)
+    items = []
+    for i in range(10):
+        item = OSBWatchlistItem(
+            code=f"{i}", name=f"Stock{i}", market="KOSPI",
+            high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+            bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0,
+            rs_return_3m=(i + 1) * 10.0  # 10.0, 20.0, ..., 100.0
+        )
+        items.append(item)
+    
+    # 실행
+    service._compute_rs_scores(items)
+
+    # 검증
+    # 상위 20%는 10개 중 2개 (90.0, 100.0)
+    # 정렬된 수익률: 10, 20, ..., 80, 90, 100
+    # cutoff 인덱스 계산: len(10) * (1 - 0.2) = 8. index 8은 90.0
+    # 따라서 90.0 이상인 항목만 점수를 받아야 함.
+    
+    for item in items:
+        if item.rs_return_3m >= 90.0:
+            assert item.rs_score == 30.0
+        else:
+            assert item.rs_score == 0.0
+
+@pytest.mark.asyncio
+async def test_compute_profit_growth_scores_api_failure(mock_deps):
+    """_compute_profit_growth_scores: API 호출 실패 시 점수 미부여 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+
+    # 아이템 생성
+    item = OSBWatchlistItem(
+        code="005930", name="Samsung", market="KOSPI",
+        high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+        bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0
+    )
+    items = [item]
+
+    # API 실패 응답 설정
+    ts.get_financial_ratio.return_value = ResCommonResponse(
+        rt_cd="1", msg1="API Error", data=None
+    )
+
+    # 실행
+    await service._compute_profit_growth_scores(items)
+
+    # 검증: 점수가 0이어야 함
+    assert item.profit_growth_score == 0.0
+
+@pytest.mark.asyncio
+async def test_compute_profit_growth_scores_exception(mock_deps):
+    """_compute_profit_growth_scores: API 호출 중 예외 발생 시 점수 미부여 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+
+    item = OSBWatchlistItem(
+        code="005930", name="Samsung", market="KOSPI",
+        high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+        bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0
+    )
+    items = [item]
+
+    # API 예외 설정
+    ts.get_financial_ratio.side_effect = Exception("Network Error")
+
+    # 실행
+    await service._compute_profit_growth_scores(items)
+
+    # 검증: 점수가 0이어야 함 (예외가 발생해도 크래시되지 않고 0점 처리)
+    assert item.profit_growth_score == 0.0
