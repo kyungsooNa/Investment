@@ -9,8 +9,6 @@
 3. [모의투자결과View] 현재가 조회하는데 오래걸리는걸로 보이는데, 어떻게 할지 고민필요. (멀종종목조회 기능 추가 필요 /uapi/domestic-stock/v1/quotations/intstock-multprice, 실전 TR ID	FHKST11300006)
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 13. [투자결과] 수수료도 적용하여 수익률 계산
-14. [프로그램매매] 구독한 종목 여러개를 선택할 수 있도록 수정. (by claude)
-  - 그리고 program_chart도 virtual_chart.js 처럼 분리하자.
 
 ### 1. 환경 (Environment)
 * **[개선 필요]** app.js web_api.py web 등 web관련 파일 덩어리가 너무 커서 리팩토링 필요.
