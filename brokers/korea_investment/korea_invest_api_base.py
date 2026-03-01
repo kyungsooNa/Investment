@@ -145,21 +145,21 @@ class KoreaInvestApiBase:
 
     def _log_request_exception(self, e):
         if isinstance(e, httpx.HTTPStatusError):
-            self._logger.error(f"HTTP 오류 발생 (httpx): {e.response.status_code} - {e.response.text}")
+            self._logger.error(f"HTTP 오류 발생 (httpx): {e.response.status_code} - {e.response.text}", exc_info=True)
         elif isinstance(e, requests.exceptions.HTTPError):
-            self._logger.error(f"HTTP 오류 발생 (requests): {e.response.status_code} - {e.response.text}")
+            self._logger.error(f"HTTP 오류 발생 (requests): {e.response.status_code} - {e.response.text}", exc_info=True)
         elif isinstance(e, requests.exceptions.ConnectionError):
-            self._logger.error(f"연결 오류 발생: {e}")
+            self._logger.error(f"연결 오류 발생: {e}", exc_info=True)
         elif isinstance(e, requests.exceptions.Timeout):
-            self._logger.error(f"타임아웃 오류 발생: {e}")
+            self._logger.error(f"타임아웃 오류 발생: {e}", exc_info=True)
         elif isinstance(e, requests.exceptions.RequestException):  # requests 관련 일반 예외
-            self._logger.error(f"요청 예외 발생 (requests): {e}")
+            self._logger.error(f"요청 예외 발생 (requests): {e}", exc_info=True)
         elif isinstance(e, httpx.RequestError):  # httpx 관련 일반 요청 오류 (연결, 타임아웃 등)
-            self._logger.error(f"요청 예외 발생 (httpx): {e}")
+            self._logger.error(f"요청 예외 발생 (httpx): {e}", exc_info=True)
         elif isinstance(e, json.JSONDecodeError):
-            self._logger.error("JSON 디코딩 오류 발생")
+            self._logger.error("JSON 디코딩 오류 발생", exc_info=True)
         else:
-            self._logger.error(f"예상치 못한 예외 발생: {e}")
+            self._logger.error(f"예상치 못한 예외 발생: {e}", exc_info=True)
 
     async def _execute_request(self, method, url, params, data):
         loop = asyncio.get_running_loop()

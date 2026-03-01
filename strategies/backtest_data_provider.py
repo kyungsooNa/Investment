@@ -77,5 +77,5 @@ class BacktestDataProvider:
             return after_price
 
         except Exception as e:
-            self._logger.error(f"[백테스트] {stock_code} 가격 조회 중 오류 발생: {e}", exc_info=True)
+            self._logger.exception(f"[백테스트] {stock_code} 가격 조회 중 오류 발생: {e}")
             return base_summary.get("current", 0)

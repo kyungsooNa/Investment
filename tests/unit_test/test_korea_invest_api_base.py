@@ -599,6 +599,9 @@ async def test_log_request_exception_cases(caplog):
     for expected in ["HTTP ", " ", "", " ", "JSON ", " "]:
         assert any(expected in message for message in caplog.messages)
 
+    for record in caplog.records:
+        assert record.exc_info is not None
+
 
 @pytest.mark.asyncio
 async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용

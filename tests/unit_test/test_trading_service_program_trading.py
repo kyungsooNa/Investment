@@ -72,4 +72,4 @@ async def test_subscribe_program_trading_exception_handling(trading_service):
     
     assert result is False
     # 서비스 레이어에서 에러 로그를 남겼는지 확인
-    trading_service._logger.error.assert_called()
+    trading_service._logger.exception.assert_called()

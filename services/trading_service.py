@@ -134,7 +134,7 @@ class TradingService:
         try:
             return await self._broker_api_wrapper.subscribe_program_trading(stock_code)
         except Exception as e:
-            self._logger.error(f"프로그램 매매 구독 중 오류 발생: {e}")
+            self._logger.exception(f"프로그램 매매 구독 중 오류 발생: {e}")
             return False
 
     async def unsubscribe_program_trading(self, stock_code: str) -> bool:
@@ -144,7 +144,7 @@ class TradingService:
         try:
             return await self._broker_api_wrapper.unsubscribe_program_trading(stock_code)
         except Exception as e:
-            self._logger.error(f"프로그램 매매 구독 해지 중 오류 발생: {e}")
+            self._logger.exception(f"프로그램 매매 구독 해지 중 오류 발생: {e}")
             return False
 
     async def get_price_summary(self, stock_code) -> ResCommonResponse:
@@ -177,7 +177,7 @@ class TradingService:
                 is_buy=True
             )
         except Exception as e:
-            self._logger.error(f"Service - 매수 주문 중 오류 발생: {str(e)}")
+            self._logger.exception(f"Service - 매수 주문 중 오류 발생: {str(e)}")
             return ResCommonResponse(
                 rt_cd=ErrorCode.UNKNOWN_ERROR.value,  # Enum 값 사용
                 msg1=f"매수 주문 처리 중 예외 발생: {str(e)}",
@@ -204,7 +204,7 @@ class TradingService:
                 is_buy=False
             )
         except Exception as e:
-            self._logger.error(f"Service - 매도 주문 중 오류 발생: {str(e)}")
+            self._logger.exception(f"Service - 매도 주문 중 오류 발생: {str(e)}")
             return ResCommonResponse(
                 rt_cd=ErrorCode.UNKNOWN_ERROR.value,  # Enum 값 사용
                 msg1=f"매도 주문 처리 중 예외 발생: {str(e)}",
@@ -261,7 +261,7 @@ class TradingService:
                     )
                     results.append(stock_info)
             except Exception as e:
-                self._logger.warning(f"{code} 현재 상한가 필터링 중 오류: {e}")
+                self._logger.warning(f"{code} 현재 상한가 필터링 중 오류: {e}", exc_info=True)
                 continue  #
 
         self._time_manager.get_current_kst_time()
@@ -299,7 +299,7 @@ class TradingService:
 
         except Exception as e:
             error_msg = f"전체 종목 코드 조회 실패: {e}"
-            self._logger.error(error_msg)
+            self._logger.exception(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.UNKNOWN_ERROR.value,  # Enum 값 사용
                 msg1=error_msg,
@@ -468,7 +468,7 @@ class TradingService:
                 await self._time_manager.async_sleep(1)  # 단순 대기 (메시지는 내부 handler에서 자동 처리됨)
 
         except Exception as e:
-            self._logger.error(f"실시간 스트림 처리 중 오류 발생: {str(e)}")
+            self._logger.exception(f"실시간 스트림 처리 중 오류 발생: {str(e)}")
 
         finally:
             for code in stock_codes:

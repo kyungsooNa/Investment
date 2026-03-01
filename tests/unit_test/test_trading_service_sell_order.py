@@ -53,7 +53,7 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
 
         # 에러 로그 기록 확인
         self.assertTrue(
-            any("매도 주문 중 오류 발생" in call_args[0][0] for call_args in self.mock_logger.error.call_args_list)
+            any("매도 주문 중 오류 발생" in call_args[0][0] for call_args in self.mock_logger.exception.call_args_list)
         )
 
     async def test_place_sell_order_api_failure(self):
@@ -76,4 +76,4 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
 
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
         assert "예상치 못한 오류" in result.msg1
-        self.mock_logger.error.assert_any_call("Service - 매도 주문 중 오류 발생: 예상치 못한 오류")
+        self.mock_logger.exception.assert_any_call("Service - 매도 주문 중 오류 발생: 예상치 못한 오류")

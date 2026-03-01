@@ -124,6 +124,7 @@ async def test_get_hashkey_network_error():
     )):
         out = await api._get_hashkey({"k":"v"})
         assert out is None
+        api._logger.exception.assert_called()
 
 @pytest.mark.asyncio
 async def test_get_hashkey_json_decode_error():
@@ -135,6 +136,7 @@ async def test_get_hashkey_json_decode_error():
         )
         out = await api._get_hashkey({"k":"v"})
         assert out is None
+        api._logger.exception.assert_called()
 
 @pytest.mark.asyncio
 async def test_get_hashkey_unexpected_exception():
@@ -151,6 +153,7 @@ async def test_get_hashkey_unexpected_exception():
     with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(side_effect=Exception("Unexpected Error"))):
         result = await api._get_hashkey({"test": "value"})
         assert result is None
+        api._logger.exception.assert_called()
 
 @pytest.mark.asyncio
 async def test_get_hashkey_missing_hash_field():
@@ -257,6 +260,7 @@ async def test_get_hashkey_timeout_exception():
     with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(side_effect=httpx.TimeoutException("Timeout"))):
         result = await api._get_hashkey({"k": "v"})
         assert result is None
+        api._logger.exception.assert_called()
 
 @pytest.mark.asyncio
 async def test_get_hashkey_http_status_error():
@@ -275,6 +279,7 @@ async def test_get_hashkey_http_status_error():
     with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(side_effect=error)):
         result = await api._get_hashkey({"k": "v"})
         assert result is None
+        api._logger.exception.assert_called()
 
 @pytest.mark.asyncio
 async def test_get_hashkey_api_failure_response():

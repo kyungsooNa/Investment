@@ -65,7 +65,8 @@ class KoreaInvestWebSocketAPI:
             cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
             return bytes.decode(unpad(cipher.decrypt(b64decode(cipher_text)), AES.block_size))
         except Exception as e:
-            self._logger.error(f"AES 복호화 오류 발생: {e} (key: {key[:5]}..., iv: {iv[:5]}..., cipher: {cipher_text[:50]}...)")
+            self._logger.exception(f"AES 복호화 오류 발생: {e} (key: {key[:5]}..., iv: {iv[:5]}..., cipher: {cipher_text[:50]}...)")
+
             return None
 
     async def _get_approval_key(self):
@@ -103,16 +104,16 @@ class KoreaInvestWebSocketAPI:
                 self._logger.info(f"웹소켓 접속키 발급 성공: {self.approval_key[:10]}...")  # 키의 일부만 로깅
                 return self.approval_key
             else:
-                self._logger.error(f"웹소켓 접속키 발급 실패 - 응답 데이터 오류: {auth_data}")
+                self._logger.exception(f"웹소켓 접속키 발급 실패 - 응답 데이터 오류: {auth_data}")
                 return None
         except requests.exceptions.RequestException as e:
-            self._logger.error(f"웹소켓 접속키 발급 중 네트워크 오류: {e}")
+            self._logger.exception(f"웹소켓 접속키 발급 중 네트워크 오류: {e}")
             return None
         except json.JSONDecodeError:
-            self._logger.error(f"웹소켓 접속키 발급 응답 JSON 디코딩 실패: {res.text if res else '응답 없음'}")
+            self._logger.exception(f"웹소켓 접속키 발급 응답 JSON 디코딩 실패: {res.text if res else '응답 없음'}")
             return None
         except Exception as e:
-            self._logger.error(f"웹소켓 접속키 발급 중 알 수 없는 오류: {e}")
+            self._logger.exception(f"웹소켓 접속키 발급 중 알 수 없는 오류: {e}")
             return None
 
     async def _establish_connection(self):
@@ -134,7 +135,7 @@ class KoreaInvestWebSocketAPI:
             self._logger.info("웹소켓 연결 성공.")
             return True
         except Exception as e:
-            self._logger.error(f"웹소켓 연결 중 오류 발생: {e}")
+            self._logger.exception(f"웹소켓 연결 중 오류 발생: {e}")
             self._is_connected = False
             self.ws = None
             return False
@@ -181,7 +182,7 @@ class KoreaInvestWebSocketAPI:
                 self._handle_websocket_message(message)
             except (websockets.ConnectionClosed, Exception) as e:
                 if self._auto_reconnect:
-                    self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.")
+                    self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.", exc_info=True)
                 self._is_connected = False
                 self.ws = None
 
@@ -259,7 +260,7 @@ class KoreaInvestWebSocketAPI:
                         parsed_data = self._parse_signing_notice(decrypted_str, tr_id)
                         message_type = 'signing_notice'
                     else:
-                        self._logger.error(f"체결통보 복호화 실패: {tr_id}, 데이터: {data_body[:50]}...")
+                        self._logger.exception(f"체결통보 복호화 실패: {tr_id}, 데이터: {data_body[:50]}...")
                         return
                 else:
                     self._logger.warning(f"체결통보 암호화 해제 실패: AES 키/IV 없음. TR_ID: {tr_id}, 메시지: {message[:50]}...")
@@ -297,9 +298,9 @@ class KoreaInvestWebSocketAPI:
                     if json_object.get("body", {}).get("msg1") == 'ALREADY IN SUBSCRIBE':
                         self._logger.warning("이미 구독 중인 종목입니다.")
             except json.JSONDecodeError:
-                self._logger.error(f"제어 메시지 JSON 디코딩 실패: {message}")
+                self._logger.exception(f"제어 메시지 JSON 디코딩 실패: {message}")
             except Exception as e:
-                self._logger.error(f"제어 메시지 처리 중 오류 발생: {e}, 메시지: {message}")
+                self._logger.exception(f"제어 메시지 처리 중 오류 발생: {e}, 메시지: {message}")
 
     # --- 실시간 데이터 파싱 헬퍼 함수들 ---
 
@@ -557,7 +558,8 @@ class KoreaInvestWebSocketAPI:
                 except asyncio.CancelledError:
                     self._logger.info("웹소켓 수신 태스크 취소됨.")
                 except Exception as e:
-                    self._logger.error(f"웹소켓 수신 태스크 종료 중 오류: {e}")
+                    self._logger.error(f"웹소켓 수신 태스크 종료 중 오류: {e}", exc_info=True)
+                    
             self._logger.info("웹소켓 연결 종료 완료.")
             self._is_connected = False
             self.ws = None
@@ -621,7 +623,7 @@ class KoreaInvestWebSocketAPI:
                 self._subscribed_items.discard((tr_id, tr_key))
             return True
         except Exception as e:
-            self._logger.error(f"실시간 요청 전송 중 오류 발생: {e}")
+            self._logger.exception(f"실시간 요청 전송 중 오류 발생: {e}")
             self._is_connected = False
             self.ws = None
             return False
@@ -659,4 +661,4 @@ class KoreaInvestWebSocketAPI:
             else:
                 self._logger.warning("수신된 메시지를 처리할 콜백이 등록되지 않았습니다.")
         except Exception as e:
-            self._logger.error(f"수신 메시지 처리 중 예외 발생: {e}")
+            self._logger.exception(f"수신 메시지 처리 중 예외 발생: {e}")
