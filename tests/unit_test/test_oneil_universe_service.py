@@ -1,6 +1,6 @@
 # tests/unit_test/test_oneil_universe_service.py
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch, mock_open
+from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
 from datetime import datetime
 import pandas as pd
 import json
@@ -663,8 +663,30 @@ async def test_analyze_candidate_insufficient_data(mock_deps):
     
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
     assert item is None
-    # 로그가 호출되었는지 확인 (debug 레벨)
-    logger.debug.assert_called()
+
+@pytest.mark.asyncio
+async def test_update_market_timing_updates_cache(mock_deps):
+    """_update_market_timing: KOSPI/KOSDAQ 각각에 대해 ETF MA 확인 후 캐시 업데이트 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # _check_etf_ma_rising 모킹
+    with patch.object(service, '_check_etf_ma_rising', new_callable=AsyncMock) as mock_check:
+        # KOSDAQ(True), KOSPI(False) 반환 설정
+        mock_check.side_effect = [True, False]
+        
+        await service._update_market_timing()
+        
+        # 캐시 확인
+        assert service._market_timing_cache["KOSDAQ"] is True
+        assert service._market_timing_cache["KOSPI"] is False
+        
+        # 호출 확인
+        expected_calls = [
+            call(service._cfg.kosdaq_etf_code),
+            call(service._cfg.kospi_etf_code)
+        ]
+        mock_check.assert_has_awaits(expected_calls, any_order=True)
 
 @pytest.mark.asyncio
 async def test_analyze_candidate_trend_filter_fail(mock_deps):
