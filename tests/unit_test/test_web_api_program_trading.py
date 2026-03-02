@@ -153,55 +153,79 @@ async def test_stream_program_trading_logic(mock_web_ctx):
     mock_rdm.remove_subscriber_queue.assert_called_with(test_queue)
 
 @pytest.mark.asyncio
-async def test_program_trading_endpoints(web_client, mock_web_ctx):
-    """프로그램 매매 관련 엔드포인트 테스트"""
-    # realtime_data_manager Mock 설정
-    mock_web_ctx.realtime_data_manager = MagicMock()
-
-    # Subscribe
-    mock_web_ctx.start_program_trading = AsyncMock(return_value=True)
-    mock_web_ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
-
-    resp = web_client.post("/api/program-trading/subscribe", json={"code": "005930"})
-    assert resp.status_code == 200
-    assert resp.json()["success"] is True
-
-    # Status
-    resp = web_client.get("/api/program-trading/status")
-    assert resp.status_code == 200
-    assert resp.json()["subscribed"] is True
-
-    # History
-    from common.types import ResCommonResponse
-    mock_web_ctx.stock_query_service.handle_get_program_trading_history.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={}
-    )
-    resp = web_client.get("/api/program-trading/history/005930")
-    assert resp.status_code == 200
-
-    # Unsubscribe
-    mock_web_ctx.stop_program_trading = AsyncMock()
-    resp = web_client.post("/api/program-trading/unsubscribe", json={"code": "005930"})
-    assert resp.status_code == 200
-    mock_web_ctx.stop_program_trading.assert_awaited_with("005930")
-
+async def test_subscribe_program_trading_failure(web_client, mock_web_ctx):
+    """POST /api/program-trading/subscribe 실패 테스트 (WebSocket 연결 실패)"""
+    mock_web_ctx.start_program_trading = AsyncMock(return_value=False)
+    
+    response = web_client.post("/api/program-trading/subscribe", json={"code": "005930"})
+    
+    assert response.status_code == 500
+    assert response.json()["detail"] == "WebSocket 연결 실패"
 
 @pytest.mark.asyncio
-async def test_program_trading_save_load(web_client, mock_web_ctx):
-    """프로그램 매매 데이터 저장/로드 테스트"""
+async def test_unsubscribe_program_trading_specific(web_client, mock_web_ctx):
+    """POST /api/program-trading/unsubscribe 개별 해지 테스트"""
+    mock_web_ctx.stop_program_trading = AsyncMock()
+    mock_web_ctx.stop_all_program_trading = AsyncMock()
     mock_web_ctx.realtime_data_manager = MagicMock()
+    mock_web_ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
 
-    # Save
-    payload = {"chartData": {}, "subscribedCodes": [], "codeNameMap": {}, "savedAt": "2025-01-01"}
-    resp = web_client.post("/api/program-trading/save-data", json=payload)
-    assert resp.status_code == 200
-    mock_web_ctx.realtime_data_manager.save_snapshot.assert_called()
+    response = web_client.post("/api/program-trading/unsubscribe", json={"code": "005930"})
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    mock_web_ctx.stop_program_trading.assert_awaited_once_with("005930")
+    mock_web_ctx.stop_all_program_trading.assert_not_awaited()
 
-    # Load
-    mock_web_ctx.realtime_data_manager.load_snapshot.return_value = payload
-    resp = web_client.get("/api/program-trading/load-data")
-    assert resp.status_code == 200
-    assert resp.json()["success"] is True
+@pytest.mark.asyncio
+async def test_unsubscribe_program_trading_all(web_client, mock_web_ctx):
+    """POST /api/program-trading/unsubscribe 전체 해지 테스트"""
+    mock_web_ctx.stop_all_program_trading = AsyncMock()
+    mock_web_ctx.stop_program_trading = AsyncMock()
+    mock_web_ctx.realtime_data_manager = MagicMock()
+    mock_web_ctx.realtime_data_manager.get_subscribed_codes.return_value = []
+
+    response = web_client.post("/api/program-trading/unsubscribe", json={})
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    mock_web_ctx.stop_all_program_trading.assert_awaited_once()
+    mock_web_ctx.stop_program_trading.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_get_program_trading_history_detail(web_client, mock_web_ctx):
+    """GET /api/program-trading/history/{code} 상세 테스트"""
+    from common.types import ResCommonResponse
+    
+    # Mock Mapper
+    mock_mapper = MagicMock()
+    mock_mapper.get_name_by_code.return_value = "삼성전자"
+    mock_web_ctx.stock_code_mapper = mock_mapper
+    
+    # Mock Service Response
+    mock_resp = ResCommonResponse(rt_cd="0", msg1="OK", data={"some": "data"})
+    mock_web_ctx.stock_query_service.handle_get_program_trading_history = AsyncMock(return_value=mock_resp)
+    
+    response = web_client.get("/api/program-trading/history/005930")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rt_cd"] == "0"
+    assert data["data"]["name"] == "삼성전자"
+    mock_web_ctx.stock_query_service.handle_get_program_trading_history.assert_awaited_once_with("005930")
+
+@pytest.mark.asyncio
+async def test_get_program_trading_status(web_client, mock_web_ctx):
+    """GET /api/program-trading/status 테스트"""
+    mock_web_ctx.realtime_data_manager = MagicMock()
+    mock_web_ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930", "000660"]
+    
+    response = web_client.get("/api/program-trading/status")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["subscribed"] is True
+    assert data["codes"] == ["005930", "000660"]
 
 
 def test_websocket_echo_endpoint(web_client):
@@ -256,3 +280,66 @@ async def test_stream_program_trading_keepalive(mock_web_ctx):
         pass
         
     mock_rdm.remove_subscriber_queue.assert_called_with(test_queue)
+
+@pytest.mark.asyncio
+async def test_save_pt_data_exception(web_client, mock_web_ctx):
+    """POST /api/program-trading/save-data 예외 발생 테스트"""
+    
+    # RealtimeDataManager Mock 설정
+    mock_rdm = MagicMock()
+    mock_web_ctx.realtime_data_manager = mock_rdm
+    
+    # 예외 발생 설정
+    mock_rdm.save_snapshot.side_effect = Exception("Disk full")
+    
+    data = {
+        "chartData": {},
+        "subscribedCodes": [],
+        "codeNameMap": {}
+    }
+    
+    response = web_client.post("/api/program-trading/save-data", json=data)
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["msg"] == "Disk full"
+
+@pytest.mark.asyncio
+async def test_stream_program_trading_cancellation(mock_web_ctx):
+    """
+    GET /api/program-trading/stream 엔드포인트의 CancelledError 처리 테스트.
+    스트리밍 중 취소 발생 시 큐 제거가 수행되는지 검증합니다.
+    """
+    from view.web.routes.program import stream_program_trading
+    from fastapi import Request
+
+    # Mock Request
+    mock_request = AsyncMock(spec=Request)
+    mock_request.is_disconnected.return_value = False
+
+    # RealtimeDataManager Mock
+    mock_rdm = MagicMock()
+    mock_web_ctx.realtime_data_manager = mock_rdm
+    
+    # Mock Queue that raises CancelledError on get()
+    mock_queue = MagicMock()
+    mock_queue.get = AsyncMock(side_effect=asyncio.CancelledError)
+    mock_rdm.create_subscriber_queue.return_value = mock_queue
+    mock_rdm.get_history_data.return_value = {}
+
+    # 핸들러 호출 (program.py의 _get_ctx 패치)
+    with patch("view.web.routes.program._get_ctx", return_value=mock_web_ctx):
+        response = await stream_program_trading(mock_request)
+
+    iterator = response.body_iterator
+
+    # 제너레이터 실행 -> CancelledError 발생 -> catch -> finally 실행
+    try:
+        await iterator.__anext__()
+    except StopAsyncIteration:
+        pass
+    except asyncio.CancelledError:
+        pass
+
+    # finally 블록 실행 확인
+    mock_rdm.remove_subscriber_queue.assert_called_with(mock_queue)
