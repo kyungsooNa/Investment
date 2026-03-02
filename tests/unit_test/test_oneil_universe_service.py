@@ -665,3 +665,128 @@ async def test_analyze_candidate_insufficient_data(mock_deps):
     assert item is None
     # 로그가 호출되었는지 확인 (debug 레벨)
     logger.debug.assert_called()
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_trend_filter_fail(mock_deps):
+    """_analyze_candidate: 정배열 조건(Close > MA20 > MA50) 불만족 시 탈락 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # 1. OHLCV Mock
+    # 역배열 데이터 생성 (가격이 계속 하락)
+    # Close(100) < MA20(approx 110) < MA50(approx 125)
+    ohlcv = [{"close": 200 - i, "high": 210 - i, "volume": 1000000} for i in range(100)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    
+    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    assert item is None
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
+    """_analyze_candidate: 52주 고가 대비 너무 많이 하락한 경우 탈락 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # 1. OHLCV Mock (정배열 등 다른 조건은 만족시켜야 함)
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 1000000} for i in range(100)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    
+    # 2. 현재가 Mock
+    # 현재가(prev_close) approx 1099.
+    # 52주 고가 2000 -> (2000-1099)/2000 = 45% 하락 -> 탈락 (기본 설정 25% 가정)
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "2000", "hts_avls": "1000"}}
+    )
+    
+    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    assert item is None
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
+    """_analyze_candidate: 볼린저 밴드 스퀴즈 조건 불만족 시 탈락 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # 1. OHLCV & Price Mock (기본 통과 조건)
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 1000000} for i in range(100)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+    )
+    
+    # 2. BB Mock
+    # 최근 폭이 최소 폭보다 훨씬 큼 (확장 국면)
+    bands = []
+    for i in range(50):
+        width = 10 if i < 40 else 50 # 최근에 확 벌어짐
+        bands.append(MagicMock(upper=100+width, lower=100))
+    
+    indicator.get_bollinger_bands.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=bands
+    )
+    
+    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    assert item is None
+
+@pytest.mark.asyncio
+async def test_is_market_timing_ok_caching(mock_deps):
+    """is_market_timing_ok: 날짜 변경 시에만 업데이트 호출 및 캐싱 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 10, 0, 0)
+    
+    with patch.object(service, '_update_market_timing', new_callable=AsyncMock) as mock_update:
+        # 1. 첫 호출 (캐시 없음)
+        async def update_side_effect():
+            service._market_timing_cache["KOSPI"] = False
+        mock_update.side_effect = update_side_effect
+        
+        result = await service.is_market_timing_ok("KOSPI")
+        assert result is False
+        mock_update.assert_awaited_once()
+        assert service._market_timing_date == "20250101"
+        
+        # 2. 두 번째 호출 (같은 날짜 -> 캐시 사용)
+        mock_update.reset_mock()
+        result2 = await service.is_market_timing_ok("KOSPI")
+        assert result2 is False
+        mock_update.assert_not_called()
+        
+        # 3. 날짜 변경
+        tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+        result3 = await service.is_market_timing_ok("KOSPI")
+        mock_update.assert_awaited_once()
+        assert service._market_timing_date == "20250102"
+
+def test_calc_turnover_ratio_zero_cap(mock_deps):
+    """_calc_turnover_ratio: 시가총액 0일 때 0 반환 (ZeroDivisionError 방지)."""
+    item = OSBWatchlistItem(
+        code="A", name="A", market="KOSPI",
+        high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+        bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0,
+        avg_trading_value_5d=100,
+        market_cap=0 # Zero
+    )
+    assert OneilUniverseService._calc_turnover_ratio(item) == 0
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_insufficient_bb_data(mock_deps):
+    """_analyze_candidate: BB 데이터가 부족할 때 None 반환."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    ohlcv = [{"close": 1000, "high": 1100, "volume": 1000000} for _ in range(100)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+    )
+    
+    # BB Data Short
+    bands = [MagicMock(upper=110, lower=90) for _ in range(10)]
+    indicator.get_bollinger_bands.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=bands
+    )
+    
+    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    assert item is None
