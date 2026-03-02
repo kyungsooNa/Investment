@@ -166,6 +166,10 @@ class BrokerAPIWrapper:
         """
         return await self._client.get_etf_info(etf_code)
 
+    async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
+        """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
+        return await self._client.get_financial_ratio(stock_code)
+
     # --- KoreaInvestApiClient / Account API delegation ---
     async def get_account_balance(self) -> ResCommonResponse:
         """계좌 잔고를 조회합니다 (KoreaInvestApiAccount 위임)."""

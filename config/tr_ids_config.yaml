@@ -16,6 +16,7 @@ tr_ids:
     inquire_daily_itemchartprice:      FHKST03010100 # 기간별 시세 (일/주/월/년)
     inquire_time_itemchartprice:       FHKST03010200 # 당일 분봉 조회
     inquire_time_daily_itemchartprice: FHKST03010230 # 일변 분봉 조회 (모의 미지원)
+    financial_ratio: FHKST66430300  # 기업 재무비율 (KIS 문서 확인 필요, 실전 전용 가능성)
 
   account:
     inquire_balance_real: TTTC8434R # 실전 계좌 잔고 조회
