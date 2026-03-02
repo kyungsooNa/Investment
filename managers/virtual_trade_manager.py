@@ -18,6 +18,18 @@ SNAPSHOT_FILENAME = "portfolio_snapshots.json"
 def _is_weekday(date_str: str) -> bool:
     """날짜 문자열(YYYY-MM-DD)이 평일인지 확인"""
     return datetime.strptime(date_str, "%Y-%m-%d").weekday() < 5
+
+
+def _get_trading_dates(daily: dict) -> list[str]:
+    """스냅샷 dict에서 실제 거래일만 추출 (평일 + 직전 대비 값이 변한 날짜). 오름차순 반환."""
+    weekday_dates = sorted(d for d in daily if _is_weekday(d))
+    if not weekday_dates:
+        return []
+    trading = [weekday_dates[0]]  # 첫 날은 항상 포함
+    for d in weekday_dates[1:]:
+        if daily[d] != daily[trading[-1]]:
+            trading.append(d)
+    return trading
 PRICE_CACHE_FILENAME = "close_price_cache.json"
 
 
@@ -383,13 +395,20 @@ class VirtualTradeManager:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     def save_daily_snapshot(self, strategy_returns: dict):
-        """오늘 스냅샷 저장 (토/일에는 저장하지 않음)."""
+        """오늘 스냅샷 저장. 토/일 및 직전 스냅샷과 동일한 데이터(공휴일)는 건너뜀."""
         now = self.tm.get_current_kst_time()
         if now.weekday() >= 5:  # 토(5), 일(6)
             return
         today = now.strftime("%Y-%m-%d")
         data = self._load_data()
         daily = data["daily"]
+
+        # 직전 평일 스냅샷과 동일하면 공휴일로 간주하여 저장 안 함
+        prev_dates = sorted([d for d in daily if d < today and _is_weekday(d)], reverse=True)
+        if prev_dates:
+            last_snapshot = daily[prev_dates[0]]
+            if last_snapshot == strategy_returns:
+                return
 
         # 오늘 스냅샷 저장 (같은 날 여러 번 호출 시 최신값으로 덮어쓰기)
         daily[today] = strategy_returns
@@ -400,42 +419,50 @@ class VirtualTradeManager:
 
         self._save_data(data)
 
-    def get_daily_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> float:
-        """가장 최근 평일 스냅샷 대비 변화. 이전 스냅샷이 없으면 누적수익률 자체 반환."""
+    def get_daily_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float, str | None]:
+        """가장 최근 거래일 vs 직전 거래일 스냅샷 비교. (변동값, 기준날짜) 튜플 반환."""
         data = _data or self._load_data()
         daily = data.get("daily", {})
         today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
 
-        prev_dates = sorted([d for d in daily if d < today and _is_weekday(d)], reverse=True)
-        if not prev_dates:
-            return current_return
+        all_trading = _get_trading_dates(daily)
+        # 오늘 이하의 거래일만
+        trading = [d for d in all_trading if d <= today]
+        if len(trading) < 2:
+            return current_return, None
 
-        ref_val = daily[prev_dates[0]].get(strategy)
-        if ref_val is None:
-            return current_return
-        return round(current_return - ref_val, 2)
+        latest_date = trading[-1]   # 가장 최근 거래일
+        prev_date = trading[-2]     # 직전 거래일
 
-    def get_weekly_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> float | None:
-        """7일 전 평일 스냅샷 대비 변화. 스냅샷 없으면 None."""
+        latest_val = daily[latest_date].get(strategy)
+        prev_val = daily[prev_date].get(strategy)
+        if latest_val is None or prev_val is None:
+            return current_return, None
+        return round(latest_val - prev_val, 2), prev_date
+
+    def get_weekly_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float | None, str | None]:
+        """7일 전 거래일 스냅샷 대비 변화. (변동값, 기준날짜) 튜플 반환."""
         data = _data or self._load_data()
         daily = data.get("daily", {})
         today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
         target = (self.tm.get_current_kst_time() - timedelta(days=7)).strftime("%Y-%m-%d")
 
-        candidates = sorted([d for d in daily if d <= target and d != today and _is_weekday(d)], reverse=True)
+        all_trading = _get_trading_dates(daily)
+        candidates = [d for d in all_trading if d <= target and d != today]
         if not candidates:
-            return None
+            return None, None
 
-        ref_val = daily[candidates[0]].get(strategy)
+        ref_date = candidates[-1]
+        ref_val = daily[ref_date].get(strategy)
         if ref_val is None:
-            return None
-        return round(current_return - ref_val, 2)
+            return None, None
+        return round(current_return - ref_val, 2), ref_date
 
     def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
-        """특정 전략의 누적 수익률 히스토리를 반환합니다 (그래프용). 토/일 데이터 제외."""
+        """특정 전략의 누적 수익률 히스토리를 반환합니다 (그래프용). 공휴일/주말 제외."""
         data = self._load_data()
         daily = data.get("daily", {})
-        all_dates = sorted(d for d in daily.keys() if _is_weekday(d))
+        all_dates = _get_trading_dates(daily)
 
         history = []
         last_val = None

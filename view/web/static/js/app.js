@@ -610,6 +610,9 @@ async function loadTopMarketCap(market = '0001') {
 let allVirtualData = [];
 let dailyChanges = {};
 let weeklyChanges = {};
+let dailyRefDates = {};
+let weeklyRefDates = {};
+let firstDates = {};
 let virtualHoldSortState = { key: null, dir: 'asc' };
 let virtualSoldSortState = { key: null, dir: 'asc' };
 let selectedVirtualStrategies = new Set(['ALL']); // 멀티셀렉트 상태
@@ -636,6 +639,9 @@ async function loadVirtualHistory(forceCode = null) {
             allVirtualData = body.trades || [];
             dailyChanges = body.daily_changes || {};
             weeklyChanges = body.weekly_changes || {};
+            dailyRefDates = body.daily_ref_dates || {};
+            weeklyRefDates = body.weekly_ref_dates || {};
+            firstDates = body.first_dates || {};
             console.log('[Virtual] data count:', allVirtualData.length, 'sample:', allVirtualData[0]);
         } else {
             const errText = await listRes.text();
@@ -643,6 +649,9 @@ async function loadVirtualHistory(forceCode = null) {
             allVirtualData = [];
             dailyChanges = {};
             weeklyChanges = {};
+            dailyRefDates = {};
+            weeklyRefDates = {};
+            firstDates = {};
         }
 
         // 2. 탭 버튼 목록 생성
@@ -773,20 +782,41 @@ function applyVirtualFilter() {
     const cumulativeReturn = totalTrades > 0 ? (totalReturn / totalTrades) : 0;
 
     // 전일/전주대비: 멀티셀렉트일 때는 선택된 전략들의 평균
-    let dailyChange, weeklyChange;
+    let dailyChange, weeklyChange, dailyRefDate, weeklyRefDate, firstDate;
+    // 날짜 포맷 헬퍼: "2025-02-13" → "250213"
+    const toShortDate = (d) => d ? d.slice(2).replace(/-/g, '') : '';
+    const todayShort = toShortDate(new Date().toISOString().slice(0, 10));
+
     if (isAll) {
         dailyChange = dailyChanges['ALL'] ?? cumulativeReturn;
         weeklyChange = weeklyChanges['ALL'];
+        dailyRefDate = dailyRefDates['ALL'];
+        weeklyRefDate = weeklyRefDates['ALL'];
+        firstDate = firstDates['ALL'];
     } else if (selectedArray.length === 1) {
         dailyChange = dailyChanges[selectedArray[0]] ?? cumulativeReturn;
         weeklyChange = weeklyChanges[selectedArray[0]];
+        dailyRefDate = dailyRefDates[selectedArray[0]];
+        weeklyRefDate = weeklyRefDates[selectedArray[0]];
+        firstDate = firstDates[selectedArray[0]];
     } else {
         // 여러 전략 선택: 선택된 전략들의 평균
         const dailyVals = selectedArray.map(s => dailyChanges[s]).filter(v => v != null);
         dailyChange = dailyVals.length > 0 ? dailyVals.reduce((a, b) => a + b, 0) / dailyVals.length : cumulativeReturn;
         const weeklyVals = selectedArray.map(s => weeklyChanges[s]).filter(v => v != null);
         weeklyChange = weeklyVals.length > 0 ? weeklyVals.reduce((a, b) => a + b, 0) / weeklyVals.length : null;
+        // 멀티셀렉트: 가장 이른 날짜 사용
+        const dDates = selectedArray.map(s => dailyRefDates[s]).filter(Boolean).sort();
+        dailyRefDate = dDates[dDates.length - 1];
+        const wDates = selectedArray.map(s => weeklyRefDates[s]).filter(Boolean).sort();
+        weeklyRefDate = wDates[wDates.length - 1];
+        const fDates = selectedArray.map(s => firstDates[s]).filter(Boolean).sort();
+        firstDate = fDates[0];
     }
+
+    const cumDateLabel = firstDate ? `${toShortDate(firstDate)}~${todayShort}` : '';
+    const dailyDateLabel = dailyRefDate ? toShortDate(dailyRefDate) : '';
+    const weeklyDateLabel = weeklyRefDate ? toShortDate(weeklyRefDate) : '';
 
     // 색상 헬퍼
     const colorClass = (val) => val > 0 ? 'text-positive' : (val < 0 ? 'text-negative' : '');
@@ -808,19 +838,19 @@ function applyVirtualFilter() {
                 <div style="color: #ffffff !important;"><strong style="font-size: 1.35em;">${totalTrades}</strong> <span style="font-size: 1em;">건</span></div>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
-                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">누적 수익률</div>
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">누적 수익률 <span style="color:#707080; font-size:0.85em;">${cumDateLabel}</span></div>
                 <strong class="${colorClass(cumulativeReturn)}" style="font-size: 1.35em; font-weight: 800 !important;">
                     ${signPrefix(cumulativeReturn)}${cumulativeReturn.toFixed(2)}%
                 </strong>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
-                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전일대비</div>
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전일대비 <span style="color:#707080; font-size:0.85em;">${dailyDateLabel}</span></div>
                 <strong class="${colorClass(dailyChange)}" style="font-size: 1.35em; font-weight: 800 !important;">
                     ${signPrefix(dailyChange)}${dailyChange.toFixed(2)}%
                 </strong>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
-                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전주대비</div>
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전주대비 <span style="color:#707080; font-size:0.85em;">${weeklyDateLabel}</span></div>
                 <strong class="${weeklyChange != null ? colorClass(weeklyChange) : ''}" style="font-size: 1.35em; font-weight: 800 !important;">
                     ${weeklyChange != null ? signPrefix(weeklyChange) + weeklyChange.toFixed(2) + '%' : '-'}
                 </strong>
