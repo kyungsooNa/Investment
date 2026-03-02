@@ -94,3 +94,55 @@ async def test_scheduler_not_initialized(web_client, mock_web_ctx):
     assert web_client.post("/api/scheduler/strategy/A/start").status_code == 503
     assert web_client.post("/api/scheduler/strategy/A/stop").status_code == 503
     assert web_client.get("/api/scheduler/history").json()["history"] == []
+
+@pytest.mark.asyncio
+async def test_scheduler_strategy_control_failure(web_client, mock_web_ctx):
+    """스케줄러 개별 전략 제어 실패 (404) 테스트"""
+    # Start Strategy - Not Found
+    mock_web_ctx.scheduler.start_strategy = AsyncMock(return_value=False)
+    resp = web_client.post("/api/scheduler/strategy/UnknownStrat/start")
+    assert resp.status_code == 404
+    assert "찾을 수 없습니다" in resp.json()["detail"]
+
+    # Stop Strategy - Not Found
+    mock_web_ctx.scheduler.stop_strategy = MagicMock(return_value=False)
+    resp = web_client.post("/api/scheduler/strategy/UnknownStrat/stop")
+    assert resp.status_code == 404
+    assert "찾을 수 없습니다" in resp.json()["detail"]
+
+@pytest.mark.asyncio
+async def test_get_scheduler_history_filter(web_client, mock_web_ctx):
+    """스케줄러 이력 조회 필터링 테스트"""
+    mock_web_ctx.scheduler.get_signal_history = MagicMock(return_value=[])
+    
+    # strategy 파라미터 전달
+    response = web_client.get("/api/scheduler/history?strategy=TestStrat")
+    assert response.status_code == 200
+    mock_web_ctx.scheduler.get_signal_history.assert_called_with("TestStrat")
+
+@pytest.mark.asyncio
+async def test_get_scheduler_history_edge_cases(web_client, mock_web_ctx):
+    """스케줄러 이력 조회 엣지 케이스 (매퍼 없음, 코드 없음 등)"""
+    history_data = [
+        {"code": "", "name": "NoCode"},
+        {"code": "000000", "name": "UnknownCode"}
+    ]
+    mock_web_ctx.scheduler.get_signal_history.return_value = history_data
+    
+    # 1. Mapper가 없는 경우
+    mock_web_ctx.stock_code_mapper = None
+    
+    response = web_client.get("/api/scheduler/history")
+    assert response.status_code == 200
+    assert response.json()["history"] == history_data # 변경 없음
+
+    # 2. Mapper는 있지만 이름 조회 실패하는 경우
+    mock_mapper = MagicMock()
+    mock_mapper.get_name_by_code.return_value = "" # 이름 못 찾음
+    mock_web_ctx.stock_code_mapper = mock_mapper
+    
+    response = web_client.get("/api/scheduler/history")
+    assert response.status_code == 200
+    data = response.json()["history"]
+    assert data[0]["name"] == "NoCode" # 코드 없어서 스킵
+    assert data[1]["name"] == "UnknownCode" # 이름 못 찾아서 기존 이름 유지
