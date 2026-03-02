@@ -151,24 +151,21 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         # 매수 버튼을 누르기 직전, '주식현재가 체결(inquire-ccnl)' API를 1회 쏴서 체결강도를 확인합니다.
         cgld_val = 0.0
         try:
-            # 주의: TradingService에 inquire-ccnl(체결 API)을 호출하는 메서드가 필요합니다.
-            # (예: get_stock_conclusion 또는 get_realtime_execution)
-            ccnl_resp = await self._ts.get_stock_conclusion(code) 
+            ccnl_resp = await self._ts.get_stock_conclusion(code)
             if ccnl_resp and ccnl_resp.rt_cd == "0":
                 ccnl_out = ccnl_resp.data.get("output") if isinstance(ccnl_resp.data, dict) else None
                 if ccnl_out:
-                    if isinstance(ccnl_out, dict):
-                        cgld_val = float(ccnl_out.get("ccld_strg_val", 0))
-                    else:
-                        cgld_val = float(getattr(ccnl_out, "ccld_strg_val", 0) or 0)
-                    
-                    # 체결강도가 120% 미만이면 휩소(매도 우위)로 판단하고 방아쇠를 당기지 않음
-                    if cgld_val < 120.0:
-                        self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val})
-                        return None
+                    # 체결강도 필드: ccld_strg_val
+                    val = ccnl_out.get("ccld_strg_val")
+                    cgld_val = float(val) if val else 0.0
         except Exception as e:
             self._logger.warning({"event": "cgld_check_failed", "code": code, "error": str(e)})
-            return None # 체결강도 확인 실패 시 안전을 위해 매수 보류
+            # 실패 시 안전을 위해 매수 보류하거나, 정책에 따라 통과시킬 수 있음. 여기서는 보류(None)
+            return None
+
+        if cgld_val < 120.0:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val})
+            return None
 
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
         qty = self._calculate_qty(current)

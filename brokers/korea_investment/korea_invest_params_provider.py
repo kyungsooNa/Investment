@@ -603,6 +603,10 @@ class Params:
         return InquirePriceParams.of(stock_code, market).to_dict()
 
     @staticmethod
+    def inquire_conclusion(stock_code: str, market: MarketCode = "J") -> Dict[str, str]:
+        return InquirePriceParams.of(stock_code, market).to_dict()
+
+    @staticmethod
     def asking_price(stock_code: str, market: MarketCode = "J") -> Dict[str, str]:
         return AskingPriceParams.of(stock_code, market).to_dict()
 

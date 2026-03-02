@@ -14,6 +14,7 @@ def mock_strategy_deps():
     logger = MagicMock()
     
     ts.get_current_stock_price = AsyncMock()
+    ts.get_stock_conclusion = AsyncMock()
     ts.get_recent_daily_ohlcv = AsyncMock()
     universe.get_watchlist = AsyncMock()
     universe.is_market_timing_ok = AsyncMock()
@@ -68,9 +69,14 @@ async def test_scan_buy_signal(scan_setup):
     # 시총: 1000억 -> 21.3/1000 = 2.13% (> 0.5%)
     ts.get_current_stock_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000", 
-            "acml_tr_pbmn": "14200000000", "ccld_strg_val": "150.0"
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000",
+            "acml_tr_pbmn": "14200000000"
         }}
+    )
+
+    # 5. 체결강도 Mock (150%)
+    ts.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"ccld_strg_val": "150.0"}}
     )
     
     signals = await strategy.scan()
@@ -146,9 +152,13 @@ async def test_scan_no_signal_if_execution_strength_low(scan_setup):
     # 모든 조건 통과, 하지만 체결강도 110.0 (< 120.0)
     ts.get_current_stock_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000", 
-            "acml_tr_pbmn": "14200000000", "ccld_strg_val": "110.0"
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000",
+            "acml_tr_pbmn": "14200000000"
         }}
+    )
+    
+    ts.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"ccld_strg_val": "110.0"}}
     )
     
     signals = await strategy.scan()
@@ -161,6 +171,11 @@ async def test_scan_early_market_volume_defense(scan_setup):
     
     # 1. 장 시작 3분 후 (09:03) -> progress approx 3/390 = 0.0077
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 3, 0)
+    
+    # 체결강도 Mock (150%) - 통과 조건
+    ts.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"ccld_strg_val": "150.0"}}
+    )
     
     # 설정: 평균 거래량 100,000
     # Defense 2 기준: 30,000 (30%)

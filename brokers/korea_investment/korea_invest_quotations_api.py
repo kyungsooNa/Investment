@@ -98,6 +98,18 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         response.data['output'] = ResStockFullInfoApiOutput.from_dict(response_data_dict)
         return response
 
+    async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
+        """주식 체결(체결강도 포함) 정보를 조회합니다."""
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.INQUIRE_CONCLUSION)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config['custtype'])
+
+        params = Params.inquire_conclusion(stock_code=stock_code)
+        self._logger.info(f"{stock_code} 체결(체결강도) 조회 시도...")
+        return await self.call_api("GET", EndpointKey.INQUIRE_CONCLUSION, params=params, retry_count=1)
+
     async def get_price_summary(self, stock_code: str) -> ResCommonResponse:
         """
         주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보 반환

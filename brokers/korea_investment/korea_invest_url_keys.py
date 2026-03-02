@@ -16,6 +16,7 @@ class EndpointKey(str, Enum):
     TIME_ITEMCHARTPRICE = "inquire_time_itemchartprice"
     TIME_DAILY_ITEMCHARTPRICE = "inquire_time_daily_itemchartprice"
     FINANCIAL_RATIO = "financial_ratio"
+    INQUIRE_CONCLUSION = "inquire_conclusion"
 
     # ── 계좌/주문 ────────────────────────
     INQUIRE_BALANCE = "inquire_balance"

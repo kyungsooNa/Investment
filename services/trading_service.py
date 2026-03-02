@@ -161,6 +161,11 @@ class TradingService:
         self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
         return await self._broker_api_wrapper.get_current_price(stock_code)
 
+    async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
+        """종목의 체결(체결강도 등) 정보를 조회합니다."""
+        self._logger.info(f"Service - {stock_code} 체결 정보 조회 요청")
+        return await self._broker_api_wrapper.get_stock_conclusion(stock_code)
+
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목)"""
         self._logger.info(f"Trading_Service - 복수종목 현재가 조회 요청 ({len(stock_codes)}종목)")

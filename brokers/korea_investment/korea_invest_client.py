@@ -81,6 +81,10 @@ class KoreaInvestApiClient:
         """현재가를 조회합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_current_price(code)
 
+    async def get_stock_conclusion(self, code: str) -> ResCommonResponse:
+        """주식 체결(체결강도) 정보를 조회합니다."""
+        return await self._quotations.get_stock_conclusion(code)
+
     async def get_price_summary(self, code: str) -> ResCommonResponse:  # 반환 타입 변경
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_price_summary(code)
