@@ -439,6 +439,75 @@ async def test_check_time_stop_logic(mock_strategy_deps):
     assert await strategy._check_time_stop("005930", state, 10100) is False
 
 @pytest.mark.asyncio
+async def test_check_exits_trend_break(mock_strategy_deps):
+    """check_exits: 추세 이탈(10MA 하향 + 대량 거래량) 시 매도 시그널 검증."""
+    ts, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(ts, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+    
+    # 1. 보유 상태 설정
+    strategy._position_state["005930"] = OSBPositionState(
+        entry_price=10000, entry_date="20250101", peak_price=10500, breakout_level=10000
+    )
+    
+    # 2. OHLCV Mock (10MA, 20AvgVol 계산용)
+    # 20일치 데이터. 종가 11000, 거래량 100000으로 일정하다고 가정.
+    # 10MA = 11000, 20AvgVol = 100000
+    ohlcv = [{"close": 11000, "volume": 100000} for _ in range(20)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    
+    # 3. 현재가 Mock (추세 이탈 조건)
+    # 가격: 10800 (< 10MA 11000) -> 가격 이탈
+    # 거래량: 60000. 장 진행률 0.5 가정 -> 예상 120000 (> 100000) -> 거래량 이탈
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10800", "acml_vol": "60000"}}
+    )
+    
+    # 장 진행률 50% 설정을 위해 시간 Mock
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0) # 12:00
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 1, 15, 30, 0)
+    
+    # 4. 실행
+    holdings = [{"code": "005930", "buy_price": 10000}]
+    signals = await strategy.check_exits(holdings)
+    
+    assert len(signals) == 1
+    assert signals[0].action == "SELL"
+    assert "추세이탈" in signals[0].reason
+    assert "10MA" in signals[0].reason
+
+@pytest.mark.asyncio
+async def test_check_exits_trend_break_no_volume(mock_strategy_deps):
+    """check_exits: 가격은 이탈했으나 거래량이 부족하면 매도 안 함."""
+    ts, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(ts, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+    
+    strategy._position_state["005930"] = OSBPositionState(
+        entry_price=10000, entry_date="20250101", peak_price=10500, breakout_level=10000
+    )
+    
+    # 10MA = 11000, 20AvgVol = 100000
+    ohlcv = [{"close": 11000, "volume": 100000} for _ in range(20)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    
+    # 가격: 10800 (< 11000) -> 가격 이탈
+    # 거래량: 40000. 장 진행률 0.5 -> 예상 80000 (< 100000) -> 거래량 부족
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10800", "acml_vol": "40000"}}
+    )
+    
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 1, 15, 30, 0)
+    
+    holdings = [{"code": "005930", "buy_price": 10000}]
+    signals = await strategy.check_exits(holdings)
+    
+    assert len(signals) == 0
+
+@pytest.mark.asyncio
 async def test_scan_mixed_market_timing(scan_setup):
     """scan: 시장별 마켓 타이밍이 다를 때(KOSPI X, KOSDAQ O) 동작 검증."""
     strategy, ts, universe, _, _ = scan_setup

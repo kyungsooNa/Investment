@@ -38,7 +38,6 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     
     [🚨 ERROR & FIX REQUIRED (v2 내 즉시 수정/추가 필요)]
     - (Buy) 매수 체결 직전 '현재가 스냅샷 체결강도(>=120%)' 검증 로직 누락
-    - (Sell) 추세 이탈 청산(10MA 이탈 + 대량 거래량 동반) 로직 미구현
 
     [v3 예정 (TODO)]
     - 스코어링 고도화: 업종 소분류 주도 (테마 대장주) 키워드 매칭 스코어링 (+20점) 추가
@@ -170,6 +169,47 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             reason=f"오닐돌파: {item.high_20d}돌파, 수급{pg_buy}", strategy_name=self.name
         )
 
+    async def _check_trend_break(self, code: str, current_price: int, current_vol: int) -> tuple[bool, str]:
+        """추세 이탈 검사 (10일선 붕괴 + 대량 거래량 동반)."""
+        period = self._cfg.trend_exit_ma_period  # 10일
+        
+        # 1. 10일 MA와 20일 평균 거래량을 계산하기 위해 20일치 데이터 1회 조회
+        ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=max(period, 20))
+        if not ohlcv or len(ohlcv) < period:
+            return False, ""
+            
+        closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
+        volumes = [r.get("volume", 0) for r in ohlcv if r.get("volume")]
+        
+        # 2. 10일 이동평균선 계산
+        ma_10d = sum(closes[-period:]) / period
+        
+        # 🚨 가격 조건: 현재가가 10일선을 깼는가? (안 깼으면 안전하므로 바로 리턴)
+        if current_price >= ma_10d:
+            return False, ""
+            
+        # 3. 거래량 조건 검증 (현재가가 10일선을 깬 상태에서만 계산)
+        avg_vol_20d = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else sum(volumes) / len(volumes)
+        
+        progress = self._get_market_progress_ratio()
+        effective_progress = max(progress, 0.05) # 뻥튀기 방어 (최소 5% 진행 보장)
+        proj_vol = current_vol / effective_progress
+        
+        # 🚨 거래량 조건: 장중 환산(예상) 거래량이 평소 20일 평균보다 많은가? (기관 매도 징후)
+        if proj_vol > avg_vol_20d:
+            reason = f"추세이탈(10MA {ma_10d:,.0f} 붕괴+대량거래)"
+            self._logger.warning({
+                "event": "trend_break_triggered",
+                "code": code,
+                "price": current_price,
+                "ma_10d": round(ma_10d, 0),
+                "proj_vol": int(proj_vol),
+                "avg_vol": int(avg_vol_20d)
+            })
+            return True, reason
+            
+        return False, ""
+
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         signals = []
         for hold in holdings:
@@ -190,8 +230,10 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
             if isinstance(output, dict):
                 current = int(output.get("stck_prpr", 0))
+                current_vol = int(output.get("acml_vol", 0))
             else:
                 current = int(getattr(output, "stck_prpr", 0) or 0)
+                current_vol = int(getattr(output, "acml_vol", 0) or 0)
 
             if current <= 0: continue
 
@@ -203,19 +245,26 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             pnl = (current - buy_price) / buy_price * 100
             reason = ""
             
-            # 손절
+            # 1. 손절
             if pnl <= self._cfg.stop_loss_pct:
                 reason = f"손절({pnl:.1f}%)"
-            # 트레일링 스탑
+            # 2. 트레일링 스탑
             elif state.peak_price > 0:
                 drop = (current - state.peak_price) / state.peak_price * 100
                 if drop <= -self._cfg.trailing_stop_pct:
                     reason = f"트레일링스탑({drop:.1f}%)"
             
-            # 시간 손절 (박스권 횡보)
+            # 3. 시간 손절 (박스권 횡보)
             if not reason and await self._check_time_stop(code, state, current):
-                reason = "시간손절(횡보)"
+                reason = f"시간손절({self._cfg.time_stop_days}일 횡보)"
 
+            # 🌟 4. [신규 추가] 추세 이탈 (10MA 하향 + 대량 거래량)
+            if not reason:
+                is_break, break_reason = await self._check_trend_break(code, current, current_vol)
+                if is_break:
+                    reason = break_reason
+
+            # 매도 시그널 생성
             if reason:
                 self._position_state.pop(code, None)
                 self._save_state()
@@ -223,6 +272,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     code=code, name=hold.get("name", code), action="SELL", 
                     price=current, qty=1, reason=reason, strategy_name=self.name
                 ))
+                
         return signals
 
     async def _check_time_stop(self, code: str, state: OSBPositionState, current_price: int) -> bool:
