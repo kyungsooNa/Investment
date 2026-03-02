@@ -682,6 +682,86 @@ async def test_analyze_candidate_trend_filter_fail(mock_deps):
     assert item is None
 
 @pytest.mark.asyncio
+async def test_build_watchlist_merge_priority(mock_deps):
+    """_build_watchlist: Pool A와 Pool B 병합 시 Pool A 우선순위 및 병합 로직 검증 (Line 114)."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # Pool A 아이템 설정
+    item_a_pool = OSBWatchlistItem(code="A", name="StockA_Pool", market="KOSPI",
+                                   high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+                                   bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0)
+    service._pool_a_items = {"A": item_a_pool}
+    service._pool_a_loaded = True
+    
+    # Pool B 아이템 설정 (A가 중복됨)
+    item_a_live = OSBWatchlistItem(code="A", name="StockA_Live", market="KOSPI",
+                                   high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+                                   bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0)
+    item_b_live = OSBWatchlistItem(code="B", name="StockB_Live", market="KOSPI",
+                                   high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+                                   bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0)
+    
+    with patch.object(service, '_build_pool_b', new_callable=AsyncMock) as mock_build_b:
+        mock_build_b.return_value = {"A": item_a_live, "B": item_b_live}
+        
+        await service._build_watchlist()
+        
+        # 검증
+        watchlist = service._watchlist
+        assert "A" in watchlist
+        assert "B" in watchlist
+        # A는 Pool A의 것이 유지되어야 함 (이름으로 확인)
+        assert watchlist["A"].name == "StockA_Pool"
+        assert watchlist["B"].name == "StockB_Live"
+
+@pytest.mark.asyncio
+async def test_build_pool_b_skip_duplicates_and_dict_parsing(mock_deps):
+    """_build_pool_b: API 응답이 dict일 때 파싱(Line 153) 및 중복 종목 스킵(Line 169) 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # Pool A에 이미 "A"가 존재한다고 설정
+    service._pool_a_items = {"A": MagicMock()}
+    
+    # API 응답 Mock (dict 형태 데이터)
+    # A: 중복 (스킵되어야 함)
+    # B: 신규 (처리되어야 함)
+    data = [
+        {"mksc_shrn_iscd": "A", "hts_kor_isnm": "StockA"},
+        {"mksc_shrn_iscd": "B", "hts_kor_isnm": "StockB"}
+    ]
+    ts.get_top_trading_value_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=data))
+    ts.get_top_rise_fall_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
+    ts.get_top_volume_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
+    
+    # _analyze_candidate Mock
+    async def mock_analyze(code, name, logger=None):
+        if code == "B":
+            return OSBWatchlistItem(code="B", name="StockB", market="KOSPI",
+                                    high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
+                                    bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0)
+        return None
+
+    with patch.object(service, '_analyze_candidate', side_effect=mock_analyze) as mock_analyze_spy, \
+         patch.object(service, '_compute_rs_scores'), \
+         patch.object(service, '_compute_profit_growth_scores', new_callable=AsyncMock), \
+         patch.object(service, '_compute_total_scores'):
+        
+        pool_b = await service._build_pool_b()
+        
+        # 검증
+        # 1. A는 Pool A에 있으므로 스킵되어야 함 -> analyze 호출 안됨 (혹은 결과에 없음)
+        # analyze 호출 인자 확인
+        called_codes = [call_args[0][0] for call_args in mock_analyze_spy.call_args_list]
+        assert "A" not in called_codes
+        assert "B" in called_codes
+        
+        # 2. 결과 확인
+        assert "A" not in pool_b
+        assert "B" in pool_b
+
+@pytest.mark.asyncio
 async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
     """_analyze_candidate: 52주 고가 대비 너무 많이 하락한 경우 탈락 검증."""
     ts, sqs, indicator, mapper, tm, logger = mock_deps
