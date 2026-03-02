@@ -130,66 +130,66 @@ async def get_virtual_history(force_code: str = None):
             code = str(trade.get('code', ''))
             trade['stock_name'] = mapper.get_name_by_code(code) if mapper else ''
 
-        # 2. HOLD + SOLD 종목 현재가 조회 (숫자 코드만, 병렬)
+        # 2. HOLD + SOLD 종목 현재가 조회 (복수종목 API 활용)
         hold_codes = list(set(
             str(t['code']) for t in trades
             if str(t['code']).strip()
         ))
         price_map = {}
         if hold_codes and getattr(ctx, 'stock_query_service', None):
-            sem = asyncio.Semaphore(5)  # 동시 요청 5개 (API 초당 20건 허용)
+            now = time.time()
 
-            async def _fetch(code):
-                # 캐시가 존재하고 1분(60초) 이내라면 캐시 반환 (단, force_code인 경우 무시)
-                now = time.time()
+            # 2-1. 캐시 유효한 종목 분리 (force_code는 캐시 무시)
+            cached_codes = {}
+            fetch_codes = []
+            for code in hold_codes:
                 if code != force_code and code in _PRICE_CACHE:
                     c_price, c_rate, c_ts = _PRICE_CACHE[code]
-                    if now - c_ts < 60:  # 1분(60초)으로 단축
-                        # 1분 이내의 신선한 데이터인 경우, API 호출을 건너뛰더라도
-                        # 사용자에게 '실패/캐시' 아이콘을 보여주지 않기 위해 False 반환
-                        return code, c_price, c_rate, False, c_ts
-                elif code == force_code:
+                    if now - c_ts < 60:
+                        cached_codes[code] = (c_price, c_rate, False, c_ts)
+                        continue
+                if code == force_code:
                     print(f"[WebAPI] 종목 {code} 강제 업데이트: 캐시를 무시하고 API를 호출합니다.")
+                fetch_codes.append(code)
 
-                async with sem:
-                    await asyncio.sleep(0.05)  # API rate limit 보호
+            price_map.update(cached_codes)
+
+            # 2-2. 캐시 미스 종목은 복수종목 API로 배치 조회 (30개씩)
+            if fetch_codes:
+                for batch_start in range(0, len(fetch_codes), 30):
+                    batch = fetch_codes[batch_start:batch_start + 30]
                     try:
-                        resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
-                        if not resp:
-                            print(f"[WebAPI] 현재가 조회 실패 ({code}): 응답 None")
-                        elif resp.rt_cd != "0":
-                            print(f"[WebAPI] 현재가 조회 실패 ({code}): rt_cd={resp.rt_cd}, msg={resp.msg1}")
-                        elif not isinstance(resp.data, dict):
-                            print(f"[WebAPI] 현재가 조회 실패 ({code}): data 타입={type(resp.data)}, data={resp.data}")
+                        resp = await ctx.stock_query_service.get_multi_price(batch)
+                        if resp and resp.rt_cd == "0" and isinstance(resp.data, list):
+                            for item in resp.data:
+                                if not isinstance(item, dict):
+                                    continue
+                                code = item.get("stck_shrn_iscd", "")
+                                if not code:
+                                    continue
+                                price_str = item.get("stck_prpr", "0")
+                                rate_str = item.get("prdy_ctrt", "0")
+                                try:
+                                    price_val = int(float(price_str))
+                                except (ValueError, TypeError):
+                                    price_val = 0
+                                try:
+                                    rate_val = float(rate_str) if rate_str not in ('N/A', '', 'None') else 0.0
+                                except (ValueError, TypeError):
+                                    rate_val = 0.0
+                                if price_val > 0:
+                                    _PRICE_CACHE[code] = (price_val, rate_val, time.time())
+                                    price_map[code] = (price_val, rate_val, False, time.time())
                         else:
-                            price_str = str(resp.data.get('price', '0'))
-                            try:
-                                price_val = int(float(price_str))
-                            except (ValueError, TypeError):
-                                price_val = 0
-                            # 전일대비 등락률 추출
-                            rate_str = str(resp.data.get('rate', '0'))
-                            try:
-                                rate_val = float(rate_str) if rate_str not in ('N/A', '', 'None') else 0.0
-                            except ValueError:
-                                rate_val = 0.0
-                            if price_val > 0:
-                                # 성공 시 캐시 업데이트
-                                _PRICE_CACHE[code] = (price_val, rate_val, time.time())
-                                return code, price_val, rate_val, False, time.time()
-                            else:
-                                print(f"[WebAPI] 현재가 조회 실패 ({code}): price='{price_str}'")
+                            print(f"[WebAPI] 복수종목 현재가 조회 실패: rt_cd={resp.rt_cd if resp else 'None'}, msg={resp.msg1 if resp else ''}")
                     except Exception as e:
-                        print(f"[WebAPI] 현재가 조회 예외 ({code}): {e}")
+                        print(f"[WebAPI] 복수종목 현재가 조회 예외: {e}")
 
-                    # 실패 시 캐시된 값이 있다면 반환
-                    if code in _PRICE_CACHE:
+                # 2-3. API에서 못 가져온 종목은 기존 캐시로 폴백
+                for code in fetch_codes:
+                    if code not in price_map and code in _PRICE_CACHE:
                         cached_price, cached_rate, cached_time = _PRICE_CACHE[code]
-                        return code, cached_price, cached_rate, True, cached_time
-                    return code, None, 0.0, False, 0
-
-            results = await asyncio.gather(*[_fetch(c) for c in hold_codes])
-            price_map = {code: (price, rate, cached, ts) for code, price, rate, cached, ts in results if price is not None}
+                        price_map[code] = (cached_price, cached_rate, True, cached_time)
 
         # 3. 전체 종목에 현재가 반영 (HOLD는 수익률도 재계산)
         for trade in trades:

@@ -36,9 +36,11 @@ async def test_virtual_endpoints(web_client, mock_web_ctx):
     mock_web_ctx.stock_code_mapper = MagicMock()
     mock_web_ctx.stock_code_mapper.get_name_by_code.return_value = "삼성전자"
 
-    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="Success", data={"price": "1100", "rate": "10.0"}
-    )
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[
+            {"stck_shrn_iscd": "005930", "stck_prpr": "1100", "prdy_ctrt": "10.0"}
+        ])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
 
     response = web_client.get("/api/virtual/history")
     assert response.status_code == 200
@@ -157,11 +159,14 @@ async def test_get_virtual_history_complex(web_client, mock_web_ctx):
     # 캐시 설정 (005930은 캐시 히트)
     web_api._PRICE_CACHE["005930"] = (50000, 5.0, time.time())
 
-    # API Mock (000660은 API 호출 -> SOLD 가격 보정용)
-    async def mock_get_price(code):
-        if code == "000660": return ResCommonResponse(rt_cd="0", msg1="OK", data={"price": "1100", "rate": "10.0"})
-        return None
-    mock_web_ctx.stock_query_service.handle_get_current_stock_price.side_effect = mock_get_price
+    # get_multi_price Mock (000660은 API 호출 -> SOLD 가격 보정용)
+    async def mock_multi_price(codes):
+        items = []
+        for code in codes:
+            if code == "000660":
+                items.append({"stck_shrn_iscd": "000660", "stck_prpr": "1100", "prdy_ctrt": "10.0"})
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=items)
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
     mock_web_ctx.virtual_manager.fix_sell_price = MagicMock()
 
     # 스냅샷 관련 Mock
@@ -198,10 +203,12 @@ async def test_get_virtual_history_force_update(web_client, mock_web_ctx):
     # 캐시 설정 (최신)
     web_api._PRICE_CACHE["005930"] = (50000, 5.0, time.time())
 
-    # API Mock
-    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"price": "51000", "rate": "2.0"}
-    )
+    # get_multi_price Mock
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[
+            {"stck_shrn_iscd": "005930", "stck_prpr": "51000", "prdy_ctrt": "2.0"}
+        ])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
 
     # force_code 지정 -> 캐시 무시하고 API 호출 예상
     response = web_client.get("/api/virtual/history?force_code=005930")
@@ -209,7 +216,6 @@ async def test_get_virtual_history_force_update(web_client, mock_web_ctx):
 
     trades = response.json()["trades"]
     assert trades[0]["current_price"] == 51000
-    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_with("005930")
 
 
 @pytest.mark.asyncio
@@ -221,7 +227,9 @@ async def test_get_virtual_history_api_exception(web_client, mock_web_ctx):
         {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
     ]
 
-    mock_web_ctx.stock_query_service.handle_get_current_stock_price.side_effect = Exception("API Error")
+    async def mock_multi_price_error(codes):
+        raise Exception("API Error")
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price_error
 
     response = web_client.get("/api/virtual/history")
     assert response.status_code == 200
@@ -239,9 +247,12 @@ async def test_get_virtual_history_price_parsing_error(web_client, mock_web_ctx)
         {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
     ]
 
-    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"price": "invalid", "rate": "0.0"}
-    )
+    # stck_prpr에 유효하지 않은 값 → price_val=0 → price_map에 추가 안 됨
+    async def mock_multi_price_invalid(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[
+            {"stck_shrn_iscd": "005930", "stck_prpr": "invalid", "prdy_ctrt": "0.0"}
+        ])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price_invalid
 
     response = web_client.get("/api/virtual/history")
     assert response.status_code == 200

@@ -114,28 +114,63 @@ def test_fix_sell_price_logic(manager):
     assert df.iloc[0]['sell_price'] == 15000
     assert df.iloc[0]['return_rate'] == 50.0
 
-def test_save_daily_snapshot_and_prev_values(manager):
-    """일일 스냅샷 저장 및 기준값(prev_values) 갱신 확인"""
+def test_save_daily_snapshot_stores_data(manager):
+    """일일 스냅샷 저장 확인"""
     # 1일차
     manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
     manager.save_daily_snapshot({"ALL": 1.0})
-    
-    # 2일차 - 변동 발생 (0.01 이상)
+
+    # 2일차
     manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 2)
     manager.save_daily_snapshot({"ALL": 2.5})
-    
+
     data = manager._load_data()
-    assert data['prev_values']['ALL'] == 1.0
+    assert data['daily']['2025-01-01']['ALL'] == 1.0
     assert data['daily']['2025-01-02']['ALL'] == 2.5
 
 def test_get_daily_change_calculation(manager):
-    """전일 대비 변동폭 계산 확인"""
+    """가장 최근 스냅샷 대비 변동폭 계산 확인"""
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 3)
     data = {
-        "daily": {"2025-01-01": {"S1": 1.0}},
-        "prev_values": {"S1": 0.5}
+        "daily": {"2025-01-01": {"S1": 0.5}, "2025-01-02": {"S1": 1.0}},
+        "prev_values": {}
     }
     change = manager.get_daily_change("S1", 1.5, _data=data)
-    assert change == 1.0 # 1.5 - 0.5
+    assert change == 0.5  # 1.5 - 1.0 (가장 최근인 1/2 대비)
+
+def test_get_daily_change_skips_weekend_data(manager):
+    """토/일 스냅샷이 존재해도 무시하고 가장 최근 평일 스냅샷과 비교"""
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 6)  # 월요일
+    data = {
+        "daily": {
+            "2025-01-02": {"S1": 1.0},  # 목요일
+            "2025-01-03": {"S1": 2.0},  # 금요일 (가장 최근 평일)
+            "2025-01-04": {"S1": 2.0},  # 토요일 (기존 데이터 잔존) → 무시
+            "2025-01-05": {"S1": 2.0},  # 일요일 (기존 데이터 잔존) → 무시
+        },
+        "prev_values": {}
+    }
+    change = manager.get_daily_change("S1", 3.0, _data=data)
+    assert change == 1.0  # 3.0 - 2.0 (금요일 대비, 토/일 무시)
+
+def test_save_daily_snapshot_skips_weekend(manager):
+    """토/일에는 스냅샷을 저장하지 않음"""
+    # 금요일 저장
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 3)  # 금요일
+    manager.save_daily_snapshot({"ALL": 5.0})
+
+    # 토요일 저장 시도 → 무시
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 4)  # 토요일
+    manager.save_daily_snapshot({"ALL": 5.0})
+
+    # 일요일 저장 시도 → 무시
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 5)  # 일요일
+    manager.save_daily_snapshot({"ALL": 5.0})
+
+    data = manager._load_data()
+    assert "2025-01-03" in data["daily"]
+    assert "2025-01-04" not in data["daily"]
+    assert "2025-01-05" not in data["daily"]
 
 def test_get_weekly_change_logic(manager):
     """7일 전 스냅샷 대비 변동폭 계산 확인"""
@@ -191,6 +226,25 @@ def test_get_strategy_return_history_logic(manager):
 
     # 4. 존재하지 않는 전략 조회 시 빈 리스트 반환 확인
     assert manager.get_strategy_return_history("UNKNOWN") == []
+
+def test_get_strategy_return_history_excludes_weekend(manager):
+    """차트 히스토리에서 토/일 데이터 제외 확인"""
+    test_snapshots = {
+        "daily": {
+            "2025-01-03": {"S1": 2.0},  # 금요일
+            "2025-01-04": {"S1": 2.0},  # 토요일 → 제외
+            "2025-01-05": {"S1": 2.0},  # 일요일 → 제외
+            "2025-01-06": {"S1": 3.0},  # 월요일
+        },
+        "prev_values": {}
+    }
+    manager._save_data(test_snapshots)
+
+    history = manager.get_strategy_return_history("S1")
+    dates = [h["date"] for h in history]
+    assert "2025-01-04" not in dates
+    assert "2025-01-05" not in dates
+    assert dates == ["2025-01-03", "2025-01-06"]
 
 def test_get_all_strategies_logic(manager):
     """모든 전략 이름 추출 로직 테스트"""

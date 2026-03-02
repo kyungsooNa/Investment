@@ -512,7 +512,7 @@ class MultiPriceParams:
         return cls(**kwargs)
 
     def to_dict(self) -> Dict[str, str]:
-        return {k.upper(): v for k, v in asdict(self).items()}
+        return {k: v for k, v in asdict(self).items() if v}
 
 
 @dataclass(frozen=True)

@@ -729,10 +729,24 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         if not isinstance(output_list, list):
             output_list = [output_list] if output_list else []
 
+        # 필드명 정규화: inter_shrn_iscd → stck_shrn_iscd, inter2_prpr → stck_prpr
+        FIELD_MAP = {
+            "inter_shrn_iscd": "stck_shrn_iscd",
+            "inter2_prpr": "stck_prpr",
+        }
+        normalized = []
+        for item in output_list:
+            if not isinstance(item, dict):
+                continue
+            mapped = {}
+            for k, v in item.items():
+                mapped[FIELD_MAP.get(k, k)] = v
+            normalized.append(mapped)
+
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="복수종목 현재가 조회 성공",
-            data=output_list
+            data=normalized
         )
 
     async def get_etf_info(self, etf_code: str) -> ResCommonResponse:

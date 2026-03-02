@@ -1242,8 +1242,8 @@ async def test_get_multi_price_over_30_truncated(mock_quotations):
     # call_api에 전달된 params 확인: 30번째까지만 존재
     _, kwargs = api.call_api.call_args
     params = kwargs["params"]
-    assert "FID_INPUT_ISCD_30" in params
-    assert "FID_INPUT_ISCD_31" not in params
+    assert "fid_input_iscd_30" in params
+    assert "fid_input_iscd_31" not in params
 
 
 @pytest.mark.asyncio
@@ -1290,5 +1290,5 @@ async def test_get_multi_price_single_stock(mock_quotations):
     # params에 1번만 설정되고 나머지는 빈 문자열인지 확인
     _, kwargs = api.call_api.call_args
     params = kwargs["params"]
-    assert params["FID_INPUT_ISCD_1"] == "005930"
-    assert params["FID_INPUT_ISCD_2"] == ""
+    assert params["fid_input_iscd_1"] == "005930"
+    assert "fid_input_iscd_2" not in params  # 빈 값은 제외
