@@ -68,7 +68,8 @@ async def test_scan_buy_signal(scan_setup):
     # 시총: 1000억 -> 21.3/1000 = 2.13% (> 0.5%)
     ts.get_current_stock_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000", "acml_tr_pbmn": "14200000000"
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000", 
+            "acml_tr_pbmn": "14200000000", "ccld_strg_val": "150.0"
         }}
     )
     
@@ -77,6 +78,7 @@ async def test_scan_buy_signal(scan_setup):
     assert len(signals) == 1
     assert signals[0].code == "005930"
     assert signals[0].action == "BUY"
+    assert "체결강도 150.0%" in signals[0].reason
     assert signals[0].price == 71000
     # 내부 상태에 포지션 기록되었는지 확인
     assert "005930" in strategy._position_state
@@ -134,6 +136,22 @@ async def test_scan_no_signal_if_program_market_cap_ratio_low(scan_setup):
     
     signals = await strategy.scan()
     
+    assert len(signals) == 0
+
+@pytest.mark.asyncio
+async def test_scan_no_signal_if_execution_strength_low(scan_setup):
+    """scan: 체결강도가 120 미만이면 매수 시그널 없음."""
+    strategy, ts, _, _, _ = scan_setup
+    
+    # 모든 조건 통과, 하지만 체결강도 110.0 (< 120.0)
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000", 
+            "acml_tr_pbmn": "14200000000", "ccld_strg_val": "110.0"
+        }}
+    )
+    
+    signals = await strategy.scan()
     assert len(signals) == 0
 
 @pytest.mark.asyncio

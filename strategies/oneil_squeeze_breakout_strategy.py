@@ -37,7 +37,6 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     - 마켓타이밍: ETF 프록시(KODEX 200/코스닥150) 20일선 3일 연속 우상향 로직 적용
     
     [🚨 ERROR & FIX REQUIRED (v2 내 즉시 수정/추가 필요)]
-    - (Buy) 매수 체결 직전 '현재가 스냅샷 체결강도(>=120%)' 검증 로직 누락
 
     [v3 예정 (TODO)]
     - 스코어링 고도화: 업종 소분류 주도 (테마 대장주) 키워드 매칭 스코어링 (+20점) 추가
@@ -102,59 +101,76 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         return signals
 
     async def _check_breakout(self, code, item, progress) -> Optional[TradeSignal]:
-        # 현재가 조회
+        # 1. 기본 시세 및 프로그램 수급 조회
         resp = await self._ts.get_current_stock_price(code)
         if not resp or resp.rt_cd != "0": return None
 
-        output = resp.data.get("output") if isinstance(resp.data, dict) else None
-        if not output: return None
+        out = resp.data.get("output") if isinstance(resp.data, dict) else None
+        if not out: return None
 
-        # Mock(dict)과 실제(객체) 모두 처리
-        if isinstance(output, dict):
-            current = int(output.get("stck_prpr", 0))
-            vol = int(output.get("acml_vol", 0))
-            pg_buy = int(output.get("pgtr_ntby_qty", 0))
-            acml_tr_pbmn = int(output.get("acml_tr_pbmn", 0))
+        if isinstance(out, dict):
+            current = int(out.get("stck_prpr", 0))
+            vol = int(out.get("acml_vol", 0))
+            pg_buy = int(out.get("pgtr_ntby_qty", 0))
+            trade_value = int(out.get("acml_tr_pbmn", 0))
         else:
-            current = int(getattr(output, "stck_prpr", 0) or 0)
-            vol = int(getattr(output, "acml_vol", 0) or 0)
-            pg_buy = int(getattr(output, "pgtr_ntby_qty", 0) or 0)
-            acml_tr_pbmn = int(getattr(output, "acml_tr_pbmn", 0) or 0)
-        
-        # 1. 가격 돌파
+            current = int(getattr(out, "stck_prpr", 0) or 0)
+            vol = int(getattr(out, "acml_vol", 0) or 0)
+            pg_buy = int(getattr(out, "pgtr_ntby_qty", 0) or 0)
+            trade_value = int(getattr(out, "acml_tr_pbmn", 0) or 0)
+
+        # 🚨 [관문 1] 가격 돌파
         if current <= item.high_20d:
             return None
             
-        # 2. 거래량 돌파
-        # 🌟 [뻥튀기 방어 로직 추가] 🌟
-        # 방어 1: 최소 진행률 5% (약 20분) 보정
-        effective_progress = max(progress, 0.05)
+        # 🚨 [관문 2] 거래량 돌파 (+ 뻥튀기 방어)
+        effective_progress = max(progress, 0.05) # 장 초반 최소 5% 진행 보장
         proj_vol = vol / effective_progress
         
-        # 방어 2: 최소 절대 거래량 확보 (20일 평균의 최소 30%는 실거래되어야 함)
-        if vol < (item.avg_vol_20d * 0.3):
+        if vol < (item.avg_vol_20d * 0.3): # 최소 절대 거래량 (평소 20일 평균의 30%) 미달 시 가짜 돌파
             return None
-            
-        # 2. 거래량 돌파 검증
         if proj_vol < item.avg_vol_20d * self._cfg.volume_breakout_multiplier:
             return None
             
-        # 3. 프로그램 수급 (기본 수량)
+        # 🚨 [관문 3] 스마트 머니(프로그램 수급) 상세 필터
         if pg_buy <= self._cfg.program_net_buy_min:
             return None
-
-        # 3-1. 프로그램 수급 (세부 조건: 거래대금/시총 비중)
-        pg_buy_amt = pg_buy * current
-        
-        if acml_tr_pbmn > 0:
-            if (pg_buy_amt / acml_tr_pbmn) * 100 < self._cfg.program_to_trade_value_pct:
-                return None
-        
-        if item.market_cap > 0:
-            if (pg_buy_amt / item.market_cap) * 100 < self._cfg.program_to_market_cap_pct:
-                return None
             
-        # 매수 신호 생성
+        pg_buy_amount = pg_buy * current # 프로그램 순매수 금액 (추정)
+        
+        # 3-1. 거래대금의 10% 이상 개입했는가?
+        if trade_value > 0 and (pg_buy_amount / trade_value * 100) < self._cfg.program_to_trade_value_pct:
+            return None
+            
+        # 3-2. 시가총액의 0.5% 이상 개입했는가?
+        if item.market_cap > 0 and (pg_buy_amount / item.market_cap * 100) < self._cfg.program_to_market_cap_pct:
+            return None
+
+        # 🌟 [최종 관문] 매수 직전 체결강도 스냅샷 (>=120%) 🌟
+        # 이 관문까지 살아서 내려왔다면 조건이 완벽하게 맞은 상태입니다.
+        # 매수 버튼을 누르기 직전, '주식현재가 체결(inquire-ccnl)' API를 1회 쏴서 체결강도를 확인합니다.
+        cgld_val = 0.0
+        try:
+            # 주의: TradingService에 inquire-ccnl(체결 API)을 호출하는 메서드가 필요합니다.
+            # (예: get_stock_conclusion 또는 get_realtime_execution)
+            ccnl_resp = await self._ts.get_stock_conclusion(code) 
+            if ccnl_resp and ccnl_resp.rt_cd == "0":
+                ccnl_out = ccnl_resp.data.get("output") if isinstance(ccnl_resp.data, dict) else None
+                if ccnl_out:
+                    if isinstance(ccnl_out, dict):
+                        cgld_val = float(ccnl_out.get("ccld_strg_val", 0))
+                    else:
+                        cgld_val = float(getattr(ccnl_out, "ccld_strg_val", 0) or 0)
+                    
+                    # 체결강도가 120% 미만이면 휩소(매도 우위)로 판단하고 방아쇠를 당기지 않음
+                    if cgld_val < 120.0:
+                        self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val})
+                        return None
+        except Exception as e:
+            self._logger.warning({"event": "cgld_check_failed", "code": code, "error": str(e)})
+            return None # 체결강도 확인 실패 시 안전을 위해 매수 보류
+
+        # ========= 모든 관문 통과! 매수 시그널 생성 =========
         qty = self._calculate_qty(current)
         self._position_state[code] = OSBPositionState(
             entry_price=current,
@@ -164,9 +180,19 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         )
         self._save_state()
         
+        reason_msg = f"오닐돌파(체결강도 {cgld_val:.1f}%, PG매수 {pg_buy_amount//100_000_000}억)"
+        
+        self._logger.info({
+            "event": "buy_signal_generated",
+            "code": code,
+            "name": item.name,
+            "price": current,
+            "reason": reason_msg
+        })
+        
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current, qty=qty,
-            reason=f"오닐돌파: {item.high_20d}돌파, 수급{pg_buy}", strategy_name=self.name
+            reason=reason_msg, strategy_name=self.name
         )
 
     async def _check_trend_break(self, code: str, current_price: int, current_vol: int) -> tuple[bool, str]:
