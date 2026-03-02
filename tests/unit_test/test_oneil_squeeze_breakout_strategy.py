@@ -98,7 +98,7 @@ async def test_scan_no_signal_if_price_not_breakout(scan_setup):
 
 @pytest.mark.asyncio
 async def test_scan_no_signal_if_program_buy_ratio_low(scan_setup):
-    """scan: 프로그램 순매수 비중(거래대금/시총)이 낮으면 매수 시그널 없음."""
+    """scan: 프로그램 순매수 비중(거래대금 대비)이 낮으면 매수 시그널 없음."""
     strategy, ts, _, _, _ = scan_setup
     
     # 가격/거래량은 돌파, 순매수 수량도 양수지만 비중이 낮음
@@ -113,6 +113,62 @@ async def test_scan_no_signal_if_program_buy_ratio_low(scan_setup):
     signals = await strategy.scan()
     
     assert len(signals) == 0
+
+@pytest.mark.asyncio
+async def test_scan_no_signal_if_program_market_cap_ratio_low(scan_setup):
+    """scan: 프로그램 순매수 비중이 거래대금 조건은 만족하나 시가총액 조건 미달 시 매수 시그널 없음."""
+    strategy, ts, _, _, _ = scan_setup
+    
+    # 시가총액: 1000억 (fixture 설정)
+    # 프로그램 순매수: 6000주 * 71000원 = 4.26억
+    #   -> 시총 대비: 4.26억 / 1000억 = 0.426% (< 0.5% 기준 미달)
+    # 거래대금: 40억
+    #   -> 거래대금 대비: 4.26억 / 40억 = 10.65% (> 10% 기준 만족)
+    
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "6000", "acml_tr_pbmn": "4000000000"
+        }}
+    )
+    
+    signals = await strategy.scan()
+    
+    assert len(signals) == 0
+
+@pytest.mark.asyncio
+async def test_scan_early_market_volume_defense(scan_setup):
+    """scan: 장 초반(09:00~09:20) 거래량 뻥튀기 방어 및 최소 거래량 조건 테스트."""
+    strategy, ts, _, tm, _ = scan_setup
+    
+    # 1. 장 시작 3분 후 (09:03) -> progress approx 3/390 = 0.0077
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 3, 0)
+    
+    # 설정: 평균 거래량 100,000
+    # Defense 2 기준: 30,000 (30%)
+    
+    # Case A: 거래량 부족 (20,000 < 30,000)
+    # 프로그램 수급은 충분하게 설정 (10000주 = 7.1억)
+    # 거래대금 14.2억 -> 50% (>10%)
+    # 시총 1000억 -> 0.71% (>0.5%)
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000", "acml_vol": "20000", "pgtr_ntby_qty": "10000", "acml_tr_pbmn": "1420000000"
+        }}
+    )
+    
+    signals = await strategy.scan()
+    assert len(signals) == 0 # Defense 2에 의해 탈락
+
+    # Case B: 거래량 충분 (40,000 > 30,000)
+    # Defense 1 적용: 40,000 / 0.05 = 800,000 (> 150,000). 통과.
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000", "acml_vol": "40000", "pgtr_ntby_qty": "10000", "acml_tr_pbmn": "2840000000"
+        }}
+    )
+    
+    signals = await strategy.scan()
+    assert len(signals) == 1 # 통과
 
 @pytest.mark.asyncio
 async def test_scan_no_signal_if_volume_not_breakout(scan_setup):

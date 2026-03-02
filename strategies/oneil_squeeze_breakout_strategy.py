@@ -38,7 +38,6 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     
     [🚨 ERROR & FIX REQUIRED (v2 내 즉시 수정/추가 필요)]
     - (Buy) 매수 체결 직전 '현재가 스냅샷 체결강도(>=120%)' 검증 로직 누락
-    - (Buy) 장 초반(09:00~09:20) 거래량 환산 비율(progress) 뻥튀기 방어 로직 누락
     - (Sell) 시간 손절(5일 횡보 박스권 이탈) 상세 로직 미구현
     - (Sell) 추세 이탈 청산(10MA 이탈 + 대량 거래량 동반) 로직 미구현
 
@@ -129,7 +128,16 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return None
             
         # 2. 거래량 돌파
-        proj_vol = vol / progress
+        # 🌟 [뻥튀기 방어 로직 추가] 🌟
+        # 방어 1: 최소 진행률 5% (약 20분) 보정
+        effective_progress = max(progress, 0.05)
+        proj_vol = vol / effective_progress
+        
+        # 방어 2: 최소 절대 거래량 확보 (20일 평균의 최소 30%는 실거래되어야 함)
+        if vol < (item.avg_vol_20d * 0.3):
+            return None
+            
+        # 2. 거래량 돌파 검증
         if proj_vol < item.avg_vol_20d * self._cfg.volume_breakout_multiplier:
             return None
             
