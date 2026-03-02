@@ -234,6 +234,12 @@ class OneilUniverseService:
             w52_hgpr = int(getattr(output, "w52_hgpr", 0) or 0)
             cap_billion = int(getattr(output, "hts_avls", 0) or getattr(output, "stck_llam", 0) or 0)
         stck_llam = cap_billion * 100_000_000  # 억 단위 -> 원 단위 변환
+
+        # 필터: 시가총액 (2천억 ~ 2조)
+        if not (self._cfg.pool_a_market_cap_min <= stck_llam <= self._cfg.pool_a_market_cap_max):
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
+            return None
+
         if w52_hgpr > 0:
             dist = ((w52_hgpr - prev_close) / w52_hgpr) * 100
             if dist > self._cfg.near_52w_high_pct:

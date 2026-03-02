@@ -95,9 +95,9 @@ async def test_analyze_candidate_success(mock_deps):
     
     # 2. 현재가 Mock (52주 고가 대비 20% 이내)
     # 현재가(prev_close)는 약 1099. 52주 고가 1200이면 통과.
-    # 시가총액 1000억으로 가정 (hts_avls는 억 단위)
+    # 시가총액 3000억으로 가정 (hts_avls는 억 단위, 2000억~2조 범위 내)
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
     )
     
     # 3. BB Mock (스퀴즈 데이터 계산용)
@@ -121,6 +121,46 @@ async def test_analyze_candidate_success(mock_deps):
     assert item.code == "005930"
     assert item.market == "KOSDAQ"
     assert item.rs_return_3m == 10.0
+
+@pytest.mark.asyncio
+async def test_analyze_candidate_filter_market_cap(mock_deps):
+    """_analyze_candidate: 시가총액 범위(2천억~2조) 벗어날 시 탈락 검증."""
+    ts, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
+    
+    # 1. OHLCV Mock (기본 통과 조건)
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    
+    # Case 1: 시가총액 미달 (1000억)
+    # hts_avls는 억 단위. 1000억 -> "1000"
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+    )
+    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    assert item is None
+    
+    # Case 2: 시가총액 초과 (3조 = 30000억)
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "30000"}}
+    )
+    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    assert item is None
+
+    # Case 3: 정상 범위 (5000억)
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "5000"}}
+    )
+    # BB, RS Mock 필요 (통과를 위해)
+    indicator.get_bollinger_bands.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+    )
+    indicator.get_relative_strength.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
+    )
+    
+    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    assert item is not None
 
 @pytest.mark.asyncio
 async def test_analyze_candidate_filter_trading_value(mock_deps):
@@ -372,7 +412,7 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
     ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
     ts.get_recent_daily_ohlcv.return_value = ohlcv
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
     )
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
@@ -409,7 +449,7 @@ async def test_analyze_candidate_rs_calculation_failure(mock_deps):
     ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
     ts.get_recent_daily_ohlcv.return_value = ohlcv
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
     )
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
@@ -797,7 +837,7 @@ async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
     # 현재가(prev_close) approx 1099.
     # 52주 고가 2000 -> (2000-1099)/2000 = 45% 하락 -> 탈락 (기본 설정 25% 가정)
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "2000", "hts_avls": "1000"}}
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "2000", "hts_avls": "3000"}}
     )
     
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
@@ -813,7 +853,7 @@ async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
     ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 1000000} for i in range(100)]
     ts.get_recent_daily_ohlcv.return_value = ohlcv
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
     )
     
     # 2. BB Mock
@@ -881,7 +921,7 @@ async def test_analyze_candidate_insufficient_bb_data(mock_deps):
     ohlcv = [{"close": 1000, "high": 1100, "volume": 1000000} for _ in range(100)]
     ts.get_recent_daily_ohlcv.return_value = ohlcv
     ts.get_current_stock_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
     )
     
     # BB Data Short
