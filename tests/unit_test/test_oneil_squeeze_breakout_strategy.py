@@ -26,7 +26,8 @@ def breakout_candidate_item():
         code="005930", name="Samsung", market="KOSPI",
         high_20d=70000, ma_20d=68000, ma_50d=65000,
         avg_vol_20d=100000, bb_width_min_20d=1000, prev_bb_width=1100,
-        w52_hgpr=80000, avg_trading_value_5d=50000000000
+        w52_hgpr=80000, avg_trading_value_5d=50000000000,
+        market_cap=100_000_000_000 # 1000억 (테스트용)
     )
 
 @pytest.fixture
@@ -60,10 +61,13 @@ async def test_scan_buy_signal(scan_setup):
     # 4. 현재가 Mock (돌파 성공 케이스)
     # 가격: 71000 (> 20일고가 70000)
     # 거래량: 200000 (환산 400000 > 평균 100000 * 1.5)
-    # 프로그램 수급: 1000 (> 0)
+    # 프로그램 수급: 30000 (> 0)
+    # 프로그램 금액: 30000 * 71000 = 21.3억
+    # 거래대금: 142억 -> 21.3/142 = 15% (> 10%)
+    # 시총: 1000억 -> 21.3/1000 = 2.13% (> 0.5%)
     ts.get_current_stock_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "1000"
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000", "acml_tr_pbmn": "14200000000"
         }}
     )
     
@@ -85,6 +89,24 @@ async def test_scan_no_signal_if_price_not_breakout(scan_setup):
     ts.get_current_stock_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
             "stck_prpr": "70000", "acml_vol": "200000", "pgtr_ntby_qty": "1000"
+        }}
+    )
+    
+    signals = await strategy.scan()
+    
+    assert len(signals) == 0
+
+@pytest.mark.asyncio
+async def test_scan_no_signal_if_program_buy_ratio_low(scan_setup):
+    """scan: 프로그램 순매수 비중(거래대금/시총)이 낮으면 매수 시그널 없음."""
+    strategy, ts, _, _, _ = scan_setup
+    
+    # 가격/거래량은 돌파, 순매수 수량도 양수지만 비중이 낮음
+    # 순매수 1000주 * 71000 = 7100만원
+    # 거래대금 142억 -> 0.5% (기준 10% 미달)
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "1000", "acml_tr_pbmn": "14200000000"
         }}
     )
     

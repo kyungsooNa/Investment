@@ -25,26 +25,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     특징:
       - 유니버스 관리(종목 발굴)는 OneilUniverseService에 위임.
       - 이 클래스는 '언제 살까(돌파)'와 '언제 팔까(청산)'에만 집중.
-
-    [v1 범위]
-    - 유니버스: get_top_trading_value_stocks() → 기본 필터(거래대금/52주고가/정배열)
-    - 매수/매도 뼈대 구축 및 스케줄러 연동 완료
-
-    [v2 완료 사항]
-    - 아키텍처: OneilUniverseService 완전 분리 및 메모리 캐싱 (API 중복 호출 방지)
-    - 유니버스: Pool A(장 마감 후 배치) / Pool B(장중 3중 그물망 실시간 발굴) 병합
-    - 스코어링: RS(3개월 상대강도 상위10% → +30점), 영업이익 25% 이상 증가 → +20점 적용
-    - 마켓타이밍: ETF 프록시(KODEX 200/코스닥150) 20일선 3일 연속 우상향 로직 적용
-
-    [🚨 ERROR & FIX REQUIRED (v2 내 즉시 수정/추가 필요)]
-    - (Universe) Pool B 발굴 시 `_analyze_candidate` 내 시가총액(2천억~2조) 필터 누락
-    - (Universe) Pool A 1차 필터(`generate_pool_a`)에서 '당일 거래대금' 조건 삭제 필요 (스퀴즈 종목 보호)
-    - (Buy) 프로그램 순매수 세부 조건(당일 거래대금의 10% 이상 & 시가총액의 0.5% 이상) 누락
-    - (Buy) 매수 체결 직전 '현재가 스냅샷 체결강도(>=120%)' 검증 로직 누락
-    - (Buy) 장 초반(09:00~09:20) 거래량 환산 비율(progress) 뻥튀기 방어 로직 누락
-    - (Sell) 시간 손절(5일 횡보 박스권 이탈) 상세 로직 미구현
-    - (Sell) 추세 이탈 청산(10MA 이탈 + 대량 거래량 동반) 로직 미구현
-    
+      
     [v1 범위]
     - 유니버스: get_top_trading_value_stocks() → 기본 필터(거래대금/52주고가/정배열)
     - 매수/매도 뼈대 구축 및 스케줄러 연동 완료
@@ -56,8 +37,6 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     - 마켓타이밍: ETF 프록시(KODEX 200/코스닥150) 20일선 3일 연속 우상향 로직 적용
     
     [🚨 ERROR & FIX REQUIRED (v2 내 즉시 수정/추가 필요)]
-    - (Universe) Pool A 1차 필터(`generate_pool_a`)에서 '당일 거래대금' 조건 삭제 필요 (스퀴즈 종목 보호)
-    - (Buy) 프로그램 순매수 세부 조건(당일 거래대금의 10% 이상 & 시가총액의 0.5% 이상) 누락
     - (Buy) 매수 체결 직전 '현재가 스냅샷 체결강도(>=120%)' 검증 로직 누락
     - (Buy) 장 초반(09:00~09:20) 거래량 환산 비율(progress) 뻥튀기 방어 로직 누락
     - (Sell) 시간 손절(5일 횡보 박스권 이탈) 상세 로직 미구현
@@ -138,10 +117,12 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             current = int(output.get("stck_prpr", 0))
             vol = int(output.get("acml_vol", 0))
             pg_buy = int(output.get("pgtr_ntby_qty", 0))
+            acml_tr_pbmn = int(output.get("acml_tr_pbmn", 0))
         else:
             current = int(getattr(output, "stck_prpr", 0) or 0)
             vol = int(getattr(output, "acml_vol", 0) or 0)
             pg_buy = int(getattr(output, "pgtr_ntby_qty", 0) or 0)
+            acml_tr_pbmn = int(getattr(output, "acml_tr_pbmn", 0) or 0)
         
         # 1. 가격 돌파
         if current <= item.high_20d:
@@ -152,9 +133,20 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if proj_vol < item.avg_vol_20d * self._cfg.volume_breakout_multiplier:
             return None
             
-        # 3. 프로그램 수급
+        # 3. 프로그램 수급 (기본 수량)
         if pg_buy <= self._cfg.program_net_buy_min:
             return None
+
+        # 3-1. 프로그램 수급 (세부 조건: 거래대금/시총 비중)
+        pg_buy_amt = pg_buy * current
+        
+        if acml_tr_pbmn > 0:
+            if (pg_buy_amt / acml_tr_pbmn) * 100 < self._cfg.program_to_trade_value_pct:
+                return None
+        
+        if item.market_cap > 0:
+            if (pg_buy_amt / item.market_cap) * 100 < self._cfg.program_to_market_cap_pct:
+                return None
             
         # 매수 신호 생성
         qty = self._calculate_qty(current)

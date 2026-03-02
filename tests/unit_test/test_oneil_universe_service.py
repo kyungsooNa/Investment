@@ -188,14 +188,14 @@ async def test_generate_pool_a(mock_deps, tmp_path):
         "시장구분": ["KOSPI", "KOSDAQ"]
     })
     
-    # 2. 1차 필터 (시총/거래대금) Mock
-    # StockA: 통과, StockB: 탈락 (거래대금 부족)
+    # 2. 1차 필터 (시총) Mock
+    # StockA: 통과, StockB: 탈락 (시가총액 미달)
     async def mock_get_price(code):
         if code == "000001":
-            # 시가총액 5000억, 거래대금 200억 (hts_avls는 억 단위)
-            return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "5000", "acml_tr_pbmn": "20000000000"}})
-        # 시가총액 10억, 거래대금 100원
-        return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "10", "acml_tr_pbmn": "100"}})
+            # 시가총액 5000억 (hts_avls는 억 단위)
+            return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "5000"}})
+        # 시가총액 10억 (미달)
+        return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "10"}})
     
     ts.get_current_stock_price.side_effect = mock_get_price
     
