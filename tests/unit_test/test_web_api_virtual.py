@@ -28,8 +28,8 @@ async def test_virtual_endpoints(web_client, mock_web_ctx):
         {"code": "005930", "strategy": "StrategyA", "buy_price": 1000, "return_rate": 10.0, "status": "HOLD"}
     ]
 
-    mock_web_ctx.virtual_manager.get_daily_change.return_value = 0.0
-    mock_web_ctx.virtual_manager.get_weekly_change.return_value = 0.0
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (0.0, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (0.0, None)
     mock_web_ctx.virtual_manager._load_data.return_value = {}
     mock_web_ctx.virtual_manager.save_daily_snapshot.return_value = None
 
@@ -172,8 +172,8 @@ async def test_get_virtual_history_complex(web_client, mock_web_ctx):
     # 스냅샷 관련 Mock
     mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
     mock_web_ctx.virtual_manager._load_data.return_value = {}
-    mock_web_ctx.virtual_manager.get_daily_change.return_value = 0.0
-    mock_web_ctx.virtual_manager.get_weekly_change.return_value = 0.0
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (0.0, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (0.0, None)
 
     response = web_client.get("/api/virtual/history")
     assert response.status_code == 200

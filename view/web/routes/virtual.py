@@ -220,6 +220,8 @@ async def get_virtual_history(force_code: str = None):
     # 4. 전략별 누적수익률 계산 + 스냅샷 저장 + 전일/전주대비 조회
     daily_changes = {}
     weekly_changes = {}
+    daily_ref_dates = {}
+    weekly_ref_dates = {}
     try:
         strategies = list(set(t['strategy'] for t in trades if t.get('strategy')))
         strategy_returns = {}
@@ -239,9 +241,37 @@ async def get_virtual_history(force_code: str = None):
         snapshot_data = vm._load_data()
         for key in ["ALL"] + strategies:
             cur = strategy_returns.get(key, 0)
-            daily_changes[key] = vm.get_daily_change(key, cur, _data=snapshot_data)
-            weekly_changes[key] = vm.get_weekly_change(key, cur, _data=snapshot_data)
+            d_val, d_date = vm.get_daily_change(key, cur, _data=snapshot_data)
+            w_val, w_date = vm.get_weekly_change(key, cur, _data=snapshot_data)
+            daily_changes[key] = d_val
+            weekly_changes[key] = w_val
+            if d_date:
+                daily_ref_dates[key] = d_date
+            if w_date:
+                weekly_ref_dates[key] = w_date
     except Exception as e:
         print(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
 
-    return {"trades": trades, "daily_changes": daily_changes, "weekly_changes": weekly_changes}
+    # 5. 최초매매일 계산 (전략별 + ALL)
+    first_dates = {}
+    try:
+        for t in trades:
+            buy_date = t.get('buy_date', '')
+            strat = t.get('strategy', '')
+            if buy_date and strat:
+                date_only = buy_date[:10]  # "2025-02-13 ..." → "2025-02-13"
+                if strat not in first_dates or date_only < first_dates[strat]:
+                    first_dates[strat] = date_only
+                if "ALL" not in first_dates or date_only < first_dates["ALL"]:
+                    first_dates["ALL"] = date_only
+    except Exception:
+        pass
+
+    return {
+        "trades": trades,
+        "daily_changes": daily_changes,
+        "weekly_changes": weekly_changes,
+        "daily_ref_dates": daily_ref_dates,
+        "weekly_ref_dates": weekly_ref_dates,
+        "first_dates": first_dates,
+    }
