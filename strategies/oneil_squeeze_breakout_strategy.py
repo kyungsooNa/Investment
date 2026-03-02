@@ -38,7 +38,6 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     
     [🚨 ERROR & FIX REQUIRED (v2 내 즉시 수정/추가 필요)]
     - (Buy) 매수 체결 직전 '현재가 스냅샷 체결강도(>=120%)' 검증 로직 누락
-    - (Sell) 시간 손절(5일 횡보 박스권 이탈) 상세 로직 미구현
     - (Sell) 추세 이탈 청산(10MA 이탈 + 대량 거래량 동반) 로직 미구현
 
     [v3 예정 (TODO)]
@@ -214,7 +213,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     reason = f"트레일링스탑({drop:.1f}%)"
             
             # 시간 손절 (박스권 횡보)
-            if not reason and await self._check_time_stop(code, state):
+            if not reason and await self._check_time_stop(code, state, current):
                 reason = "시간손절(횡보)"
 
             if reason:
@@ -226,12 +225,59 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 ))
         return signals
 
-    async def _check_time_stop(self, code: str, state: OSBPositionState) -> bool:
-        # (기존 로직 유지: N일 경과 후 박스권이면 True)
-        if state.entry_date == self._tm.get_current_kst_time().strftime("%Y%m%d"):
+    async def _check_time_stop(self, code: str, state: OSBPositionState, current_price: int) -> bool:
+        """시간 손절 조건 체크.
+        
+        조건:
+          1. 진입 후 N거래일(time_stop_days) 경과
+          2. 현재가가 진입가 대비 박스권(time_stop_box_range_pct) 이내 횡보
+          3. 진입 후 시세 분출 이력(peak_price 급등)이 없어야 함
+        """
+        if not state.entry_date or state.entry_price <= 0:
             return False
-        # ... (상세 구현 생략, 필요시 기존 코드 복사)
-        return False
+            
+        # 🌟 최적화: 당일 진입한 종목은 굳이 API를 쏠 필요 없이 즉시 리턴 (API TPS 절약)
+        today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        if state.entry_date.replace("-", "") == today_str:
+            return False
+        
+        # 1. 거래일 수 계산 (OHLCV 조회)
+        ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=self._cfg.time_stop_days + 20)
+        if not ohlcv:
+            return False
+            
+        trading_days = 0
+        safe_entry_date = state.entry_date.replace("-", "")
+        
+        # 🌟 버그 수정: == 대신 >= 를 사용하여 하이픈 제거 및 진입일 이후 데이터 필터링
+        for candle in ohlcv:
+            date_str = str(candle.get('date', '')).replace("-", "")
+            if date_str > safe_entry_date: # 진입일 '다음 날'부터 1일로 카운트
+                trading_days += 1
+                
+        # 설정된 거래일이 안 지났으면 패스
+        if trading_days < self._cfg.time_stop_days:
+            return False
+            
+        # 2. 횡보 또는 하락 조건 확인 (현재가가 박스권 상단 이상으로 치고 나가지 못했는가?)
+        pnl_pct = (current_price - state.entry_price) / state.entry_price * 100
+        
+        # 🌟 버그 수정: abs() 제거. 2% 이상 '상승'한 게 아니라면 다 잘라버림 (하락 포함)
+        if pnl_pct > self._cfg.time_stop_box_range_pct:
+            return False
+            
+        # 3. '찍고 내려온 놈' 제외 (최고가가 진입가 대비 크게 오르지 않았어야 함)
+        peak_pnl_pct = (state.peak_price - state.entry_price) / state.entry_price * 100
+        if peak_pnl_pct > (self._cfg.time_stop_box_range_pct * 2.5):
+            return False
+
+        self._logger.info({
+            "event": "time_stop_triggered",
+            "code": code,
+            "trading_days": trading_days,
+            "pnl_pct": round(pnl_pct, 2)
+        })
+        return True
 
     def _calculate_qty(self, price: int) -> int:
         if price <= 0: return 1

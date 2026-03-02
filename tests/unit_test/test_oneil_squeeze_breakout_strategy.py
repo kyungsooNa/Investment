@@ -14,6 +14,7 @@ def mock_strategy_deps():
     logger = MagicMock()
     
     ts.get_current_stock_price = AsyncMock()
+    ts.get_recent_daily_ohlcv = AsyncMock()
     universe.get_watchlist = AsyncMock()
     universe.is_market_timing_ok = AsyncMock()
     
@@ -400,17 +401,42 @@ def test_load_save_state(mock_strategy_deps, tmp_path):
     assert strategy2._position_state["005930"].peak_price == 11000
 
 @pytest.mark.asyncio
-async def test_check_time_stop_today(mock_strategy_deps):
-    """_check_time_stop: 진입일이 오늘이면 False 반환."""
+async def test_check_time_stop_logic(mock_strategy_deps):
+    """_check_time_stop: 시간 손절 로직 상세 검증."""
     ts, universe, tm, logger = mock_strategy_deps
     strategy = OneilSqueezeBreakoutStrategy(ts, universe, tm, logger=logger)
     
-    tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
-    state = OSBPositionState(10000, "20250101", 10000, 9000)
+    # 설정: 5일 경과, 박스권 2%
+    strategy._cfg.time_stop_days = 5
+    strategy._cfg.time_stop_box_range_pct = 2.0
     
-    # Private method call for testing
-    result = await strategy._check_time_stop("005930", state)
-    assert result is False
+    state = OSBPositionState(entry_price=10000, entry_date="20250101", peak_price=10000, breakout_level=10000)
+    
+    # OHLCV Mock: 진입일(0101) 이후 5일치 데이터 생성 (0102~0106)
+    ohlcv = [
+        {"date": "20250101"}, # 진입일
+        {"date": "20250102"}, {"date": "20250103"}, {"date": "20250104"}, {"date": "20250105"}, {"date": "20250106"} # 5일 경과
+    ]
+    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    
+    # Case 1: 5일 경과 & 횡보(10100원, +1%) & 급등이력 없음 -> True (손절)
+    assert await strategy._check_time_stop("005930", state, 10100) is True
+    
+    # Case 2: 5일 경과 & 상승 이탈(10300원, +3%) -> False
+    assert await strategy._check_time_stop("005930", state, 10300) is False
+    
+    # Case 3: 5일 경과 & 하락 이탈(9700원, -3%) -> True (상승 실패)
+    # 전략 로직 변경(abs 제거)으로 인해 하락 상태여도 시간 손절 조건(상승 미달)에 해당함
+    assert await strategy._check_time_stop("005930", state, 9700) is True
+    
+    # Case 4: 5일 경과 & 횡보(10100원) & 급등이력 있음(peak 10600원, +6%) -> False
+    state_peak = OSBPositionState(entry_price=10000, entry_date="20250101", peak_price=10600, breakout_level=10000)
+    assert await strategy._check_time_stop("005930", state_peak, 10100) is False
+    
+    # Case 5: 4일 경과 (데이터 부족) -> False
+    ohlcv_short = ohlcv[:-1] # 4일치
+    ts.get_recent_daily_ohlcv.return_value = ohlcv_short
+    assert await strategy._check_time_stop("005930", state, 10100) is False
 
 @pytest.mark.asyncio
 async def test_scan_mixed_market_timing(scan_setup):
