@@ -12,6 +12,7 @@ tr_ids:
     ranking_foreign: FHKUP03600000
     item_news: FHPST01040000
     etf_info: FHPST02400000
+    multi_price: FHKST11300006
 
     inquire_daily_itemchartprice:      FHKST03010100 # 기간별 시세 (일/주/월/년)
     inquire_time_itemchartprice:       FHKST03010200 # 당일 분봉 조회

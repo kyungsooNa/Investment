@@ -1187,3 +1187,108 @@ async def test_get_top_volume_stocks_parsing_error(mock_quotations, invalid_data
     assert "거래량 상위 응답 형식 오류" in result.msg1
     assert result.data is None
     api._logger.error.assert_called_once()
+
+
+# ── get_multi_price 테스트 ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_multi_price_success(mock_quotations):
+    """get_multi_price: 복수종목 현재가 정상 조회"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+        data={"output": [
+            {"stck_shrn_iscd": "005930", "stck_prpr": "70000", "prdy_ctrt": "1.50"},
+            {"stck_shrn_iscd": "000660", "stck_prpr": "120000", "prdy_ctrt": "-0.80"},
+        ]}
+    ))
+
+    result = await api.get_multi_price(["005930", "000660"])
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.msg1 == "복수종목 현재가 조회 성공"
+    assert isinstance(result.data, list)
+    assert len(result.data) == 2
+    assert result.data[0]["stck_shrn_iscd"] == "005930"
+    assert result.data[1]["stck_prpr"] == "120000"
+    api.call_api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_multi_price_empty_codes(mock_quotations):
+    """get_multi_price: 빈 종목코드 리스트"""
+    result = await mock_quotations.get_multi_price([])
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    assert "비어 있습니다" in result.msg1
+    assert result.data == []
+
+
+@pytest.mark.asyncio
+async def test_get_multi_price_over_30_truncated(mock_quotations):
+    """get_multi_price: 30개 초과 시 30개로 자르기"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+        data={"output": [{"stck_shrn_iscd": f"{i:06d}", "stck_prpr": "1000"} for i in range(30)]}
+    ))
+
+    codes = [f"{i:06d}" for i in range(35)]
+    result = await api.get_multi_price(codes)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    api._logger.warning.assert_called_once()
+    assert "30개로 제한" in api._logger.warning.call_args[0][0]
+    # call_api에 전달된 params 확인: 30번째까지만 존재
+    _, kwargs = api.call_api.call_args
+    params = kwargs["params"]
+    assert "FID_INPUT_ISCD_30" in params
+    assert "FID_INPUT_ISCD_31" not in params
+
+
+@pytest.mark.asyncio
+async def test_get_multi_price_api_failure(mock_quotations):
+    """get_multi_price: API 호출 실패"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="서버 오류", data=None
+    ))
+
+    result = await api.get_multi_price(["005930"])
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    api._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_multi_price_empty_response(mock_quotations):
+    """get_multi_price: 응답 data가 비어있을 때"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=None
+    ))
+
+    result = await api.get_multi_price(["005930"])
+
+    assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
+    assert result.data == []
+
+
+@pytest.mark.asyncio
+async def test_get_multi_price_single_stock(mock_quotations):
+    """get_multi_price: 단일 종목 조회"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+        data={"output": [{"stck_shrn_iscd": "005930", "stck_prpr": "70000"}]}
+    ))
+
+    result = await api.get_multi_price(["005930"])
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 1
+    # params에 1번만 설정되고 나머지는 빈 문자열인지 확인
+    _, kwargs = api.call_api.call_args
+    params = kwargs["params"]
+    assert params["FID_INPUT_ISCD_1"] == "005930"
+    assert params["FID_INPUT_ISCD_2"] == ""

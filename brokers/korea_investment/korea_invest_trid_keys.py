@@ -11,6 +11,7 @@ class TrIdLeaf(str, Enum):
     RANKING_FLUCTUATION = "ranking_fluctuation"
     RANKING_VOLUME = "ranking_volume"
     ETF_INFO = "etf_info"
+    MULTI_PRICE = "multi_price"
 
     DAILY_ITEMCHARTPRICE =      "inquire_daily_itemchartprice"           # 기간별 시세 (일/주/월/년)
     TIME_ITEMCHARTPRICE =       "inquire_time_itemchartprice"             # 당일 분봉 조회

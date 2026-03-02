@@ -685,6 +685,56 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
     #
     #     return response
 
+    async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
+        """
+        복수종목 현재가 조회 (최대 30종목)
+        URL: /uapi/domestic-stock/v1/quotations/intstock-multprice
+        TR:  FHKST11300006 (실전 전용)
+        """
+        if not stock_codes:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="종목코드 리스트가 비어 있습니다.",
+                data=[]
+            )
+
+        if len(stock_codes) > 30:
+            self._logger.warning(f"최대 30종목까지 조회 가능합니다. 30개로 제한합니다. (요청: {len(stock_codes)}개)")
+            stock_codes = stock_codes[:30]
+
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.MULTI_PRICE)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.multi_price(stock_codes=stock_codes)
+
+        self._logger.info(f"복수종목 현재가 조회 시도 ({len(stock_codes)}종목: {stock_codes[:5]}{'...' if len(stock_codes) > 5 else ''})")
+        response: ResCommonResponse = await self.call_api("GET", EndpointKey.MULTI_PRICE, params=params, retry_count=1)
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            self._logger.warning(f"복수종목 현재가 조회 실패: {response.msg1}")
+            return response
+
+        if not response.data:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.EMPTY_VALUES.value,
+                msg1="복수종목 현재가 데이터 없음",
+                data=[]
+            )
+
+        raw = response.data
+        output_list = raw.get("output", []) if isinstance(raw, dict) else raw
+        if not isinstance(output_list, list):
+            output_list = [output_list] if output_list else []
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="복수종목 현재가 조회 성공",
+            data=output_list
+        )
+
     async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
         """
         ETF 정보 조회

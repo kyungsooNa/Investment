@@ -435,6 +435,87 @@ class FluctuationParams:
 
 
 @dataclass(frozen=True)
+class MultiPriceParams:
+    """복수종목 현재가 조회 파라미터 (최대 30종목)"""
+    fid_cond_mrkt_div_code_1: str
+    fid_input_iscd_1: str
+    fid_cond_mrkt_div_code_2: str = ""
+    fid_input_iscd_2: str = ""
+    fid_cond_mrkt_div_code_3: str = ""
+    fid_input_iscd_3: str = ""
+    fid_cond_mrkt_div_code_4: str = ""
+    fid_input_iscd_4: str = ""
+    fid_cond_mrkt_div_code_5: str = ""
+    fid_input_iscd_5: str = ""
+    fid_cond_mrkt_div_code_6: str = ""
+    fid_input_iscd_6: str = ""
+    fid_cond_mrkt_div_code_7: str = ""
+    fid_input_iscd_7: str = ""
+    fid_cond_mrkt_div_code_8: str = ""
+    fid_input_iscd_8: str = ""
+    fid_cond_mrkt_div_code_9: str = ""
+    fid_input_iscd_9: str = ""
+    fid_cond_mrkt_div_code_10: str = ""
+    fid_input_iscd_10: str = ""
+    fid_cond_mrkt_div_code_11: str = ""
+    fid_input_iscd_11: str = ""
+    fid_cond_mrkt_div_code_12: str = ""
+    fid_input_iscd_12: str = ""
+    fid_cond_mrkt_div_code_13: str = ""
+    fid_input_iscd_13: str = ""
+    fid_cond_mrkt_div_code_14: str = ""
+    fid_input_iscd_14: str = ""
+    fid_cond_mrkt_div_code_15: str = ""
+    fid_input_iscd_15: str = ""
+    fid_cond_mrkt_div_code_16: str = ""
+    fid_input_iscd_16: str = ""
+    fid_cond_mrkt_div_code_17: str = ""
+    fid_input_iscd_17: str = ""
+    fid_cond_mrkt_div_code_18: str = ""
+    fid_input_iscd_18: str = ""
+    fid_cond_mrkt_div_code_19: str = ""
+    fid_input_iscd_19: str = ""
+    fid_cond_mrkt_div_code_20: str = ""
+    fid_input_iscd_20: str = ""
+    fid_cond_mrkt_div_code_21: str = ""
+    fid_input_iscd_21: str = ""
+    fid_cond_mrkt_div_code_22: str = ""
+    fid_input_iscd_22: str = ""
+    fid_cond_mrkt_div_code_23: str = ""
+    fid_input_iscd_23: str = ""
+    fid_cond_mrkt_div_code_24: str = ""
+    fid_input_iscd_24: str = ""
+    fid_cond_mrkt_div_code_25: str = ""
+    fid_input_iscd_25: str = ""
+    fid_cond_mrkt_div_code_26: str = ""
+    fid_input_iscd_26: str = ""
+    fid_cond_mrkt_div_code_27: str = ""
+    fid_input_iscd_27: str = ""
+    fid_cond_mrkt_div_code_28: str = ""
+    fid_input_iscd_28: str = ""
+    fid_cond_mrkt_div_code_29: str = ""
+    fid_input_iscd_29: str = ""
+    fid_cond_mrkt_div_code_30: str = ""
+    fid_input_iscd_30: str = ""
+
+    @classmethod
+    def of(cls, stock_codes: list[str], market: MarketCode = "J") -> "MultiPriceParams":
+        """종목코드 리스트로 파라미터 생성 (최대 30개)"""
+        if not stock_codes:
+            raise ValueError("stock_codes가 비어 있습니다.")
+        if len(stock_codes) > 30:
+            raise ValueError(f"최대 30종목까지 조회 가능합니다. (요청: {len(stock_codes)}개)")
+        kwargs = {}
+        for i, code in enumerate(stock_codes, start=1):
+            kwargs[f"fid_cond_mrkt_div_code_{i}"] = market
+            kwargs[f"fid_input_iscd_{i}"] = code
+        return cls(**kwargs)
+
+    def to_dict(self) -> Dict[str, str]:
+        return {k.upper(): v for k, v in asdict(self).items()}
+
+
+@dataclass(frozen=True)
 class AccountBalanceParams:
     CANO: str  # 계좌번호 앞 8자리
     ACNT_PRDT_CD: str  # 계좌상품코드 (기본: "01")
@@ -601,6 +682,10 @@ class Params:
             price_1=price_1, price_2=price_2, vol_cnt=vol_cnt,
             trgt_cls=trgt_cls, trgt_exls=trgt_exls, div_cls=div_cls
         ).to_dict()
+
+    @staticmethod
+    def multi_price(stock_codes: list[str], market: MarketCode = "J") -> Dict[str, str]:
+        return MultiPriceParams.of(stock_codes, market).to_dict()
 
     @staticmethod
     def account_balance(
