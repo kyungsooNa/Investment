@@ -16,13 +16,29 @@ from services.oneil_universe_service import OneilUniverseService
 
 
 class OneilSqueezeBreakoutStrategy(LiveStrategy):
-    """오닐식 스퀴즈 주도주 돌파매매 전략 (Strategy B).
+    """오닐식 스퀴즈 주도주 돌파매매 (O'Neil Squeeze Breakout).
+
+    핵심: 시장 주도주 중 볼린저 밴드가 극도로 수축(스퀴즈)된 종목이
+        거래량을 동반하며 20일 최고가를 돌파할 때 매수.
+        프로그램 순매수 필터(2중 스마트 머니)로 기관 수급 확인.
     
     특징:
       - 유니버스 관리(종목 발굴)는 OneilUniverseService에 위임.
       - 이 클래스는 '언제 살까(돌파)'와 '언제 팔까(청산)'에만 집중.
-    """
 
+    v1 범위:
+    - 유니버스: get_top_trading_value_stocks() → 기본 필터(거래대금/52주고가/정배열)
+    - 매수: 마켓타이밍 + 스퀴즈 + 가격돌파 + 거래량돌파 + 프로그램필터
+    - 매도: 손절(-5%) / 시간손절(5일 박스권 횡보) / 트레일링(-8%) / 추세이탈(10MA)
+
+    v2 예정 (TODO):
+    - Pool A/B 분리 유니버스 (Pool A: 전일 기준 30종목, Pool B: 장중 거래대금 30종목)
+    - 스코어링 시스템: RS(3개월 상대강도 상위10% → +30점), 업종 소분류 주도 → +20점
+    - 분기 영업이익 25% 이상 증가 → +20점: /uapi/domestic-stock/v1/finance/financial-ratio
+    - 스코어 상위 10~15종목만 집중 감시 (스코어링 갱신: 08:50, 10:00, 12:00, 14:00)
+    - 체결강도(>=120%), 고래 탐지(>=5000만원): REST inquire-ccnl 또는 WS H0STOUP0
+    - 코스닥/코스피 지수 직접 조회 (ETF 프록시 대체)
+    """
     STATE_FILE = os.path.join("data", "osb_position_state.json")
 
     def __init__(
