@@ -540,6 +540,10 @@ class KoreaInvestWebSocketAPI:
             # 메시지 수신 태스크 시작 (이미 실행 중이면 건너뜀)
             if self._receive_task and not self._receive_task.done():
                 self._receive_task.cancel()
+                try:
+                    await self._receive_task
+                except asyncio.CancelledError:
+                    pass
             self._receive_task = asyncio.create_task(self._receive_messages())
             return True
         return False
