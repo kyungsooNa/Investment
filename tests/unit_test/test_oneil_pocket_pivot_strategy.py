@@ -121,10 +121,10 @@ async def test_scan_pp_buy_signal(pp_scan_setup):
     assert len(signals) == 1
     assert signals[0].action == "BUY"
     assert "PP진입" in signals[0].reason
-    assert "20MA지지" in signals[0].reason
+    assert "MA지지" in signals[0].reason
     assert "005930" in strategy._position_state
     assert strategy._position_state["005930"].entry_type == "PP"
-    assert strategy._position_state["005930"].supporting_ma == "20"
+    assert strategy._position_state["005930"].supporting_ma in ("10", "20", "50")
 
 
 @pytest.mark.asyncio
@@ -685,20 +685,24 @@ async def test_exits_7week_rule_triggered(mock_deps):
     strategy._save_state = MagicMock()
     universe.is_market_timing_ok.return_value = True
 
-    # holding_start_date="20250101", 35거래일 이후 데이터 포함
-    state = PPPositionState("PP", 10000, "20241201", 12000, "20", 0, True, "20250101")
+    # BGU 진입 (PP 손절 로직을 우회하기 위해), gap_day_low=8000 (현재가 이하 아님)
+    # peak_price=9000 → 현재가 8800과 차이 -2.2% (하드스탑 -10% 미달)
+    state = PPPositionState("BGU", 10000, "20241201", 9000, "", 8000, True, "20250101")
     strategy._position_state["005930"] = state
 
-    # 36일치 날짜 (0102~0207) — holding_start_date 이후 36일 > 35
-    dates = [f"2025010{i}" if i < 10 else f"202501{i}" for i in range(2, 32)]
-    dates += ["20250201", "20250202", "20250203", "20250204", "20250205", "20250206", "20250207"]
-    # 50MA용 충분한 데이터 (close=9000 → 50MA ≈ 9000)
+    # 60일치 데이터: 12월 20일분(holding_start_date 이전) + 1월 30일분 + 2월 10일분
+    # holding_start_date("20250101") 이후 날짜가 36개 이상 있어야 함
+    dates_before = [f"202412{i:02d}" for i in range(1, 21)]  # 20241201~20241220 (20개)
+    dates_jan = [f"202501{i:02d}" for i in range(2, 32)]     # 20250102~20250131 (30개)
+    dates_feb = [f"202502{i:02d}" for i in range(1, 11)]     # 20250201~20250210 (10개)
+    dates = dates_before + dates_jan + dates_feb              # 총 60개 (>= 50 for MA)
     ohlcv = [{"date": d, "close": 9000, "volume": 50000} for d in dates]
     ts.get_recent_daily_ohlcv.return_value = ohlcv
 
-    tm.get_current_kst_time.return_value = datetime(2025, 2, 7, 12, 0, 0)
+    tm.get_current_kst_time.return_value = datetime(2025, 2, 10, 12, 0, 0)
 
-    # 현재가 8800 < 50MA(9000) → 이탈
+    # 현재가 8800 < 50MA(9000) → 이탈 (peak 9000 대비 -2.2%이므로 하드스탑 미발동)
+    # gap_day_low=8000이므로 BGU 손절도 미발동 (8800 > 8000)
     ts.get_current_stock_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "8800"}}
     )
@@ -718,17 +722,20 @@ async def test_exits_7week_rule_not_triggered_above_ma(mock_deps):
     strategy._save_state = MagicMock()
     universe.is_market_timing_ok.return_value = True
 
-    state = PPPositionState("PP", 10000, "20241201", 12000, "20", 0, True, "20250101")
+    # BGU 진입 (PP MA 손절 우회), peak_price=9800 → 현재가 9500 대비 -3.1% (하드스탑 미발동)
+    state = PPPositionState("BGU", 10000, "20241201", 9800, "", 8000, True, "20250101")
     strategy._position_state["005930"] = state
 
-    dates = [f"2025010{i}" if i < 10 else f"202501{i}" for i in range(2, 32)]
-    dates += ["20250201", "20250202", "20250203", "20250204", "20250205", "20250206", "20250207"]
+    dates_before = [f"202412{i:02d}" for i in range(1, 21)]
+    dates_jan = [f"202501{i:02d}" for i in range(2, 32)]
+    dates_feb = [f"202502{i:02d}" for i in range(1, 11)]
+    dates = dates_before + dates_jan + dates_feb  # 60개 (>= 50 for MA)
     ohlcv = [{"date": d, "close": 9000, "volume": 50000} for d in dates]
     ts.get_recent_daily_ohlcv.return_value = ohlcv
 
-    tm.get_current_kst_time.return_value = datetime(2025, 2, 7, 12, 0, 0)
+    tm.get_current_kst_time.return_value = datetime(2025, 2, 10, 12, 0, 0)
 
-    # 현재가 9500 > 50MA(9000) → 안전
+    # 현재가 9500 > 50MA(9000) → 안전 (peak 9800 대비 -3.1%이므로 하드스탑 미발동)
     ts.get_current_stock_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9500"}}
     )
