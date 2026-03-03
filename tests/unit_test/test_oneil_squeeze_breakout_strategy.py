@@ -74,13 +74,13 @@ async def test_scan_buy_signal(scan_setup):
         }}
     )
 
-    # 5. 체결강도 Mock (150%)
+    # 5. 체결강도 Mock (150%) - 실제 API는 output이 배열, 필드명 tday_rltv
     ts.get_stock_conclusion.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"ccld_strg_val": "150.0"}}
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "150.0"}]}
     )
-    
+
     signals = await strategy.scan()
-    
+
     assert len(signals) == 1
     assert signals[0].code == "005930"
     assert signals[0].action == "BUY"
@@ -158,7 +158,7 @@ async def test_scan_no_signal_if_execution_strength_low(scan_setup):
     )
     
     ts.get_stock_conclusion.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"ccld_strg_val": "110.0"}}
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "110.0"}]}
     )
     
     signals = await strategy.scan()
@@ -174,7 +174,7 @@ async def test_scan_early_market_volume_defense(scan_setup):
     
     # 체결강도 Mock (150%) - 통과 조건
     ts.get_stock_conclusion.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"ccld_strg_val": "150.0"}}
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "150.0"}]}
     )
     
     # 설정: 평균 거래량 100,000
@@ -567,6 +567,11 @@ async def test_scan_mixed_market_timing(scan_setup):
         rt_cd="0", msg1="OK", data={"output": {
             "stck_prpr": "999999", "acml_vol": "9999999", "pgtr_ntby_qty": "1000"
         }}
+    )
+
+    # 체결강도 Mock (150%) - 통과 조건
+    ts.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "150.0"}]}
     )
     
     signals = await strategy.scan()

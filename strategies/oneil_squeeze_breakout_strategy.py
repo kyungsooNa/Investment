@@ -153,10 +153,10 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         try:
             ccnl_resp = await self._ts.get_stock_conclusion(code)
             if ccnl_resp and ccnl_resp.rt_cd == "0":
-                ccnl_out = ccnl_resp.data.get("output") if isinstance(ccnl_resp.data, dict) else None
-                if ccnl_out:
-                    # 체결강도 필드: ccld_strg_val
-                    val = ccnl_out.get("ccld_strg_val")
+                ccnl_output = ccnl_resp.data.get("output") if isinstance(ccnl_resp.data, dict) else None
+                if ccnl_output and isinstance(ccnl_output, list) and len(ccnl_output) > 0:
+                    # output은 체결 내역 배열 → 첫 번째(최신) 체결의 당일 체결강도 사용
+                    val = ccnl_output[0].get("tday_rltv")
                     cgld_val = float(val) if val else 0.0
         except Exception as e:
             self._logger.warning({"event": "cgld_check_failed", "code": code, "error": str(e)})
