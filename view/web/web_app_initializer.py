@@ -22,6 +22,7 @@ from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
+from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from services.oneil_universe_service import OneilUniverseService
 from managers.realtime_data_manager import RealtimeDataManager
 from view.web import web_api  # 임포트 확인
@@ -197,6 +198,22 @@ class WebAppContext:
         
         self.osb_strategy = osb_strategy # (웹 API 하위 호환성 유지용)
         self.oneil_universe_service_ref = self.oneil_universe_service
+
+        # 오닐 포켓 피봇 & BGU 전략 등록
+        pp_strategy = OneilPocketPivotStrategy(
+            trading_service=self.trading_service,
+            universe_service=self.oneil_universe_service,
+            time_manager=self.time_manager,
+            logger=get_strategy_logger('OneilPocketPivot'),
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=pp_strategy,
+            interval_minutes=3,
+            max_positions=5,
+            order_qty=1,
+            enabled=False,
+            force_exit_on_close=False,  # 7주 홀딩 허용
+        ))
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
