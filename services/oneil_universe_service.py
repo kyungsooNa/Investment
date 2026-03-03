@@ -120,10 +120,25 @@ class OneilUniverseService:
             key=lambda x: (x.total_score, self._calc_turnover_ratio(x)),
             reverse=True,
         )
+
+        # 스코어링 후 정렬된 상위 종목 로그
+        top_n_for_log = 10
+        self._logger.debug({
+            "event": "watchlist_sorted",
+            "top_n": top_n_for_log,
+            "items": [
+                {
+                    "code": i.code, "name": i.name, "total_score": i.total_score,
+                    "rs_score": i.rs_score, "profit_score": i.profit_growth_score,
+                    "turnover": round(self._calc_turnover_ratio(i), 4)
+                }
+                for i in sorted_items[:top_n_for_log]
+            ]
+        })
+
         self._watchlist = {
             item.code: item for item in sorted_items[:self._cfg.max_watchlist]
         }
-        
         self._logger.info({
             "event": "build_watchlist_finished",
             "pool_a": len(self._pool_a_items),
@@ -176,6 +191,22 @@ class OneilUniverseService:
 
         # 상위 N개
         items.sort(key=lambda x: (x.total_score, self._calc_turnover_ratio(x)), reverse=True)
+
+        # Pool B 스코어링 후 정렬된 상위 종목 로그
+        top_n_for_log = 10
+        self._logger.debug({
+            "event": "pool_b_sorted",
+            "top_n": top_n_for_log,
+            "items": [
+                {
+                    "code": i.code, "name": i.name, "total_score": i.total_score,
+                    "rs_score": i.rs_score, "profit_score": i.profit_growth_score,
+                    "turnover": round(self._calc_turnover_ratio(i), 4)
+                }
+                for i in items[:top_n_for_log]
+            ]
+        })
+
         return {item.code: item for item in items[:self._cfg.pool_b_size]}
 
     async def _analyze_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
@@ -446,30 +477,88 @@ class OneilUniverseService:
             end = len(closes) - days + i
             ma_values.append(sum(closes[end-period:end]) / period)
             
-        return all(ma_values[j] > ma_values[j-1] for j in range(1, len(ma_values)))
+        is_rising = all(ma_values[j] > ma_values[j-1] for j in range(1, len(ma_values)))
+
+        self._logger.debug({
+            "event": "market_timing_check",
+            "etf_code": etf_code,
+            "is_rising": is_rising,
+            "ma_values": [round(v, 2) for v in ma_values]
+        })
+
+        return is_rising
 
     def _compute_rs_scores(self, items: List[OSBWatchlistItem]):
         if not items: return
+        self._logger.debug({"event": "compute_rs_scores_started", "item_count": len(items)})
         rets = sorted([i.rs_return_3m for i in items])
-        cutoff = rets[min(int(len(rets)*(1 - self._cfg.rs_top_percentile/100)), len(rets)-1)]
+        
+        # 백분위수 계산 (상위 10% -> 90 백분위수)
+        percentile_index = min(int(len(rets) * (1 - self._cfg.rs_top_percentile / 100)), len(rets) - 1)
+        cutoff = rets[percentile_index]
+
+        self._logger.debug({
+            "event": "rs_score_calculation_details",
+            "item_count": len(items),
+            "top_percentile_config": self._cfg.rs_top_percentile,
+            "cutoff_return": round(cutoff, 2),
+            "returns_distribution": {
+                "min": round(rets[0], 2),
+                "p25": round(rets[int(len(rets) * 0.25)], 2),
+                "median": round(rets[int(len(rets) * 0.5)], 2),
+                "p75": round(rets[int(len(rets) * 0.75)], 2),
+                "max": round(rets[-1], 2)
+            }
+        })
+
         for item in items:
-            item.rs_score = self._cfg.rs_score_points if item.rs_return_3m >= cutoff else 0.0
+            is_top_tier = item.rs_return_3m >= cutoff
+            item.rs_score = self._cfg.rs_score_points if is_top_tier else 0.0
+            if is_top_tier:
+                self._logger.debug({
+                    "event": "rs_score_assigned", "code": item.code, "name": item.name,
+                    "return_3m": round(item.rs_return_3m, 2), "score": item.rs_score
+                })
+        self._logger.debug({"event": "compute_rs_scores_finished"})
 
     async def _compute_profit_growth_scores(self, items: List[OSBWatchlistItem]):
+        if not items: return
+        self._logger.debug({"event": "compute_profit_growth_scores_started", "item_count": len(items)})
         for chunk in _chunked(items, self._cfg.api_chunk_size):
             tasks = [self._ts.get_financial_ratio(i.code) for i in chunk]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for item, resp in zip(chunk, results):
+                growth = 0.0
                 if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                    self._logger.warning({
+                        "event": "profit_growth_api_failed", "code": item.code,
+                        "error": str(resp) if isinstance(resp, Exception) else (resp.msg1 if resp else "No response")
+                    })
                     continue
                 growth = self._extract_op_profit_growth(resp.data)
                 if growth >= self._cfg.profit_growth_threshold_pct:
                     item.profit_growth_score = self._cfg.profit_growth_score_points
+                    self._logger.debug({
+                        "event": "profit_growth_score_assigned", "code": item.code, "name": item.name,
+                        "growth_pct": round(growth, 2), "score": item.profit_growth_score
+                    })
+                else:
+                    item.profit_growth_score = 0.0
             await asyncio.sleep(1.1)
+        self._logger.debug({"event": "compute_profit_growth_scores_finished"})
 
     def _compute_total_scores(self, items: List[OSBWatchlistItem]):
+        if not items: return
+        self._logger.debug({"event": "compute_total_scores_started", "item_count": len(items)})
         for item in items:
             item.total_score = item.rs_score + item.profit_growth_score
+            if item.total_score > 0:
+                self._logger.debug({
+                    "event": "total_score_calculated", "code": item.code, "name": item.name,
+                    "rs_score": item.rs_score, "profit_score": item.profit_growth_score,
+                    "total_score": item.total_score
+                })
+        self._logger.debug({"event": "compute_total_scores_finished"})
 
     def _save_pool_a(self, kospi, kosdaq):
         try:
