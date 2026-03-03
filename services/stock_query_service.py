@@ -31,6 +31,10 @@ class StockQueryService:
         """현재가만 빠르게 조회 (TradingService 래퍼)."""
         return await self.trading_service.get_current_stock_price(stock_code)
 
+    async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
+        """복수종목 현재가 조회 (최대 30종목, TradingService 래퍼)."""
+        return await self.trading_service.get_multi_price(stock_codes)
+
     async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")

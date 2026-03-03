@@ -10,6 +10,7 @@ paths:
   ranking_foreign: /uapi/domestic-stock/v1/quotations/inquire-foreign
   item_news: /uapi/domestic-stock/v1/quotations/news-title
   etf_info: /uapi/etfetn/v1/quotations/inquire-price
+  multi_price: /uapi/domestic-stock/v1/quotations/intstock-multprice
   inquire_daily_itemchartprice: /uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice      # 기간별 시세 (일/주/월/년)
   inquire_time_itemchartprice: /uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice        # 당일 분봉 조회
   inquire_time_daily_itemchartprice: /uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice # 일변 분봉 조회

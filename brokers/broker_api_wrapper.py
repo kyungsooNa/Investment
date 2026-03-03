@@ -160,6 +160,10 @@ class BrokerAPIWrapper:
     #     """
     #     return await self._client.get_stock_news(stock_code)
 
+    async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
+        """복수종목 현재가를 조회합니다 (최대 30종목, KoreaInvestApiQuotations 위임)."""
+        return await self._client.get_multi_price(stock_codes)
+
     async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
         """
         특정 ETF의 상세 정보를 조회합니다.
