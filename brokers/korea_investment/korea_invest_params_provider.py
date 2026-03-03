@@ -237,6 +237,20 @@ class ItemNewsParams:
 
 
 @dataclass(frozen=True)
+class FinancialRatioParams:
+    """기업 재무비율 조회 파라미터. (KIS 문서 확인 필요)"""
+    fid_div_cls_code: str   # "0" (전체)
+    fid_input_iscd: str     # 종목코드
+
+    @classmethod
+    def of(cls, stock_code: str):
+        return cls(fid_div_cls_code="0", fid_input_iscd=stock_code)
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class ETFInfoParams:
     fid_cond_mrkt_div_code: str
     fid_input_iscd: str
@@ -589,6 +603,10 @@ class Params:
         return InquirePriceParams.of(stock_code, market).to_dict()
 
     @staticmethod
+    def inquire_conclusion(stock_code: str, market: MarketCode = "J") -> Dict[str, str]:
+        return InquirePriceParams.of(stock_code, market).to_dict()
+
+    @staticmethod
     def asking_price(stock_code: str, market: MarketCode = "J") -> Dict[str, str]:
         return AskingPriceParams.of(stock_code, market).to_dict()
 
@@ -632,6 +650,10 @@ class Params:
     @staticmethod
     def item_news(stock_code: str) -> Dict[str, str]:
         return ItemNewsParams.of(stock_code).to_dict()
+
+    @staticmethod
+    def financial_ratio(stock_code: str) -> Dict[str, str]:
+        return FinancialRatioParams.of(stock_code).to_dict()
 
     @staticmethod
     def etf_info(etf_code: str, market: MarketCode = "J") -> Dict[str, str]:

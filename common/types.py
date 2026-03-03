@@ -411,6 +411,18 @@ class ResMovingAverage:
     def to_dict(self):
         return asdict(self)
 
+
+@dataclass
+class ResRelativeStrength:
+    """N일 수익률 (상대강도 원시값)."""
+    code: str
+    date: str
+    return_pct: float  # N일 수익률 (%)
+
+    def to_dict(self):
+        return asdict(self)
+
+
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
 @with_from_dict

@@ -81,6 +81,10 @@ class KoreaInvestApiClient:
         """현재가를 조회합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_current_price(code)
 
+    async def get_stock_conclusion(self, code: str) -> ResCommonResponse:
+        """주식 체결(체결강도) 정보를 조회합니다."""
+        return await self._quotations.get_stock_conclusion(code)
+
     async def get_price_summary(self, code: str) -> ResCommonResponse:  # 반환 타입 변경
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_price_summary(code)
@@ -193,6 +197,10 @@ class KoreaInvestApiClient:
         특정 ETF의 상세 정보를 조회합니다.
         """
         return await self._quotations.get_etf_info(etf_code)
+
+    async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
+        """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
+        return await self._quotations.get_financial_ratio(stock_code)
 
     # --- WebSocket API delegation ---
     # 웹소켓 API는 연결/구독 성공 여부만 반환할 수 있으므로, ResCommonResponse로 래핑 여부는 구현에 따라 달라집니다.

@@ -75,6 +75,10 @@ class BrokerAPIWrapper:
         """현재가를 조회합니다 (KoreaInvestApiQuotations 위임)."""
         return await self._client.get_current_price(code)
 
+    async def get_stock_conclusion(self, code: str) -> ResCommonResponse:
+        """주식 체결(체결강도) 정보를 조회합니다."""
+        return await self._client.get_stock_conclusion(code)
+
     async def get_price_summary(self, code: str) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
         return await self._client.get_price_summary(code)
@@ -169,6 +173,10 @@ class BrokerAPIWrapper:
         특정 ETF의 상세 정보를 조회합니다.
         """
         return await self._client.get_etf_info(etf_code)
+
+    async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
+        """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
+        return await self._client.get_financial_ratio(stock_code)
 
     # --- KoreaInvestApiClient / Account API delegation ---
     async def get_account_balance(self) -> ResCommonResponse:
