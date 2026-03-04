@@ -1,6 +1,7 @@
 # tests/unit_test/test_oneil_pocket_pivot_strategy.py
 import pytest
 from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
 from common.types import ResCommonResponse, TradeSignal
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
@@ -8,6 +9,14 @@ from strategies.oneil_common_types import (
     OneilPocketPivotConfig, PPPositionState, OSBWatchlistItem,
 )
 
+
+def _make_ohlcv(count=60, close=68000, open_=67000, volume=50000):
+    """테스트용 OHLCV 데이터 생성 (하락일: close < open)."""
+    base_date = 20250101
+    return [
+        {"date": str(base_date + i), "open": open_, "close": close, "high": close + 500, "low": close - 500, "volume": volume}
+        for i in range(count)
+    ]
 
 # ── 공통 Fixture ──────────────────────────────────────────────
 
@@ -850,3 +859,170 @@ def test_name_property(mock_deps):
     ts, universe, tm, logger = mock_deps
     strategy = OneilPocketPivotStrategy(ts, universe, tm, logger=logger)
     assert strategy.name == "오닐PP/BGU"
+
+# ════════════════════════════════════════════════════════════════
+# 추가된 테스트 케이스
+# ════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("price_output, ohlcv_data, conclusion_resp, expected_log_event", [
+    (ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None}), _make_ohlcv(), _cgld_output(), None),
+    (_pp_price_output(current="0"), _make_ohlcv(), _cgld_output(), None),
+    (_pp_price_output(), _make_ohlcv(count=5), _cgld_output(), None),
+    (_pp_price_output(), _make_ohlcv(), ResCommonResponse(rt_cd="1", msg1="Fail"), None),
+    (_pp_price_output(), _make_ohlcv(), ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None}), None),
+])
+async def test_scan_api_failures_and_edge_cases(pp_scan_setup, price_output, ohlcv_data, conclusion_resp, expected_log_event):
+    """scan: 다양한 API 실패 및 데이터 엣지 케이스에서 시그널이 없는지 검증."""
+    strategy, ts, _, _, logger = pp_scan_setup
+
+    ts.get_current_stock_price.return_value = price_output
+    ts.get_recent_daily_ohlcv.return_value = ohlcv_data
+    ts.get_stock_conclusion.return_value = conclusion_resp
+
+    signals = await strategy.scan()
+
+    assert len(signals) == 0
+    if expected_log_event:
+        assert any(expected_log_event in call.args[0].get("event", "") for call in logger.warning.call_args_list)
+
+@pytest.mark.asyncio
+async def test_scan_exception_logging(pp_scan_setup):
+    """scan: 체결강도 조회 중 예외 발생 시 경고 로그 검증."""
+    strategy, ts, _, _, logger = pp_scan_setup
+    
+    # Setup for success up to conclusion check
+    ts.get_current_stock_price.return_value = _pp_price_output()
+    ts.get_recent_daily_ohlcv.return_value = _make_ohlcv()
+    
+    # Make conclusion check raise exception
+    ts.get_stock_conclusion.side_effect = Exception("API Error")
+    
+    await strategy.scan()
+    
+    # Verify warning log
+    assert any("cgld_check_failed" in call.args[0].get("event", "") for call in logger.warning.call_args_list)
+
+@pytest.mark.asyncio
+async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
+    """_check_pocket_pivot: 데이터 부족, MA 0, 하락일 없음 등 엣지 케이스 검증."""
+    strategy, ts, _, _, _ = pp_scan_setup
+
+    # Case 1: OHLCV 데이터 부족 (10일 미만)
+    ts.get_recent_daily_ohlcv.return_value = _make_ohlcv(count=5)
+    ts.get_current_stock_price.return_value = _pp_price_output()
+    ts.get_stock_conclusion.return_value = _cgld_output()
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+    # Case 2: MA가 0 이하 (모든 종가가 0인 경우)
+    ts.get_recent_daily_ohlcv.return_value = _make_ohlcv(count=60, close=0)
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+    # Case 3: 하락일이 없는 경우 (down_day_volumes가 비어 max() 에러 대신 통과)
+    ts.get_recent_daily_ohlcv.return_value = _make_ohlcv(count=60, close=68000, open_=67000)
+    ts.get_current_stock_price.return_value = _pp_price_output()
+    ts.get_stock_conclusion.return_value = _cgld_output()
+    signals = await strategy.scan()
+    assert len(signals) == 1
+
+@pytest.mark.asyncio
+async def test_check_bgu_edge_cases(bgu_scan_setup):
+    """_check_bgu: 50일 거래량 데이터 부족 시나리오 검증."""
+    strategy, ts, _, _, _ = bgu_scan_setup
+
+    ts.get_recent_daily_ohlcv.return_value = _make_ohlcv(count=15)
+    ts.get_current_stock_price.return_value = _bgu_price_output()
+    ts.get_stock_conclusion.return_value = _cgld_output()
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+@pytest.mark.parametrize("pg_buy, trade_value, market_cap, expected", [
+    (0, 1000, 10000, False),
+    (-100, 1000, 10000, False),
+    (100, 0, 10000, True),
+    (100, 10000, 0, True),
+    (100, 10000, 10000, True),
+    (1000, 1000, 100000, True),
+])
+def test_check_smart_money_filters(mock_deps, pg_buy, trade_value, market_cap, expected):
+    """_check_smart_money: 다양한 필터링 조건 검증."""
+    ts, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(ts, universe, tm, logger=logger)
+    result = strategy._check_smart_money(100, pg_buy, trade_value, market_cap)
+    assert result is expected
+
+@pytest.mark.asyncio
+async def test_check_exits_edge_cases(mock_deps):
+    """check_exits: holdings 데이터 누락, API 실패 등 엣지 케이스 검증."""
+    ts, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(ts, universe, tm, logger=logger)
+    universe.is_market_timing_ok.return_value = True
+
+    # Case 1: holdings에 code 또는 buy_price 누락
+    signals = await strategy.check_exits([{"name": "Incomplete"}])
+    assert len(signals) == 0
+    ts.get_current_stock_price.assert_not_called()
+
+    # Case 2: state가 없어도 새로 생성해서 처리
+    strategy._position_state = {}
+    ts.get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9000"}}
+    )
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "market": "KOSPI"}])
+    assert len(signals) == 1
+    assert "하드스탑" in signals[0].reason
+
+    # Case 3: get_current_stock_price 응답에 output이 없음
+    ts.get_current_stock_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None})
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
+    assert len(signals) == 0
+
+    # Case 4: 현재가가 0
+    ts.get_current_stock_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "0"}})
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
+    assert len(signals) == 0
+
+def test_check_pp_stop_loss_no_data(mock_deps):
+    """_check_pp_stop_loss: OHLCV 데이터 부족 또는 MA 정보 없을 때 None 반환 검증."""
+    ts, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(ts, universe, tm, logger=logger)
+    state = PPPositionState("PP", 10000, "20250101", 10000, "20", 0, False, "")
+
+    assert strategy._check_pp_stop_loss(state, 9000, None) is None
+    state.supporting_ma = ""
+    assert strategy._check_pp_stop_loss(state, 9000, _make_ohlcv(60)) is None
+    state.supporting_ma = "20"
+    assert strategy._check_pp_stop_loss(state, 9000, _make_ohlcv(10)) is None
+
+def test_check_7week_rule_not_triggered(mock_deps):
+    """_check_7week_hold: 다양한 미발동 조건 검증."""
+    ts, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(ts, universe, tm, logger=logger)
+    state = PPPositionState("PP", 10000, "20250101", 11000, "50", 0, False, "")
+
+    assert strategy._check_7week_hold(state, 10500, _make_ohlcv(60)) is None
+    state.holding_start_date = "20250110"
+    assert strategy._check_7week_hold(state, 10500, None) is None
+    dates = [f"202501{i:02d}" for i in range(11, 32)] + [f"202502{i:02d}" for i in range(1, 10)]
+    ohlcv_short = _make_ohlcv_with_dates(dates)
+    assert strategy._check_7week_hold(state, 10500, ohlcv_short) is None
+    ohlcv_insufficient_ma = _make_ohlcv(40)
+    assert strategy._check_7week_hold(state, 10500, ohlcv_insufficient_ma) is None
+
+def test_load_save_state_exceptions(mock_deps, tmp_path):
+    """_load_state, _save_state: 파일 입출력 예외 처리 검증."""
+    ts, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(ts, universe, tm, logger=logger)
+    
+    test_file = tmp_path / "corrupted.json"
+    test_file.write_text("{invalid json")
+    strategy.STATE_FILE = str(test_file)
+    strategy._load_state()
+    assert strategy._position_state == {}
+
+    strategy.STATE_FILE = "/unwritable/path/state.json"
+    with patch("os.makedirs", side_effect=OSError("Permission denied")):
+        strategy._save_state()
