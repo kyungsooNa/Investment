@@ -68,8 +68,8 @@ class KoreaInvestApiClient:
         return await self._account.get_account_balance()
 
     # --- Trading API delegation ---
-    async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool) -> ResCommonResponse:
-        return await self._trading.place_stock_order(stock_code, order_price, order_qty, is_buy)
+    async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool, order_type: str = "지정가") -> ResCommonResponse:
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, is_buy, order_type)
 
     # --- Quotations API delegation (Updated) ---
     # KoreaInvestApiQuotations의 모든 메서드가 ResCommonResponse를 반환하도록 이미 수정되었으므로, 해당 반환 타입을 반영

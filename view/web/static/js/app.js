@@ -387,14 +387,19 @@ function renderBalanceTable() {
 
     let html = `
         <div class="card">
-        <div class="balance-summary">
-            <p>
-                <strong>계좌번호:</strong> ${accInfo.number}
-                <span class="badge ${badgeClass}" style="margin-left:5px; font-size:0.8em;">${accInfo.type}</span>
-            </p>
-            <p><strong>총 평가금액:</strong> ${parseInt(summary.tot_evlu_amt || 0).toLocaleString()}원</p>
-            <p><strong>예수금:</strong> ${parseInt(summary.dnca_tot_amt || 0).toLocaleString()}원</p>
-            <p><strong>평가손익:</strong> ${parseInt(summary.evlu_pfls_smtl_amt || 0).toLocaleString()}원</p>
+        <div class="balance-summary" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <p>
+                    <strong>계좌번호:</strong> ${accInfo.number}
+                    <span class="badge ${badgeClass}" style="margin-left:5px; font-size:0.8em;">${accInfo.type}</span>
+                </p>
+                <p><strong>총 평가금액:</strong> ${parseInt(summary.tot_evlu_amt || 0).toLocaleString()}원</p>
+                <p><strong>예수금:</strong> ${parseInt(summary.dnca_tot_amt || 0).toLocaleString()}원</p>
+                <p><strong>평가손익:</strong> ${parseInt(summary.evlu_pfls_smtl_amt || 0).toLocaleString()}원</p>
+            </div>
+            <div>
+                <button id="sell-all-btn" class="btn btn-sell" onclick="sellAllStocks()">전체 일괄매도</button>
+            </div>
         </div>
         <table class="data-table">
             <thead>
@@ -438,6 +443,40 @@ function sortBalance(key) {
         balanceSortState.dir = 'asc';
     }
     renderBalanceTable();
+}
+
+async function sellAllStocks() {
+    if (!confirm('정말로 모든 보유 주식을 일괄 매도하시겠습니까?')) {
+        return;
+    }
+
+    const btn = document.getElementById('sell-all-btn');
+    btn.disabled = true;
+    btn.innerText = '매도 중...';
+
+    try {
+        const response = await fetch('/api/sell_all', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showToast(result.message || '일괄 매도 주문이 시작되었습니다.', 'success');
+            // 잔고를 새로고침하여 결과를 반영
+            setTimeout(loadBalance, 2000); 
+        } else {
+            throw new Error(result.detail || '알 수 없는 오류가 발생했습니다.');
+        }
+    } catch (error) {
+        showToast(`일괄 매도 실패: ${error.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = '전체 일괄매도';
+    }
 }
 
 async function loadBalance() {

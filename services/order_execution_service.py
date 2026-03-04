@@ -85,6 +85,63 @@ class OrderExecutionService:
         # handle_place_sell_order 호출
         return await self.handle_place_sell_order(stock_code, price, qty)
 
+    async def sell_all_stocks(self):
+        """보유하고 있는 모든 주식을 시장가로 매도합니다."""
+        self.logger.info("모든 보유 주식의 일괄 매도를 시작합니다.")
+        if not self.time_manager.is_market_open():
+            self.logger.warning("시장이 닫혀 있어 일괄 매도를 진행할 수 없습니다.")
+            return {"error": "장 마감 시간에는 일괄 매도를 할 수 없습니다."}
+
+        try:
+            # 1. 보유 주식 목록 조회
+            balance_response = await self.trading_service.get_account_balance()
+            if balance_response.rt_cd != ErrorCode.SUCCESS.value:
+                self.logger.error(f"잔고 조회 실패: {balance_response.msg1}")
+                return {"error": f"잔고 조회에 실패했습니다: {balance_response.msg1}"}
+
+            holdings = balance_response.data.get('output1', [])
+            if not holdings:
+                self.logger.info("매도할 보유 주식이 없습니다.")
+                return {"message": "보유 중인 주식이 없습니다.", "results": []}
+
+            # 2. 각 주식에 대해 매도 주문 실행
+            sell_tasks = []
+            for stock in holdings:
+                stock_code = stock.get('pdno')
+                quantity = int(stock.get('hldg_qty', 0))
+                
+                if stock_code and quantity > 0:
+                    # 시장가 주문을 위해 가격을 0으로 설정
+                    task = self.trading_service.place_sell_order(stock_code, 0, quantity, order_type="시장가")
+                    sell_tasks.append((stock_code, task))
+
+            if not sell_tasks:
+                self.logger.info("매도할 유효한 주식이 없습니다.")
+                return {"message": "매도할 유효한 주식이 없습니다.", "results": []}
+
+            # 3. 매도 주문 결과 집계
+            results = []
+            for stock_code, task in sell_tasks:
+                try:
+                    result = await task
+                    if result and result.rt_cd == ErrorCode.SUCCESS.value:
+                        self.logger.info(f"매도 주문 성공: {stock_code}")
+                        results.append({"stock_code": stock_code, "success": True, "message": result.msg1})
+                    else:
+                        msg = result.msg1 if result else "알 수 없는 오류"
+                        self.logger.error(f"매도 주문 실패: {stock_code}, 이유: {msg}")
+                        results.append({"stock_code": stock_code, "success": False, "message": msg})
+                except Exception as e:
+                    self.logger.error(f"매도 주문 중 예외 발생: {stock_code}, 오류: {str(e)}")
+                    results.append({"stock_code": stock_code, "success": False, "message": str(e)})
+
+            self.logger.info("일괄 매도 절차가 완료되었습니다.")
+            return {"message": "일괄 매도가 완료되었습니다.", "results": results}
+
+        except Exception as e:
+            self.logger.critical(f"일괄 매도 중 심각한 오류 발생: {e}", exc_info=True)
+            return {"error": f"일괄 매도 중 심각한 오류가 발생했습니다: {str(e)}"}
+
     async def handle_realtime_price_quote_stream(self, stock_code):
         """
         실시간 주식 체결가/호가 스트림을 시작하고,

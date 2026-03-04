@@ -32,14 +32,15 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
         )
 
         self.mock_logger.info.assert_any_call(
-            "Service - 주식 매도 주문 요청 - 종목: 005930, 수량: 10, 가격: 70000"
+            "Service - 주식 매도 주문 요청 - 종목: 005930, 수량: 10, 가격: 70000, 유형: 지정가"
         )
 
         self.mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(
             stock_code="005930",
             order_price="70000",
             order_qty="10",
-            is_buy=False
+            is_buy=False,
+            order_type="지정가"
         )
 
     async def test_place_sell_order_failure(self):

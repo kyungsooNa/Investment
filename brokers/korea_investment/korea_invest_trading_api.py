@@ -73,21 +73,24 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._logger.exception(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
             return None
 
-    async def place_stock_order(self, stock_code, order_price, order_qty,
-                                is_buy: bool) -> ResCommonResponse:  # async def로 변경됨
+    async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool, order_type: str = "지정가") -> ResCommonResponse:
         full_config = self._env.active_config
 
         tr_id = self._trid_provider.trading_order_cash(is_buy)  # 모드에 따라 자동
 
-        order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
+        if order_type == "시장가":
+            order_dvsn = '01'
+            order_price = '0'  # 시장가 주문 시 가격은 0
+        else:  # 지정가
+            order_dvsn = '00'
 
         data = Params.order_cash_body(
             cano=full_config['stock_account_number'],
             acnt_prdt_cd="01",
             pdno=stock_code,
             ord_dvsn=order_dvsn,
-            ord_qty=order_qty,
-            ord_unpr=order_price,
+            ord_qty=str(order_qty),
+            ord_unpr=str(order_price),
         )
 
         calculated_hashkey = await self._get_hashkey(data)
@@ -102,5 +105,5 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             # gt_uid는 temp에서 자동 생성(값 미지정 시)
             self._headers.set_gt_uid()
             self._logger.info(
-                f"주식 {'매수' if is_buy else '매도'} 주문 시도 - 종목:{stock_code}, 수량:{order_qty}, 가격:{order_price}")
+                f"주식 {'매수' if is_buy else '매도'} 주문 시도 - 종목:{stock_code}, 수량:{order_qty}, 가격:{order_price}, 유형:{order_type}")
             return await self.call_api('POST', EndpointKey.ORDER_CASH, data=data, retry_count=1)
