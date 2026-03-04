@@ -453,3 +453,87 @@ async def test_unsubscribe_program_trading_delegation(broker_wrapper_instance):
 
     mock_client.unsubscribe_program_trading.assert_awaited_once_with("005930")
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_additional_delegations(broker_wrapper_instance):
+    """
+    BrokerAPIWrapper의 추가적인 위임 메서드들을 테스트합니다.
+    (get_stock_info_by_code, get_stock_conclusion, inquire_time_itemchartprice 등)
+    """
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+
+    # 1. get_stock_info_by_code
+    mock_client.get_stock_info_by_code.return_value = {"info": "data"}
+    result = await wrapper.get_stock_info_by_code("005930")
+    mock_client.get_stock_info_by_code.assert_called_once_with("005930")
+    assert result == {"info": "data"}
+
+    # 2. get_stock_conclusion
+    mock_client.get_stock_conclusion.return_value = {"conclusion": "data"}
+    result = await wrapper.get_stock_conclusion("005930")
+    mock_client.get_stock_conclusion.assert_called_once_with("005930")
+    assert result == {"conclusion": "data"}
+
+    # 3. inquire_time_itemchartprice
+    mock_client.inquire_time_itemchartprice.return_value = {"chart": "time_data"}
+    result = await wrapper.inquire_time_itemchartprice(
+        stock_code="005930", input_hour_1="120000", pw_data_incu_yn="Y", etc_cls_code="0"
+    )
+    mock_client.inquire_time_itemchartprice.assert_called_once_with(
+        stock_code="005930", input_hour_1="120000", pw_data_incu_yn="Y", etc_cls_code="0"
+    )
+    assert result == {"chart": "time_data"}
+
+    # 4. inquire_time_dailychartprice
+    mock_client.inquire_time_dailychartprice.return_value = {"chart": "daily_time_data"}
+    result = await wrapper.inquire_time_dailychartprice(
+        stock_code="005930", input_date_1="20250101", input_hour_1="120000"
+    )
+    mock_client.inquire_time_dailychartprice.assert_called_once_with(
+        stock_code="005930", input_date_1="20250101", input_hour_1="120000",
+        pw_data_incu_yn="Y", fake_tick_incu_yn=""
+    )
+    assert result == {"chart": "daily_time_data"}
+
+    # 5. get_asking_price
+    mock_client.get_asking_price.return_value = {"asking": "price"}
+    result = await wrapper.get_asking_price("005930")
+    mock_client.get_asking_price.assert_called_once_with("005930")
+    assert result == {"asking": "price"}
+
+    # 6. get_time_concluded_prices
+    mock_client.get_time_concluded_prices.return_value = {"concluded": "prices"}
+    result = await wrapper.get_time_concluded_prices("005930")
+    mock_client.get_time_concluded_prices.assert_called_once_with("005930")
+    assert result == {"concluded": "prices"}
+
+    # 7. get_top_rise_fall_stocks
+    mock_client.get_top_rise_fall_stocks.return_value = {"top": "rise"}
+    result = await wrapper.get_top_rise_fall_stocks(rise=True)
+    mock_client.get_top_rise_fall_stocks.assert_called_once_with(True)
+    assert result == {"top": "rise"}
+
+    # 8. get_top_volume_stocks
+    mock_client.get_top_volume_stocks.return_value = {"top": "volume"}
+    result = await wrapper.get_top_volume_stocks()
+    mock_client.get_top_volume_stocks.assert_called_once()
+    assert result == {"top": "volume"}
+
+    # 9. get_multi_price
+    mock_client.get_multi_price.return_value = {"multi": "price"}
+    result = await wrapper.get_multi_price(["005930", "000660"])
+    mock_client.get_multi_price.assert_called_once_with(["005930", "000660"])
+    assert result == {"multi": "price"}
+
+    # 10. get_etf_info
+    mock_client.get_etf_info.return_value = {"etf": "info"}
+    result = await wrapper.get_etf_info("122630")
+    mock_client.get_etf_info.assert_called_once_with("122630")
+    assert result == {"etf": "info"}
+
+    # 11. get_financial_ratio
+    mock_client.get_financial_ratio.return_value = {"financial": "ratio"}
+    result = await wrapper.get_financial_ratio("005930")
+    mock_client.get_financial_ratio.assert_called_once_with("005930")
+    assert result == {"financial": "ratio"}
