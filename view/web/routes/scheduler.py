@@ -38,7 +38,7 @@ async def stop_scheduler():
     return {"success": True, "status": ctx.scheduler.get_status()}
 
 
-@router.post("/scheduler/strategy/{name}/start")
+@router.post("/scheduler/strategy/{name:path}/start")
 async def start_strategy(name: str):
     """개별 전략 활성화 (상태 저장 — 재시작 시 자동 복원)."""
     ctx = _get_ctx()
@@ -50,7 +50,7 @@ async def start_strategy(name: str):
     return {"success": True, "status": ctx.scheduler.get_status()}
 
 
-@router.post("/scheduler/strategy/{name}/stop")
+@router.post("/scheduler/strategy/{name:path}/stop")
 async def stop_strategy(name: str):
     """개별 전략 비활성화 (상태 저장 — 재시작 시 반영)."""
     ctx = _get_ctx()

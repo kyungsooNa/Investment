@@ -96,3 +96,55 @@ class OSBPositionState:
     entry_date: str         # 진입일 (YYYYMMDD)
     peak_price: int         # 진입 후 최고가 (트레일링 스탑용)
     breakout_level: int     # 진입 시 20일 최고가
+
+
+@dataclass
+class OneilPocketPivotConfig(BaseStrategyConfig):
+    """포켓 피봇 & BGU 전략(Strategy C) 설정."""
+    # 공통 스마트 머니 필터
+    program_to_trade_value_pct: float = 10.0      # PG순매수금/거래대금 >= 10%
+    program_to_market_cap_pct: float = 0.3        # PG순매수금/시총 >= 0.3%
+    execution_strength_min: float = 120.0         # 체결강도 >= 120%
+
+    # Entry A: Pocket Pivot
+    pp_ma_proximity_lower_pct: float = -2.0       # MA 대비 하한 (-2%)
+    pp_ma_proximity_upper_pct: float = 4.0        # MA 대비 상한 (+4%)
+    pp_down_day_lookback: int = 10                # 하락일 거래량 비교 기간 (일)
+
+    # Entry B: BGU (Buyable Gap-Up)
+    bgu_gap_pct: float = 4.0                      # 시가 갭 >= 4%
+    bgu_volume_multiplier: float = 3.0            # 50일 평균거래량의 300%
+    bgu_whipsaw_after_minutes: int = 10           # 장 시작 후 10분 경과 후 진입
+
+    # 매도: 손절
+    pp_stop_loss_below_ma_pct: float = -2.0       # PP: 지지MA 대비 -2% 이탈 시 손절
+
+    # 매도: 7주 홀딩 룰
+    holding_rule_days: int = 35                   # 7주 = 35거래일
+    holding_rule_ma_period: int = 50              # 50일선 기준
+    holding_profit_anchor_pct: float = 5.0        # +5% 이상 수익 시 holding_start_date 기록 (1회만)
+
+    # 매도: 부분 익절
+    partial_profit_trigger_pct: float = 15.0      # +15% 도달 시 50% 익절
+    partial_sell_ratio: float = 0.5               # 50% 매도
+
+    # 매도: 하드 스탑
+    hard_stop_from_peak_pct: float = -10.0        # 고점 대비 -10% 하락 시 즉시 청산
+
+    # 자금 관리
+    total_portfolio_krw: int = 10_000_000
+    position_size_pct: float = 5.0
+    min_qty: int = 2                              # 부분 익절을 위해 최소 2주 매수
+
+
+@dataclass
+class PPPositionState:
+    """포켓 피봇 / BGU 포지션 추적 상태."""
+    entry_type: str             # "PP" or "BGU"
+    entry_price: int            # 진입가
+    entry_date: str             # 진입일 (YYYYMMDD)
+    peak_price: int             # 진입 후 최고가
+    supporting_ma: str          # PP전용: "10"/"20"/"50" (지지 MA 종류)
+    gap_day_low: int            # BGU전용: 갭업 당일 장중 저가
+    partial_sold: bool          # 50% 부분 익절 완료 여부
+    holding_start_date: str     # 수익 안착일 (+5% 돌파 시 1회만 기록, 7주 룰 기산점)
