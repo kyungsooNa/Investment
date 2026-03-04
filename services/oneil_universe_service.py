@@ -430,8 +430,8 @@ class OneilUniverseService:
         pool_a_logger.info({"event": "scoring_done"})
 
         sort_key = lambda x: (x.total_score, self._calc_turnover_ratio(x))
-        kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_market]
-        kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_market]
+        kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_kospi_market]
+        kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_kosdaq_market]
 
         self._save_pool_a(kospi, kosdaq)
         pool_a_logger.info({"event": "save_done", "kospi_count": len(kospi), "kosdaq_count": len(kosdaq)})

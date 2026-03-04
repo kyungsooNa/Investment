@@ -9,7 +9,6 @@ class OneilUniverseConfig(BaseStrategyConfig):
     # 유니버스 필터
     min_avg_trading_value_5d: int = 10_000_000_000  # 5일 평균 거래대금 100억 원
     near_52w_high_pct: float = 20.0                  # 52주 최고가 대비 20% 이내
-    max_watchlist: int = 60                           # 최대 감시 종목 수
 
     # 워치리스트 갱신 시각 (장 시작 후 경과 분)
     watchlist_refresh_minutes: tuple = (10, 30, 60, 90, 60*3, 60*5)
@@ -35,11 +34,15 @@ class OneilUniverseConfig(BaseStrategyConfig):
 
     # Pool A/B 설정
     pool_a_file: str = os.path.join("data", "osb_pool_a.json")
-    pool_a_size_per_market: int = 15
+    pool_a_size_per_kospi_market: int = 20
+    pool_a_size_per_kosdaq_market: int = 40
+
     pool_a_market_cap_min: int = 200_000_000_000 # 2000억
     pool_a_market_cap_max: int = 20_000_000_000_000 # 20조
     pool_b_size: int = 30
     
+    max_watchlist: int = pool_a_size_per_kospi_market + pool_a_size_per_kosdaq_market + pool_b_size # 최대 감시 종목 수
+
     # 돌파 기준 기간 (데이터 수집용)
     high_breakout_period: int = 20
 
