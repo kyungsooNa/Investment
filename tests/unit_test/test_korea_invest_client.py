@@ -249,6 +249,154 @@ async def test_inquire_daily_itemchartprice_delegation(korea_invest_client_insta
     mock_quotations.inquire_daily_itemchartprice.assert_awaited_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
     assert result == [{"date": "20230101", "price": "70000"}]
 
+@pytest.mark.asyncio
+async def test_get_stock_conclusion_delegation(korea_invest_client_instance):
+    """get_stock_conclusion 메서드가 _quotations.get_stock_conclusion을 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_stock_conclusion.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    result = await client.get_stock_conclusion("005930")
+
+    mock_quotations.get_stock_conclusion.assert_awaited_once_with("005930")
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_inquire_time_itemchartprice_delegation(korea_invest_client_instance):
+    """inquire_time_itemchartprice 메서드가 _quotations.inquire_time_itemchartprice를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.inquire_time_itemchartprice.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    result = await client.inquire_time_itemchartprice(
+        stock_code="005930",
+        input_hour_1="120000",
+        pw_data_incu_yn="Y",
+        etc_cls_code="0"
+    )
+
+    mock_quotations.inquire_time_itemchartprice.assert_awaited_once_with(
+        stock_code="005930",
+        input_hour="120000",
+        include_past="Y",
+        etc_cls_code="0"
+    )
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_inquire_time_dailychartprice_delegation(korea_invest_client_instance):
+    """inquire_time_dailychartprice 메서드가 _quotations.inquire_time_dailychartprice를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.inquire_time_dailychartprice.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    result = await client.inquire_time_dailychartprice(
+        stock_code="005930",
+        input_date_1="20230101",
+        input_hour_1="120000",
+        pw_data_incu_yn="Y",
+        fake_tick_incu_yn=""
+    )
+
+    mock_quotations.inquire_time_dailychartprice.assert_awaited_once_with(
+        stock_code="005930",
+        input_hour="120000",
+        input_date="20230101",
+        include_past="Y",
+        fid_pw_data_incu_yn=""
+    )
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_get_asking_price_delegation(korea_invest_client_instance):
+    """get_asking_price 메서드가 _quotations.get_asking_price를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_asking_price.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    result = await client.get_asking_price("005930")
+
+    mock_quotations.get_asking_price.assert_awaited_once_with("005930")
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_get_time_concluded_prices_delegation(korea_invest_client_instance):
+    """get_time_concluded_prices 메서드가 _quotations.get_time_concluded_prices를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_time_concluded_prices.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    result = await client.get_time_concluded_prices("005930")
+
+    mock_quotations.get_time_concluded_prices.assert_awaited_once_with("005930")
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_get_top_rise_fall_stocks_delegation(korea_invest_client_instance):
+    """get_top_rise_fall_stocks 메서드가 _quotations.get_top_rise_fall_stocks를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_top_rise_fall_stocks.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    # rise=True (기본값)
+    result = await client.get_top_rise_fall_stocks(rise=True)
+    mock_quotations.get_top_rise_fall_stocks.assert_awaited_once_with(True)
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+    mock_quotations.get_top_rise_fall_stocks.reset_mock()
+
+    # rise=False
+    result = await client.get_top_rise_fall_stocks(rise=False)
+    mock_quotations.get_top_rise_fall_stocks.assert_awaited_once_with(False)
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_get_top_volume_stocks_delegation(korea_invest_client_instance):
+    """get_top_volume_stocks 메서드가 _quotations.get_top_volume_stocks를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_top_volume_stocks.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    result = await client.get_top_volume_stocks()
+
+    mock_quotations.get_top_volume_stocks.assert_awaited_once()
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_get_multi_price_delegation(korea_invest_client_instance):
+    """get_multi_price 메서드가 _quotations.get_multi_price를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_multi_price.return_value = {"rt_cd": "0", "msg1": "OK"}
+    stock_codes = ["005930", "000660"]
+
+    result = await client.get_multi_price(stock_codes)
+
+    mock_quotations.get_multi_price.assert_awaited_once_with(stock_codes)
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_get_etf_info_delegation(korea_invest_client_instance):
+    """get_etf_info 메서드가 _quotations.get_etf_info를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_etf_info.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    result = await client.get_etf_info("069500")
+
+    mock_quotations.get_etf_info.assert_awaited_once_with("069500")
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+@pytest.mark.asyncio
+async def test_get_financial_ratio_delegation(korea_invest_client_instance):
+    """get_financial_ratio 메서드가 _quotations.get_financial_ratio를 호출하는지 테스트합니다."""
+    client, mock_quotations, _, _, _, _, _ = korea_invest_client_instance
+    mock_quotations.get_financial_ratio.return_value = {"rt_cd": "0", "msg1": "OK"}
+
+    result = await client.get_financial_ratio("005930")
+
+    mock_quotations.get_financial_ratio.assert_awaited_once_with("005930")
+    assert result == {"rt_cd": "0", "msg1": "OK"}
 
 # --- WebSocket API delegation 테스트 (라인 114, 118, 122, 126, 130, 134 커버) ---
 @pytest.mark.asyncio
@@ -345,3 +493,4 @@ async def test_unsubscribe_program_trading_delegation(korea_invest_client_instan
 
     mock_websocket_api.unsubscribe_program_trading.assert_awaited_once_with("005930")
     assert result is True
+
