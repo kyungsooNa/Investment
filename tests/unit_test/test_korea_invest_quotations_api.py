@@ -1523,3 +1523,76 @@ async def test_inquire_daily_itemchartprice_item_not_dict_output2(mock_quotation
     # 결과적으로 빈 리스트일 가능성 높음.
     assert isinstance(result.data, list)
     mock_quotations._logger.warning.assert_called()
+
+
+# ── 외국계 순매수추이 (frgnmem-pchs-trend) ──────────────────
+
+@pytest.mark.asyncio
+async def test_get_foreign_trading_trend_success(mock_quotations):
+    """외국계 순매수추이 정상 조회 — output[0] 반환."""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+        data={"output": [
+            {"bsop_hour": "153000", "stck_prpr": "70000", "glob_ntby_qty": "500",
+             "prdy_ctrt": "1.5", "prdy_vrss": "100", "prdy_vrss_sign": "2",
+             "acml_vol": "10000", "frgn_seln_vol": "200", "frgn_shnu_vol": "700",
+             "frgn_ntby_qty_icdc": "50"},
+            {"bsop_hour": "143000", "stck_prpr": "69900", "glob_ntby_qty": "450"},
+        ]}
+    ))
+
+    result = await api.get_foreign_trading_trend("005930")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data["glob_ntby_qty"] == "500"
+    assert result.data["stck_prpr"] == "70000"
+    api.call_api.assert_called_once()
+    _, kwargs = api.call_api.call_args
+    assert kwargs["params"]["FID_INPUT_ISCD"] == "005930"
+    assert kwargs["params"]["FID_INPUT_ISCD_2"] == "99999"
+    assert kwargs["params"]["FID_COND_MRKT_DIV_CODE"] == "J"
+
+
+@pytest.mark.asyncio
+async def test_get_foreign_trading_trend_api_error(mock_quotations):
+    """API 오류 시 에러 응답 그대로 반환."""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="API 오류", data=None
+    ))
+
+    result = await api.get_foreign_trading_trend("005930")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert result.msg1 == "API 오류"
+
+
+@pytest.mark.asyncio
+async def test_get_foreign_trading_trend_empty_output(mock_quotations):
+    """output이 비어있으면 data=None 반환."""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+        data={"output": []}
+    ))
+
+    result = await api.get_foreign_trading_trend("005930")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data is None
+    assert "데이터 없음" in result.msg1
+
+
+@pytest.mark.asyncio
+async def test_get_foreign_trading_trend_invalid_data(mock_quotations):
+    """응답 data가 dict가 아닌 경우 PARSING_ERROR."""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+        data="invalid"
+    ))
+
+    result = await api.get_foreign_trading_trend("005930")
+
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value

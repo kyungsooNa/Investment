@@ -13,17 +13,20 @@ from common.types import ResCommonResponse, ErrorCode
 def mock_deps():
     broker = MagicMock()
     mapper = MagicMock()
+    env = MagicMock()
+    env.is_paper_trading = False  # 기본: 실전투자 모드
     logger = MagicMock()
     time_manager = MagicMock()
-    return broker, mapper, logger, time_manager
+    return broker, mapper, env, logger, time_manager
 
 
 @pytest.fixture
 def bg_service(mock_deps):
-    broker, mapper, logger, time_manager = mock_deps
+    broker, mapper, env, logger, time_manager = mock_deps
     return BackgroundService(
         broker_api_wrapper=broker,
         stock_code_mapper=mapper,
+        env=env,
         logger=logger,
         time_manager=time_manager,
     )
@@ -69,12 +72,57 @@ def test_get_foreign_net_sell_ranking_empty_cache(bg_service):
     assert "수집 중" in resp.msg1
 
 
+# ── 모의투자 모드 차단 ───────────────────────────────────────
+
+def test_paper_trading_returns_blocked_message(bg_service, mock_deps):
+    """모의투자 모드에서는 실전투자 전용 안내 메시지 반환."""
+    _, _, env, _, _ = mock_deps
+    env.is_paper_trading = True
+
+    resp = bg_service.get_foreign_net_buy_ranking()
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert "실전투자 전용" in resp.msg1
+    assert resp.data == []
+
+    resp = bg_service.get_foreign_net_sell_ranking()
+    assert "실전투자 전용" in resp.msg1
+
+
+# ── 온디맨드 트리거 ─────────────────────────────────────────
+
+def test_on_demand_trigger_when_cache_empty(bg_service, mock_deps):
+    """캐시 비어있고 갱신 중이 아니면 온디맨드 갱신이 트리거되어야 함."""
+    import asyncio
+    from unittest.mock import patch
+
+    mock_loop = MagicMock()
+    with patch.object(asyncio, "get_running_loop", return_value=mock_loop), \
+         patch.object(asyncio, "create_task") as mock_create_task:
+        resp = bg_service.get_foreign_net_buy_ranking()
+        assert resp.data == []
+        mock_create_task.assert_called_once()
+
+
+def test_no_trigger_when_already_refreshing(bg_service):
+    """이미 갱신 중이면 추가 트리거하지 않음."""
+    import asyncio
+    from unittest.mock import patch
+
+    mock_loop = MagicMock()
+    bg_service._is_refreshing = True
+    with patch.object(asyncio, "get_running_loop", return_value=mock_loop), \
+         patch.object(asyncio, "create_task") as mock_create_task:
+        resp = bg_service.get_foreign_net_buy_ranking()
+        assert resp.data == []
+        mock_create_task.assert_not_called()
+
+
 # ── refresh_foreign_ranking 로직 검증 ────────────────────────
 
 @pytest.mark.asyncio
 async def test_refresh_foreign_ranking_basic(bg_service, mock_deps):
     """기본 순회 → 순매수/순매도 정렬 검증."""
-    broker, mapper, logger, _ = mock_deps
+    broker, mapper, _, logger, _ = mock_deps
 
     # 3개 종목 설정
     mapper.df = _make_stock_df([
@@ -116,7 +164,7 @@ async def test_refresh_foreign_ranking_basic(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_refresh_foreign_ranking_etf_excluded(bg_service, mock_deps):
     """ETF/ETN 종목은 제외되어야 한다."""
-    broker, mapper, _, _ = mock_deps
+    broker, mapper, _, _, _ = mock_deps
 
     mapper.df = _make_stock_df([
         ("005930", "삼성전자", "KOSPI"),
@@ -141,7 +189,7 @@ async def test_refresh_foreign_ranking_etf_excluded(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_refresh_foreign_ranking_api_error_skipped(bg_service, mock_deps):
     """API 오류 종목은 스킵되어야 한다."""
-    broker, mapper, _, _ = mock_deps
+    broker, mapper, _, _, _ = mock_deps
 
     mapper.df = _make_stock_df([
         ("005930", "삼성전자", "KOSPI"),
@@ -165,7 +213,7 @@ async def test_refresh_foreign_ranking_api_error_skipped(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_refresh_foreign_ranking_exception_skipped(bg_service, mock_deps):
     """개별 종목 조회 중 예외 발생 시 해당 종목만 스킵."""
-    broker, mapper, _, _ = mock_deps
+    broker, mapper, _, _, _ = mock_deps
 
     mapper.df = _make_stock_df([
         ("005930", "삼성전자", "KOSPI"),
@@ -189,7 +237,7 @@ async def test_refresh_foreign_ranking_exception_skipped(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_refresh_foreign_ranking_non_stock_market_excluded(bg_service, mock_deps):
     """KOSPI/KOSDAQ 이외 시장은 제외."""
-    broker, mapper, _, _ = mock_deps
+    broker, mapper, _, _, _ = mock_deps
 
     mapper.df = _make_stock_df([
         ("005930", "삼성전자", "KOSPI"),
@@ -208,7 +256,7 @@ async def test_refresh_foreign_ranking_non_stock_market_excluded(bg_service, moc
 @pytest.mark.asyncio
 async def test_refresh_foreign_ranking_duplicate_prevention(bg_service, mock_deps):
     """이미 갱신 중이면 중복 실행 방지."""
-    broker, mapper, logger, _ = mock_deps
+    broker, mapper, _, logger, _ = mock_deps
 
     bg_service._is_refreshing = True
 
@@ -222,7 +270,7 @@ async def test_refresh_foreign_ranking_duplicate_prevention(bg_service, mock_dep
 @pytest.mark.asyncio
 async def test_refresh_foreign_ranking_limit(bg_service, mock_deps):
     """상위 30개만 반환되는지 확인."""
-    broker, mapper, _, _ = mock_deps
+    broker, mapper, _, _, _ = mock_deps
 
     # 40개 종목 생성
     stocks = [(f"{i:06d}", f"종목{i}", "KOSPI") for i in range(40)]

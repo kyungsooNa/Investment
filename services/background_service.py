@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 
 from brokers.broker_api_wrapper import BrokerAPIWrapper
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ErrorCode
 from core.time_manager import TimeManager
 from market_data.stock_code_mapper import StockCodeMapper
@@ -39,11 +40,13 @@ class BackgroundService:
         self,
         broker_api_wrapper: BrokerAPIWrapper,
         stock_code_mapper: StockCodeMapper,
+        env: KoreaInvestApiEnv = None,
         logger=None,
         time_manager: TimeManager = None,
     ):
         self._broker = broker_api_wrapper
         self._mapper = stock_code_mapper
+        self._env = env
         self._logger = logger or logging.getLogger(__name__)
         self._time_manager = time_manager
 
@@ -120,12 +123,12 @@ class BackgroundService:
             # 3. 정렬: 순매수 상위 30 / 순매도 하위 30
             results.sort(key=lambda x: int(x["glob_ntby_qty"]), reverse=True)
 
-            net_buy_top = results[:30]
+            net_buy_top = [dict(item) for item in results[:30]]
             for i, item in enumerate(net_buy_top, 1):
                 item["data_rank"] = str(i)
 
-            net_sell_top = results[-30:] if len(results) >= 30 else results[:]
-            net_sell_top = list(reversed(net_sell_top))  # 가장 많이 순매도한 순서
+            sell_slice = results[-30:] if len(results) >= 30 else results[:]
+            net_sell_top = [dict(item) for item in reversed(sell_slice)]
             for i, item in enumerate(net_sell_top, 1):
                 item["data_rank"] = str(i)
 
@@ -143,8 +146,29 @@ class BackgroundService:
         finally:
             self._is_refreshing = False
 
+    def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
+        """모의투자 체크 + 캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""
+        if self._env and self._env.is_paper_trading:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="실전투자 전용 기능입니다. 실전투자 모드로 전환 후 이용해주세요.",
+                data=[]
+            )
+        # 캐시 비어있고 갱신 중이 아니면 온디맨드 트리거
+        if not self._foreign_net_buy_cache and not self._is_refreshing:
+            try:
+                loop = asyncio.get_running_loop()
+                self._logger.info("외국인 랭킹 캐시 없음 → 온디맨드 백그라운드 갱신 트리거")
+                asyncio.create_task(self.refresh_foreign_ranking())
+            except RuntimeError:
+                self._logger.warning("이벤트 루프 없음 — 온디맨드 갱신 스킵")
+        return None
+
     def get_foreign_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
         """외국인 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
+        blocked = self._check_and_trigger_refresh()
+        if blocked:
+            return blocked
         if not self._foreign_net_buy_cache:
             return ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value,
@@ -159,6 +183,9 @@ class BackgroundService:
 
     def get_foreign_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
         """외국인 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
+        blocked = self._check_and_trigger_refresh()
+        if blocked:
+            return blocked
         if not self._foreign_net_sell_cache:
             return ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value,

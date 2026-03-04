@@ -551,18 +551,26 @@ async function loadRanking(category) {
             return;
         }
 
-        // 데이터 미준비 시 자동 폴링
+        // 데이터 미준비 시 처리
         if (!json.data || json.data.length === 0) {
-            div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
-                <p style="font-size:1.2em;">데이터 수집 중...</p>
-                <p style="color:#888; margin-top:8px;">전체 종목을 순회하여 랭킹을 생성하고 있습니다. 잠시만 기다려주세요.</p>
-            </div>`;
-            // 5초 후 자동 재요청 (탭이 바뀌지 않았을 때만)
-            _rankingPollTimer = setTimeout(() => {
-                if (_rankingCurrentCategory === category) {
-                    loadRanking(category);
-                }
-            }, 5000);
+            const isPaperBlock = json.msg1 && json.msg1.includes('실전투자 전용');
+            if (isPaperBlock) {
+                // 모의투자 모드 → 폴링 없이 안내만 표시
+                div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
+                    <p style="font-size:1.2em;">${json.msg1}</p>
+                </div>`;
+            } else {
+                // 데이터 수집 중 → 자동 폴링
+                div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
+                    <p style="font-size:1.2em;">데이터 수집 중...</p>
+                    <p style="color:#888; margin-top:8px;">전체 종목을 순회하여 랭킹을 생성하고 있습니다. 잠시만 기다려주세요.</p>
+                </div>`;
+                _rankingPollTimer = setTimeout(() => {
+                    if (_rankingCurrentCategory === category) {
+                        loadRanking(category);
+                    }
+                }, 5000);
+            }
             return;
         }
 

@@ -86,6 +86,7 @@ class WebAppContext:
         self.background_service = BackgroundService(
             broker_api_wrapper=self.broker,
             stock_code_mapper=self.stock_code_mapper,
+            env=self.env,
             logger=self.logger,
             time_manager=self.time_manager,
         )
