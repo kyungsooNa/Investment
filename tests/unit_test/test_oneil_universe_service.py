@@ -43,6 +43,9 @@ def mock_deps():
     ts.get_current_stock_price = AsyncMock()
     ts.get_recent_daily_ohlcv = AsyncMock()
     ts.get_financial_ratio = AsyncMock()
+    ts.get_top_trading_value_stocks = AsyncMock()
+    ts.get_top_rise_fall_stocks = AsyncMock()
+    ts.get_top_volume_stocks = AsyncMock()
     indicator.get_bollinger_bands = AsyncMock()
     indicator.get_relative_strength = AsyncMock()
     
@@ -617,11 +620,6 @@ async def test_build_pool_b_logic(mock_deps):
     """_build_pool_b: 실시간 랭킹 기반 Pool B 생성 및 필터링 검증."""
     ts, sqs, indicator, mapper, tm, logger = mock_deps
     
-    # Ensure methods are AsyncMock
-    ts.get_top_trading_value_stocks = AsyncMock()
-    ts.get_top_rise_fall_stocks = AsyncMock()
-    ts.get_top_volume_stocks = AsyncMock()
-    
     service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
     
     # Mock API responses
@@ -634,7 +632,9 @@ async def test_build_pool_b_logic(mock_deps):
     ts.get_top_rise_fall_stocks.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": "B", "hts_kor_isnm": "StockB"}]
     )
-    ts.get_top_volume_stocks.side_effect = Exception("Network Error")
+    async def raise_network_error(*args, **kwargs):
+        raise Exception("Network Error")
+    ts.get_top_volume_stocks.side_effect = raise_network_error
     
     # Pool A에 이미 "A"가 있다고 가정 -> "A"는 스킵되어야 함
     service._pool_a_items = {"A": MagicMock()}
@@ -944,7 +944,9 @@ async def test_build_pool_b_partial_api_failure(mock_deps):
     service = OneilUniverseService(ts, sqs, indicator, mapper, tm, logger=logger)
     
     # 3가지 랭킹 중 하나는 Exception, 하나는 실패 응답, 하나는 성공
-    ts.get_top_trading_value_stocks.side_effect = Exception("Network Error")
+    async def raise_network_error(*args, **kwargs):
+        raise Exception("Network Error")
+    ts.get_top_trading_value_stocks.side_effect = raise_network_error
     ts.get_top_rise_fall_stocks.return_value = ResCommonResponse(rt_cd="1", msg1="Fail")
     ts.get_top_volume_stocks.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": "A", "hts_kor_isnm": "StockA"}]
