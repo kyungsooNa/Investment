@@ -36,8 +36,8 @@ class OneilUniverseConfig(BaseStrategyConfig):
     # Pool A/B 설정
     pool_a_file: str = os.path.join("data", "osb_pool_a.json")
     pool_a_size_per_market: int = 15
-    pool_a_market_cap_min: int = 200_000_000_000
-    pool_a_market_cap_max: int = 2_000_000_000_000
+    pool_a_market_cap_min: int = 200_000_000_000 # 2000억
+    pool_a_market_cap_max: int = 20_000_000_000_000 # 20조
     pool_b_size: int = 30
     
     # 돌파 기준 기간 (데이터 수집용)
