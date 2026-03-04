@@ -59,13 +59,18 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
+        self._logger.info({"event": "scan_started", "strategy_name": self.name})
 
         watchlist = await self._universe.get_watchlist()
         if not watchlist:
+            self._logger.info({"event": "scan_skipped", "reason": "Watchlist is empty"})
             return signals
+
+        self._logger.info({"event": "scan_with_watchlist", "count": len(watchlist)})
 
         market_progress = self._get_market_progress_ratio()
         if market_progress <= 0:
+            self._logger.info({"event": "scan_skipped", "reason": "Market not open or just started"})
             return signals
 
         for code, item in watchlist.items():
@@ -82,6 +87,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             except Exception as e:
                 self._logger.error(f"Scan error {code}: {e}")
 
+        self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
     async def _check_entry(self, code, item, progress) -> Optional[TradeSignal]:

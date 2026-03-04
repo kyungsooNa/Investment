@@ -66,15 +66,20 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
+        self._logger.info({"event": "scan_started", "strategy_name": self.name})
         
         # 1. 유니버스 서비스로부터 완성된 워치리스트 획득 (캐싱됨)
         watchlist = await self._universe.get_watchlist()
         if not watchlist:
+            self._logger.info({"event": "scan_skipped", "reason": "Watchlist is empty"})
             return signals
+
+        self._logger.info({"event": "scan_with_watchlist", "count": len(watchlist)})
 
         # 2. 장중 경과 비율 (거래량 환산용)
         market_progress = self._get_market_progress_ratio()
         if market_progress <= 0:
+            self._logger.info({"event": "scan_skipped", "reason": "Market not open or just started"})
             return signals
 
         # 3. 종목별 돌파 체크
@@ -96,6 +101,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             except Exception as e:
                 self._logger.error(f"Scan error {code}: {e}")
 
+        self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
     async def _check_breakout(self, code, item, progress) -> Optional[TradeSignal]:
