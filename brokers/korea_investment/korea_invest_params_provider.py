@@ -449,6 +449,25 @@ class FluctuationParams:
 
 
 @dataclass(frozen=True)
+class FrgnmemPchsTrendParams:
+    """종목별 외국계 순매수추이 파라미터 [국내주식-164]"""
+    FID_INPUT_ISCD: str       # 종목코드 (ex 005930)
+    FID_INPUT_ISCD_2: str     # 외국계 전체(99999)
+    FID_COND_MRKT_DIV_CODE: str  # 시장구분코드 (J: KRX)
+
+    @classmethod
+    def of(cls, stock_code: str, market: str = "J"):
+        return cls(
+            FID_INPUT_ISCD=stock_code,
+            FID_INPUT_ISCD_2="99999",
+            FID_COND_MRKT_DIV_CODE=market,
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MultiPriceParams:
     """복수종목 현재가 조회 파라미터 (최대 30종목)"""
     fid_cond_mrkt_div_code_1: str
@@ -704,6 +723,10 @@ class Params:
             price_1=price_1, price_2=price_2, vol_cnt=vol_cnt,
             trgt_cls=trgt_cls, trgt_exls=trgt_exls, div_cls=div_cls
         ).to_dict()
+
+    @staticmethod
+    def frgnmem_pchs_trend(stock_code: str, market: str = "J") -> Dict[str, str]:
+        return FrgnmemPchsTrendParams.of(stock_code, market).to_dict()
 
     @staticmethod
     def multi_price(stock_codes: list[str], market: MarketCode = "J") -> Dict[str, str]:

@@ -18,6 +18,7 @@ class TrIdLeaf(str, Enum):
     TIME_DAILY_ITEMCHARTPRICE = "inquire_time_daily_itemchartprice" # 일별 분봉 조회
     FINANCIAL_RATIO = "financial_ratio"  # 기업 재무비율
     INQUIRE_CONCLUSION = "inquire_conclusion" # 주식현재가 체결 (체결강도 포함)
+    FRGNMEM_PCHS_TREND = "frgnmem_pchs_trend" # 종목별 외국계 순매수추이 (실전 전용)
 
     # ── 계좌(account) ───────────────────────────────────────────
     INQUIRE_BALANCE_REAL = "inquire_balance_real"

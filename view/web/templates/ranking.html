@@ -10,6 +10,14 @@
                 <button class="btn ranking-tab" data-cat="volume" onclick="loadRanking('volume')">거래량</button>
                 <button class="btn ranking-tab" data-cat="trading_value" onclick="loadRanking('trading_value')">거래대금</button>
             </div>
+            <div class="form-row" style="margin-top: 6px;">
+                <button class="btn ranking-tab" data-cat="foreign_buy" onclick="loadRanking('foreign_buy')">외인 순매수</button>
+                <button class="btn ranking-tab" data-cat="foreign_sell" onclick="loadRanking('foreign_sell')">외인 순매도</button>
+            </div>
+            <div class="form-row" style="margin-top: 6px;">
+                <button class="btn market-filter active" data-market="KRX" onclick="setMarketFilter('KRX', this)">KRX</button>
+                <button class="btn market-filter" data-market="NXT" onclick="setMarketFilter('NXT', this)" disabled title="준비 중">NXT</button>
+            </div>
         </div>
         <div id="ranking-result"></div>
     </div>

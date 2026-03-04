@@ -509,7 +509,28 @@ async function placeOrder(side) {
 // 3. 랭킹 & 시가총액
 // ==========================================
 
+// 외국인 랭킹 자동 폴링 타이머
+let _rankingPollTimer = null;
+let _rankingCurrentCategory = null;
+// 시장 필터 상태 (향후 NXT 확장용)
+let _rankingMarketFilter = 'KRX';
+
+function setMarketFilter(market, btn) {
+    _rankingMarketFilter = market;
+    document.querySelectorAll('.market-filter').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    // 현재 카테고리 재조회
+    if (_rankingCurrentCategory) loadRanking(_rankingCurrentCategory);
+}
+
 async function loadRanking(category) {
+    // 폴링 타이머 초기화
+    if (_rankingPollTimer) {
+        clearTimeout(_rankingPollTimer);
+        _rankingPollTimer = null;
+    }
+    _rankingCurrentCategory = category;
+
     // 탭 스타일
     document.querySelectorAll('.ranking-tab').forEach(b => {
         b.classList.remove('active');
@@ -519,17 +540,41 @@ async function loadRanking(category) {
     const div = document.getElementById('ranking-result');
     div.innerHTML = "로딩 중...";
 
+    const isForeign = category === 'foreign_buy' || category === 'foreign_sell';
+
     try {
         const res = await fetch(`/api/ranking/${category}`);
         const json = await res.json();
-        
+
         if (json.rt_cd !== "0") {
             div.innerHTML = `<p class="error">실패: ${json.msg1}</p>`;
             return;
         }
 
+        // 데이터 미준비 시 자동 폴링
+        if (!json.data || json.data.length === 0) {
+            div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
+                <p style="font-size:1.2em;">데이터 수집 중...</p>
+                <p style="color:#888; margin-top:8px;">전체 종목을 순회하여 랭킹을 생성하고 있습니다. 잠시만 기다려주세요.</p>
+            </div>`;
+            // 5초 후 자동 재요청 (탭이 바뀌지 않았을 때만)
+            _rankingPollTimer = setTimeout(() => {
+                if (_rankingCurrentCategory === category) {
+                    loadRanking(category);
+                }
+            }, 5000);
+            return;
+        }
+
         const isTradingValue = category === 'trading_value';
-        const lastColHeader = isTradingValue ? '거래대금' : '거래량';
+        let lastColHeader;
+        if (isForeign) {
+            lastColHeader = '순매수수량';
+        } else if (isTradingValue) {
+            lastColHeader = '거래대금';
+        } else {
+            lastColHeader = '거래량';
+        }
 
         let html = `
             <div class="card">
@@ -540,9 +585,14 @@ async function loadRanking(category) {
         json.data.forEach(item => {
             const rate = parseFloat(item.prdy_ctrt || 0);
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
-            const lastCol = isTradingValue
-                ? formatTradingValue(item.acml_tr_pbmn)
-                : parseInt(item.acml_vol || 0).toLocaleString();
+            let lastCol;
+            if (isForeign) {
+                lastCol = parseInt(item.glob_ntby_qty || 0).toLocaleString();
+            } else if (isTradingValue) {
+                lastCol = formatTradingValue(item.acml_tr_pbmn);
+            } else {
+                lastCol = parseInt(item.acml_vol || 0).toLocaleString();
+            }
             html += `
                 <tr>
                     <td>${item.data_rank || item.rank || '-'}</td>

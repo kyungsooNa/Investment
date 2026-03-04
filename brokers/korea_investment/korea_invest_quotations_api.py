@@ -656,6 +656,52 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
 
 
+    async def get_foreign_trading_trend(self, stock_code: str) -> ResCommonResponse:
+        """
+        종목별 외국계 순매수추이 조회 [국내주식-164]
+        실전 전용 (모의투자 미지원)
+        """
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.FRGNMEM_PCHS_TREND)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.frgnmem_pchs_trend(stock_code=stock_code)
+
+        response: ResCommonResponse = await self.call_api(
+            "GET", EndpointKey.FRGNMEM_PCHS_TREND, params=params, retry_count=1
+        )
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            return response
+
+        try:
+            if not isinstance(response.data, dict):
+                raise TypeError(f"Expected dict, got {type(response.data)}")
+
+            output_list = response.data.get("output", [])
+            if not isinstance(output_list, list) or not output_list:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="데이터 없음",
+                    data=None
+                )
+
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="외국계 순매수추이 조회 성공",
+                data=output_list[0]  # 최신 시간대 row
+            )
+        except (TypeError, AttributeError) as e:
+            error_msg = f"외국계 순매수추이 응답 형식 오류: {e}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,
+                msg1=error_msg,
+                data=None
+            )
+
     #
     # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
     #     """
