@@ -73,6 +73,16 @@
 * 주식통합증거금 
 * 기간별계좌권리현황조회 
 * **[신규 기능]** 기관/개인 순매수/순매도 상위종목 기능 추가.
+  * 종목별 투자자 매매동향(일별) API로 수정: /investor-trade-by-stock-daily
+    * 외국인 순매수 수량: frgn_ntby_qty
+      * frgn_reg_ntby_pbmn 외국인 등록 순매수 대금	String	Y	18	단위 : 백만원
+    * 개인 순매수 수량: prsn_ntby_qty
+      * prsn_ntby_tr_pbmn 개인 순매수 거래 대금	String	Y	18	
+    * 기관계 순매수 수량: orgn_ntby_qty
+      * orgn_ntby_tr_pbmn 기관계 순매수 거래 대금	String	Y	18
+    * 증권 순매수 수량: scrt_ntby_qty
+      * scrt_ntby_tr_pbmn 증권 순매수 거래 대금	String	Y	18	
+  * 종목별 프로그램 일변 추이: program-trade-by-stock-daily
 * **[신규 기능]** 종목 추천 기능 추가.(Web에서 AI API를 바로 활용 가능한지?)
 * **[신규 기능]** Kis Developers API 문서 크롤링해서 API의 tr_id, url, Header, Params, Body를 최신으로 업데이트 할 수 있는 기능 추가 
 * **[신규 기능]** Android App으로 거래결과, 서치 결과 알림 기능 추가. 
