@@ -488,6 +488,14 @@ class StockQueryService:
     async def handle_get_top_stocks(self, category: str) -> ResCommonResponse:
         """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수 등)."""
         # (title, func, param, is_sync) — is_sync=True이면 동기 함수 호출
+        # 장마감 후 캐시된 기본 랭킹이 있으면 우선 사용
+        basic_categories = ("rise", "fall", "volume", "trading_value")
+        if category in basic_categories and self.background_service:
+            cached = self.background_service.get_basic_ranking_cache(category)
+            if cached is not None:
+                self.logger.info(f"Handler - {category} 캐시 히트 (장마감 후 캐시)")
+                return cached
+
         category_map = {
             "rise": ("상승률", self.trading_service.get_top_rise_fall_stocks, True, False),
             "fall": ("하락률", self.trading_service.get_top_rise_fall_stocks, False, False),

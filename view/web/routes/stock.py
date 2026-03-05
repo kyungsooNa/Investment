@@ -75,4 +75,5 @@ async def change_environment(req: EnvironmentRequest):
     success = await ctx.initialize_services(is_paper_trading=req.is_paper)
     if not success:
         raise HTTPException(status_code=500, detail="환경 전환 실패 (토큰 발급 오류)")
+    ctx.start_background_tasks()
     return {"success": True, "env_type": ctx.get_env_type()}

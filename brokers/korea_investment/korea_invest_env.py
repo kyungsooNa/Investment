@@ -164,5 +164,26 @@ class KoreaInvestApiEnv:
     def get_base_url(self):
         return self._base_url
 
+    def get_real_base_url(self) -> str:
+        """항상 실전 base URL 반환 (조회 API용)."""
+        return self._config_data.get('url')
+
+    def get_real_config(self) -> dict:
+        """항상 실전 API 키/시크릿/URL 반환."""
+        return {
+            'api_key': self.api_key,
+            'api_secret_key': self.api_secret_key,
+            'base_url': self._config_data.get('url'),
+        }
+
+    async def get_real_access_token(self) -> str:
+        """항상 실전 토큰 반환 (_token_manager_real 사용)."""
+        real_cfg = self.get_real_config()
+        return await self._token_manager_real.get_access_token(
+            base_url=real_cfg['base_url'],
+            app_key=real_cfg['api_key'],
+            app_secret=real_cfg['api_secret_key']
+        )
+
     def get_websocket_url(self):
         return self._websocket_url

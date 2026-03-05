@@ -74,6 +74,9 @@ class WebAppContext:
         if not token_acquired:
             self.logger.critical("웹 앱: 토큰 발급 실패.")
             return False
+        # 모의투자 모드에서도 실전 토큰 사전 발급 (조회 API는 항상 실전 인증 사용)
+        if is_paper_trading:
+            await self.env.get_real_access_token()
 
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, time_manager=self.time_manager
@@ -89,6 +92,7 @@ class WebAppContext:
             env=self.env,
             logger=self.logger,
             time_manager=self.time_manager,
+            trading_service=self.trading_service,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
@@ -232,9 +236,11 @@ class WebAppContext:
         # [변경] 매니저에게 위임
         self.realtime_data_manager.start_background_tasks()
 
-        # 투자자별 순매수 랭킹 백그라운드 갱신
-        if self.background_service and not self.env.is_paper_trading:
+        if self.background_service:
+            # 투자자별 순매수 랭킹 백그라운드 갱신 (조회 API는 항상 실전 URL 사용하므로 모의투자에서도 동작)
             asyncio.create_task(self.background_service.refresh_investor_ranking())
+            # 장마감 후 자동 갱신 스케줄러 (기본 랭킹 + 투자자 랭킹)
+            asyncio.create_task(self.background_service.start_after_market_scheduler())
 
     async def shutdown(self):
         """서비스 종료 처리."""

@@ -1889,3 +1889,22 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
         self.mock_background_service.get_prsn_net_sell_ranking.assert_called_once()
+
+    async def test_rise_uses_basic_ranking_cache(self):
+        """장마감 후 캐시가 있으면 캐시 우선 사용."""
+        cached_resp = ResCommonResponse(rt_cd="0", msg1="캐시", data=[{"cached": True}])
+        self.mock_background_service.get_basic_ranking_cache.return_value = cached_resp
+
+        result = await self.service.handle_get_top_stocks("rise")
+        assert result == cached_resp
+        self.mock_background_service.get_basic_ranking_cache.assert_called_once_with("rise")
+
+    async def test_rise_falls_through_when_no_cache(self):
+        """캐시 없으면 trading_service 호출."""
+        self.mock_background_service.get_basic_ranking_cache.return_value = None
+        self.mock_trading_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[{"name": "live"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("rise")
+        assert result.data[0]["name"] == "live"

@@ -1,7 +1,8 @@
 # services/background_service.py
 """
 백그라운드 배치 작업 전담 서비스.
-전체 종목 순회가 필요한 랭킹 집계(외국인/기관/개인 순매수 등)를 담당한다.
+전체 종목 순회가 필요한 랭킹 집계(외국인/기관/개인 순매수 등)와
+장마감 후 기본 랭킹 캐시를 담당한다.
 """
 import asyncio
 import logging
@@ -28,12 +29,16 @@ _ETF_PREFIXES = (
     "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
 )
 
+
 class BackgroundService:
     """백그라운드 배치 작업을 관리하는 서비스."""
 
     # 청크 크기 및 레이트 리밋
     API_CHUNK_SIZE = 5
     CHUNK_SLEEP_SEC = 1.1
+
+    # 장마감 후 대기 시간 (초) — 15:30 이후 약간의 여유
+    AFTER_MARKET_DELAY_SEC = 60
 
     def __init__(
         self,
@@ -42,12 +47,14 @@ class BackgroundService:
         env: KoreaInvestApiEnv = None,
         logger=None,
         time_manager: TimeManager = None,
+        trading_service=None,
     ):
         self._broker = broker_api_wrapper
         self._mapper = stock_code_mapper
         self._env = env
         self._logger = logger or logging.getLogger(__name__)
         self._time_manager = time_manager
+        self._trading_service = trading_service
 
         # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
@@ -58,6 +65,77 @@ class BackgroundService:
         self._prsn_net_sell_cache: List[Dict] = []
         self._investor_ranking_updated_at: Optional[datetime] = None
         self._is_refreshing: bool = False
+
+        # 기본 랭킹 캐시 (상승/하락/거래량/거래대금) — 장마감 후 1회
+        self._basic_ranking_cache: Dict[str, ResCommonResponse] = {}
+        self._basic_ranking_updated_at: Optional[datetime] = None
+
+        # 장마감 후 자동 갱신 태스크
+        self._after_market_task: Optional[asyncio.Task] = None
+
+    # ── 장마감 후 자동 갱신 스케줄러 ────────────────────────────
+
+    async def start_after_market_scheduler(self) -> None:
+        """장마감 후 자동으로 랭킹 갱신을 스케줄링하는 루프."""
+        self._logger.info("장마감 후 자동 갱신 스케줄러 시작")
+        while True:
+            try:
+                if self._time_manager and not self._time_manager.is_market_open():
+                    # 장 마감 상태 — 오늘 갱신한 적 없으면 갱신
+                    today = datetime.now().strftime("%Y%m%d")
+                    needs_investor = (
+                        not self._investor_ranking_updated_at
+                        or self._investor_ranking_updated_at.strftime("%Y%m%d") != today
+                    )
+                    needs_basic = (
+                        not self._basic_ranking_updated_at
+                        or self._basic_ranking_updated_at.strftime("%Y%m%d") != today
+                    )
+
+                    if needs_basic:
+                        await self.refresh_basic_ranking()
+                    if needs_investor:
+                        await self.refresh_investor_ranking()
+
+                await asyncio.sleep(300)  # 5분마다 체크
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self._logger.error(f"장마감 후 스케줄러 오류: {e}", exc_info=True)
+                await asyncio.sleep(60)
+
+    # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
+
+    async def refresh_basic_ranking(self) -> None:
+        """상승률/하락률/거래량/거래대금 랭킹을 1회 조회하여 캐시."""
+        if not self._trading_service:
+            self._logger.warning("TradingService 미설정 — 기본 랭킹 캐시 스킵")
+            return
+
+        self._logger.info("기본 랭킹 캐시 갱신 시작 (상승/하락/거래량/거래대금)")
+        try:
+            rise_resp, fall_resp, vol_resp, tv_resp = await asyncio.gather(
+                self._trading_service.get_top_rise_fall_stocks(True),
+                self._trading_service.get_top_rise_fall_stocks(False),
+                self._trading_service.get_top_volume_stocks(),
+                self._trading_service.get_top_trading_value_stocks(),
+                return_exceptions=True,
+            )
+            for key, resp in [("rise", rise_resp), ("fall", fall_resp),
+                              ("volume", vol_resp), ("trading_value", tv_resp)]:
+                if isinstance(resp, Exception):
+                    self._logger.error(f"기본 랭킹 '{key}' 조회 실패: {resp}")
+                else:
+                    self._basic_ranking_cache[key] = resp
+
+            self._basic_ranking_updated_at = datetime.now()
+            self._logger.info(f"기본 랭킹 캐시 갱신 완료: {list(self._basic_ranking_cache.keys())}")
+        except Exception as e:
+            self._logger.error(f"기본 랭킹 캐시 갱신 실패: {e}", exc_info=True)
+
+    def get_basic_ranking_cache(self, category: str) -> Optional[ResCommonResponse]:
+        """장마감 후 캐시된 기본 랭킹 반환. 캐시 없으면 None."""
+        return self._basic_ranking_cache.get(category)
 
     # ── 투자자별 순매수/순매도 랭킹 ────────────────────────────
 
@@ -104,6 +182,9 @@ class BackgroundService:
                     frgn_qty = int(resp.data.get("frgn_ntby_qty", "0") or "0")
                     orgn_qty = int(resp.data.get("orgn_ntby_qty", "0") or "0")
                     prsn_qty = int(resp.data.get("prsn_ntby_qty", "0") or "0")
+                    frgn_pbmn = int(resp.data.get("frgn_ntby_tr_pbmn", "0") or "0")
+                    orgn_pbmn = int(resp.data.get("orgn_ntby_tr_pbmn", "0") or "0")
+                    prsn_pbmn = int(resp.data.get("prsn_ntby_tr_pbmn", "0") or "0")
 
                     results.append({
                         "stck_shrn_iscd": code,
@@ -116,6 +197,9 @@ class BackgroundService:
                         "frgn_ntby_qty": str(frgn_qty),
                         "orgn_ntby_qty": str(orgn_qty),
                         "prsn_ntby_qty": str(prsn_qty),
+                        "frgn_ntby_tr_pbmn": str(frgn_pbmn),
+                        "orgn_ntby_tr_pbmn": str(orgn_pbmn),
+                        "prsn_ntby_tr_pbmn": str(prsn_pbmn),
                     })
 
                 processed += len(chunk)
@@ -128,13 +212,13 @@ class BackgroundService:
 
                 await asyncio.sleep(self.CHUNK_SLEEP_SEC)
 
-            # 3. 투자자별 정렬 → 상위 30 / 하위 30
+            # 3. 투자자별 정렬 → 순매수대금 기준 상위 30 / 하위 30
             self._foreign_net_buy_cache, self._foreign_net_sell_cache = \
-                self._build_ranking(results, "frgn_ntby_qty")
+                self._build_ranking(results, "frgn_ntby_tr_pbmn")
             self._inst_net_buy_cache, self._inst_net_sell_cache = \
-                self._build_ranking(results, "orgn_ntby_qty")
+                self._build_ranking(results, "orgn_ntby_tr_pbmn")
             self._prsn_net_buy_cache, self._prsn_net_sell_cache = \
-                self._build_ranking(results, "prsn_ntby_qty")
+                self._build_ranking(results, "prsn_ntby_tr_pbmn")
             self._investor_ranking_updated_at = datetime.now()
 
             elapsed = time.time() - start_time
@@ -147,9 +231,9 @@ class BackgroundService:
             self._is_refreshing = False
 
     @staticmethod
-    def _build_ranking(results: List[Dict], qty_field: str, top_n: int = 30):
-        """순매수수량 필드 기준 정렬 → (상위 30, 하위 30) 튜플 반환."""
-        sorted_list = sorted(results, key=lambda x: int(x[qty_field]), reverse=True)
+    def _build_ranking(results: List[Dict], pbmn_field: str, top_n: int = 30):
+        """순매수대금 필드 기준 정렬 → (상위 30, 하위 30) 튜플 반환."""
+        sorted_list = sorted(results, key=lambda x: int(x[pbmn_field]), reverse=True)
 
         buy_top = [dict(item) for item in sorted_list[:top_n]]
         for i, item in enumerate(buy_top, 1):
@@ -163,13 +247,7 @@ class BackgroundService:
         return buy_top, sell_top
 
     def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
-        """모의투자 체크 + 캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""
-        if self._env and self._env.is_paper_trading:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="실전투자 전용 기능입니다. 실전투자 모드로 전환 후 이용해주세요.",
-                data=[]
-            )
+        """캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""
         # 캐시 비어있고 갱신 중이 아니면 온디맨드 트리거
         if not self._foreign_net_buy_cache and not self._is_refreshing:
             try:

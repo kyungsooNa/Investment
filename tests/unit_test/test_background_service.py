@@ -37,8 +37,18 @@ def _make_stock_df(stocks):
     return pd.DataFrame(stocks, columns=["종목코드", "종목명", "시장구분"])
 
 
-def _make_investor_response(frgn_qty, orgn_qty=0, prsn_qty=0, stck_prpr="10000", prdy_ctrt="1.0"):
-    """투자자 매매동향 응답 생성 헬퍼."""
+def _make_investor_response(
+    frgn_qty, orgn_qty=0, prsn_qty=0,
+    stck_prpr="10000", prdy_ctrt="1.0",
+    frgn_pbmn=None, orgn_pbmn=None, prsn_pbmn=None,
+):
+    """투자자 매매동향 응답 생성 헬퍼. pbmn 미지정 시 qty * 10000 으로 자동 산출."""
+    if frgn_pbmn is None:
+        frgn_pbmn = frgn_qty * 10000
+    if orgn_pbmn is None:
+        orgn_pbmn = orgn_qty * 10000
+    if prsn_pbmn is None:
+        prsn_pbmn = prsn_qty * 10000
     return ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="OK",
@@ -51,6 +61,9 @@ def _make_investor_response(frgn_qty, orgn_qty=0, prsn_qty=0, stck_prpr="10000",
             "frgn_ntby_qty": str(frgn_qty),
             "orgn_ntby_qty": str(orgn_qty),
             "prsn_ntby_qty": str(prsn_qty),
+            "frgn_ntby_tr_pbmn": str(frgn_pbmn),
+            "orgn_ntby_tr_pbmn": str(orgn_pbmn),
+            "prsn_ntby_tr_pbmn": str(prsn_pbmn),
         }
     )
 
@@ -87,26 +100,18 @@ def test_get_prsn_net_buy_ranking_empty_cache(bg_service):
     assert resp.data == []
 
 
-# ── 모의투자 모드 차단 ───────────────────────────────────────
+# ── 모의투자 모드에서도 정상 동작 (조회 API는 항상 실전 인증) ──
 
-def test_paper_trading_returns_blocked_message(bg_service, mock_deps):
-    """모의투자 모드에서는 실전투자 전용 안내 메시지 반환."""
+def test_paper_trading_still_works(bg_service, mock_deps):
+    """모의투자 모드에서도 투자자 랭킹 조회 가능 (조회 API는 항상 실전 URL/인증 사용)."""
     _, _, env, _, _ = mock_deps
     env.is_paper_trading = True
 
     resp = bg_service.get_foreign_net_buy_ranking()
     assert resp.rt_cd == ErrorCode.SUCCESS.value
-    assert "실전투자 전용" in resp.msg1
+    # 캐시 없으면 "데이터 수집 중..." 반환 (차단하지 않음)
+    assert "데이터 수집 중" in resp.msg1
     assert resp.data == []
-
-    resp = bg_service.get_foreign_net_sell_ranking()
-    assert "실전투자 전용" in resp.msg1
-
-    resp = bg_service.get_inst_net_buy_ranking()
-    assert "실전투자 전용" in resp.msg1
-
-    resp = bg_service.get_prsn_net_sell_ranking()
-    assert "실전투자 전용" in resp.msg1
 
 
 # ── 온디맨드 트리거 ─────────────────────────────────────────
@@ -354,3 +359,122 @@ def test_get_foreign_ranking_with_limit(bg_service):
     resp = bg_service.get_foreign_net_buy_ranking(limit=5)
     assert len(resp.data) == 5
     assert resp.data[0]["data_rank"] == "1"
+
+
+# ── 순매수대금 기준 정렬 검증 ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_ranking_sorted_by_trade_amount(bg_service, mock_deps):
+    """순위는 순매수대금(tr_pbmn) 기준으로 정렬되어야 한다."""
+    broker, mapper, _, _, _ = mock_deps
+
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+    ])
+
+    # 삼성: 수량 많지만 대금 적음, SK: 수량 적지만 대금 많음
+    async def mock_trend(code, date=None):
+        if code == "005930":
+            return _make_investor_response(1000, 0, 0, frgn_pbmn=50000)
+        else:
+            return _make_investor_response(100, 0, 0, frgn_pbmn=200000)
+
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_trend)
+    await bg_service.refresh_investor_ranking()
+
+    buy_resp = bg_service.get_foreign_net_buy_ranking()
+    # 대금이 큰 SK하이닉스가 1위
+    assert buy_resp.data[0]["hts_kor_isnm"] == "SK하이닉스"
+    assert buy_resp.data[0]["frgn_ntby_tr_pbmn"] == "200000"
+    assert buy_resp.data[0]["frgn_ntby_qty"] == "100"
+    # 삼성전자는 2위
+    assert buy_resp.data[1]["hts_kor_isnm"] == "삼성전자"
+
+
+# ── 기본 랭킹 캐시 (장마감 후) ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_refresh_basic_ranking(mock_deps):
+    """기본 랭킹 캐시 갱신 테스트."""
+    broker, mapper, env, logger, time_manager = mock_deps
+    trading_service = MagicMock()
+    trading_service.get_top_rise_fall_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "rise"}])
+    )
+    trading_service.get_top_volume_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "vol"}])
+    )
+    trading_service.get_top_trading_value_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "tv"}])
+    )
+
+    bg = BackgroundService(
+        broker_api_wrapper=broker, stock_code_mapper=mapper,
+        env=env, logger=logger, time_manager=time_manager,
+        trading_service=trading_service,
+    )
+
+    await bg.refresh_basic_ranking()
+
+    assert "rise" in bg._basic_ranking_cache
+    assert "fall" in bg._basic_ranking_cache
+    assert "volume" in bg._basic_ranking_cache
+    assert "trading_value" in bg._basic_ranking_cache
+    assert bg._basic_ranking_updated_at is not None
+
+
+def test_get_basic_ranking_cache_miss(bg_service):
+    """캐시 없으면 None 반환."""
+    assert bg_service.get_basic_ranking_cache("rise") is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_basic_ranking_no_trading_service(bg_service):
+    """TradingService 없으면 스킵."""
+    bg_service._trading_service = None
+    await bg_service.refresh_basic_ranking()
+    assert bg_service._basic_ranking_cache == {}
+
+
+# ── 장마감 후 스케줄러 ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_after_market_scheduler_triggers_refresh(mock_deps):
+    """장마감 상태에서 스케줄러가 갱신을 트리거하는지 검증."""
+    import asyncio
+    from unittest.mock import patch
+
+    broker, mapper, env, logger, time_manager = mock_deps
+    time_manager.is_market_open.return_value = False  # 장마감
+
+    trading_service = MagicMock()
+    trading_service.get_top_rise_fall_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    )
+    trading_service.get_top_volume_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    )
+    trading_service.get_top_trading_value_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    )
+
+    bg = BackgroundService(
+        broker_api_wrapper=broker, stock_code_mapper=mapper,
+        env=env, logger=logger, time_manager=time_manager,
+        trading_service=trading_service,
+    )
+
+    # asyncio.sleep를 1회만 실행 후 CancelledError로 종료
+    call_count = 0
+    async def mock_sleep(sec):
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            raise asyncio.CancelledError()
+
+    with patch("asyncio.sleep", side_effect=mock_sleep):
+        await bg.start_after_market_scheduler()
+
+    # 기본 랭킹과 투자자 랭킹 모두 갱신 시도됨
+    assert bg._basic_ranking_updated_at is not None

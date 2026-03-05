@@ -575,41 +575,44 @@ async function loadRanking(category) {
         }
 
         const isTradingValue = category === 'trading_value';
-        let lastColHeader;
-        if (isInvestor) {
-            const investorLabel = {
-                'foreign_buy': '외인 순매수수량', 'foreign_sell': '외인 순매수수량',
-                'inst_buy': '기관 순매수수량', 'inst_sell': '기관 순매수수량',
-                'prsn_buy': '개인 순매수수량', 'prsn_sell': '개인 순매수수량',
-            };
-            lastColHeader = investorLabel[category] || '순매수수량';
-        } else if (isTradingValue) {
-            lastColHeader = '거래대금';
-        } else {
-            lastColHeader = '거래량';
-        }
+
+        // 투자자 카테고리별 필드 매핑
+        const pbmnField = {
+            'foreign_buy': 'frgn_ntby_tr_pbmn', 'foreign_sell': 'frgn_ntby_tr_pbmn',
+            'inst_buy': 'orgn_ntby_tr_pbmn', 'inst_sell': 'orgn_ntby_tr_pbmn',
+            'prsn_buy': 'prsn_ntby_tr_pbmn', 'prsn_sell': 'prsn_ntby_tr_pbmn',
+        };
+        const qtyField = {
+            'foreign_buy': 'frgn_ntby_qty', 'foreign_sell': 'frgn_ntby_qty',
+            'inst_buy': 'orgn_ntby_qty', 'inst_sell': 'orgn_ntby_qty',
+            'prsn_buy': 'prsn_ntby_qty', 'prsn_sell': 'prsn_ntby_qty',
+        };
+
+        // 모든 카테고리 공통: 순위|종목명|현재가|등락률|거래대금|거래량
+        const headerRow = isInvestor
+            ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th><th>거래량</th>`
+            : isTradingValue
+                ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th>`
+                : `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래량</th>`;
 
         let html = `
             <div class="card">
             <table class="data-table">
-            <thead><tr><th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>${lastColHeader}</th></tr></thead>
+            <thead><tr>${headerRow}</tr></thead>
             <tbody>
         `;
         json.data.forEach(item => {
             const rate = parseFloat(item.prdy_ctrt || 0);
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
-            let lastCol;
+            let extraCols;
             if (isInvestor) {
-                const qtyField = {
-                    'foreign_buy': 'frgn_ntby_qty', 'foreign_sell': 'frgn_ntby_qty',
-                    'inst_buy': 'orgn_ntby_qty', 'inst_sell': 'orgn_ntby_qty',
-                    'prsn_buy': 'prsn_ntby_qty', 'prsn_sell': 'prsn_ntby_qty',
-                };
-                lastCol = parseInt(item[qtyField[category]] || 0).toLocaleString();
+                const pbmnVal = formatTradingValue(item[pbmnField[category]]);
+                const qtyVal = parseInt(item[qtyField[category]] || 0).toLocaleString();
+                extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td>`;
             } else if (isTradingValue) {
-                lastCol = formatTradingValue(item.acml_tr_pbmn);
+                extraCols = `<td>${formatTradingValue(item.acml_tr_pbmn)}</td>`;
             } else {
-                lastCol = parseInt(item.acml_vol || 0).toLocaleString();
+                extraCols = `<td>${parseInt(item.acml_vol || 0).toLocaleString()}</td>`;
             }
             html += `
                 <tr>
@@ -617,7 +620,7 @@ async function loadRanking(category) {
                     <td>${item.hts_kor_isnm || item.name}</td>
                     <td>${parseInt(item.stck_prpr || 0).toLocaleString()}</td>
                     <td class="${color}">${rate}%</td>
-                    <td>${lastCol}</td>
+                    ${extraCols}
                 </tr>
             `;
         });

@@ -34,15 +34,21 @@ class KoreaInvestApiClient:
         url_provider = KoreaInvestUrlProvider.from_env_and_kis_config(env=env)
         trid_provider = KoreaInvestTrIdProvider.from_config_loader(env=env)
 
+        # 조회 API 전용: 항상 실전 URL 사용
+        quotation_url_provider = KoreaInvestUrlProvider.from_env_and_kis_config(
+            env=env, get_base_url_override=env.get_real_base_url
+        )
+
         self._quotations = KoreaInvestApiQuotations(
             self._env,
             self._logger,
             self.time_manager,
             async_client=shared_client,
             header_provider=header_provider.fork(),
-            url_provider=url_provider,
+            url_provider=quotation_url_provider,
             trid_provider=trid_provider,
         )
+        self._quotations._use_real_auth = True  # 항상 실전 인증
         self._account = KoreaInvestApiAccount(
             self._env,
             self._logger,
