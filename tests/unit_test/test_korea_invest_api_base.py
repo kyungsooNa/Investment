@@ -3,13 +3,13 @@ import unittest
 import pytest
 import json
 from unittest.mock import MagicMock, AsyncMock, patch, call
-from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
+from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase, ApiRetryError
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_token_manager import TokenManager
 import requests
 import logging
 import httpx  # 에러 시뮬레이션을 위해 import
-from common.types import ErrorCode
+from common.types import ErrorCode, ResCommonResponse
 
 
 def get_test_logger():
@@ -144,6 +144,141 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
         # Then
         self.api_base._async_session.aclose.assert_awaited_once()  # 65번 라인 커버
         self.mock_logger.info.assert_called_once_with("HTTP 클라이언트 세션이 종료되었습니다.")  # 66번 라인 커버
+
+    async def test_execute_request_internal_token_refresh(self):
+        """
+        TC: _execute_request 내부에서 EGW00123 응답 시 토큰 갱신 후 재시도 로직 검증
+        """
+        # Arrange
+        # get_access_token이 3번 호출됨: 1. 첫 시도, 2. 명시적 갱신 후 조회, 3. 재시도
+        self.mock_env.get_access_token = AsyncMock(side_effect=["old_token", "new_token", "new_token"])
+        self.mock_env.refresh_token = AsyncMock()
+
+        # httpx response mocking
+        # 1st response: EGW00123
+        resp1 = MagicMock(spec=httpx.Response)
+        resp1.json.return_value = {"msg_cd": "EGW00123", "rt_cd": "1"}
+
+        # 2nd response: Success
+        resp2 = MagicMock(spec=httpx.Response)
+        resp2.json.return_value = {"rt_cd": "0", "msg_cd": "MCA00000"}
+
+        # _async_session.post를 모킹 (method가 POST라고 가정)
+        self.api_base._async_session.post = AsyncMock(side_effect=[resp1, resp2])
+
+        # Act
+        response = await self.api_base._execute_request("POST", "http://test-url", None, {"data": 1})
+
+        # Assert
+        self.mock_env.refresh_token.assert_awaited_once()
+        self.assertEqual(response, resp2)
+        # 총 2번의 post 요청이 있었는지 확인
+        self.assertEqual(self.api_base._async_session.post.await_count, 2)
+
+    async def test_call_api_custom_retry_delay(self):
+        """
+        TC: ApiRetryError에 delay가 설정된 경우 해당 시간만큼 대기하는지 검증
+        """
+        # Arrange
+        custom_delay = 0.5
+        success_response = ResCommonResponse(rt_cd="0", msg1="Success", data={"output": {}})
+
+        # _execute_request가 ApiRetryError를 발생시키도록 설정
+        with patch.object(self.api_base, '_execute_request', new_callable=AsyncMock) as mock_execute:
+            mock_execute.side_effect = [
+                ApiRetryError("Custom Delay Error", delay=custom_delay),
+                success_response
+            ]
+
+            # Act
+            await self.api_base.call_api("GET", "/test", retry_count=2)
+
+            # Assert
+            # time_manager.async_sleep이 custom_delay로 호출되었는지 확인
+            self.mock_time_manager.async_sleep.assert_awaited_with(custom_delay)
+
+    async def test_handle_response_no_standard_schema(self):
+        """
+        TC: expect_standard_schema=False일 때 rt_cd 검사 없이 성공 처리되는지 검증
+        """
+        # Arrange
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"some_key": "some_value"}  # No rt_cd
+        mock_response.raise_for_status.return_value = None
+
+        # Act
+        result = await self.api_base._handle_response(mock_response, expect_standard_schema=False)
+
+        # Assert
+        self.assertEqual(result, {"some_key": "some_value"})
+
+    async def test_execute_request_missing_token(self):
+        """
+        TC: Access Token이 없을 때 ValueError 발생하는지 검증
+        """
+        # Arrange
+        self.mock_env.get_access_token = AsyncMock(return_value=None)
+
+        # Act & Assert
+        with self.assertRaises(ValueError) as cm:
+            await self.api_base._execute_request("GET", "http://test", None, None)
+        self.assertIn("접근 토큰이 없습니다", str(cm.exception))
+
+    async def test_execute_request_httpx_error(self):
+        """
+        TC: _execute_request 내부에서 httpx.RequestError 발생 시 ResCommonResponse 반환 검증
+        """
+        # Arrange
+        self.mock_env.get_access_token = AsyncMock(return_value="token")
+        self.api_base._async_session.get = AsyncMock(side_effect=httpx.RequestError("Connection failed"))
+
+        # Act
+        response = await self.api_base._execute_request("GET", "http://test", None, None)
+
+        # Assert
+        self.assertIsInstance(response, ResCommonResponse)
+        self.assertEqual(response.rt_cd, ErrorCode.NETWORK_ERROR.value)
+        self.assertIn("Connection failed", response.msg1)
+
+    async def test_execute_request_response_is_none(self):
+        """
+        TC: _execute_request 내부에서 make_request가 None을 반환할 때 ValueError 발생 검증
+        """
+        # Arrange
+        self.mock_env.get_access_token = AsyncMock(return_value="token")
+        # _async_session.get이 None을 반환하도록 설정
+        self.api_base._async_session.get = AsyncMock(return_value=None)
+
+        # Act & Assert
+        with self.assertRaises(ValueError) as cm:
+            await self.api_base._execute_request("GET", "http://test", None, None)
+        self.assertIn("response is None", str(cm.exception))
+
+    async def test_execute_request_token_refresh_retry_fail(self):
+        """
+        TC: _execute_request 내부에서 토큰 갱신 후 재시도했으나 여전히 EGW00123 응답인 경우
+        """
+        # Arrange
+        self.mock_env.get_access_token = AsyncMock(return_value="token")
+        self.mock_env.refresh_token = AsyncMock()
+
+        # EGW00123 응답
+        resp_fail = MagicMock(spec=httpx.Response)
+        resp_fail.json.return_value = {"msg_cd": "EGW00123", "rt_cd": "1"}
+
+        # 2번 모두 실패 응답
+        self.api_base._async_session.post = AsyncMock(return_value=resp_fail)
+
+        # Act
+        response = await self.api_base._execute_request("POST", "http://test", None, {"data": 1})
+
+        # Assert
+        self.mock_env.refresh_token.assert_awaited_once()
+        # 결과가 여전히 실패 응답이어야 함
+        self.assertEqual(response, resp_fail)
+        # 총 2번 호출 (첫 시도 -> 갱신 -> 재시도)
+        self.assertEqual(self.api_base._async_session.post.await_count, 2)
 
 
 class DummyAPI(KoreaInvestApiBase):

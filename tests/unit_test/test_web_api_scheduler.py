@@ -146,3 +146,43 @@ async def test_get_scheduler_history_edge_cases(web_client, mock_web_ctx):
     data = response.json()["history"]
     assert data[0]["name"] == "NoCode" # 코드 없어서 스킵
     assert data[1]["name"] == "UnknownCode" # 이름 못 찾아서 기존 이름 유지
+
+@pytest.mark.asyncio
+async def test_generate_osb_pool_a_success(web_client, mock_web_ctx):
+    """오닐 스퀴즈 전략 Pool A 생성 성공 테스트"""
+    mock_web_ctx.initialized = True
+    # Ensure oneil_universe_service is a mock with async method
+    mock_service = MagicMock()
+    mock_service.generate_pool_a = AsyncMock(return_value={"result": "ok"})
+    mock_web_ctx.oneil_universe_service = mock_service
+
+    # URL encoding might be handled by TestClient, but explicit path is safer if needed.
+    # FastAPI TestClient handles unicode paths correctly.
+    response = web_client.post("/api/scheduler/strategy/오닐스퀴즈돌파/generate-pool-a")
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["result"] == {"result": "ok"}
+    mock_service.generate_pool_a.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_generate_osb_pool_a_not_initialized(web_client, mock_web_ctx):
+    """오닐 스퀴즈 전략 Pool A 생성 실패 (초기화 안됨)"""
+    mock_web_ctx.initialized = False
+    
+    response = web_client.post("/api/scheduler/strategy/오닐스퀴즈돌파/generate-pool-a")
+    
+    assert response.status_code == 503
+    assert "서비스가 초기화되지 않았습니다" in response.json()["detail"]
+
+@pytest.mark.asyncio
+async def test_generate_osb_pool_a_service_missing(web_client, mock_web_ctx):
+    """오닐 스퀴즈 전략 Pool A 생성 실패 (서비스 없음)"""
+    mock_web_ctx.initialized = True
+    # Remove the service attribute or set to None
+    mock_web_ctx.oneil_universe_service = None
+    
+    response = web_client.post("/api/scheduler/strategy/오닐스퀴즈돌파/generate-pool-a")
+    
+    assert response.status_code == 404
+    assert "오닐 유니버스 서비스가 초기화되지 않았습니다" in response.json()["detail"]

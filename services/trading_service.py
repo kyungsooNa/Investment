@@ -253,7 +253,14 @@ class TradingService:
         results: List[ResBasicStockInfo] = []
 
         for stock_info in rise_stocks:
+            code = "Unknown"
             try:
+                # 로깅을 위해 코드 미리 추출 시도
+                if isinstance(stock_info, dict):
+                    code = stock_info.get("stck_shrn_iscd", "Unknown")
+                elif hasattr(stock_info, "stck_shrn_iscd"):
+                    code = stock_info.stck_shrn_iscd
+
                 fluctuation_info: ResFluctuation = stock_info
                 code = fluctuation_info.stck_shrn_iscd
                 current_price = int(fluctuation_info.stck_prpr)
@@ -326,11 +333,11 @@ class TradingService:
         self._logger.info(f"Service - {stock_code} 종목 시간대별 체결가 조회 요청")
         return await self._broker_api_wrapper.get_time_concluded_prices(stock_code)
 
-    async def inquire_daily_itemchartprice(self, stock_code: str, date: str,
+    async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str,
                                            fid_period_div_code: str = 'D') -> ResCommonResponse:
         """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""
         self._logger.info(f"Service - {stock_code} 종목 일별/분봉 주식 시세 차트 데이터를 조회 요청")
-        return await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code=stock_code, date=date,
+        return await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code=stock_code, start_date=start_date, end_date=end_date,
                                                                            fid_period_div_code=fid_period_div_code)
 
     # async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
