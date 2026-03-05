@@ -1,14 +1,16 @@
 import os
 import time
+import glob
 import logging
 import json
 from unittest.mock import patch, MagicMock
 from logging.handlers import RotatingFileHandler
+from datetime import datetime, timedelta
 
 import pytest
 
 # 실제 core.logger 경로에 맞게 수정
-from core.logger import Logger, get_strategy_logger, JsonFormatter, reset_log_timestamp_for_test, _log_rotation_namer
+from core.logger import Logger, get_strategy_logger, JsonFormatter, reset_log_timestamp_for_test, SizeTimeRotatingFileHandler
 
 
 @pytest.fixture
@@ -294,24 +296,6 @@ def test_get_strategy_logger(tmp_path):
     reset_log_timestamp_for_test()
 
 
-def test_log_rotation_namer_logic():
-    """
-    _log_rotation_namer 함수가 파일명을 올바르게 변환하는지 테스트합니다.
-    """
-    # Case 1: 일반적인 로그 파일 (.log.1 -> _1.log)
-    assert _log_rotation_namer("app.log.1") == "app_1.log"
-    assert _log_rotation_namer("/var/logs/app.log.1") == "/var/logs/app_1.log"
-
-    # Case 2: 백업 번호가 두 자리 이상일 때
-    assert _log_rotation_namer("debug.log.10") == "debug_10.log"
-
-    # Case 3: 확장자가 복잡한 경우 (my.app.log.1 -> my.app_1.log)
-    assert _log_rotation_namer("my.app.log.1") == "my.app_1.log"
-
-    # Case 4: 변경 대상이 아닌 경우 (백업 번호 없음)
-    assert _log_rotation_namer("app.log") == "app.log"
-
-
 def test_log_rotation(clean_logger_instance):
     """
     RotatingFileHandler가 설정된 크기를 초과하면 로그 파일을 회전시키는지 테스트합니다.
@@ -319,7 +303,7 @@ def test_log_rotation(clean_logger_instance):
     logger, common_log_dir = clean_logger_instance
     
     # operational_logger의 RotatingFileHandler 찾기
-    handler = next(h for h in logger.operational_logger.handlers if isinstance(h, RotatingFileHandler))
+    handler = next(h for h in logger.operational_logger.handlers if isinstance(h, SizeTimeRotatingFileHandler))
     
     # 테스트를 위해 maxBytes를 매우 작게 설정 (예: 100 바이트)
     # 기본 포맷터 헤더 등을 고려하여 100바이트로 설정
@@ -335,14 +319,14 @@ def test_log_rotation(clean_logger_instance):
     
     # 2. 두 번째 로그 기록 (누적 100바이트 초과 -> 회전 발생 예상)
     logger.info(msg)
+    time.sleep(1.1)  # 타임스탬프 변경을 위해 대기
+    logger.info(msg)
     
-    # 백업 파일이 생성되었는지 확인 (namer 적용으로 .log.1 대신 _1.log)
-    # glob 패턴은 원본(*.log)과 백업(*.log*)을 모두 포함
-    log_files = list(common_log_dir.glob("*_operational*.log*"))
-    
-    assert len(log_files) >= 2
-    # 기존 .log.1 대신 _1.log 패턴이 존재하는지 확인
-    assert any(f.name.endswith("_1.log") for f in log_files)
+    # 백업 파일이 생성되었는지 확인 (타임스탬프가 붙은 파일)
+    # 원본 파일 외에 백업 파일이 존재해야 함
+    # 백업 파일명 예시: 20231025_120000_operational_20231025_120001.log
+    log_files = list(common_log_dir.glob("*_operational_*.log"))
+    assert len(log_files) >= 1
 
 
 def test_log_cleanup(tmp_path):
@@ -423,3 +407,56 @@ def test_logger_exception_method(clean_logger_instance):
         assert message in content
         assert "ValueError: Exception method test" in content
         assert "Traceback" in content
+
+
+def test_size_time_rotating_handler_backup_limit(tmp_path):
+    """
+    SizeTimeRotatingFileHandler가 backupCount 제한을 넘어가면 오래된 파일을 삭제하는지 검증합니다.
+    """
+    log_file = tmp_path / "test_backup.log"
+    backup_count = 2
+    
+    # maxBytes를 작게 설정하여 매 로그마다 로테이션 유도
+    handler = SizeTimeRotatingFileHandler(str(log_file), maxBytes=10, backupCount=backup_count)
+    logger = logging.getLogger("test_backup_limit_logger")
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    
+    # datetime mocking to ensure unique timestamps without sleep dependency
+    start_time = datetime(2023, 1, 1, 12, 0, 0)
+    
+    with patch("core.logger.datetime") as mock_dt:
+        # now()가 호출될 때마다 1초씩 증가된 시간 반환
+        mock_dt.now.side_effect = [start_time + timedelta(seconds=i) for i in range(20)]
+        # 5개의 로그 파일을 생성하도록 유도 (원본 1 + 백업 4 시도 -> 백업 2개만 남아야 함)
+        for i in range(5):
+            logger.info(f"Log message {i} " * 5)
+        
+    handler.close()
+    logger.removeHandler(handler)
+    
+    # 백업 파일 개수 확인 (test_backup_*.log)
+    files = list(tmp_path.glob("test_backup_*.log"))
+    assert len(files) == backup_count
+
+
+def test_loggers_use_custom_handler(tmp_path):
+    """Logger 및 get_strategy_logger가 SizeTimeRotatingFileHandler를 사용하는지 검증합니다."""
+    reset_log_timestamp_for_test()
+    log_dir = tmp_path / "logs"
+    
+    # 1. Strategy Logger
+    strat_logger = get_strategy_logger("test_strat", log_dir=str(log_dir))
+    assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in strat_logger.handlers)
+    for h in strat_logger.handlers:
+        h.close()
+    
+    # 2. Main Logger
+    app_logger = Logger(log_dir=str(log_dir))
+    assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in app_logger.operational_logger.handlers)
+    assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in app_logger.debug_logger.handlers)
+    
+    # 정리
+    for logger in [app_logger.operational_logger, app_logger.debug_logger]:
+        for h in logger.handlers:
+            h.close()

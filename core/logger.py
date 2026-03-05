@@ -2,6 +2,7 @@
 import logging
 import os
 import time
+import glob
 from datetime import datetime
 import http.client
 import inspect
@@ -27,22 +28,39 @@ def reset_log_timestamp_for_test():
     global _log_timestamp
     _log_timestamp = None
 
-def _log_rotation_namer(default_name):
+class SizeTimeRotatingFileHandler(RotatingFileHandler):
     """
-    RotatingFileHandler의 백업 파일 이름을 변경하는 namer 함수.
-    기본 동작인 'filename.log.1' 대신 'filename_1.log' 형태로 변경합니다.
+    파일 크기가 maxBytes를 초과하면 타임스탬프를 붙여 백업하는 핸들러.
+    기존 RotatingFileHandler의 역순 인덱싱(.1이 최신) 대신,
+    타임스탬프를 사용하여 생성 순서대로(Linear) 파일명이 정렬되도록 합니다.
     """
-    # default_name: /path/to/file.log.1
-    base_path, backup_num_ext = os.path.splitext(default_name)
-    
-    # 백업 번호 확인 (.1, .2 등)
-    if len(backup_num_ext) > 1 and backup_num_ext[1:].isdigit():
-        backup_num = backup_num_ext[1:]
-        # 원본 파일명에서 확장자 분리
-        file_root, file_ext = os.path.splitext(base_path)
-        return f"{file_root}_{backup_num}{file_ext}"
-    return default_name
-# -------------------------
+    def doRollover(self):
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        
+        # 타임스탬프 기반 파일명 생성 (예: app_20231025_120000.log)
+        t = datetime.now().strftime("%Y%m%d_%H%M%S")
+        root, ext = os.path.splitext(self.baseFilename)
+        dfn = f"{root}_{t}{ext}"
+        
+        if os.path.exists(dfn):
+            os.remove(dfn)
+        
+        self.rotate(self.baseFilename, dfn)
+        
+        # 백업 파일 관리 (오래된 파일 삭제)
+        if self.backupCount > 0:
+            pattern = f"{glob.escape(root)}_*{glob.escape(ext)}"
+            backups = glob.glob(pattern)
+            backups.sort() # 이름순(시간순) 정렬 -> 앞쪽이 오래된 파일
+            
+            if len(backups) > self.backupCount:
+                for f in backups[:len(backups) - self.backupCount]:
+                    os.remove(f)
+        
+        if not self.delay:
+            self.stream = self._open()
 
 
 class JsonFormatter(logging.Formatter):
@@ -95,14 +113,13 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
     
     # 1. JSON 파일 핸들러 (실행마다 새로 생성)
     log_file = os.path.join(strategy_log_dir, f"{timestamp}_{strategy_name}.log.json")
-    file_handler = RotatingFileHandler(
+    file_handler = SizeTimeRotatingFileHandler(
         log_file,
         mode='a',
         encoding='utf-8',
         maxBytes=LOG_MAX_BYTES,
         backupCount=LOG_BACKUP_COUNT
     )
-    file_handler.namer = _log_rotation_namer
     file_handler.setFormatter(JsonFormatter())
     logger.addHandler(file_handler)
 
@@ -177,14 +194,13 @@ class Logger:
         if logger.handlers:
             return logger
 
-        file_handler = RotatingFileHandler(
+        file_handler = SizeTimeRotatingFileHandler(
             log_file,
             mode=mode,
             encoding='utf-8',
             maxBytes=LOG_MAX_BYTES,
             backupCount=LOG_BACKUP_COUNT
         )
-        file_handler.namer = _log_rotation_namer
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         logger.addHandler(file_handler)
 
