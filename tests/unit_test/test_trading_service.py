@@ -120,6 +120,101 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     assert broker.get_current_price.call_count == 1
 
 @pytest.mark.asyncio
+async def test_get_ohlcv_current_price_exception(trading_service_fixture, mock_deps):
+    """get_ohlcv: 현재가 조회 중 예외 발생 시 무시하고 과거 데이터만 반환"""
+    broker, _, tm, _ = mock_deps
+    service = trading_service_fixture
+    
+    # 과거 데이터
+    past_data = [{"stck_bsop_date": "20250101", "stck_clpr": "1000"}]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
+    
+    # 현재가 조회 예외
+    broker.get_current_price.side_effect = Exception("API Error")
+    
+    resp = await service.get_ohlcv("005930", period="D")
+    
+    assert resp.rt_cd == "0"
+    assert len(resp.data) == 1 # 과거 데이터만 있음
+    assert resp.data[0]['date'] == "20250101"
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_weekend_filtering(trading_service_fixture, mock_deps):
+    """get_ohlcv: 주말(토/일)에는 현재가 API가 데이터를 반환해도 제외"""
+    broker, _, tm, _ = mock_deps
+    service = trading_service_fixture
+    
+    # 토요일로 설정 (2025-01-04)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 4, 10, 0, 0)
+    
+    # 과거 데이터 (금요일까지)
+    past_data = [{"stck_bsop_date": "20250103", "stck_clpr": "1000"}]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
+    
+    # 현재가 API는 금요일 데이터를 반환함
+    today_output = {
+        "stck_oprc": "1000", "stck_hgpr": "1020", "stck_lwpr": "990", 
+        "stck_prpr": "1010", "acml_vol": "500"
+    }
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="", data={"output": today_output})
+    
+    resp = await service.get_ohlcv("005930", period="D")
+    
+    assert len(resp.data) == 1
+    assert resp.data[0]['date'] == "20250103" # 1월 4일 데이터는 없음
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_duplicate_filtering(trading_service_fixture, mock_deps):
+    """get_ohlcv: 휴장일 등으로 현재가 데이터가 과거 마지막 데이터와 동일하면 중복 제거"""
+    broker, _, tm, _ = mock_deps
+    service = trading_service_fixture
+    
+    # 평일 (2025-01-02 목요일)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    
+    # 과거 데이터 (1월 1일)
+    past_data = [{"stck_bsop_date": "20250101", "stck_oprc": "1000", "stck_hgpr": "1000", "stck_lwpr": "1000", "stck_clpr": "1000", "acml_vol": "100"}]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
+    
+    # 현재가 API가 1월 1일 데이터와 동일한 값을 반환
+    today_output = {
+        "stck_oprc": "1000", "stck_hgpr": "1000", "stck_lwpr": "1000", 
+        "stck_prpr": "1000", "acml_vol": "100"
+    }
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="", data={"output": today_output})
+    
+    resp = await service.get_ohlcv("005930", period="D")
+    
+    # 중복 제거되어 1개만 있어야 함
+    assert len(resp.data) == 1
+    assert resp.data[0]['date'] == "20250101"
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
+    """get_ohlcv: 현재가 API 응답이 객체(dataclass 등)일 때 처리"""
+    broker, _, tm, _ = mock_deps
+    service = trading_service_fixture
+    
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[])
+    
+    class MockOutput:
+        stck_oprc = "2000"
+        stck_hgpr = "2100"
+        stck_lwpr = "1900"
+        stck_prpr = "2050"
+        acml_vol = "1000"
+        
+    broker.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="", data={"output": MockOutput()}
+    )
+    
+    resp = await service.get_ohlcv("005930", period="D")
+    
+    assert len(resp.data) == 1
+    assert resp.data[0]['close'] == 2050.0
+
+@pytest.mark.asyncio
 async def test_get_current_stock_price(trading_service_fixture, mock_deps):
     """현재가 조회 위임 테스트"""
     broker, _, _, _ = mock_deps
@@ -589,6 +684,171 @@ async def test_get_account_balance(trading_service_fixture, mock_deps):
     
     assert resp.rt_cd == "0"
     broker.get_account_balance.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_get_stock_conclusion(trading_service_fixture, mock_deps):
+    """체결 정보 조회 위임 테스트"""
+    broker, _, _, logger = mock_deps
+    broker.get_stock_conclusion = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
+    
+    resp = await trading_service_fixture.get_stock_conclusion("005930")
+    
+    assert resp.rt_cd == "0"
+    broker.get_stock_conclusion.assert_awaited_once_with("005930")
+    logger.info.assert_called_with("Service - 005930 체결 정보 조회 요청")
+
+@pytest.mark.asyncio
+async def test_get_multi_price(trading_service_fixture, mock_deps):
+    """복수종목 현재가 조회 위임 테스트"""
+    broker, _, _, logger = mock_deps
+    broker.get_multi_price = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
+    codes = ["005930", "000660"]
+    
+    resp = await trading_service_fixture.get_multi_price(codes)
+    
+    assert resp.rt_cd == "0"
+    broker.get_multi_price.assert_awaited_once_with(codes)
+    logger.info.assert_called_with(f"Trading_Service - 복수종목 현재가 조회 요청 ({len(codes)}종목)")
+
+@pytest.mark.asyncio
+async def test_get_financial_ratio(trading_service_fixture, mock_deps):
+    """재무비율 조회 위임 테스트"""
+    broker, _, _, logger = mock_deps
+    broker.get_financial_ratio = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
+    
+    resp = await trading_service_fixture.get_financial_ratio("005930")
+    
+    assert resp.rt_cd == "0"
+    broker.get_financial_ratio.assert_awaited_once_with("005930")
+    logger.info.assert_called_with("Service - 005930 재무비율 조회 요청")
+
+@pytest.mark.asyncio
+async def test_get_intraday_minutes_today(trading_service_fixture, mock_deps):
+    """당일 분봉 조회 위임 테스트"""
+    broker, _, _, _ = mock_deps
+    broker.inquire_time_itemchartprice = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
+    
+    resp = await trading_service_fixture.get_intraday_minutes_today(stock_code="005930", input_hour_1="120000")
+    
+    assert resp.rt_cd == "0"
+    broker.inquire_time_itemchartprice.assert_awaited_once_with(
+        stock_code="005930", input_hour_1="120000", pw_data_incu_yn="Y", etc_cls_code="0"
+    )
+
+@pytest.mark.asyncio
+async def test_get_intraday_minutes_by_date_real(trading_service_fixture, mock_deps):
+    """일별 분봉 조회 (실전투자) 테스트"""
+    broker, env, _, _ = mock_deps
+    env.is_paper_trading = False
+    broker.inquire_time_dailychartprice = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
+    
+    resp = await trading_service_fixture.get_intraday_minutes_by_date(stock_code="005930", input_date_1="20250101")
+    
+    assert resp.rt_cd == "0"
+    broker.inquire_time_dailychartprice.assert_awaited_once_with(
+        stock_code="005930", input_date_1="20250101", input_hour_1="", pw_data_incu_yn="Y", fake_tick_incu_yn=""
+    )
+
+@pytest.mark.asyncio
+async def test_get_intraday_minutes_by_date_paper(trading_service_fixture, mock_deps):
+    """일별 분봉 조회 (모의투자) 테스트 - 미지원"""
+    broker, env, _, _ = mock_deps
+    env.is_paper_trading = True
+    
+    resp = await trading_service_fixture.get_intraday_minutes_by_date(stock_code="005930", input_date_1="20250101")
+    
+    assert resp.rt_cd == ErrorCode.API_ERROR.value
+    assert "모의투자 미지원" in resp.msg1
+    broker.inquire_time_dailychartprice.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_get_top_rise_fall_stocks(trading_service_fixture, mock_deps):
+    """상승/하락 순위 조회 위임 테스트"""
+    broker, _, _, logger = mock_deps
+    broker.get_top_rise_fall_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
+    
+    # Rise
+    await trading_service_fixture.get_top_rise_fall_stocks(rise=True)
+    broker.get_top_rise_fall_stocks.assert_awaited_with(True)
+    logger.info.assert_called_with("Service - 상승률 상위 종목 조회 요청")
+    
+    # Fall
+    await trading_service_fixture.get_top_rise_fall_stocks(rise=False)
+    broker.get_top_rise_fall_stocks.assert_awaited_with(False)
+    logger.info.assert_called_with("Service - 하락률 상위 종목 조회 요청")
+
+@pytest.mark.asyncio
+async def test_get_top_volume_stocks(trading_service_fixture, mock_deps):
+    """거래량 상위 조회 위임 테스트"""
+    broker, _, _, logger = mock_deps
+    broker.get_top_volume_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
+    
+    await trading_service_fixture.get_top_volume_stocks()
+    
+    broker.get_top_volume_stocks.assert_awaited_once()
+    logger.info.assert_called_with("Service - 거래량 상위 종목 조회 요청")
+
+@pytest.mark.asyncio
+async def test_get_name_by_code(trading_service_fixture, mock_deps):
+    """종목명 조회 위임 테스트"""
+    broker, _, _, _ = mock_deps
+    broker.get_name_by_code = AsyncMock(return_value="삼성전자")
+    
+    name = await trading_service_fixture.get_name_by_code("005930")
+    
+    assert name == "삼성전자"
+    broker.get_name_by_code.assert_awaited_once_with("005930")
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice(trading_service_fixture, mock_deps):
+    """일별 차트 조회 위임 테스트"""
+    broker, _, _, _ = mock_deps
+    broker.inquire_daily_itemchartprice = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
+    
+    resp = await trading_service_fixture.inquire_daily_itemchartprice("005930", "20250101", "20250110")
+    
+    assert resp.rt_cd == "0"
+    broker.inquire_daily_itemchartprice.assert_awaited_once_with(
+        stock_code="005930", start_date="20250101", end_date="20250110", fid_period_div_code="D"
+    )
+
+@pytest.mark.asyncio
+async def test_handle_realtime_stream_exception(trading_service_fixture, mock_deps):
+    """실시간 스트림 처리 중 예외 발생 시 로그 기록 테스트"""
+    broker, _, _, logger = mock_deps
+    broker.connect_websocket.side_effect = Exception("Connection Failed")
+
+    # finally 블록에서 호출되는 메서드들이 await 가능해야 함
+    broker.unsubscribe_realtime_price = AsyncMock()
+    broker.unsubscribe_realtime_quote = AsyncMock()
+    broker.disconnect_websocket = AsyncMock()
+    
+    await trading_service_fixture.handle_realtime_stream(["005930"], ["price"], 1)
+    
+    logger.exception.assert_called_once()
+    assert "실시간 스트림 처리 중 오류 발생" in logger.exception.call_args[0][0]
+
+class TestGetCurrentUpperLimitStocksAttributeError(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.mock_broker_api_wrapper = AsyncMock()
+        self.mock_logger = MagicMock()
+        self.trading_service = TradingService(
+            broker_api_wrapper=self.mock_broker_api_wrapper,
+            env=MagicMock(),
+            logger=self.mock_logger,
+            time_manager=MagicMock()
+        )
+
+    async def test_get_current_upper_limit_stocks_attribute_error(self):
+        """ResFluctuation 객체가 아닌 데이터(속성 접근 불가)가 들어올 때 예외 처리 테스트"""
+        # dict는 .stck_shrn_iscd 속성이 없으므로 AttributeError 발생 -> except 블록 진입 -> 스킵
+        rise_stocks = [{"stck_shrn_iscd": "005930", "stck_prpr": "10000"}]
+        
+        result = await self.trading_service.get_current_upper_limit_stocks(rise_stocks)
+        
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert len(result.data) == 0
+        self.mock_logger.warning.assert_called()
 
 # --- Existing Tests (기존 테스트 복구) ---
 class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):

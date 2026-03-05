@@ -119,3 +119,28 @@ def test_is_etf_logic(trading_service):
     # 예외 케이스 (이름 없음)
     assert trading_service._is_etf({}) is False
     assert trading_service._is_etf({"hts_kor_isnm": None}) is False
+
+@pytest.mark.asyncio
+async def test_get_top_trading_value_stocks_calculation_error(trading_service):
+    """거래대금 계산 중 에러 발생 시 0으로 처리되는지 테스트"""
+    broker = trading_service._broker_api_wrapper
+    
+    # 거래량 랭킹 등에서 데이터가 없다고 가정
+    broker.get_top_volume_stocks = AsyncMock(return_value=make_response([]))
+    broker.get_top_market_cap_stocks_code = AsyncMock(return_value=make_response([]))
+    
+    # 상승 랭킹에서 데이터가 오는데, 가격이 숫자가 아님
+    item_invalid = {"mksc_shrn_iscd": "000001", "hts_kor_isnm": "Invalid", "stck_prpr": "invalid", "acml_vol": "100"}
+    broker.get_top_rise_fall_stocks = AsyncMock(side_effect=[
+        make_response([item_invalid]), # rise
+        make_response([]) # fall
+    ])
+    
+    response = await trading_service.get_top_trading_value_stocks()
+    
+    assert response.rt_cd == ErrorCode.SUCCESS.value
+    data = response.data
+    assert len(data) == 1
+    assert data[0]['mksc_shrn_iscd'] == "000001"
+    # 계산 실패로 0이 되어야 함
+    assert data[0]['acml_tr_pbmn'] == "0"
