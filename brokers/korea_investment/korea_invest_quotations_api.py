@@ -715,33 +715,6 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=None
             )
 
-    #
-    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
-    #     """
-    #     외국인 순매수 상위 종목 조회
-    #     """
-    #     full_config = self._env.active_config
-    #
-    #     path = full_config["paths"]["ranking_foreign"]
-    #     tr_id = full_config["tr_ids"]["quotations"]["ranking_foreign"]
-    #     market_code = full_config.get("market_code", "J")
-    #
-    #     self._headers["tr_id"] = tr_id
-    #     self._headers["custtype"] = full_config["custtype"]
-    #
-    #     params = {
-    #         "fid_cond_mrkt_div_code": market_code
-    #     }
-    #
-    #     self._logger.info("외국인 순매수 상위 종목 조회 시도...")
-    #     response = await self.call_api("GET", path, params=params, retry_count=1)
-    #
-    #     if response.rt_cd != ErrorCode.SUCCESS.value:
-    #         self._logger.warning(f"외국인 순매수 조회 실패: {response.msg1}")
-    #         return response
-    #
-    #     return response
-
     # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
     #     """
     #     종목 뉴스 조회

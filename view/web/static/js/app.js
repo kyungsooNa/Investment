@@ -3,8 +3,9 @@
 // ==========================================
 // 유틸리티 함수
 // ==========================================
-function formatTradingValue(val) {
-    const num = parseInt(val || '0');
+function formatTradingValue(val, isMillion = false) {
+    let num = parseInt(val || '0');
+    if (isMillion) num *= 1000000;
     const abs = Math.abs(num);
     const sign = num < 0 ? '-' : '';
     if (abs >= 1e8) return sign + (abs / 1e8).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '억';
@@ -606,7 +607,7 @@ async function loadRanking(category) {
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
             let extraCols;
             if (isInvestor) {
-                const pbmnVal = formatTradingValue(item[pbmnField[category]]);
+                const pbmnVal = formatTradingValue(item[pbmnField[category]], true);
                 const qtyVal = parseInt(item[qtyField[category]] || 0).toLocaleString();
                 extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td>`;
             } else if (isTradingValue) {

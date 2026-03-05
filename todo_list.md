@@ -6,7 +6,16 @@
 ### 0. 불량
 1. [전략스케줄러] 전략에서 매수/매도 API를 실패하는 경우가 종종 있음. 1차로 사실 실패하면 log만되고, web에 남는 history는 저장이 안되는게 맞을거같고 2번쨰로는 실패하는경우에는 retry를 해야할거같음. retry 하는 queue를 만들어서 재시도하는 logic 추가가 필요.
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
+
+4. [Ranking] 
+  * 1. web에 진행률 표기
+  * 2. /investor-trade-by-stock-daily에 output2에 누적거래대금 filed(acml_tr_pbmn)가 있으니, 장마감 이후에는 해당 data를 활용해서 거래대금 순위를 매기도록 재조정하자.  (장중에는 기존 방식 유지.)
+  * 3. 프로그램 순매수/순매도 대금 상위 랭킹 기능 추가. 종목별 프로그램 일변 추이 (https://apiportal.koreainvestment.com/apiservice-apiservice?/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily) 
+  URL: program-trade-by-stock-daily
+  TRID: FHPPG04650201
+  * 4. 기존 외인/기관/프로그램/개인 순매수/순매도 컬럼에 1번에서 추가한 당일 누적 거래대금 대비 외인/기관/프로그램/개인 의 순매수대금/순매도대금의 비율이 어느정도인지도 표기하는 컬럼 추가 (거래대금 비율).
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
+7. [투자결과] 수수료도 적용하여 수익률 계산
 
 
 8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.
@@ -16,6 +25,8 @@
 
 ### 2. 성능 (Performance)
 * **[개선 필요]** 시장이 닫혔으면 스레드를 통해 전체 종목을 백그라운드로 업데이트하여 RAM에 올려두게 하기.
+  * 현재가 조회를 전체 종목을 backgournd로 다 돌려놓자.
+  * OHLCV도 background로 다 돌려놓자.
 * **[개선 필요]** **[현재가차트]** 많이 빨라졌지만 아직도 차트가 1초내외로 기다려야 나오는 문제가 있음 우선순위 낮게 수정 필요. OHLCV의 과거데이터는 바뀌질 않으니, 이전 data는 local에 저장해서 가지고 오는게 더 빠르게 처리할 수 있을거같음. 오늘 data와 관련된 candle chart, ma, bb 등만 새로 API 호출해서 계산하면 될거같음.
 
 ### 3. 오류 처리 (Error Handling)
@@ -72,17 +83,6 @@
 * 기간별매매손익현황조회
 * 주식통합증거금 
 * 기간별계좌권리현황조회 
-* **[신규 기능]** 기관/개인 순매수/순매도 상위종목 기능 추가.
-  * 종목별 투자자 매매동향(일별) API로 수정: /investor-trade-by-stock-daily
-    * 외국인 순매수 수량: frgn_ntby_qty
-      * frgn_reg_ntby_pbmn 외국인 등록 순매수 대금	String	Y	18	단위 : 백만원
-    * 개인 순매수 수량: prsn_ntby_qty
-      * prsn_ntby_tr_pbmn 개인 순매수 거래 대금	String	Y	18	
-    * 기관계 순매수 수량: orgn_ntby_qty
-      * orgn_ntby_tr_pbmn 기관계 순매수 거래 대금	String	Y	18
-    * 증권 순매수 수량: scrt_ntby_qty
-      * scrt_ntby_tr_pbmn 증권 순매수 거래 대금	String	Y	18	
-  * 종목별 프로그램 일변 추이: program-trade-by-stock-daily
 * **[신규 기능]** 종목 추천 기능 추가.(Web에서 AI API를 바로 활용 가능한지?)
 * **[신규 기능]** Kis Developers API 문서 크롤링해서 API의 tr_id, url, Header, Params, Body를 최신으로 업데이트 할 수 있는 기능 추가 
 * **[신규 기능]** Android App으로 거래결과, 서치 결과 알림 기능 추가. 
