@@ -364,6 +364,13 @@ class OneilUniverseService:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for (code, name, market), resp in zip(chunk, results):
                 if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                    error_msg = str(resp) if isinstance(resp, Exception) else (getattr(resp, 'msg1', 'No response') if resp else 'Empty response')
+                    pool_a_logger.warning({
+                        "event": "api_error_1st_filter", 
+                        "code": code, 
+                        "name": name, 
+                        "error": error_msg
+                    })
                     continue
                 out = resp.data.get("output") if resp.data else None
                 if not out: continue
