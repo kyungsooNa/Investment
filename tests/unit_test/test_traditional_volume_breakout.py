@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytz
 
@@ -566,6 +566,228 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
                 data = json.load(f)
             self.assertEqual(data, {})
 
+    # ── 추가 커버리지 테스트 ──
+
+    async def test_scan_market_not_open(self):
+        """장 시작 전(progress <= 0)이면 스캔 중단."""
+        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        
+        # 워치리스트 설정
+        strategy._watchlist = {"005930": MagicMock()}
+        strategy._watchlist_date = "20260225"
+        
+        # 장 시작 전 시간 설정
+        tm.get_current_kst_time.return_value = tm.get_market_open_time.return_value - timedelta(minutes=10)
+        
+        signals = await strategy.scan()
+        self.assertEqual(len(signals), 0)
+        sqs.handle_get_current_stock_price.assert_not_called()
+
+    async def test_scan_price_api_failure_in_loop(self):
+        """스캔 중 특정 종목 가격 조회 실패 시 해당 종목 건너뛰고 계속 진행."""
+        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        
+        strategy._watchlist = {
+            "A": WatchlistItem("A", "StockA", 1000, 900, 1000, 10000),
+            "B": WatchlistItem("B", "StockB", 1000, 900, 1000, 10000),
+        }
+        strategy._watchlist_date = "20260225"
+        
+        # A는 실패, B는 성공(돌파)
+        async def mock_get_price(code):
+            if code == "A":
+                return ResCommonResponse(rt_cd="1", msg1="Fail")
+            return ResCommonResponse(rt_cd="0", msg1="OK", data={"price": "1100", "acml_vol": "5000"})
+            
+        sqs.handle_get_current_stock_price.side_effect = mock_get_price
+        
+        signals = await strategy.scan()
+        
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].code, "B")
+
+    async def test_scan_current_price_zero(self):
+        """현재가가 0이면 스캔 건너뜀."""
+        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        
+        strategy._watchlist = {
+            "A": WatchlistItem("A", "StockA", 1000, 900, 1000, 10000),
+        }
+        strategy._watchlist_date = "20260225"
+        
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data={"price": "0", "acml_vol": "0"}
+        )
+        
+        signals = await strategy.scan()
+        self.assertEqual(len(signals), 0)
+
+    async def test_check_exits_missing_holding_info(self):
+        """보유 종목 정보에 code나 buy_price가 없으면 건너뜀."""
+        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        
+        holdings = [
+            {"code": "", "buy_price": 1000}, # code missing
+            {"code": "A", "buy_price": 0},   # buy_price 0
+            {"name": "NoCode"}               # code missing
+        ]
+        
+        signals = await strategy.check_exits(holdings)
+        self.assertEqual(len(signals), 0)
+        sqs.handle_get_current_stock_price.assert_not_called()
+
+    async def test_check_exits_price_api_failure(self):
+        """매도 체크 중 가격 조회 실패 시 건너뜀."""
+        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        
+        holdings = [{"code": "A", "buy_price": 1000}]
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(rt_cd="1", msg1="Fail")
+        
+        signals = await strategy.check_exits(holdings)
+        self.assertEqual(len(signals), 0)
+
+    async def test_check_exits_missing_position_state_restored(self):
+        """메모리에 포지션 상태가 없으면 holdings 정보로 복원."""
+        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        
+        # 메모리 상태 비움
+        strategy._position_state = {}
+        
+        holdings = [{"code": "A", "buy_price": 1000}]
+        
+        # 현재가 1050 (상승)
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data={"price": "1050"}
+        )
+        
+        # MA 조회 (추세 종료 아님)
+        ts.get_recent_daily_ohlcv.return_value = [{"close": 900}] * 20
+        
+        await strategy.check_exits(holdings)
+        
+        # 상태가 복원되었는지 확인
+        self.assertIn("A", strategy._position_state)
+        state = strategy._position_state["A"]
+        self.assertEqual(state.breakout_level, 1000)
+        self.assertEqual(state.peak_price, 1050) # 현재가로 갱신됨
+        
+        # 로그 확인
+        logger.warning.assert_called()
+        args, _ = logger.warning.call_args
+        self.assertEqual(args[0]["event"], "missing_position_state")
+
+    async def test_build_watchlist_candidate_missing_code(self):
+        """후보 종목에 코드가 없으면 건너뜀."""
+        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        
+        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": ""}] # Code missing
+        )
+        
+        await strategy._build_watchlist()
+        self.assertEqual(len(strategy._watchlist), 0)
+        ts.get_recent_daily_ohlcv.assert_not_called()
+
+    async def test_build_watchlist_ohlcv_exception(self):
+        """워치리스트 빌드 중 OHLCV 조회 예외 발생 시 로그 남기고 계속."""
+        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        
+        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": "A"}]
+        )
+        
+        ts.get_recent_daily_ohlcv.side_effect = Exception("API Error")
+        
+        await strategy._build_watchlist()
+        
+        self.assertEqual(len(strategy._watchlist), 0)
+        logger.error.assert_called()
+        args, _ = logger.error.call_args
+        self.assertEqual(args[0]["event"], "build_watchlist_error")
+
+    def test_save_state_exception(self):
+        """상태 저장 중 예외 발생 시 로그 남김."""
+        strategy, _, _, _, _, logger = self._make_strategy()
+        
+        with patch("builtins.open", side_effect=IOError("Disk full")):
+            strategy._save_state()
+            
+        logger.warning.assert_called()
+        args, _ = logger.warning.call_args
+        self.assertEqual(args[0]["event"], "save_state_failed")
+
+    async def test_get_current_ma_insufficient_data(self):
+        """_get_current_ma: 데이터 부족 시 None 반환."""
+        strategy, ts, _, _, _, _ = self._make_strategy()
+        
+        # Case 1: OHLCV list empty or short
+        ts.get_recent_daily_ohlcv.return_value = [{"close": 100}] * 10 # period 20 required
+        ma = await strategy._get_current_ma("A", 20)
+        self.assertIsNone(ma)
+        
+        # Case 2: OHLCV exists but closes missing
+        ts.get_recent_daily_ohlcv.return_value = [{"open": 100}] * 30 # no close key
+        ma = await strategy._get_current_ma("A", 20)
+        self.assertIsNone(ma)
+
+    def test_get_market_progress_ratio_before_open(self):
+        """_get_market_progress_ratio: 장 시작 전이면 0.0 반환."""
+        strategy, _, _, tm, _, _ = self._make_strategy()
+        
+        tm.get_current_kst_time.return_value = datetime(2026, 2, 25, 8, 59)
+        tm.get_market_open_time.return_value = datetime(2026, 2, 25, 9, 0)
+        tm.get_market_close_time.return_value = datetime(2026, 2, 25, 15, 30)
+        
+        ratio = strategy._get_market_progress_ratio()
+        self.assertEqual(ratio, 0.0)
+
+    async def test_check_exits_current_price_zero(self):
+        """check_exits: 현재가가 0이면 건너뜀."""
+        strategy, _, sqs, _, _, _ = self._make_strategy()
+        
+        holdings = [{"code": "A", "buy_price": 1000}]
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data={"price": "0"}
+        )
+        
+        signals = await strategy.check_exits(holdings)
+        self.assertEqual(len(signals), 0)
+
+    def test_calculate_qty_fixed(self):
+        """_calculate_qty: 고정 수량 모드일 때 1 반환."""
+        strategy, _, _, _, _, _ = self._make_strategy(use_fixed_qty=True)
+        qty = strategy._calculate_qty(10000)
+        self.assertEqual(qty, 1)
+
+    def test_analyze_ohlcv_missing_high_or_volume(self):
+        """_analyze_ohlcv: high나 volume 데이터가 없으면 None 반환."""
+        strategy, _, _, _, _, _ = self._make_strategy()
+        
+        # closes는 충분하지만 high가 없는 데이터
+        ohlcv = [{"close": 100, "volume": 1000} for _ in range(60)]
+        result = strategy._analyze_ohlcv("A", "StockA", ohlcv)
+        self.assertIsNone(result)
+        
+        # closes는 충분하지만 volume이 없는 데이터
+        ohlcv = [{"close": 100, "high": 110} for _ in range(60)]
+        result = strategy._analyze_ohlcv("A", "StockA", ohlcv)
+        self.assertIsNone(result)
+
+    async def test_scan_exception_handling(self):
+        """scan: 개별 종목 처리 중 예외 발생 시 로그 남기고 계속 진행."""
+        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        
+        strategy._watchlist = {
+            "A": WatchlistItem("A", "StockA", 1000, 900, 1000, 10000),
+        }
+        strategy._watchlist_date = "20260225"
+        
+        # 예외 발생 유도
+        sqs.handle_get_current_stock_price.side_effect = Exception("Unexpected Error")
+        
+        signals = await strategy.scan()
+        self.assertEqual(len(signals), 0)
+        logger.error.assert_called()
 
 if __name__ == "__main__":
     unittest.main()
