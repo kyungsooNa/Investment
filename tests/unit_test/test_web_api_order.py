@@ -81,3 +81,23 @@ async def test_place_order_market_price_api_fail(web_client, mock_web_ctx):
 
     # 가격이 0으로 전달되었는지 확인 (API 실패 시 0 유지)
     mock_web_ctx.virtual_manager.log_buy.assert_called_with("수동매매", "005930", 0)
+
+
+@pytest.mark.asyncio
+async def test_place_order_market_price_lookup_exception(web_client, mock_web_ctx):
+    """POST /api/order 시장가(0) 주문 시 현재가 조회 중 예외 발생 테스트"""
+    # 주문은 성공한다고 가정
+    mock_web_ctx.order_execution_service.handle_buy_stock.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={}
+    )
+    
+    # 현재가 조회 시 예외 발생 설정
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.side_effect = Exception("Lookup Error")
+
+    payload = {"code": "005930", "price": "0", "qty": "1", "side": "buy"}
+    response = web_client.post("/api/order", json=payload)
+    
+    assert response.status_code == 200
+    
+    # 예외가 발생하면 pass 되고 price_val은 0으로 유지된 채 log_buy가 호출되어야 함
+    mock_web_ctx.virtual_manager.log_buy.assert_called_with("수동매매", "005930", 0)
