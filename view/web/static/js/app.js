@@ -561,16 +561,8 @@ async function loadRanking(category) {
                     <p style="font-size:1.2em;">${json.msg1}</p>
                 </div>`;
             } else {
-                // 데이터 수집 중 → 자동 폴링
-                div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
-                    <p style="font-size:1.2em;">데이터 수집 중...</p>
-                    <p style="color:#888; margin-top:8px;">전체 종목을 순회하여 랭킹을 생성하고 있습니다. 잠시만 기다려주세요.</p>
-                </div>`;
-                _rankingPollTimer = setTimeout(() => {
-                    if (_rankingCurrentCategory === category) {
-                        loadRanking(category);
-                    }
-                }, 5000);
+                // 데이터 수집 중 → 진행률 폴링
+                _startProgressPolling(category, div);
             }
             return;
         }
@@ -631,6 +623,40 @@ async function loadRanking(category) {
     } catch (e) {
         div.innerHTML = "오류: " + e;
     }
+}
+
+function _formatElapsed(sec) {
+    if (sec < 60) return `${sec.toFixed(1)}s`;
+    const m = Math.floor(sec / 60);
+    const s = (sec % 60).toFixed(1);
+    return `${m}m ${s}s`;
+}
+
+function _startProgressPolling(category, div) {
+    div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
+        <p style="font-size:1.2em;">데이터 수집 중...</p>
+        <p id="ranking-progress-text" style="color:#888; margin-top:8px;">전체 종목을 순회하여 랭킹을 생성하고 있습니다. 잠시만 기다려주세요.</p>
+    </div>`;
+
+    const poll = async () => {
+        if (_rankingCurrentCategory !== category) return;
+        try {
+            const res = await fetch('/api/ranking/progress');
+            const p = await res.json();
+            const el = document.getElementById('ranking-progress-text');
+            if (el && p.total > 0) {
+                const pct = (p.processed / p.total * 100).toFixed(1);
+                el.textContent = `${p.processed}/${p.total} — ${pct}% | 수집: ${p.collected} | 소요: ${_formatElapsed(p.elapsed)}`;
+            }
+            if (!p.running && p.processed > 0 && p.processed >= p.total) {
+                // 완료 → 데이터 다시 로드
+                loadRanking(category);
+                return;
+            }
+        } catch (_) { /* ignore */ }
+        _rankingPollTimer = setTimeout(poll, 2000);
+    };
+    _rankingPollTimer = setTimeout(poll, 1000);
 }
 
 async function loadTopMarketCap(market = '0001') {

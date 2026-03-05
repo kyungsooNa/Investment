@@ -164,3 +164,31 @@ async def test_get_ranking_prsn_sell(web_client, mock_web_ctx):
     response = web_client.get("/api/ranking/prsn_sell")
     assert response.status_code == 200
     assert response.json()["data"][0]["prsn_ntby_qty"] == "-500"
+
+
+# ── 진행률 조회 ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_ranking_progress(web_client, mock_web_ctx):
+    """GET /api/ranking/progress 정상 응답."""
+    mock_web_ctx.background_service.get_investor_ranking_progress.return_value = {
+        "running": True, "processed": 500, "total": 2500, "collected": 120, "elapsed": 45.3
+    }
+    response = web_client.get("/api/ranking/progress")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["running"] is True
+    assert body["processed"] == 500
+    assert body["total"] == 2500
+    assert body["collected"] == 120
+
+
+@pytest.mark.asyncio
+async def test_get_ranking_progress_no_background_service(web_client, mock_web_ctx):
+    """background_service 없을 때 기본값 반환."""
+    mock_web_ctx.background_service = None
+    response = web_client.get("/api/ranking/progress")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["running"] is False
+    assert body["total"] == 0

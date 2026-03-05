@@ -478,3 +478,35 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
 
     # 기본 랭킹과 투자자 랭킹 모두 갱신 시도됨
     assert bg._basic_ranking_updated_at is not None
+
+
+# ── 진행률 조회 ──────────────────────────────────────────
+
+def test_get_investor_ranking_progress_initial(bg_service):
+    """초기 상태에서 진행률은 running=False, 0/0."""
+    p = bg_service.get_investor_ranking_progress()
+    assert p["running"] is False
+    assert p["processed"] == 0
+    assert p["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_progress_updates_during_refresh(bg_service, mock_deps):
+    """갱신 중 진행률이 업데이트되는지 확인."""
+    broker, mapper, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+    ])
+    broker.get_investor_trade_by_stock_daily = AsyncMock(
+        return_value=_make_investor_response(100, 50, -30)
+    )
+
+    await bg_service.refresh_investor_ranking()
+
+    p = bg_service.get_investor_ranking_progress()
+    assert p["running"] is False
+    assert p["processed"] == 2
+    assert p["total"] == 2
+    assert p["collected"] == 2
+    assert p["elapsed"] >= 0

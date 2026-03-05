@@ -73,6 +73,15 @@ class BackgroundService:
         # 장마감 후 자동 갱신 태스크
         self._after_market_task: Optional[asyncio.Task] = None
 
+        # 진행률 상태
+        self._progress: Dict = {
+            "running": False,
+            "processed": 0,
+            "total": 0,
+            "collected": 0,
+            "elapsed": 0.0,
+        }
+
     # ── 장마감 후 자동 갱신 스케줄러 ────────────────────────────
 
     async def start_after_market_scheduler(self) -> None:
@@ -133,6 +142,10 @@ class BackgroundService:
         except Exception as e:
             self._logger.error(f"기본 랭킹 캐시 갱신 실패: {e}", exc_info=True)
 
+    def get_investor_ranking_progress(self) -> Dict:
+        """투자자 랭킹 수집 진행률 반환."""
+        return dict(self._progress)
+
     def get_basic_ranking_cache(self, category: str) -> Optional[ResCommonResponse]:
         """장마감 후 캐시된 기본 랭킹 반환. 캐시 없으면 None."""
         return self._basic_ranking_cache.get(category)
@@ -149,11 +162,13 @@ class BackgroundService:
         start_time = time.time()
         today = datetime.now().strftime("%Y%m%d")
         self._logger.info("투자자 랭킹 백그라운드 갱신 시작")
+        self._progress = {"running": True, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
 
         try:
             # 1. 전체 종목 로드
             all_stocks = self._load_all_stocks()
             total = len(all_stocks)
+            self._progress["total"] = total
             self._logger.info(f"투자자 랭킹: 전체 {total}개 종목 순회 시작")
 
             # 2. 종목별 투자자 매매동향 조회
@@ -203,8 +218,13 @@ class BackgroundService:
                     })
 
                 processed += len(chunk)
+                elapsed = time.time() - start_time
+                self._progress.update({
+                    "processed": processed,
+                    "collected": len(results),
+                    "elapsed": round(elapsed, 1),
+                })
                 if processed % 50 == 0 or processed >= total:
-                    elapsed = time.time() - start_time
                     self._logger.info(
                         f"투자자 랭킹 진행: {processed}/{total} ({processed/total*100:.1f}%) "
                         f"| 수집: {len(results)} | 소요: {elapsed:.1f}s"
@@ -229,6 +249,7 @@ class BackgroundService:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
         finally:
             self._is_refreshing = False
+            self._progress["running"] = False
 
     @staticmethod
     def _build_ranking(results: List[Dict], pbmn_field: str, top_n: int = 30):
