@@ -1841,3 +1841,51 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
 
         result = await service_no_bg.handle_get_top_stocks("foreign_buy")
         self.assertEqual(result.rt_cd, ErrorCode.INVALID_INPUT.value)
+
+    async def test_inst_buy_calls_background_service(self):
+        """inst_buy → background_service.get_inst_net_buy_ranking() 호출."""
+        self.mock_background_service.get_inst_net_buy_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "삼성전자", "orgn_ntby_qty": "300"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("inst_buy")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_inst_net_buy_ranking.assert_called_once()
+
+    async def test_inst_sell_calls_background_service(self):
+        """inst_sell → background_service.get_inst_net_sell_ranking() 호출."""
+        self.mock_background_service.get_inst_net_sell_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "NAVER", "orgn_ntby_qty": "-100"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("inst_sell")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_inst_net_sell_ranking.assert_called_once()
+
+    async def test_prsn_buy_calls_background_service(self):
+        """prsn_buy → background_service.get_prsn_net_buy_ranking() 호출."""
+        self.mock_background_service.get_prsn_net_buy_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "카카오", "prsn_ntby_qty": "1000"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("prsn_buy")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_prsn_net_buy_ranking.assert_called_once()
+
+    async def test_prsn_sell_calls_background_service(self):
+        """prsn_sell → background_service.get_prsn_net_sell_ranking() 호출."""
+        self.mock_background_service.get_prsn_net_sell_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "SK하이닉스", "prsn_ntby_qty": "-500"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("prsn_sell")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_prsn_net_sell_ranking.assert_called_once()

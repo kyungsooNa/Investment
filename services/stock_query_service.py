@@ -503,6 +503,18 @@ class StockQueryService:
             category_map["foreign_sell"] = (
                 "외인 순매도", self.background_service.get_foreign_net_sell_ranking, None, True
             )
+            category_map["inst_buy"] = (
+                "기관 순매수", self.background_service.get_inst_net_buy_ranking, None, True
+            )
+            category_map["inst_sell"] = (
+                "기관 순매도", self.background_service.get_inst_net_sell_ranking, None, True
+            )
+            category_map["prsn_buy"] = (
+                "개인 순매수", self.background_service.get_prsn_net_buy_ranking, None, True
+            )
+            category_map["prsn_sell"] = (
+                "개인 순매도", self.background_service.get_prsn_net_sell_ranking, None, True
+            )
 
         if category not in category_map:
             self.logger.error(f"지원하지 않는 카테고리: {category}")

@@ -176,9 +176,9 @@ class KoreaInvestApiClient:
         """
         return await self._quotations.get_top_volume_stocks()
 
-    async def get_foreign_trading_trend(self, stock_code: str) -> ResCommonResponse:
-        """종목별 외국계 순매수추이 조회 [국내주식-164]"""
-        return await self._quotations.get_foreign_trading_trend(stock_code)
+    async def get_investor_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
+        """종목별 투자자 매매동향(일별) 조회 (실전 전용)"""
+        return await self._quotations.get_investor_trade_by_stock_daily(stock_code, date)
     #
     # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
     #     """

@@ -1,5 +1,6 @@
 # brokers/korea_investment/korea_invest_quotations_api.py
 import httpx
+from datetime import datetime
 from typing import Dict, List, Union, Optional
 from pydantic import ValidationError
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
@@ -656,21 +657,25 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
 
 
-    async def get_foreign_trading_trend(self, stock_code: str) -> ResCommonResponse:
+    async def get_investor_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
         """
-        종목별 외국계 순매수추이 조회 [국내주식-164]
+        종목별 투자자 매매동향(일별) 조회
         실전 전용 (모의투자 미지원)
+        한 번의 호출로 외국인/개인/기관 순매수 데이터를 모두 반환.
         """
+        if date is None:
+            date = datetime.now().strftime("%Y%m%d")
+
         full_config = self._env.active_config
-        tr_id = self._trid_provider.quotations(TrIdLeaf.FRGNMEM_PCHS_TREND)
+        tr_id = self._trid_provider.quotations(TrIdLeaf.INVESTOR_TRADE_BY_STOCK_DAILY)
 
         self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
-        params = Params.frgnmem_pchs_trend(stock_code=stock_code)
+        params = Params.investor_trade_by_stock_daily(stock_code=stock_code, date=date)
 
         response: ResCommonResponse = await self.call_api(
-            "GET", EndpointKey.FRGNMEM_PCHS_TREND, params=params, retry_count=1
+            "GET", EndpointKey.INVESTOR_TRADE_BY_STOCK_DAILY, params=params, retry_count=1
         )
 
         if response.rt_cd != ErrorCode.SUCCESS.value:
@@ -680,21 +685,29 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             if not isinstance(response.data, dict):
                 raise TypeError(f"Expected dict, got {type(response.data)}")
 
-            output_list = response.data.get("output", [])
-            if not isinstance(output_list, list) or not output_list:
+            output1 = response.data.get("output1", {})
+            output2 = response.data.get("output2", [])
+
+            if not isinstance(output2, list) or not output2:
                 return ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value,
                     msg1="데이터 없음",
                     data=None
                 )
 
+            # output1(현재가 정보) + output2[0](최신 일별 투자자 데이터) 병합
+            merged = {}
+            if isinstance(output1, dict):
+                merged.update(output1)
+            merged.update(output2[0])
+
             return ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value,
-                msg1="외국계 순매수추이 조회 성공",
-                data=output_list[0]  # 최신 시간대 row
+                msg1="투자자 매매동향 조회 성공",
+                data=merged
             )
         except (TypeError, AttributeError) as e:
-            error_msg = f"외국계 순매수추이 응답 형식 오류: {e}"
+            error_msg = f"투자자 매매동향 응답 형식 오류: {e}"
             self._logger.error(error_msg)
             return ResCommonResponse(
                 rt_cd=ErrorCode.PARSING_ERROR.value,

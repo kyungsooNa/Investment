@@ -1,7 +1,7 @@
 # services/background_service.py
 """
 백그라운드 배치 작업 전담 서비스.
-전체 종목 순회가 필요한 랭킹 집계(외국인/기관 순매수 등)를 담당한다.
+전체 종목 순회가 필요한 랭킹 집계(외국인/기관/개인 순매수 등)를 담당한다.
 """
 import asyncio
 import logging
@@ -28,7 +28,6 @@ _ETF_PREFIXES = (
     "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
 )
 
-
 class BackgroundService:
     """백그라운드 배치 작업을 관리하는 서비스."""
 
@@ -50,37 +49,42 @@ class BackgroundService:
         self._logger = logger or logging.getLogger(__name__)
         self._time_manager = time_manager
 
-        # 외국인 순매수 랭킹 캐시
+        # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
         self._foreign_net_sell_cache: List[Dict] = []
-        self._foreign_ranking_updated_at: Optional[datetime] = None
+        self._inst_net_buy_cache: List[Dict] = []
+        self._inst_net_sell_cache: List[Dict] = []
+        self._prsn_net_buy_cache: List[Dict] = []
+        self._prsn_net_sell_cache: List[Dict] = []
+        self._investor_ranking_updated_at: Optional[datetime] = None
         self._is_refreshing: bool = False
 
-    # ── 외국인 순매수/순매도 랭킹 ────────────────────────────
+    # ── 투자자별 순매수/순매도 랭킹 ────────────────────────────
 
-    async def refresh_foreign_ranking(self) -> None:
-        """전체 종목을 순회하여 외국인 순매수/순매도 랭킹을 갱신한다."""
+    async def refresh_investor_ranking(self) -> None:
+        """전체 종목을 순회하여 외국인/기관/개인 순매수/순매도 랭킹을 갱신한다."""
         if self._is_refreshing:
-            self._logger.info("외국인 랭킹 갱신 이미 진행 중 — 스킵")
+            self._logger.info("투자자 랭킹 갱신 이미 진행 중 — 스킵")
             return
 
         self._is_refreshing = True
         start_time = time.time()
-        self._logger.info("외국인 랭킹 백그라운드 갱신 시작")
+        today = datetime.now().strftime("%Y%m%d")
+        self._logger.info("투자자 랭킹 백그라운드 갱신 시작")
 
         try:
             # 1. 전체 종목 로드
             all_stocks = self._load_all_stocks()
             total = len(all_stocks)
-            self._logger.info(f"외국인 랭킹: 전체 {total}개 종목 순회 시작")
+            self._logger.info(f"투자자 랭킹: 전체 {total}개 종목 순회 시작")
 
-            # 2. 종목별 외국계 순매수추이 조회
+            # 2. 종목별 투자자 매매동향 조회
             results: List[Dict] = []
             processed = 0
 
             for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
                 tasks = [
-                    self._broker.get_foreign_trading_trend(code)
+                    self._broker.get_investor_trade_by_stock_daily(code, today)
                     for code, _, _ in chunk
                 ]
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
@@ -97,7 +101,10 @@ class BackgroundService:
                     if any(name.startswith(p) for p in _ETF_PREFIXES):
                         continue
 
-                    glob_ntby_qty = int(resp.data.get("glob_ntby_qty", "0") or "0")
+                    frgn_qty = int(resp.data.get("frgn_ntby_qty", "0") or "0")
+                    orgn_qty = int(resp.data.get("orgn_ntby_qty", "0") or "0")
+                    prsn_qty = int(resp.data.get("prsn_ntby_qty", "0") or "0")
+
                     results.append({
                         "stck_shrn_iscd": code,
                         "hts_kor_isnm": name,
@@ -106,45 +113,54 @@ class BackgroundService:
                         "prdy_vrss": resp.data.get("prdy_vrss", "0"),
                         "prdy_vrss_sign": resp.data.get("prdy_vrss_sign", ""),
                         "acml_vol": resp.data.get("acml_vol", "0"),
-                        "glob_ntby_qty": str(glob_ntby_qty),
-                        "frgn_ntby_qty_icdc": resp.data.get("frgn_ntby_qty_icdc", "0"),
+                        "frgn_ntby_qty": str(frgn_qty),
+                        "orgn_ntby_qty": str(orgn_qty),
+                        "prsn_ntby_qty": str(prsn_qty),
                     })
 
                 processed += len(chunk)
                 if processed % 50 == 0 or processed >= total:
                     elapsed = time.time() - start_time
                     self._logger.info(
-                        f"외국인 랭킹 진행: {processed}/{total} ({processed/total*100:.1f}%) "
+                        f"투자자 랭킹 진행: {processed}/{total} ({processed/total*100:.1f}%) "
                         f"| 수집: {len(results)} | 소요: {elapsed:.1f}s"
                     )
 
                 await asyncio.sleep(self.CHUNK_SLEEP_SEC)
 
-            # 3. 정렬: 순매수 상위 30 / 순매도 하위 30
-            results.sort(key=lambda x: int(x["glob_ntby_qty"]), reverse=True)
-
-            net_buy_top = [dict(item) for item in results[:30]]
-            for i, item in enumerate(net_buy_top, 1):
-                item["data_rank"] = str(i)
-
-            sell_slice = results[-30:] if len(results) >= 30 else results[:]
-            net_sell_top = [dict(item) for item in reversed(sell_slice)]
-            for i, item in enumerate(net_sell_top, 1):
-                item["data_rank"] = str(i)
-
-            self._foreign_net_buy_cache = net_buy_top
-            self._foreign_net_sell_cache = net_sell_top
-            self._foreign_ranking_updated_at = datetime.now()
+            # 3. 투자자별 정렬 → 상위 30 / 하위 30
+            self._foreign_net_buy_cache, self._foreign_net_sell_cache = \
+                self._build_ranking(results, "frgn_ntby_qty")
+            self._inst_net_buy_cache, self._inst_net_sell_cache = \
+                self._build_ranking(results, "orgn_ntby_qty")
+            self._prsn_net_buy_cache, self._prsn_net_sell_cache = \
+                self._build_ranking(results, "prsn_ntby_qty")
+            self._investor_ranking_updated_at = datetime.now()
 
             elapsed = time.time() - start_time
             self._logger.info(
-                f"외국인 랭킹 갱신 완료: 순매수 {len(net_buy_top)}개, "
-                f"순매도 {len(net_sell_top)}개, 소요: {elapsed:.1f}s"
+                f"투자자 랭킹 갱신 완료: {len(results)}개 종목 수집, 소요: {elapsed:.1f}s"
             )
         except Exception as e:
-            self._logger.error(f"외국인 랭킹 갱신 실패: {e}", exc_info=True)
+            self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
         finally:
             self._is_refreshing = False
+
+    @staticmethod
+    def _build_ranking(results: List[Dict], qty_field: str, top_n: int = 30):
+        """순매수수량 필드 기준 정렬 → (상위 30, 하위 30) 튜플 반환."""
+        sorted_list = sorted(results, key=lambda x: int(x[qty_field]), reverse=True)
+
+        buy_top = [dict(item) for item in sorted_list[:top_n]]
+        for i, item in enumerate(buy_top, 1):
+            item["data_rank"] = str(i)
+
+        sell_slice = sorted_list[-top_n:] if len(sorted_list) >= top_n else sorted_list[:]
+        sell_top = [dict(item) for item in reversed(sell_slice)]
+        for i, item in enumerate(sell_top, 1):
+            item["data_rank"] = str(i)
+
+        return buy_top, sell_top
 
     def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
         """모의투자 체크 + 캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""
@@ -157,36 +173,51 @@ class BackgroundService:
         # 캐시 비어있고 갱신 중이 아니면 온디맨드 트리거
         if not self._foreign_net_buy_cache and not self._is_refreshing:
             try:
-                loop = asyncio.get_running_loop()
-                self._logger.info("외국인 랭킹 캐시 없음 → 온디맨드 백그라운드 갱신 트리거")
-                asyncio.create_task(self.refresh_foreign_ranking())
+                asyncio.get_running_loop()
+                self._logger.info("투자자 랭킹 캐시 없음 → 온디맨드 백그라운드 갱신 트리거")
+                asyncio.create_task(self.refresh_investor_ranking())
             except RuntimeError:
                 self._logger.warning("이벤트 루프 없음 — 온디맨드 갱신 스킵")
         return None
 
+    # ── 외국인 ──
+
     def get_foreign_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
         """외국인 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
-        blocked = self._check_and_trigger_refresh()
-        if blocked:
-            return blocked
-        if not self._foreign_net_buy_cache:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="데이터 수집 중...",
-                data=[]
-            )
-        return ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value,
-            msg1="외국인 순매수 상위 종목 조회 성공",
-            data=self._foreign_net_buy_cache[:limit]
-        )
+        return self._get_ranking_from_cache(self._foreign_net_buy_cache, "외국인 순매수", limit)
 
     def get_foreign_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
         """외국인 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
+        return self._get_ranking_from_cache(self._foreign_net_sell_cache, "외국인 순매도", limit)
+
+    # ── 기관 ──
+
+    def get_inst_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
+        """기관 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
+        return self._get_ranking_from_cache(self._inst_net_buy_cache, "기관 순매수", limit)
+
+    def get_inst_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
+        """기관 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
+        return self._get_ranking_from_cache(self._inst_net_sell_cache, "기관 순매도", limit)
+
+    # ── 개인 ──
+
+    def get_prsn_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
+        """개인 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
+        return self._get_ranking_from_cache(self._prsn_net_buy_cache, "개인 순매수", limit)
+
+    def get_prsn_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
+        """개인 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
+        return self._get_ranking_from_cache(self._prsn_net_sell_cache, "개인 순매도", limit)
+
+    # ── 내부 헬퍼 ─────────────────────────────────────────────
+
+    def _get_ranking_from_cache(self, cache: List[Dict], label: str, limit: int) -> ResCommonResponse:
+        """캐시에서 랭킹 데이터 반환. 캐시 없으면 트리거 + 빈 응답."""
         blocked = self._check_and_trigger_refresh()
         if blocked:
             return blocked
-        if not self._foreign_net_sell_cache:
+        if not cache:
             return ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value,
                 msg1="데이터 수집 중...",
@@ -194,11 +225,9 @@ class BackgroundService:
             )
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
-            msg1="외국인 순매도 상위 종목 조회 성공",
-            data=self._foreign_net_sell_cache[:limit]
+            msg1=f"{label} 상위 종목 조회 성공",
+            data=cache[:limit]
         )
-
-    # ── 내부 헬퍼 ─────────────────────────────────────────────
 
     def _load_all_stocks(self) -> List[tuple]:
         """StockCodeMapper에서 KOSPI/KOSDAQ 전체 종목 로드."""

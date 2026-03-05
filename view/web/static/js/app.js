@@ -540,7 +540,7 @@ async function loadRanking(category) {
     const div = document.getElementById('ranking-result');
     div.innerHTML = "로딩 중...";
 
-    const isForeign = category === 'foreign_buy' || category === 'foreign_sell';
+    const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(category);
 
     try {
         const res = await fetch(`/api/ranking/${category}`);
@@ -576,8 +576,13 @@ async function loadRanking(category) {
 
         const isTradingValue = category === 'trading_value';
         let lastColHeader;
-        if (isForeign) {
-            lastColHeader = '순매수수량';
+        if (isInvestor) {
+            const investorLabel = {
+                'foreign_buy': '외인 순매수수량', 'foreign_sell': '외인 순매수수량',
+                'inst_buy': '기관 순매수수량', 'inst_sell': '기관 순매수수량',
+                'prsn_buy': '개인 순매수수량', 'prsn_sell': '개인 순매수수량',
+            };
+            lastColHeader = investorLabel[category] || '순매수수량';
         } else if (isTradingValue) {
             lastColHeader = '거래대금';
         } else {
@@ -594,8 +599,13 @@ async function loadRanking(category) {
             const rate = parseFloat(item.prdy_ctrt || 0);
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
             let lastCol;
-            if (isForeign) {
-                lastCol = parseInt(item.glob_ntby_qty || 0).toLocaleString();
+            if (isInvestor) {
+                const qtyField = {
+                    'foreign_buy': 'frgn_ntby_qty', 'foreign_sell': 'frgn_ntby_qty',
+                    'inst_buy': 'orgn_ntby_qty', 'inst_sell': 'orgn_ntby_qty',
+                    'prsn_buy': 'prsn_ntby_qty', 'prsn_sell': 'prsn_ntby_qty',
+                };
+                lastCol = parseInt(item[qtyField[category]] || 0).toLocaleString();
             } else if (isTradingValue) {
                 lastCol = formatTradingValue(item.acml_tr_pbmn);
             } else {

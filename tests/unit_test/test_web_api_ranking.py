@@ -113,3 +113,54 @@ async def test_get_ranking_foreign_empty_data(web_client, mock_web_ctx):
     assert response.status_code == 200
     assert response.json()["data"] == []
     assert "수집 중" in response.json()["msg1"]
+
+
+# ── 기관/개인 순매수/순매도 랭킹 ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_ranking_inst_buy(web_client, mock_web_ctx):
+    """GET /api/ranking/inst_buy 정상 응답."""
+    mock_web_ctx.stock_query_service.handle_get_top_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success",
+        data=[{"data_rank": "1", "hts_kor_isnm": "삼성전자", "orgn_ntby_qty": "300"}]
+    )
+    response = web_client.get("/api/ranking/inst_buy")
+    assert response.status_code == 200
+    assert response.json()["data"][0]["orgn_ntby_qty"] == "300"
+    mock_web_ctx.stock_query_service.handle_get_top_stocks.assert_awaited_with("inst_buy")
+
+
+@pytest.mark.asyncio
+async def test_get_ranking_inst_sell(web_client, mock_web_ctx):
+    """GET /api/ranking/inst_sell 정상 응답."""
+    mock_web_ctx.stock_query_service.handle_get_top_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success",
+        data=[{"data_rank": "1", "hts_kor_isnm": "NAVER", "orgn_ntby_qty": "-150"}]
+    )
+    response = web_client.get("/api/ranking/inst_sell")
+    assert response.status_code == 200
+    assert response.json()["data"][0]["orgn_ntby_qty"] == "-150"
+
+
+@pytest.mark.asyncio
+async def test_get_ranking_prsn_buy(web_client, mock_web_ctx):
+    """GET /api/ranking/prsn_buy 정상 응답."""
+    mock_web_ctx.stock_query_service.handle_get_top_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success",
+        data=[{"data_rank": "1", "hts_kor_isnm": "카카오", "prsn_ntby_qty": "1000"}]
+    )
+    response = web_client.get("/api/ranking/prsn_buy")
+    assert response.status_code == 200
+    assert response.json()["data"][0]["prsn_ntby_qty"] == "1000"
+
+
+@pytest.mark.asyncio
+async def test_get_ranking_prsn_sell(web_client, mock_web_ctx):
+    """GET /api/ranking/prsn_sell 정상 응답."""
+    mock_web_ctx.stock_query_service.handle_get_top_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success",
+        data=[{"data_rank": "1", "hts_kor_isnm": "SK하이닉스", "prsn_ntby_qty": "-500"}]
+    )
+    response = web_client.get("/api/ranking/prsn_sell")
+    assert response.status_code == 200
+    assert response.json()["data"][0]["prsn_ntby_qty"] == "-500"

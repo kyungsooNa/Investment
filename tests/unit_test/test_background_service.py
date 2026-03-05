@@ -1,6 +1,6 @@
 """
 BackgroundService 단위 테스트.
-전체 종목 순회 → 외국인 순매수/순매도 랭킹 생성 로직 검증.
+전체 종목 순회 → 외국인/기관/개인 순매수/순매도 랭킹 생성 로직 검증.
 """
 import pytest
 import pandas as pd
@@ -37,19 +37,20 @@ def _make_stock_df(stocks):
     return pd.DataFrame(stocks, columns=["종목코드", "종목명", "시장구분"])
 
 
-def _make_foreign_response(glob_ntby_qty, stck_prpr="10000", prdy_ctrt="1.0"):
-    """외국계 순매수추이 응답 생성 헬퍼."""
+def _make_investor_response(frgn_qty, orgn_qty=0, prsn_qty=0, stck_prpr="10000", prdy_ctrt="1.0"):
+    """투자자 매매동향 응답 생성 헬퍼."""
     return ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="OK",
         data={
-            "glob_ntby_qty": str(glob_ntby_qty),
             "stck_prpr": stck_prpr,
             "prdy_ctrt": prdy_ctrt,
             "prdy_vrss": "100",
             "prdy_vrss_sign": "2",
             "acml_vol": "50000",
-            "frgn_ntby_qty_icdc": "10",
+            "frgn_ntby_qty": str(frgn_qty),
+            "orgn_ntby_qty": str(orgn_qty),
+            "prsn_ntby_qty": str(prsn_qty),
         }
     )
 
@@ -72,6 +73,20 @@ def test_get_foreign_net_sell_ranking_empty_cache(bg_service):
     assert "수집 중" in resp.msg1
 
 
+def test_get_inst_net_buy_ranking_empty_cache(bg_service):
+    """기관 캐시가 비어있으면 빈 data 반환."""
+    resp = bg_service.get_inst_net_buy_ranking()
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert resp.data == []
+
+
+def test_get_prsn_net_buy_ranking_empty_cache(bg_service):
+    """개인 캐시가 비어있으면 빈 data 반환."""
+    resp = bg_service.get_prsn_net_buy_ranking()
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert resp.data == []
+
+
 # ── 모의투자 모드 차단 ───────────────────────────────────────
 
 def test_paper_trading_returns_blocked_message(bg_service, mock_deps):
@@ -85,6 +100,12 @@ def test_paper_trading_returns_blocked_message(bg_service, mock_deps):
     assert resp.data == []
 
     resp = bg_service.get_foreign_net_sell_ranking()
+    assert "실전투자 전용" in resp.msg1
+
+    resp = bg_service.get_inst_net_buy_ranking()
+    assert "실전투자 전용" in resp.msg1
+
+    resp = bg_service.get_prsn_net_sell_ranking()
     assert "실전투자 전용" in resp.msg1
 
 
@@ -117,11 +138,11 @@ def test_no_trigger_when_already_refreshing(bg_service):
         mock_create_task.assert_not_called()
 
 
-# ── refresh_foreign_ranking 로직 검증 ────────────────────────
+# ── refresh_investor_ranking 로직 검증 ────────────────────────
 
 @pytest.mark.asyncio
-async def test_refresh_foreign_ranking_basic(bg_service, mock_deps):
-    """기본 순회 → 순매수/순매도 정렬 검증."""
+async def test_refresh_investor_ranking_basic(bg_service, mock_deps):
+    """기본 순회 → 외국인/기관/개인 순매수/순매도 정렬 검증."""
     broker, mapper, _, logger, _ = mock_deps
 
     # 3개 종목 설정
@@ -131,38 +152,57 @@ async def test_refresh_foreign_ranking_basic(bg_service, mock_deps):
         ("035420", "NAVER", "KOSDAQ"),
     ])
 
-    # 각 종목의 외국인 순매수수량: 삼성(500), SK(-200), NAVER(300)
-    async def mock_trend(code):
+    # 삼성(외500,기관200,개인-300), SK(외-200,기관100,개인400), NAVER(외300,기관-100,개인50)
+    async def mock_trend(code, date=None):
         data = {
-            "005930": _make_foreign_response(500),
-            "000660": _make_foreign_response(-200),
-            "035420": _make_foreign_response(300),
+            "005930": _make_investor_response(500, 200, -300),
+            "000660": _make_investor_response(-200, 100, 400),
+            "035420": _make_investor_response(300, -100, 50),
         }
         return data.get(code, ResCommonResponse(rt_cd="1", msg1="Error", data=None))
 
-    broker.get_foreign_trading_trend = AsyncMock(side_effect=mock_trend)
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_trend)
 
-    await bg_service.refresh_foreign_ranking()
+    await bg_service.refresh_investor_ranking()
 
-    # 순매수 상위: 삼성(500) > NAVER(300) > SK(-200)
+    # 외국인 순매수 상위: 삼성(500) > NAVER(300) > SK(-200)
     buy_resp = bg_service.get_foreign_net_buy_ranking()
     assert buy_resp.rt_cd == ErrorCode.SUCCESS.value
     assert len(buy_resp.data) == 3
     assert buy_resp.data[0]["hts_kor_isnm"] == "삼성전자"
-    assert buy_resp.data[0]["glob_ntby_qty"] == "500"
+    assert buy_resp.data[0]["frgn_ntby_qty"] == "500"
     assert buy_resp.data[0]["data_rank"] == "1"
     assert buy_resp.data[1]["hts_kor_isnm"] == "NAVER"
     assert buy_resp.data[2]["hts_kor_isnm"] == "SK하이닉스"
 
-    # 순매도 상위: SK(-200) > NAVER(300) > 삼성(500)
+    # 외국인 순매도 상위: SK(-200) > NAVER(300) > 삼성(500)
     sell_resp = bg_service.get_foreign_net_sell_ranking()
     assert sell_resp.rt_cd == ErrorCode.SUCCESS.value
     assert sell_resp.data[0]["hts_kor_isnm"] == "SK하이닉스"
     assert sell_resp.data[0]["data_rank"] == "1"
 
+    # 기관 순매수 상위: 삼성(200) > SK(100) > NAVER(-100)
+    inst_buy = bg_service.get_inst_net_buy_ranking()
+    assert inst_buy.data[0]["hts_kor_isnm"] == "삼성전자"
+    assert inst_buy.data[0]["orgn_ntby_qty"] == "200"
+    assert inst_buy.data[1]["hts_kor_isnm"] == "SK하이닉스"
+
+    # 기관 순매도 상위: NAVER(-100)
+    inst_sell = bg_service.get_inst_net_sell_ranking()
+    assert inst_sell.data[0]["hts_kor_isnm"] == "NAVER"
+
+    # 개인 순매수 상위: SK(400) > NAVER(50) > 삼성(-300)
+    prsn_buy = bg_service.get_prsn_net_buy_ranking()
+    assert prsn_buy.data[0]["hts_kor_isnm"] == "SK하이닉스"
+    assert prsn_buy.data[0]["prsn_ntby_qty"] == "400"
+
+    # 개인 순매도 상위: 삼성(-300)
+    prsn_sell = bg_service.get_prsn_net_sell_ranking()
+    assert prsn_sell.data[0]["hts_kor_isnm"] == "삼성전자"
+
 
 @pytest.mark.asyncio
-async def test_refresh_foreign_ranking_etf_excluded(bg_service, mock_deps):
+async def test_refresh_investor_ranking_etf_excluded(bg_service, mock_deps):
     """ETF/ETN 종목은 제외되어야 한다."""
     broker, mapper, _, _, _ = mock_deps
 
@@ -172,12 +212,12 @@ async def test_refresh_foreign_ranking_etf_excluded(bg_service, mock_deps):
         ("102110", "TIGER 200", "KOSPI"),  # ETF
     ])
 
-    async def mock_trend(code):
-        return _make_foreign_response(1000)
+    async def mock_trend(code, date=None):
+        return _make_investor_response(1000, 500, -200)
 
-    broker.get_foreign_trading_trend = AsyncMock(side_effect=mock_trend)
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_trend)
 
-    await bg_service.refresh_foreign_ranking()
+    await bg_service.refresh_investor_ranking()
 
     buy_resp = bg_service.get_foreign_net_buy_ranking()
     names = [item["hts_kor_isnm"] for item in buy_resp.data]
@@ -187,7 +227,7 @@ async def test_refresh_foreign_ranking_etf_excluded(bg_service, mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_refresh_foreign_ranking_api_error_skipped(bg_service, mock_deps):
+async def test_refresh_investor_ranking_api_error_skipped(bg_service, mock_deps):
     """API 오류 종목은 스킵되어야 한다."""
     broker, mapper, _, _, _ = mock_deps
 
@@ -196,14 +236,14 @@ async def test_refresh_foreign_ranking_api_error_skipped(bg_service, mock_deps):
         ("000660", "SK하이닉스", "KOSPI"),
     ])
 
-    async def mock_trend(code):
+    async def mock_trend(code, date=None):
         if code == "000660":
             return ResCommonResponse(rt_cd="1", msg1="Error", data=None)
-        return _make_foreign_response(500)
+        return _make_investor_response(500, 200, -100)
 
-    broker.get_foreign_trading_trend = AsyncMock(side_effect=mock_trend)
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_trend)
 
-    await bg_service.refresh_foreign_ranking()
+    await bg_service.refresh_investor_ranking()
 
     buy_resp = bg_service.get_foreign_net_buy_ranking()
     assert len(buy_resp.data) == 1
@@ -211,7 +251,7 @@ async def test_refresh_foreign_ranking_api_error_skipped(bg_service, mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_refresh_foreign_ranking_exception_skipped(bg_service, mock_deps):
+async def test_refresh_investor_ranking_exception_skipped(bg_service, mock_deps):
     """개별 종목 조회 중 예외 발생 시 해당 종목만 스킵."""
     broker, mapper, _, _, _ = mock_deps
 
@@ -220,14 +260,14 @@ async def test_refresh_foreign_ranking_exception_skipped(bg_service, mock_deps):
         ("000660", "SK하이닉스", "KOSPI"),
     ])
 
-    async def mock_trend(code):
+    async def mock_trend(code, date=None):
         if code == "000660":
             raise Exception("Network Error")
-        return _make_foreign_response(500)
+        return _make_investor_response(500, 200, -100)
 
-    broker.get_foreign_trading_trend = AsyncMock(side_effect=mock_trend)
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_trend)
 
-    await bg_service.refresh_foreign_ranking()
+    await bg_service.refresh_investor_ranking()
 
     buy_resp = bg_service.get_foreign_net_buy_ranking()
     assert len(buy_resp.data) == 1
@@ -235,7 +275,7 @@ async def test_refresh_foreign_ranking_exception_skipped(bg_service, mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_refresh_foreign_ranking_non_stock_market_excluded(bg_service, mock_deps):
+async def test_refresh_investor_ranking_non_stock_market_excluded(bg_service, mock_deps):
     """KOSPI/KOSDAQ 이외 시장은 제외."""
     broker, mapper, _, _, _ = mock_deps
 
@@ -244,9 +284,11 @@ async def test_refresh_foreign_ranking_non_stock_market_excluded(bg_service, moc
         ("999999", "기타종목", "KONEX"),  # KONEX → 제외
     ])
 
-    broker.get_foreign_trading_trend = AsyncMock(return_value=_make_foreign_response(100))
+    broker.get_investor_trade_by_stock_daily = AsyncMock(
+        return_value=_make_investor_response(100, 50, -30)
+    )
 
-    await bg_service.refresh_foreign_ranking()
+    await bg_service.refresh_investor_ranking()
 
     buy_resp = bg_service.get_foreign_net_buy_ranking()
     assert len(buy_resp.data) == 1
@@ -254,21 +296,21 @@ async def test_refresh_foreign_ranking_non_stock_market_excluded(bg_service, moc
 
 
 @pytest.mark.asyncio
-async def test_refresh_foreign_ranking_duplicate_prevention(bg_service, mock_deps):
+async def test_refresh_investor_ranking_duplicate_prevention(bg_service, mock_deps):
     """이미 갱신 중이면 중복 실행 방지."""
     broker, mapper, _, logger, _ = mock_deps
 
     bg_service._is_refreshing = True
 
-    await bg_service.refresh_foreign_ranking()
+    await bg_service.refresh_investor_ranking()
 
     # broker가 호출되지 않아야 함
-    broker.get_foreign_trading_trend.assert_not_called()
-    logger.info.assert_any_call("외국인 랭킹 갱신 이미 진행 중 — 스킵")
+    broker.get_investor_trade_by_stock_daily.assert_not_called()
+    logger.info.assert_any_call("투자자 랭킹 갱신 이미 진행 중 — 스킵")
 
 
 @pytest.mark.asyncio
-async def test_refresh_foreign_ranking_limit(bg_service, mock_deps):
+async def test_refresh_investor_ranking_limit(bg_service, mock_deps):
     """상위 30개만 반환되는지 확인."""
     broker, mapper, _, _, _ = mock_deps
 
@@ -276,30 +318,36 @@ async def test_refresh_foreign_ranking_limit(bg_service, mock_deps):
     stocks = [(f"{i:06d}", f"종목{i}", "KOSPI") for i in range(40)]
     mapper.df = _make_stock_df(stocks)
 
-    async def mock_trend(code):
+    async def mock_trend(code, date=None):
         qty = int(code)  # 코드가 곧 순매수수량
-        return _make_foreign_response(qty)
+        return _make_investor_response(qty, qty * 2, -qty)
 
-    broker.get_foreign_trading_trend = AsyncMock(side_effect=mock_trend)
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_trend)
 
-    await bg_service.refresh_foreign_ranking()
+    await bg_service.refresh_investor_ranking()
 
     buy_resp = bg_service.get_foreign_net_buy_ranking()
     assert len(buy_resp.data) == 30
     # 가장 큰 값이 1위여야 함 (종목 39)
-    assert buy_resp.data[0]["glob_ntby_qty"] == "39"
+    assert buy_resp.data[0]["frgn_ntby_qty"] == "39"
 
     sell_resp = bg_service.get_foreign_net_sell_ranking()
     assert len(sell_resp.data) == 30
     # 가장 작은 값이 1위여야 함 (종목 0)
-    assert sell_resp.data[0]["glob_ntby_qty"] == "0"
+    assert sell_resp.data[0]["frgn_ntby_qty"] == "0"
+
+    # 기관도 30개 제한
+    inst_buy = bg_service.get_inst_net_buy_ranking()
+    assert len(inst_buy.data) == 30
+    assert inst_buy.data[0]["orgn_ntby_qty"] == "78"  # 39*2
 
 
 def test_get_foreign_ranking_with_limit(bg_service):
     """limit 파라미터가 정상 동작하는지 확인."""
     # 캐시에 직접 데이터 주입
     bg_service._foreign_net_buy_cache = [
-        {"data_rank": str(i), "hts_kor_isnm": f"종목{i}", "glob_ntby_qty": str(100-i)}
+        {"data_rank": str(i), "hts_kor_isnm": f"종목{i}",
+         "frgn_ntby_qty": str(100-i), "orgn_ntby_qty": "0", "prsn_ntby_qty": "0"}
         for i in range(1, 31)
     ]
 

@@ -232,9 +232,9 @@ class WebAppContext:
         # [변경] 매니저에게 위임
         self.realtime_data_manager.start_background_tasks()
 
-        # 외국인 순매수 랭킹 백그라운드 갱신
+        # 투자자별 순매수 랭킹 백그라운드 갱신
         if self.background_service and not self.env.is_paper_trading:
-            asyncio.create_task(self.background_service.refresh_foreign_ranking())
+            asyncio.create_task(self.background_service.refresh_investor_ranking())
 
     async def shutdown(self):
         """서비스 종료 처리."""
