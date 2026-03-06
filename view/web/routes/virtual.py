@@ -193,25 +193,31 @@ async def get_virtual_history(force_code: str = None):
 
         # 3. 전체 종목에 현재가 반영 (HOLD는 수익률도 재계산)
         for trade in trades:
+            # 현재가 정보가 있으면 업데이트
             if trade['code'] in price_map:
                 cur, daily_rate, cached, ts = price_map[trade['code']]
                 trade['current_price'] = cur
                 trade['is_cached'] = cached
                 trade['cache_ts'] = ts
+                
                 if trade['status'] == 'HOLD':
                     trade['daily_change_rate'] = daily_rate
                     bp = trade.get('buy_price', 0) or 0
                     trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
-                elif trade['status'] == 'SOLD':
-                    # sell_price가 0(시장가 매도)이면 CSV도 현재가로 보정
-                    try:
-                        sp = float(trade.get('sell_price') or 0)
-                        bp = float(trade.get('buy_price', 0) or 0)
-                    except (ValueError, TypeError):
-                        sp = 0.0
-                        bp = 0.0
 
-                    if sp == 0.0:
+            # SOLD 상태 처리 (현재가 조회 여부와 무관하게 매도가 기준 데이터 정제)
+            if trade['status'] == 'SOLD':
+                try:
+                    sp = float(trade.get('sell_price') or 0)
+                    bp = float(trade.get('buy_price', 0) or 0)
+                except (ValueError, TypeError):
+                    sp = 0.0
+                    bp = 0.0
+
+                if sp == 0.0:
+                    # 매도가가 0(미확정)인 경우, 현재가가 조회되었을 때만 보정 가능
+                    if 'current_price' in trade and trade['current_price']:
+                        cur = trade['current_price']
                         trade['sell_price'] = cur
                         trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
                         # CSV 원본도 수정
@@ -219,11 +225,10 @@ async def get_virtual_history(force_code: str = None):
                             ctx.virtual_manager.fix_sell_price(trade['code'], trade.get('buy_date', ''), cur)
                         except Exception:
                             pass
-                    else:
-                        # 매도 완료된 종목은 매도가 기준으로 수익률 고정
-                        trade['return_rate'] = round(((sp - bp) / bp) * 100, 2) if bp else 0
-                        # 변수명 의미에 맞게 수정: current_price=현재가(이미 할당됨), sell_price=매도가
-                        trade['sell_price'] = sp
+                else:
+                    # 매도 완료된 종목은 매도가 기준으로 수익률 고정
+                    trade['return_rate'] = round(((sp - bp) / bp) * 100, 2) if bp else 0
+                    trade['sell_price'] = sp
     except Exception as e:
         print(f"[WebAPI] virtual/history enrichment 오류: {e}")
 
@@ -236,14 +241,59 @@ async def get_virtual_history(force_code: str = None):
         strategies = list(set(t['strategy'] for t in trades if t.get('strategy')))
         strategy_returns = {}
 
-        # ALL 누적수익률
-        all_rates = [t['return_rate'] for t in trades if t.get('return_rate') is not None]
-        strategy_returns["ALL"] = round(sum(all_rates) / len(all_rates), 2) if all_rates else 0
-
-        # 전략별 누적수익률
+        # 집계용 딕셔너리 초기화
+        summary_agg = {"ALL": {"buy_sum": 0.0, "eval_sum": 0.0}}
         for strat in strategies:
-            rates = [t['return_rate'] for t in trades if t.get('strategy') == strat and t.get('return_rate') is not None]
-            strategy_returns[strat] = round(sum(rates) / len(rates), 2) if rates else 0
+            summary_agg[strat] = {"buy_sum": 0.0, "eval_sum": 0.0}
+
+        for t in trades:
+            strat = t.get('strategy')
+            if not strat:
+                continue
+            
+            try:
+                qty = float(t.get('qty', 1) or 1)
+                bp = float(t.get('buy_price', 0) or 0)
+                
+                # 평가금액 결정
+                # HOLD: 현재가(current_price)
+                # SOLD: 매도가(sell_price). 단, 0이면 현재가 사용.
+                ep = 0.0
+                if t.get('status') == 'HOLD':
+                    ep = float(t.get('current_price', 0) or 0)
+                else:
+                    ep = float(t.get('sell_price', 0) or 0)
+                    if ep == 0:
+                        ep = float(t.get('current_price', 0) or 0)
+                
+                # 가격 정보가 없으면 매수가를 사용하여 수익률 0%로 처리 (왜곡 방지)
+                if ep == 0:
+                    ep = bp
+
+                buy_amt = bp * qty
+                eval_amt = ep * qty
+
+                # ALL 집계
+                summary_agg["ALL"]["buy_sum"] += buy_amt
+                summary_agg["ALL"]["eval_sum"] += eval_amt
+
+                # 전략별 집계
+                if strat in summary_agg:
+                    summary_agg[strat]["buy_sum"] += buy_amt
+                    summary_agg[strat]["eval_sum"] += eval_amt
+
+            except (ValueError, TypeError):
+                continue
+
+        # 수익률 계산
+        for key, val in summary_agg.items():
+            buy_sum = val["buy_sum"]
+            eval_sum = val["eval_sum"]
+            if buy_sum > 0:
+                ror = ((eval_sum - buy_sum) / buy_sum) * 100
+                strategy_returns[key] = round(ror, 2)
+            else:
+                strategy_returns[key] = 0.0
 
         # 스냅샷 저장 + 전일/전주대비 조회 (JSON 1회만 로드)
         vm = ctx.virtual_manager
@@ -279,6 +329,8 @@ async def get_virtual_history(force_code: str = None):
 
     return {
         "trades": trades,
+        "summary_agg": summary_agg,
+        "cumulative_returns": strategy_returns,
         "daily_changes": daily_changes,
         "weekly_changes": weekly_changes,
         "daily_ref_dates": daily_ref_dates,

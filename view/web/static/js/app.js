@@ -608,6 +608,8 @@ async function loadTopMarketCap(market = '0001') {
 // 4. 모의투자 (Virtual Trading)
 // ==========================================
 let allVirtualData = [];
+let summaryAgg = {};
+let cumulativeReturns = {};
 let dailyChanges = {};
 let weeklyChanges = {};
 let dailyRefDates = {};
@@ -637,6 +639,8 @@ async function loadVirtualHistory(forceCode = null) {
         if (listRes.ok) {
             const body = await listRes.json();
             allVirtualData = body.trades || [];
+            summaryAgg = body.summary_agg || {};
+            cumulativeReturns = body.cumulative_returns || {};
             dailyChanges = body.daily_changes || {};
             weeklyChanges = body.weekly_changes || {};
             dailyRefDates = body.daily_ref_dates || {};
@@ -647,6 +651,8 @@ async function loadVirtualHistory(forceCode = null) {
             const errText = await listRes.text();
             console.error('[Virtual] API error:', listRes.status, errText);
             allVirtualData = [];
+            summaryAgg = {};
+            cumulativeReturns = {};
             dailyChanges = {};
             weeklyChanges = {};
             dailyRefDates = {};
@@ -778,8 +784,26 @@ function applyVirtualFilter() {
 
     // 2. 통계 계산
     const totalTrades = filteredData.length;
-    const totalReturn = filteredData.reduce((sum, item) => sum + (item.return_rate || 0), 0);
-    const cumulativeReturn = totalTrades > 0 ? (totalReturn / totalTrades) : 0;
+    let cumulativeReturn;
+
+    // [수정] 백엔드에서 받은 집계 데이터로 수익률 계산
+    if (isAll) {
+        cumulativeReturn = cumulativeReturns['ALL'] ?? 0;
+    } else if (selectedArray.length === 1) {
+        cumulativeReturn = cumulativeReturns[selectedArray[0]] ?? 0;
+    } else {
+        // 여러 전략 선택 시, 백엔드 집계 데이터를 합산하여 자산 가중 평균 계산
+        let totalBuyAmt = 0;
+        let totalEvalAmt = 0;
+        selectedArray.forEach(strat => {
+            const agg = summaryAgg[strat];
+            if (agg) {
+                totalBuyAmt += agg.buy_sum || 0;
+                totalEvalAmt += agg.eval_sum || 0;
+            }
+        });
+        cumulativeReturn = totalBuyAmt > 0 ? ((totalEvalAmt - totalBuyAmt) / totalBuyAmt) * 100 : 0;
+    }
 
     // 전일/전주대비: 멀티셀렉트일 때는 선택된 전략들의 평균
     let dailyChange, weeklyChange, dailyRefDate, weeklyRefDate, firstDate;
@@ -788,13 +812,12 @@ function applyVirtualFilter() {
     const todayShort = toShortDate(new Date().toISOString().slice(0, 10));
 
     if (isAll) {
-        dailyChange = dailyChanges['ALL'] ?? cumulativeReturn;
         weeklyChange = weeklyChanges['ALL'];
         dailyRefDate = dailyRefDates['ALL'];
         weeklyRefDate = weeklyRefDates['ALL'];
         firstDate = firstDates['ALL'];
     } else if (selectedArray.length === 1) {
-        dailyChange = dailyChanges[selectedArray[0]] ?? cumulativeReturn;
+        dailyChange = dailyChanges[selectedArray[0]];
         weeklyChange = weeklyChanges[selectedArray[0]];
         dailyRefDate = dailyRefDates[selectedArray[0]];
         weeklyRefDate = weeklyRefDates[selectedArray[0]];
@@ -802,7 +825,7 @@ function applyVirtualFilter() {
     } else {
         // 여러 전략 선택: 선택된 전략들의 평균
         const dailyVals = selectedArray.map(s => dailyChanges[s]).filter(v => v != null);
-        dailyChange = dailyVals.length > 0 ? dailyVals.reduce((a, b) => a + b, 0) / dailyVals.length : cumulativeReturn;
+        dailyChange = dailyVals.length > 0 ? dailyVals.reduce((a, b) => a + b, 0) / dailyVals.length : null;
         const weeklyVals = selectedArray.map(s => weeklyChanges[s]).filter(v => v != null);
         weeklyChange = weeklyVals.length > 0 ? weeklyVals.reduce((a, b) => a + b, 0) / weeklyVals.length : null;
         // 멀티셀렉트: 가장 이른 날짜 사용
@@ -845,8 +868,8 @@ function applyVirtualFilter() {
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전일대비 <span style="color:#707080; font-size:0.85em;">${dailyDateLabel}</span></div>
-                <strong class="${colorClass(dailyChange)}" style="font-size: 1.35em; font-weight: 800 !important;">
-                    ${signPrefix(dailyChange)}${dailyChange.toFixed(2)}%
+                <strong class="${dailyChange != null ? colorClass(dailyChange) : ''}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${dailyChange != null ? signPrefix(dailyChange) + dailyChange.toFixed(2) + '%' : '-'}
                 </strong>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">

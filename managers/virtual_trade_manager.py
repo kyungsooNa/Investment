@@ -311,8 +311,11 @@ class VirtualTradeManager:
         # 3. 날짜별 스냅샷 생성
         added = 0
         for day in missing_days:
-            strategy_returns = {}
+            # 자산 가중 평균 집계용: { "전략명": {"buy_sum": 0, "eval_sum": 0} }
+            agg_data = {"ALL": {"buy_sum": 0.0, "eval_sum": 0.0}}
             strategies = df['strategy'].unique()
+            for s in strategies:
+                agg_data[s] = {"buy_sum": 0.0, "eval_sum": 0.0}
 
             for strat in strategies:
                 strat_df = df[df['strategy'] == strat]
@@ -322,35 +325,49 @@ class VirtualTradeManager:
                 if bought_before.empty:
                     continue
 
-                rates = []
                 for _, row in bought_before.iterrows():
+                    qty = float(row.get('qty', 1) or 1)
+                    bp = float(row.get('buy_price', 0) or 0)
+                    if bp == 0: continue
+
+                    buy_amt = bp * qty
+                    eval_amt = 0.0
+
                     sell_day = row['_sell_day']
                     if sell_day and sell_day <= day:
-                        # 매도 완료 → 확정 수익률
-                        rates.append(row['return_rate'])
+                        # 매도 완료 → 매도가(sell_price) 사용
+                        sp = float(row.get('sell_price', 0) or 0)
+                        eval_amt = sp * qty
                     else:
-                        # 보유 중 → 당일 종가 기준 수익률
+                        # 보유 중 → 당일 종가(price_cache) 사용
                         code = str(row['code'])
-                        buy_price = row['buy_price']
                         close = (price_cache.get(code) or {}).get(day)
-                        if close and buy_price:
-                            ret = round(((close - buy_price) / buy_price) * 100, 2)
-                            rates.append(ret)
-                        else:
+                        if not close:
                             # 종가 데이터 없는 경우 (휴장일 등) → 직전 종가 사용
-                            prev_close = self._find_prev_close(price_cache, code, day)
-                            if prev_close and buy_price:
-                                ret = round(((prev_close - buy_price) / buy_price) * 100, 2)
-                                rates.append(ret)
-                            else:
-                                rates.append(0.0)
+                            close = self._find_prev_close(price_cache, code, day)
+                        
+                        # 가격 정보 없으면 매수가로 평가 (수익률 0%)
+                        current_val = float(close) if close else bp
+                        eval_amt = current_val * qty
 
-                if rates:
-                    strategy_returns[strat] = round(sum(rates) / len(rates), 2)
+                    # 집계
+                    agg_data["ALL"]["buy_sum"] += buy_amt
+                    agg_data["ALL"]["eval_sum"] += eval_amt
+                    agg_data[strat]["buy_sum"] += buy_amt
+                    agg_data[strat]["eval_sum"] += eval_amt
+
+            # 수익률 계산
+            strategy_returns = {}
+            for key, val in agg_data.items():
+                buy_sum = val["buy_sum"]
+                eval_sum = val["eval_sum"]
+                if buy_sum > 0:
+                    ror = ((eval_sum - buy_sum) / buy_sum) * 100
+                    strategy_returns[key] = round(ror, 2)
+                elif key in strategies: # 거래는 있었으나 buy_sum이 0인 경우(거의 없음) 등
+                    strategy_returns[key] = 0.0
 
             if strategy_returns:
-                all_vals = list(strategy_returns.values())
-                strategy_returns['ALL'] = round(sum(all_vals) / len(all_vals), 2)
                 daily[day] = strategy_returns
                 added += 1
 
@@ -424,7 +441,7 @@ class VirtualTradeManager:
 
         self._save_data(data)
 
-    def get_daily_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float, str | None]:
+    def get_daily_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float | None, str | None]:
         """가장 최근 거래일 vs 직전 거래일 스냅샷 비교. (변동값, 기준날짜) 튜플 반환."""
         data = _data or self._load_data()
         daily = data.get("daily", {})
@@ -434,7 +451,7 @@ class VirtualTradeManager:
         # 오늘 이하의 거래일만
         trading = [d for d in all_trading if d <= today]
         if len(trading) < 2:
-            return current_return, None
+            return None, None
 
         latest_date = trading[-1]   # 가장 최근 거래일
         prev_date = trading[-2]     # 직전 거래일
@@ -442,7 +459,7 @@ class VirtualTradeManager:
         latest_val = daily[latest_date].get(strategy)
         prev_val = daily[prev_date].get(strategy)
         if latest_val is None or prev_val is None:
-            return current_return, None
+            return None, None
         return round(latest_val - prev_val, 2), prev_date
 
     def get_weekly_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float | None, str | None]:
