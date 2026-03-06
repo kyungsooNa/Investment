@@ -608,6 +608,9 @@ async function loadTopMarketCap(market = '0001') {
 // 4. 모의투자 (Virtual Trading)
 // ==========================================
 let allVirtualData = [];
+let summaryAgg = {};
+let cumulativeReturns = {};
+let virtualCounts = {};
 let dailyChanges = {};
 let weeklyChanges = {};
 let dailyRefDates = {};
@@ -637,6 +640,9 @@ async function loadVirtualHistory(forceCode = null) {
         if (listRes.ok) {
             const body = await listRes.json();
             allVirtualData = body.trades || [];
+            summaryAgg = body.summary_agg || {};
+            cumulativeReturns = body.cumulative_returns || {};
+            virtualCounts = body.counts || {};
             dailyChanges = body.daily_changes || {};
             weeklyChanges = body.weekly_changes || {};
             dailyRefDates = body.daily_ref_dates || {};
@@ -647,6 +653,9 @@ async function loadVirtualHistory(forceCode = null) {
             const errText = await listRes.text();
             console.error('[Virtual] API error:', listRes.status, errText);
             allVirtualData = [];
+            summaryAgg = {};
+            cumulativeReturns = {};
+            virtualCounts = {};
             dailyChanges = {};
             weeklyChanges = {};
             dailyRefDates = {};
@@ -778,8 +787,26 @@ function applyVirtualFilter() {
 
     // 2. 통계 계산
     const totalTrades = filteredData.length;
-    const totalReturn = filteredData.reduce((sum, item) => sum + (item.return_rate || 0), 0);
-    const cumulativeReturn = totalTrades > 0 ? (totalReturn / totalTrades) : 0;
+    let cumulativeReturn;
+
+    // [수정] 백엔드에서 받은 집계 데이터로 수익률 계산
+    if (isAll) {
+        cumulativeReturn = cumulativeReturns['ALL'] ?? 0;
+    } else if (selectedArray.length === 1) {
+        cumulativeReturn = cumulativeReturns[selectedArray[0]] ?? 0;
+    } else {
+        // 여러 전략 선택 시, 백엔드 집계 데이터를 합산하여 자산 가중 평균 계산
+        let totalBuyAmt = 0;
+        let totalEvalAmt = 0;
+        selectedArray.forEach(strat => {
+            const agg = summaryAgg[strat];
+            if (agg) {
+                totalBuyAmt += agg.buy_sum || 0;
+                totalEvalAmt += agg.eval_sum || 0;
+            }
+        });
+        cumulativeReturn = totalBuyAmt > 0 ? ((totalEvalAmt - totalBuyAmt) / totalBuyAmt) * 100 : 0;
+    }
 
     // 전일/전주대비: 멀티셀렉트일 때는 선택된 전략들의 평균
     let dailyChange, weeklyChange, dailyRefDate, weeklyRefDate, firstDate;
@@ -788,30 +815,53 @@ function applyVirtualFilter() {
     const todayShort = toShortDate(new Date().toISOString().slice(0, 10));
 
     if (isAll) {
-        dailyChange = dailyChanges['ALL'] ?? cumulativeReturn;
         weeklyChange = weeklyChanges['ALL'];
         dailyRefDate = dailyRefDates['ALL'];
         weeklyRefDate = weeklyRefDates['ALL'];
         firstDate = firstDates['ALL'];
     } else if (selectedArray.length === 1) {
-        dailyChange = dailyChanges[selectedArray[0]] ?? cumulativeReturn;
+        dailyChange = dailyChanges[selectedArray[0]];
         weeklyChange = weeklyChanges[selectedArray[0]];
         dailyRefDate = dailyRefDates[selectedArray[0]];
         weeklyRefDate = weeklyRefDates[selectedArray[0]];
         firstDate = firstDates[selectedArray[0]];
     } else {
-        // 여러 전략 선택: 선택된 전략들의 평균
-        const dailyVals = selectedArray.map(s => dailyChanges[s]).filter(v => v != null);
-        dailyChange = dailyVals.length > 0 ? dailyVals.reduce((a, b) => a + b, 0) / dailyVals.length : cumulativeReturn;
-        const weeklyVals = selectedArray.map(s => weeklyChanges[s]).filter(v => v != null);
-        weeklyChange = weeklyVals.length > 0 ? weeklyVals.reduce((a, b) => a + b, 0) / weeklyVals.length : null;
-        // 멀티셀렉트: 가장 이른 날짜 사용
-        const dDates = selectedArray.map(s => dailyRefDates[s]).filter(Boolean).sort();
-        dailyRefDate = dDates[dDates.length - 1];
-        const wDates = selectedArray.map(s => weeklyRefDates[s]).filter(Boolean).sort();
-        weeklyRefDate = wDates[wDates.length - 1];
+        // 여러 전략 선택: 백엔드에서 제공하는 집계 데이터가 없으므로 표시하지 않음
+        // (프론트엔드에서의 단순 평균 계산은 자산 비중을 고려하지 못해 부정확함)
+        dailyChange = null;
+        weeklyChange = null;
+        dailyRefDate = null;
+        weeklyRefDate = null;
+        
         const fDates = selectedArray.map(s => firstDates[s]).filter(Boolean).sort();
         firstDate = fDates[0];
+    }
+
+    // 카운트 집계 (보유, 금일매수, 금일이탈)
+    let holdCount = 0;
+    let todayBuyCount = 0;
+    let todaySellCount = 0;
+
+    if (isAll) {
+        const c = virtualCounts['ALL'] || {};
+        holdCount = c.hold || 0;
+        todayBuyCount = c.today_buy || 0;
+        todaySellCount = c.today_sell || 0;
+    } else if (selectedArray.length === 1) {
+        const c = virtualCounts[selectedArray[0]] || {};
+        holdCount = c.hold || 0;
+        todayBuyCount = c.today_buy || 0;
+        todaySellCount = c.today_sell || 0;
+    } else {
+        // 멀티셀렉트: 합산
+        selectedArray.forEach(strat => {
+            const c = virtualCounts[strat];
+            if (c) {
+                holdCount += c.hold || 0;
+                todayBuyCount += c.today_buy || 0;
+                todaySellCount += c.today_sell || 0;
+            }
+        });
     }
 
     const cumDateLabel = firstDate ? `${toShortDate(firstDate)}~${todayShort}` : '';
@@ -837,6 +887,13 @@ function applyVirtualFilter() {
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">총 거래</div>
                 <div style="color: #ffffff !important;"><strong style="font-size: 1.35em;">${totalTrades}</strong> <span style="font-size: 1em;">건</span></div>
             </div>
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 160px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">포지션 현황</div>
+                <div style="color: #ffffff !important; font-size: 0.95em; line-height: 1.4;">
+                    보유: <strong>${holdCount}</strong><br>
+                    <span style="font-size:0.9em; color:#ccc;">(매수 <span style="color:#ff4d4d">+${todayBuyCount}</span> / 이탈 <span style="color:#4d94ff">-${todaySellCount}</span>)</span>
+                </div>
+            </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">누적 수익률 <span style="color:#707080; font-size:0.85em;">${cumDateLabel}</span></div>
                 <strong class="${colorClass(cumulativeReturn)}" style="font-size: 1.35em; font-weight: 800 !important;">
@@ -845,8 +902,8 @@ function applyVirtualFilter() {
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">전일대비 <span style="color:#707080; font-size:0.85em;">${dailyDateLabel}</span></div>
-                <strong class="${colorClass(dailyChange)}" style="font-size: 1.35em; font-weight: 800 !important;">
-                    ${signPrefix(dailyChange)}${dailyChange.toFixed(2)}%
+                <strong class="${dailyChange != null ? colorClass(dailyChange) : ''}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${dailyChange != null ? signPrefix(dailyChange) + dailyChange.toFixed(2) + '%' : '-'}
                 </strong>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
@@ -955,9 +1012,15 @@ function renderVirtualHoldTable() {
         const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
         const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
 
+        // 전략명 표시 추가
+        const strategyLabel = item.strategy ? `<div style="font-size:0.75em; color:#888; margin-bottom:2px;">${item.strategy}</div>` : '';
+
         holdBody.insertAdjacentHTML('beforeend', `
             <tr>
-                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                <td>
+                    ${strategyLabel}
+                    <a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a>
+                </td>
                 <td>${buyPrice}</td>
                 <td>${curPrice}${cacheLabel}${forceBtn}</td>
                 <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
@@ -999,11 +1062,17 @@ function renderVirtualSoldTable() {
         const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
         const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
 
+        // 전략명 표시 추가
+        const strategyLabel = item.strategy ? `<div style="font-size:0.75em; color:#888; margin-bottom:2px;">${item.strategy}</div>` : '';
+
         soldBody.insertAdjacentHTML('beforeend', `
             <tr>
-                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                <td>
+                    ${strategyLabel}
+                    <a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a>
+                </td>
                 <td>${buyPrice}</td>
-                <td>${curPrice ? curPrice + cacheLabel + forceBtn + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
+                <td>${sellPrice}<div style="font-size:0.8em; color:var(--text-secondary);">${curPrice}${cacheLabel}${forceBtn}</div></td>
                 <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                 <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
             </tr>
