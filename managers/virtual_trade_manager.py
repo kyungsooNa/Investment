@@ -1,4 +1,6 @@
 # managers/virtual_trade_manager.py
+import bisect
+import numpy as np
 import pandas as pd
 import asyncio
 import threading
@@ -285,16 +287,25 @@ class VirtualTradeManager:
         daily = data["daily"]
 
         # 1. 날짜 전처리
-        df['_buy_day'] = pd.to_datetime(df['buy_date']).dt.strftime('%Y-%m-%d')
+        # itertuples 접근을 위해 underscore 없는 컬럼명 사용
+        df['buy_day_str'] = pd.to_datetime(df['buy_date']).dt.strftime('%Y-%m-%d')
         sell_mask = df['sell_date'].notna() & (df['sell_date'] != '')
-        df['_sell_day'] = None
-        df.loc[sell_mask, '_sell_day'] = pd.to_datetime(df.loc[sell_mask, 'sell_date']).dt.strftime('%Y-%m-%d')
+        df['sell_day_str'] = None
+        df.loc[sell_mask, 'sell_day_str'] = pd.to_datetime(df.loc[sell_mask, 'sell_date']).dt.strftime('%Y-%m-%d')
 
-        all_days = set(df['_buy_day'].dropna().tolist())
-        all_days |= set(df.loc[sell_mask, '_sell_day'].dropna().tolist())
+        all_days = set(df['buy_day_str'].dropna().tolist())
+        all_days |= set(df.loc[sell_mask, 'sell_day_str'].dropna().tolist())
+
+        if not all_days:
+            return
 
         min_day = min(all_days)
         max_day = max(all_days)
+
+        # [수정] 현재 시점(어제)까지 backfill 범위 확장 (보유 중인 경우 등 고려)
+        yesterday = (self.tm.get_current_kst_time() - timedelta(days=1)).strftime('%Y-%m-%d')
+        if yesterday > max_day:
+            max_day = yesterday
 
         # backfill이 필요한 날짜 확인
         date_range = pd.date_range(min_day, max_day, freq='D')
@@ -308,67 +319,136 @@ class VirtualTradeManager:
         all_codes = df['code'].unique().tolist()
         price_cache = self._fetch_close_prices(all_codes, min_day, max_day)
 
-        # 3. 날짜별 스냅샷 생성
+        # [성능 개선] 종가 데이터를 DataFrame으로 변환하고 전처리 (ffill)
+        # _find_prev_close 반복 호출 제거를 위해 전체 기간 데이터를 미리 채움
+        price_df = pd.DataFrame()
+        if price_cache:
+            try:
+                price_df = pd.DataFrame(price_cache)
+                # 인덱스(날짜)를 datetime으로 변환하여 정렬
+                price_df.index = pd.to_datetime(price_df.index)
+                price_df = price_df.sort_index()
+                # 전체 기간 reindex & ffill (휴장일 데이터 채우기)
+                full_idx = pd.date_range(start=min_day, end=max_day)
+                price_df = price_df.reindex(full_idx).ffill()
+            except Exception as e:
+                logger.warning(f"[가상매매] 종가 데이터프레임 변환 실패: {e}")
+                price_df = pd.DataFrame()
+
+        # 3. 날짜별 스냅샷 생성 (Numpy Optimization)
         added = 0
-        for day in missing_days:
-            # 자산 가중 평균 집계용: { "전략명": {"buy_sum": 0, "eval_sum": 0} }
-            agg_data = {"ALL": {"buy_sum": 0.0, "eval_sum": 0.0}}
-            strategies = df['strategy'].unique()
-            for s in strategies:
-                agg_data[s] = {"buy_sum": 0.0, "eval_sum": 0.0}
+        missing_days.sort()
+        n_days = len(missing_days)
+        
+        strategies = sorted(df['strategy'].unique().tolist())
+        strat_to_idx = {s: i for i, s in enumerate(strategies)}
+        n_strats = len(strategies)
+        
+        # Arrays for aggregation
+        buy_sums = np.zeros((n_days, n_strats), dtype=np.float64)
+        eval_sums = np.zeros((n_days, n_strats), dtype=np.float64)
+        
+        # Prepare Price Matrix
+        price_matrix = None
+        code_to_idx = {}
+        
+        if not price_df.empty:
+            md_dt = pd.to_datetime(missing_days)
+            # Reindex to missing days only
+            price_df_aligned = price_df.reindex(md_dt)
+            
+            codes = price_df_aligned.columns.tolist()
+            code_to_idx = {c: i for i, c in enumerate(codes)}
+            price_matrix = price_df_aligned.to_numpy(dtype=np.float64)
 
-            for strat in strategies:
-                strat_df = df[df['strategy'] == strat]
-
-                # 해당 날짜 이전에 매수된 거래만 (활성 거래)
-                bought_before = strat_df[strat_df['_buy_day'] <= day]
-                if bought_before.empty:
-                    continue
-
-                for _, row in bought_before.iterrows():
-                    qty = float(row.get('qty', 1) or 1)
-                    bp = float(row.get('buy_price', 0) or 0)
-                    if bp == 0: continue
-
-                    buy_amt = bp * qty
-                    eval_amt = 0.0
-
-                    sell_day = row['_sell_day']
-                    if sell_day and sell_day <= day:
-                        # 매도 완료 → 매도가(sell_price) 사용
-                        sp = float(row.get('sell_price', 0) or 0)
-                        eval_amt = sp * qty
+        # Iterate trades
+        for row in df.itertuples():
+            strat = row.strategy
+            s_idx = strat_to_idx.get(strat)
+            if s_idx is None: continue
+            
+            code = row.code
+            qty = float(row.qty) if hasattr(row, 'qty') and pd.notna(row.qty) else 1.0
+            bp = float(row.buy_price) if pd.notna(row.buy_price) else 0.0
+            if bp == 0: continue
+            
+            buy_date = row.buy_day_str
+            sell_date = row.sell_day_str if row.status == 'SOLD' else None
+            
+            # Find start index in missing_days
+            start_idx = bisect.bisect_left(missing_days, buy_date)
+            if start_idx >= n_days:
+                continue
+            
+            # Determine end index (sell date)
+            if sell_date:
+                sell_idx = bisect.bisect_left(missing_days, sell_date)
+                
+                # Period 2: SOLD (from sell_idx onwards)
+                if sell_idx < n_days:
+                    sp = float(row.sell_price) if pd.notna(row.sell_price) else 0.0
+                    val = sp if sp > 0 else bp
+                    
+                    # Apply to [max(start_idx, sell_idx) : ]
+                    s_start = max(start_idx, sell_idx)
+                    if s_start < n_days:
+                        buy_sums[s_start:, s_idx] += (bp * qty)
+                        eval_sums[s_start:, s_idx] += (val * qty)
+                
+                # Period 1: HOLD (from start_idx to sell_idx)
+                h_end = min(sell_idx, n_days)
+                if start_idx < h_end:
+                    buy_sums[start_idx:h_end, s_idx] += (bp * qty)
+                    
+                    # Eval using market price
+                    c_idx = code_to_idx.get(code)
+                    if c_idx is not None and price_matrix is not None:
+                        prices = price_matrix[start_idx:h_end, c_idx]
+                        # Handle NaNs
+                        if np.isnan(prices).any():
+                            prices = prices.copy()
+                            prices[np.isnan(prices)] = bp
+                        eval_sums[start_idx:h_end, s_idx] += (prices * qty)
                     else:
-                        # 보유 중 → 당일 종가(price_cache) 사용
-                        code = str(row['code'])
-                        close = (price_cache.get(code) or {}).get(day)
-                        if not close:
-                            # 종가 데이터 없는 경우 (휴장일 등) → 직전 종가 사용
-                            close = self._find_prev_close(price_cache, code, day)
-                        
-                        # 가격 정보 없으면 매수가로 평가 (수익률 0%)
-                        current_val = float(close) if close else bp
-                        eval_amt = current_val * qty
+                        eval_sums[start_idx:h_end, s_idx] += (bp * qty)
+            else:
+                # HOLD until end
+                buy_sums[start_idx:, s_idx] += (bp * qty)
+                
+                c_idx = code_to_idx.get(code)
+                if c_idx is not None and price_matrix is not None:
+                    prices = price_matrix[start_idx:, c_idx]
+                    if np.isnan(prices).any():
+                        prices = prices.copy()
+                        prices[np.isnan(prices)] = bp
+                    eval_sums[start_idx:, s_idx] += (prices * qty)
+                else:
+                    eval_sums[start_idx:, s_idx] += (bp * qty)
 
-                    # 집계
-                    agg_data["ALL"]["buy_sum"] += buy_amt
-                    agg_data["ALL"]["eval_sum"] += eval_amt
-                    agg_data[strat]["buy_sum"] += buy_amt
-                    agg_data[strat]["eval_sum"] += eval_amt
-
-            # 수익률 계산
-            strategy_returns = {}
-            for key, val in agg_data.items():
-                buy_sum = val["buy_sum"]
-                eval_sum = val["eval_sum"]
-                if buy_sum > 0:
-                    ror = ((eval_sum - buy_sum) / buy_sum) * 100
-                    strategy_returns[key] = round(ror, 2)
-                elif key in strategies: # 거래는 있었으나 buy_sum이 0인 경우(거의 없음) 등
-                    strategy_returns[key] = 0.0
-
-            if strategy_returns:
-                daily[day] = strategy_returns
+        # Calculate Returns
+        with np.errstate(divide='ignore', invalid='ignore'):
+            returns = ((eval_sums - buy_sums) / buy_sums) * 100
+        returns[~np.isfinite(returns)] = 0.0
+        returns = np.round(returns, 2)
+        
+        # Calculate ALL
+        total_buy = buy_sums.sum(axis=1)
+        total_eval = eval_sums.sum(axis=1)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            all_returns = ((total_eval - total_buy) / total_buy) * 100
+        all_returns[~np.isfinite(all_returns)] = 0.0
+        all_returns = np.round(all_returns, 2)
+        
+        # Build result dict
+        for i, day_str in enumerate(missing_days):
+            if total_buy[i] > 0:
+                day_stats = {}
+                for j, strat in enumerate(strategies):
+                    if buy_sums[i, j] > 0:
+                        day_stats[strat] = returns[i, j]
+                
+                day_stats['ALL'] = all_returns[i]
+                daily[day_str] = day_stats
                 added += 1
 
         if added > 0:

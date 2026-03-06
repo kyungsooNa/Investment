@@ -431,3 +431,53 @@ async def test_get_virtual_history_first_dates_calculation(web_client, mock_web_
     assert first_dates["A"] == "2025-01-01"
     assert first_dates["B"] == "2025-03-01"
     assert first_dates["ALL"] == "2025-01-01"
+
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_asset_weighted_calculation(web_client, mock_web_ctx):
+    """GET /api/virtual/history 자산 가중 평균 수익률 및 집계 데이터 반환 테스트"""
+    # 1. Mock Trades 설정
+    # StratA: 100만원 매수 (1000원 * 1000주) -> 10% 수익
+    # StratB: 1만원 매수 (1000원 * 10주) -> -50% 손실
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        {"code": "005930", "strategy": "StratA", "buy_price": 1000, "qty": 1000, "status": "HOLD", "buy_date": "2025-01-01"},
+        {"code": "000660", "strategy": "StratB", "buy_price": 1000, "qty": 10, "status": "HOLD", "buy_date": "2025-01-01"}
+    ]
+    
+    # 2. 현재가 Mocking
+    # 005930: 1100원 (+10%) -> 평가금 1,100,000
+    # 000660: 500원 (-50%) -> 평가금 5,000
+    async def mock_multi_price(codes):
+        data = []
+        for code in codes:
+            if code == "005930":
+                data.append({"stck_shrn_iscd": "005930", "stck_prpr": "1100", "prdy_ctrt": "10.0"})
+            elif code == "000660":
+                data.append({"stck_shrn_iscd": "000660", "stck_prpr": "500", "prdy_ctrt": "-50.0"})
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=data)
+    
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+    
+    # 3. Manager Mocking
+    mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_manager._load_data.return_value = {}
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (None, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (None, None)
+    
+    # 4. API 호출
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    data = response.json()
+    
+    # 5. 검증
+    # summary_agg 확인
+    agg = data["summary_agg"]
+    assert "ALL" in agg
+    assert agg["ALL"]["buy_sum"] == 1010000.0  # 1,000,000 + 10,000
+    assert agg["ALL"]["eval_sum"] == 1105000.0 # 1,100,000 + 5,000
+    
+    # cumulative_returns 확인 (자산 가중 평균)
+    # (1,105,000 - 1,010,000) / 1,010,000 * 100 = 9.4059... -> 9.41%
+    assert data["cumulative_returns"]["ALL"] == 9.41
+    assert data["cumulative_returns"]["StratA"] == 10.0
+    assert data["cumulative_returns"]["StratB"] == -50.0

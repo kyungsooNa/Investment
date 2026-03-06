@@ -5,6 +5,7 @@ import pandas as pd
 import json
 import math
 import concurrent.futures
+import random
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
 from managers.virtual_trade_manager import VirtualTradeManager
@@ -621,3 +622,114 @@ def test_get_holds_by_strategy_missing_qty_field(temp_journal):
     assert len(holds) == 1
     assert holds[0]['code'] == "005930"
     assert holds[0]['qty'] == 1
+
+def test_backfill_snapshots_asset_weighted_logic(manager):
+    """백필 시 자산 가중 평균으로 수익률이 계산되는지 확인"""
+    # 1. 거래 기록 생성
+    # 전략 A: 큰 금액(100만원), 작은 수익률(+10%)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
+    manager.log_buy("StrategyA", "A", 1000, qty=1000) # 매수금 1,000,000
+    
+    # 전략 B: 작은 금액(1만원), 큰 손실률(-50%)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
+    manager.log_buy("StrategyB", "B", 1000, qty=10)   # 매수금 10,000
+    
+    # 2. 가격 캐시 Mocking (1월 2일 기준 평가)
+    # A: 1100원 (+10%) -> 평가금 1,100,000
+    # B: 500원 (-50%) -> 평가금 5,000
+    price_cache = {
+        "A": {"2025-01-02": 1100},
+        "B": {"2025-01-02": 500}
+    }
+    
+    # 3. Backfill 수행 (현재 시간을 1/3로 설정하여 1/2일자 스냅샷 생성 유도)
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 3)
+    
+    with patch.object(manager, '_fetch_close_prices', return_value=price_cache):
+        manager.backfill_snapshots()
+        
+    data = manager._load_data()
+    daily = data["daily"]
+    
+    # 1월 2일자 스냅샷 확인
+    assert "2025-01-02" in daily
+    snapshot = daily["2025-01-02"]
+    
+    # 자산 가중 평균 계산 검증
+    # 총 매수: 1,010,000
+    # 총 평가: 1,105,000
+    # 수익률: (1,105,000 - 1,010,000) / 1,010,000 * 100 = 9.4059... -> 9.41%
+    # 단순 평균이었다면: (10 - 50) / 2 = -20%
+    
+    assert snapshot["ALL"] == 9.41
+    assert snapshot["StrategyA"] == 10.0
+    assert snapshot["StrategyB"] == -50.0
+
+def test_get_daily_change_returns_none_if_insufficient_data(manager):
+    """데이터가 부족할 때 전일 대비가 None을 반환하는지 확인"""
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 2)
+    data = {
+        "daily": {
+            "2025-01-02": {"ALL": 1.0} # 데이터가 하루치만 있음
+        },
+        "prev_values": {}
+    }
+    
+    change, ref_date = manager.get_daily_change("ALL", 1.0, _data=data)
+    assert change is None
+    assert ref_date is None
+
+def test_backfill_snapshots_performance(manager):
+    """backfill_snapshots 대량 데이터 성능 테스트"""
+    import time
+    
+    # 1. 대량의 거래 기록 생성 (약 250건, 1년치 영업일)
+    dates = pd.date_range(start="2024-01-01", end="2024-12-31", freq="B")
+    trades = []
+    codes = [f"A{i:04d}" for i in range(50)] # 50개 종목
+    
+    for i, date in enumerate(dates):
+        # 매일 거래가 발생한다고 가정
+        code = codes[i % 50]
+        buy_date = date.strftime("%Y-%m-%d %H:%M:%S")
+        status = "SOLD" if i % 2 == 0 else "HOLD" # 반반
+        sell_date = (date + pd.Timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S") if status == "SOLD" else None
+        sell_price = 11000 if status == "SOLD" else None
+        
+        trades.append({
+            "strategy": "PerfTest",
+            "code": code,
+            "buy_date": buy_date,
+            "buy_price": 10000,
+            "qty": 10,
+            "sell_date": sell_date,
+            "sell_price": sell_price,
+            "return_rate": 10.0 if status == "SOLD" else 0.0,
+            "status": status
+        })
+            
+    df = pd.DataFrame(trades)
+    manager._write(df)
+    
+    # 2. 대량의 종가 데이터 Mocking
+    price_cache = {}
+    full_date_range = pd.date_range(start="2024-01-01", end="2024-12-31")
+    for code in codes:
+        price_cache[code] = {
+            d.strftime("%Y-%m-%d"): random.randint(9000, 11000)
+            for d in full_date_range
+        }
+        
+    # 3. backfill 실행 및 시간 측정
+    manager.tm.get_current_kst_time.return_value = datetime(2025, 1, 1)
+    
+    start_time = time.time()
+    with patch.object(manager, '_fetch_close_prices', return_value=price_cache):
+        manager.backfill_snapshots()
+    end_time = time.time()
+    
+    duration = end_time - start_time
+    print(f"\n[Performance] backfill_snapshots processed {len(trades)} trades over {len(dates)} days in {duration:.4f} seconds")
+    
+    # 최적화된 로직이라면 1년치 데이터도 매우 빠르게 처리되어야 함 (보수적으로 2초 설정)
+    assert duration < 2.0
