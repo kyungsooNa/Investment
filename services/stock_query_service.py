@@ -567,8 +567,11 @@ class StockQueryService:
         try:
             # 1. OHLCV 1회 조회
             resp = await self.trading_service.get_ohlcv(stock_code, period=period)
-            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
                 return resp or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="OHLCV 조회 실패", data=None)
+
+            if not resp.data:
+                return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="OHLCV 조회 실패", data=None)
 
             ohlcv_data = resp.data
 

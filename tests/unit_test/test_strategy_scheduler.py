@@ -1079,5 +1079,101 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             self.assertIn("시그널 CSV 저장 실패", args[0])
             self.assertIn("Disk full", args[0])
 
+    async def test_loop_outer_exception_handling(self):
+        """루프 자체(외부) 예외 발생 시 로그 기록 및 계속 실행 테스트."""
+        scheduler, _, _, tm = self._make_scheduler()
+        
+        tm.get_current_kst_time.side_effect = Exception("Time Error")
+        
+        scheduler._running = True
+        
+        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+        
+        scheduler._logger.error.assert_called()
+        args, _ = scheduler._logger.error.call_args
+        self.assertIn("루프 오류", args[0])
+        self.assertIn("Time Error", args[0])
+
+    async def test_force_liquidate_fallback_qty(self):
+        """강제 청산 시 보유 수량 정보가 없으면 설정된 주문 수량을 사용하는지 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        scheduler._sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "1000"}})
+        )
+        
+        strategy = MockStrategy(name="S")
+        config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True, order_qty=10)
+        
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "name": "Samsung", "qty": 0}]
+        
+        await scheduler._force_liquidate_strategy(config)
+        
+        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 10)
+
+    async def test_execute_signal_market_price_api_error(self):
+        """시장가 주문 시 현재가 조회 API가 실패 코드를 반환할 때 0원 유지 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        scheduler._sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd="1", msg1="Fail", data=None
+        )
+        
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="Samsung",
+            action="BUY", price=0, qty=1, reason="Market Buy"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+
+    async def test_execute_signal_market_price_lookup_object_missing_attr(self):
+        """시장가 주문 시 현재가 조회 객체에 속성이 없을 때 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        class EmptyObject:
+            pass
+            
+        mock_data = MagicMock()
+        mock_data.output = EmptyObject()
+        
+        scheduler._sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
+        )
+        
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="Samsung",
+            action="BUY", price=0, qty=1, reason="Market Buy"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+
+    async def test_execute_signal_market_price_lookup_data_object_missing_output(self):
+        """시장가 주문 시 현재가 조회 데이터 객체에 output 속성이 없을 때 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        class EmptyObject:
+            pass
+            
+        scheduler._sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=EmptyObject()
+        )
+        
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="Samsung",
+            action="BUY", price=0, qty=1, reason="Market Buy"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+
 if __name__ == "__main__":
     unittest.main()
