@@ -492,3 +492,100 @@ async def test_get_virtual_history_asset_weighted_calculation(web_client, mock_w
     assert data["cumulative_returns"]["ALL"] == 9.41
     assert data["cumulative_returns"]["StratA"] == 10.0
     assert data["cumulative_returns"]["StratB"] == -50.0
+
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_counts_logic(web_client, mock_web_ctx):
+    """GET /api/virtual/history 포지션 현황(counts) 집계 로직 테스트"""
+    web_api._PRICE_CACHE.clear()
+    
+    from datetime import datetime, timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    real_today = datetime.now(KST).strftime("%Y-%m-%d")
+    
+    # 1. Mock Trades
+    trades = [
+        {"code": "A1", "strategy": "StratA", "status": "HOLD", "buy_date": f"{real_today} 09:00:00"},
+        {"code": "A2", "strategy": "StratA", "status": "SOLD", "buy_date": "2000-01-01 09:00:00", "sell_date": f"{real_today} 10:00:00"},
+        {"code": "B1", "strategy": "StratB", "status": "HOLD", "buy_date": "2000-01-01 09:00:00"},
+        {"code": "B2", "strategy": "StratB", "status": "SOLD", "buy_date": "2000-01-01 09:00:00", "sell_date": "2000-01-02 10:00:00"},
+    ]
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = trades
+    
+    # 2. Mock Snapshot (오늘 날짜 포함 -> 휴장일 로직 미발동)
+    mock_web_ctx.virtual_manager._load_data.return_value = {
+        "daily": {
+            "2000-01-01": {},
+            real_today: {} 
+        }
+    }
+    mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (None, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (None, None)
+    
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+    
+    # 3. API 호출
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    data = response.json()
+    
+    counts = data["counts"]
+    
+    # StratA
+    assert counts["StratA"]["hold"] == 1
+    assert counts["StratA"]["today_buy"] == 1
+    assert counts["StratA"]["today_sell"] == 1
+    
+    # StratB
+    assert counts["StratB"]["hold"] == 1
+    assert counts["StratB"]["today_buy"] == 0
+    assert counts["StratB"]["today_sell"] == 0
+    
+    # ALL
+    assert counts["ALL"]["hold"] == 2
+    assert counts["ALL"]["today_buy"] == 1
+    assert counts["ALL"]["today_sell"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_counts_holiday_logic(web_client, mock_web_ctx):
+    """GET /api/virtual/history 휴장일(주말 등) 카운트 집계 로직 테스트"""
+    web_api._PRICE_CACHE.clear()
+    
+    # 시나리오: 스냅샷의 마지막 날짜가 과거임 -> 오늘이 휴장일이라고 판단 -> 기준일이 과거 날짜로 변경됨
+    last_open_day = "2020-01-01" # 확실한 과거
+    
+    # 1. Snapshot 설정
+    mock_web_ctx.virtual_manager._load_data.return_value = {
+        "daily": {
+            last_open_day: {}
+        }
+    }
+    mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (None, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (None, None)
+    
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+    
+    # 2. Trades 설정
+    # T1: last_open_day 매수 (휴장일 조회 시 today_buy로 잡혀야 함)
+    trades = [
+        {"code": "A1", "strategy": "StratA", "status": "HOLD", "buy_date": f"{last_open_day} 09:00:00"},
+    ]
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = trades
+    
+    # 3. API 호출
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    data = response.json()
+    
+    counts = data["counts"]
+    
+    # StratA: hold=1, today_buy=1 (last_open_day 기준)
+    assert counts["StratA"]["hold"] == 1
+    assert counts["StratA"]["today_buy"] == 1
