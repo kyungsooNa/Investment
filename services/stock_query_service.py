@@ -721,6 +721,10 @@ class StockQueryService:
             for row in rows:
                 d = str(row.get("stck_bsop_date") or ymd)
                 t = self.time_manager.to_hhmmss(row.get("stck_cntg_hour") or "")
+
+                if (min_time_in_batch is None) or (t < min_time_in_batch):
+                    min_time_in_batch = t
+
                 # 범위 필터
                 if t < start_hhmmss or t > end_hhmmss:
                     continue
@@ -734,9 +738,6 @@ class StockQueryService:
                 norm["stck_cntg_hour"] = t
                 collected.append(norm)
                 added += 1
-
-                if (min_time_in_batch is None) or (t < min_time_in_batch):
-                    min_time_in_batch = t
 
             if added == 0:
                 if min_time_in_batch:

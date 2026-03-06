@@ -204,6 +204,35 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.warning.assert_called_with(
             "유효하지 않은 종목코드: {'hts_kor_isnm': 'InvalidStock', 'prdy_vrss_sign': '1'}")
 
+    async def test_handle_get_top_market_cap_stocks_code_filter_upper_limit(self):
+        """handle_get_top_market_cap_stocks_code: 상한가 종목 필터링 테스트"""
+        self.mock_trading_service._env.is_paper_trading = False
+        
+        # Mock 데이터: 상한가 1개, 일반 상승 1개
+        mock_data = [
+            ResTopMarketCapApiItem(
+                mksc_shrn_iscd="005930", hts_kor_isnm="삼성전자", 
+                stck_prpr="70000", prdy_ctrt="30.00", prdy_vrss_sign="1", # 상한가
+                data_rank="1", stck_avls="500000", acc_trdvol="1000000"
+            ),
+            ResTopMarketCapApiItem(
+                mksc_shrn_iscd="000660", hts_kor_isnm="SK하이닉스", 
+                stck_prpr="120000", prdy_ctrt="5.00", prdy_vrss_sign="2", # 일반 상승
+                data_rank="2", stck_avls="300000", acc_trdvol="500000"
+            )
+        ]
+        
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=mock_data
+        )
+
+        result = await self.stockQueryService.handle_get_top_market_cap_stocks_code("0000", 10)
+        
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.assertEqual(len(result.data), 1) # 상한가 종목 1개만 있어야 함
+        self.assertEqual(result.data[0]["code"], "005930")
+        self.assertEqual(result.data[0]["name"], "삼성전자")
+
     # --- handle_get_top_10_market_cap_stocks_with_prices 함수 테스트 ---
     async def test_handle_get_top_10_market_cap_stocks_with_prices_success(self):
         self.mock_trading_service._env.is_paper_trading = False
@@ -1309,6 +1338,45 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         
         # Verify calls
         self.assertEqual(self.mock_trading_service.get_intraday_minutes_by_date.call_count, 2)
+
+    async def test_get_day_intraday_minutes_list_pagination_with_duplicates(self):
+        """페이지네이션 중 중복 데이터(added=0)가 발생해도 min_time_in_batch를 갱신하여 계속 진행하는지 테스트"""
+        self.mock_trading_service._env.is_paper_trading = False
+        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        # dec_minute: 단순히 1분 뺀 문자열 반환 (HHMMSS)
+        def mock_dec_minute(t, m):
+            return f"{int(t)-m:06d}"
+        self.mock_time_manager.dec_minute.side_effect = mock_dec_minute
+
+        # Batch 1: 10:00:00
+        data1 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "price": 100}]
+        resp1 = ResCommonResponse(rt_cd="0", msg1="OK", data=data1)
+        
+        # Batch 2: 10:00:00 (Duplicate) -> added=0
+        # Fix가 적용되면 min_time=100000 -> cursor=095959 (mock logic) -> continue
+        data2 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "price": 100}]
+        resp2 = ResCommonResponse(rt_cd="0", msg1="OK", data=data2)
+        
+        # Batch 3: 09:59:00
+        data3 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "095900", "price": 99}]
+        resp3 = ResCommonResponse(rt_cd="0", msg1="OK", data=data3)
+        
+        # Batch 4: Empty (End)
+        resp4 = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+        self.mock_trading_service.get_intraday_minutes_by_date.side_effect = [resp1, resp2, resp3, resp4]
+        
+        result = await self.stockQueryService.get_day_intraday_minutes_list(
+            "005930", date_ymd="20250101", start_hhmmss="090000", end_hhmmss="120000"
+        )
+        
+        # Should have 2 items (10:00:00 and 09:59:00)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["stck_cntg_hour"], "095900")
+        self.assertEqual(result[1]["stck_cntg_hour"], "100000")
+        
+        # Verify API calls: 1, 2, 3, 4 -> 4 calls
+        self.assertEqual(self.mock_trading_service.get_intraday_minutes_by_date.call_count, 4)
 
     async def test_get_day_intraday_minutes_list_by_date_extended_session(self):
         """get_day_intraday_minutes_list 특정일, 확장 세션 테스트"""
