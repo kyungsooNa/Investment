@@ -188,30 +188,36 @@ class BackgroundService:
                         continue
                     if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
                         continue
-                    if not resp.data or not isinstance(resp.data, dict):
+                    data = resp.data
+                    if not data:
+                        continue
+                    # 캐시 역직렬화 시 dataclass로 변환될 수 있으므로 dict로 통일
+                    if hasattr(data, 'to_dict') and callable(data.to_dict):
+                        data = data.to_dict()
+                    if not isinstance(data, dict):
                         continue
 
                     # ETF/ETN 제외
                     if any(name.startswith(p) for p in _ETF_PREFIXES):
                         continue
 
-                    frgn_qty = int(resp.data.get("frgn_ntby_qty", "0") or "0")
-                    orgn_qty = int(resp.data.get("orgn_ntby_qty", "0") or "0")
-                    prsn_qty = int(resp.data.get("prsn_ntby_qty", "0") or "0")
-                    frgn_pbmn = int(resp.data.get("frgn_ntby_tr_pbmn", "0") or "0")
-                    orgn_pbmn = int(resp.data.get("orgn_ntby_tr_pbmn", "0") or "0")
-                    prsn_pbmn = int(resp.data.get("prsn_ntby_tr_pbmn", "0") or "0")
+                    frgn_qty = int(data.get("frgn_ntby_qty", "0") or "0")
+                    orgn_qty = int(data.get("orgn_ntby_qty", "0") or "0")
+                    prsn_qty = int(data.get("prsn_ntby_qty", "0") or "0")
+                    frgn_pbmn = int(data.get("frgn_ntby_tr_pbmn", "0") or "0")
+                    orgn_pbmn = int(data.get("orgn_ntby_tr_pbmn", "0") or "0")
+                    prsn_pbmn = int(data.get("prsn_ntby_tr_pbmn", "0") or "0")
 
-                    acml_tr_pbmn = resp.data.get("acml_tr_pbmn", "0") or "0"
+                    acml_tr_pbmn = data.get("acml_tr_pbmn", "0") or "0"
 
                     results.append({
                         "stck_shrn_iscd": code,
                         "hts_kor_isnm": name,
-                        "stck_prpr": resp.data.get("stck_prpr", "0"),
-                        "prdy_ctrt": resp.data.get("prdy_ctrt", "0"),
-                        "prdy_vrss": resp.data.get("prdy_vrss", "0"),
-                        "prdy_vrss_sign": resp.data.get("prdy_vrss_sign", ""),
-                        "acml_vol": resp.data.get("acml_vol", "0"),
+                        "stck_prpr": data.get("stck_prpr", "0"),
+                        "prdy_ctrt": data.get("prdy_ctrt", "0"),
+                        "prdy_vrss": data.get("prdy_vrss", "0"),
+                        "prdy_vrss_sign": data.get("prdy_vrss_sign", ""),
+                        "acml_vol": data.get("acml_vol", "0"),
                         "acml_tr_pbmn": acml_tr_pbmn,
                         "frgn_ntby_qty": str(frgn_qty),
                         "orgn_ntby_qty": str(orgn_qty),
