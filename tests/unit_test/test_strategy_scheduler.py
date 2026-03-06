@@ -4,9 +4,10 @@ import asyncio
 import os
 import tempfile
 import shutil
+import json
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
 from common.types import TradeSignal, ErrorCode, ResCommonResponse
-from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SCHEDULER_STATE_FILE
+from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SCHEDULER_STATE_FILE, SignalRecord
 from interfaces.live_strategy import LiveStrategy
 
 
@@ -747,6 +748,432 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         # 3. 로그는 0원으로 기록되었는지 확인 (조회 실패 시 fallback)
         vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrat", "000660", 0, 10)
+
+    async def test_start_already_running(self):
+        """이미 실행 중일 때 start 호출 시 경고 로그 및 리턴 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        scheduler._running = True
+        
+        await scheduler.start()
+        
+        scheduler._logger.warning.assert_called_with("[Scheduler] 이미 실행 중")
+
+    async def test_start_enables_strategies(self):
+        """start 호출 시 등록된 전략들이 활성화되는지 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy()
+        config = StrategySchedulerConfig(strategy=strategy, enabled=False)
+        scheduler.register(config)
+        
+        await scheduler.start()
+        
+        self.assertTrue(config.enabled)
+        # Cleanup
+        await scheduler.stop()
+
+    async def test_loop_skips_disabled_strategy(self):
+        """루프에서 비활성화된 전략은 실행하지 않는지 테스트."""
+        scheduler, _, _, tm = self._make_scheduler()
+        tm.is_market_open.return_value = True
+        
+        strategy = MockStrategy(name="DisabledStrat")
+        config = StrategySchedulerConfig(strategy=strategy, enabled=False, interval_minutes=0)
+        scheduler.register(config)
+        
+        scheduler._running = True
+        
+        with patch.object(scheduler, '_run_strategy', new_callable=AsyncMock) as mock_run:
+            with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+                try:
+                    await scheduler._loop()
+                except asyncio.CancelledError:
+                    pass
+            
+            mock_run.assert_not_called()
+
+    async def test_execute_signal_api_response_none(self):
+        """API 응답이 None일 때 처리 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        oes.handle_place_buy_order.return_value = None
+        
+        signal = TradeSignal(
+            code="005930", name="Samsung", action="BUY", price=1000, qty=1, reason="Test", strategy_name="S"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        # 로그에 "응답 없음"이 포함되어야 함
+        args, _ = scheduler._logger.warning.call_args
+        self.assertIn("응답 없음", args[0])
+        self.assertFalse(scheduler._signal_history[-1].api_success)
+
+    async def test_force_liquidate_no_holdings(self):
+        """보유 종목이 없을 때 강제 청산 메서드 조기 리턴 테스트."""
+        scheduler, vm, _, _ = self._make_scheduler()
+        vm.get_holds_by_strategy.return_value = []
+        
+        strategy = MockStrategy(name="S")
+        config = StrategySchedulerConfig(strategy=strategy)
+        
+        with patch.object(scheduler, '_execute_signal', new_callable=AsyncMock) as mock_exec:
+            await scheduler._force_liquidate_strategy(config)
+            mock_exec.assert_not_called()
+
+    async def test_force_liquidate_holding_no_code(self):
+        """보유 종목 정보에 코드가 없을 때 건너뛰기 테스트."""
+        scheduler, vm, _, _ = self._make_scheduler()
+        # code 키가 없는 holding
+        vm.get_holds_by_strategy.return_value = [{"name": "NoCodeStock", "qty": 1}]
+        
+        strategy = MockStrategy(name="S")
+        config = StrategySchedulerConfig(strategy=strategy)
+        
+        with patch.object(scheduler, '_execute_signal', new_callable=AsyncMock) as mock_exec:
+            await scheduler._force_liquidate_strategy(config)
+            mock_exec.assert_not_called()
+
+    async def test_start_strategy_not_found(self):
+        """존재하지 않는 전략 시작 시 False 반환 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        result = await scheduler.start_strategy("NonExistent")
+        self.assertFalse(result)
+
+    def test_load_signal_history_file_not_exists(self):
+        """시그널 히스토리 파일이 없을 때 빈 리스트 반환 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        with patch("os.path.exists", return_value=False):
+            records = scheduler._load_signal_history()
+            self.assertEqual(records, [])
+
+    def test_load_signal_history_exception(self):
+        """시그널 히스토리 로드 중 예외 발생 시 처리 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", side_effect=Exception("Read Error")):
+                records = scheduler._load_signal_history()
+                self.assertEqual(records, [])
+                scheduler._logger.error.assert_called()
+
+    async def test_restore_state_empty_enabled_names(self):
+        """상태 파일에 활성 전략 목록이 비어있을 때 리턴 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        state_data = {
+            "running": False,
+            "enabled_strategies": [],
+            "current_positions": []
+        }
+        
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data=json.dumps(state_data))):
+                with patch("json.load", return_value=state_data):
+                    await scheduler.restore_state()
+                    
+                    self.assertFalse(scheduler._running)
+
+    def test_append_signal_csv_sync_new_file(self):
+        """새 파일 생성 시 헤더 작성 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
+        
+        with patch("os.path.exists", return_value=False): # 파일 없음
+            with patch("builtins.open", mock_open()) as mock_file:
+                scheduler._append_signal_csv_sync(record)
+                
+                handle = mock_file()
+                # 헤더가 쓰였는지 확인 (write 호출 인자 확인)
+                writes = [call[0][0] for call in handle.write.call_args_list]
+                header_written = any("strategy_name" in w for w in writes)
+                self.assertTrue(header_written)
+
+    async def test_execute_signal_api_failure_branches(self):
+        """API 응답 실패 시 분기 처리 테스트 (Line 294 coverage)."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        # Case 1: BUY 주문 실패, resp 있음
+        oes.handle_place_buy_order.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="매수 거부"
+        )
+        signal_buy = TradeSignal(
+            code="005930", name="Samsung", action="BUY", price=1000, qty=1, reason="Test", strategy_name="S"
+        )
+        await scheduler._execute_signal(signal_buy)
+        
+        # 로그 확인
+        args, _ = scheduler._logger.warning.call_args
+        self.assertIn("매수 거부", args[0])
+        
+        # Case 2: SELL 주문 실패, resp 있음
+        oes.handle_place_sell_order.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="매도 거부"
+        )
+        signal_sell = TradeSignal(
+            code="005930", name="Samsung", action="SELL", price=1000, qty=1, reason="Test", strategy_name="S"
+        )
+        await scheduler._execute_signal(signal_sell)
+        
+        # 로그 확인
+        args, _ = scheduler._logger.warning.call_args
+        self.assertIn("매도 거부", args[0])
+
+        # Case 3: resp가 None인 경우
+        oes.handle_place_sell_order.return_value = None
+        await scheduler._execute_signal(signal_sell)
+        args, _ = scheduler._logger.warning.call_args
+        self.assertIn("응답 없음", args[0])
+
+    def test_load_signal_history_branches(self):
+        """시그널 히스토리 로드 분기 테스트 (Line 403 coverage)."""
+        scheduler, _, _, _ = self._make_scheduler()
+        
+        # Case 1: 파일 없음 -> 빈 리스트 반환 (Line 403 True branch)
+        with patch("os.path.exists", return_value=False):
+            records = scheduler._load_signal_history()
+            self.assertEqual(records, [])
+            
+        # Case 2: 파일 있음 -> 데이터 로드 (Line 403 False branch)
+        csv_content = "strategy_name,code,name,action,price,reason,timestamp,api_success\n" \
+                      "S,001,Name,BUY,1000,Reason,2023-01-01,True"
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data=csv_content)):
+                records = scheduler._load_signal_history()
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0].code, "001")
+
+    def test_append_signal_csv_sync_branches(self):
+        """CSV 저장 시 헤더 작성 분기 테스트 (Line 490~491 coverage)."""
+        scheduler, _, _, _ = self._make_scheduler()
+        record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
+        
+        # Case 1: 파일 없음 -> 헤더 작성 (Line 490 True branch)
+        with patch("os.path.exists", return_value=False):
+            with patch("builtins.open", mock_open()) as mock_file:
+                scheduler._append_signal_csv_sync(record)
+                handle = mock_file()
+                writes = [call[0][0] for call in handle.write.call_args_list]
+                # 헤더가 포함되어 있는지 확인
+                self.assertTrue(any("strategy_name" in w for w in writes))
+                
+        # Case 2: 파일 있음 -> 헤더 작성 안 함 (Line 490 False branch)
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open()) as mock_file:
+                scheduler._append_signal_csv_sync(record)
+                
+                handle = mock_file()
+                writes = [call[0][0] for call in handle.write.call_args_list]
+                # 헤더가 포함되지 않아야 함
+                self.assertFalse(any("strategy_name" in w for w in writes))
+
+    async def test_execute_signal_market_price_lookup_failure(self):
+        """시장가 주문 시 현재가 조회 실패(응답은 성공이나 데이터 없음) 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        # 응답은 성공이지만 output이 없는 경우
+        scheduler._sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={}
+        )
+        
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="Samsung",
+            action="BUY", price=0, qty=1, reason="Market Buy"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        # 로그는 0원으로 기록되어야 함
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+
+    async def test_execute_signal_market_price_lookup_object_response(self):
+        """시장가 주문 시 현재가 조회가 객체 형태로 반환될 때 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        # 데이터가 객체 형태인 경우 모의
+        mock_output = MagicMock()
+        mock_output.stck_prpr = "55000"
+        # isinstance(mock_output, dict) -> False
+        
+        mock_data = MagicMock()
+        mock_data.output = mock_output
+        # isinstance(mock_data, dict) -> False
+        
+        scheduler._sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
+        )
+        
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="Samsung",
+            action="BUY", price=0, qty=1, reason="Market Buy"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        # 로그는 55000원으로 기록되어야 함
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 55000, 1)
+
+    async def test_run_strategy_updates_qty(self):
+        """전략 실행 시 시그널 수량이 1 이하이면 설정된 주문 수량으로 업데이트하는지 테스트."""
+        scheduler, vm, _, _ = self._make_scheduler()
+        
+        # 주문 수량을 10으로 설정
+        strategy = MockStrategy(scan_signals=[
+            TradeSignal(code="005930", name="Samsung", action="BUY", price=1000, qty=1, reason="T", strategy_name="S")
+        ])
+        config = StrategySchedulerConfig(strategy=strategy, order_qty=10)
+        
+        await scheduler._run_strategy(config)
+        
+        # log_buy_async 호출 시 qty가 10이어야 함
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 1000, 10)
+
+    def test_load_signal_history_max_limit(self):
+        """시그널 히스토리 로드 시 MAX_HISTORY 제한 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+        scheduler.MAX_HISTORY = 5  # 테스트를 위해 제한 줄임
+        
+        # 10개의 레코드 생성
+        csv_lines = ["strategy_name,code,name,action,price,reason,timestamp,api_success"]
+        for i in range(10):
+            csv_lines.append(f"S,00{i},Name,BUY,1000,Reason,2023-01-01,True")
+        csv_content = "\n".join(csv_lines)
+        
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data=csv_content)):
+                records = scheduler._load_signal_history()
+                
+                self.assertEqual(len(records), 5)
+                # 마지막 5개만 남아야 하므로 코드는 005 ~ 009
+                self.assertEqual(records[0].code, "005")
+                self.assertEqual(records[-1].code, "009")
+
+    async def test_execute_signal_history_truncation(self):
+        """시그널 실행 후 히스토리 제한 유지 테스트."""
+        scheduler, _, _, _ = self._make_scheduler(dry_run=True)
+        scheduler.MAX_HISTORY = 2
+        
+        # 이미 2개 있다고 가정
+        scheduler._signal_history = [
+            SignalRecord("S", "001", "N", "BUY", 100, "R", "T"),
+            SignalRecord("S", "002", "N", "BUY", 100, "R", "T")
+        ]
+        
+        signal = TradeSignal(
+            strategy_name="S", code="003", name="N", action="BUY", price=100, qty=1, reason="R"
+        )
+        await scheduler._execute_signal(signal)
+        
+        self.assertEqual(len(scheduler._signal_history), 2)
+        self.assertEqual(scheduler._signal_history[0].code, "002")
+        self.assertEqual(scheduler._signal_history[1].code, "003")
+
+    def test_append_signal_csv_sync_exception(self):
+        """CSV 저장 중 예외 발생 시 로그 기록 테스트 (Line 490~491 coverage)."""
+        scheduler, _, _, _ = self._make_scheduler()
+        record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
+        
+        # open() 호출 시 예외 발생 유도
+        with patch("builtins.open", side_effect=IOError("Disk full")):
+            scheduler._append_signal_csv_sync(record)
+            
+            # 에러 로그가 호출되었는지 확인
+            scheduler._logger.error.assert_called()
+            args, _ = scheduler._logger.error.call_args
+            self.assertIn("시그널 CSV 저장 실패", args[0])
+            self.assertIn("Disk full", args[0])
+
+    async def test_loop_outer_exception_handling(self):
+        """루프 자체(외부) 예외 발생 시 로그 기록 및 계속 실행 테스트."""
+        scheduler, _, _, tm = self._make_scheduler()
+        
+        tm.get_current_kst_time.side_effect = Exception("Time Error")
+        
+        scheduler._running = True
+        
+        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+        
+        scheduler._logger.error.assert_called()
+        args, _ = scheduler._logger.error.call_args
+        self.assertIn("루프 오류", args[0])
+        self.assertIn("Time Error", args[0])
+
+    async def test_force_liquidate_fallback_qty(self):
+        """강제 청산 시 보유 수량 정보가 없으면 설정된 주문 수량을 사용하는지 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        scheduler._sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "1000"}})
+        )
+        
+        strategy = MockStrategy(name="S")
+        config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True, order_qty=10)
+        
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "name": "Samsung", "qty": 0}]
+        
+        await scheduler._force_liquidate_strategy(config)
+        
+        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 10)
+
+    async def test_execute_signal_market_price_api_error(self):
+        """시장가 주문 시 현재가 조회 API가 실패 코드를 반환할 때 0원 유지 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        scheduler._sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd="1", msg1="Fail", data=None
+        )
+        
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="Samsung",
+            action="BUY", price=0, qty=1, reason="Market Buy"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+
+    async def test_execute_signal_market_price_lookup_object_missing_attr(self):
+        """시장가 주문 시 현재가 조회 객체에 속성이 없을 때 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        class EmptyObject:
+            pass
+            
+        mock_data = MagicMock()
+        mock_data.output = EmptyObject()
+        
+        scheduler._sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
+        )
+        
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="Samsung",
+            action="BUY", price=0, qty=1, reason="Market Buy"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+
+    async def test_execute_signal_market_price_lookup_data_object_missing_output(self):
+        """시장가 주문 시 현재가 조회 데이터 객체에 output 속성이 없을 때 테스트."""
+        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
+        
+        class EmptyObject:
+            pass
+            
+        scheduler._sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=EmptyObject()
+        )
+        
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="Samsung",
+            action="BUY", price=0, qty=1, reason="Market Buy"
+        )
+        
+        await scheduler._execute_signal(signal)
+        
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
 
 if __name__ == "__main__":
     unittest.main()

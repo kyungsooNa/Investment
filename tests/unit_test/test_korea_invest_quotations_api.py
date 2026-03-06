@@ -1292,3 +1292,127 @@ async def test_get_multi_price_single_stock(mock_quotations):
     params = kwargs["params"]
     assert params["fid_input_iscd_1"] == "005930"
     assert "fid_input_iscd_2" not in params  # 빈 값은 제외
+
+@pytest.mark.asyncio
+async def test_get_stock_conclusion_success(mock_quotations):
+    """get_stock_conclusion 성공 테스트"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"output": {"stck_prpr": "10000"}}
+    ))
+    result = await mock_quotations.get_stock_conclusion("005930")
+    assert result.rt_cd == "0"
+    mock_quotations.call_api.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_get_stock_conclusion_failure(mock_quotations):
+    """get_stock_conclusion 실패 테스트"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="1", msg1="Fail", data=None
+    ))
+    result = await mock_quotations.get_stock_conclusion("005930")
+    assert result.rt_cd == "1"
+
+@pytest.mark.asyncio
+async def test_get_market_cap_api_failure(mock_quotations):
+    """get_market_cap: 종목 정보 조회 API 실패 시 (Line 204)"""
+    mock_quotations.get_stock_info_by_code = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="Fail", data=None
+    ))
+    
+    result = await mock_quotations.get_market_cap("005930")
+    
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert result.msg1 == "Fail"
+
+@pytest.mark.asyncio
+async def test_inquire_time_itemchartprice_output_is_dict(mock_quotations):
+    """inquire_time_itemchartprice: output이 리스트가 아닌 dict일 때 (Line 470)"""
+    # output2가 dict인 경우
+    mock_data = {"output2": {"stck_cntg_hour": "100000", "stck_prpr": "10000"}}
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="OK", data=mock_data
+    ))
+    
+    result = await mock_quotations.inquire_time_itemchartprice("005930", "2025010110")
+    
+    assert result.rt_cd == "0"
+    assert isinstance(result.data, list)
+    assert len(result.data) == 1
+    assert result.data[0]["stck_prpr"] == "10000"
+
+@pytest.mark.asyncio
+async def test_get_multi_price_item_not_dict(mock_quotations):
+    """get_multi_price: output 리스트에 dict가 아닌 항목이 있을 때 (Line 742)"""
+    mock_data = {"output": [
+        {"inter_shrn_iscd": "005930", "inter2_prpr": "70000"},
+        "not_a_dict", # 건너뛰어야 함
+        {"inter_shrn_iscd": "000660", "inter2_prpr": "120000"}
+    ]}
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="OK", data=mock_data
+    ))
+    
+    result = await mock_quotations.get_multi_price(["005930", "000660"])
+    
+    assert result.rt_cd == "0"
+    assert len(result.data) == 2
+    assert result.data[0]["stck_shrn_iscd"] == "005930"
+    assert result.data[1]["stck_shrn_iscd"] == "000660"
+
+@pytest.mark.asyncio
+async def test_get_financial_ratio_success(mock_quotations):
+    """get_financial_ratio 성공 테스트"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"output": {"sales": "1000"}}
+    ))
+    result = await mock_quotations.get_financial_ratio("005930")
+    assert result.rt_cd == "0"
+    mock_quotations.call_api.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_get_financial_ratio_failure(mock_quotations):
+    """get_financial_ratio 실패 테스트"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="1", msg1="Fail", data=None
+    ))
+    result = await mock_quotations.get_financial_ratio("005930")
+    assert result.rt_cd == "1"
+    mock_quotations._logger.warning.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_get_price_summary_raw_status_code_warning(mock_quotations):
+    """get_price_summary: raw_status_code에 'vs'가 포함된 경우 경고 로그 (Line 180)"""
+    real_output = ResStockFullInfoApiOutput.from_dict({
+        "stck_oprc": "10000", "stck_prpr": "11000", "prdy_ctrt": "10.0"
+    })
+    # dataclass는 동적 속성 할당이 가능함
+    real_output.new_hgpr_lwpr_cls_code = "1 vs 2"
+    
+    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": real_output}
+    ))
+    
+    await mock_quotations.get_price_summary("005930")
+    
+    # 경고 로그 확인
+    found = False
+    for call in mock_quotations._logger.warning.call_args_list:
+        if "신고/신저가 불일치" in str(call):
+            found = True
+            break
+    assert found
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_item_not_dict_output2(mock_quotations):
+    """inquire_daily_itemchartprice: output2 리스트 내 아이템이 dict가 아닐 때"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="정상", data={"output2": ["not a dict", {"valid": "dict"}]}
+    ))
+    
+    result = await mock_quotations.inquire_daily_itemchartprice("005930", "20250101")
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    # "not a dict"는 건너뛰고, {"valid": "dict"}는 ResDailyChartApiItem 생성 시도 중 에러 발생 가능성 있음
+    # 결과적으로 빈 리스트일 가능성 높음.
+    assert isinstance(result.data, list)
+    mock_quotations._logger.warning.assert_called()

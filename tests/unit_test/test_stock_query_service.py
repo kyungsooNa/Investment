@@ -44,6 +44,18 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.stockQueryService._get_sign_from_code('9'), "")
         self.assertEqual(self.stockQueryService._get_sign_from_code('ABC'), "")
 
+    # --- get_multi_price 함수 테스트 ---
+    async def test_get_multi_price(self):
+        """get_multi_price 위임 테스트"""
+        codes = ["005930", "000660"]
+        expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+        self.mock_trading_service.get_multi_price.return_value = expected
+        
+        result = await self.stockQueryService.get_multi_price(codes)
+        
+        self.mock_trading_service.get_multi_price.assert_awaited_once_with(codes)
+        self.assertEqual(result, expected)
+
     # --- handle_get_current_stock_price 함수 테스트 ---
     async def test_handle_get_current_stock_price_success(self):
         # ResStockFullInfoApiOutput 객체로 감싸서 반환해야 함
@@ -75,6 +87,16 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         await self.stockQueryService.handle_get_current_stock_price("005930")
         self.mock_logger.error.assert_called()
         self.assertIn("현재가 및 상세 정보 조회 실패", self.mock_logger.error.call_args[0][0])
+
+    async def test_handle_get_current_stock_price_none_response(self):
+        """handle_get_current_stock_price: 응답이 None일 때 (Line 80 coverage)"""
+        self.mock_trading_service.get_current_stock_price.return_value = None
+        
+        result = await self.stockQueryService.handle_get_current_stock_price("005930")
+        
+        self.assertEqual(result.rt_cd, ErrorCode.API_ERROR.value)
+        self.assertEqual(result.msg1, "응답 없음")
+        self.mock_logger.error.assert_called()
 
     async def test_handle_get_current_stock_price_parsing_error(self):
         """handle_get_current_stock_price에서 응답 데이터 파싱 오류 테스트"""
@@ -181,6 +203,35 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.data), 0) # 유효하지 않은 종목은 건너뛰므로 결과는 비어있음
         self.mock_logger.warning.assert_called_with(
             "유효하지 않은 종목코드: {'hts_kor_isnm': 'InvalidStock', 'prdy_vrss_sign': '1'}")
+
+    async def test_handle_get_top_market_cap_stocks_code_filter_upper_limit(self):
+        """handle_get_top_market_cap_stocks_code: 상한가 종목 필터링 테스트"""
+        self.mock_trading_service._env.is_paper_trading = False
+        
+        # Mock 데이터: 상한가 1개, 일반 상승 1개
+        mock_data = [
+            ResTopMarketCapApiItem(
+                mksc_shrn_iscd="005930", hts_kor_isnm="삼성전자", 
+                stck_prpr="70000", prdy_ctrt="30.00", prdy_vrss_sign="1", # 상한가
+                data_rank="1", stck_avls="500000", acc_trdvol="1000000"
+            ),
+            ResTopMarketCapApiItem(
+                mksc_shrn_iscd="000660", hts_kor_isnm="SK하이닉스", 
+                stck_prpr="120000", prdy_ctrt="5.00", prdy_vrss_sign="2", # 일반 상승
+                data_rank="2", stck_avls="300000", acc_trdvol="500000"
+            )
+        ]
+        
+        self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=mock_data
+        )
+
+        result = await self.stockQueryService.handle_get_top_market_cap_stocks_code("0000", 10)
+        
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.assertEqual(len(result.data), 1) # 상한가 종목 1개만 있어야 함
+        self.assertEqual(result.data[0]["code"], "005930")
+        self.assertEqual(result.data[0]["name"], "삼성전자")
 
     # --- handle_get_top_10_market_cap_stocks_with_prices 함수 테스트 ---
     async def test_handle_get_top_10_market_cap_stocks_with_prices_success(self):
@@ -787,6 +838,15 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data["meta"]["prpr"], "10050")
         self.mock_logger.info.assert_called_with("005930 호가 정보 조회 성공")
 
+    async def test_handle_get_asking_price_none_response_coverage(self):
+        """handle_get_asking_price: 응답이 None일 때 (Line 410 coverage)"""
+        self.mock_trading_service.get_asking_price.return_value = None
+        
+        result = await self.stockQueryService.handle_get_asking_price("005930")
+        
+        self.assertEqual(result.rt_cd, ErrorCode.API_ERROR.value)
+        self.assertEqual(result.msg1, "응답 없음")
+
     async def test_handle_get_asking_price_api_failure(self):
         """handle_get_asking_price API 실패 케이스 테스트"""
         # Arrange
@@ -1065,6 +1125,26 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.mock_indicator_service.get_moving_average.call_count, 5)
         self.mock_indicator_service.get_bollinger_bands.assert_awaited_once()
 
+    async def test_get_ohlcv_with_indicators_none_response(self):
+        """get_ohlcv_with_indicators: 응답이 None일 때 (Line 602-604 coverage)"""
+        self.mock_trading_service.get_ohlcv.return_value = None
+        
+        result = await self.stockQueryService.get_ohlcv_with_indicators("005930")
+        
+        self.assertEqual(result.rt_cd, ErrorCode.API_ERROR.value)
+        self.assertEqual(result.msg1, "OHLCV 조회 실패")
+
+    async def test_get_ohlcv_with_indicators_empty_data(self):
+        """get_ohlcv_with_indicators: 데이터가 비어있을 때 (Line 602-604 coverage)"""
+        self.mock_trading_service.get_ohlcv.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[]
+        )
+        
+        result = await self.stockQueryService.get_ohlcv_with_indicators("005930")
+        
+        self.assertEqual(result.rt_cd, ErrorCode.API_ERROR.value)
+        self.assertEqual(result.msg1, "OHLCV 조회 실패")
+
     async def test_get_ohlcv_with_indicators_ohlcv_failure(self):
         """get_ohlcv_with_indicators에서 OHLCV 조회 실패 시 테스트"""
         # Arrange
@@ -1174,6 +1254,129 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.mock_trading_service.get_intraday_minutes_today.call_count, 2)
         # 첫 호출 커서 확인
         self.mock_trading_service.get_intraday_minutes_today.assert_any_call(stock_code="005930", input_hour_1="153000")
+
+    async def test_get_day_intraday_minutes_list_extract_rows_dict_unknown_key(self):
+        """_extract_rows: dict 응답이지만 알려진 키가 없을 때 (Line 697 coverage)"""
+        self.mock_trading_service._env.is_paper_trading = False
+        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        
+        # _fetch_batch returns a dict without output2/rows/data
+        resp = ResCommonResponse(rt_cd="0", msg1="OK", data={"unknown": []})
+        self.mock_trading_service.get_intraday_minutes_by_date.return_value = resp
+        
+        result = await self.stockQueryService.get_day_intraday_minutes_list("005930", date_ymd="20250101")
+        
+        self.assertEqual(result, [])
+
+    async def test_get_day_intraday_minutes_list_extract_rows_dict_not_list(self):
+        """_extract_rows: dict 응답의 값이 리스트가 아닐 때 (Line 697 coverage)"""
+        self.mock_trading_service._env.is_paper_trading = False
+        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        
+        resp = ResCommonResponse(rt_cd="0", msg1="OK", data={"output2": "not_a_list"})
+        self.mock_trading_service.get_intraday_minutes_by_date.return_value = resp
+        
+        result = await self.stockQueryService.get_day_intraday_minutes_list("005930", date_ymd="20250101")
+        
+        self.assertEqual(result, [])
+
+    async def test_get_day_intraday_minutes_list_loop_break_on_none_resp(self):
+        """루프 중 resp가 None이면 중단 (Line 723 coverage)"""
+        self.mock_trading_service._env.is_paper_trading = False
+        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        
+        self.mock_trading_service.get_intraday_minutes_by_date.return_value = None
+        
+        result = await self.stockQueryService.get_day_intraday_minutes_list("005930", date_ymd="20250101")
+        self.assertEqual(result, [])
+
+    async def test_get_day_intraday_minutes_list_loop_break_on_fail_rt_cd(self):
+        """루프 중 rt_cd가 0이 아니면 중단 (Line 723 coverage)"""
+        self.mock_trading_service._env.is_paper_trading = False
+        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        
+        self.mock_trading_service.get_intraday_minutes_by_date.return_value = ResCommonResponse(
+            rt_cd="1", msg1="Fail", data=[]
+        )
+        
+        result = await self.stockQueryService.get_day_intraday_minutes_list("005930", date_ymd="20250101")
+        self.assertEqual(result, [])
+
+    async def test_get_day_intraday_minutes_list_pagination_and_filtering(self):
+        """페이지네이션, 필터링, added==0 로직 테스트 (Line 739-744, 751 coverage)"""
+        self.mock_trading_service._env.is_paper_trading = False
+        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        # dec_minute: 단순히 1분 뺀 문자열 반환 (HHMMSS)
+        def mock_dec_minute(t, m):
+            return f"{int(t)-m:06d}"
+        self.mock_time_manager.dec_minute.side_effect = mock_dec_minute
+
+        # Batch 1: 10:00:00 (valid), 09:01:00 (valid) -> min 090100 -> next cursor 090099 (mock logic)
+        data1 = [
+            {"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "price": 100},
+            {"stck_bsop_date": "20250101", "stck_cntg_hour": "090100", "price": 90}
+        ]
+        resp1 = ResCommonResponse(rt_cd="0", msg1="OK", data=data1)
+        
+        # Batch 2 (Filtered out) -> added=0 -> next cursor 085800 -> break loop if < start
+        data2 = [
+            {"stck_bsop_date": "20250101", "stck_cntg_hour": "085900", "price": 80}
+        ]
+        resp2 = ResCommonResponse(rt_cd="0", msg1="OK", data=data2)
+        
+        self.mock_trading_service.get_intraday_minutes_by_date.side_effect = [resp1, resp2]
+        
+        # Call with range 09:00:00 to 15:30:00
+        result = await self.stockQueryService.get_day_intraday_minutes_list(
+            "005930", date_ymd="20250101", start_hhmmss="090000", end_hhmmss="153000"
+        )
+        
+        # Result should contain only valid items, sorted by time
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["stck_cntg_hour"], "090100")
+        self.assertEqual(result[1]["stck_cntg_hour"], "100000")
+        
+        # Verify calls
+        self.assertEqual(self.mock_trading_service.get_intraday_minutes_by_date.call_count, 2)
+
+    async def test_get_day_intraday_minutes_list_pagination_with_duplicates(self):
+        """페이지네이션 중 중복 데이터(added=0)가 발생해도 min_time_in_batch를 갱신하여 계속 진행하는지 테스트"""
+        self.mock_trading_service._env.is_paper_trading = False
+        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        # dec_minute: 단순히 1분 뺀 문자열 반환 (HHMMSS)
+        def mock_dec_minute(t, m):
+            return f"{int(t)-m:06d}"
+        self.mock_time_manager.dec_minute.side_effect = mock_dec_minute
+
+        # Batch 1: 10:00:00
+        data1 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "price": 100}]
+        resp1 = ResCommonResponse(rt_cd="0", msg1="OK", data=data1)
+        
+        # Batch 2: 10:00:00 (Duplicate) -> added=0
+        # Fix가 적용되면 min_time=100000 -> cursor=095959 (mock logic) -> continue
+        data2 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "price": 100}]
+        resp2 = ResCommonResponse(rt_cd="0", msg1="OK", data=data2)
+        
+        # Batch 3: 09:59:00
+        data3 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "095900", "price": 99}]
+        resp3 = ResCommonResponse(rt_cd="0", msg1="OK", data=data3)
+        
+        # Batch 4: Empty (End)
+        resp4 = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+        self.mock_trading_service.get_intraday_minutes_by_date.side_effect = [resp1, resp2, resp3, resp4]
+        
+        result = await self.stockQueryService.get_day_intraday_minutes_list(
+            "005930", date_ymd="20250101", start_hhmmss="090000", end_hhmmss="120000"
+        )
+        
+        # Should have 2 items (10:00:00 and 09:59:00)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["stck_cntg_hour"], "095900")
+        self.assertEqual(result[1]["stck_cntg_hour"], "100000")
+        
+        # Verify API calls: 1, 2, 3, 4 -> 4 calls
+        self.assertEqual(self.mock_trading_service.get_intraday_minutes_by_date.call_count, 4)
 
     async def test_get_day_intraday_minutes_list_by_date_extended_session(self):
         """get_day_intraday_minutes_list 특정일, 확장 세션 테스트"""
@@ -1408,6 +1611,31 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         assert any(
             "현재 상한가" in call.args[0] for call in self.mock_logger.info.call_args_list
         ), "info 로그에 '현재 상한가' 문구가 포함되어야 합니다."
+
+    async def test_handle_current_upper_limit_stocks_rise_fail(self):
+        """handle_current_upper_limit_stocks: 상승률 조회 실패 (Line 378 coverage)"""
+        self.mock_trading_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+            rt_cd="1", msg1="Fail", data=None
+        )
+        
+        result = await self.service.handle_current_upper_limit_stocks()
+        
+        self.assertEqual(result.rt_cd, "1")
+        self.mock_logger.warning.assert_called_with("상승률 조회 실패.")
+
+    async def test_handle_current_upper_limit_stocks_filter_fail(self):
+        """handle_current_upper_limit_stocks: 상한가 필터링 실패 (Line 385 coverage)"""
+        self.mock_trading_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[]
+        )
+        self.mock_trading_service.get_current_upper_limit_stocks.return_value = ResCommonResponse(
+            rt_cd="1", msg1="Fail", data=None
+        )
+        
+        result = await self.service.handle_current_upper_limit_stocks()
+        
+        self.assertEqual(result.rt_cd, "1")
+        self.mock_logger.info.assert_called_with("현재 상한가 종목 없음.")
 
 
     @pytest.mark.asyncio
