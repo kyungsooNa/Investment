@@ -298,7 +298,7 @@ def test_get_strategy_logger(tmp_path):
 
 def test_log_rotation(clean_logger_instance):
     """
-    RotatingFileHandler가 설정된 크기를 초과하면 로그 파일을 회전시키는지 테스트합니다.
+    RotatingFileHandler가 설정된 크기를 초과하면 인덱싱 방식(_1, _2...)으로 로그 파일을 회전시키는지 테스트합니다.
     """
     logger, common_log_dir = clean_logger_instance
     
@@ -319,14 +319,15 @@ def test_log_rotation(clean_logger_instance):
     
     # 2. 두 번째 로그 기록 (누적 100바이트 초과 -> 회전 발생 예상)
     logger.info(msg)
-    time.sleep(1.1)  # 타임스탬프 변경을 위해 대기
-    logger.info(msg)
     
-    # 백업 파일이 생성되었는지 확인 (타임스탬프가 붙은 파일)
+    # 백업 파일이 생성되었는지 확인 (인덱스가 붙은 파일)
     # 원본 파일 외에 백업 파일이 존재해야 함
-    # 백업 파일명 예시: 20231025_120000_operational_20231025_120001.log
+    # 백업 파일명 예시: ..._operational_1.log
     log_files = list(common_log_dir.glob("*_operational_*.log"))
     assert len(log_files) >= 1
+    
+    # 백업 파일 중 _1.log가 존재하는지 확인
+    assert any(f.name.endswith("_1.log") for f in log_files)
 
 
 def test_log_cleanup(tmp_path):
@@ -411,7 +412,7 @@ def test_logger_exception_method(clean_logger_instance):
 
 def test_size_time_rotating_handler_backup_limit(tmp_path):
     """
-    SizeTimeRotatingFileHandler가 backupCount 제한을 넘어가면 오래된 파일을 삭제하는지 검증합니다.
+    SizeTimeRotatingFileHandler가 backupCount 제한을 넘어가면 오래된 파일(낮은 인덱스)을 삭제하는지 검증합니다.
     """
     log_file = tmp_path / "test_backup.log"
     backup_count = 2
@@ -422,15 +423,10 @@ def test_size_time_rotating_handler_backup_limit(tmp_path):
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
     
-    # datetime mocking to ensure unique timestamps without sleep dependency
-    start_time = datetime(2023, 1, 1, 12, 0, 0)
-    
-    with patch("core.logger.datetime") as mock_dt:
-        # now()가 호출될 때마다 1초씩 증가된 시간 반환
-        mock_dt.now.side_effect = [start_time + timedelta(seconds=i) for i in range(20)]
-        # 5개의 로그 파일을 생성하도록 유도 (원본 1 + 백업 4 시도 -> 백업 2개만 남아야 함)
-        for i in range(5):
-            logger.info(f"Log message {i} " * 5)
+    # 4번 기록 -> 4번 로테이션 (1->2->3->4)
+    # 예상 백업 파일: test_backup_3.log, test_backup_4.log (1, 2는 삭제됨)
+    for i in range(4):
+        logger.info(f"Log message {i} " * 5)
         
     handler.close()
     logger.removeHandler(handler)
@@ -438,6 +434,11 @@ def test_size_time_rotating_handler_backup_limit(tmp_path):
     # 백업 파일 개수 확인 (test_backup_*.log)
     files = list(tmp_path.glob("test_backup_*.log"))
     assert len(files) == backup_count
+    
+    filenames = [f.name for f in files]
+    assert "test_backup_3.log" in filenames
+    assert "test_backup_4.log" in filenames
+    assert "test_backup_2.log" not in filenames
 
 
 def test_loggers_use_custom_handler(tmp_path):

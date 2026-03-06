@@ -11,6 +11,7 @@ from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
 from strategies.base_strategy_config import BaseStrategyConfig
+from core.logger import get_strategy_logger
 
 
 @dataclass
@@ -48,7 +49,10 @@ class ProgramBuyFollowStrategy(LiveStrategy):
         self._sqs = stock_query_service
         self._tm = time_manager
         self._cfg = config or ProgramBuyFollowConfig()
-        self._logger = logger or logging.getLogger(__name__)
+        if logger:
+            self._logger = logger
+        else:
+            self._logger = get_strategy_logger("ProgramBuyFollow")
 
     @property
     def name(self) -> str:

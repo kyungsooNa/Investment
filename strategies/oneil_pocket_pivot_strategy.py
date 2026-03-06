@@ -13,6 +13,7 @@ from services.trading_service import TradingService
 from core.time_manager import TimeManager
 from strategies.oneil_common_types import OneilPocketPivotConfig, PPPositionState
 from services.oneil_universe_service import OneilUniverseService
+from core.logger import get_strategy_logger
 
 
 class OneilPocketPivotStrategy(LiveStrategy):
@@ -46,7 +47,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
         self._universe = universe_service
         self._tm = time_manager
         self._cfg = config or OneilPocketPivotConfig()
-        self._logger = logger or logging.getLogger(__name__)
+        if logger:
+            self._logger = logger
+        else:
+            self._logger = get_strategy_logger("OneilPocketPivot", sub_dir="oneil")
 
         self._position_state: Dict[str, PPPositionState] = {}
         self._load_state()

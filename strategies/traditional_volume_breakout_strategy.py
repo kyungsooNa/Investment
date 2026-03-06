@@ -18,6 +18,7 @@ from services.stock_query_service import StockQueryService
 from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from strategies.base_strategy_config import BaseStrategyConfig
+from core.logger import get_strategy_logger
 
 
 @dataclass
@@ -92,7 +93,10 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
         self._mapper = stock_code_mapper
         self._tm = time_manager
         self._cfg = config or TraditionalVBConfig()
-        self._logger = logger or logging.getLogger(__name__)
+        if logger:
+            self._logger = logger
+        else:
+            self._logger = get_strategy_logger("TraditionalVolumeBreakout")
 
         # 내부 상태
         self._watchlist: Dict[str, WatchlistItem] = {}

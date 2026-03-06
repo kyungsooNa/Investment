@@ -10,6 +10,7 @@ from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from strategies.volume_breakout_strategy import VolumeBreakoutConfig
 from core.time_manager import TimeManager
+from core.logger import get_strategy_logger
 
 
 class VolumeBreakoutLiveStrategy(LiveStrategy):
@@ -39,7 +40,10 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
         self._sqs = stock_query_service
         self._tm = time_manager
         self._cfg = config or VolumeBreakoutConfig()
-        self._logger = logger or logging.getLogger(__name__)
+        if logger:
+            self._logger = logger
+        else:
+            self._logger = get_strategy_logger("VolumeBreakoutLive")
 
     @property
     def name(self) -> str:

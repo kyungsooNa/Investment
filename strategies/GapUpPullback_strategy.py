@@ -3,6 +3,7 @@
 import logging
 from interfaces.strategy import Strategy
 from typing import List, Dict, Optional
+from core.logger import get_strategy_logger
 
 class GapUpPullbackStrategy(Strategy):
     def __init__(
@@ -19,7 +20,10 @@ class GapUpPullbackStrategy(Strategy):
         self.max_pullback_rate = max_pullback_rate
         self.rebound_rate = rebound_rate
         self.mode = mode
-        self.logger = logger or logging.getLogger(__name__)
+        if logger:
+            self.logger = logger
+        else:
+            self.logger = get_strategy_logger("GapUpPullback")
 
     async def run(self, stock_codes: List[str]) -> Dict:
         selected = []
