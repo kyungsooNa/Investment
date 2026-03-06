@@ -11,6 +11,7 @@ from view.web import web_api
 @pytest.mark.asyncio
 async def test_virtual_endpoints(web_client, mock_web_ctx):
     """모의투자 관련 엔드포인트 테스트"""
+    web_api._PRICE_CACHE.clear()
     # Summary
     mock_web_ctx.virtual_manager.get_summary.return_value = {"total_trades": 10}
     response = web_client.get("/api/virtual/summary")
@@ -140,6 +141,7 @@ async def test_calculate_benchmark_invalid_base_price(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_get_virtual_history_complex(web_client, mock_web_ctx):
     """GET /api/virtual/history 복합 테스트 (캐시, SOLD 보정, 매니저 없음)"""
+    web_api._PRICE_CACHE.clear()
     # 1. 매니저 없음
     if hasattr(mock_web_ctx, 'virtual_manager'):
         vm = mock_web_ctx.virtual_manager
@@ -196,6 +198,7 @@ async def test_get_virtual_history_complex(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_get_virtual_history_force_update(web_client, mock_web_ctx):
     """GET /api/virtual/history force_code 테스트"""
+    web_api._PRICE_CACHE.clear()
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
         {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
     ]
@@ -263,6 +266,7 @@ async def test_get_virtual_history_price_parsing_error(web_client, mock_web_ctx)
 @pytest.mark.asyncio
 async def test_get_virtual_history_fallback_to_cache(web_client, mock_web_ctx):
     """GET /api/virtual/history API 실패 시 캐시 폴백 테스트"""
+    web_api._PRICE_CACHE.clear()
     # 1. Setup
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
         {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
@@ -291,6 +295,7 @@ async def test_get_virtual_history_fallback_to_cache(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_get_virtual_history_internal_exceptions(web_client, mock_web_ctx):
     """GET /api/virtual/history 내부 로직 예외 처리 테스트 (fix_sell_price, snapshot, first_dates)"""
+    web_api._PRICE_CACHE.clear()
     # 1. Setup
     # buy_date를 정수가 아닌 타입으로 설정하여 슬라이싱 에러 유도 (Block 5 예외)
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
@@ -324,6 +329,7 @@ async def test_get_virtual_history_internal_exceptions(web_client, mock_web_ctx)
 @pytest.mark.asyncio
 async def test_get_virtual_history_missing_services(web_client, mock_web_ctx):
     """GET /api/virtual/history 필수 서비스 누락 테스트"""
+    web_api._PRICE_CACHE.clear()
     # Mapper 없음, QueryService 없음
     if hasattr(mock_web_ctx, 'stock_code_mapper'): del mock_web_ctx.stock_code_mapper
     if hasattr(mock_web_ctx, 'stock_query_service'): del mock_web_ctx.stock_query_service
@@ -382,6 +388,7 @@ async def test_calculate_benchmark_invalid_price_in_ohlcv(web_client, mock_web_c
 @pytest.mark.asyncio
 async def test_get_virtual_history_snapshot_dates_populated(web_client, mock_web_ctx):
     """GET /api/virtual/history 스냅샷 날짜(d_date, w_date)가 있을 때 응답 검증"""
+    web_api._PRICE_CACHE.clear()
     # Setup
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
         {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A", "return_rate": 10.0}
@@ -410,6 +417,7 @@ async def test_get_virtual_history_snapshot_dates_populated(web_client, mock_web
 @pytest.mark.asyncio
 async def test_get_virtual_history_first_dates_calculation(web_client, mock_web_ctx):
     """GET /api/virtual/history 최초 매매일 계산 로직 검증 (earlier date update)"""
+    web_api._PRICE_CACHE.clear()
     # Setup: 3 trades.
     # 1. Strat A, 2025-02-01
     # 2. Strat A, 2025-01-01 (Should update Strat A and ALL)
@@ -436,6 +444,9 @@ async def test_get_virtual_history_first_dates_calculation(web_client, mock_web_
 @pytest.mark.asyncio
 async def test_get_virtual_history_asset_weighted_calculation(web_client, mock_web_ctx):
     """GET /api/virtual/history 자산 가중 평균 수익률 및 집계 데이터 반환 테스트"""
+    # 캐시 초기화 (다른 테스트의 영향 방지)
+    web_api._PRICE_CACHE.clear()
+
     # 1. Mock Trades 설정
     # StratA: 100만원 매수 (1000원 * 1000주) -> 10% 수익
     # StratB: 1만원 매수 (1000원 * 10주) -> -50% 손실
