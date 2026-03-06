@@ -240,7 +240,13 @@ class BackgroundService:
                         f"| 수집: {len(results)} | 소요: {elapsed:.1f}s"
                     )
 
-                await asyncio.sleep(self.CHUNK_SLEEP_SEC)
+                # 전체 캐시 HIT면 sleep 불필요, 실제 API 호출이 있었으면 rate limit sleep
+                all_cache_hit = all(
+                    getattr(r, '_cache_hit', False)
+                    for r in responses if not isinstance(r, Exception)
+                )
+                if not all_cache_hit:
+                    await asyncio.sleep(self.CHUNK_SLEEP_SEC)
 
             # 3. 투자자별 정렬 → 순매수대금 기준 상위 30 / 하위 30
             self._foreign_net_buy_cache, self._foreign_net_sell_cache = \

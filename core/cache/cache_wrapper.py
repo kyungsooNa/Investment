@@ -84,7 +84,13 @@ class ClientWithCache:
                         elif cache_type == "file":
                             if self._cache.file_cache.exists(key):
                                 self._logger.debug(f"📂 File Cache HIT (유효): {key}")
-                        return wrapper.get("data")
+                        cached_result = wrapper.get("data")
+                        try:
+                            if cached_result is not None:
+                                cached_result._cache_hit = True
+                        except AttributeError:
+                            pass  # dict 등 속성 설정 불가 타입
+                        return cached_result
                     else:
                         if self._cache.file_cache.exists(key):
                             self._logger.debug(f"📂 File Cache 무시 (만료됨): {key} / 저장 시각: {cache_time}")
