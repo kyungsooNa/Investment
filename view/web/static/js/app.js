@@ -610,6 +610,7 @@ async function loadTopMarketCap(market = '0001') {
 let allVirtualData = [];
 let summaryAgg = {};
 let cumulativeReturns = {};
+let virtualCounts = {};
 let dailyChanges = {};
 let weeklyChanges = {};
 let dailyRefDates = {};
@@ -641,6 +642,7 @@ async function loadVirtualHistory(forceCode = null) {
             allVirtualData = body.trades || [];
             summaryAgg = body.summary_agg || {};
             cumulativeReturns = body.cumulative_returns || {};
+            virtualCounts = body.counts || {};
             dailyChanges = body.daily_changes || {};
             weeklyChanges = body.weekly_changes || {};
             dailyRefDates = body.daily_ref_dates || {};
@@ -653,6 +655,7 @@ async function loadVirtualHistory(forceCode = null) {
             allVirtualData = [];
             summaryAgg = {};
             cumulativeReturns = {};
+            virtualCounts = {};
             dailyChanges = {};
             weeklyChanges = {};
             dailyRefDates = {};
@@ -834,6 +837,33 @@ function applyVirtualFilter() {
         firstDate = fDates[0];
     }
 
+    // 카운트 집계 (보유, 금일매수, 금일이탈)
+    let holdCount = 0;
+    let todayBuyCount = 0;
+    let todaySellCount = 0;
+
+    if (isAll) {
+        const c = virtualCounts['ALL'] || {};
+        holdCount = c.hold || 0;
+        todayBuyCount = c.today_buy || 0;
+        todaySellCount = c.today_sell || 0;
+    } else if (selectedArray.length === 1) {
+        const c = virtualCounts[selectedArray[0]] || {};
+        holdCount = c.hold || 0;
+        todayBuyCount = c.today_buy || 0;
+        todaySellCount = c.today_sell || 0;
+    } else {
+        // 멀티셀렉트: 합산
+        selectedArray.forEach(strat => {
+            const c = virtualCounts[strat];
+            if (c) {
+                holdCount += c.hold || 0;
+                todayBuyCount += c.today_buy || 0;
+                todaySellCount += c.today_sell || 0;
+            }
+        });
+    }
+
     const cumDateLabel = firstDate ? `${toShortDate(firstDate)}~${todayShort}` : '';
     const dailyDateLabel = dailyRefDate ? toShortDate(dailyRefDate) : '';
     const weeklyDateLabel = weeklyRefDate ? toShortDate(weeklyRefDate) : '';
@@ -856,6 +886,13 @@ function applyVirtualFilter() {
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">총 거래</div>
                 <div style="color: #ffffff !important;"><strong style="font-size: 1.35em;">${totalTrades}</strong> <span style="font-size: 1em;">건</span></div>
+            </div>
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 160px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">포지션 현황</div>
+                <div style="color: #ffffff !important; font-size: 0.95em; line-height: 1.4;">
+                    보유: <strong>${holdCount}</strong><br>
+                    <span style="font-size:0.9em; color:#ccc;">(매수 <span style="color:#ff4d4d">+${todayBuyCount}</span> / 이탈 <span style="color:#4d94ff">-${todaySellCount}</span>)</span>
+                </div>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">누적 수익률 <span style="color:#707080; font-size:0.85em;">${cumDateLabel}</span></div>

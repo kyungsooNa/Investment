@@ -327,6 +327,59 @@ async def get_virtual_history(force_code: str = None):
     except Exception:
         pass
 
+    # 6. 전략별 카운트 집계 (보유, 금일매수, 금일청산)
+    counts = {"ALL": {"hold": 0, "today_buy": 0, "today_sell": 0}}
+    for strat in strategies:
+        counts[strat] = {"hold": 0, "today_buy": 0, "today_sell": 0}
+
+    try:
+        # 오늘 날짜 (KST 기준) - TimeManager 의존성 없이 안전하게 계산
+        from datetime import datetime, timezone, timedelta
+        KST = timezone(timedelta(hours=9))
+        today_str = datetime.now(KST).strftime("%Y-%m-%d")
+
+        # [수정] 장이 열리지 않는 날(주말/휴장)에는 마지막 개장일 기준
+        local_snapshot = locals().get('snapshot_data')
+        if not local_snapshot and hasattr(ctx, 'virtual_manager'):
+            try:
+                local_snapshot = ctx.virtual_manager._load_data()
+            except Exception:
+                pass
+        
+        if local_snapshot and local_snapshot.get('daily'):
+            daily_keys = sorted(local_snapshot['daily'].keys())
+            if daily_keys:
+                last_date = daily_keys[-1]
+                if today_str > last_date:
+                    today_str = last_date
+
+        for t in trades:
+            strat = t.get('strategy')
+            if not strat: continue
+
+            # HOLD 카운트
+            if t.get('status') == 'HOLD':
+                counts["ALL"]["hold"] += 1
+                if strat in counts:
+                    counts[strat]["hold"] += 1
+
+            # 금일 매수 (buy_date가 오늘 날짜로 시작)
+            b_date = str(t.get('buy_date', ''))
+            if b_date.startswith(today_str):
+                counts["ALL"]["today_buy"] += 1
+                if strat in counts:
+                    counts[strat]["today_buy"] += 1
+
+            # 금일 청산 (status=SOLD and sell_date가 오늘 날짜로 시작)
+            if t.get('status') == 'SOLD':
+                s_date = str(t.get('sell_date', ''))
+                if s_date.startswith(today_str):
+                    counts["ALL"]["today_sell"] += 1
+                    if strat in counts:
+                        counts[strat]["today_sell"] += 1
+    except Exception as e:
+        print(f"[WebAPI] virtual/history counts error: {e}")
+
     return {
         "trades": trades,
         "summary_agg": summary_agg,
@@ -336,4 +389,5 @@ async def get_virtual_history(force_code: str = None):
         "daily_ref_dates": daily_ref_dates,
         "weekly_ref_dates": weekly_ref_dates,
         "first_dates": first_dates,
+        "counts": counts,
     }
