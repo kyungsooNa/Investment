@@ -8,8 +8,7 @@
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 
 4. [Ranking] 
-  * 1. web에 진행률 표기
-  * 2. /investor-trade-by-stock-daily에 output2에 누적거래대금 filed(acml_tr_pbmn)가 있으니, 장마감 이후에는 해당 data를 활용해서 거래대금 순위를 매기도록 재조정하자.  (장중에는 기존 방식 유지.)
+
   * 3. 프로그램 순매수/순매도 대금 상위 랭킹 기능 추가. 종목별 프로그램 일변 추이 (https://apiportal.koreainvestment.com/apiservice-apiservice?/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily) 
   URL: program-trade-by-stock-daily
   TRID: FHPPG04650201

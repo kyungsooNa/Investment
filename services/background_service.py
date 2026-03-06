@@ -63,6 +63,7 @@ class BackgroundService:
         self._inst_net_sell_cache: List[Dict] = []
         self._prsn_net_buy_cache: List[Dict] = []
         self._prsn_net_sell_cache: List[Dict] = []
+        self._trading_value_cache: List[Dict] = []  # 거래대금 랭킹 (투자자 데이터 기반)
         self._investor_ranking_updated_at: Optional[datetime] = None
         self._is_refreshing: bool = False
 
@@ -201,6 +202,8 @@ class BackgroundService:
                     orgn_pbmn = int(resp.data.get("orgn_ntby_tr_pbmn", "0") or "0")
                     prsn_pbmn = int(resp.data.get("prsn_ntby_tr_pbmn", "0") or "0")
 
+                    acml_tr_pbmn = resp.data.get("acml_tr_pbmn", "0") or "0"
+
                     results.append({
                         "stck_shrn_iscd": code,
                         "hts_kor_isnm": name,
@@ -209,6 +212,7 @@ class BackgroundService:
                         "prdy_vrss": resp.data.get("prdy_vrss", "0"),
                         "prdy_vrss_sign": resp.data.get("prdy_vrss_sign", ""),
                         "acml_vol": resp.data.get("acml_vol", "0"),
+                        "acml_tr_pbmn": acml_tr_pbmn,
                         "frgn_ntby_qty": str(frgn_qty),
                         "orgn_ntby_qty": str(orgn_qty),
                         "prsn_ntby_qty": str(prsn_qty),
@@ -239,6 +243,10 @@ class BackgroundService:
                 self._build_ranking(results, "orgn_ntby_tr_pbmn")
             self._prsn_net_buy_cache, self._prsn_net_sell_cache = \
                 self._build_ranking(results, "prsn_ntby_tr_pbmn")
+
+            # 거래대금 랭킹도 함께 구축 (acml_tr_pbmn 기준 상위 30)
+            self._trading_value_cache = self._build_trading_value_ranking(results, top_n=30)
+
             self._investor_ranking_updated_at = datetime.now()
 
             elapsed = time.time() - start_time
@@ -266,6 +274,19 @@ class BackgroundService:
             item["data_rank"] = str(i)
 
         return buy_top, sell_top
+
+    @staticmethod
+    def _build_trading_value_ranking(results: List[Dict], top_n: int = 30) -> List[Dict]:
+        """누적거래대금(acml_tr_pbmn) 기준 내림차순 상위 N개 반환."""
+        sorted_list = sorted(results, key=lambda x: int(x.get("acml_tr_pbmn", "0") or "0"), reverse=True)
+        top = [dict(item) for item in sorted_list[:top_n]]
+        for i, item in enumerate(top, 1):
+            item["data_rank"] = str(i)
+        return top
+
+    def get_trading_value_ranking(self, limit: int = 30) -> ResCommonResponse:
+        """투자자 데이터 기반 거래대금 랭킹 반환 (캐시에서 즉시)."""
+        return self._get_ranking_from_cache(self._trading_value_cache, "거래대금", limit)
 
     def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
         """캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""

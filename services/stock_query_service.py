@@ -488,8 +488,8 @@ class StockQueryService:
     async def handle_get_top_stocks(self, category: str) -> ResCommonResponse:
         """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수 등)."""
         # (title, func, param, is_sync) — is_sync=True이면 동기 함수 호출
-        # 장마감 후 캐시된 기본 랭킹이 있으면 우선 사용
-        basic_categories = ("rise", "fall", "volume", "trading_value")
+        # 장마감 후 캐시된 기본 랭킹이 있으면 우선 사용 (trading_value 제외 — background_service에서 처리)
+        basic_categories = ("rise", "fall", "volume")
         if category in basic_categories and self.background_service:
             cached = self.background_service.get_basic_ranking_cache(category)
             if cached is not None:
@@ -504,7 +504,11 @@ class StockQueryService:
         }
 
         # 백그라운드 서비스 카테고리 (동기 함수)
+        # 거래대금: 장마감 후에는 투자자 데이터(acml_tr_pbmn) 기반으로 전환
         if self.background_service:
+            category_map["trading_value"] = (
+                "거래대금", self.background_service.get_trading_value_ranking, None, True
+            )
             category_map["foreign_buy"] = (
                 "외인 순매수", self.background_service.get_foreign_net_buy_ranking, None, True
             )

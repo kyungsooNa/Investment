@@ -1890,6 +1890,36 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
         self.mock_background_service.get_prsn_net_sell_ranking.assert_called_once()
 
+    async def test_trading_value_calls_background_service(self):
+        """trading_value → background_service.get_trading_value_ranking() 호출."""
+        self.mock_background_service.get_trading_value_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "삼성전자", "acml_tr_pbmn": "5000000000"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("trading_value")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_trading_value_ranking.assert_called_once()
+
+    async def test_trading_value_without_background_service_uses_trading_service(self):
+        """background_service 없으면 trading_value는 trading_service.get_top_trading_value_stocks() 호출."""
+        service_no_bg = StockQueryService(
+            trading_service=self.mock_trading_service,
+            logger=self.mock_logger,
+            time_manager=self.mock_time_manager,
+            background_service=None,
+        )
+        self.mock_trading_service.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "삼성전자", "acml_tr_pbmn": "3000000000"}]
+        )
+
+        result = await service_no_bg.handle_get_top_stocks("trading_value")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_trading_service.get_top_trading_value_stocks.assert_awaited_once()
+
     async def test_rise_uses_basic_ranking_cache(self):
         """장마감 후 캐시가 있으면 캐시 우선 사용."""
         cached_resp = ResCommonResponse(rt_cd="0", msg1="캐시", data=[{"cached": True}])
