@@ -335,9 +335,3 @@ window.destroyProgramChart = function() {
     }
 };
 
-/**
- * 테이블용 집계 데이터 접근 (app.js에서 호출)
- */
-window.getAggregatedPtData = function(code, chartData, timeUnit) {
-    return getAggregatedPtData(code, chartData, timeUnit);
-};
