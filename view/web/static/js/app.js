@@ -1012,9 +1012,15 @@ function renderVirtualHoldTable() {
         const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
         const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
 
+        // 전략명 표시 추가
+        const strategyLabel = item.strategy ? `<div style="font-size:0.75em; color:#888; margin-bottom:2px;">${item.strategy}</div>` : '';
+
         holdBody.insertAdjacentHTML('beforeend', `
             <tr>
-                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                <td>
+                    ${strategyLabel}
+                    <a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a>
+                </td>
                 <td>${buyPrice}</td>
                 <td>${curPrice}${cacheLabel}${forceBtn}</td>
                 <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
@@ -1056,9 +1062,15 @@ function renderVirtualSoldTable() {
         const cacheLabel = item.is_cached ? `<span title="API 호출 실패로 인한 캐시 데이터 (경과: ${Math.floor(cacheAge/60)}분)" style="cursor:help; margin-left:4px; ${cacheStyle}">🕒</span>` : '';
         const forceBtn = `<span onclick="forceUpdateStock('${item.code}', event)" title="강제 업데이트" style="cursor:pointer; margin-left:6px; opacity:0.5; transition: transform 0.3s;">🔄</span>`;
 
+        // 전략명 표시 추가
+        const strategyLabel = item.strategy ? `<div style="font-size:0.75em; color:#888; margin-bottom:2px;">${item.strategy}</div>` : '';
+
         soldBody.insertAdjacentHTML('beforeend', `
             <tr>
-                <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
+                <td>
+                    ${strategyLabel}
+                    <a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a>
+                </td>
                 <td>${buyPrice}</td>
                 <td>${sellPrice}<div style="font-size:0.8em; color:var(--text-secondary);">${curPrice}${cacheLabel}${forceBtn}</div></td>
                 <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
