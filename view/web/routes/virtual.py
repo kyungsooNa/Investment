@@ -204,16 +204,26 @@ async def get_virtual_history(force_code: str = None):
                     trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
                 elif trade['status'] == 'SOLD':
                     # sell_price가 0(시장가 매도)이면 CSV도 현재가로 보정
-                    sp = trade.get('sell_price') or 0
-                    if sp == 0 or (isinstance(sp, float) and sp == 0.0):
+                    try:
+                        sp = float(trade.get('sell_price') or 0)
+                        bp = float(trade.get('buy_price', 0) or 0)
+                    except (ValueError, TypeError):
+                        sp = 0.0
+                        bp = 0.0
+
+                    if sp == 0.0:
                         trade['sell_price'] = cur
-                        bp = trade.get('buy_price', 0) or 0
                         trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
                         # CSV 원본도 수정
                         try:
                             ctx.virtual_manager.fix_sell_price(trade['code'], trade.get('buy_date', ''), cur)
                         except Exception:
                             pass
+                    else:
+                        # 매도 완료된 종목은 매도가 기준으로 수익률 고정
+                        trade['return_rate'] = round(((sp - bp) / bp) * 100, 2) if bp else 0
+                        # 변수명 의미에 맞게 수정: current_price=현재가(이미 할당됨), sell_price=매도가
+                        trade['sell_price'] = sp
     except Exception as e:
         print(f"[WebAPI] virtual/history enrichment 오류: {e}")
 

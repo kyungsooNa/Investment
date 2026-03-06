@@ -1003,7 +1003,7 @@ function renderVirtualSoldTable() {
             <tr>
                 <td><a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a></td>
                 <td>${buyPrice}</td>
-                <td>${curPrice ? curPrice + cacheLabel + forceBtn + '<div style="font-size:0.8em; color:var(--text-secondary);">' + sellPrice + '</div>' : sellPrice}</td>
+                <td>${sellPrice}<div style="font-size:0.8em; color:var(--text-secondary);">${curPrice}${cacheLabel}${forceBtn}</div></td>
                 <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
                 <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
             </tr>
