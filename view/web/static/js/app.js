@@ -823,16 +823,13 @@ function applyVirtualFilter() {
         weeklyRefDate = weeklyRefDates[selectedArray[0]];
         firstDate = firstDates[selectedArray[0]];
     } else {
-        // 여러 전략 선택: 선택된 전략들의 평균
-        const dailyVals = selectedArray.map(s => dailyChanges[s]).filter(v => v != null);
-        dailyChange = dailyVals.length > 0 ? dailyVals.reduce((a, b) => a + b, 0) / dailyVals.length : null;
-        const weeklyVals = selectedArray.map(s => weeklyChanges[s]).filter(v => v != null);
-        weeklyChange = weeklyVals.length > 0 ? weeklyVals.reduce((a, b) => a + b, 0) / weeklyVals.length : null;
-        // 멀티셀렉트: 가장 이른 날짜 사용
-        const dDates = selectedArray.map(s => dailyRefDates[s]).filter(Boolean).sort();
-        dailyRefDate = dDates[dDates.length - 1];
-        const wDates = selectedArray.map(s => weeklyRefDates[s]).filter(Boolean).sort();
-        weeklyRefDate = wDates[wDates.length - 1];
+        // 여러 전략 선택: 백엔드에서 제공하는 집계 데이터가 없으므로 표시하지 않음
+        // (프론트엔드에서의 단순 평균 계산은 자산 비중을 고려하지 못해 부정확함)
+        dailyChange = null;
+        weeklyChange = null;
+        dailyRefDate = null;
+        weeklyRefDate = null;
+        
         const fDates = selectedArray.map(s => firstDates[s]).filter(Boolean).sort();
         firstDate = fDates[0];
     }
