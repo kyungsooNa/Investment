@@ -17,11 +17,11 @@ class WebConfig(BaseModel):
     port: int = Field(..., ge=1, le=65535, description="웹 서버 포트 (1~65535)")
 
 class CacheConfig(BaseModel):
-    base_dir: str
+    base_dir: str = ".cache"
     enabled_methods: List[str] = Field(default_factory=list)
     deserializable_classes: List[str] = Field(default_factory=list)
-    memory_cache_enabled: bool
-    file_cache_enabled: bool
+    memory_cache_enabled: bool = True
+    file_cache_enabled: bool = True
 
 class AppConfig(BaseModel):
     # Core API keys
@@ -40,7 +40,7 @@ class AppConfig(BaseModel):
     
     # Sub-configs
     web: WebConfig
-    cache: CacheConfig
+    cache: CacheConfig = Field(default_factory=CacheConfig)
     
     # Dynamic/Merged configs
     tr_ids: Dict[str, Any] = Field(default_factory=dict)

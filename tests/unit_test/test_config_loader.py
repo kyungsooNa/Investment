@@ -124,3 +124,39 @@ def test_app_config_dict_access():
     # get
     assert config.get("api_key") == "key"
     assert config.get("non_existent", "default") == "default"
+
+def test_load_configs_validation_error_missing_required_field():
+    """필수 필드(예: web) 누락 시 ValueError(ValidationError 포장) 발생 테스트"""
+    with patch("config.config_loader.load_config") as mock_load:
+        # web 섹션 누락 (AppConfig에서 web은 필수)
+        mock_load.side_effect = [
+            {
+                "api_key": "test",
+                # "web": ... missing
+                "cache": {"base_dir": ".cache"}
+            },
+            {},
+            {}
+        ]
+        
+        with pytest.raises(ValueError, match="설정 파일 유효성 검사 실패"):
+            load_configs()
+
+def test_load_configs_missing_optional_field_defaults():
+    """선택적 필드(예: cache) 누락 시 기본값으로 성공하는지 테스트"""
+    with patch("config.config_loader.load_config") as mock_load:
+        # cache 섹션 누락 (AppConfig에서 cache는 default_factory 존재)
+        mock_load.side_effect = [
+            {
+                "web": {"host": "127.0.0.1", "port": 8000},
+                # "cache": ... missing
+            },
+            {},
+            {}
+        ]
+        
+        config = load_configs()
+        assert config.web.port == 8000
+        # cache가 없어도 기본값으로 생성되어야 함
+        assert config.cache.base_dir == ".cache"
+        assert config.cache.memory_cache_enabled is True
