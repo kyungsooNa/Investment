@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
+from pydantic import ValidationError
 from common.types import (
     ResCommonResponse, ErrorCode,
     ResPriceSummary, ResTopMarketCapApiItem, ResDailyChartApiItem,
@@ -763,6 +764,98 @@ async def test_get_current_price_api_failure(mock_quotations):
     assert "API 에러" in result_common.msg1
     assert result_common.data is None
     mock_quotations._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_parsing_error(mock_quotations):
+    """
+    get_current_price: API 응답은 성공했으나 데이터 파싱(Pydantic 검증 등)에 실패하는 경우
+    """
+    # 1. call_api 모킹: 필수 필드가 누락된 데이터 반환
+    # ResStockFullInfoApiOutput은 많은 필드를 요구하므로, 빈 dict나 일부만 있는 dict는 ValidationError를 유발함
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={
+            "output": {"invalid_field": "value"}  # 필수 필드 누락 -> ValidationError 유발
+        }
+    ))
+
+    # 2. 메서드 호출
+    result = await mock_quotations.get_current_price("005930")
+
+    # 3. 검증
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    assert "현재가 응답 데이터 파싱 실패" in result.msg1
+    assert result.data is None
+    mock_quotations._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_key_error(mock_quotations):
+    """
+    get_current_price: 응답 데이터에 'output' 키가 없는 경우 (KeyError 발생 시나리오)
+    """
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={"wrong_key": "value"}  # 'output' 키 없음 -> KeyError 유발
+    ))
+
+    result = await mock_quotations.get_current_price("005930")
+
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    assert "현재가 응답 데이터 파싱 실패" in result.msg1
+    mock_quotations._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_top_market_cap_stocks_validation_error(mock_quotations):
+    """get_top_market_cap_stocks_code: 항목 생성 중 ValidationError 발생 시 건너뛰기 테스트"""
+    # 1. 정상 데이터 1개, 에러 유발 데이터 1개
+    data = {
+        "output": [
+            {"mksc_shrn_iscd": "005930", "stck_avls": "100"}, # 정상
+            {"mksc_shrn_iscd": "000660", "stck_avls": "200"}  # 에러 유발용
+        ]
+    }
+    
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="OK", data=data
+    ))
+    
+    # ResTopMarketCapApiItem 생성자에서 ValidationError 발생 유도
+    with patch("brokers.korea_investment.korea_invest_quotations_api.ResTopMarketCapApiItem") as MockItem:
+        def side_effect(*args, **kwargs):
+            if kwargs.get('mksc_shrn_iscd') == "000660":
+                raise ValidationError.from_exception_data("Test", [])
+            return MagicMock(mksc_shrn_iscd="005930", stck_avls="100", data_rank="1")
+            
+        MockItem.side_effect = side_effect
+        
+        result = await mock_quotations.get_top_market_cap_stocks_code("0000", count=2)
+        
+        # 에러 난 항목은 건너뛰고 정상 항목만 반환되어야 함
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert len(result.data) == 1
+        assert result.data[0].mksc_shrn_iscd == "005930"
+        mock_quotations._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_get_top_rise_fall_stocks_validation_error(mock_quotations):
+    """get_top_rise_fall_stocks: 항목 파싱 중 ValidationError 발생 시 에러 응답 반환 테스트"""
+    data = {"output": [{"stck_shrn_iscd": "005930"}]}
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=data))
+    
+    with patch("brokers.korea_investment.korea_invest_quotations_api.ResFluctuation.from_dict") as mock_from_dict:
+        mock_from_dict.side_effect = ValidationError.from_exception_data("Test", [])
+        
+        result = await mock_quotations.get_top_rise_fall_stocks(rise=True)
+        
+        assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+        assert "등락률 응답 형식 오류" in result.msg1
+        mock_quotations._logger.error.assert_called()
 
 
 @pytest.mark.asyncio

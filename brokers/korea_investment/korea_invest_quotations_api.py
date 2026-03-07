@@ -95,8 +95,18 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning("현재가 조회 실패")
             return response
-        response_data_dict = response.data['output']
-        response.data['output'] = ResStockFullInfoApiOutput.from_dict(response_data_dict)
+
+        try:
+            response_data_dict = response.data['output']
+            response.data['output'] = ResStockFullInfoApiOutput.from_dict(response_data_dict)
+        except (KeyError, ValidationError, TypeError) as e:
+            error_msg = f"현재가 응답 데이터 파싱 실패: {stock_code}, 오류: {e}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,
+                msg1=error_msg,
+                data=None
+            )
         return response
 
     async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
@@ -315,7 +325,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
                 results.append(item)
 
-            except (ValueError, TypeError, KeyError) as e:
+            except (ValueError, TypeError, KeyError, ValidationError) as e:
                 self._logger.warning(f"시가총액 상위 종목 개별 항목 파싱 오류: {e}, 항목: {raw}")
                 continue
 
@@ -595,7 +605,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 msg1="종목 정보 조회 성공",
                 data=stocks
             )
-        except (TypeError, AttributeError) as e:
+        except (TypeError, AttributeError, ValidationError) as e:
             error_msg = f"등락률 응답 형식 오류: {e}, 응답: {response.data!r}"
             self._logger.error(error_msg)
             return ResCommonResponse(
@@ -636,7 +646,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 msg1="거래량 상위 종목 조회 성공",
                 data=stocks
             )
-        except (TypeError, AttributeError) as e:
+        except (TypeError, AttributeError, ValidationError) as e:
             error_msg = f"거래량 상위 응답 형식 오류: {e}, 응답: {response.data!r}"
             self._logger.error(error_msg)
             return ResCommonResponse(
