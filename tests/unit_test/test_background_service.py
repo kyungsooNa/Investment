@@ -5,7 +5,7 @@ BackgroundService 단위 테스트.
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock, AsyncMock
-from services.background_service import BackgroundService
+from services.background_service import BackgroundService, _ETF_PREFIXES
 from common.types import ResCommonResponse, ErrorCode
 
 
@@ -510,3 +510,62 @@ async def test_progress_updates_during_refresh(bg_service, mock_deps):
     assert p["total"] == 2
     assert p["collected"] == 2
     assert p["elapsed"] >= 0
+
+def test_load_all_stocks_filters_etf(bg_service, mock_deps):
+    """_load_all_stocks 메서드가 ETF/ETN 종목을 사전에 필터링하는지 검증"""
+    _, mapper, _, _, _ = mock_deps
+
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+        ("123456", "KODEX 200", "KOSPI"),
+        ("654321", "TIGER 200", "KOSPI"),
+    ])
+
+    stocks = bg_service._load_all_stocks()
+    
+    # 결과에서 코드와 이름 추출
+    codes = [s[0] for s in stocks]
+    names = [s[1] for s in stocks]
+    
+    # 일반 종목은 포함되어야 함
+    assert "005930" in codes
+    assert "000660" in codes
+    
+    # ETF 종목은 제외되어야 함
+    assert "123456" not in codes
+    assert "654321" not in codes
+    
+    # 필터링된 목록에 ETF 접두사가 포함된 종목이 없는지 재확인
+    for name in names:
+        assert not any(name.startswith(p) for p in _ETF_PREFIXES)
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):
+    """refresh_investor_ranking 실행 시 필터링된 종목에 대해서만 API를 호출하는지 검증"""
+    broker, mapper, _, _, _ = mock_deps
+
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+        ("123456", "KODEX 200", "KOSPI"),
+    ])
+    
+    # API 응답 Mock (성공 케이스)
+    broker.get_investor_trade_by_stock_daily.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={"frgn_ntby_qty": "100", "orgn_ntby_qty": "200"}
+    )
+    
+    # 메서드 실행
+    await bg_service.refresh_investor_ranking()
+    
+    # API 호출 횟수 검증 (ETF 제외된 2개 종목만 호출되어야 함)
+    assert broker.get_investor_trade_by_stock_daily.call_count == 2
+    
+    # 실제로 호출된 종목 코드 확인
+    called_codes = [c.args[0] for c in broker.get_investor_trade_by_stock_daily.call_args_list]
+    assert "005930" in called_codes
+    assert "000660" in called_codes
+    assert "123456" not in called_codes
