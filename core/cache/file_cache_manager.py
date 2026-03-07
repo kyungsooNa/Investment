@@ -67,6 +67,18 @@ class FileCacheManager:
                             if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
                                 raw_data["data"] = self._deserialize(raw_data["data"])
                             return cls.from_dict(raw_data)
+                    cls_fields = {f.name for f in fields(cls)}
+                    if not cls_fields.issubset(raw_data.keys()):
+                        continue
+                    # 클래스 필드가 dict 키의 50% 이상을 커버해야 매칭
+                    # (소수 필드 클래스가 대형 dict에 잘못 매칭되는 것을 방지)
+                    if len(cls_fields) / len(raw_data) < 0.5:
+                        continue
+                    if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
+                        # ✅ 내부 data도 재귀 복원
+                        raw_data["data"] = self._deserialize(raw_data["data"])
+                    return cls.from_dict(raw_data)
+
                 except Exception as e:
                     ...
             return {k: self._deserialize(v) for k, v in raw_data.items()}
