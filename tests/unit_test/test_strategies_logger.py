@@ -33,7 +33,7 @@ def test_strategies_init_logger(module_path, class_name, expected_logger_name):
     # 3. 전략별 생성자 인자 준비
     kwargs = {}
     if class_name == "OneilSqueezeBreakoutStrategy":
-        kwargs = {'trading_service': ts, 'universe_service': universe, 'time_manager': tm}
+        kwargs = {'stock_query_service': sqs, 'universe_service': universe, 'time_manager': tm}
     elif class_name == "OneilPocketPivotStrategy":
         kwargs = {'stock_query_service': sqs, 'universe_service': universe, 'time_manager': tm}
     elif "Traditional" in class_name:

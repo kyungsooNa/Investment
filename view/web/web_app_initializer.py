@@ -181,7 +181,7 @@ class WebAppContext:
 
         # 오닐 스퀴즈 돌파 전략 등록
         osb_strategy = OneilSqueezeBreakoutStrategy(
-            trading_service=self.trading_service,
+            stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('OneilSqueezeBreakout'),
