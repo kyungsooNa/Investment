@@ -301,6 +301,13 @@ class BackgroundService:
                 if not all_cache_hit:
                     await asyncio.sleep(self.CHUNK_SLEEP_SEC)
 
+            # 2-1. 프로그램 데이터의 acml_tr_pbmn으로 투자자 결과 보정
+            #      (투자자 API output1에 acml_tr_pbmn이 없거나 "0"일 수 있음)
+            prog_tr_map = {r["stck_shrn_iscd"]: r["acml_tr_pbmn"] for r in program_results}
+            for r in results:
+                if int(r.get("acml_tr_pbmn", "0") or "0") == 0:
+                    r["acml_tr_pbmn"] = prog_tr_map.get(r["stck_shrn_iscd"], "0")
+
             # 3. 투자자별 정렬 → 순매수대금 기준 상위 30 / 하위 30
             self._foreign_net_buy_cache, self._foreign_net_sell_cache = \
                 self._build_ranking(results, "frgn_ntby_tr_pbmn")

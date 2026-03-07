@@ -8,8 +8,18 @@
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 
 4. [Ranking] 
+<<<<<<< HEAD
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.### 1. 환경 (Environment)
+=======
+  * 6. 랭킹에서 순매수/순매도를 우선 분리해서, 외인,기관,개인,프로그램 을 multi로 선택하면 선택한 투자자들의 수급을 합쳐서 랭킹을 다시 매길 수 있도록 하는 multi filter 기능 추가
+6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
+
+7. [Cache] 오래된 cache(가장 최근에 장연날만 유효하니까 휴장일을 고려해서 넉넉하게 7일만 유지하자) 는 지우도록 하는 기능 추가 core\cache\.cache
+8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.
+
+### 1. 환경 (Environment)
+>>>>>>> d71aacd (거래대금 대비 순매수/순매도량의 비율 표기)
 
 ### 2. 성능 (Performance)
 * **[개선 필요]** 시장이 닫혔으면 스레드를 통해 전체 종목을 백그라운드로 업데이트하여 RAM에 올려두게 하기.

@@ -587,7 +587,7 @@ async function loadRanking(category) {
         // 모든 카테고리 공통: 순위|종목명|현재가|등락률|거래대금|거래량
         const isSell = category.endsWith('_sell');
         const headerRow = (isInvestor || isProgram)
-            ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>${isSell ? '순매도대금' : '순매수대금'}</th><th>${isSell ? '순매도량' : '순매수량'}</th>`
+            ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>${isSell ? '순매도대금' : '순매수대금'}</th><th>${isSell ? '순매도량' : '순매수량'}</th><th>거래대금비(거래대금)</th>`
             : isTradingValue
                 ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th>`
                 : `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래량</th>`;
@@ -602,14 +602,16 @@ async function loadRanking(category) {
             const rate = parseFloat(item.prdy_ctrt || 0);
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
             let extraCols;
-            if (isInvestor) {
-                const pbmnVal = formatTradingValue(item[pbmnField[category]], true);
+            if (isInvestor || isProgram) {
+                const isMil = isInvestor;
+                const pbmnVal = formatTradingValue(item[pbmnField[category]], isMil);
                 const qtyVal = parseInt(item[qtyField[category]] || 0).toLocaleString();
-                extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td>`;
-            } else if (isProgram) {
-                const pbmnVal = formatTradingValue(item[pbmnField[category]]);
-                const qtyVal = parseInt(item[qtyField[category]] || 0).toLocaleString();
-                extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td>`;
+                let rawNtby = parseInt(item[pbmnField[category]] || 0);
+                if (isMil) rawNtby *= 1000000;
+                const acmlTr = parseInt(item.acml_tr_pbmn || 0);
+                const ratio = acmlTr ? ((rawNtby / acmlTr) * 100).toFixed(1) : '-';
+                const acmlTrFmt = formatTradingValue(item.acml_tr_pbmn);
+                extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td><td>${ratio}% (${acmlTrFmt})</td>`;
             } else if (isTradingValue) {
                 extraCols = `<td>${formatTradingValue(item.acml_tr_pbmn)}</td>`;
             } else {

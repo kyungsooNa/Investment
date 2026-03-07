@@ -696,10 +696,13 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 )
 
             # output1(현재가 정보) + output2[0](최신 일별 투자자 데이터) 병합
+            # output2의 빈 값("")이 output1의 유효한 값을 덮어쓰지 않도록 처리
             merged = {}
             if isinstance(output1, dict):
                 merged.update(output1)
-            merged.update(output2[0])
+            for k, v in output2[0].items():
+                if v or k not in merged:
+                    merged[k] = v
 
             return ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value,
