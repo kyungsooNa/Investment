@@ -13,11 +13,7 @@
   TRID: FHPPG04650201
   * 4. 기존 외인/기관/프로그램/개인 순매수/순매도 컬럼에서 방금 추가한 당일 누적 거래대금 대비 외인/기관/프로그램/개인 의 순매수대금/순매도대금의 비율이 어느정도인지도 표기하는 컬럼 추가 (거래대금 비율 = 외인,기관,프로그램,개인 순매수,순매도 대금/전체 거래대금).
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-
-
 8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.
-
-
 ### 1. 환경 (Environment)
 
 ### 2. 성능 (Performance)
