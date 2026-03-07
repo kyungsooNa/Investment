@@ -6,38 +6,39 @@ from common.types import ResCommonResponse, ErrorCode
 
 @pytest.fixture
 def mock_components():
-    ts = MagicMock()
-    ts.get_recent_daily_ohlcv = AsyncMock()
-    ts.get_financial_ratio = AsyncMock()
-    ts.get_top_trading_value_stocks = AsyncMock()
-    ts.get_top_rise_fall_stocks = AsyncMock()
-    ts.get_top_volume_stocks = AsyncMock()
+    # ts = MagicMock() # Removed
     
     sqs = MagicMock()
+    sqs.get_recent_daily_ohlcv = AsyncMock()
+    sqs.get_financial_ratio = AsyncMock()
+    sqs.get_top_trading_value_stocks = AsyncMock()
+    sqs.get_top_rise_fall_stocks = AsyncMock()
+    sqs.get_top_volume_stocks = AsyncMock()
+    
     indicator = MagicMock()
     mapper = MagicMock()
     tm = MagicMock()
     logger = MagicMock()
     
-    return ts, sqs, indicator, mapper, tm, logger
+    return None, sqs, indicator, mapper, tm, logger
 
 @pytest.fixture
 def service(mock_components):
-    ts, sqs, indicator, mapper, tm, logger = mock_components
+    _, sqs, indicator, mapper, tm, logger = mock_components
     config = OneilUniverseConfig()
     # 테스트 편의를 위해 설정값 일부 조정 가능
-    return OneilUniverseService(ts, sqs, indicator, mapper, tm, config=config, logger=logger)
+    return OneilUniverseService(sqs, indicator, mapper, tm, config=config, logger=logger)
 
 @pytest.mark.asyncio
 async def test_check_etf_ma_rising_logs(service, mock_components):
     """_check_etf_ma_rising 메서드의 마켓 타이밍 체크 로그 검증"""
-    ts, _, _, _, _, logger = mock_components
+    _, sqs, _, _, _, logger = mock_components
     
     # Mock OHLCV data: 가격이 상승하여 MA가 상승하는 시나리오
     # MA Period(20) + Rising Days(3) + Buffer
     closes = [100 + i for i in range(30)] 
     ohlcv = [{"close": c} for c in closes]
-    ts.get_recent_daily_ohlcv.return_value = ohlcv
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     result = await service._check_etf_ma_rising("TEST_ETF")
     
@@ -89,7 +90,7 @@ def test_compute_rs_scores_logs(service, mock_components):
 @pytest.mark.asyncio
 async def test_compute_profit_growth_scores_logs(service, mock_components):
     """_compute_profit_growth_scores 메서드의 로그 검증"""
-    ts, _, _, _, _, logger = mock_components
+    _, sqs, _, _, _, logger = mock_components
     
     items = [
         OSBWatchlistItem(code="C1", name="N1", market="KOSPI", high_20d=100, ma_20d=90, ma_50d=80, avg_vol_20d=1000, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=120, avg_trading_value_5d=100)
@@ -97,7 +98,7 @@ async def test_compute_profit_growth_scores_logs(service, mock_components):
     
     # Mock: 영업이익 증가율 30% (기준 25% 초과)
     mock_resp = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="", data=[{"op_profit_growth": "30.0"}])
-    ts.get_financial_ratio.return_value = mock_resp
+    sqs.get_financial_ratio.return_value = mock_resp
     
     await service._compute_profit_growth_scores(items)
     

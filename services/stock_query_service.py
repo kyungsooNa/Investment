@@ -35,6 +35,22 @@ class StockQueryService:
         """복수종목 현재가 조회 (최대 30종목, TradingService 래퍼)."""
         return await self.trading_service.get_multi_price(stock_codes)
 
+    async def get_top_trading_value_stocks(self) -> ResCommonResponse:
+        """거래대금 상위 종목 조회 (TradingService 래퍼)."""
+        return await self.trading_service.get_top_trading_value_stocks()
+
+    async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
+        """상승/하락 상위 종목 조회 (TradingService 래퍼)."""
+        return await self.trading_service.get_top_rise_fall_stocks(rise)
+
+    async def get_top_volume_stocks(self) -> ResCommonResponse:
+        """거래량 상위 종목 조회 (TradingService 래퍼)."""
+        return await self.trading_service.get_top_volume_stocks()
+
+    async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
+        """재무비율 조회 (TradingService 래퍼)."""
+        return await self.trading_service.get_financial_ratio(stock_code)
+
     async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")

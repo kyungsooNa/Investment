@@ -9,7 +9,6 @@ from dataclasses import asdict
 from typing import Dict, List, Optional
 
 from common.types import ErrorCode
-from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
 from market_data.stock_code_mapper import StockCodeMapper
@@ -35,7 +34,6 @@ class OneilUniverseService:
 
     def __init__(
         self,
-        trading_service: TradingService,
         stock_query_service: StockQueryService,
         indicator_service: IndicatorService,
         stock_code_mapper: StockCodeMapper,
@@ -43,7 +41,6 @@ class OneilUniverseService:
         config: Optional[OneilUniverseConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
-        self._ts = trading_service
         self._sqs = stock_query_service
         self._indicator = indicator_service
         self._mapper = stock_code_mapper
@@ -150,9 +147,9 @@ class OneilUniverseService:
         """Pool B: 실시간 랭킹 기반 종목 발굴."""
         # 3가지 랭킹 병합
         trading_val_resp, rise_resp, volume_resp = await asyncio.gather(
-            self._ts.get_top_trading_value_stocks(),
-            self._ts.get_top_rise_fall_stocks(rise=True),
-            self._ts.get_top_volume_stocks(),
+            self._sqs.get_top_trading_value_stocks(),
+            self._sqs.get_top_rise_fall_stocks(rise=True),
+            self._sqs.get_top_volume_stocks(),
             return_exceptions=True,
         )
 
@@ -211,7 +208,9 @@ class OneilUniverseService:
 
     async def _analyze_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
         """개별 종목 분석 (OHLCV, BB, RS 등)."""
-        ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=90)
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=90)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
         if not ohlcv:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "no_ohlcv"})
             return None
@@ -248,7 +247,7 @@ class OneilUniverseService:
         if logger: logger.debug({"event": "pass_trend", "code": code, "reason": "uptrend_and_volume_ok"})
 
         # 필터: 52주 고가 근접
-        full_resp = await self._ts.get_current_stock_price(code)
+        full_resp = await self._sqs.get_current_price(code)
         if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "current_price_api_fail"})
             return None
@@ -360,7 +359,7 @@ class OneilUniverseService:
         passed_first = []
         processed_count = 0
         for chunk in _chunked(all_stocks, self._cfg.api_chunk_size):
-            tasks = [self._ts.get_current_stock_price(c) for c, _, _ in chunk]
+            tasks = [self._sqs.get_current_price(c) for c, _, _ in chunk]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for (code, name, market), resp in zip(chunk, results):
                 if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
@@ -474,7 +473,9 @@ class OneilUniverseService:
     async def _check_etf_ma_rising(self, etf_code: str) -> bool:
         period = self._cfg.market_ma_period
         days = self._cfg.market_ma_rising_days
-        ohlcv = await self._ts.get_recent_daily_ohlcv(etf_code, limit=period + days + 5)
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(etf_code, limit=period + days + 5)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
         if not ohlcv or len(ohlcv) < period + days:
             return False
         
@@ -532,7 +533,7 @@ class OneilUniverseService:
         if not items: return
         self._logger.debug({"event": "compute_profit_growth_scores_started", "item_count": len(items)})
         for chunk in _chunked(items, self._cfg.api_chunk_size):
-            tasks = [self._ts.get_financial_ratio(i.code) for i in chunk]
+            tasks = [self._sqs.get_financial_ratio(i.code) for i in chunk]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for item, resp in zip(chunk, results):
                 growth = 0.0
