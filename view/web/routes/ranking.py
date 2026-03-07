@@ -22,7 +22,8 @@ async def get_ranking(category: str):
     """랭킹 조회 (rise/fall/volume/trading_value/foreign_buy/foreign_sell/inst_buy/inst_sell/prsn_buy/prsn_sell)."""
     ctx = _get_ctx()
     valid = ("rise", "fall", "volume", "trading_value",
-             "foreign_buy", "foreign_sell", "inst_buy", "inst_sell", "prsn_buy", "prsn_sell")
+             "foreign_buy", "foreign_sell", "inst_buy", "inst_sell", "prsn_buy", "prsn_sell",
+             "program_buy", "program_sell")
     if category not in valid:
         raise HTTPException(status_code=400, detail=f"category는 {', '.join(valid)} 중 하나여야 합니다.")
 

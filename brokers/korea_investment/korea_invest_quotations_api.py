@@ -715,6 +715,57 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=None
             )
 
+    async def get_program_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
+        """
+        종목별 프로그램매매추이(일별) 조회
+        실전 전용 (모의투자 미지원)
+        """
+        if date is None:
+            date = datetime.now().strftime("%Y%m%d")
+
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.PROGRAM_TRADE_BY_STOCK_DAILY)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.program_trade_by_stock_daily(stock_code=stock_code, date=date)
+
+        response: ResCommonResponse = await self.call_api(
+            "GET", EndpointKey.PROGRAM_TRADE_BY_STOCK_DAILY, params=params, retry_count=1
+        )
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            return response
+
+        try:
+            if not isinstance(response.data, dict):
+                raise TypeError(f"Expected dict, got {type(response.data)}")
+
+            output = response.data.get("output", [])
+
+            if not isinstance(output, list) or not output:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="데이터 없음",
+                    data=None
+                )
+
+            # output[0] = 최신 일별 프로그램매매 데이터
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="프로그램매매추이 조회 성공",
+                data=output[0]
+            )
+        except (TypeError, AttributeError) as e:
+            error_msg = f"프로그램매매추이 응답 형식 오류: {e}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,
+                msg1=error_msg,
+                data=None
+            )
+
     # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
     #     """
     #     종목 뉴스 조회

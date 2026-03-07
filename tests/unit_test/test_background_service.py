@@ -9,9 +9,33 @@ from services.background_service import BackgroundService, _ETF_PREFIXES
 from common.types import ResCommonResponse, ErrorCode
 
 
+def _make_program_response(ntby_tr_pbmn=0, ntby_qty=0, stck_clpr="10000", prdy_ctrt="1.0"):
+    """프로그램매매추이 응답 생성 헬퍼."""
+    return ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={
+            "stck_clpr": stck_clpr,
+            "prdy_ctrt": prdy_ctrt,
+            "prdy_vrss": "100",
+            "prdy_vrss_sign": "2",
+            "acml_vol": "50000",
+            "acml_tr_pbmn": "100000000",
+            "whol_smtn_ntby_tr_pbmn": str(ntby_tr_pbmn),
+            "whol_smtn_ntby_qty": str(ntby_qty),
+            "whol_smtn_seln_tr_pbmn": "0",
+            "whol_smtn_shnu_tr_pbmn": "0",
+        }
+    )
+
+
 @pytest.fixture
 def mock_deps():
     broker = MagicMock()
+    # 프로그램매매추이 기본 mock (투자자 테스트에 영향 없도록 빈 응답)
+    broker.get_program_trade_by_stock_daily = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="1", msg1="", data=None)
+    )
     mapper = MagicMock()
     env = MagicMock()
     env.is_paper_trading = False  # 기본: 실전투자 모드
@@ -560,15 +584,15 @@ async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):
     ])
     
     # API 응답 Mock (성공 케이스)
-    broker.get_investor_trade_by_stock_daily.return_value = ResCommonResponse(
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="OK",
         data={"frgn_ntby_qty": "100", "orgn_ntby_qty": "200"}
-    )
-    
+    ))
+
     # 메서드 실행
     await bg_service.refresh_investor_ranking()
-    
+
     # API 호출 횟수 검증 (ETF 제외된 2개 종목만 호출되어야 함)
     assert broker.get_investor_trade_by_stock_daily.call_count == 2
     
@@ -577,3 +601,56 @@ async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):
     assert "005930" in called_codes
     assert "000660" in called_codes
     assert "123456" not in called_codes
+
+
+# ── 프로그램 순매수/순매도 랭킹 ──────────────────────────────
+
+def test_get_program_net_buy_ranking_empty_cache(bg_service):
+    """프로그램 캐시가 비어있으면 빈 data 반환."""
+    resp = bg_service.get_program_net_buy_ranking()
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert resp.data == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_program_ranking_basic(bg_service, mock_deps):
+    """프로그램 순매수/순매도 랭킹 정렬 검증."""
+    broker, mapper, _, _, _ = mock_deps
+
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+        ("035420", "NAVER", "KOSDAQ"),
+    ])
+
+    broker.get_investor_trade_by_stock_daily = AsyncMock(
+        return_value=_make_investor_response(100, 50, -30)
+    )
+
+    # 프로그램 순매수대금: 삼성(500만) > NAVER(300만) > SK(-200만)
+    async def mock_program(code, date=None):
+        data = {
+            "005930": _make_program_response(ntby_tr_pbmn=5000000, ntby_qty=500),
+            "000660": _make_program_response(ntby_tr_pbmn=-2000000, ntby_qty=-200),
+            "035420": _make_program_response(ntby_tr_pbmn=3000000, ntby_qty=300),
+        }
+        return data.get(code, ResCommonResponse(rt_cd="1", msg1="Error", data=None))
+
+    broker.get_program_trade_by_stock_daily = AsyncMock(side_effect=mock_program)
+
+    await bg_service.refresh_investor_ranking()
+
+    # 프로그램 순매수 상위: 삼성(500만) > NAVER(300만) > SK(-200만)
+    buy_resp = bg_service.get_program_net_buy_ranking()
+    assert buy_resp.rt_cd == ErrorCode.SUCCESS.value
+    assert len(buy_resp.data) == 3
+    assert buy_resp.data[0]["hts_kor_isnm"] == "삼성전자"
+    assert buy_resp.data[0]["whol_smtn_ntby_tr_pbmn"] == "5000000"
+    assert buy_resp.data[0]["data_rank"] == "1"
+    assert buy_resp.data[1]["hts_kor_isnm"] == "NAVER"
+
+    # 프로그램 순매도 상위: SK(-200만)
+    sell_resp = bg_service.get_program_net_sell_ranking()
+    assert sell_resp.rt_cd == ErrorCode.SUCCESS.value
+    assert sell_resp.data[0]["hts_kor_isnm"] == "SK하이닉스"
+    assert sell_resp.data[0]["data_rank"] == "1"

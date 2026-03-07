@@ -65,6 +65,9 @@ class BackgroundService:
         self._prsn_net_buy_cache: List[Dict] = []
         self._prsn_net_sell_cache: List[Dict] = []
         self._trading_value_cache: List[Dict] = []  # 거래대금 랭킹 (투자자 데이터 기반)
+        # 프로그램 매매 랭킹 캐시
+        self._program_net_buy_cache: List[Dict] = []
+        self._program_net_sell_cache: List[Dict] = []
         self._investor_ranking_updated_at: Optional[datetime] = None
         self._is_refreshing: bool = False
 
@@ -185,18 +188,28 @@ class BackgroundService:
             self._progress["total"] = total
             self._logger.info(f"투자자 랭킹: 전체 {total}개 종목 순회 시작")
 
-            # 2. 종목별 투자자 매매동향 조회
+            # 2. 종목별 투자자 매매동향 + 프로그램매매추이 조회
             results: List[Dict] = []
+            program_results: List[Dict] = []
             processed = 0
 
             for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
-                tasks = [
+                # 투자자 매매동향 + 프로그램매매추이 동시 호출
+                investor_tasks = [
                     self._broker.get_investor_trade_by_stock_daily(code, target_date)
                     for code, _, _ in chunk
                 ]
-                responses = await asyncio.gather(*tasks, return_exceptions=True)
+                program_tasks = [
+                    self._broker.get_program_trade_by_stock_daily(code, target_date)
+                    for code, _, _ in chunk
+                ]
+                all_responses = await asyncio.gather(
+                    *investor_tasks, *program_tasks, return_exceptions=True
+                )
+                investor_responses = all_responses[:len(chunk)]
+                program_responses = all_responses[len(chunk):]
 
-                for (code, name, market), resp in zip(chunk, responses):
+                for (code, name, market), resp in zip(chunk, investor_responses):
                     if isinstance(resp, Exception):
                         continue
                     if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
@@ -236,6 +249,37 @@ class BackgroundService:
                         "prsn_ntby_tr_pbmn": str(prsn_pbmn),
                     })
 
+                # 프로그램매매추이 수집
+                for (code, name, market), resp in zip(chunk, program_responses):
+                    if isinstance(resp, Exception):
+                        continue
+                    if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                        continue
+                    data = resp.data
+                    if not data:
+                        continue
+                    if hasattr(data, 'to_dict') and callable(data.to_dict):
+                        data = data.to_dict()
+                    if not isinstance(data, dict):
+                        continue
+
+                    ntby_tr_pbmn = int(data.get("whol_smtn_ntby_tr_pbmn", "0") or "0")
+
+                    program_results.append({
+                        "stck_shrn_iscd": code,
+                        "hts_kor_isnm": name,
+                        "stck_prpr": data.get("stck_clpr", "0"),
+                        "prdy_ctrt": data.get("prdy_ctrt", "0"),
+                        "prdy_vrss": data.get("prdy_vrss", "0"),
+                        "prdy_vrss_sign": data.get("prdy_vrss_sign", ""),
+                        "acml_vol": data.get("acml_vol", "0"),
+                        "acml_tr_pbmn": data.get("acml_tr_pbmn", "0") or "0",
+                        "whol_smtn_ntby_tr_pbmn": str(ntby_tr_pbmn),
+                        "whol_smtn_ntby_qty": data.get("whol_smtn_ntby_qty", "0") or "0",
+                        "whol_smtn_seln_tr_pbmn": data.get("whol_smtn_seln_tr_pbmn", "0") or "0",
+                        "whol_smtn_shnu_tr_pbmn": data.get("whol_smtn_shnu_tr_pbmn", "0") or "0",
+                    })
+
                 processed += len(chunk)
                 elapsed = time.time() - start_time
                 self._progress.update({
@@ -246,13 +290,13 @@ class BackgroundService:
                 if processed % 50 == 0 or processed >= total:
                     self._logger.info(
                         f"투자자 랭킹 진행: {processed}/{total} ({processed/total*100:.1f}%) "
-                        f"| 수집: {len(results)} | 소요: {elapsed:.1f}s"
+                        f"| 수집: {len(results)} | 프로그램: {len(program_results)} | 소요: {elapsed:.1f}s"
                     )
 
                 # 전체 캐시 HIT면 sleep 불필요, 실제 API 호출이 있었으면 rate limit sleep
                 all_cache_hit = all(
                     getattr(r, '_cache_hit', False)
-                    for r in responses if not isinstance(r, Exception)
+                    for r in all_responses if not isinstance(r, Exception)
                 )
                 if not all_cache_hit:
                     await asyncio.sleep(self.CHUNK_SLEEP_SEC)
@@ -267,6 +311,10 @@ class BackgroundService:
 
             # 거래대금 랭킹도 함께 구축 (acml_tr_pbmn 기준 상위 30)
             self._trading_value_cache = self._build_trading_value_ranking(results, top_n=30)
+
+            # 4. 프로그램 순매수대금 정렬 → 상위 30 / 하위 30
+            self._program_net_buy_cache, self._program_net_sell_cache = \
+                self._build_ranking(program_results, "whol_smtn_ntby_tr_pbmn")
 
             self._investor_ranking_updated_at = datetime.now()
 
@@ -350,6 +398,16 @@ class BackgroundService:
     def get_prsn_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
         """개인 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
         return self._get_ranking_from_cache(self._prsn_net_sell_cache, "개인 순매도", limit)
+
+    # ── 프로그램 ──
+
+    def get_program_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
+        """프로그램 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
+        return self._get_ranking_from_cache(self._program_net_buy_cache, "프로그램 순매수", limit)
+
+    def get_program_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
+        """프로그램 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
+        return self._get_ranking_from_cache(self._program_net_sell_cache, "프로그램 순매도", limit)
 
     # ── 내부 헬퍼 ─────────────────────────────────────────────
 

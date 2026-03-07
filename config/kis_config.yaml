@@ -9,6 +9,7 @@ paths:
   ranking_volume: /uapi/domestic-stock/v1/quotations/volume-rank
   ranking_foreign: /uapi/domestic-stock/v1/quotations/inquire-foreign
   investor_trade_by_stock_daily: /uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily
+  program_trade_by_stock_daily: /uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily
   item_news: /uapi/domestic-stock/v1/quotations/news-title
   etf_info: /uapi/etfetn/v1/quotations/inquire-price
   multi_price: /uapi/domestic-stock/v1/quotations/intstock-multprice

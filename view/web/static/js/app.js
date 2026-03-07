@@ -542,6 +542,7 @@ async function loadRanking(category) {
     div.innerHTML = "로딩 중...";
 
     const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(category);
+    const isProgram = ['program_buy', 'program_sell'].includes(category);
 
     try {
         const res = await fetch(`/api/ranking/${category}`);
@@ -574,16 +575,18 @@ async function loadRanking(category) {
             'foreign_buy': 'frgn_ntby_tr_pbmn', 'foreign_sell': 'frgn_ntby_tr_pbmn',
             'inst_buy': 'orgn_ntby_tr_pbmn', 'inst_sell': 'orgn_ntby_tr_pbmn',
             'prsn_buy': 'prsn_ntby_tr_pbmn', 'prsn_sell': 'prsn_ntby_tr_pbmn',
+            'program_buy': 'whol_smtn_ntby_tr_pbmn', 'program_sell': 'whol_smtn_ntby_tr_pbmn',
         };
         const qtyField = {
             'foreign_buy': 'frgn_ntby_qty', 'foreign_sell': 'frgn_ntby_qty',
             'inst_buy': 'orgn_ntby_qty', 'inst_sell': 'orgn_ntby_qty',
             'prsn_buy': 'prsn_ntby_qty', 'prsn_sell': 'prsn_ntby_qty',
+            'program_buy': 'whol_smtn_ntby_qty', 'program_sell': 'whol_smtn_ntby_qty',
         };
 
         // 모든 카테고리 공통: 순위|종목명|현재가|등락률|거래대금|거래량
-        const headerRow = isInvestor
-            ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th><th>거래량</th>`
+        const headerRow = (isInvestor || isProgram)
+            ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>순매수대금</th><th>순매수량</th>`
             : isTradingValue
                 ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th>`
                 : `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래량</th>`;
@@ -598,7 +601,7 @@ async function loadRanking(category) {
             const rate = parseFloat(item.prdy_ctrt || 0);
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
             let extraCols;
-            if (isInvestor) {
+            if (isInvestor || isProgram) {
                 const pbmnVal = formatTradingValue(item[pbmnField[category]], true);
                 const qtyVal = parseInt(item[qtyField[category]] || 0).toLocaleString();
                 extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td>`;

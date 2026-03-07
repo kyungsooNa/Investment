@@ -527,6 +527,12 @@ class StockQueryService:
             category_map["prsn_sell"] = (
                 "개인 순매도", self.background_service.get_prsn_net_sell_ranking, None, True
             )
+            category_map["program_buy"] = (
+                "프로그램 순매수", self.background_service.get_program_net_buy_ranking, None, True
+            )
+            category_map["program_sell"] = (
+                "프로그램 순매도", self.background_service.get_program_net_sell_ranking, None, True
+            )
 
         if category not in category_map:
             self.logger.error(f"지원하지 않는 카테고리: {category}")
