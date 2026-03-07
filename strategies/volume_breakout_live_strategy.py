@@ -6,7 +6,6 @@ from typing import List, Optional
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
-from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from strategies.volume_breakout_strategy import VolumeBreakoutConfig
 from core.time_manager import TimeManager
@@ -30,13 +29,11 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
 
     def __init__(
         self,
-        trading_service: TradingService,
         stock_query_service: StockQueryService,
         time_manager: TimeManager,
         config: Optional[VolumeBreakoutConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
-        self._ts = trading_service
         self._sqs = stock_query_service
         self._tm = time_manager
         self._cfg = config or VolumeBreakoutConfig()
@@ -54,7 +51,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
 
         # 1) 거래대금 상위 종목 조회
-        resp = await self._ts.get_top_trading_value_stocks()
+        resp = await self._sqs.get_top_trading_value_stocks()
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning({
                 "event": "scan_failed",

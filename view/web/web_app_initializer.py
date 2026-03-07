@@ -132,7 +132,6 @@ class WebAppContext:
 
         # 거래량 돌파 전략 등록
         vb_strategy = VolumeBreakoutLiveStrategy(
-            trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('VolumeBreakoutLive'),
@@ -148,7 +147,6 @@ class WebAppContext:
 
         # 프로그램 매수 추종 전략 등록
         pbf_strategy = ProgramBuyFollowStrategy(
-            trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('ProgramBuyFollow'),

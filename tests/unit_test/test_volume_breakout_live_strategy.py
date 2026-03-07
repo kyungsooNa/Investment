@@ -9,10 +9,9 @@ from strategies.volume_breakout_strategy import VolumeBreakoutConfig
 class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     def _make_strategy(self, trigger_pct=10.0, trailing_stop_pct=8.0, stop_loss_pct=8.0):
-        ts = MagicMock()
-        ts.get_top_trading_value_stocks = AsyncMock()
         sqs = MagicMock()
         sqs.handle_get_current_stock_price = AsyncMock()
+        sqs.get_top_trading_value_stocks = AsyncMock()
         tm = MagicMock()
         logger = MagicMock()
 
@@ -22,25 +21,24 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
             stop_loss_pct=stop_loss_pct,
         )
         strategy = VolumeBreakoutLiveStrategy(
-            trading_service=ts,
             stock_query_service=sqs,
             time_manager=tm,
             config=config,
             logger=logger,
         )
-        return strategy, ts, sqs, tm
+        return strategy, sqs, tm
 
     def test_name(self):
         """전략 이름이 '거래량돌파'인지 테스트."""
-        strategy, _, _, _ = self._make_strategy()
+        strategy, _, _ = self._make_strategy()
         self.assertEqual(strategy.name, "거래량돌파")
 
     async def test_scan_returns_buy_signals_when_trigger_met(self):
         """시가 대비 trigger_pct 이상 상승 종목에 BUY 시그널 생성 테스트."""
-        strategy, ts, sqs, _ = self._make_strategy(trigger_pct=10.0)
+        strategy, sqs, _ = self._make_strategy(trigger_pct=10.0)
 
         # 거래대금 상위 종목
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="OK",
             data=[
@@ -72,8 +70,8 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_returns_empty_on_api_failure(self):
         """거래대금 API 실패 시 빈 리스트 반환 테스트."""
-        strategy, ts, _, _ = self._make_strategy()
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.API_ERROR.value, msg1="Error", data=None
         )
 
@@ -82,7 +80,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_trailing_stop(self):
         """고가 대비 설정 비율(-8%) 하락 시 익절(트레일링) SELL 신호 테스트."""
-        strategy, _, sqs, tm = self._make_strategy(trailing_stop_pct=8.0)
+        strategy, sqs, tm = self._make_strategy(trailing_stop_pct=8.0)
 
         # 장 마감까지 충분한 시간 남음
         import pytz
@@ -108,7 +106,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_stop_loss(self):
         """매수가 대비 설정 비율(-8%) 이하 시 손절 SELL 신호 테스트."""
-        strategy, _, sqs, tm = self._make_strategy(stop_loss_pct=-8.0)
+        strategy, sqs, tm = self._make_strategy(stop_loss_pct=-8.0)
         # 장 마감까지 충분한 시간 남음
         import pytz
         from datetime import datetime
@@ -132,7 +130,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_time_exit(self):
         """장 마감 15분 전 시간청산 SELL 시그널 테스트."""
-        strategy, _, sqs, tm = self._make_strategy()
+        strategy, sqs, tm = self._make_strategy()
 
         import pytz
         from datetime import datetime
@@ -156,7 +154,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_skips_holding_with_no_code(self):
         """check_exits: 코드 없는 보유 종목은 건너뛰는지 테스트."""
-        strategy, _, sqs, _ = self._make_strategy()
+        strategy, sqs, _ = self._make_strategy()
         holdings = [{"name": "코드없는종목", "buy_price": 10000}]
         signals = await strategy.check_exits(holdings)
         self.assertEqual(len(signals), 0)
@@ -164,7 +162,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_skips_on_price_api_failure(self):
         """check_exits: 현재가 조회 실패 시 해당 보유 종목을 건너뛰는지 테스트."""
-        strategy, _, sqs, _ = self._make_strategy()
+        strategy, sqs, _ = self._make_strategy()
         sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.API_ERROR.value, msg1="Error"
         )
@@ -175,7 +173,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_no_signal_when_conditions_not_met(self):
         """check_exits: 어떤 청산 조건도 충족하지 않으면 신호 없음 (HOLD)."""
-        strategy, _, sqs, tm = self._make_strategy(trailing_stop_pct=8.0, stop_loss_pct=-8.0)
+        strategy, sqs, tm = self._make_strategy(trailing_stop_pct=8.0, stop_loss_pct=-8.0)
         # 장 마감까지 충분한 시간 남음
         import pytz
         from datetime import datetime
@@ -203,7 +201,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_handles_exception_in_loop(self):
         """check_exits: 루프 내에서 예외 발생 시에도 다음 보유 종목을 처리하는지 테스트."""
-        strategy, _, sqs, _ = self._make_strategy()
+        strategy, sqs, _ = self._make_strategy()
         async def mock_price(code):
             if code == "000001":
                 raise ValueError("Test Exception")

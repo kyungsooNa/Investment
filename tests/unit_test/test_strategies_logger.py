@@ -38,8 +38,10 @@ def test_strategies_init_logger(module_path, class_name, expected_logger_name):
         kwargs = {'stock_query_service': sqs, 'universe_service': universe, 'time_manager': tm}
     elif "Traditional" in class_name:
         kwargs = {'stock_query_service': sqs, 'stock_code_mapper': mapper, 'time_manager': tm}
-    elif "Program" in class_name or "VolumeBreakoutLive" in class_name:
-        kwargs = {'trading_service': ts, 'stock_query_service': sqs, 'time_manager': tm}
+    elif "VolumeBreakoutLive" in class_name:
+        kwargs = {'stock_query_service': sqs, 'time_manager': tm}
+    elif "Program" in class_name:
+        kwargs = {'stock_query_service': sqs, 'time_manager': tm}
     elif "GapUp" in class_name:
         kwargs = {'broker': broker}
         

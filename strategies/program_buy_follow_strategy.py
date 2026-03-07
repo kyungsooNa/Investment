@@ -7,7 +7,6 @@ from typing import List, Optional
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode, ResStockFullInfoApiOutput
-from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
 from strategies.base_strategy_config import BaseStrategyConfig
@@ -39,13 +38,11 @@ class ProgramBuyFollowStrategy(LiveStrategy):
 
     def __init__(
         self,
-        trading_service: TradingService,
         stock_query_service: StockQueryService,
         time_manager: TimeManager,
         config: Optional[ProgramBuyFollowConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
-        self._ts = trading_service
         self._sqs = stock_query_service
         self._tm = time_manager
         self._cfg = config or ProgramBuyFollowConfig()
@@ -63,7 +60,7 @@ class ProgramBuyFollowStrategy(LiveStrategy):
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
 
         # 1) 거래대금 상위 종목 조회
-        resp = await self._ts.get_top_trading_value_stocks()
+        resp = await self._sqs.get_top_trading_value_stocks()
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning({
                 "event": "scan_failed",
@@ -86,7 +83,7 @@ class ProgramBuyFollowStrategy(LiveStrategy):
 
             try:
                 # 2) 종목 상세 정보 조회 (pgtr_ntby_qty 포함)
-                full_resp = await self._ts.get_current_stock_price(code)
+                full_resp = await self._sqs.get_current_price(code)
                 if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
                     log_data["reason"] = "Failed to get full stock price"
                     self._logger.info({"event": "candidate_rejected", **log_data})
@@ -155,7 +152,7 @@ class ProgramBuyFollowStrategy(LiveStrategy):
                 continue
 
             try:
-                full_resp = await self._ts.get_current_stock_price(code)
+                full_resp = await self._sqs.get_current_price(code)
                 if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
                     self._logger.warning({
                         "event": "check_exits_failed",
