@@ -8,6 +8,11 @@ function formatTradingValue(val, isMillion = false) {
     if (isMillion) num *= 1000000;
     const abs = Math.abs(num);
     const sign = num < 0 ? '-' : '';
+    if (abs >= 1e12) {
+        const jo = Math.floor(abs / 1e12);
+        const eok = Math.round((abs % 1e12) / 1e8);
+        return sign + jo.toLocaleString() + '조' + (eok > 0 ? ' ' + eok.toLocaleString() + '억' : '');
+    }
     if (abs >= 1e8) return sign + (abs / 1e8).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '억';
     if (abs >= 1e4) return sign + (abs / 1e4).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '만';
     return num.toLocaleString();
@@ -17,8 +22,9 @@ function formatMarketCap(val) {
     // stck_avls는 억원 단위
     const num = parseInt(val || '0');
     if (num >= 10000) {
-        const jo = num / 10000;
-        return (jo >= 10 ? Math.round(jo).toLocaleString() : jo.toFixed(1)) + '조';
+        const jo = Math.floor(num / 10000);
+        const eok = num % 10000;
+        return jo.toLocaleString() + '조' + (eok > 0 ? ' ' + eok.toLocaleString() + '억' : '');
     }
     return num.toLocaleString() + '억';
 }
