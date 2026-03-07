@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 from brokers.broker_api_wrapper import BrokerAPIWrapper
@@ -163,6 +164,18 @@ class BackgroundService:
         start_time = time.time()
         today = datetime.now().strftime("%Y%m%d")
         self._logger.info("투자자 랭킹 백그라운드 갱신 시작")
+        
+        # [변경] 오늘 날짜 대신 실제 장이 열린 최근 날짜 조회
+        target_date = None
+        if self._trading_service:
+            target_date = await self._trading_service.get_latest_trading_date()
+
+        if not target_date:
+            self._logger.error("최근 거래일을 확인할 수 없어 투자자 랭킹 갱신을 중단합니다.")
+            self._is_refreshing = False
+            return
+
+        self._logger.info(f"투자자 랭킹 백그라운드 갱신 시작 (기준일: {target_date})")
         self._progress = {"running": True, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
 
         try:
@@ -178,7 +191,7 @@ class BackgroundService:
 
             for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
                 tasks = [
-                    self._broker.get_investor_trade_by_stock_daily(code, today)
+                    self._broker.get_investor_trade_by_stock_daily(code, target_date)
                     for code, _, _ in chunk
                 ]
                 responses = await asyncio.gather(*tasks, return_exceptions=True)

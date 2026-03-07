@@ -828,6 +828,44 @@ async def test_handle_realtime_stream_exception(trading_service_fixture, mock_de
     logger.exception.assert_called_once()
     assert "실시간 스트림 처리 중 오류 발생" in logger.exception.call_args[0][0]
 
+@pytest.mark.asyncio
+async def test_get_latest_trading_date_success(trading_service_fixture, mock_deps):
+    """get_latest_trading_date 성공 케이스 테스트"""
+    broker, _, _, _ = mock_deps
+    service = trading_service_fixture
+    
+    # Mock API response with daily chart data (mixed order to test max())
+    mock_data = [
+        {"stck_bsop_date": "20250101"},
+        {"stck_bsop_date": "20250103"},
+        {"stck_bsop_date": "20250102"}
+    ]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
+    )
+    
+    result = await service.get_latest_trading_date()
+    
+    assert result == "20250103"
+    broker.inquire_daily_itemchartprice.assert_awaited_once()
+    # 인자 검증: 종목코드(005930)와 기간구분(D) 확인
+    args, _ = broker.inquire_daily_itemchartprice.call_args
+    assert args[0] == "005930"
+    assert args[3] == "D"
+
+@pytest.mark.asyncio
+async def test_get_latest_trading_date_exception(trading_service_fixture, mock_deps):
+    """get_latest_trading_date 예외 발생 테스트"""
+    broker, _, _, logger = mock_deps
+    service = trading_service_fixture
+    
+    broker.inquire_daily_itemchartprice.side_effect = Exception("API Error")
+    
+    result = await service.get_latest_trading_date()
+    
+    assert result is None
+    logger.warning.assert_called_once()
+
 class TestGetCurrentUpperLimitStocksAttributeError(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.mock_broker_api_wrapper = AsyncMock()

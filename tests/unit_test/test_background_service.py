@@ -23,12 +23,18 @@ def mock_deps():
 @pytest.fixture
 def bg_service(mock_deps):
     broker, mapper, env, logger, time_manager = mock_deps
+    
+    # TradingService Mock 주입 (get_latest_trading_date 필수)
+    trading_service = AsyncMock()
+    trading_service.get_latest_trading_date.return_value = "20250101"
+    
     return BackgroundService(
         broker_api_wrapper=broker,
         stock_code_mapper=mapper,
         env=env,
         logger=logger,
         time_manager=time_manager,
+        trading_service=trading_service,
     )
 
 
@@ -458,6 +464,8 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
     trading_service.get_top_trading_value_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     )
+    # refresh_investor_ranking 호출 시 필요
+    trading_service.get_latest_trading_date = AsyncMock(return_value="20250101")
 
     bg = BackgroundService(
         broker_api_wrapper=broker, stock_code_mapper=mapper,
