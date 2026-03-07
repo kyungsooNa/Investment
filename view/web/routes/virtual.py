@@ -30,7 +30,7 @@ async def get_strategies():
 async def _calculate_benchmark(ctx, code: str, ref_history: list, start_date: str, end_date: str) -> list:
     """Helper to calculate benchmark history for a given ETF code."""
     try:
-        resp = await ctx.stock_query_service.trading_service.get_ohlcv_range(
+        resp = await ctx.stock_query_service.get_ohlcv_range(
             code, period="D", start_date=start_date, end_date=end_date
         )
 

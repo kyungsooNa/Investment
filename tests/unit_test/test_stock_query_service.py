@@ -1152,6 +1152,20 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.msg1, "Test Exception")
         self.mock_logger.error.assert_called_with("005930 OHLCV 데이터 처리 중 오류: Test Exception", exc_info=True)
 
+    # --- get_ohlcv_range ---
+    async def test_get_ohlcv_range_success(self):
+        """get_ohlcv_range 성공 케이스 테스트"""
+        # Arrange
+        expected_response = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=[{"date": "20230101"}])
+        self.mock_trading_service.get_ohlcv_range.return_value = expected_response
+
+        # Act
+        result = await self.stockQueryService.get_ohlcv_range("005930", period="D", start_date="20230101", end_date="20230131")
+
+        # Assert
+        self.mock_trading_service.get_ohlcv_range.assert_awaited_once_with("005930", "D", "20230101", "20230131")
+        self.assertEqual(result, expected_response)
+
     # --- get_ohlcv_with_indicators ---
     async def test_get_ohlcv_with_indicators_success(self):
         """get_ohlcv_with_indicators 성공 케이스 테스트"""

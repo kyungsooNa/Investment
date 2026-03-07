@@ -578,6 +578,12 @@ class StockQueryService:
             self.logger.error(f"{stock_code} OHLCV 데이터 처리 중 오류: {e}", exc_info=True)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=[])
 
+    async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None) -> ResCommonResponse:
+        """
+        특정 기간의 OHLCV 데이터를 조회합니다. (TradingService 래퍼)
+        """
+        return await self.trading_service.get_ohlcv_range(stock_code, period, start_date, end_date)
+
     async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D") -> ResCommonResponse:
         """
         OHLCV 데이터를 1회 조회한 후, 해당 데이터로 MA5/10/20/60/120 + 볼린저밴드를 한번에 계산하여 반환.
