@@ -16,7 +16,8 @@ def mock_deps():
          patch("view.web.web_app_initializer.StockCodeMapper") as mock_scm, \
          patch("view.web.web_app_initializer.StrategyScheduler") as mock_sched, \
          patch("view.web.web_app_initializer.RealtimeDataManager") as mock_rdm, \
-         patch("view.web.web_app_initializer.web_api") as mock_web_api:
+         patch("view.web.web_app_initializer.web_api") as mock_web_api, \
+         patch("view.web.web_app_initializer.OneilUniverseService") as mock_ous:
         
         mock_load.return_value = {
             "market_open_time": "09:00",
@@ -35,7 +36,8 @@ def mock_deps():
             "scm": mock_scm,
             "sched": mock_sched,
             "rdm": mock_rdm,
-            "web_api": mock_web_api
+            "web_api": mock_web_api,
+            "ous": mock_ous
         }
 
 def test_initialization(mock_deps):

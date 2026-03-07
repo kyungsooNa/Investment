@@ -143,6 +143,49 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_trading_service.get_current_stock_price.assert_awaited_once_with("005930")
         self.assertEqual(result, expected_response)
 
+    # --- New Wrapper Methods Tests ---
+    async def test_get_top_trading_value_stocks(self):
+        """get_top_trading_value_stocks 위임 테스트"""
+        expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+        self.mock_trading_service.get_top_trading_value_stocks.return_value = expected
+        
+        result = await self.stockQueryService.get_top_trading_value_stocks()
+        
+        self.mock_trading_service.get_top_trading_value_stocks.assert_awaited_once()
+        self.assertEqual(result, expected)
+
+    async def test_get_top_rise_fall_stocks(self):
+        """get_top_rise_fall_stocks 위임 테스트"""
+        expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+        self.mock_trading_service.get_top_rise_fall_stocks.return_value = expected
+        
+        # Default (rise=True)
+        result = await self.stockQueryService.get_top_rise_fall_stocks()
+        self.mock_trading_service.get_top_rise_fall_stocks.assert_awaited_with(True)
+        self.assertEqual(result, expected)
+        
+        # rise=False
+        await self.stockQueryService.get_top_rise_fall_stocks(rise=False)
+        self.mock_trading_service.get_top_rise_fall_stocks.assert_awaited_with(False)
+
+    async def test_get_top_volume_stocks(self):
+        """get_top_volume_stocks 위임 테스트"""
+        expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+        self.mock_trading_service.get_top_volume_stocks.return_value = expected
+        
+        result = await self.stockQueryService.get_top_volume_stocks()
+        self.mock_trading_service.get_top_volume_stocks.assert_awaited_once()
+        self.assertEqual(result, expected)
+
+    async def test_get_financial_ratio(self):
+        """get_financial_ratio 위임 테스트"""
+        expected = ResCommonResponse(rt_cd="0", msg1="OK", data={})
+        self.mock_trading_service.get_financial_ratio.return_value = expected
+        
+        result = await self.stockQueryService.get_financial_ratio("005930")
+        self.mock_trading_service.get_financial_ratio.assert_awaited_once_with("005930")
+        self.assertEqual(result, expected)
+
     # --- handle_get_account_balance 함수 테스트 ---
 
     # --- handle_get_top_market_cap_stocks_code 함수 테스트 ---
