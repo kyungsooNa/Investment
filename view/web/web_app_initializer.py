@@ -90,7 +90,6 @@ class WebAppContext:
         
         # [신규] 오닐 유니버스 서비스 초기화
         self.oneil_universe_service = OneilUniverseService(
-            trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             indicator_service=self.indicator_service,
             stock_code_mapper=self.stock_code_mapper,
@@ -201,7 +200,7 @@ class WebAppContext:
 
         # 오닐 포켓 피봇 & BGU 전략 등록
         pp_strategy = OneilPocketPivotStrategy(
-            trading_service=self.trading_service,
+            stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('OneilPocketPivot'),

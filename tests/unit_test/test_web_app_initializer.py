@@ -6,18 +6,24 @@ from view.web.web_app_initializer import WebAppContext
 def mock_deps():
     """WebAppContext가 의존하는 모든 외부 모듈을 Mocking합니다."""
     with patch("view.web.web_app_initializer.load_configs") as mock_load, \
-         patch("view.web.web_app_initializer.KoreaInvestApiEnv") as mock_env, \
-         patch("view.web.web_app_initializer.TimeManager") as mock_tm, \
-         patch("view.web.web_app_initializer.BrokerAPIWrapper") as mock_broker, \
-         patch("view.web.web_app_initializer.TradingService") as mock_ts, \
-         patch("view.web.web_app_initializer.StockQueryService") as mock_sqs, \
-         patch("view.web.web_app_initializer.OrderExecutionService") as mock_oes, \
-         patch("view.web.web_app_initializer.VirtualTradeManager") as mock_vtm, \
-         patch("view.web.web_app_initializer.StockCodeMapper") as mock_scm, \
-         patch("view.web.web_app_initializer.StrategyScheduler") as mock_sched, \
-         patch("view.web.web_app_initializer.RealtimeDataManager") as mock_rdm, \
+         patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True) as mock_env, \
+         patch("view.web.web_app_initializer.TimeManager", autospec=True) as mock_tm, \
+         patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True) as mock_broker, \
+         patch("view.web.web_app_initializer.TradingService", autospec=True) as mock_ts, \
+         patch("view.web.web_app_initializer.StockQueryService", autospec=True) as mock_sqs, \
+         patch("view.web.web_app_initializer.OrderExecutionService", autospec=True) as mock_oes, \
+         patch("view.web.web_app_initializer.VirtualTradeManager", autospec=True) as mock_vtm, \
+         patch("view.web.web_app_initializer.StockCodeMapper", autospec=True) as mock_scm, \
+         patch("view.web.web_app_initializer.StrategyScheduler", autospec=True) as mock_sched, \
+         patch("view.web.web_app_initializer.RealtimeDataManager", autospec=True) as mock_rdm, \
+         patch("view.web.web_app_initializer.IndicatorService", autospec=True) as mock_ind, \
          patch("view.web.web_app_initializer.web_api") as mock_web_api, \
-         patch("view.web.web_app_initializer.OneilUniverseService") as mock_ous:
+         patch("view.web.web_app_initializer.OneilUniverseService", autospec=True) as mock_ous, \
+         patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True) as mock_vb, \
+         patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True) as mock_pbf, \
+         patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True) as mock_tvb, \
+         patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True) as mock_osb, \
+         patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True) as mock_pp:
         
         mock_load.return_value = {
             "market_open_time": "09:00",
@@ -36,8 +42,14 @@ def mock_deps():
             "scm": mock_scm,
             "sched": mock_sched,
             "rdm": mock_rdm,
+            "ind": mock_ind,
             "web_api": mock_web_api,
-            "ous": mock_ous
+            "ous": mock_ous,
+            "vb": mock_vb,
+            "pbf": mock_pbf,
+            "tvb": mock_tvb,
+            "osb": mock_osb,
+            "pp": mock_pp
         }
 
 def test_initialization(mock_deps):
@@ -82,6 +94,10 @@ async def test_initialize_services_success(mock_deps):
     env_instance.set_trading_mode.assert_called_with(True)
     mock_deps["broker"].assert_called()
     mock_deps["ts"].assert_called()
+    mock_deps["ind"].assert_called()
+    mock_deps["sqs"].assert_called()
+    mock_deps["oes"].assert_called()
+    mock_deps["ous"].assert_called()
 
 @pytest.mark.asyncio
 async def test_initialize_services_failure(mock_deps):
@@ -124,7 +140,14 @@ def test_initialize_scheduler(mock_deps):
     mock_deps["sched"].assert_called_once()
     scheduler = mock_deps["sched"].return_value
     # 최소 2개 이상의 전략이 등록되어야 함 (VolumeBreakout, ProgramBuyFollow)
-    assert scheduler.register.call_count >= 2
+    assert scheduler.register.call_count >= 5
+    
+    # 전략 초기화 검증
+    mock_deps["vb"].assert_called()
+    mock_deps["pbf"].assert_called()
+    mock_deps["tvb"].assert_called()
+    mock_deps["osb"].assert_called()
+    mock_deps["pp"].assert_called()
 
 @pytest.mark.asyncio
 async def test_program_trading_subscription(mock_deps):

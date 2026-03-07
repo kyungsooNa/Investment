@@ -51,6 +51,10 @@ class StockQueryService:
         """재무비율 조회 (TradingService 래퍼)."""
         return await self.trading_service.get_financial_ratio(stock_code)
 
+    async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
+        """체결 정보 조회 (TradingService 래퍼)."""
+        return await self.trading_service.get_stock_conclusion(stock_code)
+
     async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")

@@ -192,6 +192,15 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_trading_service.get_financial_ratio.assert_awaited_once_with("005930")
         self.assertEqual(result, expected)
 
+    async def test_get_stock_conclusion(self):
+        """get_stock_conclusion 위임 테스트"""
+        expected = ResCommonResponse(rt_cd="0", msg1="OK", data={})
+        self.mock_trading_service.get_stock_conclusion.return_value = expected
+        
+        result = await self.stockQueryService.get_stock_conclusion("005930")
+        self.mock_trading_service.get_stock_conclusion.assert_awaited_once_with("005930")
+        self.assertEqual(result, expected)
+
     # --- handle_get_account_balance 함수 테스트 ---
 
     # --- handle_get_top_market_cap_stocks_code 함수 테스트 ---
