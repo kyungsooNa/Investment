@@ -601,8 +601,12 @@ async function loadRanking(category) {
             const rate = parseFloat(item.prdy_ctrt || 0);
             const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
             let extraCols;
-            if (isInvestor || isProgram) {
+            if (isInvestor) {
                 const pbmnVal = formatTradingValue(item[pbmnField[category]], true);
+                const qtyVal = parseInt(item[qtyField[category]] || 0).toLocaleString();
+                extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td>`;
+            } else if (isProgram) {
+                const pbmnVal = formatTradingValue(item[pbmnField[category]]);
                 const qtyVal = parseInt(item[qtyField[category]] || 0).toLocaleString();
                 extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td>`;
             } else if (isTradingValue) {
