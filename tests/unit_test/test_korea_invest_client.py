@@ -17,7 +17,7 @@ def test_korea_invest_api_client_initialization(korea_invest_client_instance):
 
 
 @pytest.mark.asyncio
-async def test_quotations_get_price_summary_success():
+async def test_quotations_get_price_summary_success(mocker):
     # env와 config mock
     mock_env = MagicMock()
     mock_env.get_full_config.return_value = {
@@ -37,6 +37,9 @@ async def test_quotations_get_price_summary_success():
 
     # 1. TokenManager에 대한 모의(mock) 객체를 생성합니다.
     mock_token_manager = MagicMock()
+
+    # KoreaInvestTrIdProvider.from_config_loader가 설정 파일을 읽지 않도록 모킹
+    mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestTrIdProvider")
 
     # 2. KoreaInvestApiClient 생성자를 호출할 때 mock_token_manager를 전달합니다.
     client = KoreaInvestApiClient(env=mock_env)
@@ -105,6 +108,9 @@ def korea_invest_client_instance(mocker):
     mock_account_class = mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiAccount")
     mock_trading_class = mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiTrading")
     mock_websocket_api_class = mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestWebSocketAPI")
+
+    # KoreaInvestTrIdProvider.from_config_loader가 설정 파일을 읽지 않도록 모킹
+    mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestTrIdProvider")
 
     # 각 모의 객체의 인스턴스 (AsyncMock으로 비동기 메서드 지원)
     mock_quotations_instance = AsyncMock()
@@ -493,4 +499,3 @@ async def test_unsubscribe_program_trading_delegation(korea_invest_client_instan
 
     mock_websocket_api.unsubscribe_program_trading.assert_awaited_once_with("005930")
     assert result is True
-

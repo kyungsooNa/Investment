@@ -11,9 +11,8 @@ def run_web():
 
     # 설정 로드
     configs = load_configs()
-    web_config = configs.get("web", {})
-    host = web_config.get("host", "127.0.0.1")
-    port = int(web_config.get("port", 8000))
+    host = configs.web.host
+    port = configs.web.port
 
     def open_browser():
         """서버 시작 후 브라우저 자동 오픈."""

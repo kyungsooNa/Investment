@@ -4,9 +4,10 @@ import os
 import json
 import importlib
 from typing import Optional, Any
-from dataclasses import dataclass, field, fields, MISSING, asdict
+from dataclasses import dataclass, field, fields, MISSING, asdict, is_dataclass
 from datetime import datetime
 from core.cache.cache_config import load_cache_config
+from pydantic import BaseModel
 
 def load_deserializable_classes(class_paths: list[str]) -> list[type]:
     classes = []
@@ -36,6 +37,8 @@ class FileCacheManager:
         if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
             # to_dict 메서드가 있는 객체는 해당 메서드를 사용하여 딕셔너리로 변환
             return value.to_dict()
+        elif isinstance(value, BaseModel):
+            return value.model_dump()
         elif isinstance(value, (list, tuple)):
             # 리스트/튜플 내의 항목도 재귀적으로 직렬화
             return [self._serialize(item) for item in value]
@@ -49,12 +52,18 @@ class FileCacheManager:
         if isinstance(raw_data, dict):
             for cls in self._deserializable_classes:
                 try:
-                    cls_fields = {f.name for f in fields(cls)}
-                    if cls_fields.issubset(raw_data.keys()):
-                        if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
-                            # ✅ 내부 data도 재귀 복원
-                            raw_data["data"] = self._deserialize(raw_data["data"])
-                        return cls.from_dict(raw_data)
+                    if issubclass(cls, BaseModel):
+                        cls_fields = set(cls.model_fields.keys())
+                        if cls_fields.issubset(raw_data.keys()):
+                            if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
+                                raw_data["data"] = self._deserialize(raw_data["data"])
+                            return cls.model_validate(raw_data)
+                    elif is_dataclass(cls):
+                        cls_fields = {f.name for f in fields(cls)}
+                        if cls_fields.issubset(raw_data.keys()):
+                            if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
+                                raw_data["data"] = self._deserialize(raw_data["data"])
+                            return cls.from_dict(raw_data)
                 except Exception as e:
                     ...
             return {k: self._deserialize(v) for k, v in raw_data.items()}

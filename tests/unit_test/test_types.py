@@ -1,6 +1,7 @@
 # tests/unit_test/test_types.py
 import pytest
 from dataclasses import asdict
+from pydantic import ValidationError
 from common.types import (
     ResCommonResponse,
     ResStockFullInfoApiOutput,
@@ -135,25 +136,20 @@ def test_res_top_market_cap_item_from_api():
 
 # --- Test for ResStockFullInfoApiOutput ---
 
-def test_res_stock_full_info_output_from_dict_missing_fields():
-    """ResStockFullInfoApiOutput.from_dict sets missing required fields to 'N/A'."""
+def test_res_stock_full_info_output_from_dict_missing_fields_raises_error():
+    """ResStockFullInfoApiOutput.from_dict raises ValidationError if required fields are missing."""
     payload = {"stck_prpr": "70000"}  # Only provide one field
-    item = ResStockFullInfoApiOutput.from_dict(payload)
-    assert item.stck_prpr == "70000"
-    assert item.acml_vol == "N/A"  # A required field that was missing
-    assert item.stck_oprc == "N/A"
+    with pytest.raises(ValidationError):
+        ResStockFullInfoApiOutput.from_dict(payload)
 
 
 # --- Test for ResFluctuation ---
 
-def test_res_fluctuation_from_dict_missing_fields():
-    """ResFluctuation.from_dict sets missing fields to None."""
+def test_res_fluctuation_from_dict_missing_fields_raises_error():
+    """ResFluctuation.from_dict raises ValidationError if required fields are missing."""
     payload = {"stck_shrn_iscd": "005930", "prdy_ctrt": "10.5"}
-    item = ResFluctuation.from_dict(payload)
-    assert item.stck_shrn_iscd == "005930"
-    assert item.prdy_ctrt == "10.5"
-    assert item.hts_kor_isnm is None  # A missing field
-    assert item.acml_vol is None
+    with pytest.raises(ValidationError):
+        ResFluctuation.from_dict(payload)
 
 
 # --- Test for other simple to_dict methods ---

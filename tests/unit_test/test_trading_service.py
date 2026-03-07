@@ -863,9 +863,23 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
             time_manager=MagicMock()
         )
 
+    def _create_dummy_fluctuation(self, overrides=None):
+        data = {
+            "stck_shrn_iscd": "000000", "data_rank": "1", "hts_kor_isnm": "Dummy", "stck_prpr": "1000",
+            "prdy_vrss": "10", "prdy_vrss_sign": "2", "prdy_ctrt": "1.0", "acml_vol": "10000",
+            "stck_hgpr": "1100", "hgpr_hour": "100000", "acml_hgpr_date": "20230101", "stck_lwpr": "900",
+            "lwpr_hour": "090000", "acml_lwpr_date": "20230101", "lwpr_vrss_prpr_rate": "10.0",
+            "dsgt_date_clpr_vrss_prpr_rate": "0.0", "cnnt_ascn_dynu": "1", "hgpr_vrss_prpr_rate": "-10.0",
+            "cnnt_down_dynu": "0", "oprc_vrss_prpr_sign": "2", "oprc_vrss_prpr": "100",
+            "oprc_vrss_prpr_rate": "10.0", "prd_rsfl": "100", "prd_rsfl_rate": "10.0"
+        }
+        if overrides:
+            data.update(overrides)
+        return ResFluctuation.from_dict(data)
+
     async def test_get_current_upper_limit_stocks_success(self):
         rise_stocks = [
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "000660",
                 "hts_kor_isnm": "SK하이닉스",
                 "stck_prpr": "30000",
@@ -873,7 +887,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
                 "prdy_vrss": "2999",
                 "data_rank": "1",
             }),
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "005930",
                 "hts_kor_isnm": "삼성전자",
                 "stck_prpr": "80000",
@@ -900,7 +914,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
     async def test_get_current_upper_limit_stocks_no_upper_limit(self):
         # 모든 종목이 상한가 조건(>29.0) 미충족하도록 구성
         rise_stocks = [
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "000660",
                 "hts_kor_isnm": "종목A",
                 "stck_prpr": "10000",
@@ -908,7 +922,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
                 "prdy_vrss": "500",
                 "data_rank": "1",
             }),
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "005930",
                 "hts_kor_isnm": "종목B",
                 "stck_prpr": "20000",
@@ -929,7 +943,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         # 모두 "잘못된 값"이라 파싱 실패 → 스킵되어 상한가 없음
         rise_stocks = [
             # 1) 현재가가 숫자가 아님 → int("N/A")에서 예외
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "000660",
                 "hts_kor_isnm": "종목A",
                 "stck_prpr": "N/A",  # ← 고의로 잘못된 값
@@ -938,7 +952,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
                 "data_rank": "1",
             }),
             # 2) 등락률이 숫자가 아님 → float("notnum")에서 예외
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "005930",
                 "hts_kor_isnm": "종목B",
                 "stck_prpr": "20000",
@@ -1002,16 +1016,30 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
             time_manager=MagicMock()
         )
 
+    def _create_dummy_fluctuation(self, overrides=None):
+        data = {
+            "stck_shrn_iscd": "000000", "data_rank": "1", "hts_kor_isnm": "Dummy", "stck_prpr": "1000",
+            "prdy_vrss": "10", "prdy_vrss_sign": "2", "prdy_ctrt": "1.0", "acml_vol": "10000",
+            "stck_hgpr": "1100", "hgpr_hour": "100000", "acml_hgpr_date": "20230101", "stck_lwpr": "900",
+            "lwpr_hour": "090000", "acml_lwpr_date": "20230101", "lwpr_vrss_prpr_rate": "10.0",
+            "dsgt_date_clpr_vrss_prpr_rate": "0.0", "cnnt_ascn_dynu": "1", "hgpr_vrss_prpr_rate": "-10.0",
+            "cnnt_down_dynu": "0", "oprc_vrss_prpr_sign": "2", "oprc_vrss_prpr": "100",
+            "oprc_vrss_prpr_rate": "10.0", "prd_rsfl": "100", "prd_rsfl_rate": "10.0"
+        }
+        if overrides:
+            data.update(overrides)
+        return ResFluctuation.from_dict(data)
+
     async def test_get_price_summary_returns_none_skips_stock(self):
         rise_stocks = [
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "CODEF",
                 "hts_kor_isnm": "종목F",
                 "stck_prpr": "30770",
                 "prdy_ctrt": "28.0",  # ← 상한가 조건 미충족 → 스킵
                 "prdy_vrss": "0",
             }),
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "CODEC",
                 "hts_kor_isnm": "종목C",
                 "stck_prpr": "40000",

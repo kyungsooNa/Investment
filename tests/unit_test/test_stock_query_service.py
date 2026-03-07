@@ -30,6 +30,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             self.mock_trading_service, self.mock_logger, self.mock_time_manager, self.mock_indicator_service
         )
 
+    def _create_dummy_stock_info(self, overrides=None):
+        base_fields = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
+        if overrides:
+            base_fields.update(overrides)
+        return ResStockFullInfoApiOutput.model_validate(base_fields)
+
     # --- _get_sign_from_code 함수 테스트 (Synchronous) ---
     def test_get_sign_from_code_plus(self):
         self.assertEqual(self.stockQueryService._get_sign_from_code('1'), "+")
@@ -59,7 +65,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     # --- handle_get_current_stock_price 함수 테스트 ---
     async def test_handle_get_current_stock_price_success(self):
         # ResStockFullInfoApiOutput 객체로 감싸서 반환해야 함
-        mock_output = ResStockFullInfoApiOutput.from_dict({
+        mock_output = self._create_dummy_stock_info({
             "stck_prpr": "75000",
             "stck_shrn_iscd": "005930",
             "prdy_vrss": "1000",
@@ -311,7 +317,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "70000",
                     "prdy_vrss": "1000",
                     "prdy_vrss_sign": "2",
@@ -328,7 +334,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "68000",
                     "prdy_vrss": "1000",
                     "prdy_vrss_sign": "5",  # 하락
@@ -345,7 +351,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "69000", "prdy_vrss": "0", "prdy_vrss_sign": "3", "prdy_ctrt": "0.00"
                 })
             }
@@ -359,7 +365,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "N/A",
                     "prdy_vrss_sign": "N/A",
                     "prdy_ctrt": "N/A",
@@ -378,7 +384,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "70000", "prdy_vrss": "ABC", "prdy_vrss_sign": "2", "prdy_ctrt": "1.45"
                 })
             }
@@ -528,7 +534,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "70000",
                     "stck_oprc": "69000",
                     "oprc_vrss_prpr_sign": "2"
@@ -545,7 +551,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "68000",  # 현재가
                     "stck_oprc": "69000",  # 시가
                     "oprc_vrss_prpr_sign": "5"  # 시가대비 부호 (하락)
@@ -562,7 +568,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "69000",  # 현재가
                     "stck_oprc": "69000",  # 시가
                     "oprc_vrss_prpr_sign": "3"  # 시가대비 부호 (보합)
@@ -579,7 +585,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "70000",
                     "stck_oprc": "0",
                 })
@@ -595,7 +601,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "N/A",  # 현재가 누락
                     "stck_oprc": "69000",
                     "oprc_vrss_prpr_sign": "2"
@@ -622,7 +628,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict(
+                "output": self._create_dummy_stock_info(
                     {}  # ✅ 빈 딕셔너리라도 명시적으로 output 키가 있어야 함
                 )
             }
@@ -667,7 +673,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     "stck_prpr": "70000",
                     "prdy_vrss": "1500",
                     "prdy_vrss_sign": "2",
@@ -687,7 +693,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     'stck_prpr': '70000',
                     'prdy_vrss': '1500',  # 전일대비 +1500원
                     'prdy_vrss_sign': '2',  # 2:상승
@@ -712,7 +718,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     'stck_prpr': '90000',
                     'prdy_vrss': '2000',  # 전일대비 -2000원
                     'prdy_vrss_sign': '5',  # 5:하락
@@ -733,7 +739,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd="0",
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_stock_info({
                     'stck_prpr': '50000',
                     'prdy_vrss': '0',  # 전일대비 0원
                     'prdy_vrss_sign': '3',  # 3:보합 (또는 기타)
@@ -751,7 +757,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_get_current_stock_price_check_new_high_low(self):
         """신고가/신저가 필드가 뷰 모델에 올바르게 매핑되는지 테스트"""
         # Case 1: 신고가 ("1")
-        mock_output_high = ResStockFullInfoApiOutput.from_dict({
+        mock_output_high = self._create_dummy_stock_info({
             "stck_prpr": "10000",
             "new_hgpr_lwpr_cls_code": "1"
         })
@@ -765,7 +771,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(resp.data["is_new_low"])
 
         # Case 2: 신저가 ("신저가") - 문자열로 오는 경우
-        mock_output_low = ResStockFullInfoApiOutput.from_dict({
+        mock_output_low = self._create_dummy_stock_info({
             "stck_prpr": "5000",
             "new_hgpr_lwpr_cls_code": "신저가"
         })
@@ -781,7 +787,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_get_current_stock_price_invalid_change_val(self):
         """handle_get_current_stock_price에서 change_val이 숫자가 아닐 때 테스트"""
         # Arrange
-        mock_output = ResStockFullInfoApiOutput.from_dict({
+        mock_output = self._create_dummy_stock_info({
             "stck_prpr": "75000",
             "prdy_vrss": "NotANumber",
             "prdy_vrss_sign": "2",
@@ -802,7 +808,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_stock_change_rate_zero_change(self):
         """get_stock_change_rate에서 등락이 0일 때 '0'을 반환하는지 테스트"""
         # Arrange
-        mock_output = ResStockFullInfoApiOutput.from_dict({
+        mock_output = self._create_dummy_stock_info({
             "stck_prpr": "70000",
             "prdy_vrss": "0",
             "prdy_vrss_sign": "3",
@@ -822,7 +828,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_open_vs_current_invalid_price(self):
         """get_open_vs_current에서 가격이 숫자가 아닐 때 오류를 반환하는지 테스트"""
         # Arrange
-        mock_output = ResStockFullInfoApiOutput.from_dict({
+        mock_output = self._create_dummy_stock_info({
             "stck_prpr": "70000",
             "stck_oprc": "InvalidPrice"
         })
@@ -1557,12 +1563,25 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
             time_manager=None
         )
 
+    def _create_dummy_fluctuation(self, overrides=None):
+        data = {
+            "stck_shrn_iscd": "000000", "data_rank": "1", "hts_kor_isnm": "Dummy", "stck_prpr": "1000",
+            "prdy_vrss": "10", "prdy_vrss_sign": "2", "prdy_ctrt": "1.0", "acml_vol": "10000",
+            "stck_hgpr": "1100", "hgpr_hour": "100000", "acml_hgpr_date": "20230101", "stck_lwpr": "900",
+            "lwpr_hour": "090000", "acml_lwpr_date": "20230101", "lwpr_vrss_prpr_rate": "10.0",
+            "dsgt_date_clpr_vrss_prpr_rate": "0.0", "cnnt_ascn_dynu": "1", "hgpr_vrss_prpr_rate": "-10.0",
+            "cnnt_down_dynu": "0", "oprc_vrss_prpr_sign": "2", "oprc_vrss_prpr": "100",
+            "oprc_vrss_prpr_rate": "10.0", "prd_rsfl": "100", "prd_rsfl_rate": "10.0"
+        }
+        if overrides:
+            data.update(overrides)
+        return ResFluctuation.from_dict(data)
 
     async def test_success_case(self):
         """Test the successful case where upper limit stocks are found."""
         # 1) 상승률 상위 목록 모킹 (서비스가 이걸 먼저 호출함)
         top30_sample = [
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "000660",
                 "hts_kor_isnm": "SK하이닉스",
                 "stck_prpr": "120000",
@@ -1618,7 +1637,7 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         # 1) 현재 코드가 실제로 호출하는 메서드를 모킹
         top30 = [
-            ResFluctuation.from_dict({
+            self._create_dummy_fluctuation({
                 "stck_shrn_iscd": "000660",
                 "hts_kor_isnm": "종목A",
                 "stck_prpr": "10000",

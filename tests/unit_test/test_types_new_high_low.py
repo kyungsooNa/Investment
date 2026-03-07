@@ -5,9 +5,10 @@ class TestResStockFullInfoApiOutputNewHighLow(unittest.TestCase):
     """ResStockFullInfoApiOutput의 신고가/신저가 프로퍼티 로직 테스트"""
 
     def _create_obj(self, code_val):
-        # from_dict가 필수 필드 누락 시 None/기본값으로 채워주므로 최소한의 데이터만 전달
-        data = {"new_hgpr_lwpr_cls_code": code_val}
-        return ResStockFullInfoApiOutput.from_dict(data)
+        # Pydantic 모델 유효성 검사를 통과하기 위해 모든 필수 필드에 더미 값을 채웁니다.
+        data = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
+        data["new_hgpr_lwpr_cls_code"] = code_val
+        return ResStockFullInfoApiOutput.model_validate(data)
 
     def test_is_new_high(self):
         # API 코드 "1"

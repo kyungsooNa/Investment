@@ -64,6 +64,7 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
         """ 각 테스트 실행 전에 필요한 객체들을 초기화합니다. """
         self.mock_logger = MagicMock()
         self.mock_time_manager = AsyncMock()
+        self.mock_trid_provider = MagicMock()
 
         # spec=KoreaInvestApiEnv 인자를 추가하여 mock_env가
         # KoreaInvestApiEnv의 인스턴스인 것처럼 동작하게 만듭니다.
@@ -75,7 +76,8 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
         self.api_base = KoreaInvestApiBase(
             env=self.mock_env,
             logger=self.mock_logger,
-            time_manager=self.mock_time_manager
+            time_manager=self.mock_time_manager,
+            trid_provider=self.mock_trid_provider
         )
 
         # _async_session을 httpx.AsyncClient 스펙을 따르는 AsyncMock으로 설정합니다.
@@ -282,10 +284,10 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
 
 
 class DummyAPI(KoreaInvestApiBase):
-    def __init__(self, env, logger, time_manager):
+    def __init__(self, env, logger, time_manager, trid_provider=None):
         # 부모 클래스의 생성자를 먼저 호출합니다.
         # 이 시점에 self._async_session은 실제 httpx.AsyncClient 인스턴스가 됩니다.
-        super().__init__(env, logger, time_manager)
+        super().__init__(env, logger, time_manager, trid_provider=trid_provider)
 
         # 부모 생성자 호출 후, _async_session을 MagicMock으로 교체합니다.
         # 이렇게 하면 _async_session.get 같은 메서드들도 MagicMock 객체가 되어 side_effect를 할당할 수 있습니다.
@@ -304,8 +306,9 @@ def get_api():
     mock_logger = get_test_logger()
     mock_time_manager = AsyncMock()
     mock_time_manager.async_sleep = AsyncMock(return_value=None)
+    mock_trid_provider = MagicMock()
 
-    return DummyAPI(mock_env,mock_logger,mock_time_manager)
+    return DummyAPI(mock_env, mock_logger, mock_time_manager, trid_provider=mock_trid_provider)
 
 @pytest.mark.asyncio
 async def testcall_api_retry_exceed_failure(caplog):
@@ -714,7 +717,8 @@ async def testcall_api_json_decode_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_log_request_exception_cases(caplog):
     mock_env = get_mock_env()
-    api = KoreaInvestApiBase(mock_env, logger=None)
+    mock_trid_provider = MagicMock()
+    api = KoreaInvestApiBase(mock_env, logger=None, trid_provider=mock_trid_provider)
 
     class DummyResponse:
         status_code = 500
@@ -741,8 +745,9 @@ async def test_log_request_exception_cases(caplog):
 @pytest.mark.asyncio
 async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
     mock_env = get_mock_env()
+    mock_trid_provider = MagicMock()
 
-    api = KoreaInvestApiBase(mock_env, logger=None)
+    api = KoreaInvestApiBase(mock_env, logger=None, trid_provider=mock_trid_provider)
 
     # httpx.Response 스펙을 따르는 mock_response 생성
     mock_response = MagicMock(spec=httpx.Response)
@@ -772,8 +777,9 @@ async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
 @pytest.mark.asyncio
 async def test_execute_request_invalid_method():
     mock_env = get_mock_env()
+    mock_trid_provider = MagicMock()
 
-    api = KoreaInvestApiBase(mock_env, logger=None)
+    api = KoreaInvestApiBase(mock_env, logger=None, trid_provider=mock_trid_provider)
     api._session = MagicMock()
 
     with pytest.raises(ValueError):
@@ -797,7 +803,8 @@ class ExplodingStr:
 @pytest.mark.asyncio
 async def test_log_headers_unicode_error_with_custom_object(caplog):
     mock_env = get_mock_env()
-    api = KoreaInvestApiBase(env=mock_env, logger=None)
+    mock_trid_provider = MagicMock()
+    api = KoreaInvestApiBase(env=mock_env, logger=None, trid_provider=mock_trid_provider)
 
     # build()가 에러 유발 객체를 포함한 dict를 반환하도록 설정
     api._headers.build = MagicMock(return_value={
@@ -826,10 +833,12 @@ async def test_call_api_with_http_error_status(caplog):
     )
 
     mock_env = get_mock_env()
+    mock_trid_provider = MagicMock()
 
     # 3. 테스트 대상 API 인스턴스 생성
     api = KoreaInvestApiBase(
-        env=mock_env
+        env=mock_env,
+        trid_provider=mock_trid_provider
     )
 
     # ▼▼▼ 핵심 수정 부분 ▼▼▼
@@ -869,8 +878,9 @@ async def test_call_api_with_invalid_json_type(caplog):
     response_mock.json.side_effect = json.JSONDecodeError("Invalid JSON", doc="not a dict", pos=0)
 
     mock_env = get_mock_env()
+    mock_trid_provider = MagicMock()
 
-    api = KoreaInvestApiBase(mock_env, logger=None)  # logger=None은 기본 로거 사용
+    api = KoreaInvestApiBase(mock_env, logger=None, trid_provider=mock_trid_provider)  # logger=None은 기본 로거 사용
 
     # 변경: api._session.request 대신 api._async_session.get을 모킹
     # _execute_request는 GET 메서드에 대해 awaitable을 반환하므로 AsyncMock 사용
@@ -972,10 +982,12 @@ async def test_log_request_exception_httpx_request_error(caplog):
     caplog.set_level(logging.ERROR)
 
     mock_env = get_mock_env()
+    mock_trid_provider = MagicMock()
 
     api = KoreaInvestApiBase(
         env=mock_env,
-        logger=None  # 실제 로거 사용
+        logger=None,  # 실제 로거 사용
+        trid_provider=mock_trid_provider
     )
 
     # httpx.RequestError 예외를 던지는 mock 세션 생성
@@ -997,7 +1009,8 @@ async def test_call_api_response_not_dict(caplog):
     api = get_api()
     # 실제 로거를 사용하는 인스턴스 생성 (DummyAPI는 로거를 모킹하므로 caplog 사용 불가)
     mock_env = get_mock_env()
-    api = KoreaInvestApiBase(mock_env, logger=None, time_manager=AsyncMock())
+    mock_trid_provider = MagicMock()
+    api = KoreaInvestApiBase(mock_env, logger=None, time_manager=AsyncMock(), trid_provider=mock_trid_provider)
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
@@ -1022,7 +1035,8 @@ async def test_call_api_response_missing_output(caplog):
     api = get_api()
     # 실제 로거를 사용하는 인스턴스 생성
     mock_env = get_mock_env()
-    api = KoreaInvestApiBase(mock_env, logger=None, time_manager=AsyncMock())
+    mock_trid_provider = MagicMock()
+    api = KoreaInvestApiBase(mock_env, logger=None, time_manager=AsyncMock(), trid_provider=mock_trid_provider)
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200

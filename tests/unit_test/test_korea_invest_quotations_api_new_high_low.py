@@ -11,8 +11,26 @@ def mock_api_quotations():
     mock_env = MagicMock()
     mock_logger = MagicMock()
     mock_time_manager = MagicMock()
-    api = KoreaInvestApiQuotations(env=mock_env, logger=mock_logger, time_manager=mock_time_manager)
+    
+    # Config 로딩 및 네트워크 연결을 방지하기 위해 의존성 주입
+    mock_trid_provider = MagicMock()
+    mock_url_provider = MagicMock()
+    mock_header_provider = MagicMock()
+    mock_async_client = AsyncMock()
+
+    api = KoreaInvestApiQuotations(
+        env=mock_env, logger=mock_logger, time_manager=mock_time_manager,
+        trid_provider=mock_trid_provider, url_provider=mock_url_provider,
+        header_provider=mock_header_provider, async_client=mock_async_client
+    )
     return api
+
+def _create_dummy_output(overrides=None):
+    """Pydantic 모델 유효성 검사를 통과하기 위해 더미 데이터를 채워 객체를 생성합니다."""
+    data = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
+    if overrides:
+        data.update(overrides)
+    return ResStockFullInfoApiOutput.model_validate(data)
 
 @pytest.mark.asyncio
 async def test_get_price_summary_new_high_low_mismatch(mock_api_quotations):
@@ -31,7 +49,7 @@ async def test_get_price_summary_new_high_low_mismatch(mock_api_quotations):
         'd250_hgpr': '84000',
         'new_hgpr_lwpr_cls_code': '4',
     }
-    output_obj = ResStockFullInfoApiOutput.from_dict(raw_output)
+    output_obj = _create_dummy_output(raw_output)
     
     # get_current_price가 반환할 ResCommonResponse 모의
     mock_api_quotations.get_current_price = AsyncMock(
@@ -69,7 +87,7 @@ async def test_get_price_summary_new_high_match(mock_api_quotations):
         'd250_hgpr': '85000',
         'new_hgpr_lwpr_cls_code': '1',
     }
-    output_obj = ResStockFullInfoApiOutput.from_dict(raw_output)
+    output_obj = _create_dummy_output(raw_output)
 
     mock_api_quotations.get_current_price = AsyncMock(
         return_value=ResCommonResponse(
@@ -102,7 +120,7 @@ async def test_get_price_summary_new_low_mismatch(mock_api_quotations):
         'd250_lwpr': '76000',
         'new_hgpr_lwpr_cls_code': '4',
     }
-    output_obj = ResStockFullInfoApiOutput.from_dict(raw_output)
+    output_obj = _create_dummy_output(raw_output)
     
     mock_api_quotations.get_current_price = AsyncMock(
         return_value=ResCommonResponse(
@@ -136,7 +154,7 @@ async def test_get_price_summary_new_low_match(mock_api_quotations):
         'd250_lwpr': '75000',
         'new_hgpr_lwpr_cls_code': '2',
     }
-    output_obj = ResStockFullInfoApiOutput.from_dict(raw_output)
+    output_obj = _create_dummy_output(raw_output)
 
     mock_api_quotations.get_current_price = AsyncMock(
         return_value=ResCommonResponse(

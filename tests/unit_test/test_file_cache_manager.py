@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from unittest.mock import MagicMock, patch
 
+from pydantic import BaseModel
 from core.cache.file_cache_manager import FileCacheManager, load_deserializable_classes
 
 
@@ -22,6 +23,10 @@ def _mk_manager(base_dir: str, classes: list[type] | None = None) -> FileCacheMa
 
 # dataclasses.fields()를 쓰므로 dataclass여야 함
 from dataclasses import dataclass
+
+class PydanticDummy(BaseModel):
+    x: int
+    y: str
 
 @dataclass
 class Dummy:
@@ -221,3 +226,37 @@ def test_get_raw_logs_on_json_error(tmp_path):
     assert logger.error.called
     msg = logger.error.call_args[0][0]
     assert "Load Error" in msg
+
+# ------------------------
+# Pydantic Model Support
+# ------------------------
+def test_serialize_pydantic_model(tmp_path):
+    """Pydantic 모델 직렬화 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    obj = PydanticDummy(x=1, y="test")
+    serialized = mgr._serialize(obj)
+    assert serialized == {"x": 1, "y": "test"}
+
+def test_deserialize_pydantic_model(tmp_path):
+    """Pydantic 모델 역직렬화 테스트"""
+    mgr = _mk_manager(str(tmp_path), classes=[PydanticDummy])
+    raw_data = {"x": 10, "y": "restored"}
+    obj = mgr._deserialize(raw_data)
+    assert isinstance(obj, PydanticDummy)
+    assert obj.x == 10
+    assert obj.y == "restored"
+
+def test_deserialize_pydantic_nested_in_res_common_response(tmp_path):
+    """ResCommonResponse(Pydantic) 내부의 data 필드 재귀 역직렬화 테스트"""
+    class ResCommonResponse(BaseModel): # FileCacheManager가 이름을 체크하므로 동일한 이름 사용
+        rt_cd: str
+        msg1: str
+        data: Any = None
+
+    mgr = _mk_manager(str(tmp_path), classes=[ResCommonResponse, PydanticDummy])
+    raw = {"rt_cd": "0", "msg1": "ok", "data": {"x": 99, "y": "nested"}}
+    
+    res = mgr._deserialize(raw)
+    assert isinstance(res, ResCommonResponse)
+    assert isinstance(res.data, PydanticDummy)
+    assert res.data.x == 99

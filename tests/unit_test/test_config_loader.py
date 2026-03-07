@@ -1,8 +1,9 @@
 import pytest
 from unittest.mock import mock_open, patch
-from config.config_loader import load_config, load_configs
+from config.config_loader import load_config, load_configs, AppConfig
 import yaml
 import json
+from pydantic import ValidationError
 
 
 @pytest.fixture
@@ -32,14 +33,21 @@ def test_load_configs_success():
     """load_configs 함수가 3개의 설정 파일을 로드하고 병합하는지 테스트"""
     with patch("config.config_loader.load_config") as mock_load:
         mock_load.side_effect = [
-            {"main": 1},
+            {
+                "main": 1,
+                "web": {"host": "127.0.0.1", "port": 8000},
+                "cache": {"base_dir": ".cache", "memory_cache_enabled": True, "file_cache_enabled": True}
+            },
             {"tr_id": 2},
             {"kis": 3}
         ]
         
         config = load_configs()
         
-        assert config == {"main": 1, "tr_id": 2, "kis": 3}
+        assert isinstance(config, AppConfig)
+        assert config.main == 1
+        assert config.tr_id == 2
+        assert config.kis == 3
         assert mock_load.call_count == 3
 
 def test_load_config_json_fallback():
@@ -71,3 +79,84 @@ def test_load_config_invalid_json_format():
             with patch("json.load", side_effect=json.JSONDecodeError("msg", "doc", 0)):
                 with pytest.raises(ValueError, match="설정 파일 형식이 올바르지 않습니다"):
                     load_config("invalid.json")
+
+def test_app_config_validation_success():
+    """AppConfig 유효성 검사 성공 테스트"""
+    config_data = {
+        "base_url": "https://api.test.com",
+        "web": {"host": "localhost", "port": 8080},
+        "cache": {"base_dir": ".cache", "memory_cache_enabled": True, "file_cache_enabled": True}
+    }
+    config = AppConfig(**config_data)
+    assert config.base_url == "https://api.test.com"
+    assert config.web.port == 8080
+
+def test_app_config_validation_invalid_url():
+    """AppConfig base_url 유효성 검사 실패 테스트"""
+    config_data = {
+        "base_url": "ftp://invalid.com",
+        "web": {"host": "localhost", "port": 8080},
+        "cache": {"base_dir": ".cache", "memory_cache_enabled": True, "file_cache_enabled": True}
+    }
+    with pytest.raises(ValidationError) as excinfo:
+        AppConfig(**config_data)
+    assert "base_url" in str(excinfo.value)
+
+def test_app_config_validation_invalid_port():
+    """AppConfig web.port 범위 검사 실패 테스트"""
+    config_data = {
+        "web": {"host": "localhost", "port": 99999},
+        "cache": {"base_dir": ".cache", "memory_cache_enabled": True, "file_cache_enabled": True}
+    }
+    with pytest.raises(ValidationError) as excinfo:
+        AppConfig(**config_data)
+    assert "port" in str(excinfo.value)
+
+def test_app_config_dict_access():
+    """AppConfig 딕셔너리 호환성 테스트 (__getitem__, get)"""
+    config = AppConfig(
+        api_key="key",
+        web={"host": "localhost", "port": 8000},
+        cache={"base_dir": ".cache", "memory_cache_enabled": True, "file_cache_enabled": True}
+    )
+    # __getitem__
+    assert config["api_key"] == "key"
+    # get
+    assert config.get("api_key") == "key"
+    assert config.get("non_existent", "default") == "default"
+
+def test_load_configs_validation_error_missing_required_field():
+    """필수 필드(예: web) 누락 시 ValueError(ValidationError 포장) 발생 테스트"""
+    with patch("config.config_loader.load_config") as mock_load:
+        # web 섹션 누락 (AppConfig에서 web은 필수)
+        mock_load.side_effect = [
+            {
+                "api_key": "test",
+                # "web": ... missing
+                "cache": {"base_dir": ".cache"}
+            },
+            {},
+            {}
+        ]
+        
+        with pytest.raises(ValueError, match="설정 파일 유효성 검사 실패"):
+            load_configs()
+
+def test_load_configs_missing_optional_field_defaults():
+    """선택적 필드(예: cache) 누락 시 기본값으로 성공하는지 테스트"""
+    with patch("config.config_loader.load_config") as mock_load:
+        # cache 섹션 누락 (AppConfig에서 cache는 default_factory 존재)
+        mock_load.side_effect = [
+            {
+                "web": {"host": "127.0.0.1", "port": 8000},
+                # "cache": ... missing
+            },
+            {},
+            {}
+        ]
+        
+        config = load_configs()
+        assert config.web.port == 8000
+        # cache가 없어도 기본값으로 생성되어야 함
+        assert config.cache.base_dir == ".cache"
+        assert config.cache.memory_cache_enabled is True
