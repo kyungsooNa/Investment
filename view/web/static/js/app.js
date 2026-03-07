@@ -585,8 +585,9 @@ async function loadRanking(category) {
         };
 
         // 모든 카테고리 공통: 순위|종목명|현재가|등락률|거래대금|거래량
+        const isSell = category.endsWith('_sell');
         const headerRow = (isInvestor || isProgram)
-            ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>순매수대금</th><th>순매수량</th>`
+            ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>${isSell ? '순매도대금' : '순매수대금'}</th><th>${isSell ? '순매도량' : '순매수량'}</th>`
             : isTradingValue
                 ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th>`
                 : `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래량</th>`;
