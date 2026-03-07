@@ -8,6 +8,7 @@
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 
 4. [Ranking] 
+  * 1. refresh_investor_ranking에서 today로 조회하면 장안연 날에서 조회가 안됨. 최근에 장열린 날짜로 조회하도록 수정.
 
   * 3. 프로그램 순매수/순매도 대금 상위 랭킹 기능 추가. 종목별 프로그램 일변 추이 (https://apiportal.koreainvestment.com/apiservice-apiservice?/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily) 
   URL: program-trade-by-stock-daily
