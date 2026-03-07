@@ -164,7 +164,6 @@ class WebAppContext:
 
         # 전통적 거래량 돌파 전략 등록
         tvb_strategy = TraditionalVolumeBreakoutStrategy(
-            trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             stock_code_mapper=self.stock_code_mapper,
             time_manager=self.time_manager,
