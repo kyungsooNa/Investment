@@ -8,17 +8,11 @@
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 
 4. [Ranking] 
-  * 1. refresh_investor_ranking에서 today로 조회하면 장안연 날에서 조회가 안됨. 최근에 장열린 날짜로 조회하도록 수정.
-
   * 3. 프로그램 순매수/순매도 대금 상위 랭킹 기능 추가. 종목별 프로그램 일변 추이 (https://apiportal.koreainvestment.com/apiservice-apiservice?/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily) 
   URL: program-trade-by-stock-daily
   TRID: FHPPG04650201
   * 4. 기존 외인/기관/프로그램/개인 순매수/순매도 컬럼에서 방금 추가한 당일 누적 거래대금 대비 외인/기관/프로그램/개인 의 순매수대금/순매도대금의 비율이 어느정도인지도 표기하는 컬럼 추가 (거래대금 비율 = 외인,기관,프로그램,개인 순매수,순매도 대금/전체 거래대금).
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-7. [투자결과] 매매비용도 적용하여 수익률 계산 (비용 적용 on/off)
-  * 매수/매도 수수료: 코스피/코스닥/코넥스 (KRX 0.0140527%, NXT 0.0130527%)
-  * 세금(매도 Only): 거래소(코스피) 0.20% 코스닥 0.20%
-8. [투자결과] 매도완료 종목의 수익률이 매도가가 아닌, 현재가로 계산되는 불량.
 
 
 8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.
@@ -53,9 +47,6 @@
 ### 3. 코드 가독성 및 유지보수성 (Code Readability & Maintainability)
 * **[강화]** 타입 힌트 강화: 모든 함수 인자 및 반환 값에 타입 힌트를 일관되게 적용하고, `Any` 타입을 구체적인 타입으로 변경.
 * **[제거]** 매직 넘버/문자열 제거: 반복적으로 사용되는 상수 값들을 별도의 Enum이나 상수로 정의.
-* **[전환]** `print` 문의 로거 전환: 사용자에게 정보를 표시하는 `print` 문을 `logger.info` 또는 `cli_view.display_message`와 같은 로깅/뷰 계층 메서드로 전환.
-
-
 
 
 ## Ⅲ. 신규 기능 및 장기 계획 (Lower Priority / New Features & Long-term)
