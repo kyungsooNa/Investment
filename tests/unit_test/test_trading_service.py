@@ -866,6 +866,39 @@ async def test_get_latest_trading_date_exception(trading_service_fixture, mock_d
     assert result is None
     logger.warning.assert_called_once()
 
+@pytest.mark.asyncio
+async def test_get_latest_trading_date_empty_data(trading_service_fixture, mock_deps):
+    """get_latest_trading_date: 데이터가 비어있을 때 None 반환 테스트"""
+    broker, _, _, _ = mock_deps
+    service = trading_service_fixture
+    
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
+    )
+    
+    result = await service.get_latest_trading_date()
+    
+    assert result is None
+
+@pytest.mark.asyncio
+async def test_get_latest_trading_date_object_data(trading_service_fixture, mock_deps):
+    """get_latest_trading_date: 데이터가 객체 형태일 때 테스트"""
+    broker, _, _, _ = mock_deps
+    service = trading_service_fixture
+    
+    class MockItem:
+        def __init__(self, date):
+            self.stck_bsop_date = date
+            
+    mock_data = [MockItem("20250101"), MockItem("20250105")]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
+    )
+    
+    result = await service.get_latest_trading_date()
+    
+    assert result == "20250105"
+
 class TestGetCurrentUpperLimitStocksAttributeError(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.mock_broker_api_wrapper = AsyncMock()

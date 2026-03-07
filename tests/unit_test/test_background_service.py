@@ -654,3 +654,97 @@ async def test_refresh_program_ranking_basic(bg_service, mock_deps):
     assert sell_resp.rt_cd == ErrorCode.SUCCESS.value
     assert sell_resp.data[0]["hts_kor_isnm"] == "SK하이닉스"
     assert sell_resp.data[0]["data_rank"] == "1"
+
+
+# ── 거래대금 랭킹 및 예외 처리 추가 테스트 ────────────────────
+
+def test_get_trading_value_ranking_empty_cache(bg_service):
+    """거래대금 랭킹 캐시가 비어있으면 빈 data + 안내 메시지 반환."""
+    resp = bg_service.get_trading_value_ranking()
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert resp.data == []
+    assert "수집 중" in resp.msg1
+
+
+def test_get_trading_value_ranking_populated(bg_service):
+    """거래대금 랭킹 캐시가 있으면 해당 데이터 반환."""
+    bg_service._trading_value_cache = [{"hts_kor_isnm": "TestStock", "data_rank": "1"}]
+    resp = bg_service.get_trading_value_ranking()
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert len(resp.data) == 1
+    assert resp.data[0]["hts_kor_isnm"] == "TestStock"
+
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_corrects_acml_tr_pbmn(bg_service, mock_deps):
+    """투자자 데이터의 거래대금이 0일 때 프로그램 데이터로 보정되는지 검증."""
+    broker, mapper, _, _, _ = mock_deps
+    
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    
+    # 투자자 데이터: acml_tr_pbmn = 0
+    async def mock_investor(code, date=None):
+        resp = _make_investor_response(100)
+        resp.data["acml_tr_pbmn"] = "0"
+        return resp
+    
+    # 프로그램 데이터: acml_tr_pbmn = 100000000 (헬퍼 기본값)
+    async def mock_program(code, date=None):
+        return _make_program_response(ntby_tr_pbmn=500)
+
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_investor)
+    broker.get_program_trade_by_stock_daily = AsyncMock(side_effect=mock_program)
+
+    await bg_service.refresh_investor_ranking()
+
+    # 거래대금 랭킹 확인
+    tv_resp = bg_service.get_trading_value_ranking()
+    assert len(tv_resp.data) == 1
+    # 보정된 값 확인 (헬퍼 기본값 1억)
+    assert tv_resp.data[0]["acml_tr_pbmn"] == "100000000"
+
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_no_target_date(bg_service, mock_deps):
+    """최근 거래일 조회 실패 시 갱신 중단."""
+    _, _, _, logger, _ = mock_deps
+    
+    # target_date None 설정
+    bg_service._trading_service.get_latest_trading_date = AsyncMock(return_value=None)
+    
+    await bg_service.refresh_investor_ranking()
+    
+    logger.error.assert_called_with("최근 거래일을 확인할 수 없어 투자자 랭킹 갱신을 중단합니다.")
+    assert bg_service._is_refreshing is False
+
+
+@pytest.mark.asyncio
+async def test_refresh_basic_ranking_partial_failure(bg_service, mock_deps):
+    """기본 랭킹 조회 중 일부 실패 시 성공한 것만 캐시."""
+    _, _, _, logger, _ = mock_deps
+    
+    # TradingService Mock 설정
+    # get_top_rise_fall_stocks는 2번 호출됨 (True, False)
+    bg_service._trading_service.get_top_rise_fall_stocks = AsyncMock(side_effect=[
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "rise"}]), # rise success
+        Exception("Fall API Error") # fall fail
+    ])
+    bg_service._trading_service.get_top_volume_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "vol"}])
+    )
+    bg_service._trading_service.get_top_trading_value_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "tv"}])
+    )
+
+    await bg_service.refresh_basic_ranking()
+
+    # 성공한 것은 캐시에 있어야 함
+    assert "rise" in bg_service._basic_ranking_cache
+    assert "volume" in bg_service._basic_ranking_cache
+    assert "trading_value" in bg_service._basic_ranking_cache
+    
+    # 실패한 것은 캐시에 없어야 함
+    assert "fall" not in bg_service._basic_ranking_cache
+    
+    # 에러 로그 확인
+    logger.error.assert_any_call("기본 랭킹 'fall' 조회 실패: Fall API Error")

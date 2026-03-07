@@ -8,15 +8,11 @@
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 
 4. [Ranking] 
-<<<<<<< HEAD
-6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.### 1. 환경 (Environment)
-=======
+  * 1. virtual.html virtual.py 에 적용된거 처럼 이미 web에서 받아온 data들에 대해서는 ranking.html ranking.py 에서도 컬럼명을 누르면 정렬할 수 있도록 수정
   * 6. 랭킹에서 순매수/순매도를 우선 분리해서, 외인,기관,개인,프로그램 을 multi로 선택하면 선택한 투자자들의 수급을 합쳐서 랭킹을 다시 매길 수 있도록 하는 multi filter 기능 추가
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-
+7. [프로그램매매] App 재실행시 프로그램 매매에서 이전에 구독한 data가 다 올라오지 않는 버그가 있어 보임. 저장을 잘못하고 있는건지, 가지고오지를 모샇는거지, file을 잘못 지우는건지 확인 필요.
 ### 1. 환경 (Environment)
->>>>>>> d71aacd (거래대금 대비 순매수/순매도량의 비율 표기)
 
 ### 2. 성능 (Performance)
 * **[개선 필요]** 시장이 닫혔으면 스레드를 통해 전체 종목을 백그라운드로 업데이트하여 RAM에 올려두게 하기.
@@ -134,5 +130,5 @@
 ### 4. 인프라 및 아키텍처 (Infrastructure & Architecture)
 * **[인프라]** 도커(Docker) 컨테이너화: `Dockerfile` 및 `docker-compose.yml` 작성을 통해 서버 배포 용이성 확보 및 로컬/서버 환경 불일치(OS 의존성 등) 문제 해결.
 * **[데이터]** DB(SQLite/SQLAlchemy) 도입: 매매 일지(Trade Journal) 영구 저장 및 봇 비정상 종료 시 재시작 후 상태 복구(State Recovery) 기능 구현.
-
+* **[안정성]** Pydantic 도입: `config.yaml` 로드 및 API 응답 데이터 처리 시 Pydantic 모델을 사용하여 유효성 검사(Validation) 및 타입 안정성 강화 (런타임 에러 방지).
 * **[아키텍처]** 이벤트 기반 아키텍처(Event-Driven): '전략(Signal)'과 '주문 실행(Execution Engine)'의 완전한 분리. 이를 통해 백테스팅 신뢰도를 높이고 향후 복합 주문 처리(Netting) 등의 고도화 기반 마련.
