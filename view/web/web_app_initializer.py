@@ -79,11 +79,15 @@ class WebAppContext:
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager
         )
-        self.indicator_service = IndicatorService(self.trading_service)
+        # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
+        self.indicator_service = IndicatorService()
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
             indicator_service=self.indicator_service
         )
+        # IndicatorService에 StockQueryService 주입
+        self.indicator_service.stock_query_service = self.stock_query_service
+
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager
         )
