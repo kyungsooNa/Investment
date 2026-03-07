@@ -197,10 +197,6 @@ class BackgroundService:
                     if not isinstance(data, dict):
                         continue
 
-                    # ETF/ETN 제외
-                    if any(name.startswith(p) for p in _ETF_PREFIXES):
-                        continue
-
                     frgn_qty = int(data.get("frgn_ntby_qty", "0") or "0")
                     orgn_qty = int(data.get("orgn_ntby_qty", "0") or "0")
                     prsn_qty = int(data.get("prsn_ntby_qty", "0") or "0")
@@ -368,6 +364,11 @@ class BackgroundService:
             code = row.get("종목코드", "")
             name = row.get("종목명", "")
             market = row.get("시장구분", "")
+
+            # ETF/ETN 사전 필터링으로 불필요한 API 호출 방지
+            if any(name.startswith(p) for p in _ETF_PREFIXES):
+                continue
+
             if code and market in ("KOSPI", "KOSDAQ"):
                 all_stocks.append((code, name, market))
         return all_stocks
