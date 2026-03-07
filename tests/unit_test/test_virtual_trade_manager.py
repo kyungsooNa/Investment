@@ -733,3 +733,61 @@ def test_backfill_snapshots_performance(manager):
     
     # 최적화된 로직이라면 1년치 데이터도 매우 빠르게 처리되어야 함 (보수적으로 2초 설정)
     assert duration < 2.0
+
+def test_calculate_return_delegation(manager):
+    """calculate_return 메서드가 비용 적용 옵션에 따라 다르게 동작하는지 확인"""
+    # 비용 미적용: 10%
+    ror_no_cost = manager.calculate_return(10000, 11000, qty=1, apply_cost=False)
+    assert ror_no_cost == 10.0
+    
+    # 비용 적용: 10% 미만 (수수료/세금 차감)
+    ror_cost = manager.calculate_return(10000, 11000, qty=1, apply_cost=True)
+    assert ror_cost < 10.0
+
+def test_get_trade_amount(manager):
+    """get_trade_amount 메서드가 비용을 가감하여 계산하는지 확인"""
+    price = 10000
+    qty = 10
+    base_amount = price * qty
+    
+    # 비용 미적용
+    assert manager.get_trade_amount(price, qty, is_sell=False, apply_cost=False) == base_amount
+    assert manager.get_trade_amount(price, qty, is_sell=True, apply_cost=False) == base_amount
+    
+    # 비용 적용 (매수: 금액 + 비용)
+    buy_amt = manager.get_trade_amount(price, qty, is_sell=False, apply_cost=True)
+    assert buy_amt > base_amount
+    
+    # 비용 적용 (매도: 금액 - 비용)
+    sell_amt = manager.get_trade_amount(price, qty, is_sell=True, apply_cost=True)
+    assert sell_amt < base_amount
+
+def test_get_summary_with_cost(manager):
+    """get_summary 메서드에서 apply_cost 옵션이 통계에 반영되는지 확인"""
+    # 데이터 준비: 1건의 매매 (10% 수익)
+    manager.log_buy("StrategyA", "005930", 10000, qty=10)
+    manager.log_sell("005930", 11000, qty=10)
+    
+    # 비용 미적용 요약
+    summary_no_cost = manager.get_summary(apply_cost=False)
+    assert summary_no_cost['avg_return'] == 10.0
+    
+    # 비용 적용 요약
+    summary_cost = manager.get_summary(apply_cost=True)
+    assert summary_cost['avg_return'] < 10.0
+    
+def test_get_all_trades_with_cost(manager):
+    """get_all_trades 메서드에서 apply_cost=True일 때 개별 거래 수익률이 재계산되는지 확인"""
+    # 데이터 준비
+    manager.log_buy("StrategyA", "005930", 10000, qty=10)
+    manager.log_sell("005930", 11000, qty=10)
+    
+    # 비용 미적용 조회 (CSV에 저장된 값 그대로: 10.0)
+    trades_no_cost = manager.get_all_trades(apply_cost=False)
+    assert len(trades_no_cost) == 1
+    assert trades_no_cost[0]['return_rate'] == 10.0
+    
+    # 비용 적용 조회 (재계산된 값)
+    trades_cost = manager.get_all_trades(apply_cost=True)
+    assert len(trades_cost) == 1
+    assert trades_cost[0]['return_rate'] < 10.0

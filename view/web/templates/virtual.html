@@ -14,7 +14,15 @@
             <div style="margin-top: 16px; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; border: 1px solid var(--border);">
                 <canvas id="virtualYieldChart" style="width: 100%; height: 600px;"></canvas>
             </div>
-            <button class="btn" onclick="loadVirtualHistory()">새로고침</button>
+            <div class="form-row" style="justify-content: flex-end; margin-top: 10px; align-items: center; gap: 10px;">
+                <label style="display: flex; align-items: center; gap: 5px; cursor: help; user-select: none; color: var(--text-primary);"
+                       title="거래 비용 상세&#10; - 매수/매도 수수료: 0.0140527%&#10; - 매도 세금: 0.20%"
+                >
+                    <input type="checkbox" id="apply-cost-chk" onchange="loadVirtualHistory()">
+                    <span>수수료/세금 포함</span>
+                </label>
+                <button class="btn" onclick="loadVirtualHistory()">새로고침</button>
+            </div>
         </div>
 
         <h3 style="margin:16px 0 8px; color:var(--text-primary);">보유 중</h3>
@@ -54,7 +62,10 @@
 {% block scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        loadVirtualHistory();
+        // app.js에 정의된 loadVirtualHistory 호출
+        if (typeof loadVirtualHistory === 'function') {
+            loadVirtualHistory();
+        }
     });
 </script>
 {% endblock %}
