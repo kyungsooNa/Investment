@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timedelta
 
 from core.time_manager import TimeManager
+from managers.transaction_cost_manager import TransactionCostManager
 logger = logging.getLogger(__name__)
 
 COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
@@ -143,10 +144,28 @@ class VirtualTradeManager:
                     record[key] = None
         return records
 
-    def get_all_trades(self) -> list:
-        """전체 거래 기록 반환 (웹 API용)."""
+    def calculate_return(self, buy_price, sell_price, qty=1, apply_cost=False) -> float:
+        """수익률 계산 헬퍼 (TransactionCostManager 위임)"""
+        return round(TransactionCostManager.get_return_rate(buy_price, sell_price, qty, apply_cost), 2)
+
+    def get_trade_amount(self, price, qty=1, is_sell=False, apply_cost=False) -> float:
+        """거래 금액 계산 (비용 포함 매수금액 또는 비용 차감 매도금액)"""
+        base_amount = price * qty
+        if not apply_cost:
+            return base_amount
+        
+        cost = TransactionCostManager.calculate_cost(price, qty, is_sell)
+        return base_amount - cost if is_sell else base_amount + cost
+
+    def get_all_trades(self, apply_cost: bool = False) -> list:
+        """전체 거래 기록 반환 (웹 API용). apply_cost=True 시 수익률 재계산."""
         df = self._read()
-        return self._to_json_records(df)
+        records = self._to_json_records(df)
+        if apply_cost:
+            for r in records:
+                if r.get('status') == 'SOLD' and r.get('buy_price') and r.get('sell_price'):
+                    r['return_rate'] = self.calculate_return(r['buy_price'], r['sell_price'], r.get('qty', 1), True)
+        return records
 
     def get_solds(self) -> list:
         """전체 SOLD 포지션 반환."""
@@ -186,14 +205,25 @@ class VirtualTradeManager:
             self._write(df)
             logger.info(f"[가상매매] {code} sell_price 보정 완료 → {correct_price}")
 
-    def get_summary(self) -> dict:
+    def get_summary(self, apply_cost: bool = False) -> dict:
         """전체 매매 요약 통계 (HOLD + SOLD 모두 포함)."""
         df = self._read()
         total_trades = len(df)
         sold_df = df[df['status'] == 'SOLD']
-        win_trades = len(sold_df[sold_df['return_rate'] > 0])
-        win_rate = (win_trades / len(sold_df) * 100) if len(sold_df) > 0 else 0
-        avg_return = sold_df['return_rate'].mean() if len(sold_df) > 0 else 0
+        
+        if sold_df.empty:
+            return {"total_trades": total_trades, "win_rate": 0, "avg_return": 0}
+
+        # 수익률 시리즈 추출 (비용 적용 시 재계산)
+        if apply_cost:
+            returns = sold_df.apply(lambda row: self.calculate_return(row['buy_price'], row['sell_price'], row['qty'], True), axis=1)
+        else:
+            returns = sold_df['return_rate']
+
+        win_trades = len(returns[returns > 0])
+        win_rate = (win_trades / len(sold_df) * 100)
+        avg_return = returns.mean()
+
         return {
             "total_trades": total_trades,
             "win_rate": round(win_rate, 1),

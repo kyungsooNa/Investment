@@ -10,14 +10,14 @@ router = APIRouter()
 
 
 @router.get("/virtual/summary")
-async def get_virtual_summary():
+async def get_virtual_summary(apply_cost: bool = False):
     """가상 매매 요약 정보 조회"""
     ctx = _get_ctx()
     # ctx에 virtual_manager가 초기화되어 있어야 합니다.
     if not hasattr(ctx, 'virtual_manager'):
         return {"total_trades": 0, "win_rate": 0, "avg_return": 0}
 
-    return ctx.virtual_manager.get_summary()
+    return ctx.virtual_manager.get_summary(apply_cost=apply_cost)
 
 
 @router.get("/virtual/strategies")
@@ -114,13 +114,13 @@ async def get_strategy_chart(strategy_name: str):
 
 
 @router.get("/virtual/history")
-async def get_virtual_history(force_code: str = None):
+async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
     """가상 매매 전체 기록 조회 (force_code 지정 시 해당 종목은 캐시 무시)"""
     ctx = _get_ctx()
     if not hasattr(ctx, 'virtual_manager'):
         return {"trades": [], "weekly_changes": {}}
 
-    trades = ctx.virtual_manager.get_all_trades()
+    trades = ctx.virtual_manager.get_all_trades(apply_cost=apply_cost)
 
     # enrichment: 실패해도 기본 trades는 반환
     try:
@@ -192,6 +192,7 @@ async def get_virtual_history(force_code: str = None):
                         price_map[code] = (cached_price, cached_rate, True, cached_time)
 
         # 3. 전체 종목에 현재가 반영 (HOLD는 수익률도 재계산)
+        vm = ctx.virtual_manager
         for trade in trades:
             # 현재가 정보가 있으면 업데이트
             if trade['code'] in price_map:
@@ -203,7 +204,8 @@ async def get_virtual_history(force_code: str = None):
                 if trade['status'] == 'HOLD':
                     trade['daily_change_rate'] = daily_rate
                     bp = trade.get('buy_price', 0) or 0
-                    trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
+                    qty = float(trade.get('qty', 1) or 1)
+                    trade['return_rate'] = vm.calculate_return(bp, cur, qty, apply_cost=apply_cost)
 
             # SOLD 상태 처리 (현재가 조회 여부와 무관하게 매도가 기준 데이터 정제)
             if trade['status'] == 'SOLD':
@@ -219,15 +221,17 @@ async def get_virtual_history(force_code: str = None):
                     if 'current_price' in trade and trade['current_price']:
                         cur = trade['current_price']
                         trade['sell_price'] = cur
-                        trade['return_rate'] = round(((cur - bp) / bp) * 100, 2) if bp else 0
+                        qty = float(trade.get('qty', 1) or 1)
+                        trade['return_rate'] = vm.calculate_return(bp, cur, qty, apply_cost=apply_cost)
                         # CSV 원본도 수정
                         try:
                             ctx.virtual_manager.fix_sell_price(trade['code'], trade.get('buy_date', ''), cur)
                         except Exception:
                             pass
                 else:
-                    # 매도 완료된 종목은 매도가 기준으로 수익률 고정
-                    trade['return_rate'] = round(((sp - bp) / bp) * 100, 2) if bp else 0
+                    # 매도 완료된 종목은 매도가 기준으로 수익률 고정 (get_all_trades에서 이미 계산되었으나 안전장치)
+                    qty = float(trade.get('qty', 1) or 1)
+                    trade['return_rate'] = vm.calculate_return(bp, sp, qty, apply_cost=apply_cost)
                     trade['sell_price'] = sp
     except Exception as e:
         print(f"[WebAPI] virtual/history enrichment 오류: {e}")
@@ -270,8 +274,8 @@ async def get_virtual_history(force_code: str = None):
                 if ep == 0:
                     ep = bp
 
-                buy_amt = bp * qty
-                eval_amt = ep * qty
+                buy_amt = vm.get_trade_amount(bp, qty, is_sell=False, apply_cost=apply_cost)
+                eval_amt = vm.get_trade_amount(ep, qty, is_sell=True, apply_cost=apply_cost)
 
                 # ALL 집계
                 summary_agg["ALL"]["buy_sum"] += buy_amt
@@ -296,7 +300,6 @@ async def get_virtual_history(force_code: str = None):
                 strategy_returns[key] = 0.0
 
         # 스냅샷 저장 + 전일/전주대비 조회 (JSON 1회만 로드)
-        vm = ctx.virtual_manager
         vm.save_daily_snapshot(strategy_returns)
         snapshot_data = vm._load_data()
         for key in ["ALL"] + strategies:

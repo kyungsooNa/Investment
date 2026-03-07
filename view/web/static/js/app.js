@@ -633,8 +633,18 @@ async function loadVirtualHistory(forceCode = null) {
     try {
         summaryBox.innerHTML = '<span>데이터 로드 중...</span>';
 
+        // [추가] 비용 적용 체크박스 확인
+        const applyCostEl = document.getElementById('apply-cost-chk');
+        const applyCost = applyCostEl ? applyCostEl.checked : false;
+
         // 1. 데이터 가져오기
-        const url = forceCode ? `/api/virtual/history?force_code=${forceCode}` : '/api/virtual/history';
+        let url = '/api/virtual/history';
+        const params = [];
+        if (forceCode) params.push(`force_code=${forceCode}`);
+        if (applyCost) params.push(`apply_cost=true`);
+        
+        if (params.length > 0) url += '?' + params.join('&');
+
         const listRes = await fetch(url);
         console.log('[Virtual] response status:', listRes.status);
         if (listRes.ok) {
@@ -994,6 +1004,9 @@ function renderVirtualHoldTable() {
 
     updateVirtualSortHeaders('hold');
 
+    const applyCostEl = document.getElementById('apply-cost-chk');
+    const showCost = applyCostEl ? applyCostEl.checked : false;
+
     if (data.length === 0) {
         holdBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">보유 종목이 없습니다.</td></tr>';
         return;
@@ -1015,6 +1028,17 @@ function renderVirtualHoldTable() {
         // 전략명 표시 추가
         const strategyLabel = item.strategy ? `<div style="font-size:0.75em; color:#888; margin-bottom:2px;">${item.strategy}</div>` : '';
 
+        let costHtml = '';
+        if (showCost) {
+            const qty = Number(item.qty) || 1;
+            const bp = Number(item.buy_price || 0);
+            const cp = Number(item.current_price || 0);
+            if (bp > 0 && cp > 0) {
+                const cost = Math.floor((bp * qty * 0.000140527) + (cp * qty * (0.000140527 + 0.002)));
+                costHtml = ` <span style="font-size:0.75em; color:#999; font-weight:normal;">(-${cost.toLocaleString()}원)</span>`;
+            }
+        }
+
         holdBody.insertAdjacentHTML('beforeend', `
             <tr>
                 <td>
@@ -1023,7 +1047,7 @@ function renderVirtualHoldTable() {
                 </td>
                 <td>${buyPrice}</td>
                 <td>${curPrice}${cacheLabel}${forceBtn}</td>
-                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
+                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong>${costHtml}</td>
                 <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate}</div></td>
             </tr>
         `);
@@ -1041,6 +1065,9 @@ function renderVirtualSoldTable() {
     }
 
     updateVirtualSortHeaders('sold');
+
+    const applyCostEl = document.getElementById('apply-cost-chk');
+    const showCost = applyCostEl ? applyCostEl.checked : false;
 
     if (data.length === 0) {
         soldBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">매도 기록이 없습니다.</td></tr>';
@@ -1065,6 +1092,18 @@ function renderVirtualSoldTable() {
         // 전략명 표시 추가
         const strategyLabel = item.strategy ? `<div style="font-size:0.75em; color:#888; margin-bottom:2px;">${item.strategy}</div>` : '';
 
+        let costHtml = '';
+        if (showCost) {
+            const qty = Number(item.qty) || 1;
+            const bp = Number(item.buy_price || 0);
+            let sp = Number(item.sell_price || 0);
+            if (sp === 0 && item.current_price) sp = Number(item.current_price);
+            if (bp > 0 && sp > 0) {
+                const cost = Math.floor((bp * qty * 0.000140527) + (sp * qty * (0.000140527 + 0.002)));
+                costHtml = ` <span style="font-size:0.75em; color:#999; font-weight:normal;">(-${cost.toLocaleString()}원)</span>`;
+            }
+        }
+
         soldBody.insertAdjacentHTML('beforeend', `
             <tr>
                 <td>
@@ -1073,7 +1112,7 @@ function renderVirtualSoldTable() {
                 </td>
                 <td>${buyPrice}</td>
                 <td>${sellPrice}<div style="font-size:0.8em; color:var(--text-secondary);">${curPrice}${cacheLabel}${forceBtn}</div></td>
-                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong></td>
+                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong>${costHtml}</td>
                 <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
             </tr>
         `);

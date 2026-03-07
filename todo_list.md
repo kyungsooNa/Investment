@@ -8,8 +8,6 @@
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 4. [오닐PP/BU] * 해당전략 전용 로그 생성안됨.
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-7. [투자결과] 수수료도 적용하여 수익률 계산
-
 
 ### 1. 환경 (Environment)
 

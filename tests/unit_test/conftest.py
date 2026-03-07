@@ -125,6 +125,9 @@ def mock_web_ctx():
     ctx.order_execution_service = AsyncMock()
     ctx.broker = AsyncMock()
     ctx.virtual_manager = MagicMock()
+    # [Fix] get_trade_amount가 연산에 사용되므로 float 반환 설정 (TypeError 방지)
+    ctx.virtual_manager.get_trade_amount.side_effect = lambda p, q=1, **kwargs: float(p * q)
+    ctx.virtual_manager.calculate_return.return_value = 0.0
     
     # scheduler는 동기/비동기 메서드가 혼재하므로 MagicMock 기반에 비동기 메서드만 AsyncMock 할당
     ctx.scheduler = MagicMock()
