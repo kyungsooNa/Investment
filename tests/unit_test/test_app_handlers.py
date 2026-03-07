@@ -69,6 +69,13 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         """각 테스트 메서드 실행 후에 설정을 정리합니다."""
         builtins.print = self.original_print
 
+    def _create_dummy_output(self, overrides=None):
+        """Pydantic 모델 유효성 검사를 통과하기 위해 더미 데이터를 채워 객체를 생성합니다."""
+        data = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
+        if overrides:
+            data.update(overrides)
+        return ResStockFullInfoApiOutput.model_validate(data)
+
     # --- DataHandlers (메뉴 1, 2, 5, 6, 7, 8 에 해당) ---
 
     # 메뉴 1: 주식 현재가 조회 (삼성전자) - handle_get_current_stock_price
@@ -80,7 +87,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
 
         # get_current_price가 반환할 Mock 데이터 생성
         # handle_get_current_stock_price 내부에서 필요한 모든 필드를 포함해야 함
-        mock_output = ResStockFullInfoApiOutput.from_dict({
+        mock_output = self._create_dummy_output({
             "stck_prpr": "70000",
             "prdy_vrss": "1000",
             "prdy_ctrt": "1.45",
@@ -250,7 +257,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_output({
                     "stck_prpr": "70000",
                     "prdy_vrss": "500",
                     "prdy_vrss_sign": "2",
@@ -286,7 +293,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="정상",
             data={
-                "output": ResStockFullInfoApiOutput.from_dict({
+                "output": self._create_dummy_output({
                     "stck_prpr": "70000",
                     "stck_oprc": "69000",
                     "oprc_vrss_prpr_sign": "2"

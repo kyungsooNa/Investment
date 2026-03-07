@@ -1,6 +1,7 @@
 # brokers/korea_investment/korea_invest_quotations_api.py
 import httpx
 from typing import Dict, List, Union, Optional
+from pydantic import ValidationError
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_params_provider import Params
@@ -57,7 +58,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                     msg1="종목 정보 조회 성공",
                     data=stock_info_data
                 )
-            except TypeError as e:
+            except (TypeError, ValidationError) as e:
                 error_msg = f"{stock_code} 종목 정보 응답 형식 오류: {e}, 응답: {response.data}"
                 self._logger.error(error_msg)
                 return ResCommonResponse(

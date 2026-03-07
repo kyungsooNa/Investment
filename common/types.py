@@ -1,26 +1,9 @@
 # common/types.py
-from dataclasses import dataclass, field, fields, MISSING, asdict
-from typing import Optional, Generic, TypeVar, Type
+from typing import Optional, Generic, TypeVar, Type, Any, Dict
 from enum import Enum, auto
+from pydantic import BaseModel, Field, model_validator, ConfigDict
 
 T = TypeVar("T")
-
-def with_from_dict(cls: Type[T]) -> Type[T]:
-    @classmethod
-    def from_dict(cls_: Type[T], data: dict) -> T:
-        init_kwargs = {}
-        for field_def in fields(cls_):
-            field_name = field_def.name
-            if field_name in data:
-                init_kwargs[field_name] = data[field_name]
-            elif field_def.default is not MISSING or field_def.default_factory is not MISSING:
-                continue  # 기본값 있으므로 skip
-            else:
-                init_kwargs[field_name] = None  # 누락된 필드는 None 등 기본값 설정
-        return cls_(**init_kwargs)
-
-    setattr(cls, "from_dict", from_dict)
-    return cls
 
 # API 응답 결과의 성공/실패를 나타내는 Enum
 class ErrorCode(Enum):
@@ -38,8 +21,7 @@ class ErrorCode(Enum):
 
 
 # --- 전략 신호 ---
-@dataclass
-class TradeSignal:
+class TradeSignal(BaseModel):
     """전략에서 생성하는 표준 매수/매도 신호."""
     code: str
     name: str
@@ -50,13 +32,11 @@ class TradeSignal:
     strategy_name: str = ""
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
 
 
 # --- 공통적으로 사용되는 데이터 응답 구조 ---
-@with_from_dict
-@dataclass
-class ResPriceSummary:
+class ResPriceSummary(BaseModel):
     symbol: str
     open: int
     current: int
@@ -65,31 +45,39 @@ class ResPriceSummary:
     new_high_low_status: Optional[str] = None
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
 
 
-@with_from_dict
-@dataclass
-class ResMomentumStock:
+class ResMomentumStock(BaseModel):
     symbol: str
     change_rate: float
     prev_volume: int
     current_volume: int
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
 
 
-@with_from_dict
-@dataclass
-class ResMarketCapStockItem:
+class ResMarketCapStockItem(BaseModel):
     rank: Optional[str]
     name: Optional[str]
     code: str
     current_price: Optional[str]
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
 
 
 # --- 한국투자증권 API 특화 응답 구조 ---
@@ -97,8 +85,7 @@ class ResMarketCapStockItem:
 # --- 한국투자증권 API 특화 응답 구조 (종목 상세정보) ---
 
 
-@dataclass
-class ResStockFullInfoApiOutput:
+class ResStockFullInfoApiOutput(BaseModel):
     acml_tr_pbmn: str  # 누적 거래 대금 (원)
     acml_vol: str  # 누적 거래량 (주)
     aspr_unit: str  # 호가 단위
@@ -198,31 +185,14 @@ class ResStockFullInfoApiOutput:
         return "-"
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, data: dict, log_missing: bool = True) -> "ResStockFullInfoApiOutput":
-        init_kwargs = {}
-
-        for field_def in fields(cls):
-            field_name = field_def.name
-            if field_name in data:
-                init_kwargs[field_name] = data[field_name]
-            elif field_def.default is not MISSING or field_def.default_factory is not MISSING:
-                # 기본값이 있으면 무시 (dataclass가 처리함)
-                pass
-            else:
-                # 필수 필드인데 누락된 경우 → 기본값 설정
-                init_kwargs[field_name] = "N/A"  # 또는 None, "N/A" 등
-                # if log_missing:
-                #     logger.warning(f"[from_dict] 필수 필드 누락 → 기본값 대입: '{field_name}'")
-
-        return cls(**init_kwargs)
+        return cls.model_validate(data)
 
 
-@with_from_dict
-@dataclass
-class ResTopMarketCapApiItem:
+class ResTopMarketCapApiItem(BaseModel):
     """
     [시가총액 상위 종목 응답 아이템]
     - 모든 수치는 API가 문자열(String)로 반환하므로 str 유지 (대형 정수/소수 정밀도 보존 목적)
@@ -253,7 +223,8 @@ class ResTopMarketCapApiItem:
     iscd: Optional[str] = None           # (호환) 단축코드 별칭. 없으면 mksc_shrn_iscd로 채움
     acc_trdvol: Optional[str] = None     # (호환) 누적 거래량 별칭. 없으면 acml_vol로 채움
 
-    def __post_init__(self):
+    @model_validator(mode='after')
+    def sync_aliases(self) -> "ResTopMarketCapApiItem":
         # 과거 호환: iscd가 없으면 mksc_shrn_iscd로 보완
         if not self.iscd:
             self.iscd = self.mksc_shrn_iscd
@@ -262,10 +233,15 @@ class ResTopMarketCapApiItem:
             self.acml_vol = self.acc_trdvol
         elif self.acml_vol and not self.acc_trdvol:
             self.acc_trdvol = self.acml_vol
+        return self
 
     def to_dict(self):
         """Dict 직렬화(테스트/로그용)."""
-        return asdict(self)
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
 
     # 선택: 원시 API payload를 받아 alias 키까지 정규화하고 생성하고 싶다면 사용
     @classmethod
@@ -285,13 +261,11 @@ class ResTopMarketCapApiItem:
         if "acml_vol" not in norm and "acc_trdvol" in norm:
             norm["acml_vol"] = norm.get("acc_trdvol")
 
-        # dataclass 생성
-        return cls(**norm)
+        # Pydantic 생성
+        return cls.model_validate(norm)
 
 
-@with_from_dict
-@dataclass
-class ResDailyChartApiItem:
+class ResDailyChartApiItem(BaseModel):
     stck_bsop_date: str
     stck_oprc: str
     stck_hgpr: str
@@ -300,34 +274,40 @@ class ResDailyChartApiItem:
     acml_vol: str
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
 
 
-@with_from_dict
-@dataclass
-class ResAccountBalanceApiOutput:
+class ResAccountBalanceApiOutput(BaseModel):
     pdno: str
     prdt_name: str
     evlu_amt: str
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
 
 
-@with_from_dict
-@dataclass
-class ResStockOrderApiOutput:
+class ResStockOrderApiOutput(BaseModel):
     ordno: str
     prdt_no: str
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
 
 
 # 종목 요약 정보 응답 구조 (상승률 기반 필터링용 등)
-@with_from_dict
-@dataclass
-class ResBasicStockInfo:
+class ResBasicStockInfo(BaseModel):
     code: str
     name: str
     # open_price: int
@@ -336,11 +316,14 @@ class ResBasicStockInfo:
     prdy_ctrt: float
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
 
-@with_from_dict
-@dataclass
-class ResFluctuation:
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
+
+
+class ResFluctuation(BaseModel):
     stck_shrn_iscd: str    #주식 단축 종목코드
     data_rank: str    #데이터 순위
     hts_kor_isnm: str    #HTS 한글 종목명
@@ -367,18 +350,15 @@ class ResFluctuation:
     prd_rsfl_rate: str    #기간 등락 비율
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, data: dict) -> "ResFluctuation":
-        init_kwargs = {}
-        for f in fields(cls):
-            init_kwargs[f.name] = data.get(f.name, None)  # 누락 시 None
-        return cls(**init_kwargs)
+        # Pydantic handles missing fields if Optional, or we can use validator
+        return cls.model_validate(data)
     
-@with_from_dict
-@dataclass
-class ResBollingerBand:
+
+class ResBollingerBand(BaseModel):
     code: str
     date: str
     close: float
@@ -387,47 +367,54 @@ class ResBollingerBand:
     lower: Optional[float]
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
 
-@with_from_dict
-@dataclass
-class ResRSI:
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
+
+
+class ResRSI(BaseModel):
     code: str
     date: str
     close: float
     rsi: float
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
 
-@with_from_dict
-@dataclass
-class ResMovingAverage:
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
+
+
+class ResMovingAverage(BaseModel):
     code: str
     date: str
     close: float
     ma: Optional[float]
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
 
 
-@dataclass
-class ResRelativeStrength:
+class ResRelativeStrength(BaseModel):
     """N일 수익률 (상대강도 원시값)."""
     code: str
     date: str
     return_pct: float  # N일 수익률 (%)
 
     def to_dict(self):
-        return asdict(self)
+        return self.model_dump()
 
 
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
-@with_from_dict
-@dataclass
-class ResCommonResponse(Generic[T]):
+class ResCommonResponse(BaseModel, Generic[T]):
     rt_cd: str
     msg1: str
     data: Optional[T] = None
@@ -437,12 +424,16 @@ class ResCommonResponse(Generic[T]):
         if hasattr(self.data, 'to_dict') and callable(getattr(self.data, 'to_dict')):
             # data 필드 자체가 to_dict를 가진 객체인 경우
             data_serialized = self.data.to_dict()
+        elif isinstance(self.data, BaseModel):
+            data_serialized = self.data.model_dump()
         elif isinstance(self.data, (list, tuple)):
             # data 필드가 리스트/튜플인 경우, 내부 항목들도 재귀적으로 직렬화
             data_serialized = []
             for item in self.data:
                 if hasattr(item, 'to_dict') and callable(getattr(item, 'to_dict')):
                     data_serialized.append(item.to_dict())
+                elif isinstance(item, BaseModel):
+                    data_serialized.append(item.model_dump())
                 elif isinstance(item, (list, tuple, dict)): # 중첩된 리스트/딕셔너리도 처리
                     # 여기서 재귀적으로 self._serialize 같은 함수를 사용하면 좋지만,
                     # types.py에서는 cache_manager._serialize를 직접 호출할 수 없으므로,
@@ -457,6 +448,8 @@ class ResCommonResponse(Generic[T]):
             for k, v in self.data.items():
                 if hasattr(v, 'to_dict') and callable(getattr(v, 'to_dict')):
                     data_serialized[k] = v.to_dict()
+                elif isinstance(v, BaseModel):
+                    data_serialized[k] = v.model_dump()
                 elif isinstance(v, (list, tuple, dict)): # 중첩된 리스트/딕셔너리도 처리
                     data_serialized[k] = v # to_dict 없는 객체는 그대로
                 else:
@@ -470,3 +463,7 @@ class ResCommonResponse(Generic[T]):
             "msg1": self.msg1,
             "data": data_serialized
         }
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)

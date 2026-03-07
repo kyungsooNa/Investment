@@ -9,11 +9,13 @@ def get_api():
     mock_logger = MagicMock()
     mock_env = MagicMock()
     mock_time_manager = AsyncMock()
+    mock_trid_provider = MagicMock()
 
     return  KoreaInvestApiAccount(
         env=mock_env,
         logger=mock_logger,
         time_manager=mock_time_manager,
+        trid_provider=mock_trid_provider,
     )
 
 @pytest.mark.asyncio

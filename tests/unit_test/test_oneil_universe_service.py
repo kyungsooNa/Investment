@@ -30,6 +30,12 @@ def create_mock_ohlcv(length=90, zero_volume_days=0, no_high_days=0):
     return data
 
 
+def create_mock_stock_info(overrides=None):
+    base_data = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
+    if overrides:
+        base_data.update(overrides)
+    return ResStockFullInfoApiOutput.model_validate(base_data)
+
 @pytest.fixture
 def mock_deps():
     # ts = MagicMock() # Removed
@@ -69,7 +75,7 @@ def oneil_service_fixture():
         logger=mock_logger
     )
     # 공통 Mock 응답 설정
-    mock_price_output = ResStockFullInfoApiOutput.from_dict({"w52_hgpr": "12000", "hts_avls": "1000"})
+    mock_price_output = create_mock_stock_info({"w52_hgpr": "12000", "hts_avls": "1000"})
     mock_sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": mock_price_output}
     )
@@ -99,7 +105,7 @@ async def test_analyze_candidate_success(mock_deps):
     # 현재가(prev_close)는 약 1099. 52주 고가 1200이면 통과.
     # 시가총액 3000억으로 가정 (hts_avls는 억 단위, 2000억~2조 범위 내)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     
     # 3. BB Mock (스퀴즈 데이터 계산용)
@@ -137,21 +143,21 @@ async def test_analyze_candidate_filter_market_cap(mock_deps):
     # Case 1: 시가총액 미달 (1000억)
     # hts_avls는 억 단위. 1000억 -> "1000"
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "1000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "1000"})}
     )
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
     assert item is None
     
     # Case 2: 시가총액 초과 (3조 = 30000억)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "30000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "30000"})}
     )
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
     assert item is None
 
     # Case 3: 정상 범위 (5000억)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "5000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "5000"})}
     )
     # BB, RS Mock 필요 (통과를 위해)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
@@ -195,9 +201,9 @@ async def test_generate_pool_a(mock_deps, tmp_path):
     async def mock_get_price(code):
         if code == "000001":
             # 시가총액 5000억 (hts_avls는 억 단위)
-            return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "5000"}})
+            return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "5000"})})
         # 시가총액 10억 (미달)
-        return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "10"}})
+        return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "10"})})
     
     sqs.get_current_price.side_effect = mock_get_price
     
@@ -310,7 +316,7 @@ async def test_generate_pool_a_sorting_with_tie_score(mock_deps, tmp_path):
     # 2. 1차 필터 통과 가정 (get_current_stock_price)
     # 시가총액 조건 통과를 위해 적절한 값 반환
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"hts_avls": "5000", "stck_llam": "5000"}} 
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "5000", "stck_llam": "5000"})}
     )
 
     # 3. 2차 필터 (_analyze_candidate) Mock
@@ -414,7 +420,7 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
     ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
@@ -451,7 +457,7 @@ async def test_analyze_candidate_rs_calculation_failure(mock_deps):
     ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
@@ -836,7 +842,7 @@ async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
     # 현재가(prev_close) approx 1099.
     # 52주 고가 2000 -> (2000-1099)/2000 = 45% 하락 -> 탈락 (기본 설정 25% 가정)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "2000", "hts_avls": "3000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "2000", "hts_avls": "3000"})}
     )
     
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
@@ -852,7 +858,7 @@ async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
     ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 1000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     
     # 2. BB Mock
@@ -920,7 +926,7 @@ async def test_analyze_candidate_insufficient_bb_data(mock_deps):
     ohlcv = [{"close": 1000, "high": 1100, "volume": 1000000} for _ in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     
     # BB Data Short
@@ -1052,7 +1058,7 @@ async def test_generate_pool_a_fallback_market_cap(mock_deps, tmp_path):
     
     # hts_avls 없음, stck_llam 있음 (5000 -> 5000억으로 처리되는지 확인)
     async def mock_get_price(code):
-        return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "", "stck_llam": "5000"}})
+        return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "", "stck_llam": "5000"})})
     
     sqs.get_current_price.side_effect = mock_get_price
     
@@ -1165,7 +1171,7 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     
     # w52_hgpr = 0
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "0", "hts_avls": "3000"}}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "0", "hts_avls": "3000"})}
     )
     
     # BB, RS Mock (통과 조건)
@@ -1234,7 +1240,7 @@ async def test_generate_pool_a_api_failure_in_loop(mock_deps, tmp_path):
     # A: 성공, B: 실패
     async def mock_get_price(code):
         if code == "A":
-            return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"hts_avls": "5000"}})
+            return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "5000"})})
         return ResCommonResponse(rt_cd="1", msg1="Fail")
     
     sqs.get_current_price.side_effect = mock_get_price
