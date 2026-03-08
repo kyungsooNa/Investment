@@ -85,6 +85,7 @@ class StrategyScheduler:
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._csv_lock = threading.Lock()
+        self._subscriber_queues: List[asyncio.Queue] = []
 
     # ── 전략 등록 ──
 
@@ -293,6 +294,7 @@ class StrategyScheduler:
         if len(self._signal_history) > self.MAX_HISTORY:
             self._signal_history = self._signal_history[-self.MAX_HISTORY:]
         await self._append_signal_csv(record)
+        await self._notify_subscribers(record)
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""
@@ -509,3 +511,34 @@ class StrategyScheduler:
             }
             for r in reversed(records)
         ]
+
+    # ── SSE 구독자 관리 ──
+
+    def create_subscriber_queue(self) -> asyncio.Queue:
+        """SSE 클라이언트용 큐 생성 및 등록."""
+        queue: asyncio.Queue = asyncio.Queue()
+        self._subscriber_queues.append(queue)
+        return queue
+
+    def remove_subscriber_queue(self, queue: asyncio.Queue):
+        """SSE 클라이언트 연결 해제 시 큐 제거."""
+        if queue in self._subscriber_queues:
+            self._subscriber_queues.remove(queue)
+
+    async def _notify_subscribers(self, record: SignalRecord):
+        """새 시그널을 모든 SSE 구독자에게 전파."""
+        data = {
+            "strategy_name": record.strategy_name,
+            "code": record.code,
+            "name": record.name,
+            "action": record.action,
+            "price": record.price,
+            "reason": record.reason,
+            "timestamp": record.timestamp,
+            "api_success": record.api_success,
+        }
+        for queue in list(self._subscriber_queues):
+            try:
+                queue.put_nowait(data)
+            except asyncio.QueueFull:
+                pass

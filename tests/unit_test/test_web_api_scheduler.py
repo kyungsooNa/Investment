@@ -1,6 +1,7 @@
 """
 스케줄러 관련 테스트 (scheduler.html).
 """
+import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
@@ -183,6 +184,52 @@ async def test_generate_osb_pool_a_service_missing(web_client, mock_web_ctx):
     mock_web_ctx.oneil_universe_service = None
     
     response = web_client.post("/api/scheduler/strategy/오닐스퀴즈돌파/generate-pool-a")
-    
+
     assert response.status_code == 404
     assert "오닐 유니버스 서비스가 초기화되지 않았습니다" in response.json()["detail"]
+
+
+# ── SSE 스트림 엔드포인트 테스트 ──
+
+@pytest.mark.asyncio
+async def test_scheduler_stream_no_scheduler(web_client, mock_web_ctx):
+    """스케줄러 미초기화 시 SSE 스트림 응답 테스트."""
+    mock_web_ctx.scheduler = None
+
+    response = web_client.get("/api/scheduler/stream")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+
+@pytest.mark.asyncio
+async def test_scheduler_stream_connects(web_client, mock_web_ctx):
+    """SSE 스트림 연결 시 구독자 큐가 생성되는지 테스트."""
+    mock_queue = asyncio.Queue()
+    mock_web_ctx.scheduler.create_subscriber_queue = MagicMock(return_value=mock_queue)
+    mock_web_ctx.scheduler.remove_subscriber_queue = MagicMock()
+
+    # 큐에 데이터 넣고 None(종료 신호) 추가
+    await mock_queue.put({
+        "strategy_name": "TestStrat",
+        "code": "005930",
+        "name": "삼성전자",
+        "action": "BUY",
+        "price": 70000,
+        "reason": "모멘텀 돌파",
+        "timestamp": "2025-01-01 10:00:00",
+        "api_success": True,
+    })
+    await mock_queue.put(None)  # 종료 신호
+
+    response = web_client.get("/api/scheduler/stream")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    # 응답 본문에 시그널 데이터가 포함되어야 함
+    assert "005930" in response.text
+    assert "삼성전자" in response.text
+    assert "BUY" in response.text
+
+    # 구독자 큐 생성/제거 확인
+    mock_web_ctx.scheduler.create_subscriber_queue.assert_called_once()
+    mock_web_ctx.scheduler.remove_subscriber_queue.assert_called_once_with(mock_queue)
