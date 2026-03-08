@@ -1,10 +1,6 @@
 [run]
 branch = True
-source =
-    app
-    services
-    api
-    core
+source = .
 
 [report]
 omit =
