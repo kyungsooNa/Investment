@@ -53,31 +53,51 @@ class FileCacheManager:
 
     def _deserialize(self, raw_data: Any) -> Any:
         if isinstance(raw_data, dict):
+            best_cls = None
+            best_ratio = 0.0
+            best_is_dataclass = False
+
             for cls in self._deserializable_classes:
                 try:
                     if issubclass(cls, BaseModel):
                         cls_fields = set(cls.model_fields.keys())
-                        if cls_fields.issubset(raw_data.keys()):
-                            # 클래스 필드가 dict 키의 50% 이상을 커버해야 매칭
-                            # (소수 필드 클래스가 대형 dict에 잘못 매칭되는 것을 방지)
-                            if len(cls_fields) / len(raw_data) < 0.5:
-                                continue
-                            if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
-                                raw_data["data"] = self._deserialize(raw_data["data"])
-                            return cls.model_validate(raw_data)
                     elif is_dataclass(cls):
                         cls_fields = {f.name for f in fields(cls)}
-                        if cls_fields.issubset(raw_data.keys()):
-                            # 클래스 필드가 dict 키의 50% 이상을 커버해야 매칭
-                            # (소수 필드 클래스가 대형 dict에 잘못 매칭되는 것을 방지)
-                            if len(cls_fields) / len(raw_data) < 0.5:
-                                continue
-                            if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
-                                raw_data["data"] = self._deserialize(raw_data["data"])
-                            return cls.from_dict(raw_data)
+                    else:
+                        continue
 
-                except Exception as e:
+                    if not cls_fields.issubset(raw_data.keys()):
+                        continue
+
+                    ratio = len(cls_fields) / len(raw_data) if raw_data else 0
+                    # 클래스 필드가 dict 키의 50% 이상을 커버해야 매칭
+                    # (소수 필드 클래스가 대형 dict에 잘못 매칭되는 것을 방지)
+                    if ratio < 0.5:
+                        continue
+
+                    # ResCommonResponse는 래퍼이므로 즉시 처리
+                    if cls.__name__ == "ResCommonResponse":
+                        if "data" in raw_data:
+                            raw_data["data"] = self._deserialize(raw_data["data"])
+                        if is_dataclass(cls):
+                            return cls.from_dict(raw_data)
+                        return cls.model_validate(raw_data)
+
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_cls = cls
+                        best_is_dataclass = is_dataclass(cls)
+                except Exception:
                     ...
+
+            if best_cls is not None:
+                try:
+                    if best_is_dataclass:
+                        return best_cls.from_dict(raw_data)
+                    return best_cls.model_validate(raw_data)
+                except Exception:
+                    ...
+
             return {k: self._deserialize(v) for k, v in raw_data.items()}
 
         elif isinstance(raw_data, (list, tuple)):

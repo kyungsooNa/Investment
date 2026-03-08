@@ -7,10 +7,19 @@
 1. [전략스케줄러] 전략에서 매수/매도 API를 실패하는 경우가 종종 있음. 1차로 사실 실패하면 log만되고, web에 남는 history는 저장이 안되는게 맞을거같고 2번쨰로는 실패하는경우에는 retry를 해야할거같음. retry 하는 queue를 만들어서 재시도하는 logic 추가가 필요.
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 3. [Ranking] 
-  * 1. Ranking 조회시 get_investor_trade_by_stock_dailydml 결과의 data는 아래와 같은 포멧으로 나오는데 ResDailyChartApiItem(stck_bsop_date='20260306', stck_oprc='8170', stck_hgpr='8170', stck_lwpr='7820', stck_clpr='8050', acml_vol='9714')
+  * 1. Ranking 조회시 refresh_investor_ranking에서  get_investor_trade_by_stock_dailydml 결과의 data는 아래와 같은 포멧으로 나오는데 ResDailyChartApiItem(stck_bsop_date='20260306', stck_oprc='8170', stck_hgpr='8170', stck_lwpr='7820', stck_clpr='8050', acml_vol='9714')
 
   다른 key값으로 꺼내고 있어서 data가 안나옴.
 
+  frgn_qty = int(data.get("frgn_ntby_qty", "0") or "0")
+  orgn_qty = int(data.get("orgn_ntby_qty", "0") or "0")
+  prsn_qty = int(data.get("prsn_ntby_qty", "0") or "0")
+  frgn_pbmn = int(data.get("frgn_ntby_tr_pbmn", "0") or "0")
+  orgn_pbmn = int(data.get("orgn_ntby_tr_pbmn", "0") or "0")
+  prsn_pbmn = int(data.get("prsn_ntby_tr_pbmn", "0") or "0")
+
+  acml_tr_pbmn = data.get("acml_tr_pbmn", "0") or "0"
+  
   File/DB Cache에서 get_investor_trade_by_stock_dailydml 결과값을 ResDailyChartApiItem로 역직렬화를 잘못하고 있는 문제가 있어서 수정 필요.
   (해당 문제가 왜 TC에서 안걸렸을까. 검증 할 수 있는 tc 추가.)
 
