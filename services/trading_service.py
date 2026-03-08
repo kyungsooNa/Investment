@@ -22,7 +22,7 @@ class TradingService:
     """
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
-                 time_manager: TimeManager = None):
+                 time_manager: TimeManager = None, market_date_manager=None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
@@ -30,6 +30,7 @@ class TradingService:
         self._latest_prices = {}
         self._daily_ohlcv_cache = {}  # {code: {'base_date': 'YYYYMMDD', 'data': [...]}}
         self._ohlcv_locks: Dict[str, asyncio.Lock] = {}  # 종목코드별 Lock (race condition 방지)
+        self._market_date_manager = market_date_manager
     async def get_name_by_code(self, code: str) -> str:
         """종목코드로 종목명을 반환합니다 (BrokerAPIWrapper 위임)."""
         return await self._broker_api_wrapper.get_name_by_code(code)
@@ -895,33 +896,9 @@ class TradingService:
         """
         대표 종목(삼성전자)의 일봉을 조회하여 데이터가 존재하는 가장 최근 날짜를 반환한다.
         """
-        try:
-            now = datetime.now()
-            end_dt = now.strftime("%Y%m%d")
-            # 넉넉하게 7일 전부터 조회 (연휴 등 고려)
-            start_dt = (now - timedelta(days=7)).strftime("%Y%m%d")
-            
-            # 삼성전자(005930) 일봉 조회
-            resp = await self._broker_api_wrapper.inquire_daily_itemchartprice(
-                "005930", start_dt, end_dt, "D"
-            )
-            
-            if resp and resp.rt_cd == ErrorCode.SUCCESS.value and resp.data:
-                dates = []
-                for item in resp.data:
-                    d = None
-                    if isinstance(item, dict):
-                        d = item.get("stck_bsop_date")
-                    else:
-                        d = getattr(item, "stck_bsop_date", None)
-                    
-                    if d:
-                        dates.append(d)
-                
-                if dates:
-                    return max(dates)
-                    
-        except Exception as e:
-            self._logger.warning(f"최근 거래일 조회 실패: {e}")
-            
+        # [수정] MarketDateManager를 통해 조회
+        if self._market_date_manager:
+            return await self._market_date_manager.get_latest_trading_date()
+        
+        self._logger.warning("MarketDateManager is not initialized in TradingService.")
         return None
