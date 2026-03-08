@@ -157,6 +157,8 @@ def test_on_demand_trigger_when_cache_empty(bg_service, mock_deps):
         resp = bg_service.get_foreign_net_buy_ranking()
         assert resp.data == []
         mock_create_task.assert_called_once()
+        # create_task에 전달된 coroutine을 close하여 "coroutine never awaited" 경고 방지
+        mock_create_task.call_args[0][0].close()
 
 
 def test_no_trigger_when_already_refreshing(bg_service):
