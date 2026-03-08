@@ -402,3 +402,33 @@ def test_exists(tmp_path):
     
     mgr.set(key, {"a": 1}, save_to_file=True)
     assert mgr.exists(key)
+
+
+def test_cleanup_old_files_ohlcv_retention(tmp_path):
+    """OHLCV 데이터 별도 보관 기간(1년) 적용 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    
+    now = time.time()
+    day = 86400
+    
+    # 1. 일반 데이터 (8일 전 -> 삭제 대상)
+    f1 = tmp_path / "normal.json"
+    f1.write_text("{}")
+    os.utime(str(f1), (now - 8 * day, now - 8 * day))
+    
+    # 2. OHLCV 데이터 (100일 전 -> 유지 대상)
+    f2 = tmp_path / "ohlcv_past_005930.json"
+    f2.write_text("{}")
+    os.utime(str(f2), (now - 100 * day, now - 100 * day))
+    
+    # 3. OHLCV 데이터 (400일 전 -> 삭제 대상)
+    f3 = tmp_path / "ohlcv_past_000660.json"
+    f3.write_text("{}")
+    os.utime(str(f3), (now - 400 * day, now - 400 * day))
+    
+    mgr.cleanup_old_files(days=7)
+    
+    assert not f1.exists()
+    assert f2.exists()
+    assert not f3.exists()
+
