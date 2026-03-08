@@ -145,6 +145,7 @@ class FileCacheManager:
             return
 
         cutoff = time.time() - (days * 86400)
+        ohlcv_cutoff = time.time() - (365 * 86400)  # OHLCV 데이터는 1년 보관
         files_info = []  # (path, mtime, size)
 
         try:
@@ -157,7 +158,11 @@ class FileCacheManager:
                             mtime = stat.st_mtime
                             size = stat.st_size
 
-                            if mtime < cutoff:
+                            # OHLCV 데이터는 별도 만료 기간 적용
+                            is_ohlcv = "ohlcv_past_" in file
+                            effective_cutoff = ohlcv_cutoff if is_ohlcv else cutoff
+
+                            if mtime < effective_cutoff:
                                 os.remove(path)
                                 if self._logger:
                                     self._logger.debug(f"🗑️ File cache 삭제됨 (기간만료): {path}")

@@ -101,6 +101,43 @@ def test_cleanup_old_files(tmp_path):
     assert mgr.exists("fresh")
     assert not mgr.exists("old")
 
+def test_cleanup_old_files_with_size_limit(tmp_path):
+    """용량 제한에 따른 데이터 정리 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    
+    # 1MB = 1024 * 1024 bytes
+    # 600KB 데이터 2개 생성 (총 1.2MB approx)
+    large_data = "x" * (600 * 1024) 
+    
+    # 시간차를 두고 저장 (오래된 것이 삭제되어야 함)
+    # 직접 DB에 insert하여 updated_at을 제어
+    conn = sqlite3.connect(str(tmp_path / "cache.db"))
+    
+    now = time.time()
+    old_time = now - 100
+    new_time = now
+    
+    # Key 1: Old (should be deleted)
+    val1 = json.dumps({"data": large_data})
+    conn.execute("INSERT INTO cache (key, value, updated_at) VALUES (?, ?, ?)", 
+                 ("key_old", val1, old_time))
+                 
+    # Key 2: New (should be kept)
+    val2 = json.dumps({"data": large_data})
+    conn.execute("INSERT INTO cache (key, value, updated_at) VALUES (?, ?, ?)", 
+                 ("key_new", val2, new_time))
+                 
+    conn.commit()
+    conn.close()
+    
+    # max_size_mb=1 (1MB limit)
+    # 총 데이터 크기는 약 1.2MB. 제한은 1MB.
+    # 오래된 key_old가 삭제되어야 함.
+    mgr.cleanup_old_files(days=7, max_size_mb=1)
+    
+    assert mgr.exists("key_new")
+    assert not mgr.exists("key_old")
+
 def test_pydantic_serialization(tmp_path):
     """Pydantic 모델 직렬화/역직렬화 테스트"""
     mgr = _mk_manager(str(tmp_path), classes=[PydanticDummy])

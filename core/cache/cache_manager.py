@@ -30,9 +30,13 @@ class CacheManager:
         if self.file_cache:
             self.file_cache.set_logger(logger)
             # 설정에서 보관 기간과 최대 용량을 가져옴 (기본값: 7일, 500MB)
-            days = self.cache_cfg.get("retention_days", 7)
-            max_size = self.cache_cfg.get("max_size_mb", 500)
-            self.file_cache.cleanup_old_files(days=days, max_size_mb=max_size)
+            try:
+                days = self.cache_cfg.get("retention_days", 7)
+                max_size = self.cache_cfg.get("max_size_mb", 500)
+                self.file_cache.cleanup_old_files(days=days, max_size_mb=max_size)
+            except Exception as e:
+                if self._logger:
+                    self._logger.warning(f"캐시 정리 중 오류 발생 (무시됨): {e}")
 
     def get_raw(self, key: str) -> Optional[Tuple[dict, str]] | None:
         """메모리 또는 파일 캐시에서 (timestamp + data) 반환"""

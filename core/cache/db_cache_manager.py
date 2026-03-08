@@ -131,9 +131,14 @@ class DBCacheManager:
 
     def cleanup_old_files(self, days: int = 7, max_size_mb: int = 0):
         cutoff = time.time() - (days * 86400)
+        ohlcv_cutoff = time.time() - (365 * 86400)  # OHLCV 데이터는 1년 보관
+
         try:
             with self._get_connection() as conn:
-                conn.execute("DELETE FROM cache WHERE updated_at < ?", (cutoff,))
+                # 일반 데이터 삭제 (OHLCV 제외)
+                conn.execute("DELETE FROM cache WHERE updated_at < ? AND key NOT LIKE 'ohlcv_past_%'", (cutoff,))
+                # OHLCV 데이터 삭제 (1년 경과)
+                conn.execute("DELETE FROM cache WHERE updated_at < ? AND key LIKE 'ohlcv_past_%'", (ohlcv_cutoff,))
 
                 # 용량 제한 적용 (데이터 크기 기준)
                 if max_size_mb > 0:
