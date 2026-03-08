@@ -1,7 +1,10 @@
 """
 전략 스케줄러 제어 API 엔드포인트 (scheduler.html).
 """
-from fastapi import APIRouter, HTTPException
+import asyncio
+import json
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from view.web.api_common import _get_ctx
 
 router = APIRouter()
@@ -84,6 +87,39 @@ async def get_scheduler_history(strategy: str = None):
 
     ctx.pm.log_timer("get_scheduler_history", t_start)
     return {"history": history}
+
+@router.get("/scheduler/stream")
+async def stream_scheduler_signals(request: Request):
+    """SSE 스트리밍: 스케줄러 시그널 실행 이력을 실시간으로 브라우저에 전달."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        return StreamingResponse(
+            iter([": no scheduler\n\n"]), media_type="text/event-stream"
+        )
+
+    queue = ctx.scheduler.create_subscriber_queue()
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=15)
+                    if data is None:
+                        break
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        break
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            ctx.scheduler.remove_subscriber_queue(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @router.post("/scheduler/strategy/오닐스퀴즈돌파/generate-pool-a")
 async def generate_osb_pool_a():

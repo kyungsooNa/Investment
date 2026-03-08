@@ -1852,6 +1852,7 @@ function handleProgramTradingData(d) {
 let schedulerPollingId = null;
 let allSchedulerHistory = [];
 let currentSchedulerFilter = '전체';
+let schedulerEventSource = null;
 
 async function loadSchedulerStatus() {
     try {
@@ -1866,6 +1867,11 @@ async function loadSchedulerStatus() {
         allSchedulerHistory = historyData.history || [];
         buildSchedulerHistoryTabs(statusData.strategies || []);
         filterSchedulerHistory(currentSchedulerFilter);
+
+        // 스케줄러가 실행 중이면 SSE 연결 (페이지 로드 시 자동 연결)
+        if (statusData.running && !schedulerEventSource) {
+            connectSchedulerSSE();
+        }
     } catch (e) {
         const info = document.getElementById('scheduler-info');
         if (info) info.innerHTML = '<span>스케줄러 상태 조회 실패</span>';
@@ -2059,12 +2065,43 @@ function renderSchedulerHistory(history) {
 function startSchedulerPolling() {
     stopSchedulerPolling();
     schedulerPollingId = setInterval(loadSchedulerStatus, 10000); // 10초마다
+    connectSchedulerSSE();
 }
 
 function stopSchedulerPolling() {
     if (schedulerPollingId) {
         clearInterval(schedulerPollingId);
         schedulerPollingId = null;
+    }
+    disconnectSchedulerSSE();
+}
+
+function connectSchedulerSSE() {
+    if (schedulerEventSource) return;
+    schedulerEventSource = new EventSource('/api/scheduler/stream');
+    schedulerEventSource.onmessage = function(event) {
+        try {
+            const signal = JSON.parse(event.data);
+            // 이력 맨 앞에 추가 (최신순)
+            allSchedulerHistory.unshift(signal);
+            if (allSchedulerHistory.length > 200) {
+                allSchedulerHistory = allSchedulerHistory.slice(0, 200);
+            }
+            filterSchedulerHistory(currentSchedulerFilter);
+        } catch (e) {
+            console.error('[Scheduler SSE] parse error:', e);
+        }
+    };
+    schedulerEventSource.onerror = function() {
+        // 연결 끊기면 자동 재연결 (EventSource 기본 동작)
+        console.warn('[Scheduler SSE] connection error, will auto-reconnect');
+    };
+}
+
+function disconnectSchedulerSSE() {
+    if (schedulerEventSource) {
+        schedulerEventSource.close();
+        schedulerEventSource = null;
     }
 }
 

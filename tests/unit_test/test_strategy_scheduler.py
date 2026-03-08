@@ -1175,5 +1175,121 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
 
+    # ── SSE 구독자 관리 테스트 ──
+
+    async def test_create_and_remove_subscriber_queue(self):
+        """SSE 구독자 큐 생성 및 제거 테스트."""
+        scheduler, _, _, _ = self._make_scheduler()
+
+        q1 = scheduler.create_subscriber_queue()
+        q2 = scheduler.create_subscriber_queue()
+        self.assertEqual(len(scheduler._subscriber_queues), 2)
+        self.assertIn(q1, scheduler._subscriber_queues)
+        self.assertIn(q2, scheduler._subscriber_queues)
+
+        scheduler.remove_subscriber_queue(q1)
+        self.assertEqual(len(scheduler._subscriber_queues), 1)
+        self.assertNotIn(q1, scheduler._subscriber_queues)
+
+        # 이미 제거된 큐 다시 제거 시 에러 없음
+        scheduler.remove_subscriber_queue(q1)
+        self.assertEqual(len(scheduler._subscriber_queues), 1)
+
+    async def test_notify_subscribers_on_signal(self):
+        """시그널 실행 시 SSE 구독자에게 데이터가 전파되는지 테스트."""
+        scheduler, _, _, _ = self._make_scheduler(dry_run=True)
+
+        q = scheduler.create_subscriber_queue()
+
+        signal = TradeSignal(
+            strategy_name="TestStrat", code="005930", name="삼성전자",
+            action="BUY", price=70000, qty=1, reason="모멘텀 돌파"
+        )
+        await scheduler._execute_signal(signal)
+
+        # 큐에 데이터가 들어왔는지 확인
+        self.assertFalse(q.empty())
+        data = q.get_nowait()
+        self.assertEqual(data["code"], "005930")
+        self.assertEqual(data["action"], "BUY")
+        self.assertEqual(data["strategy_name"], "TestStrat")
+        self.assertEqual(data["price"], 70000)
+        self.assertEqual(data["reason"], "모멘텀 돌파")
+        self.assertTrue(data["api_success"])
+
+    async def test_notify_multiple_subscribers(self):
+        """여러 구독자에게 동시에 전파되는지 테스트."""
+        scheduler, _, _, _ = self._make_scheduler(dry_run=True)
+
+        q1 = scheduler.create_subscriber_queue()
+        q2 = scheduler.create_subscriber_queue()
+
+        signal = TradeSignal(
+            strategy_name="S", code="000660", name="SK하이닉스",
+            action="SELL", price=50000, qty=5, reason="손절"
+        )
+        await scheduler._execute_signal(signal)
+
+        # 두 큐 모두에 데이터가 들어왔는지 확인
+        self.assertFalse(q1.empty())
+        self.assertFalse(q2.empty())
+        d1 = q1.get_nowait()
+        d2 = q2.get_nowait()
+        self.assertEqual(d1["code"], "000660")
+        self.assertEqual(d2["code"], "000660")
+
+    async def test_notify_subscribers_queue_full(self):
+        """구독자 큐가 가득 찬 경우 예외 없이 스킵되는지 테스트."""
+        scheduler, _, _, _ = self._make_scheduler(dry_run=True)
+
+        # maxsize=1인 큐 생성
+        q = asyncio.Queue(maxsize=1)
+        scheduler._subscriber_queues.append(q)
+        # 큐를 가득 채움
+        q.put_nowait({"dummy": True})
+
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="삼성전자",
+            action="BUY", price=70000, qty=1, reason="Test"
+        )
+        # 예외 없이 실행되어야 함
+        await scheduler._execute_signal(signal)
+
+        # 큐에는 기존 데이터만 있어야 함
+        self.assertEqual(q.qsize(), 1)
+        data = q.get_nowait()
+        self.assertEqual(data["dummy"], True)
+
+    async def test_no_subscribers_no_error(self):
+        """구독자가 없을 때 _notify_subscribers 호출 시 에러 없음 테스트."""
+        scheduler, _, _, _ = self._make_scheduler(dry_run=True)
+        self.assertEqual(len(scheduler._subscriber_queues), 0)
+
+        signal = TradeSignal(
+            strategy_name="S", code="005930", name="삼성전자",
+            action="BUY", price=70000, qty=1, reason="Test"
+        )
+        # 예외 없이 실행되어야 함
+        await scheduler._execute_signal(signal)
+
+    async def test_subscriber_removed_during_notify(self):
+        """알림 중 구독자가 제거되어도 안전한지 테스트."""
+        scheduler, _, _, _ = self._make_scheduler(dry_run=True)
+
+        q1 = scheduler.create_subscriber_queue()
+        q2 = scheduler.create_subscriber_queue()
+
+        record = SignalRecord("S", "005930", "삼성전자", "BUY", 70000, "R", "2023-01-01")
+
+        # _notify_subscribers는 list(self._subscriber_queues) 복사본을 순회하므로
+        # 중간에 제거해도 안전해야 함
+        scheduler.remove_subscriber_queue(q1)
+        await scheduler._notify_subscribers(record)
+
+        # q2만 데이터를 받아야 함
+        self.assertTrue(q1.empty())
+        self.assertFalse(q2.empty())
+
+
 if __name__ == "__main__":
     unittest.main()
