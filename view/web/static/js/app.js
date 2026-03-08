@@ -645,6 +645,7 @@ async function loadInvestorRanking() {
     const investors = Array.from(_rankingSelectedInvestors);
 
     _rankingSortState = { key: null, dir: 'asc' };
+    _rankingCurrentCategory = `investor_${dir}`;
 
     const div = document.getElementById('ranking-result');
     div.innerHTML = "로딩 중...";
@@ -711,7 +712,6 @@ async function loadInvestorRanking() {
         top.forEach((item, i) => { item.data_rank = String(i + 1); });
 
         _rankingData = top;
-        _rankingCurrentCategory = `investor_${dir}`;
         renderRankingTable();
 
     } catch (e) {
