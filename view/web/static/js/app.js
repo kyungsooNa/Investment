@@ -519,6 +519,8 @@ async function placeOrder(side) {
 // 외국인 랭킹 자동 폴링 타이머
 let _rankingPollTimer = null;
 let _rankingCurrentCategory = null;
+let _rankingData = [];
+let _rankingSortState = { key: null, dir: 'asc' };
 // 시장 필터 상태 (향후 NXT 확장용)
 let _rankingMarketFilter = 'KRX';
 
@@ -547,9 +549,6 @@ async function loadRanking(category) {
     const div = document.getElementById('ranking-result');
     div.innerHTML = "로딩 중...";
 
-    const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(category);
-    const isProgram = ['program_buy', 'program_sell'].includes(category);
-
     try {
         const res = await fetch(`/api/ranking/${category}`);
         const json = await res.json();
@@ -574,67 +573,9 @@ async function loadRanking(category) {
             return;
         }
 
-        const isTradingValue = category === 'trading_value';
-
-        // 투자자 카테고리별 필드 매핑
-        const pbmnField = {
-            'foreign_buy': 'frgn_ntby_tr_pbmn', 'foreign_sell': 'frgn_ntby_tr_pbmn',
-            'inst_buy': 'orgn_ntby_tr_pbmn', 'inst_sell': 'orgn_ntby_tr_pbmn',
-            'prsn_buy': 'prsn_ntby_tr_pbmn', 'prsn_sell': 'prsn_ntby_tr_pbmn',
-            'program_buy': 'whol_smtn_ntby_tr_pbmn', 'program_sell': 'whol_smtn_ntby_tr_pbmn',
-        };
-        const qtyField = {
-            'foreign_buy': 'frgn_ntby_qty', 'foreign_sell': 'frgn_ntby_qty',
-            'inst_buy': 'orgn_ntby_qty', 'inst_sell': 'orgn_ntby_qty',
-            'prsn_buy': 'prsn_ntby_qty', 'prsn_sell': 'prsn_ntby_qty',
-            'program_buy': 'whol_smtn_ntby_qty', 'program_sell': 'whol_smtn_ntby_qty',
-        };
-
-        // 모든 카테고리 공통: 순위|종목명|현재가|등락률|거래대금|거래량
-        const isSell = category.endsWith('_sell');
-        const headerRow = (isInvestor || isProgram)
-            ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>${isSell ? '순매도대금' : '순매수대금'}</th><th>${isSell ? '순매도량' : '순매수량'}</th><th>거래대금비(거래대금)</th>`
-            : isTradingValue
-                ? `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th>`
-                : `<th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래량</th>`;
-
-        let html = `
-            <div class="card">
-            <table class="data-table">
-            <thead><tr>${headerRow}</tr></thead>
-            <tbody>
-        `;
-        json.data.forEach(item => {
-            const rate = parseFloat(item.prdy_ctrt || 0);
-            const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
-            let extraCols;
-            if (isInvestor || isProgram) {
-                const isMil = isInvestor;
-                const pbmnVal = formatTradingValue(item[pbmnField[category]], isMil);
-                const qtyVal = parseInt(item[qtyField[category]] || 0).toLocaleString();
-                let rawNtby = parseInt(item[pbmnField[category]] || 0);
-                if (isMil) rawNtby *= 1000000;
-                const acmlTr = parseInt(item.acml_tr_pbmn || 0);
-                const ratio = acmlTr ? ((rawNtby / acmlTr) * 100).toFixed(1) : '-';
-                const acmlTrFmt = formatTradingValue(item.acml_tr_pbmn);
-                extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td><td>${ratio}% (${acmlTrFmt})</td>`;
-            } else if (isTradingValue) {
-                extraCols = `<td>${formatTradingValue(item.acml_tr_pbmn)}</td>`;
-            } else {
-                extraCols = `<td>${parseInt(item.acml_vol || 0).toLocaleString()}</td>`;
-            }
-            html += `
-                <tr>
-                    <td>${item.data_rank || item.rank || '-'}</td>
-                    <td>${item.hts_kor_isnm || item.name}</td>
-                    <td>${parseInt(item.stck_prpr || 0).toLocaleString()}</td>
-                    <td class="${color}">${rate}%</td>
-                    ${extraCols}
-                </tr>
-            `;
-        });
-        html += "</tbody></table></div>";
-        div.innerHTML = html;
+        _rankingData = json.data;
+        _rankingSortState = { key: null, dir: 'asc' };
+        renderRankingTable();
 
     } catch (e) {
         div.innerHTML = "오류: " + e;
@@ -673,6 +614,154 @@ function _startProgressPolling(category, div) {
         _rankingPollTimer = setTimeout(poll, 2000);
     };
     _rankingPollTimer = setTimeout(poll, 1000);
+}
+
+const _rankingPbmnField = {
+    'foreign_buy': 'frgn_ntby_tr_pbmn', 'foreign_sell': 'frgn_ntby_tr_pbmn',
+    'inst_buy': 'orgn_ntby_tr_pbmn', 'inst_sell': 'orgn_ntby_tr_pbmn',
+    'prsn_buy': 'prsn_ntby_tr_pbmn', 'prsn_sell': 'prsn_ntby_tr_pbmn',
+    'program_buy': 'whol_smtn_ntby_tr_pbmn', 'program_sell': 'whol_smtn_ntby_tr_pbmn',
+};
+const _rankingQtyField = {
+    'foreign_buy': 'frgn_ntby_qty', 'foreign_sell': 'frgn_ntby_qty',
+    'inst_buy': 'orgn_ntby_qty', 'inst_sell': 'orgn_ntby_qty',
+    'prsn_buy': 'prsn_ntby_qty', 'prsn_sell': 'prsn_ntby_qty',
+    'program_buy': 'whol_smtn_ntby_qty', 'program_sell': 'whol_smtn_ntby_qty',
+};
+
+function renderRankingTable() {
+    const div = document.getElementById('ranking-result');
+    if (!div) return;
+    const cat = _rankingCurrentCategory;
+    const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(cat);
+    const isProgram = ['program_buy', 'program_sell'].includes(cat);
+    const isTradingValue = cat === 'trading_value';
+    const isSell = cat.endsWith('_sell');
+
+    const sortCls = (key) => {
+        if (_rankingSortState.key !== key) return 'sortable';
+        return `sortable sort-${_rankingSortState.dir}`;
+    };
+
+    let headerRow;
+    if (isInvestor || isProgram) {
+        headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
+            + `<th class="${sortCls('name')}" onclick="sortRanking('name')">종목명</th>`
+            + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
+            + `<th class="${sortCls('rate')}" onclick="sortRanking('rate')">등락률</th>`
+            + `<th class="${sortCls('ntby_pbmn')}" onclick="sortRanking('ntby_pbmn')">${isSell ? '순매도대금' : '순매수대금'}</th>`
+            + `<th class="${sortCls('ntby_qty')}" onclick="sortRanking('ntby_qty')">${isSell ? '순매도량' : '순매수량'}</th>`
+            + `<th class="${sortCls('ratio')}" onclick="sortRanking('ratio')">거래대금비(거래대금)</th>`;
+    } else if (isTradingValue) {
+        headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
+            + `<th class="${sortCls('name')}" onclick="sortRanking('name')">종목명</th>`
+            + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
+            + `<th class="${sortCls('rate')}" onclick="sortRanking('rate')">등락률</th>`
+            + `<th class="${sortCls('tr_pbmn')}" onclick="sortRanking('tr_pbmn')">거래대금</th>`;
+    } else {
+        headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
+            + `<th class="${sortCls('name')}" onclick="sortRanking('name')">종목명</th>`
+            + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
+            + `<th class="${sortCls('rate')}" onclick="sortRanking('rate')">등락률</th>`
+            + `<th class="${sortCls('volume')}" onclick="sortRanking('volume')">거래량</th>`;
+    }
+
+    let data = _rankingData.slice();
+    if (_rankingSortState.key) {
+        data = rankingSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
+    }
+
+    let rows = '';
+    data.forEach(item => {
+        const rate = parseFloat(item.prdy_ctrt || 0);
+        const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
+        let extraCols;
+        if (isInvestor || isProgram) {
+            const isMil = isInvestor;
+            const pbmnVal = formatTradingValue(item[_rankingPbmnField[cat]], isMil);
+            const qtyVal = parseInt(item[_rankingQtyField[cat]] || 0).toLocaleString();
+            let rawNtby = parseInt(item[_rankingPbmnField[cat]] || 0);
+            if (isMil) rawNtby *= 1000000;
+            const acmlTr = parseInt(item.acml_tr_pbmn || 0);
+            const ratio = acmlTr ? ((rawNtby / acmlTr) * 100).toFixed(1) : '-';
+            const acmlTrFmt = formatTradingValue(item.acml_tr_pbmn);
+            extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td><td>${ratio}% (${acmlTrFmt})</td>`;
+        } else if (isTradingValue) {
+            extraCols = `<td>${formatTradingValue(item.acml_tr_pbmn)}</td>`;
+        } else {
+            extraCols = `<td>${parseInt(item.acml_vol || 0).toLocaleString()}</td>`;
+        }
+        rows += `<tr>
+            <td>${item.data_rank || item.rank || '-'}</td>
+            <td>${item.hts_kor_isnm || item.name}</td>
+            <td>${parseInt(item.stck_prpr || 0).toLocaleString()}</td>
+            <td class="${color}">${rate}%</td>
+            ${extraCols}
+        </tr>`;
+    });
+
+    div.innerHTML = `<div class="card"><table class="data-table">
+        <thead><tr>${headerRow}</tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+}
+
+function sortRanking(key) {
+    if (_rankingSortState.key === key) {
+        _rankingSortState.dir = _rankingSortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        _rankingSortState.key = key;
+        _rankingSortState.dir = 'asc';
+    }
+    renderRankingTable();
+}
+
+function rankingSortCompare(data, key, dir) {
+    const cat = _rankingCurrentCategory;
+    const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(cat);
+    const sorted = data.slice();
+    const d = dir === 'asc' ? 1 : -1;
+    sorted.sort((a, b) => {
+        let va, vb;
+        if (key === 'rank') {
+            va = parseInt(a.data_rank || a.rank || 0);
+            vb = parseInt(b.data_rank || b.rank || 0);
+        } else if (key === 'name') {
+            va = (a.hts_kor_isnm || a.name || '').toLowerCase();
+            vb = (b.hts_kor_isnm || b.name || '').toLowerCase();
+            return d * va.localeCompare(vb);
+        } else if (key === 'price') {
+            va = parseInt(a.stck_prpr || 0);
+            vb = parseInt(b.stck_prpr || 0);
+        } else if (key === 'rate') {
+            va = parseFloat(a.prdy_ctrt || 0);
+            vb = parseFloat(b.prdy_ctrt || 0);
+        } else if (key === 'volume') {
+            va = parseInt(a.acml_vol || 0);
+            vb = parseInt(b.acml_vol || 0);
+        } else if (key === 'tr_pbmn') {
+            va = parseInt(a.acml_tr_pbmn || 0);
+            vb = parseInt(b.acml_tr_pbmn || 0);
+        } else if (key === 'ntby_pbmn') {
+            va = parseInt(a[_rankingPbmnField[cat]] || 0);
+            vb = parseInt(b[_rankingPbmnField[cat]] || 0);
+        } else if (key === 'ntby_qty') {
+            va = parseInt(a[_rankingQtyField[cat]] || 0);
+            vb = parseInt(b[_rankingQtyField[cat]] || 0);
+        } else if (key === 'ratio') {
+            const isMil = isInvestor;
+            let rawA = parseInt(a[_rankingPbmnField[cat]] || 0);
+            let rawB = parseInt(b[_rankingPbmnField[cat]] || 0);
+            if (isMil) { rawA *= 1000000; rawB *= 1000000; }
+            const acmlA = parseInt(a.acml_tr_pbmn || 0);
+            const acmlB = parseInt(b.acml_tr_pbmn || 0);
+            va = acmlA ? (rawA / acmlA) : 0;
+            vb = acmlB ? (rawB / acmlB) : 0;
+        } else {
+            return 0;
+        }
+        return d * (va - vb);
+    });
+    return sorted;
 }
 
 async function loadTopMarketCap(market = '0001') {
