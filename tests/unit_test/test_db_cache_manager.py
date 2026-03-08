@@ -150,3 +150,19 @@ def test_multithread_safety(tmp_path):
         cursor = conn.execute("SELECT count(*) FROM cache")
         count = cursor.fetchone()[0]
         assert count == workers_count
+
+def test_persistence_across_instances(tmp_path):
+    """앱 재실행(인스턴스 재생성) 시 데이터 유지 확인"""
+    base_dir = str(tmp_path)
+    
+    # 1. 첫 번째 인스턴스로 데이터 저장
+    mgr1 = _mk_manager(base_dir)
+    mgr1.set("persist_key", {"data": "survive"}, save_to_file=True)
+    # 연결 닫기 (앱 종료 시뮬레이션)
+    mgr1._conn.close()
+    
+    # 2. 두 번째 인스턴스로 데이터 조회 (앱 재실행 시뮬레이션)
+    mgr2 = _mk_manager(base_dir)
+    loaded = mgr2.get_raw("persist_key")
+    
+    assert loaded == {"data": "survive"}
