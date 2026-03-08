@@ -31,7 +31,9 @@ async def get_stock_price(code: str):
     ctx = _get_ctx()
     resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
     result = _serialize_response(resp)
-    print(f"[Performance] get_stock_price({code}): {time.time() - start_time:.4f}s")
+    
+    if ctx.performance_logging:
+        print(f"[Performance] get_stock_price({code}): {time.time() - start_time:.4f}s")
     return result
 
 
@@ -45,7 +47,9 @@ async def get_stock_chart(code: str, period: str = "D", indicators: bool = False
     else:
         resp = await ctx.stock_query_service.get_ohlcv(code, period)
     result = _serialize_response(resp)
-    print(f"[Performance] get_stock_chart({code}, indicators={indicators}): {time.time() - start_time:.4f}s")
+    
+    if ctx.performance_logging:
+        print(f"[Performance] get_stock_chart({code}, indicators={indicators}): {time.time() - start_time:.4f}s")
     return result
 
 
@@ -56,7 +60,9 @@ async def get_bollinger_bands(code: str, period: int = 20, std_dev: float = 2.0)
     ctx = _get_ctx()
     resp = await ctx.indicator_service.get_bollinger_bands(code, period, std_dev)
     result = _serialize_response(resp)
-    print(f"[Performance] get_bollinger_bands({code}): {time.time() - start_time:.4f}s")
+    
+    if ctx.performance_logging:
+        print(f"[Performance] get_bollinger_bands({code}): {time.time() - start_time:.4f}s")
     return result
 
 
@@ -67,7 +73,9 @@ async def get_rsi(code: str, period: int = 14):
     ctx = _get_ctx()
     resp = await ctx.indicator_service.get_rsi(code, period)
     result = _serialize_response(resp)
-    print(f"[Performance] get_rsi({code}): {time.time() - start_time:.4f}s")
+    
+    if ctx.performance_logging:
+        print(f"[Performance] get_rsi({code}): {time.time() - start_time:.4f}s")
     return result
 
 
@@ -78,7 +86,9 @@ async def get_moving_average(code: str, period: int = 20, method: str = "sma"):
     ctx = _get_ctx()
     resp = await ctx.indicator_service.get_moving_average(code, period, method)
     result = _serialize_response(resp)
-    print(f"[Performance] get_moving_average({code}): {time.time() - start_time:.4f}s")
+    
+    if ctx.performance_logging:
+        print(f"[Performance] get_moving_average({code}): {time.time() - start_time:.4f}s")
     return result
 
 

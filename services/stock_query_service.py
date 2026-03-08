@@ -14,12 +14,13 @@ class StockQueryService:
     """
 
     def __init__(self, trading_service, logger, time_manager, indicator_service=None,
-                 background_service=None):
+                 background_service=None, performance_logging: bool = False):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.indicator_service = indicator_service
         self.background_service = background_service
+        self.performance_logging = performance_logging
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -641,7 +642,8 @@ class StockQueryService:
             t0 = time.time()
             resp = await self.trading_service.get_ohlcv(stock_code, period=period)
             t1 = time.time()
-            print(f"[Performance] {stock_code} OHLCV 조회: {t1 - t0:.4f}s")
+            if self.performance_logging:
+                print(f"[Performance] {stock_code} OHLCV 조회: {t1 - t0:.4f}s")
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
                 return resp or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="OHLCV 조회 실패", data=None)
 
@@ -658,7 +660,8 @@ class StockQueryService:
             indicators_resp = await indicator_service.get_chart_indicators(stock_code, ohlcv_data)
             
             t3 = time.time()
-            print(f"[Performance] {stock_code} 지표 통합 계산: {t3 - t2:.4f}s")
+            if self.performance_logging:
+                print(f"[Performance] {stock_code} 지표 통합 계산: {t3 - t2:.4f}s")
 
             if indicators_resp.rt_cd != ErrorCode.SUCCESS.value:
                 self.logger.error(f"지표 계산 실패: {indicators_resp.msg1}")
@@ -671,7 +674,8 @@ class StockQueryService:
                 "indicators": indicators_data
             }
             end_total = time.time()
-            print(f"[Performance] {stock_code} get_ohlcv_with_indicators 전체: {end_total - start_total:.4f}s")
+            if self.performance_logging:
+                print(f"[Performance] {stock_code} get_ohlcv_with_indicators 전체: {end_total - start_total:.4f}s")
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV+지표 {len(ohlcv_data)}건", data=result)
 

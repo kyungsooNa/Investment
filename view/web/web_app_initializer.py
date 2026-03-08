@@ -51,6 +51,7 @@ class WebAppContext:
         self.background_service: BackgroundService = None
         self.market_date_manager: MarketDateManager = None
         self.initialized = False
+        self.performance_logging = False
         
         # [변경] 실시간 데이터 관리자 도입
         self.realtime_data_manager = RealtimeDataManager(self.logger)
@@ -116,6 +117,9 @@ class WebAppContext:
         elif hasattr(config_dict, "dict"):
             config_dict = config_dict.dict()
 
+        perf_log = config_dict.get("performance_logging", False)
+        self.performance_logging = perf_log
+
         cache_manager = CacheManager(config_dict)
         cache_manager.set_logger(self.logger)
 
@@ -126,7 +130,7 @@ class WebAppContext:
         )
 
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
-        self.indicator_service = IndicatorService(cache_manager=cache_manager)
+        self.indicator_service = IndicatorService(cache_manager=cache_manager, performance_logging=perf_log)
         self.background_service = BackgroundService(
             broker_api_wrapper=self.broker,
             stock_code_mapper=self.stock_code_mapper,
@@ -139,6 +143,7 @@ class WebAppContext:
             self.trading_service, self.logger, self.time_manager,
             indicator_service=self.indicator_service,
             background_service=self.background_service,
+            performance_logging=perf_log
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service

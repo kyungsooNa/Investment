@@ -16,9 +16,10 @@ class IndicatorService:
     기술적 지표 계산을 담당하는 서비스.
     StockQueryService를 통해 데이터를 조회하고 가공하여 지표 값을 반환합니다.
     """
-    def __init__(self, stock_query_service: Optional['StockQueryService'] = None, cache_manager: Optional[CacheManager] = None):
+    def __init__(self, stock_query_service: Optional['StockQueryService'] = None, cache_manager: Optional[CacheManager] = None, performance_logging: bool = False):
         self.stock_query_service = stock_query_service
         self.cache_manager = cache_manager
+        self.performance_logging = performance_logging
 
     async def _get_ohlcv_data(self, stock_code: str, candle_type: str, ohlcv_data: Optional[List[Dict]] = None) -> tuple:
         """
@@ -113,7 +114,8 @@ class IndicatorService:
                             final_results.append(latest_obj)
                             
                         calc_end_time = time.time()
-                        print(f"[Performance] IndicatorService.get_bollinger_bands({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
+                        if self.performance_logging:
+                            print(f"[Performance] IndicatorService.get_bollinger_bands({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
                         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=final_results)
 
         # 2. Pandas DataFrame 변환 및 계산
@@ -150,7 +152,8 @@ class IndicatorService:
                 ))
 
             calc_end_time = time.time()
-            print(f"[Performance] IndicatorService.get_bollinger_bands({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+            if self.performance_logging:
+                print(f"[Performance] IndicatorService.get_bollinger_bands({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
@@ -231,7 +234,8 @@ class IndicatorService:
                         result = ResRSI(**latest_dict)
                         
                         calc_end_time = time.time()
-                        print(f"[Performance] IndicatorService.get_rsi({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
+                        if self.performance_logging:
+                            print(f"[Performance] IndicatorService.get_rsi({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
                         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
         calc_start_time = time.time()
@@ -264,7 +268,8 @@ class IndicatorService:
             result = ResRSI(code=stock_code, date=str(latest['date']), close=float(latest['close']), rsi=float(latest_rsi))
             
             calc_end_time = time.time()
-            print(f"[Performance] IndicatorService.get_rsi({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+            if self.performance_logging:
+                print(f"[Performance] IndicatorService.get_rsi({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
         except ValueError as e:
@@ -339,7 +344,8 @@ class IndicatorService:
                             final_results.append(latest_obj)
                             
                         calc_end_time = time.time()
-                        print(f"[Performance] IndicatorService.get_moving_average({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
+                        if self.performance_logging:
+                            print(f"[Performance] IndicatorService.get_moving_average({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
                         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=final_results)
 
         calc_start_time = time.time()
@@ -366,7 +372,8 @@ class IndicatorService:
                 ))
 
             calc_end_time = time.time()
-            print(f"[Performance] IndicatorService.get_moving_average({stock_code}, p={period}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+            if self.performance_logging:
+                print(f"[Performance] IndicatorService.get_moving_average({stock_code}, p={period}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
@@ -430,7 +437,8 @@ class IndicatorService:
             )
             
             calc_end_time = time.time()
-            print(f"[Performance] IndicatorService.get_relative_strength({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+            if self.performance_logging:
+                print(f"[Performance] IndicatorService.get_relative_strength({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
         except Exception as e:
@@ -450,7 +458,8 @@ class IndicatorService:
         # 데이터가 너무 적거나 캐시 매니저가 없으면 전체 계산 (최대 기간 120일 + 여유)
         if not ohlcv_data or len(ohlcv_data) < 130 or not self.cache_manager:
              resp = self._calculate_indicators_full(stock_code, ohlcv_data)
-             print(f"[Performance] IndicatorService.get_chart_indicators({stock_code}): {time.time() - start_time:.4f}s (Full Calc)")
+             if self.performance_logging:
+                 print(f"[Performance] IndicatorService.get_chart_indicators({stock_code}): {time.time() - start_time:.4f}s (Full Calc)")
              return resp
 
         try:
@@ -511,7 +520,8 @@ class IndicatorService:
                 else:
                     merged_indicators[key] = val_list
 
-            print(f"[Performance] IndicatorService.get_chart_indicators({stock_code}): {time.time() - start_time:.4f}s (Cached)")
+            if self.performance_logging:
+                print(f"[Performance] IndicatorService.get_chart_indicators({stock_code}): {time.time() - start_time:.4f}s (Cached)")
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=merged_indicators)
 
         except Exception as e:
