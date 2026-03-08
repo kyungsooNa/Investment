@@ -37,6 +37,12 @@ jobs:
       run: |
         mkdir -p config data
         cp config/config.yaml.example config/config.yaml || echo "No example config"
+        # CI 테스트 통과를 위한 web 설정 강제 추가 (AppConfig 유효성 검사 대응)
+        echo "" >> config/config.yaml
+        echo "web:" >> config/config.yaml
+        echo "  host: \"127.0.0.1\"" >> config/config.yaml
+        echo "  port: 8000" >> config/config.yaml
+        echo "  reload: false" >> config/config.yaml
 
     - name: Run tests with coverage
       run: |
