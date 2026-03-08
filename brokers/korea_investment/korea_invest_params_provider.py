@@ -449,6 +449,48 @@ class FluctuationParams:
 
 
 @dataclass(frozen=True)
+class InvestorTradeByStockDailyParams:
+    """종목별 투자자 매매동향(일별) 파라미터"""
+    FID_COND_MRKT_DIV_CODE: str  # 시장구분코드 (J:KRX, NX:NXT, UN:통합)
+    FID_INPUT_ISCD: str          # 종목코드 (6자리)
+    FID_INPUT_DATE_1: str        # 입력 날짜 (YYYYMMDD)
+    FID_ORG_ADJ_PRC: str         # 수정주가 원주가 가격 (공란)
+    FID_ETC_CLS_CODE: str        # 기타 구분 코드 ("1")
+
+    @classmethod
+    def of(cls, stock_code: str, date: str, market: str = "J"):
+        return cls(
+            FID_COND_MRKT_DIV_CODE=market,
+            FID_INPUT_ISCD=stock_code,
+            FID_INPUT_DATE_1=date,
+            FID_ORG_ADJ_PRC="",
+            FID_ETC_CLS_CODE="1",
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ProgramTradeByStockDailyParams:
+    """종목별 프로그램매매추이(일별) 파라미터"""
+    FID_COND_MRKT_DIV_CODE: str  # 시장구분코드 (J:KRX, NX:NXT, UN:통합)
+    FID_INPUT_ISCD: str          # 종목코드 (6자리)
+    FID_INPUT_DATE_1: str        # 입력 날짜 (YYYYMMDD)
+
+    @classmethod
+    def of(cls, stock_code: str, date: str, market: str = "J"):
+        return cls(
+            FID_COND_MRKT_DIV_CODE=market,
+            FID_INPUT_ISCD=stock_code,
+            FID_INPUT_DATE_1=date,
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MultiPriceParams:
     """복수종목 현재가 조회 파라미터 (최대 30종목)"""
     fid_cond_mrkt_div_code_1: str
@@ -704,6 +746,14 @@ class Params:
             price_1=price_1, price_2=price_2, vol_cnt=vol_cnt,
             trgt_cls=trgt_cls, trgt_exls=trgt_exls, div_cls=div_cls
         ).to_dict()
+
+    @staticmethod
+    def investor_trade_by_stock_daily(stock_code: str, date: str, market: str = "J") -> Dict[str, str]:
+        return InvestorTradeByStockDailyParams.of(stock_code, date, market).to_dict()
+
+    @staticmethod
+    def program_trade_by_stock_daily(stock_code: str, date: str, market: str = "J") -> Dict[str, str]:
+        return ProgramTradeByStockDailyParams.of(stock_code, date, market).to_dict()
 
     @staticmethod
     def multi_price(stock_codes: list[str], market: MarketCode = "J") -> Dict[str, str]:

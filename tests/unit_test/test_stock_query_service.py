@@ -1786,3 +1786,155 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.error.assert_called()
         # (선택) 메시지 내용까지 확인하고 싶으면:
         assert any("오류 발생" in str(call.args[0]) for call in self.mock_logger.error.call_args_list)
+
+
+# ── 외국인 순매수/순매도 카테고리 (BackgroundService 연동) ───
+
+class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
+
+    async def asyncSetUp(self):
+        self.mock_trading_service = AsyncMock()
+        self.mock_logger = MagicMock()
+        self.mock_time_manager = MagicMock()
+        self.mock_background_service = MagicMock()
+
+        self.service = StockQueryService(
+            trading_service=self.mock_trading_service,
+            logger=self.mock_logger,
+            time_manager=self.mock_time_manager,
+            background_service=self.mock_background_service,
+        )
+
+    async def test_foreign_buy_calls_background_service(self):
+        """foreign_buy → background_service.get_foreign_net_buy_ranking() 호출."""
+        self.mock_background_service.get_foreign_net_buy_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "삼성전자", "glob_ntby_qty": "500"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("foreign_buy")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_foreign_net_buy_ranking.assert_called_once()
+        self.mock_logger.info.assert_called_with("외인 순매수 상위 종목 조회 성공")
+
+    async def test_foreign_sell_calls_background_service(self):
+        """foreign_sell → background_service.get_foreign_net_sell_ranking() 호출."""
+        self.mock_background_service.get_foreign_net_sell_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "SK하이닉스", "glob_ntby_qty": "-200"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("foreign_sell")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_foreign_net_sell_ranking.assert_called_once()
+
+    async def test_foreign_buy_without_background_service(self):
+        """background_service 없으면 foreign_buy는 지원하지 않는 카테고리."""
+        service_no_bg = StockQueryService(
+            trading_service=self.mock_trading_service,
+            logger=self.mock_logger,
+            time_manager=self.mock_time_manager,
+            background_service=None,
+        )
+
+        result = await service_no_bg.handle_get_top_stocks("foreign_buy")
+        self.assertEqual(result.rt_cd, ErrorCode.INVALID_INPUT.value)
+
+    async def test_inst_buy_calls_background_service(self):
+        """inst_buy → background_service.get_inst_net_buy_ranking() 호출."""
+        self.mock_background_service.get_inst_net_buy_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "삼성전자", "orgn_ntby_qty": "300"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("inst_buy")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_inst_net_buy_ranking.assert_called_once()
+
+    async def test_inst_sell_calls_background_service(self):
+        """inst_sell → background_service.get_inst_net_sell_ranking() 호출."""
+        self.mock_background_service.get_inst_net_sell_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "NAVER", "orgn_ntby_qty": "-100"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("inst_sell")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_inst_net_sell_ranking.assert_called_once()
+
+    async def test_prsn_buy_calls_background_service(self):
+        """prsn_buy → background_service.get_prsn_net_buy_ranking() 호출."""
+        self.mock_background_service.get_prsn_net_buy_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "카카오", "prsn_ntby_qty": "1000"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("prsn_buy")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_prsn_net_buy_ranking.assert_called_once()
+
+    async def test_prsn_sell_calls_background_service(self):
+        """prsn_sell → background_service.get_prsn_net_sell_ranking() 호출."""
+        self.mock_background_service.get_prsn_net_sell_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "SK하이닉스", "prsn_ntby_qty": "-500"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("prsn_sell")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_prsn_net_sell_ranking.assert_called_once()
+
+    async def test_trading_value_calls_background_service(self):
+        """trading_value → background_service.get_trading_value_ranking() 호출."""
+        self.mock_background_service.get_trading_value_ranking.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "삼성전자", "acml_tr_pbmn": "5000000000"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("trading_value")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_background_service.get_trading_value_ranking.assert_called_once()
+
+    async def test_trading_value_without_background_service_uses_trading_service(self):
+        """background_service 없으면 trading_value는 trading_service.get_top_trading_value_stocks() 호출."""
+        service_no_bg = StockQueryService(
+            trading_service=self.mock_trading_service,
+            logger=self.mock_logger,
+            time_manager=self.mock_time_manager,
+            background_service=None,
+        )
+        self.mock_trading_service.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"data_rank": "1", "hts_kor_isnm": "삼성전자", "acml_tr_pbmn": "3000000000"}]
+        )
+
+        result = await service_no_bg.handle_get_top_stocks("trading_value")
+
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.mock_trading_service.get_top_trading_value_stocks.assert_awaited_once()
+
+    async def test_rise_uses_basic_ranking_cache(self):
+        """장마감 후 캐시가 있으면 캐시 우선 사용."""
+        cached_resp = ResCommonResponse(rt_cd="0", msg1="캐시", data=[{"cached": True}])
+        self.mock_background_service.get_basic_ranking_cache.return_value = cached_resp
+
+        result = await self.service.handle_get_top_stocks("rise")
+        assert result == cached_resp
+        self.mock_background_service.get_basic_ranking_cache.assert_called_once_with("rise")
+
+    async def test_rise_falls_through_when_no_cache(self):
+        """캐시 없으면 trading_service 호출."""
+        self.mock_background_service.get_basic_ranking_cache.return_value = None
+        self.mock_trading_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[{"name": "live"}]
+        )
+
+        result = await self.service.handle_get_top_stocks("rise")
+        assert result.data[0]["name"] == "live"

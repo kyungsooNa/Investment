@@ -1,5 +1,6 @@
 # brokers/korea_investment/korea_invest_quotations_api.py
 import httpx
+from datetime import datetime
 from typing import Dict, List, Union, Optional
 from pydantic import ValidationError
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
@@ -656,32 +657,117 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
 
 
-    #
-    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
-    #     """
-    #     외국인 순매수 상위 종목 조회
-    #     """
-    #     full_config = self._env.active_config
-    #
-    #     path = full_config["paths"]["ranking_foreign"]
-    #     tr_id = full_config["tr_ids"]["quotations"]["ranking_foreign"]
-    #     market_code = full_config.get("market_code", "J")
-    #
-    #     self._headers["tr_id"] = tr_id
-    #     self._headers["custtype"] = full_config["custtype"]
-    #
-    #     params = {
-    #         "fid_cond_mrkt_div_code": market_code
-    #     }
-    #
-    #     self._logger.info("외국인 순매수 상위 종목 조회 시도...")
-    #     response = await self.call_api("GET", path, params=params, retry_count=1)
-    #
-    #     if response.rt_cd != ErrorCode.SUCCESS.value:
-    #         self._logger.warning(f"외국인 순매수 조회 실패: {response.msg1}")
-    #         return response
-    #
-    #     return response
+    async def get_investor_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
+        """
+        종목별 투자자 매매동향(일별) 조회
+        실전 전용 (모의투자 미지원)
+        한 번의 호출로 외국인/개인/기관 순매수 데이터를 모두 반환.
+        """
+        if date is None:
+            date = datetime.now().strftime("%Y%m%d")
+
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.INVESTOR_TRADE_BY_STOCK_DAILY)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.investor_trade_by_stock_daily(stock_code=stock_code, date=date)
+
+        response: ResCommonResponse = await self.call_api(
+            "GET", EndpointKey.INVESTOR_TRADE_BY_STOCK_DAILY, params=params, retry_count=1
+        )
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            return response
+
+        try:
+            if not isinstance(response.data, dict):
+                raise TypeError(f"Expected dict, got {type(response.data)}")
+
+            output1 = response.data.get("output1", {})
+            output2 = response.data.get("output2", [])
+
+            if not isinstance(output2, list) or not output2:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="데이터 없음",
+                    data=None
+                )
+
+            # output1(현재가 정보) + output2[0](최신 일별 투자자 데이터) 병합
+            # output2의 빈 값("")이 output1의 유효한 값을 덮어쓰지 않도록 처리
+            merged = {}
+            if isinstance(output1, dict):
+                merged.update(output1)
+            for k, v in output2[0].items():
+                if v or k not in merged:
+                    merged[k] = v
+
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="투자자 매매동향 조회 성공",
+                data=merged
+            )
+        except (TypeError, AttributeError) as e:
+            error_msg = f"투자자 매매동향 응답 형식 오류: {e}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,
+                msg1=error_msg,
+                data=None
+            )
+
+    async def get_program_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
+        """
+        종목별 프로그램매매추이(일별) 조회
+        실전 전용 (모의투자 미지원)
+        """
+        if date is None:
+            date = datetime.now().strftime("%Y%m%d")
+
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.PROGRAM_TRADE_BY_STOCK_DAILY)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.program_trade_by_stock_daily(stock_code=stock_code, date=date)
+
+        response: ResCommonResponse = await self.call_api(
+            "GET", EndpointKey.PROGRAM_TRADE_BY_STOCK_DAILY, params=params, retry_count=1
+        )
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            return response
+
+        try:
+            if not isinstance(response.data, dict):
+                raise TypeError(f"Expected dict, got {type(response.data)}")
+
+            output = response.data.get("output", [])
+
+            if not isinstance(output, list) or not output:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="데이터 없음",
+                    data=None
+                )
+
+            # output[0] = 최신 일별 프로그램매매 데이터
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="프로그램매매추이 조회 성공",
+                data=output[0]
+            )
+        except (TypeError, AttributeError) as e:
+            error_msg = f"프로그램매매추이 응답 형식 오류: {e}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,
+                msg1=error_msg,
+                data=None
+            )
 
     # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
     #     """

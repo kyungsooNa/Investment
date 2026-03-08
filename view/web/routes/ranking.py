@@ -8,12 +8,24 @@ from view.web.api_common import _get_ctx, _serialize_response, _serialize_list_i
 router = APIRouter()
 
 
+@router.get("/ranking/progress")
+async def get_ranking_progress():
+    """투자자 랭킹 수집 진행률 조회."""
+    ctx = _get_ctx()
+    if ctx.background_service:
+        return ctx.background_service.get_investor_ranking_progress()
+    return {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
+
+
 @router.get("/ranking/{category}")
 async def get_ranking(category: str):
-    """랭킹 조회 (rise/fall/volume/trading_value)."""
+    """랭킹 조회 (rise/fall/volume/trading_value/foreign_buy/foreign_sell/inst_buy/inst_sell/prsn_buy/prsn_sell)."""
     ctx = _get_ctx()
-    if category not in ("rise", "fall", "volume", "trading_value"):
-        raise HTTPException(status_code=400, detail="category는 rise, fall, volume, trading_value 중 하나여야 합니다.")
+    valid = ("rise", "fall", "volume", "trading_value",
+             "foreign_buy", "foreign_sell", "inst_buy", "inst_sell", "prsn_buy", "prsn_sell",
+             "program_buy", "program_sell")
+    if category not in valid:
+        raise HTTPException(status_code=400, detail=f"category는 {', '.join(valid)} 중 하나여야 합니다.")
 
     resp = await ctx.stock_query_service.handle_get_top_stocks(category)
 

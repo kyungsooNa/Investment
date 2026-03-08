@@ -10,6 +10,8 @@ tr_ids:
     ranking_fluctuation: FHPST01700000
     ranking_volume: FHPST01710000
     ranking_foreign: FHKUP03600000
+    investor_trade_by_stock_daily: FHPTJ04160001
+    program_trade_by_stock_daily: FHPPG04650201
     item_news: FHPST01040000
     etf_info: FHPST02400000
     multi_price: FHKST11300006

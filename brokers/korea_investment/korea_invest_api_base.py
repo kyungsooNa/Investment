@@ -48,6 +48,7 @@ class KoreaInvestApiBase:
         self._headers: KoreaInvestHeaderProvider = header_provider or build_header_provider_from_env(env)
         self._url_provider: KoreaInvestUrlProvider = url_provider or KoreaInvestUrlProvider.from_env_and_kis_config(env)
         self._trid_provider = trid_provider or KoreaInvestTrIdProvider.from_config_loader(env)
+        self._use_real_auth: bool = False  # True면 항상 실전 인증 사용 (조회 API)
 
         if async_client:
             self._async_session = async_client
@@ -169,14 +170,19 @@ class KoreaInvestApiBase:
         async def make_request():
             self._headers.sync_from_env(self._env)
 
-            access_token: str = await self._env.get_access_token()
-            # payload = jwt.decode(access_token, options={"verify_signature": False})
-            # self._logger.debug(f"access_token payload: {payload}")
+            if self._use_real_auth:
+                # 조회 API: 항상 실전 인증 사용
+                access_token = await self._env.get_real_access_token()
+                real_cfg = self._env.get_real_config()
+                self._headers.set_app_keys(real_cfg['api_key'], real_cfg['api_secret_key'])
+            else:
+                access_token = await self._env.get_access_token()
+                self._headers.set_app_keys(self._env.active_config['api_key'], self._env.active_config['api_secret_key'])
+
             if not isinstance(access_token, str) or access_token is None:
                 raise ValueError("접근 토큰이 없습니다. KoreaInvestEnv에서 먼저 토큰을 발급받아야 합니다.")
 
             self._headers.set_auth_bearer(access_token)
-            self._headers.set_app_keys(self._env.active_config['api_key'], self._env.active_config['api_secret_key'])
             headers = self._headers.build()
             # self._log_headers()
 

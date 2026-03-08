@@ -24,6 +24,7 @@ from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBre
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from services.oneil_universe_service import OneilUniverseService
+from services.background_service import BackgroundService
 from managers.realtime_data_manager import RealtimeDataManager
 from view.web import web_api  # 임포트 확인
 
@@ -45,6 +46,7 @@ class WebAppContext:
         self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
+        self.background_service: BackgroundService = None
         self.initialized = False
         
         # [변경] 실시간 데이터 관리자 도입
@@ -72,6 +74,9 @@ class WebAppContext:
         if not token_acquired:
             self.logger.critical("웹 앱: 토큰 발급 실패.")
             return False
+        # 모의투자 모드에서도 실전 토큰 사전 발급 (조회 API는 항상 실전 인증 사용)
+        if is_paper_trading:
+            await self.env.get_real_access_token()
 
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, time_manager=self.time_manager
@@ -81,9 +86,18 @@ class WebAppContext:
         )
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
         self.indicator_service = IndicatorService()
+        self.background_service = BackgroundService(
+            broker_api_wrapper=self.broker,
+            stock_code_mapper=self.stock_code_mapper,
+            env=self.env,
+            logger=self.logger,
+            time_manager=self.time_manager,
+            trading_service=self.trading_service,
+        )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
-            indicator_service=self.indicator_service
+            indicator_service=self.indicator_service,
+            background_service=self.background_service,
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
@@ -221,6 +235,12 @@ class WebAppContext:
         """백그라운드 태스크 시작."""
         # [변경] 매니저에게 위임
         self.realtime_data_manager.start_background_tasks()
+
+        if self.background_service:
+            # 투자자별 순매수 랭킹 백그라운드 갱신 (조회 API는 항상 실전 URL 사용하므로 모의투자에서도 동작)
+            asyncio.create_task(self.background_service.refresh_investor_ranking())
+            # 장마감 후 자동 갱신 스케줄러 (기본 랭킹 + 투자자 랭킹)
+            asyncio.create_task(self.background_service.start_after_market_scheduler())
 
     async def shutdown(self):
         """서비스 종료 처리."""

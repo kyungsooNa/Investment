@@ -34,15 +34,21 @@ class KoreaInvestApiClient:
         url_provider = KoreaInvestUrlProvider.from_env_and_kis_config(env=env)
         trid_provider = KoreaInvestTrIdProvider.from_config_loader(env=env)
 
+        # 조회 API 전용: 항상 실전 URL 사용
+        quotation_url_provider = KoreaInvestUrlProvider.from_env_and_kis_config(
+            env=env, get_base_url_override=env.get_real_base_url
+        )
+
         self._quotations = KoreaInvestApiQuotations(
             self._env,
             self._logger,
             self.time_manager,
             async_client=shared_client,
             header_provider=header_provider.fork(),
-            url_provider=url_provider,
+            url_provider=quotation_url_provider,
             trid_provider=trid_provider,
         )
+        self._quotations._use_real_auth = True  # 항상 실전 인증
         self._account = KoreaInvestApiAccount(
             self._env,
             self._logger,
@@ -176,12 +182,14 @@ class KoreaInvestApiClient:
         """
         return await self._quotations.get_top_volume_stocks()
 
-    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
-    #     """
-    #     외국인 순매수 상위 종목을 조회합니다.
-    #     """
-    #     return await self._quotations.get_top_foreign_buying_stocks()
-    #
+    async def get_investor_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
+        """종목별 투자자 매매동향(일별) 조회 (실전 전용)"""
+        return await self._quotations.get_investor_trade_by_stock_daily(stock_code, date)
+    
+    async def get_program_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
+        """종목별 프로그램 매매동향(일별) 조회 (실전 전용)"""
+        return await self._quotations.get_program_trade_by_stock_daily(stock_code, date)
+    
     # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
     #     """
     #     특정 종목의 뉴스를 조회합니다.

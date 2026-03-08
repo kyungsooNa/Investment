@@ -17,8 +17,11 @@ cache:
     - get_top_volume_stocks
     - get_top_trading_value_stocks
     - get_top_foreign_buying_stocks
+    - get_investor_trade_by_stock_daily
+    - get_program_trade_by_stock_daily
     - get_stock_news
     - get_etf_info
+
   deserializable_classes:
     - common.types.ResCommonResponse
     - common.types.ResStockFullInfoApiOutput

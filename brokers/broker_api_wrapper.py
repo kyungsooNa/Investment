@@ -152,11 +152,13 @@ class BrokerAPIWrapper:
         """
         return await self._client.get_top_volume_stocks()
 
-    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
-    #     """
-    #     외국인 순매수 상위 종목을 조회합니다.
-    #     """
-    #     return await self._client.get_top_foreign_buying_stocks()
+    async def get_investor_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
+        """종목별 투자자 매매동향(일별) 조회 (실전 전용)"""
+        return await self._client.get_investor_trade_by_stock_daily(stock_code, date)
+
+    async def get_program_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
+        """종목별 프로그램매매추이(일별) 조회 (실전 전용)"""
+        return await self._client.get_program_trade_by_stock_daily(stock_code, date)
     #
     # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
     #     """

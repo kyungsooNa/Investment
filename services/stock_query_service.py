@@ -12,11 +12,13 @@ class StockQueryService:
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
     """
 
-    def __init__(self, trading_service, logger, time_manager, indicator_service=None):
+    def __init__(self, trading_service, logger, time_manager, indicator_service=None,
+                 background_service=None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.indicator_service = indicator_service
+        self.background_service = background_service
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -484,14 +486,53 @@ class StockQueryService:
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=view_model)
 
     async def handle_get_top_stocks(self, category: str) -> ResCommonResponse:
-        """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수)."""
+        """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수 등)."""
+        # (title, func, param, is_sync) — is_sync=True이면 동기 함수 호출
+        # 장마감 후 캐시된 기본 랭킹이 있으면 우선 사용 (trading_value 제외 — background_service에서 처리)
+        basic_categories = ("rise", "fall", "volume")
+        if category in basic_categories and self.background_service:
+            cached = self.background_service.get_basic_ranking_cache(category)
+            if cached is not None:
+                self.logger.info(f"Handler - {category} 캐시 히트 (장마감 후 캐시)")
+                return cached
+
         category_map = {
-            "rise": ("상승률", self.trading_service.get_top_rise_fall_stocks, True),
-            "fall": ("하락률", self.trading_service.get_top_rise_fall_stocks, False),
-            "volume": ("거래량", self.trading_service.get_top_volume_stocks, None),
-            "trading_value": ("거래대금", self.trading_service.get_top_trading_value_stocks, None),
-            # "foreign": ("외국인 순매수", self.trading_service.get_top_foreign_buying_stocks, None),
+            "rise": ("상승률", self.trading_service.get_top_rise_fall_stocks, True, False),
+            "fall": ("하락률", self.trading_service.get_top_rise_fall_stocks, False, False),
+            "volume": ("거래량", self.trading_service.get_top_volume_stocks, None, False),
+            "trading_value": ("거래대금", self.trading_service.get_top_trading_value_stocks, None, False),
         }
+
+        # 백그라운드 서비스 카테고리 (동기 함수)
+        # 거래대금: 장마감 후에는 투자자 데이터(acml_tr_pbmn) 기반으로 전환
+        if self.background_service:
+            category_map["trading_value"] = (
+                "거래대금", self.background_service.get_trading_value_ranking, None, True
+            )
+            category_map["foreign_buy"] = (
+                "외인 순매수", self.background_service.get_foreign_net_buy_ranking, None, True
+            )
+            category_map["foreign_sell"] = (
+                "외인 순매도", self.background_service.get_foreign_net_sell_ranking, None, True
+            )
+            category_map["inst_buy"] = (
+                "기관 순매수", self.background_service.get_inst_net_buy_ranking, None, True
+            )
+            category_map["inst_sell"] = (
+                "기관 순매도", self.background_service.get_inst_net_sell_ranking, None, True
+            )
+            category_map["prsn_buy"] = (
+                "개인 순매수", self.background_service.get_prsn_net_buy_ranking, None, True
+            )
+            category_map["prsn_sell"] = (
+                "개인 순매도", self.background_service.get_prsn_net_sell_ranking, None, True
+            )
+            category_map["program_buy"] = (
+                "프로그램 순매수", self.background_service.get_program_net_buy_ranking, None, True
+            )
+            category_map["program_sell"] = (
+                "프로그램 순매도", self.background_service.get_program_net_sell_ranking, None, True
+            )
 
         if category not in category_map:
             self.logger.error(f"지원하지 않는 카테고리: {category}")
@@ -501,10 +542,13 @@ class StockQueryService:
                 data=None,
             )
 
-        title, service_func, param = category_map[category]
+        title, service_func, param, is_sync = category_map[category]
         self.logger.info(f"Handler - {title} 상위 종목 조회 요청")
 
-        response = await (service_func(param) if param is not None else service_func())
+        if is_sync:
+            response = service_func(param) if param is not None else service_func()
+        else:
+            response = await (service_func(param) if param is not None else service_func())
 
         if response and response.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(f"{title} 상위 종목 조회 성공")

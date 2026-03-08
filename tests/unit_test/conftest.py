@@ -11,8 +11,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from unittest import mock
 from unittest.mock import MagicMock, AsyncMock
-from view.web import web_api
-from view.web.web_main import page_router
 from core.cache.cache_manager import CacheManager
 
 @pytest.fixture(autouse=True)
@@ -99,6 +97,8 @@ def fast_sleep(request):
 @pytest.fixture(scope="session")
 def test_app():
     """테스트용 FastAPI 앱 (Web API 라우터 포함)"""
+    from view.web import web_api
+    from view.web.web_main import page_router
     app = FastAPI()
     app.include_router(web_api.router)
     app.include_router(page_router)
@@ -112,6 +112,7 @@ def web_client(test_app):
 @pytest.fixture
 def mock_web_ctx():
     """WebAppContext Mock 객체 및 전역 주입"""
+    from view.web import web_api
     ctx = MagicMock()
     
     # 기본 속성 설정

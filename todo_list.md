@@ -6,16 +6,15 @@
 ### 0. 불량
 1. [전략스케줄러] 전략에서 매수/매도 API를 실패하는 경우가 종종 있음. 1차로 사실 실패하면 log만되고, web에 남는 history는 저장이 안되는게 맞을거같고 2번쨰로는 실패하는경우에는 retry를 해야할거같음. retry 하는 queue를 만들어서 재시도하는 logic 추가가 필요.
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
+
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-
-
-8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.
-
-
+7. [프로그램매매] App 재실행시 프로그램 매매에서 이전에 구독한 data가 다 올라오지 않는 버그가 있어 보임. 저장을 잘못하고 있는건지, 가지고오지를 모샇는거지, file을 잘못 지우는건지 확인 필요.
 ### 1. 환경 (Environment)
 
 ### 2. 성능 (Performance)
 * **[개선 필요]** 시장이 닫혔으면 스레드를 통해 전체 종목을 백그라운드로 업데이트하여 RAM에 올려두게 하기.
+  * 현재가 조회를 전체 종목을 backgournd로 다 돌려놓자.
+  * OHLCV도 background로 다 돌려놓자.
 * **[개선 필요]** **[현재가차트]** 많이 빨라졌지만 아직도 차트가 1초내외로 기다려야 나오는 문제가 있음 우선순위 낮게 수정 필요. OHLCV의 과거데이터는 바뀌질 않으니, 이전 data는 local에 저장해서 가지고 오는게 더 빠르게 처리할 수 있을거같음. 오늘 data와 관련된 candle chart, ma, bb 등만 새로 API 호출해서 계산하면 될거같음.
 
 ### 3. 오류 처리 (Error Handling)
@@ -39,9 +38,6 @@
 ### 3. 코드 가독성 및 유지보수성 (Code Readability & Maintainability)
 * **[강화]** 타입 힌트 강화: 모든 함수 인자 및 반환 값에 타입 힌트를 일관되게 적용하고, `Any` 타입을 구체적인 타입으로 변경.
 * **[제거]** 매직 넘버/문자열 제거: 반복적으로 사용되는 상수 값들을 별도의 Enum이나 상수로 정의.
-* **[전환]** `print` 문의 로거 전환: 사용자에게 정보를 표시하는 `print` 문을 `logger.info` 또는 `cli_view.display_message`와 같은 로깅/뷰 계층 메서드로 전환.
-
-
 
 
 ## Ⅲ. 신규 기능 및 장기 계획 (Lower Priority / New Features & Long-term)
@@ -72,7 +68,6 @@
 * 기간별매매손익현황조회
 * 주식통합증거금 
 * 기간별계좌권리현황조회 
-* **[신규 기능]** 외국인 순매수 상위 종목 조회 기능 추가. (실시간은 없음)
 * **[신규 기능]** 종목 추천 기능 추가.(Web에서 AI API를 바로 활용 가능한지?)
 * **[신규 기능]** Kis Developers API 문서 크롤링해서 API의 tr_id, url, Header, Params, Body를 최신으로 업데이트 할 수 있는 기능 추가 
 * **[신규 기능]** Android App으로 거래결과, 서치 결과 알림 기능 추가. 

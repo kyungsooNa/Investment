@@ -81,9 +81,10 @@ async def test_initialize_services_success(mock_deps):
     ctx = WebAppContext(None)
     ctx.load_config_and_env()
     
-    # Mock env.get_access_token 성공 설정
+    # Mock env.get_access_token / get_real_access_token 성공 설정
     env_instance = mock_deps["env"].return_value
     env_instance.get_access_token = AsyncMock(return_value=True)
+    env_instance.get_real_access_token = AsyncMock(return_value="fake_real_token")
     
     # Act
     res = await ctx.initialize_services(is_paper_trading=True)

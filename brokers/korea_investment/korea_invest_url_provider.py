@@ -18,13 +18,17 @@ class KoreaInvestUrlProvider:
         self._paths = dict(paths or {})
 
     @classmethod
-    def from_env_and_kis_config(cls, env: KoreaInvestApiEnv, kis_config_override: Optional[dict] = None) -> "KoreaInvestUrlProvider":
+    def from_env_and_kis_config(
+        cls, env: KoreaInvestApiEnv,
+        kis_config_override: Optional[dict] = None,
+        get_base_url_override: Optional[Callable[[], str]] = None,
+    ) -> "KoreaInvestUrlProvider":
         kis_conf = kis_config_override if kis_config_override is not None else load_config(KIS_CONFIG_PATH)
         paths = kis_conf.get("paths")
         if not isinstance(paths, dict) or not paths:
             raise ValueError("kis_config.yaml의 paths가 없거나 비었습니다.")
-        # base_url은 사용하지 않음(동적으로 env에서 받음)
-        return cls(get_base_url=env.get_base_url, paths=paths)
+        get_base_url = get_base_url_override or env.get_base_url
+        return cls(get_base_url=get_base_url, paths=paths)
 
 
     # ---------- 조회 ----------

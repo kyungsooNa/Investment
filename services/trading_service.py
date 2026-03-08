@@ -890,3 +890,38 @@ class TradingService:
             pw_data_incu_yn="Y",
             fake_tick_incu_yn="",   # 공백 필수
         )
+
+    async def get_latest_trading_date(self) -> Optional[str]:
+        """
+        대표 종목(삼성전자)의 일봉을 조회하여 데이터가 존재하는 가장 최근 날짜를 반환한다.
+        """
+        try:
+            now = datetime.now()
+            end_dt = now.strftime("%Y%m%d")
+            # 넉넉하게 7일 전부터 조회 (연휴 등 고려)
+            start_dt = (now - timedelta(days=7)).strftime("%Y%m%d")
+            
+            # 삼성전자(005930) 일봉 조회
+            resp = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+                "005930", start_dt, end_dt, "D"
+            )
+            
+            if resp and resp.rt_cd == ErrorCode.SUCCESS.value and resp.data:
+                dates = []
+                for item in resp.data:
+                    d = None
+                    if isinstance(item, dict):
+                        d = item.get("stck_bsop_date")
+                    else:
+                        d = getattr(item, "stck_bsop_date", None)
+                    
+                    if d:
+                        dates.append(d)
+                
+                if dates:
+                    return max(dates)
+                    
+        except Exception as e:
+            self._logger.warning(f"최근 거래일 조회 실패: {e}")
+            
+        return None
