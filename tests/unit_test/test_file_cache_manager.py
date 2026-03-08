@@ -288,7 +288,7 @@ def test_cleanup_old_files(tmp_path):
     # 로그 확인
     assert logger.debug.called
     logs = [call.args[0] for call in logger.debug.call_args_list]
-    assert any("오래된 File cache 삭제됨" in msg for msg in logs)
+    assert any("File cache 삭제됨 (기간만료)" in msg for msg in logs)
 
 # ------------------------
 # Additional Tests for Coverage
@@ -379,7 +379,7 @@ def test_cleanup_old_files_remove_error(tmp_path):
         mgr.cleanup_old_files()
         
     assert logger.error.called
-    assert "오래된 파일 삭제 실패" in logger.error.call_args[0][0]
+    assert "파일 접근 실패" in logger.error.call_args[0][0]
 
 def test_cleanup_old_files_outer_exception(tmp_path):
     """cleanup_old_files: 전체 로직 중 에러 발생 시 로깅"""
@@ -402,3 +402,38 @@ def test_exists(tmp_path):
     
     mgr.set(key, {"a": 1}, save_to_file=True)
     assert mgr.exists(key)
+
+
+def test_cleanup_old_files_ohlcv_retention(tmp_path):
+    """OHLCV 데이터 별도 보관 기간(1년) 적용 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    
+    now = time.time()
+    day = 86400
+    
+    # 1. 일반 데이터 (8일 전 -> 삭제 대상)
+    f1 = tmp_path / "normal.json"
+    f1.write_text("{}")
+    os.utime(str(f1), (now - 8 * day, now - 8 * day))
+    
+    # 2. OHLCV 데이터 (100일 전 -> 유지 대상)
+    f2 = tmp_path / "ohlcv_past_005930.json"
+    f2.write_text("{}")
+    os.utime(str(f2), (now - 100 * day, now - 100 * day))
+    
+    # 3. OHLCV 데이터 (400일 전 -> 삭제 대상)
+    f3 = tmp_path / "ohlcv_past_000660.json"
+    f3.write_text("{}")
+    os.utime(str(f3), (now - 400 * day, now - 400 * day))
+
+    # 4. 지표 데이터 (100일 전 -> 유지 대상)
+    f4 = tmp_path / "indicators_chart_005930_20250101.json"
+    f4.write_text("{}")
+    os.utime(str(f4), (now - 100 * day, now - 100 * day))
+    
+    mgr.cleanup_old_files(days=7)
+    
+    assert not f1.exists()
+    assert f2.exists()
+    assert not f3.exists()
+    assert f4.exists()

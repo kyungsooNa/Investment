@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from services.trading_service import TradingService
+from types import SimpleNamespace
 
 @pytest.fixture
 def mock_deps(mocker):
@@ -9,13 +10,12 @@ def mock_deps(mocker):
     env = mocker.Mock()
     logger = mocker.Mock()
     time_manager = mocker.Mock()
-    return broker, env, logger, time_manager
+    return SimpleNamespace(broker=broker, env=env, logger=logger, time_manager=time_manager)
 
 @pytest.fixture
 def trading_service(mock_deps):
     """TradingService 인스턴스 생성"""
-    broker, env, logger, time_manager = mock_deps
-    return TradingService(broker, env, logger, time_manager)
+    return TradingService(mock_deps.broker, mock_deps.env, mock_deps.logger, mock_deps.time_manager)
 
 @pytest.mark.asyncio
 async def test_start_program_trading_success(trading_service):

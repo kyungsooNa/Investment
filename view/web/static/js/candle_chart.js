@@ -242,9 +242,12 @@ function renderStockChart(period) {
             ]
         },
         options: {
-            responsive: true,
+            animation: false, // [최적화] 애니메이션 비활성화로 즉시 렌더링
+            responsive: true, 
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
+            parsing: false, // [최적화] 데이터 파싱 비활성화 (이미 포맷에 맞춤)
+            normalized: true, // [최적화] 데이터가 이미 정렬되어 있음을 명시
             scales: {
                 x: {
                     type: 'category', // [수정] 1970년 문제 해결을 위해 명시적 category 설정

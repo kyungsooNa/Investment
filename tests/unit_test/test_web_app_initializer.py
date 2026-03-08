@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from view.web.web_app_initializer import WebAppContext
+from pydantic import BaseModel
 
 @pytest.fixture
 def mock_deps():
@@ -23,7 +24,8 @@ def mock_deps():
          patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True) as mock_pbf, \
          patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True) as mock_tvb, \
          patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True) as mock_osb, \
-         patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True) as mock_pp:
+         patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True) as mock_pp, \
+         patch("view.web.web_app_initializer.CacheManager", autospec=True) as mock_cm:
         
         mock_load.return_value = {
             "market_open_time": "09:00",
@@ -49,7 +51,8 @@ def mock_deps():
             "pbf": mock_pbf,
             "tvb": mock_tvb,
             "osb": mock_osb,
-            "pp": mock_pp
+            "pp": mock_pp,
+            "cm": mock_cm
         }
 
 def test_initialization(mock_deps):
@@ -264,3 +267,36 @@ async def test_stop_all_program_trading(mock_deps):
     assert ctx.stock_query_service.unsubscribe_program_trading.call_count == 2
     assert ctx.stock_query_service.unsubscribe_realtime_price.call_count == 2
     ctx.realtime_data_manager.clear_subscribed_codes.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_initialize_services_with_pydantic_config_object(mock_deps):
+    """
+    설정 객체가 dict가 아닌 Pydantic 모델일 때(get 메서드 없음),
+    initialize_services 내부에서 dict로 변환하여 CacheManager에 전달하는지 검증.
+    """
+    # Arrange
+    ctx = WebAppContext(None)
+
+    # Pydantic 모델 흉내 (dict 메서드 또는 model_dump 메서드 보유, get 메서드 없음)
+    class MockAppConfig(BaseModel):
+        market_open_time: str = "09:00"
+        market_close_time: str = "15:30"
+        market_timezone: str = "Asia/Seoul"
+        cache: dict = {"base_dir": ".cache"}
+
+    config_model = MockAppConfig()
+    
+    # load_configs가 dict가 아닌 객체를 반환하도록 설정 (기존 mock 오버라이드)
+    mock_deps["load_configs"].return_value = config_model
+    
+    ctx.load_config_and_env()
+    
+    # Act
+    await ctx.initialize_services(is_paper_trading=True)
+
+    # Assert
+    # CacheManager 생성자에 전달된 인자가 dict 타입인지 확인
+    mock_deps["cm"].assert_called_once()
+    init_arg = mock_deps["cm"].call_args[0][0]
+    assert isinstance(init_arg, dict)
+    assert init_arg["market_open_time"] == "09:00"

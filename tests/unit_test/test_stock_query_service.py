@@ -1175,14 +1175,17 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=ohlcv_data
         )
 
-        ma_data = [{"date": "20230101", "value": 100}]
-        bb_data = [{"date": "20230101", "upper": 105, "middle": 100, "lower": 95}]
-
-        self.mock_indicator_service.get_moving_average.return_value = ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=ma_data
-        )
-        self.mock_indicator_service.get_bollinger_bands.return_value = ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=bb_data
+        indicators_data = {
+            "ma5": [{"date": "20230101", "close": 100, "ma": 100}],
+            "ma10": [{"date": "20230101", "close": 100, "ma": None}],
+            "ma20": [{"date": "20230101", "close": 100, "ma": None}],
+            "ma60": [{"date": "20230101", "close": 100, "ma": None}],
+            "ma120": [{"date": "20230101", "close": 100, "ma": None}],
+            "bb": [{"date": "20230101", "upper": 105, "middle": 100, "lower": 95}],
+            "rs": [{"date": "20230101", "rs": None}],
+        }
+        self.mock_indicator_service.get_chart_indicators.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=indicators_data
         )
 
         # Act
@@ -1194,8 +1197,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.data["indicators"]["ma5"]), 1)
         self.assertEqual(len(result.data["indicators"]["bb"]), 1)
         self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D")
-        self.assertEqual(self.mock_indicator_service.get_moving_average.call_count, 5)
-        self.mock_indicator_service.get_bollinger_bands.assert_awaited_once()
+        self.mock_indicator_service.get_chart_indicators.assert_awaited_once_with("005930", ohlcv_data)
 
     async def test_get_ohlcv_with_indicators_none_response(self):
         """get_ohlcv_with_indicators: 응답이 None일 때 (Line 602-604 coverage)"""
@@ -1238,12 +1240,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_trading_service.get_ohlcv.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=ohlcv_data
         )
-        self.mock_indicator_service.get_moving_average.return_value = ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=[{"value": 100}]
-        )
-        # BB 계산만 실패하는 경우
-        self.mock_indicator_service.get_bollinger_bands.return_value = ResCommonResponse(
-            rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="계산 오류", data=[]
+        # get_chart_indicators 실패 시 빈 지표 반환
+        self.mock_indicator_service.get_chart_indicators.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="계산 오류", data=None
         )
 
         # Act
@@ -1252,8 +1251,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         # Assert
         self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
         self.assertIsNotNone(result.data["ohlcv"])
-        self.assertEqual(len(result.data["indicators"]["ma5"]), 1)
-        self.assertEqual(len(result.data["indicators"]["bb"]), 0) # BB 데이터는 비어있어야 함
+        # 지표 계산 실패 시 빈 배열로 fallback
+        self.assertEqual(len(result.data["indicators"]["ma5"]), 0)
+        self.assertEqual(len(result.data["indicators"]["bb"]), 0)
 
     # --- get_recent_daily_ohlcv ---
     async def test_get_recent_daily_ohlcv_success(self):

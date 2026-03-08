@@ -45,7 +45,10 @@ class AppConfig(BaseModel):
     # Dynamic/Merged configs
     tr_ids: Dict[str, Any] = Field(default_factory=dict)
     paths: Dict[str, str] = Field(default_factory=dict)
-    
+
+    # ✅ 필드 추가 (기본값 False 설정)
+    performance_logging: bool = False 
+
     # Extra fields for anything else in config.yaml
     model_config = {"extra": "allow"}
 

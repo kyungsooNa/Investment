@@ -13,6 +13,7 @@ from common.types import (
     ResPriceSummary, ResCommonResponse, ErrorCode,
     ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation,ResDailyChartApiItem
 )
+from core.cache.cache_manager import CacheManager
 
 
 class TradingService:
@@ -22,13 +23,14 @@ class TradingService:
     """
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
-                 time_manager: TimeManager = None, market_date_manager=None):
+                 time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None,
+                 market_date_manager=None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
+        self.cache_manager = cache_manager
         self._latest_prices = {}
-        self._daily_ohlcv_cache = {}  # {code: {'base_date': 'YYYYMMDD', 'data': [...]}}
         self._ohlcv_locks: Dict[str, asyncio.Lock] = {}  # 종목코드별 Lock (race condition 방지)
         self._market_date_manager = market_date_manager
     async def get_name_by_code(self, code: str) -> str:
@@ -642,6 +644,50 @@ class TradingService:
             
         return all_rows
 
+    def _save_ohlcv_cache(self, key: str, base_date: str, data: List[dict]):
+        """OHLCV 데이터를 캐시에 저장하는 헬퍼 메서드"""
+        cache_payload = {
+            "timestamp": datetime.now().isoformat(),
+            "data": {
+                'base_date': base_date,
+                'data': data
+            }
+        }
+        if self.cache_manager:
+            self.cache_manager.set(key, cache_payload, save_to_file=True)
+
+    async def _fetch_today_ohlcv(self, stock_code: str, today_str: str) -> List[dict]:
+        """현재가 API를 호출하여 오늘자 OHLCV 데이터를 생성합니다."""
+        try:
+            current_resp = await self.get_current_stock_price(stock_code)
+            if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
+                output = current_resp.data.get('output')
+                if output:
+                    # ResStockFullInfoApiOutput 객체 또는 dict 처리
+                    def _get_val(obj, attr_name):
+                        if isinstance(obj, dict):
+                            return obj.get(attr_name)
+                        return getattr(obj, attr_name, None)
+
+                    opn = _get_val(output, 'stck_oprc')
+                    high = _get_val(output, 'stck_hgpr')
+                    low = _get_val(output, 'stck_lwpr')
+                    close = _get_val(output, 'stck_prpr')
+                    vol = _get_val(output, 'acml_vol')
+
+                    if opn and high and low and close:
+                        return [{
+                            "date": today_str,
+                            "open": float(opn),
+                            "high": float(high),
+                            "low": float(low),
+                            "close": float(close),
+                            "volume": int(vol) if vol else 0
+                        }]
+        except Exception as e:
+            self._logger.warning(f"오늘자 OHLCV 구성을 위한 현재가 조회 실패: {e}")
+        return []
+
     async def get_ohlcv(
             self,
             stock_code: str,
@@ -660,69 +706,67 @@ class TradingService:
             if stock_code not in self._ohlcv_locks:
                 self._ohlcv_locks[stock_code] = asyncio.Lock()
 
+            cache_key = f"ohlcv_past_{stock_code}"
+
             async with self._ohlcv_locks[stock_code]:
                 # 1. 과거 데이터 가져오기 (캐시 활용)
                 past_rows = []
-                cached = self._daily_ohlcv_cache.get(stock_code)
+                
+                cached_wrapper = None
+                if self.cache_manager:
+                    raw_cache = self.cache_manager.get_raw(cache_key)
+                    if raw_cache and isinstance(raw_cache, tuple):
+                        cached_wrapper, _ = raw_cache
+                
+                cached_data = cached_wrapper.get('data') if cached_wrapper else None
 
                 # 캐시가 있고, 기준일(base_date)이 오늘이라면 (즉, 어제까지의 데이터가 이미 로드됨)
-                if cached and cached.get('base_date') == today_str:
-                    past_rows = cached['data']
+                if cached_data and cached_data.get('base_date') == today_str:
+                    past_rows = cached_data['data']
                 else:
                     # 캐시 없거나 날짜 변경됨 -> 어제까지의 데이터 대량 조회 (약 2년치)
                     past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=8)
                     # 캐시 업데이트
-                    self._daily_ohlcv_cache[stock_code] = {
-                        'base_date': today_str,
-                        'data': past_rows
-                    }
+                    self._save_ohlcv_cache(cache_key, today_str, past_rows)
 
-            # 2. 오늘 데이터 가져오기 (실시간 변동 반영을 위해 항상 조회)
-            # [변경] inquire_daily_itemchartprice 대신 get_current_stock_price 사용
+            # 2. 오늘 데이터 처리
             today_rows = []
-            try:
-                current_resp = await self.get_current_stock_price(stock_code)
-                if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
-                    output = current_resp.data.get('output')
-                    if output:
-                        # ResStockFullInfoApiOutput 객체 또는 dict 처리
-                        def _get_val(obj, attr_name):
-                            if isinstance(obj, dict):
-                                return obj.get(attr_name)
-                            return getattr(obj, attr_name, None)
+            
+            # 이미 캐시(past_rows)에 오늘 데이터가 포함되어 있고, 장이 마감된 상태라면 API 호출 스킵
+            is_today_cached = past_rows and past_rows[-1]['date'] == today_str
+            is_market_open = self._time_manager.is_market_open()
 
-                        opn = _get_val(output, 'stck_oprc')
-                        high = _get_val(output, 'stck_hgpr')
-                        low = _get_val(output, 'stck_lwpr')
-                        close = _get_val(output, 'stck_prpr')
-                        vol = _get_val(output, 'acml_vol')
+            if is_today_cached and not is_market_open:
+                # 이미 최신 데이터가 캐싱되어 있음 -> API 호출 안 함 (속도 향상)
+                pass
+            else:
+                # 캐시에 없거나(최초 실행/어제까지 데이터만 있음), 장 중(실시간 갱신 필요)이면 API 호출
+                today_rows = await self._fetch_today_ohlcv(stock_code, today_str)
 
-                        if opn and high and low and close:
-                            today_rows.append({
-                                "date": today_str,
-                                "open": float(opn),
-                                "high": float(high),
-                                "low": float(low),
-                                "close": float(close),
-                                "volume": int(vol) if vol else 0
-                            })
-            except Exception as e:
-                self._logger.warning(f"오늘자 OHLCV 구성을 위한 현재가 조회 실패: {e}")
-
-            # 비거래일(주말) 체크: 현재가 API가 마지막 거래일 데이터를 반환하므로 중복 방지
-            if today_rows and now_dt.weekday() >= 5:
-                today_rows = []
-
-            # 추가 안전장치: 공휴일 등 비거래일에서 OHLCV가 동일하면 중복 제거
-            if today_rows and past_rows:
-                last_past = past_rows[-1]
-                today = today_rows[0]
-                if (today['date'] != last_past['date'] and
-                    today['open'] == last_past['open'] and
-                    today['high'] == last_past['high'] and
-                    today['low'] == last_past['low'] and
-                    today['close'] == last_past['close']):
+                # 비거래일(주말) 체크 및 중복 제거
+                if today_rows and now_dt.weekday() >= 5:
                     today_rows = []
+                elif today_rows and past_rows:
+                    last_past = past_rows[-1]
+                    today = today_rows[0]
+                    # 날짜가 다른데 데이터가 같다면? (휴장일 등 API가 이전 거래일 데이터 반환 시)
+                    if today['date'] != last_past['date']:
+                        if (today['open'] == last_past['open'] and
+                            today['high'] == last_past['high'] and
+                            today['low'] == last_past['low'] and
+                            today['close'] == last_past['close']):
+                            today_rows = []
+                            
+            # [최적화] 장 마감 후라면 오늘 데이터를 캐시에 영구 저장 (다음 조회 시 API 호출 방지)
+            if today_rows and not self._time_manager.is_market_open():
+                # 오늘 데이터가 과거 데이터의 마지막보다 최신인 경우에만
+                if not past_rows or today_rows[0]['date'] > past_rows[-1]['date']:
+                    # 병합 및 캐시 저장 (base_date를 오늘로 갱신)
+                    updated_past_rows = past_rows + today_rows
+                    self._save_ohlcv_cache(cache_key, today_str, updated_past_rows)
+                    # 메모리 변수 갱신 (아래 병합 로직을 위해)
+                    past_rows = updated_past_rows
+                    today_rows = [] # 이미 past_rows에 들어갔으므로 중복 방지
 
             # 3. 병합 및 정렬
             # past_rows는 이미 정렬됨. today_rows는 0개 또는 1개.
