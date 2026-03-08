@@ -95,17 +95,9 @@ class WebAppContext:
             await self.env.get_real_access_token()
 
         self.broker = BrokerAPIWrapper(
-            env=self.env, logger=self.logger, time_manager=self.time_manager
+            env=self.env, logger=self.logger, time_manager=self.time_manager,
+            market_date_manager=self.market_date_manager
         )
-        
-        # [중요] BrokerAPIWrapper 내부의 ClientWithCache에 MarketDateManager 주입
-        # BrokerAPIWrapper -> KoreaInvestApiClient -> _quotations (ClientWithCache)
-        if hasattr(self.broker, '_client'):
-            kis_client = self.broker._client
-            if hasattr(kis_client, '_quotations'):
-                quotations = kis_client._quotations
-                if hasattr(quotations, '_market_date_manager'):
-                    quotations._market_date_manager = self.market_date_manager
 
         # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
         self.market_date_manager.set_broker(self.broker)

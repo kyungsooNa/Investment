@@ -54,7 +54,12 @@ class MarketDateManager:
             raw_quotations = None
             
             # 안전하게 속성 접근
-            kis_client = getattr(self._broker, '_client', None)
+            kis_client = self._broker._client
+            
+            # ClientWithCache 래퍼 언래핑 (BrokerAPIWrapper에서 래핑됨)
+            if hasattr(kis_client, '_client'):
+                kis_client = kis_client._client
+
             if kis_client:
                 quotations = getattr(kis_client, '_quotations', None)
                 if quotations:
