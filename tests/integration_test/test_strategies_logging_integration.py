@@ -55,12 +55,16 @@ def test_strategy_creates_log_file_integration(tmp_path, module_path, class_name
 
         # 전략별 생성자 인자 구성
         kwargs = {}
-        if "Oneil" in class_name:
-            kwargs = {'trading_service': mock_ts, 'universe_service': mock_universe, 'time_manager': mock_tm}
+        if class_name == "OneilSqueezeBreakoutStrategy":
+            kwargs = {'stock_query_service': mock_sqs, 'universe_service': mock_universe, 'time_manager': mock_tm}
+        elif class_name == "OneilPocketPivotStrategy":
+            kwargs = {'stock_query_service': mock_sqs, 'universe_service': mock_universe, 'time_manager': mock_tm}
         elif "Traditional" in class_name:
-            kwargs = {'trading_service': mock_ts, 'stock_query_service': mock_sqs, 'stock_code_mapper': mock_mapper, 'time_manager': mock_tm}
-        elif "Program" in class_name or "VolumeBreakoutLive" in class_name:
-            kwargs = {'trading_service': mock_ts, 'stock_query_service': mock_sqs, 'time_manager': mock_tm}
+            kwargs = {'stock_query_service': mock_sqs, 'stock_code_mapper': mock_mapper, 'time_manager': mock_tm}
+        elif "VolumeBreakoutLive" in class_name:
+            kwargs = {'stock_query_service': mock_sqs, 'time_manager': mock_tm}
+        elif "Program" in class_name:
+            kwargs = {'stock_query_service': mock_sqs, 'time_manager': mock_tm}
         elif "GapUp" in class_name:
             kwargs = {'broker': mock_broker}
 

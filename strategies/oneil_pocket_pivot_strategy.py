@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
-from services.trading_service import TradingService
+from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
 from strategies.oneil_common_types import OneilPocketPivotConfig, PPPositionState
 from services.oneil_universe_service import OneilUniverseService
@@ -37,13 +37,13 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
     def __init__(
         self,
-        trading_service: TradingService,
+        stock_query_service: StockQueryService,
         universe_service: OneilUniverseService,
         time_manager: TimeManager,
         config: Optional[OneilPocketPivotConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
-        self._ts = trading_service
+        self._sqs = stock_query_service
         self._universe = universe_service
         self._tm = time_manager
         self._cfg = config or OneilPocketPivotConfig()
@@ -97,7 +97,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
     async def _check_entry(self, code, item, progress) -> Optional[TradeSignal]:
         """진입 조건 검사: PP 또는 BGU → 스마트머니 → 체결강도."""
         # 1. 현재가 데이터 조회
-        resp = await self._ts.get_current_stock_price(code)
+        resp = await self._sqs.get_current_price(code)
         if not resp or resp.rt_cd != "0":
             return None
 
@@ -126,7 +126,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
             return None
 
         # 2. OHLCV 조회 (MA 계산 + 하락일 거래량 분석용)
-        ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=60)
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=60)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
         if not ohlcv or len(ohlcv) < 10:
             return None
 
@@ -154,7 +155,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         # 6. ★ 체결강도 스냅샷 (>=120%)
         cgld_val = 0.0
         try:
-            ccnl_resp = await self._ts.get_stock_conclusion(code)
+            ccnl_resp = await self._sqs.get_stock_conclusion(code)
             if ccnl_resp and ccnl_resp.rt_cd == "0":
                 ccnl_output = ccnl_resp.data.get("output") if isinstance(ccnl_resp.data, dict) else None
                 if ccnl_output and isinstance(ccnl_output, list) and len(ccnl_output) > 0:
@@ -367,7 +368,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 )
                 self._position_state[code] = state
 
-            resp = await self._ts.get_current_stock_price(code)
+            resp = await self._sqs.get_current_price(code)
             if not resp or resp.rt_cd != "0":
                 continue
 
@@ -397,7 +398,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 self._save_state()
 
             # OHLCV (MA 기반 체크용)
-            ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=60)
+            ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=60)
+            ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
 
             reason = ""
 

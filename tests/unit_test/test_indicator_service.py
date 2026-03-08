@@ -6,13 +6,13 @@ from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI,
 
 @pytest.fixture
 def indicator_service():
-    mock_trading_service = AsyncMock()
-    return IndicatorService(mock_trading_service), mock_trading_service
+    mock_sqs = AsyncMock()
+    return IndicatorService(mock_sqs), mock_sqs
 
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_success(indicator_service):
     """볼린저 밴드 계산 성공 시나리오"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 25일치 데이터 생성 (20일 이동평균 계산 가능하도록)
     data = []
@@ -23,7 +23,7 @@ async def test_get_bollinger_bands_success(indicator_service):
             "open": 10000, "high": 10000, "low": 10000, "volume": 100
         })
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -46,11 +46,11 @@ async def test_get_bollinger_bands_success(indicator_service):
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_not_enough_data(indicator_service):
     """데이터가 부족할 때 (period 미만)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 데이터 10개 (기본 period 20개 필요)
     data = [{"date": "20250101", "close": 10000}] * 10
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -62,9 +62,9 @@ async def test_get_bollinger_bands_not_enough_data(indicator_service):
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_api_failure(indicator_service):
     """TradingService API 호출 실패 시"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.API_ERROR.value, msg1="Fail", data=None
     )
 
@@ -75,11 +75,11 @@ async def test_get_bollinger_bands_api_failure(indicator_service):
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_calculation_error(indicator_service):
     """계산 중 예외 발생 시 (예: 숫자가 아닌 데이터)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 숫자가 아닌 문자열 데이터
     data = [{"date": "20250101", "close": "invalid_number"}] * 25
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -97,7 +97,7 @@ async def test_get_bollinger_bands_calculation_error(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_success(indicator_service):
     """RSI 계산 성공 시나리오"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 30일치 데이터 생성 (14일 RSI 계산 가능하도록)
     # 지속적인 상승 추세 -> RSI가 높게 나와야 함
@@ -109,7 +109,7 @@ async def test_get_rsi_success(indicator_service):
             "open": 10000, "high": 10000, "low": 10000, "volume": 100
         })
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -124,7 +124,7 @@ async def test_get_rsi_success(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_sma_success(indicator_service):
     """이동평균선(SMA) 계산 성공 시나리오"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 5일치 데이터 생성 (5일 이동평균 계산)
     # 가격: 100, 200, 300, 400, 500
@@ -136,7 +136,7 @@ async def test_get_moving_average_sma_success(indicator_service):
             "open": 100, "high": 100, "low": 100, "volume": 100
         })
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -159,7 +159,7 @@ async def test_get_moving_average_sma_success(indicator_service):
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_with_preloaded_data(indicator_service):
     """ohlcv_data를 미리 전달하여 API 호출을 건너뛰는지 테스트"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 20일치 데이터 생성
     data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 10} for i in range(20)]
@@ -168,7 +168,7 @@ async def test_get_bollinger_bands_with_preloaded_data(indicator_service):
     result = await service.get_bollinger_bands("005930", ohlcv_data=data)
 
     # API가 호출되지 않았는지 확인
-    mock_ts.get_ohlcv.assert_not_called()
+    mock_sqs.get_ohlcv.assert_not_called()
     
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert len(result.data) == 20
@@ -181,11 +181,11 @@ async def test_get_bollinger_bands_with_preloaded_data(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_not_enough_data(indicator_service):
     """RSI 계산에 데이터가 부족한 경우 (period + 1 미만)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 14일 RSI 계산에 10개 데이터만 제공
     data = [{"date": "20250101", "close": 10000}] * 10
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -197,9 +197,9 @@ async def test_get_rsi_not_enough_data(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_api_failure(indicator_service):
     """RSI 계산 시 OHLCV API 호출 실패"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.API_ERROR.value, msg1="Fail", data=None
     )
 
@@ -210,10 +210,10 @@ async def test_get_rsi_api_failure(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_calculation_error(indicator_service):
     """RSI 계산 중 예외 발생 (예: 숫자가 아닌 데이터)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data_invalid = [{"date": f"202501{i+1:02d}", "close": "invalid"} for i in range(30)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data_invalid
     )
     
@@ -230,13 +230,13 @@ async def test_get_rsi_calculation_error(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_with_preloaded_data(indicator_service):
     """get_moving_average에 ohlcv_data를 미리 전달하여 API 호출을 건너뛰는지 테스트"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": f"202501{i+1:02d}", "close": "10000"} for i in range(20)]
     
     result = await service.get_moving_average("005930", ohlcv_data=data)
 
-    mock_ts.get_ohlcv.assert_not_called()
+    mock_sqs.get_ohlcv.assert_not_called()
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert len(result.data) == 20
     # close가 문자열이어도 내부적으로 pd.to_numeric으로 처리되는지 확인
@@ -245,10 +245,10 @@ async def test_get_moving_average_with_preloaded_data(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_calculation_error(indicator_service):
     """get_moving_average 계산 중 예외 발생"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data_invalid = [{"date": f"202501{i+1:02d}", "close": "invalid"} for i in range(20)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data_invalid
     )
     
@@ -265,12 +265,12 @@ async def test_get_moving_average_calculation_error(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_ema_success(indicator_service):
     """이동평균선(EMA) 계산 성공 시나리오"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 데이터 생성 (가격 일정)
     data = [{"date": f"2025010{i+1}", "close": 10000, "open": 10000, "high": 10000, "low": 10000, "volume": 100} for i in range(10)]
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -283,11 +283,11 @@ async def test_get_moving_average_ema_success(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_not_enough_data(indicator_service):
     """데이터 부족 시나리오"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 데이터 3개 (period 5 필요)
     data = [{"date": "20250101", "close": 10000}] * 3
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -304,7 +304,7 @@ async def test_get_moving_average_not_enough_data(indicator_service):
 @pytest.mark.asyncio
 async def test_get_relative_strength_success(indicator_service):
     """3개월 수익률 정상 계산"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
 
     # 70일치 데이터 (period_days=63 충분)
     data = []
@@ -330,7 +330,7 @@ async def test_get_relative_strength_success(indicator_service):
 @pytest.mark.asyncio
 async def test_get_relative_strength_insufficient_data(indicator_service):
     """데이터 부족 시 EMPTY_VALUES 반환"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
 
     # 30일치만 (period_days=63 필요)
     data = [{"date": f"2025010{i+1}", "close": 10000 + i * 100,
@@ -346,7 +346,7 @@ async def test_get_relative_strength_insufficient_data(indicator_service):
 @pytest.mark.asyncio
 async def test_get_relative_strength_with_ohlcv_data_no_api_call(indicator_service):
     """ohlcv_data 직접 전달 시 API 호출 안함"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
 
     data = [{"date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}",
              "close": 10000, "open": 10000, "high": 10000, "low": 10000, "volume": 100}
@@ -356,13 +356,13 @@ async def test_get_relative_strength_with_ohlcv_data_no_api_call(indicator_servi
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert result.data.return_pct == 0.0  # 종가 일정 → 수익률 0%
-    mock_ts.get_ohlcv.assert_not_called()
+    mock_sqs.get_ohlcv.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_get_relative_strength_zero_past_close(indicator_service):
     """과거 종가가 0이면 EMPTY_VALUES 반환"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
 
     data = [{"date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}",
              "close": 0 if i < 10 else 10000,
@@ -381,9 +381,9 @@ async def test_get_relative_strength_zero_past_close(indicator_service):
 @pytest.mark.asyncio
 async def test_get_ohlcv_data_direct_failure(indicator_service):
     """_get_ohlcv_data 내부 메서드 직접 테스트: API 실패 시"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.API_ERROR.value, msg1="Fail", data=None
     )
     
@@ -394,11 +394,11 @@ async def test_get_ohlcv_data_direct_failure(indicator_service):
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_string_conversion_success(indicator_service):
     """볼린저 밴드: 문자열로 된 숫자 데이터가 정상적으로 변환되어 계산되는지 테스트"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 문자열 데이터
     data = [{"date": f"202501{i+1:02d}", "close": str(10000 + i * 100)} for i in range(25)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -410,10 +410,10 @@ async def test_get_bollinger_bands_string_conversion_success(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_string_conversion_success(indicator_service):
     """RSI: 문자열 데이터 변환 성공 테스트"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": f"202501{i+1:02d}", "close": str(10000 + i * 100)} for i in range(30)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -425,11 +425,11 @@ async def test_get_rsi_string_conversion_success(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_nan_result(indicator_service):
     """RSI: 계산 결과가 NaN인 경우 (데이터 값 문제)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 데이터 개수는 충분하지만 값이 모두 None인 경우 -> 결과 NaN
     data_all_nan = [{"date": f"202501{i+1:02d}", "close": None} for i in range(15)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data_all_nan
     )
     
@@ -441,10 +441,10 @@ async def test_get_rsi_nan_result(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_unknown_method(indicator_service):
     """이동평균: 알 수 없는 method는 SMA로 처리"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(20)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -456,7 +456,7 @@ async def test_get_moving_average_unknown_method(indicator_service):
 @pytest.mark.asyncio
 async def test_get_relative_strength_generic_exception(indicator_service):
     """상대강도: 계산 중 알 수 없는 예외 발생 시 처리"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": "20250101", "close": 10000}] * 70
     
@@ -474,11 +474,11 @@ async def test_get_relative_strength_generic_exception(indicator_service):
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_unknown_exception(indicator_service):
     """볼린저 밴드: 알 수 없는 예외 발생 시 UNKNOWN_ERROR 반환"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 데이터는 정상이지만 내부 로직에서 예외 발생 유도
     data = [{"date": "20250101", "close": 10000}] * 25
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -491,10 +491,10 @@ async def test_get_bollinger_bands_unknown_exception(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_unknown_exception(indicator_service):
     """RSI: 알 수 없는 예외 발생 시 UNKNOWN_ERROR 반환"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": "20250101", "close": 10000}] * 30
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -507,10 +507,10 @@ async def test_get_rsi_unknown_exception(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_unknown_exception(indicator_service):
     """이동평균: 알 수 없는 예외 발생 시 UNKNOWN_ERROR 반환"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": "20250101", "close": 10000}] * 25
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -523,7 +523,7 @@ async def test_get_moving_average_unknown_exception(indicator_service):
 @pytest.mark.asyncio
 async def test_get_relative_strength_string_conversion(indicator_service):
     """상대강도: 문자열 데이터 변환 성공 테스트"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 문자열 데이터 (period_days=63 이므로 충분한 데이터 생성)
     data = [{"date": f"202501{i+1:02d}", "close": str(10000 + i * 10)} for i in range(70)]
@@ -536,9 +536,9 @@ async def test_get_relative_strength_string_conversion(indicator_service):
 @pytest.mark.asyncio
 async def test_get_ohlcv_data_success_but_no_data(indicator_service):
     """_get_ohlcv_data: API 성공이지만 데이터가 없는(빈 리스트) 경우"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
     )
     
@@ -552,9 +552,9 @@ async def test_get_ohlcv_data_success_but_no_data(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_success_but_no_data(indicator_service):
     """RSI: API 호출은 성공했으나 데이터가 비어있는 경우"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
     )
 
@@ -567,11 +567,11 @@ async def test_get_rsi_success_but_no_data(indicator_service):
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_missing_column(indicator_service):
     """볼린저 밴드: 데이터에 'close' 컬럼이 없는 경우 (KeyError -> UNKNOWN_ERROR)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 'close' 키가 없는 데이터
     data = [{"date": "20250101", "open": 10000}] * 25
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -585,10 +585,10 @@ async def test_get_bollinger_bands_missing_column(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_missing_column(indicator_service):
     """RSI: 데이터에 'close' 컬럼이 없는 경우 (KeyError -> UNKNOWN_ERROR)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": "20250101", "open": 10000}] * 30
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -600,10 +600,10 @@ async def test_get_rsi_missing_column(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_missing_column(indicator_service):
     """이동평균: 데이터에 'close' 컬럼이 없는 경우 (KeyError -> UNKNOWN_ERROR)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": "20250101", "open": 10000}] * 25
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -615,7 +615,7 @@ async def test_get_moving_average_missing_column(indicator_service):
 @pytest.mark.asyncio
 async def test_get_relative_strength_missing_column(indicator_service):
     """상대강도: 데이터에 'close' 컬럼이 없는 경우 (KeyError -> UNKNOWN_ERROR)"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": "20250101", "open": 10000}] * 70
     
@@ -627,11 +627,11 @@ async def test_get_relative_strength_missing_column(indicator_service):
 @pytest.mark.asyncio
 async def test_get_rsi_constant_price(indicator_service):
     """RSI: 가격이 일정할 때 (변동폭 0 -> RSI NaN) 처리 검증"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     # 가격이 10000원으로 일정
     data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(30)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -644,10 +644,10 @@ async def test_get_rsi_constant_price(indicator_service):
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_constant_price(indicator_service):
     """볼린저 밴드: 가격이 일정할 때 (표준편차 0) 검증"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(25)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
@@ -663,10 +663,10 @@ async def test_get_bollinger_bands_constant_price(indicator_service):
 @pytest.mark.asyncio
 async def test_get_moving_average_ema_case_insensitive(indicator_service):
     """이동평균: method 대소문자 구분 없이 EMA 처리 확인"""
-    service, mock_ts = indicator_service
+    service, mock_sqs = indicator_service
     
     data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(10)]
-    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 

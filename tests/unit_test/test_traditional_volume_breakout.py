@@ -20,12 +20,10 @@ from strategies.traditional_volume_breakout_strategy import (
 class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     def _make_strategy(self, **config_overrides):
-        ts = MagicMock()
-        ts.get_top_trading_value_stocks = AsyncMock()
-        ts.get_recent_daily_ohlcv = AsyncMock()
-
         sqs = MagicMock()
         sqs.handle_get_current_stock_price = AsyncMock()
+        sqs.get_top_trading_value_stocks = AsyncMock()
+        sqs.get_recent_daily_ohlcv = AsyncMock()
 
         mapper = MagicMock()
         mapper.is_kosdaq.return_value = True
@@ -56,7 +54,6 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         logger = MagicMock()
 
         strategy = TraditionalVolumeBreakoutStrategy(
-            trading_service=ts,
             stock_query_service=sqs,
             stock_code_mapper=mapper,
             time_manager=tm,
@@ -65,7 +62,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         )
         # Clear position state to avoid cross-test pollution
         strategy._position_state = {}
-        return strategy, ts, sqs, tm, mapper, logger
+        return strategy, sqs, tm, mapper, logger
 
     def _make_ohlcv(self, days=20, base_close=10000, base_high=10500, base_vol=500000):
         """20일치 OHLCV mock 데이터 생성."""
@@ -84,38 +81,38 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
     # ── 이름 ──
 
     def test_name(self):
-        strategy, *_ = self._make_strategy()
+        strategy, _, _, _, _ = self._make_strategy()
         self.assertEqual(strategy.name, "거래량돌파(전통)")
 
     # ── 포지션 사이징 ──
 
     def test_calculate_qty_normal(self):
         """포트폴리오 1000만 × 5% = 50만 / 주가 10000 = 50주."""
-        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=5.0, use_fixed_qty=False)
+        strategy, _, _, _, _ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=5.0, use_fixed_qty=False)
         self.assertEqual(strategy._calculate_qty(10000), 50)
 
     def test_calculate_qty_expensive_stock(self):
         """고가주: 50만 / 60만 = 0 → min_qty=1."""
-        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=5.0, use_fixed_qty=False)
+        strategy, _, _, _, _ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=5.0, use_fixed_qty=False)
         self.assertEqual(strategy._calculate_qty(600000), 1)
 
     def test_calculate_qty_zero_price(self):
         """가격 0일 때 min_qty 반환."""
-        strategy, *_ = self._make_strategy(use_fixed_qty=False)
+        strategy, _, _, _, _ = self._make_strategy(use_fixed_qty=False)
         self.assertEqual(strategy._calculate_qty(0), 1)
 
     def test_calculate_qty_low_pct(self):
         """position_size_pct=1.0이면 1000만×1%=10만 / 10000=10주."""
-        strategy, *_ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=1.0, use_fixed_qty=False)
+        strategy, _, _, _, _ = self._make_strategy(total_portfolio_krw=10_000_000, position_size_pct=1.0, use_fixed_qty=False)
         self.assertEqual(strategy._calculate_qty(10000), 10)
 
     # ── 워치리스트 빌드 ──
 
     async def test_build_watchlist_filters_kospi(self):
         """코스피 종목은 워치리스트에서 제외."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data=[{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"}]
         )
@@ -126,14 +123,14 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_build_watchlist_filters_low_trading_value(self):
         """5일 평균 거래대금 100억 미만 종목 제외."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data=[{"mksc_shrn_iscd": "123456", "hts_kor_isnm": "소형주"}]
         )
         # 거래량 1000 × 종가 10000 = 거래대금 1000만 (100억 미만)
-        ts.get_recent_daily_ohlcv.return_value = self._make_ohlcv(
+        sqs.get_recent_daily_ohlcv.return_value = self._make_ohlcv(
             days=20, base_close=10000, base_vol=1000
         )
 
@@ -142,9 +139,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_build_watchlist_filters_below_ma(self):
         """전일 종가가 20일 MA 이하인 종목 제외."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data=[{"mksc_shrn_iscd": "123456", "hts_kor_isnm": "하락종목"}]
         )
@@ -152,31 +149,31 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         ohlcv = self._make_ohlcv(days=20, base_close=20000, base_high=21000, base_vol=1_000_000)
         ohlcv[-1]["close"] = 15000  # 전일 종가 < 20일 MA(~20000)
 
-        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ohlcv
 
         await strategy._build_watchlist()
         self.assertEqual(len(strategy._watchlist), 0)
 
     async def test_build_watchlist_filters_far_from_high(self):
         """전일 종가가 20일 최고가의 3% 이상 떨어진 종목 제외."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data=[{"mksc_shrn_iscd": "123456", "hts_kor_isnm": "먼종목"}]
         )
         # 최고가 30000, 종가 28000 → 거리 6.7% > 3%
         ohlcv = self._make_ohlcv(days=20, base_close=28000, base_high=30000, base_vol=1_000_000)
-        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ohlcv
 
         await strategy._build_watchlist()
         self.assertEqual(len(strategy._watchlist), 0)
 
     async def test_build_watchlist_success(self):
         """모든 조건 충족 시 워치리스트에 추가."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data=[{"mksc_shrn_iscd": "123456", "hts_kor_isnm": "좋은종목"}]
         )
@@ -184,7 +181,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # 전일 종가가 MA보다 높도록 이전 종가들을 낮게 설정
         ohlcv = self._make_ohlcv(days=20, base_close=29000, base_high=30000, base_vol=1_000_000)
         ohlcv[-1]["close"] = 29500  # 전일 종가를 MA(~29000)보다 높게
-        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ohlcv
 
         await strategy._build_watchlist()
         self.assertEqual(len(strategy._watchlist), 1)
@@ -194,9 +191,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_watchlist_cached_same_day(self):
         """같은 날 두 번 scan해도 워치리스트 빌드는 1회만."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
         )
         sqs.handle_get_current_stock_price.return_value = None
@@ -205,13 +202,13 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         await strategy.scan()
 
         # get_top_trading_value_stocks는 1회만 호출
-        self.assertEqual(ts.get_top_trading_value_stocks.call_count, 1)
+        self.assertEqual(sqs.get_top_trading_value_stocks.call_count, 1)
 
     # ── 매수 시그널 ──
 
     async def test_scan_buy_signal_price_and_volume_breakout(self):
         """가격+거래량 돌파 AND 조건 충족 시 BUY 시그널."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy(use_fixed_qty=False)
+        strategy, sqs, tm, mapper, _ = self._make_strategy(use_fixed_qty=False)
 
         # 워치리스트 수동 설정
         strategy._watchlist = {
@@ -238,7 +235,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_no_signal_price_not_broken(self):
         """가격 미돌파 시 시그널 없음."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
         strategy._watchlist = {
             "123456": WatchlistItem(
@@ -259,7 +256,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_no_signal_volume_insufficient(self):
         """가격은 돌파했지만 거래량 부족 시 시그널 없음."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
         strategy._watchlist = {
             "123456": WatchlistItem(
@@ -282,7 +279,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_creates_position_state(self):
         """매수 시그널 생성 시 포지션 상태가 기록됨."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
         strategy._watchlist = {
             "123456": WatchlistItem(
@@ -306,7 +303,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_skips_already_held_stock(self):
         """이미 보유 중인 종목은 스캔 대상에서 제외."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
 
         # 워치리스트 설정
         strategy._watchlist = {
@@ -332,7 +329,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
     # ── 매도 시그널 ──
     async def test_check_exits_stop_loss(self):
         """진입가 대비 -3% 이하 시 손절 SELL."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         strategy._position_state["005930"] = PositionState(breakout_level=10000, peak_price=10500)
 
         # 매수가 10000, 현재가 9690 → -3.1%
@@ -351,7 +348,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_fake_breakout(self):
         """현재가가 돌파기준선 아래로 복귀 시 가짜돌파 SELL."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         strategy._position_state["005930"] = PositionState(breakout_level=10000, peak_price=10200)
 
         # 매수가 10100, 현재가 9900 → 손절(-3%) 아닌데 돌파기준(10000) 아래
@@ -368,7 +365,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_trailing_stop(self):
         """최고가 대비 -5% 하락 시 트레일링스탑 SELL."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         strategy._position_state["005930"] = PositionState(breakout_level=10000, peak_price=12000)
 
         # 최고가 12000, 현재가 11380 → -5.17%
@@ -385,7 +382,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_trend_end(self):
         """현재가 < 20일 MA 시 추세종료 SELL."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         strategy._position_state["005930"] = PositionState(breakout_level=10000, peak_price=11000)
 
         # 현재가 10500, 매수가 10100 → 손절/가짜돌파/트레일링 해당 없음
@@ -397,7 +394,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # 20일 MA = 10800 (현재가 10500 < MA 10800)
         ohlcv = [{"close": 10800, "high": 11000, "low": 10500, "volume": 100000, "date": f"2026020{i+1:02d}"}
                  for i in range(20)]
-        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ohlcv
 
         holdings = [{"code": "005930", "buy_price": 10100}]
         signals = await strategy.check_exits(holdings)
@@ -407,7 +404,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_peak_price_update(self):
         """현재가가 기존 최고가보다 높으면 peak_price 갱신."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         strategy._position_state["005930"] = PositionState(breakout_level=10000, peak_price=10500)
 
         # 현재가 11000 > peak 10500 → 갱신
@@ -418,7 +415,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # 추세종료 체크용: MA를 현재가보다 낮게
         ohlcv = [{"close": 10000, "high": 11000, "low": 9800, "volume": 100000, "date": f"2026020{i+1:02d}"}
                  for i in range(20)]
-        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ohlcv
 
         holdings = [{"code": "005930", "buy_price": 10100}]
         await strategy.check_exits(holdings)
@@ -428,7 +425,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_no_sell_when_ok(self):
         """모든 조건 미충족 시 매도 없음."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         strategy._position_state["005930"] = PositionState(breakout_level=10000, peak_price=10500)
 
         # 현재가 10400: 손절 X (매수가 대비 +3%), 가짜돌파 X (>10000), 트레일링 X (<5%), 추세종료 X
@@ -439,7 +436,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # MA = 10000 < 현재가 10400 → 추세종료 X
         ohlcv = [{"close": 10000, "high": 10500, "low": 9800, "volume": 100000, "date": f"2026020{i+1:02d}"}
                  for i in range(20)]
-        ts.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ohlcv
 
         holdings = [{"code": "005930", "buy_price": 10100}]
         signals = await strategy.check_exits(holdings)
@@ -448,7 +445,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_api_exception(self):
         """매도 체크 중 API 예외 발생 시 로그 기록하고 건너뜀."""
-        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        strategy, sqs, tm, mapper, logger = self._make_strategy()
         
         # 예외 발생 설정
         sqs.handle_get_current_stock_price.side_effect = Exception("Network Error")
@@ -465,13 +462,13 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     def test_analyze_ohlcv_returns_none_for_empty(self):
         """빈 OHLCV에 None 반환."""
-        strategy, *_ = self._make_strategy()
+        strategy, _, _, _, _ = self._make_strategy()
         result = strategy._analyze_ohlcv("123456", "테스트", [])
         self.assertIsNone(result)
 
     def test_analyze_ohlcv_returns_none_for_insufficient_data(self):
         """데이터 부족 시 None 반환."""
-        strategy, *_ = self._make_strategy()
+        strategy, _, _, _, _ = self._make_strategy()
         ohlcv = self._make_ohlcv(days=10)  # 20일 필요한데 10일만
         result = strategy._analyze_ohlcv("123456", "테스트", ohlcv)
         self.assertIsNone(result)
@@ -480,7 +477,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     def test_market_progress_ratio(self):
         """11시 = 장 시작(9시) 후 2시간 / 총 6.5시간 ≈ 30.8%."""
-        strategy, *_ = self._make_strategy()
+        strategy, _, _, _, _ = self._make_strategy()
         ratio = strategy._get_market_progress_ratio()
         self.assertAlmostEqual(ratio, 2 / 6.5, places=2)
 
@@ -488,8 +485,8 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_empty_on_api_failure(self):
         """거래대금 상위 API 실패 시 빈 리스트."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.API_ERROR.value, msg1="Error", data=None
         )
 
@@ -498,8 +495,8 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_current_ma_exception(self):
         """이동평균 계산 중 예외 발생 시 None 반환."""
-        strategy, ts, *_ = self._make_strategy()
-        ts.get_recent_daily_ohlcv.side_effect = Exception("API Error")
+        strategy, sqs, _, _, _ = self._make_strategy()
+        sqs.get_recent_daily_ohlcv.side_effect = Exception("API Error")
 
         ma = await strategy._get_current_ma("005930", 20)
         self.assertIsNone(ma)
@@ -511,7 +508,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = os.path.join(tmpdir, "tvb_state.json")
 
-            strategy, *_ = self._make_strategy()
+            strategy, _, _, _, _ = self._make_strategy()
             strategy.STATE_FILE = state_file
 
             # 상태 설정 + 저장
@@ -523,7 +520,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(os.path.exists(state_file))
 
             # 새 인스턴스에서 복원
-            strategy2, *_ = self._make_strategy()
+            strategy2, _, _, _, _ = self._make_strategy()
             strategy2.STATE_FILE = state_file
             strategy2._load_state()
 
@@ -534,7 +531,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     def test_load_state_missing_file(self):
         """파일 없을 때 빈 상태 유지."""
-        strategy, *_ = self._make_strategy()
+        strategy, _, _, _, _ = self._make_strategy()
         strategy.STATE_FILE = "/nonexistent/path/state.json"
         strategy._load_state()
         self.assertEqual(len(strategy._position_state), 0)
@@ -546,7 +543,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
             with open(state_file, "w") as f:
                 f.write("{invalid json")
 
-            strategy, *_ = self._make_strategy()
+            strategy, _, _, _, _ = self._make_strategy()
             strategy.STATE_FILE = state_file
             strategy._load_state()
             self.assertEqual(len(strategy._position_state), 0)
@@ -556,7 +553,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = os.path.join(tmpdir, "tvb_state.json")
 
-            strategy, *_ = self._make_strategy()
+            strategy, _, _, _, _ = self._make_strategy()
             strategy.STATE_FILE = state_file
 
             # 빈 상태 저장
@@ -570,7 +567,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_market_not_open(self):
         """장 시작 전(progress <= 0)이면 스캔 중단."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         
         # 워치리스트 설정
         strategy._watchlist = {"005930": MagicMock()}
@@ -585,7 +582,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_price_api_failure_in_loop(self):
         """스캔 중 특정 종목 가격 조회 실패 시 해당 종목 건너뛰고 계속 진행."""
-        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        strategy, sqs, tm, mapper, logger = self._make_strategy()
         
         strategy._watchlist = {
             "A": WatchlistItem("A", "StockA", 1000, 900, 1000, 10000),
@@ -608,7 +605,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_current_price_zero(self):
         """현재가가 0이면 스캔 건너뜀."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         
         strategy._watchlist = {
             "A": WatchlistItem("A", "StockA", 1000, 900, 1000, 10000),
@@ -624,7 +621,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_missing_holding_info(self):
         """보유 종목 정보에 code나 buy_price가 없으면 건너뜀."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         
         holdings = [
             {"code": "", "buy_price": 1000}, # code missing
@@ -638,7 +635,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_price_api_failure(self):
         """매도 체크 중 가격 조회 실패 시 건너뜀."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         
         holdings = [{"code": "A", "buy_price": 1000}]
         sqs.handle_get_current_stock_price.return_value = ResCommonResponse(rt_cd="1", msg1="Fail")
@@ -648,7 +645,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_missing_position_state_restored(self):
         """메모리에 포지션 상태가 없으면 holdings 정보로 복원."""
-        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        strategy, sqs, tm, mapper, logger = self._make_strategy()
         
         # 메모리 상태 비움
         strategy._position_state = {}
@@ -661,7 +658,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         )
         
         # MA 조회 (추세 종료 아님)
-        ts.get_recent_daily_ohlcv.return_value = [{"close": 900}] * 20
+        sqs.get_recent_daily_ohlcv.return_value = [{"close": 900}] * 20
         
         await strategy.check_exits(holdings)
         
@@ -678,25 +675,25 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_build_watchlist_candidate_missing_code(self):
         """후보 종목에 코드가 없으면 건너뜀."""
-        strategy, ts, sqs, tm, mapper, _ = self._make_strategy()
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
         
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": ""}] # Code missing
         )
         
         await strategy._build_watchlist()
         self.assertEqual(len(strategy._watchlist), 0)
-        ts.get_recent_daily_ohlcv.assert_not_called()
+        sqs.get_recent_daily_ohlcv.assert_not_called()
 
     async def test_build_watchlist_ohlcv_exception(self):
         """워치리스트 빌드 중 OHLCV 조회 예외 발생 시 로그 남기고 계속."""
-        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        strategy, sqs, tm, mapper, logger = self._make_strategy()
         
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": "A"}]
         )
         
-        ts.get_recent_daily_ohlcv.side_effect = Exception("API Error")
+        sqs.get_recent_daily_ohlcv.side_effect = Exception("API Error")
         
         await strategy._build_watchlist()
         
@@ -707,7 +704,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     def test_save_state_exception(self):
         """상태 저장 중 예외 발생 시 로그 남김."""
-        strategy, _, _, _, _, logger = self._make_strategy()
+        strategy, _, _, _, logger = self._make_strategy()
         
         with patch("builtins.open", side_effect=IOError("Disk full")):
             strategy._save_state()
@@ -718,21 +715,21 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_current_ma_insufficient_data(self):
         """_get_current_ma: 데이터 부족 시 None 반환."""
-        strategy, ts, _, _, _, _ = self._make_strategy()
+        strategy, sqs, _, _, _ = self._make_strategy()
         
         # Case 1: OHLCV list empty or short
-        ts.get_recent_daily_ohlcv.return_value = [{"close": 100}] * 10 # period 20 required
+        sqs.get_recent_daily_ohlcv.return_value = [{"close": 100}] * 10 # period 20 required
         ma = await strategy._get_current_ma("A", 20)
         self.assertIsNone(ma)
         
         # Case 2: OHLCV exists but closes missing
-        ts.get_recent_daily_ohlcv.return_value = [{"open": 100}] * 30 # no close key
+        sqs.get_recent_daily_ohlcv.return_value = [{"open": 100}] * 30 # no close key
         ma = await strategy._get_current_ma("A", 20)
         self.assertIsNone(ma)
 
     def test_get_market_progress_ratio_before_open(self):
         """_get_market_progress_ratio: 장 시작 전이면 0.0 반환."""
-        strategy, _, _, tm, _, _ = self._make_strategy()
+        strategy, _, tm, _, _ = self._make_strategy()
         
         tm.get_current_kst_time.return_value = datetime(2026, 2, 25, 8, 59)
         tm.get_market_open_time.return_value = datetime(2026, 2, 25, 9, 0)
@@ -743,7 +740,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_current_price_zero(self):
         """check_exits: 현재가가 0이면 건너뜀."""
-        strategy, _, sqs, _, _, _ = self._make_strategy()
+        strategy, sqs, _, _, _ = self._make_strategy()
         
         holdings = [{"code": "A", "buy_price": 1000}]
         sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
@@ -755,13 +752,13 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     def test_calculate_qty_fixed(self):
         """_calculate_qty: 고정 수량 모드일 때 1 반환."""
-        strategy, _, _, _, _, _ = self._make_strategy(use_fixed_qty=True)
+        strategy, _, _, _, _ = self._make_strategy(use_fixed_qty=True)
         qty = strategy._calculate_qty(10000)
         self.assertEqual(qty, 1)
 
     def test_analyze_ohlcv_missing_high_or_volume(self):
         """_analyze_ohlcv: high나 volume 데이터가 없으면 None 반환."""
-        strategy, _, _, _, _, _ = self._make_strategy()
+        strategy, _, _, _, _ = self._make_strategy()
         
         # closes는 충분하지만 high가 없는 데이터
         ohlcv = [{"close": 100, "volume": 1000} for _ in range(60)]
@@ -775,7 +772,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_exception_handling(self):
         """scan: 개별 종목 처리 중 예외 발생 시 로그 남기고 계속 진행."""
-        strategy, ts, sqs, tm, mapper, logger = self._make_strategy()
+        strategy, sqs, tm, mapper, logger = self._make_strategy()
         
         strategy._watchlist = {
             "A": WatchlistItem("A", "StockA", 1000, 900, 1000, 10000),

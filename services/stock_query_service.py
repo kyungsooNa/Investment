@@ -51,6 +51,10 @@ class StockQueryService:
         """재무비율 조회 (TradingService 래퍼)."""
         return await self.trading_service.get_financial_ratio(stock_code)
 
+    async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
+        """체결 정보 조회 (TradingService 래퍼)."""
+        return await self.trading_service.get_stock_conclusion(stock_code)
+
     async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
@@ -574,6 +578,12 @@ class StockQueryService:
             self.logger.error(f"{stock_code} OHLCV 데이터 처리 중 오류: {e}", exc_info=True)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=[])
 
+    async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None) -> ResCommonResponse:
+        """
+        특정 기간의 OHLCV 데이터를 조회합니다. (TradingService 래퍼)
+        """
+        return await self.trading_service.get_ohlcv_range(stock_code, period, start_date, end_date)
+
     async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D") -> ResCommonResponse:
         """
         OHLCV 데이터를 1회 조회한 후, 해당 데이터로 MA5/10/20/60/120 + 볼린저밴드를 한번에 계산하여 반환.
@@ -793,3 +803,34 @@ class StockQueryService:
             # 4) 구독 해지 및 연결 해제 (예외가 나도 정리 보장)
             await self.trading_service.unsubscribe_program_trading(stock_code)
             await self.trading_service.disconnect_websocket()
+
+    def dispatch_realtime_message(self, data: dict):
+        """실시간 메시지를 TradingService로 전달하여 처리."""
+        if self.trading_service:
+            self.trading_service._default_realtime_message_handler(data)
+
+    def get_cached_realtime_price(self, code: str) -> Optional[Dict | str]:
+        """TradingService에 캐시된 실시간 현재가 정보를 반환."""
+        if self.trading_service and hasattr(self.trading_service, '_latest_prices'):
+            return self.trading_service._latest_prices.get(code)
+        return None
+
+    async def connect_websocket(self, callback=None):
+        """웹소켓 연결 (TradingService 위임)."""
+        return await self.trading_service.connect_websocket(callback)
+
+    async def subscribe_program_trading(self, code: str):
+        """프로그램 매매 구독 (TradingService 위임)."""
+        return await self.trading_service.subscribe_program_trading(code)
+
+    async def subscribe_realtime_price(self, code: str):
+        """실시간 체결가 구독 (TradingService 위임)."""
+        return await self.trading_service.subscribe_realtime_price(code)
+
+    async def unsubscribe_program_trading(self, code: str):
+        """프로그램 매매 구독 해지 (TradingService 위임)."""
+        return await self.trading_service.unsubscribe_program_trading(code)
+
+    async def unsubscribe_realtime_price(self, code: str):
+        """실시간 체결가 구독 해지 (TradingService 위임)."""
+        return await self.trading_service.unsubscribe_realtime_price(code)

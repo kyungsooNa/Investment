@@ -1,16 +1,18 @@
 import logging
 import pandas as pd
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, TYPE_CHECKING
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
-from services.trading_service import TradingService
+
+if TYPE_CHECKING:
+    from services.stock_query_service import StockQueryService
 
 class IndicatorService:
     """
     기술적 지표 계산을 담당하는 서비스.
-    TradingService를 통해 데이터를 조회하고 가공하여 지표 값을 반환합니다.
+    StockQueryService를 통해 데이터를 조회하고 가공하여 지표 값을 반환합니다.
     """
-    def __init__(self, trading_service: TradingService):
-        self.trading_service = trading_service
+    def __init__(self, stock_query_service: Optional['StockQueryService'] = None):
+        self.stock_query_service = stock_query_service
 
     async def _get_ohlcv_data(self, stock_code: str, candle_type: str, ohlcv_data: Optional[List[Dict]] = None) -> tuple:
         """
@@ -20,7 +22,10 @@ class IndicatorService:
         if ohlcv_data is not None:
             return ohlcv_data, None
 
-        resp = await self.trading_service.get_ohlcv(stock_code, period=candle_type)
+        if not self.stock_query_service:
+            return None, ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="StockQueryService not initialized", data=None)
+
+        resp = await self.stock_query_service.get_ohlcv(stock_code, period=candle_type)
         if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
             return None, resp
         return resp.data, None
@@ -98,7 +103,10 @@ class IndicatorService:
         :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
         """
         # 1. OHLCV 데이터 조회
-        resp = await self.trading_service.get_ohlcv(stock_code, period=candle_type)
+        if not self.stock_query_service:
+            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="StockQueryService not initialized", data=None)
+
+        resp = await self.stock_query_service.get_ohlcv(stock_code, period=candle_type)
 
         if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
             return resp

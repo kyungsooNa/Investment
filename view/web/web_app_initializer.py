@@ -79,18 +79,21 @@ class WebAppContext:
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager
         )
-        self.indicator_service = IndicatorService(self.trading_service)
+        # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
+        self.indicator_service = IndicatorService()
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
             indicator_service=self.indicator_service
         )
+        # IndicatorService에 StockQueryService 주입
+        self.indicator_service.stock_query_service = self.stock_query_service
+
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager
         )
         
         # [신규] 오닐 유니버스 서비스 초기화
         self.oneil_universe_service = OneilUniverseService(
-            trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             indicator_service=self.indicator_service,
             stock_code_mapper=self.stock_code_mapper,
@@ -133,7 +136,6 @@ class WebAppContext:
 
         # 거래량 돌파 전략 등록
         vb_strategy = VolumeBreakoutLiveStrategy(
-            trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('VolumeBreakoutLive'),
@@ -149,7 +151,6 @@ class WebAppContext:
 
         # 프로그램 매수 추종 전략 등록
         pbf_strategy = ProgramBuyFollowStrategy(
-            trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('ProgramBuyFollow'),
@@ -165,7 +166,6 @@ class WebAppContext:
 
         # 전통적 거래량 돌파 전략 등록
         tvb_strategy = TraditionalVolumeBreakoutStrategy(
-            trading_service=self.trading_service,
             stock_query_service=self.stock_query_service,
             stock_code_mapper=self.stock_code_mapper,
             time_manager=self.time_manager,
@@ -182,7 +182,7 @@ class WebAppContext:
 
         # 오닐 스퀴즈 돌파 전략 등록
         osb_strategy = OneilSqueezeBreakoutStrategy(
-            trading_service=self.trading_service,
+            stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('OneilSqueezeBreakout'),
@@ -201,7 +201,7 @@ class WebAppContext:
 
         # 오닐 포켓 피봇 & BGU 전략 등록
         pp_strategy = OneilPocketPivotStrategy(
-            trading_service=self.trading_service,
+            stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
             time_manager=self.time_manager,
             logger=get_strategy_logger('OneilPocketPivot'),
@@ -232,15 +232,15 @@ class WebAppContext:
 
     def _web_realtime_callback(self, data):
         """웹소켓 실시간 콜백: 기존 핸들러 + 웹 SSE 전달."""
-        if self.trading_service:
-            self.trading_service._default_realtime_message_handler(data)
+        if self.stock_query_service:
+            self.stock_query_service.dispatch_realtime_message(data)
         if data.get('type') == 'realtime_program_trading':
             item = data.get('data', {})
             # [추가] 현재가 정보 주입
-            if self.trading_service and hasattr(self.trading_service, '_latest_prices'):
+            if self.stock_query_service:
                 code = item.get('유가증권단축종목코드')
-                if code in self.trading_service._latest_prices:
-                    price_data = self.trading_service._latest_prices[code]
+                price_data = self.stock_query_service.get_cached_realtime_price(code)
+                if price_data:
                     if isinstance(price_data, dict):
                         item['price'] = price_data.get('price')
                         item['change'] = price_data.get('change')
@@ -258,11 +258,11 @@ class WebAppContext:
         if self.realtime_data_manager.is_subscribed(code):
             return True
             
-        connected = await self.broker.connect_websocket(self._web_realtime_callback)
+        connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
         if not connected:
             return False
-        await self.trading_service.subscribe_program_trading(code)
-        await self.trading_service.subscribe_realtime_price(code) # [추가] 실시간 현재가 구독
+        await self.stock_query_service.subscribe_program_trading(code)
+        await self.stock_query_service.subscribe_realtime_price(code) # [추가] 실시간 현재가 구독
         
         # [변경] 매니저에 구독 상태 등록
         self.realtime_data_manager.add_subscribed_code(code)
@@ -272,14 +272,14 @@ class WebAppContext:
         """특정 종목 프로그램매매 구독 해지."""
         # [변경] 매니저를 통해 구독 상태 확인
         if self.realtime_data_manager.is_subscribed(code):
-            await self.trading_service.unsubscribe_program_trading(code)
-            await self.trading_service.unsubscribe_realtime_price(code) # [추가]
+            await self.stock_query_service.unsubscribe_program_trading(code)
+            await self.stock_query_service.unsubscribe_realtime_price(code) # [추가]
             self.realtime_data_manager.remove_subscribed_code(code)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
         # [변경] 매니저에서 구독 목록 가져오기
         for code in self.realtime_data_manager.get_subscribed_codes():
-            await self.trading_service.unsubscribe_program_trading(code)
-            await self.trading_service.unsubscribe_realtime_price(code)
+            await self.stock_query_service.unsubscribe_program_trading(code)
+            await self.stock_query_service.unsubscribe_realtime_price(code)
         self.realtime_data_manager.clear_subscribed_codes()

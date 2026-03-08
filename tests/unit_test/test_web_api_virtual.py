@@ -68,7 +68,7 @@ async def test_get_strategy_chart(web_client, mock_web_ctx):
         {"date": "2025-01-02", "return_rate": 2.0}
     ]
 
-    mock_web_ctx.stock_query_service.trading_service.get_ohlcv_range.return_value = ResCommonResponse(
+    mock_web_ctx.stock_query_service.get_ohlcv_range.return_value = ResCommonResponse(
         rt_cd="0", msg1="Success", data=[
             {"date": "20250101", "close": 30000},
             {"date": "20250102", "close": 30300}
@@ -91,7 +91,7 @@ async def test_get_strategy_chart_all_and_failure(web_client, mock_web_ctx):
     mock_web_ctx.virtual_manager.get_all_strategies.return_value = ["StratA"]
     mock_web_ctx.virtual_manager.get_strategy_return_history.return_value = [{"date": "2025-01-01", "return_rate": 0}]
 
-    mock_web_ctx.stock_query_service.trading_service.get_ohlcv_range.return_value = ResCommonResponse(
+    mock_web_ctx.stock_query_service.get_ohlcv_range.return_value = ResCommonResponse(
         rt_cd="1", msg1="Fail", data=None
     )
 
@@ -110,7 +110,7 @@ async def test_calculate_benchmark_zero_base_price(web_client, mock_web_ctx):
         {"date": "2025-01-01", "return_rate": 0}
     ]
 
-    mock_web_ctx.stock_query_service.trading_service.get_ohlcv_range.return_value = ResCommonResponse(
+    mock_web_ctx.stock_query_service.get_ohlcv_range.return_value = ResCommonResponse(
         rt_cd="0", msg1="Success", data=[{"date": "20250101", "close": 0}]
     )
 
@@ -128,7 +128,7 @@ async def test_calculate_benchmark_invalid_base_price(web_client, mock_web_ctx):
         {"date": "2025-01-01", "return_rate": 0}
     ]
 
-    mock_web_ctx.stock_query_service.trading_service.get_ohlcv_range.return_value = ResCommonResponse(
+    mock_web_ctx.stock_query_service.get_ohlcv_range.return_value = ResCommonResponse(
         rt_cd="0", msg1="Success", data=[{"date": "20250101", "close": "invalid"}]
     )
 
@@ -369,7 +369,7 @@ async def test_calculate_benchmark_invalid_price_in_ohlcv(web_client, mock_web_c
     ]
 
     # 20250102의 close가 문자열이거나 None
-    mock_web_ctx.stock_query_service.trading_service.get_ohlcv_range.return_value = ResCommonResponse(
+    mock_web_ctx.stock_query_service.get_ohlcv_range.return_value = ResCommonResponse(
         rt_cd="0", msg1="Success", data=[
             {"date": "20250101", "close": 100},
             {"date": "20250102", "close": "invalid"}

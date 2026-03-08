@@ -6,18 +6,24 @@ from view.web.web_app_initializer import WebAppContext
 def mock_deps():
     """WebAppContext가 의존하는 모든 외부 모듈을 Mocking합니다."""
     with patch("view.web.web_app_initializer.load_configs") as mock_load, \
-         patch("view.web.web_app_initializer.KoreaInvestApiEnv") as mock_env, \
-         patch("view.web.web_app_initializer.TimeManager") as mock_tm, \
-         patch("view.web.web_app_initializer.BrokerAPIWrapper") as mock_broker, \
-         patch("view.web.web_app_initializer.TradingService") as mock_ts, \
-         patch("view.web.web_app_initializer.StockQueryService") as mock_sqs, \
-         patch("view.web.web_app_initializer.OrderExecutionService") as mock_oes, \
-         patch("view.web.web_app_initializer.VirtualTradeManager") as mock_vtm, \
-         patch("view.web.web_app_initializer.StockCodeMapper") as mock_scm, \
-         patch("view.web.web_app_initializer.StrategyScheduler") as mock_sched, \
-         patch("view.web.web_app_initializer.RealtimeDataManager") as mock_rdm, \
+         patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True) as mock_env, \
+         patch("view.web.web_app_initializer.TimeManager", autospec=True) as mock_tm, \
+         patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True) as mock_broker, \
+         patch("view.web.web_app_initializer.TradingService", autospec=True) as mock_ts, \
+         patch("view.web.web_app_initializer.StockQueryService", autospec=True) as mock_sqs, \
+         patch("view.web.web_app_initializer.OrderExecutionService", autospec=True) as mock_oes, \
+         patch("view.web.web_app_initializer.VirtualTradeManager", autospec=True) as mock_vtm, \
+         patch("view.web.web_app_initializer.StockCodeMapper", autospec=True) as mock_scm, \
+         patch("view.web.web_app_initializer.StrategyScheduler", autospec=True) as mock_sched, \
+         patch("view.web.web_app_initializer.RealtimeDataManager", autospec=True) as mock_rdm, \
+         patch("view.web.web_app_initializer.IndicatorService", autospec=True) as mock_ind, \
          patch("view.web.web_app_initializer.web_api") as mock_web_api, \
-         patch("view.web.web_app_initializer.OneilUniverseService") as mock_ous:
+         patch("view.web.web_app_initializer.OneilUniverseService", autospec=True) as mock_ous, \
+         patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True) as mock_vb, \
+         patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True) as mock_pbf, \
+         patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True) as mock_tvb, \
+         patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True) as mock_osb, \
+         patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True) as mock_pp:
         
         mock_load.return_value = {
             "market_open_time": "09:00",
@@ -36,8 +42,14 @@ def mock_deps():
             "scm": mock_scm,
             "sched": mock_sched,
             "rdm": mock_rdm,
+            "ind": mock_ind,
             "web_api": mock_web_api,
-            "ous": mock_ous
+            "ous": mock_ous,
+            "vb": mock_vb,
+            "pbf": mock_pbf,
+            "tvb": mock_tvb,
+            "osb": mock_osb,
+            "pp": mock_pp
         }
 
 def test_initialization(mock_deps):
@@ -82,6 +94,10 @@ async def test_initialize_services_success(mock_deps):
     env_instance.set_trading_mode.assert_called_with(True)
     mock_deps["broker"].assert_called()
     mock_deps["ts"].assert_called()
+    mock_deps["ind"].assert_called()
+    mock_deps["sqs"].assert_called()
+    mock_deps["oes"].assert_called()
+    mock_deps["ous"].assert_called()
 
 @pytest.mark.asyncio
 async def test_initialize_services_failure(mock_deps):
@@ -124,7 +140,14 @@ def test_initialize_scheduler(mock_deps):
     mock_deps["sched"].assert_called_once()
     scheduler = mock_deps["sched"].return_value
     # 최소 2개 이상의 전략이 등록되어야 함 (VolumeBreakout, ProgramBuyFollow)
-    assert scheduler.register.call_count >= 2
+    assert scheduler.register.call_count >= 5
+    
+    # 전략 초기화 검증
+    mock_deps["vb"].assert_called()
+    mock_deps["pbf"].assert_called()
+    mock_deps["tvb"].assert_called()
+    mock_deps["osb"].assert_called()
+    mock_deps["pp"].assert_called()
 
 @pytest.mark.asyncio
 async def test_program_trading_subscription(mock_deps):
@@ -135,28 +158,27 @@ async def test_program_trading_subscription(mock_deps):
     mock_rdm_instance = ctx.realtime_data_manager
     mock_rdm_instance.is_subscribed.return_value = False
 
-    ctx.broker = MagicMock()
-    ctx.broker.connect_websocket = AsyncMock(return_value=True)
-    ctx.trading_service = MagicMock()
-    ctx.trading_service.subscribe_program_trading = AsyncMock()
-    ctx.trading_service.subscribe_realtime_price = AsyncMock()
-    ctx.trading_service.unsubscribe_program_trading = AsyncMock()
-    ctx.trading_service.unsubscribe_realtime_price = AsyncMock()
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.connect_websocket = AsyncMock(return_value=True)
+    ctx.stock_query_service.subscribe_program_trading = AsyncMock()
+    ctx.stock_query_service.subscribe_realtime_price = AsyncMock()
+    ctx.stock_query_service.unsubscribe_program_trading = AsyncMock()
+    ctx.stock_query_service.unsubscribe_realtime_price = AsyncMock()
     
     # 1. 구독 시작
     await ctx.start_program_trading("005930")
-    ctx.broker.connect_websocket.assert_awaited_once()
-    ctx.trading_service.subscribe_program_trading.assert_awaited_with("005930")
+    ctx.stock_query_service.connect_websocket.assert_awaited_once()
+    ctx.stock_query_service.subscribe_program_trading.assert_awaited_with("005930")
     mock_rdm_instance.add_subscribed_code.assert_called_with("005930")
     
     # 2. 중복 구독 시도 (API 호출 없어야 함)
     mock_rdm_instance.is_subscribed.return_value = True
     await ctx.start_program_trading("005930")
-    assert ctx.trading_service.subscribe_program_trading.call_count == 1
+    assert ctx.stock_query_service.subscribe_program_trading.call_count == 1
     
     # 3. 구독 해지
     await ctx.stop_program_trading("005930")
-    ctx.trading_service.unsubscribe_program_trading.assert_awaited_with("005930")
+    ctx.stock_query_service.unsubscribe_program_trading.assert_awaited_with("005930")
     mock_rdm_instance.remove_subscribed_code.assert_called_with("005930")
 
 def test_time_manager_methods(mock_deps):
@@ -198,20 +220,20 @@ async def test_lifecycle_methods(mock_deps):
 def test_web_realtime_callback(mock_deps):
     """웹소켓 콜백 처리 테스트"""
     ctx = WebAppContext(None)
-    ctx.trading_service = MagicMock()
-    ctx.trading_service._default_realtime_message_handler = MagicMock()
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.dispatch_realtime_message = MagicMock()
+    ctx.stock_query_service.get_cached_realtime_price = MagicMock(return_value=None)
     ctx.realtime_data_manager = MagicMock()
     
     # 1. 일반 데이터 (program trading 아님)
     data_normal = {"type": "realtime_price", "data": {}}
     ctx._web_realtime_callback(data_normal)
-    ctx.trading_service._default_realtime_message_handler.assert_called_with(data_normal)
+    ctx.stock_query_service.dispatch_realtime_message.assert_called_with(data_normal)
     ctx.realtime_data_manager.on_data_received.assert_not_called()
     
     # 2. 프로그램 매매 데이터 (가격 정보 주입 - dict 형태)
-    ctx.trading_service._latest_prices = {
-        "005930": {"price": "70000", "change": "100", "rate": "0.1", "sign": "2"}
-    }
+    mock_price_data = {"price": "70000", "change": "100", "rate": "0.1", "sign": "2"}
+    ctx.stock_query_service.get_cached_realtime_price.return_value = mock_price_data
     
     data_pt = {
         "type": "realtime_program_trading",
@@ -219,6 +241,7 @@ def test_web_realtime_callback(mock_deps):
     }
     ctx._web_realtime_callback(data_pt)
     
+    ctx.stock_query_service.get_cached_realtime_price.assert_called_with("005930")
     # 데이터가 주입되었는지 확인
     received_data = ctx.realtime_data_manager.on_data_received.call_args[0][0]
     assert received_data["price"] == "70000"
@@ -231,12 +254,12 @@ async def test_stop_all_program_trading(mock_deps):
     ctx.realtime_data_manager = MagicMock()
     ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930", "000660"]
     
-    ctx.trading_service = MagicMock()
-    ctx.trading_service.unsubscribe_program_trading = AsyncMock()
-    ctx.trading_service.unsubscribe_realtime_price = AsyncMock()
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.unsubscribe_program_trading = AsyncMock()
+    ctx.stock_query_service.unsubscribe_realtime_price = AsyncMock()
     
     await ctx.stop_all_program_trading()
     
-    assert ctx.trading_service.unsubscribe_program_trading.call_count == 2
-    assert ctx.trading_service.unsubscribe_realtime_price.call_count == 2
+    assert ctx.stock_query_service.unsubscribe_program_trading.call_count == 2
+    assert ctx.stock_query_service.unsubscribe_realtime_price.call_count == 2
     ctx.realtime_data_manager.clear_subscribed_codes.assert_called_once()

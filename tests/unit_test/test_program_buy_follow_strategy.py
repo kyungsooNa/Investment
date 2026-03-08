@@ -8,10 +8,9 @@ from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy, Pro
 class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     def _make_strategy(self, trailing_stop=8.0, stop_loss=-3.0):
-        ts = MagicMock()
-        ts.get_top_trading_value_stocks = AsyncMock()
-        ts.get_current_stock_price = AsyncMock()
         sqs = MagicMock()
+        sqs.get_top_trading_value_stocks = AsyncMock()
+        sqs.get_current_price = AsyncMock()
         tm = MagicMock()
 
         config = ProgramBuyFollowConfig(
@@ -19,23 +18,22 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
             stop_loss_pct=stop_loss,
         )
         strategy = ProgramBuyFollowStrategy(
-            trading_service=ts,
             stock_query_service=sqs,
             time_manager=tm,
             config=config,
         )
-        return strategy, ts, sqs, tm
+        return strategy, sqs, tm
 
     def test_name(self):
         """전략 이름 테스트."""
-        strategy, _, _, _ = self._make_strategy()
+        strategy, _, _ = self._make_strategy()
         self.assertEqual(strategy.name, "프로그램매수추종")
 
     async def test_scan_filters_by_program_net_buy(self):
         """pgtr_ntby_qty 양수인 종목만 BUY 시그널 생성 테스트."""
-        strategy, ts, _, _ = self._make_strategy()
+        strategy, sqs, _ = self._make_strategy()
 
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="OK",
             data=[
@@ -56,7 +54,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
                 data=responses.get(code, {})
             )
 
-        ts.get_current_stock_price.side_effect = mock_full_price
+        sqs.get_current_price.side_effect = mock_full_price
 
         signals = await strategy.scan()
 
@@ -73,8 +71,8 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_empty_on_api_failure(self):
         """거래대금 API 실패 시 빈 리스트 반환."""
-        strategy, ts, _, _ = self._make_strategy()
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.API_ERROR.value, msg1="Error", data=None
         )
 
@@ -83,7 +81,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_trailing_stop(self):
         """고가 대비 설정 비율(-8%) 이상 하락 시 익절(트레일링) SELL 신호 테스트."""
-        strategy, ts, _, tm = self._make_strategy(trailing_stop=8.0)
+        strategy, sqs, tm = self._make_strategy(trailing_stop=8.0)
 
         import pytz
         from datetime import datetime
@@ -94,7 +92,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         tm.get_market_close_time.return_value = close
 
         # 고가 80000원, 현재가 73600원 -> -8% 하락
-        ts.get_current_stock_price.return_value = ResCommonResponse(
+        sqs.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data={"output": {
                 "stck_prpr": "73600",
@@ -113,7 +111,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_program_reversal(self):
         """프로그램 매도 전환 시 SELL 시그널 테스트."""
-        strategy, ts, _, tm = self._make_strategy()
+        strategy, sqs, tm = self._make_strategy()
 
         import pytz
         from datetime import datetime
@@ -123,7 +121,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         tm.get_current_kst_time.return_value = now
         tm.get_market_close_time.return_value = close
 
-        ts.get_current_stock_price.return_value = ResCommonResponse(
+        sqs.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data={"output": {"stck_prpr": "71000", "stck_hgpr": "72000", "pgtr_ntby_qty": "-500", "bstp_kor_isnm": "전기전자"}}
         )
@@ -136,7 +134,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_stop_loss(self):
         """매수가 대비 -3% 이하이면 손절 SELL 시그널 테스트."""
-        strategy, ts, _, tm = self._make_strategy(stop_loss=-3.0)
+        strategy, sqs, tm = self._make_strategy(stop_loss=-3.0)
 
         import pytz
         from datetime import datetime
@@ -146,7 +144,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         tm.get_current_kst_time.return_value = now
         tm.get_market_close_time.return_value = close
 
-        ts.get_current_stock_price.return_value = ResCommonResponse(
+        sqs.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data={"output": {"stck_prpr": "67800", "stck_hgpr": "70000", "pgtr_ntby_qty": "100", "bstp_kor_isnm": "전기전자"}}
         )
@@ -159,10 +157,10 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_scan_various_skip_conditions(self):
         """scan() 내부의 다양한 예외/skip 조건 테스트 (커버리지 향상)."""
-        strategy, ts, _, _ = self._make_strategy()
+        strategy, sqs, _ = self._make_strategy()
 
         # 1. 거래대금 상위 목록 (여러 케이스 포함)
-        ts.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data=[
                 {"mksc_shrn_iscd": "", "hts_kor_isnm": "코드없음"},  # Skip: Code missing
@@ -187,7 +185,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
                 return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "1000", "pgtr_ntby_qty": "100"}})
             return None
 
-        ts.get_current_stock_price.side_effect = mock_detail
+        sqs.get_current_price.side_effect = mock_detail
 
         signals = await strategy.scan()
 
@@ -197,7 +195,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_time_exit(self):
         """장 마감 15분 전 시간 청산 테스트."""
-        strategy, ts, _, tm = self._make_strategy()
+        strategy, sqs, tm = self._make_strategy()
 
         import pytz
         from datetime import datetime, timedelta
@@ -209,7 +207,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         tm.get_current_kst_time.return_value = now
         tm.get_market_close_time.return_value = close
 
-        ts.get_current_stock_price.return_value = ResCommonResponse(
+        sqs.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
             data={"output": {"stck_prpr": "70000", "stck_hgpr": "71000", "pgtr_ntby_qty": "100", "bstp_kor_isnm": "삼성전자"}}
         )
@@ -223,7 +221,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_hold_and_skips(self):
         """청산 조건 미달(Hold) 및 잘못된 데이터 Skip 테스트."""
-        strategy, ts, _, tm = self._make_strategy()
+        strategy, sqs, tm = self._make_strategy()
 
         import pytz
         from datetime import datetime
@@ -247,7 +245,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
                 "stck_prpr": "70500", "stck_hgpr": "71000", "pgtr_ntby_qty": "1000", "bstp_kor_isnm": "삼성전자"
             }})
 
-        ts.get_current_stock_price.side_effect = mock_price
+        sqs.get_current_price.side_effect = mock_price
 
         holdings = [
             {"code": "", "buy_price": 100},  # Skip: No code
@@ -265,7 +263,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     def test_utils_coverage(self):
         """내부 유틸 메서드 커버리지 (객체 접근, 예외 처리 등)."""
-        strategy, _, _, _ = self._make_strategy()
+        strategy, _, _ = self._make_strategy()
 
         # 1. _get_int_field with object
         class DummyOutput:

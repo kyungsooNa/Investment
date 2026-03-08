@@ -13,7 +13,6 @@ from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
-from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
@@ -81,14 +80,12 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
 
     def __init__(
         self,
-        trading_service: TradingService,
         stock_query_service: StockQueryService,
         stock_code_mapper: StockCodeMapper,
         time_manager: TimeManager,
         config: Optional[TraditionalVBConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
-        self._ts = trading_service
         self._sqs = stock_query_service
         self._mapper = stock_code_mapper
         self._tm = time_manager
@@ -314,7 +311,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
         self._logger.info({"event": "build_watchlist_started"})
 
         # 1) 거래대금 상위 종목 조회
-        resp = await self._ts.get_top_trading_value_stocks()
+        resp = await self._sqs.get_top_trading_value_stocks()
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning({"event": "build_watchlist_failed", "reason": "Failed to get top trading stocks"})
             return
@@ -332,7 +329,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
             stock_name = stock.get("hts_kor_isnm", "") or self._mapper.get_name_by_code(code) or code
 
             try:
-                ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=self._cfg.high_period)
+                ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.high_period)
                 if not ohlcv or len(ohlcv) < self._cfg.ma_period:
                     continue
 
@@ -462,7 +459,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
     async def _get_current_ma(self, code: str, period: int) -> Optional[float]:
         """종목의 현재 N일 이동평균을 계산."""
         try:
-            ohlcv = await self._ts.get_recent_daily_ohlcv(code, limit=period)
+            ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=period)
             if not ohlcv or len(ohlcv) < period:
                 return None
             closes = [row.get("close", 0) for row in ohlcv[-period:] if row.get("close")]

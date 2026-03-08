@@ -192,6 +192,15 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_trading_service.get_financial_ratio.assert_awaited_once_with("005930")
         self.assertEqual(result, expected)
 
+    async def test_get_stock_conclusion(self):
+        """get_stock_conclusion 위임 테스트"""
+        expected = ResCommonResponse(rt_cd="0", msg1="OK", data={})
+        self.mock_trading_service.get_stock_conclusion.return_value = expected
+        
+        result = await self.stockQueryService.get_stock_conclusion("005930")
+        self.mock_trading_service.get_stock_conclusion.assert_awaited_once_with("005930")
+        self.assertEqual(result, expected)
+
     # --- handle_get_account_balance 함수 테스트 ---
 
     # --- handle_get_top_market_cap_stocks_code 함수 테스트 ---
@@ -1143,6 +1152,20 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.msg1, "Test Exception")
         self.mock_logger.error.assert_called_with("005930 OHLCV 데이터 처리 중 오류: Test Exception", exc_info=True)
 
+    # --- get_ohlcv_range ---
+    async def test_get_ohlcv_range_success(self):
+        """get_ohlcv_range 성공 케이스 테스트"""
+        # Arrange
+        expected_response = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=[{"date": "20230101"}])
+        self.mock_trading_service.get_ohlcv_range.return_value = expected_response
+
+        # Act
+        result = await self.stockQueryService.get_ohlcv_range("005930", period="D", start_date="20230101", end_date="20230131")
+
+        # Assert
+        self.mock_trading_service.get_ohlcv_range.assert_awaited_once_with("005930", "D", "20230101", "20230131")
+        self.assertEqual(result, expected_response)
+
     # --- get_ohlcv_with_indicators ---
     async def test_get_ohlcv_with_indicators_success(self):
         """get_ohlcv_with_indicators 성공 케이스 테스트"""
@@ -1549,6 +1572,56 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         # finally 블록이 실행되었는지 확인
         self.mock_trading_service.unsubscribe_program_trading.assert_awaited_once_with("005930")
         self.mock_trading_service.disconnect_websocket.assert_awaited_once()
+
+    # --- Realtime Helper Methods ---
+    def test_dispatch_realtime_message(self):
+        """dispatch_realtime_message가 trading_service 핸들러를 호출하는지 테스트"""
+        data = {"type": "test"}
+        self.stockQueryService.dispatch_realtime_message(data)
+        self.mock_trading_service._default_realtime_message_handler.assert_called_once_with(data)
+
+    def test_get_cached_realtime_price(self):
+        """get_cached_realtime_price가 trading_service의 캐시를 반환하는지 테스트"""
+        # Setup mock cache
+        self.mock_trading_service._latest_prices = {
+            "005930": {"price": "1000"}
+        }
+        
+        # Case 1: Exists
+        result = self.stockQueryService.get_cached_realtime_price("005930")
+        self.assertEqual(result, {"price": "1000"})
+        
+        # Case 2: Not exists
+        result_none = self.stockQueryService.get_cached_realtime_price("000660")
+        self.assertIsNone(result_none)
+
+    async def test_websocket_delegation_methods(self):
+        """웹소켓 관련 위임 메서드 테스트"""
+        # connect_websocket
+        cb = MagicMock()
+        self.mock_trading_service.connect_websocket.return_value = True
+        assert await self.stockQueryService.connect_websocket(cb) is True
+        self.mock_trading_service.connect_websocket.assert_awaited_once_with(cb)
+
+        # subscribe_program_trading
+        self.mock_trading_service.subscribe_program_trading.return_value = True
+        assert await self.stockQueryService.subscribe_program_trading("005930") is True
+        self.mock_trading_service.subscribe_program_trading.assert_awaited_once_with("005930")
+
+        # subscribe_realtime_price
+        self.mock_trading_service.subscribe_realtime_price.return_value = True
+        assert await self.stockQueryService.subscribe_realtime_price("005930") is True
+        self.mock_trading_service.subscribe_realtime_price.assert_awaited_once_with("005930")
+
+        # unsubscribe_program_trading
+        self.mock_trading_service.unsubscribe_program_trading.return_value = True
+        assert await self.stockQueryService.unsubscribe_program_trading("005930") is True
+        self.mock_trading_service.unsubscribe_program_trading.assert_awaited_once_with("005930")
+
+        # unsubscribe_realtime_price
+        self.mock_trading_service.unsubscribe_realtime_price.return_value = True
+        assert await self.stockQueryService.unsubscribe_realtime_price("005930") is True
+        self.mock_trading_service.unsubscribe_realtime_price.assert_awaited_once_with("005930")
 
 
 class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
