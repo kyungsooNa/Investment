@@ -53,6 +53,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         if response.rt_cd == ErrorCode.SUCCESS.value:
             try:
+                # Pydantic 모델 필수 필드 누락 방지 (API 응답에 없을 경우 기본값 설정)
+                if "new_hgpr_lwpr_cls_code" not in response.data:
+                    response.data["new_hgpr_lwpr_cls_code"] = "-"
+
                 stock_info_data = ResStockFullInfoApiOutput(**response.data)
                 return ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
@@ -99,6 +103,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         try:
             response_data_dict = response.data['output']
+            # Pydantic 모델 필수 필드 누락 방지 (API 응답에 없을 경우 기본값 설정)
+            if "new_hgpr_lwpr_cls_code" not in response_data_dict:
+                response_data_dict["new_hgpr_lwpr_cls_code"] = "-"
+
             response.data['output'] = ResStockFullInfoApiOutput.from_dict(response_data_dict)
         except (KeyError, ValidationError, TypeError) as e:
             error_msg = f"현재가 응답 데이터 파싱 실패: {stock_code}, 오류: {e}"

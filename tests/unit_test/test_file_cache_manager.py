@@ -288,7 +288,7 @@ def test_cleanup_old_files(tmp_path):
     # 로그 확인
     assert logger.debug.called
     logs = [call.args[0] for call in logger.debug.call_args_list]
-    assert any("오래된 File cache 삭제됨" in msg for msg in logs)
+    assert any("File cache 삭제됨 (기간만료)" in msg for msg in logs)
 
 # ------------------------
 # Additional Tests for Coverage

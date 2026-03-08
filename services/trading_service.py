@@ -720,24 +720,44 @@ class TradingService:
                         'data': past_rows
                     }
 
-            # 2. 오늘 데이터 가져오기 (실시간 변동 반영을 위해 항상 조회)
-            # [변경] inquire_daily_itemchartprice 대신 get_current_stock_price 사용
-            today_rows = await self._fetch_today_ohlcv(stock_code, today_str)
+            # 2. 오늘 데이터 처리
+            today_rows = []
+            
+            # 이미 캐시(past_rows)에 오늘 데이터가 포함되어 있고, 장이 마감된 상태라면 API 호출 스킵
+            is_today_cached = past_rows and past_rows[-1]['date'] == today_str
+            is_market_open = self._time_manager.is_market_open()
 
-            # 비거래일(주말) 체크: 현재가 API가 마지막 거래일 데이터를 반환하므로 중복 방지
-            if today_rows and now_dt.weekday() >= 5:
-                today_rows = []
+            if is_today_cached and not is_market_open:
+                # 이미 최신 데이터가 캐싱되어 있음 -> API 호출 안 함 (속도 향상)
+                pass
+            else:
+                # 캐시에 없거나(최초 실행/어제까지 데이터만 있음), 장 중(실시간 갱신 필요)이면 API 호출
+                today_rows = await self._fetch_today_ohlcv(stock_code, today_str)
 
-            # 추가 안전장치: 공휴일 등 비거래일에서 OHLCV가 동일하면 중복 제거
-            if today_rows and past_rows:
-                last_past = past_rows[-1]
-                today = today_rows[0]
-                if (today['date'] != last_past['date'] and
-                    today['open'] == last_past['open'] and
-                    today['high'] == last_past['high'] and
-                    today['low'] == last_past['low'] and
-                    today['close'] == last_past['close']):
+                # 비거래일(주말) 체크 및 중복 제거
+                if today_rows and now_dt.weekday() >= 5:
                     today_rows = []
+                elif today_rows and past_rows:
+                    last_past = past_rows[-1]
+                    today = today_rows[0]
+                    # 날짜가 다른데 데이터가 같다면? (휴장일 등 API가 이전 거래일 데이터 반환 시)
+                    if today['date'] != last_past['date']:
+                        if (today['open'] == last_past['open'] and
+                            today['high'] == last_past['high'] and
+                            today['low'] == last_past['low'] and
+                            today['close'] == last_past['close']):
+                            today_rows = []
+                            
+            # [최적화] 장 마감 후라면 오늘 데이터를 캐시에 영구 저장 (다음 조회 시 API 호출 방지)
+            if today_rows and not self._time_manager.is_market_open():
+                # 오늘 데이터가 과거 데이터의 마지막보다 최신인 경우에만
+                if not past_rows or today_rows[0]['date'] > past_rows[-1]['date']:
+                    # 병합 및 캐시 저장 (base_date를 오늘로 갱신)
+                    updated_past_rows = past_rows + today_rows
+                    self._save_ohlcv_cache(cache_key, today_str, updated_past_rows)
+                    # 메모리 변수 갱신 (아래 병합 로직을 위해)
+                    past_rows = updated_past_rows
+                    today_rows = [] # 이미 past_rows에 들어갔으므로 중복 방지
 
             # 3. 병합 및 정렬
             # past_rows는 이미 정렬됨. today_rows는 0개 또는 1개.

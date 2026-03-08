@@ -1,5 +1,8 @@
 import logging
 import pandas as pd
+import numpy as np
+import math
+import time
 from typing import List, Dict, Optional, TYPE_CHECKING
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
 
@@ -41,7 +44,9 @@ class IndicatorService:
         :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
         :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
         """
+        start_time = time.time()
         data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
+        data_end_time = time.time()
         if err:
             return err
 
@@ -53,6 +58,7 @@ class IndicatorService:
             )
 
         # 2. Pandas DataFrame 변환 및 계산
+        calc_start_time = time.time()
         try:
             df = pd.DataFrame(data)
             # close 컬럼이 문자열일 수 있으므로 숫자형으로 변환
@@ -84,6 +90,9 @@ class IndicatorService:
                     middle=mb, upper=ub, lower=lb
                 ))
 
+            calc_end_time = time.time()
+            print(f"[Performance] IndicatorService.get_bollinger_bands({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
         except ValueError as e:
@@ -102,11 +111,13 @@ class IndicatorService:
         :param period: RSI 기간 (기본 14)
         :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
         """
+        start_time = time.time()
         # 1. OHLCV 데이터 조회
         if not self.stock_query_service:
             return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="StockQueryService not initialized", data=None)
 
         resp = await self.stock_query_service.get_ohlcv(stock_code, period=candle_type)
+        data_end_time = time.time()
 
         if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
             return resp
@@ -121,6 +132,7 @@ class IndicatorService:
                 data=None
             )
 
+        calc_start_time = time.time()
         try:
             df = pd.DataFrame(ohlcv_data)
             if df['close'].dtype == object:
@@ -148,6 +160,9 @@ class IndicatorService:
                  return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
 
             result = ResRSI(code=stock_code, date=str(latest['date']), close=float(latest['close']), rsi=float(latest_rsi))
+            
+            calc_end_time = time.time()
+            print(f"[Performance] IndicatorService.get_rsi({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
         except ValueError as e:
@@ -169,7 +184,9 @@ class IndicatorService:
         :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
         :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
         """
+        start_time = time.time()
         data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
+        data_end_time = time.time()
         if err:
             return err
 
@@ -180,6 +197,7 @@ class IndicatorService:
                 data=None
             )
 
+        calc_start_time = time.time()
         try:
             df = pd.DataFrame(data)
             if df['close'].dtype == object:
@@ -201,6 +219,9 @@ class IndicatorService:
                     close=float(df.iloc[i]['close']),
                     ma=ma_val
                 ))
+
+            calc_end_time = time.time()
+            print(f"[Performance] IndicatorService.get_moving_average({stock_code}, p={period}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
@@ -226,7 +247,9 @@ class IndicatorService:
         :param candle_type: 봉 타입 ('D':일봉)
         :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
         """
+        start_time = time.time()
         data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
+        data_end_time = time.time()
         if err:
             return err
 
@@ -237,6 +260,7 @@ class IndicatorService:
                 data=None
             )
 
+        calc_start_time = time.time()
         try:
             df = pd.DataFrame(data)
             if df['close'].dtype == object:
@@ -259,6 +283,9 @@ class IndicatorService:
                 date=str(df['date'].iloc[-1]),
                 return_pct=round(return_pct, 2),
             )
+            
+            calc_end_time = time.time()
+            print(f"[Performance] IndicatorService.get_relative_strength({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
         except Exception as e:
@@ -267,3 +294,76 @@ class IndicatorService:
                 msg1=f"상대강도 계산 중 오류: {str(e)}",
                 data=None
             )
+
+    async def get_chart_indicators(self, stock_code: str, ohlcv_data: List[Dict]) -> ResCommonResponse:
+        """
+        차트 렌더링용 지표(MA 5/10/20/60/120, BB, RS)를 한 번에 계산하여 반환합니다.
+        DataFrame 변환 오버헤드를 최소화하기 위함입니다.
+        """
+        start_time = time.time()
+        try:
+            # 1. DataFrame 변환 (1회 수행)
+            df = pd.DataFrame(ohlcv_data)
+            if df.empty:
+                 return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 없음", data=None)
+                 
+            if df['close'].dtype == object:
+                df['close'] = pd.to_numeric(df['close'])
+
+            # 2. 지표 계산 (Vectorized operations)
+            # MA
+            for p in [5, 10, 20, 60, 120]:
+                df[f'ma{p}'] = df['close'].rolling(window=p).mean()
+
+            # BB (20일, 2.0)
+            period = 20
+            std_dev = 2.0
+            mb = df['close'].rolling(window=period).mean()
+            std = df['close'].rolling(window=period).std()
+            df['bb_upper'] = mb + (std * std_dev)
+            df['bb_lower'] = mb - (std * std_dev)
+            df['bb_middle'] = mb
+
+            # RS (63일 등락률)
+            rs_period = 63
+            df['rs'] = df['close'].pct_change(periods=rs_period) * 100
+
+            # 3. 결과 포맷팅
+            # NaN 및 Inf 값은 JSON 직렬화 시 문제가 되므로 안전하게 변환
+            def _safe_float(val):
+                if val is None:
+                    return None
+                try:
+                    f = float(val)
+                    if math.isnan(f) or math.isinf(f):
+                        return None
+                    return f
+                except (ValueError, TypeError):
+                    return None
+
+            indicators = {}
+            rows = list(df.itertuples(index=False))
+            
+            for p in [5, 10, 20, 60, 120]:
+                ma_key = f'ma{p}'
+                indicators[ma_key] = [{"date": str(r.date), "close": _safe_float(r.close), "ma": _safe_float(getattr(r, ma_key, None))} for r in rows]
+
+            indicators["bb"] = [
+                {
+                    "code": stock_code, "date": str(r.date), "close": _safe_float(r.close),
+                    "middle": _safe_float(getattr(r, 'bb_middle', None)),
+                    "upper": _safe_float(getattr(r, 'bb_upper', None)),
+                    "lower": _safe_float(getattr(r, 'bb_lower', None))
+                } for r in rows
+            ]
+
+            indicators["rs"] = [
+                {"date": str(r.date), "rs": _safe_float(getattr(r, 'rs', None))} for r in rows
+            ]
+
+            print(f"[Performance] IndicatorService.get_chart_indicators({stock_code}): {time.time() - start_time:.4f}s")
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=indicators)
+
+        except Exception as e:
+            logging.getLogger(__name__).exception(f"지표 통합 계산 중 오류: {e}")
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
