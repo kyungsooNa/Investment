@@ -803,3 +803,34 @@ class StockQueryService:
             # 4) 구독 해지 및 연결 해제 (예외가 나도 정리 보장)
             await self.trading_service.unsubscribe_program_trading(stock_code)
             await self.trading_service.disconnect_websocket()
+
+    def dispatch_realtime_message(self, data: dict):
+        """실시간 메시지를 TradingService로 전달하여 처리."""
+        if self.trading_service:
+            self.trading_service._default_realtime_message_handler(data)
+
+    def get_cached_realtime_price(self, code: str) -> Optional[Dict | str]:
+        """TradingService에 캐시된 실시간 현재가 정보를 반환."""
+        if self.trading_service and hasattr(self.trading_service, '_latest_prices'):
+            return self.trading_service._latest_prices.get(code)
+        return None
+
+    async def connect_websocket(self, callback=None):
+        """웹소켓 연결 (TradingService 위임)."""
+        return await self.trading_service.connect_websocket(callback)
+
+    async def subscribe_program_trading(self, code: str):
+        """프로그램 매매 구독 (TradingService 위임)."""
+        return await self.trading_service.subscribe_program_trading(code)
+
+    async def subscribe_realtime_price(self, code: str):
+        """실시간 체결가 구독 (TradingService 위임)."""
+        return await self.trading_service.subscribe_realtime_price(code)
+
+    async def unsubscribe_program_trading(self, code: str):
+        """프로그램 매매 구독 해지 (TradingService 위임)."""
+        return await self.trading_service.unsubscribe_program_trading(code)
+
+    async def unsubscribe_realtime_price(self, code: str):
+        """실시간 체결가 구독 해지 (TradingService 위임)."""
+        return await self.trading_service.unsubscribe_realtime_price(code)
