@@ -11,11 +11,40 @@ class OrderExecutionService:
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
     """
 
+    _ORDER_MAX_RETRIES = 2
+    _ORDER_RETRY_DELAY_SEC = 3
+
     def __init__(self, trading_service, logger, time_manager, performance_manager: Optional[PerformanceManager] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+
+    async def _retry_order(self, order_fn, stock_code, price, qty) -> ResCommonResponse:
+        """재시도 가능한 오류에 대해 주문 API를 재시도."""
+        last_result = None
+        for attempt in range(1, self._ORDER_MAX_RETRIES + 1):
+            result: ResCommonResponse = await order_fn(stock_code, price, qty)
+            if result and result.rt_cd == ErrorCode.SUCCESS.value:
+                return result
+            last_result = result
+
+            error_code = None
+            if result:
+                try:
+                    error_code = ErrorCode(result.rt_cd)
+                except ValueError:
+                    pass
+
+            if error_code and error_code.is_retriable and attempt < self._ORDER_MAX_RETRIES:
+                self.logger.warning(
+                    f"주문 재시도 {attempt}/{self._ORDER_MAX_RETRIES}: "
+                    f"{stock_code}, 사유: {result.msg1}"
+                )
+                await self.time_manager.async_sleep(self._ORDER_RETRY_DELAY_SEC * attempt)
+                continue
+            break
+        return last_result
 
     async def handle_place_buy_order(self, stock_code, price, qty):
         """주식 매수 주문 요청 및 결과 출력."""
@@ -24,8 +53,8 @@ class OrderExecutionService:
             self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
-        buy_order_result: ResCommonResponse = await self.trading_service.place_buy_order(
-            stock_code, price, qty
+        buy_order_result: ResCommonResponse = await self._retry_order(
+            self.trading_service.place_buy_order, stock_code, price, qty
         )
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
@@ -45,8 +74,8 @@ class OrderExecutionService:
             self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
-        sell_order_result: ResCommonResponse = await self.trading_service.place_sell_order(
-            stock_code, price, qty
+        sell_order_result: ResCommonResponse = await self._retry_order(
+            self.trading_service.place_sell_order, stock_code, price, qty
         )
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
