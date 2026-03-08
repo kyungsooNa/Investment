@@ -443,3 +443,131 @@ def make_error_response(msg="오류 발생", code="1"):
     """ResCommonResponse 실패 응답을 만드는 헬퍼."""
     return ResCommonResponse(rt_cd=code, msg1=msg, data=None)
 
+
+# ============================================================================
+# 중간 깊이(Mid-depth) 통합 테스트용 픽스처
+# 실제 서비스 객체를 사용하고, HTTP 네트워크 호출만 mock
+# ============================================================================
+
+def _build_deep_mock_config():
+    """중간 깊이 IT용 AppConfig."""
+    from config.config_loader import AppConfig
+    return AppConfig(**{
+        "api_key": "test-real-key",
+        "api_secret_key": "test-real-secret",
+        "stock_account_number": "12345678-01",
+        "url": "https://openapi.koreainvestment.com:9443",
+        "websocket_url": "ws://ops.koreainvestment.com:21000",
+        "paper_api_key": "test-paper-key",
+        "paper_api_secret_key": "test-paper-secret",
+        "paper_stock_account_number": "99887766-01",
+        "paper_url": "https://openapivts.koreainvestment.com:29443",
+        "paper_websocket_url": "ws://ops.koreainvestment.com:31000",
+        "is_paper_trading": True,
+        "htsid": "test-htsid",
+        "custtype": "P",
+        "market_open_time": "09:00",
+        "market_close_time": "15:30",
+        "market_timezone": "Asia/Seoul",
+        "web": {"host": "0.0.0.0", "port": 8000},
+        "tr_ids": {
+            "quotations": {"inquire_price": "FHKST01010100", "market_cap": "FHPST01740000"},
+            "account": {"inquire_balance_real": "TTTC8434R", "inquire_balance_paper": "VTTC8434R"},
+            "trading": {"order_cash_buy_real": "TTTC0012U", "order_cash_sell_real": "TTTC0011U",
+                        "order_cash_buy_paper": "VTTC0012U", "order_cash_sell_paper": "VTTC0011U"},
+        },
+        "paths": {
+            "inquire_price": "/uapi/domestic-stock/v1/quotations/inquire-price",
+            "market_cap": "/uapi/domestic-stock/v1/ranking/market-cap",
+            "inquire_balance": "/uapi/domestic-stock/v1/trading/inquire-balance",
+            "order_cash": "/uapi/domestic-stock/v1/trading/order-cash",
+            "hashkey": "/uapi/hashkey",
+            "search_info": "/uapi/domestic-stock/v1/quotations/search-info",
+            "asking_price": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+            "time_conclude": "/uapi/domestic-stock/v1/quotations/inquire-time-itemconclusion",
+            "search_stock": "/uapi/domestic-stock/v1/quotations/search-stock-info",
+            "ranking_fluctuation": "/uapi/domestic-stock/v1/ranking/fluctuation",
+            "ranking_volume": "/uapi/domestic-stock/v1/quotations/volume-rank",
+            "ranking_foreign": "/uapi/domestic-stock/v1/quotations/inquire-foreign",
+            "investor_trade_by_stock_daily": "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily",
+            "program_trade_by_stock_daily": "/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily",
+            "item_news": "/uapi/domestic-stock/v1/quotations/news-title",
+            "etf_info": "/uapi/etfetn/v1/quotations/inquire-price",
+            "multi_price": "/uapi/domestic-stock/v1/quotations/intstock-multprice",
+            "inquire_daily_itemchartprice": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            "inquire_time_itemchartprice": "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+            "inquire_time_daily_itemchartprice": "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
+            "financial_ratio": "/uapi/domestic-stock/v1/finance/financial-ratio",
+            "inquire_conclusion": "/uapi/domestic-stock/v1/quotations/inquire-ccnl",
+            "approval_key": "/oauth2/Approval",
+            "real_time_price": "/tryitout/H0STCNT0",
+        },
+        "params": {"fid_div_cls_code": "2"},
+    })
+
+
+@pytest.fixture
+async def deep_paper_ctx(test_logger, web_app):
+    """
+    중간 깊이 IT용 픽스처.
+    실제 WebAppContext를 생성하여 모든 서비스를 초기화하되,
+    네트워크 호출(토큰 발급)만 mock한다.
+    HTTP 레벨 mock은 각 테스트에서 직접 수행.
+    """
+    from unittest.mock import patch
+    from view.web.web_app_initializer import WebAppContext
+
+    mock_config = _build_deep_mock_config()
+
+    class SimpleContext:
+        env = None
+
+    with patch("view.web.web_app_initializer.load_configs", return_value=mock_config), \
+         patch("view.web.web_app_initializer.VirtualTradeManager") as MockVTM, \
+         patch("view.web.web_app_initializer.StockCodeMapper"):
+
+        web_ctx = WebAppContext(SimpleContext())
+        web_ctx.logger = test_logger
+        web_ctx.load_config_and_env()
+
+        # 토큰 발급 mock
+        web_ctx.env._token_manager_paper = MagicMock()
+        web_ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
+        web_ctx.env._token_manager_real = MagicMock()
+        web_ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
+
+        await web_ctx.initialize_services(is_paper_trading=True)
+
+        # TestClient에 연결
+        api_common.set_ctx(web_ctx)
+        with TestClient(web_app) as client:
+            web_ctx._test_client = client
+            yield web_ctx
+        api_common.set_ctx(None)
+
+
+def _unwrap_client_from_ctx(web_ctx):
+    """WebAppContext에서 실제 KoreaInvestApiClient까지 언랩."""
+    client = web_ctx.broker._client
+    if hasattr(client, "_client"):
+        client = client._client
+    return client
+
+
+def _get_quotations_api_from_ctx(web_ctx):
+    return _unwrap_client_from_ctx(web_ctx)._quotations
+
+
+def _get_account_api_from_ctx(web_ctx):
+    return _unwrap_client_from_ctx(web_ctx)._account
+
+
+def _get_trading_api_from_ctx(web_ctx):
+    client = _unwrap_client_from_ctx(web_ctx)
+    for name in ("_trading", "_trade", "_orders"):
+        if hasattr(client, name):
+            api = getattr(client, name)
+            if hasattr(api, "url") and hasattr(api, "_async_session"):
+                return api
+    return None
+
