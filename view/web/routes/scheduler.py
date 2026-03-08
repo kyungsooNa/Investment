@@ -66,6 +66,7 @@ async def stop_strategy(name: str):
 async def get_scheduler_history(strategy: str = None):
     """스케줄러 시그널 실행 이력 조회. ?strategy=전략명 으로 필터 가능."""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     if not ctx.scheduler:
         return {"history": []}
 
@@ -81,15 +82,18 @@ async def get_scheduler_history(strategy: str = None):
                 if real_name:
                     item['name'] = real_name
 
+    ctx.pm.log_timer("get_scheduler_history", t_start)
     return {"history": history}
 
 @router.post("/scheduler/strategy/오닐스퀴즈돌파/generate-pool-a")
 async def generate_osb_pool_a():
     """오닐 스퀴즈 전략 Pool A 생성 (장 마감 후 수동 실행)."""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     if not ctx.initialized:
         raise HTTPException(status_code=503, detail="서비스가 초기화되지 않았습니다.")
     if not hasattr(ctx, "oneil_universe_service") or not ctx.oneil_universe_service:
         raise HTTPException(status_code=404, detail="오닐 유니버스 서비스가 초기화되지 않았습니다.")
     result = await ctx.oneil_universe_service.generate_pool_a()
+    ctx.pm.log_timer("generate_osb_pool_a", t_start)
     return {"success": True, "result": result}

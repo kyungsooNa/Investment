@@ -15,6 +15,7 @@ from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from core.logger import get_strategy_logger
+from core.performance_manager import PerformanceManager
 
 
 def _chunked(lst, size):
@@ -40,6 +41,7 @@ class OneilUniverseService:
         time_manager: TimeManager,
         config: Optional[OneilUniverseConfig] = None,
         logger: Optional[logging.Logger] = None,
+        performance_manager: Optional[PerformanceManager] = None
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
@@ -47,6 +49,7 @@ class OneilUniverseService:
         self._tm = time_manager
         self._cfg = config or OneilUniverseConfig()
         self._logger = logger or logging.getLogger(__name__)
+        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
         # 상태 관리
         self._watchlist: Dict[str, OSBWatchlistItem] = {}
@@ -94,6 +97,7 @@ class OneilUniverseService:
 
     async def _build_watchlist(self):
         """Pool A + Pool B 병합 -> 스코어링 -> 상위 N개 선정."""
+        t_start = self.pm.start_timer()
         self._logger.info({"event": "build_watchlist_started"})
 
         # 1) Pool A 로드
@@ -142,9 +146,11 @@ class OneilUniverseService:
             "pool_b": len(pool_b_items),
             "final_count": len(self._watchlist)
         })
+        self.pm.log_timer("OneilUniverseService._build_watchlist", t_start, threshold=5.0)
 
     async def _build_pool_b(self) -> Dict[str, OSBWatchlistItem]:
         """Pool B: 실시간 랭킹 기반 종목 발굴."""
+        t_start = self.pm.start_timer()
         # 3가지 랭킹 병합
         trading_val_resp, rise_resp, volume_resp = await asyncio.gather(
             self._sqs.get_top_trading_value_stocks(),
@@ -204,6 +210,7 @@ class OneilUniverseService:
             ]
         })
 
+        self.pm.log_timer("OneilUniverseService._build_pool_b", t_start, threshold=3.0)
         return {item.code: item for item in items[:self._cfg.pool_b_size]}
 
     async def _analyze_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:

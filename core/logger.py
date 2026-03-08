@@ -135,6 +135,39 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
     return logger
 
 
+def get_performance_logger(log_dir="logs"):
+    """
+    성능 측정 전용 로거를 생성하고 반환합니다.
+    경로: logs/performance/{timestamp}_perf.log
+    """
+    logger = logging.getLogger("performance")
+    
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    perf_log_dir = os.path.join(log_dir, "performance")
+    if not os.path.exists(perf_log_dir):
+        os.makedirs(perf_log_dir, exist_ok=True)
+
+    timestamp = get_log_timestamp()
+    log_file = os.path.join(perf_log_dir, f"{timestamp}_perf.log")
+    
+    file_handler = SizeTimeRotatingFileHandler(
+        log_file,
+        mode='a',
+        encoding='utf-8',
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT
+    )
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+    logger.addHandler(file_handler)
+
+    return logger
+
+
 class Logger:
     """
     애플리케이션의 로깅을 관리하는 클래스입니다.

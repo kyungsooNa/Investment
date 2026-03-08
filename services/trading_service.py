@@ -14,6 +14,7 @@ from common.types import (
     ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation,ResDailyChartApiItem
 )
 from core.cache.cache_manager import CacheManager
+from core.performance_manager import PerformanceManager
 
 
 class TradingService:
@@ -24,7 +25,7 @@ class TradingService:
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
                  time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None,
-                 market_date_manager=None):
+                 market_date_manager=None, performance_manager: Optional[PerformanceManager] = None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
@@ -33,6 +34,8 @@ class TradingService:
         self._latest_prices = {}
         self._ohlcv_locks: Dict[str, asyncio.Lock] = {}  # 종목코드별 Lock (race condition 방지)
         self._market_date_manager = market_date_manager
+        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+
     async def get_name_by_code(self, code: str) -> str:
         """종목코드로 종목명을 반환합니다 (BrokerAPIWrapper 위임)."""
         return await self._broker_api_wrapper.get_name_by_code(code)
@@ -373,6 +376,7 @@ class TradingService:
         acml_tr_pbmn(거래대금) 기준 상위 30개를 반환한다.
         ETF/ETN 종목은 제외한다.
         """
+        t_start = self.pm.start_timer()
         self._logger.info("Service - 거래대금 상위 종목 조회 요청 (5개 소스 병합)")
 
         # 5개 API 병렬 호출
@@ -438,6 +442,7 @@ class TradingService:
         for i, stock in enumerate(result, 1):
             stock["data_rank"] = str(i)
 
+        self.pm.log_timer("TradingService.get_top_trading_value_stocks", t_start, threshold=1.0)
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="거래대금 상위 종목 조회 성공",

@@ -48,6 +48,7 @@ class AppConfig(BaseModel):
 
     # ✅ 필드 추가 (기본값 False 설정)
     performance_logging: bool = False 
+    performance_threshold: float = 0.1
 
     # Extra fields for anything else in config.yaml
     model_config = {"extra": "allow"}

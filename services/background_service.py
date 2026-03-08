@@ -16,6 +16,7 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ErrorCode
 from core.time_manager import TimeManager
 from market_data.stock_code_mapper import StockCodeMapper
+from core.performance_manager import PerformanceManager
 
 
 def _chunked(lst, size):
@@ -49,6 +50,7 @@ class BackgroundService:
         logger=None,
         time_manager: TimeManager = None,
         trading_service=None,
+        performance_manager: Optional[PerformanceManager] = None
     ):
         self._broker = broker_api_wrapper
         self._mapper = stock_code_mapper
@@ -56,6 +58,7 @@ class BackgroundService:
         self._logger = logger or logging.getLogger(__name__)
         self._time_manager = time_manager
         self._trading_service = trading_service
+        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
         # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
@@ -126,6 +129,7 @@ class BackgroundService:
             self._logger.warning("TradingService 미설정 — 기본 랭킹 캐시 스킵")
             return
 
+        t_start = self.pm.start_timer()
         self._logger.info("기본 랭킹 캐시 갱신 시작 (상승/하락/거래량/거래대금)")
         try:
             rise_resp, fall_resp, vol_resp, tv_resp = await asyncio.gather(
@@ -144,6 +148,7 @@ class BackgroundService:
 
             self._basic_ranking_updated_at = datetime.now()
             self._logger.info(f"기본 랭킹 캐시 갱신 완료: {list(self._basic_ranking_cache.keys())}")
+            self.pm.log_timer("BackgroundService.refresh_basic_ranking", t_start, threshold=1.0)
         except Exception as e:
             self._logger.error(f"기본 랭킹 캐시 갱신 실패: {e}", exc_info=True)
 
@@ -163,6 +168,7 @@ class BackgroundService:
             self._logger.info("투자자 랭킹 갱신 이미 진행 중 — 스킵")
             return
 
+        t_start_total = self.pm.start_timer()
         self._is_refreshing = True
         start_time = time.time()
         today = datetime.now().strftime("%Y%m%d")
@@ -329,6 +335,7 @@ class BackgroundService:
             self._logger.info(
                 f"투자자 랭킹 갱신 완료: {len(results)}개 종목 수집, 소요: {elapsed:.1f}s"
             )
+            self.pm.log_timer("BackgroundService.refresh_investor_ranking", t_start_total, threshold=10.0)
         except Exception as e:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
         finally:
