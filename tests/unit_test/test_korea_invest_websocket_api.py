@@ -878,10 +878,14 @@ async def test_websocket_keepalive_logic(websocket_api_instance):
         assert kwargs.get('ping_timeout') == 20
         
     # 2. PINGPONG 메시지 수신 처리 확인
+    # connect() 후 api.ws가 AsyncMock이므로, 정리하여 coroutine never awaited 경고 방지
+    api.ws = None
+    api._is_connected = False
+
     api._logger.info = MagicMock()
     ping_msg = json.dumps({"header": {"tr_id": "PINGPONG"}})
     api._handle_websocket_message(ping_msg)
-    
+
     # 로그가 남는지 확인 (현재 구현은 로그만 남김)
     api._logger.info.assert_called_with("PINGPONG 수신됨. PONG 응답.")
 

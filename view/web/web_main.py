@@ -59,7 +59,7 @@ async def render_page(request: Request, template_name: str, active_page: str):
     try:
         ctx = web_api._get_ctx()
     except:
-        return templates.TemplateResponse("login.html", {"request": request})
+        return templates.TemplateResponse(request, "login.html")
 
     use_login = ctx.full_config.get("use_login", True)
     if use_login:
@@ -68,9 +68,9 @@ async def render_page(request: Request, template_name: str, active_page: str):
         token = request.cookies.get("access_token")
 
         if not token or token != expected_token:
-            return templates.TemplateResponse("login.html", {"request": request})
+            return templates.TemplateResponse(request, "login.html")
 
-    return templates.TemplateResponse(template_name, {"request": request, "active_page": active_page})
+    return templates.TemplateResponse(request, template_name, {"active_page": active_page})
 
 # 4. 페이지 라우팅
 @page_router.get("/")

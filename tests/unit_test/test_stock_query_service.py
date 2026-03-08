@@ -1576,6 +1576,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     # --- Realtime Helper Methods ---
     def test_dispatch_realtime_message(self):
         """dispatch_realtime_message가 trading_service 핸들러를 호출하는지 테스트"""
+        # _default_realtime_message_handler는 동기 함수이므로 MagicMock으로 명시 (AsyncMock이면 coroutine never awaited 경고 발생)
+        self.mock_trading_service._default_realtime_message_handler = MagicMock()
         data = {"type": "test"}
         self.stockQueryService.dispatch_realtime_message(data)
         self.mock_trading_service._default_realtime_message_handler.assert_called_once_with(data)
