@@ -4,6 +4,7 @@ from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, R
     ResStockFullInfoApiOutput
 from config.DynamicConfig import DynamicConfig
 from typing import List, Dict, Optional, Literal
+from core.performance_manager import PerformanceManager
 import time
 
 
@@ -13,14 +14,14 @@ class StockQueryService:
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
     """
 
-    def __init__(self, trading_service, logger, time_manager, indicator_service=None,
-                 background_service=None, performance_logging: bool = False):
+    def __init__(self, trading_service, logger, time_manager, indicator_service=None, 
+                 background_service=None, performance_manager: Optional[PerformanceManager] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.indicator_service = indicator_service
         self.background_service = background_service
-        self.performance_logging = performance_logging
+        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -635,15 +636,14 @@ class StockQueryService:
         OHLCV 데이터를 1회 조회한 후, 해당 데이터로 MA5/10/20/60/120 + 볼린저밴드 + RS를 한번에 계산하여 반환.
         차트 렌더링 시 7개 API 호출을 1개로 통합하기 위한 메서드.
         """
-        start_total = time.time()
+        t_start = self.pm.start_timer()
         self.logger.info(f"ServiceHandler - {stock_code} OHLCV+지표 통합 조회 period={period}")
         try:
             # 1. OHLCV 1회 조회
-            t0 = time.time()
+            t0 = self.pm.start_timer()
             resp = await self.trading_service.get_ohlcv(stock_code, period=period)
-            t1 = time.time()
-            if self.performance_logging:
-                print(f"[Performance] {stock_code} OHLCV 조회: {t1 - t0:.4f}s")
+            self.pm.log_timer(f"{stock_code} OHLCV 조회", t0)
+
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
                 return resp or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="OHLCV 조회 실패", data=None)
 
@@ -654,14 +654,12 @@ class StockQueryService:
 
             # 2. 지표 계산 (OHLCV 데이터를 직접 전달하여 API 재호출 방지)
             indicator_service = self.indicator_service
-            t2 = time.time()
+            t2 = self.pm.start_timer()
             
             # [최적화] 통합 지표 계산 메서드 호출 (DataFrame 변환 1회)
             indicators_resp = await indicator_service.get_chart_indicators(stock_code, ohlcv_data)
             
-            t3 = time.time()
-            if self.performance_logging:
-                print(f"[Performance] {stock_code} 지표 통합 계산: {t3 - t2:.4f}s")
+            self.pm.log_timer(f"{stock_code} 지표 통합 계산", t2)
 
             if indicators_resp.rt_cd != ErrorCode.SUCCESS.value:
                 self.logger.error(f"지표 계산 실패: {indicators_resp.msg1}")
@@ -673,9 +671,7 @@ class StockQueryService:
                 "ohlcv": ohlcv_data,
                 "indicators": indicators_data
             }
-            end_total = time.time()
-            if self.performance_logging:
-                print(f"[Performance] {stock_code} get_ohlcv_with_indicators 전체: {end_total - start_total:.4f}s")
+            self.pm.log_timer(f"{stock_code} get_ohlcv_with_indicators 전체", t_start, threshold=0.5)
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV+지표 {len(ohlcv_data)}건", data=result)
 

@@ -30,12 +30,14 @@ async def subscribe_program_trading(req: ProgramTradingRequest):
 async def get_program_trading_history(code: str):
     """프로그램 매매 추이 히스토리 조회 (차트용)."""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     resp = await ctx.stock_query_service.handle_get_program_trading_history(code)
     result = _serialize_response(resp)
 
     if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):
         mapper = getattr(ctx, 'stock_code_mapper', None)
         result["data"]["name"] = mapper.get_name_by_code(code) if mapper else ""
+    ctx.pm.log_timer(f"get_program_trading_history({code})", t_start)
     return result
 
 
@@ -107,7 +109,9 @@ async def save_pt_data(data: ProgramTradingDataModel):
     try:
         # [변경] 매니저를 통해 스냅샷 저장
         ctx = _get_ctx()
+        t_start = ctx.pm.start_timer()
         ctx.realtime_data_manager.save_snapshot(data.model_dump())
+        ctx.pm.log_timer("save_pt_data", t_start)
         return {"success": True}
     except Exception as e:
         print(f"[WebAPI] PT Data Save Error: {e}")
@@ -119,7 +123,9 @@ async def load_pt_data():
     """서버 파일에서 프로그램 매매 데이터 로드"""
     # [변경] 매니저를 통해 스냅샷 로드
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     data = ctx.realtime_data_manager.load_snapshot()
+    ctx.pm.log_timer("load_pt_data", t_start)
 
     if data is None:
         return {"success": False, "msg": "File not found"}

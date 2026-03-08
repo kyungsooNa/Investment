@@ -21,6 +21,7 @@ async def get_ranking_progress():
 async def get_ranking(category: str):
     """랭킹 조회 (rise/fall/volume/trading_value/foreign_buy/foreign_sell/inst_buy/inst_sell/prsn_buy/prsn_sell)."""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     valid = ("rise", "fall", "volume", "trading_value",
              "foreign_buy", "foreign_sell", "inst_buy", "inst_sell", "prsn_buy", "prsn_sell",
              "program_buy", "program_sell")
@@ -29,6 +30,7 @@ async def get_ranking(category: str):
 
     resp = await ctx.stock_query_service.handle_get_top_stocks(category)
 
+    ctx.pm.log_timer(f"get_ranking({category})", t_start)
     if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
         return {
             "rt_cd": resp.rt_cd,
@@ -42,9 +44,11 @@ async def get_ranking(category: str):
 async def get_top_market_cap(limit: int = 20, market: str = "0001"):
     """시가총액 상위 종목. market: 0001=거래소(코스피), 1001=코스닥"""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     if market not in ("0000", "0001", "1001", "2001"):
         market = "0001"
     resp = await ctx.broker.get_top_market_cap_stocks_code(market, limit)
+    ctx.pm.log_timer(f"get_top_market_cap({market}, {limit})", t_start)
     if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
         items = resp.data or []
         data = []

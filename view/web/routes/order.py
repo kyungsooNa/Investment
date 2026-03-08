@@ -11,6 +11,7 @@ router = APIRouter()
 async def place_order(req: OrderRequest):
     """매수/매도 주문 (성공 시 가상 매매 기록에도 '수동매매'로 저장)"""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
 
     # 1. 실제/모의 투자 주문 전송
     if req.side == "buy":
@@ -48,4 +49,5 @@ async def place_order(req: OrderRequest):
             except Exception as e:
                 print(f"[WebAPI] 수동매매 기록 중 오류 발생: {e}")
 
+    ctx.pm.log_timer("place_order", t_start)
     return _serialize_response(resp)

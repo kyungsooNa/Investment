@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, TYPE_CHECKING
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
 from core.cache.cache_manager import CacheManager
+from core.performance_manager import PerformanceManager
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
@@ -16,10 +17,12 @@ class IndicatorService:
     기술적 지표 계산을 담당하는 서비스.
     StockQueryService를 통해 데이터를 조회하고 가공하여 지표 값을 반환합니다.
     """
-    def __init__(self, stock_query_service: Optional['StockQueryService'] = None, cache_manager: Optional[CacheManager] = None, performance_logging: bool = False):
+    def __init__(self, stock_query_service: Optional['StockQueryService'] = None, 
+                 cache_manager: Optional[CacheManager] = None, 
+                 performance_manager: Optional[PerformanceManager] = None):
         self.stock_query_service = stock_query_service
         self.cache_manager = cache_manager
-        self.performance_logging = performance_logging
+        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
     async def _get_ohlcv_data(self, stock_code: str, candle_type: str, ohlcv_data: Optional[List[Dict]] = None) -> tuple:
         """
@@ -48,9 +51,9 @@ class IndicatorService:
         :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
         :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
         """
-        start_time = time.time()
+        t_start = self.pm.start_timer()
         data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
-        data_end_time = time.time()
+        t_data = self.pm.start_timer()
         if err:
             return err
 
@@ -113,13 +116,11 @@ class IndicatorService:
                         else:
                             final_results.append(latest_obj)
                             
-                        calc_end_time = time.time()
-                        if self.performance_logging:
-                            print(f"[Performance] IndicatorService.get_bollinger_bands({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
+                        self.pm.log_timer(f"IndicatorService.get_bollinger_bands({stock_code})", t_start, extra_info="Cached")
                         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=final_results)
 
         # 2. Pandas DataFrame 변환 및 계산
-        calc_start_time = time.time()
+        t_calc = self.pm.start_timer()
         try:
             df = pd.DataFrame(data)
             # close 컬럼이 문자열일 수 있으므로 숫자형으로 변환
@@ -151,9 +152,10 @@ class IndicatorService:
                     middle=mb, upper=ub, lower=lb
                 ))
 
-            calc_end_time = time.time()
-            if self.performance_logging:
-                print(f"[Performance] IndicatorService.get_bollinger_bands({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+            if self.pm.enabled:
+                data_dur = t_data - t_start
+                calc_dur = time.time() - t_calc
+                self.pm.log_timer(f"IndicatorService.get_bollinger_bands({stock_code})", t_start, extra_info=f"data={data_dur:.4f}s, calc={calc_dur:.4f}s")
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
@@ -173,13 +175,13 @@ class IndicatorService:
         :param period: RSI 기간 (기본 14)
         :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
         """
-        start_time = time.time()
+        t_start = self.pm.start_timer()
         # 1. OHLCV 데이터 조회
         if not self.stock_query_service:
             return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="StockQueryService not initialized", data=None)
 
         resp = await self.stock_query_service.get_ohlcv(stock_code, period=candle_type)
-        data_end_time = time.time()
+        t_data = self.pm.start_timer()
 
         if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
             return resp
@@ -233,12 +235,10 @@ class IndicatorService:
                         # get_rsi는 단일 ResRSI 객체를 반환함
                         result = ResRSI(**latest_dict)
                         
-                        calc_end_time = time.time()
-                        if self.performance_logging:
-                            print(f"[Performance] IndicatorService.get_rsi({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
+                        self.pm.log_timer(f"IndicatorService.get_rsi({stock_code})", t_start, extra_info="Cached")
                         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
-        calc_start_time = time.time()
+        t_calc = self.pm.start_timer()
         try:
             df = pd.DataFrame(ohlcv_data)
             if df['close'].dtype == object:
@@ -267,9 +267,10 @@ class IndicatorService:
 
             result = ResRSI(code=stock_code, date=str(latest['date']), close=float(latest['close']), rsi=float(latest_rsi))
             
-            calc_end_time = time.time()
-            if self.performance_logging:
-                print(f"[Performance] IndicatorService.get_rsi({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+            if self.pm.enabled:
+                data_dur = t_data - t_start
+                calc_dur = time.time() - t_calc
+                self.pm.log_timer(f"IndicatorService.get_rsi({stock_code})", t_start, extra_info=f"data={data_dur:.4f}s, calc={calc_dur:.4f}s")
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
         except ValueError as e:
@@ -291,9 +292,9 @@ class IndicatorService:
         :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
         :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
         """
-        start_time = time.time()
+        t_start = self.pm.start_timer()
         data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
-        data_end_time = time.time()
+        t_data = self.pm.start_timer()
         if err:
             return err
 
@@ -343,12 +344,10 @@ class IndicatorService:
                         else:
                             final_results.append(latest_obj)
                             
-                        calc_end_time = time.time()
-                        if self.performance_logging:
-                            print(f"[Performance] IndicatorService.get_moving_average({stock_code}): total={calc_end_time - start_time:.4f}s (Cached)")
+                        self.pm.log_timer(f"IndicatorService.get_moving_average({stock_code})", t_start, extra_info="Cached")
                         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=final_results)
 
-        calc_start_time = time.time()
+        t_calc = self.pm.start_timer()
         try:
             df = pd.DataFrame(data)
             if df['close'].dtype == object:
@@ -371,9 +370,10 @@ class IndicatorService:
                     ma=ma_val
                 ))
 
-            calc_end_time = time.time()
-            if self.performance_logging:
-                print(f"[Performance] IndicatorService.get_moving_average({stock_code}, p={period}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+            if self.pm.enabled:
+                data_dur = t_data - t_start
+                calc_dur = time.time() - t_calc
+                self.pm.log_timer(f"IndicatorService.get_moving_average({stock_code}, p={period})", t_start, extra_info=f"data={data_dur:.4f}s, calc={calc_dur:.4f}s")
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
 
@@ -399,9 +399,9 @@ class IndicatorService:
         :param candle_type: 봉 타입 ('D':일봉)
         :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
         """
-        start_time = time.time()
+        t_start = self.pm.start_timer()
         data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
-        data_end_time = time.time()
+        t_data = self.pm.start_timer()
         if err:
             return err
 
@@ -412,7 +412,7 @@ class IndicatorService:
                 data=None
             )
 
-        calc_start_time = time.time()
+        t_calc = self.pm.start_timer()
         try:
             df = pd.DataFrame(data)
             if df['close'].dtype == object:
@@ -436,9 +436,10 @@ class IndicatorService:
                 return_pct=round(return_pct, 2),
             )
             
-            calc_end_time = time.time()
-            if self.performance_logging:
-                print(f"[Performance] IndicatorService.get_relative_strength({stock_code}): total={calc_end_time - start_time:.4f}s (data={data_end_time - start_time:.4f}s, calc={calc_end_time - calc_start_time:.4f}s)")
+            if self.pm.enabled:
+                data_dur = t_data - t_start
+                calc_dur = time.time() - t_calc
+                self.pm.log_timer(f"IndicatorService.get_relative_strength({stock_code})", t_start, extra_info=f"data={data_dur:.4f}s, calc={calc_dur:.4f}s")
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
 
         except Exception as e:
@@ -453,13 +454,12 @@ class IndicatorService:
         차트 렌더링용 지표(MA 5/10/20/60/120, BB, RS)를 한 번에 계산하여 반환합니다.
         과거 데이터에 대한 계산 결과를 캐싱하여 성능을 최적화합니다.
         """
-        start_time = time.time()
+        t_start = self.pm.start_timer()
         
         # 데이터가 너무 적거나 캐시 매니저가 없으면 전체 계산 (최대 기간 120일 + 여유)
         if not ohlcv_data or len(ohlcv_data) < 130 or not self.cache_manager:
              resp = self._calculate_indicators_full(stock_code, ohlcv_data)
-             if self.performance_logging:
-                 print(f"[Performance] IndicatorService.get_chart_indicators({stock_code}): {time.time() - start_time:.4f}s (Full Calc)")
+             self.pm.log_timer(f"IndicatorService.get_chart_indicators({stock_code})", t_start, extra_info="Full Calc", threshold=0.5)
              return resp
 
         try:
@@ -520,8 +520,7 @@ class IndicatorService:
                 else:
                     merged_indicators[key] = val_list
 
-            if self.performance_logging:
-                print(f"[Performance] IndicatorService.get_chart_indicators({stock_code}): {time.time() - start_time:.4f}s (Cached)")
+            self.pm.log_timer(f"IndicatorService.get_chart_indicators({stock_code})", t_start, extra_info="Cached")
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=merged_indicators)
 
         except Exception as e:

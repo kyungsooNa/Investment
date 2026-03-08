@@ -7,7 +7,6 @@ import pytest
 import logging
 import json
 from core.cache.cache_manager import CacheManager
-from core.cache.cache_wrapper import ClientWithCache
 from core.logger import Logger  # ⬅️ 추가
 from unittest.mock import MagicMock, AsyncMock
 from typing import Any, Dict, Iterable, Optional
@@ -17,7 +16,7 @@ from tests.integration_test import ctx  # ← 방금 만든 모듈
 @pytest.fixture(autouse=True)
 def patch_cache_wrap_client_for_tests(mocker):
     # 캐시를 바이패스하여 NoneType 에러 원천 차단
-    def bypass_cache(client, logger, time_manager, env_fn, config=None):
+    def bypass_cache(client, *args, **kwargs):
         return client
     mocker.patch("brokers.broker_api_wrapper.cache_wrap_client", side_effect=bypass_cache)
 
@@ -590,4 +589,3 @@ def _get_trading_api_from_ctx(web_ctx):
             if hasattr(api, "url") and hasattr(api, "_async_session"):
                 return api
     return None
-

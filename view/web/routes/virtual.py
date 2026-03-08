@@ -13,11 +13,14 @@ router = APIRouter()
 async def get_virtual_summary(apply_cost: bool = False):
     """가상 매매 요약 정보 조회"""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     # ctx에 virtual_manager가 초기화되어 있어야 합니다.
     if not hasattr(ctx, 'virtual_manager'):
         return {"total_trades": 0, "win_rate": 0, "avg_return": 0}
 
-    return ctx.virtual_manager.get_summary(apply_cost=apply_cost)
+    result = ctx.virtual_manager.get_summary(apply_cost=apply_cost)
+    ctx.pm.log_timer("get_virtual_summary", t_start)
+    return result
 
 
 @router.get("/virtual/strategies")
@@ -73,6 +76,7 @@ async def _calculate_benchmark(ctx, code: str, ref_history: list, start_date: st
 async def get_strategy_chart(strategy_name: str):
     """특정 전략의 수익률 히스토리(차트용) 반환 + 벤치마크(KOSPI200, KOSDAQ150) 포함"""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     vm = ctx.virtual_manager
 
     # 1. 히스토리 데이터 수집
@@ -110,6 +114,7 @@ async def get_strategy_chart(strategy_name: str):
         "KOSDAQ150": kosdaq_benchmark,
     }
 
+    ctx.pm.log_timer(f"get_strategy_chart({strategy_name})", t_start)
     return {"histories": histories, "benchmarks": benchmarks}
 
 
@@ -117,6 +122,7 @@ async def get_strategy_chart(strategy_name: str):
 async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
     """가상 매매 전체 기록 조회 (force_code 지정 시 해당 종목은 캐시 무시)"""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     if not hasattr(ctx, 'virtual_manager'):
         return {"trades": [], "weekly_changes": {}}
 
@@ -383,6 +389,7 @@ async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
     except Exception as e:
         print(f"[WebAPI] virtual/history counts error: {e}")
 
+    ctx.pm.log_timer("get_virtual_history", t_start)
     return {
         "trades": trades,
         "summary_agg": summary_agg,

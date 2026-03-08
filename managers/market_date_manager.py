@@ -52,15 +52,22 @@ class MarketDateManager:
             # Broker -> Client -> Quotations -> Raw Client (ClientWithCache 우회)
             # 구조: broker._client (KoreaInvestApiClient) -> _quotations (ClientWithCache) -> _client (KoreaInvestApiQuotations)
             raw_quotations = None
-            if hasattr(self._broker, '_client') and hasattr(self._broker._client, '_quotations'):
-                quotations = self._broker._client._quotations
-                # ClientWithCache로 래핑되어 있다면 내부 _client 사용
-                if hasattr(quotations, '_client'):
-                    raw_quotations = quotations._client
-                else:
-                    raw_quotations = quotations
+            
+            # 안전하게 속성 접근
+            kis_client = self._broker._client
+            
+            # ClientWithCache 래퍼 언래핑 (BrokerAPIWrapper에서 래핑됨)
+            if hasattr(kis_client, '_client'):
+                kis_client = kis_client._client
+
+            if kis_client:
+                quotations = getattr(kis_client, '_quotations', None)
+                if quotations:
+                    # ClientWithCache로 래핑되어 있다면 내부 _client 사용
+                    raw_quotations = getattr(quotations, '_client', quotations)
             
             if not raw_quotations:
+                self._logger.error("MarketDateManager: Failed to retrieve raw quotations client. Broker structure might have changed.")
                 return None
 
             now = self._time_manager.get_current_kst_time()
@@ -71,9 +78,22 @@ class MarketDateManager:
             resp = await raw_quotations.inquire_daily_itemchartprice("005930", start_dt, end_dt, "D")
             
             if resp and resp.rt_cd == "0" and resp.data:
-                dates = [d.get("stck_bsop_date") for d in resp.data if d.get("stck_bsop_date")]
+                dates = []
+                for d in resp.data:
+                    # ResDailyChartApiItem 객체 또는 dict 지원
+                    date_val = getattr(d, "stck_bsop_date", None)
+                    if date_val is None and isinstance(d, dict):
+                        date_val = d.get("stck_bsop_date")
+                    
+                    if date_val:
+                        dates.append(date_val)
+                        
                 if dates:
                     return max(dates)
+            else:
+                msg = getattr(resp, 'msg1', 'Unknown Error')
+                self._logger.warning(f"MarketDateManager: API call failed or no data. msg={msg}")
+
         except Exception as e:
-            self._logger.warning(f"최근 거래일 조회 실패 (API): {e}")
+            self._logger.warning(f"최근 거래일 조회 실패 (API): {e}", exc_info=True)
         return None

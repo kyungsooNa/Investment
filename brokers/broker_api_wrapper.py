@@ -14,7 +14,7 @@ class BrokerAPIWrapper:
     """
 
     def __init__(self, broker: str = "korea_investment", env=None, logger=None, time_manager=None,
-                 cache_config=None):
+                 cache_config=None, market_date_manager=None):
         self._broker = broker
         self._logger = logger
         self._client = None
@@ -29,7 +29,8 @@ class BrokerAPIWrapper:
             self._client = cache_wrap_client(
                 self._client, logger, time_manager,
                 lambda: "PAPER" if env.is_paper_trading else "REAL",
-                config=cache_config  # ✅ 여기서 주입
+                config=cache_config,  # ✅ 여기서 주입
+                market_date_manager=market_date_manager
             )
 
         else:

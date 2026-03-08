@@ -1,6 +1,8 @@
 # app/order_execution_service.py
 import asyncio
+from typing import Optional
 from common.types import ErrorCode, ResCommonResponse
+from core.performance_manager import PerformanceManager
 
 
 class OrderExecutionService:
@@ -9,13 +11,15 @@ class OrderExecutionService:
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
     """
 
-    def __init__(self, trading_service, logger, time_manager):
+    def __init__(self, trading_service, logger, time_manager, performance_manager: Optional[PerformanceManager] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
+        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
     async def handle_place_buy_order(self, stock_code, price, qty):
         """주식 매수 주문 요청 및 결과 출력."""
+        t_start = self.pm.start_timer()
         if not self.time_manager.is_market_open():
             self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
@@ -31,10 +35,12 @@ class OrderExecutionService:
             msg1 = buy_order_result.msg1 if buy_order_result else '응답 없음'
             self.logger.error(
                 f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
+        self.pm.log_timer(f"OrderExecutionService.handle_place_buy_order({stock_code})", t_start)
         return buy_order_result
 
     async def handle_place_sell_order(self, stock_code, price, qty):
         """주식 매도 주문 요청 및 결과 출력."""
+        t_start = self.pm.start_timer()
         if not self.time_manager.is_market_open():
             self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
@@ -50,6 +56,7 @@ class OrderExecutionService:
             msg1 = sell_order_result.msg1 if sell_order_result else '응답 없음'
             self.logger.error(
                 f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
+        self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)
         return sell_order_result
 
     async def handle_buy_stock(self, stock_code, qty_input, price_input):  # 파라미터 추가

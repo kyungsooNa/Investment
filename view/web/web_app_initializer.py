@@ -17,6 +17,7 @@ from market_data.stock_code_mapper import StockCodeMapper
 from services.indicator_service import IndicatorService
 from core.time_manager import TimeManager
 from core.logger import Logger, get_strategy_logger
+from core.performance_manager import PerformanceManager
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -51,7 +52,7 @@ class WebAppContext:
         self.background_service: BackgroundService = None
         self.market_date_manager: MarketDateManager = None
         self.initialized = False
-        self.performance_logging = False
+        self.pm: PerformanceManager = None
         
         # [변경] 실시간 데이터 관리자 도입
         self.realtime_data_manager = RealtimeDataManager(self.logger)
@@ -94,17 +95,9 @@ class WebAppContext:
             await self.env.get_real_access_token()
 
         self.broker = BrokerAPIWrapper(
-            env=self.env, logger=self.logger, time_manager=self.time_manager
+            env=self.env, logger=self.logger, time_manager=self.time_manager,
+            market_date_manager=self.market_date_manager
         )
-        
-        # [중요] BrokerAPIWrapper 내부의 ClientWithCache에 MarketDateManager 주입
-        # BrokerAPIWrapper -> KoreaInvestApiClient -> _quotations (ClientWithCache)
-        if hasattr(self.broker, '_client'):
-            kis_client = self.broker._client
-            if hasattr(kis_client, '_quotations'):
-                quotations = kis_client._quotations
-                if hasattr(quotations, '_market_date_manager'):
-                    quotations._market_date_manager = self.market_date_manager
 
         # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
         self.market_date_manager.set_broker(self.broker)
@@ -118,7 +111,9 @@ class WebAppContext:
             config_dict = config_dict.dict()
 
         perf_log = config_dict.get("performance_logging", False)
-        self.performance_logging = perf_log
+        perf_threshold = config_dict.get("performance_threshold", 0.1)
+        # [변경] PerformanceManager 인스턴스 생성 및 주입 준비
+        self.pm = PerformanceManager(enabled=perf_log, threshold=perf_threshold)
 
         cache_manager = CacheManager(config_dict)
         cache_manager.set_logger(self.logger)
@@ -126,11 +121,12 @@ class WebAppContext:
 
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
-            market_date_manager=self.market_date_manager
+            market_date_manager=self.market_date_manager,
+            performance_manager=self.pm
         )
 
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
-        self.indicator_service = IndicatorService(cache_manager=cache_manager, performance_logging=perf_log)
+        self.indicator_service = IndicatorService(cache_manager=cache_manager, performance_manager=self.pm)
         self.background_service = BackgroundService(
             broker_api_wrapper=self.broker,
             stock_code_mapper=self.stock_code_mapper,
@@ -138,18 +134,20 @@ class WebAppContext:
             logger=self.logger,
             time_manager=self.time_manager,
             trading_service=self.trading_service,
+            performance_manager=self.pm
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
             indicator_service=self.indicator_service,
             background_service=self.background_service,
-            performance_logging=perf_log
+            performance_manager=self.pm
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
 
         self.order_execution_service = OrderExecutionService(
-            self.trading_service, self.logger, self.time_manager
+            self.trading_service, self.logger, self.time_manager,
+            performance_manager=self.pm
         )
         
         # [신규] 오닐 유니버스 서비스 초기화
@@ -158,7 +156,8 @@ class WebAppContext:
             indicator_service=self.indicator_service,
             stock_code_mapper=self.stock_code_mapper,
             time_manager=self.time_manager,
-            logger=self.logger
+            logger=self.logger,
+            performance_manager=self.pm
         )
 
         self.initialized = True

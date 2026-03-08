@@ -4,7 +4,6 @@
 """
 from fastapi import APIRouter, HTTPException
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
-import time
 import view.web.api_common as api_common
 
 router = APIRouter()
@@ -27,68 +26,63 @@ async def get_status():
 @router.get("/stock/{code}")
 async def get_stock_price(code: str):
     """현재가 조회."""
-    start_time = time.time()
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
     result = _serialize_response(resp)
     
-    if ctx.performance_logging:
-        print(f"[Performance] get_stock_price({code}): {time.time() - start_time:.4f}s")
+    ctx.pm.log_timer(f"get_stock_price({code})", t_start)
     return result
 
 
 @router.get("/chart/{code}")
 async def get_stock_chart(code: str, period: str = "D", indicators: bool = False):
     """종목의 OHLCV 차트 데이터 조회 (기본 일봉). indicators=true 시 MA+BB 지표 포함."""
-    start_time = time.time()
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     if indicators:
         resp = await ctx.stock_query_service.get_ohlcv_with_indicators(code, period)
     else:
         resp = await ctx.stock_query_service.get_ohlcv(code, period)
     result = _serialize_response(resp)
     
-    if ctx.performance_logging:
-        print(f"[Performance] get_stock_chart({code}, indicators={indicators}): {time.time() - start_time:.4f}s")
+    ctx.pm.log_timer(f"get_stock_chart({code}, indicators={indicators})", t_start)
     return result
 
 
 @router.get("/indicator/bollinger/{code}")
 async def get_bollinger_bands(code: str, period: int = 20, std_dev: float = 2.0):
     """볼린저 밴드 조회 (기본: 20일, 2표준편차)"""
-    start_time = time.time()
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     resp = await ctx.indicator_service.get_bollinger_bands(code, period, std_dev)
     result = _serialize_response(resp)
     
-    if ctx.performance_logging:
-        print(f"[Performance] get_bollinger_bands({code}): {time.time() - start_time:.4f}s")
+    ctx.pm.log_timer(f"get_bollinger_bands({code})", t_start)
     return result
 
 
 @router.get("/indicator/rsi/{code}")
 async def get_rsi(code: str, period: int = 14):
     """RSI 조회 (기본: 14일)"""
-    start_time = time.time()
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     resp = await ctx.indicator_service.get_rsi(code, period)
     result = _serialize_response(resp)
     
-    if ctx.performance_logging:
-        print(f"[Performance] get_rsi({code}): {time.time() - start_time:.4f}s")
+    ctx.pm.log_timer(f"get_rsi({code})", t_start)
     return result
 
 
 @router.get("/indicator/ma/{code}")
 async def get_moving_average(code: str, period: int = 20, method: str = "sma"):
     """이동평균선 조회 (기본: 20일, sma)"""
-    start_time = time.time()
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     resp = await ctx.indicator_service.get_moving_average(code, period, method)
     result = _serialize_response(resp)
     
-    if ctx.performance_logging:
-        print(f"[Performance] get_moving_average({code}): {time.time() - start_time:.4f}s")
+    ctx.pm.log_timer(f"get_moving_average({code})", t_start)
     return result
 
 

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import pytest
 
 # 실제 core.logger 경로에 맞게 수정
-from core.logger import Logger, get_strategy_logger, JsonFormatter, reset_log_timestamp_for_test, SizeTimeRotatingFileHandler
+from core.logger import Logger, get_strategy_logger, get_performance_logger, JsonFormatter, reset_log_timestamp_for_test, SizeTimeRotatingFileHandler
 
 
 @pytest.fixture
@@ -293,6 +293,63 @@ def test_get_strategy_logger(tmp_path):
         logger.removeHandler(handler)
     
     # 전역 타임스탬프 다시 리셋
+    reset_log_timestamp_for_test()
+
+
+def test_get_performance_logger(tmp_path):
+    """
+    get_performance_logger가 성능 측정 전용 로거를 올바르게 생성하는지 테스트합니다.
+    """
+    # 기존 핸들러 정리 (다른 테스트의 영향 방지)
+    perf_logger = logging.getLogger("performance")
+    for handler in perf_logger.handlers[:]:
+        handler.close()
+        perf_logger.removeHandler(handler)
+
+    log_dir = tmp_path / "logs"
+    
+    # 테스트 격리를 위해 타임스탬프 리셋
+    reset_log_timestamp_for_test()
+
+    # 로거 생성
+    logger = get_performance_logger(log_dir=str(log_dir))
+
+    # 1. 로거 속성 검증
+    assert isinstance(logger, logging.Logger)
+    assert logger.name == "performance"
+    assert not logger.propagate
+    assert len(logger.handlers) == 1
+
+    # 2. 파일 핸들러 검증
+    file_handler = next((h for h in logger.handlers if isinstance(h, SizeTimeRotatingFileHandler)), None)
+    assert file_handler is not None
+    # 포맷터는 기본 logging.Formatter여야 함 (JsonFormatter 아님)
+    assert not isinstance(file_handler.formatter, JsonFormatter)
+
+    # 파일명 확인
+    perf_log_dir = log_dir / "performance"
+    log_files = list(perf_log_dir.glob("*_perf.log"))
+    assert len(log_files) == 1
+    log_file_path = log_files[0]
+    assert file_handler.baseFilename == str(log_file_path)
+
+    # 3. 로깅 동작 검증
+    msg = "Performance test message"
+    logger.info(msg)
+
+    # 핸들러 닫기
+    for handler in logger.handlers[:]:
+        handler.close()
+
+    # 4. 로그 파일 내용 검증
+    assert log_file_path.exists()
+    content = log_file_path.read_text(encoding='utf-8')
+    assert msg in content
+    
+    # 5. 핸들러 정리
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
     reset_log_timestamp_for_test()
 
 

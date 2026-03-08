@@ -11,6 +11,7 @@ router = APIRouter()
 async def get_balance():
     """계좌 잔고 조회."""
     ctx = _get_ctx()
+    t_start = ctx.pm.start_timer()
     resp = await ctx.stock_query_service.handle_get_account_balance()
 
     # 1. 기존 응답 직렬화
@@ -58,4 +59,5 @@ async def get_balance():
             "type": "Env Not Found"
         }
 
+    ctx.pm.log_timer("get_balance", t_start)
     return result

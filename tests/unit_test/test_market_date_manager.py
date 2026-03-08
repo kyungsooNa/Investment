@@ -35,7 +35,12 @@ def mock_broker():
     kis_client = MagicMock()
     kis_client._quotations = quotations_wrapper
     
-    broker._client = kis_client
+    # BrokerAPIWrapper wraps the client.
+    # broker._client is the wrapper.
+    # wrapper._client is the actual KoreaInvestApiClient (kis_client).
+    client_wrapper = MagicMock()
+    client_wrapper._client = kis_client
+    broker._client = client_wrapper
     
     return broker, raw_quotations
 
@@ -174,6 +179,7 @@ async def test_fetch_from_api_not_wrapped(manager, mock_deps):
     
     # Broker setup
     kis_client = MagicMock()
+    del kis_client._client
     kis_client._quotations = raw_quotations
     broker = MagicMock()
     broker._client = kis_client
