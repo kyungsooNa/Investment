@@ -858,3 +858,290 @@ async def test_calculate_indicators_full_exception(indicator_service):
     with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("Test Error")):
         result = service._calculate_indicators_full("005930", [{"date": "20250101"}])
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+
+@pytest.mark.asyncio
+async def test_get_moving_average_caching_miss(indicator_service_with_cache):
+    """MA: 캐시 미스 -> 전체 계산 및 저장"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    # 30일치 데이터
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 10} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data)
+    
+    # 캐시 미스 설정
+    mock_cache.get_raw.return_value = None
+    
+    result = await service.get_moving_average("005930", period=5)
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 30
+    
+    # 캐시 저장 호출 확인
+    mock_cache.set.assert_called_once()
+    args, kwargs = mock_cache.set.call_args
+    assert "ma_005930_5_sma" in args[0] # key check
+    assert kwargs.get("save_to_file") is True
+
+@pytest.mark.asyncio
+async def test_get_moving_average_caching_hit(indicator_service_with_cache):
+    """MA: 캐시 히트 -> 증분 계산 및 병합"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    # 30일치 데이터 (0~29)
+    full_data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 10} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=full_data)
+    
+    # 캐시된 데이터 (29일치)
+    cached_data = [
+        {"code": "005930", "date": f"202501{i+1:02d}", "close": 10000 + i * 10, "ma": 10000.0}
+        for i in range(29)
+    ]
+    mock_cache.get_raw.return_value = ({"data": cached_data}, None)
+    
+    result = await service.get_moving_average("005930", period=5)
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 30
+    # 마지막 데이터는 새로 계산된 값이어야 함
+    assert result.data[-1].date == "20250130"
+    assert isinstance(result.data[0], ResMovingAverage)
+
+@pytest.mark.asyncio
+async def test_get_moving_average_caching_hit_partial_fail_fallback(indicator_service_with_cache):
+    """MA: 캐시 히트했으나 증분 계산 실패 -> 전체 재계산 Fallback"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    full_data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 10} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=full_data)
+    
+    cached_data = [{"code": "005930", "date": "20250101", "ma": 10000.0}]
+    mock_cache.get_raw.return_value = ({"data": cached_data}, None)
+    
+    # _calculate_moving_average_full 실패 유도
+    with patch.object(service, '_calculate_moving_average_full', return_value=ResCommonResponse(rt_cd="1", msg1="Fail")) as mock_calc:
+        result = await service.get_moving_average("005930", period=5)
+        
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert len(result.data) == 30
+        # Fallback logic (inline pandas) executed
+
+@pytest.mark.asyncio
+async def test_calculate_moving_average_full_exception(indicator_service):
+    """_calculate_moving_average_full: 예외 처리"""
+    service, _ = indicator_service
+    
+    # 데이터 변환 실패 유도 (close가 숫자가 아님)
+    data = [{"date": "20250101", "close": "invalid"}]
+    
+    # 직접 호출
+    result = service._calculate_moving_average_full("005930", data, 5, "sma")
+    
+    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+
+@pytest.mark.asyncio
+async def test_get_bollinger_bands_caching_miss(indicator_service_with_cache):
+    """볼린저 밴드: 캐시 미스 -> 전체 계산 및 저장"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    # 30일치 데이터
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 100} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data)
+    
+    # 캐시 미스
+    mock_cache.get_raw.return_value = None
+    
+    result = await service.get_bollinger_bands("005930")
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 30
+    
+    # 캐시 저장 호출 확인
+    mock_cache.set.assert_called_once()
+    args, kwargs = mock_cache.set.call_args
+    assert "bb_005930" in args[0]
+
+@pytest.mark.asyncio
+async def test_get_bollinger_bands_caching_hit_merge_update(indicator_service_with_cache):
+    """볼린저 밴드: 캐시 히트 & 날짜 중복 -> 업데이트 (중복 방지)"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    # 30일치 데이터 (마지막 날짜 20250130)
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 100} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data)
+    
+    # 캐시된 데이터 (30일치, 마지막 날짜 포함)
+    cached_data = [
+        {"code": "005930", "date": f"202501{i+1:02d}", "close": 10000 + i * 100, "middle": 10000.0, "upper": 11000.0, "lower": 9000.0}
+        for i in range(30)
+    ]
+    # 마지막 데이터의 값을 다르게 설정하여 업데이트 확인
+    cached_data[-1]["close"] = 99999 
+    
+    mock_cache.get_raw.return_value = ({"data": cached_data}, None)
+    
+    result = await service.get_bollinger_bands("005930")
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 30
+    # 마지막 데이터가 API에서 가져온 최신 값으로 업데이트되었는지 확인
+    # API data[-1].close = 10000 + 29*100 = 12900
+    assert result.data[-1].close == 12900.0
+    assert result.data[-1].date == "20250130"
+
+@pytest.mark.asyncio
+async def test_get_rsi_caching_miss(indicator_service_with_cache):
+    """RSI: 캐시 미스 -> 전체 시계열 계산 및 저장"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 100} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data)
+    
+    mock_cache.get_raw.return_value = None
+    
+    result = await service.get_rsi("005930")
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    
+    # 캐시 저장 호출 확인
+    mock_cache.set.assert_called_once()
+    args, kwargs = mock_cache.set.call_args
+    assert "rsi_series_005930" in args[0]
+
+@pytest.mark.asyncio
+async def test_get_relative_strength_past_close_zero_via_api(indicator_service):
+    """상대강도: API를 통해 조회한 과거 종가가 0 이하인 경우"""
+    service, mock_sqs = indicator_service
+    
+    # 70일치 데이터
+    data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(70)]
+    # 과거 시점(63일 전)의 종가를 0으로 설정
+    data[-63]["close"] = 0
+    
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data)
+    
+    result = await service.get_relative_strength("005930", period_days=63)
+    
+    assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
+    assert "과거 종가가 0 이하" in result.msg1
+
+@pytest.mark.asyncio
+async def test_get_moving_average_caching_hit_merge_update(indicator_service_with_cache):
+    """MA: 캐시 히트 & 날짜 중복 -> 업데이트 (중복 방지)"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    # 30일치 데이터
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 10} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data)
+    
+    # 캐시된 데이터 (30일치, 마지막 날짜 포함)
+    cached_data = [
+        {"code": "005930", "date": f"202501{i+1:02d}", "close": 10000 + i * 10, "ma": 10000.0}
+        for i in range(30)
+    ]
+    # 캐시의 마지막 데이터 값을 다르게 설정
+    cached_data[-1]["ma"] = 99999.0
+    
+    mock_cache.get_raw.return_value = ({"data": cached_data}, None)
+    
+    result = await service.get_moving_average("005930", period=5)
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 30
+    # 마지막 데이터가 새로 계산된 값으로 업데이트되었는지 확인 (99999.0이 아니어야 함)
+    assert result.data[-1].ma != 99999.0
+    assert result.data[-1].date == "20250130"
+
+@pytest.mark.asyncio
+async def test_get_rsi_caching_hit_partial_calc_none(indicator_service_with_cache):
+    """RSI: 캐시 히트했으나 증분 계산 결과가 None인 경우 (데이터 부족 등)"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    # 충분한 데이터가 있지만, 증분 계산 시에는 일부만 사용됨
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 100} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data)
+    
+    # 캐시된 데이터
+    cached_series = [
+        {"code": "005930", "date": f"202501{i+1:02d}", "close": 10000 + i * 100, "rsi": 50.0}
+        for i in range(29)
+    ]
+    mock_cache.get_raw.return_value = ({"data": cached_series}, None)
+    
+    # _calculate_rsi_series가 호출될 때, 마지막 데이터의 RSI가 None이 되도록 조작
+    with patch.object(service, '_calculate_rsi_series') as mock_calc:
+        # 정상적인 응답 구조지만 rsi가 None
+        mock_calc.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, 
+            msg1="OK", 
+            data=[{"rsi": None}]
+        )
+        
+        result = await service.get_rsi("005930")
+        
+        assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
+        assert "계산 불가" in result.msg1
+
+@pytest.mark.asyncio
+async def test_calculate_indicators_full_safe_float_handling(indicator_service):
+    """_calculate_indicators_full: NaN/Inf 값 처리 (_safe_float)"""
+    service, _ = indicator_service
+    
+    # 데이터 부족으로 MA 계산 시 NaN 발생 유도
+    data = [
+        {"date": "20250101", "close": 10000},
+        {"date": "20250102", "close": 10000}
+    ]
+    
+    result = service._calculate_indicators_full("005930", data)
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    indicators = result.data
+    
+    # MA5는 데이터 부족으로 NaN -> None으로 변환되어야 함
+    assert indicators["ma5"][0]["ma"] is None
+    assert indicators["ma5"][1]["ma"] is None
+    
+    # BB도 NaN -> None
+    assert indicators["bb"][0]["middle"] is None
+
+@pytest.mark.asyncio
+async def test_calculate_bollinger_bands_full_exception(indicator_service):
+    """_calculate_bollinger_bands_full: 내부 예외 처리"""
+    service, _ = indicator_service
+    
+    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("BB Calc Error")):
+        result = service._calculate_bollinger_bands_full("005930", [], 20, 2.0)
+        assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+        assert "BB Calc Error" in result.msg1
+
+@pytest.mark.asyncio
+async def test_calculate_rsi_series_exception(indicator_service):
+    """_calculate_rsi_series: 내부 예외 처리"""
+    service, _ = indicator_service
+    
+    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("RSI Calc Error")):
+        result = service._calculate_rsi_series("005930", [], 14)
+        assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+        assert "RSI Calc Error" in result.msg1
+
+@pytest.mark.asyncio
+async def test_get_chart_indicators_merge_missing_key(indicator_service_with_cache):
+    """get_chart_indicators: 병합 시 최신 데이터에 키가 없는 경우"""
+    service, mock_sqs, mock_cache = indicator_service_with_cache
+    
+    # 140개 데이터
+    data = [{"date": f"202501{i+1:03d}", "close": 10000 + i} for i in range(140)]
+    
+    # 캐시 히트 (extra_key 포함)
+    cached_indicators = {
+        "ma5": [{"date": "old", "ma": 100}],
+        "extra_key": [{"date": "old", "val": 1}] 
+    }
+    mock_cache.get_raw.return_value = ({"data": cached_indicators}, None)
+    
+    result = await service.get_chart_indicators("005930", ohlcv_data=data)
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    # extra_key는 업데이트되지 않고 그대로 유지되어야 함 (else 분기)
+    assert "extra_key" in result.data
+    assert len(result.data["extra_key"]) == 1

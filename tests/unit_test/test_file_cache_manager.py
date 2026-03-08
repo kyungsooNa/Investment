@@ -288,7 +288,7 @@ def test_cleanup_old_files(tmp_path):
     # 로그 확인
     assert logger.debug.called
     logs = [call.args[0] for call in logger.debug.call_args_list]
-    assert any("File cache 삭제됨 (기간만료)" in msg for msg in logs)
+    assert any("오래된 File cache 삭제됨" in msg for msg in logs)
 
 # ------------------------
 # Additional Tests for Coverage
@@ -379,7 +379,7 @@ def test_cleanup_old_files_remove_error(tmp_path):
         mgr.cleanup_old_files()
         
     assert logger.error.called
-    assert "파일 접근 실패" in logger.error.call_args[0][0]
+    assert "오래된 파일 삭제 실패" in logger.error.call_args[0][0]
 
 def test_cleanup_old_files_outer_exception(tmp_path):
     """cleanup_old_files: 전체 로직 중 에러 발생 시 로깅"""
@@ -437,3 +437,85 @@ def test_cleanup_old_files_ohlcv_retention(tmp_path):
     assert f2.exists()
     assert not f3.exists()
     assert f4.exists()
+
+def test_set_save_to_file_false(tmp_path):
+    """set: save_to_file=False이면 파일 생성 안 함"""
+    mgr = _mk_manager(str(tmp_path))
+    key = "no_save"
+    mgr.set(key, {"a": 1}, save_to_file=False)
+    
+    assert not (tmp_path / f"{key}.json").exists()
+
+def test_delete_success(tmp_path):
+    """delete: 파일 삭제 성공"""
+    mgr = _mk_manager(str(tmp_path))
+    key = "delete_me"
+    f = tmp_path / f"{key}.json"
+    f.write_text("{}")
+    
+    mgr.delete(key)
+    assert not f.exists()
+
+def test_delete_file_not_exists(tmp_path):
+    """delete: 파일 없으면 조용히 리턴"""
+    mgr = _mk_manager(str(tmp_path))
+    key = "ghost"
+    # Should not raise
+    mgr.delete(key)
+
+def test_clear_success(tmp_path):
+    """clear: 모든 .json 파일 삭제"""
+    mgr = _mk_manager(str(tmp_path))
+    (tmp_path / "a.json").write_text("{}")
+    (tmp_path / "b.json").write_text("{}")
+    (tmp_path / "c.txt").write_text("keep me")
+    
+    mgr.clear()
+    
+    assert not (tmp_path / "a.json").exists()
+    assert not (tmp_path / "b.json").exists()
+    assert (tmp_path / "c.txt").exists()
+
+def test_cleanup_old_files_ignores_non_json(tmp_path):
+    """cleanup_old_files: .json이 아닌 파일은 오래되어도 삭제하지 않음"""
+    mgr = _mk_manager(str(tmp_path))
+    
+    # 오래된 .txt 파일 생성
+    old_txt = tmp_path / "old.txt"
+    old_txt.write_text("content")
+    past = time.time() - (10 * 86400)
+    os.utime(str(old_txt), (past, past))
+    
+    # 오래된 .json 파일 생성
+    old_json = tmp_path / "old.json"
+    old_json.write_text("{}")
+    os.utime(str(old_json), (past, past))
+    
+    mgr.cleanup_old_files(days=7)
+    
+    assert old_txt.exists()
+    assert not old_json.exists()
+
+def test_get_raw_file_not_exists(tmp_path):
+    """get_raw: 파일 없으면 None 반환"""
+    mgr = _mk_manager(str(tmp_path))
+    assert mgr.get_raw("non_existent") is None
+
+def test_cleanup_old_files_getmtime_error(tmp_path):
+    """cleanup_old_files: getmtime 실패 시 로깅하고 계속 진행"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    # 파일 생성
+    f1 = tmp_path / "f1.json"
+    f1.write_text("{}")
+    
+    # os.path.getmtime이 예외를 던지도록 patch
+    with patch("os.path.getmtime", side_effect=OSError("Access denied")):
+        mgr.cleanup_old_files(days=7)
+        
+    assert logger.error.called
+    assert "오래된 파일 삭제 실패" in logger.error.call_args[0][0]
+    # 파일은 삭제되지 않았어야 함 (예외 발생으로 remove 호출 전)
+    assert f1.exists()
