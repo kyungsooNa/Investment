@@ -344,3 +344,102 @@ def _inject_test_helpers(ki_providers, spy_exec_and_patch_get, spy_exec_and_patc
     ctx.patch_post_with_hash_and_order = patch_post_with_hash_and_order
     ctx.make_http_response = make_http_response
 
+
+# ============================================================================
+# Web API 통합 테스트용 픽스처
+# ============================================================================
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from view.web.routes import router as api_router
+import view.web.api_common as api_common
+from common.types import ResCommonResponse
+
+
+def _build_mock_web_ctx(is_paper: bool = True):
+    """
+    WebAppContext를 모사하는 Mock 객체 생성.
+    각 route handler가 접근하는 속성/메서드를 모두 구비한다.
+    """
+    mock_ctx = MagicMock()
+    mock_ctx.initialized = True
+    mock_ctx.full_config = {"use_login": False, "auth": {"secret_key": "test-token"}}
+
+    # env 설정
+    mock_ctx.env.is_paper_trading = is_paper
+    mock_ctx.env.active_config = {
+        "stock_account_number": "12345678-01",
+        "custtype": "P",
+        "auth": {"secret_key": "test-token"},
+    }
+
+    # 시장 상태
+    mock_ctx.is_market_open.return_value = True
+    mock_ctx.get_env_type.return_value = "모의투자" if is_paper else "실전투자"
+    mock_ctx.get_current_time_str.return_value = "2026-03-08 10:30:00"
+
+    # 서비스 mock (async 메서드)
+    mock_ctx.stock_query_service = MagicMock()
+    mock_ctx.order_execution_service = MagicMock()
+    mock_ctx.indicator_service = MagicMock()
+    mock_ctx.broker = MagicMock()
+    mock_ctx.virtual_manager = MagicMock()
+    mock_ctx.background_service = MagicMock()
+    mock_ctx.realtime_data_manager = MagicMock()
+    mock_ctx.stock_code_mapper = MagicMock()
+    mock_ctx.scheduler = MagicMock()
+
+    # initialize_services (환경 전환용)
+    mock_ctx.initialize_services = AsyncMock(return_value=True)
+    mock_ctx.start_background_tasks = MagicMock()
+
+    return mock_ctx
+
+
+@pytest.fixture
+def web_app():
+    """테스트용 FastAPI 앱 (lifespan 없이 라우터만 등록)."""
+    app = FastAPI()
+    app.include_router(api_router)
+    return app
+
+
+@pytest.fixture
+def mock_paper_ctx():
+    """모의투자 모드 WebAppContext mock."""
+    return _build_mock_web_ctx(is_paper=True)
+
+
+@pytest.fixture
+def mock_real_ctx():
+    """실전투자 모드 WebAppContext mock."""
+    return _build_mock_web_ctx(is_paper=False)
+
+
+@pytest.fixture
+def paper_client(web_app, mock_paper_ctx):
+    """모의투자 모드 TestClient. 테스트 전후 api_common._ctx를 정리."""
+    api_common.set_ctx(mock_paper_ctx)
+    with TestClient(web_app) as client:
+        yield client
+    api_common.set_ctx(None)
+
+
+@pytest.fixture
+def real_client(web_app, mock_real_ctx):
+    """실전투자 모드 TestClient."""
+    api_common.set_ctx(mock_real_ctx)
+    with TestClient(web_app) as client:
+        yield client
+    api_common.set_ctx(None)
+
+
+def make_success_response(data=None, msg="정상"):
+    """ResCommonResponse 성공 응답을 만드는 헬퍼."""
+    return ResCommonResponse(rt_cd="0", msg1=msg, data=data)
+
+
+def make_error_response(msg="오류 발생", code="1"):
+    """ResCommonResponse 실패 응답을 만드는 헬퍼."""
+    return ResCommonResponse(rt_cd=code, msg1=msg, data=None)
+
