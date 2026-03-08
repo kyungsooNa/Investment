@@ -42,7 +42,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
 
         try:
             response: ResCommonResponse = await self.call_api('POST', EndpointKey.HASHKEY,
-                                                              data=data, expect_standard_schema=False, retry_count=1)
+                                                              data=data, expect_standard_schema=False, retry_count=3)
 
             if response.rt_cd != ErrorCode.SUCCESS.value:
                 return response
@@ -103,4 +103,4 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._headers.set_gt_uid()
             self._logger.info(
                 f"주식 {'매수' if is_buy else '매도'} 주문 시도 - 종목:{stock_code}, 수량:{order_qty}, 가격:{order_price}")
-            return await self.call_api('POST', EndpointKey.ORDER_CASH, data=data, retry_count=1)
+            return await self.call_api('POST', EndpointKey.ORDER_CASH, data=data, retry_count=3)

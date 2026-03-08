@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import builtins
 from unittest.mock import call, ANY
-from common.types import ResCommonResponse
+from common.types import ResCommonResponse, ErrorCode
 from services.order_execution_service import OrderExecutionService
 
 # 테스트를 위한 MockLogger
@@ -36,6 +36,7 @@ def mock_time_manager():
     """TimeManager의 MagicMock 인스턴스를 제공하는 픽스처."""
     mock = MagicMock()
     mock.is_market_open.return_value = True # 기본값 설정
+    mock.async_sleep = AsyncMock()
     return mock
 
 @pytest.fixture
@@ -413,3 +414,84 @@ async def test_realtime_data_display_callback_logic(handler, mock_trading_servic
     non_dict_data = "invalid_string_data"
     realtime_callback(non_dict_data)
     mock_logger.debug.assert_not_called()
+
+
+# --- 주문 재시도 (_retry_order) 테스트 ---
+
+@pytest.mark.asyncio
+async def test_retry_order_success_on_first_attempt(handler, mock_trading_service):
+    """첫 시도에서 성공하면 재시도 없이 즉시 반환."""
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data=None
+    )
+    result = await handler._retry_order(
+        mock_trading_service.place_buy_order, "005930", 70000, 10
+    )
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert mock_trading_service.place_buy_order.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_order_retriable_error_then_success(handler, mock_trading_service, mock_time_manager):
+    """NETWORK_ERROR 후 재시도에서 성공."""
+    mock_trading_service.place_buy_order.side_effect = [
+        ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data=None),
+    ]
+    result = await handler._retry_order(
+        mock_trading_service.place_buy_order, "005930", 70000, 10
+    )
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert mock_trading_service.place_buy_order.await_count == 2
+    mock_time_manager.async_sleep.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_order_retriable_error_exhausted(handler, mock_trading_service, mock_time_manager):
+    """재시도 가능한 오류가 계속 발생하면 마지막 실패 결과 반환."""
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.RETRY_LIMIT.value, msg1="재시도 한도 초과", data=None
+    )
+    result = await handler._retry_order(
+        mock_trading_service.place_buy_order, "005930", 70000, 10
+    )
+    assert result.rt_cd == ErrorCode.RETRY_LIMIT.value
+    assert mock_trading_service.place_buy_order.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_order_non_retriable_error_no_retry(handler, mock_trading_service, mock_time_manager):
+    """API_ERROR 같은 비재시도 오류는 즉시 반환 (재시도 안 함)."""
+    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="잔고 부족", data=None
+    )
+    result = await handler._retry_order(
+        mock_trading_service.place_buy_order, "005930", 70000, 10
+    )
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert mock_trading_service.place_buy_order.await_count == 1
+    mock_time_manager.async_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_order_integrates_with_handle_place_buy_order(handler, mock_trading_service, mock_time_manager):
+    """handle_place_buy_order가 _retry_order를 통해 재시도하는지 확인."""
+    mock_trading_service.place_buy_order.side_effect = [
+        ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data=None),
+    ]
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert mock_trading_service.place_buy_order.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_order_integrates_with_handle_place_sell_order(handler, mock_trading_service, mock_time_manager):
+    """handle_place_sell_order가 _retry_order를 통해 재시도하는지 확인."""
+    mock_trading_service.place_sell_order.side_effect = [
+        ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="매도 성공", data=None),
+    ]
+    result = await handler.handle_place_sell_order("005930", 60000, 5)
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert mock_trading_service.place_sell_order.await_count == 2

@@ -114,7 +114,7 @@ async def test_get_hashkey_success():
         assert args[1] == EndpointKey.HASHKEY
         assert kwargs.get("data") == body
         assert kwargs.get("expect_standard_schema") is False
-        assert kwargs.get("retry_count") == 1
+        assert kwargs.get("retry_count") == 3
 
 
 @pytest.mark.asyncio

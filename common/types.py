@@ -19,6 +19,11 @@ class ErrorCode(Enum):
     MARKET_CLOSED = "108"  # 장 마감
     UNKNOWN_ERROR = "999"  # 기타 오류
 
+    @property
+    def is_retriable(self) -> bool:
+        """서비스 레벨에서 재시도 가능한 오류인지 반환."""
+        return self in (ErrorCode.NETWORK_ERROR, ErrorCode.RETRY_LIMIT)
+
 
 # --- 전략 신호 ---
 class TradeSignal(BaseModel):
