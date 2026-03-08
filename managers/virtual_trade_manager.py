@@ -51,7 +51,7 @@ class VirtualTradeManager:
             pd.DataFrame(columns=COLUMNS).to_csv(self.filename, index=False)
 
     def _read(self) -> pd.DataFrame:
-        df = pd.read_csv(self.filename, dtype={'code': str})
+        df = pd.read_csv(self.filename, dtype={'code': str, 'sell_date': object})
         df['return_rate'] = df['return_rate'].fillna(0.0)
         # 기존 파일 호환성: qty 컬럼이 없으면 기본값 1로 채움
         if 'qty' not in df.columns:
@@ -66,23 +66,22 @@ class VirtualTradeManager:
     def log_buy(self, strategy_name: str, code: str, current_price, qty: int = 1):
         """가상 매수 기록. 동일 전략+종목 중복 매수 방지."""
         with self._lock:
-            df = self._read()
             if self.is_holding(strategy_name, code):
                 logger.info(f"[가상매매] {strategy_name}/{code} 이미 보유 중 — 매수 스킵")
                 return
-            new_trade = {
-                "strategy": strategy_name,
-                "code": code,
-                "buy_date": self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S"),
-                "buy_price": current_price,
-                "qty": qty,
-                "sell_date": None,
-                "sell_price": None,
-                "return_rate": 0.0,
-                "status": "HOLD"
-            }
-            df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
-            self._write(df)
+            buy_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
+            new_row = pd.DataFrame({
+                "strategy": [strategy_name],
+                "code": [code],
+                "buy_date": [buy_date],
+                "buy_price": [current_price],
+                "qty": [qty],
+                "sell_date": [np.nan],
+                "sell_price": [np.nan],
+                "return_rate": [0.0],
+                "status": ["HOLD"]
+            })
+            new_row.to_csv(self.filename, mode='a', header=False, index=False)
             logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
     async def log_buy_async(self, strategy_name: str, code: str, current_price, qty: int = 1):

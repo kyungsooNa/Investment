@@ -107,7 +107,7 @@ async def save_pt_data(data: ProgramTradingDataModel):
     try:
         # [변경] 매니저를 통해 스냅샷 저장
         ctx = _get_ctx()
-        ctx.realtime_data_manager.save_snapshot(data.dict())
+        ctx.realtime_data_manager.save_snapshot(data.model_dump())
         return {"success": True}
     except Exception as e:
         print(f"[WebAPI] PT Data Save Error: {e}")
