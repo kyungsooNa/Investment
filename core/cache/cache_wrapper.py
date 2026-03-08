@@ -1,5 +1,5 @@
 # core/cache_wrapper.py
-from typing import TypeVar, Callable, Optional
+from typing import TypeVar, Callable, Optional, Any
 
 from common.types import ResCommonResponse, ErrorCode
 from core.cache.cache_manager import CacheManager
@@ -17,7 +17,8 @@ class ClientWithCache:
             time_manager,
             mode_fn: Callable[[], str],
             cache_manager: Optional[CacheManager] = None,
-            config: Optional[dict] = None
+            config: Optional[dict] = None,
+            market_date_manager: Optional[Any] = None  # [추가] MarketDateManager 주입
     ):
         self._client = client
         self._logger = logger
@@ -37,6 +38,7 @@ class ClientWithCache:
         self._cache = cache_manager if cache_manager else CacheManager(config)
         self._cache.set_logger(self._logger)
         self.cached_methods = set(config["cache"]["enabled_methods"])
+        self._market_date_manager = market_date_manager  # [추가]
 
     def __getattr__(self, name: str):
         # ✅ 무한 루프 방지
@@ -76,6 +78,27 @@ class ClientWithCache:
                     latest_close_time = self._time_manager.get_latest_market_close_time()
                     next_open_time = self._time_manager.get_next_market_open_time()
                     is_valid = (cache_time and latest_close_time <= cache_time < next_open_time)
+                    
+                    is_valid = False
+                    if cache_time and cache_time < next_open_time:
+                        # [수정] MarketDateManager가 있으면 실제 거래일 기준으로 검증
+                        if self._market_date_manager:
+                            latest_trading_date_str = await self._market_date_manager.get_latest_trading_date()
+                            if latest_trading_date_str:
+                                # 캐시된 데이터의 날짜가 최근 거래일(또는 그 이후)인지 확인
+                                cache_date_str = cache_time.strftime("%Y%m%d")
+                                if cache_date_str >= latest_trading_date_str:
+                                    is_valid = True
+                                else:
+                                    self._logger.debug(f"📉 캐시 만료 (최근 거래일 {latest_trading_date_str} > 캐시 데이터 {cache_date_str})")
+                            else:
+                                # 날짜 확인 불가 시 기존 로직 fallback
+                                if latest_close_time <= cache_time:
+                                    is_valid = True
+                        else:
+                            # Manager 없으면 기존 로직 (주말/휴일 등 단순 시간 비교)
+                            if latest_close_time <= cache_time:
+                                is_valid = True
 
                     if is_valid:
                         if cache_type == "memory":
@@ -145,7 +168,8 @@ def cache_wrap_client(
         time_manager,
         mode_getter: Callable[[], str],
         config: Optional[dict] = None,
-        cache_manager: Optional[CacheManager] = None
+        cache_manager: Optional[CacheManager] = None,
+        market_date_manager: Optional[Any] = None
 ) -> T:
     return ClientWithCache(
         client=api_client,
@@ -153,5 +177,6 @@ def cache_wrap_client(
         time_manager=time_manager,
         mode_fn=mode_getter,
         cache_manager=cache_manager,
-        config=config
+        config=config,
+        market_date_manager=market_date_manager
     )

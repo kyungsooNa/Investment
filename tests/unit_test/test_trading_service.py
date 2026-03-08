@@ -830,74 +830,44 @@ async def test_handle_realtime_stream_exception(trading_service_fixture, mock_de
 
 @pytest.mark.asyncio
 async def test_get_latest_trading_date_success(trading_service_fixture, mock_deps):
-    """get_latest_trading_date 성공 케이스 테스트"""
-    broker, _, _, _ = mock_deps
+    """get_latest_trading_date 성공 케이스 테스트 (Delegation)"""
     service = trading_service_fixture
     
-    # Mock API response with daily chart data (mixed order to test max())
-    mock_data = [
-        {"stck_bsop_date": "20250101"},
-        {"stck_bsop_date": "20250103"},
-        {"stck_bsop_date": "20250102"}
-    ]
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
-    )
+    # Mock MarketDateManager
+    mock_mdm = AsyncMock()
+    mock_mdm.get_latest_trading_date.return_value = "20250103"
+    service._market_date_manager = mock_mdm
     
     result = await service.get_latest_trading_date()
     
     assert result == "20250103"
-    broker.inquire_daily_itemchartprice.assert_awaited_once()
-    # 인자 검증: 종목코드(005930)와 기간구분(D) 확인
-    args, _ = broker.inquire_daily_itemchartprice.call_args
-    assert args[0] == "005930"
-    assert args[3] == "D"
+    mock_mdm.get_latest_trading_date.assert_awaited_once()
 
 @pytest.mark.asyncio
-async def test_get_latest_trading_date_exception(trading_service_fixture, mock_deps):
-    """get_latest_trading_date 예외 발생 테스트"""
-    broker, _, _, logger = mock_deps
+async def test_get_latest_trading_date_none(trading_service_fixture, mock_deps):
+    """get_latest_trading_date: 매니저가 None 반환 시 (Delegation)"""
     service = trading_service_fixture
     
-    broker.inquire_daily_itemchartprice.side_effect = Exception("API Error")
+    mock_mdm = AsyncMock()
+    mock_mdm.get_latest_trading_date.return_value = None
+    service._market_date_manager = mock_mdm
     
+    result = await service.get_latest_trading_date()
+    
+    assert result is None
+    mock_mdm.get_latest_trading_date.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_get_latest_trading_date_no_manager(trading_service_fixture, mock_deps):
+    """get_latest_trading_date: 매니저 미설정 시 None 반환"""
+    _, _, _, logger = mock_deps
+    service = trading_service_fixture
+    service._market_date_manager = None
+
     result = await service.get_latest_trading_date()
     
     assert result is None
     logger.warning.assert_called_once()
-
-@pytest.mark.asyncio
-async def test_get_latest_trading_date_empty_data(trading_service_fixture, mock_deps):
-    """get_latest_trading_date: 데이터가 비어있을 때 None 반환 테스트"""
-    broker, _, _, _ = mock_deps
-    service = trading_service_fixture
-    
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
-    )
-    
-    result = await service.get_latest_trading_date()
-    
-    assert result is None
-
-@pytest.mark.asyncio
-async def test_get_latest_trading_date_object_data(trading_service_fixture, mock_deps):
-    """get_latest_trading_date: 데이터가 객체 형태일 때 테스트"""
-    broker, _, _, _ = mock_deps
-    service = trading_service_fixture
-    
-    class MockItem:
-        def __init__(self, date):
-            self.stck_bsop_date = date
-            
-    mock_data = [MockItem("20250101"), MockItem("20250105")]
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
-    )
-    
-    result = await service.get_latest_trading_date()
-    
-    assert result == "20250105"
 
 class TestGetCurrentUpperLimitStocksAttributeError(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

@@ -26,6 +26,7 @@ from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from services.oneil_universe_service import OneilUniverseService
 from services.background_service import BackgroundService
 from managers.realtime_data_manager import RealtimeDataManager
+from managers.market_date_manager import MarketDateManager
 from view.web import web_api  # 임포트 확인
 
 class WebAppContext:
@@ -47,6 +48,7 @@ class WebAppContext:
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.background_service: BackgroundService = None
+        self.market_date_manager: MarketDateManager = None
         self.initialized = False
         
         # [변경] 실시간 데이터 관리자 도입
@@ -66,6 +68,9 @@ class WebAppContext:
             logger=self.logger
         )
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
+        
+        # [신규] MarketDateManager 초기화
+        self.market_date_manager = MarketDateManager(self.time_manager, self.logger)
 
     async def initialize_services(self, is_paper_trading: bool = True):
         """서비스 레이어 초기화. TradingApp._complete_api_initialization() 참조."""
@@ -81,8 +86,22 @@ class WebAppContext:
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, time_manager=self.time_manager
         )
+        
+        # [중요] BrokerAPIWrapper 내부의 ClientWithCache에 MarketDateManager 주입
+        # BrokerAPIWrapper -> KoreaInvestApiClient -> _quotations (ClientWithCache)
+        if hasattr(self.broker, '_client'):
+            kis_client = self.broker._client
+            if hasattr(kis_client, '_quotations'):
+                quotations = kis_client._quotations
+                if hasattr(quotations, '_market_date_manager'):
+                    quotations._market_date_manager = self.market_date_manager
+
+        # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
+        self.market_date_manager.set_broker(self.broker)
+        
         self.trading_service = TradingService(
-            self.broker, self.env, self.logger, self.time_manager
+            self.broker, self.env, self.logger, self.time_manager,
+            market_date_manager=self.market_date_manager
         )
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
         self.indicator_service = IndicatorService()
