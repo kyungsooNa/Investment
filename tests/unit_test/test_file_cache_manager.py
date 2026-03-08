@@ -2,6 +2,7 @@
 import os
 import json
 import tempfile
+import time
 from typing import Any
 import pytest
 from unittest.mock import MagicMock, patch
@@ -122,7 +123,7 @@ def test_set_file_write_error_logs(tmp_path):
     mgr.set_logger(logger)
 
     with patch("builtins.open", side_effect=IOError("disk error")):
-        mgr.set("k", {"data": 123}, save_to_file=True)  # except 블록 → logger.error :contentReference[oaicite:5]{index=5}
+        mgr.set("k", {"data": 123}, save_to_file=True)  # except 블록 → logger.error
 
     assert logger.error.called
     msg = logger.error.call_args[0][0]
@@ -142,7 +143,7 @@ def test_delete_file_remove_error_logs(tmp_path):
     mgr.set_logger(logger)
 
     with patch("os.remove", side_effect=OSError("cannot delete")):
-        mgr.delete("k")  # except 블록 → logger.error :contentReference[oaicite:6]{index=6}
+        mgr.delete("k")  # except 블록 → logger.error
 
     assert logger.error.called
     msg = logger.error.call_args[0][0]
@@ -175,7 +176,7 @@ def test_clear_with_delete_error_logs_each_file(tmp_path):
 
     # 첫 번째 remove는 실패, 두 번째는 성공하도록 side_effect 설정
     with patch("os.remove", side_effect=[OSError("fail a"), None]):
-        mgr.clear()  # 파일 루프 내 except → logger.error 호출 :contentReference[oaicite:8]{index=8}
+        mgr.clear()  # 파일 루프 내 except → logger.error 호출
 
     assert logger.error.called
     # 개별 파일 삭제 실패 메시지 형태 확인
@@ -190,7 +191,7 @@ def test_clear_top_level_exception_is_logged(tmp_path):
     mgr.set_logger(logger)
 
     with patch("os.walk", side_effect=RuntimeError("walk boom")):
-        mgr.clear()  # 전체 예외 처리 :contentReference[oaicite:9]{index=9}
+        mgr.clear()  # 전체 예외 처리
 
     assert logger.error.called
     msg = logger.error.call_args[0][0]
@@ -260,3 +261,31 @@ def test_deserialize_pydantic_nested_in_res_common_response(tmp_path):
     assert isinstance(res, ResCommonResponse)
     assert isinstance(res.data, PydanticDummy)
     assert res.data.x == 99
+
+def test_cleanup_old_files(tmp_path):
+    """오래된 캐시 파일 삭제 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+
+    # 1. 최신 파일 (유지)
+    fresh = tmp_path / "fresh.json"
+    fresh.write_text("{}")
+
+    # 2. 오래된 파일 (삭제)
+    old = tmp_path / "old.json"
+    old.write_text("{}")
+    
+    # 8일 전으로 수정 시간 변경
+    past = time.time() - (8 * 86400)
+    os.utime(str(old), (past, past))
+
+    mgr.cleanup_old_files(days=7)
+
+    assert fresh.exists()
+    assert not old.exists()
+    
+    # 로그 확인
+    assert logger.debug.called
+    logs = [call.args[0] for call in logger.debug.call_args_list]
+    assert any("오래된 File cache 삭제됨" in msg for msg in logs)

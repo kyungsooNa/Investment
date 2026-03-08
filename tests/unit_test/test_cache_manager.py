@@ -2,7 +2,11 @@
 
 import pytest
 import json
+from unittest.mock import MagicMock
 from core.cache.cache_manager import CacheManager
+from core.cache.file_cache_manager import FileCacheManager
+from core.cache.db_cache_manager import DBCacheManager
+from core.cache.memory_cache_manager import MemoryCacheManager
 from datetime import datetime
 
 
@@ -255,3 +259,87 @@ def test_cache_manager_both_off_is_noop(tmp_path):
     # delete/clear도 예외 없이 동작
     cm.delete(key)
     cm.clear()
+
+def test_cache_manager_set_logger_calls_cleanup(tmp_path):
+    """set_logger 호출 시 cleanup_old_files가 호출되는지 테스트"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": [],
+            "deserializable_classes": [],
+            "file_cache_enabled": True
+        }
+    }
+    cm = CacheManager(config=config)
+    
+    # Mocking cleanup_old_files to verify call
+    cm.file_cache.cleanup_old_files = MagicMock()
+    
+    logger = MagicMock()
+    cm.set_logger(logger)
+    
+    cm.file_cache.cleanup_old_files.assert_called_once()
+
+def test_config_selection_db_cache(tmp_path):
+    """use_db_cache=True 설정 시 DBCacheManager 선택 검증"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "file_cache_enabled": True,
+            "use_db_cache": True,
+            "memory_cache_enabled": False
+        }
+    }
+    cm = CacheManager(config=config)
+    assert isinstance(cm.file_cache, DBCacheManager)
+    assert not isinstance(cm.file_cache, FileCacheManager)
+
+def test_config_selection_file_cache(tmp_path):
+    """use_db_cache=False 설정 시 FileCacheManager 선택 검증"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "file_cache_enabled": True,
+            "use_db_cache": False,
+            "memory_cache_enabled": False
+        }
+    }
+    cm = CacheManager(config=config)
+    assert isinstance(cm.file_cache, FileCacheManager)
+    assert not isinstance(cm.file_cache, DBCacheManager)
+
+def test_config_selection_memory_cache(tmp_path):
+    """memory_cache_enabled 설정에 따른 MemoryCacheManager 초기화 검증"""
+    # Case 1: Enabled
+    config_on = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "memory_cache_enabled": True
+        }
+    }
+    cm_on = CacheManager(config=config_on)
+    assert isinstance(cm_on.memory_cache, MemoryCacheManager)
+
+    # Case 2: Disabled
+    config_off = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "memory_cache_enabled": False
+        }
+    }
+    cm_off = CacheManager(config=config_off)
+    assert cm_off.memory_cache is None
+
+def test_config_selection_with_integer_flags(tmp_path):
+    """YAML에서 1/0으로 로드될 경우(int)에 대한 옵션 적용 검증"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "file_cache_enabled": 1,  # True
+            "use_db_cache": 1,        # True -> DBCacheManager
+            "memory_cache_enabled": 0 # False
+        }
+    }
+    cm = CacheManager(config=config)
+    assert isinstance(cm.file_cache, DBCacheManager)
+    assert cm.memory_cache is None

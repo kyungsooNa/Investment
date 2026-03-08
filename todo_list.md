@@ -8,6 +8,10 @@
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 
+
+8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.
+
+
 ### 1. 환경 (Environment)
 
 ### 2. 성능 (Performance)
@@ -128,5 +132,4 @@
 ### 4. 인프라 및 아키텍처 (Infrastructure & Architecture)
 * **[인프라]** 도커(Docker) 컨테이너화: `Dockerfile` 및 `docker-compose.yml` 작성을 통해 서버 배포 용이성 확보 및 로컬/서버 환경 불일치(OS 의존성 등) 문제 해결.
 * **[데이터]** DB(SQLite/SQLAlchemy) 도입: 매매 일지(Trade Journal) 영구 저장 및 봇 비정상 종료 시 재시작 후 상태 복구(State Recovery) 기능 구현.
-* **[안정성]** Pydantic 도입: `config.yaml` 로드 및 API 응답 데이터 처리 시 Pydantic 모델을 사용하여 유효성 검사(Validation) 및 타입 안정성 강화 (런타임 에러 방지).
 * **[아키텍처]** 이벤트 기반 아키텍처(Event-Driven): '전략(Signal)'과 '주문 실행(Execution Engine)'의 완전한 분리. 이를 통해 백테스팅 신뢰도를 높이고 향후 복합 주문 처리(Netting) 등의 고도화 기반 마련.

@@ -3,6 +3,7 @@
 import os
 import json
 import importlib
+import time
 from typing import Optional, Any
 from dataclasses import dataclass, field, fields, MISSING, asdict, is_dataclass
 from datetime import datetime
@@ -28,6 +29,8 @@ class FileCacheManager:
         self._base_dir = config["cache"]["base_dir"]
         self._logger = None
         self._deserializable_classes = load_deserializable_classes(config["cache"].get("deserializable_classes", []))
+        if not os.path.exists(self._base_dir):
+            os.makedirs(self._base_dir, exist_ok=True)
 
     def set_logger(self, logger):
         self._logger = logger
@@ -79,7 +82,7 @@ class FileCacheManager:
     def set(self, key: str, value: Any, save_to_file: bool = False):
         if save_to_file:
             try:
-                path = self._base_dir + f"/{key}.json"
+                path = self._get_path(key)
                 os.makedirs(os.path.dirname(path), exist_ok=True)
 
                 # _serialize 메서드를 사용하여 모든 객체를 직렬화 가능하도록 변환
@@ -88,6 +91,7 @@ class FileCacheManager:
 
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(wrapper, f, ensure_ascii=False, indent=2)
+
                 if self._logger:
                     self._logger.debug(f"💾 File cache 저장: {path}")
             except Exception as e:
@@ -95,7 +99,7 @@ class FileCacheManager:
                     self._logger.error(f"❌ File cache 저장 실패: {e}")
 
     def delete(self, key: str):
-        path = self._base_dir + f"/{key}.json"
+        path = self._get_path(key)
         if os.path.exists(path):
             try:
                 os.remove(path)
@@ -126,6 +130,30 @@ class FileCacheManager:
             if self._logger:
                 self._logger.error(f"❌ 전체 캐시 삭제 실패: {e}")
 
+    def cleanup_old_files(self, days: int = 7):
+        """오래된 캐시 파일 삭제 (기본 7일)"""
+        if not os.path.exists(self._base_dir):
+            return
+
+        cutoff = time.time() - (days * 86400)
+
+        try:
+            for root, _, files in os.walk(self._base_dir):
+                for file in files:
+                    if file.endswith(".json"):
+                        path = os.path.join(root, file)
+                        try:
+                            if os.path.getmtime(path) < cutoff:
+                                os.remove(path)
+                                if self._logger:
+                                    self._logger.debug(f"🗑️ 오래된 File cache 삭제됨: {path}")
+                        except Exception as e:
+                            if self._logger:
+                                self._logger.error(f"❌ 오래된 파일 삭제 실패: {path} - {e}")
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"❌ 캐시 정리 실패: {e}")
+
     def get_raw(self, key: str):
         path = self._get_path(key)
         if not os.path.exists(path):
@@ -137,7 +165,6 @@ class FileCacheManager:
                 wrapper['data'] = self._deserialize(data)
 
                 return wrapper
-
         except Exception as e:
             if self._logger:
                 self._logger.error(f"[FileCache] Load Error: {e}")
