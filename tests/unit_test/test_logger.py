@@ -300,6 +300,12 @@ def test_get_performance_logger(tmp_path):
     """
     get_performance_logger가 성능 측정 전용 로거를 올바르게 생성하는지 테스트합니다.
     """
+    # 기존 핸들러 정리 (다른 테스트의 영향 방지)
+    perf_logger = logging.getLogger("performance")
+    for handler in perf_logger.handlers[:]:
+        handler.close()
+        perf_logger.removeHandler(handler)
+
     log_dir = tmp_path / "logs"
     
     # 테스트 격리를 위해 타임스탬프 리셋
