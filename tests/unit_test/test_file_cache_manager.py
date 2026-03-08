@@ -289,3 +289,116 @@ def test_cleanup_old_files(tmp_path):
     assert logger.debug.called
     logs = [call.args[0] for call in logger.debug.call_args_list]
     assert any("오래된 File cache 삭제됨" in msg for msg in logs)
+
+# ------------------------
+# Additional Tests for Coverage
+# ------------------------
+
+def test_serialize_dict_recursion(tmp_path):
+    """_serialize: 딕셔너리 재귀 직렬화 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    data = {"a": {"b": 1, "c": [2, 3]}}
+    out = mgr._serialize(data)
+    assert out == data
+
+def test_serialize_to_dict_method(tmp_path):
+    """_serialize: to_dict 메서드 호출 테스트"""
+    class ToDictObj:
+        def to_dict(self):
+            return {"converted": True}
+            
+    mgr = _mk_manager(str(tmp_path))
+    obj = ToDictObj()
+    out = mgr._serialize(obj)
+    assert out == {"converted": True}
+
+def test_deserialize_dict_recursion_no_match(tmp_path):
+    """_deserialize: 매칭되는 클래스가 없을 때 딕셔너리 재귀 복원 테스트"""
+    mgr = _mk_manager(str(tmp_path), classes=[Dummy])
+    # Dummy는 a, b 필드를 가짐. c, d는 매칭 안됨.
+    raw = {"c": 1, "d": {"e": 2}} 
+    out = mgr._deserialize(raw)
+    assert out == raw
+    assert isinstance(out, dict)
+
+def test_deserialize_field_coverage_check(tmp_path):
+    """_deserialize: 필드 커버리지 50% 미만일 때 매칭 건너뛰기 테스트"""
+    @dataclass
+    class SmallClass:
+        a: int
+
+    mgr = _mk_manager(str(tmp_path), classes=[SmallClass])
+    
+    # raw_data 키가 3개, SmallClass 필드는 1개 (a). 1/3 < 0.5 이므로 매칭 안되어야 함.
+    raw_data = {"a": 1, "b": 2, "c": 3}
+    
+    out = mgr._deserialize(raw_data)
+    # 매칭되었다면 SmallClass 인스턴스여야 하지만, 건너뛰었으므로 dict여야 함
+    assert isinstance(out, dict)
+    assert out["a"] == 1
+
+def test_deserialize_exception_handling(tmp_path):
+    """_deserialize: 클래스 매칭 시도 중 예외 발생 시 무시하고 계속 진행 테스트"""
+    @dataclass
+    class FaultyClass:
+        a: int
+        
+        @classmethod
+        def from_dict(cls, d):
+            raise ValueError("Intentional Error")
+
+    mgr = _mk_manager(str(tmp_path), classes=[FaultyClass])
+    raw_data = {"a": 1}
+    
+    # FaultyClass.from_dict에서 예외가 발생하지만, _deserialize는 이를 잡고(pass) 
+    # 다음 로직(dict 반환)으로 넘어가야 함.
+    out = mgr._deserialize(raw_data)
+    assert isinstance(out, dict)
+    assert out["a"] == 1
+
+def test_cleanup_old_files_base_dir_not_exists(tmp_path):
+    """cleanup_old_files: base_dir이 없으면 조기 리턴"""
+    not_exists = tmp_path / "nope"
+    mgr = _mk_manager(str(not_exists))
+    # 에러 없이 리턴되어야 함
+    mgr.cleanup_old_files()
+
+def test_cleanup_old_files_remove_error(tmp_path):
+    """cleanup_old_files: 파일 삭제 중 에러 발생 시 로깅"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    # 파일 생성 및 시간 조작
+    old = tmp_path / "old.json"
+    old.write_text("{}")
+    past = time.time() - (8 * 86400)
+    os.utime(str(old), (past, past))
+    
+    with patch("os.remove", side_effect=OSError("Delete Fail")):
+        mgr.cleanup_old_files()
+        
+    assert logger.error.called
+    assert "오래된 파일 삭제 실패" in logger.error.call_args[0][0]
+
+def test_cleanup_old_files_outer_exception(tmp_path):
+    """cleanup_old_files: 전체 로직 중 에러 발생 시 로깅"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    with patch("os.walk", side_effect=Exception("Walk Fail")):
+        mgr.cleanup_old_files()
+        
+    assert logger.error.called
+    assert "캐시 정리 실패" in logger.error.call_args[0][0]
+
+def test_exists(tmp_path):
+    """exists: 파일 존재 여부 확인"""
+    mgr = _mk_manager(str(tmp_path))
+    key = "exist_test"
+    
+    assert not mgr.exists(key)
+    
+    mgr.set(key, {"a": 1}, save_to_file=True)
+    assert mgr.exists(key)

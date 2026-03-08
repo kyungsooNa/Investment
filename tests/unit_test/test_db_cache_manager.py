@@ -6,13 +6,26 @@ import sqlite3
 import concurrent.futures
 from typing import Any
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from pydantic import BaseModel
+from dataclasses import dataclass
 from core.cache.db_cache_manager import DBCacheManager
 
 class PydanticDummy(BaseModel):
     x: int
     y: str
+
+@dataclass
+class DataClassDummy:
+    a: int
+    b: int
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(**d)
+
+    def to_dict(self):
+        return {"a": self.a, "b": self.b}
 
 def _mk_manager(base_dir: str, classes: list[type] | None = None) -> DBCacheManager:
     cfg = {"cache": {"base_dir": base_dir, "deserializable_classes": []}}
@@ -166,3 +179,208 @@ def test_persistence_across_instances(tmp_path):
     loaded = mgr2.get_raw("persist_key")
     
     assert loaded == {"data": "survive"}
+
+# ----------------------------------------------------------------
+# 추가된 테스트 케이스 (커버리지 향상)
+# ----------------------------------------------------------------
+
+def test_init_with_none_config(tmp_path):
+    """config가 None일 때 load_cache_config 호출 확인"""
+    with patch("core.cache.db_cache_manager.load_cache_config") as mock_load:
+        mock_load.return_value = {"cache": {"base_dir": str(tmp_path)}}
+        mgr = DBCacheManager(config=None)
+        assert mgr._base_dir == str(tmp_path)
+
+def test_init_db_exception(tmp_path):
+    """DB 초기화 중 예외 발생 시 로깅 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    # _init_db를 직접 호출하여 예외 유발
+    mgr._conn.close()
+    mgr._conn = MagicMock()
+    mgr._conn.execute.side_effect = sqlite3.Error("DB Init Error")
+    mgr._init_db()
+
+    logger.error.assert_called()
+    assert "DB 초기화 실패" in logger.error.call_args[0][0]
+
+def test_get_connection_rollback(tmp_path):
+    """트랜잭션 롤백 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    
+    # Replace real connection with mock
+    mgr._conn.close()
+    mgr._conn = MagicMock()
+    
+    with pytest.raises(ValueError):
+        with mgr._get_connection():
+            raise ValueError("Intentional Error")
+            
+    mgr._conn.commit.assert_not_called()
+    mgr._conn.rollback.assert_called_once()
+
+def test_serialize_complex_types(tmp_path):
+    """to_dict, list, dict 등 복합 타입 직렬화 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    
+    # 1. to_dict method
+    dc = DataClassDummy(a=1, b=2)
+    assert mgr._serialize(dc) == {"a": 1, "b": 2}
+    
+    # 2. list/tuple
+    data_list = [dc, PydanticDummy(x=3, y="z")]
+    serialized_list = mgr._serialize(data_list)
+    assert serialized_list == [{"a": 1, "b": 2}, {"x": 3, "y": "z"}]
+    
+    # 3. dict
+    data_dict = {"key": dc}
+    serialized_dict = mgr._serialize(data_dict)
+    assert serialized_dict == {"key": {"a": 1, "b": 2}}
+
+def test_deserialize_dataclass_and_res_common_response(tmp_path):
+    """Dataclass 및 ResCommonResponse 특수 로직 역직렬화 테스트"""
+    # ResCommonResponse 흉내 (이름이 중요)
+    @dataclass
+    class ResCommonResponse:
+        rt_cd: str
+        data: Any = None
+        
+        @classmethod
+        def from_dict(cls, d):
+            return cls(**d)
+
+    mgr = _mk_manager(str(tmp_path), classes=[ResCommonResponse, DataClassDummy])
+    
+    # Nested structure: ResCommonResponse containing DataClassDummy
+    raw_data = {
+        "rt_cd": "0",
+        "data": {"a": 10, "b": 20}
+    }
+    
+    # _deserialize 호출
+    # ResCommonResponse의 data 필드가 재귀적으로 _deserialize 되어야 함
+    result = mgr._deserialize(raw_data)
+    
+    assert isinstance(result, ResCommonResponse)
+    assert isinstance(result.data, DataClassDummy)
+    assert result.data.a == 10
+
+def test_deserialize_list(tmp_path):
+    """리스트 역직렬화 테스트"""
+    mgr = _mk_manager(str(tmp_path), classes=[DataClassDummy])
+    raw_list = [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+    
+    result = mgr._deserialize(raw_list)
+    assert isinstance(result, list)
+    assert isinstance(result[0], DataClassDummy)
+    assert result[1].a == 3
+
+def test_deserialize_fallback_on_error(tmp_path):
+    """역직렬화 시도 중 에러 발생 시 딕셔너리로 반환 (혹은 다음 클래스 시도)"""
+    # PydanticDummy requires x(int), y(str). Provide wrong types to cause validation error.
+    mgr = _mk_manager(str(tmp_path), classes=[PydanticDummy])
+    
+    raw_data = {"x": "not_int", "y": 123} # Invalid types
+    
+    # Should fail Pydantic validation and return raw dict (recursive)
+    res = mgr._deserialize(raw_data)
+    assert isinstance(res, dict)
+    assert res["x"] == "not_int"
+
+def test_set_save_to_file_false(tmp_path):
+    """save_to_file=False일 때 저장 안 함"""
+    mgr = _mk_manager(str(tmp_path))
+    mgr.set("no_save", {"a": 1}, save_to_file=False)
+    assert not mgr.exists("no_save")
+
+def test_set_exception_logging(tmp_path):
+    """set 중 예외 발생 시 로깅"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    # json.dumps 실패 유도 (직렬화 불가능 객체)
+    class Unserializable:
+        pass
+        
+    mgr.set("error_key", Unserializable(), save_to_file=True)
+    logger.error.assert_called()
+    assert "DB cache 저장 실패" in logger.error.call_args[0][0]
+
+def test_delete_exception_logging(tmp_path):
+    """delete 중 예외 발생 시 로깅"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    mgr._conn.close()
+    mgr._conn = MagicMock()
+    mgr._conn.execute.side_effect = sqlite3.Error("Delete Error")
+    mgr.delete("some_key")
+        
+    logger.error.assert_called()
+    assert "DB cache 삭제 실패" in logger.error.call_args[0][0]
+
+def test_clear_exception_logging(tmp_path):
+    """clear 중 예외 발생 시 로깅"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    mgr._conn.close()
+    mgr._conn = MagicMock()
+    mgr._conn.execute.side_effect = sqlite3.Error("Clear Error")
+    mgr.clear()
+
+    logger.error.assert_called()
+    assert "전체 DB 캐시 삭제 실패" in logger.error.call_args[0][0]
+
+def test_cleanup_exception_logging(tmp_path):
+    """cleanup 중 예외 발생 시 로깅"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    mgr._conn.close()
+    mgr._conn = MagicMock()
+    mgr._conn.execute.side_effect = sqlite3.Error("Cleanup Error")
+    mgr.cleanup_old_files()
+
+    logger.error.assert_called()
+    assert "DB 캐시 정리 실패" in logger.error.call_args[0][0]
+
+def test_get_raw_exception_logging(tmp_path):
+    """get_raw 중 예외 발생 시 로깅"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+    
+    mgr._conn.close()
+    mgr._conn = MagicMock()
+    mgr._conn.execute.side_effect = sqlite3.Error("Select Error")
+    res = mgr.get_raw("key")
+
+    assert res is None
+    logger.error.assert_called()
+    assert "[DBCache] Load Error" in logger.error.call_args[0][0]
+
+def test_exists_exception_handling(tmp_path):
+    """exists 중 예외 발생 시 False 반환"""
+    mgr = _mk_manager(str(tmp_path))
+    
+    mgr._conn.close()
+    mgr._conn = MagicMock()
+    mgr._conn.execute.side_effect = sqlite3.Error("Exists Error")
+    assert mgr.exists("key") is False
+
+def test_del_closes_connection(tmp_path):
+    """__del__ 호출 시 연결 종료 확인"""
+    mgr = _mk_manager(str(tmp_path))
+    # Replace real connection with mock to verify close call
+    mgr._conn.close()
+    mgr._conn = MagicMock()
+    
+    mgr.__del__()
+    mgr._conn.close.assert_called_once()

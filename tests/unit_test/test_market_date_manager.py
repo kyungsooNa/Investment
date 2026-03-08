@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime, timedelta
 from managers.market_date_manager import MarketDateManager
 from common.types import ResCommonResponse
@@ -126,4 +126,89 @@ async def test_get_latest_trading_date_exception(manager, mock_deps, mock_broker
     
     assert result is None
     # Check if warning logged in _fetch_from_api
-    logger.warning.assert_called() 
+    logger.warning.assert_called()
+
+def test_init_default_logger(mock_deps):
+    """로거 없이 초기화 시 기본 로거 생성 확인"""
+    tm, _ = mock_deps
+    manager = MarketDateManager(tm)
+    assert manager._logger is not None
+
+@pytest.mark.asyncio
+async def test_fetch_from_api_broker_structure_mismatch(manager, mock_deps):
+    """Broker 구조가 예상과 다를 때 (속성 누락) None 반환"""
+    tm, logger = mock_deps
+    
+    # 1. Broker has no _client
+    broker = MagicMock()
+    del broker._client 
+    manager.set_broker(broker)
+    
+    result = await manager.get_latest_trading_date()
+    assert result is None
+    
+    # 2. Broker has _client but no _quotations
+    broker = MagicMock()
+    broker._client = MagicMock()
+    del broker._client._quotations
+    manager.set_broker(broker)
+    
+    result = await manager.get_latest_trading_date()
+    assert result is None
+
+@pytest.mark.asyncio
+async def test_fetch_from_api_not_wrapped(manager, mock_deps):
+    """ClientWithCache로 래핑되지 않은 경우 직접 사용"""
+    tm, logger = mock_deps
+    
+    # Raw quotations mock
+    raw_quotations = AsyncMock()
+    # Ensure it doesn't look like a wrapper (no _client attribute)
+    del raw_quotations._client
+    
+    mock_resp = ResCommonResponse(
+        rt_cd="0", msg1="OK", 
+        data=[{"stck_bsop_date": "20250105"}]
+    )
+    raw_quotations.inquire_daily_itemchartprice.return_value = mock_resp
+    
+    # Broker setup
+    kis_client = MagicMock()
+    kis_client._quotations = raw_quotations
+    broker = MagicMock()
+    broker._client = kis_client
+    
+    manager.set_broker(broker)
+    
+    result = await manager.get_latest_trading_date()
+    assert result == "20250105"
+
+@pytest.mark.asyncio
+async def test_fetch_from_api_empty_data(manager, mock_deps, mock_broker):
+    """API 응답 데이터가 비어있을 때"""
+    tm, logger = mock_deps
+    broker, raw_quotations = mock_broker
+    manager.set_broker(broker)
+    
+    # Empty data list
+    mock_resp = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    raw_quotations.inquire_daily_itemchartprice.return_value = mock_resp
+    
+    result = await manager.get_latest_trading_date()
+    assert result is None
+
+@pytest.mark.asyncio
+async def test_get_latest_trading_date_outer_exception(manager, mock_deps):
+    """get_latest_trading_date 내부 try-except 블록 테스트"""
+    tm, logger = mock_deps
+    
+    # Broker 설정 (초기 체크 통과용)
+    manager.set_broker(MagicMock())
+    
+    # _fetch_from_api가 예외를 던지도록 모킹 (내부 예외 처리가 아닌 외부 예외 처리 테스트)
+    with patch.object(manager, '_fetch_from_api', side_effect=Exception("Critical Error")):
+        result = await manager.get_latest_trading_date()
+        
+        assert result is None
+        logger.error.assert_called()
+        assert "Failed to fetch latest trading date" in logger.error.call_args[0][0]
