@@ -740,3 +740,283 @@ async def test_get_chart_indicators_cache_miss_none_return(indicator_service):
     # 캐시 미스 처리되어 전체 계산 후 저장되었는지 확인
     mock_cache.set.assert_called()
     assert len(result.data['ma5']) == 150
+
+def test_compute_ma_logic():
+    """_compute_ma 정적 메서드의 SMA/EMA 계산 로직 검증"""
+    # Arrange
+    data = {"close": [10.0, 20.0, 30.0, 40.0, 50.0]}
+    df = pd.DataFrame(data)
+    
+    # Act 1: SMA (Simple Moving Average)
+    # Period 3: (10+20+30)/3 = 20, (20+30+40)/3 = 30, ...
+    df_sma = IndicatorService._compute_ma(df.copy(), period=3, method="sma", target_col="sma_3")
+    
+    # Assert SMA
+    # 처음 period-1 개는 NaN이어야 함
+    assert pd.isna(df_sma["sma_3"].iloc[0])
+    assert pd.isna(df_sma["sma_3"].iloc[1])
+    # 이후 값 검증
+    assert df_sma["sma_3"].iloc[2] == 20.0
+    assert df_sma["sma_3"].iloc[3] == 30.0
+    assert df_sma["sma_3"].iloc[4] == 40.0
+    
+    # Act 2: EMA (Exponential Moving Average)
+    # Period 3 (span=3) -> alpha = 2/(3+1) = 0.5 (pandas ewm adjust=False 기준)
+    # y0 = 10
+    # y1 = 0.5*20 + 0.5*10 = 15
+    # y2 = 0.5*30 + 0.5*15 = 22.5
+    # y3 = 0.5*40 + 0.5*22.5 = 31.25
+    # y4 = 0.5*50 + 0.5*31.25 = 40.625
+    df_ema = IndicatorService._compute_ma(df.copy(), period=3, method="ema", target_col="ema_3")
+    
+    # Assert EMA
+    assert df_ema["ema_3"].iloc[0] == 10.0
+    assert df_ema["ema_3"].iloc[1] == 15.0
+    assert df_ema["ema_3"].iloc[2] == 22.5
+    assert df_ema["ema_3"].iloc[3] == 31.25
+    assert df_ema["ema_3"].iloc[4] == 40.625
+
+@pytest.mark.asyncio
+async def test_cache_key_changes_on_parameter_change(indicator_service):
+    """지표 파라미터 변경 시 캐시 키 변경 확인 테스트"""
+    service, mock_ts = indicator_service
+    mock_cache = service.cache_manager
+    
+    # 데이터 준비 (캐싱 조건 충족을 위해 충분한 데이터)
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i} for i in range(30)]
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+    
+    # 1. MA Period 변경 테스트
+    # Period 5
+    mock_cache.get_raw.return_value = None # Cache Miss
+    await service.get_moving_average("005930", period=5)
+    
+    # 첫 번째 호출의 캐시 키 확인
+    args_5, _ = mock_cache.get_raw.call_args
+    key_5 = args_5[0]
+    assert "ma_005930_5_sma" in key_5
+    
+    # Period 10
+    mock_cache.get_raw.reset_mock()
+    await service.get_moving_average("005930", period=10)
+    
+    args_10, _ = mock_cache.get_raw.call_args
+    key_10 = args_10[0]
+    assert "ma_005930_10_sma" in key_10
+    
+    assert key_5 != key_10
+    
+    # 2. BB Std Dev 변경 테스트
+    mock_cache.get_raw.reset_mock()
+    
+    # Std Dev 2.0
+    await service.get_bollinger_bands("005930", period=20, std_dev=2.0)
+    args_20, _ = mock_cache.get_raw.call_args
+    key_20 = args_20[0]
+    assert "bb_005930_20_2.0" in key_20
+    
+    # Std Dev 2.5
+    mock_cache.get_raw.reset_mock()
+    await service.get_bollinger_bands("005930", period=20, std_dev=2.5)
+    args_25, _ = mock_cache.get_raw.call_args
+    key_25 = args_25[0]
+    assert "bb_005930_20_2.5" in key_25
+    
+    assert key_20 != key_25
+
+def test_compute_ma_logic():
+    """_compute_ma 정적 메서드의 SMA/EMA 계산 로직 검증"""
+    data = {"close": [10.0, 20.0, 30.0, 40.0, 50.0]}
+    df = pd.DataFrame(data)
+    
+    # SMA
+    df_sma = IndicatorService._compute_ma(df.copy(), period=3, method="sma", target_col="sma_3")
+    assert pd.isna(df_sma["sma_3"].iloc[1])
+    assert df_sma["sma_3"].iloc[2] == 20.0
+    
+    # EMA
+    df_ema = IndicatorService._compute_ma(df.copy(), period=3, method="ema", target_col="ema_3")
+    assert df_ema["ema_3"].iloc[0] == 10.0
+    assert df_ema["ema_3"].iloc[1] == 15.0
+
+def test_compute_bb_logic():
+    """_compute_bb 정적 메서드 로직 검증"""
+    data = {"close": [100, 110, 120, 130, 140]}
+    df = pd.DataFrame(data)
+    
+    df_bb = IndicatorService._compute_bb(df.copy(), period=3, std_dev=2.0, prefix="bb")
+    
+    assert df_bb["bb_middle"].iloc[2] == 110.0
+    assert df_bb["bb_upper"].iloc[2] == 130.0
+    assert df_bb["bb_lower"].iloc[2] == 90.0
+
+def test_compute_rsi_logic():
+    """_compute_rsi 정적 메서드 로직 검증"""
+    data = {"close": [100, 110, 120, 130, 140, 150]}
+    df = pd.DataFrame(data)
+    
+    df_rsi = IndicatorService._compute_rsi(df.copy(), period=2, target_col="rsi")
+    
+    assert "rsi" in df_rsi.columns
+    assert df_rsi["rsi"].iloc[-1] > 90.0
+
+@pytest.mark.asyncio
+async def test_cache_key_changes_on_data_update(indicator_service):
+    """데이터의 마지막 날짜가 변경되었을 때 캐시 키가 변경되는지 확인"""
+    service, mock_ts = indicator_service
+    mock_cache = service.cache_manager
+    
+    # 데이터 1: 20250101 ~ 20250129 (29일치) -> confirmed: ~20250128
+    data1 = [{"date": f"202501{i+1:02d}", "close": 10000 + i} for i in range(29)]
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data1
+    )
+    
+    mock_cache.get_raw.return_value = None # Cache Miss
+    await service.get_moving_average("005930", period=5)
+    
+    args1, _ = mock_cache.get_raw.call_args
+    key1 = args1[0]
+    # key format: ma_{code}_{period}_{method}_{date}
+    # confirmed last date is 20250128
+    assert "20250128" in key1
+    
+    # 데이터 2: 20250101 ~ 20250130 (30일치) -> confirmed: ~20250129
+    data2 = [{"date": f"202501{i+1:02d}", "close": 10000 + i} for i in range(30)]
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data2
+    )
+    
+    mock_cache.get_raw.reset_mock()
+    await service.get_moving_average("005930", period=5)
+    
+    args2, _ = mock_cache.get_raw.call_args
+    key2 = args2[0]
+    assert "20250129" in key2
+    
+    assert key1 != key2
+
+def test_compute_bb_logic():
+    """_compute_bb 정적 메서드 로직 검증"""
+    data = {"close": [100, 110, 120, 130, 140]}
+    df = pd.DataFrame(data)
+    
+    # Period 3, Std 2.0
+    # 0: NaN
+    # 1: NaN
+    # 2: Mean(100,110,120)=110, Std(100,110,120)=10.0
+    #    Upper = 110 + 2*10 = 130
+    #    Lower = 110 - 2*10 = 90
+    df_bb = IndicatorService._compute_bb(df.copy(), period=3, std_dev=2.0, prefix="bb")
+    
+    assert "bb_middle" in df_bb.columns
+    assert "bb_upper" in df_bb.columns
+    assert "bb_lower" in df_bb.columns
+    
+    assert pd.isna(df_bb["bb_middle"].iloc[1])
+    assert df_bb["bb_middle"].iloc[2] == 110.0
+    assert df_bb["bb_upper"].iloc[2] == 130.0
+    assert df_bb["bb_lower"].iloc[2] == 90.0
+
+def test_compute_rsi_logic():
+    """_compute_rsi 정적 메서드 로직 검증"""
+    # 상승 추세 데이터
+    data = {"close": [100, 110, 120, 130, 140, 150]}
+    df = pd.DataFrame(data)
+    
+    # Period 2
+    df_rsi = IndicatorService._compute_rsi(df.copy(), period=2, target_col="rsi")
+    
+    assert "rsi" in df_rsi.columns
+    # 지속 상승이므로 RSI는 100에 가까워야 함
+    assert df_rsi["rsi"].iloc[-1] > 90.0
+
+@pytest.mark.asyncio
+async def test_caching_behavior_hit_and_miss(indicator_service):
+    """캐시 히트/미스 동작 검증"""
+    service, mock_ts = indicator_service
+    mock_cache = service.cache_manager
+    
+    # 데이터 준비 (30일치)
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i} for i in range(30)]
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+    
+    # 1. Cache Miss
+    mock_cache.get_raw.return_value = None
+    
+    await service.get_moving_average("005930", period=5)
+    
+    # 캐시 저장 호출 확인
+    mock_cache.set.assert_called_once()
+    
+    # 2. Cache Hit
+    # 저장된 것과 유사한 구조의 데이터 반환 설정
+    # confirmed_data는 data[:-1] (29개)
+    cached_data = [{"date": f"202501{i+1:02d}", "close": 10000 + i, "ma": 10000} for i in range(29)]
+    cached_data = [{"code": "005930", "date": f"202501{i+1:02d}", "close": 10000 + i, "ma": 10000} for i in range(29)]
+    mock_cache.get_raw.return_value = ({"data": cached_data}, "memory")
+    
+    mock_cache.set.reset_mock()
+    
+    result = await service.get_moving_average("005930", period=5)
+    
+    # 캐시 히트 시 set은 호출되지 않아야 함 (증분 계산만 수행하고 리턴)
+    mock_cache.set.assert_not_called()
+    
+    # 결과는 30개여야 함 (캐시된 29개 + 오늘 1개)
+    assert len(result.data) == 30
+    assert result.data[-1].date == "20250130"
+
+@pytest.mark.asyncio
+async def test_cache_key_changes_on_parameter_change(indicator_service):
+    """지표 파라미터 변경 시 캐시 키 변경 확인 테스트"""
+    service, mock_ts = indicator_service
+    mock_cache = service.cache_manager
+    
+    # 데이터 준비 (캐싱 조건 충족을 위해 충분한 데이터)
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i} for i in range(30)]
+    mock_ts.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+    
+    # 1. MA Period 변경 테스트
+    # Period 5
+    mock_cache.get_raw.return_value = None # Cache Miss
+    await service.get_moving_average("005930", period=5)
+    
+    # 첫 번째 호출의 캐시 키 확인
+    args_5, _ = mock_cache.get_raw.call_args
+    key_5 = args_5[0]
+    assert "ma_005930_5_sma" in key_5
+    
+    # Period 10
+    mock_cache.get_raw.reset_mock()
+    await service.get_moving_average("005930", period=10)
+    
+    args_10, _ = mock_cache.get_raw.call_args
+    key_10 = args_10[0]
+    assert "ma_005930_10_sma" in key_10
+    
+    assert key_5 != key_10
+    
+    # 2. BB Std Dev 변경 테스트
+    mock_cache.get_raw.reset_mock()
+    
+    # Std Dev 2.0
+    await service.get_bollinger_bands("005930", period=20, std_dev=2.0)
+    args_20, _ = mock_cache.get_raw.call_args
+    key_20 = args_20[0]
+    assert "bb_005930_20_2.0" in key_20
+    
+    # Std Dev 2.5
+    mock_cache.get_raw.reset_mock()
+    await service.get_bollinger_bands("005930", period=20, std_dev=2.5)
+    args_25, _ = mock_cache.get_raw.call_args
+    key_25 = args_25[0]
+    assert "bb_005930_20_2.5" in key_25
+    
+    assert key_20 != key_25
