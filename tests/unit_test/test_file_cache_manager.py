@@ -425,10 +425,15 @@ def test_cleanup_old_files_ohlcv_retention(tmp_path):
     f3 = tmp_path / "ohlcv_past_000660.json"
     f3.write_text("{}")
     os.utime(str(f3), (now - 400 * day, now - 400 * day))
+
+    # 4. 지표 데이터 (100일 전 -> 유지 대상)
+    f4 = tmp_path / "indicators_chart_005930_20250101.json"
+    f4.write_text("{}")
+    os.utime(str(f4), (now - 100 * day, now - 100 * day))
     
     mgr.cleanup_old_files(days=7)
     
     assert not f1.exists()
     assert f2.exists()
     assert not f3.exists()
-
+    assert f4.exists()

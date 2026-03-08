@@ -28,6 +28,7 @@ from services.background_service import BackgroundService
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
 from view.web import web_api  # 임포트 확인
+from core.cache.cache_manager import CacheManager
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
@@ -60,11 +61,19 @@ class WebAppContext:
         """설정 파일 로드 및 환경 초기화."""
         config_data = load_configs()
         self.full_config = config_data  # 전체 설정 저장
-        self.env = KoreaInvestApiEnv(config_data, self.logger)
+
+        # Pydantic 모델(AppConfig)을 dict로 변환
+        config_dict = config_data
+        if hasattr(config_data, "model_dump"):
+            config_dict = config_data.model_dump()
+        elif hasattr(config_data, "dict"):
+            config_dict = config_data.dict()
+
+        self.env = KoreaInvestApiEnv(config_dict, self.logger)
         self.time_manager = TimeManager(
-            market_open_time=config_data.get('market_open_time', "09:00"),
-            market_close_time=config_data.get('market_close_time', "15:30"),
-            timezone=config_data.get('market_timezone', "Asia/Seoul"),
+            market_open_time=config_dict.get('market_open_time', "09:00"),
+            market_close_time=config_dict.get('market_close_time', "15:30"),
+            timezone=config_dict.get('market_timezone', "Asia/Seoul"),
             logger=self.logger
         )
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
@@ -99,12 +108,25 @@ class WebAppContext:
         # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
         self.market_date_manager.set_broker(self.broker)
         
+        # 캐시 매니저 생성
+        # Pydantic 모델(AppConfig)을 dict로 변환하여 전달
+        config_dict = self.full_config
+        if hasattr(config_dict, "model_dump"):
+            config_dict = config_dict.model_dump()
+        elif hasattr(config_dict, "dict"):
+            config_dict = config_dict.dict()
+
+        cache_manager = CacheManager(config_dict)
+        cache_manager.set_logger(self.logger)
+
+
         self.trading_service = TradingService(
-            self.broker, self.env, self.logger, self.time_manager,
+            self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager
             market_date_manager=self.market_date_manager
         )
+
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
-        self.indicator_service = IndicatorService()
+        self.indicator_service = IndicatorService(cache_manager=cache_manager)
         self.background_service = BackgroundService(
             broker_api_wrapper=self.broker,
             stock_code_mapper=self.stock_code_mapper,

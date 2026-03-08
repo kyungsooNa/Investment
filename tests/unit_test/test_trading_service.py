@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timedelta
 from services.trading_service import TradingService
 from common.types import ErrorCode, ResCommonResponse, ResFluctuation, ResBasicStockInfo
+from types import SimpleNamespace
 
 # --- Pytest Fixtures (새로운 테스트용) ---
 @pytest.fixture
@@ -23,20 +24,32 @@ def mock_deps():
     logger = MagicMock()
     cache_manager = MagicMock()  # Added cache_manager mock
 
-    return broker, env, tm, logger, cache_manager  # Return 5 items
+    return SimpleNamespace(
+        broker=broker,
+        env=env,
+        tm=tm,
+        logger=logger,
+        cache_manager=cache_manager
+    )
 
 @pytest.fixture
 def trading_service_fixture(mock_deps):
-    broker, env, tm, logger, cache_manager = mock_deps
+    # broker, env, tm, logger, cache_manager = mock_deps
     # TradingService currently doesn't accept cache_manager in __init__ based on provided context,
     # but we pass what it accepts.
-    service = TradingService(broker, env, time_manager=tm, logger=logger)
+    service = TradingService(
+        broker_api_wrapper=mock_deps.broker,
+        env=mock_deps.env,
+        time_manager=mock_deps.tm,
+        logger=mock_deps.logger,
+        cache_manager=mock_deps.cache_manager
+    )
     return service
 
 @pytest.mark.asyncio
 async def test_fetch_past_daily_ohlcv(trading_service_fixture, mock_deps):
     """과거 데이터 반복 조회 및 병합 테스트"""
-    broker, _, _, _, _ = mock_deps  # Unpack 5 items
+    broker = mock_deps.broker
     trading_service = trading_service_fixture
     
     # Mock 설정: 2번의 호출에 대해 각각 다른 과거 데이터를 반환
@@ -67,7 +80,9 @@ async def test_fetch_past_daily_ohlcv(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     """get_ohlcv 메서드의 캐싱 동작 검증"""
-    broker, _, tm, _, _ = mock_deps  # Unpack 5 items
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    cache_manager = mock_deps.cache_manager
     trading_service = trading_service_fixture
     
     # 1. 초기 상태: 캐시 없음
@@ -82,6 +97,9 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
         "stck_prpr": "1010", "acml_vol": "500"
     }
     
+    # 캐시 미스 설정
+    cache_manager.get_raw.return_value = None
+
     broker.inquire_daily_itemchartprice.side_effect = [
         # _fetch_past_daily_ohlcv 내부 호출 (1회차)
         ResCommonResponse(rt_cd="0", msg1="", data=past_data),
@@ -99,8 +117,10 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     
     assert resp1.rt_cd == "0"
     assert len(resp1.data) == 2 # 과거1 + 오늘1
-    assert "005930" in trading_service._daily_ohlcv_cache
-    assert trading_service._daily_ohlcv_cache["005930"]["base_date"] == "20250102"
+    
+    # 캐시 저장 호출 확인
+    cache_manager.set.assert_called()
+    assert "ohlcv_past_005930" in cache_manager.set.call_args[0][0]
     
     # [수정] API 호출 횟수 확인 (과거조회 2회)
     assert broker.inquire_daily_itemchartprice.call_count == 2
@@ -113,6 +133,15 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     broker.inquire_daily_itemchartprice.call_count = 0 # 카운트 리셋
     broker.get_current_price.call_count = 0
     
+    # 캐시 히트 설정 (오늘 날짜 20250102)
+    # [수정] OHLCV 비교 로직을 위해 필수 키(open, high, low, close, volume) 포함
+    cached_item = {"date": "20250101", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}
+    cached_data = {'base_date': '20250102', 'data': [cached_item]}
+    cache_manager.get_raw.return_value = (
+        {'data': cached_data, 'timestamp': '...'}, 
+        'memory'
+    )
+
     # Act 2: 두 번째 호출
     resp2 = await trading_service.get_ohlcv("005930", period="D")
     
@@ -129,11 +158,13 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     # 날짜 변경 시뮬레이션 (2025-01-05)
     tm.get_current_kst_time.return_value = datetime(2025, 1, 5, 10, 0, 0)
     
-    # 기존 캐시 (20250101까지) - _daily_ohlcv_cache 직접 조작
-    trading_service._daily_ohlcv_cache["005930"] = {
-        'base_date': '20250102', # 이전 날짜
-        'data': [{"date": "20250101", "close": 1000.0}]
-    }
+    # 캐시 히트하지만 날짜가 다름 (base_date: 20250102 != today: 20250105)
+    cached_item_old = {"date": "20250101", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}
+    cached_data_old = {'base_date': '20250102', 'data': [cached_item_old]}
+    cache_manager.get_raw.return_value = (
+        {'data': cached_data_old, 'timestamp': '...'}, 
+        'memory'
+    )
     
     # API 응답 Mock (전체 재조회)
     broker.inquire_daily_itemchartprice.side_effect = [
@@ -155,7 +186,9 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_ohlcv_full_fetch_on_large_gap(trading_service_fixture, mock_deps):
     """get_ohlcv: 캐시 갭이 100일 이상일 때 전체 재조회 수행 테스트"""
-    broker, _, tm, _, cache_manager = mock_deps # Unpack 5 items
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    cache_manager = mock_deps.cache_manager
     trading_service = trading_service_fixture
     
     # 1. 날짜 설정 (오늘: 2025-06-01)
@@ -164,11 +197,12 @@ async def test_get_ohlcv_full_fetch_on_large_gap(trading_service_fixture, mock_d
     
     # 2. 캐시 설정 (마지막 데이터: 2024-12-01, 약 6개월 전 -> 100일 이상 차이)
     # TradingService uses _daily_ohlcv_cache, not cache_manager
-    trading_service._daily_ohlcv_cache["005930"] = {
-        'base_date': '20241202',
-        'data': [{"date": "20241201", "close": 1000.0}]
-    }
-    
+    cached_item = {"date": "20241201", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}
+    cache_manager.get_raw.return_value = (
+        {'data': {'base_date': '20241202', 'data': [cached_item]}, 'timestamp': '...'},
+        'memory'
+    )
+
     # 3. API 응답 설정
     # 전체 재조회 시 _fetch_past_daily_ohlcv가 호출되고, 이는 inquire_daily_itemchartprice를 호출함
     # 여기서는 루프가 한 번만 돌고 끝나도록 설정 (데이터 반환)
@@ -184,29 +218,36 @@ async def test_get_ohlcv_full_fetch_on_large_gap(trading_service_fixture, mock_d
     )
 
     # Act
-    await trading_service.get_ohlcv("005930", period="D")
+    # [Fix] DynamicConfig 값을 모킹하여 테스트 환경을 고정 (기본값 100일 가정)
+    with patch("services.trading_service.DynamicConfig") as mock_config:
+        mock_config.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE = 100
+        await trading_service.get_ohlcv("005930", period="D")
     
-    # Assert
-    # inquire_daily_itemchartprice가 호출되었는지 확인
-    assert broker.inquire_daily_itemchartprice.called
-    
-    # 호출 인자 확인
-    # 증분 업데이트라면 start_date가 last_cached_date + 1일 ("20241202") 이어야 함.
-    # 전체 재조회라면 start_date가 yesterday(20250531) - 100일 ("20250220") 이어야 함.
-    args, kwargs = broker.inquire_daily_itemchartprice.call_args_list[0]
-    start_date_arg = kwargs['start_date']
-    
-    # 증분 업데이트가 아님을 확인 (20241202가 아님)
-    assert start_date_arg != "20241202"
-    
-    # 전체 재조회 로직(어제 기준 100일 전)을 따랐는지 확인
-    # 20250531 - 100 days = 20250220
-    assert start_date_arg == "20250220"
+        # Assert
+        # inquire_daily_itemchartprice가 호출되었는지 확인
+        assert broker.inquire_daily_itemchartprice.called
+        
+        # 호출 인자 확인
+        # 증분 업데이트라면 start_date가 last_cached_date + 1일 ("20241202") 이어야 함.
+        # 전체 재조회라면 start_date가 yesterday(20250531) - 100일 ("20250220") 이어야 함.
+        # 루프가 돌아서 여러 번 호출될 수 있으므로 첫 번째 호출을 확인
+        first_call = broker.inquire_daily_itemchartprice.call_args_list[0]
+        _, kwargs = first_call
+        start_date_arg = kwargs['start_date']
+        
+        # 증분 업데이트가 아님을 확인 (20241202가 아님)
+        assert start_date_arg != "20241202"
+        
+        # 전체 재조회 로직(어제 기준 100일 전)을 따랐는지 확인
+        # 20250531 - 100 days = 20250220
+        assert start_date_arg == "20250220"
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_skip_today_api_if_cached_and_closed(trading_service_fixture, mock_deps):
     """장 마감 후이고 캐시에 오늘 데이터가 있으면 오늘 데이터 API 호출 스킵"""
-    broker, _, tm, _, _ = mock_deps # Unpack 5 items
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    cache_manager = mock_deps.cache_manager
     trading_service = trading_service_fixture
     
     # 1. 장 마감 시간 설정 (18:00)
@@ -216,13 +257,13 @@ async def test_get_ohlcv_skip_today_api_if_cached_and_closed(trading_service_fix
     # 2. 캐시 설정 (오늘 20250102 데이터 포함)
     today_str = "20250102"
     cached_data = [
-        {"date": "20250101", "close": 1000.0},
-        {"date": today_str, "close": 1010.0}
+        {"date": "20250101", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100},
+        {"date": today_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100}
     ]
-    trading_service._daily_ohlcv_cache["005930"] = {
-        'base_date': today_str,
-        'data': cached_data
-    }
+    cache_manager.get_raw.return_value = (
+        {'data': {'base_date': today_str, 'data': cached_data}, 'timestamp': '...'},
+        'memory'
+    )
     
     # 3. 호출
     resp = await trading_service.get_ohlcv("005930", period="D")
@@ -237,7 +278,9 @@ async def test_get_ohlcv_skip_today_api_if_cached_and_closed(trading_service_fix
 @pytest.mark.asyncio
 async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_fixture, mock_deps):
     """장 중일 때 과거 데이터는 캐시를 사용하고 오늘 데이터만 API 호출하는지 검증"""
-    broker, _, tm, _, _ = mock_deps # Unpack 5 items
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    cache_manager = mock_deps.cache_manager
     trading_service = trading_service_fixture
     
     # 1. 장 중 시간 설정 (2025-01-02 10:00:00)
@@ -248,13 +291,13 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
     # 2. 캐시 설정 (어제인 2025-01-01까지 데이터 있음)
     yesterday_str = "20250101"
     cached_past_data = [
-        {"date": "20241231", "open": 990.0, "high": 1005.0, "low": 985.0, "close": 1000.0, "volume": 300},
-        {"date": yesterday_str, "open": 1000.0, "high": 1015.0, "low": 995.0, "close": 1010.0, "volume": 400}
+        {"date": "20241231", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100},
+        {"date": yesterday_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100}
     ]
-    trading_service._daily_ohlcv_cache["005930"] = {
-        'base_date': "20250102", # base_date matches today
-        'data': cached_past_data
-    }
+    cache_manager.get_raw.return_value = (
+        {'data': {'base_date': '20250102', 'data': cached_past_data}, 'timestamp': '...'},
+        'memory'
+    )
     
     # 3. 현재가 API Mock (오늘 데이터)
     broker.get_current_price.return_value = ResCommonResponse(
@@ -280,7 +323,8 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
 @pytest.mark.asyncio
 async def test_get_ohlcv_current_price_exception(trading_service_fixture, mock_deps):
     """get_ohlcv: 현재가 조회 중 예외 발생 시 무시하고 과거 데이터만 반환"""
-    broker, _, tm, _, _ = mock_deps
+    broker = mock_deps.broker
+    cache_manager = mock_deps.cache_manager
     service = trading_service_fixture
     
     # 과거 데이터
@@ -299,7 +343,9 @@ async def test_get_ohlcv_current_price_exception(trading_service_fixture, mock_d
 @pytest.mark.asyncio
 async def test_get_ohlcv_weekend_filtering(trading_service_fixture, mock_deps):
     """get_ohlcv: 주말(토/일)에는 현재가 API가 데이터를 반환해도 제외"""
-    broker, _, tm, _, _ = mock_deps
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    cache_manager = mock_deps.cache_manager
     service = trading_service_fixture
     
     # 토요일로 설정 (2025-01-04)
@@ -324,7 +370,9 @@ async def test_get_ohlcv_weekend_filtering(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_ohlcv_duplicate_filtering(trading_service_fixture, mock_deps):
     """get_ohlcv: 휴장일 등으로 현재가 데이터가 과거 마지막 데이터와 동일하면 중복 제거"""
-    broker, _, tm, _, _ = mock_deps
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    cache_manager = mock_deps.cache_manager
     service = trading_service_fixture
     
     # 평일 (2025-01-02 목요일)
@@ -350,7 +398,9 @@ async def test_get_ohlcv_duplicate_filtering(trading_service_fixture, mock_deps)
 @pytest.mark.asyncio
 async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
     """get_ohlcv: 현재가 API 응답이 객체(dataclass 등)일 때 처리"""
-    broker, _, tm, _, _ = mock_deps
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    cache_manager = mock_deps.cache_manager
     service = trading_service_fixture
     
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
@@ -375,9 +425,9 @@ async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_current_stock_price(trading_service_fixture, mock_deps):
     """현재가 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={})
-
+    
     resp = await trading_service_fixture.get_current_stock_price("005930")
     assert resp.rt_cd == "0"
     broker.get_current_price.assert_awaited_once_with("005930")
@@ -385,7 +435,7 @@ async def test_get_current_stock_price(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_ohlcv_range(trading_service_fixture, mock_deps):
     """기간별 OHLCV 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     
     resp = await trading_service_fixture.get_ohlcv_range("005930", start_date="20250101", end_date="20250110")
@@ -395,7 +445,7 @@ async def test_get_ohlcv_range(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_asking_price(trading_service_fixture, mock_deps):
     """호가 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.get_asking_price = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_asking_price("005930")
@@ -405,7 +455,7 @@ async def test_get_asking_price(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_time_concluded_prices(trading_service_fixture, mock_deps):
     """시간대별 체결가 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.get_time_concluded_prices = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_time_concluded_prices("005930")
@@ -415,7 +465,7 @@ async def test_get_time_concluded_prices(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_etf_info(trading_service_fixture, mock_deps):
     """ETF 정보 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.get_etf_info = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_etf_info("005930")
@@ -425,7 +475,7 @@ async def test_get_etf_info(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_websocket_connection_methods(trading_service_fixture, mock_deps):
     """웹소켓 연결/해제 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.connect_websocket = AsyncMock(return_value=True)
     broker.disconnect_websocket = AsyncMock(return_value=True)
     
@@ -439,7 +489,7 @@ async def test_websocket_connection_methods(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_websocket_subscription_methods(trading_service_fixture, mock_deps):
     """웹소켓 구독/해제 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.subscribe_realtime_price = AsyncMock(return_value=True)
     broker.unsubscribe_realtime_price = AsyncMock(return_value=True)
     broker.subscribe_realtime_quote = AsyncMock(return_value=True)
@@ -462,7 +512,8 @@ async def test_websocket_subscription_methods(trading_service_fixture, mock_deps
 @pytest.mark.asyncio
 async def test_handle_realtime_stream(trading_service_fixture, mock_deps):
     """실시간 스트림 처리 로직 테스트"""
-    broker, _, tm, _, _ = mock_deps
+    broker = mock_deps.broker
+    tm = mock_deps.tm
     broker.connect_websocket = AsyncMock(return_value=True)
     broker.subscribe_realtime_price = AsyncMock(return_value=True)
     broker.unsubscribe_realtime_price = AsyncMock(return_value=True)
@@ -494,7 +545,6 @@ async def test_handle_realtime_stream(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_default_realtime_message_handler(trading_service_fixture, mock_deps):
     """실시간 메시지 핸들러 테스트"""
-    _, _, _, _, _ = mock_deps
     service = trading_service_fixture
     
     # 1. realtime_price
@@ -596,7 +646,7 @@ def test_normalize_ohlcv_rows(trading_service_fixture):
 def test_calc_range_by_period(trading_service_fixture, mock_deps):
     """기간별 날짜 계산 로직 테스트"""
     service = trading_service_fixture
-    _, _, tm, _, _ = mock_deps
+    tm = mock_deps.tm
     
     # Mock current time
     base_dt = datetime(2025, 6, 1)
@@ -631,7 +681,7 @@ def test_calc_range_by_period(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_ohlcv_non_daily(trading_service_fixture, mock_deps):
     """일봉이 아닌(주봉/월봉) OHLCV 조회 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     service = trading_service_fixture
     
     # Mock API response
@@ -652,7 +702,7 @@ async def test_get_ohlcv_non_daily(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_all_stocks_code_error(trading_service_fixture, mock_deps):
     """전체 종목 코드 조회 실패 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     service = trading_service_fixture
     
     broker.get_all_stock_code_list.side_effect = Exception("API Error")
@@ -665,7 +715,7 @@ async def test_get_all_stocks_code_error(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_all_stocks_code_invalid_type(trading_service_fixture, mock_deps):
     """전체 종목 코드 조회 반환 타입 오류 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     service = trading_service_fixture
     
     broker.get_all_stock_code_list = AsyncMock(return_value="Not a list")
@@ -678,7 +728,7 @@ async def test_get_all_stocks_code_invalid_type(trading_service_fixture, mock_de
 @pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_with_start_date(trading_service_fixture, mock_deps):
     """get_recent_daily_ohlcv: start_date 지정 시 단일 호출 테스트"""
-    broker, _, tm, _, _ = mock_deps
+    broker = mock_deps.broker
     service = trading_service_fixture
     
     expected_data = [{"stck_bsop_date": "20250101", "stck_clpr": "100", "stck_oprc": "100", "stck_hgpr": "100", "stck_lwpr": "100", "acml_vol": "100"}]
@@ -697,7 +747,7 @@ async def test_get_recent_daily_ohlcv_with_start_date(trading_service_fixture, m
 @pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_loop_merging(trading_service_fixture, mock_deps):
     """get_recent_daily_ohlcv: 반복 호출 및 병합 로직 테스트"""
-    broker, _, tm, _, _ = mock_deps
+    broker = mock_deps.broker
     service = trading_service_fixture
     
     batch1 = [{"stck_bsop_date": "20250105", "stck_clpr": "105"}]
@@ -720,7 +770,7 @@ async def test_get_recent_daily_ohlcv_loop_merging(trading_service_fixture, mock
 @pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_api_error_break(trading_service_fixture, mock_deps):
     """get_recent_daily_ohlcv: API 에러 시 중단 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     service = trading_service_fixture
     
     batch1 = [{"stck_bsop_date": "20250105", "stck_clpr": "105"}]
@@ -738,7 +788,7 @@ async def test_get_recent_daily_ohlcv_api_error_break(trading_service_fixture, m
 @pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_overlap_handling(trading_service_fixture, mock_deps):
     """get_recent_daily_ohlcv: 중복 데이터 처리 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     service = trading_service_fixture
     
     batch1 = [{"stck_bsop_date": "20250104", "stck_clpr": "104"}, {"stck_bsop_date": "20250105", "stck_clpr": "105"}]
@@ -760,7 +810,7 @@ async def test_get_recent_daily_ohlcv_overlap_handling(trading_service_fixture, 
 @pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_with_end_date(trading_service_fixture, mock_deps):
     """get_recent_daily_ohlcv: end_date 지정 테스트"""
-    broker, _, tm, _, _ = mock_deps
+    broker = mock_deps.broker
     service = trading_service_fixture
     
     broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
@@ -776,7 +826,7 @@ async def test_get_recent_daily_ohlcv_with_end_date(trading_service_fixture, moc
 @pytest.mark.asyncio
 async def test_unsubscribe_program_trading_success(trading_service_fixture, mock_deps):
     """프로그램 매매 구독 해지 성공 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.unsubscribe_program_trading = AsyncMock(return_value=True)
     
     result = await trading_service_fixture.unsubscribe_program_trading("005930")
@@ -787,7 +837,8 @@ async def test_unsubscribe_program_trading_success(trading_service_fixture, mock
 @pytest.mark.asyncio
 async def test_unsubscribe_program_trading_invalid_code(trading_service_fixture, mock_deps):
     """프로그램 매매 구독 해지 시 종목 코드 누락 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.unsubscribe_program_trading = AsyncMock()
     
     result = await trading_service_fixture.unsubscribe_program_trading("")
@@ -799,7 +850,8 @@ async def test_unsubscribe_program_trading_invalid_code(trading_service_fixture,
 @pytest.mark.asyncio
 async def test_unsubscribe_program_trading_exception(trading_service_fixture, mock_deps):
     """프로그램 매매 구독 해지 중 예외 발생 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.unsubscribe_program_trading = AsyncMock(side_effect=Exception("Network Error"))
     
     result = await trading_service_fixture.unsubscribe_program_trading("005930")
@@ -811,7 +863,8 @@ async def test_unsubscribe_program_trading_exception(trading_service_fixture, mo
 @pytest.mark.asyncio
 async def test_get_price_summary(trading_service_fixture, mock_deps):
     """가격 요약 정보 조회 위임 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.get_price_summary = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_price_summary("005930")
@@ -823,7 +876,8 @@ async def test_get_price_summary(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_stock_info_by_code(trading_service_fixture, mock_deps):
     """종목 상세 정보 조회 위임 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.get_stock_info_by_code = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_stock_info_by_code("005930")
@@ -835,7 +889,7 @@ async def test_get_stock_info_by_code(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_account_balance(trading_service_fixture, mock_deps):
     """계좌 잔고 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.get_account_balance = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_account_balance()
@@ -846,7 +900,8 @@ async def test_get_account_balance(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_stock_conclusion(trading_service_fixture, mock_deps):
     """체결 정보 조회 위임 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.get_stock_conclusion = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_stock_conclusion("005930")
@@ -858,7 +913,8 @@ async def test_get_stock_conclusion(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_multi_price(trading_service_fixture, mock_deps):
     """복수종목 현재가 조회 위임 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.get_multi_price = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     codes = ["005930", "000660"]
     
@@ -871,7 +927,8 @@ async def test_get_multi_price(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_financial_ratio(trading_service_fixture, mock_deps):
     """재무비율 조회 위임 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.get_financial_ratio = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_financial_ratio("005930")
@@ -883,7 +940,7 @@ async def test_get_financial_ratio(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_intraday_minutes_today(trading_service_fixture, mock_deps):
     """당일 분봉 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.inquire_time_itemchartprice = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.get_intraday_minutes_today(stock_code="005930", input_hour_1="120000")
@@ -896,7 +953,8 @@ async def test_get_intraday_minutes_today(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_intraday_minutes_by_date_real(trading_service_fixture, mock_deps):
     """일별 분봉 조회 (실전투자) 테스트"""
-    broker, env, _, _, _ = mock_deps
+    broker = mock_deps.broker
+    env = mock_deps.env
     env.is_paper_trading = False
     broker.inquire_time_dailychartprice = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
@@ -910,7 +968,8 @@ async def test_get_intraday_minutes_by_date_real(trading_service_fixture, mock_d
 @pytest.mark.asyncio
 async def test_get_intraday_minutes_by_date_paper(trading_service_fixture, mock_deps):
     """일별 분봉 조회 (모의투자) 테스트 - 미지원"""
-    broker, env, _, _, _ = mock_deps
+    broker = mock_deps.broker
+    env = mock_deps.env
     env.is_paper_trading = True
     
     resp = await trading_service_fixture.get_intraday_minutes_by_date(stock_code="005930", input_date_1="20250101")
@@ -922,7 +981,8 @@ async def test_get_intraday_minutes_by_date_paper(trading_service_fixture, mock_
 @pytest.mark.asyncio
 async def test_get_top_rise_fall_stocks(trading_service_fixture, mock_deps):
     """상승/하락 순위 조회 위임 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.get_top_rise_fall_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     # Rise
@@ -938,7 +998,8 @@ async def test_get_top_rise_fall_stocks(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_top_volume_stocks(trading_service_fixture, mock_deps):
     """거래량 상위 조회 위임 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.get_top_volume_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     await trading_service_fixture.get_top_volume_stocks()
@@ -949,7 +1010,7 @@ async def test_get_top_volume_stocks(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_name_by_code(trading_service_fixture, mock_deps):
     """종목명 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.get_name_by_code = AsyncMock(return_value="삼성전자")
     
     name = await trading_service_fixture.get_name_by_code("005930")
@@ -960,7 +1021,7 @@ async def test_get_name_by_code(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_inquire_daily_itemchartprice(trading_service_fixture, mock_deps):
     """일별 차트 조회 위임 테스트"""
-    broker, _, _, _, _ = mock_deps
+    broker = mock_deps.broker
     broker.inquire_daily_itemchartprice = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
     
     resp = await trading_service_fixture.inquire_daily_itemchartprice("005930", "20250101", "20250110")
@@ -973,7 +1034,8 @@ async def test_inquire_daily_itemchartprice(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_handle_realtime_stream_exception(trading_service_fixture, mock_deps):
     """실시간 스트림 처리 중 예외 발생 시 로그 기록 테스트"""
-    broker, _, _, logger, _ = mock_deps
+    broker = mock_deps.broker
+    logger = mock_deps.logger
     broker.connect_websocket.side_effect = Exception("Connection Failed")
 
     # finally 블록에서 호출되는 메서드들이 await 가능해야 함

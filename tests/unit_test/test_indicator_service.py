@@ -8,7 +8,8 @@ from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI,
 @pytest.fixture
 def indicator_service():
     mock_trading_service = AsyncMock()
-    return IndicatorService(mock_trading_service), mock_trading_service
+    mock_cache_manager = MagicMock()
+    return IndicatorService(mock_trading_service, cache_manager=mock_cache_manager), mock_trading_service
 
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_success(indicator_service):
@@ -677,3 +678,65 @@ async def test_get_moving_average_ema_case_insensitive(indicator_service):
     assert result.rt_cd == ErrorCode.SUCCESS.value
     # EMA 로직을 탔다면 결과가 나와야 함
     assert result.data[-1].ma == 10000.0
+
+@pytest.mark.asyncio
+async def test_get_chart_indicators_caching(indicator_service):
+    """get_chart_indicators 캐싱 동작 테스트"""
+    service, mock_ts = indicator_service
+    mock_cache = service.cache_manager
+    
+    # 150일치 데이터 (캐싱 조건 충족: len >= 130)
+    data = [{"date": f"202501{i+1:03d}", "close": 10000 + i} for i in range(150)]
+    
+    # 1. 캐시 미스 (첫 호출)
+    mock_cache.get_raw.return_value = (None, None)
+    
+    result1 = await service.get_chart_indicators("005930", data)
+    
+    assert result1.rt_cd == ErrorCode.SUCCESS.value
+    # 캐시 저장 호출 확인
+    mock_cache.set.assert_called_once()
+    args, kwargs = mock_cache.set.call_args
+    # 키에 종목코드와 날짜가 포함되어야 함
+    assert "indicators_chart_005930_" in args[0]
+    assert kwargs['save_to_file'] is True
+    
+    # 2. 캐시 히트 (두 번째 호출)
+    # 저장된 캐시 데이터(과거 데이터)를 반환하도록 설정
+    # 실제 로직: past_indicators는 data[:-1]에 대한 결과
+    past_indicators = result1.data.copy()
+    # 마지막 요소 제거 (캐시된 상태 시뮬레이션)
+    for k in past_indicators:
+        if isinstance(past_indicators[k], list):
+            past_indicators[k] = past_indicators[k][:-1]
+            
+    mock_cache.get_raw.return_value = ({"data": past_indicators}, "memory")
+    
+    result2 = await service.get_chart_indicators("005930", data)
+    
+    assert result2.rt_cd == ErrorCode.SUCCESS.value
+    # 캐시 히트 시 set은 다시 호출되지 않아야 함 (이전 호출 1회 유지)
+    assert mock_cache.set.call_count == 1
+    # 결과 데이터 길이는 원본 데이터 길이와 같아야 함 (병합됨)
+    assert len(result2.data['ma5']) == 150
+
+@pytest.mark.asyncio
+async def test_get_chart_indicators_cache_miss_none_return(indicator_service):
+    """get_chart_indicators: 캐시 매니저가 None을 반환할 때(완전한 캐시 미스) 처리 검증"""
+    service, mock_ts = indicator_service
+    mock_cache = service.cache_manager
+    
+    # 데이터 준비 (캐싱 조건 충족: len >= 130)
+    data = [{"date": f"202501{i+1:03d}", "close": 10000 + i} for i in range(150)]
+    
+    # 캐시 미스 시 None 반환 설정 (이전 코드에서 언패킹 에러 발생했던 상황)
+    mock_cache.get_raw.return_value = None
+    
+    # 실행
+    result = await service.get_chart_indicators("005930", data)
+    
+    # 검증
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    # 캐시 미스 처리되어 전체 계산 후 저장되었는지 확인
+    mock_cache.set.assert_called()
+    assert len(result.data['ma5']) == 150

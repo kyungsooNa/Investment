@@ -13,6 +13,7 @@ from common.types import (
     ResPriceSummary, ResCommonResponse, ErrorCode,
     ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation,ResDailyChartApiItem
 )
+from core.cache.cache_manager import CacheManager
 
 
 class TradingService:
@@ -22,13 +23,14 @@ class TradingService:
     """
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
-                 time_manager: TimeManager = None, market_date_manager=None):
+
+                 time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
+        self.cache_manager = cache_manager
         self._latest_prices = {}
-        self._daily_ohlcv_cache = {}  # {code: {'base_date': 'YYYYMMDD', 'data': [...]}}
         self._ohlcv_locks: Dict[str, asyncio.Lock] = {}  # 종목코드별 Lock (race condition 방지)
         self._market_date_manager = market_date_manager
     async def get_name_by_code(self, code: str) -> str:
@@ -651,7 +653,8 @@ class TradingService:
                 'data': data
             }
         }
-        self.cache_manager.set(key, cache_payload, save_to_file=True)
+        if self.cache_manager:
+            self.cache_manager.set(key, cache_payload, save_to_file=True)
 
     async def _fetch_today_ohlcv(self, stock_code: str, today_str: str) -> List[dict]:
         """현재가 API를 호출하여 오늘자 OHLCV 데이터를 생성합니다."""
@@ -703,22 +706,28 @@ class TradingService:
             if stock_code not in self._ohlcv_locks:
                 self._ohlcv_locks[stock_code] = asyncio.Lock()
 
+            cache_key = f"ohlcv_past_{stock_code}"
+
             async with self._ohlcv_locks[stock_code]:
                 # 1. 과거 데이터 가져오기 (캐시 활용)
                 past_rows = []
-                cached = self._daily_ohlcv_cache.get(stock_code)
+                
+                cached_wrapper = None
+                if self.cache_manager:
+                    raw_cache = self.cache_manager.get_raw(cache_key)
+                    if raw_cache and isinstance(raw_cache, tuple):
+                        cached_wrapper, _ = raw_cache
+                
+                cached_data = cached_wrapper.get('data') if cached_wrapper else None
 
                 # 캐시가 있고, 기준일(base_date)이 오늘이라면 (즉, 어제까지의 데이터가 이미 로드됨)
-                if cached and cached.get('base_date') == today_str:
-                    past_rows = cached['data']
+                if cached_data and cached_data.get('base_date') == today_str:
+                    past_rows = cached_data['data']
                 else:
                     # 캐시 없거나 날짜 변경됨 -> 어제까지의 데이터 대량 조회 (약 2년치)
                     past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=8)
                     # 캐시 업데이트
-                    self._daily_ohlcv_cache[stock_code] = {
-                        'base_date': today_str,
-                        'data': past_rows
-                    }
+                    self._save_ohlcv_cache(cache_key, today_str, past_rows)
 
             # 2. 오늘 데이터 처리
             today_rows = []

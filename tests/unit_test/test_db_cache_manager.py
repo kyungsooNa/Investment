@@ -154,11 +154,15 @@ def test_cleanup_old_files_ohlcv_retention(tmp_path):
     # 3. OHLCV 데이터 (400일 전 -> 삭제 대상)
     mgr.set("ohlcv_past_000660", {"v": 3}, save_to_file=True)
     
+    # 4. 지표 데이터 (100일 전 -> 유지 대상)
+    mgr.set("indicators_chart_005930", {"v": 4}, save_to_file=True)
+    
     # DB 조작하여 updated_at 수정
     conn = sqlite3.connect(str(tmp_path / "cache.db"))
     conn.execute("UPDATE cache SET updated_at = ? WHERE key = ?", (now - 8 * day, "normal_old"))
     conn.execute("UPDATE cache SET updated_at = ? WHERE key = ?", (now - 100 * day, "ohlcv_past_005930"))
     conn.execute("UPDATE cache SET updated_at = ? WHERE key = ?", (now - 400 * day, "ohlcv_past_000660"))
+    conn.execute("UPDATE cache SET updated_at = ? WHERE key = ?", (now - 100 * day, "indicators_chart_005930"))
     conn.commit()
     conn.close()
     
@@ -167,6 +171,7 @@ def test_cleanup_old_files_ohlcv_retention(tmp_path):
     assert not mgr.exists("normal_old")          # 7일 지났으므로 삭제됨
     assert mgr.exists("ohlcv_past_005930")       # 100일 지났지만 OHLCV(1년)이므로 유지됨
     assert not mgr.exists("ohlcv_past_000660")   # 400일 지났으므로 삭제됨
+    assert mgr.exists("indicators_chart_005930") # 100일 지났지만 지표 데이터이므로 유지됨
 
 def test_pydantic_serialization(tmp_path):
     """Pydantic 모델 직렬화/역직렬화 테스트"""

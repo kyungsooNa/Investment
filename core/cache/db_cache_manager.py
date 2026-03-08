@@ -135,10 +135,10 @@ class DBCacheManager:
 
         try:
             with self._get_connection() as conn:
-                # 일반 데이터 삭제 (OHLCV 제외)
-                conn.execute("DELETE FROM cache WHERE updated_at < ? AND key NOT LIKE 'ohlcv_past_%'", (cutoff,))
-                # OHLCV 데이터 삭제 (1년 경과)
-                conn.execute("DELETE FROM cache WHERE updated_at < ? AND key LIKE 'ohlcv_past_%'", (ohlcv_cutoff,))
+                # 일반 데이터 삭제 (OHLCV 및 지표 제외)
+                conn.execute("DELETE FROM cache WHERE updated_at < ? AND key NOT LIKE 'ohlcv_past_%' AND key NOT LIKE 'indicators_chart_%'", (cutoff,))
+                # OHLCV 및 지표 데이터 삭제 (1년 경과)
+                conn.execute("DELETE FROM cache WHERE updated_at < ? AND (key LIKE 'ohlcv_past_%' OR key LIKE 'indicators_chart_%')", (ohlcv_cutoff,))
 
                 # 용량 제한 적용 (데이터 크기 기준)
                 if max_size_mb > 0:

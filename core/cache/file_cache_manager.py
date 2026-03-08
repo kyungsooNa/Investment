@@ -158,9 +158,9 @@ class FileCacheManager:
                             mtime = stat.st_mtime
                             size = stat.st_size
 
-                            # OHLCV 데이터는 별도 만료 기간 적용
-                            is_ohlcv = "ohlcv_past_" in file
-                            effective_cutoff = ohlcv_cutoff if is_ohlcv else cutoff
+                            # OHLCV 및 지표 데이터는 별도 만료 기간(1년) 적용
+                            is_long_term = "ohlcv_past_" in file or "indicators_chart_" in file
+                            effective_cutoff = ohlcv_cutoff if is_long_term else cutoff
 
                             if mtime < effective_cutoff:
                                 os.remove(path)
