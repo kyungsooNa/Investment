@@ -642,6 +642,49 @@ class TradingService:
             
         return all_rows
 
+    def _save_ohlcv_cache(self, key: str, base_date: str, data: List[dict]):
+        """OHLCV 데이터를 캐시에 저장하는 헬퍼 메서드"""
+        cache_payload = {
+            "timestamp": datetime.now().isoformat(),
+            "data": {
+                'base_date': base_date,
+                'data': data
+            }
+        }
+        self.cache_manager.set(key, cache_payload, save_to_file=True)
+
+    async def _fetch_today_ohlcv(self, stock_code: str, today_str: str) -> List[dict]:
+        """현재가 API를 호출하여 오늘자 OHLCV 데이터를 생성합니다."""
+        try:
+            current_resp = await self.get_current_stock_price(stock_code)
+            if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
+                output = current_resp.data.get('output')
+                if output:
+                    # ResStockFullInfoApiOutput 객체 또는 dict 처리
+                    def _get_val(obj, attr_name):
+                        if isinstance(obj, dict):
+                            return obj.get(attr_name)
+                        return getattr(obj, attr_name, None)
+
+                    opn = _get_val(output, 'stck_oprc')
+                    high = _get_val(output, 'stck_hgpr')
+                    low = _get_val(output, 'stck_lwpr')
+                    close = _get_val(output, 'stck_prpr')
+                    vol = _get_val(output, 'acml_vol')
+
+                    if opn and high and low and close:
+                        return [{
+                            "date": today_str,
+                            "open": float(opn),
+                            "high": float(high),
+                            "low": float(low),
+                            "close": float(close),
+                            "volume": int(vol) if vol else 0
+                        }]
+        except Exception as e:
+            self._logger.warning(f"오늘자 OHLCV 구성을 위한 현재가 조회 실패: {e}")
+        return []
+
     async def get_ohlcv(
             self,
             stock_code: str,
@@ -679,35 +722,7 @@ class TradingService:
 
             # 2. 오늘 데이터 가져오기 (실시간 변동 반영을 위해 항상 조회)
             # [변경] inquire_daily_itemchartprice 대신 get_current_stock_price 사용
-            today_rows = []
-            try:
-                current_resp = await self.get_current_stock_price(stock_code)
-                if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
-                    output = current_resp.data.get('output')
-                    if output:
-                        # ResStockFullInfoApiOutput 객체 또는 dict 처리
-                        def _get_val(obj, attr_name):
-                            if isinstance(obj, dict):
-                                return obj.get(attr_name)
-                            return getattr(obj, attr_name, None)
-
-                        opn = _get_val(output, 'stck_oprc')
-                        high = _get_val(output, 'stck_hgpr')
-                        low = _get_val(output, 'stck_lwpr')
-                        close = _get_val(output, 'stck_prpr')
-                        vol = _get_val(output, 'acml_vol')
-
-                        if opn and high and low and close:
-                            today_rows.append({
-                                "date": today_str,
-                                "open": float(opn),
-                                "high": float(high),
-                                "low": float(low),
-                                "close": float(close),
-                                "volume": int(vol) if vol else 0
-                            })
-            except Exception as e:
-                self._logger.warning(f"오늘자 OHLCV 구성을 위한 현재가 조회 실패: {e}")
+            today_rows = await self._fetch_today_ohlcv(stock_code, today_str)
 
             # 비거래일(주말) 체크: 현재가 API가 마지막 거래일 데이터를 반환하므로 중복 방지
             if today_rows and now_dt.weekday() >= 5:

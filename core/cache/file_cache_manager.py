@@ -139,12 +139,13 @@ class FileCacheManager:
             if self._logger:
                 self._logger.error(f"❌ 전체 캐시 삭제 실패: {e}")
 
-    def cleanup_old_files(self, days: int = 7):
-        """오래된 캐시 파일 삭제 (기본 7일)"""
+    def cleanup_old_files(self, days: int = 7, max_size_mb: int = 0):
+        """오래된 캐시 파일 삭제 (기간 및 용량 기준)"""
         if not os.path.exists(self._base_dir):
             return
 
         cutoff = time.time() - (days * 86400)
+        files_info = []  # (path, mtime, size)
 
         try:
             for root, _, files in os.walk(self._base_dir):
@@ -152,13 +153,36 @@ class FileCacheManager:
                     if file.endswith(".json"):
                         path = os.path.join(root, file)
                         try:
-                            if os.path.getmtime(path) < cutoff:
+                            stat = os.stat(path)
+                            mtime = stat.st_mtime
+                            size = stat.st_size
+
+                            if mtime < cutoff:
                                 os.remove(path)
                                 if self._logger:
-                                    self._logger.debug(f"🗑️ 오래된 File cache 삭제됨: {path}")
+                                    self._logger.debug(f"🗑️ File cache 삭제됨 (기간만료): {path}")
+                            elif max_size_mb > 0:
+                                files_info.append((path, mtime, size))
                         except Exception as e:
-                            if self._logger:
-                                self._logger.error(f"❌ 오래된 파일 삭제 실패: {path} - {e}")
+                            if self._logger: self._logger.error(f"❌ 파일 접근 실패: {path} - {e}")
+
+            # 용량 제한 적용 (오래된 순 삭제)
+            if max_size_mb > 0 and files_info:
+                total_size = sum(f[2] for f in files_info)
+                limit_size = max_size_mb * 1024 * 1024
+
+                if total_size > limit_size:
+                    files_info.sort(key=lambda x: x[1])  # mtime 오름차순 정렬
+                    deleted_size = 0
+                    for path, _, size in files_info:
+                        if total_size - deleted_size <= limit_size:
+                            break
+                        try:
+                            os.remove(path)
+                            deleted_size += size
+                            if self._logger: self._logger.debug(f"🗑️ File cache 삭제됨 (용량초과): {path}")
+                        except Exception: pass
+
         except Exception as e:
             if self._logger:
                 self._logger.error(f"❌ 캐시 정리 실패: {e}")

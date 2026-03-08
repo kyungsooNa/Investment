@@ -129,11 +129,41 @@ class DBCacheManager:
             if self._logger:
                 self._logger.error(f"❌ 전체 DB 캐시 삭제 실패: {e}")
 
-    def cleanup_old_files(self, days: int = 7):
+    def cleanup_old_files(self, days: int = 7, max_size_mb: int = 0):
         cutoff = time.time() - (days * 86400)
         try:
             with self._get_connection() as conn:
                 conn.execute("DELETE FROM cache WHERE updated_at < ?", (cutoff,))
+
+                # 용량 제한 적용 (데이터 크기 기준)
+                if max_size_mb > 0:
+                    cursor = conn.execute("SELECT SUM(LENGTH(value)) FROM cache")
+                    total_size = cursor.fetchone()[0] or 0
+                    limit_size = max_size_mb * 1024 * 1024
+
+                    if total_size > limit_size:
+                        bytes_to_remove = total_size - limit_size
+                        # 오래된 순으로 조회하여 삭제할 키 수집
+                        rows = conn.execute("SELECT key, LENGTH(value) FROM cache ORDER BY updated_at ASC").fetchall()
+                        
+                        keys_to_delete = []
+                        removed_amount = 0
+                        for key, size in rows:
+                            keys_to_delete.append(key)
+                            removed_amount += (size or 0)
+                            if removed_amount >= bytes_to_remove:
+                                break
+                        
+                        if keys_to_delete:
+                            # SQLite 변수 제한 고려하여 배치 삭제 (900개씩)
+                            for i in range(0, len(keys_to_delete), 900):
+                                batch = keys_to_delete[i:i+900]
+                                placeholders = ','.join('?' for _ in batch)
+                                conn.execute(f"DELETE FROM cache WHERE key IN ({placeholders})", batch)
+                            
+                            if self._logger:
+                                self._logger.debug(f"🗑️ DB cache 용량 초과로 {len(keys_to_delete)}개 항목 삭제됨")
+
             if self._logger:
                 self._logger.debug(f"🗑️ 오래된 DB cache 정리 완료 (기준: {days}일 전)")
         except Exception as e:

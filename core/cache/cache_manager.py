@@ -12,7 +12,8 @@ class CacheManager:
     def __init__(self, config: Optional[dict] = None):
         if config is None:
             config = load_cache_config()
-        cache_cfg = config.get("cache", {})
+        self.cache_cfg = config.get("cache", {})
+        cache_cfg = self.cache_cfg
 
         self.memory_cache = MemoryCacheManager() if cache_cfg.get("memory_cache_enabled", True) else None
         
@@ -28,7 +29,10 @@ class CacheManager:
             self.memory_cache.set_logger(logger)
         if self.file_cache:
             self.file_cache.set_logger(logger)
-            self.file_cache.cleanup_old_files()
+            # 설정에서 보관 기간과 최대 용량을 가져옴 (기본값: 7일, 500MB)
+            days = self.cache_cfg.get("retention_days", 7)
+            max_size = self.cache_cfg.get("max_size_mb", 500)
+            self.file_cache.cleanup_old_files(days=days, max_size_mb=max_size)
 
     def get_raw(self, key: str) -> Optional[Tuple[dict, str]] | None:
         """메모리 또는 파일 캐시에서 (timestamp + data) 반환"""
