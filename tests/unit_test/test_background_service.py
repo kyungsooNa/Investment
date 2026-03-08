@@ -707,6 +707,91 @@ async def test_refresh_investor_ranking_corrects_acml_tr_pbmn(bg_service, mock_d
 
 
 @pytest.mark.asyncio
+async def test_progress_running_flag_lifecycle(bg_service, mock_deps):
+    """진행률의 running 플래그가 갱신 시작/종료 시 올바르게 전환되는지 검증.
+
+    프론트엔드 진행률 폴링은 running=True → False 전환을 감지하여 자동 새로고침하므로,
+    이 전환이 정확해야 한다.
+    """
+    broker, mapper, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+
+    # 갱신 중 progress 상태 캡처
+    captured_progress = []
+    original_gather = __import__('asyncio').gather
+
+    async def mock_investor(code, date=None):
+        # API 호출 시점의 progress 상태 캡처
+        captured_progress.append(dict(bg_service._progress))
+        return _make_investor_response(100, 50, -30)
+
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_investor)
+
+    # 초기 상태
+    assert bg_service._progress["running"] is False
+
+    await bg_service.refresh_investor_ranking()
+
+    # API 호출 시점에 running=True였어야 함
+    assert len(captured_progress) > 0
+    assert captured_progress[0]["running"] is True
+    assert captured_progress[0]["total"] > 0
+
+    # 완료 후 running=False, processed >= total
+    p = bg_service.get_investor_ranking_progress()
+    assert p["running"] is False
+    assert p["processed"] > 0
+    assert p["processed"] >= p["total"]
+    assert p["collected"] > 0
+
+
+@pytest.mark.asyncio
+async def test_progress_reset_on_failure(bg_service, mock_deps):
+    """갱신 중 예외 발생 시에도 running=False로 복원되어야 한다.
+
+    프론트엔드 폴링이 무한루프에 빠지지 않도록 finally에서 반드시 해제.
+    """
+    broker, mapper, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+
+    # API 호출 시 예외 발생
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=Exception("Network Error"))
+    broker.get_program_trade_by_stock_daily = AsyncMock(side_effect=Exception("Network Error"))
+
+    await bg_service.refresh_investor_ranking()
+
+    p = bg_service.get_investor_ranking_progress()
+    assert p["running"] is False
+    assert bg_service._is_refreshing is False
+
+
+@pytest.mark.asyncio
+async def test_progress_total_set_before_api_calls(bg_service, mock_deps):
+    """total이 API 호출 전에 설정되어 프론트에서 0/0이 아닌 진행률을 보여줄 수 있는지 검증."""
+    broker, mapper, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+        ("035420", "NAVER", "KOSDAQ"),
+    ])
+
+    total_at_first_call = None
+
+    async def mock_investor(code, date=None):
+        nonlocal total_at_first_call
+        if total_at_first_call is None:
+            total_at_first_call = bg_service._progress["total"]
+        return _make_investor_response(100, 50, -30)
+
+    broker.get_investor_trade_by_stock_daily = AsyncMock(side_effect=mock_investor)
+
+    await bg_service.refresh_investor_ranking()
+
+    # 첫 API 호출 시점에 이미 total이 설정되어 있어야 함
+    assert total_at_first_call == 3
+
+
+@pytest.mark.asyncio
 async def test_refresh_investor_ranking_no_target_date(bg_service, mock_deps):
     """최근 거래일 조회 실패 시 갱신 중단."""
     _, _, _, logger, _ = mock_deps

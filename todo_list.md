@@ -6,15 +6,7 @@
 ### 0. 불량
 1. [전략스케줄러] 전략에서 매수/매도 API를 실패하는 경우가 종종 있음. 1차로 사실 실패하면 log만되고, web에 남는 history는 저장이 안되는게 맞을거같고 2번쨰로는 실패하는경우에는 retry를 해야할거같음. retry 하는 queue를 만들어서 재시도하는 logic 추가가 필요.
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
-3. [Ranking] 
-  * 1. Ranking 조회시 get_investor_trade_by_stock_dailydml 결과의 data는 아래와 같은 포멧으로 나오는데 ResDailyChartApiItem(stck_bsop_date='20260306', stck_oprc='8170', stck_hgpr='8170', stck_lwpr='7820', stck_clpr='8050', acml_vol='9714')
 
-  다른 key값으로 꺼내고 있어서 data가 안나옴.
-
-  File/DB Cache에서 get_investor_trade_by_stock_dailydml 결과값을 ResDailyChartApiItem로 역직렬화를 잘못하고 있는 문제가 있어서 수정 필요.
-  (해당 문제가 왜 TC에서 안걸렸을까. 검증 할 수 있는 tc 추가.)
-
-  * 2. Ranking 조회시 progress 출력이 view에 찍어주는 기능이 동작하지 않는 버그.
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 7. [프로그램매매] App 재실행시 프로그램 매매에서 이전에 구독한 data가 다 올라오지 않는 버그가 있어 보임. 저장을 잘못하고 있는건지, 가지고오지를 모샇는거지, file을 잘못 지우는건지 확인 필요.
 ### 1. 환경 (Environment)

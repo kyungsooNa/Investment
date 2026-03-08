@@ -72,22 +72,48 @@ class DBCacheManager:
 
     def _deserialize(self, raw_data: Any) -> Any:
         if isinstance(raw_data, dict):
+            best_cls = None
+            best_ratio = 0.0
+            best_is_dataclass = False
+
             for cls in self._deserializable_classes:
                 try:
                     if issubclass(cls, BaseModel):
                         cls_fields = set(cls.model_fields.keys())
-                        if cls_fields.issubset(raw_data.keys()):
-                            if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
-                                raw_data["data"] = self._deserialize(raw_data["data"])
-                            return cls.model_validate(raw_data)
                     elif is_dataclass(cls):
                         cls_fields = {f.name for f in fields(cls)}
-                        if cls_fields.issubset(raw_data.keys()):
-                            if cls.__name__ == "ResCommonResponse" and "data" in raw_data:
-                                raw_data["data"] = self._deserialize(raw_data["data"])
+                    else:
+                        continue
+
+                    if not cls_fields.issubset(raw_data.keys()):
+                        continue
+
+                    ratio = len(cls_fields) / len(raw_data) if raw_data else 0
+                    if ratio < 0.5:
+                        continue
+
+                    if cls.__name__ == "ResCommonResponse":
+                        if "data" in raw_data:
+                            raw_data["data"] = self._deserialize(raw_data["data"])
+                        if is_dataclass(cls):
                             return cls.from_dict(raw_data)
-                except Exception as e:
+                        return cls.model_validate(raw_data)
+
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_cls = cls
+                        best_is_dataclass = is_dataclass(cls)
+                except Exception:
                     ...
+
+            if best_cls is not None:
+                try:
+                    if best_is_dataclass:
+                        return best_cls.from_dict(raw_data)
+                    return best_cls.model_validate(raw_data)
+                except Exception:
+                    ...
+
             return {k: self._deserialize(v) for k, v in raw_data.items()}
         elif isinstance(raw_data, (list, tuple)):
             return [self._deserialize(item) for item in raw_data]

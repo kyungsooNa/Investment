@@ -501,6 +501,119 @@ def test_get_raw_file_not_exists(tmp_path):
     mgr = _mk_manager(str(tmp_path))
     assert mgr.get_raw("non_existent") is None
 
+class SmallPydantic(BaseModel):
+    """ResDailyChartApiItem과 유사한 소수 필드 클래스"""
+    stck_bsop_date: str
+    stck_oprc: str
+    stck_hgpr: str
+    stck_lwpr: str
+    stck_clpr: str
+    acml_vol: str
+
+    def to_dict(self):
+        return self.model_dump()
+
+
+def test_deserialize_best_match_not_first_match(tmp_path):
+    """소수 필드 클래스가 대형 dict에 잘못 매칭되지 않는지 테스트 (best-match 로직 검증)
+
+    get_investor_trade_by_stock_daily 캐시 역직렬화 버그 재현:
+    투자자 매매동향 데이터(15+필드)가 ResDailyChartApiItem(6필드)로 잘못 변환되던 문제
+    """
+    mgr = _mk_manager(str(tmp_path), classes=[SmallPydantic])
+
+    # 투자자 매매동향 API 응답과 유사한 merged dict (15개 필드)
+    investor_trade_data = {
+        "stck_bsop_date": "20260306",
+        "stck_oprc": "8170",
+        "stck_hgpr": "8170",
+        "stck_lwpr": "7820",
+        "stck_clpr": "8050",
+        "acml_vol": "9714",
+        "stck_prpr": "8050",
+        "prdy_vrss": "-120",
+        "prdy_vrss_sign": "5",
+        "prdy_ctrt": "-1.47",
+        "frgn_ntby_qty": "1234",
+        "orgn_ntby_qty": "-5678",
+        "prsn_ntby_qty": "4444",
+        "frgn_ntby_tr_pbmn": "9940000",
+        "orgn_ntby_tr_pbmn": "-45700000",
+    }
+
+    result = mgr._deserialize(investor_trade_data)
+
+    # SmallPydantic(6필드)의 coverage = 6/15 = 40% < 50% → 매칭 안되어야 함
+    assert isinstance(result, dict), "투자자 매매동향 데이터가 SmallPydantic으로 잘못 변환됨"
+    assert "frgn_ntby_qty" in result, "투자자 필드가 누락됨"
+    assert result["frgn_ntby_qty"] == "1234"
+
+
+def test_deserialize_investor_trade_via_res_common_response(tmp_path):
+    """ResCommonResponse로 감싸진 투자자 매매동향 데이터의 캐시 역직렬화 검증"""
+    class ResCommonResponsePydantic(BaseModel):
+        rt_cd: str
+        msg1: str
+        data: Any = None
+
+    mgr = _mk_manager(str(tmp_path), classes=[ResCommonResponsePydantic, SmallPydantic])
+
+    raw = {
+        "rt_cd": "0",
+        "msg1": "투자자 매매동향 조회 성공",
+        "data": {
+            "stck_bsop_date": "20260306",
+            "stck_oprc": "8170",
+            "stck_hgpr": "8170",
+            "stck_lwpr": "7820",
+            "stck_clpr": "8050",
+            "acml_vol": "9714",
+            "stck_prpr": "8050",
+            "prdy_vrss": "-120",
+            "prdy_vrss_sign": "5",
+            "prdy_ctrt": "-1.47",
+            "frgn_ntby_qty": "1234",
+            "orgn_ntby_qty": "-5678",
+            "prsn_ntby_qty": "4444",
+            "frgn_ntby_tr_pbmn": "9940000",
+            "orgn_ntby_tr_pbmn": "-45700000",
+        }
+    }
+
+    result = mgr._deserialize(raw)
+    assert isinstance(result, ResCommonResponsePydantic)
+    # data가 dict로 유지되어야 함 (SmallPydantic으로 변환 안됨)
+    assert isinstance(result.data, dict), f"data가 {type(result.data)}로 잘못 변환됨"
+    assert result.data["frgn_ntby_qty"] == "1234"
+
+
+def test_deserialize_picks_best_match_among_candidates(tmp_path):
+    """여러 후보 클래스 중 가장 높은 coverage를 가진 클래스가 선택되는지 검증"""
+    class BigPydantic(BaseModel):
+        a: int
+        b: int
+        c: int
+        d: int
+
+        def to_dict(self):
+            return self.model_dump()
+
+    class SmallPydantic2(BaseModel):
+        a: int
+        b: int
+
+        def to_dict(self):
+            return self.model_dump()
+
+    mgr = _mk_manager(str(tmp_path), classes=[SmallPydantic2, BigPydantic])
+
+    # 4필드 dict → SmallPydantic2(2/4=50%), BigPydantic(4/4=100%) → BigPydantic 선택
+    raw = {"a": 1, "b": 2, "c": 3, "d": 4}
+    result = mgr._deserialize(raw)
+    assert isinstance(result, BigPydantic), f"Expected BigPydantic, got {type(result)}"
+    assert result.a == 1 and result.d == 4
+
+
 def test_cleanup_old_files_getmtime_error(tmp_path):
     """cleanup_old_files: getmtime 실패 시 로깅하고 계속 진행"""
     mgr = _mk_manager(str(tmp_path))
