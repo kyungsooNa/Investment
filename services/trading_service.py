@@ -23,8 +23,8 @@ class TradingService:
     """
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
-
-                 time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None):
+                 time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None,
+                 market_date_manager=None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)

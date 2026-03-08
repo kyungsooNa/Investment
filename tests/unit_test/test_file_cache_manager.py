@@ -379,7 +379,7 @@ def test_cleanup_old_files_remove_error(tmp_path):
         mgr.cleanup_old_files()
         
     assert logger.error.called
-    assert "오래된 파일 삭제 실패" in logger.error.call_args[0][0]
+    assert "파일 접근 실패" in logger.error.call_args[0][0]
 
 def test_cleanup_old_files_outer_exception(tmp_path):
     """cleanup_old_files: 전체 로직 중 에러 발생 시 로깅"""

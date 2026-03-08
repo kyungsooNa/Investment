@@ -121,7 +121,7 @@ class WebAppContext:
 
 
         self.trading_service = TradingService(
-            self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager
+            self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
             market_date_manager=self.market_date_manager
         )
 

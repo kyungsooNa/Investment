@@ -1080,7 +1080,7 @@ async def test_get_latest_trading_date_none(trading_service_fixture, mock_deps):
 @pytest.mark.asyncio
 async def test_get_latest_trading_date_no_manager(trading_service_fixture, mock_deps):
     """get_latest_trading_date: 매니저 미설정 시 None 반환"""
-    _, _, _, logger = mock_deps
+    logger = mock_deps.logger
     service = trading_service_fixture
     service._market_date_manager = None
 
