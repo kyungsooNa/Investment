@@ -23,6 +23,7 @@ class CacheManager:
             self.memory_cache.set_logger(logger)
         if self.file_cache:
             self.file_cache.set_logger(logger)
+            self.file_cache.cleanup_old_files()
 
     def get_raw(self, key: str) -> Optional[Tuple[dict, str]] | None:
         """메모리 또는 파일 캐시에서 (timestamp + data) 반환"""

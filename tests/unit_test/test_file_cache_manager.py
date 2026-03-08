@@ -2,6 +2,7 @@
 import os
 import json
 import tempfile
+import time
 from typing import Any
 import pytest
 from unittest.mock import MagicMock, patch
@@ -260,3 +261,31 @@ def test_deserialize_pydantic_nested_in_res_common_response(tmp_path):
     assert isinstance(res, ResCommonResponse)
     assert isinstance(res.data, PydanticDummy)
     assert res.data.x == 99
+
+def test_cleanup_old_files(tmp_path):
+    """오래된 캐시 파일 삭제 테스트"""
+    mgr = _mk_manager(str(tmp_path))
+    logger = MagicMock()
+    mgr.set_logger(logger)
+
+    # 1. 최신 파일 (유지)
+    fresh = tmp_path / "fresh.json"
+    fresh.write_text("{}")
+
+    # 2. 오래된 파일 (삭제)
+    old = tmp_path / "old.json"
+    old.write_text("{}")
+    
+    # 8일 전으로 수정 시간 변경
+    past = time.time() - (8 * 86400)
+    os.utime(str(old), (past, past))
+
+    mgr.cleanup_old_files(days=7)
+
+    assert fresh.exists()
+    assert not old.exists()
+    
+    # 로그 확인
+    assert logger.debug.called
+    logs = [call.args[0] for call in logger.debug.call_args_list]
+    assert any("오래된 File cache 삭제됨" in msg for msg in logs)

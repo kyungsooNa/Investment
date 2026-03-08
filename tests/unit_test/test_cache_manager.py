@@ -2,6 +2,7 @@
 
 import pytest
 import json
+from unittest.mock import MagicMock
 from core.cache.cache_manager import CacheManager
 from datetime import datetime
 
@@ -255,3 +256,23 @@ def test_cache_manager_both_off_is_noop(tmp_path):
     # delete/clear도 예외 없이 동작
     cm.delete(key)
     cm.clear()
+
+def test_cache_manager_set_logger_calls_cleanup(tmp_path):
+    """set_logger 호출 시 cleanup_old_files가 호출되는지 테스트"""
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": [],
+            "deserializable_classes": [],
+            "file_cache_enabled": True
+        }
+    }
+    cm = CacheManager(config=config)
+    
+    # Mocking cleanup_old_files to verify call
+    cm.file_cache.cleanup_old_files = MagicMock()
+    
+    logger = MagicMock()
+    cm.set_logger(logger)
+    
+    cm.file_cache.cleanup_old_files.assert_called_once()

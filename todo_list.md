@@ -9,7 +9,6 @@
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 
 
-7. [Cache] 오래된 cache(가장 최근에 장연날만 유효하니까 휴장일을 고려해서 넉넉하게 7일만 유지하자) 는 지우도록 하는 기능 추가 core\cache\.cache
 8. [Cache] 장 마감 상태에서 cache update 여부를 확인할 때, get_latest_market_close_time를 주말만 검사하고 있는데, 이러지말고 trading_service의 get_latest_trading_date를 활용하도록 수정. get_latest_trading_date 이것도, 하루에 한번만 API를 호출해서 검사한걸 담아 두면 되니까 따로 manager를 두자.
 8. [Cache] File Cache 적용해도 2~3분 걸리는게 느린거같은데, 하나의 file에 하나의 API를 다 담는 방식으로 변경하면 file IO가 줄어서 더 빨라질지 검토.
 
