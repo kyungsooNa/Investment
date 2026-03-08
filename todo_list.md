@@ -7,9 +7,6 @@
 1. [전략스케줄러] 전략에서 매수/매도 API를 실패하는 경우가 종종 있음. 1차로 사실 실패하면 log만되고, web에 남는 history는 저장이 안되는게 맞을거같고 2번쨰로는 실패하는경우에는 retry를 해야할거같음. retry 하는 queue를 만들어서 재시도하는 logic 추가가 필요.
 2. [전략스케줄러] 전략에서 실행이력이 발생하면 web_veiw가 udpate 되도록 수정.
 
-4. [Ranking] 
-  * 1. virtual.html virtual.py 에 적용된거 처럼 이미 web에서 받아온 data들에 대해서는 ranking.html ranking.py 에서도 컬럼명을 누르면 정렬할 수 있도록 수정
-  * 6. 랭킹에서 순매수/순매도를 우선 분리해서, 외인,기관,개인,프로그램 을 multi로 선택하면 선택한 투자자들의 수급을 합쳐서 랭킹을 다시 매길 수 있도록 하는 multi filter 기능 추가
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 7. [프로그램매매] App 재실행시 프로그램 매매에서 이전에 구독한 data가 다 올라오지 않는 버그가 있어 보임. 저장을 잘못하고 있는건지, 가지고오지를 모샇는거지, file을 잘못 지우는건지 확인 필요.
 ### 1. 환경 (Environment)

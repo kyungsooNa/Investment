@@ -3,26 +3,31 @@
 {% block content %}
     <div id="section-ranking" class="section">
         <div class="card">
-            <h2>상위 종목 랭킹</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h2 style="margin: 0;">상위 종목 랭킹</h2>
+                <div class="form-row" style="margin: 0; gap: 4px;">
+                    <button class="btn market-filter active" data-market="ALL" onclick="setMarketFilter('ALL', this)">통합</button>
+                    <button class="btn market-filter" data-market="KRX" onclick="setMarketFilter('KRX', this)">KRX</button>
+                    <button class="btn market-filter" data-market="NXT" onclick="setMarketFilter('NXT', this)" disabled title="준비 중">NXT</button>
+                </div>
+            </div>
             <div class="form-row">
                 <button class="btn ranking-tab active" data-cat="rise" onclick="loadRanking('rise')">상승률</button>
                 <button class="btn ranking-tab" data-cat="fall" onclick="loadRanking('fall')">하락률</button>
                 <button class="btn ranking-tab" data-cat="volume" onclick="loadRanking('volume')">거래량</button>
                 <button class="btn ranking-tab" data-cat="trading_value" onclick="loadRanking('trading_value')">거래대금</button>
             </div>
-            <div class="form-row" style="margin-top: 6px;">
-                <button class="btn ranking-tab" data-cat="foreign_buy" onclick="loadRanking('foreign_buy')">외인 순매수</button>
-                <button class="btn ranking-tab" data-cat="foreign_sell" onclick="loadRanking('foreign_sell')">외인 순매도</button>
-                <button class="btn ranking-tab" data-cat="inst_buy" onclick="loadRanking('inst_buy')">기관 순매수</button>
-                <button class="btn ranking-tab" data-cat="inst_sell" onclick="loadRanking('inst_sell')">기관 순매도</button>
-                <button class="btn ranking-tab" data-cat="prsn_buy" onclick="loadRanking('prsn_buy')">개인 순매수</button>
-                <button class="btn ranking-tab" data-cat="prsn_sell" onclick="loadRanking('prsn_sell')">개인 순매도</button>
-                <button class="btn ranking-tab" data-cat="program_buy" onclick="loadRanking('program_buy')">프로그램 순매수</button>
-                <button class="btn ranking-tab" data-cat="program_sell" onclick="loadRanking('program_sell')">프로그램 순매도</button>
-            </div>
-            <div class="form-row" style="margin-top: 6px;">
-                <button class="btn market-filter active" data-market="KRX" onclick="setMarketFilter('KRX', this)">KRX</button>
-                <button class="btn market-filter" data-market="NXT" onclick="setMarketFilter('NXT', this)" disabled title="준비 중">NXT</button>
+            <div class="ranking-investor-group" style="margin-top: 6px;">
+                <div class="form-row" style="margin-bottom: 0;">
+                    <button class="btn ranking-tab" data-cat="net_buy" onclick="setRankingDirection('buy')">순매수</button>
+                    <button class="btn ranking-tab" data-cat="net_sell" onclick="setRankingDirection('sell')">순매도</button>
+                    <div id="investor-type-row" style="display: none; margin-left: 8px; padding-left: 12px; border-left: 2px solid var(--accent-secondary, #3b82f6);">
+                        <button class="btn investor-toggle active" data-inv="foreign" onclick="toggleRankingInvestor('foreign')">외인</button>
+                        <button class="btn investor-toggle" data-inv="inst" onclick="toggleRankingInvestor('inst')">기관</button>
+                        <button class="btn investor-toggle" data-inv="prsn" onclick="toggleRankingInvestor('prsn')">개인</button>
+                        <button class="btn investor-toggle" data-inv="program" onclick="toggleRankingInvestor('program')">프로그램</button>
+                    </div>
+                </div>
             </div>
         </div>
         <div id="ranking-result"></div>

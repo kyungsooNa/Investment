@@ -521,15 +521,26 @@ let _rankingPollTimer = null;
 let _rankingCurrentCategory = null;
 let _rankingData = [];
 let _rankingSortState = { key: null, dir: 'asc' };
+let _rankingDirection = null; // 'buy' or 'sell'
+let _rankingSelectedInvestors = new Set(['foreign']);
+
+const _investorTypeFields = {
+    'foreign': { pbmn: 'frgn_ntby_tr_pbmn', qty: 'frgn_ntby_qty', isMil: true, label: '외인' },
+    'inst':    { pbmn: 'orgn_ntby_tr_pbmn', qty: 'orgn_ntby_qty', isMil: true, label: '기관' },
+    'prsn':    { pbmn: 'prsn_ntby_tr_pbmn', qty: 'prsn_ntby_qty', isMil: true, label: '개인' },
+    'program': { pbmn: 'whol_smtn_ntby_tr_pbmn', qty: 'whol_smtn_ntby_qty', isMil: false, label: '프로그램' },
+};
+
 // 시장 필터 상태 (향후 NXT 확장용)
-let _rankingMarketFilter = 'KRX';
+let _rankingMarketFilter = 'ALL';
 
 function setMarketFilter(market, btn) {
     _rankingMarketFilter = market;
     document.querySelectorAll('.market-filter').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     // 현재 카테고리 재조회
-    if (_rankingCurrentCategory) loadRanking(_rankingCurrentCategory);
+    if (_rankingDirection) loadInvestorRanking();
+    else if (_rankingCurrentCategory) loadRanking(_rankingCurrentCategory);
 }
 
 async function loadRanking(category) {
@@ -539,12 +550,17 @@ async function loadRanking(category) {
         _rankingPollTimer = null;
     }
     _rankingCurrentCategory = category;
+    _rankingDirection = null;
 
     // 탭 스타일
     document.querySelectorAll('.ranking-tab').forEach(b => {
         b.classList.remove('active');
         if (b.dataset.cat === category) b.classList.add('active');
     });
+
+    // 투자자 멀티셀렉트 행 숨기기
+    const invRow = document.getElementById('investor-type-row');
+    if (invRow) invRow.style.display = 'none';
 
     const div = document.getElementById('ranking-result');
     div.innerHTML = "로딩 중...";
@@ -582,6 +598,127 @@ async function loadRanking(category) {
     }
 }
 
+function setRankingDirection(dir) {
+    if (_rankingPollTimer) {
+        clearTimeout(_rankingPollTimer);
+        _rankingPollTimer = null;
+    }
+    _rankingDirection = dir;
+
+    // 탭 스타일
+    document.querySelectorAll('.ranking-tab').forEach(b => {
+        b.classList.remove('active');
+        if (b.dataset.cat === `net_${dir}`) b.classList.add('active');
+    });
+
+    // 투자자 멀티셀렉트 행 표시
+    const invRow = document.getElementById('investor-type-row');
+    if (invRow) invRow.style.display = '';
+
+    // 투자자 버튼 스타일 동기화
+    document.querySelectorAll('.investor-toggle').forEach(b => {
+        b.classList.toggle('active', _rankingSelectedInvestors.has(b.dataset.inv));
+    });
+
+    loadInvestorRanking();
+}
+
+function toggleRankingInvestor(type) {
+    if (_rankingSelectedInvestors.has(type)) {
+        if (_rankingSelectedInvestors.size > 1) {
+            _rankingSelectedInvestors.delete(type);
+        }
+        // 최소 1개는 유지
+    } else {
+        _rankingSelectedInvestors.add(type);
+    }
+
+    document.querySelectorAll('.investor-toggle').forEach(b => {
+        b.classList.toggle('active', _rankingSelectedInvestors.has(b.dataset.inv));
+    });
+
+    loadInvestorRanking();
+}
+
+async function loadInvestorRanking() {
+    const dir = _rankingDirection;
+    const investors = Array.from(_rankingSelectedInvestors);
+
+    _rankingSortState = { key: null, dir: 'asc' };
+
+    const div = document.getElementById('ranking-result');
+    div.innerHTML = "로딩 중...";
+
+    // API 카테고리명 매핑
+    const categories = investors.map(inv => `${inv}_${dir}`);
+
+    try {
+        const results = await Promise.all(
+            categories.map(cat => fetch(`/api/ranking/${cat}`).then(r => r.json()))
+        );
+
+        // 에러/빈데이터 처리
+        for (const json of results) {
+            if (json.rt_cd !== "0") {
+                div.innerHTML = `<p class="error">실패: ${json.msg1}</p>`;
+                return;
+            }
+            if (!json.data || json.data.length === 0) {
+                if (json.msg1 && json.msg1.includes('실전투자 전용')) {
+                    div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
+                        <p style="font-size:1.2em;">${json.msg1}</p></div>`;
+                    return;
+                }
+                _startProgressPolling(categories[0], div);
+                return;
+            }
+        }
+
+        // 종목코드 기준 병합
+        const stockMap = new Map();
+        for (const json of results) {
+            for (const item of json.data) {
+                const code = item.stck_shrn_iscd || '';
+                if (!stockMap.has(code)) {
+                    stockMap.set(code, { ...item });
+                }
+            }
+        }
+
+        // 합산 금액/수량 계산
+        const merged = Array.from(stockMap.values());
+        for (const item of merged) {
+            let combinedPbmn = 0;
+            let combinedQty = 0;
+            for (const inv of investors) {
+                const f = _investorTypeFields[inv];
+                let pbmn = parseInt(item[f.pbmn] || 0);
+                if (f.isMil) pbmn *= 1000000;
+                combinedPbmn += pbmn;
+                combinedQty += parseInt(item[f.qty] || 0);
+            }
+            item._combined_pbmn = combinedPbmn;
+            item._combined_qty = combinedQty;
+        }
+
+        // 순매수: 내림차순, 순매도: 오름차순
+        merged.sort((a, b) => dir === 'buy'
+            ? b._combined_pbmn - a._combined_pbmn
+            : a._combined_pbmn - b._combined_pbmn
+        );
+
+        const top = merged.slice(0, 30);
+        top.forEach((item, i) => { item.data_rank = String(i + 1); });
+
+        _rankingData = top;
+        _rankingCurrentCategory = `investor_${dir}`;
+        renderRankingTable();
+
+    } catch (e) {
+        div.innerHTML = "오류: " + e;
+    }
+}
+
 function _formatElapsed(sec) {
     if (sec < 60) return `${sec.toFixed(1)}s`;
     const m = Math.floor(sec / 60);
@@ -596,7 +733,10 @@ function _startProgressPolling(category, div) {
     </div>`;
 
     const poll = async () => {
-        if (_rankingCurrentCategory !== category) return;
+        // 카테고리 전환 시 폴링 중단 (combined mode에서는 investor_buy/sell)
+        if (_rankingCurrentCategory !== category
+            && _rankingCurrentCategory !== 'investor_buy'
+            && _rankingCurrentCategory !== 'investor_sell') return;
         try {
             const res = await fetch('/api/ranking/progress');
             const p = await res.json();
@@ -607,7 +747,8 @@ function _startProgressPolling(category, div) {
             }
             if (!p.running && p.processed > 0 && p.processed >= p.total) {
                 // 완료 → 데이터 다시 로드
-                loadRanking(category);
+                if (_rankingDirection) loadInvestorRanking();
+                else loadRanking(category);
                 return;
             }
         } catch (_) { /* ignore */ }
@@ -635,22 +776,33 @@ function renderRankingTable() {
     const cat = _rankingCurrentCategory;
     const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(cat);
     const isProgram = ['program_buy', 'program_sell'].includes(cat);
+    const isCombined = cat === 'investor_buy' || cat === 'investor_sell';
     const isTradingValue = cat === 'trading_value';
-    const isSell = cat.endsWith('_sell');
+    const isSell = cat.endsWith('_sell') || cat === 'investor_sell';
 
     const sortCls = (key) => {
         if (_rankingSortState.key !== key) return 'sortable';
         return `sortable sort-${_rankingSortState.dir}`;
     };
 
+    const investorLabel = isCombined
+        ? Array.from(_rankingSelectedInvestors).map(inv => _investorTypeFields[inv].label).join('+')
+        : '';
+
     let headerRow;
-    if (isInvestor || isProgram) {
+    if (isInvestor || isProgram || isCombined) {
+        const pbmnLabel = isCombined
+            ? `${investorLabel} ${isSell ? '순매도대금' : '순매수대금'}`
+            : (isSell ? '순매도대금' : '순매수대금');
+        const qtyLabel = isCombined
+            ? `${investorLabel} ${isSell ? '순매도량' : '순매수량'}`
+            : (isSell ? '순매도량' : '순매수량');
         headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
             + `<th class="${sortCls('name')}" onclick="sortRanking('name')">종목명</th>`
             + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
             + `<th class="${sortCls('rate')}" onclick="sortRanking('rate')">등락률</th>`
-            + `<th class="${sortCls('ntby_pbmn')}" onclick="sortRanking('ntby_pbmn')">${isSell ? '순매도대금' : '순매수대금'}</th>`
-            + `<th class="${sortCls('ntby_qty')}" onclick="sortRanking('ntby_qty')">${isSell ? '순매도량' : '순매수량'}</th>`
+            + `<th class="${sortCls('ntby_pbmn')}" onclick="sortRanking('ntby_pbmn')">${pbmnLabel}</th>`
+            + `<th class="${sortCls('ntby_qty')}" onclick="sortRanking('ntby_qty')">${qtyLabel}</th>`
             + `<th class="${sortCls('ratio')}" onclick="sortRanking('ratio')">거래대금비(거래대금)</th>`;
     } else if (isTradingValue) {
         headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
@@ -676,7 +828,14 @@ function renderRankingTable() {
         const rate = parseFloat(item.prdy_ctrt || 0);
         const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
         let extraCols;
-        if (isInvestor || isProgram) {
+        if (isCombined) {
+            const pbmnVal = formatTradingValue(String(item._combined_pbmn));
+            const qtyVal = parseInt(item._combined_qty || 0).toLocaleString();
+            const acmlTr = parseInt(item.acml_tr_pbmn || 0);
+            const ratio = acmlTr ? ((item._combined_pbmn / acmlTr) * 100).toFixed(1) : '-';
+            const acmlTrFmt = formatTradingValue(item.acml_tr_pbmn);
+            extraCols = `<td>${pbmnVal}</td><td>${qtyVal}</td><td>${ratio}% (${acmlTrFmt})</td>`;
+        } else if (isInvestor || isProgram) {
             const isMil = isInvestor;
             const pbmnVal = formatTradingValue(item[_rankingPbmnField[cat]], isMil);
             const qtyVal = parseInt(item[_rankingQtyField[cat]] || 0).toLocaleString();
@@ -717,6 +876,7 @@ function sortRanking(key) {
 
 function rankingSortCompare(data, key, dir) {
     const cat = _rankingCurrentCategory;
+    const isCombined = cat === 'investor_buy' || cat === 'investor_sell';
     const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(cat);
     const sorted = data.slice();
     const d = dir === 'asc' ? 1 : -1;
@@ -742,20 +902,37 @@ function rankingSortCompare(data, key, dir) {
             va = parseInt(a.acml_tr_pbmn || 0);
             vb = parseInt(b.acml_tr_pbmn || 0);
         } else if (key === 'ntby_pbmn') {
-            va = parseInt(a[_rankingPbmnField[cat]] || 0);
-            vb = parseInt(b[_rankingPbmnField[cat]] || 0);
+            if (isCombined) {
+                va = a._combined_pbmn || 0;
+                vb = b._combined_pbmn || 0;
+            } else {
+                va = parseInt(a[_rankingPbmnField[cat]] || 0);
+                vb = parseInt(b[_rankingPbmnField[cat]] || 0);
+            }
         } else if (key === 'ntby_qty') {
-            va = parseInt(a[_rankingQtyField[cat]] || 0);
-            vb = parseInt(b[_rankingQtyField[cat]] || 0);
+            if (isCombined) {
+                va = a._combined_qty || 0;
+                vb = b._combined_qty || 0;
+            } else {
+                va = parseInt(a[_rankingQtyField[cat]] || 0);
+                vb = parseInt(b[_rankingQtyField[cat]] || 0);
+            }
         } else if (key === 'ratio') {
-            const isMil = isInvestor;
-            let rawA = parseInt(a[_rankingPbmnField[cat]] || 0);
-            let rawB = parseInt(b[_rankingPbmnField[cat]] || 0);
-            if (isMil) { rawA *= 1000000; rawB *= 1000000; }
-            const acmlA = parseInt(a.acml_tr_pbmn || 0);
-            const acmlB = parseInt(b.acml_tr_pbmn || 0);
-            va = acmlA ? (rawA / acmlA) : 0;
-            vb = acmlB ? (rawB / acmlB) : 0;
+            if (isCombined) {
+                const acmlA = parseInt(a.acml_tr_pbmn || 0);
+                const acmlB = parseInt(b.acml_tr_pbmn || 0);
+                va = acmlA ? ((a._combined_pbmn || 0) / acmlA) : 0;
+                vb = acmlB ? ((b._combined_pbmn || 0) / acmlB) : 0;
+            } else {
+                const isMil = isInvestor;
+                let rawA = parseInt(a[_rankingPbmnField[cat]] || 0);
+                let rawB = parseInt(b[_rankingPbmnField[cat]] || 0);
+                if (isMil) { rawA *= 1000000; rawB *= 1000000; }
+                const acmlA = parseInt(a.acml_tr_pbmn || 0);
+                const acmlB = parseInt(b.acml_tr_pbmn || 0);
+                va = acmlA ? (rawA / acmlA) : 0;
+                vb = acmlB ? (rawB / acmlB) : 0;
+            }
         } else {
             return 0;
         }
