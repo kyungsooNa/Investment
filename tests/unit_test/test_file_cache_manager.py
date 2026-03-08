@@ -123,7 +123,7 @@ def test_set_file_write_error_logs(tmp_path):
     mgr.set_logger(logger)
 
     with patch("builtins.open", side_effect=IOError("disk error")):
-        mgr.set("k", {"data": 123}, save_to_file=True)  # except 블록 → logger.error :contentReference[oaicite:5]{index=5}
+        mgr.set("k", {"data": 123}, save_to_file=True)  # except 블록 → logger.error
 
     assert logger.error.called
     msg = logger.error.call_args[0][0]
@@ -143,7 +143,7 @@ def test_delete_file_remove_error_logs(tmp_path):
     mgr.set_logger(logger)
 
     with patch("os.remove", side_effect=OSError("cannot delete")):
-        mgr.delete("k")  # except 블록 → logger.error :contentReference[oaicite:6]{index=6}
+        mgr.delete("k")  # except 블록 → logger.error
 
     assert logger.error.called
     msg = logger.error.call_args[0][0]
@@ -176,7 +176,7 @@ def test_clear_with_delete_error_logs_each_file(tmp_path):
 
     # 첫 번째 remove는 실패, 두 번째는 성공하도록 side_effect 설정
     with patch("os.remove", side_effect=[OSError("fail a"), None]):
-        mgr.clear()  # 파일 루프 내 except → logger.error 호출 :contentReference[oaicite:8]{index=8}
+        mgr.clear()  # 파일 루프 내 except → logger.error 호출
 
     assert logger.error.called
     # 개별 파일 삭제 실패 메시지 형태 확인
@@ -191,7 +191,7 @@ def test_clear_top_level_exception_is_logged(tmp_path):
     mgr.set_logger(logger)
 
     with patch("os.walk", side_effect=RuntimeError("walk boom")):
-        mgr.clear()  # 전체 예외 처리 :contentReference[oaicite:9]{index=9}
+        mgr.clear()  # 전체 예외 처리
 
     assert logger.error.called
     msg = logger.error.call_args[0][0]

@@ -5,6 +5,7 @@ from datetime import datetime
 from core.cache.cache_config import load_cache_config
 from core.cache.memory_cache_manager import MemoryCacheManager
 from core.cache.file_cache_manager import FileCacheManager
+from core.cache.db_cache_manager import DBCacheManager
 
 
 class CacheManager:
@@ -14,7 +15,11 @@ class CacheManager:
         cache_cfg = config.get("cache", {})
 
         self.memory_cache = MemoryCacheManager() if cache_cfg.get("memory_cache_enabled", True) else None
-        self.file_cache = FileCacheManager(config) if cache_cfg.get("file_cache_enabled", True) else None
+        
+        if cache_cfg.get("file_cache_enabled", True):
+            self.file_cache = DBCacheManager(config) if cache_cfg.get("use_db_cache", False) else FileCacheManager(config)
+        else:
+            self.file_cache = None
         self._logger = None
 
     def set_logger(self, logger):
