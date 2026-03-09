@@ -455,3 +455,450 @@ def test_calculate_qty(mock_deps):
     # 가격 0 → min_qty(1)
     assert strategy._calculate_qty(0) == 1
     assert strategy._calculate_qty(-100) == 1
+
+
+# ── Edge Cases & Error Handling ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_scan_market_not_open(htf_scan_setup):
+    """scan: 장 시작 전(progress <= 0)이면 스캔 중단."""
+    strategy, _, _, tm, _ = htf_scan_setup
+
+    # 장 시작 전 시간 설정 (08:59)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 8, 59, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 1, 15, 30, 0)
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_ohlcv_api_failure(htf_scan_setup):
+    """scan: OHLCV 조회 실패 시 해당 종목 스킵."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+
+    # OHLCV API 에러 응답
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Error", data=[]
+    )
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_ohlcv_data_insufficient(htf_scan_setup):
+    """scan: OHLCV 데이터가 pole_lookback_days보다 적으면 스킵."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+    strategy._cfg.pole_lookback_days = 40
+
+    # 39일치 데이터만 반환
+    ohlcv = _make_ohlcv_pole_and_flag(pole_days=20, flag_days=19)  # total 39 days
+    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_current_price_api_failure(htf_scan_setup):
+    """scan: 현재가 조회 실패 시 스킵."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+
+    # OHLCV는 정상 (패턴 감지 성공 유도)
+    ohlcv = _make_ohlcv_pole_and_flag()
+    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+
+    # 현재가 조회 실패
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Error", data=None
+    )
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_conclusion_api_failure(htf_scan_setup):
+    """scan: 체결강도 조회 실패(예외 발생) 시 스킵."""
+    strategy, sqs, _, _, logger = htf_scan_setup
+
+    # OHLCV 정상
+    ohlcv = _make_ohlcv_pole_and_flag()
+    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+
+    # 현재가 정상 (돌파 조건 충족)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "10500", "acml_vol": "600000",
+        }}
+    )
+
+    # 체결강도 조회 중 예외 발생
+    sqs.get_stock_conclusion.side_effect = Exception("API Error")
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_insufficient_volume_data_for_avg(htf_scan_setup):
+    """scan: 거래량 이동평균 계산을 위한 데이터가 20일 미만이면 스킵."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+
+    # OHLCV는 HTF 패턴을 만족하지만, 데이터 길이는 19일.
+    ohlcv = _make_ohlcv_pole_and_flag(pole_days=10, flag_days=8)  # total 18 days
+    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+
+    # 현재가 및 체결강도는 돌파 조건 만족
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "600000"}}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "130.0"}]}
+    )
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_check_exits_price_api_failure(mock_deps):
+    """check_exits: 현재가 조회 실패 시 홀딩 유지 (시그널 없음)."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    strategy._position_state["005930"] = HTFPositionState(10000, "20250101", 10000, 10000)
+
+    # 현재가 API 실패
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="1", msg1="Fail", data=None)
+
+    holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
+    signals = await strategy.check_exits(holdings)
+
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_check_exits_for_untracked_holding(mock_deps):
+    """check_exits: _position_state에 없는 보유종목은 새로 상태를 만들어 손절 로직 적용."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    assert "005930" not in strategy._position_state
+
+    # 현재가 9400, 매수가 10000 -> -6% 손실
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9400"}}
+    )
+
+    # state가 없어도, buy_price 기준으로 stop_loss_pct(-5%)가 적용되어야 함
+    holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
+    signals = await strategy.check_exits(holdings)
+
+    assert len(signals) == 1
+    assert signals[0].action == "SELL"
+    assert "칼손절" in signals[0].reason
+    assert "005930" not in strategy._position_state
+
+
+# ── Edge Cases & Error Handling ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_scan_market_not_open(htf_scan_setup):
+    """scan: 장 시작 전(progress <= 0)이면 스캔 중단."""
+    strategy, _, _, tm, _ = htf_scan_setup
+
+    # 장 시작 전 시간 설정 (08:59)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 8, 59, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 1, 15, 30, 0)
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_ohlcv_api_failure(htf_scan_setup):
+    """scan: OHLCV 조회 실패 시 해당 종목 스킵."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+
+    # OHLCV API 에러 응답
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Error", data=[]
+    )
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_current_price_api_failure(htf_scan_setup):
+    """scan: 현재가 조회 실패 시 스킵."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+
+    # OHLCV는 정상 (패턴 감지 성공 유도)
+    ohlcv = _make_ohlcv_pole_and_flag()
+    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+
+    # 현재가 조회 실패
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Error", data=None
+    )
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_conclusion_api_failure(htf_scan_setup):
+    """scan: 체결강도 조회 실패(예외 발생) 시 스킵."""
+    strategy, sqs, _, _, logger = htf_scan_setup
+
+    # OHLCV 정상
+    ohlcv = _make_ohlcv_pole_and_flag()
+    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+
+    # 현재가 정상 (돌파 조건 충족)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "10500", "acml_vol": "600000",
+        }}
+    )
+
+    # 체결강도 조회 중 예외 발생
+    sqs.get_stock_conclusion.side_effect = Exception("API Error")
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_check_exits_price_api_failure(mock_deps):
+    """check_exits: 현재가 조회 실패 시 홀딩 유지 (시그널 없음)."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    strategy._position_state["005930"] = HTFPositionState(10000, "20250101", 10000, 10000)
+
+    # 현재가 API 실패
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="1", msg1="Fail", data=None)
+
+    holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
+    signals = await strategy.check_exits(holdings)
+
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_check_exits_trailing_ma_data_insufficient(mock_deps):
+    """check_exits: 트레일링스탑 계산 시 데이터 부족하면 스킵."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    strategy._position_state["005930"] = HTFPositionState(10000, "20250101", 12000, 10000)
+
+    # 현재가 10500 (고점 대비 하락했으나 손절가는 아님)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500"}}
+    )
+
+    # OHLCV 데이터가 10일치 미만 (5일)
+    ohlcv = [{"close": 11000} for _ in range(5)]
+    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+
+    holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
+    signals = await strategy.check_exits(holdings)
+
+    assert len(signals) == 0  # 데이터 부족으로 MA 계산 불가 -> 매도 안 함
+
+
+# ── _check_htf_setup / _check_breakout 단위 테스트 ───────────────────
+
+@pytest.mark.asyncio
+async def test_check_htf_setup_no_pattern(htf_scan_setup):
+    """_check_htf_setup: _detect_pole_and_flag가 None을 반환하면 즉시 종료."""
+    strategy, sqs, universe, tm, logger = htf_scan_setup
+    watchlist = await universe.get_watchlist()
+    item = watchlist.get("005930")
+
+    # OHLCV는 정상적으로 조회되나, 패턴 감지에는 실패하는 데이터 (surge_ratio < 1.9)
+    ohlcv = _make_ohlcv_pole_and_flag(pole_start_price=8000, pole_end_price=10000)
+    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+
+    # _detect_pole_and_flag가 None을 반환하므로 _check_breakout은 호출되지 않아야 함
+    sqs.get_current_price.reset_mock()
+
+    signal = await strategy._check_htf_setup("005930", item, 0.5)
+
+    assert signal is None
+    sqs.get_current_price.assert_not_called()
+
+
+@pytest.fixture
+def breakout_setup(htf_scan_setup):
+    """_check_breakout 메서드 테스트를 위한 공통 설정."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+
+    code = "005930"
+    item = MagicMock(name="테스트종목")
+    pattern = {
+        "pole_high": 10000,
+        "surge_ratio": 2.0,
+        "flag_days": 15,
+    }
+    # 50일치 데이터, 평균 거래량 100,000
+    ohlcv = [{"volume": 100000} for _ in range(50)]
+    progress = 0.5  # 50%
+
+    return strategy, sqs, code, item, pattern, ohlcv, progress
+
+
+@pytest.mark.asyncio
+async def test_check_breakout_no_price_output(breakout_setup):
+    """_check_breakout: 현재가 API 응답에 'output'이 없으면 None 반환."""
+    strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
+
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": None}
+    )
+
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_check_breakout_current_price_zero(breakout_setup):
+    """_check_breakout: 현재가가 0이면 None 반환."""
+    strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
+
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "0", "acml_vol": "100000"}}
+    )
+
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_check_breakout_price_output_is_object(breakout_setup):
+    """_check_breakout: 현재가 API 응답의 output이 객체일 때도 정상 처리."""
+    strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
+
+    class MockPriceOutput:
+        stck_prpr = "10500"
+        acml_vol = "600000"
+
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": MockPriceOutput()}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "130.0"}]}
+    )
+
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    assert signal is not None
+    assert signal.action == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_check_breakout_conclusion_empty_list(breakout_setup):
+    """_check_breakout: 체결강도 API 응답의 output 리스트가 비어있으면 None 반환."""
+    strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
+
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "600000"}}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": []}
+    )
+
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_check_breakout_conclusion_no_tday_rltv(breakout_setup):
+    """_check_breakout: 체결강도 응답에 'tday_rltv' 필드가 없으면 None 반환."""
+    strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
+
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "600000"}}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"some_other_key": "130.0"}]}
+    )
+
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_check_breakout_early_market_volume_defense(breakout_setup):
+    """_check_breakout: 장 초반(progress < 0.05) 거래량 계산 시 effective_progress(0.05) 적용 검증."""
+    strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
+
+    progress = 0.01
+
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "130.0"}]}
+    )
+
+    # Case 1: 거래량 부족 (proj_vol = 9900 / 0.05 = 198,000 < 200,000)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "9900"}}
+    )
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    assert signal is None
+
+    # Case 2: 거래량 충분 (proj_vol = 10000 / 0.05 = 200,000 >= 200,000)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "10000"}}
+    )
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    assert signal is not None
+    assert signal.action == "BUY"
+
+
+# ── check_exits() Edge Cases ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_check_exits_incomplete_holding_info(mock_deps):
+    """check_exits: holdings 리스트의 항목에 code나 buy_price가 없으면 스킵."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+
+    holdings = [
+        {"name": "No Code", "buy_price": 10000},
+        {"code": "005930", "name": "No Buy Price"}
+    ]
+
+    signals = await strategy.check_exits(holdings)
+
+    assert len(signals) == 0
+    sqs.get_current_price.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_exits_invalid_price_data(mock_deps):
+    """check_exits: 현재가 API 응답이 비정상이면 스킵."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+    strategy._position_state["005930"] = HTFPositionState(10000, "20250101", 10000, 10000)
+    holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
+
+    # Case 1: output is None
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None})
+    signals = await strategy.check_exits(holdings)
+    assert len(signals) == 0
+
+    # Case 2: current price is 0
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "0"}})
+    signals = await strategy.check_exits(holdings)
+    assert len(signals) == 0
