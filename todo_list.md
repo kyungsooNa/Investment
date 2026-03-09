@@ -8,6 +8,7 @@
 - [ ] **[전략매매]** `OneilPocketPivotStrategy`의 전용 로거(logger)가 생성되지 않는 버그 수정.
 - [ ] **[프로그램매매]** 10시 이후 데이터 리로드(reload)가 정상적으로 이루어지지 않는 버그 디버깅 및 수정.
 - [ ] **[설정/환경]** `tr_ids_config.yaml`과 `kis_config.yaml`의 `tr_id`, `url`을 `(실전, 모의)` 튜플(Tuple) 형태로 변경. 모의투자에서 지원하지 않는 API는 빈 값으로 두어 자동 차단되도록 수정.
+- [ ] **[로그]** logs\strategies\oneil 에 PoolA 생성에 대한 log만 있어야하는데 OneilSqueezeBreakout, OneilPocketPivot 의 전략 전용 로그도 들어오는 문제 (folder 명도 logs\strategies\oneil_pool 로 변경.). logs\strategies 여기에 있었으면 좋겠음.
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[아키텍처]** 단일 책임 원칙(SRP)에 따라 비대해진 `TradingService`를 `OrderService`(주문), `MarketDataService`(시세/조회), `StreamingService`(웹소켓)로 분리.
