@@ -92,8 +92,13 @@ async def test_stream_notifications_timeout_keepalive(mock_get_ctx, mock_ctx):
     # 3. 루프 재진입 연결 확인 (True) -> 종료
     mock_request.is_disconnected = AsyncMock(side_effect=[False, False, True])
     
+    async def raise_timeout(coro, *args, **kwargs):
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        raise asyncio.TimeoutError
+
     # asyncio.wait_for가 TimeoutError를 발생시키도록 패치
-    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+    with patch("asyncio.wait_for", side_effect=raise_timeout):
         response = await stream_notifications(mock_request)
         iterator = response.body_iterator
         
@@ -141,8 +146,13 @@ async def test_stream_notifications_cancelled(mock_get_ctx, mock_ctx):
     mock_request = MagicMock(spec=Request)
     mock_request.is_disconnected = AsyncMock(return_value=False)
     
+    async def raise_cancelled(coro, *args, **kwargs):
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        raise asyncio.CancelledError
+
     # wait_for에서 CancelledError 발생 시뮬레이션
-    with patch("asyncio.wait_for", side_effect=asyncio.CancelledError):
+    with patch("asyncio.wait_for", side_effect=raise_cancelled):
         response = await stream_notifications(mock_request)
         iterator = response.body_iterator
         
@@ -166,8 +176,13 @@ async def test_stream_notifications_timeout_disconnect_check(mock_get_ctx, mock_
     # 2. TimeoutError 발생 후 예외 처리 블록 내 연결 확인 (True) -> break
     mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
     
+    async def raise_timeout(coro, *args, **kwargs):
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        raise asyncio.TimeoutError
+
     # asyncio.wait_for가 TimeoutError를 발생시키도록 패치
-    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+    with patch("asyncio.wait_for", side_effect=raise_timeout):
         response = await stream_notifications(mock_request)
         iterator = response.body_iterator
         
