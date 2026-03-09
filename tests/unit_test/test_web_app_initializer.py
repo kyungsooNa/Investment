@@ -1,62 +1,44 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-import asyncio
 from view.web.web_app_initializer import WebAppContext
 from pydantic import BaseModel
+import contextlib
 
 @pytest.fixture
 def mock_deps():
     """WebAppContext가 의존하는 모든 외부 모듈을 Mocking합니다."""
-    with patch("view.web.web_app_initializer.load_configs") as mock_load, \
-         patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True) as mock_env, \
-         patch("view.web.web_app_initializer.TimeManager", autospec=True) as mock_tm, \
-         patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True) as mock_broker, \
-         patch("view.web.web_app_initializer.TradingService", autospec=True) as mock_ts, \
-         patch("view.web.web_app_initializer.StockQueryService", autospec=True) as mock_sqs, \
-         patch("view.web.web_app_initializer.OrderExecutionService", autospec=True) as mock_oes, \
-         patch("view.web.web_app_initializer.VirtualTradeManager", autospec=True) as mock_vtm, \
-         patch("view.web.web_app_initializer.StockCodeMapper", autospec=True) as mock_scm, \
-         patch("view.web.web_app_initializer.StrategyScheduler", autospec=True) as mock_sched, \
-         patch("view.web.web_app_initializer.RealtimeDataManager", autospec=True) as mock_rdm, \
-         patch("view.web.web_app_initializer.IndicatorService", autospec=True) as mock_ind, \
-         patch("view.web.web_app_initializer.web_api") as mock_web_api, \
-         patch("view.web.web_app_initializer.OneilUniverseService", autospec=True) as mock_ous, \
-         patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True) as mock_vb, \
-         patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True) as mock_pbf, \
-         patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True) as mock_tvb, \
-         patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True) as mock_osb, \
-         patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True) as mock_pp, \
-         patch("view.web.web_app_initializer.CacheManager", autospec=True) as mock_cm, \
-         patch("view.web.web_app_initializer.Logger", autospec=True) as mock_logger:
-        
-        mock_load.return_value = {
+    patch_targets = [
+        ("load_configs", patch("view.web.web_app_initializer.load_configs")),
+        ("env", patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True)),
+        ("tm", patch("view.web.web_app_initializer.TimeManager", autospec=True)),
+        ("broker", patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True)),
+        ("ts", patch("view.web.web_app_initializer.TradingService", autospec=True)),
+        ("sqs", patch("view.web.web_app_initializer.StockQueryService", autospec=True)),
+        ("oes", patch("view.web.web_app_initializer.OrderExecutionService", autospec=True)),
+        ("vtm", patch("view.web.web_app_initializer.VirtualTradeManager", autospec=True)),
+        ("scm", patch("view.web.web_app_initializer.StockCodeMapper", autospec=True)),
+        ("sched", patch("view.web.web_app_initializer.StrategyScheduler", autospec=True)),
+        ("rdm", patch("view.web.web_app_initializer.RealtimeDataManager", autospec=True)),
+        ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
+        ("web_api", patch("view.web.web_app_initializer.web_api")),
+        ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
+        ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
+        ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
+        ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
+        ("osb", patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True)),
+        ("pp", patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True)),
+        ("cm", patch("view.web.web_app_initializer.CacheManager", autospec=True)),
+        ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
+    ]
+
+    with contextlib.ExitStack() as stack:
+        mocks = {name: stack.enter_context(p) for name, p in patch_targets}
+        mocks["load_configs"].return_value = {
             "market_open_time": "09:00",
             "market_close_time": "15:30",
             "market_timezone": "Asia/Seoul"
         }
-        yield {
-            "load_configs": mock_load,
-            "env": mock_env,
-            "tm": mock_tm,
-            "broker": mock_broker,
-            "ts": mock_ts,
-            "sqs": mock_sqs,
-            "oes": mock_oes,
-            "vtm": mock_vtm,
-            "scm": mock_scm,
-            "sched": mock_sched,
-            "rdm": mock_rdm,
-            "ind": mock_ind,
-            "web_api": mock_web_api,
-            "ous": mock_ous,
-            "vb": mock_vb,
-            "pbf": mock_pbf,
-            "tvb": mock_tvb,
-            "osb": mock_osb,
-            "pp": mock_pp,
-            "cm": mock_cm,
-            "logger": mock_logger
-        }
+        yield mocks
 
 def test_initialization(mock_deps):
     """WebAppContext 객체 생성 시 초기 상태 검증"""
