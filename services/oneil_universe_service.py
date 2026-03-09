@@ -344,7 +344,7 @@ class OneilUniverseService:
     async def generate_pool_a(self) -> dict:
         """전체 종목 스캔 -> Pool A 생성 및 파일 저장."""
         # 전용 로거 생성 (logs/strategies/oneil/YYYYMMDD_HHMMSS_generate_poolA.log.json)
-        pool_a_logger = get_strategy_logger("generate_poolA", sub_dir="oneil")
+        pool_a_logger = get_strategy_logger("generate_poolA", sub_dir="oneil_pool")
         pool_a_logger.setLevel(logging.DEBUG)
 
         self._logger.info({"event": "generate_pool_a_started"})

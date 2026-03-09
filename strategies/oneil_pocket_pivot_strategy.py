@@ -50,7 +50,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         if logger:
             self._logger = logger
         else:
-            self._logger = get_strategy_logger("OneilPocketPivot", sub_dir="oneil")
+            self._logger = get_strategy_logger("OneilPocketPivot")
 
         self._position_state: Dict[str, PPPositionState] = {}
         self._load_state()
