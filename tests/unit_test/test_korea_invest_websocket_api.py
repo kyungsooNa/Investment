@@ -466,7 +466,7 @@ def test_handle_websocket_message_pingpong(websocket_api_instance):
 
     api._handle_websocket_message(pingpong_message)
 
-    api._logger.info.assert_called_once_with("PINGPONG 수신됨. PONG 응답.")
+    api._logger.debug.assert_called_once_with("PINGPONG 수신됨. PONG 응답.")
 
 
 # _handle_websocket_message: 성공적인 AES KEY/IV 수신 처리 테스트
@@ -887,7 +887,7 @@ async def test_websocket_keepalive_logic(websocket_api_instance):
     api._handle_websocket_message(ping_msg)
 
     # 로그가 남는지 확인 (현재 구현은 로그만 남김)
-    api._logger.info.assert_called_with("PINGPONG 수신됨. PONG 응답.")
+    api._logger.debug.assert_called_with("PINGPONG 수신됨. PONG 응답.")
 
 
 @pytest.mark.asyncio
@@ -1334,7 +1334,7 @@ def test_handle_websocket_message_control_pingpong(websocket_api_instance):
 
     api._handle_websocket_message(message)
 
-    api._logger.info.assert_called_with("PINGPONG 수신됨. PONG 응답.")
+    api._logger.debug.assert_called_once_with("PINGPONG 수신됨. PONG 응답.")
 
 
 def test_handle_websocket_message_parse_h0ifasp0(websocket_api_instance):
