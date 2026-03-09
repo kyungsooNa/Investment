@@ -59,7 +59,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if logger:
             self._logger = logger
         else:
-            self._logger = get_strategy_logger("OneilSqueezeBreakout", sub_dir="oneil")
+            self._logger = get_strategy_logger("OneilSqueezeBreakout")
 
         self._position_state: Dict[str, OSBPositionState] = {}
         self._load_state()
