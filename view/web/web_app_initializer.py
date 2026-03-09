@@ -137,7 +137,8 @@ class WebAppContext:
             logger=self.logger,
             time_manager=self.time_manager,
             trading_service=self.trading_service,
-            performance_manager=self.pm
+            performance_manager=self.pm,
+            notification_manager=self.notification_manager,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
