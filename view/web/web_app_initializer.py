@@ -213,6 +213,7 @@ class WebAppContext:
             order_qty=1,
             enabled=False,
             force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
+            allow_pyramiding=False,    # 👈 단타 전략이므로 불타기 금지
         ))
 
         # 프로그램 매수 추종 전략 등록
@@ -228,6 +229,7 @@ class WebAppContext:
             order_qty=1,
             enabled=False,
             force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
+            allow_pyramiding=False,    # 👈 단타 전략이므로 불타기 금지
         ))
 
         # 전통적 거래량 돌파 전략 등록
@@ -244,6 +246,7 @@ class WebAppContext:
             order_qty=1,
             enabled=False,
             force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
+            allow_pyramiding=False,    # 👈 단타 전략이므로 불타기 금지
         ))
 
         # 오닐 스퀴즈 돌파 전략 등록
@@ -260,6 +263,7 @@ class WebAppContext:
             order_qty=1,
             enabled=False,
             force_exit_on_close=False,  # 👈 오닐 전략은 오버나잇(홀딩) 허용!
+            allow_pyramiding=True,     # 👈 오버나잇 전략이므로 불타기 허용
         ))
         
         self.osb_strategy = osb_strategy # (웹 API 하위 호환성 유지용)
@@ -279,6 +283,7 @@ class WebAppContext:
             order_qty=1,
             enabled=False,
             force_exit_on_close=False,  # 7주 홀딩 허용
+            allow_pyramiding=True,      # 👈 오버나잇 전략이므로 불타기 허용
         ))
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")

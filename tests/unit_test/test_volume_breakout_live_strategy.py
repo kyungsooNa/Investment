@@ -8,18 +8,18 @@ from strategies.volume_breakout_strategy import VolumeBreakoutConfig
 
 class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
-    def _make_strategy(self, trigger_pct=10.0, trailing_stop_pct=8.0, stop_loss_pct=8.0):
+    def _make_strategy(self, **config_kwargs):
         sqs = MagicMock()
         sqs.handle_get_current_stock_price = AsyncMock()
         sqs.get_top_trading_value_stocks = AsyncMock()
         tm = MagicMock()
         logger = MagicMock()
 
-        config = VolumeBreakoutConfig(
-            trigger_pct=trigger_pct,
-            trailing_stop_pct=trailing_stop_pct,
-            stop_loss_pct=stop_loss_pct,
-        )
+        # 기본값 설정 후 kwargs로 덮어쓰기
+        config_values = {"trigger_pct": 10.0, "trailing_stop_pct": 8.0, "stop_loss_pct": -5.0}
+        config_values.update(config_kwargs)
+        config = VolumeBreakoutConfig(**config_values)
+
         strategy = VolumeBreakoutLiveStrategy(
             stock_query_service=sqs,
             time_manager=tm,
@@ -220,6 +220,51 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].code, "005930")
         strategy._logger.error.assert_called_once()
+
+    async def test_scan_reentry_disallowed(self):
+        """allow_reentry=False일 때 당일 재진입 방지 테스트."""
+        strategy, sqs, tm = self._make_strategy(allow_reentry=False)
+        
+        from datetime import datetime
+        import pytz
+        kst = pytz.timezone("Asia/Seoul")
+        tm.get_current_kst_time.return_value = kst.localize(datetime(2025, 1, 1, 10, 0))
+
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "acml_vol": "1000"}]
+        )
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"price": "1100", "open": "1000"} # +10%
+        )
+
+        # 첫 번째 스캔: 매수 신호 발생
+        signals1 = await strategy.scan()
+        self.assertEqual(len(signals1), 1)
+        self.assertIn("005930", strategy._bought_today)
+
+        # 두 번째 스캔: 이미 매수했으므로 신호 없음
+        signals2 = await strategy.scan()
+        self.assertEqual(len(signals2), 0)
+
+        # 날짜 변경 후
+        tm.get_current_kst_time.return_value = kst.localize(datetime(2025, 1, 2, 10, 0))
+        
+        # 세 번째 스캔: 날짜가 바뀌었으므로 다시 매수 신호 발생
+        signals3 = await strategy.scan()
+        self.assertEqual(len(signals3), 1)
+        self.assertEqual(signals3[0].code, "005930")
+
+        # 네 번째 스캔: 같은 날이므로 다시 신호 없음
+        signals4 = await strategy.scan()
+        self.assertEqual(len(signals4), 0)
+
+
+
+
+
+
 
 
 if __name__ == "__main__":

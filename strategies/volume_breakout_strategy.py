@@ -17,6 +17,7 @@ class VolumeBreakoutConfig(BaseStrategyConfig):
     avg_vol_lookback_days: int = 20    # 평균 거래량 계산 기간 (거래일 기준 약 1개월)
     avg_vol_multiplier: float = 2.0    # 평균 거래량 대비 최소 배수 (≥2배)
     session: Literal["REGULAR", "EXTENDED"] = "REGULAR"  # 거래 세션 구분
+    allow_reentry: bool = True         # 당일 재진입 허용 여부 (False면 종목당 하루 1회만 매수)
 
 # ===============================
 # 거래량 돌파 전략 클래스
