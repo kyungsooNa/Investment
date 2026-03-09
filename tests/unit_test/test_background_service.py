@@ -5,7 +5,7 @@ BackgroundService 단위 테스트.
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock, AsyncMock
-from services.background_service import BackgroundService, _ETF_PREFIXES
+from services.background_service import BackgroundService, _ETF_PREFIXES, _chunked
 from common.types import ResCommonResponse, ErrorCode
 
 
@@ -639,6 +639,146 @@ async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, m
 
     broker.get_investor_trade_by_stock_daily.assert_not_called()
     logger.info.assert_any_call("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
+
+
+def test_chunked_helper():
+    """_chunked 헬퍼 함수 테스트."""
+    lst = [1, 2, 3, 4, 5]
+    chunks = list(_chunked(lst, 2))
+    assert chunks == [[1, 2], [3, 4], [5]]
+
+    chunks = list(_chunked([], 2))
+    assert chunks == []
+
+    chunks = list(_chunked(lst, 10))
+    assert chunks == [[1, 2, 3, 4, 5]]
+
+
+@pytest.mark.asyncio
+async def test_refresh_basic_ranking_exception_and_notification(bg_service, mock_deps):
+    """기본 랭킹 갱신 중 예외 발생 시 로그 및 알림 테스트."""
+    _, _, _, logger, _ = mock_deps
+    bg_service._nm = AsyncMock()
+
+    # TradingService가 예외를 던지도록 설정
+    bg_service._trading_service.get_top_rise_fall_stocks.side_effect = Exception("Critical Error")
+
+    await bg_service.refresh_basic_ranking()
+
+    logger.error.assert_called()
+    bg_service._nm.emit.assert_awaited_with("SYSTEM", "error", "기본 랭킹 갱신 실패", "Critical Error")
+
+
+@pytest.mark.asyncio
+async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps):
+    """기본 랭킹 갱신 성공 시 알림 테스트."""
+    bg_service._nm = AsyncMock()
+
+    # Mock success responses
+    bg_service._trading_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    bg_service._trading_service.get_top_volume_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    bg_service._trading_service.get_top_trading_value_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+    await bg_service.refresh_basic_ranking()
+
+    bg_service._nm.emit.assert_awaited()
+    args = bg_service._nm.emit.call_args[0]
+    assert args[0] == "API"
+    assert args[1] == "info"
+    assert "기본 랭킹 갱신 완료" in args[2]
+
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
+    """투자자 랭킹 갱신 성공/실패 알림 테스트."""
+    broker, mapper, _, _, _ = mock_deps
+    bg_service._nm = AsyncMock()
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+
+    # 1. Success case
+    broker.get_investor_trade_by_stock_daily.return_value = _make_investor_response(100)
+
+    await bg_service.refresh_investor_ranking()
+
+    bg_service._nm.emit.assert_awaited()
+    args = bg_service._nm.emit.call_args[0]
+    assert args[0] == "API"
+    assert "투자자 랭킹 갱신 완료" in args[2]
+
+    # 2. Failure case
+    bg_service._nm.reset_mock()
+    broker.get_investor_trade_by_stock_daily.side_effect = Exception("API Fail")
+
+    await bg_service.refresh_investor_ranking()
+
+    bg_service._nm.emit.assert_awaited()
+    args = bg_service._nm.emit.call_args[0]
+    assert args[0] == "SYSTEM"
+    assert "투자자 랭킹 갱신 실패" in args[2]
+
+
+def test_check_and_trigger_refresh_no_loop(bg_service):
+    """이벤트 루프가 없을 때 온디맨드 갱신 트리거 실패 처리 테스트."""
+    from unittest.mock import patch
+
+    bg_service._foreign_net_buy_cache = []
+    bg_service._is_refreshing = False
+
+    # asyncio.get_running_loop가 RuntimeError를 던지도록 설정
+    with patch("asyncio.get_running_loop", side_effect=RuntimeError("No running loop")):
+        with patch("asyncio.create_task") as mock_create_task:
+            bg_service._check_and_trigger_refresh()
+
+            mock_create_task.assert_not_called()
+            bg_service._logger.warning.assert_called_with("이벤트 루프 없음 — 온디맨드 갱신 스킵")
+
+
+@pytest.mark.asyncio
+async def test_start_after_market_scheduler_exception_handling(bg_service, mock_deps):
+    """스케줄러 루프 내 일반 예외 발생 시 처리 테스트."""
+    import asyncio
+    from unittest.mock import patch
+
+    _, _, _, logger, time_manager = mock_deps
+    time_manager.is_market_open.return_value = False
+
+    # refresh_basic_ranking에서 예외 발생
+    bg_service.refresh_basic_ranking = AsyncMock(side_effect=Exception("Scheduler Error"))
+
+    # sleep을 모킹하여 루프를 한 번 돌고 종료(CancelledError)하도록 설정
+    with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+         try:
+             await bg_service.start_after_market_scheduler()
+         except asyncio.CancelledError:
+             pass
+
+    logger.error.assert_called()
+    assert "장마감 후 스케줄러 오류" in logger.error.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_invalid_response_data(bg_service, mock_deps):
+    """API 응답 데이터가 None이거나 dict가 아닐 때 처리 테스트."""
+    broker, mapper, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+
+    # 1. data is None
+    broker.get_investor_trade_by_stock_daily.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=None)
+    await bg_service.refresh_investor_ranking()
+    assert len(bg_service._foreign_net_buy_cache) == 0
+
+    # 2. data is not dict
+    broker.get_investor_trade_by_stock_daily.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data="invalid")
+    await bg_service.refresh_investor_ranking()
+    assert len(bg_service._foreign_net_buy_cache) == 0
+
+    # 3. program data invalid
+    broker.get_investor_trade_by_stock_daily.return_value = _make_investor_response(100)
+    broker.get_program_trade_by_stock_daily.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data="invalid")
+    await bg_service.refresh_investor_ranking()
+    # 투자자 데이터는 수집되었으나 프로그램 데이터는 수집되지 않음
+    assert len(bg_service._foreign_net_buy_cache) == 1
+    assert len(bg_service._program_net_buy_cache) == 0
 
 
 @pytest.mark.asyncio
