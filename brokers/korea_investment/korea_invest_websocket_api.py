@@ -146,6 +146,7 @@ class KoreaInvestWebSocketAPI:
         max_retries = 30     # 최대 재시도 횟수 (약 30분간 시도)
         base_delay = 3       # 기본 대기 시간 (초)
         max_delay = 60       # 최대 대기 시간 (초)
+        DATA_TIMEOUT = 60.0  # [추가] 데이터 수신 타임아웃 (초)
 
         while self._auto_reconnect:
             # 1. 연결이 끊겨있다면 재연결 시도
@@ -178,8 +179,18 @@ class KoreaInvestWebSocketAPI:
 
             # 2. 메시지 수신
             try:
-                message = await self.ws.recv()
+                # [수정] 타임아웃 적용: 일정 시간 데이터가 없으면 Dead Connection으로 간주하고 재연결
+                message = await asyncio.wait_for(self.ws.recv(), timeout=DATA_TIMEOUT)
                 self._handle_websocket_message(message)
+            except asyncio.TimeoutError:
+                # 장 운영 시간 중에만 재연결 시도 (장 마감 후에는 데이터가 없는 것이 정상이므로 무시)
+                if self._time_manager and self._time_manager.is_market_open():
+                    self._logger.warning(f"{DATA_TIMEOUT}초간 데이터 수신 없음 (Dead Connection 의심). 재연결을 시도합니다.")
+                    self._is_connected = False
+                    if self.ws:
+                        await self.ws.close()
+                    self.ws = None
+                # 장 마감 후에는 타임아웃 발생해도 연결 유지 (Ping/Pong은 내부적으로 처리됨)
             except (websockets.ConnectionClosed, Exception) as e:
                 if self._auto_reconnect:
                     self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.", exc_info=True)
@@ -270,6 +281,9 @@ class KoreaInvestWebSocketAPI:
                 parsed_data = self._parse_program_trading_data(data_body)
                 message_type = 'realtime_program_trading'
 
+            # [추가] 파싱된 데이터 디버그 로그 (데이터 내용 확인용)
+            self._logger.debug(f"WS 수신 데이터 파싱: Type={message_type}, TR_ID={tr_id}, Data={parsed_data}")
+
             # 외부 콜백 함수로 파싱된 데이터 전달
             if self.on_realtime_message_callback:
                 self.on_realtime_message_callback({'type': message_type, 'tr_id': tr_id, 'data': parsed_data})
@@ -281,7 +295,7 @@ class KoreaInvestWebSocketAPI:
                 tr_id = header.get("tr_id")
 
                 if tr_id == "PINGPONG":
-                    self._logger.info("PINGPONG 수신됨. PONG 응답.")
+                    self._logger.debug("PINGPONG 수신됨. PONG 응답.")
                     # websockets 라이브러리 내부에서 PONG 응답 자동 처리 (ping_interval, ping_timeout 설정 시)
                 elif json_object.get("body", {}).get("rt_cd") == '0':
                     self._logger.info(f"실시간 요청 응답 성공: TR_KEY={header.get('tr_key')}, MSG={json_object['body']['msg1']}")

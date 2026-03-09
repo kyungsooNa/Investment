@@ -132,6 +132,13 @@ async def load_pt_data():
     return {"success": True, "data": data}
 
 
+@router.get("/program-trading/db-status")
+async def get_db_status():
+    """DB 내부 상태(스냅샷 시간, 히스토리 건수 등) 조회."""
+    ctx = _get_ctx()
+    return ctx.realtime_data_manager.inspect_db_status()
+
+
 @router.websocket("/ws/echo")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 테스트용 에코 엔드포인트."""

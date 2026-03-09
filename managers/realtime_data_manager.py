@@ -24,6 +24,7 @@ class RealtimeDataManager:
 
         # 메모리 캐시 (성능 최적화)
         self._pt_history: dict = {}  # {code: [data1, data2, ...]}
+        self.last_data_ts = 0.0      # [추가] 마지막 데이터 수신 시간 (Timestamp)
 
         # 클라이언트 스트리밍
         self._pt_queues: list = []  # 접속한 클라이언트들의 큐 리스트
@@ -137,6 +138,12 @@ class RealtimeDataManager:
         if not code:
             return
 
+        now = time.time()
+        # [추가] 10초 이상 데이터가 없다가 들어오면 로그 기록 (연결 복구 확인용)
+        if self.last_data_ts > 0 and (now - self.last_data_ts) > 10.0:
+            self.logger.info(f"실시간 데이터 수신 재개 (Gap: {now - self.last_data_ts:.1f}초)")
+
+        self.last_data_ts = now
         # 1. 메모리 저장
         self._pt_history.setdefault(code, []).append(data)
 
@@ -233,9 +240,11 @@ class RealtimeDataManager:
     def load_snapshot(self) -> dict:
         try:
             with self._get_connection() as conn:
-                cursor = conn.execute("SELECT value FROM pt_snapshot WHERE key = ?", ("pt_data",))
+                cursor = conn.execute("SELECT value, updated_at FROM pt_snapshot WHERE key = ?", ("pt_data",))
                 row = cursor.fetchone()
                 if row:
+                    updated_at = datetime.fromtimestamp(row[1]).strftime("%Y-%m-%d %H:%M:%S")
+                    self.logger.info(f"스냅샷 로드됨 (Last Updated: {updated_at})")
                     return json.loads(row[0])
         except Exception as e:
             self.logger.error(f"스냅샷 로드 실패: {e}")
@@ -285,3 +294,53 @@ class RealtimeDataManager:
                 pass
             self._conn = None
         self.logger.info("RealtimeDataManager: 종료 완료")
+
+    def inspect_db_status(self) -> dict:
+        """DB 상태(마지막 저장 시간, 데이터 건수 등)를 조회하여 반환 (디버깅용)."""
+        status = {
+            "snapshot": {"exists": False, "updated_at": None},
+            "history": {"count": 0, "last_record": None, "hourly_counts": {}},
+            "memory": {"last_received_at": None}  # [추가] 메모리 수신 상태
+        }
+        try:
+            with self._get_connection() as conn:
+                # 1. Snapshot 확인
+                cursor = conn.execute("SELECT updated_at FROM pt_snapshot WHERE key='pt_data'")
+                row = cursor.fetchone()
+                if row:
+                    status["snapshot"]["exists"] = True
+                    status["snapshot"]["updated_at"] = datetime.fromtimestamp(row[0]).strftime("%Y-%m-%d %H:%M:%S")
+
+                # 2. History 확인 (오늘 기준)
+                today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+                
+                cursor = conn.execute(
+                    "SELECT COUNT(*), MAX(created_at) FROM pt_history WHERE created_at >= ?", 
+                    (today_start,)
+                )
+                cnt, last_ts = cursor.fetchone()
+                status["history"]["count"] = cnt
+                if last_ts:
+                    status["history"]["last_record"] = datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+                # 시간대별 건수
+                cursor = conn.execute("""
+                    SELECT strftime('%H', datetime(created_at, 'unixepoch', 'localtime')) as hour, count(*) 
+                    FROM pt_history 
+                    WHERE created_at >= ? 
+                    GROUP BY hour 
+                    ORDER BY hour
+                """, (today_start,))
+                
+                for r in cursor.fetchall():
+                    status["history"]["hourly_counts"][r[0]] = r[1]
+                    
+            # 메모리 상태 추가
+            if self.last_data_ts > 0:
+                status["memory"]["last_received_at"] = datetime.fromtimestamp(self.last_data_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+        except Exception as e:
+            self.logger.error(f"DB 검사 중 오류: {e}")
+            status["error"] = str(e)
+            
+        return status

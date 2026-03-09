@@ -8,6 +8,8 @@
 2. [전략매매] OneilPocketPivotStrategy의 전용 logger 생성 안됨.
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
 
+
+11. [프로그램매매] 10시 이후 data reload가 안됨.
 ### 1. 환경 (Environment)
 
 ### 2. 성능 (Performance)
