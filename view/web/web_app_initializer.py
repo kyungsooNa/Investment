@@ -25,6 +25,7 @@ from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBre
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
+from strategies.first_pullback_strategy import FirstPullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
 from services.background_service import BackgroundService
 from managers.realtime_data_manager import RealtimeDataManager
@@ -303,6 +304,22 @@ class WebAppContext:
             force_exit_on_close=False,  # HTF는 오버나잇 홀딩 허용
         ))
 
+        # 첫 눌림목(Holy Grail) 전략 등록
+        fp_strategy = FirstPullbackStrategy(
+            stock_query_service=self.stock_query_service,
+            universe_service=self.oneil_universe_service,
+            time_manager=self.time_manager,
+            logger=get_strategy_logger('FirstPullback'),
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=fp_strategy,
+            interval_minutes=3,
+            max_positions=5,
+            order_qty=1,
+            enabled=False,
+            force_exit_on_close=False,  # 스윙 전략: 오버나잇 허용
+            allow_pyramiding=False,
+        ))
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
     def start_background_tasks(self):
