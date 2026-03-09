@@ -27,6 +27,7 @@ def mock_deps():
         ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
         ("osb", patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True)),
         ("pp", patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True)),
+        ("htf", patch("view.web.web_app_initializer.HighTightFlagStrategy", autospec=True)),
         ("cm", patch("view.web.web_app_initializer.CacheManager", autospec=True)),
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
     ]
