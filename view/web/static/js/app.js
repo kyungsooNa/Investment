@@ -1901,9 +1901,9 @@ async function loadSchedulerStatus() {
         buildSchedulerHistoryTabs(statusData.strategies || []);
         filterSchedulerHistory(currentSchedulerFilter);
 
-        // 스케줄러가 실행 중이면 SSE 연결 (페이지 로드 시 자동 연결)
-        if (statusData.running && !schedulerEventSource) {
-            connectSchedulerSSE();
+        // 스케줄러가 실행 중이면 폴링+SSE 시작 (페이지 로드 시 자동 연결)
+        if (statusData.running && !schedulerPollingId) {
+            startSchedulerPolling();
         }
     } catch (e) {
         const info = document.getElementById('scheduler-info');
@@ -2121,6 +2121,12 @@ function connectSchedulerSSE() {
                 allSchedulerHistory = allSchedulerHistory.slice(0, 200);
             }
             filterSchedulerHistory(currentSchedulerFilter);
+
+            // 시그널 발생 시 전략 상태 즉시 갱신 (포지션 수, 마지막 실행 시간 등)
+            fetch('/api/scheduler/status')
+                .then(res => res.json())
+                .then(data => renderSchedulerStatus(data))
+                .catch(() => {});
         } catch (e) {
             console.error('[Scheduler SSE] parse error:', e);
         }
