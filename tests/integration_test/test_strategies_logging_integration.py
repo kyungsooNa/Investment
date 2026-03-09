@@ -8,8 +8,8 @@ from core.logger import get_strategy_logger as real_get_strategy_logger
 
 # 테스트할 전략 목록 (모듈 경로, 클래스명, 예상되는 로그 서브 디렉토리)
 STRATEGIES_TO_TEST = [
-    ("strategies.oneil_pocket_pivot_strategy", "OneilPocketPivotStrategy", "oneil"),
-    ("strategies.oneil_squeeze_breakout_strategy", "OneilSqueezeBreakoutStrategy", "oneil"),
+    ("strategies.oneil_pocket_pivot_strategy", "OneilPocketPivotStrategy", None),
+    ("strategies.oneil_squeeze_breakout_strategy", "OneilSqueezeBreakoutStrategy", None),
     ("strategies.traditional_volume_breakout_strategy", "TraditionalVolumeBreakoutStrategy", None),
     ("strategies.program_buy_follow_strategy", "ProgramBuyFollowStrategy", None),
     ("strategies.volume_breakout_live_strategy", "VolumeBreakoutLiveStrategy", None),
