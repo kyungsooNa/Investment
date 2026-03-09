@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
 from managers.virtual_trade_manager import VirtualTradeManager
+from managers.notification_manager import NotificationManager
 from services.order_execution_service import OrderExecutionService
 from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
@@ -66,6 +67,7 @@ class StrategyScheduler:
         time_manager: TimeManager,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
+        notification_manager: Optional[NotificationManager] = None,
     ):
         self._vm = virtual_manager
         self._oes = order_execution_service
@@ -73,6 +75,7 @@ class StrategyScheduler:
         self._tm = time_manager
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
+        self._nm = notification_manager
 
         # 데이터 디렉토리 생성
         os.makedirs(os.path.dirname(SIGNAL_HISTORY_FILE), exist_ok=True)
@@ -107,6 +110,9 @@ class StrategyScheduler:
         self._running = True
         self._task = asyncio.create_task(self._loop())
         self._logger.info("[Scheduler] 시작 (전체 전략 활성화)")
+        if self._nm:
+            names = [c.strategy.name for c in self._strategies if c.enabled]
+            await self._nm.emit("SYSTEM", "info", "스케줄러 시작", f"활성 전략: {', '.join(names)}")
 
     async def stop(self, save_state: bool = False):
         if save_state:
@@ -131,6 +137,8 @@ class StrategyScheduler:
             await self.stop_strategy(cfg.strategy.name, perform_force_exit=perform_exit)
 
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
+        if self._nm:
+            await self._nm.emit("SYSTEM", "info", "스케줄러 정지", "전체 전략 비활성화")
 
     # ── 메인 루프 ──
 
@@ -175,6 +183,8 @@ class StrategyScheduler:
                 break
             except Exception as e:
                 self._logger.error(f"[Scheduler] 루프 오류: {e}", exc_info=True)
+                if self._nm:
+                    await self._nm.emit("SYSTEM", "error", "스케줄러 루프 오류", str(e))
                 await asyncio.sleep(self.LOOP_INTERVAL_SEC)
 
     # ── 전략 실행 ──
@@ -295,6 +305,21 @@ class StrategyScheduler:
             self._signal_history = self._signal_history[-self.MAX_HISTORY:]
         await self._append_signal_csv(record)
         await self._notify_subscribers(record)
+
+        if self._nm:
+            action_kr = "매수" if signal.action == "BUY" else "매도"
+            level = "critical" if api_success else "error"
+            title = f"{action_kr} {signal.name}"
+            msg = f"{signal.name}({signal.code}) @ {log_price:,}원 | {signal.reason}"
+            if not api_success:
+                title = f"{action_kr} 실패 {signal.name}"
+            await self._nm.emit("TRADE", level, title, msg, metadata={
+                "strategy_name": signal.strategy_name,
+                "code": signal.code,
+                "action": signal.action,
+                "price": log_price,
+                "api_success": api_success,
+            })
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""

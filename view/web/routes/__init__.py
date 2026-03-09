@@ -12,6 +12,7 @@ from view.web.routes.ranking import router as ranking_router
 from view.web.routes.virtual import router as virtual_router
 from view.web.routes.program import router as program_router
 from view.web.routes.scheduler import router as scheduler_router
+from view.web.routes.notification import router as notification_router
 
 router = APIRouter(prefix="/api")
 
@@ -23,3 +24,4 @@ router.include_router(ranking_router)
 router.include_router(virtual_router)
 router.include_router(program_router)
 router.include_router(scheduler_router)
+router.include_router(notification_router)

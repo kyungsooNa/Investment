@@ -28,6 +28,7 @@ from services.oneil_universe_service import OneilUniverseService
 from services.background_service import BackgroundService
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
+from managers.notification_manager import NotificationManager
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_manager import CacheManager
 
@@ -51,9 +52,10 @@ class WebAppContext:
         self.oneil_universe_service: OneilUniverseService = None
         self.background_service: BackgroundService = None
         self.market_date_manager: MarketDateManager = None
+        self.notification_manager: NotificationManager = None
         self.initialized = False
         self.pm: PerformanceManager = None
-        
+
         # [변경] 실시간 데이터 관리자 도입
         self.realtime_data_manager = RealtimeDataManager(self.logger)
         
@@ -78,8 +80,9 @@ class WebAppContext:
             timezone=config_dict.get('market_timezone', "Asia/Seoul"),
             logger=self.logger
         )
+        self.notification_manager = NotificationManager(self.time_manager)
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
-        
+
         # [신규] MarketDateManager 초기화
         self.market_date_manager = MarketDateManager(self.time_manager, self.logger)
 
@@ -191,6 +194,7 @@ class WebAppContext:
             time_manager=self.time_manager,
             logger=get_strategy_logger('StrategyScheduler'),
             dry_run=False,
+            notification_manager=self.notification_manager,
         )
 
         # 거래량 돌파 전략 등록
