@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Investment - Web View</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/css/style.css?v=7">
+    <link rel="stylesheet" href="/static/css/style.css?v=8">
     <style>
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .spinning { display: inline-block; animation: spin 1s linear infinite; opacity: 1 !important; }
@@ -32,6 +32,15 @@
         <span id="status-time">--</span>
         <span id="status-market" class="badge closed">--</span>
         <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>
+        <div class="notification-wrapper">
+            <button class="notification-bell" onclick="toggleNotificationPanel()" title="알림">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                </svg>
+                <span id="notification-badge" class="notification-badge" style="display:none;">0</span>
+            </button>
+        </div>
     </div>
 </header>
 
@@ -53,13 +62,29 @@
     {% endblock %}
 </main>
 
+<div id="notification-panel" class="notification-panel" style="display:none;">
+    <div class="notification-header">
+        <h3>알림 센터</h3>
+        <button class="notif-clear-btn" onclick="clearNotifications()">모두 읽음</button>
+    </div>
+    <div class="notification-filters">
+        <button class="notif-filter active" data-category="all" onclick="filterNotifications('all')">전체</button>
+        <button class="notif-filter" data-category="TRADE" onclick="filterNotifications('TRADE')">매매</button>
+        <button class="notif-filter" data-category="API" onclick="filterNotifications('API')">API</button>
+        <button class="notif-filter" data-category="SYSTEM" onclick="filterNotifications('SYSTEM')">시스템</button>
+    </div>
+    <div id="notification-list" class="notification-list">
+        <div class="notification-empty">알림이 없습니다.</div>
+    </div>
+</div>
+
 <div id="toast-container" class="toast-container"></div>
 
 <!-- 공통 스크립트 -->
 <script src="/static/js/virtual_chart.js?v=6"></script>
 <script src="/static/js/candle_chart.js?v=1"></script>
 <script src="/static/js/program_chart.js?v=1"></script>
-<script src="/static/js/app.js?v=15"></script>
+<script src="/static/js/app.js?v=16"></script>
 <script>
     // 페이지 분리로 인해 탭 전환 로직이 불필요해졌으므로, 
     // app.js의 setupTabs가 동작하지 않도록 하거나 무시됩니다.

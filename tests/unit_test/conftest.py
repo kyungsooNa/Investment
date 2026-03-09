@@ -141,6 +141,10 @@ def mock_web_ctx():
     ctx.env.active_config = {"auth": {"username": "admin", "password": "password", "secret_key": "secret"}}
     ctx.full_config = {"auth": {"username": "admin", "password": "password"}}
     
+    # 알림 매니저 Mocking
+    ctx.notification_manager = MagicMock()
+    ctx.notification_manager.emit = AsyncMock()
+
     # 전역 컨텍스트 설정
     web_api.set_ctx(ctx)
     return ctx

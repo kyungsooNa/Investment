@@ -17,6 +17,7 @@ from common.types import ResCommonResponse, ErrorCode
 from core.time_manager import TimeManager
 from market_data.stock_code_mapper import StockCodeMapper
 from core.performance_manager import PerformanceManager
+from managers.notification_manager import NotificationManager
 
 
 def _chunked(lst, size):
@@ -50,7 +51,8 @@ class BackgroundService:
         logger=None,
         time_manager: TimeManager = None,
         trading_service=None,
-        performance_manager: Optional[PerformanceManager] = None
+        performance_manager: Optional[PerformanceManager] = None,
+        notification_manager: Optional[NotificationManager] = None,
     ):
         self._broker = broker_api_wrapper
         self._mapper = stock_code_mapper
@@ -59,6 +61,7 @@ class BackgroundService:
         self._time_manager = time_manager
         self._trading_service = trading_service
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self._nm = notification_manager
 
         # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
@@ -149,8 +152,15 @@ class BackgroundService:
             self._basic_ranking_updated_at = datetime.now()
             self._logger.info(f"기본 랭킹 캐시 갱신 완료: {list(self._basic_ranking_cache.keys())}")
             self.pm.log_timer("BackgroundService.refresh_basic_ranking", t_start, threshold=1.0)
+            if self._nm:
+                await self._nm.emit(
+                    "API", "info", "기본 랭킹 갱신 완료",
+                    f"상승/하락/거래량/거래대금 캐시 갱신 완료",
+                )
         except Exception as e:
             self._logger.error(f"기본 랭킹 캐시 갱신 실패: {e}", exc_info=True)
+            if self._nm:
+                await self._nm.emit("SYSTEM", "error", "기본 랭킹 갱신 실패", str(e))
 
     def get_investor_ranking_progress(self) -> Dict:
         """투자자 랭킹 수집 진행률 반환."""
@@ -336,8 +346,15 @@ class BackgroundService:
                 f"투자자 랭킹 갱신 완료: {len(results)}개 종목 수집, 소요: {elapsed:.1f}s"
             )
             self.pm.log_timer("BackgroundService.refresh_investor_ranking", t_start_total, threshold=10.0)
+            if self._nm:
+                await self._nm.emit(
+                    "API", "info", "투자자 랭킹 갱신 완료",
+                    f"{len(results)}개 종목 수집, 소요: {elapsed:.1f}초",
+                )
         except Exception as e:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
+            if self._nm:
+                await self._nm.emit("SYSTEM", "error", "투자자 랭킹 갱신 실패", str(e))
         finally:
             self._is_refreshing = False
             self._progress["running"] = False
