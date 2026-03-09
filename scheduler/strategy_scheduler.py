@@ -45,6 +45,7 @@ class StrategySchedulerConfig:
     max_positions: int = 3          # 최대 동시 보유 포지션 수
     order_qty: int = 1              # 주문 수량
     enabled: bool = True            # 개별 전략 활성/비활성
+    allow_pyramiding: bool = False  # 불타기(추가매수) 허용 여부
     force_exit_on_close: bool = False       # 당일 청산 여부
 
 
@@ -204,18 +205,29 @@ class StrategyScheduler:
 
         # 2) 새 매수 스캔 (강제 청산 모드가 아닐 때만)
         if not force_exit_only:
-            current_holds = len(self._vm.get_holds_by_strategy(name))
-            if current_holds >= cfg.max_positions:
+            # 현재 보유 종목 재조회 (check_exits 수행 후 상태 반영)
+            current_holdings = self._vm.get_holds_by_strategy(name)
+            current_holds_count = len(current_holdings)
+
+            if current_holds_count >= cfg.max_positions:
                 self._logger.info(
                     f"[Scheduler] {name}: 최대 포지션 도달 "
-                    f"({current_holds}/{cfg.max_positions}), 스캔 스킵"
+                    f"({current_holds_count}/{cfg.max_positions}), 스캔 스킵"
                 )
                 return
 
             buy_signals = await cfg.strategy.scan()
-            remaining = cfg.max_positions - current_holds
             
-            target_signals = buy_signals[:remaining]
+            # 이미 보유 중인 종목은 추가 매수(불타기) 방지
+            if cfg.allow_pyramiding:
+                valid_signals = buy_signals
+            else:
+                holding_codes = {str(h.get('code')) for h in current_holdings if h.get('code')}
+                valid_signals = [s for s in buy_signals if str(s.code) not in holding_codes]
+
+            remaining = cfg.max_positions - current_holds_count
+            target_signals = valid_signals[:remaining]
+
             if target_signals:
                 for sig in target_signals:
                     if sig.qty <= 1:

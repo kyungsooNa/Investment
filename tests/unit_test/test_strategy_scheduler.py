@@ -213,6 +213,50 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(vm.log_buy_async.call_count, 1)
         vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1)
 
+    async def test_run_strategy_prevents_pyramiding(self):
+        """이미 보유 중인 종목에 대한 추가 매수 신호는 무시하는지 테스트."""
+        scheduler, vm, _, _ = self._make_scheduler()
+
+        # 1개 보유 중 (005930)
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "buy_price": 70000}]
+
+        # 보유 중인 종목(005930)과 새로운 종목(000660) 매수 신호 발생
+        buy_signals = [
+            TradeSignal(code="005930", name="삼성전자", action="BUY", price=71000, qty=1, reason="추가매수", strategy_name="테스트전략"),
+            TradeSignal(code="000660", name="SK하이닉스", action="BUY", price=120000, qty=1, reason="신규매수", strategy_name="테스트전략"),
+        ]
+        strategy = MockStrategy(scan_signals=buy_signals)
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=5) # 슬롯 충분
+
+        await scheduler._run_strategy(config)
+
+        # 005930은 이미 보유 중이므로 매수 실행 안 됨 (호출 횟수 1회)
+        # 000660만 매수 실행됨
+        self.assertEqual(vm.log_buy_async.call_count, 1)
+        vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1)
+
+    async def test_run_strategy_allows_pyramiding_if_enabled(self):
+        """allow_pyramiding=True일 때 보유 종목 추가 매수 허용 테스트."""
+        scheduler, vm, _, _ = self._make_scheduler()
+
+        # 1개 보유 중 (005930)
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "buy_price": 70000}]
+
+        # 보유 중인 종목(005930)과 새로운 종목(000660) 매수 신호 발생
+        buy_signals = [
+            TradeSignal(code="005930", name="삼성전자", action="BUY", price=71000, qty=1, reason="추가매수", strategy_name="테스트전략"),
+            TradeSignal(code="000660", name="SK하이닉스", action="BUY", price=120000, qty=1, reason="신규매수", strategy_name="테스트전략"),
+        ]
+        strategy = MockStrategy(scan_signals=buy_signals)
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=5, allow_pyramiding=True)
+
+        await scheduler._run_strategy(config)
+
+        # allow_pyramiding=True이므로 두 종목 모두 매수 실행되어야 함
+        self.assertEqual(vm.log_buy_async.call_count, 2)
+        vm.log_buy_async.assert_any_await("테스트전략", "005930", 71000, 1)
+        vm.log_buy_async.assert_any_await("테스트전략", "000660", 120000, 1)
+
     async def test_start_and_stop(self):
         """스케줄러 start/stop 생명주기 테스트."""
         scheduler, _, _, _ = self._make_scheduler()

@@ -17,8 +17,10 @@ from core.logger import get_strategy_logger
 class ProgramBuyFollowConfig(BaseStrategyConfig):
     """프로그램 매수 추종 전략 설정."""
     min_program_net_buy: int = 0        # 프로그램 순매수 최소 기준 (> 0)
+    min_program_buy_ratio: float = 5.0  # 거래대금 대비 프로그램 순매수 금액 비율 (%)
     trailing_stop_pct: float = 8.0      # 고가 대비 -8% 하락 시 익절
     stop_loss_pct: float = -5.0         # 매수가 대비 -5% 손절
+    allow_reentry: bool = True          # 당일 재진입 허용 여부 (False면 종목당 하루 1회만 매수)
 
 
 class ProgramBuyFollowStrategy(LiveStrategy):
@@ -26,8 +28,8 @@ class ProgramBuyFollowStrategy(LiveStrategy):
 
     scan():
       1. 거래대금 상위 30종목 조회
-      2. 각 종목의 pgtr_ntby_qty (프로그램 순매수 수량) 확인
-      3. 양수인 종목을 내림차순 정렬, BUY 시그널 반환
+      2. 각 종목의 프로그램 순매수 금액 비중(거래대금 대비) 확인
+      3. 기준(5%) 이상인 종목을 내림차순 정렬, BUY 시그널 반환
 
     check_exits():
       - 익절: 당일 고가 대비 <= -trailing_stop_pct
@@ -50,6 +52,9 @@ class ProgramBuyFollowStrategy(LiveStrategy):
             self._logger = logger
         else:
             self._logger = get_strategy_logger("ProgramBuyFollow")
+        
+        self._bought_today = set()
+        self._last_date = ""
 
     @property
     def name(self) -> str:
@@ -58,6 +63,12 @@ class ProgramBuyFollowStrategy(LiveStrategy):
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
+
+        # 날짜 변경 시 당일 매수 기록 초기화
+        today = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        if self._last_date != today:
+            self._bought_today.clear()
+            self._last_date = today
 
         # 1) 거래대금 상위 종목 조회
         resp = await self._sqs.get_top_trading_value_stocks()
@@ -81,6 +92,10 @@ class ProgramBuyFollowStrategy(LiveStrategy):
             if not code:
                 continue
 
+            # 재진입 불허 설정 시, 이미 매수한 종목은 스킵
+            if not self._cfg.allow_reentry and code in self._bought_today:
+                continue
+
             try:
                 # 2) 종목 상세 정보 조회 (pgtr_ntby_qty 포함)
                 full_resp = await self._sqs.get_current_price(code)
@@ -97,10 +112,17 @@ class ProgramBuyFollowStrategy(LiveStrategy):
 
                 pgtr_ntby = self._get_int_field(output, "pgtr_ntby_qty")
                 current = self._get_int_field(output, "stck_prpr")
-                log_data.update({"program_net_buy": pgtr_ntby, "current_price": current})
+                acml_tr_pbmn = self._get_int_field(output, "acml_tr_pbmn")
+                
+                # 프로그램 순매수 금액 및 비중 계산
+                pg_buy_amt = pgtr_ntby * current
+                pg_ratio = (pg_buy_amt / acml_tr_pbmn * 100) if acml_tr_pbmn > 0 else 0.0
 
-                if pgtr_ntby <= self._cfg.min_program_net_buy:
-                    log_data["reason"] = f"Program net buy {pgtr_ntby} <= threshold {self._cfg.min_program_net_buy}"
+                log_data.update({"program_net_buy": pgtr_ntby, "current_price": current, "pg_ratio": round(pg_ratio, 2)})
+
+                # 조건: 순매수 수량 > 0 AND 거래대금 대비 비중 >= 5%
+                if pgtr_ntby <= 0 or pg_ratio < self._cfg.min_program_buy_ratio:
+                    log_data["reason"] = f"Ratio {pg_ratio:.2f}% < {self._cfg.min_program_buy_ratio}% or Not net buy"
                     self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
 
@@ -109,22 +131,23 @@ class ProgramBuyFollowStrategy(LiveStrategy):
                     self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
                 
-                scored.append((pgtr_ntby, code, stock_name, current, log_data))
+                scored.append((pg_ratio, code, stock_name, current, log_data))
 
             except Exception as e:
                 self._logger.error({
                     "event": "scan_error", "code": code, "error": str(e),
                 }, exc_info=True)
 
-        # 3) 프로그램 순매수 내림차순 정렬
+        # 3) 프로그램 순매수 비중 높은 순으로 정렬
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        for pgtr_ntby, code, stock_name, current, log_data in scored:
-            reason_msg = f"프로그램순매수 {pgtr_ntby:,}주, 거래대금상위"
+        for pg_ratio, code, stock_name, current, log_data in scored:
+            reason_msg = f"PG비중 {pg_ratio:.1f}%, 거래대금상위"
             signals.append(TradeSignal(
                 code=code, name=stock_name, action="BUY", price=current, qty=1,
                 reason=reason_msg, strategy_name=self.name,
             ))
+            self._bought_today.add(code)  # 매수 신호 발생 기록
             self._logger.info({
                 "event": "buy_signal_generated",
                 "code": code, "name": stock_name, "price": current,

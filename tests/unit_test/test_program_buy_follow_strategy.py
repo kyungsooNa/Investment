@@ -1,27 +1,30 @@
 # tests/unit_test/test_program_buy_follow_strategy.py
 import unittest
 from unittest.mock import MagicMock, AsyncMock
-from common.types import ErrorCode, ResCommonResponse
+from common.types import ErrorCode, ResCommonResponse, ResStockFullInfoApiOutput
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy, ProgramBuyFollowConfig
+from typing import Optional
 
 
 class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
-    def _make_strategy(self, trailing_stop=8.0, stop_loss=-3.0):
+    def _make_strategy(self, **config_kwargs):
         sqs = MagicMock()
         sqs.get_top_trading_value_stocks = AsyncMock()
         sqs.get_current_price = AsyncMock()
         tm = MagicMock()
+        from datetime import datetime
+        import pytz
+        kst = pytz.timezone("Asia/Seoul")
+        tm.get_current_kst_time.return_value = kst.localize(datetime(2025, 1, 1, 10, 0))
 
-        config = ProgramBuyFollowConfig(
-            trailing_stop_pct=trailing_stop,
-            stop_loss_pct=stop_loss,
-        )
+        config = ProgramBuyFollowConfig(**config_kwargs)
         strategy = ProgramBuyFollowStrategy(
             stock_query_service=sqs,
             time_manager=tm,
             config=config,
         )
+        strategy._logger = MagicMock()
         return strategy, sqs, tm
 
     def test_name(self):
@@ -29,45 +32,43 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         strategy, _, _ = self._make_strategy()
         self.assertEqual(strategy.name, "프로그램매수추종")
 
-    async def test_scan_filters_by_program_net_buy(self):
-        """pgtr_ntby_qty 양수인 종목만 BUY 시그널 생성 테스트."""
+    async def test_scan_filters_and_sorts_by_program_buy_ratio(self):
+        """프로그램 순매수 비중(%)으로 필터링 및 정렬 테스트."""
+        # min_program_buy_ratio 기본값 5.0%
         strategy, sqs, _ = self._make_strategy()
 
         sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="OK",
             data=[
-                {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"},
-                {"mksc_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스"},
-                {"mksc_shrn_iscd": "035420", "hts_kor_isnm": "NAVER"},
+                {"mksc_shrn_iscd": "A", "hts_kor_isnm": "StockA"}, # Ratio 10.0% -> Pass
+                {"mksc_shrn_iscd": "B", "hts_kor_isnm": "StockB"}, # Ratio 4.0% -> Fail
+                {"mksc_shrn_iscd": "C", "hts_kor_isnm": "StockC"}, # Ratio 6.67% -> Pass
+                {"mksc_shrn_iscd": "D", "hts_kor_isnm": "StockD"}, # Net Sell -> Fail
             ]
         )
 
         async def mock_full_price(code):
             responses = {
-                "005930": {"output": {"stck_prpr": "70000", "pgtr_ntby_qty": "5000"}},
-                "000660": {"output": {"stck_prpr": "120000", "pgtr_ntby_qty": "-200"}},
-                "035420": {"output": {"stck_prpr": "300000", "pgtr_ntby_qty": "3000"}},
+                "A": {"output": {"stck_prpr": "50000", "pgtr_ntby_qty": "10000", "acml_tr_pbmn": "5000000000"}},
+                "B": {"output": {"stck_prpr": "200000", "pgtr_ntby_qty": "5000", "acml_tr_pbmn": "25000000000"}},
+                "C": {"output": {"stck_prpr": "10000", "pgtr_ntby_qty": "20000", "acml_tr_pbmn": "3000000000"}},
+                "D": {"output": {"stck_prpr": "10000", "pgtr_ntby_qty": "-100", "acml_tr_pbmn": "1000000000"}},
             }
             return ResCommonResponse(
                 rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
                 data=responses.get(code, {})
             )
-
         sqs.get_current_price.side_effect = mock_full_price
 
         signals = await strategy.scan()
 
-        # 000660은 pgtr_ntby_qty < 0이므로 제외, 나머지 2개
+        # A(10%), C(6.67%) 통과. B(4%), D(매도) 탈락.
         self.assertEqual(len(signals), 2)
-        codes = [s.code for s in signals]
-        self.assertIn("005930", codes)
-        self.assertIn("035420", codes)
-        self.assertNotIn("000660", codes)
-
-        # 5000 > 3000 이므로 005930이 먼저
-        self.assertEqual(signals[0].code, "005930")
-        self.assertEqual(signals[0].action, "BUY")
+        
+        # 정렬 순서: A > C
+        self.assertEqual(signals[0].code, "A")
+        self.assertEqual(signals[1].code, "C")
 
     async def test_scan_empty_on_api_failure(self):
         """거래대금 API 실패 시 빈 리스트 반환."""
@@ -81,7 +82,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_trailing_stop(self):
         """고가 대비 설정 비율(-8%) 이상 하락 시 익절(트레일링) SELL 신호 테스트."""
-        strategy, sqs, tm = self._make_strategy(trailing_stop=8.0)
+        strategy, sqs, tm = self._make_strategy(trailing_stop_pct=8.0)
 
         import pytz
         from datetime import datetime
@@ -134,7 +135,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_exits_stop_loss(self):
         """매수가 대비 -3% 이하이면 손절 SELL 시그널 테스트."""
-        strategy, sqs, tm = self._make_strategy(stop_loss=-3.0)
+        strategy, sqs, tm = self._make_strategy(stop_loss_pct=-3.0)
 
         import pytz
         from datetime import datetime
@@ -182,7 +183,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
             if code == "EXCEPT":
                 raise ValueError("Test Exception")
             if code == "005930":
-                return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "1000", "pgtr_ntby_qty": "100"}})
+                return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "1000", "pgtr_ntby_qty": "100", "acml_tr_pbmn": "10000"}})
             return None
 
         sqs.get_current_price.side_effect = mock_detail
@@ -284,6 +285,77 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         obj_str = DummyOutputStr()
         self.assertEqual(strategy._get_str_field(obj_str, "name"), "Test")
         self.assertEqual(strategy._get_str_field(obj_str, "empty"), "")
+
+        # 3. _extract_output
+        from dataclasses import dataclass
+
+        @dataclass
+        class DummyData:
+            field: str
+
+        # Case A: data is a dict with 'output'
+        resp_dict = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"a": 1}})
+        self.assertEqual(strategy._extract_output(resp_dict), {"a": 1})
+
+        # Case B: data is a dataclass
+        dummy_obj = DummyData(field="test")
+        resp_obj = ResCommonResponse(rt_cd="0", msg1="OK", data=dummy_obj)
+        self.assertEqual(strategy._extract_output(resp_obj), dummy_obj)
+
+        # Case C: data is None
+        resp_none = ResCommonResponse(rt_cd="0", msg1="OK", data=None)
+        self.assertIsNone(strategy._extract_output(resp_none))
+
+    async def test_scan_reentry_disallowed(self):
+        """allow_reentry=False일 때 당일 재진입 방지 테스트."""
+        strategy, sqs, _ = self._make_strategy(allow_reentry=False)
+
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"}]
+        )
+        sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": {"stck_prpr": "1000", "pgtr_ntby_qty": "100", "acml_tr_pbmn": "10000"}} # Ratio 100%
+        )
+
+        # 첫 번째 스캔: 매수 신호 발생
+        signals1 = await strategy.scan()
+        self.assertEqual(len(signals1), 1)
+        self.assertIn("005930", strategy._bought_today)
+
+        # 두 번째 스캔: 이미 매수했으므로 신호 없음
+        signals2 = await strategy.scan()
+        self.assertEqual(len(signals2), 0)
+
+    async def test_scan_reentry_reset_on_new_day(self):
+        """날짜 변경 시 재진입 목록(_bought_today) 초기화 테스트."""
+        strategy, sqs, tm = self._make_strategy(allow_reentry=False)
+        
+        from datetime import datetime
+        import pytz
+        kst = pytz.timezone("Asia/Seoul")
+
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자"}]
+        )
+        sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": {"stck_prpr": "1000", "pgtr_ntby_qty": "100", "acml_tr_pbmn": "10000"}}
+        )
+
+        # Day 1
+        tm.get_current_kst_time.return_value = kst.localize(datetime(2025, 1, 1, 11, 0))
+        signals1 = await strategy.scan()
+        self.assertEqual(len(signals1), 1)
+        self.assertIn("005930", strategy._bought_today)
+
+        # Day 2
+        tm.get_current_kst_time.return_value = kst.localize(datetime(2025, 1, 2, 11, 0))
+        signals2 = await strategy.scan()
+        self.assertEqual(len(signals2), 1) # 목록 초기화되어 다시 매수
+        self.assertIn("005930", strategy._bought_today)
 
 
 if __name__ == "__main__":

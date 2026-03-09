@@ -41,6 +41,9 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
             self._logger = logger
         else:
             self._logger = get_strategy_logger("VolumeBreakoutLive")
+        
+        self._bought_today = set()
+        self._last_date = ""
 
     @property
     def name(self) -> str:
@@ -49,6 +52,12 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
+
+        # 날짜 변경 시 당일 매수 기록 초기화
+        today = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        if self._last_date != today:
+            self._bought_today.clear()
+            self._last_date = today
 
         # 1) 거래대금 상위 종목 조회
         resp = await self._sqs.get_top_trading_value_stocks()
@@ -72,6 +81,10 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
             log_data = {"code": code, "name": stock_name}
 
             if not code:
+                continue
+            
+            # 재진입 불허 설정 시, 이미 매수한 종목은 스킵
+            if not self._cfg.allow_reentry and code in self._bought_today:
                 continue
 
             try:
@@ -115,6 +128,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                     code=code, name=stock_name, action="BUY", price=current, qty=1,
                     reason=reason_msg, strategy_name=self.name,
                 ))
+                self._bought_today.add(code)  # 매수 신호 발생 기록
                 self._logger.info({
                     "event": "buy_signal_generated",
                     "strategy_name": self.name,
