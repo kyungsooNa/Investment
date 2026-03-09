@@ -5,7 +5,6 @@
 
 ### 0. 치명적 불량 수정 (Critical Bugs)
 - [ ] **[스케줄러]** 전략 실행 시 전략 스케줄러 Web View가 업데이트되지 않는 현상 수정 (Event Push 등 적용).
-- [ ] **[전략매매]** `OneilPocketPivotStrategy`의 전용 로거(logger)가 생성되지 않는 버그 수정.
 - [ ] **[프로그램매매]** 10시 이후 데이터 리로드(reload)가 정상적으로 이루어지지 않는 버그 디버깅 및 수정.
 - [ ] **[설정/환경]** `tr_ids_config.yaml`과 `kis_config.yaml`의 `tr_id`, `url`을 `(실전, 모의)` 튜플(Tuple) 형태로 변경. 모의투자에서 지원하지 않는 API는 빈 값으로 두어 자동 차단되도록 수정.
 
