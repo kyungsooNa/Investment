@@ -142,11 +142,11 @@ class TestDetectPoleAndFlag:
         assert result is None
 
     def test_deep_drawdown(self, mock_deps):
-        """깃발 구간 25% 하락 → drawdown > 20% → None."""
+        """깃발 구간 종가 기준 > 20% 하락 → drawdown > 20% → None."""
         strategy = self._make_strategy(mock_deps)
         ohlcv = _make_ohlcv_pole_and_flag(
             pole_days=25, pole_start_price=5000, pole_end_price=10000,
-            flag_days=18, flag_drawdown_pct=25.0,
+            flag_days=18, flag_drawdown_pct=45.0,  # 종가 기준 22.5% 하락
             pole_volume=500000, flag_volume=100000,
         )
 
@@ -154,23 +154,23 @@ class TestDetectPoleAndFlag:
         assert result is None
 
     def test_volume_not_shrinking(self, mock_deps):
-        """깃발 거래량이 깃대와 비슷 → 거래량 미건조 → None."""
+        """깃발 거래량이 50일 평균 대비 120% 초과 → 거래량 미건조 → None."""
         strategy = self._make_strategy(mock_deps)
         ohlcv = _make_ohlcv_pole_and_flag(
             pole_days=25, pole_start_price=5000, pole_end_price=10000,
             flag_days=18, flag_drawdown_pct=10.0,
-            pole_volume=500000, flag_volume=400000,  # 감소 안 됨
+            pole_volume=100000, flag_volume=500000,  # 깃발 거래량 >> 50일 평균
         )
 
         result = strategy._detect_pole_and_flag(ohlcv)
         assert result is None
 
     def test_flag_too_short(self, mock_deps):
-        """횡보 10일 → flag_min_days(15) 미달 → None."""
+        """횡보 3일 → flag_min_days(5) 미달 → None."""
         strategy = self._make_strategy(mock_deps)
         ohlcv = _make_ohlcv_pole_and_flag(
             pole_days=25, pole_start_price=5000, pole_end_price=10000,
-            flag_days=10, flag_drawdown_pct=10.0,
+            flag_days=3, flag_drawdown_pct=10.0,
             pole_volume=500000, flag_volume=100000,
         )
 
@@ -746,7 +746,8 @@ def breakout_setup(htf_scan_setup):
     strategy, sqs, _, _, _ = htf_scan_setup
 
     code = "005930"
-    item = MagicMock(name="테스트종목")
+    item = MagicMock()
+    item.name = "테스트종목"
     pattern = {
         "pole_high": 10000,
         "surge_ratio": 2.0,

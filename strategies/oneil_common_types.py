@@ -161,10 +161,10 @@ class HTFConfig(BaseStrategyConfig):
     pole_min_surge_ratio: float = 1.90       # max(high)/min(low) >= 1.90
 
     # Phase 2: 깃발 (Flag)
-    flag_min_days: int = 15                  # 최소 횡보 기간
+    flag_min_days: int = 5                   # 최소 횡보 기간 (한국형: Short Stroke 대응)
     flag_max_days: int = 25                  # 최대 횡보 기간
-    flag_max_drawdown_pct: float = 20.0      # 고점 대비 최대 하락폭
-    flag_volume_shrink_ratio: float = 0.5    # 깃발 평균거래량 < 깃대 * 0.5
+    flag_max_drawdown_pct: float = 20.0      # 고점 대비 최대 하락폭 (종가 기준)
+    flag_volume_shrink_ratio: float = 1.2    # 깃발 평균거래량 < 50일평균 * 1.2
 
     # Phase 3: 돌파 (Breakout)
     volume_breakout_multiplier: float = 2.0  # 예상거래량 >= 50일평균 * 200%

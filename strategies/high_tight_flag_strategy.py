@@ -174,7 +174,7 @@ class HighTightFlagStrategy(LiveStrategy):
             "surge_ratio": surge_ratio,
             "flag_days": flag_days,
             "drawdown_pct": drawdown_pct,
-            "pole_avg_vol": pole_avg_vol,
+            "avg_vol_50d": avg_vol_50d,
             "flag_avg_vol": flag_avg_vol,
         }
 
