@@ -180,8 +180,9 @@ class StockQueryService:
         self.logger.info(f"{stock_code} 현재가 및 상세 정보 조회 성공")
         if self._nm:
             name = view.get("name", stock_code)
+            sign_str = actual_sign if actual_sign == "+" else ""
             await self._nm.emit("API", "info", "현재가 조회",
-                                f"{name}({stock_code}) {view['price']}원 ({actual_sign}{view['rate']}%)",
+                                f"{name}({stock_code}) {view['price']}원 ({sign_str}{view['rate']}%)",
                                 metadata={"code": stock_code, "price": view["price"]})
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=view)
 
