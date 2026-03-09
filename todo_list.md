@@ -71,7 +71,7 @@
 * **[신규 기능]** Kis Developers API 문서 크롤링해서 API의 tr_id, url, Header, Params, Body를 최신으로 업데이트 할 수 있는 기능 추가 
 * **[신규 기능]** Android App으로 거래결과, 서치 결과 알림 기능 추가. 
 * **[신규 기능]** Backtest 기능 추가
-
+* **[신규 기능]** 전략별로 최대 보유 종목 수(max_positions)를 web에서 동적으로 조절하는 기능을 추가해줘.
 
 ### 2. 전략 (Strategy)
 * **[탐색 필요]** 다른 전략 탐색 (GPT 추천).
