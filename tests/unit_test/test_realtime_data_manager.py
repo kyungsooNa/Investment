@@ -368,3 +368,130 @@ def test_get_history_data(manager):
 def test_retention_days_is_7():
     """보존 기간이 7일인지 확인."""
     assert RealtimeDataManager.RETENTION_DAYS == 7
+
+# --- 추가된 테스트 케이스 (Coverage 향상) ---
+
+def test_inspect_db_status(manager):
+    """inspect_db_status 정상 동작 확인."""
+    # 1. 데이터 준비
+    manager.save_snapshot({"test": "snapshot"})
+    manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
+    
+    # 2. 실행
+    status = manager.inspect_db_status()
+    
+    # 3. 검증
+    assert status["snapshot"]["exists"] is True
+    assert status["snapshot"]["updated_at"] is not None
+    assert status["history"]["count"] == 1
+    assert status["history"]["last_record"] is not None
+    assert "hourly_counts" in status["history"]
+    assert status["memory"]["last_received_at"] is not None
+
+def test_inspect_db_status_exception(manager):
+    """inspect_db_status 예외 처리 확인."""
+    # DB 연결을 닫아서 예외 유발
+    manager._conn.close()
+    
+    status = manager.inspect_db_status()
+    
+    assert "error" in status
+
+def test_on_data_received_log_gap(manager):
+    """데이터 수신 간격이 10초 이상일 때 로그 기록 확인."""
+    manager.last_data_ts = time.time() - 15  # 15초 전
+    
+    test_data = {"유가증권단축종목코드": "005930", "price": 100}
+    manager.on_data_received(test_data)
+    
+    # 로그 메시지 확인
+    manager.logger.info.assert_called()
+    found = False
+    for call_args in manager.logger.info.call_args_list:
+        if "실시간 데이터 수신 재개" in str(call_args):
+            found = True
+            break
+    assert found
+
+def test_on_data_received_db_save_failure(manager):
+    """DB 저장 실패 시에도 메모리 저장 및 큐 전송은 동작해야 함."""
+    test_data = {"유가증권단축종목코드": "005930", "price": 100}
+    queue = manager.create_subscriber_queue()
+    
+    # _get_connection이 예외를 던지도록 설정
+    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
+        manager.on_data_received(test_data)
+        
+    # 1. 에러 로그 확인
+    manager.logger.error.assert_called()
+    
+    # 2. 메모리 저장은 성공해야 함
+    assert "005930" in manager._pt_history
+    
+    # 3. 큐 전송은 성공해야 함
+    assert queue.qsize() == 1
+
+def test_load_pt_history_json_error(manager):
+    """히스토리 데이터 중 JSON 파싱 에러가 있는 경우 건너뛰는지 확인."""
+    # 1. 정상 데이터와 불량 데이터 삽입
+    now = time.time()
+    with manager._get_connection() as conn:
+        conn.execute(
+            "INSERT INTO pt_history (code, data, created_at) VALUES (?, ?, ?)",
+            ("005930", '{"valid": true}', now)
+        )
+        conn.execute(
+            "INSERT INTO pt_history (code, data, created_at) VALUES (?, ?, ?)",
+            ("005930", '{invalid_json}', now)
+        )
+    
+    # 2. 로드 실행 (초기화 시 이미 로드되었으므로 다시 로드)
+    manager._pt_history = {}
+    manager._load_pt_history()
+    
+    # 3. 검증: 정상 데이터만 로드되어야 함
+    assert len(manager._pt_history["005930"]) == 1
+    assert manager._pt_history["005930"][0]["valid"] is True
+
+def test_load_snapshot_json_error(manager):
+    """스냅샷 데이터 JSON 파싱 에러 처리."""
+    # 1. 불량 데이터 삽입
+    with manager._get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO pt_snapshot (key, value, updated_at) VALUES (?, ?, ?)",
+            ("pt_data", "{invalid_json}", time.time())
+        )
+        
+    # 2. 로드 실행
+    result = manager.load_snapshot()
+    
+    # 3. 검증: None 반환 및 에러 로그
+    assert result is None
+    manager.logger.error.assert_called()
+
+def test_subscription_db_errors(manager):
+    """구독 관리 시 DB 에러 발생해도 메모리에는 반영되는지 확인."""
+    # Add
+    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
+        manager.add_subscribed_code("005930")
+    assert "005930" in manager._pt_codes
+    manager.logger.error.assert_called()
+    
+    # Remove
+    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
+        manager.remove_subscribed_code("005930")
+    assert "005930" not in manager._pt_codes
+    
+    # Clear
+    manager.add_subscribed_code("005930")
+    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
+        manager.clear_subscribed_codes()
+    assert len(manager._pt_codes) == 0
+
+def test_init_db_connect_failure():
+    """DB 연결 실패 시 에러 로그 확인."""
+    mock_logger = MagicMock()
+    with patch('sqlite3.connect', side_effect=Exception("Connection failed")):
+        with patch.object(RealtimeDataManager, '_get_base_dir', return_value='.'):
+             mgr = RealtimeDataManager(logger=mock_logger)
+             mock_logger.error.assert_any_call("SQLite DB 초기화 실패: Connection failed")

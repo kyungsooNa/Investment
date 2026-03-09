@@ -2,58 +2,43 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from view.web.web_app_initializer import WebAppContext
 from pydantic import BaseModel
+import contextlib
 
 @pytest.fixture
 def mock_deps():
     """WebAppContext가 의존하는 모든 외부 모듈을 Mocking합니다."""
-    with patch("view.web.web_app_initializer.load_configs") as mock_load, \
-         patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True) as mock_env, \
-         patch("view.web.web_app_initializer.TimeManager", autospec=True) as mock_tm, \
-         patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True) as mock_broker, \
-         patch("view.web.web_app_initializer.TradingService", autospec=True) as mock_ts, \
-         patch("view.web.web_app_initializer.StockQueryService", autospec=True) as mock_sqs, \
-         patch("view.web.web_app_initializer.OrderExecutionService", autospec=True) as mock_oes, \
-         patch("view.web.web_app_initializer.VirtualTradeManager", autospec=True) as mock_vtm, \
-         patch("view.web.web_app_initializer.StockCodeMapper", autospec=True) as mock_scm, \
-         patch("view.web.web_app_initializer.StrategyScheduler", autospec=True) as mock_sched, \
-         patch("view.web.web_app_initializer.RealtimeDataManager", autospec=True) as mock_rdm, \
-         patch("view.web.web_app_initializer.IndicatorService", autospec=True) as mock_ind, \
-         patch("view.web.web_app_initializer.web_api") as mock_web_api, \
-         patch("view.web.web_app_initializer.OneilUniverseService", autospec=True) as mock_ous, \
-         patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True) as mock_vb, \
-         patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True) as mock_pbf, \
-         patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True) as mock_tvb, \
-         patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True) as mock_osb, \
-         patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True) as mock_pp, \
-         patch("view.web.web_app_initializer.CacheManager", autospec=True) as mock_cm:
-        
-        mock_load.return_value = {
+    patch_targets = [
+        ("load_configs", patch("view.web.web_app_initializer.load_configs")),
+        ("env", patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True)),
+        ("tm", patch("view.web.web_app_initializer.TimeManager", autospec=True)),
+        ("broker", patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True)),
+        ("ts", patch("view.web.web_app_initializer.TradingService", autospec=True)),
+        ("sqs", patch("view.web.web_app_initializer.StockQueryService", autospec=True)),
+        ("oes", patch("view.web.web_app_initializer.OrderExecutionService", autospec=True)),
+        ("vtm", patch("view.web.web_app_initializer.VirtualTradeManager", autospec=True)),
+        ("scm", patch("view.web.web_app_initializer.StockCodeMapper", autospec=True)),
+        ("sched", patch("view.web.web_app_initializer.StrategyScheduler", autospec=True)),
+        ("rdm", patch("view.web.web_app_initializer.RealtimeDataManager", autospec=True)),
+        ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
+        ("web_api", patch("view.web.web_app_initializer.web_api")),
+        ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
+        ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
+        ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
+        ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
+        ("osb", patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True)),
+        ("pp", patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True)),
+        ("cm", patch("view.web.web_app_initializer.CacheManager", autospec=True)),
+        ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
+    ]
+
+    with contextlib.ExitStack() as stack:
+        mocks = {name: stack.enter_context(p) for name, p in patch_targets}
+        mocks["load_configs"].return_value = {
             "market_open_time": "09:00",
             "market_close_time": "15:30",
             "market_timezone": "Asia/Seoul"
         }
-        yield {
-            "load_configs": mock_load,
-            "env": mock_env,
-            "tm": mock_tm,
-            "broker": mock_broker,
-            "ts": mock_ts,
-            "sqs": mock_sqs,
-            "oes": mock_oes,
-            "vtm": mock_vtm,
-            "scm": mock_scm,
-            "sched": mock_sched,
-            "rdm": mock_rdm,
-            "ind": mock_ind,
-            "web_api": mock_web_api,
-            "ous": mock_ous,
-            "vb": mock_vb,
-            "pbf": mock_pbf,
-            "tvb": mock_tvb,
-            "osb": mock_osb,
-            "pp": mock_pp,
-            "cm": mock_cm
-        }
+        yield mocks
 
 def test_initialization(mock_deps):
     """WebAppContext 객체 생성 시 초기 상태 검증"""
@@ -300,3 +285,103 @@ async def test_initialize_services_with_pydantic_config_object(mock_deps):
     init_arg = mock_deps["cm"].call_args[0][0]
     assert isinstance(init_arg, dict)
     assert init_arg["market_open_time"] == "09:00"
+
+@pytest.mark.asyncio
+async def test_start_background_tasks_with_restore(mock_deps):
+    """
+    start_background_tasks가 구독 복원 및 백그라운드 서비스 태스크를
+    올바르게 생성하고 실행하는지 검증합니다.
+    """
+    # Arrange
+    ctx = WebAppContext(None)
+    
+    # Mock realtime_data_manager
+    mock_rdm_instance = ctx.realtime_data_manager
+    mock_rdm_instance.get_subscribed_codes.return_value = ["005930", "000660"]
+    
+    # Mock background_service
+    ctx.background_service = MagicMock()
+    ctx.background_service.refresh_investor_ranking = AsyncMock()
+    ctx.background_service.start_after_market_scheduler = AsyncMock()
+    
+    # Mock the method that will be called inside the task
+    ctx._restore_program_trading = AsyncMock()
+
+    # Patch asyncio.create_task to collect coroutines
+    created_coroutines = []
+    def coro_collector(coro):
+        created_coroutines.append(coro)
+        return MagicMock() # return a mock task object
+        
+    with patch("view.web.web_app_initializer.asyncio.create_task", side_effect=coro_collector) as mock_create_task:
+        # Act
+        ctx.start_background_tasks()
+
+    # Await all collected coroutines
+    for coro in created_coroutines:
+        await coro
+        
+    # Assert
+    # 1. RDM의 start_background_tasks 호출 확인
+    mock_rdm_instance.start_background_tasks.assert_called_once()
+    
+    # 2. RDM의 get_subscribed_codes 호출 확인
+    mock_rdm_instance.get_subscribed_codes.assert_called_once()
+    
+    # 3. create_task가 3번 호출되었는지 확인
+    assert mock_create_task.call_count == 3
+    
+    # 4. 각 태스크의 내부 메서드가 await 되었는지 확인
+    ctx._restore_program_trading.assert_awaited_once_with(["005930", "000660"])
+    ctx.background_service.refresh_investor_ranking.assert_awaited_once()
+    ctx.background_service.start_after_market_scheduler.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_restore_program_trading_success(mock_deps):
+    """_restore_program_trading: 모든 종목 구독 복원 성공 케이스."""
+    # Arrange
+    ctx = WebAppContext(None)
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.connect_websocket = AsyncMock(return_value=True)
+    ctx.stock_query_service.subscribe_program_trading = AsyncMock()
+    ctx.stock_query_service.subscribe_realtime_price = AsyncMock()
+    
+    codes_to_restore = ["005930", "000660"]
+    
+    # Act
+    await ctx._restore_program_trading(codes_to_restore)
+    
+    # Assert
+    assert ctx.stock_query_service.connect_websocket.call_count == 2
+    assert ctx.stock_query_service.subscribe_program_trading.call_count == 2
+    assert ctx.stock_query_service.subscribe_realtime_price.call_count == 2
+    
+    ctx.logger.info.assert_any_call(f"프로그램매매 구독 복원 완료: 2/2개 종목")
+
+@pytest.mark.asyncio
+async def test_restore_program_trading_partial_failure(mock_deps):
+    """_restore_program_trading: 일부 종목 복원 실패 시에도 계속 진행하는지 검증."""
+    # Arrange
+    ctx = WebAppContext(None)
+    ctx.stock_query_service = MagicMock()
+    
+    # 005930: connect fails, 000660: subscribe fails, 035720: success
+    async def connect_side_effect(callback):
+        return ctx.stock_query_service.connect_websocket.await_count != 1
+    async def subscribe_side_effect(code):
+        if code == "000660": raise Exception("Subscription failed")
+    
+    ctx.stock_query_service.connect_websocket = AsyncMock(side_effect=connect_side_effect)
+    ctx.stock_query_service.subscribe_program_trading = AsyncMock(side_effect=subscribe_side_effect)
+    ctx.stock_query_service.subscribe_realtime_price = AsyncMock()
+    
+    # Act
+    await ctx._restore_program_trading(["005930", "000660", "035720"])
+    
+    # Assert
+    assert ctx.stock_query_service.connect_websocket.await_count == 3
+    assert ctx.stock_query_service.subscribe_program_trading.await_count == 2
+    ctx.stock_query_service.subscribe_realtime_price.assert_awaited_once_with("035720")
+    ctx.logger.warning.assert_called_with("프로그램매매 복원 실패 (WebSocket 연결 불가): 005930")
+    ctx.logger.error.assert_called_with("프로그램매매 복원 중 오류 (000660): Subscription failed")
+    ctx.logger.info.assert_any_call("프로그램매매 구독 복원 완료: 1/3개 종목")
