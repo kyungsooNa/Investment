@@ -674,7 +674,15 @@ def test_extract_op_profit_growth_logic(mock_deps):
     data2 = {"sale_totl_prfi_icdc": "10.0"}
     assert service._extract_op_profit_growth(data2) == 10.0
     
-    # Case 3: Invalid data
+    # Case 3: 실제 API 응답 구조 (output 리스트 포함)
+    data3 = {"rt_cd": "0", "msg1": "정상", "output": [{"stac_yymm": "202312", "bsop_prfi_inrt": "18.3"}]}
+    assert service._extract_op_profit_growth(data3) == 18.3
+
+    # Case 4: output에 bsop_prti_icdc 필드
+    data4 = {"output": [{"bsop_prti_icdc": "30.0", "grs": "5.0"}]}
+    assert service._extract_op_profit_growth(data4) == 30.0  # 우선순위 높은 키 사용
+
+    # Case 5: Invalid data
     assert service._extract_op_profit_growth(None) == 0.0
     assert service._extract_op_profit_growth([]) == 0.0
     assert service._extract_op_profit_growth({}) == 0.0

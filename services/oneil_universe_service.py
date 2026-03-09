@@ -624,11 +624,21 @@ class OneilUniverseService:
 
     @staticmethod
     def _extract_op_profit_growth(data) -> float:
-        # API 응답 구조에 따라 영업이익 증가율 추출 (간소화)
+        """API 응답에서 영업이익 증가율 추출.
+
+        resp.data 구조: {"rt_cd": "0", "output": [{"stac_yymm": "...", "bsop_prfi_inrt": "...", ...}]}
+        output 리스트의 첫 번째 항목(최신 분기)에서 영업이익 관련 필드를 탐색.
+        """
         try:
-            target = data[0] if isinstance(data, list) and data else data
+            # API 응답 dict에서 output 리스트 추출
+            if isinstance(data, dict):
+                output = data.get("output", data)
+            else:
+                output = data
+
+            target = output[0] if isinstance(output, list) and output else output
             if isinstance(target, dict):
-                for k in ["bsop_prti_icdc", "sale_totl_prfi_icdc", "op_profit_growth"]:
+                for k in ["bsop_prti_icdc", "sale_totl_prfi_icdc", "bsop_prfi_inrt", "grs"]:
                     if val := target.get(k): return float(val)
         except: pass
         return 0.0
