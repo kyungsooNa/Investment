@@ -49,24 +49,5 @@ async def place_order(req: OrderRequest):
             except Exception as e:
                 print(f"[WebAPI] 수동매매 기록 중 오류 발생: {e}")
 
-    # 3. 알림 이벤트 발행
-    if ctx.notification_manager:
-        side_kr = "매수" if req.side == "buy" else "매도"
-        if resp and resp.rt_cd == "0":
-            await ctx.notification_manager.emit(
-                "TRADE", "info",
-                f"수동 {side_kr} 주문 성공",
-                f"{req.code} {req.qty}주 @ {req.price}원",
-                metadata={"code": req.code, "side": req.side, "qty": req.qty, "price": req.price},
-            )
-        else:
-            msg = resp.msg1 if resp else "응답 없음"
-            await ctx.notification_manager.emit(
-                "SYSTEM", "error",
-                f"수동 {side_kr} 주문 실패",
-                f"{req.code} - {msg}",
-                metadata={"code": req.code, "side": req.side, "error": msg},
-            )
-
     ctx.pm.log_timer("place_order", t_start)
     return _serialize_response(resp)

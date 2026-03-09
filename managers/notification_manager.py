@@ -58,7 +58,7 @@ class NotificationManager:
         """이벤트 생성 → 히스토리 저장 → 구독자 전파."""
         event = NotificationEvent(
             id=uuid.uuid4().hex[:12],
-            timestamp=self._time_manager.now().isoformat(),
+            timestamp=self._time_manager.get_current_kst_time().isoformat(),
             category=category,
             level=level,
             title=title,

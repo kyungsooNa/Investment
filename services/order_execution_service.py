@@ -3,6 +3,7 @@ import asyncio
 from typing import Optional
 from common.types import ErrorCode, ResCommonResponse
 from core.performance_manager import PerformanceManager
+from managers.notification_manager import NotificationManager
 
 
 class OrderExecutionService:
@@ -14,11 +15,14 @@ class OrderExecutionService:
     _ORDER_MAX_RETRIES = 2
     _ORDER_RETRY_DELAY_SEC = 3
 
-    def __init__(self, trading_service, logger, time_manager, performance_manager: Optional[PerformanceManager] = None):
+    def __init__(self, trading_service, logger, time_manager,
+                 performance_manager: Optional[PerformanceManager] = None,
+                 notification_manager: Optional[NotificationManager] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self._nm = notification_manager
 
     async def _retry_order(self, order_fn, stock_code, price, qty) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도."""
@@ -59,11 +63,19 @@ class OrderExecutionService:
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
                 f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
+            if self._nm:
+                await self._nm.emit("API", "info", "매수 주문 성공",
+                                    f"{stock_code} {qty}주 @ {price}원",
+                                    metadata={"code": stock_code, "qty": qty, "price": price})
         else:
             rt_cd = buy_order_result.rt_cd if buy_order_result else 'None'
             msg1 = buy_order_result.msg1 if buy_order_result else '응답 없음'
             self.logger.error(
                 f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
+            if self._nm:
+                await self._nm.emit("SYSTEM", "error", "매수 주문 실패",
+                                    f"{stock_code} - {msg1}",
+                                    metadata={"code": stock_code, "error": msg1})
         self.pm.log_timer(f"OrderExecutionService.handle_place_buy_order({stock_code})", t_start)
         return buy_order_result
 
@@ -80,11 +92,19 @@ class OrderExecutionService:
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
                 f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
+            if self._nm:
+                await self._nm.emit("API", "info", "매도 주문 성공",
+                                    f"{stock_code} {qty}주 @ {price}원",
+                                    metadata={"code": stock_code, "qty": qty, "price": price})
         else:
             rt_cd = sell_order_result.rt_cd if sell_order_result else 'None'
             msg1 = sell_order_result.msg1 if sell_order_result else '응답 없음'
             self.logger.error(
                 f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
+            if self._nm:
+                await self._nm.emit("SYSTEM", "error", "매도 주문 실패",
+                                    f"{stock_code} - {msg1}",
+                                    metadata={"code": stock_code, "error": msg1})
         self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)
         return sell_order_result
 

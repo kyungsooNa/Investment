@@ -144,14 +144,16 @@ class WebAppContext:
             self.trading_service, self.logger, self.time_manager,
             indicator_service=self.indicator_service,
             background_service=self.background_service,
-            performance_manager=self.pm
+            performance_manager=self.pm,
+            notification_manager=self.notification_manager,
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
 
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager,
-            performance_manager=self.pm
+            performance_manager=self.pm,
+            notification_manager=self.notification_manager,
         )
         
         # [신규] 오닐 유니버스 서비스 초기화
