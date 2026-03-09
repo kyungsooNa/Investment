@@ -181,16 +181,19 @@ async def test_build_pool_b_parallel_execution(mock_components):
     # 중복 제거 로직 테스트를 위해 일부러 겹치는 종목 없이 설정
     sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, 
+        msg1="OK",
         data=[{"mksc_shrn_iscd": "000010", "hts_kor_isnm": "Stock1"}, 
               {"mksc_shrn_iscd": "000020", "hts_kor_isnm": "Stock2"}]
     )
     sqs.get_top_rise_fall_stocks.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, 
+        msg1="OK",
         data=[{"mksc_shrn_iscd": "000030", "hts_kor_isnm": "Stock3"},
               {"mksc_shrn_iscd": "000040", "hts_kor_isnm": "Stock4"}]
     )
     sqs.get_top_volume_stocks.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, 
+        msg1="OK",
         data=[{"mksc_shrn_iscd": "000050", "hts_kor_isnm": "Stock5"}]
     )
     

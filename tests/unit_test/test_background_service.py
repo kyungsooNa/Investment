@@ -352,8 +352,8 @@ async def test_refresh_investor_ranking_limit(bg_service, mock_deps):
     """상위 30개만 반환되는지 확인."""
     broker, mapper, _, _, _ = mock_deps
 
-    # 40개 종목 생성
-    stocks = [(f"{i:06d}", f"종목{i}", "KOSPI") for i in range(40)]
+    # 40개 종목 생성 (우선주 필터 통과를 위해 끝자리 0 보장)
+    stocks = [(f"{i:05d}0", f"종목{i}", "KOSPI") for i in range(40)]
     mapper.df = _make_stock_df(stocks)
 
     async def mock_trend(code, date=None):
@@ -366,18 +366,18 @@ async def test_refresh_investor_ranking_limit(bg_service, mock_deps):
 
     buy_resp = bg_service.get_foreign_net_buy_ranking()
     assert len(buy_resp.data) == 30
-    # 가장 큰 값이 1위여야 함 (종목 39)
-    assert buy_resp.data[0]["frgn_ntby_qty"] == "39"
+    # 가장 큰 값이 1위여야 함 (종목 39 -> 코드 000390 -> 수량 390)
+    assert buy_resp.data[0]["frgn_ntby_qty"] == "390"
 
     sell_resp = bg_service.get_foreign_net_sell_ranking()
     assert len(sell_resp.data) == 30
-    # 가장 작은 값이 1위여야 함 (종목 0)
+    # 가장 작은 값이 1위여야 함 (종목 0 -> 코드 000000 -> 수량 0)
     assert sell_resp.data[0]["frgn_ntby_qty"] == "0"
 
     # 기관도 30개 제한
     inst_buy = bg_service.get_inst_net_buy_ranking()
     assert len(inst_buy.data) == 30
-    assert inst_buy.data[0]["orgn_ntby_qty"] == "78"  # 39*2
+    assert inst_buy.data[0]["orgn_ntby_qty"] == "780"  # 390*2
 
 
 def test_get_foreign_ranking_with_limit(bg_service):
