@@ -487,23 +487,33 @@ class OneilUniverseService:
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(etf_code, limit=period + days + 5)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
 
-        if not ohlcv or len(ohlcv) < period + days:
+        if not ohlcv or len(ohlcv) < period + days: # This check should be based on the actual 'closes' list length
             return False
         
-        closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
+        closes = [r.get("close", 0) for r in ohlcv] # Changed: Do not filter out 0 values
         ma_values = []
         for i in range(days + 1):
             end = len(closes) - days + i
             ma_values.append(sum(closes[end-period:end]) / period)
             
-        is_rising = all(ma_values[j] > ma_values[j-1] for j in range(1, len(ma_values)))
+        is_rising = True
+        fail_detail = ""
+        for j in range(1, len(ma_values)):
+            if ma_values[j] <= ma_values[j-1]:
+                is_rising = False
+                fail_detail = f"MA decline: {ma_values[j-1]:.2f} -> {ma_values[j]:.2f} (idx {j})"
+                break
 
-        self._logger.debug({
+        log_data = {
             "event": "market_timing_check",
             "etf_code": etf_code,
             "is_rising": is_rising,
             "ma_values": [round(v, 2) for v in ma_values]
-        })
+        }
+        if not is_rising:
+            log_data["fail_detail"] = fail_detail
+
+        self._logger.debug(log_data)
 
         return is_rising
 

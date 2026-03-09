@@ -27,6 +27,7 @@ def mock_deps():
         ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
         ("osb", patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True)),
         ("pp", patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True)),
+        ("htf", patch("view.web.web_app_initializer.HighTightFlagStrategy", autospec=True)),
         ("cm", patch("view.web.web_app_initializer.CacheManager", autospec=True)),
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
     ]
@@ -123,13 +124,14 @@ def test_initialize_scheduler(mock_deps):
     ctx.time_manager = MagicMock()
     ctx.trading_service = MagicMock()
     ctx.stock_query_service = MagicMock()
-    
+    ctx.broker = MagicMock()
+
     ctx.initialize_scheduler()
     
     mock_deps["sched"].assert_called_once()
     scheduler = mock_deps["sched"].return_value
     # 최소 2개 이상의 전략이 등록되어야 함 (VolumeBreakout, ProgramBuyFollow)
-    assert scheduler.register.call_count >= 5
+    assert scheduler.register.call_count >= 6
     
     # 전략 초기화 검증
     mock_deps["vb"].assert_called()
@@ -137,6 +139,7 @@ def test_initialize_scheduler(mock_deps):
     mock_deps["tvb"].assert_called()
     mock_deps["osb"].assert_called()
     mock_deps["pp"].assert_called()
+    mock_deps["htf"].assert_called()
 
 @pytest.mark.asyncio
 async def test_program_trading_subscription(mock_deps):

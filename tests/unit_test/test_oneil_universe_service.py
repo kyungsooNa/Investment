@@ -621,6 +621,58 @@ async def test_check_etf_ma_rising_logic(mock_deps):
     assert await service._check_etf_ma_rising("000000") is False
 
 @pytest.mark.asyncio
+async def test_check_etf_ma_rising_exact_calculation(mock_deps):
+    """_check_etf_ma_rising: MA 값의 연속 상승/하락을 정확히 계산하고 로그를 남기는지 검증."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    # 설정: 5일 MA, 2일 연속 상승 필요 (총 3일간 MA값 비교)
+    service._cfg.market_ma_period = 5
+    service._cfg.market_ma_rising_days = 2
+
+    # Case 1: 2일 연속 상승 (성공)
+    logger.debug.reset_mock()
+    # MA 값: (30, 40, 50) -> 상승
+    closes_rising = [{"close": c} for c in [10, 20, 30, 40, 50, 60, 70]]
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_rising)
+    assert await service._check_etf_ma_rising("RISING") is True
+
+    # 로그 확인 (성공)
+    log_call = logger.debug.call_args[0][0]
+    assert log_call["event"] == "market_timing_check"
+    assert log_call["is_rising"] is True
+    assert "fail_detail" not in log_call
+
+    # Case 2: 마지막 날 MA 하락 (실패)
+    logger.debug.reset_mock()
+    # MA 값: (30, 40, 36) -> 실패
+    closes_falling = [{"close": c} for c in [10, 20, 30, 40, 50, 60, 0]]
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_falling)
+    assert await service._check_etf_ma_rising("FALLING") is False
+
+    # 로그 확인 (실패)
+    log_call = logger.debug.call_args[0][0]
+    assert log_call["event"] == "market_timing_check"
+    assert log_call["is_rising"] is False
+    assert "fail_detail" in log_call
+    assert "MA decline: 40.00 -> 36.00" in log_call["fail_detail"]
+
+    # Case 3: 중간에 MA 하락 (실패)
+    logger.debug.reset_mock()
+    # MA 값: (30, 28, 38) -> 실패
+    closes_dip = [{"close": c} for c in [10, 20, 30, 40, 50, 0, 70]]
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_dip)
+    assert await service._check_etf_ma_rising("DIP") is False
+
+    # 로그 확인 (실패)
+    log_call = logger.debug.call_args[0][0]
+    assert log_call["event"] == "market_timing_check"
+    assert log_call["is_rising"] is False
+    assert "fail_detail" in log_call
+    assert "MA decline: 30.00 -> 28.00" in log_call["fail_detail"]
+
+
+@pytest.mark.asyncio
 async def test_build_pool_b_logic(mock_deps):
     """_build_pool_b: 실시간 랭킹 기반 Pool B 생성 및 필터링 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
