@@ -1553,6 +1553,46 @@ let ptCodeNameMap = {};   // 종목코드 → 종목명 매핑
 let ptFilterCodes = new Set();  // 선택된 필터 종목코드 Set (비어있으면 전체 표시)
 let ptDataDirty = false;  // 데이터 변경 여부 플래그
 let ptTimeUnit = 1;       // 차트/표 시간 단위 (분)
+let ptResubscribing = false; // SSE 재연결 시 재구독 중복 방지 플래그
+
+/**
+ * SSE EventSource 연결 생성 (공통).
+ * 재연결(onerror → auto reconnect) 시 서버에 재구독 요청을 보낸다.
+ */
+function connectPtEventSource() {
+    if (ptEventSource) return;
+    ptEventSource = new EventSource('/api/program-trading/stream');
+    ptEventSource.onmessage = (event) => {
+        const d = JSON.parse(event.data);
+        handleProgramTradingData(d);
+    };
+    ptEventSource.onerror = () => {
+        const statusDiv = document.getElementById('pt-status');
+        if (statusDiv) statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김 — 재연결 시도 중...</span>';
+    };
+    // SSE 재연결(open) 시 서버 측 구독 상태가 초기화되었을 수 있으므로 재구독
+    ptEventSource.onopen = async () => {
+        if (ptSubscribedCodes.size === 0 || ptResubscribing) return;
+        ptResubscribing = true;
+        try {
+            for (const code of ptSubscribedCodes) {
+                try {
+                    await fetch('/api/program-trading/subscribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code })
+                    });
+                } catch (e) {
+                    console.error(`[PT] Resubscribe failed: ${code}`, e);
+                }
+            }
+            const statusDiv = document.getElementById('pt-status');
+            if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
+        } finally {
+            ptResubscribing = false;
+        }
+    };
+}
 
 async function addProgramTrading() {
     const input = document.getElementById('pt-code-input');
@@ -1591,16 +1631,7 @@ async function addProgramTrading() {
         renderPtChips();
         input.value = '';
 
-        if (!ptEventSource) {
-            ptEventSource = new EventSource('/api/program-trading/stream');
-            ptEventSource.onmessage = (event) => {
-                const d = JSON.parse(event.data);
-                handleProgramTradingData(d); // 새 핸들러 호출
-            };
-            ptEventSource.onerror = () => {
-                statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
-            };
-        }
+        connectPtEventSource();
 
         statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
     } catch (e) {
@@ -2405,32 +2436,36 @@ async function initProgramTrading() {
                 statusDiv.style.display = 'block';
                 statusDiv.innerHTML = '<span>이전 구독 복구 중...</span>';
             }
-            
-            // SSE 연결 및 재구독 요청은 addProgramTrading 로직을 일부 재사용하거나 직접 수행
-            // 여기서는 SSE 연결이 없으면 생성하고, 각 종목에 대해 subscribe API 호출
-            if (!ptEventSource) {
-                ptEventSource = new EventSource('/api/program-trading/stream');
-                ptEventSource.onmessage = (event) => {
-                    const d = JSON.parse(event.data);
-                    handleProgramTradingData(d);
-                };
-                ptEventSource.onerror = () => {
-                    if (statusDiv) statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김</span>';
-                };
-            }
 
-            for (const code of ptSubscribedCodes) {
-                try {
-                    await fetch('/api/program-trading/subscribe', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ code })
-                    });
-                } catch (e) {
-                    console.error(`Failed to resubscribe ${code}`, e);
+            // SSE 연결 (onopen 핸들러가 자동으로 재구독 처리)
+            connectPtEventSource();
+        }
+    } else {
+        // loadPtData 실패 시에도 서버에 저장된 구독 상태를 확인하여 복구 시도
+        try {
+            const res = await fetch('/api/program-trading/status');
+            const status = await res.json();
+            if (status.subscribed && status.codes && status.codes.length > 0) {
+                // 서버에 구독 상태가 남아있으면 (SQLite에 저장된) 복구
+                for (const code of status.codes) {
+                    ptSubscribedCodes.add(code);
+                    if (!ptChartData[code]) {
+                        ptChartData[code] = { totalValue: 0, totalVolume: 0, valueData: [], volumeData: [] };
+                    }
                 }
+                renderPtChips();
+                initProgramChart(ptTimeUnit);
+                updateProgramChart(ptChartData, ptSubscribedCodes, ptFilterCodes, ptCodeNameMap, ptTimeUnit);
+
+                const statusDiv = document.getElementById('pt-status');
+                if (statusDiv) {
+                    statusDiv.style.display = 'block';
+                    statusDiv.innerHTML = '<span>서버 구독 상태에서 복구 중...</span>';
+                }
+                connectPtEventSource();
             }
-            if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
+        } catch (e) {
+            console.warn('[PT] Server status check failed:', e);
         }
     }
 }

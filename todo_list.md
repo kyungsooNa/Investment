@@ -7,7 +7,9 @@
 1. [스케줄러] 전략 실행시 전략스케줄러 view가 update 안됨.
 2. [전략매매] OneilPocketPivotStrategy의 전용 logger 생성 안됨.
 6. tr_ids_config.yaml과 kis_config.yaml에 있는 tr_id, url을 (실전,모의) tuple로 바꾸고 모의에서 불가능한건 비워놓고 없으면 못쓰는 방식으로 수정하자.
-7. [프로그램매매] App 재실행시 프로그램 매매에서 이전에 구독한 data가 다 올라오지 않는 버그가 있어 보임. 저장을 잘못하고 있는건지, 가지고오지를 모샇는거지, file을 잘못 지우는건지 확인 필요.
+
+
+11. [프로그램매매] 10시 이후 data reload가 안됨.
 ### 1. 환경 (Environment)
 
 ### 2. 성능 (Performance)
