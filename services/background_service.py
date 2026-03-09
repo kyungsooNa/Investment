@@ -37,7 +37,7 @@ class BackgroundService:
     """백그라운드 배치 작업을 관리하는 서비스."""
 
     # 청크 크기 및 레이트 리밋
-    API_CHUNK_SIZE = 5
+    API_CHUNK_SIZE = 8
     CHUNK_SLEEP_SEC = 1.1
 
     # 장마감 후 대기 시간 (초) — 15:30 이후 약간의 여유
@@ -174,6 +174,11 @@ class BackgroundService:
 
     async def refresh_investor_ranking(self) -> None:
         """전체 종목을 순회하여 외국인/기관/개인 순매수/순매도 랭킹을 갱신한다."""
+        # [성능 보호] 장 중에는 실행하지 않음
+        if self._time_manager and self._time_manager.is_market_open():
+            self._logger.info("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
+            return
+
         if self._is_refreshing:
             self._logger.info("투자자 랭킹 갱신 이미 진행 중 — 스킵")
             return
@@ -390,6 +395,10 @@ class BackgroundService:
 
     def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
         """캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""
+        # [성능 보호] 장 중에는 온디맨드 갱신 트리거 안 함
+        if self._time_manager and self._time_manager.is_market_open():
+            return None
+
         # 캐시 비어있고 갱신 중이 아니면 온디맨드 트리거
         if not self._foreign_net_buy_cache and not self._is_refreshing:
             try:
@@ -467,10 +476,19 @@ class BackgroundService:
             name = row.get("종목명", "")
             market = row.get("시장구분", "")
 
+            if not code:
+                continue
+
             # ETF/ETN 사전 필터링으로 불필요한 API 호출 방지
             if any(name.startswith(p) for p in _ETF_PREFIXES):
                 continue
 
-            if code and market in ("KOSPI", "KOSDAQ"):
+            # [성능 개선] 우선주(코드 끝자리가 0이 아님) 및 스팩(SPAC) 제외
+            if code[-1] != '0':
+                continue
+            if "스팩" in name:
+                continue
+
+            if market in ("KOSPI", "KOSDAQ"):
                 all_stocks.append((code, name, market))
         return all_stocks

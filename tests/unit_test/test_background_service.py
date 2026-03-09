@@ -41,6 +41,7 @@ def mock_deps():
     env.is_paper_trading = False  # 기본: 실전투자 모드
     logger = MagicMock()
     time_manager = MagicMock()
+    time_manager.is_market_open.return_value = False  # 기본: 장 마감 상태 (갱신 허용)
     return broker, mapper, env, logger, time_manager
 
 
@@ -574,6 +575,29 @@ def test_load_all_stocks_filters_etf(bg_service, mock_deps):
     for name in names:
         assert not any(name.startswith(p) for p in _ETF_PREFIXES)
 
+def test_load_all_stocks_filters_preferred_and_spac(bg_service, mock_deps):
+    """_load_all_stocks가 우선주와 스팩(SPAC) 종목을 필터링하는지 검증."""
+    _, mapper, _, _, _ = mock_deps
+
+    # Mock DataFrame with common, preferred, and SPAC stocks
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("005935", "삼성전자우", "KOSPI"),  # Preferred stock (ends with non-zero)
+        ("123456", "미래에셋스팩1호", "KOSDAQ"), # SPAC
+        ("000660", "SK하이닉스", "KOSDAQ"),
+    ])
+
+    # Call the method to be tested
+    loaded_stocks = bg_service._load_all_stocks()
+
+    # Extract codes for easier assertion
+    loaded_codes = [stock[0] for stock in loaded_stocks]
+
+    assert "005930" in loaded_codes
+    assert "000660" in loaded_codes
+    assert "005935" not in loaded_codes
+    assert "123456" not in loaded_codes
+
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):
     """refresh_investor_ranking 실행 시 필터링된 종목에 대해서만 API를 호출하는지 검증"""
@@ -603,6 +627,41 @@ async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):
     assert "005930" in called_codes
     assert "000660" in called_codes
     assert "123456" not in called_codes
+
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, mock_deps):
+    """장 중에는 투자자 랭킹 갱신(직접 호출)을 스킵해야 한다."""
+    broker, _, _, logger, time_manager = mock_deps
+    time_manager.is_market_open.return_value = True  # 장 중으로 설정
+
+    await bg_service.refresh_investor_ranking()
+
+    broker.get_investor_trade_by_stock_daily.assert_not_called()
+    logger.info.assert_any_call("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
+
+
+@pytest.mark.asyncio
+async def test_on_demand_trigger_skipped_during_market_open(bg_service, mock_deps):
+    """장 중에는 온디맨드(on-demand) 랭킹 갱신이 트리거되지 않아야 한다."""
+    import asyncio
+    from unittest.mock import patch
+
+    _, _, _, logger, time_manager = mock_deps
+    time_manager.is_market_open.return_value = True  # 장 중으로 설정
+
+    # 캐시가 비어있는 상태
+    bg_service._foreign_net_buy_cache = []
+    bg_service._is_refreshing = False
+
+    with patch.object(asyncio, "create_task") as mock_create_task:
+        # 랭킹 조회를 시도하면 내부적으로 _check_and_trigger_refresh가 호출됨
+        resp = bg_service.get_foreign_net_buy_ranking()
+
+        # 장 중이므로 온디맨드 갱신(create_task)이 호출되지 않아야 함
+        mock_create_task.assert_not_called()
+        # 갱신이 트리거되지 않고 "수집 중" 메시지만 반환되어야 함
+        assert "수집 중" in resp.msg1
 
 
 # ── 프로그램 순매수/순매도 랭킹 ──────────────────────────────
@@ -835,3 +894,15 @@ async def test_refresh_basic_ranking_partial_failure(bg_service, mock_deps):
     
     # 에러 로그 확인
     logger.error.assert_any_call("기본 랭킹 'fall' 조회 실패: Fall API Error")
+
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, mock_deps):
+    """장 중에는 투자자 랭킹 갱신을 스킵해야 한다."""
+    broker, _, _, logger, time_manager = mock_deps
+    time_manager.is_market_open.return_value = True  # 장 중으로 설정
+
+    await bg_service.refresh_investor_ranking()
+
+    broker.get_investor_trade_by_stock_daily.assert_not_called()
+    logger.info.assert_any_call("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
