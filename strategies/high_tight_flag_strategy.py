@@ -313,13 +313,14 @@ class HighTightFlagStrategy(LiveStrategy):
                 if is_break:
                     reason = break_reason
 
-            # 매도 시그널 생성
+            # 매도 시그널 생성 (전량 매도)
             if reason:
+                holding_qty = int(hold.get("qty", 1))
                 self._position_state.pop(code, None)
                 self._save_state()
                 signals.append(TradeSignal(
                     code=code, name=hold.get("name", code), action="SELL",
-                    price=current, qty=1, reason=reason, strategy_name=self.name,
+                    price=current, qty=holding_qty, reason=reason, strategy_name=self.name,
                 ))
 
         return signals

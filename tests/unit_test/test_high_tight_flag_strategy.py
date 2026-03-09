@@ -351,11 +351,12 @@ async def test_exit_hard_stop(mock_deps):
         rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9400"}}
     )
 
-    holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
+    holdings = [{"code": "005930", "buy_price": 10000, "qty": 50, "name": "테스트종목"}]
     signals = await strategy.check_exits(holdings)
 
     assert len(signals) == 1
     assert signals[0].action == "SELL"
+    assert signals[0].qty == 50  # 전량 매도
     assert "칼손절" in signals[0].reason
     assert "005930" not in strategy._position_state
 
@@ -380,11 +381,12 @@ async def test_exit_trailing_ma_stop(mock_deps):
     ohlcv = [{"close": 11000, "volume": 100000} for _ in range(10)]
     sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
 
-    holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
+    holdings = [{"code": "005930", "buy_price": 10000, "qty": 30, "name": "테스트종목"}]
     signals = await strategy.check_exits(holdings)
 
     assert len(signals) == 1
     assert signals[0].action == "SELL"
+    assert signals[0].qty == 30  # 전량 매도
     assert "트레일링스탑" in signals[0].reason
     assert "10MA" in signals[0].reason
 
@@ -409,7 +411,7 @@ async def test_exit_hold(mock_deps):
     ohlcv = [{"close": 11000, "volume": 100000} for _ in range(10)]
     sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
 
-    holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
+    holdings = [{"code": "005930", "buy_price": 10000, "qty": 50, "name": "테스트종목"}]
     signals = await strategy.check_exits(holdings)
 
     assert len(signals) == 0
