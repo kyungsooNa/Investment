@@ -657,13 +657,13 @@ def test_chunked_helper():
 @pytest.mark.asyncio
 async def test_refresh_basic_ranking_exception_and_notification(bg_service, mock_deps):
     """기본 랭킹 갱신 중 예외 발생 시 로그 및 알림 테스트."""
+    from unittest.mock import patch
     _, _, _, logger, _ = mock_deps
     bg_service._nm = AsyncMock()
 
-    # TradingService가 예외를 던지도록 설정
-    bg_service._trading_service.get_top_rise_fall_stocks.side_effect = Exception("Critical Error")
-
-    await bg_service.refresh_basic_ranking()
+    # asyncio.gather가 예외를 던지도록 설정하여 try-except 블록 진입 유도
+    with patch("services.background_service.asyncio.gather", side_effect=Exception("Critical Error")):
+        await bg_service.refresh_basic_ranking()
 
     logger.error.assert_called()
     bg_service._nm.emit.assert_awaited_with("SYSTEM", "error", "기본 랭킹 갱신 실패", "Critical Error")
@@ -691,12 +691,14 @@ async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps)
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
     """투자자 랭킹 갱신 성공/실패 알림 테스트."""
+    from unittest.mock import patch
     broker, mapper, _, _, _ = mock_deps
     bg_service._nm = AsyncMock()
     mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
 
     # 1. Success case
-    broker.get_investor_trade_by_stock_daily.return_value = _make_investor_response(100)
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=_make_investor_response(100))
+    broker.get_program_trade_by_stock_daily = AsyncMock(return_value=_make_program_response(100))
 
     await bg_service.refresh_investor_ranking()
 
@@ -707,9 +709,8 @@ async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
 
     # 2. Failure case
     bg_service._nm.reset_mock()
-    broker.get_investor_trade_by_stock_daily.side_effect = Exception("API Fail")
-
-    await bg_service.refresh_investor_ranking()
+    with patch("services.background_service.asyncio.gather", side_effect=Exception("API Fail")):
+        await bg_service.refresh_investor_ranking()
 
     bg_service._nm.emit.assert_awaited()
     args = bg_service._nm.emit.call_args[0]
@@ -763,18 +764,18 @@ async def test_refresh_investor_ranking_invalid_response_data(bg_service, mock_d
     mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
 
     # 1. data is None
-    broker.get_investor_trade_by_stock_daily.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=None)
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=None))
     await bg_service.refresh_investor_ranking()
     assert len(bg_service._foreign_net_buy_cache) == 0
 
     # 2. data is not dict
-    broker.get_investor_trade_by_stock_daily.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data="invalid")
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data="invalid"))
     await bg_service.refresh_investor_ranking()
     assert len(bg_service._foreign_net_buy_cache) == 0
 
     # 3. program data invalid
-    broker.get_investor_trade_by_stock_daily.return_value = _make_investor_response(100)
-    broker.get_program_trade_by_stock_daily.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data="invalid")
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=_make_investor_response(100))
+    broker.get_program_trade_by_stock_daily = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data="invalid"))
     await bg_service.refresh_investor_ranking()
     # 투자자 데이터는 수집되었으나 프로그램 데이터는 수집되지 않음
     assert len(bg_service._foreign_net_buy_cache) == 1
