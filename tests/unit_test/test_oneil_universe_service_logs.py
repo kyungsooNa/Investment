@@ -154,3 +154,68 @@ async def test_build_watchlist_sorted_logs(service, mock_components):
     # 정렬 순서 확인 (점수 높은 A1이 먼저)
     assert sorted_log["items"][0]["code"] == "A1"
     assert sorted_log["items"][1]["code"] == "B1"
+
+@pytest.mark.asyncio
+async def test_build_pool_b_parallel_execution(mock_components):
+    """_build_pool_b 메서드가 후보 종목들을 병렬로 처리하여 수집하는지 검증"""
+    _, sqs, indicator, mapper, tm, logger = mock_components
+    
+    # 설정: 청크 사이즈를 2로 설정하여 5개 후보가 3번의 청크(2, 2, 1)로 나뉘어 처리되는지 간접 확인
+    config = OneilUniverseConfig(api_chunk_size=2, pool_b_size=10)
+    
+    # PerformanceManager Mock
+    pm = MagicMock()
+
+    service = OneilUniverseService(
+        stock_query_service=sqs,
+        indicator_service=indicator,
+        stock_code_mapper=mapper,
+        time_manager=tm,
+        config=config,
+        logger=logger,
+        performance_manager=pm
+    )
+    
+    # Mock 데이터 설정
+    # 랭킹 API 응답 Mocking (총 5개 후보 종목 생성)
+    # 중복 제거 로직 테스트를 위해 일부러 겹치는 종목 없이 설정
+    sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, 
+        msg1="OK",
+        data=[{"mksc_shrn_iscd": "000010", "hts_kor_isnm": "Stock1"}, 
+              {"mksc_shrn_iscd": "000020", "hts_kor_isnm": "Stock2"}]
+    )
+    sqs.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, 
+        msg1="OK",
+        data=[{"mksc_shrn_iscd": "000030", "hts_kor_isnm": "Stock3"},
+              {"mksc_shrn_iscd": "000040", "hts_kor_isnm": "Stock4"}]
+    )
+    sqs.get_top_volume_stocks.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, 
+        msg1="OK",
+        data=[{"mksc_shrn_iscd": "000050", "hts_kor_isnm": "Stock5"}]
+    )
+    
+    # _analyze_candidate 메서드를 Mocking하여 실제 복잡한 분석 로직은 건너뛰고 성공 결과 반환
+    async def mock_analyze(code, name, logger=None):
+        return OSBWatchlistItem(
+            code=code, name=name, market="KOSPI",
+            high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=10000,
+            bb_width_min_20d=10, prev_bb_width=12, w52_hgpr=1200,
+            avg_trading_value_5d=10000000000, market_cap=500000000000
+        )
+    
+    service._analyze_candidate = AsyncMock(side_effect=mock_analyze)
+    
+    # 실행
+    pool_b = await service._build_pool_b()
+    
+    # 검증
+    # 총 5개 후보에 대해 analyze가 호출되었는지 확인
+    assert service._analyze_candidate.call_count == 5
+    
+    # 결과 딕셔너리에 5개가 모두 포함되었는지 확인
+    assert len(pool_b) == 5
+    assert "000010" in pool_b
+    assert "000050" in pool_b

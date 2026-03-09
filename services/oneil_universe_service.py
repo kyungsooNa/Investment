@@ -177,15 +177,19 @@ class OneilUniverseService:
         items = []
         skip_codes = set(self._pool_a_items.keys()) | set(self._watchlist.keys())
         
-        for code, name in candidate_map.items():
-            if code in skip_codes:
-                continue
-            try:
-                item = await self._analyze_candidate(code, name)
-                if item:
-                    items.append(item)
-            except Exception:
-                continue
+        # [성능 개선] 순차 처리 -> 청크 단위 병렬 처리 (asyncio.gather)
+        candidates = [(c, n) for c, n in candidate_map.items() if c not in skip_codes]
+        
+        for chunk in _chunked(candidates, self._cfg.api_chunk_size):
+            tasks = [self._analyze_candidate(code, name) for code, name in chunk]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for res in results:
+                if isinstance(res, Exception) or res is None:
+                    continue
+                items.append(res)
+            # 레이트 리밋 고려하여 약간의 대기 (필요 시)
+            await asyncio.sleep(0.1)
 
         # 스코어링
         self._compute_rs_scores(items)
