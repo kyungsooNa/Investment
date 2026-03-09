@@ -24,6 +24,7 @@ from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
+from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from services.oneil_universe_service import OneilUniverseService
 from services.background_service import BackgroundService
 from managers.realtime_data_manager import RealtimeDataManager
@@ -284,6 +285,22 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 7주 홀딩 허용
             allow_pyramiding=True,      # 👈 오버나잇 전략이므로 불타기 허용
+        ))
+
+        # 하이 타이트 플래그 전략 등록
+        htf_strategy = HighTightFlagStrategy(
+            stock_query_service=self.stock_query_service,
+            universe_service=self.oneil_universe_service,
+            time_manager=self.time_manager,
+            logger=get_strategy_logger('HighTightFlag'),
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=htf_strategy,
+            interval_minutes=3,
+            max_positions=5,
+            order_qty=1,
+            enabled=False,
+            force_exit_on_close=False,  # HTF는 오버나잇 홀딩 허용
         ))
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")

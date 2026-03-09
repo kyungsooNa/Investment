@@ -151,3 +151,39 @@ class PPPositionState:
     gap_day_low: int            # BGU전용: 갭업 당일 장중 저가
     partial_sold: bool          # 50% 부분 익절 완료 여부
     holding_start_date: str     # 수익 안착일 (+5% 돌파 시 1회만 기록, 7주 룰 기산점)
+
+
+@dataclass
+class HTFConfig(BaseStrategyConfig):
+    """하이 타이트 플래그 전략 설정."""
+    # Phase 1: 깃대 (Pole)
+    pole_lookback_days: int = 40             # 40거래일 스캔
+    pole_min_surge_ratio: float = 1.90       # max(high)/min(low) >= 1.90
+
+    # Phase 2: 깃발 (Flag)
+    flag_min_days: int = 15                  # 최소 횡보 기간
+    flag_max_days: int = 25                  # 최대 횡보 기간
+    flag_max_drawdown_pct: float = 20.0      # 고점 대비 최대 하락폭
+    flag_volume_shrink_ratio: float = 0.5    # 깃발 평균거래량 < 깃대 * 0.5
+
+    # Phase 3: 돌파 (Breakout)
+    volume_breakout_multiplier: float = 2.0  # 예상거래량 >= 50일평균 * 200%
+    execution_strength_min: float = 120.0    # 체결강도 >= 120%
+
+    # Phase 4: 청산 (Exit)
+    stop_loss_pct: float = -5.0              # 칼손절
+    trailing_ma_period: int = 10             # 10일 MA 트레일링스탑
+
+    # 자금 관리
+    total_portfolio_krw: int = 10_000_000
+    position_size_pct: float = 5.0
+    min_qty: int = 1
+
+
+@dataclass
+class HTFPositionState:
+    """HTF 포지션 추적 상태."""
+    entry_price: int         # 진입가
+    entry_date: str          # 진입일 (YYYYMMDD)
+    peak_price: int          # 진입 후 최고가
+    pole_high: int           # 깃대 최고점 (돌파 기준가)
