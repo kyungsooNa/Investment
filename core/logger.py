@@ -37,35 +37,38 @@ class SizeTimeRotatingFileHandler(RotatingFileHandler):
         if self.stream:
             self.stream.close()
             self.stream = None
+        
+        # 확장자 처리 (예: .log.json)
+        if self.baseFilename.endswith(".log.json"):
+            root, ext = self.baseFilename[:-len(".log.json")], ".log.json"
+        else:
+            root, ext = os.path.splitext(self.baseFilename)
 
-        root, ext = os.path.splitext(self.baseFilename)
-
-        # 1. 다음 백업 파일 이름 결정 (예: ..._debug_1.log, ..._debug_2.log)
-        pattern = f"{glob.escape(root)}_*_*{glob.escape(ext)}" # 이전 타임스탬프 형식도 포함
+        # 1. 기존 백업 파일 목록을 찾고 최대 인덱스 결정
         pattern_indexed = f"{glob.escape(root)}_[0-9]*{glob.escape(ext)}"
-
-        existing_files = glob.glob(pattern) + glob.glob(pattern_indexed)
+        existing_backups = glob.glob(pattern_indexed)
         
         max_index = 0
-        for f in existing_files:
+        for f in existing_backups:
             try:
-                # 파일명에서 인덱스 부분 추출 (예: ..._debug_1.log -> 1)
-                index_str = os.path.splitext(f)[0].split('_')[-1]
+                # 파일명에서 인덱스 부분 추출 (예: ..._1.log.json -> 1)
+                filename_no_ext = f[:-len(ext)]
+                index_str = filename_no_ext.split('_')[-1]
                 if index_str.isdigit():
                     max_index = max(max_index, int(index_str))
             except (ValueError, IndexError):
                 continue
 
+        # 2. 새 백업 파일명 생성 및 회전
         dfn = f"{root}_{max_index + 1}{ext}"
         self.rotate(self.baseFilename, dfn)
 
-        # 백업 파일 관리 (오래된 파일 삭제)
+        # 3. 백업 파일 개수 관리 (오래된 파일 삭제)
         if self.backupCount > 0:
-            backups = glob.glob(pattern) + glob.glob(pattern_indexed)
-            backups.sort() # 이름순(시간순) 정렬 -> 앞쪽이 오래된 파일
-            
-            if len(backups) > self.backupCount:
-                for f in backups[:len(backups) - self.backupCount]:
+            all_backups = glob.glob(pattern_indexed)
+            all_backups.sort(key=lambda f: int(f[:-len(ext)].split('_')[-1]) if f[:-len(ext)].split('_')[-1].isdigit() else -1)
+            if len(all_backups) > self.backupCount:
+                for f in all_backups[:len(all_backups) - self.backupCount]:
                     os.remove(f)
         
         if not self.delay:
