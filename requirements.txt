@@ -20,3 +20,5 @@ pytest-xdist
 pytest-mock
 pytest-asyncio
 pykrx
+aiohttp
+beautifulsoup4

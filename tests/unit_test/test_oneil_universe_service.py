@@ -187,7 +187,12 @@ async def test_analyze_candidate_filter_trading_value(mock_deps):
 async def test_generate_pool_a(mock_deps, tmp_path):
     """generate_pool_a: 전체 종목 스캔 및 파일 저장 로직 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # [수정] Scraper Mock 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
     
     # 1. 전체 종목 리스트 Mock
     mapper.df = pd.DataFrame({
@@ -555,7 +560,10 @@ def test_compute_rs_scores_edge_cases(mock_deps):
 async def test_compute_profit_growth_scores_api_failure(mock_deps):
     """_compute_profit_growth_scores: API 호출 실패 시 점수 미부여 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # [수정] Scraper Mock 사용
+    mock_scraper = MagicMock()
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
 
     # 아이템 생성
     item = OSBWatchlistItem(
@@ -564,11 +572,9 @@ async def test_compute_profit_growth_scores_api_failure(mock_deps):
         bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0
     )
     items = [item]
-
-    # API 실패 응답 설정
-    sqs.get_financial_ratio.return_value = ResCommonResponse(
-        rt_cd="1", msg1="API Error", data=None
-    )
+    
+    # [수정] Scraper가 0.0을 반환하도록 설정 (실패/데이터 없음 간주)
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
 
     # 실행
     await service._compute_profit_growth_scores(items)
@@ -580,7 +586,10 @@ async def test_compute_profit_growth_scores_api_failure(mock_deps):
 async def test_compute_profit_growth_scores_exception(mock_deps):
     """_compute_profit_growth_scores: API 호출 중 예외 발생 시 점수 미부여 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # [수정] Scraper Mock 사용
+    mock_scraper = MagicMock()
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
 
     item = OSBWatchlistItem(
         code="005930", name="Samsung", market="KOSPI",
@@ -588,9 +597,9 @@ async def test_compute_profit_growth_scores_exception(mock_deps):
         bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0
     )
     items = [item]
-
-    # API 예외 설정
-    sqs.get_financial_ratio.side_effect = Exception("Network Error")
+    
+    # [수정] Scraper 예외 설정
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(side_effect=Exception("Scraping Error"))
 
     # 실행
     await service._compute_profit_growth_scores(items)
@@ -677,7 +686,11 @@ async def test_build_pool_b_logic(mock_deps):
     """_build_pool_b: 실시간 랭킹 기반 Pool B 생성 및 필터링 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    # [수정] Scraper Mock 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
     
     # Mock API responses
     # 1. 거래대금 상위: A, B
@@ -1006,7 +1019,11 @@ async def test_analyze_candidate_insufficient_bb_data(mock_deps):
 async def test_build_pool_b_partial_api_failure(mock_deps):
     """_build_pool_b: API 호출 중 일부가 실패해도 나머지는 처리되는지 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # [수정] Scraper Mock 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
     
     # 3가지 랭킹 중 하나는 Exception, 하나는 실패 응답, 하나는 성공
     async def raise_network_error(*args, **kwargs):
@@ -1110,7 +1127,11 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
 async def test_generate_pool_a_fallback_market_cap(mock_deps, tmp_path):
     """generate_pool_a: hts_avls(시가총액) 누락 시 stck_llam(상장주식수) 사용 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # [수정] Scraper Mock 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
     
     mapper.df = pd.DataFrame({
         "종목코드": ["000001"], "종목명": ["StockA"], "시장구분": ["KOSPI"]
@@ -1250,7 +1271,11 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
 async def test_build_pool_b_response_items_as_objects(mock_deps):
     """_build_pool_b: API 응답 아이템이 객체(속성 접근)일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # [수정] Scraper Mock 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
     
     class MockItem:
         def __init__(self, code, name):
@@ -1291,7 +1316,11 @@ def test_extract_op_profit_growth_non_dict(mock_deps):
 async def test_generate_pool_a_api_failure_in_loop(mock_deps, tmp_path):
     """generate_pool_a: 1차 필터 루프 중 API 실패 시 건너뛰기 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # [수정] Scraper Mock 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
     
     mapper.df = pd.DataFrame({
         "종목코드": ["A", "B"], "종목명": ["StockA", "StockB"], "시장구분": ["KOSPI", "KOSPI"]
@@ -1341,7 +1370,11 @@ async def test_analyze_candidate_ohlcv_none(mock_deps):
 async def test_generate_pool_a_price_output_as_object(mock_deps, tmp_path):
     """generate_pool_a: 현재가 API 응답이 객체일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # [수정] Scraper Mock 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, logger=logger)
     
     mapper.df = pd.DataFrame({
         "종목코드": ["000001"], "종목명": ["StockA"], "시장구분": ["KOSPI"]
