@@ -19,6 +19,7 @@ from core.time_manager import TimeManager
 from core.logger import Logger, get_strategy_logger
 from core.performance_manager import PerformanceManager
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
+from services.naver_finance_scraper import NaverFinanceScraper
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
@@ -46,6 +47,7 @@ class WebAppContext:
         self.trading_service: TradingService = None
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
+        self.indicator_service: IndicatorService = None
         self.indicator_service: IndicatorService = None
         self.virtual_manager = VirtualTradeManager()
         self.virtual_manager.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
@@ -164,6 +166,7 @@ class WebAppContext:
             indicator_service=self.indicator_service,
             stock_code_mapper=self.stock_code_mapper,
             time_manager=self.time_manager,
+            scraper_service=NaverFinanceScraper(logger=self.logger),
             logger=self.logger,
             performance_manager=self.pm
         )

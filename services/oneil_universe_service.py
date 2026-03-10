@@ -12,11 +12,11 @@ from common.types import ErrorCode
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
 from market_data.stock_code_mapper import StockCodeMapper
+from services.naver_finance_scraper import NaverFinanceScraper
 from core.time_manager import TimeManager
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from core.logger import get_strategy_logger
 from core.performance_manager import PerformanceManager
-
 
 def _chunked(lst, size):
     for i in range(0, len(lst), size):
@@ -39,6 +39,7 @@ class OneilUniverseService:
         indicator_service: IndicatorService,
         stock_code_mapper: StockCodeMapper,
         time_manager: TimeManager,
+        scraper_service: Optional[NaverFinanceScraper] = None,  # 추가됨
         config: Optional[OneilUniverseConfig] = None,
         logger: Optional[logging.Logger] = None,
         performance_manager: Optional[PerformanceManager] = None
@@ -47,6 +48,7 @@ class OneilUniverseService:
         self._indicator = indicator_service
         self._mapper = stock_code_mapper
         self._tm = time_manager
+        self._scraper = scraper_service
         self._cfg = config or OneilUniverseConfig()
         self._logger = logger or logging.getLogger(__name__)
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
@@ -439,9 +441,9 @@ class OneilUniverseService:
         pool_a_logger.info({"event": "2nd_filter_done", "selected": len(items)})
 
         # 4. 스코어링 및 저장
-        self._compute_rs_scores(items)
-        await self._compute_profit_growth_scores(items)
-        self._compute_total_scores(items)
+        self._compute_rs_scores(items, logger=pool_a_logger)
+        await self._compute_profit_growth_scores(items, logger=pool_a_logger)
+        self._compute_total_scores(items, logger=pool_a_logger)
         pool_a_logger.info({"event": "scoring_done"})
 
         sort_key = lambda x: (x.total_score, self._calc_turnover_ratio(x))
@@ -525,16 +527,17 @@ class OneilUniverseService:
 
         return is_rising
 
-    def _compute_rs_scores(self, items: List[OSBWatchlistItem]):
+    def _compute_rs_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None):
+        logger = logger or self._logger
         if not items: return
-        self._logger.debug({"event": "compute_rs_scores_started", "item_count": len(items)})
+        logger.debug({"event": "compute_rs_scores_started", "item_count": len(items)})
         rets = sorted([i.rs_return_3m for i in items])
         
         # 백분위수 계산 (상위 10% -> 90 백분위수)
         percentile_index = min(int(len(rets) * (1 - self._cfg.rs_top_percentile / 100)), len(rets) - 1)
         cutoff = rets[percentile_index]
 
-        self._logger.debug({
+        logger.debug({
             "event": "rs_score_calculation_details",
             "item_count": len(items),
             "top_percentile_config": self._cfg.rs_top_percentile,
@@ -552,50 +555,56 @@ class OneilUniverseService:
             is_top_tier = item.rs_return_3m >= cutoff
             item.rs_score = self._cfg.rs_score_points if is_top_tier else 0.0
             if is_top_tier:
-                self._logger.debug({
+                logger.debug({
                     "event": "rs_score_assigned", "code": item.code, "name": item.name,
                     "return_3m": round(item.rs_return_3m, 2), "score": item.rs_score
                 })
-        self._logger.debug({"event": "compute_rs_scores_finished"})
+        logger.debug({"event": "compute_rs_scores_finished"})
 
-    async def _compute_profit_growth_scores(self, items: List[OSBWatchlistItem]):
+    async def _compute_profit_growth_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None):
+        logger = logger or self._logger
         if not items: return
-        self._logger.debug({"event": "compute_profit_growth_scores_started", "item_count": len(items)})
+        logger.debug({"event": "compute_profit_growth_scores_started", "item_count": len(items)})
+        
         for chunk in _chunked(items, self._cfg.api_chunk_size):
-            tasks = [self._sqs.get_financial_ratio(i.code) for i in chunk]
+            # API 대신 스크래퍼의 메서드를 호출
+            tasks = [self._scraper.fetch_yoy_profit_growth(i.code) for i in chunk]
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            for item, resp in zip(chunk, results):
-                growth = 0.0
-                if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
-                    self._logger.warning({
-                        "event": "profit_growth_api_failed", "code": item.code,
-                        "error": str(resp) if isinstance(resp, Exception) else (resp.msg1 if resp else "No response")
-                    })
+            
+            for item, growth in zip(chunk, results):
+                if isinstance(growth, Exception):
+                    logger.warning({"event": "profit_growth_scraping_error", "code": item.code, "error": str(growth)})
+                    item.profit_growth_score = 0.0
                     continue
-                growth = self._extract_op_profit_growth(resp.data)
-                if growth >= self._cfg.profit_growth_threshold_pct:
+
+                # 턴어라운드(999.0)이거나 설정한 한계치 이상의 성장이면 스코어 부여
+                if growth >= self._cfg.profit_growth_threshold_pct or growth == 999.0:
                     item.profit_growth_score = self._cfg.profit_growth_score_points
-                    self._logger.debug({
-                        "event": "profit_growth_score_assigned", "code": item.code, "name": item.name,
-                        "growth_pct": round(growth, 2), "score": item.profit_growth_score
+                    logger.debug({
+                        "event": "profit_growth_score_assigned", 
+                        "code": item.code, 
+                        "name": item.name,
+                        "growth_pct": "Turnaround" if growth == 999.0 else round(growth, 2), 
+                        "score": item.profit_growth_score
                     })
                 else:
                     item.profit_growth_score = 0.0
 
-        self._logger.debug({"event": "compute_profit_growth_scores_finished"})
+        logger.debug({"event": "compute_profit_growth_scores_finished"})
 
-    def _compute_total_scores(self, items: List[OSBWatchlistItem]):
+    def _compute_total_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None):
+        logger = logger or self._logger
         if not items: return
-        self._logger.debug({"event": "compute_total_scores_started", "item_count": len(items)})
+        logger.debug({"event": "compute_total_scores_started", "item_count": len(items)})
         for item in items:
             item.total_score = item.rs_score + item.profit_growth_score
             if item.total_score > 0:
-                self._logger.debug({
+                logger.debug({
                     "event": "total_score_calculated", "code": item.code, "name": item.name,
                     "rs_score": item.rs_score, "profit_score": item.profit_growth_score,
                     "total_score": item.total_score
                 })
-        self._logger.debug({"event": "compute_total_scores_finished"})
+        logger.debug({"event": "compute_total_scores_finished"})
 
     def _save_pool_a(self, kospi, kosdaq):
         try:
