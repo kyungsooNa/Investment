@@ -168,6 +168,16 @@ def get_performance_logger(log_dir="logs"):
     return logger
 
 
+class StrategyInfoFilter(logging.Filter):
+    """
+    전략 로거(strategy.*)의 로그는 INFO 레벨 이상만 통과시키는 필터.
+    통합 로그(debug.log)에 전략의 과도한 DEBUG 로그가 쌓이는 것을 방지함.
+    """
+    def filter(self, record):
+        if record.name.startswith("strategy."):
+            return record.levelno >= logging.INFO
+        return True
+
 class Logger:
     """
     애플리케이션의 로깅을 관리하는 클래스입니다.
@@ -202,6 +212,9 @@ class Logger:
         self.operational_logger = self._setup_logger('operational_logger', self.operational_log_path, logging.INFO)
         self.debug_logger = self._setup_logger('debug_logger', self.debug_log_path, logging.DEBUG)
 
+        # 전략 로그 필터 생성 (debug.log 용량 관리용)
+        strategy_filter = StrategyInfoFilter()
+
         # 기존 로깅 핸들러 제거 및 urllib3 로거 레벨 설정 (중복 로깅 방지)
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
@@ -210,6 +223,7 @@ class Logger:
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.DEBUG)
         for h in self.debug_logger.handlers:
+            h.addFilter(strategy_filter)  # 전략 로그는 INFO 이상만 debug.log에 기록
             root_logger.addHandler(h)
         for h in self.operational_logger.handlers:
             root_logger.addHandler(h)
