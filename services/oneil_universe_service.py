@@ -407,13 +407,12 @@ class OneilUniverseService:
                     pass
             
             processed_count += len(chunk)
-            if processed_count % 50 == 0 or processed_count >= total_stocks:
+            if processed_count % 100 == 0 or processed_count >= total_stocks:
                 pct = (processed_count / total_stocks * 100) if total_stocks > 0 else 0.0
                 elapsed = time.time() - start_time
                 print(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "1st_filter_progress", "processed": processed_count, "total": total_stocks, "passed": len(passed_first)})
 
-            await asyncio.sleep(1.1)
 
         print(f"[Pool A 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
         pool_a_logger.info({"event": "1st_filter_done", "passed": len(passed_first)})
@@ -430,13 +429,12 @@ class OneilUniverseService:
                     items.append(item)
             
             processed_count_2 += len(chunk)
-            if processed_count_2 % 10 == 0 or processed_count_2 >= total_passed:
+            if processed_count_2 % 50 == 0 or processed_count_2 >= total_passed:
                 pct2 = (processed_count_2 / total_passed * 100) if total_passed > 0 else 0.0
                 elapsed = time.time() - start_time
                 print(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "2nd_filter_progress", "processed": processed_count_2, "total": total_passed, "selected": len(items)})
 
-            await asyncio.sleep(1.1)
 
         pool_a_logger.info({"event": "2nd_filter_done", "selected": len(items)})
 
@@ -457,9 +455,19 @@ class OneilUniverseService:
         print(f"[Pool A 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
         pool_a_logger.info({"event": "generate_pool_a_finished", "elapsed_seconds": total_elapsed})
         
+        # 시총 범위 문자열 생성 (예: 2000억 ~ 2조)
+        min_cap = self._cfg.pool_a_market_cap_min // 100000000
+        max_cap = self._cfg.pool_a_market_cap_max // 100000000
+        cap_str = f"{min_cap}억 ~ {max_cap}억"
+        if self._cfg.pool_a_market_cap_max >= 1000000000000:
+             cap_str = f"{min_cap}억 ~ {self._cfg.pool_a_market_cap_max // 1000000000000}조"
+
         return {
             "kospi_count": len(kospi), "kosdaq_count": len(kosdaq),
-            "total_scanned": len(all_stocks), "passed_first": len(passed_first),
+            "total_scanned": len(all_stocks), "scanned": len(all_stocks),
+            "passed_first": len(passed_first), "first_filter_passed": len(passed_first),
+            "second_filter_passed": len(items),
+            "market_cap_filter": cap_str,
             "total_elapsed_seconds": total_elapsed
         }
 
@@ -573,7 +581,7 @@ class OneilUniverseService:
                     })
                 else:
                     item.profit_growth_score = 0.0
-            await asyncio.sleep(1.1)
+
         self._logger.debug({"event": "compute_profit_growth_scores_finished"})
 
     def _compute_total_scores(self, items: List[OSBWatchlistItem]):
