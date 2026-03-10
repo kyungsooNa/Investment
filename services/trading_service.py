@@ -163,8 +163,9 @@ class TradingService:
         self._logger.info(f"Service - {stock_code} 종목 상세 정보 조회 요청")
         return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
 
-    async def get_current_stock_price(self, stock_code) -> ResCommonResponse:
-        self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
+    async def get_current_stock_price(self, stock_code, logger=None) -> ResCommonResponse:
+        logger = logger or self._logger
+        logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
         return await self._broker_api_wrapper.get_current_price(stock_code)
 
     async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
@@ -810,6 +811,7 @@ class TradingService:
             period: str = "D",
             start_date: Optional[str] = None,  # YYYYMMDD
             end_date: Optional[str] = None,  # YYYYMMDD
+            logger=None
     ) -> ResCommonResponse:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
@@ -836,6 +838,7 @@ class TradingService:
             limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE,
             end_date: Optional[str] = None,
             start_date: Optional[str] = None,  # (옵션) 달력기준 시작일 강제 시 사용
+            logger=None
     ) -> List[Dict[str, Any]]:
         """
         최근 'limit'개 *거래일* 일봉을 반환.
@@ -853,7 +856,7 @@ class TradingService:
         
         # start_date가 명시된 경우: 해당 기간만 조회 (단일 호출 시도)
         if start_date:
-            resp = await self.get_ohlcv_range(code, period="D", start_date=start_date, end_date=self._time_manager.to_yyyymmdd(current_ed_dt))
+            resp = await self.get_ohlcv_range(code, period="D", start_date=start_date, end_date=self._time_manager.to_yyyymmdd(current_ed_dt), logger=logger)
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                 return resp.data or []
             return []
@@ -873,7 +876,7 @@ class TradingService:
             sd_str = self._time_manager.to_yyyymmdd(current_sd_dt)
 
             # API 호출
-            resp = await self.get_ohlcv_range(code, period="D", start_date=sd_str, end_date=ed_str)
+            resp = await self.get_ohlcv_range(code, period="D", start_date=sd_str, end_date=ed_str, logger=logger)
             
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
                 break # 에러 시 중단

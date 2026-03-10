@@ -60,7 +60,7 @@ class HighTightFlagStrategy(LiveStrategy):
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
 
-        watchlist = await self._universe.get_watchlist()
+        watchlist = await self._universe.get_watchlist(logger=self._logger)
         if not watchlist:
             self._logger.info({"event": "scan_skipped", "reason": "Watchlist is empty"})
             return signals
@@ -76,7 +76,7 @@ class HighTightFlagStrategy(LiveStrategy):
             if code in self._position_state:
                 continue
 
-            if not await self._universe.is_market_timing_ok(item.market):
+            if not await self._universe.is_market_timing_ok(item.market, logger=self._logger):
                 continue
 
             try:

@@ -60,7 +60,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
             self._last_date = today
 
         # 1) 거래대금 상위 종목 조회
-        resp = await self._sqs.get_top_trading_value_stocks()
+        resp = await self._sqs.get_top_trading_value_stocks(logger=self._logger)
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning({
                 "event": "scan_failed",
@@ -89,7 +89,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
 
             try:
                 # 2) 현재가/시가 조회
-                price_resp = await self._sqs.handle_get_current_stock_price(code)
+                price_resp = await self._sqs.handle_get_current_stock_price(code, logger=self._logger)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     log_data.update({"reason": "Failed to get current price"})
                     self._logger.info({"event": "candidate_rejected", **log_data})
@@ -168,7 +168,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 continue
 
             try:
-                price_resp = await self._sqs.handle_get_current_stock_price(code)
+                price_resp = await self._sqs.handle_get_current_stock_price(code, logger=self._logger)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     self._logger.warning({
                         "event": "check_exits_failed",
