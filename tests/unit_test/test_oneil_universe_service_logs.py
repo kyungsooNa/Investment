@@ -26,8 +26,13 @@ def mock_components():
 def service(mock_components):
     _, sqs, indicator, mapper, tm, logger = mock_components
     config = OneilUniverseConfig()
+    
+    # [수정] Scraper Mock 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+
     # 테스트 편의를 위해 설정값 일부 조정 가능
-    return OneilUniverseService(sqs, indicator, mapper, tm, config=config, logger=logger)
+    return OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, config=config, logger=logger)
 
 @pytest.mark.asyncio
 async def test_check_etf_ma_rising_logs(service, mock_components):
@@ -96,9 +101,8 @@ async def test_compute_profit_growth_scores_logs(service, mock_components):
         OSBWatchlistItem(code="C1", name="N1", market="KOSPI", high_20d=100, ma_20d=90, ma_50d=80, avg_vol_20d=1000, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=120, avg_trading_value_5d=100)
     ]
     
-    # Mock: 영업이익 증가율 30% (기준 25% 초과)
-    mock_resp = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="", data=[{"op_profit_growth": "30.0"}])
-    sqs.get_financial_ratio.return_value = mock_resp
+    # [수정] Mock: 영업이익 증가율 30% (기준 25% 초과) - Scraper Mock 설정
+    service._scraper.fetch_yoy_profit_growth.return_value = 30.0
     
     await service._compute_profit_growth_scores(items)
     
@@ -166,11 +170,16 @@ async def test_build_pool_b_parallel_execution(mock_components):
     # PerformanceManager Mock
     pm = MagicMock()
 
+    # [수정] Mock Scraper 추가
+    mock_scraper = MagicMock()
+    mock_scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+
     service = OneilUniverseService(
         stock_query_service=sqs,
         indicator_service=indicator,
         stock_code_mapper=mapper,
         time_manager=tm,
+        scraper_service=mock_scraper,
         config=config,
         logger=logger,
         performance_manager=pm
