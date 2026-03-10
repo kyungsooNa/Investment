@@ -47,7 +47,7 @@ jobs:
     - name: Run tests with coverage
       run: |
         # XML(뱃지용)과 HTML(웹배포용) 리포트를 모두 생성합니다.
-        pytest tests --cov=. --cov-report=xml:coverage.xml --cov-report=html:htmlcov --cov-report=term-missing 
+        pytest tests --cov=. --cov-report=xml:coverage.xml --cov-report=html:htmlcov --cov-report=term-missing > coverage.txt
 
     # 🚀 1. README 뱃지 강제 업데이트 (파이썬 사용)
     - name: Force Update README Badge
