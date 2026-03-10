@@ -6,6 +6,7 @@ from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import json
 import os
+import time
 from datetime import datetime, timedelta
 import asyncio
 from brokers.broker_api_wrapper import BrokerAPIWrapper
@@ -335,6 +336,9 @@ class WebAppContext:
         if saved_codes:
             asyncio.create_task(self._restore_program_trading(saved_codes))
 
+        # 프로그램매매 연결 상태 워치독 시작
+        asyncio.create_task(self._program_trading_watchdog())
+
         if self.background_service:
             # 투자자별 순매수 랭킹 백그라운드 갱신 (조회 API는 항상 실전 URL 사용하므로 모의투자에서도 동작)
             asyncio.create_task(self.background_service.refresh_investor_ranking())
@@ -388,18 +392,94 @@ class WebAppContext:
                 self.logger.error(f"프로그램매매 복원 중 오류 ({code}): {e}")
         self.logger.info(f"프로그램매매 구독 복원 완료: {success_count}/{len(codes)}개 종목")
 
+    async def _program_trading_watchdog(self):
+        """프로그램매매 WebSocket 연결 상태를 주기적으로 감시하고, 데이터 수신이 끊기면 재연결."""
+        WATCHDOG_INTERVAL = 60   # 감시 주기 (초)
+        DATA_GAP_THRESHOLD = 120  # 데이터 미수신 허용 최대 시간 (초)
+
+        while True:
+            try:
+                await asyncio.sleep(WATCHDOG_INTERVAL)
+
+                codes = self.realtime_data_manager.get_subscribed_codes()
+                if not codes:
+                    continue  # 구독 중인 종목 없으면 스킵
+
+                if not self.time_manager or not self.time_manager.is_market_open():
+                    continue  # 장 마감 시간이면 스킵
+
+                # 조건 1: 수신 태스크가 죽었는지 확인
+                receive_alive = (
+                    self.trading_service
+                    and self.trading_service.is_websocket_receive_alive()
+                )
+
+                # 조건 2: 데이터 수신 갭 확인
+                last_ts = self.realtime_data_manager.last_data_ts
+                data_gap = (time.time() - last_ts) if last_ts > 0 else float('inf')
+
+                needs_reconnect = False
+                if not receive_alive:
+                    self.logger.warning(f"[워치독] WebSocket 수신 태스크가 종료됨. 재연결을 시도합니다.")
+                    needs_reconnect = True
+                elif data_gap > DATA_GAP_THRESHOLD:
+                    self.logger.warning(f"[워치독] {data_gap:.0f}초간 데이터 미수신 (임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다.")
+                    needs_reconnect = True
+
+                if needs_reconnect:
+                    await self._force_reconnect_program_trading()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"[워치독] 오류 발생: {e}")
+
+    async def _force_reconnect_program_trading(self):
+        """WebSocket 연결을 강제로 끊고 재연결 + 재구독."""
+        codes = self.realtime_data_manager.get_subscribed_codes()
+        if not codes:
+            return
+
+        self.logger.info(f"[워치독] 강제 재연결 시작 (구독 종목: {codes})")
+        try:
+            # 1. 기존 WebSocket 연결 강제 종료
+            await self.stock_query_service.trading_service.disconnect_websocket()
+        except Exception as e:
+            self.logger.warning(f"[워치독] 기존 연결 종료 중 오류 (무시): {e}")
+
+        # 2. 새 연결 + 재구독
+        success_count = 0
+        for code in codes:
+            try:
+                connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
+                if not connected:
+                    self.logger.warning(f"[워치독] 재연결 실패: {code}")
+                    continue
+                await self.stock_query_service.subscribe_program_trading(code)
+                await self.stock_query_service.subscribe_realtime_price(code)
+                success_count += 1
+            except Exception as e:
+                self.logger.error(f"[워치독] 재구독 중 오류 ({code}): {e}")
+
+        self.logger.info(f"[워치독] 강제 재연결 완료: {success_count}/{len(codes)}개 종목")
+
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""
         # [변경] 매니저를 통해 구독 상태 확인
         if self.realtime_data_manager.is_subscribed(code):
+            # [추가] 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
+            if (self.trading_service
+                    and not self.trading_service.is_websocket_receive_alive()):
+                self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
+                await self._force_reconnect_program_trading()
             return True
-            
+
         connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
         if not connected:
             return False
         await self.stock_query_service.subscribe_program_trading(code)
         await self.stock_query_service.subscribe_realtime_price(code) # [추가] 실시간 현재가 구독
-        
+
         # [변경] 매니저에 구독 상태 등록
         self.realtime_data_manager.add_subscribed_code(code)
         return True
