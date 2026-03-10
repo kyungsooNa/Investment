@@ -110,7 +110,7 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
             logger.removeHandler(handler)
 
     logger.setLevel(logging.INFO)
-    logger.propagate = False
+    logger.propagate = True
 
     strategy_log_dir = os.path.join(log_dir, "strategies")
     if sub_dir:
@@ -206,6 +206,14 @@ class Logger:
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
+        # 루트 로거에 통합 로그 핸들러 연결 (전략 로거 등 전파된 로그 수집)
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)
+        for h in self.debug_logger.handlers:
+            root_logger.addHandler(h)
+        for h in self.operational_logger.handlers:
+            root_logger.addHandler(h)
+
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
         http.client.HTTPConnection.debuglevel = 0  # HTTP 통신 디버그 레벨 비활성화
 
@@ -243,6 +251,7 @@ class Logger:
             maxBytes=LOG_MAX_BYTES,
             backupCount=LOG_BACKUP_COUNT
         )
+        file_handler.setLevel(level)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         logger.addHandler(file_handler)
 
