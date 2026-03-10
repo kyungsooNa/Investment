@@ -413,7 +413,6 @@ class OneilUniverseService:
                 print(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "1st_filter_progress", "processed": processed_count, "total": total_stocks, "passed": len(passed_first)})
 
-            await asyncio.sleep(1.1)
 
         print(f"[Pool A 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
         pool_a_logger.info({"event": "1st_filter_done", "passed": len(passed_first)})
@@ -436,7 +435,6 @@ class OneilUniverseService:
                 print(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "2nd_filter_progress", "processed": processed_count_2, "total": total_passed, "selected": len(items)})
 
-            await asyncio.sleep(1.1)
 
         pool_a_logger.info({"event": "2nd_filter_done", "selected": len(items)})
 
@@ -573,7 +571,7 @@ class OneilUniverseService:
                     })
                 else:
                     item.profit_growth_score = 0.0
-            await asyncio.sleep(1.1)
+
         self._logger.debug({"event": "compute_profit_growth_scores_finished"})
 
     def _compute_total_scores(self, items: List[OSBWatchlistItem]):

@@ -239,12 +239,13 @@ class ItemNewsParams:
 @dataclass(frozen=True)
 class FinancialRatioParams:
     """기업 재무비율 조회 파라미터. (KIS 문서 확인 필요)"""
+    fid_cond_mrkt_div_code: str  # 시장구분코드 ("J": 주식)
     fid_div_cls_code: str   # "0" (전체)
     fid_input_iscd: str     # 종목코드
 
     @classmethod
     def of(cls, stock_code: str):
-        return cls(fid_div_cls_code="0", fid_input_iscd=stock_code)
+        return cls(fid_cond_mrkt_div_code="J", fid_div_cls_code="0", fid_input_iscd=stock_code)
 
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
