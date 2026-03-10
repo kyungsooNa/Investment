@@ -67,11 +67,11 @@ class TradingService:
             cumulative_volume = realtime_data.get('누적거래량', 'N/A')
             trade_time = realtime_data.get('주식체결시간', 'N/A')
 
-            # display_message = (
-            #     f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
-            #     f"전일대비: {change_sign}{change} ({change_rate}%), 누적량: {cumulative_volume}"
-            # )
-            # print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+            display_message = (
+                f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
+                f"전일대비: {change_sign}{change} ({change_rate}%), 누적량: {cumulative_volume}"
+            )
+            print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
             self._logger.info(
                 f"실시간 체결 데이터: {stock_code} 현재가={current_price}, 전일대비={change_sign}{change}({change_rate}%), 누적량={cumulative_volume}")
 
