@@ -1006,11 +1006,16 @@ async def test_call_api_response_not_dict(caplog):
     """응답이 JSON 파싱은 되지만 dict가 아닌 경우 (예: list)"""
     caplog.set_level(logging.ERROR, logger='brokers.korea_investment.korea_invest_api_base')
 
-    api = get_api()
     # 실제 로거를 사용하는 인스턴스 생성 (DummyAPI는 로거를 모킹하므로 caplog 사용 불가)
     mock_env = get_mock_env()
     mock_trid_provider = MagicMock()
-    api = KoreaInvestApiBase(mock_env, logger=None, time_manager=AsyncMock(), trid_provider=mock_trid_provider)
+    mock_session = AsyncMock()
+    api = KoreaInvestApiBase(
+        mock_env, logger=None, time_manager=AsyncMock(),
+        async_client=mock_session,
+        header_provider=MagicMock(), url_provider=MagicMock(),
+        trid_provider=mock_trid_provider,
+    )
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
@@ -1018,7 +1023,6 @@ async def test_call_api_response_not_dict(caplog):
     mock_response.json.return_value = [{"key": "value"}]  # 리스트 반환
     mock_response.raise_for_status.return_value = None
 
-    api._async_session = AsyncMock()
     api._async_session.get = AsyncMock(return_value=mock_response)
 
     result = await api.call_api("GET", "/not-dict", retry_count=1)
@@ -1032,11 +1036,16 @@ async def test_call_api_response_missing_output(caplog):
     """응답이 성공(rt_cd='0')이지만 output 데이터가 없는 경우"""
     caplog.set_level(logging.ERROR, logger='brokers.korea_investment.korea_invest_api_base')
 
-    api = get_api()
     # 실제 로거를 사용하는 인스턴스 생성
     mock_env = get_mock_env()
     mock_trid_provider = MagicMock()
-    api = KoreaInvestApiBase(mock_env, logger=None, time_manager=AsyncMock(), trid_provider=mock_trid_provider)
+    mock_session = AsyncMock()
+    api = KoreaInvestApiBase(
+        mock_env, logger=None, time_manager=AsyncMock(),
+        async_client=mock_session,
+        header_provider=MagicMock(), url_provider=MagicMock(),
+        trid_provider=mock_trid_provider,
+    )
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
@@ -1044,7 +1053,6 @@ async def test_call_api_response_missing_output(caplog):
     mock_response.json.return_value = {"rt_cd": "0", "msg1": "정상"}  # output 키 누락
     mock_response.raise_for_status.return_value = None
 
-    api._async_session = AsyncMock()
     api._async_session.get = AsyncMock(return_value=mock_response)
 
     result = await api.call_api("GET", "/missing-output", retry_count=1)

@@ -11,9 +11,12 @@ from typing import List
 from types import SimpleNamespace
 
 
+_BASE_DUMMY_DATA = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
+
+
 def _create_dummy_output(overrides=None):
     """Pydantic 모델 유효성 검사를 통과하기 위해 더미 데이터를 채워 객체를 생성합니다."""
-    data = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
+    data = _BASE_DUMMY_DATA.copy()
     if overrides:
         data.update(overrides)
     return ResStockFullInfoApiOutput.model_validate(data)
