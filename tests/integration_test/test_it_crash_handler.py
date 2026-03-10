@@ -50,6 +50,10 @@ if __name__ == "__main__":
     # 4. 검증: 파일이 생성되었고 내용에 'access violation' 또는 'string_at'이 있는지 확인
     log_file = log_dir / "test_crash.log"
     assert log_file.exists(), "크래시 덤프 파일이 생성되지 않았습니다."
+
+    # 수정 포인트: 환경에 구애받지 않도록 바이너리로 읽어서 디코딩하거나 utf-8/latin-1 사용
+    # latin-1은 모든 바이트를 에러 없이 읽을 수 있어 덤프 확인 시 유용합니다.
+    content = log_file.read_bytes().decode('latin-1') 
     
-    content = log_file.read_text(encoding="ansi") # Windows 환경은 보통 ansi/cp949로 기록될 수 있음
-    assert "string_at" in content or "access violation" in content.lower(), "덤프 내용이 올바르지 않습니다."
+    # 혹은 아래와 같이 검증
+    assert "string_at" in content or "access violation" in content.lower() or "segmentation fault" in content.lower()
