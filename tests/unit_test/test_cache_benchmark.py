@@ -29,6 +29,7 @@ def run_benchmark(manager, operation, count, data=None):
     end_time = time.time()
     return end_time - start_time
 
+@pytest.mark.slow
 def test_cache_performance_comparison(tmp_path, benchmark_data):
     """FileCacheManager vs DBCacheManager vs MemoryCacheManager 성능 비교 벤치마크"""
     count = 500  # 테스트 항목 수
