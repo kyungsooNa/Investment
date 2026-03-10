@@ -455,9 +455,19 @@ class OneilUniverseService:
         print(f"[Pool A 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
         pool_a_logger.info({"event": "generate_pool_a_finished", "elapsed_seconds": total_elapsed})
         
+        # 시총 범위 문자열 생성 (예: 2000억 ~ 2조)
+        min_cap = self._cfg.pool_a_market_cap_min // 100000000
+        max_cap = self._cfg.pool_a_market_cap_max // 100000000
+        cap_str = f"{min_cap}억 ~ {max_cap}억"
+        if self._cfg.pool_a_market_cap_max >= 1000000000000:
+             cap_str = f"{min_cap}억 ~ {self._cfg.pool_a_market_cap_max // 1000000000000}조"
+
         return {
             "kospi_count": len(kospi), "kosdaq_count": len(kosdaq),
-            "total_scanned": len(all_stocks), "passed_first": len(passed_first),
+            "total_scanned": len(all_stocks), "scanned": len(all_stocks),
+            "passed_first": len(passed_first), "first_filter_passed": len(passed_first),
+            "second_filter_passed": len(items),
+            "market_cap_filter": cap_str,
             "total_elapsed_seconds": total_elapsed
         }
 
