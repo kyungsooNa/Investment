@@ -1,5 +1,24 @@
-# main.py (최종 버전)
+# main.py
+import faulthandler
+import os
+from datetime import datetime
+from core.logger import Logger, get_log_timestamp  # 타임스탬프 함수 임포트
 from config.config_loader import load_configs
+
+def enable_crash_dump(log_dir="logs/common"):
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+    
+    timestamp = get_log_timestamp()
+    dump_filename = os.path.join(log_dir, f"{timestamp}_crash_dump.log")
+    
+    # buffering=0 (즉시 기록)을 위해 'ab' (append binary) 모드로 오픈
+    # 이 설정이 있어야 크래시 직후 메모리에 남은 데이터 없이 파일로 들어갑니다.
+    f = open(dump_filename, "ab", buffering=0)
+    
+    # faulthandler 활성화
+    faulthandler.enable(file=f)
+    return f
 
 
 def run_web():
@@ -27,4 +46,14 @@ def run_web():
 
 
 if __name__ == "__main__":
-    run_web()
+    # 1. 크래시 덤프 설정 (최상단)
+    dump_file = enable_crash_dump()
+    
+    # 2. 로거 및 앱 실행
+    logger = Logger()
+    try:
+        run_web()
+    except Exception as e:
+        logger.exception("애플리케이션 예기치 못한 종료")
+    finally:
+        dump_file.close()
