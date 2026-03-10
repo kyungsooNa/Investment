@@ -407,7 +407,7 @@ class OneilUniverseService:
                     pass
             
             processed_count += len(chunk)
-            if processed_count % 50 == 0 or processed_count >= total_stocks:
+            if processed_count % 100 == 0 or processed_count >= total_stocks:
                 pct = (processed_count / total_stocks * 100) if total_stocks > 0 else 0.0
                 elapsed = time.time() - start_time
                 print(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
@@ -429,7 +429,7 @@ class OneilUniverseService:
                     items.append(item)
             
             processed_count_2 += len(chunk)
-            if processed_count_2 % 10 == 0 or processed_count_2 >= total_passed:
+            if processed_count_2 % 50 == 0 or processed_count_2 >= total_passed:
                 pct2 = (processed_count_2 / total_passed * 100) if total_passed > 0 else 0.0
                 elapsed = time.time() - start_time
                 print(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
