@@ -191,7 +191,7 @@ class KoreaInvestWebSocketAPI:
                         await self.ws.close()
                     self.ws = None
                 # 장 마감 후에는 타임아웃 발생해도 연결 유지 (Ping/Pong은 내부적으로 처리됨)
-            except (websockets.ConnectionClosed, Exception) as e:
+            except Exception as e:
                 if self._auto_reconnect:
                     self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.", exc_info=True)
                 self._is_connected = False
