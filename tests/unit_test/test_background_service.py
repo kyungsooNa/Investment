@@ -4,7 +4,7 @@ BackgroundService 단위 테스트.
 """
 import pytest
 import pandas as pd
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from services.background_service import BackgroundService, _ETF_PREFIXES, _chunked
 from common.types import ResCommonResponse, ErrorCode
 
@@ -150,7 +150,6 @@ def test_paper_trading_still_works(bg_service, mock_deps):
 def test_on_demand_trigger_when_cache_empty(bg_service, mock_deps):
     """캐시 비어있고 갱신 중이 아니면 온디맨드 갱신이 트리거되어야 함."""
     import asyncio
-    from unittest.mock import patch
 
     mock_loop = MagicMock()
     with patch.object(asyncio, "get_running_loop", return_value=mock_loop), \
@@ -165,7 +164,6 @@ def test_on_demand_trigger_when_cache_empty(bg_service, mock_deps):
 def test_no_trigger_when_already_refreshing(bg_service):
     """이미 갱신 중이면 추가 트리거하지 않음."""
     import asyncio
-    from unittest.mock import patch
 
     mock_loop = MagicMock()
     bg_service._is_refreshing = True
@@ -476,7 +474,6 @@ async def test_refresh_basic_ranking_no_trading_service(bg_service):
 async def test_after_market_scheduler_triggers_refresh(mock_deps):
     """장마감 상태에서 스케줄러가 갱신을 트리거하는지 검증."""
     import asyncio
-    from unittest.mock import patch
 
     broker, mapper, env, logger, time_manager = mock_deps
     time_manager.is_market_open.return_value = False  # 장마감
@@ -657,7 +654,6 @@ def test_chunked_helper():
 @pytest.mark.asyncio
 async def test_refresh_basic_ranking_exception_and_notification(bg_service, mock_deps):
     """기본 랭킹 갱신 중 예외 발생 시 로그 및 알림 테스트."""
-    from unittest.mock import patch
     _, _, _, logger, _ = mock_deps
     bg_service._nm = AsyncMock()
 
@@ -691,7 +687,6 @@ async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps)
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
     """투자자 랭킹 갱신 성공/실패 알림 테스트."""
-    from unittest.mock import patch
     broker, mapper, _, _, _ = mock_deps
     bg_service._nm = AsyncMock()
     mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
@@ -720,7 +715,6 @@ async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
 
 def test_check_and_trigger_refresh_no_loop(bg_service):
     """이벤트 루프가 없을 때 온디맨드 갱신 트리거 실패 처리 테스트."""
-    from unittest.mock import patch
 
     bg_service._foreign_net_buy_cache = []
     bg_service._is_refreshing = False
@@ -738,7 +732,6 @@ def test_check_and_trigger_refresh_no_loop(bg_service):
 async def test_start_after_market_scheduler_exception_handling(bg_service, mock_deps):
     """스케줄러 루프 내 일반 예외 발생 시 처리 테스트."""
     import asyncio
-    from unittest.mock import patch
 
     _, _, _, logger, time_manager = mock_deps
     time_manager.is_market_open.return_value = False
@@ -786,7 +779,6 @@ async def test_refresh_investor_ranking_invalid_response_data(bg_service, mock_d
 async def test_on_demand_trigger_skipped_during_market_open(bg_service, mock_deps):
     """장 중에는 온디맨드(on-demand) 랭킹 갱신이 트리거되지 않아야 한다."""
     import asyncio
-    from unittest.mock import patch
 
     _, _, _, logger, time_manager = mock_deps
     time_manager.is_market_open.return_value = True  # 장 중으로 설정
@@ -1047,6 +1039,102 @@ async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, m
 
     broker.get_investor_trade_by_stock_daily.assert_not_called()
     logger.info.assert_any_call("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
+
+
+# ── 재시도 로직 및 스케줄러 최적화 테스트 ───────────────────
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_success_first_try(bg_service):
+    """첫 시도 성공 시 재시도 없이 반환."""
+    mock_api = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK"))
+
+    resp = await bg_service._fetch_with_retry(mock_api, "arg1")
+
+    assert resp.rt_cd == "0"
+    assert mock_api.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_fail_then_success(bg_service, mock_deps):
+    """첫 시도 실패 후 두 번째 성공."""
+    _, _, _, logger, _ = mock_deps
+
+    # 1. API Error response (rt_cd != 0)
+    # 2. Success response
+    fail_resp = ResCommonResponse(rt_cd="1", msg1="Limit Exceeded")
+    success_resp = ResCommonResponse(rt_cd="0", msg1="OK")
+
+    mock_api = AsyncMock(side_effect=[fail_resp, success_resp])
+
+    # sleep mock to speed up test
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        resp = await bg_service._fetch_with_retry(mock_api, "arg1")
+
+    assert resp.rt_cd == "0"
+    assert mock_api.call_count == 2
+    logger.warning.assert_called()  # Warning logged for first failure
+
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_exception_then_success(bg_service, mock_deps):
+    """첫 시도 예외 발생 후 두 번째 성공."""
+    _, _, _, logger, _ = mock_deps
+
+    success_resp = ResCommonResponse(rt_cd="0", msg1="OK")
+    mock_api = AsyncMock(side_effect=[Exception("Network Error"), success_resp])
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        resp = await bg_service._fetch_with_retry(mock_api, "arg1")
+
+    assert resp.rt_cd == "0"
+    assert mock_api.call_count == 2
+    logger.error.assert_called()  # Error logged for exception
+
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_all_fail(bg_service, mock_deps):
+    """모든 시도 실패 시 None 반환."""
+    _, _, _, logger, _ = mock_deps
+
+    fail_resp = ResCommonResponse(rt_cd="1", msg1="Error")
+    mock_api = AsyncMock(return_value=fail_resp)
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        resp = await bg_service._fetch_with_retry(mock_api, "arg1")
+
+    assert resp is None
+    assert mock_api.call_count == 3  # Max retries default is 3
+    # Check final error log
+    args, _ = logger.error.call_args
+    assert "최종 실패" in args[0]
+
+
+@pytest.mark.asyncio
+async def test_start_after_market_scheduler_waits_efficiently(bg_service, mock_deps):
+    """장 중일 때 효율적인 대기 시간(get_sleep_seconds_until_market_close)을 사용하는지 검증."""
+    import asyncio
+
+    _, _, _, logger, time_manager = mock_deps
+
+    # 1. Market is Open
+    time_manager.is_market_open.return_value = True
+    # 2. TimeManager suggests waiting 1000 seconds
+    time_manager.get_sleep_seconds_until_market_close.return_value = 1000.0
+
+    # We want the loop to run once then exit via CancelledError
+    async def mock_sleep(sec):
+        if sec == 1000.0:
+            raise asyncio.CancelledError("End Test")
+        return None
+
+    with patch("asyncio.sleep", side_effect=mock_sleep) as patched_sleep:
+        try:
+            await bg_service.start_after_market_scheduler()
+        except asyncio.CancelledError:
+            pass
+
+    # Verify asyncio.sleep was called with the value from time_manager
+    patched_sleep.assert_called_with(1000.0)
 
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_calls_telegram_reporter(bg_service, mock_deps):

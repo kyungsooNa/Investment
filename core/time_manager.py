@@ -3,6 +3,7 @@ import time
 import pytz
 import logging
 import asyncio  # 비동기 sleep을 위해 추가
+from typing import Optional
 from datetime import datetime, timedelta, date
 
 
@@ -138,6 +139,59 @@ class TimeManager:
         if seconds > 0:
             self.logger.info(f"{seconds:.2f}초 동안 대기합니다 (비동기).")
             await asyncio.sleep(seconds)  # <--- asyncio.sleep 사용
+
+    def get_sleep_seconds_until_market_close(self, buffer_minutes: int = 5, check_interval: int = 60) -> Optional[float]:
+        """
+        장 마감까지 남은 시간을 계산하여 대기할 초를 반환합니다.
+
+        :param buffer_minutes: 장 마감 몇 분 전에 깨어날지 설정 (기본 5분)
+        :param check_interval: buffer 이내로 남았을 때의 확인 주기 (기본 60초)
+        :return: 대기할 초(float) 또는 None (계산 불가, 이미 마감 등)
+        """
+        now = self.get_current_kst_time()
+        close_time = self.get_market_close_time()
+
+        # 날짜가 다르면(새벽 등) 당일 장 마감이 아닐 수 있음 -> None 반환하여 기본 주기 사용
+        if close_time.date() != now.date():
+            return None
+
+        remaining = (close_time - now).total_seconds()
+        buffer_sec = buffer_minutes * 60
+
+        if remaining > buffer_sec:
+            sleep_sec = remaining - buffer_sec
+            self.logger.info(f"장 마감까지 {remaining/60:.1f}분 남음. {sleep_sec:.0f}초 대기 (마감 {buffer_minutes}분 전 기상).")
+            return sleep_sec
+        elif remaining > 0:
+            return float(check_interval)
+
+        return None
+
+    def get_sleep_seconds_until_market_open(self, buffer_minutes: int = 5, check_interval: int = 60) -> Optional[float]:
+        """
+        다음 장 시작까지 남은 시간을 계산하여 대기할 초를 반환합니다.
+
+        :param buffer_minutes: 장 시작 몇 분 전에 깨어날지 설정 (기본 5분)
+        :param check_interval: buffer 이내로 남았을 때의 확인 주기 (기본 60초)
+        :return: 대기할 초(float) 또는 None (계산 불가, 이미 개장 등)
+        """
+        now = self.get_current_kst_time()
+        next_open_time = self.get_next_market_open_time()
+
+        remaining = (next_open_time - now).total_seconds()
+
+        if remaining <= 0:
+            # 이미 장이 시작되었거나, 계산 오류로 과거 시간이 나온 경우
+            return None
+
+        buffer_sec = buffer_minutes * 60
+
+        if remaining > buffer_sec:
+            sleep_sec = remaining - buffer_sec
+            self.logger.info(f"다음 장 시작까지 {remaining/60:.1f}분 남음. {sleep_sec:.0f}초 대기 (시작 {buffer_minutes}분 전 기상).")
+            return sleep_sec
+        else:  # 0 < remaining <= buffer_sec
+            return float(check_interval)
 
     def get_market_close_time_on(self, date: datetime) -> datetime:
         close_hour, close_minute = map(int, self.market_close_time_str.split(":"))

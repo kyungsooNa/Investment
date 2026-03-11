@@ -103,6 +103,8 @@ class BackgroundService:
         self._logger.info("장마감 후 자동 갱신 스케줄러 시작")
         while True:
             try:
+                sleep_sec = 300  # 기본 5분
+
                 if self._time_manager and not self._time_manager.is_market_open():
                     # 장 마감 상태 — 오늘 갱신한 적 없으면 갱신
                     today = datetime.now().strftime("%Y%m%d")
@@ -120,7 +122,13 @@ class BackgroundService:
                     if needs_investor:
                         await self.refresh_investor_ranking()
 
-                await asyncio.sleep(300)  # 5분마다 체크
+                elif self._time_manager:
+                    # 장 중 상태 — 마감까지 남은 시간 계산하여 효율적 대기
+                    wait_sec = self._time_manager.get_sleep_seconds_until_market_close()
+                    if wait_sec is not None:
+                        sleep_sec = wait_sec
+
+                await asyncio.sleep(sleep_sec)
             except asyncio.CancelledError:
                 break
             except Exception as e:

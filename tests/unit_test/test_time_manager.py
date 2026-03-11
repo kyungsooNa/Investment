@@ -482,3 +482,67 @@ def test_to_hhmmss_none_uses_now_safely(time_manager, mocker):
 ])
 def test_dec_minute_basic_cases(time_manager, start, minutes, expected):
     assert time_manager.dec_minute(start, minutes) == expected
+
+
+# --- Sleep Wait Calculation ---
+
+def test_get_sleep_seconds_until_market_close_long_wait(time_manager, mock_logger):
+    """장 마감까지 시간이 많이 남았을 때 (buffer 이상) 계산 검증."""
+    # 14:00 (마감 15:30) -> 90분 남음. Buffer 5분 제외 시 85분(5100초) 대기해야 함.
+    now = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 14, 0, 0))
+    close = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 15, 30, 0))
+
+    with patch.object(time_manager, 'get_current_kst_time', return_value=now), \
+         patch.object(time_manager, 'get_market_close_time', return_value=close):
+        seconds = time_manager.get_sleep_seconds_until_market_close(buffer_minutes=5)
+        assert seconds == 5100
+        mock_logger.info.assert_called()
+
+
+def test_get_sleep_seconds_until_market_close_short_wait(time_manager):
+    """장 마감 임박 시 (buffer 이내) check_interval 반환 검증."""
+    # 15:28 (마감 15:30) -> 2분 남음. Buffer 5분 이내이므로 check_interval 반환.
+    now = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 15, 28, 0))
+    close = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 15, 30, 0))
+
+    with patch.object(time_manager, 'get_current_kst_time', return_value=now), \
+         patch.object(time_manager, 'get_market_close_time', return_value=close):
+        seconds = time_manager.get_sleep_seconds_until_market_close(buffer_minutes=5, check_interval=30)
+        assert seconds == 30.0
+
+
+def test_get_sleep_seconds_until_market_close_already_closed(time_manager):
+    """이미 장이 마감된 경우 None 반환 검증."""
+    # 16:00
+    now = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 16, 0, 0))
+    close = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 15, 30, 0))
+
+    with patch.object(time_manager, 'get_current_kst_time', return_value=now), \
+         patch.object(time_manager, 'get_market_close_time', return_value=close):
+        seconds = time_manager.get_sleep_seconds_until_market_close()
+        assert seconds is None
+
+
+def test_get_sleep_seconds_until_market_open_long_wait(time_manager, mock_logger):
+    """장 시작까지 시간이 많이 남았을 때 계산 검증."""
+    # 08:00 (개장 09:00) -> 60분 남음. Buffer 5분 제외 시 55분(3300초) 대기.
+    now = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 8, 0, 0))
+    next_open = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 9, 0, 0))
+
+    with patch.object(time_manager, 'get_current_kst_time', return_value=now), \
+         patch.object(time_manager, 'get_next_market_open_time', return_value=next_open):
+        seconds = time_manager.get_sleep_seconds_until_market_open(buffer_minutes=5)
+        assert seconds == 3300
+        mock_logger.info.assert_called()
+
+
+def test_get_sleep_seconds_until_market_open_short_wait(time_manager):
+    """장 시작 임박 시 check_interval 반환 검증."""
+    # 08:58 (개장 09:00) -> 2분 남음.
+    now = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 8, 58, 0))
+    next_open = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 9, 0, 0))
+
+    with patch.object(time_manager, 'get_current_kst_time', return_value=now), \
+         patch.object(time_manager, 'get_next_market_open_time', return_value=next_open):
+        seconds = time_manager.get_sleep_seconds_until_market_open(buffer_minutes=5, check_interval=10)
+        assert seconds == 10.0
