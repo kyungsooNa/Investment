@@ -509,7 +509,14 @@ class WebAppContext:
                     and not self.trading_service.is_websocket_receive_alive()):
                 self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
                 await self._force_reconnect_program_trading()
-            return True
+                
+                # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
+                if not self.realtime_data_manager.is_subscribed(code):
+                    self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
+                else:
+                    return True
+            else:
+                return True
 
         try:
             connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
