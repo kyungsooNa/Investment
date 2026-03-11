@@ -175,6 +175,33 @@ class BackgroundService:
 
     # ── 투자자별 순매수/순매도 랭킹 ────────────────────────────
 
+    async def _fetch_with_retry(self, api_call, *args, **kwargs):
+        """API 호출을 재시도 로직으로 감싸는 헬퍼."""
+        max_retries = 3
+        delay = 1.0  # 초
+        for attempt in range(max_retries):
+            try:
+                resp = await api_call(*args, **kwargs)
+                if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                    return resp
+
+                error_msg = resp.msg1 if resp else "응답 없음"
+                self._logger.warning(
+                    f"API 호출 실패 (시도 {attempt + 1}/{max_retries}): {api_call.__name__}({args[0]}), 사유: {error_msg}. {delay}초 후 재시도."
+                )
+            except Exception as e:
+                self._logger.error(
+                    f"API 호출 예외 (시도 {attempt + 1}/{max_retries}): {api_call.__name__}({args[0]}), 오류: {e}. {delay}초 후 재시도.",
+                    exc_info=True
+                )
+
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+                delay *= 1.5  # 약간의 지수 백오프
+
+        self._logger.error(f"API 호출 최종 실패: {api_call.__name__}({args[0]})")
+        return None  # 최종 실패 시 None 반환
+
     async def refresh_investor_ranking(self) -> None:
         """전체 종목을 순회하여 외국인/기관/개인 순매수/순매도 랭킹을 갱신한다."""
         # [성능 보호] 장 중에는 실행하지 않음
@@ -220,11 +247,11 @@ class BackgroundService:
             for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
                 # 투자자 매매동향 + 프로그램매매추이 동시 호출
                 investor_tasks = [
-                    self._broker.get_investor_trade_by_stock_daily(code, target_date)
+                    self._fetch_with_retry(self._broker.get_investor_trade_by_stock_daily, code, target_date)
                     for code, _, _ in chunk
                 ]
                 program_tasks = [
-                    self._broker.get_program_trade_by_stock_daily(code, target_date)
+                    self._fetch_with_retry(self._broker.get_program_trade_by_stock_daily, code, target_date)
                     for code, _, _ in chunk
                 ]
                 all_responses = await asyncio.gather(
@@ -235,8 +262,9 @@ class BackgroundService:
 
                 for (code, name, market), resp in zip(chunk, investor_responses):
                     if isinstance(resp, Exception):
+                        # _fetch_with_retry에서 이미 로깅했으므로 여기서는 스킵
                         continue
-                    if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                    if not resp:  # 최종 실패 시 None이 반환됨
                         continue
                     data = resp.data
                     if not data:
@@ -276,8 +304,9 @@ class BackgroundService:
                 # 프로그램매매추이 수집
                 for (code, name, market), resp in zip(chunk, program_responses):
                     if isinstance(resp, Exception):
+                        # _fetch_with_retry에서 이미 로깅했으므로 여기서는 스킵
                         continue
-                    if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                    if not resp:  # 최종 실패 시 None이 반환됨
                         continue
                     data = resp.data
                     if not data:
