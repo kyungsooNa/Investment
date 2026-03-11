@@ -108,6 +108,10 @@ class TradingService:
         else:
             self._logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
 
+    def is_websocket_receive_alive(self) -> bool:
+        """웹소켓 수신 태스크가 살아있는지 확인."""
+        return self._broker_api_wrapper.is_websocket_receive_alive()
+
     async def connect_websocket(self, on_message_callback=None):
         """웹소켓 연결을 비동기로 시작합니다."""
         return await self._broker_api_wrapper.connect_websocket(

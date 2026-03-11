@@ -190,12 +190,14 @@ class KoreaInvestWebSocketAPI:
                     if self.ws:
                         await self.ws.close()
                     self.ws = None
+                    self.approval_key = None  # 재연결 시 새로운 접속키 발급 강제
                 # 장 마감 후에는 타임아웃 발생해도 연결 유지 (Ping/Pong은 내부적으로 처리됨)
             except Exception as e:
                 if self._auto_reconnect:
                     self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.", exc_info=True)
                 self._is_connected = False
                 self.ws = None
+                self.approval_key = None  # 재연결 시 새로운 접속키 발급 강제
 
     def _handle_websocket_message(self, message: str):
         """수신된 웹소켓 메시지를 파싱하고 등록된 콜백으로 전달."""
@@ -538,6 +540,12 @@ class KoreaInvestWebSocketAPI:
             self._logger.info(f"구독 복구 요청: TR_ID={tr_id}, KEY={tr_key}")
             # send_realtime_request 내부에서 _subscribed_items에 다시 추가하므로 중복 방지 로직 필요 없음 (Set이므로)
             await self.send_realtime_request(tr_id, tr_key, tr_type="1")
+
+    def is_receive_alive(self) -> bool:
+        """수신 태스크가 살아있는지 확인 (외부 워치독용)."""
+        return (self._receive_task is not None
+                and not self._receive_task.done()
+                and self._auto_reconnect)
 
     # --- 웹소켓 연결 및 해지 ---
     async def connect(self, on_message_callback=None):

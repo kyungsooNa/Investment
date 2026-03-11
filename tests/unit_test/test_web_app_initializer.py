@@ -22,6 +22,7 @@ def mock_deps():
         ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
         ("web_api", patch("view.web.web_app_initializer.web_api")),
         ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
+        ("bg_service", patch("view.web.web_app_initializer.BackgroundService", autospec=True)),
         ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
         ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
         ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
@@ -201,9 +202,11 @@ async def test_lifecycle_methods(mock_deps):
     ctx.realtime_data_manager = MagicMock()
     ctx.realtime_data_manager.shutdown = AsyncMock()
     
-    # Start
-    ctx.start_background_tasks()
-    ctx.realtime_data_manager.start_background_tasks.assert_called_once()
+    # asyncio.create_task를 모킹하여 실제 백그라운드 태스크가 실행되지 않도록 합니다.
+    with patch("view.web.web_app_initializer.asyncio.create_task"):
+        # Start
+        ctx.start_background_tasks()
+        ctx.realtime_data_manager.start_background_tasks.assert_called_once()
     
     # Shutdown
     await ctx.shutdown()
@@ -309,13 +312,15 @@ async def test_start_background_tasks_with_restore(mock_deps):
     
     # Mock the method that will be called inside the task
     ctx._restore_program_trading = AsyncMock()
+    # Mock watchdog (무한 루프이므로 await 시 hang 방지)
+    ctx._program_trading_watchdog = AsyncMock()
 
     # Patch asyncio.create_task to collect coroutines
     created_coroutines = []
     def coro_collector(coro):
         created_coroutines.append(coro)
         return MagicMock() # return a mock task object
-        
+
     with patch("view.web.web_app_initializer.asyncio.create_task", side_effect=coro_collector) as mock_create_task:
         # Act
         ctx.start_background_tasks()
@@ -323,19 +328,20 @@ async def test_start_background_tasks_with_restore(mock_deps):
     # Await all collected coroutines
     for coro in created_coroutines:
         await coro
-        
+
     # Assert
     # 1. RDM의 start_background_tasks 호출 확인
     mock_rdm_instance.start_background_tasks.assert_called_once()
-    
+
     # 2. RDM의 get_subscribed_codes 호출 확인
     mock_rdm_instance.get_subscribed_codes.assert_called_once()
-    
-    # 3. create_task가 3번 호출되었는지 확인
-    assert mock_create_task.call_count == 3
-    
+
+    # 3. create_task가 4번 호출되었는지 확인 (restore + watchdog + ranking + scheduler)
+    assert mock_create_task.call_count == 4
+
     # 4. 각 태스크의 내부 메서드가 await 되었는지 확인
     ctx._restore_program_trading.assert_awaited_once_with(["005930", "000660"])
+    ctx._program_trading_watchdog.assert_awaited_once()
     ctx.background_service.refresh_investor_ranking.assert_awaited_once()
     ctx.background_service.start_after_market_scheduler.assert_awaited_once()
 

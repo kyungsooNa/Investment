@@ -238,6 +238,10 @@ class KoreaInvestApiClient:
         return await self._websocketAPI.unsubscribe_realtime_quote(stock_code)
 
 
+    def is_websocket_receive_alive(self) -> bool:
+        """웹소켓 수신 태스크가 살아있는지 확인."""
+        return self._websocketAPI.is_receive_alive()
+
     async def subscribe_program_trading(self, stock_code: str):
         return await self._websocketAPI.subscribe_program_trading(stock_code)
 
