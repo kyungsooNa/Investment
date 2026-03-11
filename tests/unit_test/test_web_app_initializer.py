@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import time
 from unittest.mock import MagicMock, AsyncMock, patch
 from view.web.web_app_initializer import WebAppContext
 from pydantic import BaseModel
@@ -431,3 +432,47 @@ async def test_program_trading_watchdog_market_closed(mock_deps):
     # 장 마감이므로 웹소켓 연결 종료가 호출되어야 함
     ctx.trading_service.disconnect_websocket.assert_awaited_once()
     ctx.logger.info.assert_any_call("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_data_gap(mock_deps):
+    """TC: _program_trading_watchdog 데이터 미수신(Gap) 감지 및 재연결 시도 검증."""
+    # Arrange
+    ctx = WebAppContext(None)
+    ctx.time_manager = MagicMock()
+    ctx.time_manager.is_market_open.return_value = True # 장 중 상태
+    
+    ctx.realtime_data_manager = MagicMock()
+    ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
+    
+    # 마지막 데이터 수신 시간을 130초 전으로 설정 (임계값 120초 초과)
+    ctx.realtime_data_manager.last_data_ts = time.time() - 130 
+    
+    ctx.trading_service = MagicMock()
+    ctx.trading_service.is_websocket_receive_alive.return_value = True # 수신 태스크는 살아있다고 가정 (Zombie 상태 시뮬레이션)
+    
+    # 재연결 메서드 모킹
+    ctx._force_reconnect_program_trading = AsyncMock()
+    
+    # asyncio.sleep을 모킹하여 루프 제어 (한 번 돌고 종료)
+    async def sleep_side_effect(seconds):
+        if sleep_side_effect.counter == 0:
+            sleep_side_effect.counter += 1
+            return
+        raise asyncio.CancelledError
+    sleep_side_effect.counter = 0
+    
+    # Act
+    with patch("asyncio.sleep", side_effect=sleep_side_effect):
+        try:
+            await ctx._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+            
+    # Assert
+    # 1. 재연결 시도가 발생했는지 확인
+    ctx._force_reconnect_program_trading.assert_called_once()
+    
+    # 2. 경고 로그 메시지 내용 확인 ("130초간 데이터 미수신" 등이 포함되어야 함)
+    args, _ = ctx.logger.warning.call_args
+    assert "데이터 미수신" in args[0]
+    assert "재연결을 시도합니다" in args[0]
