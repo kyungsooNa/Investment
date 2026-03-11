@@ -110,14 +110,14 @@ class VirtualTradeManager:
         """log_sell의 비동기 래퍼 (스레드 실행)."""
         await asyncio.to_thread(self.log_sell, code, current_price, qty)
 
-    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1):
-        """전략+종목 매칭 매도."""
+    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1) -> float | None:
+        """전략+종목 매칭 매도. 성공 시 수익률 반환, 실패 시 None 반환."""
         with self._lock:
             df = self._read()
             mask = (df['strategy'] == strategy_name) & (df['code'] == code) & (df['status'] == 'HOLD')
             if df.loc[mask].empty:
                 logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
-                return
+                return None
             idx = df.loc[mask].index[-1]
             buy_price = df.loc[idx, 'buy_price']
             return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
@@ -127,10 +127,11 @@ class VirtualTradeManager:
             df.loc[idx, 'status'] = 'SOLD'
             self._write(df)
             logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {return_rate:.2f}%)")
+            return round(return_rate, 2)
 
-    async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1):
-        """log_sell_by_strategy의 비동기 래퍼 (스레드 실행)."""
-        await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty)
+    async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1) -> float | None:
+        """log_sell_by_strategy의 비동기 래퍼 (스레드 실행). 성공 시 수익률 반환."""
+        return await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty)
 
     # ---- 조회 ----
 

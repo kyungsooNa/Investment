@@ -20,7 +20,7 @@ from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
 
 SIGNAL_HISTORY_FILE = "data/StrategyScheduler/signal_history.csv"
-SIGNAL_COLUMNS = ["strategy_name", "code", "name", "action", "price", "reason", "timestamp", "api_success"]
+SIGNAL_COLUMNS = ["strategy_name", "code", "name", "action", "price", "return_rate", "reason", "timestamp", "api_success"]
 SCHEDULER_STATE_FILE = "data/StrategyScheduler/scheduler_state.json"
 
 
@@ -35,6 +35,7 @@ class SignalRecord:
     reason: str
     timestamp: str       # ISO format
     api_success: bool = True
+    return_rate: Optional[float] = None
 
 
 @dataclass
@@ -263,10 +264,11 @@ class StrategyScheduler:
                 pass  # 조회 실패 시 0원으로 기록 유지
 
         # CSV 기록 (항상)
+        return_rate = None
         if signal.action == "BUY":
             await self._vm.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
         elif signal.action == "SELL":
-            await self._vm.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+            return_rate = await self._vm.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
 
         api_success = True
 
@@ -311,6 +313,7 @@ class StrategyScheduler:
             reason=signal.reason,
             timestamp=now.strftime("%Y-%m-%d %H:%M:%S"),
             api_success=api_success,
+            return_rate=return_rate,
         )
         self._signal_history.append(record)
         if len(self._signal_history) > self.MAX_HISTORY:
@@ -427,12 +430,19 @@ class StrategyScheduler:
             with open(SIGNAL_HISTORY_FILE, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    # 이전 버전 호환성: return_rate가 없을 수 있음
+                    return_rate_val = row.get("return_rate")
+                    try:
+                        return_rate = float(return_rate_val) if return_rate_val else None
+                    except (ValueError, TypeError):
+                        return_rate = None
                     records.append(SignalRecord(
                         strategy_name=row["strategy_name"],
                         code=row["code"],
                         name=row["name"],
                         action=row["action"],
                         price=int(row["price"]),
+                        return_rate=return_rate,
                         reason=row["reason"],
                         timestamp=row["timestamp"],
                         api_success=row.get("api_success", "True") == "True",
@@ -522,6 +532,7 @@ class StrategyScheduler:
                         "name": record.name,
                         "action": record.action,
                         "price": record.price,
+                "return_rate": record.return_rate,
                         "reason": record.reason,
                         "timestamp": record.timestamp,
                         "api_success": record.api_success,
@@ -542,6 +553,7 @@ class StrategyScheduler:
                 "name": r.name,
                 "action": r.action,
                 "price": r.price,
+                "return_rate": r.return_rate,
                 "reason": r.reason,
                 "timestamp": r.timestamp,
                 "api_success": r.api_success,
@@ -570,6 +582,7 @@ class StrategyScheduler:
             "name": record.name,
             "action": record.action,
             "price": record.price,
+                        "return_rate": record.return_rate,
             "reason": record.reason,
             "timestamp": record.timestamp,
             "api_success": record.api_success,

@@ -2076,7 +2076,7 @@ function renderSchedulerHistory(history) {
     ensureTableInCard(tbody.closest('table'));
 
     if (!history || history.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:15px;">실행 이력이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:15px;">실행 이력이 없습니다.</td></tr>';
         return;
     }
 
@@ -2084,12 +2084,22 @@ function renderSchedulerHistory(history) {
         const actionClass = h.action === 'BUY' ? 'text-red' : 'text-blue';
         const actionLabel = h.action === 'BUY' ? '매수' : '매도';
         const statusIcon = h.api_success ? '' : ' <span title="API 주문 실패" style="color:orange;">⚠</span>';
+
+        let returnRateHtml = '<td>-</td>';
+        if (h.action === 'SELL' && h.return_rate != null) {
+            const ror = parseFloat(h.return_rate);
+            const rorClass = ror > 0 ? 'text-red' : (ror < 0 ? 'text-blue' : '');
+            const sign = ror > 0 ? '+' : '';
+            returnRateHtml = `<td class="${rorClass}"><strong>${sign}${ror.toFixed(2)}%</strong></td>`;
+        }
+
         return `<tr>
             <td style="white-space:nowrap;">${h.timestamp}</td>
             <td>${h.strategy_name}</td>
             <td>${h.name}(${h.code})</td>
             <td class="${actionClass}"><strong>${actionLabel}</strong>${statusIcon}</td>
             <td>${Number(h.price).toLocaleString()}</td>
+            ${returnRateHtml}
             <td style="font-size:0.85em;">${h.reason}</td>
         </tr>`;
     }).join('');
