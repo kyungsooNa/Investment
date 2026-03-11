@@ -33,6 +33,8 @@ def mock_deps():
         ("htf", patch("view.web.web_app_initializer.HighTightFlagStrategy", autospec=True)),
         ("cm", patch("view.web.web_app_initializer.CacheManager", autospec=True)),
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
+        ("tn", patch("view.web.web_app_initializer.TelegramNotifier", autospec=True)),
+        ("tr", patch("view.web.web_app_initializer.TelegramReporter", autospec=True)),
     ]
 
     with contextlib.ExitStack() as stack:

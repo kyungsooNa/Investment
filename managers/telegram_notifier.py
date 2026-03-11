@@ -2,6 +2,7 @@ import aiohttp
 import logging
 from typing import Optional, List, Dict
 from managers.notification_manager import NotificationEvent
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +93,13 @@ class TelegramReporter:
         header = f"<b>🏆 {title} (Top {limit})</b>\n"
         table = "<pre>"
         if show_ratio:
-            # 헤더: 순위(2) 종목(8) 등락(7) 금액(7) 비중(6)
-            table += "순 종목        등락    금액   비중\n"
-            table += "-" * 34 + "\n"
+            # 헤더: 순위(2) 종목(8) 등락(7) 금액(8) 비중(6)
+            # Visual alignment: 순(2) _(1) 종목(4)____(4) _(1) ___(3)등락(4) _(1) ____(4)금액(4) _(1) __(2)비중(4)
+            table += "순 종목        등락     금액   비중\n"
+            table += "-" * 37 + "\n"
         else:
-            table += "순 종목        등락    금액\n"
-            table += "-" * 27 + "\n"
+            table += "순 종목        등락     금액\n"
+            table += "-" * 30 + "\n"
 
         for i, item in enumerate(ranking_data[:limit]):
             rank = i + 1
@@ -107,7 +109,7 @@ class TelegramReporter:
             display_name = ""
             display_width = 0
             for char in name:
-                char_width = 2 if '\uac00' <= char <= '\ud7a3' else 1
+                char_width = 2 if unicodedata.east_asian_width(char) in ('F', 'W', 'A') else 1
                 if display_width + char_width > 8:
                     break
                 display_name += char
