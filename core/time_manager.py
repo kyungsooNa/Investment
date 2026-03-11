@@ -98,7 +98,8 @@ class TimeManager:
             second=0, microsecond=0
         ))
 
-        if now < today_open:
+        # 오늘이 주말이 아니고, 현재 시간이 개장 전이라면 -> 오늘 개장 시간 반환
+        if now < today_open and now.weekday() < 5:
             next_open = today_open
         else:
             next_day = now.date() + timedelta(days=1)

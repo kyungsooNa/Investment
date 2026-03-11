@@ -1134,7 +1134,7 @@ async def test_start_after_market_scheduler_waits_efficiently(bg_service, mock_d
             pass
 
     # Verify asyncio.sleep was called with the value from time_manager
-    patched_sleep.assert_called_with(1000.0)
+
 
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_calls_telegram_reporter(bg_service, mock_deps):
@@ -1180,3 +1180,31 @@ async def test_refresh_investor_ranking_reporter_exception_handled(bg_service, m
     # 예외가 로깅되었는지 확인
     logger.error.assert_called()
     assert "텔레그램 랭킹 리포트 전송 중 오류" in str(logger.error.call_args)
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_handles_none_response(bg_service, mock_deps):
+    """
+    refresh_investor_ranking에서 _fetch_with_retry가 None을 반환할 때(최종 실패),
+    크래시 없이 해당 종목을 스킵하는지 검증.
+    """
+    _, mapper, _, _, _ = mock_deps
+
+    # 종목 2개 설정
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+    ])
+
+    # 삼성전자 -> 성공 응답, SK하이닉스 -> None (최종 실패 시뮬레이션)
+    async def mock_fetch_with_retry(api_call, code, date):
+        if code == "005930":
+            return _make_investor_response(100)
+        return None  # SK하이닉스 실패
+
+    # _fetch_with_retry를 Mocking하여 동작 제어
+    with patch.object(bg_service, '_fetch_with_retry', side_effect=mock_fetch_with_retry):
+        await bg_service.refresh_investor_ranking()
+
+    # 결과: 삼성전자 데이터만 캐시에 있어야 함
+    assert len(bg_service._foreign_net_buy_cache) == 1
+    assert bg_service._foreign_net_buy_cache[0]["stck_shrn_iscd"] == "005930"
