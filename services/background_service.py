@@ -17,6 +17,7 @@ from common.types import ResCommonResponse, ErrorCode
 from core.time_manager import TimeManager
 from market_data.stock_code_mapper import StockCodeMapper
 from core.performance_manager import PerformanceManager
+from managers.telegram_notifier import TelegramReporter
 from managers.notification_manager import NotificationManager
 
 
@@ -53,6 +54,7 @@ class BackgroundService:
         trading_service=None,
         performance_manager: Optional[PerformanceManager] = None,
         notification_manager: Optional[NotificationManager] = None,
+        telegram_reporter: Optional[TelegramReporter] = None,
     ):
         self._broker = broker_api_wrapper
         self._mapper = stock_code_mapper
@@ -62,6 +64,7 @@ class BackgroundService:
         self._trading_service = trading_service
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
         self._nm = notification_manager
+        self._telegram_reporter = telegram_reporter
 
         # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
@@ -356,6 +359,26 @@ class BackgroundService:
                     "API", "info", "투자자 랭킹 갱신 완료",
                     f"{len(results)}개 종목 수집, 소요: {elapsed:.1f}초",
                 )
+            if self._telegram_reporter:
+                self._logger.info("텔레그램 랭킹 리포트 전송 시작")
+                rankings_for_report = {
+                    'foreign_buy': self._foreign_net_buy_cache,
+                    'foreign_sell': self._foreign_net_sell_cache,
+                    'inst_buy': self._inst_net_buy_cache,
+                    'inst_sell': self._inst_net_sell_cache,
+                    'prsn_buy': self._prsn_net_buy_cache,
+                    'prsn_sell': self._prsn_net_sell_cache,
+                    'program_buy': self._program_net_buy_cache,
+                    'program_sell': self._program_net_sell_cache,
+                    'trading_value': self._trading_value_cache,
+                    'all_stocks': results,
+                    'program_all_stocks': program_results
+                }
+                try:
+                    await self._telegram_reporter.send_ranking_report(rankings_for_report, report_date=target_date)
+                    self._logger.info("텔레그램 랭킹 리포트 전송 완료")
+                except Exception as e:
+                    self._logger.error(f"텔레그램 랭킹 리포트 전송 중 오류: {e}", exc_info=True)
         except Exception as e:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
             if self._nm:

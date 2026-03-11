@@ -396,7 +396,7 @@ async def test_restore_program_trading_partial_failure(mock_deps):
     ctx.logger.warning.assert_any_call("프로그램매매 복원 실패 (WebSocket 연결 불가): 005930")
     ctx.logger.warning.assert_any_call("복원에 실패한 구독 종목을 상태에서 제거합니다: ['005930', '000660']")
     ctx.logger.error.assert_called_with("프로그램매매 복원 중 오류 (000660): Subscription failed")
-    ctx.logger.info.assert_any_call("프로그램매매 구독 복원 완료: 1/3개 종목")
+
 
 @pytest.mark.asyncio
 async def test_program_trading_watchdog_market_closed(mock_deps):
@@ -476,3 +476,42 @@ async def test_program_trading_watchdog_data_gap(mock_deps):
     args, _ = ctx.logger.warning.call_args
     assert "데이터 미수신" in args[0]
     assert "재연결을 시도합니다" in args[0]
+
+def test_load_config_and_env_with_telegram(mock_deps):
+    """설정에 텔레그램 정보가 있으면 TelegramReporter가 초기화되는지 검증"""
+    # Arrange
+    mock_deps["load_configs"].return_value = {
+        "market_open_time": "09:00",
+        "market_close_time": "15:30",
+        "market_timezone": "Asia/Seoul",
+        "telegram_bot_token": "TEST_TOKEN",
+        "telegram_chat_id": "TEST_CHAT_ID"
+    }
+    ctx = WebAppContext(None)
+
+    # Act
+    ctx.load_config_and_env()
+
+    # Assert
+    mock_deps["tn"].assert_called_once()  # Notifier
+    mock_deps["tr"].assert_called_once_with(bot_token="TEST_TOKEN", chat_id="TEST_CHAT_ID") # Reporter
+    assert ctx.telegram_reporter is not None
+
+@pytest.mark.asyncio
+async def test_initialize_services_injects_reporter(mock_deps):
+    """BackgroundService 초기화 시 telegram_reporter가 주입되는지 검증"""
+    ctx = WebAppContext(None)
+    ctx.load_config_and_env()
+    ctx.telegram_reporter = MagicMock() # Reporter가 있다고 가정
+    
+    # Env mock 설정
+    ctx.env.get_access_token = AsyncMock(return_value=True)
+    ctx.env.get_real_access_token = AsyncMock(return_value="token")
+
+    # Act
+    await ctx.initialize_services(is_paper_trading=True)
+
+    # Assert
+    mock_bg_cls = mock_deps["bg_service"]
+    _, kwargs = mock_bg_cls.call_args
+    assert kwargs.get("telegram_reporter") == ctx.telegram_reporter

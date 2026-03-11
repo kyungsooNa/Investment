@@ -1,6 +1,6 @@
 import pytest
-from unittest.mock import AsyncMock, patch
-from managers.telegram_notifier import TelegramNotifier
+from unittest.mock import AsyncMock, patch, MagicMock
+from managers.telegram_notifier import TelegramNotifier, TelegramReporter
 from managers.notification_manager import NotificationEvent
 
 @pytest.fixture
@@ -113,3 +113,68 @@ async def test_handle_event_filtered_out(filter_notifier):
 
         # SYSTEM 카테고리는 무시되어야 하므로 post 메서드가 단 한 번도 호출되지 않아야 함
         mock_post.assert_not_called()
+
+
+# --- TelegramReporter Tests ---
+
+@pytest.fixture
+def telegram_reporter():
+    return TelegramReporter(bot_token="test_token", chat_id="test_chat_id")
+
+@pytest.mark.asyncio
+async def test_reporter_send_message(telegram_reporter):
+    """TelegramReporter._send_message 메서드 동작 검증"""
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        result = await telegram_reporter._send_message("테스트 메시지")
+        
+        assert result is True
+        mock_post.assert_called_once()
+        payload = mock_post.call_args[1]['json']
+        assert payload['chat_id'] == "test_chat_id"
+        assert payload['text'] == "테스트 메시지"
+
+def test_format_ranking_table(telegram_reporter):
+    """랭킹 테이블 포맷팅 검증"""
+    data = [
+        {'hts_kor_isnm': '삼성전자', 'value': '10000000000'}, # 100억
+        {'hts_kor_isnm': 'SK하이닉스', 'value': '5000000000'}   # 50억
+    ]
+    
+    table = telegram_reporter._format_ranking_table("테스트 랭킹", data, "value")
+    
+    assert "🏆 테스트 랭킹" in table
+    assert "<pre>" in table
+    assert "삼성전자" in table
+    assert "100" in table # 100억
+    assert "50" in table  # 50억
+
+@pytest.mark.asyncio
+async def test_send_ranking_report_splits_message(telegram_reporter):
+    """리포트가 너무 길 경우 메시지를 분할해서 전송하는지 검증"""
+    # 매우 긴 데이터 생성 (4096 바이트 초과 유도)
+    long_data = [{'hts_kor_isnm': f'종목{i}', 'val': '100'} for i in range(100)]
+    
+    rankings = {
+        'foreign_buy': long_data,
+        'inst_buy': long_data,
+        'program_buy': long_data,
+        # ...
+    }
+    
+    # _send_message를 Mocking하여 호출 횟수 카운트
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    
+    # 테이블 포맷팅이 긴 문자열을 반환하도록 설정 (실제 로직 사용)
+    
+    await telegram_reporter.send_ranking_report(rankings, "20250101")
+    
+    # 최소 2번 이상 메시지 전송이 호출되어야 함 (타이틀 1번 + 내용 분할 N번)
+    assert telegram_reporter._send_message.call_count >= 2
+    
+    # 첫 메시지는 타이틀이어야 함
+    first_call_text = telegram_reporter._send_message.call_args_list[0][0][0]
+    assert "장 마감 랭킹 리포트" in first_call_text
