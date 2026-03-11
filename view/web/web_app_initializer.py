@@ -399,17 +399,26 @@ class WebAppContext:
         """앱 시작 시 이전 구독 상태를 자동 복원 (백그라운드)."""
         self.logger.info(f"프로그램매매 구독 복원 시작: {codes}")
         success_count = 0
+        failed_codes = []
         for code in codes:
             try:
                 connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
                 if not connected:
                     self.logger.warning(f"프로그램매매 복원 실패 (WebSocket 연결 불가): {code}")
+                    failed_codes.append(code)
                     continue
                 await self.stock_query_service.subscribe_program_trading(code)
                 await self.stock_query_service.subscribe_realtime_price(code)
                 success_count += 1
             except Exception as e:
                 self.logger.error(f"프로그램매매 복원 중 오류 ({code}): {e}")
+                failed_codes.append(code)
+
+        if failed_codes:
+            self.logger.warning(f"복원에 실패한 구독 종목을 상태에서 제거합니다: {failed_codes}")
+            for code in failed_codes:
+                self.realtime_data_manager.remove_subscribed_code(code)
+
         self.logger.info(f"프로그램매매 구독 복원 완료: {success_count}/{len(codes)}개 종목")
 
     async def _program_trading_watchdog(self):
@@ -469,17 +478,25 @@ class WebAppContext:
 
         # 2. 새 연결 + 재구독
         success_count = 0
+        failed_codes = []
         for code in codes:
             try:
                 connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
                 if not connected:
                     self.logger.warning(f"[워치독] 재연결 실패: {code}")
+                    failed_codes.append(code)
                     continue
                 await self.stock_query_service.subscribe_program_trading(code)
                 await self.stock_query_service.subscribe_realtime_price(code)
                 success_count += 1
             except Exception as e:
                 self.logger.error(f"[워치독] 재구독 중 오류 ({code}): {e}")
+                failed_codes.append(code)
+
+        if failed_codes:
+            self.logger.warning(f"[워치독] 재구독에 실패한 종목을 상태에서 제거합니다: {failed_codes}")
+            for code in failed_codes:
+                self.realtime_data_manager.remove_subscribed_code(code)
 
         self.logger.info(f"[워치독] 강제 재연결 완료: {success_count}/{len(codes)}개 종목")
 
@@ -492,17 +509,40 @@ class WebAppContext:
                     and not self.trading_service.is_websocket_receive_alive()):
                 self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
                 await self._force_reconnect_program_trading()
-            return True
+                
+                # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
+                if not self.realtime_data_manager.is_subscribed(code):
+                    self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
+                else:
+                    return True
+            else:
+                return True
 
-        connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
-        if not connected:
+        try:
+            connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
+            if not connected:
+                self.logger.warning(f"프로그램매매 구독 실패 (WebSocket 연결 불가): {code}")
+                return False
+
+            sub_pt_success = await self.stock_query_service.subscribe_program_trading(code)
+            sub_price_success = await self.stock_query_service.subscribe_realtime_price(code)
+
+            if sub_pt_success and sub_price_success:
+                self.realtime_data_manager.add_subscribed_code(code)
+                self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
+                return True
+            else:
+                # 하나라도 실패하면, 성공했을 수 있는 다른 구독을 해지하여 상태를 정리한다.
+                self.logger.warning(f"프로그램매매 구독 실패 (pt: {sub_pt_success}, price: {sub_price_success}) - {code}")
+                if sub_pt_success:
+                    await self.stock_query_service.unsubscribe_program_trading(code)
+                if sub_price_success:
+                    await self.stock_query_service.unsubscribe_realtime_price(code)
+                return False
+
+        except Exception as e:
+            self.logger.error(f"프로그램매매 구독 중 예외 발생 ({code}): {e}", exc_info=True)
             return False
-        await self.stock_query_service.subscribe_program_trading(code)
-        await self.stock_query_service.subscribe_realtime_price(code) # [추가] 실시간 현재가 구독
-
-        # [변경] 매니저에 구독 상태 등록
-        self.realtime_data_manager.add_subscribed_code(code)
-        return True
 
     async def stop_program_trading(self, code: str):
         """특정 종목 프로그램매매 구독 해지."""

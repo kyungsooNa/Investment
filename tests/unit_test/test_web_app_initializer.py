@@ -391,6 +391,7 @@ async def test_restore_program_trading_partial_failure(mock_deps):
     assert ctx.stock_query_service.connect_websocket.await_count == 3
     assert ctx.stock_query_service.subscribe_program_trading.await_count == 2
     ctx.stock_query_service.subscribe_realtime_price.assert_awaited_once_with("035720")
-    ctx.logger.warning.assert_called_with("프로그램매매 복원 실패 (WebSocket 연결 불가): 005930")
+    ctx.logger.warning.assert_any_call("프로그램매매 복원 실패 (WebSocket 연결 불가): 005930")
+    ctx.logger.warning.assert_any_call("복원에 실패한 구독 종목을 상태에서 제거합니다: ['005930', '000660']")
     ctx.logger.error.assert_called_with("프로그램매매 복원 중 오류 (000660): Subscription failed")
     ctx.logger.info.assert_any_call("프로그램매매 구독 복원 완료: 1/3개 종목")
