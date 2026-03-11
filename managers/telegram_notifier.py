@@ -84,16 +84,20 @@ class TelegramReporter:
             logger.error(f"Telegram 리포트 전송 중 예외 발생: {e}")
             return False
 
-    def _format_ranking_table(self, title: str, ranking_data: List[Dict], value_field: str, limit: int = 10, divisor: float = 100_000_000) -> str:
+    def _format_ranking_table(self, title: str, ranking_data: List[Dict], value_field: str, limit: int = 10, divisor: float = 100_000_000, show_ratio: bool = True) -> str:
         """랭킹 데이터를 HTML 포맷의 문자열로 변환합니다."""
         if not ranking_data:
             return ""
 
         header = f"<b>🏆 {title} (Top {limit})</b>\n"
         table = "<pre>"
-        # 헤더: 순위(2) 종목(8) 현재가(7) 등락(6) 금액(6) 비중(5)
-        table += "{:<2} {:<8} {:>7} {:>6} {:>6} {:>5}\n".format("순", "종목", "현재가", "등락", "금액", "비중")
-        table += "-" * 40 + "\n"
+        if show_ratio:
+            # 헤더: 순위(2) 종목(8) 등락(7) 금액(7) 비중(6)
+            table += "순 종목        등락    금액   비중\n"
+            table += "-" * 34 + "\n"
+        else:
+            table += "순 종목        등락    금액\n"
+            table += "-" * 27 + "\n"
 
         for i, item in enumerate(ranking_data[:limit]):
             rank = i + 1
@@ -112,14 +116,7 @@ class TelegramReporter:
             name_padding = 8 - display_width
             name_str = f"{display_name}{' ' * name_padding}"
 
-            # 2. 현재가
-            try:
-                price = int(item.get('stck_prpr', '0') or '0')
-                price_str = f"{price:,}"
-            except:
-                price_str = "-"
-
-            # 3. 등락률
+            # 2. 등락률
             try:
                 rate = float(item.get('prdy_ctrt', '0') or '0')
                 if rate > 0:
@@ -131,7 +128,7 @@ class TelegramReporter:
             except:
                 rate_str = "-"
 
-            # 4. 금액 (억)
+            # 3. 금액 (억)
             value_str = item.get(value_field, "0")
             raw_val = 0
             try:
@@ -142,20 +139,23 @@ class TelegramReporter:
             except (ValueError, TypeError):
                 val_str = "-"
 
-            # 5. 비중 (순매수금액 / 총거래대금)
-            ratio_str = "-"
-            try:
-                acml_tr_pbmn = float(item.get('acml_tr_pbmn', '0') or '0')
-                if acml_tr_pbmn > 0:
-                    # divisor=100이면 raw_val은 백만원 단위 -> 원 단위로 변환
-                    net_won = raw_val * 1_000_000 if divisor == 100 else raw_val
-                    
-                    ratio = abs(net_won) / acml_tr_pbmn * 100
-                    ratio_str = f"{ratio:.1f}%"
-            except:
-                pass
+            if show_ratio:
+                # 4. 비중 (순매수금액 / 총거래대금)
+                ratio_str = "-"
+                try:
+                    acml_tr_pbmn = float(item.get('acml_tr_pbmn', '0') or '0')
+                    if acml_tr_pbmn > 0:
+                        # divisor=100이면 raw_val은 백만원 단위 -> 원 단위로 변환
+                        net_won = raw_val * 1_000_000 if divisor == 100 else raw_val
+                        
+                        ratio = abs(net_won) / acml_tr_pbmn * 100
+                        ratio_str = f"{ratio:.1f}%"
+                except:
+                    pass
 
-            table += f"{rank:<2} {name_str} {price_str:>7} {rate_str:>6} {val_str:>6} {ratio_str:>5}\n"
+                table += f"{rank:<2} {name_str} {rate_str:>7} {val_str:>7} {ratio_str:>6}\n"
+            else:
+                table += f"{rank:<2} {name_str} {rate_str:>7} {val_str:>7}\n"
 
         table += "</pre>"
         return header + table
@@ -212,7 +212,7 @@ class TelegramReporter:
                 report_parts.append(self._format_ranking_table("외인+기관+프로그램 순매도", sorted(fip_combined, key=lambda x: x['fip_combined_net']), 'fip_combined_net', divisor=100))
 
         # 3. 거래대금
-        report_parts.append(self._format_ranking_table("거래대금 상위", rankings.get('trading_value', []), 'acml_tr_pbmn', divisor=100_000_000))
+        report_parts.append(self._format_ranking_table("거래대금 상위", rankings.get('trading_value', []), 'acml_tr_pbmn', divisor=100_000_000, show_ratio=False))
 
         # 메시지 분할 전송
         title = f"🔔 <b>장 마감 랭킹 리포트 ({report_date})</b>\n"
