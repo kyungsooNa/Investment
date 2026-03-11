@@ -103,4 +103,4 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._headers.set_gt_uid()
             self._logger.info(
                 f"주식 {'매수' if is_buy else '매도'} 주문 시도 - 종목:{stock_code}, 수량:{order_qty}, 가격:{order_price}")
-            return await self.call_api('POST', EndpointKey.ORDER_CASH, data=data, retry_count=3)
+            return await self.call_api('POST', EndpointKey.ORDER_CASH, data=data, retry_count=10)
