@@ -22,6 +22,7 @@ def mock_deps():
         ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
         ("web_api", patch("view.web.web_app_initializer.web_api")),
         ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
+        ("bg_service", patch("view.web.web_app_initializer.BackgroundService", autospec=True)),
         ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
         ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
         ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
@@ -201,9 +202,11 @@ async def test_lifecycle_methods(mock_deps):
     ctx.realtime_data_manager = MagicMock()
     ctx.realtime_data_manager.shutdown = AsyncMock()
     
-    # Start
-    ctx.start_background_tasks()
-    ctx.realtime_data_manager.start_background_tasks.assert_called_once()
+    # asyncio.create_task를 모킹하여 실제 백그라운드 태스크가 실행되지 않도록 합니다.
+    with patch("view.web.web_app_initializer.asyncio.create_task"):
+        # Start
+        ctx.start_background_tasks()
+        ctx.realtime_data_manager.start_background_tasks.assert_called_once()
     
     # Shutdown
     await ctx.shutdown()
