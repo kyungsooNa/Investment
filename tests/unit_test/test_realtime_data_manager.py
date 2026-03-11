@@ -83,7 +83,22 @@ async def test_on_data_received_stores_and_broadcasts(manager):
     # 3. 큐 브로드캐스트 확인
     assert queue.qsize() == 1
     item = await queue.get()
-    assert item == test_data
+    # The payload is a list, not the original dict
+    expected_payload = [
+        '005930',  # code
+        '',        # 주식체결시간
+        100,       # price
+        0,         # rate
+        0,         # change
+        '',        # sign
+        0,         # 매도체결량
+        0,         # 매수2체결량
+        0,         # 순매수체결량
+        0,         # 순매수거래대금
+        0,         # 매도호가잔량
+        0          # 매수호가잔량
+    ]
+    assert item == expected_payload
 
 
 @pytest.mark.asyncio
@@ -101,7 +116,22 @@ async def test_on_data_received_queue_full_behavior(manager):
     item1 = await queue.get()
     item2 = await queue.get()
     assert item1 == "old_2"
-    assert item2 == test_data
+    # The payload is a list, not the original dict
+    expected_payload = [
+        '005930',  # code
+        '',        # 주식체결시간
+        0,         # price (default)
+        0,         # rate
+        0,         # change
+        '',        # sign
+        0,         # 매도체결량
+        0,         # 매수2체결량
+        0,         # 순매수체결량
+        0,         # 순매수거래대금
+        0,         # 매도호가잔량
+        0          # 매수호가잔량
+    ]
+    assert item2 == expected_payload
 
 
 def test_on_data_received_missing_key(manager):
@@ -216,8 +246,8 @@ def test_load_pt_history_only_today(tmp_db_dir):
         yesterday = time.time() - 86400 * 2
         with mgr._get_connection() as conn:
             conn.execute(
-                "INSERT INTO pt_history (code, data, created_at) VALUES (?, ?, ?)",
-                ("OLD_CODE", '{"유가증권단축종목코드": "OLD_CODE"}', yesterday)
+                "INSERT INTO pt_history (code, created_at) VALUES (?, ?)",
+                ("OLD_CODE", yesterday)
             )
 
         # 다시 로드
@@ -226,6 +256,16 @@ def test_load_pt_history_only_today(tmp_db_dir):
 
         assert "OLD_CODE" not in mgr._pt_history
         mgr._conn.close()
+
+
+def test_cleanup_old_data_no_old_data(manager):
+    """삭제 대상이 없을 때 정상 동작."""
+    manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
+    manager._cleanup_old_data()
+
+    with manager._get_connection() as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM pt_history")
+        assert cursor.fetchone()[0] == 1
 
 
 # --- 스냅샷 저장/로드 ---
@@ -263,12 +303,12 @@ def test_cleanup_old_data(manager):
 
     with manager._get_connection() as conn:
         conn.execute(
-            "INSERT INTO pt_history (code, data, created_at) VALUES (?, ?, ?)",
-            ("OLD", '{"old": true}', old_ts)
+            "INSERT INTO pt_history (code, created_at) VALUES (?, ?)",
+            ("OLD", old_ts)
         )
         conn.execute(
-            "INSERT INTO pt_history (code, data, created_at) VALUES (?, ?, ?)",
-            ("RECENT", '{"recent": true}', recent_ts)
+            "INSERT INTO pt_history (code, created_at) VALUES (?, ?)",
+            ("RECENT", recent_ts)
         )
 
     manager._cleanup_old_data()
@@ -279,17 +319,6 @@ def test_cleanup_old_data(manager):
 
     assert "OLD" not in codes
     assert "RECENT" in codes
-
-
-def test_cleanup_old_data_no_old_data(manager):
-    """삭제 대상이 없을 때 정상 동작."""
-    manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
-    manager._cleanup_old_data()
-
-    with manager._get_connection() as conn:
-        cursor = conn.execute("SELECT COUNT(*) FROM pt_history")
-        assert cursor.fetchone()[0] == 1
-
 
 # --- 레거시 파일 정리 ---
 
@@ -369,34 +398,6 @@ def test_retention_days_is_7():
     """보존 기간이 7일인지 확인."""
     assert RealtimeDataManager.RETENTION_DAYS == 7
 
-# --- 추가된 테스트 케이스 (Coverage 향상) ---
-
-def test_inspect_db_status(manager):
-    """inspect_db_status 정상 동작 확인."""
-    # 1. 데이터 준비
-    manager.save_snapshot({"test": "snapshot"})
-    manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
-    
-    # 2. 실행
-    status = manager.inspect_db_status()
-    
-    # 3. 검증
-    assert status["snapshot"]["exists"] is True
-    assert status["snapshot"]["updated_at"] is not None
-    assert status["history"]["count"] == 1
-    assert status["history"]["last_record"] is not None
-    assert "hourly_counts" in status["history"]
-    assert status["memory"]["last_received_at"] is not None
-
-def test_inspect_db_status_exception(manager):
-    """inspect_db_status 예외 처리 확인."""
-    # DB 연결을 닫아서 예외 유발
-    manager._conn.close()
-    
-    status = manager.inspect_db_status()
-    
-    assert "error" in status
-
 def test_on_data_received_log_gap(manager):
     """데이터 수신 간격이 10초 이상일 때 로그 기록 확인."""
     manager.last_data_ts = time.time() - 15  # 15초 전
@@ -430,28 +431,6 @@ def test_on_data_received_db_save_failure(manager):
     
     # 3. 큐 전송은 성공해야 함
     assert queue.qsize() == 1
-
-def test_load_pt_history_json_error(manager):
-    """히스토리 데이터 중 JSON 파싱 에러가 있는 경우 건너뛰는지 확인."""
-    # 1. 정상 데이터와 불량 데이터 삽입
-    now = time.time()
-    with manager._get_connection() as conn:
-        conn.execute(
-            "INSERT INTO pt_history (code, data, created_at) VALUES (?, ?, ?)",
-            ("005930", '{"valid": true}', now)
-        )
-        conn.execute(
-            "INSERT INTO pt_history (code, data, created_at) VALUES (?, ?, ?)",
-            ("005930", '{invalid_json}', now)
-        )
-    
-    # 2. 로드 실행 (초기화 시 이미 로드되었으므로 다시 로드)
-    manager._pt_history = {}
-    manager._load_pt_history()
-    
-    # 3. 검증: 정상 데이터만 로드되어야 함
-    assert len(manager._pt_history["005930"]) == 1
-    assert manager._pt_history["005930"][0]["valid"] is True
 
 def test_load_snapshot_json_error(manager):
     """스냅샷 데이터 JSON 파싱 에러 처리."""
@@ -495,3 +474,31 @@ def test_init_db_connect_failure():
         with patch.object(RealtimeDataManager, '_get_base_dir', return_value='.'):
              mgr = RealtimeDataManager(logger=mock_logger)
              mock_logger.error.assert_any_call("SQLite DB 초기화 실패: Connection failed")
+
+# --- 추가된 테스트 케이스 (Coverage 향상) ---
+
+def test_inspect_db_status(manager):
+    """inspect_db_status 정상 동작 확인."""
+    # 1. 데이터 준비
+    manager.save_snapshot({"test": "snapshot"})
+    manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
+    
+    # 2. 실행
+    status = manager.inspect_db_status()
+    
+    # 3. 검증
+    assert status["snapshot"]["exists"] is True
+    assert status["snapshot"]["updated_at"] is not None
+    assert status["history"]["count"] == 1
+    assert status["history"]["last_record"] is not None
+    assert "hourly_counts" in status["history"]
+    assert status["memory"]["last_received_at"] is not None
+
+def test_inspect_db_status_exception(manager):
+    """inspect_db_status 예외 처리 확인."""
+    # DB 연결을 닫아서 예외 유발
+    manager._conn.close()
+    
+    status = manager.inspect_db_status()
+    
+    assert "error" in status

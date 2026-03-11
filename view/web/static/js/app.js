@@ -1798,81 +1798,90 @@ function _appendProgramTradingTableRow(d) {
 
 
 function handleProgramTradingData(d) {
-    // _appendProgramTradingTableRow(d); // [수정] 개별 행 추가 대신 전체 갱신으로 변경
+    let code, netValue, netVolume, timeStr, price, rate, change, sign, sellVol, buyVol, sellRem, buyRem;
 
-    const code = d['유가증권단축종목코드'];
+    // 1. 서버에서 받은 데이터 포맷에 따라 파싱 (Array 최적화 반영)
+    if (Array.isArray(d)) {
+        // 배열일 경우 순서에 맞춰 구조 분해 할당
+        [code, timeStr, price, rate, change, sign, sellVol, buyVol, netVolume, netValue, sellRem, buyRem] = d;
+        netValue = parseInt(netValue || 0);
+        netVolume = parseInt(netVolume || 0);
+    } else {
+        // (하위 호환) 혹시 기존처럼 Object 형태로 넘어올 경우
+        code = d['유가증권단축종목코드'];
+        netValue = parseInt(d['순매수거래대금'] || '0');
+        netVolume = parseInt(d['순매수체결량'] || '0');
+        timeStr = d['주식체결시간'];
+        price = d.price;
+        rate = d.rate;
+        change = d.change;
+        sign = d.sign;
+        sellVol = d['매도체결량'];
+        buyVol = d['매수2체결량'];
+        sellRem = d['매도호가잔량'];
+        buyRem = d['매수호가잔량'];
+    }
+
     if (!ptChartData[code]) return;
-
-    const netValue = parseInt(d['순매수거래대금'] || '0');
-    const netVolume = parseInt(d['순매수체결량'] || '0');
-    // API 데이터가 이미 누적치이므로 그대로 사용합니다.
-
-    const timeStr = d['주식체결시간']; // "HHMMSS"
     if (!timeStr || timeStr.length < 4) return;
 
+    // 2. 이 아래부터는 기존 로직 그대로 유지
     const now = new Date();
     now.setHours(parseInt(timeStr.slice(0, 2)));
     now.setMinutes(parseInt(timeStr.slice(2, 4)));
-    now.setSeconds(0); // [수정] 차트는 1분 단위로 표시 (초 절삭)
+    now.setSeconds(0); 
     now.setMilliseconds(0);
     const timestamp = now.getTime();
 
     const valueData = ptChartData[code].valueData;
     const volumeData = ptChartData[code].volumeData;
 
-    // [수정] 같은 분(Minute) 데이터 찾기 (lastItem만 비교하면 순서 꼬일 시 중복 발생 가능)
     const existingIdx = valueData.findIndex(item => item.x === timestamp);
 
     if (existingIdx >= 0) {
-        valueData[existingIdx].y = netValue; // 덮어쓰기
-        valueData[existingIdx].price = d.price;
-        valueData[existingIdx].rate = d.rate;
-        valueData[existingIdx].change = d.change;
-        valueData[existingIdx].sign = d.sign;
-        valueData[existingIdx].netVolume = netVolume; // [추가] 테이블 렌더링용
-        
-        // [추가] 상세 데이터 저장 (복원용)
-        valueData[existingIdx].sellVol = d['매도체결량'];
-        valueData[existingIdx].buyVol = d['매수2체결량'];
-        valueData[existingIdx].sellRem = d['매도호가잔량'];
-        valueData[existingIdx].buyRem = d['매수호가잔량'];
+        valueData[existingIdx].y = netValue; 
+        valueData[existingIdx].price = price;
+        valueData[existingIdx].rate = rate;
+        valueData[existingIdx].change = change;
+        valueData[existingIdx].sign = sign;
+        valueData[existingIdx].netVolume = netVolume; 
+        valueData[existingIdx].sellVol = sellVol;
+        valueData[existingIdx].buyVol = buyVol;
+        valueData[existingIdx].sellRem = sellRem;
+        valueData[existingIdx].buyRem = buyRem;
 
         if (volumeData[existingIdx]) {
             volumeData[existingIdx].y = netVolume;
-            volumeData[existingIdx].price = d.price;
+            volumeData[existingIdx].price = price;
         }
     } else {
         const point = { 
             x: timestamp, 
             y: netValue, 
-            price: d.price, 
-            rate: d.rate, 
-            change: d.change, 
-            sign: d.sign,
-            netVolume: netVolume, // [추가]
-            // [추가] 상세 데이터 저장
-            sellVol: d['매도체결량'],
-            buyVol: d['매수2체결량'],
-            sellRem: d['매도호가잔량'],
-            buyRem: d['매수호가잔량']
+            price: price, 
+            rate: rate, 
+            change: change, 
+            sign: sign,
+            netVolume: netVolume, 
+            sellVol: sellVol,
+            buyVol: buyVol,
+            sellRem: sellRem,
+            buyRem: buyRem
         };
         valueData.push(point);
         
-        const volPoint = { x: timestamp, y: netVolume, price: d.price };
+        const volPoint = { x: timestamp, y: netVolume, price: price };
         volumeData.push(volPoint);
-        // 시간순 정렬 (Line 차트 꼬임 방지)
         valueData.sort((a, b) => a.x - b.x);
         volumeData.sort((a, b) => a.x - b.x);
     }
     
-    // 데이터 포인트 제한
     if (valueData.length > 1000) {
         valueData.shift();
         volumeData.shift();
     }
-    ptDataDirty = true; // [추가] 데이터 변경 표시
+    ptDataDirty = true; 
     
-    // [수정] 필터링된 상태에서는 해당 종목 데이터가 들어왔을 때만 차트 업데이트
     if (ptFilterCodes.size === 0 || ptFilterCodes.has(code)) {
         updateProgramChart(ptChartData, ptSubscribedCodes, ptFilterCodes, ptCodeNameMap, ptTimeUnit);
         _renderPtTable();

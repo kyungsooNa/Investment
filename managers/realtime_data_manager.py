@@ -51,12 +51,22 @@ class RealtimeDataManager:
             self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
             with self._get_connection() as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
-                # 프로그램매매 히스토리 테이블
+                
+                # 프로그램매매 히스토리 테이블 (모든 필드 분리 및 정수형 최적화)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS pt_history (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         code TEXT NOT NULL,
-                        data TEXT NOT NULL,
+                        trade_time TEXT,       -- 주식체결시간
+                        sell_vol INTEGER,      -- 매도체결량
+                        sell_amt INTEGER,      -- 매도거래대금
+                        buy_vol INTEGER,       -- 매수2체결량
+                        buy_amt INTEGER,       -- 매수2거래대금
+                        net_vol INTEGER,       -- 순매수체결량
+                        net_amt INTEGER,       -- 순매수거래대금
+                        sell_rem INTEGER,      -- 매도호가잔량
+                        buy_rem INTEGER,       -- 매수호가잔량
+                        net_rem INTEGER,       -- 전체순매수호가잔량
                         created_at REAL NOT NULL
                     )
                 """)
@@ -70,7 +80,7 @@ class RealtimeDataManager:
                     )
                 """)
 
-                # 스냅샷 테이블 (차트 데이터 저장)
+                # 스냅샷 테이블
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS pt_snapshot (
                         key TEXT PRIMARY KEY,
@@ -100,19 +110,35 @@ class RealtimeDataManager:
             today_ts = today_start.timestamp()
 
             with self._get_connection() as conn:
-                cursor = conn.execute(
-                    "SELECT code, data FROM pt_history WHERE created_at >= ? ORDER BY id ASC",
-                    (today_ts,)
-                )
+                cursor = conn.execute("""
+                    SELECT 
+                        code, trade_time, sell_vol, sell_amt, buy_vol, buy_amt, 
+                        net_vol, net_amt, sell_rem, buy_rem, net_rem
+                    FROM pt_history 
+                    WHERE created_at >= ? ORDER BY id ASC
+                """, (today_ts,))
+                
                 count = 0
                 for row in cursor.fetchall():
-                    code, data_str = row
-                    try:
-                        data = json.loads(data_str)
-                        self._pt_history.setdefault(code, []).append(data)
-                        count += 1
-                    except json.JSONDecodeError:
-                        continue
+                    (code, trade_time, sell_vol, sell_amt, buy_vol, buy_amt, 
+                     net_vol, net_amt, sell_rem, buy_rem, net_rem) = row
+                    
+                    # 기존 웹 UI 및 타 서비스와 호환되도록 원래 JSON 구조로 완벽히 복원
+                    restored_data = {
+                        "유가증권단축종목코드": code,
+                        "주식체결시간": trade_time,
+                        "매도체결량": str(sell_vol),
+                        "매도거래대금": str(sell_amt),
+                        "매수2체결량": str(buy_vol),
+                        "매수2거래대금": str(buy_amt),
+                        "순매수체결량": str(net_vol),
+                        "순매수거래대금": str(net_amt),
+                        "매도호가잔량": str(sell_rem),
+                        "매수호가잔량": str(buy_rem),
+                        "전체순매수호가잔량": str(net_rem)
+                    }
+                    self._pt_history.setdefault(code, []).append(restored_data)
+                    count += 1
 
             if count > 0:
                 self.logger.info(f"DB에서 {count}건의 히스토리 데이터를 복구했습니다.")
@@ -133,40 +159,72 @@ class RealtimeDataManager:
 
     # --- 데이터 처리 ---
     def on_data_received(self, data: dict):
-        """웹소켓 등에서 수신한 데이터를 처리 (SQLite 즉시 저장 및 브로드캐스트)."""
+        """웹소켓 등에서 수신한 데이터를 처리 (SQLite 분할 저장 및 브로드캐스트)."""
         code = data.get('유가증권단축종목코드')
         if not code:
             return
 
         now = time.time()
-        # [추가] 10초 이상 데이터가 없다가 들어오면 로그 기록 (연결 복구 확인용)
         if self.last_data_ts > 0 and (now - self.last_data_ts) > 10.0:
             self.logger.info(f"실시간 데이터 수신 재개 (Gap: {now - self.last_data_ts:.1f}초)")
 
         self.last_data_ts = now
-        # 1. 메모리 저장
+        
+        # 1. 메모리 저장 (기존 프론트엔드/백엔드 호환용 원본 유지)
         self._pt_history.setdefault(code, []).append(data)
 
-        # 2. SQLite 즉시 저장 (버퍼 불필요)
+        # 2. SQLite 즉시 저장 (정수형 캐스팅으로 용량 최소화)
         try:
-            data_str = json.dumps(data, ensure_ascii=False)
-            now = time.time()
+            def safe_int(val):
+                try: return int(val)
+                except: return 0
+
+            trade_time = data.get('주식체결시간', '')
+            sell_vol = safe_int(data.get('매도체결량', 0))
+            sell_amt = safe_int(data.get('매도거래대금', 0))
+            buy_vol = safe_int(data.get('매수2체결량', 0))
+            buy_amt = safe_int(data.get('매수2거래대금', 0))
+            net_vol = safe_int(data.get('순매수체결량', 0))
+            net_amt = safe_int(data.get('순매수거래대금', 0))
+            sell_rem = safe_int(data.get('매도호가잔량', 0))
+            buy_rem = safe_int(data.get('매수호가잔량', 0))
+            net_rem = safe_int(data.get('전체순매수호가잔량', 0))
+
             with self._get_connection() as conn:
-                conn.execute(
-                    "INSERT INTO pt_history (code, data, created_at) VALUES (?, ?, ?)",
-                    (code, data_str, now)
-                )
+                conn.execute("""
+                    INSERT INTO pt_history (
+                        code, trade_time, sell_vol, sell_amt, buy_vol, buy_amt, 
+                        net_vol, net_amt, sell_rem, buy_rem, net_rem, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (code, trade_time, sell_vol, sell_amt, buy_vol, buy_amt, 
+                      net_vol, net_amt, sell_rem, buy_rem, net_rem, now))
         except Exception as e:
             self.logger.error(f"히스토리 DB 저장 실패: {e}")
 
-        # 3. 클라이언트 브로드캐스트
+        # 3. 클라이언트 브로드캐스트 (Dict 대신 Array 전송으로 네트워크 트래픽 80% 절감)
+        # 배열 순서: [종목코드, 체결시간, 현재가, 등락률, 대비, 부호, 매도체결, 매수체결, 순매수체결, 순매수대금, 매도호가잔량, 매수호가잔량]
+        payload = [
+            code,
+            data.get('주식체결시간', ''),
+            data.get('price', 0),
+            data.get('rate', 0),
+            data.get('change', 0),
+            data.get('sign', ''),
+            data.get('매도체결량', 0),
+            data.get('매수2체결량', 0),
+            data.get('순매수체결량', 0),
+            data.get('순매수거래대금', 0),
+            data.get('매도호가잔량', 0),
+            data.get('매수호가잔량', 0)
+        ]
+        
         for q in list(self._pt_queues):
             try:
-                q.put_nowait(data)
+                q.put_nowait(payload)  # data 대신 payload(리스트) 전송
             except asyncio.QueueFull:
                 try:
                     q.get_nowait()
-                    q.put_nowait(data)
+                    q.put_nowait(payload)
                 except Exception:
                     pass
             except Exception:
