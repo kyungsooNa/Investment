@@ -33,6 +33,7 @@ from services.background_service import BackgroundService
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
+from managers.telegram_notifier import TelegramNotifier
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_manager import CacheManager
 
@@ -86,6 +87,25 @@ class WebAppContext:
             logger=self.logger
         )
         self.notification_manager = NotificationManager(self.time_manager)
+        # ---------------------------------------------------------
+        # [추가] Telegram Notifier 초기화 및 핸들러 등록
+        telegram_token = config_dict.get("telegram_bot_token")
+        telegram_chat_id = config_dict.get("telegram_chat_id")
+        
+        if telegram_token and telegram_chat_id:
+            # WebAppContext 인스턴스 변수로 유지하여 생명주기 관리
+            self.telegram_notifier = TelegramNotifier(
+                bot_token=telegram_token, 
+                chat_id=telegram_chat_id,
+                allowed_categories=["TRADE"]
+            )
+            self.notification_manager.register_external_handler(
+                self.telegram_notifier.handle_event
+            )
+            self.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
+        else:
+            self.logger.info("텔레그램 설정이 누락되어 알림 핸들러를 등록하지 않습니다.")
+        # ---------------------------------------------------------
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
         # [신규] MarketDateManager 초기화
