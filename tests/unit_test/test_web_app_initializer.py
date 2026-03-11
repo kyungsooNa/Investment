@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 from view.web.web_app_initializer import WebAppContext
 from pydantic import BaseModel
@@ -395,3 +396,38 @@ async def test_restore_program_trading_partial_failure(mock_deps):
     ctx.logger.warning.assert_any_call("복원에 실패한 구독 종목을 상태에서 제거합니다: ['005930', '000660']")
     ctx.logger.error.assert_called_with("프로그램매매 복원 중 오류 (000660): Subscription failed")
     ctx.logger.info.assert_any_call("프로그램매매 구독 복원 완료: 1/3개 종목")
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_market_closed(mock_deps):
+    """TC: _program_trading_watchdog 장 마감 시 연결 종료 검증."""
+    # Arrange
+    ctx = WebAppContext(None)
+    ctx.time_manager = MagicMock()
+    ctx.time_manager.is_market_open.return_value = False # 장 마감 상태
+    
+    ctx.realtime_data_manager = MagicMock()
+    ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
+    
+    ctx.trading_service = MagicMock()
+    ctx.trading_service.is_websocket_receive_alive.return_value = True # 연결 살아있음
+    ctx.trading_service.disconnect_websocket = AsyncMock()
+    
+    # asyncio.sleep을 모킹하여 루프 제어 (첫 번째는 통과, 두 번째에 에러 발생시켜 루프 탈출)
+    async def sleep_side_effect(seconds):
+        if sleep_side_effect.counter == 0:
+            sleep_side_effect.counter += 1
+            return
+        raise asyncio.CancelledError
+    sleep_side_effect.counter = 0
+    
+    # Act
+    with patch("asyncio.sleep", side_effect=sleep_side_effect):
+        try:
+            await ctx._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+            
+    # Assert
+    # 장 마감이므로 웹소켓 연결 종료가 호출되어야 함
+    ctx.trading_service.disconnect_websocket.assert_awaited_once()
+    ctx.logger.info.assert_any_call("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")

@@ -435,7 +435,11 @@ class WebAppContext:
                     continue  # 구독 중인 종목 없으면 스킵
 
                 if not self.time_manager or not self.time_manager.is_market_open():
-                    continue  # 장 마감 시간이면 스킵
+                    # [추가] 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
+                    if self.trading_service and self.trading_service.is_websocket_receive_alive():
+                        self.logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
+                        await self.trading_service.disconnect_websocket()
+                    continue
 
                 # 조건 1: 수신 태스크가 죽었는지 확인
                 receive_alive = (

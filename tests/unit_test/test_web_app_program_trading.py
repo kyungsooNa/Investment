@@ -8,7 +8,9 @@ def mock_ctx():
     app_context = MagicMock()
     app_context.env = MagicMock()
     
-    with patch('view.web.web_app_initializer.RealtimeDataManager') as MockRDM:
+    # [수정] WebAppContext 초기화 시 web_api 의존성 격리를 위해 추가 patch
+    with patch('view.web.web_app_initializer.RealtimeDataManager') as MockRDM, \
+         patch('view.web.web_app_initializer.web_api') as MockWebApi:
         ctx = WebAppContext(app_context)
         ctx.logger = MagicMock()
         ctx.stock_query_service = AsyncMock()
@@ -21,7 +23,7 @@ def mock_ctx():
         ctx.stock_query_service.subscribe_program_trading.return_value = True
         ctx.stock_query_service.subscribe_realtime_price.return_value = True
         
-        return ctx
+        yield ctx
 
 @pytest.mark.asyncio
 async def test_start_program_trading_success(mock_ctx):
