@@ -22,3 +22,4 @@ pytest-asyncio
 pykrx
 aiohttp
 beautifulsoup4
+python-telegram-bot>=13.15
