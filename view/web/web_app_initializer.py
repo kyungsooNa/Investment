@@ -33,7 +33,7 @@ from services.background_service import BackgroundService
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
-from managers.telegram_notifier import TelegramNotifier
+from managers.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_manager import CacheManager
 
@@ -103,6 +103,10 @@ class WebAppContext:
                 self.telegram_notifier.handle_event
             )
             self.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
+            
+            # [추가] Telegram Reporter 초기화 (BackgroundService 주입용)
+            self.telegram_reporter = TelegramReporter(bot_token=telegram_token, chat_id=telegram_chat_id)
+            self.logger.info("텔레그램 리포터가 초기화되었습니다.")
         else:
             self.logger.info("텔레그램 설정이 누락되어 알림 핸들러를 등록하지 않습니다.")
         # ---------------------------------------------------------
@@ -164,6 +168,7 @@ class WebAppContext:
             trading_service=self.trading_service,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
+            telegram_reporter=getattr(self, 'telegram_reporter', None),
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,

@@ -1047,3 +1047,48 @@ async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, m
 
     broker.get_investor_trade_by_stock_daily.assert_not_called()
     logger.info.assert_any_call("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_calls_telegram_reporter(bg_service, mock_deps):
+    """투자자 랭킹 갱신 완료 후 TelegramReporter 호출 검증"""
+    broker, mapper, _, _, _ = mock_deps
+    
+    # Reporter Mock 주입
+    mock_reporter = AsyncMock()
+    bg_service._telegram_reporter = mock_reporter
+    
+    # 데이터 설정
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=_make_investor_response(100))
+    broker.get_program_trade_by_stock_daily = AsyncMock(return_value=_make_program_response(100))
+
+    # Act
+    await bg_service.refresh_investor_ranking()
+
+    # Assert
+    mock_reporter.send_ranking_report.assert_awaited_once()
+    call_args = mock_reporter.send_ranking_report.call_args
+    rankings = call_args[0][0]
+    report_date = call_args[1]['report_date']
+    
+    assert 'foreign_buy' in rankings
+    assert 'trading_value' in rankings
+    assert report_date == "20250101" # fixture에서 설정한 날짜
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_reporter_exception_handled(bg_service, mock_deps):
+    """리포트 전송 중 예외가 발생해도 서비스가 중단되지 않고 로깅되는지 검증"""
+    broker, mapper, _, logger, _ = mock_deps
+    
+    mock_reporter = AsyncMock()
+    mock_reporter.send_ranking_report.side_effect = Exception("Telegram Error")
+    bg_service._telegram_reporter = mock_reporter
+    
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=_make_investor_response(100))
+
+    await bg_service.refresh_investor_ranking()
+
+    # 예외가 로깅되었는지 확인
+    logger.error.assert_called()
+    assert "텔레그램 랭킹 리포트 전송 중 오류" in str(logger.error.call_args)
