@@ -37,35 +37,38 @@ class SizeTimeRotatingFileHandler(RotatingFileHandler):
         if self.stream:
             self.stream.close()
             self.stream = None
+        
+        # 확장자 처리 (예: .log.json)
+        if self.baseFilename.endswith(".log.json"):
+            root, ext = self.baseFilename[:-len(".log.json")], ".log.json"
+        else:
+            root, ext = os.path.splitext(self.baseFilename)
 
-        root, ext = os.path.splitext(self.baseFilename)
-
-        # 1. 다음 백업 파일 이름 결정 (예: ..._debug_1.log, ..._debug_2.log)
-        pattern = f"{glob.escape(root)}_*_*{glob.escape(ext)}" # 이전 타임스탬프 형식도 포함
+        # 1. 기존 백업 파일 목록을 찾고 최대 인덱스 결정
         pattern_indexed = f"{glob.escape(root)}_[0-9]*{glob.escape(ext)}"
-
-        existing_files = glob.glob(pattern) + glob.glob(pattern_indexed)
+        existing_backups = glob.glob(pattern_indexed)
         
         max_index = 0
-        for f in existing_files:
+        for f in existing_backups:
             try:
-                # 파일명에서 인덱스 부분 추출 (예: ..._debug_1.log -> 1)
-                index_str = os.path.splitext(f)[0].split('_')[-1]
+                # 파일명에서 인덱스 부분 추출 (예: ..._1.log.json -> 1)
+                filename_no_ext = f[:-len(ext)]
+                index_str = filename_no_ext.split('_')[-1]
                 if index_str.isdigit():
                     max_index = max(max_index, int(index_str))
             except (ValueError, IndexError):
                 continue
 
+        # 2. 새 백업 파일명 생성 및 회전
         dfn = f"{root}_{max_index + 1}{ext}"
         self.rotate(self.baseFilename, dfn)
 
-        # 백업 파일 관리 (오래된 파일 삭제)
+        # 3. 백업 파일 개수 관리 (오래된 파일 삭제)
         if self.backupCount > 0:
-            backups = glob.glob(pattern) + glob.glob(pattern_indexed)
-            backups.sort() # 이름순(시간순) 정렬 -> 앞쪽이 오래된 파일
-            
-            if len(backups) > self.backupCount:
-                for f in backups[:len(backups) - self.backupCount]:
+            all_backups = glob.glob(pattern_indexed)
+            all_backups.sort(key=lambda f: int(f[:-len(ext)].split('_')[-1]) if f[:-len(ext)].split('_')[-1].isdigit() else -1)
+            if len(all_backups) > self.backupCount:
+                for f in all_backups[:len(all_backups) - self.backupCount]:
                     os.remove(f)
         
         if not self.delay:
@@ -110,7 +113,7 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
             logger.removeHandler(handler)
 
     logger.setLevel(logging.INFO)
-    logger.propagate = False
+    logger.propagate = True
 
     strategy_log_dir = os.path.join(log_dir, "strategies")
     if sub_dir:
@@ -168,6 +171,16 @@ def get_performance_logger(log_dir="logs"):
     return logger
 
 
+class StrategyInfoFilter(logging.Filter):
+    """
+    전략 로거(strategy.*)의 로그는 INFO 레벨 이상만 통과시키는 필터.
+    통합 로그(debug.log)에 전략의 과도한 DEBUG 로그가 쌓이는 것을 방지함.
+    """
+    def filter(self, record):
+        if record.name.startswith("strategy."):
+            return record.levelno >= logging.INFO
+        return True
+
 class Logger:
     """
     애플리케이션의 로깅을 관리하는 클래스입니다.
@@ -202,9 +215,21 @@ class Logger:
         self.operational_logger = self._setup_logger('operational_logger', self.operational_log_path, logging.INFO)
         self.debug_logger = self._setup_logger('debug_logger', self.debug_log_path, logging.DEBUG)
 
+        # 전략 로그 필터 생성 (debug.log 용량 관리용)
+        strategy_filter = StrategyInfoFilter()
+
         # 기존 로깅 핸들러 제거 및 urllib3 로거 레벨 설정 (중복 로깅 방지)
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
+
+        # 루트 로거에 통합 로그 핸들러 연결 (전략 로거 등 전파된 로그 수집)
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)
+        for h in self.debug_logger.handlers:
+            h.addFilter(strategy_filter)  # 전략 로그는 INFO 이상만 debug.log에 기록
+            root_logger.addHandler(h)
+        for h in self.operational_logger.handlers:
+            root_logger.addHandler(h)
 
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
         http.client.HTTPConnection.debuglevel = 0  # HTTP 통신 디버그 레벨 비활성화
@@ -243,6 +268,7 @@ class Logger:
             maxBytes=LOG_MAX_BYTES,
             backupCount=LOG_BACKUP_COUNT
         )
+        file_handler.setLevel(level)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         logger.addHandler(file_handler)
 

@@ -64,8 +64,9 @@ class OneilUniverseService:
         self._market_timing_cache: Dict[str, bool] = {}
         self._market_timing_date: str = ""
 
-    async def get_watchlist(self) -> Dict[str, OSBWatchlistItem]:
+    async def get_watchlist(self, logger: Optional[logging.Logger] = None) -> Dict[str, OSBWatchlistItem]:
         """현재 유효한 워치리스트를 반환 (캐싱 + 자동 갱신)."""
+        logger = logger or self._logger
         today = self._tm.get_current_kst_time().strftime("%Y%m%d")
         
         # 날짜 변경 시 초기화
@@ -73,7 +74,7 @@ class OneilUniverseService:
             self._watchlist_refresh_done = set()
             self._pool_a_loaded = False
             self._pool_a_items = {}
-            await self._build_watchlist()
+            await self._build_watchlist(logger=logger)
             self._watchlist_date = today
             self._market_timing_date = "" # 마켓타이밍도 재확인 필요
             
@@ -82,25 +83,27 @@ class OneilUniverseService:
         
         # 장중 갱신 주기 체크
         elif self._should_refresh_watchlist():
-            await self._build_watchlist()
+            await self._build_watchlist(logger=logger)
 
         return self._watchlist
 
-    async def is_market_timing_ok(self, market: str) -> bool:
+    async def is_market_timing_ok(self, market: str, logger: Optional[logging.Logger] = None) -> bool:
         """해당 시장(KOSPI/KOSDAQ)의 마켓 타이밍이 매수 적합한지 확인."""
+        logger = logger or self._logger
         today = self._tm.get_current_kst_time().strftime("%Y%m%d")
         if self._market_timing_date != today:
-            await self._update_market_timing()
+            await self._update_market_timing(logger=logger)
             self._market_timing_date = today
         
         return self._market_timing_cache.get(market, False)
 
     # ── 워치리스트 빌드 ────────────────────────────────────────────
 
-    async def _build_watchlist(self):
+    async def _build_watchlist(self, logger: Optional[logging.Logger] = None):
         """Pool A + Pool B 병합 -> 스코어링 -> 상위 N개 선정."""
+        logger = logger or self._logger
         t_start = self.pm.start_timer()
-        self._logger.info({"event": "build_watchlist_started"})
+        logger.info({"event": "build_watchlist_started"})
 
         # 1) Pool A 로드
         if not self._pool_a_loaded:
@@ -109,7 +112,7 @@ class OneilUniverseService:
             self._pool_a_loaded = True
 
         # 2) Pool B 빌드 (실시간 랭킹)
-        pool_b_items = await self._build_pool_b()
+        pool_b_items = await self._build_pool_b(logger=logger)
 
         # 3) 병합
         merged: Dict[str, OSBWatchlistItem] = dict(self._pool_a_items)
@@ -126,7 +129,7 @@ class OneilUniverseService:
 
         # 스코어링 후 정렬된 상위 종목 로그
         top_n_for_log = 10
-        self._logger.debug({
+        logger.debug({
             "event": "watchlist_sorted",
             "top_n": top_n_for_log,
             "items": [
@@ -142,7 +145,7 @@ class OneilUniverseService:
         self._watchlist = {
             item.code: item for item in sorted_items[:self._cfg.max_watchlist]
         }
-        self._logger.info({
+        logger.info({
             "event": "build_watchlist_finished",
             "pool_a": len(self._pool_a_items),
             "pool_b": len(pool_b_items),
@@ -150,8 +153,9 @@ class OneilUniverseService:
         })
         self.pm.log_timer("OneilUniverseService._build_watchlist", t_start, threshold=5.0)
 
-    async def _build_pool_b(self) -> Dict[str, OSBWatchlistItem]:
+    async def _build_pool_b(self, logger: Optional[logging.Logger] = None) -> Dict[str, OSBWatchlistItem]:
         """Pool B: 실시간 랭킹 기반 종목 발굴."""
+        logger = logger or self._logger
         t_start = self.pm.start_timer()
         # 3가지 랭킹 병합
         trading_val_resp, rise_resp, volume_resp = await asyncio.gather(
@@ -183,7 +187,7 @@ class OneilUniverseService:
         candidates = [(c, n) for c, n in candidate_map.items() if c not in skip_codes]
         
         for chunk in _chunked(candidates, self._cfg.api_chunk_size):
-            tasks = [self._analyze_candidate(code, name) for code, name in chunk]
+            tasks = [self._analyze_candidate(code, name, logger=logger) for code, name in chunk]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             for res in results:
@@ -194,16 +198,16 @@ class OneilUniverseService:
             await asyncio.sleep(0.1)
 
         # 스코어링
-        self._compute_rs_scores(items)
-        await self._compute_profit_growth_scores(items)
-        self._compute_total_scores(items)
+        self._compute_rs_scores(items, logger=logger)
+        await self._compute_profit_growth_scores(items, logger=logger)
+        self._compute_total_scores(items, logger=logger)
 
         # 상위 N개
         items.sort(key=lambda x: (x.total_score, self._calc_turnover_ratio(x)), reverse=True)
 
         # Pool B 스코어링 후 정렬된 상위 종목 로그
         top_n_for_log = 10
-        self._logger.debug({
+        logger.debug({
             "event": "pool_b_sorted",
             "top_n": top_n_for_log,
             "items": [
@@ -487,11 +491,13 @@ class OneilUniverseService:
                 triggered = True
         return triggered
 
-    async def _update_market_timing(self):
+    async def _update_market_timing(self, logger: Optional[logging.Logger] = None):
+        logger = logger or self._logger
         for market, code in [("KOSDAQ", self._cfg.kosdaq_etf_code), ("KOSPI", self._cfg.kospi_etf_code)]:
-            self._market_timing_cache[market] = await self._check_etf_ma_rising(code)
+            self._market_timing_cache[market] = await self._check_etf_ma_rising(code, logger=logger)
 
-    async def _check_etf_ma_rising(self, etf_code: str) -> bool:
+    async def _check_etf_ma_rising(self, etf_code: str, logger: Optional[logging.Logger] = None) -> bool:
+        logger = logger or self._logger
         period = self._cfg.market_ma_period
         days = self._cfg.market_ma_rising_days
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(etf_code, limit=period + days + 5)
@@ -523,7 +529,7 @@ class OneilUniverseService:
         if not is_rising:
             log_data["fail_detail"] = fail_detail
 
-        self._logger.debug(log_data)
+        logger.debug(log_data)
 
         return is_rising
 

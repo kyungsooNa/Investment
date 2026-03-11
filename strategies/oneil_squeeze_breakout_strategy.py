@@ -73,7 +73,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
         
         # 1. 유니버스 서비스로부터 완성된 워치리스트 획득 (캐싱됨)
-        watchlist = await self._universe.get_watchlist()
+        watchlist = await self._universe.get_watchlist(logger=self._logger)
         if not watchlist:
             self._logger.info({"event": "scan_skipped", "reason": "Watchlist is empty"})
             return signals
@@ -92,7 +92,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 continue
 
             # 마켓 타이밍 체크 (서비스 위임)
-            if not await self._universe.is_market_timing_ok(item.market):
+            if not await self._universe.is_market_timing_ok(item.market, logger=self._logger):
                 continue
 
             # 스퀴즈 조건 (이미 유니버스에서 걸러졌지만, 전일 대비 BB폭 확인 등 추가 체크 가능)

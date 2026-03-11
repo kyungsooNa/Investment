@@ -65,7 +65,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
 
-        watchlist = await self._universe.get_watchlist()
+        watchlist = await self._universe.get_watchlist(logger=self._logger)
         if not watchlist:
             self._logger.info({"event": "scan_skipped", "reason": "Watchlist is empty"})
             return signals
@@ -81,7 +81,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             if code in self._position_state:
                 continue
 
-            if not await self._universe.is_market_timing_ok(item.market):
+            if not await self._universe.is_market_timing_ok(item.market, logger=self._logger):
                 continue
 
             try:
@@ -404,7 +404,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             reason = ""
 
             # 🚨 우선순위 1: 하드 스탑 (마켓타이밍 악화 OR 고점 대비 -10%)
-            market = hold.get("market", "KOSPI")
+            market = hold.get("market", "KOSPI") # type: ignore
             hard_reason = await self._check_hard_stop(state, current, market)
             if hard_reason:
                 reason = hard_reason
@@ -449,7 +449,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
     async def _check_hard_stop(self, state: PPPositionState, current: int, market: str) -> Optional[str]:
         """하드 스탑: 마켓타이밍 악화 또는 고점 대비 -10%."""
         # 마켓 타이밍 악화
-        if not await self._universe.is_market_timing_ok(market):
+        if not await self._universe.is_market_timing_ok(market, logger=self._logger):
             return "하드스탑(마켓타이밍 악화)"
 
         # 고점 대비 폭락
