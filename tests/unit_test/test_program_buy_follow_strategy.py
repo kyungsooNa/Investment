@@ -48,7 +48,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        async def mock_full_price(code):
+        async def mock_full_price(code, *args, **kwargs):
             responses = {
                 "A": {"output": {"stck_prpr": "50000", "pgtr_ntby_qty": "10000", "acml_tr_pbmn": "5000000000"}},
                 "B": {"output": {"stck_prpr": "200000", "pgtr_ntby_qty": "5000", "acml_tr_pbmn": "25000000000"}},
@@ -173,7 +173,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        async def mock_detail(code):
+        async def mock_detail(code, *args, **kwargs):
             if code == "ERR001":
                 return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="Fail")
             if code == "NOOUT":

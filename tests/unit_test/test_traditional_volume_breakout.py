@@ -591,12 +591,12 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         strategy._watchlist_date = "20260225"
         
         # A는 실패, B는 성공(돌파)
-        async def mock_get_price(code):
+        async def mock_price(code, *args, **kwargs):
             if code == "A":
                 return ResCommonResponse(rt_cd="1", msg1="Fail")
             return ResCommonResponse(rt_cd="0", msg1="OK", data={"price": "1100", "acml_vol": "5000"})
             
-        sqs.handle_get_current_stock_price.side_effect = mock_get_price
+        sqs.handle_get_current_stock_price.side_effect = mock_price
         
         signals = await strategy.scan()
         

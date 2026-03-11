@@ -544,28 +544,34 @@ async def test_check_exits_trend_break_no_volume(mock_strategy_deps):
 async def test_scan_mixed_market_timing(scan_setup):
     """scan: 시장별 마켓 타이밍이 다를 때(KOSPI X, KOSDAQ O) 동작 검증."""
     strategy, sqs, universe, _, _ = scan_setup
-    
+
     # 워치리스트: KOSPI 종목 1개, KOSDAQ 종목 1개
     item_kospi = OSBWatchlistItem(code="005930", name="Samsung", market="KOSPI",
-                                  high_20d=70000, ma_20d=68000, ma_50d=65000,
-                                  avg_vol_20d=100000, bb_width_min_20d=1000, prev_bb_width=1100,
-                                  w52_hgpr=80000, avg_trading_value_5d=50000000000)
+                                    high_20d=70000, ma_20d=68000, ma_50d=65000,
+                                    avg_vol_20d=100000, bb_width_min_20d=1000, prev_bb_width=1100,
+                                    w52_hgpr=80000, avg_trading_value_5d=50000000000,
+                                    market_cap=400_000_000_000_000)
     item_kosdaq = OSBWatchlistItem(code="123456", name="KOSDAQ_Stock", market="KOSDAQ",
-                                   high_20d=10000, ma_20d=9000, ma_50d=8000,
-                                   avg_vol_20d=50000, bb_width_min_20d=500, prev_bb_width=600,
-                                   w52_hgpr=12000, avg_trading_value_5d=10000000000)
-    
+                                    high_20d=10000, ma_20d=9000, ma_50d=8000,
+                                    avg_vol_20d=50000, bb_width_min_20d=500, prev_bb_width=600,
+                                    w52_hgpr=12000, avg_trading_value_5d=10000000000,
+                                    market_cap=10_000_000_000_000)
+
     universe.get_watchlist.return_value = {"005930": item_kospi, "123456": item_kosdaq}
-    
+
     # 마켓 타이밍: KOSPI False, KOSDAQ True
-    async def mock_is_market_timing_ok(market):
+    async def mock_is_market_timing_ok(market, logger=None):
         return market == "KOSDAQ"
     universe.is_market_timing_ok.side_effect = mock_is_market_timing_ok
-    
+
     # 현재가 Mock (둘 다 돌파 조건 충족한다고 가정)
+    # [수정] 스마트 머니 필터 통과를 위해 프로그램 순매수 수량과 거래대금을 충분히 크게 설정
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "999999", "acml_vol": "9999999", "pgtr_ntby_qty": "1000"
+            "stck_prpr": "999999", 
+            "acml_vol": "9999999", 
+            "pgtr_ntby_qty": "100000",      # 1000 -> 100000 (약 1000억 매수, 시총 대비 1%)
+            "acml_tr_pbmn": "500000000000"  # 거래대금 5000억 (매수비중 20%)
         }}
     )
 
@@ -573,9 +579,9 @@ async def test_scan_mixed_market_timing(scan_setup):
     sqs.get_stock_conclusion.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "150.0"}]}
     )
-    
+
     signals = await strategy.scan()
-    
+
     # KOSPI 종목은 제외되고 KOSDAQ 종목만 시그널 생성되어야 함
     assert len(signals) == 1
     assert signals[0].code == "123456"

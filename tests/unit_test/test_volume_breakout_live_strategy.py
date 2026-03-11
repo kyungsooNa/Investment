@@ -48,7 +48,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         )
 
         # 현재가 응답: 삼성전자(시가 대비 +12%), SK하이닉스(시가 대비 +5%)
-        async def mock_price(code):
+        async def mock_price(code, *args, **kwargs):
             if code == "005930":
                 return ResCommonResponse(
                     rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
@@ -202,7 +202,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
     async def test_check_exits_handles_exception_in_loop(self):
         """check_exits: 루프 내에서 예외 발생 시에도 다음 보유 종목을 처리하는지 테스트."""
         strategy, sqs, _ = self._make_strategy()
-        async def mock_price(code):
+        async def mock_price(code, *args, **kwargs):
             if code == "000001":
                 raise ValueError("Test Exception")
             return ResCommonResponse(

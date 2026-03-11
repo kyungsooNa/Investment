@@ -247,7 +247,7 @@ def test_get_strategy_logger(tmp_path):
     # 1. 로거 속성 검증
     assert isinstance(logger, logging.Logger)
     assert logger.name == f"strategy.{strategy_name}"
-    assert not logger.propagate
+    assert logger.propagate
     assert len(logger.handlers) == 1  # JSON 파일 핸들러만 존재 (콘솔 핸들러 제거됨)
 
     # 2. 파일 핸들러 검증

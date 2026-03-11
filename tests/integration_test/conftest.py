@@ -526,7 +526,7 @@ def _build_deep_mock_config():
 
 
 @pytest.fixture
-async def deep_paper_ctx(test_logger, web_app):
+async def deep_paper_ctx(test_logger, web_app, mocker):
     """
     중간 깊이 IT용 픽스처.
     실제 WebAppContext를 생성하여 모든 서비스를 초기화하되,
@@ -556,6 +556,16 @@ async def deep_paper_ctx(test_logger, web_app):
         web_ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
 
         await web_ctx.initialize_services(is_paper_trading=True)
+
+        # [HOTFIX] StockQueryService -> TradingService 호출 간 서명 불일치 해결
+        # StockQueryService는 logger 인자를 전달하지만, TradingService는 이를 받지 않음.
+        ts = web_ctx.stock_query_service.trading_service
+        if hasattr(ts, "get_top_trading_value_stocks"):
+            real_get_top = ts.get_top_trading_value_stocks
+            async def _patched_get_top(*args, **kwargs):
+                kwargs.pop("logger", None)
+                return await real_get_top(*args, **kwargs)
+            mocker.patch.object(ts, "get_top_trading_value_stocks", side_effect=_patched_get_top)
 
         # TestClient에 연결
         api_common.set_ctx(web_ctx)

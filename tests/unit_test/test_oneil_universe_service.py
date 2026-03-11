@@ -801,8 +801,8 @@ async def test_update_market_timing_updates_cache(mock_deps):
         
         # 호출 확인
         expected_calls = [
-            call(service._cfg.kosdaq_etf_code),
-            call(service._cfg.kospi_etf_code)
+            call(service._cfg.kosdaq_etf_code, logger=logger),
+            call(service._cfg.kospi_etf_code, logger=logger)
         ]
         mock_check.assert_has_awaits(expected_calls, any_order=True)
 
@@ -958,7 +958,7 @@ async def test_is_market_timing_ok_caching(mock_deps):
     
     with patch.object(service, '_update_market_timing', new_callable=AsyncMock) as mock_update:
         # 1. 첫 호출 (캐시 없음)
-        async def update_side_effect():
+        async def update_side_effect(*args, **kwargs):
             service._market_timing_cache["KOSPI"] = False
         mock_update.side_effect = update_side_effect
         
