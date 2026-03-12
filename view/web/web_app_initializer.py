@@ -175,7 +175,6 @@ class WebAppContext:
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
-            _mdm=self._mdm,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
@@ -448,7 +447,7 @@ class WebAppContext:
                 if not codes:
                     continue  # 구독 중인 종목 없으면 스킵
 
-                if not self._mdm or not self._mdm.is_market_open_now():
+                if not self._mdm or not await self._mdm.is_market_open_now():
                     # [추가] 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
                     if self.trading_service and self.trading_service.is_websocket_receive_alive():
                         self.logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")

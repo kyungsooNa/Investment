@@ -67,7 +67,12 @@ class ClientWithCache:
                 return await orig_attr(*args, **kwargs)
 
             # ✅ 1. 메모리 or 파일 캐시 조회
-            if self._mdm and self._mdm.is_market_open_now():
+            # [수정] is_market_open_now는 async 메서드이므로 await 필요
+            is_open = False
+            if self._mdm:
+                is_open = await self._mdm.is_market_open_now()
+
+            if is_open:
                 self._logger.debug(f"⏳ 시장 개장 중 → 캐시 우회: {key}")
             else:
                 raw = self._cache.get_raw(key)
@@ -75,15 +80,15 @@ class ClientWithCache:
 
                 if wrapper:
                     cache_time = self._parse_timestamp(wrapper.get("timestamp"))
-                    latest_close_time = self._mdm.get_latest_market_close_time()
-                    next_open_time = self._mdm.get_next_open_time()
-                    is_valid = (cache_time and latest_close_time <= cache_time < next_open_time)
                     
                     is_valid = False
-                    if cache_time and cache_time < next_open_time:
+                    # [수정] next_open_time도 async 메서드
+                    next_open_time = await self._mdm.get_next_open_time() if self._mdm else None
+
+                    if cache_time and next_open_time and cache_time < next_open_time:
                         # [수정] MarketDateManager가 있으면 실제 거래일 기준으로 검증
-                        if self._market_date_manager:
-                            latest_trading_date_str = await self._market_date_manager.get_latest_trading_date()
+                        if self._mdm:
+                            latest_trading_date_str = await self._mdm.get_latest_trading_date()
                             if latest_trading_date_str:
                                 # 캐시된 데이터의 날짜가 최근 거래일(또는 그 이후)인지 확인
                                 cache_date_str = cache_time.strftime("%Y%m%d")
@@ -91,14 +96,6 @@ class ClientWithCache:
                                     is_valid = True
                                 else:
                                     self._logger.debug(f"📉 캐시 만료 (최근 거래일 {latest_trading_date_str} > 캐시 데이터 {cache_date_str})")
-                            else:
-                                # 날짜 확인 불가 시 기존 로직 fallback
-                                if latest_close_time <= cache_time:
-                                    is_valid = True
-                        else:
-                            # Manager 없으면 기존 로직 (주말/휴일 등 단순 시간 비교)
-                            if latest_close_time <= cache_time:
-                                is_valid = True
 
                     if is_valid:
                         if cache_type == "memory":
@@ -154,8 +151,7 @@ class ClientWithCache:
         try:
             dt = datetime.fromisoformat(timestamp_str)
             if dt.tzinfo is None:
-                return dt.replace(tzinfo=self._time_manager.market_timezone)
-            
+                return self._time_manager.market_timezone.localize(dt)
             return dt
         except Exception as e:
             if self._logger:

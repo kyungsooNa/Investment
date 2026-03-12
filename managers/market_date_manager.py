@@ -52,25 +52,44 @@ class MarketDateManager:
 
     async def _fetch_from_api(self) -> Optional[str]:
         """삼성전자(005930) 일봉 조회를 통해 가장 최근 영업일을 API에서 가져옵니다."""
-        if not hasattr(self._broker, '_client') or not hasattr(self._broker._client, '_quotations'):
+        if not self._broker:
+            self._logger.warning("MarketDateManager: Broker가 설정되지 않았습니다.")
             return None
-            
-        quotations = self._broker._client._quotations
-        # ClientWithCache 래퍼인 경우 내부 _client로 접근
-        if hasattr(quotations, '_client'):
-            quotations = quotations._client
             
         now = self._time_manager.get_current_kst_time()
         end_dt = now.strftime("%Y%m%d")
         # 7일 전부터 오늘까지 조회 (명절 연휴 등을 감안)
         start_dt = (now - timedelta(days=7)).strftime("%Y%m%d")
         
-        resp = await quotations.inquire_daily_itemchartprice("005930", start_dt, end_dt, "D")
-        
-        if resp.rt_cd == "0" and resp.data:
-            # 배열의 첫 번째 요소가 가장 최신 날짜
-            return resp.data[0].get("stck_bsop_date")
-        return None
+        try:
+            # 1. 내부 클래스에 직접 접근하지 않고, 상위 래퍼(BrokerAPIWrapper)의 메서드를 활용
+            # 2. 파라미터를 키워드 인자(kwargs)로 명시하여 안전하게 전달
+            resp = await self._broker.inquire_daily_itemchartprice(
+                stock_code="005930", 
+                start_date=start_dt, 
+                end_date=end_dt, 
+                fid_period_div_code="D"
+            )
+            
+            # API 호출이 실패한 경우 원인 로깅
+            if resp.rt_cd != "0":
+                self._logger.error(f"일봉 조회 API 실패: {resp.msg1} (코드: {resp.rt_cd})")
+                return None
+                
+            if resp.data:
+                first_item = resp.data[0]
+                # 3. 응답 데이터가 딕셔너리인지, 객체(Dataclass)인지 판별하여 안전하게 추출
+                if isinstance(first_item, dict):
+                    return first_item.get("stck_bsop_date")
+                else:
+                    # 객체 형태인 경우 getattr 사용
+                    return getattr(first_item, "stck_bsop_date", None)
+                    
+            return None
+            
+        except Exception as e:
+            self._logger.error(f"최근 영업일 일봉 조회 중 예외 발생: {e}", exc_info=True)
+            return None
 
     # ==============================================================================
     # 2. 휴장일 판별 및 미래 개장일 계산 (chk-holiday API 활용 신규 로직)

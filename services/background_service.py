@@ -228,7 +228,7 @@ class BackgroundService:
     async def refresh_investor_ranking(self) -> None:
         """전체 종목을 순회하여 외국인/기관/개인 순매수/순매도 랭킹을 갱신한다."""
         # [성능 보호] 장 중에는 실행하지 않음
-        if self._time_manager and await self.mdm.is_market_open_now():
+        if self.mdm and await self.mdm.is_market_open_now():
             self._logger.info("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
             return
 
@@ -244,8 +244,8 @@ class BackgroundService:
         
         # [변경] 오늘 날짜 대신 실제 장이 열린 최근 날짜 조회
         target_date = None
-        if self._trading_service:
-            target_date = await self._trading_service.get_latest_trading_date()
+        if self.mdm:
+            target_date = await self.mdm.get_latest_trading_date()
 
         if not target_date:
             self._logger.error("최근 거래일을 확인할 수 없어 투자자 랭킹 갱신을 중단합니다.")
