@@ -23,6 +23,7 @@ class ClientWithCache:
         self._client = client
         self._logger = logger
         self._time_manager = time_manager
+        self._mdm = market_date_manager  # [추가]
         self._mode_fn = mode_fn  # 동적으로 모드 가져오기
 
         # ✅ 설정에서 읽기
@@ -38,7 +39,6 @@ class ClientWithCache:
         self._cache = cache_manager if cache_manager else CacheManager(config)
         self._cache.set_logger(self._logger)
         self.cached_methods = set(config["cache"]["enabled_methods"])
-        self._market_date_manager = market_date_manager  # [추가]
 
     def __getattr__(self, name: str):
         # ✅ 무한 루프 방지
@@ -67,7 +67,7 @@ class ClientWithCache:
                 return await orig_attr(*args, **kwargs)
 
             # ✅ 1. 메모리 or 파일 캐시 조회
-            if self._time_manager.is_market_open():
+            if self._mdm and not self._mdm.is_market_open_now():
                 self._logger.debug(f"⏳ 시장 개장 중 → 캐시 우회: {key}")
             else:
                 raw = self._cache.get_raw(key)

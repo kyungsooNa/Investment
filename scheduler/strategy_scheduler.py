@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
+from managers.market_date_manager import MarketDateManager
 from managers.virtual_trade_manager import VirtualTradeManager
 from managers.notification_manager import NotificationManager
 from services.order_execution_service import OrderExecutionService
@@ -67,6 +68,7 @@ class StrategyScheduler:
         order_execution_service: OrderExecutionService,
         stock_query_service: StockQueryService,
         time_manager: TimeManager,
+        market_date_manager: MarketDateManager,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
         notification_manager: Optional[NotificationManager] = None,
@@ -78,6 +80,7 @@ class StrategyScheduler:
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
         self._nm = notification_manager
+        self._mdm = market_date_manager
 
         # 데이터 디렉토리 생성
         os.makedirs(os.path.dirname(SIGNAL_HISTORY_FILE), exist_ok=True)
@@ -145,15 +148,21 @@ class StrategyScheduler:
     # ── 메인 루프 ──
 
     async def _loop(self):
+        self._logger.info("스케줄러 메인 루프 시작.")
         while self._running:
             try:
-                now = self._tm.get_current_kst_time()
-
-                if not self._tm.is_market_open(now):
-                    await asyncio.sleep(self.MARKET_CLOSED_SLEEP_SEC)
+                # 1. API 기반의 완벽한 개장/공휴일/시간대 검증
+                if not await self.market_date_manager.is_market_open_now():
+                    self.logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
+                    
+                    # 2. 다음 개장 시간(내일, 혹은 명절 연휴 이후)까지 한 번에 대기(Sleep)!
+                    await self.market_date_manager.wait_until_next_open()
+                    
+                    # 깨어나면 다시 루프의 처음으로 돌아가서 장이 열렸는지 최종 확인
                     continue
 
                 # 장 마감 전 강제 청산 체크
+                now = self._tm.get_current_kst_time()
                 close_time = self._tm.get_market_close_time()
                 minutes_to_close = (close_time - now).total_seconds() / 60
 

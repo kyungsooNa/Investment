@@ -57,7 +57,7 @@ class WebAppContext:
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.background_service: BackgroundService = None
-        self.market_date_manager: MarketDateManager = None
+        self._mdm: MarketDateManager = None
         self.notification_manager: NotificationManager = None
         self.initialized = False
         self.pm: PerformanceManager = None
@@ -113,7 +113,8 @@ class WebAppContext:
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
         # [신규] MarketDateManager 초기화
-        self.market_date_manager = MarketDateManager(self.time_manager, self.logger)
+        self._mdm = MarketDateManager(self.time_manager, self.logger)
+        
 
     async def initialize_services(self, is_paper_trading: bool = True):
         """서비스 레이어 초기화. TradingApp._complete_api_initialization() 참조."""
@@ -128,12 +129,16 @@ class WebAppContext:
 
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, time_manager=self.time_manager,
-            market_date_manager=self.market_date_manager
+            _mdm=self._mdm
         )
 
         # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
-        self.market_date_manager.set_broker(self.broker)
+        self._mdm.set_broker(self.broker)
         
+        # [신규] 휴장일 정보 동기화 (TimeManager에 API 데이터 주입)
+        # 이를 통해 get_next_market_open_time 등이 임시공휴일을 정확히 인지하게 됨
+        await self._mdm._sync_calendar_if_needed()
+
         # 캐시 매니저 생성
         # Pydantic 모델(AppConfig)을 dict로 변환하여 전달
         config_dict = self.full_config
@@ -153,7 +158,7 @@ class WebAppContext:
 
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
-            market_date_manager=self.market_date_manager,
+            _mdm=self._mdm,
             performance_manager=self.pm
         )
 
@@ -169,6 +174,7 @@ class WebAppContext:
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
+            _mdm=self._mdm,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
@@ -184,6 +190,7 @@ class WebAppContext:
             self.trading_service, self.logger, self.time_manager,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
+            _mdm=self._mdm,
         )
         
         # [신규] 오닐 유니버스 서비스 초기화
@@ -207,10 +214,10 @@ class WebAppContext:
             return "미설정"
         return "모의투자" if self.env.is_paper_trading else "실전투자"
 
-    def is_market_open(self) -> bool:
-        if self.time_manager is None:
+    def is_market_open_now(self) -> bool:
+        if self._mdm is None:
             return False
-        return self.time_manager.is_market_open()
+        return self._mdm.is_market_open_now() if self._mdm else False
 
     def get_current_time_str(self) -> str:
         if self.time_manager is None:
@@ -439,7 +446,7 @@ class WebAppContext:
                 if not codes:
                     continue  # 구독 중인 종목 없으면 스킵
 
-                if not self.time_manager or not self.time_manager.is_market_open():
+                if not self._mdm or not self._mdm.is_market_open_now():
                     # [추가] 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
                     if self.trading_service and self.trading_service.is_websocket_receive_alive():
                         self.logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")

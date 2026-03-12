@@ -265,6 +265,19 @@ class ETFInfoParams:
 
 
 @dataclass(frozen=True)
+class CheckHolidayParams:
+    BASS_DT: str  # 기준일자 (YYYYMMDD)
+    CTX_AREA_NK: str = ""
+    CTX_AREA_FK: str = ""
+
+    @classmethod
+    def of(cls, date: str):
+        return cls(BASS_DT=date)
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+@dataclass(frozen=True)
 class FluctuationParams:
     fid_rsfl_rate2: str  # 등락 비율2 ( ~비율 ) 공백이면 전체
     fid_cond_mrkt_div_code: str  # 시장구분 (주식 J)
@@ -697,6 +710,10 @@ class Params:
     @staticmethod
     def financial_ratio(stock_code: str) -> Dict[str, str]:
         return FinancialRatioParams.of(stock_code).to_dict()
+
+    @staticmethod
+    def check_holiday(date: str) -> Dict[str, str]:
+        return CheckHolidayParams.of(date).to_dict()
 
     @staticmethod
     def etf_info(etf_code: str, market: MarketCode = "J") -> Dict[str, str]:

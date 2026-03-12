@@ -1606,3 +1606,18 @@ async def test_get_investor_trade_by_stock_daily_invalid_data(mock_quotations):
     result = await api.get_investor_trade_by_stock_daily("005930", "20260305")
 
     assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+
+
+@pytest.mark.asyncio
+async def test_check_holiday_success(mock_quotations):
+    """check_holiday 성공 테스트"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"output": [{"bass_dt": "20250101", "bzdy_yn": "N"}]}
+    ))
+    
+    result = await api.check_holiday("20250101")
+    
+    assert result.rt_cd == "0"
+    assert result.data["output"][0]["bzdy_yn"] == "N"
+    api.call_api.assert_called_once()

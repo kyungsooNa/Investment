@@ -43,25 +43,25 @@ def test_get_current_kst_time_returns_timezone_aware_datetime():
     assert str(current_time.tzinfo) == "Asia/Seoul"
 
 @patch("core.time_manager.TimeManager.get_current_kst_time")
-def test_is_market_open_true(mock_get_time):
+def test_is_market_operating_hours_true(mock_get_time):
     kst = pytz.timezone("Asia/Seoul")
-    mock_get_time.return_value = kst.localize(datetime(2024, 6, 21, 10, 0, 0))
+    mock_get_time.return_value = kst.localize(datetime(2024, 6, 21, 10, 0, 0)) # 평일 장중
     manager = TimeManager()
-    assert manager.is_market_open() is True
+    assert manager.is_market_operating_hours() is True
 
 @patch("core.time_manager.TimeManager.get_current_kst_time")
-def test_is_market_open_false_weekend(mock_get_time):
+def test_is_market_operating_hours_false_weekend(mock_get_time):
     kst = pytz.timezone("Asia/Seoul")
     mock_get_time.return_value = kst.localize(datetime(2024, 6, 22, 10, 0, 0))  # 토요일
     manager = TimeManager()
-    assert manager.is_market_open() is False
+    assert manager.is_market_operating_hours() is False
 
 @patch("core.time_manager.TimeManager.get_current_kst_time")
-def test_is_market_open_false_after_hours(mock_get_time):
+def test_is_market_operating_false_after_hours(mock_get_time):
     kst = pytz.timezone("Asia/Seoul")
     mock_get_time.return_value = kst.localize(datetime(2024, 6, 21, 16, 0, 0))  # 평일 16시
     manager = TimeManager()
-    assert manager.is_market_open() is False
+    assert manager.is_market_operating_hours() is False
 
 @patch("core.time_manager.logging.getLogger")
 def test_init_default_values(mock_logger):
@@ -153,31 +153,13 @@ def test_get_current_kst_time(time_manager):
         assert result.tzinfo == time_manager.market_timezone
 
 
-def test_is_market_open_on_weekend(time_manager, mock_logger):
-    """
-    is_market_open 메서드 커버: 주말인 경우 (라인 41-43)
-    """
-    # 토요일 (weekday()는 월요일이 0, 일요일이 6)
-    saturday = time_manager.market_timezone.localize(dt.datetime(2025, 6, 28, 10, 0, 0))
-    assert not time_manager.is_market_open(now=saturday)
-    mock_logger.info.assert_called_once_with(
-        f"시장 상태 - 주말이므로 시장이 닫혀 있습니다. (현재: {saturday.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")
-    mock_logger.reset_mock()
-
-    # 일요일
-    sunday = time_manager.market_timezone.localize(dt.datetime(2025, 6, 29, 10, 0, 0))
-    assert not time_manager.is_market_open(now=sunday)
-    mock_logger.info.assert_called_once_with(
-        f"시장 상태 - 주말이므로 시장이 닫혀 있습니다. (현재: {sunday.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")
-
-
 def test_is_market_open_during_hours(time_manager, mock_logger):
     """
     is_market_open 메서드 커버: 평일, 개장 시간 내 (라인 59-61)
     """
     # 평일 개장 시간 (09:00 ~ 15:30) 내의 시간
     weekday_in_hours = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 10, 0, 0))  # 금요일 10시
-    assert time_manager.is_market_open(now=weekday_in_hours)
+    assert time_manager.is_market_operating_hours(now=weekday_in_hours)
     mock_logger.info.assert_called_once_with(
         f"시장 상태 - 시장이 열려 있습니다. (현재: {weekday_in_hours.strftime('%Y-%m-%d %H:%M:%S %Z%z')})")
 
@@ -188,7 +170,7 @@ def test_is_market_open_before_open(time_manager, mock_logger):
     """
     # 평일 개장 전 시간
     weekday_before_open = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 8, 30, 0))  # 금요일 8시 30분
-    assert not time_manager.is_market_open(now=weekday_before_open)
+    assert not time_manager.is_market_operating_hours(now=weekday_before_open)
     mock_logger.info.assert_called_once_with(
         f"시장 상태 - 시장이 닫혀 있습니다. (현재: {weekday_before_open.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, 개장: {time_manager.market_open_time_str}, 폐장: {time_manager.market_close_time_str})"
     )
@@ -200,7 +182,7 @@ def test_is_market_open_after_close(time_manager, mock_logger):
     """
     # 평일 폐장 후 시간
     weekday_after_close = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 16, 0, 0))  # 금요일 16시
-    assert not time_manager.is_market_open(now=weekday_after_close)
+    assert not time_manager.is_market_operating_hours(now=weekday_after_close)
     mock_logger.info.assert_called_once_with(
         f"시장 상태 - 시장이 닫혀 있습니다. (현재: {weekday_after_close.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, 개장: {time_manager.market_open_time_str}, 폐장: {time_manager.market_close_time_str})"
     )
@@ -351,17 +333,6 @@ async def test_async_sleep_negative_seconds(time_manager, mock_logger):
         mock_logger.info.assert_not_called()
 
 
-def test_is_weekend_or_holiday_with_weekday(time_manager):
-    weekday = datetime(2025, 8, 5)  # 예: 화요일
-    assert not time_manager.is_weekend_or_holiday(weekday)
-
-
-def test_is_weekend_or_holiday_with_weekend(time_manager):
-    saturday = datetime(2025, 8, 2)  # 토요일
-    sunday = datetime(2025, 8, 3)    # 일요일
-    assert time_manager.is_weekend_or_holiday(saturday)
-    assert time_manager.is_weekend_or_holiday(sunday)
-
 def test_get_market_close_time(time_manager):
     now = time_manager.get_current_kst_time()
     close_time = time_manager.get_market_close_time()
@@ -409,16 +380,6 @@ def test_get_latest_market_close_time_weekday(time_manager):
     assert latest_close.hour == 15
     assert latest_close.minute == 30
     assert latest_close < fake_now
-
-# --- is_weekend_or_holiday ---
-@pytest.mark.parametrize("d, expected", [
-    (dt.datetime(2025, 8, 1), False),  # Fri
-    (dt.datetime(2025, 8, 2), True),   # Sat
-    (dt.datetime(2025, 8, 3), True),   # Sun
-    (dt.datetime(2025, 8, 4), False),  # Mon
-])
-def test_is_weekend_or_holiday_cases(time_manager, d, expected):
-    assert time_manager.is_weekend_or_holiday(d) is expected
 
 
 # --- to_yyyymmdd ---
@@ -535,54 +496,3 @@ def test_get_sleep_seconds_until_market_close_already_closed(time_manager):
         seconds = time_manager.get_sleep_seconds_until_market_close()
         assert seconds is None
 
-
-def test_get_sleep_seconds_until_market_open_long_wait(time_manager, mock_logger):
-    """장 시작까지 시간이 많이 남았을 때 계산 검증."""
-    # 08:00 (개장 09:00) -> 60분 남음. Buffer 5분 제외 시 55분(3300초) 대기.
-    now = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 8, 0, 0))
-    next_open = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 9, 0, 0))
-
-    with patch.object(time_manager, 'get_current_kst_time', return_value=now), \
-         patch.object(time_manager, 'get_next_market_open_time', return_value=next_open):
-        seconds = time_manager.get_sleep_seconds_until_market_open(buffer_minutes=5)
-        assert seconds == 3300
-        mock_logger.info.assert_called()
-
-
-def test_get_sleep_seconds_until_market_open_short_wait(time_manager):
-    """장 시작 임박 시 check_interval 반환 검증."""
-    # 08:58 (개장 09:00) -> 2분 남음.
-    now = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 8, 58, 0))
-    next_open = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 9, 0, 0))
-
-    with patch.object(time_manager, 'get_current_kst_time', return_value=now), \
-         patch.object(time_manager, 'get_next_market_open_time', return_value=next_open):
-        seconds = time_manager.get_sleep_seconds_until_market_open(buffer_minutes=5, check_interval=10)
-        assert seconds == 10.0
-
-
-def test_get_sleep_seconds_until_market_open_weekend(time_manager, mock_logger):
-    """
-    주말(토요일)에 다음 장 시작(월요일)까지 대기 시간 계산 테스트.
-    get_next_market_open_time의 버그 수정 사항(토요일->월요일)이
-    sleep 시간 계산에 올바르게 반영되는지 통합 검증.
-    """
-    # 토요일 10:00 (이미 금요일 장은 끝났고, 다음 장은 월요일 09:00)
-    saturday_morning = time_manager.market_timezone.localize(dt.datetime(2025, 6, 28, 10, 0, 0))
-    # 월요일 09:00
-    monday_open = time_manager.market_timezone.localize(dt.datetime(2025, 6, 30, 9, 0, 0))
-
-    # get_current_kst_time만 Mocking하여 get_next_market_open_time 내부 로직이 실제로 동작하게 함
-    # (단, 여기서는 get_next_market_open_time의 동작을 신뢰하고 반환값만 Mocking하여 계산 식 검증에 집중할 수도 있음)
-    with patch.object(time_manager, 'get_current_kst_time', return_value=saturday_morning), \
-         patch.object(time_manager, 'get_next_market_open_time', return_value=monday_open):
-
-        # 예상: 월요일 09:00 - 토요일 10:00 = 47시간(169200초) - Buffer 10분(600초)
-        expected_seconds = 169200.0 - 600.0
-        seconds = time_manager.get_sleep_seconds_until_market_open(buffer_minutes=10)
-
-        assert seconds == expected_seconds
-        # 로깅 메시지 확인
-        mock_logger.info.assert_called()
-        args, _ = mock_logger.info.call_args
-        assert "다음 장 시작까지" in args[0]

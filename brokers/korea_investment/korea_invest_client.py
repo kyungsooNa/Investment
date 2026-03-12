@@ -1,4 +1,6 @@
 # brokers/korea_investment/korea_invest_client.py
+from typing import Optional
+
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
@@ -14,6 +16,7 @@ import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from typing import Any
 from common.types import ResCommonResponse
+from managers.market_date_manager import MarketDateManager
 
 
 class KoreaInvestApiClient:
@@ -22,10 +25,12 @@ class KoreaInvestApiClient:
     각 도메인별 API 클래스를 통해 접근합니다.
     """
 
-    def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager=None):
+    def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager=None,
+                 market_date_manager: Optional[MarketDateManager] = None):
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
         self.time_manager = time_manager
+        self._mdm = market_date_manager  # MarketDateManager는 나중에 set_market_date_manager()로 주입받음
 
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         shared_client = httpx.AsyncClient(verify=ssl_context)
@@ -67,7 +72,7 @@ class KoreaInvestApiClient:
             url_provider=url_provider,
             trid_provider=trid_provider,
         )
-        self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger)
+        self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger, time_manager=self.time_manager, market_date_manager=self._mdm)
 
     # --- Account API delegation ---
     async def get_account_balance(self) -> ResCommonResponse:
@@ -209,6 +214,10 @@ class KoreaInvestApiClient:
     async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
         """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
         return await self._quotations.get_financial_ratio(stock_code)
+
+    async def check_holiday(self, date: str) -> ResCommonResponse:
+        """국내 휴장일 조회"""
+        return await self._quotations.check_holiday(date)
 
     # --- WebSocket API delegation ---
     # 웹소켓 API는 연결/구독 성공 여부만 반환할 수 있으므로, ResCommonResponse로 래핑 여부는 구현에 따라 달라집니다.

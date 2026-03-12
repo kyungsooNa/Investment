@@ -15,6 +15,7 @@ from brokers.broker_api_wrapper import BrokerAPIWrapper
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ErrorCode
 from core.time_manager import TimeManager
+from managers.market_date_manager import MarketDateManager
 from market_data.stock_code_mapper import StockCodeMapper
 from core.performance_manager import PerformanceManager
 from managers.telegram_notifier import TelegramReporter
@@ -55,6 +56,7 @@ class BackgroundService:
         performance_manager: Optional[PerformanceManager] = None,
         notification_manager: Optional[NotificationManager] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
+        market_date_manager: Optional[MarketDateManager] = None,
     ):
         self._broker = broker_api_wrapper
         self._mapper = stock_code_mapper
@@ -65,6 +67,7 @@ class BackgroundService:
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
         self._nm = notification_manager
         self._telegram_reporter = telegram_reporter
+        self.mdm = market_date_manager
 
         # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
@@ -101,13 +104,23 @@ class BackgroundService:
     async def start_after_market_scheduler(self) -> None:
         """장마감 후 자동으로 랭킹 갱신을 스케줄링하는 루프."""
         self._logger.info("장마감 후 자동 갱신 스케줄러 시작")
+        
         while True:
             try:
-                sleep_sec = 300  # 기본 5분
+                # 1. 시계(TimeManager)를 보고 현재 장 중(09:00~15:30)인지 확인
+                if self.mdm and await self.mdm.is_market_open_now():
+                    wait_sec = self._time_manager.get_sleep_seconds_until_market_close()
+                    if wait_sec and wait_sec > 0:
+                        self._logger.info(f"장 마감까지 {wait_sec:.0f}초 대기합니다.")
+                        await asyncio.sleep(wait_sec + 60) # 마감 1분 뒤로 한 번에 대기
+                    continue 
 
-                if self._time_manager and not self._time_manager.is_market_open():
-                    # 장 마감 상태 — 오늘 갱신한 적 없으면 갱신
-                    today = datetime.now().strftime("%Y%m%d")
+                # 2. 장 마감 이후 상태 (15:30 이후)
+                today = self._time_manager.get_current_kst_time().strftime("%Y%m%d")
+                
+                # 달력(MarketDateManager)을 통해 "오늘"이 영업일인지 확인
+                if self.mdm and await self.mdm.is_business_day(today):
+                    
                     needs_investor = (
                         not self._investor_ranking_updated_at
                         or self._investor_ranking_updated_at.strftime("%Y%m%d") != today
@@ -122,13 +135,15 @@ class BackgroundService:
                     if needs_investor:
                         await self.refresh_investor_ranking()
 
-                elif self._time_manager:
-                    # 장 중 상태 — 마감까지 남은 시간 계산하여 효율적 대기
-                    wait_sec = self._time_manager.get_sleep_seconds_until_market_close()
-                    if wait_sec is not None:
-                        sleep_sec = wait_sec
-
-                await asyncio.sleep(sleep_sec)
+                # ★ 핵심 최적화: 오늘의 갱신이 끝났거나 / 오늘은 휴장일인 경우
+                # 5분마다 깰 필요 없이, 다음 날까지 12시간 딥슬립(Deep Sleep) 시킵니다.
+                self._logger.info("오늘 장 마감 작업이 완료되었거나 휴장일입니다. 내일까지 대기합니다. 💤")
+                
+                # 15시 30분에 작업이 끝났다면, 12시간 뒤인 새벽 3시 30분에 깨어납니다.
+                # 깨어나면 루프를 다시 돌면서 "장 마감까지 남은 시간(오후 3시 30분까지 약 12시간)"을 
+                # 다시 계산해서 한 번 더 깊게 잠들게 됩니다.
+                await asyncio.sleep(12 * 3600) 
+                
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -213,7 +228,7 @@ class BackgroundService:
     async def refresh_investor_ranking(self) -> None:
         """전체 종목을 순회하여 외국인/기관/개인 순매수/순매도 랭킹을 갱신한다."""
         # [성능 보호] 장 중에는 실행하지 않음
-        if self._time_manager and self._time_manager.is_market_open():
+        if self._time_manager and await self.mdm.is_market_open_now():
             self._logger.info("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
             return
 
@@ -449,14 +464,14 @@ class BackgroundService:
             item["data_rank"] = str(i)
         return top
 
-    def get_trading_value_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_trading_value_ranking(self, limit: int = 30) -> ResCommonResponse:
         """투자자 데이터 기반 거래대금 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._trading_value_cache, "거래대금", limit)
+        return await self._get_ranking_from_cache(self._trading_value_cache, "거래대금", limit)
 
-    def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
+    async def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
         """캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""
         # [성능 보호] 장 중에는 온디맨드 갱신 트리거 안 함
-        if self._time_manager and self._time_manager.is_market_open():
+        if self.mdm and await self.mdm.is_market_open_now():
             return None
 
         # 캐시 비어있고 갱신 중이 아니면 온디맨드 트리거
@@ -471,49 +486,49 @@ class BackgroundService:
 
     # ── 외국인 ──
 
-    def get_foreign_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_foreign_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
         """외국인 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._foreign_net_buy_cache, "외국인 순매수", limit)
+        return await self._get_ranking_from_cache(self._foreign_net_buy_cache, "외국인 순매수", limit)
 
-    def get_foreign_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_foreign_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
         """외국인 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._foreign_net_sell_cache, "외국인 순매도", limit)
+        return await self._get_ranking_from_cache(self._foreign_net_sell_cache, "외국인 순매도", limit)
 
     # ── 기관 ──
 
-    def get_inst_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_inst_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
         """기관 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._inst_net_buy_cache, "기관 순매수", limit)
+        return await self._get_ranking_from_cache(self._inst_net_buy_cache, "기관 순매수", limit)
 
-    def get_inst_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_inst_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
         """기관 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._inst_net_sell_cache, "기관 순매도", limit)
+        return await self._get_ranking_from_cache(self._inst_net_sell_cache, "기관 순매도", limit)
 
     # ── 개인 ──
 
-    def get_prsn_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_prsn_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
         """개인 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._prsn_net_buy_cache, "개인 순매수", limit)
+        return await self._get_ranking_from_cache(self._prsn_net_buy_cache, "개인 순매수", limit)
 
-    def get_prsn_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_prsn_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
         """개인 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._prsn_net_sell_cache, "개인 순매도", limit)
+        return await self._get_ranking_from_cache(self._prsn_net_sell_cache, "개인 순매도", limit)
 
     # ── 프로그램 ──
 
-    def get_program_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_program_net_buy_ranking(self, limit: int = 30) -> ResCommonResponse:
         """프로그램 순매수 상위 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._program_net_buy_cache, "프로그램 순매수", limit)
+        return await self._get_ranking_from_cache(self._program_net_buy_cache, "프로그램 순매수", limit)
 
-    def get_program_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
+    async def get_program_net_sell_ranking(self, limit: int = 30) -> ResCommonResponse:
         """프로그램 순매도 상위 랭킹 반환 (캐시에서 즉시)."""
-        return self._get_ranking_from_cache(self._program_net_sell_cache, "프로그램 순매도", limit)
+        return await self._get_ranking_from_cache(self._program_net_sell_cache, "프로그램 순매도", limit)
 
     # ── 내부 헬퍼 ─────────────────────────────────────────────
 
-    def _get_ranking_from_cache(self, cache: List[Dict], label: str, limit: int) -> ResCommonResponse:
+    async def _get_ranking_from_cache(self, cache: List[Dict], label: str, limit: int) -> ResCommonResponse:
         """캐시에서 랭킹 데이터 반환. 캐시 없으면 트리거 + 빈 응답."""
-        blocked = self._check_and_trigger_refresh()
+        blocked = await self._check_and_trigger_refresh()
         if blocked:
             return blocked
         if not cache:

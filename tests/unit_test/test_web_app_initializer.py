@@ -184,7 +184,7 @@ def test_time_manager_methods(mock_deps):
     
     # 1. time_manager가 없을 때
     ctx.time_manager = None
-    assert ctx.is_market_open() is False
+    assert ctx.is_market_open_now() is False
     assert ctx.get_current_time_str() == ""
     
     # 2. time_manager가 있을 때
@@ -196,7 +196,7 @@ def test_time_manager_methods(mock_deps):
     mock_dt.strftime.return_value = "2025-01-01 12:00:00"
     ctx.time_manager.get_current_kst_time.return_value = mock_dt
     
-    assert ctx.is_market_open() is True
+    assert ctx.is_market_open_now() is True
     assert ctx.get_current_time_str() == "2025-01-01 12:00:00"
 
 @pytest.mark.asyncio

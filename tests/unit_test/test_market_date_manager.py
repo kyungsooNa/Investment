@@ -218,3 +218,48 @@ async def test_get_latest_trading_date_outer_exception(manager, mock_deps):
         assert result is None
         logger.error.assert_called()
         assert "Failed to fetch latest trading date" in logger.error.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_is_business_day_cache_logic(manager, mock_deps, mock_broker):
+    """is_business_day 호출 시 API 1회 호출 후 캐싱되는지 테스트"""
+    tm, logger = mock_deps
+    broker, raw_quotations = mock_broker
+    manager.set_broker(broker)
+    
+    # 한투 '국내휴장일조회' API 응답 Mocking
+    # 1월 1일: 휴장일(N), 1월 2일: 개장일(Y)
+    broker.check_holiday = AsyncMock(return_value={
+        "output": [
+            {"bass_dt": "20250101", "bzdy_yn": "N", "tr_day_yn": "N"},
+            {"bass_dt": "20250102", "bzdy_yn": "Y", "tr_day_yn": "Y"}
+        ]
+    })
+    
+    # 1. 20250102 조회 (처음이므로 API 호출됨)
+    is_open = await manager.is_business_day("20250102")
+    assert is_open is True
+    broker.check_holiday.assert_awaited_once() # API 1회 호출 확인
+    
+    # 2. 20250101 조회 (같은 월이므로 API 호출 없이 캐시에서 가져옴)
+    is_open_holiday = await manager.is_business_day("20250101")
+    assert is_open_holiday is False
+    broker.check_holiday.assert_awaited_once() # 호출 횟수 여전히 1회 확인
+
+@pytest.mark.asyncio
+async def test_is_market_open_now(manager, mock_deps):
+    """is_market_open_now 통합 검증 테스트"""
+    tm, logger = mock_deps
+    
+    # 1. 영업일이면서 시간대도 맞을 때
+    manager.is_business_day = AsyncMock(return_value=True)
+    tm.is_market_operating_hours = MagicMock(return_value=True)
+    assert await manager.is_market_open_now() is True
+    
+    # 2. 영업일이지만 장이 끝났을 때
+    tm.is_market_operating_hours = MagicMock(return_value=False)
+    assert await manager.is_market_open_now() is False
+    
+    # 3. 시간은 평일 10시지만 공휴일(영업일 아님)일 때
+    manager.is_business_day = AsyncMock(return_value=False)
+    tm.is_market_operating_hours = MagicMock(return_value=True) # 시계는 장중이라고 판단
+    assert await manager.is_market_open_now() is False # 달력이 컷트!

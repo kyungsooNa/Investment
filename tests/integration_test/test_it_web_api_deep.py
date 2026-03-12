@@ -582,7 +582,7 @@ class TestDeepRanking:
 class TestDeepStatus:
     """
     GET /api/status
-    실제 WebAppContext.is_market_open(), get_env_type() 등이 호출된다.
+    실제 WebAppContext.is_market_open_now(), get_env_type() 등이 호출된다.
     """
 
     @pytest.mark.asyncio
@@ -595,8 +595,8 @@ class TestDeepStatus:
         body = resp.json()
         assert body["initialized"] is True
         assert body["env_type"] == "모의투자"
-        # market_open은 실제 TimeManager 결과 (주말/평일에 따라 다를 수 있음)
-        assert isinstance(body["market_open"], bool)
+        # is_market_open_now는 실제 MarketDateManager 결과 (주말/평일에 따라 다를 수 있음)
+        assert isinstance(body["is_market_open_now"], bool)
         assert body["current_time"] != ""
 
 

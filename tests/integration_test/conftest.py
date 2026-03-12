@@ -543,7 +543,13 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
 
     with patch("view.web.web_app_initializer.load_configs", return_value=mock_config), \
          patch("view.web.web_app_initializer.VirtualTradeManager") as MockVTM, \
-         patch("view.web.web_app_initializer.StockCodeMapper"):
+         patch("view.web.web_app_initializer.StockCodeMapper"), \
+         patch("view.web.web_app_initializer.MarketDateManager") as MockMDM:
+
+        # MarketDateManager Mock 설정 (_sync_calendar_if_needed 누락 방지)
+        mock_mdm_instance = MockMDM.return_value
+        mock_mdm_instance._sync_calendar_if_needed = AsyncMock()
+        mock_mdm_instance.set_broker = MagicMock()
 
         web_ctx = WebAppContext(SimpleContext())
         web_ctx.logger = test_logger
