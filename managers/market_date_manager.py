@@ -3,6 +3,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+from common.types import ResCommonResponse
+
 class MarketDateManager:
     """
     주식 시장의 개장일, 휴장일, 과거 최신 영업일 및 다음 개장 시간을 통합 관리하는 달력(Calendar) 매니저입니다.
@@ -90,10 +92,10 @@ class MarketDateManager:
 
         # 한투 '국내휴장일조회' API 호출 
         target_date_str = target_date.strftime("%Y%m%d")
-        holiday_data = await self._broker.check_holiday(target_date_str)
+        holiday_data: ResCommonResponse = await self._broker.check_holiday(target_date_str)
         
-        if holiday_data and "output" in holiday_data:
-            for day_info in holiday_data["output"]:
+        if holiday_data and holiday_data.rt_cd == "0" and holiday_data.data and "output" in holiday_data.data:
+            for day_info in holiday_data.data["output"]:
                 date_str = day_info["bass_dt"]
                 # 영업일이면서 거래일이어야 개장일
                 is_open = (day_info["bzdy_yn"] == "Y" and day_info["tr_day_yn"] == "Y")
@@ -165,3 +167,38 @@ class MarketDateManager:
         if seconds_left > 0:
             self._logger.info(f"다음 개장시간({next_open.strftime('%Y-%m-%d %H:%M:%S')})까지 {seconds_left:.1f}초 대기합니다. 💤")
             await asyncio.sleep(seconds_left)
+
+    async def get_latest_market_close_time(self) -> Optional[datetime]:
+        """
+        가장 최근에 장이 마감된 정확한 '시간(datetime)'을 반환합니다.
+        (예: 월요일 오전 10시라면 -> 지난주 금요일 15:30 반환)
+        """
+        now = self._time_manager.get_current_kst_time()
+        today_str = now.strftime("%Y%m%d")
+
+        # 1. 오늘이 영업일이고, 현재 시간이 이미 오늘 장 마감(15:30) 이후라면? -> 오늘 15:30
+        if await self.is_business_day(today_str) and now >= self._time_manager.get_market_close_time():
+            latest_close_str = today_str
+        else:
+            # 2. 휴장일이거나, 아직 오늘 장이 안 끝났다면(장전/장중) -> 과거로 거슬러 올라감
+            check_dt = now - timedelta(days=1)
+            
+            # 최대 15일 전까지 거슬러 올라가며 가장 최근 영업일을 찾음
+            for _ in range(15):
+                check_str = check_dt.strftime("%Y%m%d")
+                if await self.is_business_day(check_str):
+                    latest_close_str = check_str
+                    break
+                check_dt -= timedelta(days=1)
+            else:
+                self._logger.error("최근 15일 내에 영업일이 없습니다. (시스템 오류 의심)")
+                return None
+
+        # 찾아낸 영업일 문자열(latest_close_str)과 TimeManager의 마감 시간(15:30)을 결합
+        close_time_str = self._time_manager.market_close_time_str
+        close_hour, close_minute = map(int, close_time_str.split(":"))
+        close_date = datetime.strptime(latest_close_str, "%Y%m%d")
+        
+        return self._time_manager.market_timezone.localize(
+            datetime(close_date.year, close_date.month, close_date.day, close_hour, close_minute)
+        )

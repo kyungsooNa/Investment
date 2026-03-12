@@ -180,7 +180,11 @@ class BrokerAPIWrapper:
     async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
         """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
         return await self._client.get_financial_ratio(stock_code)
-
+    
+    async def check_holiday(self, date: str) -> ResCommonResponse:
+        """국내 휴장일 조회"""
+        return await self._client.check_holiday(date)
+    
     # --- KoreaInvestApiClient / Account API delegation ---
     async def get_account_balance(self) -> ResCommonResponse:
         """계좌 잔고를 조회합니다 (KoreaInvestApiAccount 위임)."""

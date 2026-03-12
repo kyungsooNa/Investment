@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timedelta
 import asyncio
 from brokers.broker_api_wrapper import BrokerAPIWrapper
+from managers import market_date_manager
 from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
@@ -129,7 +130,7 @@ class WebAppContext:
 
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, time_manager=self.time_manager,
-            _mdm=self._mdm
+            market_date_manager=self._mdm
         )
 
         # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
@@ -158,7 +159,7 @@ class WebAppContext:
 
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
-            _mdm=self._mdm,
+            market_date_manager=self._mdm,
             performance_manager=self.pm
         )
 
@@ -190,7 +191,7 @@ class WebAppContext:
             self.trading_service, self.logger, self.time_manager,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
-            _mdm=self._mdm,
+            market_date_manager=self._mdm,
         )
         
         # [신규] 오닐 유니버스 서비스 초기화
@@ -233,6 +234,7 @@ class WebAppContext:
             order_execution_service=self.order_execution_service,
             stock_query_service=self.stock_query_service,
             time_manager=self.time_manager,
+            market_date_manager=self._mdm,
             logger=get_strategy_logger('StrategyScheduler'),
             dry_run=False,
             notification_manager=self.notification_manager,

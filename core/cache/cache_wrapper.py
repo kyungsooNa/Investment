@@ -67,7 +67,7 @@ class ClientWithCache:
                 return await orig_attr(*args, **kwargs)
 
             # ✅ 1. 메모리 or 파일 캐시 조회
-            if self._mdm and not self._mdm.is_market_open_now():
+            if self._mdm and self._mdm.is_market_open_now():
                 self._logger.debug(f"⏳ 시장 개장 중 → 캐시 우회: {key}")
             else:
                 raw = self._cache.get_raw(key)
@@ -75,8 +75,8 @@ class ClientWithCache:
 
                 if wrapper:
                     cache_time = self._parse_timestamp(wrapper.get("timestamp"))
-                    latest_close_time = self._time_manager.get_latest_market_close_time()
-                    next_open_time = self._time_manager.get_next_market_open_time()
+                    latest_close_time = self._mdm.get_latest_market_close_time()
+                    next_open_time = self._mdm.get_next_open_time()
                     is_valid = (cache_time and latest_close_time <= cache_time < next_open_time)
                     
                     is_valid = False
@@ -154,7 +154,8 @@ class ClientWithCache:
         try:
             dt = datetime.fromisoformat(timestamp_str)
             if dt.tzinfo is None:
-                return self._time_manager.market_timezone.localize(dt)
+                return dt.replace(tzinfo=self._time_manager.market_timezone)
+            
             return dt
         except Exception as e:
             if self._logger:
