@@ -152,11 +152,11 @@ class StrategyScheduler:
         while self._running:
             try:
                 # 1. API 기반의 완벽한 개장/공휴일/시간대 검증
-                if not await self.market_date_manager.is_market_open_now():
-                    self.logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
+                if not await self._mdm.is_market_open_now():
+                    self._logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
                     
                     # 2. 다음 개장 시간(내일, 혹은 명절 연휴 이후)까지 한 번에 대기(Sleep)!
-                    await self.market_date_manager.wait_until_next_open()
+                    await self._mdm.wait_until_next_open()
                     
                     # 깨어나면 다시 루프의 처음으로 돌아가서 장이 열렸는지 최종 확인
                     continue

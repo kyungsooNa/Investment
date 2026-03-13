@@ -175,6 +175,7 @@ class WebAppContext:
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
+            market_date_manager=self._mdm,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,

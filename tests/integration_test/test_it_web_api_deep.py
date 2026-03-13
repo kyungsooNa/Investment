@@ -13,6 +13,7 @@ httpx 네트워크 호출만 mock한다.
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from managers.market_date_manager import MarketDateManager
 from tests.integration_test.conftest import (
     _get_quotations_api_from_ctx,
     _get_account_api_from_ctx,
@@ -397,9 +398,12 @@ class TestDeepBuyOrder:
 
         order_payload = _make_order_success_payload()
 
-        # TimeManager mock — 장 중으로 설정
-        deep_paper_ctx.order_execution_service.time_manager.is_market_open = MagicMock(return_value=True)
-
+        # [Fix] MarketDateManager.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정
+        # 이 메서드가 True를 반환하도록 하여 "장 중" 상태를 시뮬레이션합니다.
+        mock_mdm = AsyncMock(spec=MarketDateManager)
+        mock_mdm.is_market_open_now.return_value = True
+        deep_paper_ctx.order_execution_service.market_date_manager = mock_mdm
+    
         # hashkey + order POST 모킹
         from brokers.korea_investment.korea_invest_url_keys import EndpointKey
         expected_order_url = trading_api.url(EndpointKey.ORDER_CASH)
@@ -462,8 +466,12 @@ class TestDeepSellOrder:
         assert trading_api is not None
 
         order_payload = _make_order_success_payload()
-        deep_paper_ctx.order_execution_service.time_manager.is_market_open = MagicMock(return_value=True)
-
+        # [Fix] MarketDateManager.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정
+        # 이 메서드가 True를 반환하도록 하여 "장 중" 상태를 시뮬레이션합니다.
+        mock_mdm = AsyncMock(spec=MarketDateManager)
+        mock_mdm.is_market_open_now.return_value = True
+        deep_paper_ctx.order_execution_service.market_date_manager = mock_mdm
+    
         from brokers.korea_investment.korea_invest_url_keys import EndpointKey
         expected_order_url = trading_api.url(EndpointKey.ORDER_CASH)
 
