@@ -9,6 +9,7 @@
 - [ ] **[랭킹]** 프로그램 매매순위에 데이터가 없는 경우가 많은데, DATA 정합성이 안맞으면 retry를 하던가, 수동으로 udpate 할 수 있는 ui를 만들어야할듯.
 - [ ] **[Background]** Background Service가 web에서 action이 없어도 돌고있는지 확인해야함.
 - [ ] **[Background]** 프로그램매매 순매수/순매도 결과가 텔레그램에 금액이 억단위로 안짤려 나오고 비중도 표기 안됨. 그리고 전체적으로 colume중 금액에 금액(억) 으로 단위까지 표기
+- [ ] **[Background]** 12시 10분에 Udpate가 됨. 장 마감 시간인 15시30분에는 오늘 새벽 12시에 update 되었으면 update가 되었다고 판단하여 안하는거 같은데, 이는 장마감 이후 date가 바뀌었기 때문에 update가 되었어야함
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[아키텍처]** 단일 책임 원칙(SRP)에 따라 비대해진 `TradingService`를 `OrderService`(주문), `MarketDataService`(시세/조회), `StreamingService`(웹소켓)로 분리.

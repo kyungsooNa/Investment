@@ -745,7 +745,7 @@ class TradingService:
             
             # 이미 캐시(past_rows)에 오늘 데이터가 포함되어 있고, 장이 마감된 상태라면 API 호출 스킵
             is_today_cached = past_rows and past_rows[-1]['date'] == today_str
-            is_market_open = self._mdm.is_market_open_now() if self._mdm else False
+            is_market_open = (await self._mdm.is_market_open_now()) if self._mdm else False
 
             if is_today_cached and not is_market_open:
                 # 이미 최신 데이터가 캐싱되어 있음 -> API 호출 안 함 (속도 향상)
@@ -769,7 +769,8 @@ class TradingService:
                             today_rows = []
                             
             # [최적화] 장 마감 후라면 오늘 데이터를 캐시에 영구 저장 (다음 조회 시 API 호출 방지)
-            if today_rows and not self._mdm.is_market_open_now() if self._mdm else False:
+            is_market_closed = (not await self._mdm.is_market_open_now()) if self._mdm else False
+            if today_rows and is_market_closed:
                 # 오늘 데이터가 과거 데이터의 마지막보다 최신인 경우에만
                 if not past_rows or today_rows[0]['date'] > past_rows[-1]['date']:
                     # 병합 및 캐시 저장 (base_date를 오늘로 갱신)
