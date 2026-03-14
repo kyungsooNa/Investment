@@ -8,6 +8,8 @@
       "program": "${workspaceFolder}/main.py",
       "args": ["--web"],
       "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
       "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
     },
     {
@@ -16,6 +18,8 @@
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
       "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
       "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
     }
   ]
