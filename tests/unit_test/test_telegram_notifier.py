@@ -140,17 +140,62 @@ async def test_reporter_send_message(telegram_reporter):
 def test_format_ranking_table(telegram_reporter):
     """랭킹 테이블 포맷팅 검증"""
     data = [
-        {'hts_kor_isnm': '삼성전자', 'value': '10000000000'}, # 100억
-        {'hts_kor_isnm': 'SK하이닉스', 'value': '5000000000'}   # 50억
+        {'hts_kor_isnm': '삼성전자', 'value': '10000000000', 'acml_tr_pbmn': '100000000000', 'prdy_ctrt': '1.5'}, # 100억, 총거래대금 1000억
+        {'hts_kor_isnm': 'SK하이닉스', 'value': '5000000000', 'acml_tr_pbmn': '100000000000', 'prdy_ctrt': '-2.0'}   # 50억, 총거래대금 1000억
     ]
     
     table = telegram_reporter._format_ranking_table("테스트 랭킹", data, "value")
     
     assert "🏆 테스트 랭킹" in table
     assert "<pre>" in table
+    assert "금액(억)" in table
     assert "삼성전자" in table
     assert "100" in table # 100억
+    assert "10.0%" in table # 비중 10%
+    assert "+1.5%" in table # 등락 1.5%
     assert "50" in table  # 50억
+    assert "5.0%" in table  # 비중 5%
+    assert "-2.0%" in table # 등락 -2.0%
+
+@pytest.mark.asyncio
+async def test_send_ranking_report_combined_ranking(telegram_reporter):
+    """조합 랭킹(외인+기관, 외인+기관+프로그램) 단위 일치 및 계산 검증"""
+    # 외인, 기관: 백만 원 단위 (예: 10000 -> 100억)
+    # 프로그램: 원 단위 (예: 20000000000 -> 200억)
+    all_stocks = [
+        {
+            'stck_shrn_iscd': '005930', 'hts_kor_isnm': '삼성전자',
+            'frgn_ntby_tr_pbmn': '10000', # 100억 (백만 단위)
+            'orgn_ntby_tr_pbmn': '5000',  # 50억 (백만 단위)
+            'acml_tr_pbmn': '100000000000'
+        }
+    ]
+    program_all_stocks = [
+        {
+            'stck_shrn_iscd': '005930',
+            'whol_smtn_ntby_tr_pbmn': '20000000000' # 200억 (원 단위)
+        }
+    ]
+    
+    rankings = {
+        'all_stocks': all_stocks,
+        'program_all_stocks': program_all_stocks
+    }
+    
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    await telegram_reporter.send_ranking_report(rankings, "20250101")
+    
+    calls = telegram_reporter._send_message.call_args_list
+    full_message = "".join([call[0][0] for call in calls])
+    
+    # 1. 외인+기관 = 100억 + 50억 = 150억. divisor=100이므로 150으로 표시
+    assert "외인+기관 순매수" in full_message
+    assert "150" in full_message
+    
+    # 2. 외인+기관+프로그램 = 100억(백만) + 50억(백만) + 200억(원 단위 -> 20000 백만)
+    # 총 35000 (백만 단위, 350억). divisor=100이므로 350으로 표시
+    assert "외인+기관+프로그램 순매수" in full_message
+    assert "350" in full_message
 
 @pytest.mark.asyncio
 async def test_send_ranking_report_splits_message(telegram_reporter):
