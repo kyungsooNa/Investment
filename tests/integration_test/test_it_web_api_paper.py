@@ -27,7 +27,7 @@ class TestStatusPaper:
 
     def test_get_status_market_closed(self, paper_client, mock_paper_ctx):
         """장 마감 시 market_open=False를 반환한다."""
-        mock_paper_ctx.is_market_operating_hours.return_value = False
+        mock_paper_ctx.is_market_open_now = AsyncMock(return_value=False)
         resp = paper_client.get("/api/status")
         assert resp.status_code == 200
         assert resp.json()["market_open"] is False

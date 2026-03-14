@@ -550,6 +550,7 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
         # MarketDateManager Mock 설정 (_sync_calendar_if_needed 누락 방지)
         mock_mdm_instance = MockMDM.return_value
         mock_mdm_instance._sync_calendar_if_needed = AsyncMock()
+        mock_mdm_instance.is_market_open_now = AsyncMock(return_value=False)
         mock_mdm_instance.set_broker = MagicMock()
 
         web_ctx = WebAppContext(SimpleContext())

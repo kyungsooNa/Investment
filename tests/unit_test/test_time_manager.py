@@ -155,7 +155,7 @@ def test_get_current_kst_time(time_manager):
 
 def test_is_market_open_during_hours(time_manager):
     """
-    is_market_open 메서드 커버: 평일, 개장 시간 내
+    is_market_operating_hours 메서드 커버: 평일, 개장 시간 내
     """
     # 평일 개장 시간 (09:00 ~ 15:30) 내의 시간
     weekday_in_hours = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 10, 0, 0))  # 금요일 10시
@@ -164,7 +164,7 @@ def test_is_market_open_during_hours(time_manager):
 
 def test_is_market_open_before_open(time_manager):
     """
-    is_market_open 메서드 커버: 평일, 개장 전 시간
+    is_market_operating_hours 메서드 커버: 평일, 개장 전 시간
     """
     # 평일 개장 전 시간
     weekday_before_open = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 8, 30, 0))  # 금요일 8시 30분
@@ -173,7 +173,7 @@ def test_is_market_open_before_open(time_manager):
 
 def test_is_market_open_after_close(time_manager):
     """
-    is_market_open 메서드 커버: 평일, 폐장 후 시간
+    is_market_operating_hours 메서드 커버: 평일, 폐장 후 시간
     """
     # 평일 폐장 후 시간
     weekday_after_close = time_manager.market_timezone.localize(dt.datetime(2025, 6, 27, 16, 0, 0))  # 금요일 16시

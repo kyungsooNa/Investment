@@ -574,7 +574,7 @@ async def test_cache_wrapper_with_market_date_manager_valid(cache_manager, test_
     time_manager.get_latest_market_close_time.return_value = now - timedelta(hours=2.5)
 
     market_date_manager = AsyncMock()
-    market_date_manager.is_market_operating_hours_now.return_value = False
+    market_date_manager.is_market_open_now.return_value = False
     market_date_manager.get_next_open_time.return_value = now + timedelta(hours=15)
     # 최근 거래일이 오늘(20250101)이라고 가정
     market_date_manager.get_latest_trading_date.return_value = "20250101"
@@ -626,7 +626,7 @@ async def test_cache_wrapper_with_market_date_manager_expired(cache_manager, tes
     time_manager.get_latest_market_close_time.return_value = now - timedelta(hours=16.5)
     
     market_date_manager = AsyncMock()
-    market_date_manager.is_market_operating_hours_now.return_value = False
+    market_date_manager.is_market_open_now.return_value = False
     market_date_manager.get_next_open_time.return_value = now + timedelta(hours=1)
     # 최근 거래일이 어제(20250101)가 아니라 오늘(20250102)로 갱신되었다고 가정 (새벽에 갱신됨)
     market_date_manager.get_latest_trading_date.return_value = "20250102"
@@ -676,7 +676,7 @@ async def test_cache_wrapper_with_market_date_manager_fallback(cache_manager, te
     time_manager.get_latest_market_close_time.return_value = latest_close
 
     market_date_manager = AsyncMock()
-    market_date_manager.is_market_operating_hours_now.return_value = False
+    market_date_manager.is_market_open_now.return_value = False
     market_date_manager.get_next_open_time.return_value = now + timedelta(hours=13)
     market_date_manager.get_latest_trading_date.return_value = None # 날짜 확인 불가
 
