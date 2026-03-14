@@ -434,7 +434,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_handle_upper_limit_stocks_found_one_upper_limit(self):
-        self.mock_time_manager.is_market_open.return_value = True
         self.mock_trading_service._env.is_paper_trading = False
 
         self.mock_trading_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
@@ -1799,6 +1798,15 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
         self.mock_logger = MagicMock()
         self.mock_time_manager = MagicMock()
         self.mock_background_service = MagicMock()
+        
+        # Configure AsyncMock for async methods
+        self.mock_background_service.get_foreign_net_buy_ranking = AsyncMock()
+        self.mock_background_service.get_foreign_net_sell_ranking = AsyncMock()
+        self.mock_background_service.get_inst_net_buy_ranking = AsyncMock()
+        self.mock_background_service.get_inst_net_sell_ranking = AsyncMock()
+        self.mock_background_service.get_prsn_net_buy_ranking = AsyncMock()
+        self.mock_background_service.get_prsn_net_sell_ranking = AsyncMock()
+        self.mock_background_service.get_trading_value_ranking = AsyncMock()
 
         self.service = StockQueryService(
             trading_service=self.mock_trading_service,

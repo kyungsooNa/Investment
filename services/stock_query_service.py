@@ -531,31 +531,31 @@ class StockQueryService:
         # 거래대금: 장마감 후에는 투자자 데이터(acml_tr_pbmn) 기반으로 전환
         if self.background_service:
             category_map["trading_value"] = (
-                "거래대금", self.background_service.get_trading_value_ranking, None, True
+                "거래대금", self.background_service.get_trading_value_ranking, None, False
             )
             category_map["foreign_buy"] = (
-                "외인 순매수", self.background_service.get_foreign_net_buy_ranking, None, True
+                "외인 순매수", self.background_service.get_foreign_net_buy_ranking, None, False
             )
             category_map["foreign_sell"] = (
-                "외인 순매도", self.background_service.get_foreign_net_sell_ranking, None, True
+                "외인 순매도", self.background_service.get_foreign_net_sell_ranking, None, False
             )
             category_map["inst_buy"] = (
-                "기관 순매수", self.background_service.get_inst_net_buy_ranking, None, True
+                "기관 순매수", self.background_service.get_inst_net_buy_ranking, None, False
             )
             category_map["inst_sell"] = (
-                "기관 순매도", self.background_service.get_inst_net_sell_ranking, None, True
+                "기관 순매도", self.background_service.get_inst_net_sell_ranking, None, False
             )
             category_map["prsn_buy"] = (
-                "개인 순매수", self.background_service.get_prsn_net_buy_ranking, None, True
+                "개인 순매수", self.background_service.get_prsn_net_buy_ranking, None, False
             )
             category_map["prsn_sell"] = (
-                "개인 순매도", self.background_service.get_prsn_net_sell_ranking, None, True
+                "개인 순매도", self.background_service.get_prsn_net_sell_ranking, None, False
             )
             category_map["program_buy"] = (
-                "프로그램 순매수", self.background_service.get_program_net_buy_ranking, None, True
+                "프로그램 순매수", self.background_service.get_program_net_buy_ranking, None, False
             )
             category_map["program_sell"] = (
-                "프로그램 순매도", self.background_service.get_program_net_sell_ranking, None, True
+                "프로그램 순매도", self.background_service.get_program_net_sell_ranking, None, False
             )
 
         if category not in category_map:

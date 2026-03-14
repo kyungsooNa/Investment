@@ -20,6 +20,7 @@ class TrIdLeaf(str, Enum):
     INQUIRE_CONCLUSION = "inquire_conclusion" # 주식현재가 체결 (체결강도 포함)
     INVESTOR_TRADE_BY_STOCK_DAILY = "investor_trade_by_stock_daily" # 종목별 투자자 매매동향 일별 (실전 전용)
     PROGRAM_TRADE_BY_STOCK_DAILY = "program_trade_by_stock_daily" # 종목별 프로그램매매추이 일별 (실전 전용)
+    CHK_HOLIDAY = "check_holiday"  # 국내휴장일조회
 
     # ── 계좌(account) ───────────────────────────────────────────
     INQUIRE_BALANCE_REAL = "inquire_balance_real"

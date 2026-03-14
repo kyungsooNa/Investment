@@ -25,7 +25,7 @@ class BrokerAPIWrapper:
             if env is None:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
-            self._client = KoreaInvestApiClient(env, logger, time_manager)
+            self._client = KoreaInvestApiClient(env, logger, time_manager, market_date_manager)
             self._client = cache_wrap_client(
                 self._client, logger, time_manager,
                 lambda: "PAPER" if env.is_paper_trading else "REAL",
@@ -180,7 +180,11 @@ class BrokerAPIWrapper:
     async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
         """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
         return await self._client.get_financial_ratio(stock_code)
-
+    
+    async def check_holiday(self, date: str) -> ResCommonResponse:
+        """국내 휴장일 조회"""
+        return await self._client.check_holiday(date)
+    
     # --- KoreaInvestApiClient / Account API delegation ---
     async def get_account_balance(self) -> ResCommonResponse:
         """계좌 잔고를 조회합니다 (KoreaInvestApiAccount 위임)."""

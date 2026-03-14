@@ -3,7 +3,9 @@ import asyncio
 from typing import Optional
 from common.types import ErrorCode, ResCommonResponse
 from core.performance_manager import PerformanceManager
+from core.time_manager import TimeManager
 from managers.notification_manager import NotificationManager
+from managers.market_date_manager import MarketDateManager
 
 
 class OrderExecutionService:
@@ -15,14 +17,17 @@ class OrderExecutionService:
     _ORDER_MAX_RETRIES = 2
     _ORDER_RETRY_DELAY_SEC = 3
 
-    def __init__(self, trading_service, logger, time_manager,
+    def __init__(self, trading_service, logger, 
+                 time_manager: Optional[TimeManager] = None,
                  performance_manager: Optional[PerformanceManager] = None,
-                 notification_manager: Optional[NotificationManager] = None):
+                 notification_manager: Optional[NotificationManager] = None,
+                 market_date_manager: Optional[MarketDateManager] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
         self._nm = notification_manager
+        self.market_date_manager = market_date_manager
 
     async def _retry_order(self, order_fn, stock_code, price, qty) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도."""
@@ -53,8 +58,11 @@ class OrderExecutionService:
     async def handle_place_buy_order(self, stock_code, price, qty):
         """주식 매수 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
-        if not self.time_manager.is_market_open():
+        if self.market_date_manager and not await self.market_date_manager.is_market_open_now():
             self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
+            return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
+        # Fallback if market_date_manager is not available (though it should be)
+        elif not self.market_date_manager and not self.time_manager.is_market_operating_hours():
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         buy_order_result: ResCommonResponse = await self._retry_order(
@@ -82,8 +90,11 @@ class OrderExecutionService:
     async def handle_place_sell_order(self, stock_code, price, qty):
         """주식 매도 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
-        if not self.time_manager.is_market_open():
+        if self.market_date_manager and not await self.market_date_manager.is_market_open_now():
             self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
+            return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
+        # Fallback if market_date_manager is not available
+        elif not self.market_date_manager and not self.time_manager.is_market_operating_hours():
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         sell_order_result: ResCommonResponse = await self._retry_order(

@@ -69,7 +69,10 @@ class SizeTimeRotatingFileHandler(RotatingFileHandler):
             all_backups.sort(key=lambda f: int(f[:-len(ext)].split('_')[-1]) if f[:-len(ext)].split('_')[-1].isdigit() else -1)
             if len(all_backups) > self.backupCount:
                 for f in all_backups[:len(all_backups) - self.backupCount]:
-                    os.remove(f)
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
         
         if not self.delay:
             self.stream = self._open()
@@ -95,7 +98,7 @@ class JsonFormatter(logging.Formatter):
         if record.exc_info:
             log_object['exc_info'] = self.formatException(record.exc_info)
 
-        return json.dumps(log_object, ensure_ascii=False)
+        return json.dumps(log_object, ensure_ascii=False, default=str)
 
 
 def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None):

@@ -16,7 +16,7 @@ async def get_status():
     if ctx is None:
         return {"market_open": False, "env_type": "미설정", "current_time": "", "initialized": False}
     return {
-        "market_open": ctx.is_market_open(),
+        "market_open": await ctx.is_market_open_now(),
         "env_type": ctx.get_env_type(),
         "current_time": ctx.get_current_time_str(),
         "initialized": ctx.initialized

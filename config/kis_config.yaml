@@ -18,6 +18,7 @@ paths:
   inquire_time_daily_itemchartprice: /uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice # 일변 분봉 조회
   financial_ratio: /uapi/domestic-stock/v1/finance/financial-ratio  # 기업 재무비율 (영업이익 등)
   inquire_conclusion: /uapi/domestic-stock/v1/quotations/inquire-ccnl
+  check_holiday: /uapi/domestic-stock/v1/quotations/chk-holiday
   # 계좌/주문
   inquire_balance: /uapi/domestic-stock/v1/trading/inquire-balance
   order_cash: /uapi/domestic-stock/v1/trading/order-cash

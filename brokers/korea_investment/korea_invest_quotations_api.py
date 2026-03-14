@@ -911,3 +911,18 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             return response
 
         return response
+
+    async def check_holiday(self, date: str) -> ResCommonResponse:
+        """국내 휴장일 조회 (CTCA0903R)"""
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.CHK_HOLIDAY)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config['custtype'])
+
+        params = Params.check_holiday(date)
+
+        # EndpointKey.CHK_HOLIDAY는 전체 경로로 설정되어 있음
+        return await self.call_api(
+            "GET", EndpointKey.CHK_HOLIDAY, params=params, retry_count=1
+        )

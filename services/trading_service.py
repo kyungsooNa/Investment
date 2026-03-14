@@ -15,6 +15,7 @@ from common.types import (
 )
 from core.cache.cache_manager import CacheManager
 from core.performance_manager import PerformanceManager
+from managers import market_date_manager
 
 
 class TradingService:
@@ -33,7 +34,7 @@ class TradingService:
         self.cache_manager = cache_manager
         self._latest_prices = {}
         self._ohlcv_locks: Dict[str, asyncio.Lock] = {}  # 종목코드별 Lock (race condition 방지)
-        self._market_date_manager = market_date_manager
+        self._mdm = market_date_manager
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
     async def get_name_by_code(self, code: str) -> str:
@@ -744,7 +745,7 @@ class TradingService:
             
             # 이미 캐시(past_rows)에 오늘 데이터가 포함되어 있고, 장이 마감된 상태라면 API 호출 스킵
             is_today_cached = past_rows and past_rows[-1]['date'] == today_str
-            is_market_open = self._time_manager.is_market_open()
+            is_market_open = (await self._mdm.is_market_open_now()) if self._mdm else False
 
             if is_today_cached and not is_market_open:
                 # 이미 최신 데이터가 캐싱되어 있음 -> API 호출 안 함 (속도 향상)
@@ -768,7 +769,8 @@ class TradingService:
                             today_rows = []
                             
             # [최적화] 장 마감 후라면 오늘 데이터를 캐시에 영구 저장 (다음 조회 시 API 호출 방지)
-            if today_rows and not self._time_manager.is_market_open():
+            is_market_closed = (not await self._mdm.is_market_open_now()) if self._mdm else False
+            if today_rows and is_market_closed:
                 # 오늘 데이터가 과거 데이터의 마지막보다 최신인 경우에만
                 if not past_rows or today_rows[0]['date'] > past_rows[-1]['date']:
                     # 병합 및 캐시 저장 (base_date를 오늘로 갱신)
@@ -953,8 +955,47 @@ class TradingService:
         대표 종목(삼성전자)의 일봉을 조회하여 데이터가 존재하는 가장 최근 날짜를 반환한다.
         """
         # [수정] MarketDateManager를 통해 조회
-        if self._market_date_manager:
-            return await self._market_date_manager.get_latest_trading_date()
+        if self._mdm:
+            return await self._mdm.get_latest_trading_date()
         
         self._logger.warning("MarketDateManager is not initialized in TradingService.")
+        return None
+
+    async def get_next_open_day(self) -> Optional[str]:
+        """
+        현재 날짜 기준으로 가장 빠른 개장일을 찾아 반환합니다 (YYYYMMDD).
+        국내휴장일조회 API를 사용하여 휴장 여부를 정확히 판단합니다.
+        """
+        current_date = self._time_manager.get_current_kst_time().date()
+        target_date_str = current_date.strftime("%Y%m%d")
+
+        # 최대 30일 후까지만 탐색 (무한 루프 방지)
+        for _ in range(30):
+            resp = await self._broker_api_wrapper._client.check_holiday(target_date_str)
+
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                self._logger.warning(f"휴장일 조회 실패 ({target_date_str}), 다음 날짜로 시도합니다.")
+                current_date += timedelta(days=1)
+                target_date_str = current_date.strftime("%Y%m%d")
+                continue
+
+            # API 응답 파싱: output 리스트에 [기준일, 기준일+1, ...] 형태로 들어옴
+            outputs = resp.data.get("output", []) if isinstance(resp.data, dict) else []
+            if not outputs:
+                self._logger.warning(f"휴장일 데이터 없음 ({target_date_str})")
+                current_date += timedelta(days=1)
+                target_date_str = current_date.strftime("%Y%m%d")
+                continue
+
+            # 수신된 리스트 내에서 가장 빠른 개장일(bzdy_yn='Y') 탐색
+            for item in outputs:
+                # 영업일 여부 (Y/N)
+                if item.get("bzdy_yn") == "Y":
+                    return item.get("bass_dt")
+
+            # 리스트에 개장일이 없으면(모두 휴장), 리스트 마지막 날짜의 다음 날부터 다시 조회
+            last_dt_str = outputs[-1].get("bass_dt", target_date_str)
+            current_date = datetime.strptime(last_dt_str, "%Y%m%d").date() + timedelta(days=1)
+            target_date_str = current_date.strftime("%Y%m%d")
+
         return None

@@ -13,6 +13,7 @@ httpx 네트워크 호출만 mock한다.
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from managers.market_date_manager import MarketDateManager
 from tests.integration_test.conftest import (
     _get_quotations_api_from_ctx,
     _get_account_api_from_ctx,
@@ -397,9 +398,12 @@ class TestDeepBuyOrder:
 
         order_payload = _make_order_success_payload()
 
-        # TimeManager mock — 장 중으로 설정
-        deep_paper_ctx.order_execution_service.time_manager.is_market_open = MagicMock(return_value=True)
-
+        # [Fix] MarketDateManager.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정
+        # 이 메서드가 True를 반환하도록 하여 "장 중" 상태를 시뮬레이션합니다.
+        mock_mdm = AsyncMock(spec=MarketDateManager)
+        mock_mdm.is_market_open_now.return_value = True
+        deep_paper_ctx.order_execution_service.market_date_manager = mock_mdm
+    
         # hashkey + order POST 모킹
         from brokers.korea_investment.korea_invest_url_keys import EndpointKey
         expected_order_url = trading_api.url(EndpointKey.ORDER_CASH)
@@ -432,7 +436,7 @@ class TestDeepBuyOrder:
     @pytest.mark.asyncio
     async def test_buy_order_market_closed(self, deep_paper_ctx, mocker):
         """장 마감 시 매수 주문이 거부된다."""
-        deep_paper_ctx.order_execution_service.time_manager.is_market_open = MagicMock(return_value=False)
+        deep_paper_ctx.order_execution_service.market_date_manager.is_market_open_now = AsyncMock(return_value=False)
 
         client = deep_paper_ctx._test_client
         resp = client.post("/api/order", json={
@@ -462,8 +466,12 @@ class TestDeepSellOrder:
         assert trading_api is not None
 
         order_payload = _make_order_success_payload()
-        deep_paper_ctx.order_execution_service.time_manager.is_market_open = MagicMock(return_value=True)
-
+        # [Fix] MarketDateManager.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정
+        # 이 메서드가 True를 반환하도록 하여 "장 중" 상태를 시뮬레이션합니다.
+        mock_mdm = AsyncMock(spec=MarketDateManager)
+        mock_mdm.is_market_open_now.return_value = True
+        deep_paper_ctx.order_execution_service.market_date_manager = mock_mdm
+    
         from brokers.korea_investment.korea_invest_url_keys import EndpointKey
         expected_order_url = trading_api.url(EndpointKey.ORDER_CASH)
 
@@ -497,7 +505,7 @@ class TestDeepSellOrder:
         trading_api = _get_trading_api_from_ctx(deep_paper_ctx)
         assert trading_api is not None
 
-        deep_paper_ctx.order_execution_service.time_manager.is_market_open = MagicMock(return_value=True)
+        deep_paper_ctx.order_execution_service.market_date_manager.is_market_open_now = AsyncMock(return_value=True)
 
         # hashkey 응답에 HASH 값이 없는 경우
         async def _side_effect(url, *args, **kwargs):
@@ -582,7 +590,7 @@ class TestDeepRanking:
 class TestDeepStatus:
     """
     GET /api/status
-    실제 WebAppContext.is_market_open(), get_env_type() 등이 호출된다.
+    실제 WebAppContext.is_market_open_now(), get_env_type() 등이 호출된다.
     """
 
     @pytest.mark.asyncio
@@ -595,7 +603,7 @@ class TestDeepStatus:
         body = resp.json()
         assert body["initialized"] is True
         assert body["env_type"] == "모의투자"
-        # market_open은 실제 TimeManager 결과 (주말/평일에 따라 다를 수 있음)
+        # is_market_open_now는 실제 MarketDateManager 결과 (주말/평일에 따라 다를 수 있음)
         assert isinstance(body["market_open"], bool)
         assert body["current_time"] != ""
 
@@ -619,7 +627,7 @@ class TestDeepInputValidation:
     @pytest.mark.asyncio
     async def test_order_invalid_price_format(self, deep_paper_ctx, mocker):
         """가격이 숫자가 아닌 경우 서비스에서 INVALID_INPUT으로 처리."""
-        deep_paper_ctx.order_execution_service.time_manager.is_market_open = MagicMock(return_value=True)
+        deep_paper_ctx.order_execution_service.market_date_manager.is_market_open_now = AsyncMock(return_value=True)
 
         client = deep_paper_ctx._test_client
         resp = client.post("/api/order", json={

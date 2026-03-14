@@ -1,6 +1,6 @@
 import pytest
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, call
 from datetime import datetime, timedelta
 from services.trading_service import TradingService
 from common.types import ErrorCode, ResCommonResponse, ResFluctuation, ResBasicStockInfo
@@ -252,7 +252,7 @@ async def test_get_ohlcv_skip_today_api_if_cached_and_closed(trading_service_fix
     
     # 1. 장 마감 시간 설정 (18:00)
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 18, 0, 0)
-    tm.is_market_open.return_value = False
+    tm.is_market_operating_hours.return_value = False
     
     # 2. 캐시 설정 (오늘 20250102 데이터 포함)
     today_str = "20250102"
@@ -286,7 +286,7 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
     # 1. 장 중 시간 설정 (2025-01-02 10:00:00)
     today_dt = datetime(2025, 1, 2, 10, 0, 0)
     tm.get_current_kst_time.return_value = today_dt
-    tm.is_market_open.return_value = True
+    tm.is_market_operating_hours.return_value = True
     
     # 2. 캐시 설정 (어제인 2025-01-01까지 데이터 있음)
     yesterday_str = "20250101"
@@ -1056,7 +1056,7 @@ async def test_get_latest_trading_date_success(trading_service_fixture, mock_dep
     # Mock MarketDateManager
     mock_mdm = AsyncMock()
     mock_mdm.get_latest_trading_date.return_value = "20250103"
-    service._market_date_manager = mock_mdm
+    service._mdm = mock_mdm
     
     result = await service.get_latest_trading_date()
     
@@ -1070,7 +1070,7 @@ async def test_get_latest_trading_date_none(trading_service_fixture, mock_deps):
     
     mock_mdm = AsyncMock()
     mock_mdm.get_latest_trading_date.return_value = None
-    service._market_date_manager = mock_mdm
+    service._mdm = mock_mdm
     
     result = await service.get_latest_trading_date()
     
@@ -1082,7 +1082,7 @@ async def test_get_latest_trading_date_no_manager(trading_service_fixture, mock_
     """get_latest_trading_date: 매니저 미설정 시 None 반환"""
     logger = mock_deps.logger
     service = trading_service_fixture
-    service._market_date_manager = None
+    service._mdm = None
 
     result = await service.get_latest_trading_date()
     

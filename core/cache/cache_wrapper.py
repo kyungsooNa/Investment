@@ -23,6 +23,7 @@ class ClientWithCache:
         self._client = client
         self._logger = logger
         self._time_manager = time_manager
+        self._mdm = market_date_manager  # [추가]
         self._mode_fn = mode_fn  # 동적으로 모드 가져오기
 
         # ✅ 설정에서 읽기
@@ -38,7 +39,6 @@ class ClientWithCache:
         self._cache = cache_manager if cache_manager else CacheManager(config)
         self._cache.set_logger(self._logger)
         self.cached_methods = set(config["cache"]["enabled_methods"])
-        self._market_date_manager = market_date_manager  # [추가]
 
     def __getattr__(self, name: str):
         # ✅ 무한 루프 방지
@@ -67,7 +67,12 @@ class ClientWithCache:
                 return await orig_attr(*args, **kwargs)
 
             # ✅ 1. 메모리 or 파일 캐시 조회
-            if self._time_manager.is_market_open():
+            # [수정] is_market_open_now는 async 메서드이므로 await 필요
+            is_open = False
+            if self._mdm:
+                is_open = await self._mdm.is_market_open_now()
+
+            if is_open:
                 self._logger.debug(f"⏳ 시장 개장 중 → 캐시 우회: {key}")
             else:
                 raw = self._cache.get_raw(key)
@@ -75,15 +80,15 @@ class ClientWithCache:
 
                 if wrapper:
                     cache_time = self._parse_timestamp(wrapper.get("timestamp"))
-                    latest_close_time = self._time_manager.get_latest_market_close_time()
-                    next_open_time = self._time_manager.get_next_market_open_time()
-                    is_valid = (cache_time and latest_close_time <= cache_time < next_open_time)
                     
                     is_valid = False
-                    if cache_time and cache_time < next_open_time:
+                    # [수정] next_open_time도 async 메서드
+                    next_open_time = await self._mdm.get_next_open_time() if self._mdm else None
+
+                    if cache_time and next_open_time and cache_time < next_open_time:
                         # [수정] MarketDateManager가 있으면 실제 거래일 기준으로 검증
-                        if self._market_date_manager:
-                            latest_trading_date_str = await self._market_date_manager.get_latest_trading_date()
+                        if self._mdm:
+                            latest_trading_date_str = await self._mdm.get_latest_trading_date()
                             if latest_trading_date_str:
                                 # 캐시된 데이터의 날짜가 최근 거래일(또는 그 이후)인지 확인
                                 cache_date_str = cache_time.strftime("%Y%m%d")
@@ -92,20 +97,15 @@ class ClientWithCache:
                                 else:
                                     self._logger.debug(f"📉 캐시 만료 (최근 거래일 {latest_trading_date_str} > 캐시 데이터 {cache_date_str})")
                             else:
-                                # 날짜 확인 불가 시 기존 로직 fallback
-                                if latest_close_time <= cache_time:
-                                    is_valid = True
-                        else:
-                            # Manager 없으면 기존 로직 (주말/휴일 등 단순 시간 비교)
-                            if latest_close_time <= cache_time:
+                                # MDM이 거래일을 확인할 수 없는 경우 캐시를 유효한 것으로 간주
                                 is_valid = True
 
                     if is_valid:
                         if cache_type == "memory":
-                            if self._cache.memory_cache.has(key):
+                            if self._cache.memory_cache and self._cache.memory_cache.has(key):
                                 self._logger.debug(f"🧠 Memory Cache HIT (유효): {key}")
                         elif cache_type == "file":
-                            if self._cache.file_cache.exists(key):
+                            if self._cache.file_cache and self._cache.file_cache.exists(key):
                                 self._logger.debug(f"📂 File Cache HIT (유효): {key}")
                         cached_result = wrapper.get("data")
                         try:
@@ -115,10 +115,11 @@ class ClientWithCache:
                             pass  # dict 등 속성 설정 불가 타입
                         return cached_result
                     else:
-                        if self._cache.file_cache.exists(key):
+                        if self._cache.file_cache and self._cache.file_cache.exists(key):
                             self._logger.debug(f"📂 File Cache 무시 (만료됨): {key} / 저장 시각: {cache_time}")
                             self._cache.file_cache.delete(key)
-                        self._cache.memory_cache.delete(key)
+                        if self._cache.memory_cache:
+                            self._cache.memory_cache.delete(key)
 
             # ✅ 2. API 호출
             self._logger.debug(f"🌐 실시간 API 호출: {key}")

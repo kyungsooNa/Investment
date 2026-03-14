@@ -373,7 +373,8 @@ def _build_mock_web_ctx(is_paper: bool = True):
     }
 
     # 시장 상태
-    mock_ctx.is_market_open.return_value = True
+    mock_ctx.is_market_operating_hours.return_value = True
+    mock_ctx.is_market_open_now = AsyncMock(return_value=True)
     mock_ctx.get_env_type.return_value = "모의투자" if is_paper else "실전투자"
     mock_ctx.get_current_time_str.return_value = "2026-03-08 10:30:00"
 
@@ -543,7 +544,14 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
 
     with patch("view.web.web_app_initializer.load_configs", return_value=mock_config), \
          patch("view.web.web_app_initializer.VirtualTradeManager") as MockVTM, \
-         patch("view.web.web_app_initializer.StockCodeMapper"):
+         patch("view.web.web_app_initializer.StockCodeMapper"), \
+         patch("view.web.web_app_initializer.MarketDateManager") as MockMDM:
+
+        # MarketDateManager Mock 설정 (_sync_calendar_if_needed 누락 방지)
+        mock_mdm_instance = MockMDM.return_value
+        mock_mdm_instance._sync_calendar_if_needed = AsyncMock()
+        mock_mdm_instance.is_market_open_now = AsyncMock(return_value=False)
+        mock_mdm_instance.set_broker = MagicMock()
 
         web_ctx = WebAppContext(SimpleContext())
         web_ctx.logger = test_logger

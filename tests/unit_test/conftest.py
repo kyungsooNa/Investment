@@ -116,7 +116,7 @@ def mock_web_ctx():
     ctx = MagicMock()
     
     # 기본 속성 설정
-    ctx.is_market_open.return_value = True
+    ctx.is_market_open_now = AsyncMock(return_value=True)
     ctx.get_env_type.return_value = "모의투자"
     ctx.get_current_time_str.return_value = "2025-01-01 12:00:00"
     ctx.initialized = True

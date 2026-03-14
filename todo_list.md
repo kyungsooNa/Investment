@@ -8,6 +8,8 @@
 - [ ] **[전략]** 주문 api 실패헀을경우 기록되지 않게 수정.
 - [ ] **[랭킹]** 프로그램 매매순위에 데이터가 없는 경우가 많은데, DATA 정합성이 안맞으면 retry를 하던가, 수동으로 udpate 할 수 있는 ui를 만들어야할듯.
 - [ ] **[Background]** Background Service가 web에서 action이 없어도 돌고있는지 확인해야함.
+- [ ] **[Background]** 프로그램매매 순매수/순매도 결과가 텔레그램에 금액이 억단위로 안짤려 나오고 비중도 표기 안됨. 그리고 전체적으로 colume중 금액에 금액(억) 으로 단위까지 표기
+- [ ] **[Background]** 12시 10분에 Udpate가 됨. 장 마감 시간인 15시30분에는 오늘 새벽 12시에 update 되었으면 update가 되었다고 판단하여 안하는거 같은데, 이는 장마감 이후 date가 바뀌었기 때문에 update가 되었어야함
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[아키텍처]** 단일 책임 원칙(SRP)에 따라 비대해진 `TradingService`를 `OrderService`(주문), `MarketDataService`(시세/조회), `StreamingService`(웹소켓)로 분리.
@@ -15,6 +17,8 @@
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
 - [ ] **[전략]** PoolA 생성시 전체종목 조회가 multi로 하는데도 느림, caching 되어있는지 확인필요.
 - [ ] **[전략]** _compute_profit_growth_scores 에서 예상영업이익 전망치를 포함할 수 있는 기능 추가
+- [ ] **[스케줄러]** 스케줄러 루프 오류: 'StrategyScheduler' object has no attribute 'market_date_manager'
+
 ---
 
 ## Ⅱ. ⚡ 성능 최적화 및 인프라 전환 (Performance & Infra)

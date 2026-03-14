@@ -22,8 +22,6 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
 
     @pytest.mark.asyncio
     async def test_market_closed_returns_none(self):
-        self.mock_time_manager.is_market_open.return_value = False
-
         result: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code="0000",limit=10)
 
         # 수정된 기대값 검증
@@ -37,7 +35,6 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
 
     @pytest.mark.asyncio
     async def test_paper_trading_returns_error(self):
-        self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = True
 
         result: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code="0000",limit=10)
@@ -49,7 +46,6 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         assert result.data == []
 
     async def test_get_top_stocks_failure(self):
-        self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = False
 
         self.trading_service.get_top_market_cap_stocks_code = AsyncMock(
@@ -64,7 +60,6 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
 
     @pytest.mark.asyncio
     async def test_successful_flow_returns_results(self):
-        self.mock_time_manager.is_market_open.return_value = True
         self.mock_env.is_paper_trading = False
 
         top_stocks = [
@@ -106,7 +101,6 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
     @pytest.mark.asyncio
     async def test_market_cap_limit_10_enforced(self):
         # ─ Conditions ─
-        self.trading_service._time_manager.is_market_open.return_value = True
         self.trading_service._env.is_paper_trading = False
         count = 11
         # 11개 종목 제공

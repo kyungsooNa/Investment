@@ -1,4 +1,5 @@
 # api/korea_invest_websocket_api.py
+from typing import Optional
 import websockets  # pip install websockets
 import json
 import logging
@@ -12,7 +13,8 @@ from Crypto.Util.Padding import unpad
 from base64 import b64decode
 
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # KoreaInvestEnv 클래스 임포트
-from core.time_manager import TimeManager  # TimeManager 임포트
+from core.time_manager import TimeManager
+from managers.market_date_manager import MarketDateManager  # TimeManager 임포트
 
 
 class KoreaInvestWebSocketAPI:
@@ -21,9 +23,11 @@ class KoreaInvestWebSocketAPI:
     `websockets` 라이브러리(asyncio 기반)를 사용하며, 다양한 실시간 데이터 파싱을 포함합니다.
     """
 
-    def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None):
+    def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None,
+                 market_date_manager: Optional[MarketDateManager] = None):
         self._env = env
         self._time_manager = time_manager
+        self._mdm = market_date_manager
         self._logger = logger if logger else logging.getLogger(__name__)
         # self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)
         # config에서 웹소켓 및 REST API 정보 가져오기
@@ -152,7 +156,7 @@ class KoreaInvestWebSocketAPI:
             # 1. 연결이 끊겨있다면 재연결 시도
             if not self._is_connected:
                 # 장 운영 시간 확인 (TimeManager가 있을 경우)
-                if self._time_manager and not self._time_manager.is_market_open():
+                if self._mdm and not await self._mdm.is_market_open_now():
                     self._logger.info("장이 종료되어 자동 재연결을 중단합니다.")
                     self._auto_reconnect = False
                     break
@@ -184,7 +188,7 @@ class KoreaInvestWebSocketAPI:
                 self._handle_websocket_message(message)
             except asyncio.TimeoutError:
                 # 장 운영 시간 중에만 재연결 시도 (장 마감 후에는 데이터가 없는 것이 정상이므로 무시)
-                if self._time_manager and self._time_manager.is_market_open():
+                if self._mdm and not await self._mdm.is_market_open_now():
                     self._logger.warning(f"{DATA_TIMEOUT}초간 데이터 수신 없음 (Dead Connection 의심). 재연결을 시도합니다.")
                     self._is_connected = False
                     if self.ws:
