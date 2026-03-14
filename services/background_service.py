@@ -116,18 +116,18 @@ class BackgroundService:
                     continue 
 
                 # 2. 장 마감 이후 상태 (15:30 이후)
-                today = self._time_manager.get_current_kst_time().strftime("%Y%m%d")
-                
-                # 달력(MarketDateManager)을 통해 "오늘"이 영업일인지 확인
-                if self.mdm and await self.mdm.is_business_day(today):
-                    
+                # 최근 거래일 기준으로 갱신 여부 판단 (자정 넘어도 전날 갱신분 인식)
+                latest_trading_date = await self.mdm.get_latest_trading_date() if self.mdm else None
+
+                if latest_trading_date:
+
                     needs_investor = (
                         not self._investor_ranking_updated_at
-                        or self._investor_ranking_updated_at.strftime("%Y%m%d") != today
+                        or self._investor_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
                     )
                     needs_basic = (
                         not self._basic_ranking_updated_at
-                        or self._basic_ranking_updated_at.strftime("%Y%m%d") != today
+                        or self._basic_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
                     )
 
                     if needs_basic:
