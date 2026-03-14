@@ -373,7 +373,8 @@ def _build_mock_web_ctx(is_paper: bool = True):
     }
 
     # 시장 상태
-    mock_ctx.is_market_open.return_value = True
+    mock_ctx.is_market_operating_hours.return_value = True
+    mock_ctx.is_market_open_now = AsyncMock(return_value=True)
     mock_ctx.get_env_type.return_value = "모의투자" if is_paper else "실전투자"
     mock_ctx.get_current_time_str.return_value = "2026-03-08 10:30:00"
 

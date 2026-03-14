@@ -27,7 +27,7 @@ class TestStatusReal:
 
     def test_get_status_market_closed(self, real_client, mock_real_ctx):
         """실전 모드에서도 장 마감 시 market_open=False."""
-        mock_real_ctx.is_market_open.return_value = False
+        mock_real_ctx.is_market_operating_hours.return_value = False
         resp = real_client.get("/api/status")
         assert resp.status_code == 200
         assert resp.json()["market_open"] is False

@@ -507,8 +507,6 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         config_b = StrategySchedulerConfig(strategy=strategy_b, force_exit_on_close=False, interval_minutes=0)
         scheduler.register(config_b)
 
-        tm.is_market_open.return_value = True
-
         # 현재 시간: 15:20, 마감 시간: 15:30 (10분 남음 -> FORCE_EXIT_MINUTES_BEFORE(15) 이내)
         import pytz
         from datetime import datetime
@@ -538,7 +536,6 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
     async def test_loop_exception_handling(self):
         """루프 내 예외 발생 시 계속 실행되는지 테스트."""
         scheduler, _, _, tm, _ = self._make_scheduler()
-        tm.is_market_open.return_value = True
         
         # 전략 실행 시 예외 발생
         strategy = MockStrategy(name="전략A")
@@ -561,8 +558,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
     
     async def test_force_liquidate_strategy_execution(self):
         """강제 청산 실행 시: 현재가 조회 후 시장가 매도 주문 및 로깅 확인."""
-        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
-        
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+
         # SQS Mock 설정
         scheduler._sqs.get_current_price = AsyncMock(
             return_value=ResCommonResponse(
@@ -740,10 +737,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         oes = MagicMock()
         sqs = MagicMock()
         tm = MagicMock()
-        
+        mdm = AsyncMock()
+
         # 파일 로드 방지
         with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
-            scheduler = StrategyScheduler(vm, oes, sqs, tm, dry_run=True)
+            scheduler = StrategyScheduler(vm, oes, sqs, tm, mdm, dry_run=True)
         
         record = MagicMock()
         
@@ -825,9 +823,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
     async def test_loop_skips_disabled_strategy(self):
         """루프에서 비활성화된 전략은 실행하지 않는지 테스트."""
-        scheduler, _, _, tm = self._make_scheduler()
-        tm.is_market_open.return_value = True
-        
+        scheduler, _, _, tm, _ = self._make_scheduler()
+
         strategy = MockStrategy(name="DisabledStrat")
         config = StrategySchedulerConfig(strategy=strategy, enabled=False, interval_minutes=0)
         scheduler.register(config)
@@ -939,8 +936,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
     async def test_execute_signal_api_failure_branches(self):
         """API 응답 실패 시 분기 처리 테스트 (Line 294 coverage)."""
-        scheduler, vm, oes, _ = self._make_scheduler(dry_run=False)
-        
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+
         # Case 1: BUY 주문 실패, resp 있음
         oes.handle_place_buy_order.return_value = ResCommonResponse(
             rt_cd=ErrorCode.API_ERROR.value, msg1="매수 거부"
@@ -1063,8 +1060,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_strategy_updates_qty(self):
         """전략 실행 시 시그널 수량이 1 이하이면 설정된 주문 수량으로 업데이트하는지 테스트."""
-        scheduler, vm, _, _ = self._make_scheduler()
-        
+        scheduler, vm, _, _, _ = self._make_scheduler()
+
         # 주문 수량을 10으로 설정
         strategy = MockStrategy(scan_signals=[
             TradeSignal(code="005930", name="Samsung", action="BUY", price=1000, qty=1, reason="T", strategy_name="S")
@@ -1133,8 +1130,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
     async def test_loop_outer_exception_handling(self):
         """루프 자체(외부) 예외 발생 시 로그 기록 및 계속 실행 테스트."""
-        scheduler, _, _, tm = self._make_scheduler()
-        
+        scheduler, _, _, tm, _ = self._make_scheduler()
+
         tm.get_current_kst_time.side_effect = Exception("Time Error")
         
         scheduler._running = True

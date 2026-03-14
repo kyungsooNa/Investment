@@ -36,7 +36,7 @@ def mock_logger():
 def mock_time_manager():
     """TimeManager의 MagicMock 인스턴스를 제공하는 픽스처."""
     mock = MagicMock()
-    mock.is_market_open.return_value = True # 기본값 설정
+    mock.is_market_operating_hours.return_value = True # 기본값 설정
     mock.async_sleep = AsyncMock()
     return mock
 

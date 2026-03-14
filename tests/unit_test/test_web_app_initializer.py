@@ -178,25 +178,28 @@ async def test_program_trading_subscription(mock_deps):
     ctx.stock_query_service.unsubscribe_program_trading.assert_awaited_with("005930")
     mock_rdm_instance.remove_subscribed_code.assert_called_with("005930")
 
-def test_time_manager_methods(mock_deps):
+@pytest.mark.asyncio
+async def test_time_manager_methods(mock_deps):
     """TimeManager 관련 메서드 테스트 (None 체크 포함)"""
     ctx = WebAppContext(None)
     
     # 1. time_manager가 없을 때
     ctx.time_manager = None
-    assert ctx.is_market_open_now() is False
+    ctx._mdm = None
+    assert await ctx.is_market_open_now() is False
     assert ctx.get_current_time_str() == ""
     
     # 2. time_manager가 있을 때
     ctx.time_manager = MagicMock()
-    ctx.time_manager.is_market_open.return_value = True
+    ctx._mdm = AsyncMock()
+    ctx._mdm.is_market_open_now.return_value = True
     
     # datetime 객체 모킹
     mock_dt = MagicMock()
     mock_dt.strftime.return_value = "2025-01-01 12:00:00"
     ctx.time_manager.get_current_kst_time.return_value = mock_dt
     
-    assert ctx.is_market_open_now() is True
+    assert await ctx.is_market_open_now() is True
     assert ctx.get_current_time_str() == "2025-01-01 12:00:00"
 
 @pytest.mark.asyncio
@@ -405,8 +408,11 @@ async def test_program_trading_watchdog_market_closed(mock_deps):
     """TC: _program_trading_watchdog 장 마감 시 연결 종료 검증."""
     # Arrange
     ctx = WebAppContext(None)
+    # [Fix] MarketDateManager가 명시적으로 '장 마감(False)' 상태를 반환하도록 설정
+    ctx._mdm = AsyncMock()
+    ctx._mdm.is_market_open_now.return_value = False
+
     ctx.time_manager = MagicMock()
-    ctx.time_manager.is_market_open.return_value = False # 장 마감 상태
     
     ctx.realtime_data_manager = MagicMock()
     ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
@@ -424,7 +430,7 @@ async def test_program_trading_watchdog_market_closed(mock_deps):
     sleep_side_effect.counter = 0
     
     # Act
-    with patch("asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("view.web.web_app_initializer.asyncio.sleep", side_effect=sleep_side_effect):
         try:
             await ctx._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -440,8 +446,12 @@ async def test_program_trading_watchdog_data_gap(mock_deps):
     """TC: _program_trading_watchdog 데이터 미수신(Gap) 감지 및 재연결 시도 검증."""
     # Arrange
     ctx = WebAppContext(None)
+    # [Fix] MarketDateManager가 명시적으로 '장 중(True)' 상태를 반환하도록 설정
+    # _mdm이 None이면 장 마감으로 간주하여 로직이 실행되지 않음
+    ctx._mdm = AsyncMock()
+    ctx._mdm.is_market_open_now.return_value = True
+
     ctx.time_manager = MagicMock()
-    ctx.time_manager.is_market_open.return_value = True # 장 중 상태
     
     ctx.realtime_data_manager = MagicMock()
     ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
@@ -464,7 +474,7 @@ async def test_program_trading_watchdog_data_gap(mock_deps):
     sleep_side_effect.counter = 0
     
     # Act
-    with patch("asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("view.web.web_app_initializer.asyncio.sleep", side_effect=sleep_side_effect):
         try:
             await ctx._program_trading_watchdog()
         except asyncio.CancelledError:

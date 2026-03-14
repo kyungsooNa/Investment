@@ -1,5 +1,6 @@
 # core/time_manager.py
 import time
+from typing import Optional
 import pytz
 import logging
 import asyncio
@@ -44,14 +45,14 @@ class TimeManager:
         if now.weekday() >= 5:
             return False
 
-        market_open_dt = self.get_market_open_time()
-        market_close_dt = self.get_market_close_time()
+        market_open_dt = self.get_market_open_time(target_dt=now)
+        market_close_dt = self.get_market_close_time(target_dt=now)
 
         return market_open_dt <= now <= market_close_dt
 
-    def get_market_open_time(self) -> datetime:
-        """오늘 날짜 기준 시장 개장 시간(09:00) 반환"""
-        now = self.get_current_kst_time()
+    def get_market_open_time(self, target_dt: Optional[datetime] = None) -> datetime:
+        """오늘 날짜 또는 지정된 날짜 기준 시장 개장 시간(09:00) 반환"""
+        now = target_dt or self.get_current_kst_time()
         return self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
             hour=int(self.market_open_time_str.split(':')[0]),
@@ -59,9 +60,9 @@ class TimeManager:
             second=0, microsecond=0
         ))
 
-    def get_market_close_time(self) -> datetime:
-        """오늘 날짜 기준 시장 마감 시간(15:30) 반환"""
-        now = self.get_current_kst_time()
+    def get_market_close_time(self, target_dt: Optional[datetime] = None) -> datetime:
+        """오늘 날짜 또는 지정된 날짜 기준 시장 마감 시간(15:30) 반환"""
+        now = target_dt or self.get_current_kst_time()
         return self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
             hour=int(self.market_close_time_str.split(':')[0]),
@@ -69,21 +70,13 @@ class TimeManager:
             second=0, microsecond=0
         ))
 
-    def get_market_close_time_on(self, target_date: datetime) -> datetime:
-        """특정 날짜의 시장 마감 시간을 반환합니다."""
-        close_hour, close_minute = map(int, self.market_close_time_str.split(":"))
-        return self.market_timezone.localize(datetime(
-            target_date.year, target_date.month, target_date.day, 
-            close_hour, close_minute
-        ))
-
     def get_seconds_until_market_close(self, now=None) -> float:
         """
-        현재 시간부터 오늘 장 마감(15:30)까지 남은 초(seconds)를 계산합니다.
+        현재 시간 또는 지정된 시간부터 해당 날짜의 장 마감(15:30)까지 남은 초(seconds)를 계산합니다.
         (장 마감 후 계산 시 음수가 반환될 수 있습니다.)
         """
         now = now or self.get_current_kst_time()
-        close_time = self.get_market_close_time()
+        close_time = self.get_market_close_time(target_dt=now)
         diff = (close_time - now).total_seconds()
         return diff
 

@@ -215,10 +215,10 @@ class WebAppContext:
             return "미설정"
         return "모의투자" if self.env.is_paper_trading else "실전투자"
 
-    def is_market_open_now(self) -> bool:
+    async def is_market_open_now(self) -> bool:
         if self._mdm is None:
             return False
-        return self._mdm.is_market_open_now() if self._mdm else False
+        return await self._mdm.is_market_open_now() if self._mdm else False
 
     def get_current_time_str(self) -> str:
         if self.time_manager is None:

@@ -56,7 +56,7 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
     mock_client.inquire_daily_itemchartprice.return_value = {"chart": "data"}
     mock_client_class.return_value = mock_client
 
-    mock_time_manager.is_market_open.return_value = True  # ✅ 함수로 유지
+    mock_time_manager.is_market_operating_hours.return_value = True  # ✅ 함수로 유지
 
     # 3. 인스턴스 생성
     wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, time_manager=mock_time_manager)

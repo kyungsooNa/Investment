@@ -38,14 +38,15 @@ def mock_deps():
         return_value=ResCommonResponse(rt_cd="1", msg1="", data=None)
     )
     mapper = MagicMock()
+    mapper.df = pd.DataFrame(columns=["종목코드", "종목명", "시장구분"])
     env = MagicMock()
     env.is_paper_trading = False  # 기본: 실전투자 모드
     logger = MagicMock()
     time_manager = MagicMock()
-    time_manager.is_market_open.return_value = False # 기본: 장 마감 상태 (갱신 허용)
     market_date_manager = AsyncMock(spec=MarketDateManager)
-    market_date_manager.is_market_open_now.return_value = False # 기본: 장 마감 상태 (갱신 허용)
-    market_date_manager.is_business_day.return_value = True # 기본: 영업일
+    market_date_manager.is_market_open_now = AsyncMock(return_value=False) # 기본: 장 마감 상태 (갱신 허용)
+    market_date_manager.is_business_day = AsyncMock(return_value=True) # 기본: 영업일
+    market_date_manager.get_latest_trading_date = AsyncMock(return_value="20250101")
     return broker, mapper, env, logger, time_manager, market_date_manager
 
 
@@ -53,9 +54,7 @@ def mock_deps():
 def bg_service(mock_deps):
     broker, mapper, env, logger, time_manager, market_date_manager = mock_deps
     
-    # TradingService Mock 주입 (get_latest_trading_date 필수)
     trading_service = AsyncMock()
-    trading_service.get_latest_trading_date.return_value = "20250101"
     
     return BackgroundService(
         broker_api_wrapper=broker,
@@ -109,6 +108,7 @@ def _make_investor_response(
 @pytest.mark.asyncio
 async def test_get_foreign_net_buy_ranking_empty_cache(bg_service):
     """캐시가 비어있으면 빈 data + 안내 메시지 반환."""
+    bg_service._is_refreshing = True
     resp = await bg_service.get_foreign_net_buy_ranking()
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert resp.data == []
@@ -118,6 +118,7 @@ async def test_get_foreign_net_buy_ranking_empty_cache(bg_service):
 @pytest.mark.asyncio
 async def test_get_foreign_net_sell_ranking_empty_cache(bg_service):
     """캐시가 비어있으면 빈 data + 안내 메시지 반환."""
+    bg_service._is_refreshing = True
     resp = await bg_service.get_foreign_net_sell_ranking()
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert resp.data == []
@@ -127,6 +128,7 @@ async def test_get_foreign_net_sell_ranking_empty_cache(bg_service):
 @pytest.mark.asyncio
 async def test_get_inst_net_buy_ranking_empty_cache(bg_service):
     """기관 캐시가 비어있으면 빈 data 반환."""
+    bg_service._is_refreshing = True
     resp = await bg_service.get_inst_net_buy_ranking()
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert resp.data == []
@@ -135,6 +137,7 @@ async def test_get_inst_net_buy_ranking_empty_cache(bg_service):
 @pytest.mark.asyncio
 async def test_get_prsn_net_buy_ranking_empty_cache(bg_service):
     """개인 캐시가 비어있으면 빈 data 반환."""
+    bg_service._is_refreshing = True
     resp = await bg_service.get_prsn_net_buy_ranking()
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert resp.data == []
@@ -147,6 +150,7 @@ async def test_paper_trading_still_works(bg_service, mock_deps):
     """모의투자 모드에서도 투자자 랭킹 조회 가능 (조회 API는 항상 실전 URL/인증 사용)."""
     _, _, env, _, _, _ = mock_deps
     env.is_paper_trading = True
+    bg_service._is_refreshing = True
 
     resp = await bg_service.get_foreign_net_buy_ranking()
     assert resp.rt_cd == ErrorCode.SUCCESS.value
@@ -489,7 +493,7 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
     """장마감 상태에서 스케줄러가 갱신을 트리거하는지 검증."""
     import asyncio
     broker, mapper, env, logger, time_manager, market_date_manager = mock_deps
-    time_manager.is_market_open.return_value = False  # 장마감
+    market_date_manager.is_market_open_now.return_value = False  # 장마감
 
     trading_service = MagicMock()
     trading_service.get_top_rise_fall_stocks = AsyncMock(
@@ -501,8 +505,6 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
     trading_service.get_top_trading_value_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     )
-    # refresh_investor_ranking 호출 시 필요
-    trading_service.get_latest_trading_date = AsyncMock(return_value="20250101")
 
     bg = BackgroundService(
         broker_api_wrapper=broker, stock_code_mapper=mapper,
@@ -644,7 +646,7 @@ async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):
 async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, mock_deps):
     """장 중에는 투자자 랭킹 갱신(직접 호출)을 스킵해야 한다."""
     broker, _, _, logger, time_manager, market_date_manager = mock_deps
-    time_manager.is_market_open.return_value = True  # 장 중으로 설정
+    market_date_manager.is_market_open_now.return_value = True  # 장 중으로 설정
 
     await bg_service.refresh_investor_ranking()
 
@@ -747,7 +749,7 @@ async def test_start_after_market_scheduler_exception_handling(bg_service, mock_
     """스케줄러 루프 내 일반 예외 발생 시 처리 테스트."""
     import asyncio
     _, _, _, logger, time_manager, market_date_manager = mock_deps
-    time_manager.is_market_open.return_value = False
+    market_date_manager.is_market_open_now.return_value = False
 
     # refresh_basic_ranking에서 예외 발생
     bg_service.refresh_basic_ranking = AsyncMock(side_effect=Exception("Scheduler Error"))
@@ -793,7 +795,7 @@ async def test_on_demand_trigger_skipped_during_market_open(bg_service, mock_dep
     """장 중에는 온디맨드(on-demand) 랭킹 갱신이 트리거되지 않아야 한다."""
     import asyncio
     _, _, _, logger, time_manager, market_date_manager = mock_deps
-    time_manager.is_market_open.return_value = True  # 장 중으로 설정
+    market_date_manager.is_market_open_now.return_value = True  # 장 중으로 설정
 
     # 캐시가 비어있는 상태
     bg_service._foreign_net_buy_cache = []
@@ -814,6 +816,7 @@ async def test_on_demand_trigger_skipped_during_market_open(bg_service, mock_dep
 @pytest.mark.asyncio
 async def test_get_program_net_buy_ranking_empty_cache(bg_service):
     """프로그램 캐시가 비어있으면 빈 data 반환."""
+    bg_service._is_refreshing = True
     resp = await bg_service.get_program_net_buy_ranking()
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert resp.data == []
@@ -822,7 +825,7 @@ async def test_get_program_net_buy_ranking_empty_cache(bg_service):
 @pytest.mark.asyncio
 async def test_refresh_program_ranking_basic(bg_service, mock_deps):
     """프로그램 순매수/순매도 랭킹 정렬 검증."""
-    broker, mapper, _, _, _ = mock_deps
+    broker, mapper, _, _, _, _ = mock_deps
 
     mapper.df = _make_stock_df([
         ("005930", "삼성전자", "KOSPI"),
@@ -868,6 +871,7 @@ async def test_refresh_program_ranking_basic(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_get_trading_value_ranking_empty_cache(bg_service):
     """거래대금 랭킹 캐시가 비어있으면 빈 data + 안내 메시지 반환."""
+    bg_service._is_refreshing = True
     resp = await bg_service.get_trading_value_ranking()
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert resp.data == []
@@ -1001,10 +1005,10 @@ async def test_progress_total_set_before_api_calls(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_no_target_date(bg_service, mock_deps):
     """최근 거래일 조회 실패 시 갱신 중단."""
-    _, _, _, logger, _, _ = mock_deps
+    _, _, _, logger, _, mdm = mock_deps
     
     # target_date None 설정
-    bg_service._trading_service.get_latest_trading_date = AsyncMock(return_value=None)
+    mdm.get_latest_trading_date.return_value = None
     
     await bg_service.refresh_investor_ranking()
     
@@ -1042,18 +1046,6 @@ async def test_refresh_basic_ranking_partial_failure(bg_service, mock_deps):
     
     # 에러 로그 확인
     logger.error.assert_any_call("기본 랭킹 'fall' 조회 실패: Fall API Error")
-
-
-@pytest.mark.asyncio
-async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, mock_deps):
-    """장 중에는 투자자 랭킹 갱신을 스킵해야 한다."""
-    broker, _, _, logger, time_manager, market_date_manager = mock_deps
-    time_manager.is_market_open.return_value = True  # 장 중으로 설정
-
-    await bg_service.refresh_investor_ranking()
-
-    broker.get_investor_trade_by_stock_daily.assert_not_called()
-    logger.info.assert_any_call("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
 
 
 # ── 재시도 로직 및 스케줄러 최적화 테스트 ───────────────────
@@ -1131,13 +1123,13 @@ async def test_start_after_market_scheduler_waits_efficiently(bg_service, mock_d
     _, _, _, logger, time_manager, market_date_manager = mock_deps
 
     # 1. Market is Open
-    time_manager.is_market_open.return_value = True
+    market_date_manager.is_market_open_now.return_value = True
     # 2. TimeManager suggests waiting 1000 seconds
     time_manager.get_sleep_seconds_until_market_close.return_value = 1000.0
 
     # We want the loop to run once then exit via CancelledError
     async def mock_sleep(sec):
-        if sec == 1000.0:
+        if sec == 1060.0:
             raise asyncio.CancelledError("End Test")
         return None
 
@@ -1153,7 +1145,7 @@ async def test_start_after_market_scheduler_waits_efficiently(bg_service, mock_d
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_calls_telegram_reporter(bg_service, mock_deps):
     """투자자 랭킹 갱신 완료 후 TelegramReporter 호출 검증"""
-    broker, mapper, _, _, _ = mock_deps
+    broker, mapper, _, _, _, _ = mock_deps
     
     # Reporter Mock 주입
     mock_reporter = AsyncMock()
@@ -1180,7 +1172,7 @@ async def test_refresh_investor_ranking_calls_telegram_reporter(bg_service, mock
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_reporter_exception_handled(bg_service, mock_deps):
     """리포트 전송 중 예외가 발생해도 서비스가 중단되지 않고 로깅되는지 검증"""
-    broker, mapper, _, logger, _ = mock_deps
+    broker, mapper, _, logger, _, _ = mock_deps
     
     mock_reporter = AsyncMock()
     mock_reporter.send_ranking_report.side_effect = Exception("Telegram Error")
@@ -1201,7 +1193,7 @@ async def test_refresh_investor_ranking_handles_none_response(bg_service, mock_d
     refresh_investor_ranking에서 _fetch_with_retry가 None을 반환할 때(최종 실패),
     크래시 없이 해당 종목을 스킵하는지 검증.
     """
-    _, mapper, _, _, _ = mock_deps
+    _, mapper, _, _, _, _ = mock_deps
     # 종목 2개 설정
     mapper.df = _make_stock_df([
         ("005930", "삼성전자", "KOSPI"),

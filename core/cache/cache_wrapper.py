@@ -96,13 +96,16 @@ class ClientWithCache:
                                     is_valid = True
                                 else:
                                     self._logger.debug(f"📉 캐시 만료 (최근 거래일 {latest_trading_date_str} > 캐시 데이터 {cache_date_str})")
+                            else:
+                                # MDM이 거래일을 확인할 수 없는 경우 캐시를 유효한 것으로 간주
+                                is_valid = True
 
                     if is_valid:
                         if cache_type == "memory":
-                            if self._cache.memory_cache.has(key):
+                            if self._cache.memory_cache and self._cache.memory_cache.has(key):
                                 self._logger.debug(f"🧠 Memory Cache HIT (유효): {key}")
                         elif cache_type == "file":
-                            if self._cache.file_cache.exists(key):
+                            if self._cache.file_cache and self._cache.file_cache.exists(key):
                                 self._logger.debug(f"📂 File Cache HIT (유효): {key}")
                         cached_result = wrapper.get("data")
                         try:
@@ -112,10 +115,11 @@ class ClientWithCache:
                             pass  # dict 등 속성 설정 불가 타입
                         return cached_result
                     else:
-                        if self._cache.file_cache.exists(key):
+                        if self._cache.file_cache and self._cache.file_cache.exists(key):
                             self._logger.debug(f"📂 File Cache 무시 (만료됨): {key} / 저장 시각: {cache_time}")
                             self._cache.file_cache.delete(key)
-                        self._cache.memory_cache.delete(key)
+                        if self._cache.memory_cache:
+                            self._cache.memory_cache.delete(key)
 
             # ✅ 2. API 호출
             self._logger.debug(f"🌐 실시간 API 호출: {key}")

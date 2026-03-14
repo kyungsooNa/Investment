@@ -835,9 +835,9 @@ async def test_receive_messages_stops_reconnect_when_market_closed(websocket_api
     api._is_connected = False  # 연결 끊김 상태
     api._auto_reconnect = True
 
-    # TimeManager Mock 설정 (장 종료 상태)
-    api._time_manager = MagicMock()
-    api._time_manager.is_market_open.return_value = False
+    # MarketDateManager Mock 설정 (장 종료 상태)
+    api._mdm = AsyncMock()
+    api._mdm.is_market_open_now.return_value = False
 
     # _establish_connection이 호출되지 않아야 함
     with patch.object(api, "_establish_connection", new_callable=AsyncMock) as mock_est_conn, \
