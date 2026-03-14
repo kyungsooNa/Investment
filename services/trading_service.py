@@ -158,33 +158,28 @@ class TradingService:
             self._logger.exception(f"프로그램 매매 구독 해지 중 오류 발생: {e}")
             return False
 
-    async def get_price_summary(self, stock_code, logger=None) -> ResCommonResponse:
+    async def get_price_summary(self, stock_code) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
-        logger = logger or self._logger
-        logger.info(f"Service - {stock_code} 종목 요약 정보 조회 요청")
+        self._logger.info(f"Service - {stock_code} 종목 요약 정보 조회 요청")
         return await self._broker_api_wrapper.get_price_summary(stock_code)
 
-    async def get_stock_info_by_code(self, stock_code: str, logger=None) -> ResCommonResponse:
+    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
         """종목코드로 종목의 전체 정보를 가져옵니다 (BrokerAPIWrapper 위임)."""
-        logger = logger or self._logger
-        logger.info(f"Service - {stock_code} 종목 상세 정보 조회 요청")
+        self._logger.info(f"Service - {stock_code} 종목 상세 정보 조회 요청")
         return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
 
-    async def get_current_stock_price(self, stock_code, logger=None) -> ResCommonResponse:
-        logger = logger or self._logger
-        logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
+    async def get_current_stock_price(self, stock_code) -> ResCommonResponse:
+        self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
         return await self._broker_api_wrapper.get_current_price(stock_code)
 
-    async def get_stock_conclusion(self, stock_code: str, logger=None) -> ResCommonResponse:
+    async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
         """종목의 체결(체결강도 등) 정보를 조회합니다."""
-        logger = logger or self._logger
-        logger.info(f"Service - {stock_code} 체결 정보 조회 요청")
+        self._logger.info(f"Service - {stock_code} 체결 정보 조회 요청")
         return await self._broker_api_wrapper.get_stock_conclusion(stock_code)
 
-    async def get_multi_price(self, stock_codes: list[str], logger=None) -> ResCommonResponse:
+    async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목)"""
-        logger = logger or self._logger
-        logger.info(f"Trading_Service - 복수종목 현재가 조회 요청 ({len(stock_codes)}종목)")
+        self._logger.info(f"Trading_Service - 복수종목 현재가 조회 요청 ({len(stock_codes)}종목)")
         return await self._broker_api_wrapper.get_multi_price(stock_codes)
 
     async def get_account_balance(self) -> ResCommonResponse:
@@ -361,17 +356,15 @@ class TradingService:
     #     self._logger.info(f"Service - '{keyword}' 키워드로 종목 검색 요청")
     #     return await self._broker_api_wrapper.search_stocks_by_keyword(keyword)
 
-    async def get_top_rise_fall_stocks(self, rise: bool = True, logger=None) -> ResCommonResponse:
+    async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
         """상승률 또는 하락률 상위 종목을 조회합니다."""
-        logger = logger or self._logger
         direction = "상승" if rise else "하락"
-        logger.info(f"Service - {direction}률 상위 종목 조회 요청")
+        self._logger.info(f"Service - {direction}률 상위 종목 조회 요청")
         return await self._broker_api_wrapper.get_top_rise_fall_stocks(rise)
 
-    async def get_top_volume_stocks(self, logger=None) -> ResCommonResponse:
+    async def get_top_volume_stocks(self) -> ResCommonResponse:
         """거래량 상위 종목을 조회합니다."""
-        logger = logger or self._logger
-        logger.info("Service - 거래량 상위 종목 조회 요청")
+        self._logger.info("Service - 거래량 상위 종목 조회 요청")
         return await self._broker_api_wrapper.get_top_volume_stocks()
 
     # ETF/ETN 브랜드명 — 종목명이 이 접두사로 시작하면 개별종목이 아님
@@ -381,16 +374,15 @@ class TradingService:
         "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
     )
 
-    async def get_top_trading_value_stocks(self, logger=None) -> ResCommonResponse:
+    async def get_top_trading_value_stocks(self) -> ResCommonResponse:
         """
         거래대금 상위 종목 조회.
         거래량/코스피시가총액30/코스닥시가총액30/상승률/하락률 5개 기존 API 결과를 병합하여
         acml_tr_pbmn(거래대금) 기준 상위 30개를 반환한다.
         ETF/ETN 종목은 제외한다.
         """
-        logger = logger or self._logger
         t_start = self.pm.start_timer()
-        logger.info("Service - 거래대금 상위 종목 조회 요청 (5개 소스 병합)")
+        self._logger.info("Service - 거래대금 상위 종목 조회 요청 (5개 소스 병합)")
 
         # 5개 API 병렬 호출
         vol_resp, mc_kospi_resp, mc_kosdaq_resp, rise_resp, fall_resp = await asyncio.gather(
@@ -477,16 +469,14 @@ class TradingService:
     #     self._logger.info(f"Service - {stock_code} 종목 뉴스 조회 요청")
     #     return await self._broker_api_wrapper.get_stock_news(stock_code)
 
-    async def get_etf_info(self, etf_code: str, logger=None) -> ResCommonResponse:
+    async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
         """특정 ETF의 상세 정보를 조회합니다."""
-        logger = logger or self._logger
-        logger.info(f"Service - {etf_code} ETF 정보 조회 요청")
+        self._logger.info(f"Service - {etf_code} ETF 정보 조회 요청")
         return await self._broker_api_wrapper.get_etf_info(etf_code)
 
-    async def get_financial_ratio(self, stock_code: str, logger=None) -> ResCommonResponse:
+    async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
         """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
-        logger = logger or self._logger
-        logger.info(f"Service - {stock_code} 재무비율 조회 요청")
+        self._logger.info(f"Service - {stock_code} 재무비율 조회 요청")
         return await self._broker_api_wrapper.get_financial_ratio(stock_code)
 
     async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
@@ -712,12 +702,10 @@ class TradingService:
             self,
             stock_code: str,
             period: str = "D",
-            logger=None
     ) -> ResCommonResponse:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
         """
-        logger = logger or self._logger
         # [수정] 일봉(D)인 경우 캐싱 및 최적화 적용
         if (period or "D").upper() == "D":
             now_dt = self._time_manager.get_current_kst_time()
@@ -828,7 +816,6 @@ class TradingService:
             period: str = "D",
             start_date: Optional[str] = None,  # YYYYMMDD
             end_date: Optional[str] = None,  # YYYYMMDD
-            logger=None
     ) -> ResCommonResponse:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
@@ -855,7 +842,6 @@ class TradingService:
             limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE,
             end_date: Optional[str] = None,
             start_date: Optional[str] = None,  # (옵션) 달력기준 시작일 강제 시 사용
-            logger=None
     ) -> List[Dict[str, Any]]:
         """
         최근 'limit'개 *거래일* 일봉을 반환.
@@ -873,7 +859,7 @@ class TradingService:
         
         # start_date가 명시된 경우: 해당 기간만 조회 (단일 호출 시도)
         if start_date:
-            resp = await self.get_ohlcv_range(code, period="D", start_date=start_date, end_date=self._time_manager.to_yyyymmdd(current_ed_dt), logger=logger)
+            resp = await self.get_ohlcv_range(code, period="D", start_date=start_date, end_date=self._time_manager.to_yyyymmdd(current_ed_dt))
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                 return resp.data or []
             return []
@@ -893,7 +879,7 @@ class TradingService:
             sd_str = self._time_manager.to_yyyymmdd(current_sd_dt)
 
             # API 호출
-            resp = await self.get_ohlcv_range(code, period="D", start_date=sd_str, end_date=ed_str, logger=logger)
+            resp = await self.get_ohlcv_range(code, period="D", start_date=sd_str, end_date=ed_str)
             
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
                 break # 에러 시 중단
