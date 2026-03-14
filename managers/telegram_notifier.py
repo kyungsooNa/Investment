@@ -93,13 +93,11 @@ class TelegramReporter:
         header = f"<b>🏆 {title} (Top {limit})</b>\n"
         table = "<pre>"
         if show_ratio:
-            # 헤더: 순위(2) 종목(8) 등락(7) 금액(8) 비중(6)
-            # Visual alignment: 순(2) _(1) 종목(4)____(4) _(1) ___(3)등락(4) _(1) ____(4)금액(4) _(1) __(2)비중(4)
-            table += "순 종목        등락     금액   비중\n"
-            table += "-" * 37 + "\n"
+            table += "순 종목        등락 금액(억)   비중\n"
+            table += "-" * 38 + "\n"
         else:
-            table += "순 종목        등락     금액\n"
-            table += "-" * 30 + "\n"
+            table += "순 종목        등락 금액(억)\n"
+            table += "-" * 31 + "\n"
 
         for i, item in enumerate(ranking_data[:limit]):
             rank = i + 1
@@ -155,9 +153,9 @@ class TelegramReporter:
                 except:
                     pass
 
-                table += f"{rank:<2} {name_str} {rate_str:>7} {val_str:>7} {ratio_str:>6}\n"
+                table += f"{rank:<2} {name_str} {rate_str:>7} {val_str:>8} {ratio_str:>6}\n"
             else:
-                table += f"{rank:<2} {name_str} {rate_str:>7} {val_str:>7}\n"
+                table += f"{rank:<2} {name_str} {rate_str:>7} {val_str:>8}\n"
 
         table += "</pre>"
         return header + table
@@ -172,10 +170,10 @@ class TelegramReporter:
         # 1. 개별 랭킹
         report_parts.append(self._format_ranking_table("외국인 순매수", rankings.get('foreign_buy', []), 'frgn_ntby_tr_pbmn', divisor=100))
         report_parts.append(self._format_ranking_table("기관 순매수", rankings.get('inst_buy', []), 'orgn_ntby_tr_pbmn', divisor=100))
-        report_parts.append(self._format_ranking_table("프로그램 순매수", rankings.get('program_buy', []), 'whol_smtn_ntby_tr_pbmn', divisor=100))
+        report_parts.append(self._format_ranking_table("프로그램 순매수", rankings.get('program_buy', []), 'whol_smtn_ntby_tr_pbmn', divisor=100_000_000))
         report_parts.append(self._format_ranking_table("외국인 순매도", rankings.get('foreign_sell', []), 'frgn_ntby_tr_pbmn', divisor=100))
         report_parts.append(self._format_ranking_table("기관 순매도", rankings.get('inst_sell', []), 'orgn_ntby_tr_pbmn', divisor=100))
-        report_parts.append(self._format_ranking_table("프로그램 순매도", rankings.get('program_sell', []), 'whol_smtn_ntby_tr_pbmn', divisor=100))
+        report_parts.append(self._format_ranking_table("프로그램 순매도", rankings.get('program_sell', []), 'whol_smtn_ntby_tr_pbmn', divisor=100_000_000))
 
         # 2. 조합 랭킹
         all_stocks = rankings.get('all_stocks')
@@ -186,8 +184,8 @@ class TelegramReporter:
             fi_combined = []
             for stock in all_stocks:
                 try:
-                    f_net = int(stock.get('frgn_ntby_tr_pbmn', '0') or '0')
-                    i_net = int(stock.get('orgn_ntby_tr_pbmn', '0') or '0')
+                    f_net = float(stock.get('frgn_ntby_tr_pbmn', '0') or '0')
+                    i_net = float(stock.get('orgn_ntby_tr_pbmn', '0') or '0')
                     new_stock = stock.copy()
                     new_stock['fi_combined_net'] = f_net + i_net
                     fi_combined.append(new_stock)
@@ -198,15 +196,15 @@ class TelegramReporter:
 
             # 외인+기관+프로그램
             if program_all_stocks:
-                prog_map = {p['stck_shrn_iscd']: int(p.get('whol_smtn_ntby_tr_pbmn', '0') or '0') for p in program_all_stocks}
+                prog_map = {p['stck_shrn_iscd']: float(p.get('whol_smtn_ntby_tr_pbmn', '0') or '0') for p in program_all_stocks}
                 fip_combined = []
                 for stock in all_stocks:
                     try:
-                        f_net = int(stock.get('frgn_ntby_tr_pbmn', '0') or '0')
-                        i_net = int(stock.get('orgn_ntby_tr_pbmn', '0') or '0')
-                        p_net = prog_map.get(stock.get('stck_shrn_iscd'), 0)
+                        f_net = float(stock.get('frgn_ntby_tr_pbmn', '0') or '0')
+                        i_net = float(stock.get('orgn_ntby_tr_pbmn', '0') or '0')
+                        p_net = prog_map.get(stock.get('stck_shrn_iscd'), 0.0)
                         new_stock = stock.copy()
-                        new_stock['fip_combined_net'] = f_net + i_net + p_net
+                        new_stock['fip_combined_net'] = f_net + i_net + (p_net / 1_000_000)
                         fip_combined.append(new_stock)
                     except (ValueError, TypeError): continue
 
