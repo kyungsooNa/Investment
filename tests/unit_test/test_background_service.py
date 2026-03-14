@@ -1213,3 +1213,224 @@ async def test_refresh_investor_ranking_handles_none_response(bg_service, mock_d
     # 결과: 삼성전자 데이터만 캐시에 있어야 함
     assert len(bg_service._foreign_net_buy_cache) == 1
     assert bg_service._foreign_net_buy_cache[0]["stck_shrn_iscd"] == "005930"
+
+
+# ── 스케줄러 갱신 타이밍 검증 (장 마감 후 1회만 갱신) ─────────────
+
+@pytest.mark.asyncio
+async def test_scheduler_no_refresh_during_market_hours(bg_service, mock_deps):
+    """장 중(09:00~15:30)에는 refresh를 호출하지 않고 장 마감까지 대기만 한다."""
+    import asyncio
+    _, _, _, _, time_manager, market_date_manager = mock_deps
+
+    market_date_manager.is_market_open_now.return_value = True
+    time_manager.get_sleep_seconds_until_market_close.return_value = 3600.0
+
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        await bg_service.start_after_market_scheduler()
+
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_refreshes_when_no_prior_update(bg_service, mock_deps):
+    """장 마감 후 최근 거래일에 대한 갱신 이력이 없으면 basic+investor 모두 갱신한다."""
+    import asyncio
+    _, _, _, _, _, market_date_manager = mock_deps
+
+    market_date_manager.is_market_open_now.return_value = False
+    market_date_manager.get_latest_trading_date.return_value = "20260315"
+
+    bg_service._basic_ranking_updated_at = None
+    bg_service._investor_ranking_updated_at = None
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    # 12시간 딥슬립(첫 번째 sleep)에서 CancelledError → 루프 1회만 실행
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        await bg_service.start_after_market_scheduler()
+
+    bg_service.refresh_basic_ranking.assert_awaited_once()
+    bg_service.refresh_investor_ranking.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_if_already_updated_for_trading_date(bg_service, mock_deps):
+    """장 마감 후 해당 거래일에 대해 이미 갱신 완료되었으면 재갱신하지 않는다.
+
+    시나리오: 3/15 16:00에 갱신 완료, 같은 날 20:00에 스케줄러 재실행.
+    최근 거래일(20260315) = 갱신 이력(20260315) → 스킵.
+    """
+    import asyncio
+    _, _, _, _, _, market_date_manager = mock_deps
+
+    market_date_manager.is_market_open_now.return_value = False
+    market_date_manager.get_latest_trading_date.return_value = "20260315"
+
+    # 이미 20260315에 대해 갱신 완료
+    updated_at = MagicMock()
+    updated_at.strftime.return_value = "20260315"
+    bg_service._basic_ranking_updated_at = updated_at
+    bg_service._investor_ranking_updated_at = updated_at
+
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        await bg_service.start_after_market_scheduler()
+
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_no_double_refresh_overnight(bg_service, mock_deps):
+    """자정~09시 사이, 전날 장 마감 후 갱신 이력이 있으면 재갱신하지 않는다.
+
+    시나리오: 3/15 16:00에 갱신 완료 → 12시간 딥슬립 → 3/16 04:00에 깨어남.
+    최근 거래일은 여전히 20260315이므로, 이미 갱신된 20260315와 일치 → 스킵.
+    (기존 코드는 날짜 비교로 "20260315" != "20260316"이 되어 불필요한 재갱신이 발생했음)
+    """
+    import asyncio
+    _, _, _, _, _, market_date_manager = mock_deps
+
+    market_date_manager.is_market_open_now.return_value = False
+    # 3/16 04:00이지만 최근 거래일은 여전히 3/15
+    market_date_manager.get_latest_trading_date.return_value = "20260315"
+
+    # 3/15 16:00에 갱신 완료 → strftime("%Y%m%d") = "20260315"
+    updated_at = MagicMock()
+    updated_at.strftime.return_value = "20260315"
+    bg_service._basic_ranking_updated_at = updated_at
+    bg_service._investor_ranking_updated_at = updated_at
+
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        await bg_service.start_after_market_scheduler()
+
+    # 전날 장 마감 후 갱신 이력이 있으므로 재갱신하면 안 됨
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_on_weekend_if_already_updated(bg_service, mock_deps):
+    """주말(토/일)에는 장이 열리지 않으므로, 금요일 장 마감 후 갱신 이력이 있으면 스킵한다.
+
+    시나리오: 금요일(3/13) 16:00에 갱신 완료 → 토요일(3/14) 04:00에 스케줄러 깨어남.
+    is_market_open_now=False, get_latest_trading_date="20260313"(금요일),
+    갱신 이력도 "20260313" → 스킵.
+    """
+    import asyncio
+    _, _, _, _, _, market_date_manager = mock_deps
+
+    market_date_manager.is_market_open_now.return_value = False
+    # 토요일이지만 최근 거래일은 금요일
+    market_date_manager.get_latest_trading_date.return_value = "20260313"
+
+    # 금요일 16:00에 갱신 완료
+    updated_at = MagicMock()
+    updated_at.strftime.return_value = "20260313"
+    bg_service._basic_ranking_updated_at = updated_at
+    bg_service._investor_ranking_updated_at = updated_at
+
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        await bg_service.start_after_market_scheduler()
+
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_on_holiday_if_already_updated(bg_service, mock_deps):
+    """공휴일(추석 등 연휴)에도 마지막 거래일 갱신 이력이 있으면 스킵한다.
+
+    시나리오: 수요일(3/11) 장 마감 후 갱신 완료 → 목/금/토/일 연휴 →
+    목요일(3/12) 04:00에 깨어남.
+    is_market_open_now=False, get_latest_trading_date="20260311"(수요일),
+    갱신 이력도 "20260311" → 스킵.
+    """
+    import asyncio
+    _, _, _, _, _, market_date_manager = mock_deps
+
+    market_date_manager.is_market_open_now.return_value = False
+    # 연휴 중이지만 최근 거래일은 연휴 전 수요일
+    market_date_manager.get_latest_trading_date.return_value = "20260311"
+
+    # 수요일 16:00에 갱신 완료
+    updated_at = MagicMock()
+    updated_at.strftime.return_value = "20260311"
+    bg_service._basic_ranking_updated_at = updated_at
+    bg_service._investor_ranking_updated_at = updated_at
+
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        await bg_service.start_after_market_scheduler()
+
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_when_latest_trading_date_unavailable(bg_service, mock_deps):
+    """get_latest_trading_date()가 None을 반환하면(API 오류 등) 갱신을 시도하지 않는다."""
+    import asyncio
+    _, _, _, _, _, market_date_manager = mock_deps
+
+    market_date_manager.is_market_open_now.return_value = False
+    market_date_manager.get_latest_trading_date.return_value = None
+
+    bg_service._basic_ranking_updated_at = None
+    bg_service._investor_ranking_updated_at = None
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        await bg_service.start_after_market_scheduler()
+
+    # latest_trading_date가 None이면 if 블록에 진입하지 않으므로 갱신 없음
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_on_substitute_holiday(bg_service, mock_deps):
+    """대체공휴일에도 마지막 거래일 갱신 이력이 있으면 스킵한다.
+
+    시나리오: 2/27(금) 16:00 갱신 완료 → 2/28(토), 3/1(일·삼일절), 3/2(월·대체공휴일) 연휴.
+    3/2(월) 04:00에 스케줄러 깨어남.
+    is_market_open_now=False, get_latest_trading_date="20260227"(금요일),
+    갱신 이력도 "20260227" → 스킵.
+    """
+    import asyncio
+    _, _, _, _, _, market_date_manager = mock_deps
+
+    market_date_manager.is_market_open_now.return_value = False
+    # 3/2(월) 대체공휴일이지만 최근 거래일은 2/27(금)
+    market_date_manager.get_latest_trading_date.return_value = "20260227"
+
+    # 2/27(금) 16:00에 갱신 완료
+    updated_at = MagicMock()
+    updated_at.strftime.return_value = "20260227"
+    bg_service._basic_ranking_updated_at = updated_at
+    bg_service._investor_ranking_updated_at = updated_at
+
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        await bg_service.start_after_market_scheduler()
+
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
