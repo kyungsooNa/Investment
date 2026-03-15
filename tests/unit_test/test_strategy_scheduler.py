@@ -512,16 +512,19 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         from datetime import datetime
         kst = pytz.timezone("Asia/Seoul")
         now = kst.localize(datetime(2023, 1, 1, 15, 20))
+        # 두 번째 루프에서는 쿨다운(60초) 이후 시점
+        now_after_cooldown = kst.localize(datetime(2023, 1, 1, 15, 21, 1))
         close_time = kst.localize(datetime(2023, 1, 1, 15, 30))
 
-        tm.get_current_kst_time.return_value = now
+        tm.get_current_kst_time.side_effect = [now, now_after_cooldown]
         tm.get_market_close_time.return_value = close_time
 
         scheduler._running = True
 
         # _run_strategy가 force_exit_only=True로 호출되는지 확인하기 위해 spy/mock
         with patch.object(scheduler, '_run_strategy', new_callable=AsyncMock) as mock_run:
-            with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            # 두 번째 루프 이터레이션 후 종료 (전략B는 쿨다운 후 두 번째 루프에서 실행)
+            with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
                 try:
                     await scheduler._loop()
                 except asyncio.CancelledError:
@@ -529,8 +532,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
             # 전략 A는 강제 청산 모드(True)로 실행되어야 함
             mock_run.assert_any_call(config_a, force_exit_only=True)
-            
-            # 전략 B는 일반 모드(False)로 실행되어야 함 (should_run=True 조건에 의해 실행됨)
+
+            # 전략 B는 일반 모드(False)로 실행되어야 함 (쿨다운 이후 두 번째 루프에서 실행)
             mock_run.assert_any_call(config_b, force_exit_only=False)
 
     async def test_loop_exception_handling(self):

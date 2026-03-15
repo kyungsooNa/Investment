@@ -62,6 +62,7 @@ class StrategyScheduler:
     LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
     FORCE_EXIT_MINUTES_BEFORE = 15  # 장 마감 N분 전 강제 청산
+    STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
 
     def __init__(
         self,
@@ -93,6 +94,7 @@ class StrategyScheduler:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._last_run: Dict[str, datetime] = {}
+        self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._csv_lock = threading.Lock()
@@ -183,7 +185,16 @@ class StrategyScheduler:
                         force_exit = True
 
                     if should_run or force_exit:
+                        # 전략 간 API 자원 충돌 방지: 직전 전략 실행 후 최소 STAGGER_INTERVAL_SEC 대기
+                        # (강제 청산은 쿨다운 무시 — 장 마감 시 즉시 처리 필요)
+                        if not force_exit and self._last_execution_time:
+                            since_last_exec = (now - self._last_execution_time).total_seconds()
+                            if since_last_exec < self.STAGGER_INTERVAL_SEC:
+                                continue
+
                         self._last_run[name] = now
+                        if not force_exit:
+                            self._last_execution_time = now
                         try:
                             await self._run_strategy(cfg, force_exit_only=force_exit)
                         except Exception as e:
