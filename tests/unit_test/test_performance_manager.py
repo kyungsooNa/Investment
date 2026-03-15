@@ -178,7 +178,7 @@ class TestPerformanceManagerProfile(unittest.TestCase):
                     async with pm.profile_async("async_block", save_html=False) as profiler:
                         await asyncio.sleep(0)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
         mock_pyinstrument.Profiler.assert_called_with(async_mode="enabled")
         mock_profiler.start.assert_called_once()
@@ -192,7 +192,7 @@ class TestPerformanceManagerProfile(unittest.TestCase):
             async with pm.profile_async("async_block"):
                 await asyncio.sleep(0)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
         self.mock_logger.info.assert_not_called()
 
     @patch('core.performance_manager.HAS_PYINSTRUMENT', True)
