@@ -333,15 +333,19 @@ class StrategyScheduler:
         if self._nm:
             action_kr = "매수" if signal.action == "BUY" else "매도"
             level = "critical" if api_success else "error"
-            title = f"{action_kr} {signal.name}"
-            msg = f"{signal.name}({signal.code}) @ {log_price:,}원 | {signal.reason}"
+            title = f"[{signal.strategy_name}] {signal.name} {action_kr} {'성공' if api_success else '실패'}"
+            msg = (f"종목: {signal.name}({signal.code})\n"
+                   f"주문: {log_price:,}원 × {signal.qty}주\n"
+                   f"사유: {signal.reason}")
             if not api_success:
-                title = f"{action_kr} 실패 {signal.name}"
+                title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
             await self._nm.emit("TRADE", level, title, msg, metadata={
                 "strategy_name": signal.strategy_name,
                 "code": signal.code,
                 "action": signal.action,
                 "price": log_price,
+                "qty": signal.qty,
+                "reason": signal.reason,
                 "api_success": api_success,
             })
 
