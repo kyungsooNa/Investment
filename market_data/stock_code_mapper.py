@@ -121,6 +121,17 @@ class StockCodeMapper:
             self.logger.warning(f"❗ 종목코드 없음: {name}")
         return code
 
+    def search_by_name(self, keyword: str, limit: int = 20) -> list:
+        """종목명 부분 일치 검색. [{"code": "005930", "name": "삼성전자"}, ...] 형태로 반환."""
+        keyword_lower = keyword.lower()
+        results = []
+        for name, code in self.name_to_code.items():
+            if keyword_lower in name.lower():
+                results.append({"code": code, "name": name})
+                if len(results) >= limit:
+                    break
+        return results
+
     def get_kosdaq_codes(self) -> list:
         """코스닥 시장 종목코드 리스트 반환."""
         if "시장구분" not in self.df.columns:

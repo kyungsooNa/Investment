@@ -41,6 +41,16 @@ async def get_status():
     return result
 
 
+@router.get("/stock/search")
+async def search_stock_by_name(q: str = ""):
+    """종목명 부분 일치 검색 (자동완성용)."""
+    ctx = _get_ctx()
+    if not q or len(q.strip()) == 0:
+        return {"results": []}
+    results = ctx.stock_code_mapper.search_by_name(q.strip())
+    return {"results": results}
+
+
 @router.get("/stock/{code}")
 async def get_stock_price(code: str):
     """현재가 조회."""

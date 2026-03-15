@@ -1,10 +1,96 @@
 /* view/web/static/js/stock.js — 종목 조회 (searchStock) */
 
+/* ── 종목명 자동완성 ── */
+(function() {
+    let debounceTimer = null;
+    let activeIndex = -1;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const input = document.getElementById('stock-code-input');
+        const list = document.getElementById('stock-autocomplete-list');
+        if (!input || !list) return;
+
+        input.addEventListener('input', function() {
+            const q = input.value.trim();
+            clearTimeout(debounceTimer);
+            activeIndex = -1;
+
+            // 숫자 6자리(종목코드)이면 자동완성 안 함
+            if (!q || /^\d+$/.test(q)) {
+                list.innerHTML = '';
+                list.style.display = 'none';
+                return;
+            }
+
+            debounceTimer = setTimeout(async () => {
+                try {
+                    const res = await fetch(`/api/stock/search?q=${encodeURIComponent(q)}`);
+                    const json = await res.json();
+                    renderAutocomplete(json.results || []);
+                } catch(e) {
+                    list.innerHTML = '';
+                    list.style.display = 'none';
+                }
+            }, 250);
+        });
+
+        input.addEventListener('keydown', function(e) {
+            const items = list.querySelectorAll('li');
+            if (!items.length) return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                activeIndex = Math.min(activeIndex + 1, items.length - 1);
+                updateActive(items);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                activeIndex = Math.max(activeIndex - 1, 0);
+                updateActive(items);
+            } else if (e.key === 'Enter' && activeIndex >= 0) {
+                e.preventDefault();
+                items[activeIndex].click();
+            }
+        });
+
+        // 외부 클릭 시 닫기
+        document.addEventListener('click', function(e) {
+            if (!input.contains(e.target) && !list.contains(e.target)) {
+                list.innerHTML = '';
+                list.style.display = 'none';
+            }
+        });
+
+        function renderAutocomplete(results) {
+            list.innerHTML = '';
+            if (!results.length) { list.style.display = 'none'; return; }
+            results.forEach((item, idx) => {
+                const li = document.createElement('li');
+                li.textContent = `${item.name} (${item.code})`;
+                li.addEventListener('click', function() {
+                    input.value = item.code;
+                    list.innerHTML = '';
+                    list.style.display = 'none';
+                    searchStock(item.code);
+                });
+                list.appendChild(li);
+            });
+            list.style.display = 'block';
+        }
+
+        function updateActive(items) {
+            items.forEach(li => li.classList.remove('active'));
+            if (activeIndex >= 0 && activeIndex < items.length) {
+                items[activeIndex].classList.add('active');
+            }
+        }
+    });
+})();
+
 async function searchStock(codeOverride) {
     const input = document.getElementById('stock-code-input');
     const code = codeOverride || (input ? input.value.trim() : '');
     if (!code) {
-        alert("종목코드를 입력하세요.");
+        alert("종목코드 또는 종목명을 입력하세요.");
         return;
     }
 

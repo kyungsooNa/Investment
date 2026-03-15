@@ -11,10 +11,11 @@
     <div id="section-stock" class="section">
         <div class="card">
             <h2>종목 현재가 조회</h2>
-            <div class="form-row">
-                <label>종목코드</label>
-                <input type="text" id="stock-code-input" placeholder="예: 005930" maxlength="6" onkeydown="if(event.key==='Enter') searchStock()">
+            <div class="form-row" style="position: relative;">
+                <label>종목코드/종목명</label>
+                <input type="text" id="stock-code-input" placeholder="예: 005930 또는 삼성전자" autocomplete="off" onkeydown="if(event.key==='Enter') searchStock()">
                 <button class="btn" onclick="searchStock()">조회</button>
+                <ul id="stock-autocomplete-list"></ul>
             </div>
         </div>
         <div id="stock-result"></div>
@@ -29,7 +30,7 @@
 
 {% block scripts %}
 <script src="/static/js/candle_chart.js?v=1"></script>
-<script src="/static/js/stock.js?v=1"></script>
+<script src="/static/js/stock.js?v=2"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const urlParams = new URLSearchParams(window.location.search);
