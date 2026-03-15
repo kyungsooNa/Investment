@@ -128,6 +128,11 @@ class MarketDateManager:
             date_str = self._time_manager.get_current_kst_time().strftime("%Y%m%d")
             
         target_date = datetime.strptime(date_str, "%Y%m%d")
+        
+        # [최적화 1] 주말(토, 일)은 무조건 휴장일이므로 캐시/API 확인 스킵
+        if target_date.weekday() >= 5:
+            return False
+            
         await self._sync_calendar_if_needed(target_date)
         
         return self._business_days_cache.get(date_str, False)
@@ -148,6 +153,11 @@ class MarketDateManager:
         
         # 최대 15일 탐색 (긴 명절 연휴 커버)
         for _ in range(15):
+            # [최적화 2] 주말이면 달력 동기화 검사를 스킵하고 다음 날로 이동
+            if check_dt.weekday() >= 5:
+                check_dt += timedelta(days=1)
+                continue
+
             await self._sync_calendar_if_needed(check_dt)
             check_str = check_dt.strftime("%Y%m%d")
             
