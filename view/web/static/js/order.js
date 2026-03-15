@@ -14,10 +14,14 @@ async function placeOrder(side) {
     }
 
     const resDiv = document.getElementById('order-result');
-    resDiv.innerHTML = "주문 전송 중...";
+    const buyBtn = document.querySelector('.btn-buy');
+    const sellBtn = document.querySelector('.btn-sell');
+    showLoading(resDiv, '주문 전송 중...');
+    if (buyBtn) buyBtn.disabled = true;
+    if (sellBtn) sellBtn.disabled = true;
 
     try {
-        const res = await fetch('/api/order', {
+        const res = await fetchWithTimeout('/api/order', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ code, qty, price, side })
@@ -31,6 +35,13 @@ async function placeOrder(side) {
             resDiv.innerHTML = `<p class="error">주문 실패: ${json.msg1}</p>`;
         }
     } catch (e) {
-        resDiv.innerHTML = `<p class="error">통신 오류: ${e}</p>`;
+        if (e.name === 'AbortError') {
+            resDiv.innerHTML = `<p class="error">주문 요청 시간이 초과되었습니다. 다시 시도해주세요.</p>`;
+        } else {
+            resDiv.innerHTML = `<p class="error">통신 오류: ${e}</p>`;
+        }
+    } finally {
+        if (buyBtn) buyBtn.disabled = false;
+        if (sellBtn) sellBtn.disabled = false;
     }
 }

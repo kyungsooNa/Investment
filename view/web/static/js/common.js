@@ -59,6 +59,56 @@ function escapeHtml(str) {
 }
 
 // ==========================================
+// 로딩 표시 유틸리티
+// ==========================================
+function showLoading(targetEl, message = '로딩 중...') {
+    if (!targetEl) return;
+    targetEl.innerHTML = `<div class="loading-indicator"><span class="spinner"></span><span class="loading-text">${escapeHtml(message)}</span></div>`;
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+        .finally(() => clearTimeout(timer));
+}
+
+async function withLoading(btn, targetEl, message, asyncFn) {
+    if (btn) btn.disabled = true;
+    showLoading(targetEl, message);
+    try {
+        await asyncFn();
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            if (targetEl) targetEl.innerHTML = '<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>';
+        } else {
+            if (targetEl) targetEl.innerHTML = `<p class="error">오류: ${escapeHtml(String(e.message || e))}</p>`;
+        }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ==========================================
+// 페이지 전환 로딩 오버레이
+// ==========================================
+document.addEventListener('click', (e) => {
+    const link = e.target.closest('nav.nav a');
+    if (!link) return;
+    const href = link.getAttribute('href');
+    if (!href || href === '#' || href === window.location.pathname) return;
+
+    const overlay = document.getElementById('page-loading-overlay');
+    if (overlay) overlay.classList.add('active');
+});
+
+// bfcache 복원 시 오버레이 해제
+window.addEventListener('pageshow', () => {
+    const overlay = document.getElementById('page-loading-overlay');
+    if (overlay) overlay.classList.remove('active');
+});
+
+// ==========================================
 // 상태 갱신 & 환경 전환
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {

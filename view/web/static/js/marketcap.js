@@ -7,9 +7,9 @@ async function loadTopMarketCap(market = '0001') {
     });
 
     const div = document.getElementById('marketcap-result');
-    div.innerHTML = "로딩 중...";
+    showLoading(div, '시가총액 랭킹 조회 중...');
     try {
-        const res = await fetch(`/api/top-market-cap?limit=30&market=${market}`);
+        const res = await fetchWithTimeout(`/api/top-market-cap?limit=30&market=${market}`);
         const json = await res.json();
         if (json.rt_cd !== "0") {
             div.innerHTML = `<p class="error">실패: ${json.msg1}</p>`;
@@ -37,6 +37,10 @@ async function loadTopMarketCap(market = '0001') {
         html += "</tbody></table></div>";
         div.innerHTML = html;
     } catch(e) {
-        div.innerHTML = "오류: " + e;
+        if (e.name === 'AbortError') {
+            div.innerHTML = '<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>';
+        } else {
+            div.innerHTML = "오류: " + e;
+        }
     }
 }

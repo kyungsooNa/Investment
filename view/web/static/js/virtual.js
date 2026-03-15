@@ -35,7 +35,7 @@ async function loadVirtualHistory(forceCode = null) {
     if (!tabContainer) return;
 
     try {
-        summaryBox.innerHTML = '<span>데이터 로드 중...</span>';
+        showLoading(summaryBox, '성과 데이터 로드 중...');
 
         const applyCostEl = document.getElementById('apply-cost-chk');
         const applyCost = applyCostEl ? applyCostEl.checked : false;
@@ -47,7 +47,7 @@ async function loadVirtualHistory(forceCode = null) {
 
         if (params.length > 0) url += '?' + params.join('&');
 
-        const listRes = await fetch(url);
+        const listRes = await fetchWithTimeout(url, {}, 30000);
         console.log('[Virtual] response status:', listRes.status);
         if (listRes.ok) {
             const body = await listRes.json();

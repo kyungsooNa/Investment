@@ -41,10 +41,10 @@ async function loadRanking(category) {
     if (invRow) invRow.style.display = 'none';
 
     const div = document.getElementById('ranking-result');
-    div.innerHTML = "로딩 중...";
+    showLoading(div, '랭킹 데이터 조회 중...');
 
     try {
-        const res = await fetch(`/api/ranking/${category}`);
+        const res = await fetchWithTimeout(`/api/ranking/${category}`);
         const json = await res.json();
 
         if (json.rt_cd !== "0") {
@@ -69,7 +69,11 @@ async function loadRanking(category) {
         renderRankingTable();
 
     } catch (e) {
-        div.innerHTML = "오류: " + e;
+        if (e.name === 'AbortError') {
+            div.innerHTML = '<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>';
+        } else {
+            div.innerHTML = "오류: " + e;
+        }
     }
 }
 
@@ -119,13 +123,13 @@ async function loadInvestorRanking() {
     _rankingCurrentCategory = `investor_${dir}`;
 
     const div = document.getElementById('ranking-result');
-    div.innerHTML = "로딩 중...";
+    showLoading(div, '투자자별 랭킹 조회 중...');
 
     const categories = investors.map(inv => `${inv}_${dir}`);
 
     try {
         const results = await Promise.all(
-            categories.map(cat => fetch(`/api/ranking/${cat}`).then(r => r.json()))
+            categories.map(cat => fetchWithTimeout(`/api/ranking/${cat}`).then(r => r.json()))
         );
 
         for (const json of results) {
@@ -181,7 +185,11 @@ async function loadInvestorRanking() {
         renderRankingTable();
 
     } catch (e) {
-        div.innerHTML = "오류: " + e;
+        if (e.name === 'AbortError') {
+            div.innerHTML = '<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>';
+        } else {
+            div.innerHTML = "오류: " + e;
+        }
     }
 }
 
@@ -194,7 +202,7 @@ function _formatElapsed(sec) {
 
 function _startProgressPolling(category, div) {
     div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
-        <p style="font-size:1.2em;">데이터 수집 중...</p>
+        <div class="loading-indicator" style="margin-bottom: 12px;"><span class="spinner"></span><span class="loading-text" style="font-size:1.2em;">데이터 수집 중...</span></div>
         <p id="ranking-progress-text" style="color:#888; margin-top:8px;">전체 종목을 순회하여 랭킹을 생성하고 있습니다. 잠시만 기다려주세요.</p>
     </div>`;
 

@@ -100,9 +100,9 @@ function sortBalance(key) {
 
 async function loadBalance() {
     const div = document.getElementById('balance-result');
-    div.innerHTML = "조회 중...";
+    showLoading(div, '잔고 조회 중...');
     try {
-        const res = await fetch('/api/balance');
+        const res = await fetchWithTimeout('/api/balance');
         const json = await res.json();
 
         if (json.rt_cd !== "0") {
@@ -118,6 +118,10 @@ async function loadBalance() {
         renderBalanceTable();
 
     } catch (e) {
-        div.innerHTML = `<p class="error">오류: ${e}</p>`;
+        if (e.name === 'AbortError') {
+            div.innerHTML = `<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>`;
+        } else {
+            div.innerHTML = `<p class="error">오류: ${e}</p>`;
+        }
     }
 }

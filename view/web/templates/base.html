@@ -18,6 +18,32 @@
         
         /* 페이지 분리 후 섹션 표시 강제 */
         .section { display: block !important; }
+
+        /* 페이지 전환 로딩 오버레이 */
+        .page-loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.45);
+            z-index: 99999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .page-loading-overlay.active { display: flex; }
+        .page-loading-spinner {
+            width: 36px; height: 36px;
+            border: 3.5px solid rgba(255,255,255,0.2);
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+        .page-loading-text {
+            color: #fff;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
     </style>
     {% block head_scripts %}
     <!-- 차트 라이브러리는 필요한 페이지에서만 로드 -->
@@ -78,6 +104,12 @@
 </div>
 
 <div id="toast-container" class="toast-container"></div>
+
+<!-- 페이지 전환 로딩 오버레이 -->
+<div id="page-loading-overlay" class="page-loading-overlay">
+    <div class="page-loading-spinner"></div>
+    <span class="page-loading-text">페이지 이동 중...</span>
+</div>
 
 <!-- 공통 스크립트 -->
 <script src="/static/js/common.js?v=1"></script>
