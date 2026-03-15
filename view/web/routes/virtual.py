@@ -389,6 +389,99 @@ async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
     except Exception as e:
         print(f"[WebAPI] virtual/history counts error: {e}")
 
+    # 7. Profit Factor & Expectancy 계산 (전략별 + ALL)
+    profit_factors = {}
+    expectancies = {}
+    try:
+        # 전략별 수익/손실 집계용
+        pf_agg = {"ALL": {"gains": [], "losses": []}}
+        for strat in strategies:
+            pf_agg[strat] = {"gains": [], "losses": []}
+
+        for t in trades:
+            strat = t.get('strategy')
+            if not strat:
+                continue
+            try:
+                qty = float(t.get('qty', 1) or 1)
+                bp = float(t.get('buy_price', 0) or 0)
+                if bp <= 0:
+                    continue
+
+                # 평가금액 결정
+                if t.get('status') == 'HOLD':
+                    ep = float(t.get('current_price', 0) or 0)
+                else:
+                    ep = float(t.get('sell_price', 0) or 0)
+                    if ep == 0:
+                        ep = float(t.get('current_price', 0) or 0)
+                if ep <= 0:
+                    continue
+
+                buy_amt = vm.get_trade_amount(bp, qty, is_sell=False, apply_cost=apply_cost)
+                eval_amt = vm.get_trade_amount(ep, qty, is_sell=True, apply_cost=apply_cost)
+                pnl = eval_amt - buy_amt
+
+                bucket = "gains" if pnl >= 0 else "losses"
+                pf_agg["ALL"][bucket].append(pnl)
+                if strat in pf_agg:
+                    pf_agg[strat][bucket].append(pnl)
+
+            except (ValueError, TypeError):
+                continue
+
+        for key, val in pf_agg.items():
+            total_gain = sum(val["gains"])
+            total_loss = abs(sum(val["losses"]))
+            wins = len(val["gains"])
+            losses_count = len(val["losses"])
+            total_count = wins + losses_count
+
+            # Profit Factor
+            if total_loss > 0:
+                profit_factors[key] = {
+                    "value": round(total_gain / total_loss, 2),
+                    "total_gain": round(total_gain),
+                    "total_loss": round(total_loss),
+                }
+            elif total_gain > 0:
+                profit_factors[key] = {
+                    "value": None,  # 손실 없음 (무한대)
+                    "total_gain": round(total_gain),
+                    "total_loss": 0,
+                }
+            else:
+                profit_factors[key] = {
+                    "value": 0.0,
+                    "total_gain": 0,
+                    "total_loss": 0,
+                }
+
+            # Expectancy: (승률 × 평균수익금) - (패배율 × 평균손실금)
+            if total_count > 0:
+                win_rate = wins / total_count
+                loss_rate = losses_count / total_count
+                avg_gain = (total_gain / wins) if wins > 0 else 0
+                avg_loss = (total_loss / losses_count) if losses_count > 0 else 0
+                exp_value = (win_rate * avg_gain) - (loss_rate * avg_loss)
+                expectancies[key] = {
+                    "value": round(exp_value, 0),
+                    "win_rate": round(win_rate * 100, 1),
+                    "avg_gain": round(avg_gain),
+                    "avg_loss": round(avg_loss),
+                    "wins": wins,
+                    "losses": losses_count,
+                }
+            else:
+                expectancies[key] = {
+                    "value": 0.0,
+                    "win_rate": 0, "avg_gain": 0, "avg_loss": 0,
+                    "wins": 0, "losses": 0,
+                }
+
+    except Exception as e:
+        print(f"[WebAPI] virtual/history PF/Expectancy error: {e}")
+
     ctx.pm.log_timer("get_virtual_history", t_start)
     return {
         "trades": trades,
@@ -400,4 +493,6 @@ async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
         "weekly_ref_dates": weekly_ref_dates,
         "first_dates": first_dates,
         "counts": counts,
+        "profit_factors": profit_factors,
+        "expectancies": expectancies,
     }
