@@ -42,6 +42,20 @@ async def lifespan(app: FastAPI):
 # 1. FastAPI 앱 인스턴스 생성 (lifespan 추가)
 app = FastAPI(title="Trading App", lifespan=lifespan)
 
+# debugpy가 요청 처리 컨텍스트를 인식하도록 첫 요청에서 트리거
+import sys
+if "debugpy" in sys.modules:
+    _debugpy_activated = False
+
+    @app.middleware("http")
+    async def _debugpy_activate_middleware(request: Request, call_next):
+        global _debugpy_activated
+        if not _debugpy_activated:
+            _debugpy_activated = True
+            import debugpy
+            debugpy.debug_this_thread()
+        return await call_next(request)
+
 # 2. 정적 파일 및 템플릿 설정
 # 현재 파일(web_main.py)의 위치를 기준으로 절대 경로 설정하여 실행 위치에 영향받지 않도록 함
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
