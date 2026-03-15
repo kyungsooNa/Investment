@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
@@ -94,6 +94,7 @@ class StrategyScheduler:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._last_run: Dict[str, datetime] = {}
+        self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._csv_lock = threading.Lock()
@@ -151,29 +152,8 @@ class StrategyScheduler:
 
     # ── 메인 루프 ──
 
-    def _init_staggered_schedule(self):
-        """전략 간 API 자원 충돌 방지를 위해 실행 시점을 1분 간격으로 분산."""
-        try:
-            now = self._tm.get_current_kst_time()
-        except Exception:
-            return
-        for i, cfg in enumerate(self._strategies):
-            name = cfg.strategy.name
-            offset = i * self.STAGGER_INTERVAL_SEC
-            interval_sec = cfg.interval_minutes * 60
-            if name not in self._last_run and interval_sec > offset:
-                # 전략 i번째는 i*STAGGER_INTERVAL_SEC 후에 첫 실행
-                # last_run을 (interval - offset)만큼 과거로 설정
-                self._last_run[name] = now - timedelta(
-                    seconds=interval_sec - offset
-                )
-                self._logger.info(
-                    f"[Scheduler] {name} 첫 실행 오프셋: {offset}초 후"
-                )
-
     async def _loop(self):
         self._logger.info("스케줄러 메인 루프 시작.")
-        self._init_staggered_schedule()
         while self._running:
             try:
                 # 1. API 기반의 완벽한 개장/공휴일/시간대 검증
@@ -205,7 +185,16 @@ class StrategyScheduler:
                         force_exit = True
 
                     if should_run or force_exit:
+                        # 전략 간 API 자원 충돌 방지: 직전 전략 실행 후 최소 STAGGER_INTERVAL_SEC 대기
+                        # (강제 청산은 쿨다운 무시 — 장 마감 시 즉시 처리 필요)
+                        if not force_exit and self._last_execution_time:
+                            since_last_exec = (now - self._last_execution_time).total_seconds()
+                            if since_last_exec < self.STAGGER_INTERVAL_SEC:
+                                continue
+
                         self._last_run[name] = now
+                        if not force_exit:
+                            self._last_execution_time = now
                         try:
                             await self._run_strategy(cfg, force_exit_only=force_exit)
                         except Exception as e:
