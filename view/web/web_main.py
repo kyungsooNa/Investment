@@ -69,7 +69,7 @@ app.include_router(web_api.router)
 page_router = APIRouter()
 
 # 공통 페이지 렌더링 함수 (로그인 체크 포함)
-async def render_page(request: Request, template_name: str, active_page: str):
+async def render_page(request: Request, template_name: str, active_page: str, extra_context: dict = None):
     try:
         ctx = web_api._get_ctx()
     except:
@@ -84,7 +84,10 @@ async def render_page(request: Request, template_name: str, active_page: str):
         if not token or token != expected_token:
             return templates.TemplateResponse(request, "login.html")
 
-    return templates.TemplateResponse(request, template_name, {"active_page": active_page})
+    context = {"active_page": active_page}
+    if extra_context:
+        context.update(extra_context)
+    return templates.TemplateResponse(request, template_name, context)
 
 # 4. 페이지 라우팅
 @page_router.get("/")
@@ -93,7 +96,16 @@ async def index(request: Request):
 
 @page_router.get("/stock")
 async def stock(request: Request):
-    return await render_page(request, "stock.html", "stock")
+    # 종목 리스트를 페이지 로드 시 1회 전달 (클라이언트 자동완성용)
+    try:
+        ctx = web_api._get_ctx()
+        stock_list = [
+            {"c": code, "n": name}
+            for name, code in ctx.stock_code_mapper.name_to_code.items()
+        ]
+    except Exception:
+        stock_list = []
+    return await render_page(request, "stock.html", "stock", extra_context={"stock_list": stock_list})
 
 @page_router.get("/balance")
 async def balance(request: Request):

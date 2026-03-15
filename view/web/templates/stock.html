@@ -30,7 +30,11 @@
 
 {% block scripts %}
 <script src="/static/js/candle_chart.js?v=1"></script>
-<script src="/static/js/stock.js?v=2"></script>
+<script>
+    // 서버에서 1회 전달받은 전 종목 리스트 (클라이언트 자동완성용)
+    var ALL_STOCKS = {{ stock_list | default([], true) | tojson }};
+</script>
+<script src="/static/js/stock.js?v=3"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const urlParams = new URLSearchParams(window.location.search);

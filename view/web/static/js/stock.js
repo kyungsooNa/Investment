@@ -1,8 +1,7 @@
 /* view/web/static/js/stock.js — 종목 조회 (searchStock) */
 
-/* ── 종목명 자동완성 ── */
+/* ── 종목명 자동완성 (클라이언트 로컬 검색) ── */
 (function() {
-    let debounceTimer = null;
     let activeIndex = -1;
 
     document.addEventListener('DOMContentLoaded', function() {
@@ -10,28 +9,27 @@
         const list = document.getElementById('stock-autocomplete-list');
         if (!input || !list) return;
 
+        const stocks = (typeof ALL_STOCKS !== 'undefined') ? ALL_STOCKS : [];
+
         input.addEventListener('input', function() {
-            const q = input.value.trim();
-            clearTimeout(debounceTimer);
+            const q = input.value.trim().toLowerCase();
             activeIndex = -1;
 
-            // 숫자 6자리(종목코드)이면 자동완성 안 함
+            // 숫자만(종목코드)이면 자동완성 안 함
             if (!q || /^\d+$/.test(q)) {
                 list.innerHTML = '';
                 list.style.display = 'none';
                 return;
             }
 
-            debounceTimer = setTimeout(async () => {
-                try {
-                    const res = await fetch(`/api/stock/search?q=${encodeURIComponent(q)}`);
-                    const json = await res.json();
-                    renderAutocomplete(json.results || []);
-                } catch(e) {
-                    list.innerHTML = '';
-                    list.style.display = 'none';
+            // 로컬 배열에서 filter (네트워크 0회)
+            const results = [];
+            for (let i = 0; i < stocks.length && results.length < 20; i++) {
+                if (stocks[i].n.toLowerCase().includes(q)) {
+                    results.push(stocks[i]);
                 }
-            }, 250);
+            }
+            renderAutocomplete(results);
         });
 
         input.addEventListener('keydown', function(e) {
@@ -63,14 +61,14 @@
         function renderAutocomplete(results) {
             list.innerHTML = '';
             if (!results.length) { list.style.display = 'none'; return; }
-            results.forEach((item, idx) => {
+            results.forEach(item => {
                 const li = document.createElement('li');
-                li.textContent = `${item.name} (${item.code})`;
+                li.textContent = `${item.n} (${item.c})`;
                 li.addEventListener('click', function() {
-                    input.value = item.code;
+                    input.value = item.c;
                     list.innerHTML = '';
                     list.style.display = 'none';
-                    searchStock(item.code);
+                    searchStock(item.c);
                 });
                 list.appendChild(li);
             });
