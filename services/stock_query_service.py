@@ -16,13 +16,13 @@ class StockQueryService:
     """
 
     def __init__(self, trading_service, logger, time_manager, indicator_service=None,
-                 background_service=None, performance_manager: Optional[PerformanceManager] = None,
+                 ranking_task=None, performance_manager: Optional[PerformanceManager] = None,
                  notification_manager: Optional[NotificationManager] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.indicator_service = indicator_service
-        self.background_service = background_service
+        self.ranking_task = ranking_task
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
         self._nm = notification_manager
 
@@ -512,10 +512,10 @@ class StockQueryService:
         """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수 등)."""
         t_start = self.pm.start_timer()
         # (title, func, param, is_sync) — is_sync=True이면 동기 함수 호출
-        # 장마감 후 캐시된 기본 랭킹이 있으면 우선 사용 (trading_value 제외 — background_service에서 처리)
+        # 장마감 후 캐시된 기본 랭킹이 있으면 우선 사용 (trading_value 제외 — ranking_task에서 처리)
         basic_categories = ("rise", "fall", "volume")
-        if category in basic_categories and self.background_service:
-            cached = self.background_service.get_basic_ranking_cache(category)
+        if category in basic_categories and self.ranking_task:
+            cached = self.ranking_task.get_basic_ranking_cache(category)
             if cached is not None:
                 self.logger.info(f"Handler - {category} 캐시 히트 (장마감 후 캐시)")
                 return cached
@@ -527,35 +527,35 @@ class StockQueryService:
             "trading_value": ("거래대금", self.trading_service.get_top_trading_value_stocks, None, False),
         }
 
-        # 백그라운드 서비스 카테고리 (동기 함수)
+        # 랭킹 태스크 카테고리 (동기 함수)
         # 거래대금: 장마감 후에는 투자자 데이터(acml_tr_pbmn) 기반으로 전환
-        if self.background_service:
+        if self.ranking_task:
             category_map["trading_value"] = (
-                "거래대금", self.background_service.get_trading_value_ranking, None, False
+                "거래대금", self.ranking_task.get_trading_value_ranking, None, False
             )
             category_map["foreign_buy"] = (
-                "외인 순매수", self.background_service.get_foreign_net_buy_ranking, None, False
+                "외인 순매수", self.ranking_task.get_foreign_net_buy_ranking, None, False
             )
             category_map["foreign_sell"] = (
-                "외인 순매도", self.background_service.get_foreign_net_sell_ranking, None, False
+                "외인 순매도", self.ranking_task.get_foreign_net_sell_ranking, None, False
             )
             category_map["inst_buy"] = (
-                "기관 순매수", self.background_service.get_inst_net_buy_ranking, None, False
+                "기관 순매수", self.ranking_task.get_inst_net_buy_ranking, None, False
             )
             category_map["inst_sell"] = (
-                "기관 순매도", self.background_service.get_inst_net_sell_ranking, None, False
+                "기관 순매도", self.ranking_task.get_inst_net_sell_ranking, None, False
             )
             category_map["prsn_buy"] = (
-                "개인 순매수", self.background_service.get_prsn_net_buy_ranking, None, False
+                "개인 순매수", self.ranking_task.get_prsn_net_buy_ranking, None, False
             )
             category_map["prsn_sell"] = (
-                "개인 순매도", self.background_service.get_prsn_net_sell_ranking, None, False
+                "개인 순매도", self.ranking_task.get_prsn_net_sell_ranking, None, False
             )
             category_map["program_buy"] = (
-                "프로그램 순매수", self.background_service.get_program_net_buy_ranking, None, False
+                "프로그램 순매수", self.ranking_task.get_program_net_buy_ranking, None, False
             )
             category_map["program_sell"] = (
-                "프로그램 순매도", self.background_service.get_program_net_sell_ranking, None, False
+                "프로그램 순매도", self.ranking_task.get_program_net_sell_ranking, None, False
             )
 
         if category not in category_map:

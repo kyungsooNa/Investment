@@ -171,7 +171,7 @@ async def test_get_ranking_prsn_sell(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_get_ranking_progress(web_client, mock_web_ctx):
     """GET /api/ranking/progress 정상 응답."""
-    mock_web_ctx.background_service.get_investor_ranking_progress.return_value = {
+    mock_web_ctx.ranking_task.get_investor_ranking_progress.return_value = {
         "running": True, "processed": 500, "total": 2500, "collected": 120, "elapsed": 45.3
     }
     response = web_client.get("/api/ranking/progress")
@@ -184,9 +184,9 @@ async def test_get_ranking_progress(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
-async def test_get_ranking_progress_no_background_service(web_client, mock_web_ctx):
-    """background_service 없을 때 기본값 반환."""
-    mock_web_ctx.background_service = None
+async def test_get_ranking_progress_no_ranking_task(web_client, mock_web_ctx):
+    """ranking_task 없을 때 기본값 반환."""
+    mock_web_ctx.ranking_task = None
     response = web_client.get("/api/ranking/progress")
     assert response.status_code == 200
     body = response.json()

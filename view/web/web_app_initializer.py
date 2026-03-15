@@ -2,6 +2,7 @@
 웹 애플리케이션용 서비스 초기화 모듈.
 TradingApp의 초기화 로직을 참고하여 서비스 레이어만 초기화한다.
 """
+import asyncio
 from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
@@ -26,7 +27,8 @@ from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
-from services.background_service import BackgroundService
+from services.ranking_task import RankingTask
+from services.websocket_watchdog_task import WebSocketWatchdogTask
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
@@ -53,7 +55,8 @@ class WebAppContext:
         self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
-        self.background_service: BackgroundService = None
+        self.ranking_task: RankingTask = None
+        self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self._mdm: MarketDateManager = None
         self.notification_manager: NotificationManager = None
         self.initialized = False
@@ -101,7 +104,7 @@ class WebAppContext:
             )
             self.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
             
-            # [추가] Telegram Reporter 초기화 (BackgroundService 주입용)
+            # [추가] Telegram Reporter 초기화 (RankingTask 주입용)
             self.telegram_reporter = TelegramReporter(bot_token=telegram_token, chat_id=telegram_chat_id)
             self.logger.info("텔레그램 리포터가 초기화되었습니다.")
         else:
@@ -161,7 +164,7 @@ class WebAppContext:
 
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
         self.indicator_service = IndicatorService(cache_manager=cache_manager, performance_manager=self.pm)
-        self.background_service = BackgroundService(
+        self.ranking_task = RankingTask(
             broker_api_wrapper=self.broker,
             stock_code_mapper=self.stock_code_mapper,
             env=self.env,
@@ -172,20 +175,26 @@ class WebAppContext:
             notification_manager=self.notification_manager,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
             market_date_manager=self._mdm,
-            stock_query_service=None,  # stock_query_service 생성 후 주입
-            realtime_data_manager=self.realtime_data_manager,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
             indicator_service=self.indicator_service,
-            background_service=self.background_service,
+            ranking_task=self.ranking_task,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
-        # BackgroundService에 StockQueryService 주입 (순환 참조 방지를 위해 지연 주입)
-        self.background_service._stock_query_service = self.stock_query_service
+        # WebSocketWatchdogTask 초기화
+        self.websocket_watchdog_task = WebSocketWatchdogTask(
+            stock_query_service=self.stock_query_service,
+            trading_service=self.trading_service,
+            realtime_data_manager=self.realtime_data_manager,
+            market_date_manager=self._mdm,
+            performance_manager=self.pm,
+            notification_manager=self.notification_manager,
+            logger=self.logger,
+        )
 
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager,
@@ -363,16 +372,20 @@ class WebAppContext:
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
     def start_background_tasks(self):
-        """백그라운드 태스크 시작 — BackgroundService에 위임."""
-        if self.background_service:
-            self.background_service.start_all(
+        """백그라운드 태스크 시작 — RankingTask + WebSocketWatchdogTask에 위임."""
+        if self.ranking_task:
+            asyncio.create_task(self.ranking_task.start())
+        if self.websocket_watchdog_task:
+            asyncio.create_task(self.websocket_watchdog_task.start(
                 realtime_callback=self._web_realtime_callback,
-            )
+            ))
 
     async def shutdown(self):
-        """서비스 종료 처리 — BackgroundService에 위임."""
-        if self.background_service:
-            await self.background_service.shutdown()
+        """서비스 종료 처리 — RankingTask + WebSocketWatchdogTask에 위임."""
+        if self.ranking_task:
+            await self.ranking_task.stop()
+        if self.websocket_watchdog_task:
+            await self.websocket_watchdog_task.stop()
         self.logger.info("웹 앱: 서비스 종료 완료")
 
     # --- 프로그램매매 실시간 스트리밍 ---
@@ -407,7 +420,7 @@ class WebAppContext:
             if (self.trading_service
                     and not self.trading_service.is_websocket_receive_alive()):
                 self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
-                await self.background_service.force_reconnect_program_trading()
+                await self.websocket_watchdog_task.force_reconnect_program_trading()
 
                 # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
                 if not self.realtime_data_manager.is_subscribed(code):

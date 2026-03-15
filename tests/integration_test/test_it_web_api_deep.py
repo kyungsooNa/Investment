@@ -548,8 +548,8 @@ class TestDeepRanking:
         payload = _make_ranking_rise_payload()
         patch_session_get(quot_api, mocker, payload)
 
-        # background_service의 캐시 비활성화 (실시간 API 호출 유도)
-        deep_paper_ctx.stock_query_service.background_service = None
+        # ranking_task의 캐시 비활성화 (실시간 API 호출 유도)
+        deep_paper_ctx.stock_query_service.ranking_task = None
 
         client = deep_paper_ctx._test_client
         resp = client.get("/api/ranking/rise")
@@ -572,7 +572,7 @@ class TestDeepRanking:
         payload = _make_volume_ranking_payload()
         patch_session_get(quot_api, mocker, payload)
 
-        deep_paper_ctx.stock_query_service.background_service = None
+        deep_paper_ctx.stock_query_service.ranking_task = None
 
         client = deep_paper_ctx._test_client
         resp = client.get("/api/ranking/volume")

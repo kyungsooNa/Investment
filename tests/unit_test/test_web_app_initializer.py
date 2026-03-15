@@ -22,7 +22,8 @@ def mock_deps():
         ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
         ("web_api", patch("view.web.web_app_initializer.web_api")),
         ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
-        ("bg_service", patch("view.web.web_app_initializer.BackgroundService", autospec=True)),
+        ("ranking_task", patch("view.web.web_app_initializer.RankingTask", autospec=True)),
+        ("watchdog_task", patch("view.web.web_app_initializer.WebSocketWatchdogTask", autospec=True)),
         ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
         ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
         ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
@@ -209,18 +210,23 @@ async def test_lifecycle_methods(mock_deps):
     ctx.realtime_data_manager = MagicMock()
     ctx.realtime_data_manager.shutdown = AsyncMock()
 
-    # Mock background_service
-    ctx.background_service = MagicMock()
-    ctx.background_service.start_all = MagicMock()
-    ctx.background_service.shutdown = AsyncMock()
+    # Mock ranking_task and websocket_watchdog_task
+    ctx.ranking_task = MagicMock()
+    ctx.ranking_task.start = AsyncMock()
+    ctx.ranking_task.stop = AsyncMock()
+    ctx.websocket_watchdog_task = MagicMock()
+    ctx.websocket_watchdog_task.start = AsyncMock()
+    ctx.websocket_watchdog_task.stop = AsyncMock()
 
-    # Start — BackgroundService에 위임
-    ctx.start_background_tasks()
-    ctx.background_service.start_all.assert_called_once()
+    # Start — RankingTask + WebSocketWatchdogTask에 위임
+    with patch("view.web.web_app_initializer.asyncio.create_task") as mock_create_task:
+        ctx.start_background_tasks()
+        assert mock_create_task.call_count == 2
 
-    # Shutdown — BackgroundService에 위임
+    # Shutdown — RankingTask + WebSocketWatchdogTask에 위임
     await ctx.shutdown()
-    ctx.background_service.shutdown.assert_awaited_once()
+    ctx.ranking_task.stop.assert_awaited_once()
+    ctx.websocket_watchdog_task.stop.assert_awaited_once()
 
 def test_web_realtime_callback(mock_deps):
     """웹소켓 콜백 처리 테스트"""
@@ -305,26 +311,24 @@ async def test_initialize_services_with_pydantic_config_object(mock_deps):
 @pytest.mark.asyncio
 async def test_start_background_tasks_with_restore(mock_deps):
     """
-    start_background_tasks가 BackgroundService.start_all()에
+    start_background_tasks가 RankingTask + WebSocketWatchdogTask에
     올바르게 위임하는지 검증합니다.
     """
     # Arrange
     ctx = WebAppContext(None)
 
-    # Mock background_service
-    ctx.background_service = MagicMock()
-    ctx.background_service.start_all = MagicMock()
+    # Mock ranking_task and websocket_watchdog_task
+    ctx.ranking_task = MagicMock()
+    ctx.ranking_task.start = AsyncMock()
+    ctx.websocket_watchdog_task = MagicMock()
+    ctx.websocket_watchdog_task.start = AsyncMock()
 
     # Act
-    ctx.start_background_tasks()
+    with patch("view.web.web_app_initializer.asyncio.create_task") as mock_create_task:
+        ctx.start_background_tasks()
 
-    # Assert — BackgroundService.start_all()이 realtime_callback과 함께 호출되었는지 확인
-    ctx.background_service.start_all.assert_called_once()
-    call_kwargs = ctx.background_service.start_all.call_args
-    assert call_kwargs.kwargs.get("realtime_callback") == ctx._web_realtime_callback
-
-    # NOTE: _restore_program_trading, _program_trading_watchdog, _force_reconnect_program_trading
-    # 테스트는 BackgroundService로 이동됨 → test_background_service.py 참조
+    # Assert — RankingTask.start()과 WebSocketWatchdogTask.start()이 호출되었는지 확인
+    assert mock_create_task.call_count == 2
 
 def test_load_config_and_env_with_telegram(mock_deps):
     """설정에 텔레그램 정보가 있으면 TelegramReporter가 초기화되는지 검증"""
@@ -348,11 +352,11 @@ def test_load_config_and_env_with_telegram(mock_deps):
 
 @pytest.mark.asyncio
 async def test_initialize_services_injects_reporter(mock_deps):
-    """BackgroundService 초기화 시 telegram_reporter가 주입되는지 검증"""
+    """RankingTask 초기화 시 telegram_reporter가 주입되는지 검증"""
     ctx = WebAppContext(None)
     ctx.load_config_and_env()
     ctx.telegram_reporter = MagicMock() # Reporter가 있다고 가정
-    
+
     # Env mock 설정
     ctx.env.get_access_token = AsyncMock(return_value=True)
     ctx.env.get_real_access_token = AsyncMock(return_value="token")
@@ -361,6 +365,6 @@ async def test_initialize_services_injects_reporter(mock_deps):
     await ctx.initialize_services(is_paper_trading=True)
 
     # Assert
-    mock_bg_cls = mock_deps["bg_service"]
-    _, kwargs = mock_bg_cls.call_args
+    mock_ranking_cls = mock_deps["ranking_task"]
+    _, kwargs = mock_ranking_cls.call_args
     assert kwargs.get("telegram_reporter") == ctx.telegram_reporter
