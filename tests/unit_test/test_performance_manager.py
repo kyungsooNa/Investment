@@ -1,5 +1,6 @@
 import unittest
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import MagicMock, patch, mock_open
 from core.performance_manager import PerformanceManager
 
 class TestPerformanceManager(unittest.TestCase):
@@ -111,3 +112,132 @@ class TestPerformanceManager(unittest.TestCase):
         self.mock_logger.info.assert_called_once()
         args, _ = self.mock_logger.info.call_args
         self.assertIn("[Performance] test_func: 0.5000s", args[0])
+
+
+class TestPerformanceManagerProfile(unittest.TestCase):
+    def setUp(self):
+        self.mock_logger = MagicMock()
+
+    @patch('core.performance_manager.HAS_PYINSTRUMENT', True)
+    @patch('core.performance_manager.pyinstrument', create=True)
+    def test_profile_sync_enabled(self, mock_pyinstrument):
+        """활성화 시 profile 컨텍스트 매니저가 프로파일링을 수행하는지 테스트"""
+        mock_profiler = MagicMock()
+        mock_profiler.output_text.return_value = "mock profile output"
+        mock_profiler.output_html.return_value = "<html>mock</html>"
+        mock_pyinstrument.Profiler.return_value = mock_profiler
+
+        pm = PerformanceManager(logger=self.mock_logger, enabled=True)
+
+        with patch('builtins.open', mock_open()):
+            with patch('os.makedirs'):
+                with pm.profile("test_block", save_html=False) as profiler:
+                    _ = sum(range(100))
+
+        mock_profiler.start.assert_called_once()
+        mock_profiler.stop.assert_called_once()
+        mock_profiler.output_text.assert_called_once()
+        self.mock_logger.info.assert_called()
+
+    def test_profile_sync_disabled(self):
+        """비활성화 시 profile이 프로파일링 없이 통과하는지 테스트"""
+        pm = PerformanceManager(logger=self.mock_logger, enabled=False)
+
+        with pm.profile("test_block") as profiler:
+            _ = sum(range(100))
+
+        self.assertIsNone(profiler)
+        self.mock_logger.info.assert_not_called()
+
+    @patch('core.performance_manager.HAS_PYINSTRUMENT', False)
+    def test_profile_no_pyinstrument(self):
+        """pyinstrument 미설치 시 경고 로그를 남기는지 테스트"""
+        pm = PerformanceManager(logger=self.mock_logger, enabled=True)
+
+        with pm.profile("test_block"):
+            _ = sum(range(100))
+
+        self.mock_logger.warning.assert_called_once()
+        warning_msg = self.mock_logger.warning.call_args[0][0]
+        self.assertIn("pyinstrument", warning_msg)
+
+    @patch('core.performance_manager.HAS_PYINSTRUMENT', True)
+    @patch('core.performance_manager.pyinstrument', create=True)
+    def test_profile_async_enabled(self, mock_pyinstrument):
+        """활성화 시 profile_async가 async_mode로 프로파일링하는지 테스트"""
+        mock_profiler = MagicMock()
+        mock_profiler.output_text.return_value = "mock async profile"
+        mock_profiler.output_html.return_value = "<html>mock</html>"
+        mock_pyinstrument.Profiler.return_value = mock_profiler
+
+        pm = PerformanceManager(logger=self.mock_logger, enabled=True)
+
+        async def run():
+            with patch('builtins.open', mock_open()):
+                with patch('os.makedirs'):
+                    async with pm.profile_async("async_block", save_html=False) as profiler:
+                        await asyncio.sleep(0)
+
+        asyncio.get_event_loop().run_until_complete(run())
+
+        mock_pyinstrument.Profiler.assert_called_with(async_mode="enabled")
+        mock_profiler.start.assert_called_once()
+        mock_profiler.stop.assert_called_once()
+
+    def test_profile_async_disabled(self):
+        """비활성화 시 profile_async가 프로파일링 없이 통과하는지 테스트"""
+        pm = PerformanceManager(logger=self.mock_logger, enabled=False)
+
+        async def run():
+            async with pm.profile_async("async_block"):
+                await asyncio.sleep(0)
+
+        asyncio.get_event_loop().run_until_complete(run())
+        self.mock_logger.info.assert_not_called()
+
+    @patch('core.performance_manager.HAS_PYINSTRUMENT', True)
+    @patch('core.performance_manager.pyinstrument', create=True)
+    def test_profile_saves_html(self, mock_pyinstrument):
+        """save_html=True일 때 HTML 파일을 저장하는지 테스트"""
+        mock_profiler = MagicMock()
+        mock_profiler.output_text.return_value = "profile output"
+        mock_profiler.output_html.return_value = "<html>report</html>"
+        mock_pyinstrument.Profiler.return_value = mock_profiler
+
+        pm = PerformanceManager(logger=self.mock_logger, enabled=True)
+
+        m_open = mock_open()
+        with patch('builtins.open', m_open):
+            with patch('os.makedirs') as mock_makedirs:
+                with pm.profile("html_test", save_html=True):
+                    _ = 1 + 1
+
+        mock_makedirs.assert_called_once_with(PerformanceManager.PROFILE_OUTPUT_DIR, exist_ok=True)
+        m_open.assert_called_once()
+        # 파일 경로에 html_test가 포함되어야 함
+        filepath_arg = m_open.call_args[0][0]
+        self.assertIn("html_test", filepath_arg)
+        self.assertTrue(filepath_arg.endswith(".html"))
+        # HTML 저장 로그 확인
+        info_calls = [call[0][0] for call in self.mock_logger.info.call_args_list]
+        html_saved_logs = [msg for msg in info_calls if "HTML 저장" in msg]
+        self.assertEqual(len(html_saved_logs), 1)
+
+    @patch('core.performance_manager.HAS_PYINSTRUMENT', True)
+    @patch('core.performance_manager.pyinstrument', create=True)
+    def test_profile_exception_still_stops(self, mock_pyinstrument):
+        """블록 내 예외 발생 시에도 프로파일러가 정상 종료되는지 테스트"""
+        mock_profiler = MagicMock()
+        mock_profiler.output_text.return_value = "output"
+        mock_profiler.output_html.return_value = "<html></html>"
+        mock_pyinstrument.Profiler.return_value = mock_profiler
+
+        pm = PerformanceManager(logger=self.mock_logger, enabled=True)
+
+        with self.assertRaises(ValueError):
+            with patch('builtins.open', mock_open()):
+                with patch('os.makedirs'):
+                    with pm.profile("exception_test", save_html=False):
+                        raise ValueError("test error")
+
+        mock_profiler.stop.assert_called_once()

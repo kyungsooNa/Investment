@@ -125,11 +125,12 @@ async def stream_scheduler_signals(request: Request):
 async def generate_osb_pool_a():
     """오닐 스퀴즈 전략 Pool A 생성 (장 마감 후 수동 실행)."""
     ctx = _get_ctx()
-    t_start = ctx.pm.start_timer()
-    if not ctx.initialized:
-        raise HTTPException(status_code=503, detail="서비스가 초기화되지 않았습니다.")
-    if not hasattr(ctx, "oneil_universe_service") or not ctx.oneil_universe_service:
-        raise HTTPException(status_code=404, detail="오닐 유니버스 서비스가 초기화되지 않았습니다.")
-    result = await ctx.oneil_universe_service.generate_pool_a()
-    ctx.pm.log_timer("generate_osb_pool_a", t_start)
-    return {"success": True, "result": result}
+    async with ctx.pm.profile_async("generate_osb_pool_a"):
+        t_start = ctx.pm.start_timer()
+        if not ctx.initialized:
+            raise HTTPException(status_code=503, detail="서비스가 초기화되지 않았습니다.")
+        if not hasattr(ctx, "oneil_universe_service") or not ctx.oneil_universe_service:
+            raise HTTPException(status_code=404, detail="오닐 유니버스 서비스가 초기화되지 않았습니다.")
+        result = await ctx.oneil_universe_service.generate_pool_a()
+        ctx.pm.log_timer("generate_osb_pool_a", t_start)
+        return {"success": True, "result": result}

@@ -4,15 +4,17 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from common.types import ResCommonResponse
+from core.performance_manager import PerformanceManager
 
 class MarketDateManager:
     """
     주식 시장의 개장일, 휴장일, 과거 최신 영업일 및 다음 개장 시간을 통합 관리하는 달력(Calendar) 매니저입니다.
     """
-    def __init__(self, time_manager, logger=None):
+    def __init__(self, time_manager, logger=None, performance_manager: Optional[PerformanceManager] = None):
         self._time_manager = time_manager
         self._logger = logger or logging.getLogger(__name__)
         self._broker = None
+        self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
         
         # [과거/현재] get_latest_trading_date 캐시 변수 (기존 로직 유지)
         self._cached_date = None
@@ -31,23 +33,26 @@ class MarketDateManager:
     async def get_latest_trading_date(self) -> Optional[str]:
         """오늘을 포함하여 가장 최근에 장이 열렸던 영업일(YYYYMMDD)을 반환합니다."""
         current_date = self._time_manager.get_current_kst_time().strftime("%Y%m%d")
-        
+
         # 캐시가 있고, 오늘 이미 확인했다면 캐시 반환
         if self._cached_date and self._last_check_date == current_date:
             return self._cached_date
-            
+
         if not self._broker:
             self._logger.warning("MarketDateManager: Broker is not set.")
             return None
-            
+
+        t_start = self._pm.start_timer()
         try:
             latest_date = await self._fetch_from_api()
             if latest_date:
                 self._cached_date = latest_date
                 self._last_check_date = current_date
+            self._pm.log_timer("MarketDateManager.get_latest_trading_date", t_start)
             return latest_date
         except Exception as e:
             self._logger.error(f"Failed to fetch latest trading date: {e}")
+            self._pm.log_timer("MarketDateManager.get_latest_trading_date [예외]", t_start)
             return None
 
     async def _fetch_from_api(self) -> Optional[str]:
@@ -100,7 +105,7 @@ class MarketDateManager:
             target_date = self._time_manager.get_current_kst_time()
 
         target_month = target_date.strftime("%Y%m")
-        
+
         # 이미 이번 달 데이터를 가져왔고, 해당 날짜가 캐시에 있다면 스킵
         if self._last_sync_month == target_month and target_date.strftime("%Y%m%d") in self._business_days_cache:
             return
@@ -109,18 +114,20 @@ class MarketDateManager:
             self._logger.error("Broker가 설정되지 않아 휴장일 API를 호출할 수 없습니다.")
             return
 
-        # 한투 '국내휴장일조회' API 호출 
+        t_start = self._pm.start_timer()
+        # 한투 '국내휴장일조회' API 호출
         target_date_str = target_date.strftime("%Y%m%d")
         holiday_data: ResCommonResponse = await self._broker.check_holiday(target_date_str)
-        
+
         if holiday_data and holiday_data.rt_cd == "0" and holiday_data.data and "output" in holiday_data.data:
             for day_info in holiday_data.data["output"]:
                 date_str = day_info["bass_dt"]
                 # 영업일이면서 거래일이어야 개장일
                 is_open = (day_info["bzdy_yn"] == "Y" and day_info["tr_day_yn"] == "Y")
                 self._business_days_cache[date_str] = is_open
-                
+
         self._last_sync_month = target_month
+        self._pm.log_timer(f"MarketDateManager._sync_calendar_if_needed({target_date_str})", t_start)
 
     async def is_business_day(self, date_str: str = None) -> bool:
         """특정 날짜(YYYYMMDD)가 공휴일/휴장일이 아닌 영업일인지 확인합니다."""

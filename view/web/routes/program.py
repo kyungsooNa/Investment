@@ -17,28 +17,30 @@ router = APIRouter()
 async def subscribe_program_trading(req: ProgramTradingRequest):
     """프로그램매매 실시간 구독 시작 (다중 종목 추가 구독)."""
     ctx = _get_ctx()
-    success = await ctx.start_program_trading(req.code)
-    if not success:
-        raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
-    mapper = getattr(ctx, 'stock_code_mapper', None)
-    stock_name = mapper.get_name_by_code(req.code) if mapper else ''
-    # [변경] 매니저 사용
-    return {"success": True, "code": req.code, "stock_name": stock_name, "codes": ctx.realtime_data_manager.get_subscribed_codes()}
+    async with ctx.pm.profile_async(f"subscribe({req.code})"):
+        success = await ctx.start_program_trading(req.code)
+        if not success:
+            raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
+        mapper = getattr(ctx, 'stock_code_mapper', None)
+        stock_name = mapper.get_name_by_code(req.code) if mapper else ''
+        # [변경] 매니저 사용
+        return {"success": True, "code": req.code, "stock_name": stock_name, "codes": ctx.realtime_data_manager.get_subscribed_codes()}
 
 
 @router.get("/program-trading/history/{code}")
 async def get_program_trading_history(code: str):
     """프로그램 매매 추이 히스토리 조회 (차트용)."""
     ctx = _get_ctx()
-    t_start = ctx.pm.start_timer()
-    resp = await ctx.stock_query_service.handle_get_program_trading_history(code)
-    result = _serialize_response(resp)
+    async with ctx.pm.profile_async(f"get_program_trading_history({code})"):
+        t_start = ctx.pm.start_timer()
+        resp = await ctx.stock_query_service.handle_get_program_trading_history(code)
+        result = _serialize_response(resp)
 
-    if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):
-        mapper = getattr(ctx, 'stock_code_mapper', None)
-        result["data"]["name"] = mapper.get_name_by_code(code) if mapper else ""
-    ctx.pm.log_timer(f"get_program_trading_history({code})", t_start)
-    return result
+        if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):
+            mapper = getattr(ctx, 'stock_code_mapper', None)
+            result["data"]["name"] = mapper.get_name_by_code(code) if mapper else ""
+        ctx.pm.log_timer(f"get_program_trading_history({code})", t_start)
+        return result
 
 
 @router.post("/program-trading/unsubscribe")

@@ -21,6 +21,10 @@ def mock_ctx():
         ctx.background_service = MagicMock()
         ctx.background_service.force_reconnect_program_trading = AsyncMock()
 
+        # PerformanceManager mock
+        ctx.pm = MagicMock()
+        ctx.pm.start_timer.return_value = 0.0
+
         # Default behaviors
         ctx.realtime_data_manager.is_subscribed.return_value = False
         ctx.stock_query_service.connect_websocket.return_value = True

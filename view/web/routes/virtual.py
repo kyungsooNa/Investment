@@ -76,52 +76,59 @@ async def _calculate_benchmark(ctx, code: str, ref_history: list, start_date: st
 async def get_strategy_chart(strategy_name: str):
     """특정 전략의 수익률 히스토리(차트용) 반환 + 벤치마크(KOSPI200, KOSDAQ150) 포함"""
     ctx = _get_ctx()
-    t_start = ctx.pm.start_timer()
-    vm = ctx.virtual_manager
+    async with ctx.pm.profile_async(f"get_strategy_chart({strategy_name})"):
+        t_start = ctx.pm.start_timer()
+        vm = ctx.virtual_manager
 
-    # 1. 히스토리 데이터 수집
-    if strategy_name == "ALL":
-        strategies = vm.get_all_strategies()
-        histories = {s: vm.get_strategy_return_history(s) for s in strategies}
-        # ALL 합산 히스토리 생성: 전 전략의 날짜별 평균 수익률
-        all_dates_map: dict[str, list[float]] = {}
-        for hist in histories.values():
-            for entry in hist:
-                all_dates_map.setdefault(entry['date'], []).append(entry['return_rate'])
-        if all_dates_map:
-            histories["ALL"] = [
-                {"date": d, "return_rate": sum(vals) / len(vals)}
-                for d, vals in sorted(all_dates_map.items())
-            ]
-    else:
-        histories = {strategy_name: vm.get_strategy_return_history(strategy_name)}
+        # 1. 히스토리 데이터 수집
+        if strategy_name == "ALL":
+            strategies = vm.get_all_strategies()
+            histories = {s: vm.get_strategy_return_history(s) for s in strategies}
+            # ALL 합산 히스토리 생성: 전 전략의 날짜별 평균 수익률
+            all_dates_map: dict[str, list[float]] = {}
+            for hist in histories.values():
+                for entry in hist:
+                    all_dates_map.setdefault(entry['date'], []).append(entry['return_rate'])
+            if all_dates_map:
+                histories["ALL"] = [
+                    {"date": d, "return_rate": sum(vals) / len(vals)}
+                    for d, vals in sorted(all_dates_map.items())
+                ]
+        else:
+            histories = {strategy_name: vm.get_strategy_return_history(strategy_name)}
 
-    # 벤치마크 계산을 위한 기준 히스토리 (날짜 범위 추출용)
-    ref_history = histories.get("ALL") or histories.get(strategy_name) or (next(iter(histories.values())) if histories else [])
+        # 벤치마크 계산을 위한 기준 히스토리 (날짜 범위 추출용)
+        ref_history = histories.get("ALL") or histories.get(strategy_name) or (next(iter(histories.values())) if histories else [])
 
-    if not ref_history:
-        return {"histories": {}, "benchmarks": {}}
+        if not ref_history:
+            return {"histories": {}, "benchmarks": {}}
 
-    start_date = ref_history[0]['date'].replace('-', '')
-    end_date = ref_history[-1]['date'].replace('-', '')
+        start_date = ref_history[0]['date'].replace('-', '')
+        end_date = ref_history[-1]['date'].replace('-', '')
 
-    # 벤치마크 데이터 (KOSPI 200, KOSDAQ 150)
-    kospi_benchmark = await _calculate_benchmark(ctx, "069500", ref_history, start_date, end_date)
-    kosdaq_benchmark = await _calculate_benchmark(ctx, "229200", ref_history, start_date, end_date)
+        # 벤치마크 데이터 (KOSPI 200, KOSDAQ 150)
+        kospi_benchmark = await _calculate_benchmark(ctx, "069500", ref_history, start_date, end_date)
+        kosdaq_benchmark = await _calculate_benchmark(ctx, "229200", ref_history, start_date, end_date)
 
-    benchmarks = {
-        "KOSPI200": kospi_benchmark,
-        "KOSDAQ150": kosdaq_benchmark,
-    }
+        benchmarks = {
+            "KOSPI200": kospi_benchmark,
+            "KOSDAQ150": kosdaq_benchmark,
+        }
 
-    ctx.pm.log_timer(f"get_strategy_chart({strategy_name})", t_start)
-    return {"histories": histories, "benchmarks": benchmarks}
+        ctx.pm.log_timer(f"get_strategy_chart({strategy_name})", t_start)
+        return {"histories": histories, "benchmarks": benchmarks}
 
 
 @router.get("/virtual/history")
 async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
     """가상 매매 전체 기록 조회 (force_code 지정 시 해당 종목은 캐시 무시)"""
     ctx = _get_ctx()
+    async with ctx.pm.profile_async("get_virtual_history"):
+        return await _get_virtual_history_impl(ctx, force_code, apply_cost)
+
+
+async def _get_virtual_history_impl(ctx, force_code, apply_cost):
+    """get_virtual_history의 실제 구현 (프로파일링 래핑 분리)."""
     t_start = ctx.pm.start_timer()
     if not hasattr(ctx, 'virtual_manager'):
         return {"trades": [], "weekly_changes": {}}
