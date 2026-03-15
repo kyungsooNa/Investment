@@ -30,4 +30,15 @@
 {% block scripts %}
 <script src="/static/js/candle_chart.js?v=1"></script>
 <script src="/static/js/stock.js?v=1"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        if (code) {
+            const input = document.getElementById('stock-code-input');
+            if (input) input.value = code;
+            searchStock(code);
+        }
+    });
+</script>
 {% endblock %}

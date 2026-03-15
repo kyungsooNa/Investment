@@ -291,6 +291,7 @@ function renderRankingTable() {
     data.forEach(item => {
         const rate = parseFloat(item.prdy_ctrt || 0);
         const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
+        const code = item.stck_shrn_iscd || item.iscd || item.mksc_shrn_iscd || item.code || '';
         let extraCols;
         if (isCombined) {
             const pbmnVal = formatTradingValue(String(item._combined_pbmn));
@@ -316,7 +317,7 @@ function renderRankingTable() {
         }
         rows += `<tr>
             <td>${item.data_rank || item.rank || '-'}</td>
-            <td>${item.hts_kor_isnm || item.name}</td>
+            <td><a href="/?code=${code}" style="color:var(--accent); text-decoration:none;">${item.hts_kor_isnm || item.name}</a></td>
             <td>${parseInt(item.stck_prpr || 0).toLocaleString()}</td>
             <td class="${color}">${rate}%</td>
             ${extraCols}

@@ -75,7 +75,7 @@ function renderBalanceTable() {
             const colorClass = profit > 0 ? 'text-red' : (profit < 0 ? 'text-blue' : '');
             html += `
                 <tr>
-                    <td>${s.prdt_name}<br><small>(${s.pdno})</small></td>
+                    <td><a href="/?code=${s.pdno}" style="color:var(--accent); text-decoration:none;">${s.prdt_name}</a><br><small>(${s.pdno})</small></td>
                     <td>${s.hldg_qty}</td>
                     <td>${parseInt(s.pchs_avg_pric).toLocaleString()}</td>
                     <td>${parseInt(s.prpr).toLocaleString()}</td>

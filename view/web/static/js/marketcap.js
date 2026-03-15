@@ -28,8 +28,8 @@ async function loadTopMarketCap(market = '0001') {
             html += `
                 <tr>
                     <td>${item.rank || (idx+1)}</td>
-                    <td>${item.name}</td>
-                    <td><a href="#" onclick="searchStock('${item.code}'); return false;">${item.code}</a></td>
+                    <td><a href="/?code=${item.code}" style="color:var(--accent); text-decoration:none;">${item.name}</a></td>
+                    <td><a href="/?code=${item.code}" style="color:var(--accent); text-decoration:none;">${item.code}</a></td>
                     <td>${parseInt(item.current_price).toLocaleString()} <small class="${color}">(${rateStr})</small></td>
                     <td>${formatMarketCap(item.market_cap)}</td>
                 </tr>

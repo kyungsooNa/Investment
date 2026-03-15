@@ -525,7 +525,7 @@ function renderVirtualHoldTable() {
             <tr>
                 <td>
                     ${strategyLabel}
-                    <a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a>
+                    <a href="/?code=${item.code}" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a>
                 </td>
                 <td>${buyPrice}</td>
                 <td>${curPrice}${cacheLabel}${forceBtn}</td>
@@ -589,7 +589,7 @@ function renderVirtualSoldTable() {
             <tr>
                 <td>
                     ${strategyLabel}
-                    <a href="#" onclick="searchStock('${item.code}'); return false;" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a>
+                    <a href="/?code=${item.code}" style="color:var(--accent); text-decoration:none;">${stockLabel(item)}</a>
                 </td>
                 <td>${buyPrice}</td>
                 <td>${sellPrice}<div style="font-size:0.8em; color:var(--text-secondary);">${curPrice}${cacheLabel}${forceBtn}</div></td>
