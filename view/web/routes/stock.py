@@ -53,12 +53,18 @@ async def search_stock_by_name(q: str = ""):
 
 @router.get("/stock/{code}")
 async def get_stock_price(code: str):
-    """현재가 조회."""
+    """현재가 조회. 종목명이 들어오면 종목코드로 변환 후 조회."""
     ctx = _get_ctx()
+    # 숫자가 아닌 입력(종목명)이면 코드로 변환
+    if not code.isdigit():
+        resolved = ctx.stock_code_mapper.get_code_by_name(code)
+        if not resolved:
+            return {"rt_cd": "1", "msg1": f"종목명 '{code}'에 해당하는 종목코드를 찾을 수 없습니다.", "data": None}
+        code = resolved
     t_start = ctx.pm.start_timer()
     resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
     result = _serialize_response(resp)
-    
+
     ctx.pm.log_timer(f"get_stock_price({code})", t_start)
     return result
 
