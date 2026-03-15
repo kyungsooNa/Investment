@@ -1,5 +1,23 @@
 /* view/web/static/js/stock.js — 종목 조회 (searchStock) */
 
+/* ── 초성 추출 유틸 ── */
+const _CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+const _CHO_SET = new Set(_CHO);
+
+function _getChosung(str) {
+    let r = '';
+    for (let i = 0; i < str.length; i++) {
+        const c = str.charCodeAt(i);
+        if (c >= 0xAC00 && c <= 0xD7A3) r += _CHO[Math.floor((c - 0xAC00) / 588)];
+    }
+    return r;
+}
+
+function _isChosung(str) {
+    for (let i = 0; i < str.length; i++) { if (!_CHO_SET.has(str[i])) return false; }
+    return str.length > 0;
+}
+
 /* ── 종목명 자동완성 (클라이언트 로컬 검색) ── */
 (function() {
     let activeIndex = -1;
@@ -11,22 +29,37 @@
 
         const stocks = (typeof ALL_STOCKS !== 'undefined') ? ALL_STOCKS : [];
 
+        // 초성 인덱스를 1회 미리 계산
+        for (let i = 0; i < stocks.length; i++) {
+            stocks[i].ch = _getChosung(stocks[i].n);
+        }
+
         input.addEventListener('input', function() {
-            const q = input.value.trim().toLowerCase();
+            const q = input.value.trim();
             activeIndex = -1;
 
-            // 숫자만(종목코드)이면 자동완성 안 함
-            if (!q || /^\d+$/.test(q)) {
+            if (!q) {
                 list.innerHTML = '';
                 list.style.display = 'none';
                 return;
             }
 
-            // 로컬 배열에서 filter (네트워크 0회)
             const results = [];
+            const isDigit = /^\d+$/.test(q);
+            const isCho = _isChosung(q);
+            const qLower = q.toLowerCase();
+
             for (let i = 0; i < stocks.length && results.length < 20; i++) {
-                if (stocks[i].n.toLowerCase().includes(q)) {
-                    results.push(stocks[i]);
+                const s = stocks[i];
+                if (isDigit) {
+                    // 숫자 → 종목코드 앞자리 매칭
+                    if (s.c.startsWith(q)) results.push(s);
+                } else if (isCho) {
+                    // 초성 → 초성 필드에서 매칭
+                    if (s.ch.includes(q)) results.push(s);
+                } else {
+                    // 일반 텍스트 → 종목명 부분 매칭
+                    if (s.n.toLowerCase().includes(qLower)) results.push(s);
                 }
             }
             renderAutocomplete(results);
