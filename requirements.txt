@@ -23,3 +23,4 @@ pykrx
 aiohttp
 beautifulsoup4
 python-telegram-bot>=13.15
+pyinstrument>=4.6.0
