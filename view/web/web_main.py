@@ -42,6 +42,20 @@ async def lifespan(app: FastAPI):
 # 1. FastAPI 앱 인스턴스 생성 (lifespan 추가)
 app = FastAPI(title="Trading App", lifespan=lifespan)
 
+# debugpy가 요청 처리 컨텍스트를 인식하도록 첫 요청에서 트리거
+import sys
+if "debugpy" in sys.modules:
+    _debugpy_activated = False
+
+    @app.middleware("http")
+    async def _debugpy_activate_middleware(request: Request, call_next):
+        global _debugpy_activated
+        if not _debugpy_activated:
+            _debugpy_activated = True
+            import debugpy
+            debugpy.debug_this_thread()
+        return await call_next(request)
+
 # 2. 정적 파일 및 템플릿 설정
 # 현재 파일(web_main.py)의 위치를 기준으로 절대 경로 설정하여 실행 위치에 영향받지 않도록 함
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +69,7 @@ app.include_router(web_api.router)
 page_router = APIRouter()
 
 # 공통 페이지 렌더링 함수 (로그인 체크 포함)
-async def render_page(request: Request, template_name: str, active_page: str):
+async def render_page(request: Request, template_name: str, active_page: str, extra_context: dict = None):
     try:
         ctx = web_api._get_ctx()
     except:
@@ -70,12 +84,28 @@ async def render_page(request: Request, template_name: str, active_page: str):
         if not token or token != expected_token:
             return templates.TemplateResponse(request, "login.html")
 
-    return templates.TemplateResponse(request, template_name, {"active_page": active_page})
+    context = {"active_page": active_page}
+    if extra_context:
+        context.update(extra_context)
+    return templates.TemplateResponse(request, template_name, context)
 
 # 4. 페이지 라우팅
 @page_router.get("/")
 async def index(request: Request):
-    return await render_page(request, "index.html", "stock")
+    return await render_page(request, "index.html", "home")
+
+@page_router.get("/stock")
+async def stock(request: Request):
+    # 종목 리스트를 페이지 로드 시 1회 전달 (클라이언트 자동완성용)
+    try:
+        ctx = web_api._get_ctx()
+        stock_list = [
+            {"c": code, "n": name}
+            for name, code in ctx.stock_code_mapper.name_to_code.items()
+        ]
+    except Exception:
+        stock_list = []
+    return await render_page(request, "stock.html", "stock", extra_context={"stock_list": stock_list})
 
 @page_router.get("/balance")
 async def balance(request: Request):

@@ -341,7 +341,8 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
     assert wrapper._stock_mapper is mock_stock_mapper.return_value  # _stock_mapper가 mock_stock_mapper 인스턴스를 참조하는지 확인
 
 
-def test_initialization_no_env_raises_error(mock_logger):
+@patch(f"{wrapper_module.__name__}.StockCodeMapper")
+def test_initialization_no_env_raises_error(mock_mapper_class, mock_logger):
     """
     'korea_investment' 브로커 선택 시 env가 없으면 ValueError가 발생하는지 테스트합니다.
     """
@@ -355,7 +356,8 @@ def test_initialization_no_env_raises_error(mock_logger):
         )
 
 
-def test_initialization_unsupported_broker_raises_error(mock_env):
+@patch(f"{wrapper_module.__name__}.StockCodeMapper")
+def test_initialization_unsupported_broker_raises_error(mock_mapper_class, mock_env):
     """
     지원되지 않는 브로커 이름으로 초기화 시 NotImplementedError가 발생하는지 테스트합니다.
     """

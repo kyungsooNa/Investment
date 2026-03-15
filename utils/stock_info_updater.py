@@ -3,13 +3,19 @@
 import pandas as pd
 import json
 import os
+import sqlite3
 from pykrx import stock
 from datetime import datetime, timedelta
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
-CSV_FILE_PATH = os.path.join(DATA_DIR, "stock_code_list.csv")
+DB_FILE_PATH = os.path.join(DATA_DIR, "stock_code_list.db")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.json")
+
+# 하위 호환용 (테스트 등에서 참조)
+CSV_FILE_PATH = os.path.join(DATA_DIR, "stock_code_list.csv")
+
+TABLE_NAME = "stocks"
 
 
 def _save_metadata():
@@ -37,7 +43,7 @@ def _needs_update(max_age_days=7):
 
 def save_stock_code_list(force_update=False):
     """
-    종목 코드 리스트 저장 (CSV + 메타데이터).
+    종목 코드 리스트 저장 (SQLite + 메타데이터).
     force_update=True일 경우 날짜와 무관하게 업데이트.
     """
     if not force_update and not _needs_update():
@@ -65,10 +71,23 @@ def save_stock_code_list(force_update=False):
 
     df = pd.DataFrame(data)
     os.makedirs(DATA_DIR, exist_ok=True)
-    df.to_csv(CSV_FILE_PATH, index=False, encoding="utf-8-sig")
+
+    conn = sqlite3.connect(DB_FILE_PATH)
+    try:
+        df.to_sql(TABLE_NAME, conn, if_exists="replace", index=False)
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_code ON {TABLE_NAME}(종목코드)")
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_name ON {TABLE_NAME}(종목명)")
+        conn.commit()
+    finally:
+        conn.close()
+
     _save_metadata()
-    print(f"🟢 {len(df)}개 종목 저장 완료: {CSV_FILE_PATH}")
+    print(f"🟢 {len(df)}개 종목 저장 완료: {DB_FILE_PATH}")
 
 
 def load_stock_code_list():
-    return pd.read_csv(CSV_FILE_PATH, dtype={"종목코드": str})
+    conn = sqlite3.connect(DB_FILE_PATH)
+    try:
+        return pd.read_sql(f"SELECT * FROM {TABLE_NAME}", conn, dtype={"종목코드": str})
+    finally:
+        conn.close()

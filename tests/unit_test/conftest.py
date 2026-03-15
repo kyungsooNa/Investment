@@ -18,19 +18,27 @@ def mock_heavy_io(monkeypatch):
     """
     테스트 속도 저하를 유발하는 무거운 I/O 및 네트워크 리소스 정리 작업을 모킹합니다.
     """
-    # 1. pandas.read_csv: 대용량 주식 코드 리스트 로딩 방지
-    original_read_csv = pd.read_csv
-    def _mock_read_csv(*args, **kwargs):
-        # stock_code_list.csv 파일 로딩 시 테스트용 가벼운 데이터 반환
-        if args and isinstance(args[0], str) and 'stock_code_list.csv' in args[0]:
-            return pd.DataFrame({
-                "종목코드": ["005930", "000660"],
-                "종목명": ["삼성전자", "SK하이닉스"],
-                "시장구분": ["KOSPI", "KOSPI"],
-                "상장주식수": [1000, 500]
-            })
-        return original_read_csv(*args, **kwargs)
-    monkeypatch.setattr(pd, "read_csv", _mock_read_csv)
+    # 1. sqlite3.connect: 프로덕션 stock_code_list.db 로딩 방지
+    #    테스트용 tmp_path DB는 통과시키고, 프로덕션 경로만 인메모리 DB로 대체
+    import sqlite3
+    _original_connect = sqlite3.connect
+    _PROD_DB_PATTERN = os.path.join("data", "stock_code_list.db")
+    def _create_mock_stock_db():
+        conn = _original_connect(":memory:")
+        conn.execute("CREATE TABLE stocks (종목코드 TEXT, 종목명 TEXT, 시장구분 TEXT, 상장주식수 INTEGER)")
+        conn.executemany("INSERT INTO stocks VALUES (?, ?, ?, ?)", [
+            ("005930", "삼성전자", "KOSPI", 1000),
+            ("000660", "SK하이닉스", "KOSPI", 500),
+        ])
+        conn.commit()
+        return conn
+    def _mock_sqlite_connect(database, *args, **kwargs):
+        if isinstance(database, str) and _PROD_DB_PATTERN in database:
+            # pytest tmp 경로가 아닌 프로덕션 경로만 인터셉트
+            if "pytest" not in database and "Temp" not in database:
+                return _create_mock_stock_db()
+        return _original_connect(database, *args, **kwargs)
+    monkeypatch.setattr(sqlite3, "connect", _mock_sqlite_connect)
 
     # 2. httpx.AsyncClient.aclose: 세션 종료 시 불필요한 대기 제거
     async def _mock_aclose(*args, **kwargs):

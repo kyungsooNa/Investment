@@ -240,7 +240,7 @@ function _appendProgramTradingTableRow(d) {
     const stockCode = d['유가증권단축종목코드'] || '-';
     const hidden = (ptFilterCodes.size > 0 && !ptFilterCodes.has(stockCode)) ? ' style="display:none"' : '';
     const row = `<tr data-code="${stockCode}"${hidden}>
-        <td><a href="/?code=${stockCode}" target="_blank" class="stock-link">${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</a></td>
+        <td><a href="/stock?code=${stockCode}" target="_blank" class="stock-link">${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</a></td>
         <td>${fmtTime}</td>
         <td class="${priceClass}">${price}<br><small>${rate}</small></td>
         <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>
@@ -445,7 +445,7 @@ function _renderPtTable() {
         const tr = document.createElement('tr');
         tr.dataset.code = stockCode;
         tr.innerHTML = `
-            <td><a href="/?code=${stockCode}" target="_blank" class="stock-link">${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</a></td>
+            <td><a href="/stock?code=${stockCode}" target="_blank" class="stock-link">${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</a></td>
             <td>${fmtTime}</td>
             <td class="${priceClass}">${price}<br><small>${rate}</small></td>
             <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>

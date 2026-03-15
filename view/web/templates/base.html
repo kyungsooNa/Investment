@@ -71,7 +71,8 @@
 
 <nav class="nav">
     <!-- Flask에서 active_page 변수를 넘겨주어 활성화 클래스 적용 -->
-    <a href="/" class="{% if active_page == 'stock' %}active{% endif %}">현재가 조회</a>
+    <a href="/" class="{% if active_page == 'home' %}active{% endif %}">홈</a>
+    <a href="/stock" class="{% if active_page == 'stock' %}active{% endif %}">현재가 조회</a>
     <a href="/balance" class="{% if active_page == 'balance' %}active{% endif %}">계좌 잔고</a>
     <a href="/order" class="{% if active_page == 'order' %}active{% endif %}">매수/매도</a>
     <a href="/ranking" class="{% if active_page == 'ranking' %}active{% endif %}">랭킹</a>

@@ -3,7 +3,8 @@ from unittest.mock import MagicMock
 
 # 페이지별 라우트와 예상되는 active_page 값 매핑
 PAGES = [
-    ("/", "stock"),
+    ("/", "home"),
+    ("/stock", "stock"),
     ("/balance", "balance"),
     ("/order", "order"),
     ("/ranking", "ranking"),
@@ -26,13 +27,12 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
         assert "<title>Investment - Web View</title>" in response.text
         
         # 네비게이션 바 활성화 상태 확인
-        if path == "/":
-            assert 'href="/" class="active"' in response.text
-        else:
-            assert f'href="{path}" class="active"' in response.text
-        
+        assert f'href="{path}" class="active"' in response.text
+
         # 각 페이지별 특징적인 요소 확인
         if path == "/":
+            assert "Investment" in response.text
+        elif path == "/stock":
             assert "종목 현재가 조회" in response.text
         elif path == "/balance":
             assert "계좌 잔고" in response.text
