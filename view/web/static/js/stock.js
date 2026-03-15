@@ -21,10 +21,10 @@ async function searchStock(codeOverride) {
     }
 
     if (!resultDiv) return;
-    resultDiv.innerHTML = "조회 중...";
+    showLoading(resultDiv, '종목 정보 조회 중...');
 
     try {
-        const res = await fetch(`/api/stock/${code}`);
+        const res = await fetchWithTimeout(`/api/stock/${code}`);
         if (!res.ok) {
             const errorText = await res.text();
             console.error("Server error response:", errorText);
@@ -176,7 +176,11 @@ async function searchStock(codeOverride) {
 
     } catch (e) {
         console.error("Error in searchStock:", e);
-        resultDiv.innerHTML = `<p class="error">오류 발생: ${e.message}</p>`;
+        if (e.name === 'AbortError') {
+            resultDiv.innerHTML = `<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>`;
+        } else {
+            resultDiv.innerHTML = `<p class="error">오류 발생: ${e.message}</p>`;
+        }
         if(chartCard) chartCard.style.display = 'none';
     }
 }

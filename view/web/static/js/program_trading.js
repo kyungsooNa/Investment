@@ -25,26 +25,34 @@ function connectPtEventSource() {
         const statusDiv = document.getElementById('pt-status');
         if (statusDiv) statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김 — 재연결 시도 중...</span>';
     };
-    ptEventSource.onopen = async () => {
+    ptEventSource.onopen = () => {
         if (ptSubscribedCodes.size === 0 || ptResubscribing) return;
         ptResubscribing = true;
-        try {
-            for (const code of ptSubscribedCodes) {
-                try {
-                    await fetch('/api/program-trading/subscribe', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ code })
-                    });
-                } catch (e) {
-                    console.error(`[PT] Resubscribe failed: ${code}`, e);
-                }
-            }
-            const statusDiv = document.getElementById('pt-status');
-            if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
-        } finally {
-            ptResubscribing = false;
+        const codes = Array.from(ptSubscribedCodes);
+        const statusDiv = document.getElementById('pt-status');
+        if (statusDiv) {
+            statusDiv.style.display = 'block';
+            showLoading(statusDiv, `이전 구독 복구 중... (0/${codes.length})`);
         }
+        // 병렬로 구독 요청을 보내서 서버 이벤트 루프 점유를 최소화
+        Promise.allSettled(
+            codes.map(code =>
+                fetch('/api/program-trading/subscribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code })
+                }).then(r => {
+                    if (statusDiv) {
+                        const done = codes.indexOf(code) + 1;
+                        statusDiv.innerHTML = `<span>구독 복구 중... (${done}/${codes.length})</span>`;
+                    }
+                    return r;
+                }).catch(e => console.error(`[PT] Resubscribe failed: ${code}`, e))
+            )
+        ).then(() => {
+            if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
+            ptResubscribing = false;
+        });
     };
 }
 
@@ -59,7 +67,7 @@ async function addProgramTrading() {
 
     const statusDiv = document.getElementById('pt-status');
     statusDiv.style.display = 'block';
-    statusDiv.innerHTML = '<span>구독 요청 중...</span>';
+    showLoading(statusDiv, '구독 요청 중...');
 
     try {
         const res = await fetch('/api/program-trading/subscribe', {
@@ -232,7 +240,7 @@ function _appendProgramTradingTableRow(d) {
     const stockCode = d['유가증권단축종목코드'] || '-';
     const hidden = (ptFilterCodes.size > 0 && !ptFilterCodes.has(stockCode)) ? ' style="display:none"' : '';
     const row = `<tr data-code="${stockCode}"${hidden}>
-        <td>${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</td>
+        <td><a href="/?code=${stockCode}" target="_blank" class="stock-link">${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</a></td>
         <td>${fmtTime}</td>
         <td class="${priceClass}">${price}<br><small>${rate}</small></td>
         <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>
@@ -437,7 +445,7 @@ function _renderPtTable() {
         const tr = document.createElement('tr');
         tr.dataset.code = stockCode;
         tr.innerHTML = `
-            <td>${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</td>
+            <td><a href="/?code=${stockCode}" target="_blank" class="stock-link">${ptCodeNameMap[stockCode] ? ptCodeNameMap[stockCode] + '(' + stockCode + ')' : stockCode}</a></td>
             <td>${fmtTime}</td>
             <td class="${priceClass}">${price}<br><small>${rate}</small></td>
             <td>${parseInt(d['매도체결량'] || 0).toLocaleString()}</td>
@@ -532,7 +540,7 @@ async function initProgramTrading() {
             const statusDiv = document.getElementById('pt-status');
             if (statusDiv) {
                 statusDiv.style.display = 'block';
-                statusDiv.innerHTML = '<span>이전 구독 복구 중...</span>';
+                showLoading(statusDiv, '이전 구독 복구 중...');
             }
             connectPtEventSource();
         }
@@ -554,7 +562,7 @@ async function initProgramTrading() {
                 const statusDiv = document.getElementById('pt-status');
                 if (statusDiv) {
                     statusDiv.style.display = 'block';
-                    statusDiv.innerHTML = '<span>서버 구독 상태에서 복구 중...</span>';
+                    showLoading(statusDiv, '서버 구독 상태에서 복구 중...');
                 }
                 connectPtEventSource();
             }
