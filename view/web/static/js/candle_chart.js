@@ -69,8 +69,10 @@ async function loadAndRenderStockChart(code) {
 
     try {
         // [최적화] 7개 API 호출 → 1개 통합 API로 변경 (OHLCV + 지표 한번에 조회)
+        const t0 = performance.now();
         const res = await fetch(`/api/chart/${code}?period=D&indicators=true`);
         const json = await res.json();
+        const tFetch = performance.now();
 
         if (json.rt_cd !== "0" || !json.data || !json.data.ohlcv || json.data.ohlcv.length === 0) {
             chartCard.style.display = 'none';
@@ -86,6 +88,10 @@ async function loadAndRenderStockChart(code) {
 
         // 기본 3개월 렌더링
         renderStockChart('3M');
+        const tRender = performance.now();
+
+        // [성능 측정] API fetch + 차트 렌더링 시간 로깅
+        console.log(`[Perf] 차트 데이터 조회(${code}): ${(tFetch - t0).toFixed(1)}ms | 렌더링: ${(tRender - tFetch).toFixed(1)}ms | 합계: ${(tRender - t0).toFixed(1)}ms`);
 
     } catch (e) {
         console.error("Chart rendering failed:", e);
@@ -103,6 +109,7 @@ function changeChartPeriod(period, btn) {
 
 function renderStockChart(period) {
     if (!g_chartRawData) return;
+    const tRenderStart = performance.now();
 
     // 1. 데이터 슬라이싱 (기간 필터링)
     let sliceCount = 0;
@@ -214,6 +221,7 @@ function renderStockChart(period) {
     const ctx = document.getElementById('stockChart').getContext('2d');
     if (stockChartInstance) stockChartInstance.destroy();
 
+    const tChartStart = performance.now();
     stockChartInstance = new Chart(ctx, {
         type: 'candlestick',
         plugins: [highLowPlugin, splitLinePlugin],
@@ -292,4 +300,8 @@ function renderStockChart(period) {
             }
         }
     });
+
+    // [성능 측정] 데이터 가공 + Chart.js 생성 시간 로깅
+    const tRenderEnd = performance.now();
+    console.log(`[Perf] 차트 렌더링(${period}, ${slicedRaw.length}건): 데이터 가공 ${(tChartStart - tRenderStart).toFixed(1)}ms | Chart.js 생성 ${(tRenderEnd - tChartStart).toFixed(1)}ms | 합계 ${(tRenderEnd - tRenderStart).toFixed(1)}ms`);
 }
