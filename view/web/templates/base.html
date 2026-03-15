@@ -19,10 +19,9 @@
         /* 페이지 분리 후 섹션 표시 강제 */
         .section { display: block !important; }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/chartjs-chart-financial.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+    {% block head_scripts %}
+    <!-- 차트 라이브러리는 필요한 페이지에서만 로드 -->
+    {% endblock %}
 </head>
 <body>
 
@@ -81,15 +80,8 @@
 <div id="toast-container" class="toast-container"></div>
 
 <!-- 공통 스크립트 -->
-<script src="/static/js/virtual_chart.js?v=6"></script>
-<script src="/static/js/candle_chart.js?v=1"></script>
-<script src="/static/js/program_chart.js?v=1"></script>
-<script src="/static/js/app.js?v=16"></script>
-<script>
-    // 페이지 분리로 인해 탭 전환 로직이 불필요해졌으므로, 
-    // app.js의 setupTabs가 동작하지 않도록 하거나 무시됩니다.
-    // 대신 각 페이지별 초기화 로직을 아래 블록에 작성합니다.
-</script>
+<script src="/static/js/common.js?v=1"></script>
+<script src="/static/js/notifications.js?v=1"></script>
 
 {% block scripts %}
 <!-- 페이지별 추가 스크립트 -->

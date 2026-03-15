@@ -13,8 +13,8 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/balance.js?v=1"></script>
 <script>
-    // 페이지 로드 시 자동으로 잔고 조회 실행
     document.addEventListener('DOMContentLoaded', function() {
         loadBalance();
     });

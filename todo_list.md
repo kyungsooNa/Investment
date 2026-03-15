@@ -14,9 +14,6 @@
 - [ ] **[아키텍처]** 단일 책임 원칙(SRP)에 따라 비대해진 `TradingService`를 `OrderService`(주문), `MarketDataService`(시세/조회), `StreamingService`(웹소켓)로 분리.
 - [ ] **[아키텍처]** UI 출력 로직 완전 격리: Service 계층 내부에 존재하는 콘솔 출력(`print`) 로직을 제거하고, View 계층에 위임.
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
-- [ ] **[전략]** PoolA 생성시 전체종목 조회가 multi로 하는데도 느림, caching 되어있는지 확인필요.
-- [ ] **[전략]** _compute_profit_growth_scores 에서 예상영업이익 전망치를 포함할 수 있는 기능 추가
-- [ ] **[스케줄러]** 스케줄러 루프 오류: 'StrategyScheduler' object has no attribute 'market_date_manager'
 - [ ] **[Background]** Background에서 동작해야 하는 작업들이 모두 background_service.py를 통해 이루어 지도록 refactoring. 
 ---
 

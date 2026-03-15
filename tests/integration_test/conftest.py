@@ -344,6 +344,14 @@ def _inject_test_helpers(ki_providers, spy_exec_and_patch_get, spy_exec_and_patc
     ctx.make_http_response = make_http_response
 
 
+@pytest.fixture(autouse=True)
+def clear_status_cache():
+    """/api/status 캐시를 초기화하여 테스트 간 간섭(모의투자/실전투자 상태 유지)을 방지합니다."""
+    from view.web.routes import stock
+    stock._status_cache = None
+    yield
+    stock._status_cache = None
+
 # ============================================================================
 # Web API 통합 테스트용 픽스처
 # ============================================================================

@@ -128,15 +128,21 @@ class MarketDateManager:
             date_str = self._time_manager.get_current_kst_time().strftime("%Y%m%d")
             
         target_date = datetime.strptime(date_str, "%Y%m%d")
+        
+        # [최적화 1] 주말(토, 일)은 무조건 휴장일이므로 캐시/API 확인 스킵
+        if target_date.weekday() >= 5:
+            return False
+            
         await self._sync_calendar_if_needed(target_date)
         
         return self._business_days_cache.get(date_str, False)
 
     async def is_market_open_now(self) -> bool:
         """현재 시점이 휴일이 아니며, 장 운영 시간(09:00~15:30) 이내인지 확인합니다."""
-        if not await self.is_business_day():
+        # 장 운영 시간이 아니면 달력(API/캐시)을 확인할 필요도 없이 바로 False 반환 (성능 최적화)
+        if not self._time_manager.is_market_operating_hours():
             return False
-        return self._time_manager.is_market_operating_hours()
+        return await self.is_business_day()
 
     async def get_next_open_day(self, current_date_str: str = None) -> str:
         """기준일의 '다음 영업일(YYYYMMDD)'을 반환합니다 (연휴 완벽 스킵)."""
@@ -147,6 +153,11 @@ class MarketDateManager:
         
         # 최대 15일 탐색 (긴 명절 연휴 커버)
         for _ in range(15):
+            # [최적화 2] 주말이면 달력 동기화 검사를 스킵하고 다음 날로 이동
+            if check_dt.weekday() >= 5:
+                check_dt += timedelta(days=1)
+                continue
+
             await self._sync_calendar_if_needed(check_dt)
             check_str = check_dt.strftime("%Y%m%d")
             

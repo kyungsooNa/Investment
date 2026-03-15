@@ -4,7 +4,7 @@ from typing import Optional
 import pytz
 import logging
 import asyncio
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, time as dt_time
 
 class TimeManager:
     """
@@ -18,6 +18,12 @@ class TimeManager:
         self.market_close_time_str = market_close_time
         self.timezone_name = timezone
         self.logger = logger if logger else logging.getLogger(__name__)
+
+        # [최적화 1] 시간 문자열을 한 번만 파싱하여 time 객체로 캐싱
+        open_h, open_m = map(int, self.market_open_time_str.split(':'))
+        self._open_time_obj = dt_time(open_h, open_m)
+        close_h, close_m = map(int, self.market_close_time_str.split(':'))
+        self._close_time_obj = dt_time(close_h, close_m)
 
         try:
             self.market_timezone = pytz.timezone(self.timezone_name)
@@ -45,18 +51,16 @@ class TimeManager:
         if now.weekday() >= 5:
             return False
 
-        market_open_dt = self.get_market_open_time(target_dt=now)
-        market_close_dt = self.get_market_close_time(target_dt=now)
-
-        return market_open_dt <= now <= market_close_dt
+        # [최적화 2] 무거운 datetime 조합과 타임존 연산 없이 순수 시간(time) 객체만으로 비교
+        return self._open_time_obj <= now.time() <= self._close_time_obj
 
     def get_market_open_time(self, target_dt: Optional[datetime] = None) -> datetime:
         """오늘 날짜 또는 지정된 날짜 기준 시장 개장 시간(09:00) 반환"""
         now = target_dt or self.get_current_kst_time()
         return self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
-            hour=int(self.market_open_time_str.split(':')[0]),
-            minute=int(self.market_open_time_str.split(':')[1]),
+            hour=self._open_time_obj.hour,
+            minute=self._open_time_obj.minute,
             second=0, microsecond=0
         ))
 
@@ -65,8 +69,8 @@ class TimeManager:
         now = target_dt or self.get_current_kst_time()
         return self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
-            hour=int(self.market_close_time_str.split(':')[0]),
-            minute=int(self.market_close_time_str.split(':')[1]),
+            hour=self._close_time_obj.hour,
+            minute=self._close_time_obj.minute,
             second=0, microsecond=0
         ))
 
