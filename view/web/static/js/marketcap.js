@@ -18,7 +18,7 @@ async function loadTopMarketCap(market = '0001') {
         let html = `
             <div class="card">
             <table class="data-table">
-            <thead><tr><th>순위</th><th>종목명</th><th>코드</th><th>현재가</th><th>시가총액</th></tr></thead>
+            <thead><tr><th>순위</th><th>종목명</th><th>현재가</th><th>시가총액</th></tr></thead>
             <tbody>
         `;
         json.data.forEach((item, idx) => {
@@ -28,7 +28,7 @@ async function loadTopMarketCap(market = '0001') {
             html += `
                 <tr>
                     <td>${item.rank || (idx+1)}</td>
-                    <td><a href="/?code=${item.code}" target="_blank" class="stock-link">${item.name}</a></td>
+                    <td><a href="/?code=${item.code}" target="_blank" class="stock-link">${item.name}(${item.code})</a></td>
                     <td>${parseInt(item.current_price).toLocaleString()} <small class="${color}">(${rateStr})</small></td>
                     <td>${formatMarketCap(item.market_cap)}</td>
                 </tr>
