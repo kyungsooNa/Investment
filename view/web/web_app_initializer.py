@@ -238,6 +238,7 @@ class WebAppContext:
             logger=get_strategy_logger('StrategyScheduler'),
             dry_run=False,
             notification_manager=self.notification_manager,
+            performance_manager=self.pm,
         )
 
         # 거래량 돌파 전략 등록
@@ -406,7 +407,7 @@ class WebAppContext:
                     and not self.trading_service.is_websocket_receive_alive()):
                 self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
                 await self.background_service.force_reconnect_program_trading()
-                
+
                 # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
                 if not self.realtime_data_manager.is_subscribed(code):
                     self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
@@ -416,13 +417,20 @@ class WebAppContext:
                 return True
 
         try:
+            t_start = self.pm.start_timer()
             connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
+            self.pm.log_timer(f"connect_websocket({code})", t_start)
             if not connected:
                 self.logger.warning(f"프로그램매매 구독 실패 (WebSocket 연결 불가): {code}")
                 return False
 
+            t_sub_pt = self.pm.start_timer()
             sub_pt_success = await self.stock_query_service.subscribe_program_trading(code)
+            self.pm.log_timer(f"subscribe_program_trading({code})", t_sub_pt)
+
+            t_sub_price = self.pm.start_timer()
             sub_price_success = await self.stock_query_service.subscribe_realtime_price(code)
+            self.pm.log_timer(f"subscribe_realtime_price({code})", t_sub_price)
 
             if sub_pt_success and sub_price_success:
                 self.realtime_data_manager.add_subscribed_code(code)

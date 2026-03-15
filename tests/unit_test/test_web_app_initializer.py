@@ -153,13 +153,15 @@ async def test_program_trading_subscription(mock_deps):
     mock_rdm_instance = ctx.realtime_data_manager
     mock_rdm_instance.is_subscribed.return_value = False
 
+    ctx.pm = MagicMock()
+    ctx.pm.start_timer.return_value = 0.0
     ctx.stock_query_service = MagicMock()
     ctx.stock_query_service.connect_websocket = AsyncMock(return_value=True)
     ctx.stock_query_service.subscribe_program_trading = AsyncMock()
     ctx.stock_query_service.subscribe_realtime_price = AsyncMock()
     ctx.stock_query_service.unsubscribe_program_trading = AsyncMock()
     ctx.stock_query_service.unsubscribe_realtime_price = AsyncMock()
-    
+
     # 1. 구독 시작
     await ctx.start_program_trading("005930")
     ctx.stock_query_service.connect_websocket.assert_awaited_once()

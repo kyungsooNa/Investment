@@ -19,6 +19,7 @@ from managers.notification_manager import NotificationManager
 from services.order_execution_service import OrderExecutionService
 from services.stock_query_service import StockQueryService
 from core.time_manager import TimeManager
+from core.performance_manager import PerformanceManager
 
 SIGNAL_HISTORY_FILE = "data/StrategyScheduler/signal_history.csv"
 SIGNAL_COLUMNS = ["strategy_name", "code", "name", "action", "price", "return_rate", "reason", "timestamp", "api_success"]
@@ -72,6 +73,7 @@ class StrategyScheduler:
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
         notification_manager: Optional[NotificationManager] = None,
+        performance_manager: Optional[PerformanceManager] = None,
     ):
         self._vm = virtual_manager
         self._oes = order_execution_service
@@ -81,6 +83,7 @@ class StrategyScheduler:
         self._dry_run = dry_run
         self._nm = notification_manager
         self._mdm = market_date_manager
+        self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
         # 데이터 디렉토리 생성
         os.makedirs(os.path.dirname(SIGNAL_HISTORY_FILE), exist_ok=True)
@@ -202,12 +205,15 @@ class StrategyScheduler:
 
     async def _run_strategy(self, cfg: StrategySchedulerConfig, force_exit_only: bool = False):
         name = cfg.strategy.name
+        t_run = self._pm.start_timer()
         self._logger.info(f"[Scheduler] {name} 실행 시작 (force_exit_only={force_exit_only})")
 
         # 1) 보유 종목 청산 조건 체크
         holdings = self._vm.get_holds_by_strategy(name)
         if holdings:
+            t_exit = self._pm.start_timer()
             sell_signals = await cfg.strategy.check_exits(holdings)
+            self._pm.log_timer(f"{name}.check_exits({len(holdings)}건)", t_exit)
             if sell_signals:
                 tasks = [self._execute_signal(sig) for sig in sell_signals]
                 for f in asyncio.as_completed(tasks):
@@ -224,9 +230,12 @@ class StrategyScheduler:
                     f"[Scheduler] {name}: 최대 포지션 도달 "
                     f"({current_holds_count}/{cfg.max_positions}), 스캔 스킵"
                 )
+                self._pm.log_timer(f"{name}.run_strategy", t_run)
                 return
 
+            t_scan = self._pm.start_timer()
             buy_signals = await cfg.strategy.scan()
+            self._pm.log_timer(f"{name}.scan()", t_scan)
             
             # 이미 보유 중인 종목은 추가 매수(불타기) 방지
             if cfg.allow_pyramiding:
@@ -247,6 +256,7 @@ class StrategyScheduler:
                 for f in asyncio.as_completed(tasks):
                     await f
 
+        self._pm.log_timer(f"{name}.run_strategy", t_run)
         self._logger.info(f"[Scheduler] {name} 실행 완료")
 
     # ── 시그널 실행 ──
