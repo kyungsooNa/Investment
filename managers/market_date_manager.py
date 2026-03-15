@@ -134,9 +134,10 @@ class MarketDateManager:
 
     async def is_market_open_now(self) -> bool:
         """현재 시점이 휴일이 아니며, 장 운영 시간(09:00~15:30) 이내인지 확인합니다."""
-        if not await self.is_business_day():
+        # 장 운영 시간이 아니면 달력(API/캐시)을 확인할 필요도 없이 바로 False 반환 (성능 최적화)
+        if not self._time_manager.is_market_operating_hours():
             return False
-        return self._time_manager.is_market_operating_hours()
+        return await self.is_business_day()
 
     async def get_next_open_day(self, current_date_str: str = None) -> str:
         """기준일의 '다음 영업일(YYYYMMDD)'을 반환합니다 (연휴 완벽 스킵)."""
