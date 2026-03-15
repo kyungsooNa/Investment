@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
@@ -62,6 +62,7 @@ class StrategyScheduler:
     LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
     FORCE_EXIT_MINUTES_BEFORE = 15  # 장 마감 N분 전 강제 청산
+    STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
 
     def __init__(
         self,
@@ -150,8 +151,29 @@ class StrategyScheduler:
 
     # ── 메인 루프 ──
 
+    def _init_staggered_schedule(self):
+        """전략 간 API 자원 충돌 방지를 위해 실행 시점을 1분 간격으로 분산."""
+        try:
+            now = self._tm.get_current_kst_time()
+        except Exception:
+            return
+        for i, cfg in enumerate(self._strategies):
+            name = cfg.strategy.name
+            offset = i * self.STAGGER_INTERVAL_SEC
+            interval_sec = cfg.interval_minutes * 60
+            if name not in self._last_run and interval_sec > offset:
+                # 전략 i번째는 i*STAGGER_INTERVAL_SEC 후에 첫 실행
+                # last_run을 (interval - offset)만큼 과거로 설정
+                self._last_run[name] = now - timedelta(
+                    seconds=interval_sec - offset
+                )
+                self._logger.info(
+                    f"[Scheduler] {name} 첫 실행 오프셋: {offset}초 후"
+                )
+
     async def _loop(self):
         self._logger.info("스케줄러 메인 루프 시작.")
+        self._init_staggered_schedule()
         while self._running:
             try:
                 # 1. API 기반의 완벽한 개장/공휴일/시간대 검증
