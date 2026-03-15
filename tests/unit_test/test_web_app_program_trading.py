@@ -7,7 +7,7 @@ def mock_ctx():
     # Mocking dependencies
     app_context = MagicMock()
     app_context.env = MagicMock()
-    
+
     # [수정] WebAppContext 초기화 시 web_api 의존성 격리를 위해 추가 patch
     with patch('view.web.web_app_initializer.RealtimeDataManager') as MockRDM, \
          patch('view.web.web_app_initializer.web_api') as MockWebApi:
@@ -16,13 +16,17 @@ def mock_ctx():
         ctx.stock_query_service = AsyncMock()
         ctx.trading_service = MagicMock()
         ctx.realtime_data_manager = MockRDM.return_value
-        
+
+        # BackgroundService mock (force_reconnect 등 위임용)
+        ctx.background_service = MagicMock()
+        ctx.background_service.force_reconnect_program_trading = AsyncMock()
+
         # Default behaviors
         ctx.realtime_data_manager.is_subscribed.return_value = False
         ctx.stock_query_service.connect_websocket.return_value = True
         ctx.stock_query_service.subscribe_program_trading.return_value = True
         ctx.stock_query_service.subscribe_realtime_price.return_value = True
-        
+
         yield ctx
 
 @pytest.mark.asyncio
@@ -70,13 +74,10 @@ async def test_start_program_trading_dead_reconnect_success(mock_ctx):
     mock_ctx.realtime_data_manager.is_subscribed.return_value = True
     mock_ctx.trading_service.is_websocket_receive_alive.return_value = False
     
-    # 재연결 로직은 복잡하므로 여기서는 메서드 호출 여부만 모킹
-    mock_ctx._force_reconnect_program_trading = AsyncMock()
-    
     result = await mock_ctx.start_program_trading(code)
-    
+
     assert result is True
-    mock_ctx._force_reconnect_program_trading.assert_called_once()
+    mock_ctx.background_service.force_reconnect_program_trading.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_start_program_trading_dead_reconnect_fail_retry_success(mock_ctx):
@@ -85,7 +86,6 @@ async def test_start_program_trading_dead_reconnect_fail_retry_success(mock_ctx)
     # 1. 처음 체크 시 True, 2. 재연결 후 체크 시 False (실패 가정)
     mock_ctx.realtime_data_manager.is_subscribed.side_effect = [True, False, False]
     mock_ctx.trading_service.is_websocket_receive_alive.return_value = False
-    mock_ctx._force_reconnect_program_trading = AsyncMock()
     
     result = await mock_ctx.start_program_trading(code)
     
