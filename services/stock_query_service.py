@@ -35,17 +35,17 @@ class StockQueryService:
         else:  # 3:보합 (또는 기타)
             return ""
 
-    async def get_current_price(self, stock_code: str, logger=None) -> ResCommonResponse:
+    async def get_current_price(self, stock_code: str) -> ResCommonResponse:
         """현재가만 빠르게 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_current_stock_price(stock_code, logger=logger)
+        return await self.trading_service.get_current_stock_price(stock_code)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, TradingService 래퍼)."""
         return await self.trading_service.get_multi_price(stock_codes)
 
-    async def get_top_trading_value_stocks(self, logger=None) -> ResCommonResponse:
+    async def get_top_trading_value_stocks(self) -> ResCommonResponse:
         """거래대금 상위 종목 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_top_trading_value_stocks(logger=logger)
+        return await self.trading_service.get_top_trading_value_stocks()
 
     async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
         """상승/하락 상위 종목 조회 (TradingService 래퍼)."""
@@ -63,15 +63,14 @@ class StockQueryService:
         """체결 정보 조회 (TradingService 래퍼)."""
         return await self.trading_service.get_stock_conclusion(stock_code)
 
-    async def handle_get_current_stock_price(self, stock_code, logger=None):
+    async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
-        logger = logger or self.logger
-        logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
-        resp: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code, logger=logger)
+        self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
+        resp: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
-            logger.error(f"{stock_code} 현재가 및 상세 정보 조회 실패: {msg}")
+            self.logger.error(f"{stock_code} 현재가 및 상세 정보 조회 실패: {msg}")
             if self._nm:
                 await self._nm.emit("SYSTEM", "warning", "현재가 조회 실패",
                                     f"{stock_code} - {msg}",
@@ -86,7 +85,7 @@ class StockQueryService:
         output = (resp.data or {}).get("output") if isinstance(resp.data, dict) else None
 
         if not isinstance(output, ResStockFullInfoApiOutput):
-            logger.error(f"잘못된 응답 데이터 타입 또는 output 없음: {type(output)}")
+            self.logger.error(f"잘못된 응답 데이터 타입 또는 output 없음: {type(output)}")
             return ResCommonResponse(
                 rt_cd=ErrorCode.PARSING_ERROR.value,
                 msg1=f"잘못된 응답 데이터 타입 또는 output 없음: {type(output)}",
@@ -178,7 +177,7 @@ class StockQueryService:
             "sltr_yn": "예" if output.sltr_yn == "Y" else "아니오",
             "mang_issu_cls_code": "예" if output.mang_issu_cls_code and output.mang_issu_cls_code.strip() else "아니오",
         }
-        logger.info(f"{stock_code} 현재가 및 상세 정보 조회 성공")
+        self.logger.info(f"{stock_code} 현재가 및 상세 정보 조회 성공")
         if self._nm:
             name = view.get("name", stock_code)
             sign_str = actual_sign if actual_sign == "+" else ""
@@ -708,13 +707,13 @@ class StockQueryService:
             self.logger.error(f"{stock_code} OHLCV+지표 통합 조회 중 오류: {e}", exc_info=True)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
-    async def get_recent_daily_ohlcv(self, stock_code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE, logger=None) -> ResCommonResponse:
+    async def get_recent_daily_ohlcv(self, stock_code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE) -> ResCommonResponse:
         """
         타겟 종목의 최근 일봉을 limit개 반환.
         TradingService.get_recent_daily_ohlcv를 래핑하여 ResCommonResponse 형태로 통일.
         """
         try:
-            rows = await self.trading_service.get_recent_daily_ohlcv(stock_code, limit=limit, logger=logger)
+            rows = await self.trading_service.get_recent_daily_ohlcv(stock_code, limit=limit)
             if not rows:
                 return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 없음", data=[])
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=rows)
