@@ -186,6 +186,7 @@ class TradingService:
         return await self._broker_api_wrapper.get_account_balance()
 
     async def place_buy_order(self, stock_code, price, qty) -> ResCommonResponse:
+        t_start = self.pm.start_timer()
         self._logger.info(
             f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
         )
@@ -199,6 +200,7 @@ class TradingService:
             )
         except Exception as e:
             self._logger.exception(f"Service - 매수 주문 중 오류 발생: {str(e)}")
+            self.pm.log_timer(f"TradingService.place_buy_order({stock_code}) [예외]", t_start)
             return ResCommonResponse(
                 rt_cd=ErrorCode.UNKNOWN_ERROR.value,  # Enum 값 사용
                 msg1=f"매수 주문 처리 중 예외 발생: {str(e)}",
@@ -208,11 +210,14 @@ class TradingService:
         if response_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
             msg = getattr(response_common, "msg1", "매수 주문 실패")  # 방어적 접근
             self._logger.error(f"매수 주문 실패: {msg}")
+            self.pm.log_timer(f"TradingService.place_buy_order({stock_code}) [실패]", t_start)
             return response_common
 
+        self.pm.log_timer(f"TradingService.place_buy_order({stock_code})", t_start)
         return response_common
 
     async def place_sell_order(self, stock_code, price, qty) -> ResCommonResponse:
+        t_start = self.pm.start_timer()
         self._logger.info(
             f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
         )
@@ -226,6 +231,7 @@ class TradingService:
             )
         except Exception as e:
             self._logger.exception(f"Service - 매도 주문 중 오류 발생: {str(e)}")
+            self.pm.log_timer(f"TradingService.place_sell_order({stock_code}) [예외]", t_start)
             return ResCommonResponse(
                 rt_cd=ErrorCode.UNKNOWN_ERROR.value,  # Enum 값 사용
                 msg1=f"매도 주문 처리 중 예외 발생: {str(e)}",
@@ -235,8 +241,10 @@ class TradingService:
         if response_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
             msg = getattr(response_common, "msg1", "매도 주문 실패")
             self._logger.error(f"매도 주문 실패: {msg}")
+            self.pm.log_timer(f"TradingService.place_sell_order({stock_code}) [실패]", t_start)
             return response_common
 
+        self.pm.log_timer(f"TradingService.place_sell_order({stock_code})", t_start)
         return response_common
 
     async def get_top_market_cap_stocks_code(self, market_code: str, limit: int = None) -> ResCommonResponse:
@@ -608,6 +616,7 @@ class TradingService:
         :param end_yyyymmdd: 조회 종료일 (보통 어제 날짜)
         :param max_loops: 반복 횟수 (기본 8회 * 100일 = 약 800일 ≈ 2.2년)
         """
+        t_start = self.pm.start_timer()
         all_rows = []
         curr_end_dt = datetime.strptime(end_yyyymmdd, "%Y%m%d")
         # 시작일은 종료일로부터 충분히 과거로 설정 (max_loops 기반)
@@ -651,7 +660,8 @@ class TradingService:
             
             # 다음 루프를 위해 종료일 갱신
             curr_end_dt = curr_start_dt - timedelta(days=1)
-            
+
+        self.pm.log_timer(f"TradingService._fetch_past_daily_ohlcv({stock_code}, {loop_cnt}회)", t_start, threshold=1.0)
         return all_rows
 
     def _save_ohlcv_cache(self, key: str, base_date: str, data: List[dict]):
@@ -706,6 +716,7 @@ class TradingService:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
         """
+        t_ohlcv = self.pm.start_timer()
         # [수정] 일봉(D)인 경우 캐싱 및 최적화 적용
         if (period or "D").upper() == "D":
             now_dt = self._time_manager.get_current_kst_time()
@@ -787,7 +798,8 @@ class TradingService:
                 merged_map[r['date']] = r
             
             final_rows = sorted(merged_map.values(), key=lambda x: x['date'])
-            
+
+            self.pm.log_timer(f"TradingService.get_ohlcv({stock_code}, D)", t_ohlcv, threshold=0.5)
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(final_rows)}건", data=final_rows)
 
         else:
@@ -808,6 +820,7 @@ class TradingService:
                 return raw or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="차트 API 실패", data=[])
 
             rows = self._normalize_ohlcv_rows(raw.data)
+            self.pm.log_timer(f"TradingService.get_ohlcv({stock_code}, {period})", t_ohlcv, threshold=0.5)
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(rows)}건", data=rows)
 
     async def get_ohlcv_range(
@@ -849,6 +862,7 @@ class TradingService:
         한국투자증권 API 특성상 긴 기간(1년 이상) 조회 시 데이터가 잘릴 수 있으므로,
         1년 단위로 끊어서 반복 호출하여 병합한다.
         """
+        t_start = self.pm.start_timer()
         # 1. 기준 종료일 설정
         if end_date:
             current_ed_dt = datetime.strptime(end_date, "%Y%m%d")
@@ -908,7 +922,8 @@ class TradingService:
         # 3. 최근 limit개 슬라이스
         if len(all_rows) > limit:
             all_rows = all_rows[-limit:]
-            
+
+        self.pm.log_timer(f"TradingService.get_recent_daily_ohlcv({code}, limit={limit})", t_start, threshold=1.0)
         return all_rows
 
     async def get_intraday_minutes_today(self, *, stock_code: str, input_hour_1: str) -> ResCommonResponse:

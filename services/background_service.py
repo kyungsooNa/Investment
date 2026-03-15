@@ -212,12 +212,14 @@ class BackgroundService:
 
     async def _fetch_with_retry(self, api_call, *args, **kwargs):
         """API 호출을 재시도 로직으로 감싸는 헬퍼."""
+        t_start = self.pm.start_timer()
         max_retries = 3
         delay = 1.0  # 초
         for attempt in range(max_retries):
             try:
                 resp = await api_call(*args, **kwargs)
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                    self.pm.log_timer(f"BackgroundService._fetch_with_retry({api_call.__name__}, {args[0]})", t_start)
                     return resp
 
                 error_msg = resp.msg1 if resp else "응답 없음"
@@ -235,6 +237,7 @@ class BackgroundService:
                 delay *= 1.5  # 약간의 지수 백오프
 
         self._logger.error(f"API 호출 최종 실패: {api_call.__name__}({args[0]})")
+        self.pm.log_timer(f"BackgroundService._fetch_with_retry({api_call.__name__}, {args[0]}) [최종실패]", t_start)
         return None  # 최종 실패 시 None 반환
 
     async def refresh_investor_ranking(self) -> None:
@@ -722,6 +725,7 @@ class BackgroundService:
         if not codes:
             return
 
+        t_start = self.pm.start_timer()
         self._logger.info(f"[워치독] 강제 재연결 시작 (구독 종목: {codes})")
         try:
             # 1. 기존 WebSocket 연결 강제 종료
@@ -751,4 +755,5 @@ class BackgroundService:
             for code in failed_codes:
                 self._realtime_data_manager.remove_subscribed_code(code)
 
+        self.pm.log_timer(f"BackgroundService.force_reconnect_program_trading({success_count}/{len(codes)})", t_start)
         self._logger.info(f"[워치독] 강제 재연결 완료: {success_count}/{len(codes)}개 종목")

@@ -110,7 +110,7 @@ class WebAppContext:
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
         # [신규] MarketDateManager 초기화
-        self._mdm = MarketDateManager(self.time_manager, self.logger)
+        self._mdm = MarketDateManager(self.time_manager, self.logger, performance_manager=self.pm)
         
 
     async def initialize_services(self, is_paper_trading: bool = True):

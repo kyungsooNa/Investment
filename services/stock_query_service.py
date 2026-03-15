@@ -510,6 +510,7 @@ class StockQueryService:
 
     async def handle_get_top_stocks(self, category: str) -> ResCommonResponse:
         """상위 종목 조회 및 출력 (상승률, 하락률, 거래량, 외국인순매수 등)."""
+        t_start = self.pm.start_timer()
         # (title, func, param, is_sync) — is_sync=True이면 동기 함수 호출
         # 장마감 후 캐시된 기본 랭킹이 있으면 우선 사용 (trading_value 제외 — background_service에서 처리)
         basic_categories = ("rise", "fall", "volume")
@@ -587,6 +588,7 @@ class StockQueryService:
                 await self._nm.emit("SYSTEM", "warning", f"{title} 랭킹 조회 실패", msg,
                                     metadata={"category": category})
 
+        self.pm.log_timer(f"StockQueryService.handle_get_top_stocks({category})", t_start, threshold=0.5)
         return response
 
     async def handle_get_etf_info(self, etf_code: str):
@@ -757,6 +759,7 @@ class StockQueryService:
         - 반환: 시간 오름차순(HHMMSS) 정렬된 리스트. 각 행은 최소 다음 키를 포함:
           'stck_bsop_date'(YYYYMMDD), 'stck_cntg_hour'(HHMMSS), 나머지는 원본 필드 유지
         """
+        t_start = self.pm.start_timer()
         # 세션 범위 결정
         if not start_hhmmss or not end_hhmmss:
             if session.upper() == "EXTENDED":
@@ -858,6 +861,7 @@ class StockQueryService:
         # 최종 정렬(과거→현재)
         collected.sort(key=lambda r: r.get("stck_cntg_hour", ""))
 
+        self.pm.log_timer(f"StockQueryService.get_day_intraday_minutes_list({stock_code}, {batches}배치)", t_start, threshold=1.0)
         return collected
 
     async def handle_program_trading_stream(self, stock_code: str, duration: int = 60) -> None:
