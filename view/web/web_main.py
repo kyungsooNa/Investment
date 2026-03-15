@@ -75,7 +75,11 @@ async def render_page(request: Request, template_name: str, active_page: str):
 # 4. 페이지 라우팅
 @page_router.get("/")
 async def index(request: Request):
-    return await render_page(request, "index.html", "stock")
+    return await render_page(request, "index.html", "home")
+
+@page_router.get("/stock")
+async def stock(request: Request):
+    return await render_page(request, "stock.html", "stock")
 
 @page_router.get("/balance")
 async def balance(request: Request):

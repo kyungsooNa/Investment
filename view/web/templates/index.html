@@ -1,44 +1,36 @@
 {% extends "base.html" %}
 
-{% block head_scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/chartjs-chart-financial.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
-{% endblock %}
-
 {% block content %}
-    <div id="section-stock" class="section">
-        <div class="card">
-            <h2>종목 현재가 조회</h2>
-            <div class="form-row">
-                <label>종목코드</label>
-                <input type="text" id="stock-code-input" placeholder="예: 005930" maxlength="6" onkeydown="if(event.key==='Enter') searchStock()">
-                <button class="btn" onclick="searchStock()">조회</button>
-            </div>
-        </div>
-        <div id="stock-result"></div>
-        <div class="card" id="stock-chart-card" style="display: none; margin-top: 16px;">
-            <div id="chart-controls-area" style="text-align: right; margin-bottom: 10px; min-height: 24px;"></div>
-            <div style="position: relative; height: 650px; width: 100%;">
-                <canvas id="stockChart"></canvas>
+    <div class="section">
+        <div class="card" style="text-align: center; padding: 48px 24px;">
+            <h2 style="margin-bottom: 12px;">Investment</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 32px;">한국투자증권 Open API 기반 주식 자동매매 시스템</p>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; max-width: 800px; margin: 0 auto;">
+                <a href="/stock" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">📈</div>
+                    <div style="font-weight: 600;">현재가 조회</div>
+                </a>
+                <a href="/balance" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">💰</div>
+                    <div style="font-weight: 600;">계좌 잔고</div>
+                </a>
+                <a href="/order" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">🛒</div>
+                    <div style="font-weight: 600;">매수/매도</div>
+                </a>
+                <a href="/ranking" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">🏆</div>
+                    <div style="font-weight: 600;">랭킹</div>
+                </a>
+                <a href="/virtual" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">📊</div>
+                    <div style="font-weight: 600;">모의투자 기록</div>
+                </a>
+                <a href="/scheduler" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">⏰</div>
+                    <div style="font-weight: 600;">전략 스케줄러</div>
+                </a>
             </div>
         </div>
     </div>
-{% endblock %}
-
-{% block scripts %}
-<script src="/static/js/candle_chart.js?v=1"></script>
-<script src="/static/js/stock.js?v=1"></script>
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const code = urlParams.get('code');
-        if (code) {
-            const input = document.getElementById('stock-code-input');
-            if (input) input.value = code;
-            searchStock(code);
-        }
-    });
-</script>
 {% endblock %}

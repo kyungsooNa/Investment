@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/chartjs-chart-financial.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+{% endblock %}
+
+{% block content %}
+    <div id="section-stock" class="section">
+        <div class="card">
+            <h2>종목 현재가 조회</h2>
+            <div class="form-row">
+                <label>종목코드</label>
+                <input type="text" id="stock-code-input" placeholder="예: 005930" maxlength="6" onkeydown="if(event.key==='Enter') searchStock()">
+                <button class="btn" onclick="searchStock()">조회</button>
+            </div>
+        </div>
+        <div id="stock-result"></div>
+        <div class="card" id="stock-chart-card" style="display: none; margin-top: 16px;">
+            <div id="chart-controls-area" style="text-align: right; margin-bottom: 10px; min-height: 24px;"></div>
+            <div style="position: relative; height: 650px; width: 100%;">
+                <canvas id="stockChart"></canvas>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/candle_chart.js?v=1"></script>
+<script src="/static/js/stock.js?v=1"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        if (code) {
+            const input = document.getElementById('stock-code-input');
+            if (input) input.value = code;
+            searchStock(code);
+        }
+    });
+</script>
+{% endblock %}
