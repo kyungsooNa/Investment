@@ -63,6 +63,26 @@ function escapeHtml(str) {
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.add('light-mode');
+
+    // 주식 종목 링크 호버 스타일 추가
+    if (!document.getElementById('stock-link-style')) {
+        const style = document.createElement('style');
+        style.id = 'stock-link-style';
+        style.innerHTML = `
+            .stock-link {
+                color: var(--accent);
+                text-decoration: none;
+                transition: all 0.2s ease;
+            }
+            .stock-link:hover {
+                font-weight: bold;
+                text-decoration: underline;
+                filter: brightness(1.2);
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
     updateStatus();
     setInterval(updateStatus, 5000);
 });

@@ -317,7 +317,7 @@ function renderRankingTable() {
         }
         rows += `<tr>
             <td>${item.data_rank || item.rank || '-'}</td>
-            <td><a href="/?code=${code}" style="color:var(--accent); text-decoration:none;">${item.hts_kor_isnm || item.name}</a></td>
+            <td><a href="/?code=${code}" target="_blank" class="stock-link">${item.hts_kor_isnm || item.name}</a></td>
             <td>${parseInt(item.stck_prpr || 0).toLocaleString()}</td>
             <td class="${color}">${rate}%</td>
             ${extraCols}

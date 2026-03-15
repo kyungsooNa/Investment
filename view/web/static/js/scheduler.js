@@ -212,7 +212,7 @@ function renderSchedulerHistory(history) {
         return `<tr>
             <td style="white-space:nowrap;">${h.timestamp}</td>
             <td>${h.strategy_name}</td>
-            <td><a href="/?code=${h.code}" style="color:var(--accent); text-decoration:none;">${h.name}(${h.code})</a></td>
+            <td><a href="/?code=${h.code}" target="_blank" class="stock-link">${h.name}(${h.code})</a></td>
             <td class="${actionClass}"><strong>${actionLabel}</strong>${statusIcon}</td>
             <td>${Number(h.price).toLocaleString()}</td>
             ${returnRateHtml}
