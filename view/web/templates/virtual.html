@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+{% endblock %}
+
 {% block content %}
     <div id="section-virtual" class="section">
         <div class="card">
@@ -60,12 +66,12 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/virtual_chart.js?v=6"></script>
+<script src="/static/js/stock.js?v=1"></script>
+<script src="/static/js/virtual.js?v=1"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // app.js에 정의된 loadVirtualHistory 호출
-        if (typeof loadVirtualHistory === 'function') {
-            loadVirtualHistory();
-        }
+        loadVirtualHistory();
     });
 </script>
 {% endblock %}

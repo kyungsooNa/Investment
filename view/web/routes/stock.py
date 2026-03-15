@@ -2,25 +2,43 @@
 종목 조회 관련 API 엔드포인트 (index.html).
 현재가, 차트(OHLCV), 기술 지표, 시장 상태, 환경 전환.
 """
+import time
 from fastapi import APIRouter, HTTPException
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
 import view.web.api_common as api_common
 
 router = APIRouter()
 
+# /api/status 결과를 5초간 캐시하여 페이지 전환 시 broker API 반복 호출 방지
+_status_cache = None
+_status_cache_ts = 0.0
+_STATUS_CACHE_TTL = 5.0
+
 
 @router.get("/status")
 async def get_status():
     """시장 상태 및 환경 정보."""
+    global _status_cache, _status_cache_ts
+
     ctx = _get_ctx()
     if ctx is None:
         return {"market_open": False, "env_type": "미설정", "current_time": "", "initialized": False}
-    return {
+
+    now = time.monotonic()
+    if _status_cache is not None and (now - _status_cache_ts) < _STATUS_CACHE_TTL:
+        # 캐시된 결과 반환 (현재 시각만 갱신)
+        _status_cache["current_time"] = ctx.get_current_time_str()
+        return _status_cache
+
+    result = {
         "market_open": await ctx.is_market_open_now(),
         "env_type": ctx.get_env_type(),
         "current_time": ctx.get_current_time_str(),
         "initialized": ctx.initialized
     }
+    _status_cache = result
+    _status_cache_ts = now
+    return result
 
 
 @router.get("/stock/{code}")
@@ -89,10 +107,14 @@ async def get_moving_average(code: str, period: int = 20, method: str = "sma"):
 @router.post("/environment")
 async def change_environment(req: EnvironmentRequest):
     """거래 환경 변경 (모의/실전)."""
+    global _status_cache, _status_cache_ts
     ctx = api_common._ctx
     if ctx is None:
         raise HTTPException(status_code=503, detail="서비스가 초기화되지 않았습니다.")
     success = await ctx.initialize_services(is_paper_trading=req.is_paper)
+    # 환경 전환 시 상태 캐시 무효화
+    _status_cache = None
+    _status_cache_ts = 0.0
     if not success:
         raise HTTPException(status_code=500, detail="환경 전환 실패 (토큰 발급 오류)")
     ctx.start_background_tasks()
