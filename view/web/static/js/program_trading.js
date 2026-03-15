@@ -25,34 +25,50 @@ function connectPtEventSource() {
         const statusDiv = document.getElementById('pt-status');
         if (statusDiv) statusDiv.innerHTML = '<span class="text-red">SSE 연결 끊김 — 재연결 시도 중...</span>';
     };
-    ptEventSource.onopen = () => {
+    ptEventSource.onopen = async () => {
         if (ptSubscribedCodes.size === 0 || ptResubscribing) return;
-        ptResubscribing = true;
-        const codes = Array.from(ptSubscribedCodes);
         const statusDiv = document.getElementById('pt-status');
-        if (statusDiv) {
-            statusDiv.style.display = 'block';
-            showLoading(statusDiv, `이전 구독 복구 중... (0/${codes.length})`);
-        }
-        // 병렬로 구독 요청을 보내서 서버 이벤트 루프 점유를 최소화
-        Promise.allSettled(
-            codes.map(code =>
-                fetch('/api/program-trading/subscribe', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ code })
-                }).then(r => {
-                    if (statusDiv) {
-                        const done = codes.indexOf(code) + 1;
-                        statusDiv.innerHTML = `<span>구독 복구 중... (${done}/${codes.length})</span>`;
-                    }
-                    return r;
-                }).catch(e => console.error(`[PT] Resubscribe failed: ${code}`, e))
-            )
-        ).then(() => {
+
+        // 서버 구독 상태를 먼저 확인하여 불필요한 재구독 방지
+        try {
+            const res = await fetch('/api/program-trading/status');
+            const status = await res.json();
+            const serverCodes = new Set(status.codes || []);
+
+            // 서버에 없는 종목만 추려서 구독
+            const missingCodes = Array.from(ptSubscribedCodes).filter(c => !serverCodes.has(c));
+
+            if (missingCodes.length === 0) {
+                // 서버에 이미 모든 구독이 살아있음 — 재구독 불필요
+                if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
+                return;
+            }
+
+            ptResubscribing = true;
+            if (statusDiv) {
+                statusDiv.style.display = 'block';
+                showLoading(statusDiv, `구독 복구 중... (0/${missingCodes.length})`);
+            }
+
+            await Promise.allSettled(
+                missingCodes.map((code, idx) =>
+                    fetch('/api/program-trading/subscribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code })
+                    }).then(r => {
+                        if (statusDiv) statusDiv.innerHTML = `<span>구독 복구 중... (${idx + 1}/${missingCodes.length})</span>`;
+                        return r;
+                    }).catch(e => console.error(`[PT] Resubscribe failed: ${code}`, e))
+                )
+            );
+
             if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
             ptResubscribing = false;
-        });
+        } catch (e) {
+            console.warn('[PT] Status check failed on SSE open:', e);
+            ptResubscribing = false;
+        }
     };
 }
 
@@ -530,6 +546,17 @@ async function initProgramTrading() {
         }
     });
 
+    // 시장 개장 여부를 먼저 확인하여 비영업일에는 구독 복구를 스킵
+    let isMarketOpen = true;
+    let serverStatus = null;
+    try {
+        const res = await fetch('/api/program-trading/status');
+        serverStatus = await res.json();
+        isMarketOpen = serverStatus.is_market_open !== false;
+    } catch (e) {
+        console.warn('[PT] Status check failed:', e);
+    }
+
     if (await loadPtData()) {
         ptDataDirty = true;
         renderPtChips();
@@ -538,36 +565,38 @@ async function initProgramTrading() {
 
         if (ptSubscribedCodes.size > 0) {
             const statusDiv = document.getElementById('pt-status');
-            if (statusDiv) {
-                statusDiv.style.display = 'block';
-                showLoading(statusDiv, '이전 구독 복구 중...');
-            }
-            connectPtEventSource();
-        }
-    } else {
-        try {
-            const res = await fetch('/api/program-trading/status');
-            const status = await res.json();
-            if (status.subscribed && status.codes && status.codes.length > 0) {
-                for (const code of status.codes) {
-                    ptSubscribedCodes.add(code);
-                    if (!ptChartData[code]) {
-                        ptChartData[code] = { totalValue: 0, totalVolume: 0, valueData: [], volumeData: [] };
-                    }
-                }
-                renderPtChips();
-                initProgramChart(ptTimeUnit);
-                updateProgramChart(ptChartData, ptSubscribedCodes, ptFilterCodes, ptCodeNameMap, ptTimeUnit);
-
-                const statusDiv = document.getElementById('pt-status');
+            if (!isMarketOpen) {
+                // 비영업일: 데이터만 표시하고 구독 복구는 하지 않음
                 if (statusDiv) {
                     statusDiv.style.display = 'block';
-                    showLoading(statusDiv, '서버 구독 상태에서 복구 중...');
+                    statusDiv.innerHTML = '<span>비영업일 — 실시간 구독 대기</span>';
+                }
+            } else {
+                if (statusDiv) {
+                    statusDiv.style.display = 'block';
+                    showLoading(statusDiv, '구독 상태 확인 중...');
                 }
                 connectPtEventSource();
             }
-        } catch (e) {
-            console.warn('[PT] Server status check failed:', e);
+        }
+    } else if (serverStatus && serverStatus.subscribed && serverStatus.codes && serverStatus.codes.length > 0) {
+        for (const code of serverStatus.codes) {
+            ptSubscribedCodes.add(code);
+            if (!ptChartData[code]) {
+                ptChartData[code] = { totalValue: 0, totalVolume: 0, valueData: [], volumeData: [] };
+            }
+        }
+        renderPtChips();
+        initProgramChart(ptTimeUnit);
+        updateProgramChart(ptChartData, ptSubscribedCodes, ptFilterCodes, ptCodeNameMap, ptTimeUnit);
+
+        if (isMarketOpen) {
+            const statusDiv = document.getElementById('pt-status');
+            if (statusDiv) {
+                statusDiv.style.display = 'block';
+                showLoading(statusDiv, '서버 구독 상태에서 복구 중...');
+            }
+            connectPtEventSource();
         }
     }
 }

@@ -57,13 +57,14 @@ async def unsubscribe_program_trading(req: ProgramTradingUnsubscribeRequest = No
 
 @router.get("/program-trading/status")
 async def get_program_trading_status():
-    """프로그램매매 구독 상태 확인."""
+    """프로그램매매 구독 상태 확인 (시장 개장 여부 포함)."""
     ctx = _get_ctx()
-    # [변경] 매니저 사용
     codes = ctx.realtime_data_manager.get_subscribed_codes()
+    is_market_open = await ctx.is_market_open_now()
     return {
         "subscribed": len(codes) > 0,
         "codes": codes,
+        "is_market_open": is_market_open,
     }
 
 

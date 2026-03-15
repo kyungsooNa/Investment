@@ -7,13 +7,19 @@
 - [ ] **[설정/환경]** `tr_ids_config.yaml`과 `kis_config.yaml`의 `tr_id`, `url`을 `(실전, 모의)` 튜플(Tuple) 형태로 변경. 모의투자에서 지원하지 않는 API는 빈 값으로 두어 자동 차단되도록 수정.
 - [ ] **[전략]** 주문 api 실패헀을경우 기록되지 않게 수정.
 - [ ] **[랭킹]** 프로그램 매매순위에 데이터가 없는 경우가 많은데, DATA 정합성이 안맞으면 retry를 하던가, 수동으로 udpate 할 수 있는 ui를 만들어야할듯.
-- [ ] **[프로그램매매]** 이전 구독종목 복구 중... 이 너무 오래걸림.
+- [ ] **[프로그램매매]** 이전 구독종목 복구 중... 이 너무 오래걸림. 현재 모든 tick 단위가 db에 저장되고 있는데, ui에서는 1분이 최소 단위임으로, 보여지는건 최신의 data를 보여주되 db저장은 1분 단위로 마지막 tick 정보만 저장하도록 수정. 이렇게하면 memory에 다 올려도 부담 없을것으로 예상됨. 종목당 (KRX 09시~15시30분 => 390분(개), NTX 포함해도 08시~20시 => 720분(개))
 
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[아키텍처]** 단일 책임 원칙(SRP)에 따라 비대해진 `TradingService`를 `OrderService`(주문), `MarketDataService`(시세/조회), `StreamingService`(웹소켓)로 분리.
 - [ ] **[아키텍처]** UI 출력 로직 완전 격리: Service 계층 내부에 존재하는 콘솔 출력(`print`) 로직을 제거하고, View 계층에 위임.
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
+- [ ] **[BackgroundService]** BackgroundService는 단순 task들의 background 수행만 관리. ForegourndService 만들어서 앞에서 도는 서비스(UseCase)와 분리. Background로 전체종목 data의 종목현재가, ohlcv, bb, ma, rsi 등 변하지 않는 data DB에서 가지고 있도록 수정. 
+기존에 있는 service들은 backgroundService(Scheduler), forgroundService(Scheduler)에서 돌수있는 task interface를 가지게 하고, UserAction이 있으면 backgroundService는 suspend/resume 할 수 있도록 수정. 
+두가지 스케줄러에 모두 등록되는 Service 도 있을수 있음.
+(e.g) foreground: 현재가 조회, 계자잔고 조회, 매수/매도(최우선 우선순위), 랭킹, 시가총액, 모의투자 기록, 전략 스케줄러(전략 실행/정지), 프로그램매매 구독 등 User Action에 의한 동작
+backgournd: 수행중인 전략 scheduler(전략에서 수행하는 매수/매도는 forground의 매수매도와 동일한 최우선순위) 랭킹정보 udpate, 전체 종목 정보 update 등 장마감 이후 한번씩 고정된 data를 db에 올리는 작업 등.
+- [ ] **[전략]** 전략이 스케줄러에서 돌때 동일한 시간에 여러 전략들이 동시에 수행되게 스케줄링 되고있음. 이는 API 자원을 같이 쓰는 단점이 있으므로 1분 간격으로 각 스케줄러들이 돌게 하는게 좋을것 같음.
 
 ---
 
