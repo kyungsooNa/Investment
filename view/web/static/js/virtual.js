@@ -224,15 +224,73 @@ function applyVirtualFilter() {
         profitFactor = profitFactors[selectedArray[0]];
         expectancy = expectancies[selectedArray[0]];
     } else {
-        dailyChange = null;
-        weeklyChange = null;
-        dailyRefDate = null;
-        weeklyRefDate = null;
-        profitFactor = null;
-        expectancy = null;
+        // 다중 전략: 전일/전주대비는 누적수익률 기반으로 재계산
+        // 각 전략의 buy_sum/eval_sum을 합산하여 누적수익률을 구한 뒤, 스냅샷 변동분과 비교
+        // 단순 합산이 어려우므로 개별 전략 값의 가중평균 사용
+        let totalBuyForWeight = 0;
+        let weightedDaily = 0, weightedWeekly = 0;
+        let hasDaily = false, hasWeekly = false;
+        selectedArray.forEach(strat => {
+            const agg = summaryAgg[strat];
+            const buyAmt = agg ? (agg.buy_sum || 0) : 0;
+            if (buyAmt <= 0) return;
+
+            const dc = dailyChanges[strat];
+            const wc = weeklyChanges[strat];
+            if (dc != null) { weightedDaily += dc * buyAmt; hasDaily = true; }
+            if (wc != null) { weightedWeekly += wc * buyAmt; hasWeekly = true; }
+            totalBuyForWeight += buyAmt;
+
+            // ref dates: 가장 이른 날짜
+            const dr = dailyRefDates[strat];
+            const wr = weeklyRefDates[strat];
+            if (dr && (!dailyRefDate || dr < dailyRefDate)) dailyRefDate = dr;
+            if (wr && (!weeklyRefDate || wr < weeklyRefDate)) weeklyRefDate = wr;
+        });
+        dailyChange = (hasDaily && totalBuyForWeight > 0) ? weightedDaily / totalBuyForWeight : null;
+        weeklyChange = (hasWeekly && totalBuyForWeight > 0) ? weightedWeekly / totalBuyForWeight : null;
 
         const fDates = selectedArray.map(s => firstDates[s]).filter(Boolean).sort();
         firstDate = fDates[0];
+
+        // 다중 전략: PF 합산 (총 수익금 합 / 총 손실금 합)
+        let multiTotalGain = 0, multiTotalLoss = 0;
+        selectedArray.forEach(strat => {
+            const pf = profitFactors[strat];
+            if (pf && typeof pf === 'object') {
+                multiTotalGain += pf.total_gain || 0;
+                multiTotalLoss += pf.total_loss || 0;
+            }
+        });
+        if (multiTotalLoss > 0) {
+            profitFactor = { value: Math.round((multiTotalGain / multiTotalLoss) * 100) / 100, total_gain: Math.round(multiTotalGain), total_loss: Math.round(multiTotalLoss) };
+        } else if (multiTotalGain > 0) {
+            profitFactor = { value: null, total_gain: Math.round(multiTotalGain), total_loss: 0 };
+        } else {
+            profitFactor = { value: 0, total_gain: 0, total_loss: 0 };
+        }
+
+        // 다중 전략: Expectancy 합산
+        let multiWins = 0, multiLosses = 0, multiGainSum = 0, multiLossSum = 0;
+        selectedArray.forEach(strat => {
+            const exp = expectancies[strat];
+            if (exp && typeof exp === 'object') {
+                multiWins += exp.wins || 0;
+                multiLosses += exp.losses || 0;
+                multiGainSum += (exp.avg_gain || 0) * (exp.wins || 0);
+                multiLossSum += (exp.avg_loss || 0) * (exp.losses || 0);
+            }
+        });
+        const multiTotal = multiWins + multiLosses;
+        if (multiTotal > 0) {
+            const wr = multiWins / multiTotal;
+            const lr = multiLosses / multiTotal;
+            const ag = multiWins > 0 ? multiGainSum / multiWins : 0;
+            const al = multiLosses > 0 ? multiLossSum / multiLosses : 0;
+            expectancy = { value: Math.round((wr * ag) - (lr * al)), win_rate: Math.round(wr * 1000) / 10, avg_gain: Math.round(ag), avg_loss: Math.round(al), wins: multiWins, losses: multiLosses };
+        } else {
+            expectancy = { value: 0, win_rate: 0, avg_gain: 0, avg_loss: 0, wins: 0, losses: 0 };
+        }
     }
 
     let holdCount = 0;
@@ -319,7 +377,7 @@ function applyVirtualFilter() {
                 <div style="font-size: 0.8em; color: #a0a0b0 !important; margin-bottom: 3px; font-weight: 600;">Profit Factor</div>
                 ${(() => {
                     const pfData = profitFactor;
-                    if (pfData == null || (selectedArray.length > 1 && !isAll)) return '<strong style="font-size: 1.15em; font-weight: 800 !important;">-</strong>';
+                    if (pfData == null) return '<strong style="font-size: 1.15em; font-weight: 800 !important;">-</strong>';
                     const pf = typeof pfData === 'object' ? pfData.value : pfData;
                     if (pf === null) return '<strong style="font-size: 1.15em; font-weight: 800 !important; color: #ffd700;">&infin;</strong>';
                     const pfNum = Number(pf) || 0;
@@ -342,7 +400,7 @@ function applyVirtualFilter() {
                 <div style="font-size: 0.8em; color: #a0a0b0 !important; margin-bottom: 3px; font-weight: 600;">기대수익<span style="font-size:0.85em; color:#707080;"> /1회</span></div>
                 ${(() => {
                     const expData = expectancy;
-                    if (expData == null || (selectedArray.length > 1 && !isAll)) return '<strong style="font-size: 1.15em; font-weight: 800 !important;">-</strong>';
+                    if (expData == null) return '<strong style="font-size: 1.15em; font-weight: 800 !important;">-</strong>';
                     const exp = typeof expData === 'object' ? Number(expData.value || 0) : Number(expData || 0);
                     const expColor = exp > 0 ? '#4dff4d' : exp < 0 ? '#ff4d4d' : '#ffffff';
                     const expWeight = exp > 0 ? '800' : '600';
