@@ -589,3 +589,175 @@ async def test_get_virtual_history_counts_holiday_logic(web_client, mock_web_ctx
     # StratA: hold=1, today_buy=1 (last_open_day 기준)
     assert counts["StratA"]["hold"] == 1
     assert counts["StratA"]["today_buy"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_profit_factor_and_expectancy(web_client, mock_web_ctx):
+    """GET /api/virtual/history Profit Factor & Expectancy 계산 검증"""
+    web_api._PRICE_CACHE.clear()
+
+    # 4건의 거래: 2승(+20%, +10%) 2패(-5%, -15%)
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        {"code": "A", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
+         "sell_price": 1200, "return_rate": 20.0, "buy_date": "2025-01-01 09:00:00"},
+        {"code": "B", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
+         "sell_price": 1100, "return_rate": 10.0, "buy_date": "2025-01-02 09:00:00"},
+        {"code": "C", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
+         "sell_price": 950, "return_rate": -5.0, "buy_date": "2025-01-03 09:00:00"},
+        {"code": "D", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
+         "sell_price": 850, "return_rate": -15.0, "buy_date": "2025-01-04 09:00:00"},
+    ]
+
+    mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_manager._load_data.return_value = {}
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (None, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (None, None)
+
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Profit Factor 검증
+    # 총 수익금: 200 + 100 = 300, 총 손실금: 50 + 150 = 200
+    # PF = 300 / 200 = 1.5
+    pf = data["profit_factors"]
+    assert "S1" in pf
+    assert pf["S1"]["value"] == 1.5
+    assert pf["S1"]["total_gain"] == 300
+    assert pf["S1"]["total_loss"] == 200
+
+    # ALL도 동일
+    assert pf["ALL"]["value"] == 1.5
+
+    # Expectancy 검증
+    # 승률 50%, 평균수익금 150, 평균손실금 100
+    # Expectancy = (0.5 * 150) - (0.5 * 100) = 75 - 50 = 25
+    exp = data["expectancies"]
+    assert "S1" in exp
+    assert exp["S1"]["value"] == 25.0
+    assert exp["S1"]["win_rate"] == 50.0
+    assert exp["S1"]["avg_gain"] == 150
+    assert exp["S1"]["avg_loss"] == 100
+    assert exp["S1"]["wins"] == 2
+    assert exp["S1"]["losses"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_profit_factor_no_loss(web_client, mock_web_ctx):
+    """GET /api/virtual/history Profit Factor 손실 없을 때 무한대(None) 반환"""
+    web_api._PRICE_CACHE.clear()
+
+    # 전부 수익
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        {"code": "A", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
+         "sell_price": 1500, "return_rate": 50.0, "buy_date": "2025-01-01 09:00:00"},
+    ]
+
+    mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_manager._load_data.return_value = {}
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (None, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (None, None)
+
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    data = response.json()
+
+    pf = data["profit_factors"]
+    assert pf["S1"]["value"] is None  # 무한대
+    assert pf["S1"]["total_gain"] == 500
+    assert pf["S1"]["total_loss"] == 0
+
+    exp = data["expectancies"]
+    assert exp["S1"]["value"] == 500.0  # 100% 승률 * 500원 평균수익
+    assert exp["S1"]["win_rate"] == 100.0
+    assert exp["S1"]["wins"] == 1
+    assert exp["S1"]["losses"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_profit_factor_multi_strategy(web_client, mock_web_ctx):
+    """GET /api/virtual/history 다중 전략 시 ALL 합산 PF/Expectancy 검증"""
+    web_api._PRICE_CACHE.clear()
+
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        # S1: 수익 200
+        {"code": "A", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
+         "sell_price": 1200, "return_rate": 20.0, "buy_date": "2025-01-01 09:00:00"},
+        # S2: 손실 300
+        {"code": "B", "strategy": "S2", "buy_price": 1000, "qty": 1, "status": "SOLD",
+         "sell_price": 700, "return_rate": -30.0, "buy_date": "2025-01-01 09:00:00"},
+    ]
+
+    mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_manager._load_data.return_value = {}
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (None, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (None, None)
+
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    data = response.json()
+
+    pf = data["profit_factors"]
+    # S1: PF = 200/0 = None (무한대, 손실 없음)
+    assert pf["S1"]["value"] is None
+    # S2: PF = 0/300 = 0.0 (수익 없음)
+    assert pf["S2"]["value"] == 0.0
+    # ALL: PF = 200/300 = 0.67
+    assert pf["ALL"]["value"] == 0.67
+    assert pf["ALL"]["total_gain"] == 200
+    assert pf["ALL"]["total_loss"] == 300
+
+    exp = data["expectancies"]
+    # ALL: 승률 50%, 평균수익금 200, 평균손실금 300
+    # = (0.5 * 200) - (0.5 * 300) = 100 - 150 = -50
+    assert exp["ALL"]["value"] == -50.0
+    assert exp["ALL"]["win_rate"] == 50.0
+
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_pf_with_hold_trades(web_client, mock_web_ctx):
+    """GET /api/virtual/history HOLD 상태 거래도 PF/Expectancy에 포함 (현재가 기준)"""
+    web_api._PRICE_CACHE.clear()
+
+    mock_web_ctx.virtual_manager.get_all_trades.return_value = [
+        {"code": "005930", "strategy": "S1", "buy_price": 1000, "qty": 10, "status": "HOLD",
+         "return_rate": 0, "buy_date": "2025-01-01 09:00:00"},
+    ]
+
+    # 현재가 1200원 -> 수익 2000원 (200원 * 10주)
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[
+            {"stck_shrn_iscd": "005930", "stck_prpr": "1200", "prdy_ctrt": "20.0"}
+        ])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+
+    mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_manager._load_data.return_value = {}
+    mock_web_ctx.virtual_manager.get_daily_change.return_value = (None, None)
+    mock_web_ctx.virtual_manager.get_weekly_change.return_value = (None, None)
+
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    data = response.json()
+
+    pf = data["profit_factors"]
+    # 수익만 있으므로 PF = None (무한대)
+    assert pf["S1"]["value"] is None
+    assert pf["S1"]["total_gain"] == 2000  # (1200-1000) * 10
+
+    exp = data["expectancies"]
+    assert exp["S1"]["value"] == 2000.0  # 1건, 100% 승률, 수익 2000
+    assert exp["S1"]["wins"] == 1
+    assert exp["S1"]["losses"] == 0
