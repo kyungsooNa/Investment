@@ -1,6 +1,4 @@
 import pytest
-import asyncio
-import time
 from unittest.mock import MagicMock, AsyncMock, patch
 from view.web.web_app_initializer import WebAppContext
 from pydantic import BaseModel
@@ -208,16 +206,19 @@ async def test_lifecycle_methods(mock_deps):
     ctx = WebAppContext(None)
     ctx.realtime_data_manager = MagicMock()
     ctx.realtime_data_manager.shutdown = AsyncMock()
-    
-    # asyncio.create_task를 모킹하여 실제 백그라운드 태스크가 실행되지 않도록 합니다.
-    with patch("view.web.web_app_initializer.asyncio.create_task"):
-        # Start
-        ctx.start_background_tasks()
-        ctx.realtime_data_manager.start_background_tasks.assert_called_once()
-    
-    # Shutdown
+
+    # Mock background_service
+    ctx.background_service = MagicMock()
+    ctx.background_service.start_all = MagicMock()
+    ctx.background_service.shutdown = AsyncMock()
+
+    # Start — BackgroundService에 위임
+    ctx.start_background_tasks()
+    ctx.background_service.start_all.assert_called_once()
+
+    # Shutdown — BackgroundService에 위임
     await ctx.shutdown()
-    ctx.realtime_data_manager.shutdown.assert_awaited_once()
+    ctx.background_service.shutdown.assert_awaited_once()
 
 def test_web_realtime_callback(mock_deps):
     """웹소켓 콜백 처리 테스트"""
@@ -302,192 +303,26 @@ async def test_initialize_services_with_pydantic_config_object(mock_deps):
 @pytest.mark.asyncio
 async def test_start_background_tasks_with_restore(mock_deps):
     """
-    start_background_tasks가 구독 복원 및 백그라운드 서비스 태스크를
-    올바르게 생성하고 실행하는지 검증합니다.
+    start_background_tasks가 BackgroundService.start_all()에
+    올바르게 위임하는지 검증합니다.
     """
     # Arrange
     ctx = WebAppContext(None)
-    
-    # Mock realtime_data_manager
-    mock_rdm_instance = ctx.realtime_data_manager
-    mock_rdm_instance.get_subscribed_codes.return_value = ["005930", "000660"]
-    
+
     # Mock background_service
     ctx.background_service = MagicMock()
-    ctx.background_service.refresh_investor_ranking = AsyncMock()
-    ctx.background_service.start_after_market_scheduler = AsyncMock()
-    
-    # Mock the method that will be called inside the task
-    ctx._restore_program_trading = AsyncMock()
-    # Mock watchdog (무한 루프이므로 await 시 hang 방지)
-    ctx._program_trading_watchdog = AsyncMock()
+    ctx.background_service.start_all = MagicMock()
 
-    # Patch asyncio.create_task to collect coroutines
-    created_coroutines = []
-    def coro_collector(coro):
-        created_coroutines.append(coro)
-        return MagicMock() # return a mock task object
-
-    with patch("view.web.web_app_initializer.asyncio.create_task", side_effect=coro_collector) as mock_create_task:
-        # Act
-        ctx.start_background_tasks()
-
-    # Await all collected coroutines
-    for coro in created_coroutines:
-        await coro
-
-    # Assert
-    # 1. RDM의 start_background_tasks 호출 확인
-    mock_rdm_instance.start_background_tasks.assert_called_once()
-
-    # 2. RDM의 get_subscribed_codes 호출 확인
-    mock_rdm_instance.get_subscribed_codes.assert_called_once()
-
-    # 3. create_task가 4번 호출되었는지 확인 (restore + watchdog + ranking + scheduler)
-    assert mock_create_task.call_count == 4
-
-    # 4. 각 태스크의 내부 메서드가 await 되었는지 확인
-    ctx._restore_program_trading.assert_awaited_once_with(["005930", "000660"])
-    ctx._program_trading_watchdog.assert_awaited_once()
-    ctx.background_service.refresh_investor_ranking.assert_awaited_once()
-    ctx.background_service.start_after_market_scheduler.assert_awaited_once()
-
-@pytest.mark.asyncio
-async def test_restore_program_trading_success(mock_deps):
-    """_restore_program_trading: 모든 종목 구독 복원 성공 케이스."""
-    # Arrange
-    ctx = WebAppContext(None)
-    ctx.stock_query_service = MagicMock()
-    ctx.stock_query_service.connect_websocket = AsyncMock(return_value=True)
-    ctx.stock_query_service.subscribe_program_trading = AsyncMock()
-    ctx.stock_query_service.subscribe_realtime_price = AsyncMock()
-    
-    codes_to_restore = ["005930", "000660"]
-    
     # Act
-    await ctx._restore_program_trading(codes_to_restore)
-    
-    # Assert
-    assert ctx.stock_query_service.connect_websocket.call_count == 2
-    assert ctx.stock_query_service.subscribe_program_trading.call_count == 2
-    assert ctx.stock_query_service.subscribe_realtime_price.call_count == 2
-    
-    ctx.logger.info.assert_any_call(f"프로그램매매 구독 복원 완료: 2/2개 종목")
+    ctx.start_background_tasks()
 
-@pytest.mark.asyncio
-async def test_restore_program_trading_partial_failure(mock_deps):
-    """_restore_program_trading: 일부 종목 복원 실패 시에도 계속 진행하는지 검증."""
-    # Arrange
-    ctx = WebAppContext(None)
-    ctx.stock_query_service = MagicMock()
-    
-    # 005930: connect fails, 000660: subscribe fails, 035720: success
-    async def connect_side_effect(callback):
-        return ctx.stock_query_service.connect_websocket.await_count != 1
-    async def subscribe_side_effect(code):
-        if code == "000660": raise Exception("Subscription failed")
-    
-    ctx.stock_query_service.connect_websocket = AsyncMock(side_effect=connect_side_effect)
-    ctx.stock_query_service.subscribe_program_trading = AsyncMock(side_effect=subscribe_side_effect)
-    ctx.stock_query_service.subscribe_realtime_price = AsyncMock()
-    
-    # Act
-    await ctx._restore_program_trading(["005930", "000660", "035720"])
-    
-    # Assert
-    assert ctx.stock_query_service.connect_websocket.await_count == 3
-    assert ctx.stock_query_service.subscribe_program_trading.await_count == 2
-    ctx.stock_query_service.subscribe_realtime_price.assert_awaited_once_with("035720")
-    ctx.logger.warning.assert_any_call("프로그램매매 복원 실패 (WebSocket 연결 불가): 005930")
-    ctx.logger.warning.assert_any_call("복원에 실패한 구독 종목을 상태에서 제거합니다: ['005930', '000660']")
-    ctx.logger.error.assert_called_with("프로그램매매 복원 중 오류 (000660): Subscription failed")
+    # Assert — BackgroundService.start_all()이 realtime_callback과 함께 호출되었는지 확인
+    ctx.background_service.start_all.assert_called_once()
+    call_kwargs = ctx.background_service.start_all.call_args
+    assert call_kwargs.kwargs.get("realtime_callback") == ctx._web_realtime_callback
 
-
-@pytest.mark.asyncio
-async def test_program_trading_watchdog_market_closed(mock_deps):
-    """TC: _program_trading_watchdog 장 마감 시 연결 종료 검증."""
-    # Arrange
-    ctx = WebAppContext(None)
-    # [Fix] MarketDateManager가 명시적으로 '장 마감(False)' 상태를 반환하도록 설정
-    ctx._mdm = AsyncMock()
-    ctx._mdm.is_market_open_now.return_value = False
-
-    ctx.time_manager = MagicMock()
-    
-    ctx.realtime_data_manager = MagicMock()
-    ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
-    
-    ctx.trading_service = MagicMock()
-    ctx.trading_service.is_websocket_receive_alive.return_value = True # 연결 살아있음
-    ctx.trading_service.disconnect_websocket = AsyncMock()
-    
-    # asyncio.sleep을 모킹하여 루프 제어 (첫 번째는 통과, 두 번째에 에러 발생시켜 루프 탈출)
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-    
-    # Act
-    with patch("view.web.web_app_initializer.asyncio.sleep", side_effect=sleep_side_effect):
-        try:
-            await ctx._program_trading_watchdog()
-        except asyncio.CancelledError:
-            pass
-            
-    # Assert
-    # 장 마감이므로 웹소켓 연결 종료가 호출되어야 함
-    ctx.trading_service.disconnect_websocket.assert_awaited_once()
-    ctx.logger.info.assert_any_call("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
-
-@pytest.mark.asyncio
-async def test_program_trading_watchdog_data_gap(mock_deps):
-    """TC: _program_trading_watchdog 데이터 미수신(Gap) 감지 및 재연결 시도 검증."""
-    # Arrange
-    ctx = WebAppContext(None)
-    # [Fix] MarketDateManager가 명시적으로 '장 중(True)' 상태를 반환하도록 설정
-    # _mdm이 None이면 장 마감으로 간주하여 로직이 실행되지 않음
-    ctx._mdm = AsyncMock()
-    ctx._mdm.is_market_open_now.return_value = True
-
-    ctx.time_manager = MagicMock()
-    
-    ctx.realtime_data_manager = MagicMock()
-    ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
-    
-    # 마지막 데이터 수신 시간을 130초 전으로 설정 (임계값 120초 초과)
-    ctx.realtime_data_manager.last_data_ts = time.time() - 130 
-    
-    ctx.trading_service = MagicMock()
-    ctx.trading_service.is_websocket_receive_alive.return_value = True # 수신 태스크는 살아있다고 가정 (Zombie 상태 시뮬레이션)
-    
-    # 재연결 메서드 모킹
-    ctx._force_reconnect_program_trading = AsyncMock()
-    
-    # asyncio.sleep을 모킹하여 루프 제어 (한 번 돌고 종료)
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-    
-    # Act
-    with patch("view.web.web_app_initializer.asyncio.sleep", side_effect=sleep_side_effect):
-        try:
-            await ctx._program_trading_watchdog()
-        except asyncio.CancelledError:
-            pass
-            
-    # Assert
-    # 1. 재연결 시도가 발생했는지 확인
-    ctx._force_reconnect_program_trading.assert_called_once()
-    
-    # 2. 경고 로그 메시지 내용 확인 ("130초간 데이터 미수신" 등이 포함되어야 함)
-    args, _ = ctx.logger.warning.call_args
-    assert "데이터 미수신" in args[0]
-    assert "재연결을 시도합니다" in args[0]
+    # NOTE: _restore_program_trading, _program_trading_watchdog, _force_reconnect_program_trading
+    # 테스트는 BackgroundService로 이동됨 → test_background_service.py 참조
 
 def test_load_config_and_env_with_telegram(mock_deps):
     """설정에 텔레그램 정보가 있으면 TelegramReporter가 초기화되는지 검증"""
