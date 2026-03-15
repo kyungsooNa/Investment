@@ -159,7 +159,7 @@ class FileCacheManager:
             if self._logger:
                 self._logger.error(f"❌ 전체 캐시 삭제 실패: {e}")
 
-    def cleanup_old_files(self, days: int = 7):
+    def cleanup_old_files(self, days: int = 7, max_size_mb: int = 0):
         """오래된 캐시 파일 삭제 (기본 7일)"""
         if not os.path.exists(self._base_dir):
             return

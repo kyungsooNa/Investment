@@ -510,7 +510,12 @@ class StrategyScheduler:
             return
         try:
             with open(SCHEDULER_STATE_FILE, "r", encoding="utf-8") as f:
-                state = json.load(f)
+                try:
+                    state = json.load(f)
+                except json.JSONDecodeError:
+                    self._logger.warning("[Scheduler] 상태 파일이 손상됨 — 삭제 후 초기화")
+                    os.remove(SCHEDULER_STATE_FILE)
+                    return
             enabled_names = state.get("enabled_strategies", [])
             saved_positions = state.get("current_positions", [])
 
