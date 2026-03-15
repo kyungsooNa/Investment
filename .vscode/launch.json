@@ -9,7 +9,7 @@
       "args": ["--web"],
       "console": "integratedTerminal",
       "justMyCode": false,
-      "subProcess": true,
+      "subProcess": false,
       "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
     },
     {
@@ -19,7 +19,7 @@
       "program": "${workspaceFolder}/main.py",
       "console": "integratedTerminal",
       "justMyCode": false,
-      "subProcess": true,
+      "subProcess": false,
       "python": "C:\\Users\\Kyungsoo\\anaconda3\\envs\\py310\\python.exe"
     }
   ]
