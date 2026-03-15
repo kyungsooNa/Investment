@@ -9,6 +9,8 @@ let weeklyChanges = {};
 let dailyRefDates = {};
 let weeklyRefDates = {};
 let firstDates = {};
+let profitFactors = {};
+let expectancies = {};
 let virtualHoldSortState = { key: null, dir: 'asc' };
 let virtualSoldSortState = { key: null, dir: 'asc' };
 let selectedVirtualStrategies = new Set(['ALL']);
@@ -58,6 +60,8 @@ async function loadVirtualHistory(forceCode = null) {
             dailyRefDates = body.daily_ref_dates || {};
             weeklyRefDates = body.weekly_ref_dates || {};
             firstDates = body.first_dates || {};
+            profitFactors = body.profit_factors || {};
+            expectancies = body.expectancies || {};
             console.log('[Virtual] data count:', allVirtualData.length, 'sample:', allVirtualData[0]);
         } else {
             const errText = await listRes.text();
@@ -71,6 +75,8 @@ async function loadVirtualHistory(forceCode = null) {
             dailyRefDates = {};
             weeklyRefDates = {};
             firstDates = {};
+            profitFactors = {};
+            expectancies = {};
         }
 
         const defaultStrategies = ['수동매매'];
@@ -198,6 +204,7 @@ function applyVirtualFilter() {
     }
 
     let dailyChange, weeklyChange, dailyRefDate, weeklyRefDate, firstDate;
+    let profitFactor, expectancy;
     const toShortDate = (d) => d ? d.slice(2).replace(/-/g, '') : '';
     const todayShort = toShortDate(new Date().toISOString().slice(0, 10));
 
@@ -206,17 +213,23 @@ function applyVirtualFilter() {
         dailyRefDate = dailyRefDates['ALL'];
         weeklyRefDate = weeklyRefDates['ALL'];
         firstDate = firstDates['ALL'];
+        profitFactor = profitFactors['ALL'];
+        expectancy = expectancies['ALL'];
     } else if (selectedArray.length === 1) {
         dailyChange = dailyChanges[selectedArray[0]];
         weeklyChange = weeklyChanges[selectedArray[0]];
         dailyRefDate = dailyRefDates[selectedArray[0]];
         weeklyRefDate = weeklyRefDates[selectedArray[0]];
         firstDate = firstDates[selectedArray[0]];
+        profitFactor = profitFactors[selectedArray[0]];
+        expectancy = expectancies[selectedArray[0]];
     } else {
         dailyChange = null;
         weeklyChange = null;
         dailyRefDate = null;
         weeklyRefDate = null;
+        profitFactor = null;
+        expectancy = null;
 
         const fDates = selectedArray.map(s => firstDates[s]).filter(Boolean).sort();
         firstDate = fDates[0];
@@ -292,6 +305,49 @@ function applyVirtualFilter() {
                 <strong class="${weeklyChange != null ? colorClass(weeklyChange) : ''}" style="font-size: 1.35em; font-weight: 800 !important;">
                     ${weeklyChange != null ? signPrefix(weeklyChange) + weeklyChange.toFixed(2) + '%' : '-'}
                 </strong>
+            </div>
+        </div>
+        <div style="display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 8px 14px; border-radius: 8px; border: 1px solid #30363d; min-width: 100px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); cursor: help;"
+                 title="${(() => {
+                    const pfData = profitFactor;
+                    if (!pfData || typeof pfData !== 'object') return 'Profit Factor = 총 수익금 ÷ 총 손실금';
+                    const g = Number(pfData.total_gain || 0).toLocaleString();
+                    const l = Number(pfData.total_loss || 0).toLocaleString();
+                    return 'Profit Factor = 총 수익금 ÷ 총 손실금\n\n총 수익금: ' + g + '원\n총 손실금: ' + l + '원\n\n< 1.0: 손실 시스템\n≥ 1.5: 우수\n≥ 2.0: 최우수';
+                 })()}">
+                <div style="font-size: 0.8em; color: #a0a0b0 !important; margin-bottom: 3px; font-weight: 600;">Profit Factor</div>
+                ${(() => {
+                    const pfData = profitFactor;
+                    if (pfData == null || (selectedArray.length > 1 && !isAll)) return '<strong style="font-size: 1.15em; font-weight: 800 !important;">-</strong>';
+                    const pf = typeof pfData === 'object' ? pfData.value : pfData;
+                    if (pf === null) return '<strong style="font-size: 1.15em; font-weight: 800 !important; color: #ffd700;">&infin;</strong>';
+                    const pfNum = Number(pf) || 0;
+                    const pfColor = pfNum >= 2.0 ? '#ffd700' : pfNum >= 1.5 ? '#4dff4d' : pfNum >= 1.0 ? '#ffffff' : '#ff4d4d';
+                    const pfWeight = pfNum >= 2.0 ? '900' : pfNum >= 1.5 ? '800' : '600';
+                    return '<strong style="font-size: 1.15em; font-weight: ' + pfWeight + ' !important; color: ' + pfColor + ';">' + pfNum.toFixed(2) + '</strong>';
+                })()}
+            </div>
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 8px 14px; border-radius: 8px; border: 1px solid #30363d; min-width: 100px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); cursor: help;"
+                 title="${(() => {
+                    const expData = expectancy;
+                    if (!expData || typeof expData !== 'object') return '1회 매매당 기대수익\n= (승률 × 평균수익금) - (패배율 × 평균손실금)';
+                    const wr = expData.win_rate || 0;
+                    const ag = Number(expData.avg_gain || 0).toLocaleString();
+                    const al = Number(expData.avg_loss || 0).toLocaleString();
+                    const w = expData.wins || 0;
+                    const l = expData.losses || 0;
+                    return '1회 매매당 기대수익 (평균 매수금 기준)\n= (승률 × 평균수익금) - (패배율 × 평균손실금)\n\n승률: ' + wr + '% (' + w + '승 ' + l + '패)\n평균 수익금: ' + ag + '원\n평균 손실금: ' + al + '원\n\n양수(+)면 반복할수록 수익이 기대되는 시스템';
+                 })()}">
+                <div style="font-size: 0.8em; color: #a0a0b0 !important; margin-bottom: 3px; font-weight: 600;">기대수익<span style="font-size:0.85em; color:#707080;"> /1회</span></div>
+                ${(() => {
+                    const expData = expectancy;
+                    if (expData == null || (selectedArray.length > 1 && !isAll)) return '<strong style="font-size: 1.15em; font-weight: 800 !important;">-</strong>';
+                    const exp = typeof expData === 'object' ? Number(expData.value || 0) : Number(expData || 0);
+                    const expColor = exp > 0 ? '#4dff4d' : exp < 0 ? '#ff4d4d' : '#ffffff';
+                    const expWeight = exp > 0 ? '800' : '600';
+                    return '<strong style="font-size: 1.15em; font-weight: ' + expWeight + ' !important; color: ' + expColor + ';">' + (exp > 0 ? '+' : '') + exp.toLocaleString() + '원</strong>';
+                })()}
             </div>
         </div>
     `;
