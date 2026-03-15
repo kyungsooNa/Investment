@@ -439,7 +439,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         with patch("os.path.exists", return_value=True):
             with patch("builtins.open", mock_open(read_data="{invalid_json")):
                 await scheduler.restore_state()
-                scheduler._logger.error.assert_called()
+                scheduler._logger.warning.assert_called()
                 self.assertFalse(scheduler._running)
 
     def test_save_state_exception(self):

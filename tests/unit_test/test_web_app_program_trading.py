@@ -8,9 +8,10 @@ def mock_ctx():
     app_context = MagicMock()
     app_context.env = MagicMock()
 
-    # [수정] WebAppContext 초기화 시 web_api 의존성 격리를 위해 추가 patch
+    # [수정] WebAppContext 초기화 시 web_api / StockCodeMapper 의존성 격리를 위해 추가 patch
     with patch('view.web.web_app_initializer.RealtimeDataManager') as MockRDM, \
-         patch('view.web.web_app_initializer.web_api') as MockWebApi:
+         patch('view.web.web_app_initializer.web_api') as MockWebApi, \
+         patch('view.web.web_app_initializer.StockCodeMapper') as MockMapper:
         ctx = WebAppContext(app_context)
         ctx.logger = MagicMock()
         ctx.stock_query_service = AsyncMock()
