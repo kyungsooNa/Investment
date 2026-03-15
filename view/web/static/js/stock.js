@@ -117,14 +117,63 @@ function _isChosung(str) {
     });
 })();
 
+/**
+ * 입력값을 종목코드로 변환. 6자리 숫자면 그대로, 아니면 ALL_STOCKS에서 탐색.
+ * 반환: { code, error } — code가 있으면 성공, error가 있으면 실패 메시지.
+ */
+function _resolveStockCode(raw) {
+    // 6자리 숫자 → 종목코드 그대로
+    if (/^\d{6}$/.test(raw)) return { code: raw };
+
+    const stocks = (typeof ALL_STOCKS !== 'undefined') ? ALL_STOCKS : [];
+
+    // 숫자지만 6자리 미만 → 코드 앞자리 매칭
+    if (/^\d+$/.test(raw)) {
+        const matches = stocks.filter(s => s.c.startsWith(raw));
+        if (matches.length === 1) return { code: matches[0].code || matches[0].c };
+        if (matches.length > 1) return { error: `'${raw}'으로 시작하는 종목이 ${matches.length}개 있습니다. 자동완성에서 선택해주세요.` };
+        return { error: `'${raw}'으로 시작하는 종목코드를 찾을 수 없습니다.` };
+    }
+
+    // 초성 검색
+    if (_isChosung(raw)) {
+        const matches = stocks.filter(s => s.ch && s.ch.includes(raw));
+        if (matches.length === 1) return { code: matches[0].c };
+        if (matches.length > 1) return { error: `'${raw}' 초성에 해당하는 종목이 ${matches.length}개 있습니다. 자동완성에서 선택해주세요.` };
+        return { error: `'${raw}' 초성에 해당하는 종목을 찾을 수 없습니다.` };
+    }
+
+    // 종목명 검색 — 정확히 일치하면 바로 사용, 아니면 부분 일치 시도
+    const rawLower = raw.toLowerCase();
+    const exact = stocks.find(s => s.n.toLowerCase() === rawLower);
+    if (exact) return { code: exact.c };
+
+    const partial = stocks.filter(s => s.n.toLowerCase().includes(rawLower));
+    if (partial.length === 1) return { code: partial[0].c };
+    if (partial.length > 1) return { error: `'${raw}'에 해당하는 종목이 ${partial.length}개 있습니다. 자동완성에서 선택해주세요.` };
+    return { error: `'${raw}'에 해당하는 종목을 찾을 수 없습니다.` };
+}
+
 async function searchStock(codeOverride) {
     const input = document.getElementById('stock-code-input');
-    const code = codeOverride || (input ? input.value.trim() : '');
-    if (!code) {
+    const raw = codeOverride || (input ? input.value.trim() : '');
+    if (!raw) {
         alert("종목코드 또는 종목명을 입력하세요.");
         return;
     }
 
+    // 자동완성 드롭다운 닫기
+    const acList = document.getElementById('stock-autocomplete-list');
+    if (acList) { acList.innerHTML = ''; acList.style.display = 'none'; }
+
+    // 클라이언트에서 종목코드 변환
+    const resolved = _resolveStockCode(raw);
+    if (resolved.error) {
+        const resultDiv = document.getElementById('stock-result');
+        if (resultDiv) resultDiv.innerHTML = `<p class="error">${resolved.error}</p>`;
+        return;
+    }
+    const code = resolved.code;
     if (input) input.value = code;
 
     const resultDiv = document.getElementById('stock-result');
