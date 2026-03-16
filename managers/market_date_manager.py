@@ -70,10 +70,11 @@ class MarketDateManager:
             # 1. 내부 클래스에 직접 접근하지 않고, 상위 래퍼(BrokerAPIWrapper)의 메서드를 활용
             # 2. 파라미터를 키워드 인자(kwargs)로 명시하여 안전하게 전달
             resp = await self._broker.inquire_daily_itemchartprice(
-                stock_code="005930", 
-                start_date=start_dt, 
-                end_date=end_dt, 
-                fid_period_div_code="D"
+                stock_code="005930",
+                start_date=start_dt,
+                end_date=end_dt,
+                fid_period_div_code="D",
+                _skip_cache=True  # 캐시 우회: cache_wrapper가 get_latest_trading_date를 호출하므로 무한 재귀 방지
             )
             
             # API 호출이 실패한 경우 원인 로깅

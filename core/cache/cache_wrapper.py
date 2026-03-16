@@ -58,6 +58,12 @@ class ClientWithCache:
             return "_".join(parts)
 
         async def wrapped(*args, **kwargs):
+            # _skip_cache 플래그가 있으면 캐시를 완전히 우회 (무한 재귀 방지용)
+            skip_cache = kwargs.pop("_skip_cache", False)
+            if skip_cache:
+                self._logger.debug(f"🔓 _skip_cache=True → 캐시 우회: {name}")
+                return await orig_attr(*args, **kwargs)
+
             mode = self._mode_fn() or "unknown"
             key = _build_cache_key(mode, name, args, kwargs)
 
@@ -90,10 +96,20 @@ class ClientWithCache:
                         if self._mdm:
                             latest_trading_date_str = await self._mdm.get_latest_trading_date()
                             if latest_trading_date_str:
-                                # 캐시된 데이터의 날짜가 최근 거래일(또는 그 이후)인지 확인
                                 cache_date_str = cache_time.strftime("%Y%m%d")
-                                if cache_date_str >= latest_trading_date_str:
+                                if cache_date_str > latest_trading_date_str:
+                                    # 캐시가 최근 거래일 이후에 저장됨 → 유효
                                     is_valid = True
+                                elif cache_date_str == latest_trading_date_str:
+                                    # 캐시 날짜 == 최근 거래일: 장 마감(15:30) 이후에 저장된 경우만 유효
+                                    # 장 마감 전에 저장된 캐시는 전일 데이터이므로 무효
+                                    market_close = self._time_manager.get_market_close_time()
+                                    if cache_time >= market_close:
+                                        is_valid = True
+                                    else:
+                                        self._logger.debug(
+                                            f"📉 캐시 만료 (거래일 {latest_trading_date_str} 장 마감 전 저장: {cache_time})"
+                                        )
                                 else:
                                     self._logger.debug(f"📉 캐시 만료 (최근 거래일 {latest_trading_date_str} > 캐시 데이터 {cache_date_str})")
                             else:
