@@ -262,3 +262,40 @@ async def test_scheduler_stream_connects(web_client, mock_web_ctx):
     # 구독자 큐 생성/제거 확인
     mock_web_ctx.scheduler.create_subscriber_queue.assert_called_once()
     mock_web_ctx.scheduler.remove_subscriber_queue.assert_called_once_with(mock_queue)
+
+
+@pytest.mark.asyncio
+async def test_update_strategy_max_positions_success(web_client, mock_web_ctx):
+    """POST /api/scheduler/strategy/{name}/max-positions 성공 테스트"""
+    # Mock 설정
+    mock_web_ctx.scheduler.update_max_positions = AsyncMock(return_value=True)
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={"running": True, "strategies": []})
+
+    payload = {"max_positions": 10}
+    response = web_client.post("/api/scheduler/strategy/전략A/max-positions", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    mock_web_ctx.scheduler.update_max_positions.assert_awaited_once_with("전략A", 10)
+
+
+@pytest.mark.asyncio
+async def test_update_strategy_max_positions_fail(web_client, mock_web_ctx):
+    """POST /api/scheduler/strategy/{name}/max-positions 실패(1 미만 값 등) 테스트"""
+    mock_web_ctx.scheduler.update_max_positions = AsyncMock(return_value=False)
+
+    payload = {"max_positions": 0}
+    response = web_client.post("/api/scheduler/strategy/전략A/max-positions", json=payload)
+
+    assert response.status_code == 400
+    assert "최대 포지션 수 변경 실패" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_update_strategy_max_positions_no_scheduler(web_client, mock_web_ctx):
+    """POST /api/scheduler/strategy/{name}/max-positions 스케줄러 미초기화 테스트"""
+    mock_web_ctx.scheduler = None
+    payload = {"max_positions": 5}
+    response = web_client.post("/api/scheduler/strategy/전략A/max-positions", json=payload)
+
+    assert response.status_code == 503

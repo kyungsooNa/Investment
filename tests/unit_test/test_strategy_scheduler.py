@@ -576,6 +576,38 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await scheduler.start_strategy("전략A"))
         self.assertTrue(scheduler._strategies[0].enabled)
 
+    async def test_update_max_positions_success(self):
+        """최대 포지션 수가 성공적으로 변경되는지 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=5)
+        scheduler.register(config)
+
+        with patch.object(scheduler, '_save_scheduler_state') as mock_save:
+            result = await scheduler.update_max_positions("전략A", 10)
+            self.assertTrue(result)
+            self.assertEqual(config.max_positions, 10)
+            mock_save.assert_called_once()
+
+    async def test_update_max_positions_invalid_value(self):
+        """1 미만의 값으로 변경 시도 시 실패하는지 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=5)
+        scheduler.register(config)
+
+        with patch.object(scheduler, '_save_scheduler_state') as mock_save:
+            result = await scheduler.update_max_positions("전략A", 0)
+            self.assertFalse(result)
+            self.assertEqual(config.max_positions, 5)  # 변경되지 않아야 함
+            mock_save.assert_not_called()
+
+    async def test_update_max_positions_not_found(self):
+        """존재하지 않는 전략의 포지션 수 변경 시도 시 실패하는지 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        result = await scheduler.update_max_positions("없는전략", 10)
+        self.assertFalse(result)
+
     async def test_persistence_save_restore(self):
         """상태 저장 및 복원 테스트."""
         scheduler, vm, _, _, _ = self._make_scheduler()
