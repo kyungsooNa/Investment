@@ -104,6 +104,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         holding_item = {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 1, "status": "HOLD"}
         vm.get_holds_by_strategy.return_value = [holding_item]
 
+        # 실행 중인 상태로 가정
+        scheduler._running = True
         status = scheduler.get_status()
 
         self.assertTrue(status["running"])
