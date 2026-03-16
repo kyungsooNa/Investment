@@ -95,6 +95,7 @@ class StrategyScheduler:
         self._task: Optional[asyncio.Task] = None
         self._last_run: Dict[str, datetime] = {}
         self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
+        self._force_exit_done: set = set()  # 당일 강제 청산 완료된 전략
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._csv_lock = threading.Lock()
@@ -156,20 +157,36 @@ class StrategyScheduler:
         self._logger.info("스케줄러 메인 루프 시작.")
         while self._running:
             try:
-                # 1. API 기반의 완벽한 개장/공휴일/시간대 검증
-                if not await self._mdm.is_market_open_now():
+                market_open = await self._mdm.is_market_open_now()
+
+                if not market_open:
+                    # 장이 닫힌 직후(15:30~) 아직 강제 청산 미완료된 전략이 있으면 실행
+                    if self._force_exit_done is not None:
+                        for cfg in self._strategies:
+                            if (cfg.enabled and cfg.force_exit_on_close
+                                    and cfg.strategy.name not in self._force_exit_done):
+                                name = cfg.strategy.name
+                                self._force_exit_done.add(name)
+                                self._logger.info(
+                                    f"[Scheduler] {name}: 장 마감 후 미처리 강제 청산 실행"
+                                )
+                                try:
+                                    await self._run_strategy(cfg, force_exit_only=True)
+                                except Exception as e:
+                                    self._logger.error(
+                                        f"[Scheduler] {name} 강제 청산 오류: {e}", exc_info=True
+                                    )
+
                     self._logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
-                    
-                    # 2. 다음 개장 시간(내일, 혹은 명절 연휴 이후)까지 한 번에 대기(Sleep)!
+                    self._force_exit_done.clear()
                     await self._mdm.wait_until_next_open()
-                    
-                    # 깨어나면 다시 루프의 처음으로 돌아가서 장이 열렸는지 최종 확인
                     continue
 
-                # 장 마감 전 강제 청산 체크
+                # 장중: 시간 계산
                 now = self._tm.get_current_kst_time()
                 close_time = self._tm.get_market_close_time()
                 minutes_to_close = (close_time - now).total_seconds() / 60
+                in_force_exit_window = minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE
 
                 for cfg in self._strategies:
                     if not cfg.enabled:
@@ -178,15 +195,18 @@ class StrategyScheduler:
                     last = self._last_run.get(name)
                     elapsed = (now - last).total_seconds() if last else float('inf')
 
-                    # 정규 주기 도래 또는 장 마감 전 강제 실행
-                    should_run = elapsed >= cfg.interval_minutes * 60
-                    force_exit = False
-                    if cfg.force_exit_on_close and (minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE):
-                        force_exit = True
+                    # 강제 청산: 마감 N분 전이면 즉시 실행 (1회만)
+                    force_exit = (cfg.force_exit_on_close
+                                  and in_force_exit_window
+                                  and name not in self._force_exit_done)
+
+                    # 정규 실행: force_exit_on_close 전략은 마감 전 구간에서 새 매수 금지
+                    should_run = (not force_exit
+                                  and not (cfg.force_exit_on_close and in_force_exit_window)
+                                  and elapsed >= cfg.interval_minutes * 60)
 
                     if should_run or force_exit:
-                        # 전략 간 API 자원 충돌 방지: 직전 전략 실행 후 최소 STAGGER_INTERVAL_SEC 대기
-                        # (강제 청산은 쿨다운 무시 — 장 마감 시 즉시 처리 필요)
+                        # 전략 간 API 자원 충돌 방지 (강제 청산은 쿨다운 무시)
                         if not force_exit and self._last_execution_time:
                             since_last_exec = (now - self._last_execution_time).total_seconds()
                             if since_last_exec < self.STAGGER_INTERVAL_SEC:
@@ -195,6 +215,11 @@ class StrategyScheduler:
                         self._last_run[name] = now
                         if not force_exit:
                             self._last_execution_time = now
+                        if force_exit:
+                            self._force_exit_done.add(name)
+                            self._logger.info(
+                                f"[Scheduler] {name}: 장 마감 {minutes_to_close:.1f}분 전 — 강제 청산 실행"
+                            )
                         try:
                             await self._run_strategy(cfg, force_exit_only=force_exit)
                         except Exception as e:
@@ -219,6 +244,12 @@ class StrategyScheduler:
         t_run = self._pm.start_timer()
         self._logger.info(f"[Scheduler] {name} 실행 시작 (force_exit_only={force_exit_only})")
 
+        # 강제 청산 모드: 전략의 check_exits 로직 무시, 보유 종목 전량 시장가 매도
+        if force_exit_only:
+            await self._force_liquidate_strategy(cfg)
+            self._pm.log_timer(f"{name}.run_strategy(force_exit)", t_run)
+            return
+
         # 1) 보유 종목 청산 조건 체크
         holdings = self._vm.get_holds_by_strategy(name)
         if holdings:
@@ -230,42 +261,47 @@ class StrategyScheduler:
                 for f in asyncio.as_completed(tasks):
                     await f
 
-        # 2) 새 매수 스캔 (강제 청산 모드가 아닐 때만)
-        if not force_exit_only:
-            # 현재 보유 종목 재조회 (check_exits 수행 후 상태 반영)
-            current_holdings = self._vm.get_holds_by_strategy(name)
-            current_holds_count = len(current_holdings)
+        # 2) 새 매수 스캔
+        current_holdings = self._vm.get_holds_by_strategy(name)
+        current_holds_count = len(current_holdings)
 
-            if current_holds_count >= cfg.max_positions:
-                self._logger.info(
-                    f"[Scheduler] {name}: 최대 포지션 도달 "
-                    f"({current_holds_count}/{cfg.max_positions}), 스캔 스킵"
-                )
-                self._pm.log_timer(f"{name}.run_strategy", t_run)
-                return
+        if current_holds_count >= cfg.max_positions:
+            self._logger.info(
+                f"[Scheduler] {name}: 최대 포지션 도달 "
+                f"({current_holds_count}/{cfg.max_positions}), 스캔 스킵"
+            )
+            self._pm.log_timer(f"{name}.run_strategy", t_run)
+            return
 
-            t_scan = self._pm.start_timer()
-            buy_signals = await cfg.strategy.scan()
-            self._pm.log_timer(f"{name}.scan()", t_scan)
-            
-            # 이미 보유 중인 종목은 추가 매수(불타기) 방지
-            if cfg.allow_pyramiding:
-                valid_signals = buy_signals
-            else:
-                holding_codes = {str(h.get('code')) for h in current_holdings if h.get('code')}
-                valid_signals = [s for s in buy_signals if str(s.code) not in holding_codes]
+        t_scan = self._pm.start_timer()
+        buy_signals = await cfg.strategy.scan()
+        self._pm.log_timer(f"{name}.scan()", t_scan)
 
-            remaining = cfg.max_positions - current_holds_count
-            target_signals = valid_signals[:remaining]
+        # 이미 보유 중인 종목은 추가 매수(불타기) 방지
+        if cfg.allow_pyramiding:
+            valid_signals = buy_signals
+        else:
+            holding_codes = {str(h.get('code')) for h in current_holdings if h.get('code')}
+            valid_signals = [s for s in buy_signals if str(s.code) not in holding_codes]
 
-            if target_signals:
-                for sig in target_signals:
-                    if sig.qty <= 1:
-                        sig.qty = cfg.order_qty
-                
-                tasks = [self._execute_signal(sig) for sig in target_signals]
-                for f in asyncio.as_completed(tasks):
-                    await f
+        remaining = cfg.max_positions - current_holds_count
+        target_signals = valid_signals[:remaining]
+
+        if target_signals:
+            for sig in target_signals:
+                if sig.qty <= 1:
+                    sig.qty = cfg.order_qty
+
+            # 순차 실행: 매수마다 보유 수를 재확인하여 max_positions 초과 방지
+            for sig in target_signals:
+                current_count = len(self._vm.get_holds_by_strategy(name))
+                if current_count >= cfg.max_positions:
+                    self._logger.info(
+                        f"[Scheduler] {name}: 매수 중단 — 최대 포지션 도달 "
+                        f"({current_count}/{cfg.max_positions})"
+                    )
+                    break
+                await self._execute_signal(sig)
 
         self._pm.log_timer(f"{name}.run_strategy", t_run)
         self._logger.info(f"[Scheduler] {name} 실행 완료")
@@ -432,6 +468,18 @@ class StrategyScheduler:
                 return True
         return False
 
+    async def update_max_positions(self, name: str, new_max: int) -> bool:
+        """개별 전략의 최대 포지션 수를 동적으로 변경하고 상태를 저장합니다."""
+        if new_max < 1:
+            return False
+        for cfg in self._strategies:
+            if cfg.strategy.name == name:
+                cfg.max_positions = new_max
+                self._logger.info(f"[Scheduler] '{name}' 전략 최대 포지션 수 변경: {new_max}")
+                self._save_scheduler_state()
+                return True
+        return False
+
     # ── 상태 조회 ──
 
     def get_status(self) -> dict:
@@ -439,12 +487,14 @@ class StrategyScheduler:
         for cfg in self._strategies:
             name = cfg.strategy.name
             last = self._last_run.get(name)
+            holdings = self._vm.get_holds_by_strategy(name)
             strategies.append({
                 "name": name,
                 "interval_minutes": cfg.interval_minutes,
                 "max_positions": cfg.max_positions,
                 "enabled": cfg.enabled,
-                "current_holds": len(self._vm.get_holds_by_strategy(name)),
+                "current_holds": len(holdings),
+                "holdings": holdings,  # 상세 보유 내역 추가
                 "last_run": last.strftime("%H:%M:%S") if last else None,
             })
         return {
@@ -500,7 +550,11 @@ class StrategyScheduler:
         state = {
             "running": self._running,
             "enabled_strategies": enabled_names,
-            "current_positions": current_positions
+            "current_positions": current_positions,
+            "strategy_configs": {
+                cfg.strategy.name: {"max_positions": cfg.max_positions}
+                for cfg in self._strategies
+            }
         }
         try:
             with open(SCHEDULER_STATE_FILE, "w", encoding="utf-8") as f:
@@ -529,16 +583,18 @@ class StrategyScheduler:
                     return
             enabled_names = state.get("enabled_strategies", [])
             saved_positions = state.get("current_positions", [])
+            strategy_configs = state.get("strategy_configs", {})
 
             if saved_positions:
                 self._logger.info(f"[Scheduler] 이전 상태 파일에 저장된 보유 포지션: {len(saved_positions)}건")
 
-            if not enabled_names:
-                return
-
             # 개별 전략 활성화
             restored = []
             for cfg in self._strategies:
+                # 동적 설정(최대 포지션) 복원
+                if cfg.strategy.name in strategy_configs:
+                    cfg.max_positions = strategy_configs[cfg.strategy.name].get("max_positions", cfg.max_positions)
+
                 if cfg.strategy.name in enabled_names:
                     cfg.enabled = True
                     restored.append(cfg.strategy.name)
