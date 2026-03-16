@@ -8,6 +8,22 @@ from common.types import ResCommonResponse
 from view.web import web_api
 
 
+def mock_trade(**kwargs):
+    """실제 CSV에서 읽어오는 형태와 동일하게 기본 키를 모두 포함하는 헬퍼 함수"""
+    trade = {
+        "strategy": "ALL",  # 기본 전략 설정
+        "code": "000000",
+        "buy_date": "2025-01-01 09:00:00",
+        "buy_price": 1000,
+        "qty": 1,
+        "sell_date": None,
+        "sell_price": 0,
+        "return_rate": 0.0,
+        "status": "HOLD"
+    }
+    trade.update(kwargs)
+    return trade
+
 @pytest.mark.asyncio
 async def test_virtual_endpoints(web_client, mock_web_ctx):
     """모의투자 관련 엔드포인트 테스트"""
@@ -26,7 +42,7 @@ async def test_virtual_endpoints(web_client, mock_web_ctx):
 
     # History
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "strategy": "StrategyA", "buy_price": 1000, "return_rate": 10.0, "status": "HOLD"}
+        mock_trade(code="005930", strategy="StratA", buy_price=1000, qty=1000, status="HOLD", buy_date="2025-01-01")
     ]
 
     mock_web_ctx.virtual_manager.get_daily_change.return_value = (0.0, None)
@@ -154,8 +170,8 @@ async def test_get_virtual_history_complex(web_client, mock_web_ctx):
 
     # 2. 캐시 히트 및 SOLD 보정 테스트
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"},
-        {"code": "000660", "status": "SOLD", "sell_price": 0, "buy_price": 1000, "strategy": "A"}
+        mock_trade(code="005930", status="HOLD", buy_price=1000, strategy="A"),
+        mock_trade(code="000660", status="SOLD", sell_price=0, buy_price=1000, strategy="A")
     ]
 
     # 캐시 설정 (005930은 캐시 히트)
@@ -200,7 +216,7 @@ async def test_get_virtual_history_force_update(web_client, mock_web_ctx):
     """GET /api/virtual/history force_code 테스트"""
     web_api._PRICE_CACHE.clear()
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
+        mock_trade(code="005930", status="HOLD", buy_price=1000, strategy="A")
     ]
 
     # 캐시 설정 (최신)
@@ -227,7 +243,7 @@ async def test_get_virtual_history_api_exception(web_client, mock_web_ctx):
     web_api._PRICE_CACHE.clear()
 
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
+        mock_trade(code="005930", status="HOLD", buy_price=1000, strategy="A")
     ]
 
     async def mock_multi_price_error(codes):
@@ -247,7 +263,7 @@ async def test_get_virtual_history_price_parsing_error(web_client, mock_web_ctx)
     web_api._PRICE_CACHE.clear()
 
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
+        mock_trade(code="005930", status="HOLD", buy_price=1000, strategy="A")
     ]
 
     # stck_prpr에 유효하지 않은 값 → price_val=0 → price_map에 추가 안 됨
@@ -269,7 +285,7 @@ async def test_get_virtual_history_fallback_to_cache(web_client, mock_web_ctx):
     web_api._PRICE_CACHE.clear()
     # 1. Setup
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
+        mock_trade(code="005930", status="HOLD", buy_price=1000, strategy="A")
     ]
 
     # 캐시에 데이터 존재 (만료된 상태로 설정하여 API 호출 유도 -> API 실패 -> 폴백 확인)
@@ -299,7 +315,7 @@ async def test_get_virtual_history_internal_exceptions(web_client, mock_web_ctx)
     # 1. Setup
     # buy_date를 정수가 아닌 타입으로 설정하여 슬라이싱 에러 유도 (Block 5 예외)
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "status": "SOLD", "sell_price": 0, "buy_price": 1000, "strategy": "A", "buy_date": 12345}
+        mock_trade(code="005930", status="SOLD", sell_price=0, buy_price=1000, strategy="A", buy_date=12345)
     ]
 
     # API 정상 응답 (SOLD 가격 보정 트리거)
@@ -335,7 +351,7 @@ async def test_get_virtual_history_missing_services(web_client, mock_web_ctx):
     if hasattr(mock_web_ctx, 'stock_query_service'): del mock_web_ctx.stock_query_service
 
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A"}
+        mock_trade(code="005930", status="HOLD", buy_price=1000, strategy="A")
     ]
 
     response = web_client.get("/api/virtual/history")
@@ -391,7 +407,7 @@ async def test_get_virtual_history_snapshot_dates_populated(web_client, mock_web
     web_api._PRICE_CACHE.clear()
     # Setup
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "status": "HOLD", "buy_price": 1000, "strategy": "A", "return_rate": 10.0}
+        mock_trade(code="005930", status="HOLD", buy_price=1000, strategy="A", return_rate=10.0)
     ]
 
     # Mock snapshot return values with actual dates
@@ -451,8 +467,8 @@ async def test_get_virtual_history_asset_weighted_calculation(web_client, mock_w
     # StratA: 100만원 매수 (1000원 * 1000주) -> 10% 수익
     # StratB: 1만원 매수 (1000원 * 10주) -> -50% 손실
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "strategy": "StratA", "buy_price": 1000, "qty": 1000, "status": "HOLD", "buy_date": "2025-01-01"},
-        {"code": "000660", "strategy": "StratB", "buy_price": 1000, "qty": 10, "status": "HOLD", "buy_date": "2025-01-01"}
+        mock_trade(code="005930", strategy="StratA", buy_price=1000, qty=1000, status="HOLD", buy_date="2025-01-01"),
+        mock_trade(code="000660", strategy="StratB", buy_price=1000, qty=10, status="HOLD", buy_date="2025-01-01")
     ]
     
     # 2. 현재가 Mocking
@@ -598,14 +614,10 @@ async def test_get_virtual_history_profit_factor_and_expectancy(web_client, mock
 
     # 4건의 거래: 2승(+20%, +10%) 2패(-5%, -15%)
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "A", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
-         "sell_price": 1200, "return_rate": 20.0, "buy_date": "2025-01-01 09:00:00"},
-        {"code": "B", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
-         "sell_price": 1100, "return_rate": 10.0, "buy_date": "2025-01-02 09:00:00"},
-        {"code": "C", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
-         "sell_price": 950, "return_rate": -5.0, "buy_date": "2025-01-03 09:00:00"},
-        {"code": "D", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
-         "sell_price": 850, "return_rate": -15.0, "buy_date": "2025-01-04 09:00:00"},
+        mock_trade(code="A", strategy="S1", buy_price=1000, qty=1, status="SOLD", sell_price=1200, return_rate=20.0, buy_date="2025-01-01 09:00:00"),
+        mock_trade(code="B", strategy="S1", buy_price=1000, qty=1, status="SOLD", sell_price=1100, return_rate=10.0, buy_date="2025-01-02 09:00:00"),
+        mock_trade(code="C", strategy="S1", buy_price=1000, qty=1, status="SOLD", sell_price=950, return_rate=-5.0, buy_date="2025-01-03 09:00:00"),
+        mock_trade(code="D", strategy="S1", buy_price=1000, qty=1, status="SOLD", sell_price=850, return_rate=-15.0, buy_date="2025-01-04 09:00:00"),
     ]
 
     mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
@@ -653,8 +665,7 @@ async def test_get_virtual_history_profit_factor_no_loss(web_client, mock_web_ct
 
     # 전부 수익
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "A", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
-         "sell_price": 1500, "return_rate": 50.0, "buy_date": "2025-01-01 09:00:00"},
+        mock_trade(code="A", strategy="S1", buy_price=1000, qty=1, status="SOLD", sell_price=1500, return_rate=50.0, buy_date="2025-01-01 09:00:00"),
     ]
 
     mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
@@ -689,11 +700,9 @@ async def test_get_virtual_history_profit_factor_multi_strategy(web_client, mock
 
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
         # S1: 수익 200
-        {"code": "A", "strategy": "S1", "buy_price": 1000, "qty": 1, "status": "SOLD",
-         "sell_price": 1200, "return_rate": 20.0, "buy_date": "2025-01-01 09:00:00"},
+        mock_trade(code="A", strategy="S1", buy_price=1000, qty=1, status="SOLD", sell_price=1200, return_rate=20.0, buy_date="2025-01-01 09:00:00"),
         # S2: 손실 300
-        {"code": "B", "strategy": "S2", "buy_price": 1000, "qty": 1, "status": "SOLD",
-         "sell_price": 700, "return_rate": -30.0, "buy_date": "2025-01-01 09:00:00"},
+        mock_trade(code="B", strategy="S2", buy_price=1000, qty=1, status="SOLD", sell_price=700, return_rate=-30.0, buy_date="2025-01-01 09:00:00"),
     ]
 
     mock_web_ctx.virtual_manager.save_daily_snapshot = MagicMock()
@@ -732,8 +741,7 @@ async def test_get_virtual_history_pf_with_hold_trades(web_client, mock_web_ctx)
     web_api._PRICE_CACHE.clear()
 
     mock_web_ctx.virtual_manager.get_all_trades.return_value = [
-        {"code": "005930", "strategy": "S1", "buy_price": 1000, "qty": 10, "status": "HOLD",
-         "return_rate": 0, "buy_date": "2025-01-01 09:00:00"},
+        mock_trade(code="005930", strategy="S1", buy_price=1000, qty=10, status="HOLD", buy_date="2025-01-01 09:00:00"),
     ]
 
     # 현재가 1200원 -> 수익 2000원 (200원 * 10주)
