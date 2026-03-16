@@ -468,6 +468,18 @@ class StrategyScheduler:
                 return True
         return False
 
+    async def update_max_positions(self, name: str, new_max: int) -> bool:
+        """개별 전략의 최대 포지션 수를 동적으로 변경하고 상태를 저장합니다."""
+        if new_max < 1:
+            return False
+        for cfg in self._strategies:
+            if cfg.strategy.name == name:
+                cfg.max_positions = new_max
+                self._logger.info(f"[Scheduler] '{name}' 전략 최대 포지션 수 변경: {new_max}")
+                self._save_scheduler_state()
+                return True
+        return False
+
     # ── 상태 조회 ──
 
     def get_status(self) -> dict:
@@ -538,7 +550,11 @@ class StrategyScheduler:
         state = {
             "running": self._running,
             "enabled_strategies": enabled_names,
-            "current_positions": current_positions
+            "current_positions": current_positions,
+            "strategy_configs": {
+                cfg.strategy.name: {"max_positions": cfg.max_positions}
+                for cfg in self._strategies
+            }
         }
         try:
             with open(SCHEDULER_STATE_FILE, "w", encoding="utf-8") as f:
@@ -567,16 +583,18 @@ class StrategyScheduler:
                     return
             enabled_names = state.get("enabled_strategies", [])
             saved_positions = state.get("current_positions", [])
+            strategy_configs = state.get("strategy_configs", {})
 
             if saved_positions:
                 self._logger.info(f"[Scheduler] 이전 상태 파일에 저장된 보유 포지션: {len(saved_positions)}건")
 
-            if not enabled_names:
-                return
-
             # 개별 전략 활성화
             restored = []
             for cfg in self._strategies:
+                # 동적 설정(최대 포지션) 복원
+                if cfg.strategy.name in strategy_configs:
+                    cfg.max_positions = strategy_configs[cfg.strategy.name].get("max_positions", cfg.max_positions)
+
                 if cfg.strategy.name in enabled_names:
                     cfg.enabled = True
                     restored.append(cfg.strategy.name)

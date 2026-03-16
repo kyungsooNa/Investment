@@ -53,7 +53,7 @@ function renderSchedulerStatus(data) {
         const enabledBadge = s.enabled
             ? '<span class="badge open">활성</span>'
             : '<span class="badge closed">비활성</span>';
-        const positionBadge = `<span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}">포지션 ${s.current_holds}/${s.max_positions}</span>`;
+        const positionBadge = `<span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}" style="cursor:pointer;" onclick="updateMaxPositions('${s.name}', ${s.max_positions})" title="클릭하여 최대 포지션 수 변경">포지션 ${s.current_holds}/${s.max_positions} ✏️</span>`;
         const toggleBtn = s.enabled
             ? `<button class="btn btn-sell" style="padding:4px 12px;font-size:0.85em;" onclick="stopStrategy('${s.name}')">정지</button>`
             : `<button class="btn btn-buy" style="padding:4px 12px;font-size:0.85em;" onclick="startStrategy('${s.name}')">시작</button>`;
@@ -146,6 +146,33 @@ async function stopStrategy(name) {
         }
     } catch (e) {
         alert('전략 정지 실패');
+    }
+}
+
+async function updateMaxPositions(name, currentMax) {
+    const newVal = prompt(`'${name}' 전략의 최대 보유 포지션 수를 입력하세요:`, currentMax);
+    if (newVal === null) return; // Cancelled
+    
+    const parsed = parseInt(newVal, 10);
+    if (isNaN(parsed) || parsed < 1) {
+        alert('1 이상의 올바른 숫자를 입력하세요.');
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/scheduler/strategy/${encodeURIComponent(name)}/max-positions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ max_positions: parsed })
+        });
+        const data = await res.json();
+        if (data.success) {
+            renderSchedulerStatus(data.status);
+        } else {
+            alert(data.detail || '포지션 수 변경 실패');
+        }
+    } catch (e) {
+        alert('포지션 수 변경 중 오류가 발생했습니다.');
     }
 }
 

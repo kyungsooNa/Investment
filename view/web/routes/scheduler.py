@@ -5,9 +5,13 @@ import asyncio
 import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from view.web.api_common import _get_ctx
 
 router = APIRouter()
+
+class UpdateMaxPositionsRequest(BaseModel):
+    max_positions: int
 
 
 @router.get("/scheduler/status")
@@ -78,6 +82,18 @@ async def stop_strategy(name: str):
     ctx.scheduler._save_scheduler_state()
     return {"success": True, "status": ctx.scheduler.get_status()}
 
+
+@router.post("/scheduler/strategy/{name:path}/max-positions")
+async def update_strategy_max_positions(name: str, req: UpdateMaxPositionsRequest):
+    """개별 전략의 최대 포지션 수 동적 변경."""
+    ctx = _get_ctx()
+    if not ctx.scheduler:
+        raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
+    
+    success = await ctx.scheduler.update_max_positions(name, req.max_positions)
+    if not success:
+        raise HTTPException(status_code=400, detail="최대 포지션 수 변경 실패 (1 이상이어야 함)")
+    return {"success": True, "status": ctx.scheduler.get_status()}
 
 @router.get("/scheduler/history")
 async def get_scheduler_history(strategy: str = None):
