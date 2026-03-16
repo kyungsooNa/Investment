@@ -118,10 +118,11 @@ async def test_get_latest_trading_date_api_success(manager, mock_deps, mock_brok
     
     # 키워드 인자(kwargs)로 정상적으로 호출되었는지 검증
     broker.inquire_daily_itemchartprice.assert_awaited_once_with(
-        stock_code="005930", 
-        start_date="20241226", 
-        end_date="20250102", 
-        fid_period_div_code="D"
+        stock_code="005930",
+        start_date="20241226",
+        end_date="20250102",
+        fid_period_div_code="D",
+        _skip_cache=True
     )
 
 @pytest.mark.asyncio

@@ -558,20 +558,20 @@ async def test_mode_unknown(cache_manager, test_cache_config):
 
 @pytest.mark.asyncio
 async def test_cache_wrapper_with_market_date_manager_valid(cache_manager, test_cache_config):
-    """MarketDateManager가 있고, 캐시 날짜가 최신 거래일과 같거나 이후면 유효"""
+    """MarketDateManager가 있고, 캐시가 최신 거래일의 장 마감 이후에 저장되었으면 유효"""
     logger = MagicMock()
     time_manager = MagicMock()
     time_manager.is_market_operating_hours.return_value = False
     seoul_tz = pytz.timezone("Asia/Seoul")
     time_manager.market_timezone = seoul_tz
-    
+
     # 현재 시간 설정 (장 마감 후)
     now = seoul_tz.localize(datetime(2025, 1, 1, 18, 0, 0))
     time_manager.get_current_kst_time.return_value = now
     # 다음 장 시작 시간 (내일 9시)
     time_manager.get_next_market_open_time.return_value = now + timedelta(hours=15)
-    # 최근 장 종료 시간 (오늘 15:30)
-    time_manager.get_latest_market_close_time.return_value = now - timedelta(hours=2.5)
+    # 오늘 장 마감 시간 (15:30)
+    time_manager.get_market_close_time.return_value = seoul_tz.localize(datetime(2025, 1, 1, 15, 30, 0))
 
     market_date_manager = AsyncMock()
     market_date_manager.is_market_open_now.return_value = False
@@ -589,10 +589,10 @@ async def test_cache_wrapper_with_market_date_manager_valid(cache_manager, test_
         market_date_manager=market_date_manager
     )
 
-    # 1. 캐시 생성 (오늘 날짜 데이터)
+    # 1. 캐시 생성 (오늘 장 마감 이후 데이터 → 유효해야 함)
     key = "TEST_get_data_1"
     cache_data = {
-        "timestamp": datetime(2025, 1, 1, 10, 0, 0).isoformat(), # 오늘 장중 데이터
+        "timestamp": datetime(2025, 1, 1, 16, 0, 0).isoformat(),  # 장 마감(15:30) 이후
         "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": "cached"})
     }
     cache_manager.set(key, cache_data)
@@ -602,9 +602,8 @@ async def test_cache_wrapper_with_market_date_manager_valid(cache_manager, test_
 
     # 3. 검증: 캐시 HIT
     assert result.data["key"] == "cached"
-    # API 호출 안함 (DummyApiClient는 value-1 반환함)
     market_date_manager.get_latest_trading_date.assert_awaited()
-    
+
     # 로그 확인
     debug_logs = [c.args[0] for c in logger.debug.call_args_list]
     assert any("Memory Cache HIT" in msg for msg in debug_logs)
@@ -654,10 +653,181 @@ async def test_cache_wrapper_with_market_date_manager_expired(cache_manager, tes
 
     # 3. 검증: 캐시 MISS (만료됨) -> API 호출 결과 반환
     assert result.data["key"] == "value-1" # DummyApiClient 반환값
-    
+
     # 로그 확인
     debug_logs = [c.args[0] for c in logger.debug.call_args_list]
     assert any("캐시 만료" in msg for msg in debug_logs)
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_pre_market_close_cache_is_stale(cache_manager, test_cache_config):
+    """거래일 당일이지만 장 마감 전에 저장된 캐시는 만료 처리되어야 함"""
+    logger = MagicMock()
+    time_manager = MagicMock()
+    time_manager.is_market_operating_hours.return_value = False
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    time_manager.market_timezone = seoul_tz
+
+    # 현재 시간: 장 마감 후 (18:00)
+    now = seoul_tz.localize(datetime(2025, 1, 1, 18, 0, 0))
+    time_manager.get_current_kst_time.return_value = now
+    time_manager.get_market_close_time.return_value = seoul_tz.localize(datetime(2025, 1, 1, 15, 30, 0))
+
+    market_date_manager = AsyncMock()
+    market_date_manager.is_market_open_now.return_value = False
+    market_date_manager.get_next_open_time.return_value = now + timedelta(hours=15)
+    market_date_manager.get_latest_trading_date.return_value = "20250101"
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cache_manager,
+        config=test_cache_config,
+        market_date_manager=market_date_manager
+    )
+
+    # 캐시: 오늘 08:00에 저장 (장 마감 전 → 전일 데이터이므로 무효해야 함)
+    key = "TEST_get_data_1"
+    cache_data = {
+        "timestamp": datetime(2025, 1, 1, 8, 0, 0).isoformat(),
+        "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": "stale_pre_close"})
+    }
+    cache_manager.set(key, cache_data)
+
+    result = await wrapped.get_data(1)
+
+    # 캐시 MISS: 장 마감 전 저장된 캐시 → API 호출 결과 반환
+    assert result.data["key"] == "value-1"
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("장 마감 전 저장" in msg for msg in debug_logs)
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_early_morning_cache_miss_at_evening(cache_manager, test_cache_config):
+    """새벽 2시에 저장된 캐시 → 당일 18시 접근 시 cache MISS (장 마감 전 데이터이므로 무효)"""
+    logger = MagicMock()
+    time_manager = MagicMock()
+    time_manager.is_market_operating_hours.return_value = False
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    time_manager.market_timezone = seoul_tz
+
+    # 현재 시간: 당일 18:00 (장 마감 후)
+    now = seoul_tz.localize(datetime(2025, 3, 17, 18, 0, 0))  # 월요일 저녁
+    time_manager.get_current_kst_time.return_value = now
+    # 당일 장 마감 시간
+    time_manager.get_market_close_time.return_value = seoul_tz.localize(datetime(2025, 3, 17, 15, 30, 0))
+
+    market_date_manager = AsyncMock()
+    market_date_manager.is_market_open_now.return_value = False
+    # 다음 장 시작: 내일 9시
+    market_date_manager.get_next_open_time.return_value = seoul_tz.localize(datetime(2025, 3, 18, 9, 0, 0))
+    # 최근 거래일 = 오늘 (장이 이미 마감됨)
+    market_date_manager.get_latest_trading_date.return_value = "20250317"
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cache_manager,
+        config=test_cache_config,
+        market_date_manager=market_date_manager
+    )
+
+    # 캐시: 당일 새벽 02:00에 저장됨 (장 마감 전 → 전일 데이터)
+    key = "TEST_get_data_1"
+    cache_data = {
+        "timestamp": datetime(2025, 3, 17, 2, 0, 0).isoformat(),
+        "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": "stale_early_morning"})
+    }
+    cache_manager.set(key, cache_data)
+
+    # 18시에 접근
+    result = await wrapped.get_data(1)
+
+    # 캐시 MISS: 새벽 02:00 < 장 마감 15:30 이므로 무효 → API 호출
+    assert result.data["key"] == "value-1"  # DummyApiClient 반환값
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("장 마감 전 저장" in msg for msg in debug_logs)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("access_hour,label", [(2, "새벽 02시"), (8, "오전 08시")])
+async def test_cache_wrapper_post_close_cache_hit_next_day(cache_manager, test_cache_config, access_hour, label):
+    """전일 16시(장 마감 후)에 저장된 캐시 → 다음날 02시/08시 접근 시 cache HIT"""
+    logger = MagicMock()
+    time_manager = MagicMock()
+    time_manager.is_market_operating_hours.return_value = False
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    time_manager.market_timezone = seoul_tz
+
+    # 현재 시간: 다음날(화요일) 02시 또는 08시
+    now = seoul_tz.localize(datetime(2025, 3, 18, access_hour, 0, 0))
+    time_manager.get_current_kst_time.return_value = now
+    # 최근 거래일(월요일) 기준 장 마감 시간 → target_dt로 정확한 날짜의 15:30 반환
+    time_manager.get_market_close_time.return_value = seoul_tz.localize(datetime(2025, 3, 17, 15, 30, 0))
+
+    market_date_manager = AsyncMock()
+    market_date_manager.is_market_open_now.return_value = False
+    # 다음 장 시작: 화요일 09시
+    market_date_manager.get_next_open_time.return_value = seoul_tz.localize(datetime(2025, 3, 18, 9, 0, 0))
+    # 최근 거래일 = 월요일
+    market_date_manager.get_latest_trading_date.return_value = "20250317"
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cache_manager,
+        config=test_cache_config,
+        market_date_manager=market_date_manager
+    )
+
+    # 캐시: 월요일 16:00에 저장 (장 마감 15:30 이후 → 유효한 데이터)
+    key = "TEST_get_data_1"
+    cache_data = {
+        "timestamp": datetime(2025, 3, 17, 16, 0, 0).isoformat(),
+        "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": "valid_post_close"})
+    }
+    cache_manager.set(key, cache_data)
+
+    # 다음날 접근
+    result = await wrapped.get_data(1)
+
+    # 캐시 HIT: 16:00 >= 15:30 (거래일 기준 장 마감) → 유효
+    assert result.data["key"] == "valid_post_close", f"{label} 접근 시 cache HIT 실패"
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("Cache HIT" in msg for msg in debug_logs), f"{label} 접근 시 Cache HIT 로그 없음"
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_skip_cache_flag(cache_manager, test_cache_config):
+    """_skip_cache=True 플래그가 있으면 캐시를 완전히 우회"""
+    logger = MagicMock()
+    time_manager = MagicMock()
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    time_manager.market_timezone = seoul_tz
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        time_manager=time_manager,
+        mode_getter=lambda: "TEST",
+        cache_manager=cache_manager,
+        config=test_cache_config,
+        market_date_manager=None
+    )
+
+    # 캐시에 데이터 미리 저장
+    key = "TEST_get_data_1"
+    cache_data = {
+        "timestamp": datetime(2025, 1, 1, 16, 0, 0).isoformat(),
+        "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": "cached_value"})
+    }
+    cache_manager.set(key, cache_data)
+
+    # _skip_cache=True → 캐시 무시하고 직접 API 호출
+    result = await wrapped.get_data(1, _skip_cache=True)
+    assert result.data["key"] == "value-1"  # DummyApiClient 반환값
 
 @pytest.mark.asyncio
 async def test_cache_wrapper_with_market_date_manager_fallback(cache_manager, test_cache_config):

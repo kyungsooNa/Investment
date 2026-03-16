@@ -70,6 +70,8 @@ class VirtualTradeManager:
                 logger.info(f"[가상매매] {strategy_name}/{code} 이미 보유 중 — 매수 스킵")
                 return
             buy_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
+            # 기존 CSV 헤더 순서에 맞춰 append
+            existing_cols = pd.read_csv(self.filename, nrows=0).columns.tolist()
             new_row = pd.DataFrame({
                 "strategy": [strategy_name],
                 "code": [code],
@@ -81,6 +83,7 @@ class VirtualTradeManager:
                 "return_rate": [0.0],
                 "status": ["HOLD"]
             })
+            new_row = new_row[existing_cols]
             new_row.to_csv(self.filename, mode='a', header=False, index=False)
             logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
@@ -318,10 +321,12 @@ class VirtualTradeManager:
 
         # 1. 날짜 전처리
         # itertuples 접근을 위해 underscore 없는 컬럼명 사용
-        df['buy_day_str'] = pd.to_datetime(df['buy_date']).dt.strftime('%Y-%m-%d')
+        df['buy_day_str'] = pd.to_datetime(df['buy_date'], errors='coerce').dt.strftime('%Y-%m-%d')
         sell_mask = df['sell_date'].notna() & (df['sell_date'] != '')
         df['sell_day_str'] = None
-        df.loc[sell_mask, 'sell_day_str'] = pd.to_datetime(df.loc[sell_mask, 'sell_date']).dt.strftime('%Y-%m-%d')
+        sell_dt = pd.to_datetime(df.loc[sell_mask, 'sell_date'], errors='coerce')
+        valid_sell = sell_mask & sell_dt.notna().reindex(df.index, fill_value=False)
+        df.loc[valid_sell, 'sell_day_str'] = sell_dt.dropna().dt.strftime('%Y-%m-%d')
 
         all_days = set(df['buy_day_str'].dropna().tolist())
         all_days |= set(df.loc[sell_mask, 'sell_day_str'].dropna().tolist())
@@ -398,7 +403,10 @@ class VirtualTradeManager:
             if s_idx is None: continue
             
             code = row.code
-            qty = float(row.qty) if hasattr(row, 'qty') and pd.notna(row.qty) else 1.0
+            try:
+                qty = float(row.qty) if hasattr(row, 'qty') and pd.notna(row.qty) else 1.0
+            except (ValueError, TypeError):
+                qty = 1.0
             bp = float(row.buy_price) if pd.notna(row.buy_price) else 0.0
             if bp == 0: continue
             
