@@ -63,7 +63,36 @@ async def test_get_scheduler_history_name_correction(web_client, mock_web_ctx):
     data = response.json()
     assert len(data["history"]) == 1
     assert data["history"][0]["name"] == "삼성전자"
-    mock_mapper.get_name_by_code.assert_called_once_with("005930")
+    mock_mapper.get_name_by_code.assert_called_with("005930")
+
+
+@pytest.mark.asyncio
+async def test_get_scheduler_status_name_correction(web_client, mock_web_ctx):
+    """
+    GET /api/scheduler/status 엔드포인트가 보유 종목의 종목명을 올바르게 보정하는지 테스트.
+    """
+    mock_status = {
+        "running": True,
+        "strategies": [
+            {
+                "name": "전략A",
+                "current_holds": 1,
+                "holdings": [{"code": "005930", "name": "이전이름"}]
+            }
+        ]
+    }
+    mock_web_ctx.scheduler.get_status.return_value = mock_status
+
+    mock_mapper = MagicMock()
+    mock_mapper.get_name_by_code.return_value = "삼성전자"
+    mock_web_ctx.stock_code_mapper = mock_mapper
+
+    response = web_client.get("/api/scheduler/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["strategies"][0]["holdings"][0]["name"] == "삼성전자"
+    mock_mapper.get_name_by_code.assert_called_with("005930")
 
 
 @pytest.mark.asyncio

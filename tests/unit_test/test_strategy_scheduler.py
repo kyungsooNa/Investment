@@ -93,6 +93,28 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(scheduler._strategies), 1)
         self.assertEqual(scheduler._strategies[0].strategy.name, "테스트전략")
 
+    def test_get_status_with_holdings(self):
+        """전략 등록 및 보유 종목이 있는 경우 get_status 테스트."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy, interval_minutes=10, max_positions=5)
+        scheduler.register(config)
+
+        # Mock VirtualTradeManager가 특정 전략의 보유 종목을 반환하도록 설정
+        holding_item = {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 1, "status": "HOLD"}
+        vm.get_holds_by_strategy.return_value = [holding_item]
+
+        status = scheduler.get_status()
+
+        self.assertTrue(status["running"])
+        self.assertEqual(len(status["strategies"]), 1)
+        strat_status = status["strategies"][0]
+        self.assertEqual(strat_status["name"], "전략A")
+        self.assertEqual(strat_status["current_holds"], 1)
+        self.assertEqual(strat_status["holdings"], [holding_item])
+        self.assertEqual(strat_status["max_positions"], 5)
+        self.assertEqual(strat_status["interval_minutes"], 10)
+
     def test_get_status_empty(self):
         """전략 미등록 상태에서 get_status 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()

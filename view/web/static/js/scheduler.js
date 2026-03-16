@@ -60,6 +60,20 @@ function renderSchedulerStatus(data) {
         const poolABtn = s.name === '오닐스퀴즈돌파'
             ? `<button class="btn" style="padding:4px 12px;font-size:0.85em;background:var(--accent);" onclick="generatePoolA(this)">Pool A 생성</button>`
             : '';
+
+        // 보유 종목 리스트 렌더링
+        let holdingsHtml = '';
+        if (s.holdings && s.holdings.length > 0) {
+            const list = s.holdings.map(h => 
+                `<a href="/stock?code=${h.code}" target="_blank" class="stock-link" style="font-size:0.9em; padding:2px 6px; background:var(--bg-secondary); border-radius:4px;">${h.name || h.code}</a>`
+            ).join(' ');
+            holdingsHtml = `<div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                <span style="font-size:0.85em; color:var(--text-secondary);">보유:</span> ${list}
+            </div>`;
+        } else {
+            holdingsHtml = `<div style="margin-top:8px; font-size:0.85em; color:var(--text-secondary);">보유 종목 없음</div>`;
+        }
+
         return `
         <div class="card" style="margin-bottom:8px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -73,6 +87,7 @@ function renderSchedulerStatus(data) {
                     ${toggleBtn}
                 </div>
             </div>
+            ${holdingsHtml}
             <div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
                 실행 주기: ${s.interval_minutes}분 | 마지막 실행: ${s.last_run || '-'}
             </div>

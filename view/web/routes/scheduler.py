@@ -16,7 +16,21 @@ async def get_scheduler_status():
     ctx = _get_ctx()
     if not ctx.scheduler:
         return {"running": False, "strategies": []}
-    return ctx.scheduler.get_status()
+    
+    status = ctx.scheduler.get_status()
+    
+    # [BugFix] 보유 종목명 보정
+    mapper = getattr(ctx, 'stock_code_mapper', None)
+    if mapper:
+        for s in status.get("strategies", []):
+            for hold in s.get("holdings", []):
+                code = str(hold.get("code", ""))
+                if code:
+                    real_name = mapper.get_name_by_code(code)
+                    if real_name:
+                        hold["name"] = real_name
+                        
+    return status
 
 
 @router.post("/scheduler/start")

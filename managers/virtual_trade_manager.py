@@ -51,7 +51,7 @@ class VirtualTradeManager:
             pd.DataFrame(columns=COLUMNS).to_csv(self.filename, index=False)
 
     def _read(self) -> pd.DataFrame:
-        df = pd.read_csv(self.filename, dtype={'code': str, 'sell_date': object})
+        df = pd.read_csv(self.filename, dtype={'code': str, 'sell_date': object}, encoding='utf-8')
         df['return_rate'] = df['return_rate'].fillna(0.0)
         # 기존 파일 호환성: qty 컬럼이 없으면 기본값 1로 채움
         if 'qty' not in df.columns:
@@ -59,7 +59,7 @@ class VirtualTradeManager:
         return df
 
     def _write(self, df: pd.DataFrame):
-        df.to_csv(self.filename, index=False)
+        df.to_csv(self.filename, index=False, encoding='utf-8')
 
     # ---- 매수/매도 ----
 
@@ -71,7 +71,11 @@ class VirtualTradeManager:
                 return
             buy_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
             # 기존 CSV 헤더 순서에 맞춰 append
-            existing_cols = pd.read_csv(self.filename, nrows=0).columns.tolist()
+            try:
+                existing_cols = pd.read_csv(self.filename, nrows=0, encoding='utf-8').columns.tolist()
+            except Exception:
+                existing_cols = COLUMNS
+                
             new_row = pd.DataFrame({
                 "strategy": [strategy_name],
                 "code": [code],
@@ -84,7 +88,7 @@ class VirtualTradeManager:
                 "status": ["HOLD"]
             })
             new_row = new_row[existing_cols]
-            new_row.to_csv(self.filename, mode='a', header=False, index=False)
+            new_row.to_csv(self.filename, mode='a', header=False, index=False, encoding='utf-8')
             logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
     async def log_buy_async(self, strategy_name: str, code: str, current_price, qty: int = 1):

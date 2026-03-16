@@ -475,12 +475,14 @@ class StrategyScheduler:
         for cfg in self._strategies:
             name = cfg.strategy.name
             last = self._last_run.get(name)
+            holdings = self._vm.get_holds_by_strategy(name)
             strategies.append({
                 "name": name,
                 "interval_minutes": cfg.interval_minutes,
                 "max_positions": cfg.max_positions,
                 "enabled": cfg.enabled,
-                "current_holds": len(self._vm.get_holds_by_strategy(name)),
+                "current_holds": len(holdings),
+                "holdings": holdings,  # 상세 보유 내역 추가
                 "last_run": last.strftime("%H:%M:%S") if last else None,
             })
         return {
