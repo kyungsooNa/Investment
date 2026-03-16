@@ -156,21 +156,44 @@ class StrategyScheduler:
         self._logger.info("스케줄러 메인 루프 시작.")
         while self._running:
             try:
-                # 1. API 기반의 완벽한 개장/공휴일/시간대 검증
-                if not await self._mdm.is_market_open_now():
-                    self._logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
-                    
-                    # 2. 다음 개장 시간(내일, 혹은 명절 연휴 이후)까지 한 번에 대기(Sleep)!
-                    await self._mdm.wait_until_next_open()
-                    
-                    # 깨어나면 다시 루프의 처음으로 돌아가서 장이 열렸는지 최종 확인
-                    continue
-
-                # 장 마감 전 강제 청산 체크
                 now = self._tm.get_current_kst_time()
                 close_time = self._tm.get_market_close_time()
                 minutes_to_close = (close_time - now).total_seconds() / 60
 
+                # 0. 장 마감 전 강제 청산 (is_market_open_now 와 독립적으로 실행)
+                #    장 마감 직후 is_market_open_now()=False 가 되어도
+                #    강제 청산이 누락되지 않도록 별도로 먼저 처리한다.
+                if 0 <= minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE:
+                    for cfg in self._strategies:
+                        if not cfg.enabled or not cfg.force_exit_on_close:
+                            continue
+                        name = cfg.strategy.name
+                        # 이미 이번 청산 구간에서 실행했으면 스킵
+                        last = self._last_run.get(name)
+                        if last and (now - last).total_seconds() < self.FORCE_EXIT_MINUTES_BEFORE * 60:
+                            continue
+                        self._last_run[name] = now
+                        self._logger.info(
+                            f"[Scheduler] {name}: 장 마감 {minutes_to_close:.1f}분 전 — 강제 청산 실행"
+                        )
+                        try:
+                            await self._run_strategy(cfg, force_exit_only=True)
+                        except Exception as e:
+                            self._logger.error(
+                                f"[Scheduler] {name} 강제 청산 오류: {e}", exc_info=True
+                            )
+
+                # 1. API 기반의 완벽한 개장/공휴일/시간대 검증
+                if not await self._mdm.is_market_open_now():
+                    self._logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
+
+                    # 2. 다음 개장 시간(내일, 혹은 명절 연휴 이후)까지 한 번에 대기(Sleep)!
+                    await self._mdm.wait_until_next_open()
+
+                    # 깨어나면 다시 루프의 처음으로 돌아가서 장이 열렸는지 최종 확인
+                    continue
+
+                # 3. 정규 전략 실행 (장중)
                 for cfg in self._strategies:
                     if not cfg.enabled:
                         continue
@@ -178,25 +201,19 @@ class StrategyScheduler:
                     last = self._last_run.get(name)
                     elapsed = (now - last).total_seconds() if last else float('inf')
 
-                    # 정규 주기 도래 또는 장 마감 전 강제 실행
                     should_run = elapsed >= cfg.interval_minutes * 60
-                    force_exit = False
-                    if cfg.force_exit_on_close and (minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE):
-                        force_exit = True
 
-                    if should_run or force_exit:
+                    if should_run:
                         # 전략 간 API 자원 충돌 방지: 직전 전략 실행 후 최소 STAGGER_INTERVAL_SEC 대기
-                        # (강제 청산은 쿨다운 무시 — 장 마감 시 즉시 처리 필요)
-                        if not force_exit and self._last_execution_time:
+                        if self._last_execution_time:
                             since_last_exec = (now - self._last_execution_time).total_seconds()
                             if since_last_exec < self.STAGGER_INTERVAL_SEC:
                                 continue
 
                         self._last_run[name] = now
-                        if not force_exit:
-                            self._last_execution_time = now
+                        self._last_execution_time = now
                         try:
-                            await self._run_strategy(cfg, force_exit_only=force_exit)
+                            await self._run_strategy(cfg, force_exit_only=False)
                         except Exception as e:
                             self._logger.error(
                                 f"[Scheduler] {name} 실행 오류: {e}", exc_info=True
@@ -262,10 +279,17 @@ class StrategyScheduler:
                 for sig in target_signals:
                     if sig.qty <= 1:
                         sig.qty = cfg.order_qty
-                
-                tasks = [self._execute_signal(sig) for sig in target_signals]
-                for f in asyncio.as_completed(tasks):
-                    await f
+
+                # 순차 실행: 매수마다 보유 수를 재확인하여 max_positions 초과 방지
+                for sig in target_signals:
+                    current_count = len(self._vm.get_holds_by_strategy(name))
+                    if current_count >= cfg.max_positions:
+                        self._logger.info(
+                            f"[Scheduler] {name}: 매수 중단 — 최대 포지션 도달 "
+                            f"({current_count}/{cfg.max_positions})"
+                        )
+                        break
+                    await self._execute_signal(sig)
 
         self._pm.log_timer(f"{name}.run_strategy", t_run)
         self._logger.info(f"[Scheduler] {name} 실행 완료")

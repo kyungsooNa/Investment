@@ -201,6 +201,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         vm.get_holds_by_strategy.side_effect = [
             [{"code": "005930", "buy_price": 70000}],  # check_exits 호출
             [{"code": "005930", "buy_price": 70000}],  # scan 전 보유수 확인
+            [{"code": "005930", "buy_price": 70000}],  # 순차 매수 전 재확인
         ]
 
         buy_signals = [
@@ -239,6 +240,33 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 000660만 매수 실행됨
         self.assertEqual(vm.log_buy_async.call_count, 1)
         vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1)
+
+    async def test_run_strategy_recheck_blocks_excess_buys(self):
+        """순차 매수 시 매수마다 보유 수를 재확인하여 초과 매수를 차단하는지 테스트."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+
+        # 처음엔 0개 보유, max_positions=2
+        # 첫 매수 후 보유 1개, 두번째 매수 후 보유 2개 → 세번째는 차단
+        vm.get_holds_by_strategy.side_effect = [
+            [],                                              # check_exits
+            [],                                              # scan 전 보유수 확인 (0개)
+            [{"code": "A"}],                                 # 1번째 매수 전 재확인 (0 < 2 → 통과)
+            [{"code": "A"}, {"code": "B"}],                  # 2번째 매수 전 재확인 (2 >= 2 → 차단)
+        ]
+
+        buy_signals = [
+            TradeSignal(code="A", name="종목A", action="BUY", price=1000, qty=1, reason="t", strategy_name="테스트전략"),
+            TradeSignal(code="B", name="종목B", action="BUY", price=2000, qty=1, reason="t", strategy_name="테스트전략"),
+            TradeSignal(code="C", name="종목C", action="BUY", price=3000, qty=1, reason="t", strategy_name="테스트전략"),
+        ]
+        strategy = MockStrategy(scan_signals=buy_signals)
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=2)
+
+        await scheduler._run_strategy(config)
+
+        # remaining=2이므로 target_signals는 [A, B]이지만,
+        # 순차 재확인으로 B 매수 전 이미 2개 보유 → B 매수 차단, A만 실행
+        self.assertEqual(vm.log_buy_async.call_count, 1)
 
     async def test_run_strategy_allows_pyramiding_if_enabled(self):
         """allow_pyramiding=True일 때 보유 종목 추가 매수 허용 테스트."""
@@ -754,19 +782,19 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             # asyncio.to_thread가 호출되었는지 확인
             mock_to_thread.assert_awaited_once_with(scheduler._append_signal_csv_sync, record)
 
-    async def test_run_strategy_concurrent_execution_with_exception(self):
-        """_run_strategy에서 asyncio.as_completed 사용 시 예외가 발생하면 전파되는지 테스트."""
+    async def test_run_strategy_sequential_execution_with_exception(self):
+        """순차 매수 실행 중 예외 발생 시 전파되고 후속 매수가 중단되는지 테스트."""
         scheduler, vm, _, _, _ = self._make_scheduler()
-        
+
         buy_signals = [
             TradeSignal(code="00001", name="S1", action="BUY", price=1000, qty=1, reason="T", strategy_name="S"),
             TradeSignal(code="00002", name="S2", action="BUY", price=1000, qty=1, reason="T", strategy_name="S"),
         ]
-        
+
         strategy = MockStrategy(scan_signals=buy_signals)
         config = StrategySchedulerConfig(strategy=strategy, max_positions=10)
-        
-        # _execute_signal 모킹: 하나는 성공, 하나는 예외
+
+        # _execute_signal 모킹: 첫 번째에서 예외 발생
         async def mock_execute(signal):
             if signal.code == "00001":
                 raise ValueError("Test Error")
@@ -775,9 +803,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         with patch.object(scheduler, '_execute_signal', side_effect=mock_execute) as mock_exec:
             with self.assertRaises(ValueError):
                 await scheduler._run_strategy(config)
-            
-            # 두 시그널 모두에 대해 _execute_signal이 호출되어 코루틴이 생성되었는지 확인
-            self.assertEqual(mock_exec.call_count, 2)
+
+            # 순차 실행이므로 첫 번째 예외 발생 시 두 번째는 실행되지 않음
+            self.assertEqual(mock_exec.call_count, 1)
 
     async def test_execute_signal_market_price_exception_handling(self):
         """_execute_signal에서 현재가 조회 중 예외 발생 시 0원으로 처리되는지 테스트."""
