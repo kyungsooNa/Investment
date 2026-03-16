@@ -205,28 +205,23 @@ async def test_time_manager_methods(mock_deps):
 
 @pytest.mark.asyncio
 async def test_lifecycle_methods(mock_deps):
-    """백그라운드 태스크 시작 및 종료 테스트"""
+    """백그라운드 태스크 시작 및 종료 테스트 — BackgroundScheduler에 위임."""
     ctx = WebAppContext(None)
-    ctx.realtime_data_manager = MagicMock()
-    ctx.realtime_data_manager.shutdown = AsyncMock()
 
-    # Mock ranking_task and websocket_watchdog_task
-    ctx.ranking_task = MagicMock()
-    ctx.ranking_task.start = AsyncMock()
-    ctx.ranking_task.stop = AsyncMock()
+    # Mock background_scheduler
+    ctx.background_scheduler = MagicMock()
+    ctx.background_scheduler.start_all = AsyncMock()
+    ctx.background_scheduler.shutdown = AsyncMock()
     ctx.websocket_watchdog_task = MagicMock()
-    ctx.websocket_watchdog_task.start = AsyncMock()
-    ctx.websocket_watchdog_task.stop = AsyncMock()
 
-    # Start — RankingTask + WebSocketWatchdogTask에 위임
+    # Start — BackgroundScheduler.start_all()에 위임
     with patch("view.web.web_app_initializer.asyncio.create_task") as mock_create_task:
         ctx.start_background_tasks()
-        assert mock_create_task.call_count == 2
+        mock_create_task.assert_called_once()
 
-    # Shutdown — RankingTask + WebSocketWatchdogTask에 위임
+    # Shutdown — BackgroundScheduler.shutdown()에 위임
     await ctx.shutdown()
-    ctx.ranking_task.stop.assert_awaited_once()
-    ctx.websocket_watchdog_task.stop.assert_awaited_once()
+    ctx.background_scheduler.shutdown.assert_awaited_once()
 
 def test_web_realtime_callback(mock_deps):
     """웹소켓 콜백 처리 테스트"""
@@ -311,24 +306,23 @@ async def test_initialize_services_with_pydantic_config_object(mock_deps):
 @pytest.mark.asyncio
 async def test_start_background_tasks_with_restore(mock_deps):
     """
-    start_background_tasks가 RankingTask + WebSocketWatchdogTask에
+    start_background_tasks가 BackgroundScheduler.start_all()에
     올바르게 위임하는지 검증합니다.
     """
     # Arrange
     ctx = WebAppContext(None)
 
-    # Mock ranking_task and websocket_watchdog_task
-    ctx.ranking_task = MagicMock()
-    ctx.ranking_task.start = AsyncMock()
+    # Mock background_scheduler
+    ctx.background_scheduler = MagicMock()
+    ctx.background_scheduler.start_all = AsyncMock()
     ctx.websocket_watchdog_task = MagicMock()
-    ctx.websocket_watchdog_task.start = AsyncMock()
 
     # Act
     with patch("view.web.web_app_initializer.asyncio.create_task") as mock_create_task:
         ctx.start_background_tasks()
 
-    # Assert — RankingTask.start()과 WebSocketWatchdogTask.start()이 호출되었는지 확인
-    assert mock_create_task.call_count == 2
+    # Assert — BackgroundScheduler.start_all()이 create_task로 호출되었는지 확인
+    mock_create_task.assert_called_once()
 
 def test_load_config_and_env_with_telegram(mock_deps):
     """설정에 텔레그램 정보가 있으면 TelegramReporter가 초기화되는지 검증"""

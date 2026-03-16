@@ -59,12 +59,14 @@ class WebSocketWatchdogTask(SchedulableTask):
     def state(self) -> TaskState:
         return self._state
 
-    async def start(self, realtime_callback: Callable = None) -> None:
-        """WebSocket 워치독 + 구독 복원 태스크를 시작한다."""
+    async def start(self) -> None:
+        """WebSocket 워치독 + 구독 복원 태스크를 시작한다.
+
+        Note: realtime_callback은 start() 호출 전에 _realtime_callback 속성으로 설정해야 한다.
+        """
         if self._state == TaskState.RUNNING:
             return
         self._state = TaskState.RUNNING
-        self._realtime_callback = realtime_callback
 
         # 1. 실시간 데이터 매니저 백그라운드 태스크 (데이터 정리 등)
         if self._realtime_data_manager:

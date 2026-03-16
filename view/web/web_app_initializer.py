@@ -18,6 +18,9 @@ from core.time_manager import TimeManager
 from core.logger import Logger, get_strategy_logger
 from core.performance_manager import PerformanceManager
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
+from scheduler.background_scheduler import BackgroundScheduler
+from scheduler.foreground_scheduler import ForegroundScheduler
+from scheduler.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from services.naver_finance_scraper import NaverFinanceScraper
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -57,6 +60,8 @@ class WebAppContext:
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
+        self.background_scheduler: BackgroundScheduler = None
+        self.foreground_scheduler: ForegroundScheduler = None
         self._mdm: MarketDateManager = None
         self.notification_manager: NotificationManager = None
         self.initialized = False
@@ -212,6 +217,23 @@ class WebAppContext:
             scraper_service=NaverFinanceScraper(logger=self.logger),
             logger=self.logger,
             performance_manager=self.pm
+        )
+
+        # BackgroundScheduler 초기화 및 태스크 등록
+        self.background_scheduler = BackgroundScheduler(
+            logger=self.logger,
+            performance_manager=self.pm,
+        )
+        if self.ranking_task:
+            self.background_scheduler.register(self.ranking_task)
+        if self.websocket_watchdog_task:
+            self.background_scheduler.register(self.websocket_watchdog_task)
+
+        # ForegroundScheduler 초기화
+        self.foreground_scheduler = ForegroundScheduler(
+            background_scheduler=self.background_scheduler,
+            logger=self.logger,
+            performance_manager=self.pm,
         )
 
         self.initialized = True
@@ -371,21 +393,24 @@ class WebAppContext:
         ))
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
+        # StrategyScheduler를 BackgroundScheduler에 어댑터로 등록
+        if self.background_scheduler and self.scheduler:
+            adapter = StrategySchedulerTaskAdapter(self.scheduler)
+            self.background_scheduler.register(adapter)
+
     def start_background_tasks(self):
-        """백그라운드 태스크 시작 — RankingTask + WebSocketWatchdogTask에 위임."""
-        if self.ranking_task:
-            asyncio.create_task(self.ranking_task.start())
+        """백그라운드 태스크 시작 — BackgroundScheduler에 위임."""
+        # WebSocketWatchdogTask에 realtime_callback 설정
         if self.websocket_watchdog_task:
-            asyncio.create_task(self.websocket_watchdog_task.start(
-                realtime_callback=self._web_realtime_callback,
-            ))
+            self.websocket_watchdog_task._realtime_callback = self._web_realtime_callback
+
+        if self.background_scheduler:
+            asyncio.create_task(self.background_scheduler.start_all())
 
     async def shutdown(self):
-        """서비스 종료 처리 — RankingTask + WebSocketWatchdogTask에 위임."""
-        if self.ranking_task:
-            await self.ranking_task.stop()
-        if self.websocket_watchdog_task:
-            await self.websocket_watchdog_task.stop()
+        """서비스 종료 처리 — BackgroundScheduler에 위임."""
+        if self.background_scheduler:
+            await self.background_scheduler.shutdown()
         self.logger.info("웹 앱: 서비스 종료 완료")
 
     # --- 프로그램매매 실시간 스트리밍 ---
