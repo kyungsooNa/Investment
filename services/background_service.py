@@ -119,12 +119,14 @@ class BackgroundService:
         
         while True:
             try:
-                # 1. 시계(TimeManager)를 보고 현재 장 중(09:00~15:30)인지 확인
-                if self.mdm and await self.mdm.is_market_open_now():
-                    wait_sec = self._time_manager.get_sleep_seconds_until_market_close()
-                    if wait_sec and wait_sec > 0:
-                        self._logger.info(f"장 마감까지 {wait_sec:.0f}초 대기합니다.")
-                        await asyncio.sleep(wait_sec + 60) # 마감 1분 뒤로 한 번에 대기
+                # 1. 오늘이 주식 시장이 열리는 영업일인지 달력 확인
+                is_business_day = await self.mdm.is_business_day() if self.mdm else True
+                wait_sec = self._time_manager.get_sleep_seconds_until_market_close()
+                
+                # 영업일이면서 15:30 이전인 경우에만 대기 (주말/휴일이거나 15:30 이후면 즉시 통과)
+                if is_business_day and wait_sec > 0:
+                    self._logger.info(f"오늘 장 마감(15:30)까지 {wait_sec:.0f}초 대기합니다.")
+                    await asyncio.sleep(wait_sec + 60)
                     continue 
 
                 # 2. 장 마감 이후 상태 (15:30 이후)
@@ -147,14 +149,17 @@ class BackgroundService:
                     if needs_investor:
                         await self.refresh_investor_ranking()
 
-                # ★ 핵심 최적화: 오늘의 갱신이 끝났거나 / 오늘은 휴장일인 경우
-                # 5분마다 깰 필요 없이, 다음 날까지 12시간 딥슬립(Deep Sleep) 시킵니다.
-                self._logger.info("오늘 장 마감 작업이 완료되었거나 휴장일입니다. 내일까지 대기합니다. 💤")
+                # 3. 갱신을 마쳤으면 자정(다음날 00:00:01)까지 정확히 대기하여 다음 사이클 준비
+                now_after_task = self._time_manager.get_current_kst_time()
+                tomorrow = now_after_task + timedelta(days=1)
+                next_midnight = tomorrow.replace(hour=0, minute=0, second=1, microsecond=0)
+                sleep_to_midnight = (next_midnight - now_after_task).total_seconds()
                 
-                # 15시 30분에 작업이 끝났다면, 12시간 뒤인 새벽 3시 30분에 깨어납니다.
-                # 깨어나면 루프를 다시 돌면서 "장 마감까지 남은 시간(오후 3시 30분까지 약 12시간)"을 
-                # 다시 계산해서 한 번 더 깊게 잠들게 됩니다.
-                await asyncio.sleep(12 * 3600) 
+                if sleep_to_midnight > 0:
+                    self._logger.info(f"오늘 장 마감 작업 완료. 자정까지 {sleep_to_midnight:.0f}초 대기합니다. 💤")
+                    await asyncio.sleep(sleep_to_midnight)
+                else:
+                    await asyncio.sleep(60)
                 
             except asyncio.CancelledError:
                 break
