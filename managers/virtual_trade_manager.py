@@ -9,7 +9,7 @@ import json
 import math
 import logging
 from datetime import datetime, timedelta
-
+from functools import lru_cache
 from core.time_manager import TimeManager
 from managers.transaction_cost_manager import TransactionCostManager
 logger = logging.getLogger(__name__)
@@ -18,8 +18,9 @@ COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sel
 SNAPSHOT_FILENAME = "portfolio_snapshots.json"
 
 
+@lru_cache(maxsize=1024)
 def _is_weekday(date_str: str) -> bool:
-    """날짜 문자열(YYYY-MM-DD)이 평일인지 확인"""
+    # 이미 처리한 날짜는 다시 계산하지 않음
     return datetime.strptime(date_str, "%Y-%m-%d").weekday() < 5
 
 
@@ -43,6 +44,7 @@ PRICE_CACHE_FILENAME = "close_price_cache.json"
 
 class VirtualTradeManager:
     def __init__(self, filename="data/VirtualTradeManager/trade_journal.csv", time_manager: TimeManager = None):
+        self._cached_data = None  # 메모리 캐시 변수 추가
         self.filename = filename
         self.tm = time_manager if time_manager else TimeManager()
         self._lock = threading.Lock()
@@ -520,66 +522,98 @@ class VirtualTradeManager:
         return os.path.join(os.path.dirname(self.filename), SNAPSHOT_FILENAME)
 
     def _load_data(self) -> dict:
+        """메모리에 데이터가 있으면 즉시 반환하고, 없으면 파일에서 읽어옵니다."""
+        # 1. 캐시 확인 (메모리에 있으면 I/O 생략)
+        if self._cached_data is not None:
+            return self._cached_data
+
         path = self._snapshot_path()
         if not os.path.exists(path):
-            return {"daily": {}, "prev_values": {}}
+            self._cached_data = {"daily": {}, "prev_values": {}}
+            return self._cached_data
+
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            # 이전 포맷(날짜가 최상위 키) → 새 포맷 마이그레이션
+            
+            # 데이터 마이그레이션 로직
             if "daily" not in data:
                 data = {"daily": data, "prev_values": {}}
-            return data
+            
+            # 2. 읽어온 데이터를 메모리에 저장 (캐싱)
+            self._cached_data = data
+            return self._cached_data
+            
         except (json.JSONDecodeError, IOError):
-            return {"daily": {}, "prev_values": {}}
+            self._cached_data = {"daily": {}, "prev_values": {}}
+            return self._cached_data
 
     def _save_data(self, data: dict):
         path = self._snapshot_path()
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            # 중요: 파일 저장 성공 시 메모리 캐시도 즉시 최신화
+            self._cached_data = data
+        except IOError as e:
+            logger.error(f"Failed to save snapshot: {e}")
 
     def save_daily_snapshot(self, strategy_returns: dict):
-        """오늘 스냅샷 저장. 토/일 및 직전 스냅샷과 동일한 데이터(공휴일)는 건너뜀."""
+        """오늘 스냅샷 저장. 성능 최적화 버전."""
         now = self.tm.get_current_kst_time()
-        if now.weekday() >= 5:  # 토(5), 일(6)
+        if now.weekday() >= 5:  # 주말 제외
             return
+            
         today = now.strftime("%Y-%m-%d")
+        
+        # 1. 메모리 캐시를 우선 사용하는 _load_data 호출
         data = self._load_data()
-        daily = data["daily"]
+        daily = data.get("daily", {})
 
-        # 직전 평일 스냅샷과 개별 전략 값이 동일하면 공휴일로 간주하여 저장 안 함
-        prev_dates = sorted([d for d in daily if d < today and _is_weekday(d)], reverse=True)
-        if prev_dates:
-            last_snapshot = daily[prev_dates[0]]
-            if _strategy_values(last_snapshot) == _strategy_values(strategy_returns):
-                return
+        # 2. 직전 날짜 비교 로직 최적화 (전체 정렬 대신 필요한 값만 찾기)
+        if daily:
+            # 오늘보다 이전 날짜 중 가장 최근 날짜 하나만 찾음
+            prev_dates = [d for d in daily if d < today]
+            if prev_dates:
+                last_date = max(prev_dates) # sorted()보다 max()가 훨씬 빠름
+                if _is_weekday(last_date):
+                    last_snapshot = daily[last_date]
+                    if _strategy_values(last_snapshot) == _strategy_values(strategy_returns):
+                        return
 
-        # 오늘 스냅샷 저장 (같은 날 여러 번 호출 시 최신값으로 덮어쓰기)
+        # 3. 데이터 업데이트
         daily[today] = strategy_returns
 
-        # 30일 이전 데이터 정리
-        cutoff = (self.tm.get_current_kst_time() - timedelta(days=30)).strftime("%Y-%m-%d")
-        data["daily"] = {d: v for d, v in daily.items() if d >= cutoff}
+        # 4. 데이터 정리 로직 개선 (30일치 유지)
+        cutoff_dt = now - timedelta(days=30)
+        cutoff_str = cutoff_dt.strftime("%Y-%m-%d")
+        
+        # dict comprehension 시 기준 날짜보다 큰 것만 필터링
+        new_daily = {d: v for d, v in daily.items() if d >= cutoff_str}
+        data["daily"] = new_daily
 
+        # 5. 파일 및 캐시 저장
         self._save_data(data)
 
     def get_daily_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float | None, str | None]:
-        """가장 최근 거래일 vs 직전 거래일 스냅샷 비교. (변동값, 기준날짜) 튜플 반환."""
         data = _data or self._load_data()
         daily = data.get("daily", {})
+        if not daily: return None, None
+
         today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
 
+        # _get_trading_dates()로 주말/공휴일(전략값 미변동) 제외
         all_trading = _get_trading_dates(daily)
-        # 오늘 이하의 거래일만
         trading = [d for d in all_trading if d <= today]
         if len(trading) < 2:
             return None, None
 
-        latest_date = trading[-1]   # 가장 최근 거래일
-        prev_date = trading[-2]     # 직전 거래일
+        latest_date = trading[-1]
+        prev_date = trading[-2]
 
         latest_val = daily[latest_date].get(strategy)
         prev_val = daily[prev_date].get(strategy)
+
         if latest_val is None or prev_val is None:
             return None, None
         return round(latest_val - prev_val, 2), prev_date
@@ -588,11 +622,15 @@ class VirtualTradeManager:
         """7일 전 거래일 스냅샷 대비 변화. (변동값, 기준날짜) 튜플 반환."""
         data = _data or self._load_data()
         daily = data.get("daily", {})
+        if not daily: return None, None
+        
         today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
         target = (self.tm.get_current_kst_time() - timedelta(days=7)).strftime("%Y-%m-%d")
 
-        all_trading = _get_trading_dates(daily)
-        candidates = [d for d in all_trading if d <= target and d != today]
+        # _get_trading_dates()의 무거운 루프를 피하고 바로 키 정렬 사용
+        sorted_dates = sorted(daily.keys())
+        candidates = [d for d in sorted_dates if d <= target and d != today]
+        
         if not candidates:
             return None, None
 
@@ -603,30 +641,32 @@ class VirtualTradeManager:
         return round(current_return - ref_val, 2), ref_date
 
     def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
-        """특정 전략의 누적 수익률 히스토리를 반환합니다 (그래프용). 공휴일/주말 제외."""
         data = self._load_data()
         daily = data.get("daily", {})
-        all_dates = _get_trading_dates(daily)
+        if not daily: return []
 
-        history = []
-        last_val = None
-        for date in all_dates:
-            returns = daily[date]
-            if strategy_name in returns:
-                last_val = returns[strategy_name]
-                history.append({"date": date, "return_rate": last_val})
-            elif last_val is not None:
-                # 해당 전략의 기록이 시작된 이후인데, 특정 날짜 스냅샷에 해당 전략이 누락된 경우
-                # 마지막 수익률을 채워넣어(Forward Fill) 차트가 중간에 끊기지 않게 함
-                history.append({"date": date, "return_rate": last_val})
+        df = pd.DataFrame.from_dict(daily, orient='index')
+        if strategy_name not in df.columns: return []
 
-        return history
+        # [수정 포인트] ffill() 후에도 남는 과거 빈값(최초 거래 이전)을 0.0으로 채움
+        # .fillna(0.0) 을 반드시 추가해 주세요.
+        series = df[strategy_name].sort_index().ffill().fillna(0.0)
+
+        # [수정 포인트] Numpy float64 타입을 순수 Python float로 캐스팅하여 에러 방지
+        # 주말 날짜 제외 (_is_weekday 필터)
+        return [{"date": date, "return_rate": float(val)} for date, val in series.items() if _is_weekday(date)]
 
     def get_all_strategies(self) -> list[str]:
-        """저장된 스냅샷에 존재하는 모든 전략 이름을 반환합니다."""
         data = self._load_data()
         daily = data.get("daily", {})
+        if not daily: return []
+
+        # 모든 날짜를 다 뒤지는 대신, 최근 30일 내에 등장한 전략들만 합집합
+        # (과거에 삭제된 전략이 계속 나타나는 것을 방지)
         strategies = set()
-        for returns in daily.values():
-            strategies.update(returns.keys())
+        recent_dates = sorted(daily.keys(), reverse=True)[:5] # 최근 5거래일만 확인
+        for date in recent_dates:
+            strategies.update(daily[date].keys())
+
+        if "ALL" in strategies: strategies.remove("ALL")
         return sorted(list(strategies))
