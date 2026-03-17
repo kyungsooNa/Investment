@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 # 프로젝트 내부 모듈 임포트
 from view.web.web_app_initializer import WebAppContext
 import view.web.web_api as web_api
+import view.web.api_common as api_common
 
 # [추가] 서버 시작 시 초기화 로직
 @asynccontextmanager
@@ -55,6 +56,61 @@ if "debugpy" in sys.modules:
             import debugpy
             debugpy.debug_this_thread()
         return await call_next(request)
+
+# --- Foreground 우선순위 미들웨어 ---
+# Broker API를 호출하는 라우트만 foreground로 래핑하여
+# 백그라운드 태스크(RankingTask, WebSocketWatchdog 등)와의 API rate limit 경합을 방지한다.
+
+_FOREGROUND_PATHS = frozenset({
+    # stock.py — 현재가, 차트, 기술지표
+    "/api/stock/",
+    "/api/chart/",
+    "/api/indicator/",
+    # balance.py
+    "/api/balance",
+    # order.py
+    "/api/order",
+    # ranking.py
+    "/api/ranking/",
+    "/api/top-market-cap",
+    # program.py — broker API 호출하는 엔드포인트만
+    "/api/program-trading/subscribe",
+    "/api/program-trading/history/",
+    "/api/program-trading/unsubscribe",
+    # scheduler.py — start/stop/strategy 제어
+    "/api/scheduler/start",
+    "/api/scheduler/stop",
+    "/api/scheduler/strategy/",
+    # virtual.py — broker API 호출하는 엔드포인트만
+    "/api/virtual/chart/",
+    "/api/virtual/history",
+})
+
+_FOREGROUND_EXCLUDE = frozenset({
+    "/api/ranking/progress",
+    "/api/stock/search",
+})
+
+
+def _needs_foreground(path: str) -> bool:
+    """경로가 foreground 우선순위 적용 대상인지 판단."""
+    if path in _FOREGROUND_EXCLUDE:
+        return False
+    return any(path.startswith(prefix) for prefix in _FOREGROUND_PATHS)
+
+
+@app.middleware("http")
+async def foreground_priority_middleware(request: Request, call_next):
+    """Broker API 호출 라우트에 foreground 우선순위를 적용하는 미들웨어."""
+    path = request.url.path
+    ctx = api_common._ctx
+    fg = getattr(ctx, 'foreground_scheduler', None) if ctx else None
+
+    if fg and _needs_foreground(path):
+        async with fg.context():
+            return await call_next(request)
+    return await call_next(request)
+
 
 # 2. 정적 파일 및 템플릿 설정
 # 현재 파일(web_main.py)의 위치를 기준으로 절대 경로 설정하여 실행 위치에 영향받지 않도록 함

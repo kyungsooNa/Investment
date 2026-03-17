@@ -6,6 +6,7 @@ Reference counting 방식: 첫 foreground action → suspend, 마지막 완료 �
 """
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from scheduler.background_scheduler import BackgroundScheduler
@@ -31,6 +32,33 @@ class ForegroundScheduler:
         self._active_count = 0
         self._lock = asyncio.Lock()
 
+    @asynccontextmanager
+    async def context(self):
+        """Foreground 우선순위 컨텍스트 매니저.
+
+        첫 진입 시 BackgroundScheduler를 suspend하고,
+        마지막 퇴장 시 resume한다. 미들웨어에서 사용.
+
+        Usage::
+
+            async with fg.context():
+                # broker API 호출 등 foreground 작업
+                ...
+        """
+        async with self._lock:
+            self._active_count += 1
+            if self._active_count == 1:
+                self._logger.debug("[ForegroundScheduler] 백그라운드 태스크 일시 중지")
+                await self._bg.suspend_all()
+        try:
+            yield
+        finally:
+            async with self._lock:
+                self._active_count -= 1
+                if self._active_count == 0:
+                    self._logger.debug("[ForegroundScheduler] 백그라운드 태스크 재개")
+                    await self._bg.resume_all()
+
     async def execute(self, coro):
         """포그라운드 태스크를 실행한다.
 
@@ -43,20 +71,8 @@ class ForegroundScheduler:
         Returns:
             코루틴의 반환값.
         """
-        async with self._lock:
-            self._active_count += 1
-            if self._active_count == 1:
-                self._logger.debug("[ForegroundScheduler] 백그라운드 태스크 일시 중지")
-                await self._bg.suspend_all()
-
-        try:
+        async with self.context():
             return await coro
-        finally:
-            async with self._lock:
-                self._active_count -= 1
-                if self._active_count == 0:
-                    self._logger.debug("[ForegroundScheduler] 백그라운드 태스크 재개")
-                    await self._bg.resume_all()
 
     @property
     def active_count(self) -> int:

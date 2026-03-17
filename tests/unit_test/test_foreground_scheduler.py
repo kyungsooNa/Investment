@@ -109,3 +109,56 @@ async def test_is_active_property(fg_scheduler):
     """초기 상태에서 is_active == False."""
     assert fg_scheduler.is_active is False
     assert fg_scheduler.active_count == 0
+
+
+# --- context() 컨텍스트 매니저 테스트 ---
+
+
+async def test_context_manager_basic(fg_scheduler, bg_scheduler):
+    """context() 진입 시 suspend, 퇴장 시 resume."""
+    async with fg_scheduler.context():
+        assert fg_scheduler.active_count == 1
+        bg_scheduler.suspend_all.assert_awaited_once()
+
+    assert fg_scheduler.active_count == 0
+    bg_scheduler.resume_all.assert_awaited_once()
+
+
+async def test_context_manager_exception(fg_scheduler, bg_scheduler):
+    """context() 내부 예외 발생 시에도 resume이 호출된다."""
+    with pytest.raises(RuntimeError, match="test error"):
+        async with fg_scheduler.context():
+            raise RuntimeError("test error")
+
+    bg_scheduler.suspend_all.assert_awaited_once()
+    bg_scheduler.resume_all.assert_awaited_once()
+    assert fg_scheduler.active_count == 0
+
+
+async def test_context_manager_nested(fg_scheduler, bg_scheduler):
+    """중첩 context() 사용 시 suspend/resume은 각 1회만."""
+    entered = asyncio.Event()
+    barrier = asyncio.Event()
+
+    async def worker():
+        async with fg_scheduler.context():
+            entered.set()
+            await barrier.wait()
+
+    task = asyncio.create_task(worker())
+    await entered.wait()
+
+    # 두 번째 context 진입
+    async with fg_scheduler.context():
+        assert fg_scheduler.active_count == 2
+        assert bg_scheduler.suspend_all.await_count == 1
+
+    # 첫 번째 worker 아직 실행 중 → resume 안 됨
+    assert fg_scheduler.active_count == 1
+    assert bg_scheduler.resume_all.await_count == 0
+
+    barrier.set()
+    await task
+
+    assert fg_scheduler.active_count == 0
+    assert bg_scheduler.resume_all.await_count == 1
