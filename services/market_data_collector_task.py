@@ -12,11 +12,13 @@ from typing import List, Dict, Optional, TYPE_CHECKING
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from common.types import ErrorCode
 from core.performance_manager import PerformanceManager
+from core.time_manager import TimeManager
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from managers.market_data_repository import MarketDataRepository
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
 from market_data.stock_code_mapper import StockCodeMapper
+from scheduler.after_market_loop import run_after_market_loop
 
 
 def _chunked(lst, size):
@@ -44,6 +46,7 @@ class MarketDataCollectorTask(SchedulableTask):
         stock_code_mapper: StockCodeMapper,
         repository: MarketDataRepository,
         market_date_manager: Optional[MarketDateManager] = None,
+        time_manager: Optional[TimeManager] = None,
         performance_manager: Optional[PerformanceManager] = None,
         notification_manager: Optional[NotificationManager] = None,
         logger=None,
@@ -52,6 +55,7 @@ class MarketDataCollectorTask(SchedulableTask):
         self._mapper = stock_code_mapper
         self._repo = repository
         self._mdm = market_date_manager
+        self._time_manager = time_manager
         self._pm = performance_manager or PerformanceManager(enabled=False)
         self._nm = notification_manager
         self._logger = logger or logging.getLogger(__name__)
@@ -132,40 +136,18 @@ class MarketDataCollectorTask(SchedulableTask):
 
     async def _after_market_scheduler(self) -> None:
         """장 마감 후 자동으로 수집을 스케줄링하는 루프."""
-        self._logger.info("MarketDataCollector 장마감 후 자동 수집 스케줄러 시작")
+        await run_after_market_loop(
+            mdm=self._mdm,
+            time_manager=self._time_manager,
+            logger=self._logger,
+            on_market_closed=self._on_market_closed,
+            label="MarketDataCollector",
+        )
 
-        while True:
-            try:
-                # 1. 장 중이면 장 마감까지 대기
-                if self._mdm and await self._mdm.is_market_open_now():
-                    self._logger.info("장 운영 중 — 마감 후 수집 대기")
-                    await asyncio.sleep(300)  # 5분마다 재확인
-                    continue
-
-                # 2. 장 마감 이후 — 수집 필요 여부 판단
-                latest_trading_date = (
-                    await self._mdm.get_latest_trading_date() if self._mdm else None
-                )
-
-                if latest_trading_date:
-                    needs_collect = (
-                        self._last_collected_date != latest_trading_date
-                    )
-                    if needs_collect:
-                        await self._collect_all_prices()
-
-                self._logger.info(
-                    "MarketDataCollector: 오늘 수집 완료 또는 휴장. 12시간 대기."
-                )
-                await asyncio.sleep(12 * 3600)
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._logger.error(
-                    f"MarketDataCollector 스케줄러 오류: {e}", exc_info=True
-                )
-                await asyncio.sleep(60)
+    async def _on_market_closed(self, latest_trading_date: str) -> None:
+        """장 마감 후 콜백: 해당 거래일의 수집이 필요하면 실행."""
+        if self._last_collected_date != latest_trading_date:
+            await self._collect_all_prices()
 
     # ── 전체 종목 현재가 수집 ────────────────────────────
 

@@ -771,7 +771,7 @@ async def test_start_after_market_scheduler_exception_handling(bg_service, mock_
              pass
 
     logger.error.assert_called()
-    assert "장마감 후 스케줄러 오류" in logger.error.call_args[0][0]
+    assert "스케줄러 오류" in logger.error.call_args[0][0]
 
 
 @pytest.mark.asyncio

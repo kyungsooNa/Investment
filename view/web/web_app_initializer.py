@@ -212,6 +212,7 @@ class WebAppContext:
             stock_code_mapper=self.stock_code_mapper,
             repository=self.market_data_repository,
             market_date_manager=self._mdm,
+            time_manager=self.time_manager,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
             logger=self.logger,

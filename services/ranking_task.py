@@ -19,6 +19,7 @@ from managers.market_date_manager import MarketDateManager
 from market_data.stock_code_mapper import StockCodeMapper
 from core.performance_manager import PerformanceManager
 from managers.telegram_notifier import TelegramReporter
+from scheduler.after_market_loop import run_after_market_loop
 from managers.notification_manager import NotificationManager
 
 
@@ -161,45 +162,29 @@ class RankingTask(SchedulableTask):
 
     async def start_after_market_scheduler(self) -> None:
         """장마감 후 자동으로 랭킹 갱신을 스케줄링하는 루프."""
-        self._logger.info("장마감 후 자동 갱신 스케줄러 시작")
+        await run_after_market_loop(
+            mdm=self.mdm,
+            time_manager=self._time_manager,
+            logger=self._logger,
+            on_market_closed=self._on_market_closed,
+            label="RankingTask",
+        )
 
-        while True:
-            try:
-                # 1. 시계(TimeManager)를 보고 현재 장 중(09:00~15:30)인지 확인
-                if self.mdm and await self.mdm.is_market_open_now():
-                    wait_sec = self._time_manager.get_sleep_seconds_until_market_close()
-                    if wait_sec and wait_sec > 0:
-                        self._logger.info(f"장 마감까지 {wait_sec:.0f}초 대기합니다.")
-                        await asyncio.sleep(wait_sec + 60)  # 마감 1분 뒤로 한 번에 대기
-                    continue
+    async def _on_market_closed(self, latest_trading_date: str) -> None:
+        """장 마감 후 콜백: 해당 거래일의 랭킹 갱신이 필요하면 실행."""
+        needs_basic = (
+            not self._basic_ranking_updated_at
+            or self._basic_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
+        )
+        needs_investor = (
+            not self._investor_ranking_updated_at
+            or self._investor_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
+        )
 
-                # 2. 장 마감 이후 상태 (15:30 이후)
-                # 최근 거래일 기준으로 갱신 여부 판단 (자정 넘어도 전날 갱신분 인식)
-                latest_trading_date = await self.mdm.get_latest_trading_date() if self.mdm else None
-
-                if latest_trading_date:
-                    needs_investor = (
-                        not self._investor_ranking_updated_at
-                        or self._investor_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
-                    )
-                    needs_basic = (
-                        not self._basic_ranking_updated_at
-                        or self._basic_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
-                    )
-
-                    if needs_basic:
-                        await self.refresh_basic_ranking()
-                    if needs_investor:
-                        await self.refresh_investor_ranking()
-
-                self._logger.info("오늘 장 마감 작업이 완료되었거나 휴장일입니다. 내일까지 대기합니다.")
-                await asyncio.sleep(12 * 3600)
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._logger.error(f"장마감 후 스케줄러 오류: {e}", exc_info=True)
-                await asyncio.sleep(60)
+        if needs_basic:
+            await self.refresh_basic_ranking()
+        if needs_investor:
+            await self.refresh_investor_ranking()
 
     # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
 
