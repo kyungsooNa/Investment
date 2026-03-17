@@ -242,11 +242,14 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
     try:
         df = pd.DataFrame(trades)
         
-        # 데이터 전처리
-        df['qty'] = pd.to_numeric(df.get('qty', 1), errors='coerce').fillna(1)
-        df['buy_price'] = pd.to_numeric(df.get('buy_price', 0), errors='coerce').fillna(0)
-        df['current_price'] = pd.to_numeric(df.get('current_price', 0), errors='coerce').fillna(0)
-        df['sell_price'] = pd.to_numeric(df.get('sell_price', 0), errors='coerce').fillna(0)
+        # 데이터 전처리 - 컬럼 없을 때 기본값 설정 후 숫자형 변환
+        for col, default in [('status', 'HOLD'), ('sell_date', None)]:
+            if col not in df.columns:
+                df[col] = default
+        for col, default in [('qty', 1), ('buy_price', 0), ('current_price', 0), ('sell_price', 0)]:
+            if col not in df.columns:
+                df[col] = default
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(default)
 
         # 평가가격(eval_price) 계산 벡터화
         df['eval_price'] = np.where(
@@ -256,8 +259,8 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
         df['eval_price'] = np.where(df['eval_price'] <= 0, df['buy_price'], df['eval_price'])
 
         # 매수/평가 금액 계산 (수수료 로직 반영 위해 apply 사용)
-        df['buy_amt'] = df.apply(lambda x: vm.get_trade_amount(x['buy_price'], x['qty'], False, apply_cost), axis=1)
-        df['eval_amt'] = df.apply(lambda x: vm.get_trade_amount(x['eval_price'], x['qty'], True, apply_cost), axis=1)
+        df['buy_amt'] = df.apply(lambda x: vm.get_trade_amount(x['buy_price'], x['qty'], is_sell=False, apply_cost=apply_cost), axis=1)
+        df['eval_amt'] = df.apply(lambda x: vm.get_trade_amount(x['eval_price'], x['qty'], is_sell=True, apply_cost=apply_cost), axis=1)
         df['pnl'] = df['eval_amt'] - df['buy_amt']
 
         strategies = [s for s in df['strategy'].dropna().unique() if s]
@@ -280,30 +283,40 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
                 strategy_returns[key] = 0.0
 
         # 스냅샷 저장 및 변화율 계산 (I/O 최소화)
-        vm.save_daily_snapshot(strategy_returns)
-        snapshot_data = vm._load_data()  # 메모리 캐싱 적용 시 0초 소요
-        
         daily_changes, weekly_changes, daily_ref_dates, weekly_ref_dates = {}, {}, {}, {}
-        for key in ["ALL"] + strategies:
-            d_val, d_date = vm.get_daily_change(key, strategy_returns.get(key, 0), _data=snapshot_data)
-            w_val, w_date = vm.get_weekly_change(key, strategy_returns.get(key, 0), _data=snapshot_data)
-            daily_changes[key], weekly_changes[key] = d_val, w_val
-            if d_date: daily_ref_dates[key] = d_date
-            if w_date: weekly_ref_dates[key] = w_date
+        snapshot_data = {}
+        try:
+            vm.save_daily_snapshot(strategy_returns)
+            snapshot_data = vm._load_data()  # 메모리 캐싱 적용 시 0초 소요
+            for key in ["ALL"] + strategies:
+                d_val, d_date = vm.get_daily_change(key, strategy_returns.get(key, 0), _data=snapshot_data)
+                w_val, w_date = vm.get_weekly_change(key, strategy_returns.get(key, 0), _data=snapshot_data)
+                daily_changes[key], weekly_changes[key] = d_val, w_val
+                if d_date: daily_ref_dates[key] = d_date
+                if w_date: weekly_ref_dates[key] = w_date
+        except Exception as e:
+            print(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
 
-        # 5. 최초매매일 계산
+        # 5. 최초매매일 계산 (YYYY-MM-DD 형식인 날짜만 유효로 처리)
         df['buy_date_str'] = df['buy_date'].astype(str).str[:10]
-        first_dates = {"ALL": str(df[df['buy_date_str'] != '']['buy_date_str'].min() or '')}
+        valid_date_mask = df['buy_date_str'].str.match(r'^\d{4}-\d{2}-\d{2}$', na=False)
+        valid_dates_df = df[valid_date_mask]
+        all_min = valid_dates_df['buy_date_str'].min()
+        first_dates = {}
+        if pd.notna(all_min) and all_min:
+            first_dates["ALL"] = str(all_min)
         for strat in strategies:
-            min_date = df[(df['strategy'] == strat) & (df['buy_date_str'] != '')]['buy_date_str'].min()
-            first_dates[strat] = str(min_date) if pd.notna(min_date) else ''
+            min_date = valid_dates_df[valid_dates_df['strategy'] == strat]['buy_date_str'].min()
+            if pd.notna(min_date) and min_date:
+                first_dates[strat] = str(min_date)
 
         # 6. 상태별 카운트 집계
         KST = timezone(timedelta(hours=9))
         today_str = datetime.now(KST).strftime("%Y-%m-%d")
-        if snapshot_data and snapshot_data.get('daily'):
-            last_date = sorted(snapshot_data['daily'].keys())[-1]
-            if today_str > last_date: today_str = last_date
+        if isinstance(snapshot_data, dict) and snapshot_data.get('daily'):
+            daily_keys = sorted(snapshot_data['daily'].keys())
+            if daily_keys and today_str > daily_keys[-1]:
+                today_str = daily_keys[-1]
 
         df['is_hold'] = df['status'] == 'HOLD'
         df['is_today_buy'] = df['buy_date'].astype(str).str.startswith(today_str)

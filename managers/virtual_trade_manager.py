@@ -600,20 +600,23 @@ class VirtualTradeManager:
         daily = data.get("daily", {})
         if not daily: return None, None
 
-        # 모든 날짜를 매번 정렬하기보다, 이미 정렬된 리스트를 캐싱해두거나 
-        # 간단히 정렬 후 뒤에서 두 개만 확인
-        sorted_dates = sorted(daily.keys())
         today = self.tm.get_current_kst_time().strftime("%Y-%m-%d")
 
-        # 오늘 날짜를 제외한 과거 거래일 리스트
-        trading = [d for d in sorted_dates if d <= today]
-        if len(trading) < 2: return None, None
+        # _get_trading_dates()로 주말/공휴일(전략값 미변동) 제외
+        all_trading = _get_trading_dates(daily)
+        trading = [d for d in all_trading if d <= today]
+        if len(trading) < 2:
+            return None, None
 
-        prev_date = trading[-2] # 직전 거래일
+        latest_date = trading[-1]
+        prev_date = trading[-2]
+
+        latest_val = daily[latest_date].get(strategy)
         prev_val = daily[prev_date].get(strategy)
 
-        if prev_val is None: return None, None
-        return round(current_return - prev_val, 2), prev_date
+        if latest_val is None or prev_val is None:
+            return None, None
+        return round(latest_val - prev_val, 2), prev_date
 
     def get_weekly_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float | None, str | None]:
         """7일 전 거래일 스냅샷 대비 변화. (변동값, 기준날짜) 튜플 반환."""
@@ -650,7 +653,8 @@ class VirtualTradeManager:
         series = df[strategy_name].sort_index().ffill().fillna(0.0)
 
         # [수정 포인트] Numpy float64 타입을 순수 Python float로 캐스팅하여 에러 방지
-        return [{"date": date, "return_rate": float(val)} for date, val in series.items()]
+        # 주말 날짜 제외 (_is_weekday 필터)
+        return [{"date": date, "return_rate": float(val)} for date, val in series.items() if _is_weekday(date)]
 
     def get_all_strategies(self) -> list[str]:
         data = self._load_data()
