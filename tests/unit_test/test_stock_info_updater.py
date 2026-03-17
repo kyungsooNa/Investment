@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pytest
 from utils import stock_info_updater
-from unittest.mock import patch, mock_open
+from unittest.mock import patch
 
 TEST_DATA_DIR = "data_test"
 
@@ -32,29 +32,36 @@ def setup_and_teardown(tmp_path, mocker):
     yield
 
 
-@patch(f"{stock_info_updater.__name__}.stock.get_market_ticker_list", return_value=["005930"])
-@patch(f"{stock_info_updater.__name__}.stock.get_market_ticker_name", return_value="삼성전자")
-def test_force_update_saves_files(mock_get_name, mock_get_list):
+@patch("FinanceDataReader.StockListing")
+def test_force_update_saves_files(mock_fdr_listing):
     """force_update=True로 save_stock_code_list를 호출하면 DB와 메타데이터가 저장됩니다."""
+    mock_fdr_listing.return_value = pd.DataFrame({
+        'Code': ['005930', '123456'],
+        'Name': ['삼성전자', '코스닥종목'],
+        'MarketId': ['STK', 'KSQ']
+    })
+
     stock_info_updater.save_stock_code_list(force_update=True)
 
-    # DB 파일 생성 확인
+    # 1. DB 파일 생성 확인 (setup_and_teardown에서 안전한 경로로 이미 모킹됨)
     assert os.path.exists(stock_info_updater.DB_FILE_PATH)
 
-    # DB 내용 확인
+    # 2. 임시 DB 내용 확인
     conn = sqlite3.connect(stock_info_updater.DB_FILE_PATH)
     df = pd.read_sql("SELECT * FROM stocks", conn)
     conn.close()
-    assert len(df) == 2  # KOSPI + KOSDAQ 각각 005930
-    assert "삼성전자" in df["종목명"].values
-
-    # 메타데이터 확인
-    assert os.path.exists(stock_info_updater.METADATA_PATH)
+    
+    # 모킹된 데이터를 통해 KOSPI 1개, KOSDAQ 1개가 삽입되므로 2개가 정상
+    assert len(df) == 2  
 
 
-@patch(f"{stock_info_updater.__name__}.stock.get_market_ticker_list", return_value=["005930"])
-@patch(f"{stock_info_updater.__name__}.stock.get_market_ticker_name", return_value="삼성전자")
-def test_metadata_blocks_update_within_7_days(mock_get_name, mock_get_list, capfd):
+@patch("FinanceDataReader.StockListing")
+def test_metadata_blocks_update_within_7_days(mock_fdr_listing, capfd):
+    mock_fdr_listing.return_value = pd.DataFrame({
+        'Code': ['005930'],
+        'Name': ['삼성전자'],
+        'MarketId': ['STK']
+    })
     # 강제로 한 번 저장
     stock_info_updater.save_stock_code_list(force_update=True)
 

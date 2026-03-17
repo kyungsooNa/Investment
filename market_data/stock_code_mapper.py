@@ -64,22 +64,27 @@ class StockCodeMapper:
             finally:
                 conn.close()
 
-            if self.df.empty or len(self.df.columns) == 0:
-                raise ValueError("DB 테이블이 비어있거나 컬럼이 없습니다.")
+            if self.df.empty or len(self.df.columns) == 0 or (len(self.df) == 1 and self.df.iloc[0]["종목코드"] == "000000"):
+                raise ValueError("DB 테이블이 비어있거나 최소 DB 상태입니다.")
 
             self.code_to_name = dict(zip(self.df["종목코드"], self.df["종목명"]))
             self.name_to_code = dict(zip(self.df["종목명"], self.df["종목코드"]))
             if self.logger:
                 self.logger.info(f"🔄 종목코드 매핑 DB 로드 완료: {self._db_path}")
         except Exception as e:
-            err_msg = str(e)
-            if "비어" not in err_msg and "no such table" not in err_msg:
-                if self.logger:
-                    self.logger.error(f"❌ 종목코드 매핑 DB 로드 실패: {e}")
-                raise
-            # DB가 비어 있거나 테이블이 없는 경우: 갱신 시도 후 실패하면 최소 DB로 시작
             if self.logger:
-                self.logger.warning("종목코드 DB가 비어 있음. 갱신 시도 후 재시도합니다.")
+                self.logger.warning(f"⚠️ 종목코드 DB 갱신/복구 시도 중 (사유: {e})")
+            
+            # 손상된 기존 파일 삭제 시도
+            try:
+                if os.path.exists(self._db_path):
+                    os.remove(self._db_path)
+                    if self.logger:
+                        self.logger.info(f"🗑️ 손상된 DB 파일 삭제 완료: {self._db_path}")
+            except Exception as remove_err:
+                if self.logger:
+                    self.logger.error(f"❌ 손상된 DB 파일 삭제 실패 (파일 점유/권한 문제 등): {remove_err}")
+
             try:
                 save_stock_code_list(force_update=True)
                 conn = sqlite3.connect(self._db_path)
@@ -89,8 +94,8 @@ class StockCodeMapper:
                     )
                 finally:
                     conn.close()
-                if self.df.empty or len(self.df.columns) == 0:
-                    raise ValueError("DB 테이블이 비어있거나 컬럼이 없습니다.")
+                if self.df.empty or len(self.df.columns) == 0 or (len(self.df) == 1 and self.df.iloc[0]["종목코드"] == "000000"):
+                    raise ValueError("DB 테이블이 비어있거나 최소 DB 상태입니다.")
                 self.code_to_name = dict(zip(self.df["종목코드"], self.df["종목명"]))
                 self.name_to_code = dict(zip(self.df["종목명"], self.df["종목코드"]))
                 if self.logger:
