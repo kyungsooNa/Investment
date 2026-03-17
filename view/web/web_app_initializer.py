@@ -32,6 +32,8 @@ from strategies.first_pullback_strategy import FirstPullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
 from services.ranking_task import RankingTask
 from services.websocket_watchdog_task import WebSocketWatchdogTask
+from services.market_data_collector_task import MarketDataCollectorTask
+from managers.market_data_repository import MarketDataRepository
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
@@ -60,6 +62,8 @@ class WebAppContext:
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
+        self.market_data_collector_task: MarketDataCollectorTask = None
+        self.market_data_repository: MarketDataRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
         self._mdm: MarketDateManager = None
@@ -201,6 +205,18 @@ class WebAppContext:
             logger=self.logger,
         )
 
+        # MarketDataRepository + MarketDataCollectorTask 초기화
+        self.market_data_repository = MarketDataRepository(logger=self.logger)
+        self.market_data_collector_task = MarketDataCollectorTask(
+            broker_api_wrapper=self.broker,
+            stock_code_mapper=self.stock_code_mapper,
+            repository=self.market_data_repository,
+            market_date_manager=self._mdm,
+            performance_manager=self.pm,
+            notification_manager=self.notification_manager,
+            logger=self.logger,
+        )
+
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager,
             performance_manager=self.pm,
@@ -228,6 +244,8 @@ class WebAppContext:
             self.background_scheduler.register(self.ranking_task)
         if self.websocket_watchdog_task:
             self.background_scheduler.register(self.websocket_watchdog_task)
+        if self.market_data_collector_task:
+            self.background_scheduler.register(self.market_data_collector_task)
 
         # ForegroundScheduler 초기화
         self.foreground_scheduler = ForegroundScheduler(
