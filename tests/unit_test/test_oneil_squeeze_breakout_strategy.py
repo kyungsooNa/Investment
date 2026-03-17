@@ -317,6 +317,21 @@ async def test_check_exits_peak_price_update(mock_strategy_deps):
     assert len(signals) == 0
     # 최고가가 12000으로 갱신되었는지 확인
     assert strategy._position_state["005930"].peak_price == 12000
+    
+@pytest.mark.asyncio
+async def test_check_exits_signal_name_fallback(mock_strategy_deps):
+    """매도 시그널 생성 시 holdings의 name이 TradeSignal에 정상 반영되는지 검증."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+    strategy._position_state["005930"] = OSBPositionState(10000, "20250101", 10000, 9500)
+    
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9400"}})
+    holdings = [{"code": "005930", "buy_price": 10000, "name": "기존이름"}]
+    signals = await strategy.check_exits(holdings)
+    
+    assert len(signals) == 1
+    assert signals[0].name == "기존이름"
 
 @pytest.mark.asyncio
 async def test_scan_empty_watchlist(scan_setup):

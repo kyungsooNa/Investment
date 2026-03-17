@@ -458,6 +458,31 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 0)
         logger.error.assert_called()
 
+    async def test_check_exits_signal_name_resolution(self):
+        """매도 시그널 생성 시 종목명을 API 응답 또는 Mapper에서 정상적으로 결정하는지 테스트."""
+        strategy, sqs, tm, mapper, _ = self._make_strategy()
+        strategy._position_state["005930"] = PositionState(breakout_level=10000, peak_price=10500)
+
+        # SQS 응답 data에 "name" 속성이 있는 경우
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"price": "9690", "acml_vol": "100000", "name": "API제공이름"}
+        )
+
+        holdings = [{"code": "005930", "buy_price": 10000, "name": "기존이름"}]
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].name, "API제공이름")
+
+        # SQS 응답에 name이 없으면 Mapper 사용으로 Fallback
+        sqs.handle_get_current_stock_price.return_value.data = {"price": "9690", "acml_vol": "100000"} 
+        mapper.get_name_by_code.return_value = "매퍼제공이름"
+        
+        signals2 = await strategy.check_exits(holdings)
+        self.assertEqual(len(signals2), 1)
+        self.assertEqual(signals2[0].name, "매퍼제공이름")
+
     # ── OHLCV 분석 ──
 
     def test_analyze_ohlcv_returns_none_for_empty(self):

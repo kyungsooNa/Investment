@@ -259,6 +259,25 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         # 네 번째 스캔: 같은 날이므로 다시 신호 없음
         signals4 = await strategy.scan()
         self.assertEqual(len(signals4), 0)
+        
+    async def test_check_exits_signal_name_fallback(self):
+        """매도 시그널 생성 시 holdings의 name이 정상적으로 반영되는지 테스트."""
+        strategy, sqs, tm = self._make_strategy(stop_loss_pct=-8.0)
+        import pytz
+        from datetime import datetime
+        kst = pytz.timezone("Asia/Seoul")
+        tm.get_current_kst_time.return_value = kst.localize(datetime(2026, 2, 20, 10, 0))
+        tm.get_market_close_time.return_value = kst.localize(datetime(2026, 2, 20, 15, 30))
+
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"price": "66200", "open": "70000", "high": "71500", "code": "005930"}
+        )
+        holdings = [{"code": "005930", "buy_price": 72000, "name": "기존이름"}]
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].name, "기존이름")
 
 
 

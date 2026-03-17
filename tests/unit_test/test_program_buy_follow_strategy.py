@@ -357,6 +357,43 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals2), 1) # 목록 초기화되어 다시 매수
         self.assertIn("005930", strategy._bought_today)
 
+    async def test_check_exits_uses_hts_kor_isnm_for_name(self):
+        """매도 시그널 생성 시 종목명을 hts_kor_isnm(HTS 한글 종목명)에서 정상적으로 가져오는지 테스트."""
+        strategy, sqs, tm = self._make_strategy()
+
+        import pytz
+        from datetime import datetime
+        kst = pytz.timezone("Asia/Seoul")
+        now = kst.localize(datetime(2026, 2, 20, 11, 0))
+        close = kst.localize(datetime(2026, 2, 20, 15, 30))
+        tm.get_current_kst_time.return_value = now
+        tm.get_market_close_time.return_value = close
+
+        # 케이스 1: API 응답에 hts_kor_isnm이 존재하는 경우 (업종명 버그 수정 검증)
+        sqs.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data={"output": {
+                "stck_prpr": "71000",
+                "stck_hgpr": "72000",
+                "pgtr_ntby_qty": "-500",  # 프로그램 매도 전환으로 SELL 조건 발동
+                "hts_kor_isnm": "삼성전자(API)"
+            }}
+        )
+
+        holdings = [{"code": "005930", "buy_price": 70000, "name": "기존이름"}]
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].name, "삼성전자(API)")  # API 이름이 우선 적용되어야 함
+
+        # 케이스 2: API 응답에 hts_kor_isnm이 없는 경우 (기존 hold의 name으로 폴백)
+        sqs.get_current_price.return_value.data["output"]["hts_kor_isnm"] = ""
+        
+        signals_fallback = await strategy.check_exits(holdings)
+        
+        self.assertEqual(len(signals_fallback), 1)
+        self.assertEqual(signals_fallback[0].name, "기존이름")  # 빈 값이면 기존 이름 유지
+
 
 if __name__ == "__main__":
     unittest.main()
