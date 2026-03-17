@@ -801,6 +801,26 @@ async def test_exits_api_failure(mock_deps):
     signals = await strategy.check_exits([{"code": "005930", "buy_price": 68000}])
     assert len(signals) == 0
 
+@pytest.mark.asyncio
+async def test_check_exits_signal_name_fallback(mock_deps):
+    """매도 시그널 생성 시 holdings의 name이 TradeSignal에 정상 반영되는지 검증."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+    universe.is_market_timing_ok.return_value = True
+
+    strategy._position_state["005930"] = PPPositionState("PP", 10000, "20250101", 11500, "20", 0, False, "20250105")
+    ohlcv = _make_ohlcv(60, close=11000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    
+    # 부분 익절 트리거 (+16%)
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "11600"}})
+    holdings = [{"code": "005930", "buy_price": 10000, "qty": 4, "name": "기존이름"}]
+    signals = await strategy.check_exits(holdings)
+    
+    assert len(signals) == 1
+    assert signals[0].name == "기존이름"
 
 # ════════════════════════════════════════════════════════════════
 # 헬퍼 메서드

@@ -310,7 +310,7 @@ class StrategyScheduler:
 
     async def _execute_signal(self, signal: TradeSignal):
         self._logger.info(
-            f"[Scheduler] 시그널 실행: {signal.action} {signal.name}({signal.code}) "
+            f"[Scheduler] 시그널 실행: [{signal.strategy_name}] {signal.action} {signal.name}({signal.code}) "
             f"@ {signal.price:,}원 | {signal.reason}"
         )
 

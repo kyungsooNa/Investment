@@ -606,6 +606,19 @@ async def test_check_exits_for_untracked_holding(mock_deps):
     assert "칼손절" in signals[0].reason
     assert "005930" not in strategy._position_state
 
+@pytest.mark.asyncio
+async def test_check_exits_signal_name_fallback(mock_deps):
+    """매도 시그널 생성 시 holdings의 name이 TradeSignal에 정상 반영되는지 검증."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+    
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9400"}})
+    holdings = [{"code": "005930", "buy_price": 10000, "name": "기존이름"}]
+    signals = await strategy.check_exits(holdings)
+    
+    assert len(signals) == 1
+    assert signals[0].name == "기존이름"
 
 # ── Edge Cases & Error Handling ──────────────────────────────────────
 

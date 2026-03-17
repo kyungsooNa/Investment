@@ -637,6 +637,24 @@ async def test_exits_no_state_creates_default(mock_deps):
     signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "qty": 2}])
     assert len(signals) == 1
     assert "손절" in signals[0].reason
+    
+@pytest.mark.asyncio
+async def test_exits_signal_name_fallback(mock_deps):
+    """매도 시그널 생성 시 holdings의 name이 TradeSignal에 정상 반영되는지 검증."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+    strategy._position_state["005930"] = FPPositionState(10000, "20250101", 10500, 12000, False)
+
+    ohlcv = _make_ohlcv(20, close=10000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9700"}})
+
+    holdings = [{"code": "005930", "buy_price": 10000, "name": "기존이름"}]
+    signals = await strategy.check_exits(holdings)
+
+    assert len(signals) == 1
+    assert signals[0].name == "기존이름"
 
 
 # ════════════════════════════════════════════════════════════════

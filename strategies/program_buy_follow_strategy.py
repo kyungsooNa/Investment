@@ -217,7 +217,7 @@ class ProgramBuyFollowStrategy(LiveStrategy):
                     should_sell = True
 
                 if should_sell:
-                    stock_name_from_api = self._get_str_field(output, "bstp_kor_isnm") or stock_name
+                    stock_name_from_api = self._get_str_field(output, "hts_kor_isnm") or stock_name
                     signals.append(TradeSignal(
                         code=code, name=stock_name_from_api, action="SELL", price=current, qty=1,
                         reason=reason, strategy_name=self.name,
