@@ -247,9 +247,13 @@ class HighTightFlagStrategy(LiveStrategy):
         )
         self._save_state()
 
+        vol_ratio = (proj_vol / avg_vol_50d * 100) if avg_vol_50d > 0 else 0.0
+
         reason_msg = (
-            f"HTF돌파(폭등 {pattern['surge_ratio']:.0%}, "
-            f"깃발 {pattern['flag_days']}일, "
+            f"HTF돌파(돌파 {current:,}>{pole_high:,}, "
+            f"예상거래 {vol_ratio:.0f}%, "
+            f"깃대폭등 {pattern['surge_ratio']:.0%}, "
+            f"깃발 {pattern['flag_days']}일(-{pattern['drawdown_pct']:.1f}%), "
             f"체결강도 {cgld_val:.1f}%)"
         )
 

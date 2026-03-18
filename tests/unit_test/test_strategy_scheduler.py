@@ -61,6 +61,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}})
         )
 
+        scm = MagicMock()
+        scm.get_stock_code = AsyncMock(
+            return_value="005930"
+        )
+
         tm = MagicMock()
         tm.is_market_operating_hours.return_value = True
 
@@ -76,6 +81,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                 virtual_manager=vm,
                 order_execution_service=oes,
                 stock_query_service=sqs,
+                stock_code_mapper=scm,
                 time_manager=tm,
                 market_date_manager=mdm,
                 logger=mock_logger,

@@ -183,7 +183,18 @@ class FirstPullbackStrategy(LiveStrategy):
         )
         self._save_state()
 
-        reason_msg = f"첫눌림목(체결강도 {cgld_val:.1f}%, 20MA {ma_20d:,.0f})"
+        # 상세 근거 계산
+        recent_vols = [r.get("volume", 0) for r in ohlcv[-self._cfg.volume_dryup_days:]]
+        avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 0
+        vol_dryup_pct = (avg_vol / surge_volume * 100) if surge_volume > 0 else 0.0
+        pullback_pct = (today_low - ma_20d) / ma_20d * 100 if ma_20d > 0 else 0.0
+
+        reason_msg = (
+            f"첫눌림목(20MA {ma_20d:,.0f} 지지({pullback_pct:+.1f}%), "
+            f"거래고갈 {vol_dryup_pct:.0f}%(급등대비), "
+            f"반등확인 {today_open:,}->{current:,}, "
+            f"체결강도 {cgld_val:.1f}%)"
+        )
 
         self._logger.info({
             "event": "buy_signal_generated",
