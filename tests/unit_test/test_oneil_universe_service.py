@@ -10,6 +10,10 @@ from common.types import ResStockFullInfoApiOutput, ResBollingerBand, ResRelativ
 from services.oneil_universe_service import OneilUniverseService
 from strategies.oneil_common_types import OSBWatchlistItem
 from core.logger import get_strategy_logger
+from services.stock_query_service import StockQueryService
+from services.indicator_service import IndicatorService
+from market_data.stock_code_mapper import StockCodeMapper
+from core.time_manager import TimeManager
 
 def create_mock_ohlcv(length=90, zero_volume_days=0, no_high_days=0):
     """테스트 목적에 맞는 OHLCV 목 데이터를 생성합니다."""
@@ -39,21 +43,21 @@ def create_mock_stock_info(overrides=None):
 @pytest.fixture
 def mock_deps():
     # ts = MagicMock() # Removed
-    sqs = MagicMock()
-    indicator = MagicMock()
-    mapper = MagicMock()
-    tm = MagicMock()
+    sqs = MagicMock(spec=StockQueryService)
+    indicator = MagicMock(spec=IndicatorService)
+    mapper = MagicMock(spec=StockCodeMapper)
+    tm = MagicMock(spec=TimeManager)
     logger = MagicMock()
     
     # 공통 Mock 설정 (SQS로 이동)
-    sqs.get_current_price = AsyncMock()
-    sqs.get_recent_daily_ohlcv = AsyncMock()
-    sqs.get_financial_ratio = AsyncMock()
-    sqs.get_top_trading_value_stocks = AsyncMock()
-    sqs.get_top_rise_fall_stocks = AsyncMock()
-    sqs.get_top_volume_stocks = AsyncMock()
-    indicator.get_bollinger_bands = AsyncMock()
-    indicator.get_relative_strength = AsyncMock()
+    sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
+    sqs.get_financial_ratio = AsyncMock(spec=StockQueryService.get_financial_ratio)
+    sqs.get_top_trading_value_stocks = AsyncMock(spec=StockQueryService.get_top_trading_value_stocks)
+    sqs.get_top_rise_fall_stocks = AsyncMock(spec=StockQueryService.get_top_rise_fall_stocks)
+    sqs.get_top_volume_stocks = AsyncMock(spec=StockQueryService.get_top_volume_stocks)
+    indicator.get_bollinger_bands = AsyncMock(spec=IndicatorService.get_bollinger_bands)
+    indicator.get_relative_strength = AsyncMock(spec=IndicatorService.get_relative_strength)
     
     return None, sqs, indicator, mapper, tm, logger # ts is None
 
@@ -61,10 +65,10 @@ def mock_deps():
 def oneil_service_fixture():
     """OneilUniverseService와 Mock 종속성을 제공하는 픽스처입니다."""
     # mock_ts = AsyncMock() # Removed
-    mock_sqs = AsyncMock()
-    mock_indicator = AsyncMock()
-    mock_mapper = MagicMock()
-    mock_tm = MagicMock()
+    mock_sqs = AsyncMock(spec=StockQueryService)
+    mock_indicator = AsyncMock(spec=IndicatorService)
+    mock_mapper = MagicMock(spec=StockCodeMapper)
+    mock_tm = MagicMock(spec=TimeManager)
     mock_logger = MagicMock()
 
     service = OneilUniverseService(

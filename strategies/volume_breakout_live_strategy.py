@@ -172,7 +172,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 continue
 
             try:
-                price_resp = await self._sqs.handle_get_current_stock_price(code, logger=self._logger)
+                price_resp = await self._sqs.handle_get_current_stock_price(code)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     self._logger.warning({
                         "event": "check_exits_failed",

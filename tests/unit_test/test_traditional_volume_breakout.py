@@ -15,22 +15,25 @@ from strategies.traditional_volume_breakout_strategy import (
     WatchlistItem,
     PositionState,
 )
+from services.stock_query_service import StockQueryService
+from market_data.stock_code_mapper import StockCodeMapper
+from core.time_manager import TimeManager
 
 
 class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
     def _make_strategy(self, **config_overrides):
-        sqs = MagicMock()
-        sqs.handle_get_current_stock_price = AsyncMock()
-        sqs.get_top_trading_value_stocks = AsyncMock()
-        sqs.get_recent_daily_ohlcv = AsyncMock()
+        sqs = MagicMock(spec=StockQueryService)
+        sqs.handle_get_current_stock_price = AsyncMock(spec=StockQueryService.handle_get_current_stock_price)
+        sqs.get_top_trading_value_stocks = AsyncMock(spec=StockQueryService.get_top_trading_value_stocks)
+        sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
 
-        mapper = MagicMock()
+        mapper = MagicMock(spec=StockCodeMapper)
         mapper.is_kosdaq.return_value = True
         mapper.get_name_by_code.return_value = "테스트종목"
 
         kst = pytz.timezone("Asia/Seoul")
-        tm = MagicMock()
+        tm = MagicMock(spec=TimeManager)
         now = kst.localize(datetime(2026, 2, 25, 11, 0))
         open_time = kst.localize(datetime(2026, 2, 25, 9, 0))
         close_time = kst.localize(datetime(2026, 2, 25, 15, 30))
@@ -130,8 +133,11 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
             data=[{"mksc_shrn_iscd": "123456", "hts_kor_isnm": "소형주"}]
         )
         # 거래량 1000 × 종가 10000 = 거래대금 1000만 (100억 미만)
-        sqs.get_recent_daily_ohlcv.return_value = self._make_ohlcv(
-            days=20, base_close=10000, base_vol=1000
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", 
+            data=self._make_ohlcv(
+                days=20, base_close=10000, base_vol=1000
+            )
         )
 
         await strategy._build_watchlist()
@@ -149,7 +155,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         ohlcv = self._make_ohlcv(days=20, base_close=20000, base_high=21000, base_vol=1_000_000)
         ohlcv[-1]["close"] = 15000  # 전일 종가 < 20일 MA(~20000)
 
-        sqs.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=ohlcv
+        )
 
         await strategy._build_watchlist()
         self.assertEqual(len(strategy._watchlist), 0)
@@ -164,7 +172,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         )
         # 최고가 30000, 종가 28000 → 거리 6.7% > 3%
         ohlcv = self._make_ohlcv(days=20, base_close=28000, base_high=30000, base_vol=1_000_000)
-        sqs.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=ohlcv
+        )
 
         await strategy._build_watchlist()
         self.assertEqual(len(strategy._watchlist), 0)
@@ -181,7 +191,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # 전일 종가가 MA보다 높도록 이전 종가들을 낮게 설정
         ohlcv = self._make_ohlcv(days=20, base_close=29000, base_high=30000, base_vol=1_000_000)
         ohlcv[-1]["close"] = 29500  # 전일 종가를 MA(~29000)보다 높게
-        sqs.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=ohlcv
+        )
 
         await strategy._build_watchlist()
         self.assertEqual(len(strategy._watchlist), 1)
@@ -394,7 +406,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # 20일 MA = 10800 (현재가 10500 < MA 10800)
         ohlcv = [{"close": 10800, "high": 11000, "low": 10500, "volume": 100000, "date": f"2026020{i+1:02d}"}
                  for i in range(20)]
-        sqs.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=ohlcv
+        )
 
         holdings = [{"code": "005930", "buy_price": 10100}]
         signals = await strategy.check_exits(holdings)
@@ -415,7 +429,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # 추세종료 체크용: MA를 현재가보다 낮게
         ohlcv = [{"close": 10000, "high": 11000, "low": 9800, "volume": 100000, "date": f"2026020{i+1:02d}"}
                  for i in range(20)]
-        sqs.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=ohlcv
+        )
 
         holdings = [{"code": "005930", "buy_price": 10100}]
         await strategy.check_exits(holdings)
@@ -436,7 +452,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # MA = 10000 < 현재가 10400 → 추세종료 X
         ohlcv = [{"close": 10000, "high": 10500, "low": 9800, "volume": 100000, "date": f"2026020{i+1:02d}"}
                  for i in range(20)]
-        sqs.get_recent_daily_ohlcv.return_value = ohlcv
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=ohlcv
+        )
 
         holdings = [{"code": "005930", "buy_price": 10100}]
         signals = await strategy.check_exits(holdings)
@@ -683,7 +701,9 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         )
         
         # MA 조회 (추세 종료 아님)
-        sqs.get_recent_daily_ohlcv.return_value = [{"close": 900}] * 20
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[{"close": 900}] * 20
+        )
         
         await strategy.check_exits(holdings)
         
@@ -743,12 +763,16 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         strategy, sqs, _, _, _ = self._make_strategy()
         
         # Case 1: OHLCV list empty or short
-        sqs.get_recent_daily_ohlcv.return_value = [{"close": 100}] * 10 # period 20 required
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[{"close": 100}] * 10
+        )
         ma = await strategy._get_current_ma("A", 20)
         self.assertIsNone(ma)
         
         # Case 2: OHLCV exists but closes missing
-        sqs.get_recent_daily_ohlcv.return_value = [{"open": 100}] * 30 # no close key
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data=[{"open": 100}] * 30
+        )
         ma = await strategy._get_current_ma("A", 20)
         self.assertIsNone(ma)
 

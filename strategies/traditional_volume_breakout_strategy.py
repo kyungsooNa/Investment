@@ -331,7 +331,8 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
             stock_name = stock.get("hts_kor_isnm", "") or self._mapper.get_name_by_code(code) or code
 
             try:
-                ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.high_period)
+                ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.high_period)
+                ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
                 if not ohlcv or len(ohlcv) < self._cfg.ma_period:
                     continue
 
@@ -461,15 +462,11 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
     async def _get_current_ma(self, code: str, period: int) -> Optional[float]:
         """종목의 현재 N일 이동평균을 계산."""
         try:
-            ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=period)
+            ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=period)
+            ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
             if not ohlcv or len(ohlcv) < period:
                 return None
             closes = [row.get("close", 0) for row in ohlcv[-period:] if row.get("close")]
-            if len(closes) < period:
-                return None
-            return sum(closes) / len(closes)
-        except Exception:
-            return None
             if len(closes) < period:
                 return None
             return sum(closes) / len(closes)

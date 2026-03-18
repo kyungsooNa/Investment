@@ -213,7 +213,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         period = self._cfg.trend_exit_ma_period  # 10일
         
         # 1. 10일 MA와 20일 평균 거래량을 계산하기 위해 20일치 데이터 1회 조회
-        ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=max(period, 20))
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=max(period, 20))
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
         if not ohlcv or len(ohlcv) < period:
             return False, ""
             
@@ -331,7 +332,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return False
         
         # 1. 거래일 수 계산 (OHLCV 조회)
-        ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.time_stop_days + 20)
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.time_stop_days + 20)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
         if not ohlcv:
             return False
             

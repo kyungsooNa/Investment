@@ -5,19 +5,22 @@ from datetime import datetime
 from common.types import ResCommonResponse, TradeSignal
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.oneil_common_types import OSBWatchlistItem, OSBPositionState
+from services.stock_query_service import StockQueryService
+from services.oneil_universe_service import OneilUniverseService
+from core.time_manager import TimeManager
 
 @pytest.fixture
 def mock_strategy_deps():
-    sqs = MagicMock()
-    universe = MagicMock()
-    tm = MagicMock()
+    sqs = MagicMock(spec=StockQueryService)
+    universe = MagicMock(spec=OneilUniverseService)
+    tm = MagicMock(spec=TimeManager)
     logger = MagicMock()
     
-    sqs.get_current_price = AsyncMock()
-    sqs.get_stock_conclusion = AsyncMock()
-    sqs.get_recent_daily_ohlcv = AsyncMock()
-    universe.get_watchlist = AsyncMock()
-    universe.is_market_timing_ok = AsyncMock()
+    sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.get_stock_conclusion = AsyncMock(spec=StockQueryService.get_stock_conclusion)
+    sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
+    universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
+    universe.is_market_timing_ok = AsyncMock(spec=OneilUniverseService.is_market_timing_ok)
     
     return sqs, universe, tm, logger
 
@@ -465,7 +468,7 @@ async def test_check_time_stop_logic(mock_strategy_deps):
         {"date": "20250101"}, # 진입일
         {"date": "20250102"}, {"date": "20250103"}, {"date": "20250104"}, {"date": "20250105"}, {"date": "20250106"} # 5일 경과
     ]
-    sqs.get_recent_daily_ohlcv.return_value = ohlcv
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # Case 1: 5일 경과 & 횡보(10100원, +1%) & 급등이력 없음 -> True (손절)
     assert await strategy._check_time_stop("005930", state, 10100) is True
@@ -483,7 +486,7 @@ async def test_check_time_stop_logic(mock_strategy_deps):
     
     # Case 5: 4일 경과 (데이터 부족) -> False
     ohlcv_short = ohlcv[:-1] # 4일치
-    sqs.get_recent_daily_ohlcv.return_value = ohlcv_short
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv_short)
     assert await strategy._check_time_stop("005930", state, 10100) is False
 
 @pytest.mark.asyncio
@@ -502,7 +505,7 @@ async def test_check_exits_trend_break(mock_strategy_deps):
     # 20일치 데이터. 종가 11000, 거래량 100000으로 일정하다고 가정.
     # 10MA = 11000, 20AvgVol = 100000
     ohlcv = [{"close": 11000, "volume": 100000} for _ in range(20)]
-    sqs.get_recent_daily_ohlcv.return_value = ohlcv
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # 3. 현재가 Mock (추세 이탈 조건)
     # 가격: 10800 (< 10MA 11000) -> 가격 이탈
@@ -538,7 +541,7 @@ async def test_check_exits_trend_break_no_volume(mock_strategy_deps):
     
     # 10MA = 11000, 20AvgVol = 100000
     ohlcv = [{"close": 11000, "volume": 100000} for _ in range(20)]
-    sqs.get_recent_daily_ohlcv.return_value = ohlcv
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # 가격: 10800 (< 11000) -> 가격 이탈
     # 거래량: 40000. 장 진행률 0.5 -> 예상 80000 (< 100000) -> 거래량 부족

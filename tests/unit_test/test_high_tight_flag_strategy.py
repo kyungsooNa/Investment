@@ -5,6 +5,9 @@ from datetime import datetime
 from common.types import ResCommonResponse
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.oneil_common_types import HTFConfig, HTFPositionState, OSBWatchlistItem
+from services.stock_query_service import StockQueryService
+from services.oneil_universe_service import OneilUniverseService
+from core.time_manager import TimeManager
 
 
 # ── 헬퍼: 합성 OHLCV 데이터 생성 ────────────────────────────────────
@@ -60,16 +63,16 @@ def _make_ohlcv_pole_and_flag(
 
 @pytest.fixture
 def mock_deps():
-    sqs = MagicMock()
-    universe = MagicMock()
-    tm = MagicMock()
+    sqs = MagicMock(spec=StockQueryService)
+    universe = MagicMock(spec=OneilUniverseService)
+    tm = MagicMock(spec=TimeManager)
     logger = MagicMock()
 
-    sqs.get_current_price = AsyncMock()
-    sqs.get_stock_conclusion = AsyncMock()
-    sqs.get_recent_daily_ohlcv = AsyncMock()
-    universe.get_watchlist = AsyncMock()
-    universe.is_market_timing_ok = AsyncMock()
+    sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.get_stock_conclusion = AsyncMock(spec=StockQueryService.get_stock_conclusion)
+    sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
+    universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
+    universe.is_market_timing_ok = AsyncMock(spec=OneilUniverseService.is_market_timing_ok)
 
     return sqs, universe, tm, logger
 
@@ -203,7 +206,7 @@ async def test_scan_buy_signal(htf_scan_setup):
         flag_days=18, flag_drawdown_pct=10.0,
         pole_volume=500000, flag_volume=100000,
     )
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     # 현재가: 10500 (> pole_high 10000) + 거래량 대량
     sqs.get_current_price.return_value = ResCommonResponse(
@@ -237,7 +240,7 @@ async def test_scan_no_breakout_price(htf_scan_setup):
         flag_days=18, flag_drawdown_pct=10.0,
         pole_volume=500000, flag_volume=100000,
     )
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     # 현재가 9800 (< pole_high 10000) → 돌파 실패
     sqs.get_current_price.return_value = ResCommonResponse(
@@ -260,7 +263,7 @@ async def test_scan_low_volume(htf_scan_setup):
         flag_days=18, flag_drawdown_pct=10.0,
         pole_volume=500000, flag_volume=100000,
     )
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     # 현재가 돌파하지만 거래량 부족 (10000 / 0.5 = 20000 < avg * 2.0)
     sqs.get_current_price.return_value = ResCommonResponse(
@@ -283,7 +286,7 @@ async def test_scan_low_execution_strength(htf_scan_setup):
         flag_days=18, flag_drawdown_pct=10.0,
         pole_volume=500000, flag_volume=100000,
     )
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
@@ -379,7 +382,7 @@ async def test_exit_trailing_ma_stop(mock_deps):
 
     # 10일 OHLCV: 종가 11000 일정 → 10MA = 11000, 현재가 10500 < 11000
     ohlcv = [{"close": 11000, "volume": 100000} for _ in range(10)]
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     holdings = [{"code": "005930", "buy_price": 10000, "qty": 30, "name": "테스트종목"}]
     signals = await strategy.check_exits(holdings)
@@ -409,7 +412,7 @@ async def test_exit_hold(mock_deps):
 
     # 10MA = 11000, 현재가 11500 > 11000 → MA 위
     ohlcv = [{"close": 11000, "volume": 100000} for _ in range(10)]
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     holdings = [{"code": "005930", "buy_price": 10000, "qty": 50, "name": "테스트종목"}]
     signals = await strategy.check_exits(holdings)
@@ -497,7 +500,7 @@ async def test_scan_ohlcv_data_insufficient(htf_scan_setup):
 
     # 39일치 데이터만 반환
     ohlcv = _make_ohlcv_pole_and_flag(pole_days=20, flag_days=19)  # total 39 days
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     signals = await strategy.scan()
     assert len(signals) == 0
@@ -510,7 +513,7 @@ async def test_scan_current_price_api_failure(htf_scan_setup):
 
     # OHLCV는 정상 (패턴 감지 성공 유도)
     ohlcv = _make_ohlcv_pole_and_flag()
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     # 현재가 조회 실패
     sqs.get_current_price.return_value = ResCommonResponse(
@@ -528,7 +531,7 @@ async def test_scan_conclusion_api_failure(htf_scan_setup):
 
     # OHLCV 정상
     ohlcv = _make_ohlcv_pole_and_flag()
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     # 현재가 정상 (돌파 조건 충족)
     sqs.get_current_price.return_value = ResCommonResponse(
@@ -551,7 +554,7 @@ async def test_scan_insufficient_volume_data_for_avg(htf_scan_setup):
 
     # OHLCV는 HTF 패턴을 만족하지만, 데이터 길이는 19일.
     ohlcv = _make_ohlcv_pole_and_flag(pole_days=10, flag_days=8)  # total 18 days
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     # 현재가 및 체결강도는 돌파 조건 만족
     sqs.get_current_price.return_value = ResCommonResponse(
@@ -725,7 +728,7 @@ async def test_check_exits_trailing_ma_data_insufficient(mock_deps):
 
     # OHLCV 데이터가 10일치 미만 (5일)
     ohlcv = [{"close": 11000} for _ in range(5)]
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
     signals = await strategy.check_exits(holdings)
@@ -744,7 +747,7 @@ async def test_check_htf_setup_no_pattern(htf_scan_setup):
 
     # OHLCV는 정상적으로 조회되나, 패턴 감지에는 실패하는 데이터 (surge_ratio < 1.9)
     ohlcv = _make_ohlcv_pole_and_flag(pole_start_price=8000, pole_end_price=10000)
-    sqs.get_recent_daily_ohlcv.return_value = MagicMock(rt_cd="0", data=ohlcv)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     # _detect_pole_and_flag가 None을 반환하므로 _check_breakout은 호출되지 않아야 함
     sqs.get_current_price.reset_mock()
