@@ -20,7 +20,7 @@ from core.performance_manager import PerformanceManager
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from scheduler.background_scheduler import BackgroundScheduler
 from scheduler.foreground_scheduler import ForegroundScheduler
-from scheduler.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
+from task.background.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from services.naver_finance_scraper import NaverFinanceScraper
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -30,9 +30,9 @@ from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
-from services.ranking_task import RankingTask
-from services.websocket_watchdog_task import WebSocketWatchdogTask
-from services.market_data_collector_task import MarketDataCollectorTask
+from task.background.ranking_task import RankingTask
+from task.background.websocket_watchdog_task import WebSocketWatchdogTask
+from task.background.market_data_collector_task import MarketDataCollectorTask
 from managers.market_data_repository import MarketDataRepository
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager

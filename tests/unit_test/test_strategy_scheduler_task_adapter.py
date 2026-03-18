@@ -4,7 +4,7 @@ StrategyScheduler를 SchedulableTask 인터페이스로 래핑하는 어댑터 �
 """
 import pytest
 from unittest.mock import MagicMock, AsyncMock, PropertyMock
-from scheduler.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
+from task.background.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from interfaces.schedulable_task import TaskPriority, TaskState
 
 

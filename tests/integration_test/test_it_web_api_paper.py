@@ -526,7 +526,7 @@ class TestWebAppContextInitialization:
         from services.order_execution_service import OrderExecutionService
         from services.indicator_service import IndicatorService
         from services.oneil_universe_service import OneilUniverseService
-        from services.ranking_task import RankingTask
+        from task.background.ranking_task import RankingTask
         from core.time_manager import TimeManager
         from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 

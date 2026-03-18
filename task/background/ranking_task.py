@@ -1,4 +1,4 @@
-# services/ranking_task.py
+# task/background/ranking_task.py
 """
 랭킹 데이터 수집 및 캐시 관리 태스크.
 전체 종목 순회가 필요한 랭킹 집계(외국인/기관/개인 순매수 등)와

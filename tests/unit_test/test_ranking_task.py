@@ -7,7 +7,7 @@ import time
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock, AsyncMock, patch
-from services.ranking_task import RankingTask, _ETF_PREFIXES, _chunked
+from task.background.ranking_task import RankingTask, _ETF_PREFIXES, _chunked
 from common.types import ResCommonResponse, ErrorCode
 from managers.market_date_manager import MarketDateManager
 
@@ -683,7 +683,7 @@ async def test_refresh_basic_ranking_exception_and_notification(bg_service, mock
     bg_service._nm = AsyncMock() # NotificationManager
 
     # asyncio.gather가 예외를 던지도록 설정하여 try-except 블록 진입 유도
-    with patch("services.ranking_task.asyncio.gather", side_effect=Exception("Critical Error")):
+    with patch("task.background.ranking_task.asyncio.gather", side_effect=Exception("Critical Error")):
         await bg_service.refresh_basic_ranking()
 
     logger.error.assert_called()
@@ -729,7 +729,7 @@ async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
 
     # 2. Failure case
     bg_service._nm.reset_mock()
-    with patch("services.ranking_task.asyncio.gather", side_effect=Exception("API Fail")):
+    with patch("task.background.ranking_task.asyncio.gather", side_effect=Exception("API Fail")):
         await bg_service.refresh_investor_ranking()
 
     bg_service._nm.emit.assert_awaited()

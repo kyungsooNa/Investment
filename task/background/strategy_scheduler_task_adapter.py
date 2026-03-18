@@ -1,4 +1,4 @@
-# scheduler/strategy_scheduler_task_adapter.py
+# task/background/strategy_scheduler_task_adapter.py
 """
 StrategyScheduler를 SchedulableTask 인터페이스로 래핑하는 어댑터.
 기존 StrategyScheduler 코드를 변경하지 않고 BackgroundScheduler에 등록할 수 있게 한다.

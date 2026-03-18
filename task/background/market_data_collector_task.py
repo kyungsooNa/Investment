@@ -1,4 +1,4 @@
-# services/market_data_collector_task.py
+# task/background/market_data_collector_task.py
 """
 장 마감 후 전체 종목 현재가를 수집하여 DB에 저장하는 백그라운드 태스크.
 get_current_price API를 사용하여 종목별 50+ 필드(시가/고가/저가/현재가/PER/PBR 등)를 수집한다.
