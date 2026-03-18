@@ -8,6 +8,9 @@ from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.oneil_common_types import (
     OneilPocketPivotConfig, PPPositionState, OSBWatchlistItem,
 )
+from services.stock_query_service import StockQueryService
+from services.oneil_universe_service import OneilUniverseService
+from core.time_manager import TimeManager
 
 
 def _make_ohlcv(count=60, close=68000, open_=67000, volume=50000):
@@ -22,16 +25,16 @@ def _make_ohlcv(count=60, close=68000, open_=67000, volume=50000):
 
 @pytest.fixture
 def mock_deps():
-    sqs = MagicMock()
-    universe = MagicMock()
-    tm = MagicMock()
+    sqs = MagicMock(spec=StockQueryService)
+    universe = MagicMock(spec=OneilUniverseService)
+    tm = MagicMock(spec=TimeManager)
     logger = MagicMock()
 
-    sqs.get_current_price = AsyncMock()
-    sqs.get_stock_conclusion = AsyncMock()
-    sqs.get_recent_daily_ohlcv = AsyncMock()
-    universe.get_watchlist = AsyncMock()
-    universe.is_market_timing_ok = AsyncMock()
+    sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.get_stock_conclusion = AsyncMock(spec=StockQueryService.get_stock_conclusion)
+    sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
+    universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
+    universe.is_market_timing_ok = AsyncMock(spec=OneilUniverseService.is_market_timing_ok)
 
     return sqs, universe, tm, logger
 
@@ -906,23 +909,60 @@ async def test_scan_api_failures_and_edge_cases(pp_scan_setup, price_output, ohl
     if expected_log_event:
         assert any(expected_log_event in call.args[0].get("event", "") for call in logger.warning.call_args_list)
 
-@pytest.mark.asyncio
 async def test_scan_exception_logging(pp_scan_setup):
     """scan: 체결강도 조회 중 예외 발생 시 경고 로그 검증."""
     strategy, sqs, _, _, logger = pp_scan_setup
     
-    # Setup for success up to conclusion check
-    sqs.get_current_price.return_value = _pp_price_output()
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=_make_ohlcv())
+    # [수정] 1. Pocket Pivot 조건을 확실히 통과하도록 정교하게 설정
+    # - current: 68500 (20MA인 68000 근처이면서 전일종가 67000보다 높음 -> 가격 통과)
+    # - vol: 100000 (0.5 progress 기준 예상 거래량 200,000 -> 하락일 최대 50,000보다 큼 -> 거래량 통과)
+    # - pg_buy: 100000 (시총 1000억 대비 충분히 큰 금액 -> 스마트 머니 통과)
+    sqs.get_current_price.return_value = _pp_price_output(
+        current="68500", 
+        vol="100000", 
+        pg_buy="100000",
+        prev_close="67000"
+    )
     
-    # Make conclusion check raise exception
+    # [수정] 2. OHLCV 데이터 (하락일이 확실히 포함되도록 보장)
+    # _make_ohlcv는 기본적으로 close(68000) > open(67000)으로 생성하여 '하락일'이 없을 수 있음
+    # 하락일(open > close) 거래량을 50,000으로 고정 설정
+    down_day_ohlcv = _make_ohlcv(count=60, close=67000, open_=68000, volume=50000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=down_day_ohlcv
+    )
+    
+    # 3. 체결강도 조회 시 예외 발생 유도 (드디어 이 단계에 진입 가능)
     sqs.get_stock_conclusion.side_effect = Exception("API Error")
     
+    # 4. 스캔 실행
     await strategy.scan()
     
-    # Verify warning log
-    assert any("cgld_check_failed" in call.args[0].get("event", "") for call in logger.warning.call_args_list)
+    # 5. 검증
+    found = any(
+        isinstance(call.args[0], dict) and call.args[0].get("event") == "cgld_check_failed"
+        for call in logger.warning.call_args_list
+    )
+            
+    assert found, f"로그가 여전히 비어있습니다. 이전 단계(PP/스마트머니)에서 return 되었는지 확인 필요. 호출 로그: {logger.warning.call_args_list}"
 
+@pytest.mark.asyncio
+async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
+    """Case 3: 하락일이 없는 경우 (로직 수정 후 0개여야 함)"""
+    strategy, sqs, _, _, _ = pp_scan_setup
+
+    # 모든 봉을 양봉으로 생성 (close 68000 > open 67000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_make_ohlcv(count=60, close=68000, open_=67000)
+    )
+    sqs.get_current_price.return_value = _pp_price_output()
+    sqs.get_stock_conclusion.return_value = _cgld_output()
+    
+    signals = await strategy.scan()
+    
+    # 전략 로직 수정으로 인해 이제 하락일이 없으면 0을 반환합니다.
+    assert len(signals) == 0
+    
 @pytest.mark.asyncio
 async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
     """_check_pocket_pivot: 데이터 부족, MA 0, 하락일 없음 등 엣지 케이스 검증."""
@@ -930,7 +970,7 @@ async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
 
     # Case 1: OHLCV 데이터 부족 (10일 미만)
     ts.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=_make_ohlcv(count=5))
-    ts.get_current_stock_price.return_value = _pp_price_output()
+    ts.get_current_price.return_value = _pp_price_output()
     ts.get_stock_conclusion.return_value = _cgld_output()
     signals = await strategy.scan()
     assert len(signals) == 0
@@ -942,7 +982,7 @@ async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
 
     # Case 3: 하락일이 없는 경우 (down_day_volumes가 비어 max() 에러 대신 통과)
     ts.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=_make_ohlcv(count=60, close=68000, open_=67000))
-    ts.get_current_stock_price.return_value = _pp_price_output()
+    ts.get_current_price.return_value = _pp_price_output()
     ts.get_stock_conclusion.return_value = _cgld_output()
     signals = await strategy.scan()
     assert len(signals) == 0
@@ -995,7 +1035,7 @@ async def test_check_exits_edge_cases(mock_deps):
     assert len(signals) == 1
     assert "하드스탑" in signals[0].reason
 
-    # Case 3: get_current_stock_price 응답에 output이 없음
+    # Case 3: get_current_price 응답에 output이 없음
     sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None})
     signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
     assert len(signals) == 0

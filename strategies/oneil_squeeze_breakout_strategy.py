@@ -86,13 +86,22 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Market not open or just started"})
             return signals
 
-        # 3. 종목별 돌파 체크
+        # 3. 마켓 타이밍 사전 체크 (루프 내 중복 await 방지)
+        market_timing = {
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", logger=self._logger)
+        }
+        if not any(market_timing.values()):
+            self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
+            return signals
+
+        # 4. 종목별 돌파 체크
         for code, item in watchlist.items():
             if code in self._position_state:
                 continue
 
-            # 마켓 타이밍 체크 (서비스 위임)
-            if not await self._universe.is_market_timing_ok(item.market, logger=self._logger):
+            # 마켓 타이밍 체크 (사전 체크된 값 사용)
+            if not market_timing.get(item.market, False):
                 continue
 
             # 스퀴즈 조건 (이미 유니버스에서 걸러졌지만, 전일 대비 BB폭 확인 등 추가 체크 가능)
@@ -129,6 +138,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         # 🚨 [관문 1] 가격 돌파
         if current <= item.high_20d:
+            # 너무 많은 로그를 피하기 위해 이 단계는 로그 생략
             return None
             
         # 🚨 [관문 2] 거래량 돌파 (+ 뻥튀기 방어)
@@ -136,22 +146,27 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         proj_vol = vol / effective_progress
         
         if vol < (item.avg_vol_20d * 0.3): # 최소 절대 거래량 (평소 20일 평균의 30%) 미달 시 가짜 돌파
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_absolute_volume", "vol": vol, "min_required": item.avg_vol_20d * 0.3})
             return None
         if proj_vol < item.avg_vol_20d * self._cfg.volume_breakout_multiplier:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "insufficient_projected_volume", "proj_vol": int(proj_vol), "threshold": item.avg_vol_20d * self._cfg.volume_breakout_multiplier})
             return None
             
         # 🚨 [관문 3] 스마트 머니(프로그램 수급) 상세 필터
         if pg_buy <= self._cfg.program_net_buy_min:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_net_buy", "pg_buy": pg_buy, "min_required": self._cfg.program_net_buy_min})
             return None
             
         pg_buy_amount = pg_buy * current # 프로그램 순매수 금액 (추정)
         
         # 3-1. 거래대금의 10% 이상 개입했는가?
         if trade_value > 0 and (pg_buy_amount / trade_value * 100) < self._cfg.program_to_trade_value_pct:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_to_trade_value", "pg_buy_amount": pg_buy_amount, "trade_value": trade_value})
             return None
             
         # 3-2. 시가총액의 0.5% 이상 개입했는가?
         if item.market_cap > 0 and (pg_buy_amount / item.market_cap * 100) < self._cfg.program_to_market_cap_pct:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_to_market_cap", "pg_buy_amount": pg_buy_amount, "market_cap": item.market_cap})
             return None
 
         # 🌟 [최종 관문] 매수 직전 체결강도 스냅샷 (>=120%) 🌟
@@ -185,7 +200,15 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         )
         self._save_state()
         
-        reason_msg = f"오닐돌파(체결강도 {cgld_val:.1f}%, PG매수 {pg_buy_amount//100_000_000}억)"
+        pg_ratio = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0.0
+        vol_ratio = (proj_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
+
+        reason_msg = (
+            f"오닐돌파(돌파 {current:,}>{item.high_20d:,}, "
+            f"예상거래 {vol_ratio:.0f}%, "
+            f"PG매수 {pg_buy_amount//100_000_000:,}억({pg_ratio:.1f}%), "
+            f"체결강도 {cgld_val:.1f}%)"
+        )
         
         self._logger.info({
             "event": "buy_signal_generated",
@@ -205,7 +228,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         period = self._cfg.trend_exit_ma_period  # 10일
         
         # 1. 10일 MA와 20일 평균 거래량을 계산하기 위해 20일치 데이터 1회 조회
-        ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=max(period, 20))
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=max(period, 20))
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
         if not ohlcv or len(ohlcv) < period:
             return False, ""
             
@@ -323,7 +347,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return False
         
         # 1. 거래일 수 계산 (OHLCV 조회)
-        ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.time_stop_days + 20)
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.time_stop_days + 20)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
         if not ohlcv:
             return False
             

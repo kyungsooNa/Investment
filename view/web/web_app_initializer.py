@@ -233,6 +233,7 @@ class WebAppContext:
             virtual_manager=self.virtual_manager,
             order_execution_service=self.order_execution_service,
             stock_query_service=self.stock_query_service,
+            stock_code_mapper=self.stock_code_mapper,
             time_manager=self.time_manager,
             market_date_manager=self._mdm,
             logger=get_strategy_logger('StrategyScheduler'),

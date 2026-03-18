@@ -115,7 +115,6 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
             handler.close()
             logger.removeHandler(handler)
 
-    logger.setLevel(logging.INFO)
     logger.propagate = True
 
     strategy_log_dir = os.path.join(log_dir, "strategies")

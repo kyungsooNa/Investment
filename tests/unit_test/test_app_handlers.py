@@ -392,7 +392,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         """
         self.mock_env.is_paper_trading = False
 
-        # TradingService의 get_top_market_cap_stocks와 get_current_stock_price를 Mocking
+        # TradingService의 get_top_market_cap_stocks와 get_current_price를 Mocking
         self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
             rt_cd="0",
             msg1="성공",

@@ -178,10 +178,12 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                 )
                 self._save_state()
 
+                vol_ratio = (projected_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
+
                 reason_msg = (
-                    f"20일고가({item.high_20d:,}) 돌파, "
-                    f"예상거래량 {projected_vol:,.0f} "
-                    f"(기준 {vol_threshold:,.0f})"
+                    f"전통돌파(돌파 {current:,}>{item.high_20d:,}, "
+                    f"예상거래 {vol_ratio:.0f}%(20일평균대비), "
+                    f"5일평균대금 {item.avg_trading_value_5d / 100_000_000:,.0f}억)"
                 )
                 signals.append(TradeSignal(
                     code=code, name=item.name, action="BUY", price=current, qty=qty,
@@ -329,7 +331,8 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
             stock_name = stock.get("hts_kor_isnm", "") or self._mapper.get_name_by_code(code) or code
 
             try:
-                ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.high_period)
+                ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.high_period)
+                ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
                 if not ohlcv or len(ohlcv) < self._cfg.ma_period:
                     continue
 
@@ -459,15 +462,11 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
     async def _get_current_ma(self, code: str, period: int) -> Optional[float]:
         """종목의 현재 N일 이동평균을 계산."""
         try:
-            ohlcv = await self._sqs.get_recent_daily_ohlcv(code, limit=period)
+            ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=period)
+            ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
             if not ohlcv or len(ohlcv) < period:
                 return None
             closes = [row.get("close", 0) for row in ohlcv[-period:] if row.get("close")]
-            if len(closes) < period:
-                return None
-            return sum(closes) / len(closes)
-        except Exception:
-            return None
             if len(closes) < period:
                 return None
             return sum(closes) / len(closes)

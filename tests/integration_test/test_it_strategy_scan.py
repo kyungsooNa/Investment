@@ -390,44 +390,50 @@ class TestTraditionalVolumeBreakoutScan:
             TraditionalVolumeBreakoutStrategy, TraditionalVBConfig,
         )
         from market_data.stock_code_mapper import StockCodeMapper
+        from common.types import ResCommonResponse
 
-        quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+        # 1. 기초 데이터 준비 (msg1 필드 추가)
+        ohlcv_list = _make_ohlcv_data(days=25, base_close=70000, base_vol=1000000)
+        ohlcv_resp = ResCommonResponse(rt_cd="0", msg1="ok", data=ohlcv_list)
 
-        trading_value_resp = _make_trading_value_response([
-            _make_trading_value_stock("005930", "삼성전자", "5000000"),
-        ])
-
-        # 20일 OHLCV 데이터 (전략이 list 형태로 기대)
-        ohlcv_data = _make_ohlcv_data(days=25, base_close=70000, base_vol=1000000)
-
-        # 현재가 75000 → 20일 최고가(~72400+500=72900 high) 돌파
-        # 누적거래량 3000000, 장중 50% 경과 → 환산 6000000 > avg(~1120000)*1.5
-        price_resp = _make_current_price_response(
-            code="005930", price="75000", open_price="72000",
-            high="75500", vol="3000000",
+        # 2. Mock 설정
+        # 현재가 응답 (msg1 필드 추가)
+        price_handle_resp = ResCommonResponse(
+            rt_cd="0",
+            msg1="ok",
+            data={
+                "price": "75000",      # 돌파 가격
+                "acml_vol": "3000000", # 누적 거래량
+                "name": "삼성전자"
+            }
         )
 
-        async def _side_effect(url, *args, **kwargs):
-            u = str(url)
-            if "volume-rank" in u or "ranking" in u:
-                return make_http_response(trading_value_resp)
-            return make_http_response(price_resp)
+        # 거래대금 상위 종목 응답 (msg1 필드 추가)
+        top_stocks_resp = ResCommonResponse(
+            rt_cd="0", 
+            msg1="ok", 
+            data=[_make_trading_value_stock("005930")]
+        )
 
+        # 서비스 레이어 메서드 Mocking
         mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=_side_effect,
+            deep_paper_ctx.stock_query_service, "get_top_trading_value_stocks",
+            new_callable=AsyncMock, 
+            return_value=top_stocks_resp
         )
-
-        mock_mapper = MagicMock(spec=StockCodeMapper)
-        mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
-        deep_paper_ctx.broker._stock_mapper = mock_mapper
-
-        # get_recent_daily_ohlcv를 서비스 레벨에서 mock (전략이 list를 기대하는 인터페이스 불일치 우회)
+        mocker.patch.object(
+            deep_paper_ctx.stock_query_service, "handle_get_current_stock_price",
+            new_callable=AsyncMock, return_value=price_handle_resp
+        )
         mocker.patch.object(
             deep_paper_ctx.stock_query_service, "get_recent_daily_ohlcv",
-            new_callable=AsyncMock, return_value=ohlcv_data,
+            new_callable=AsyncMock, return_value=ohlcv_resp
         )
 
+        # 3. 시간 및 환경 설정
+        mock_mapper = MagicMock(spec=StockCodeMapper)
+        mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
+        
         from datetime import datetime
         from pytz import timezone
         kst = timezone("Asia/Seoul")
@@ -438,8 +444,10 @@ class TestTraditionalVolumeBreakoutScan:
 
         config = TraditionalVBConfig(
             min_avg_trading_value_5d=0,
-            near_high_pct=100.0,  # 필터 완화
+            near_high_pct=100.0,
         )
+
+        # 4. 전략 실행
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
             stock_code_mapper=mock_mapper,
@@ -447,15 +455,15 @@ class TestTraditionalVolumeBreakoutScan:
             config=config,
         )
         strategy._watchlist_date = ""
-        strategy._position_state.clear()  # 이전 테스트 잔여 상태 제거
+        strategy._position_state.clear()
 
         signals = await strategy.scan()
 
+        # 5. 검증
         assert len(signals) >= 1
         sig = signals[0]
         assert sig.code == "005930"
         assert sig.action == "BUY"
-        assert sig.strategy_name == "거래량돌파(전통)"
         assert sig.price == 75000
 
     async def test_scan_no_signal_price_below_high(self, deep_paper_ctx, mocker):

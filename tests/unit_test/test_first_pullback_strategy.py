@@ -6,6 +6,9 @@ from common.types import ResCommonResponse, TradeSignal
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from strategies.first_pullback_types import FirstPullbackConfig, FPPositionState
 from strategies.oneil_common_types import OSBWatchlistItem
+from services.stock_query_service import StockQueryService
+from services.oneil_universe_service import OneilUniverseService
+from core.time_manager import TimeManager
 
 
 # ── 헬퍼 함수 ──────────────────────────────────────────────────
@@ -87,16 +90,16 @@ def _cgld_output(strength="105.0"):
 
 @pytest.fixture
 def mock_deps():
-    sqs = MagicMock()
-    universe = MagicMock()
-    tm = MagicMock()
+    sqs = MagicMock(spec=StockQueryService)
+    universe = MagicMock(spec=OneilUniverseService)
+    tm = MagicMock(spec=TimeManager)
     logger = MagicMock()
 
-    sqs.get_current_price = AsyncMock()
-    sqs.get_stock_conclusion = AsyncMock()
-    sqs.get_recent_daily_ohlcv = AsyncMock()
-    universe.get_watchlist = AsyncMock()
-    universe.is_market_timing_ok = AsyncMock()
+    sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.get_stock_conclusion = AsyncMock(spec=StockQueryService.get_stock_conclusion)
+    sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
+    universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
+    universe.is_market_timing_ok = AsyncMock(spec=OneilUniverseService.is_market_timing_ok)
 
     return sqs, universe, tm, logger
 

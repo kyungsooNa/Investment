@@ -123,7 +123,11 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 # 4) 거래량 체크 (현재는 스킵, 추후 추가 가능)
                 
                 # BUY 신호 생성
-                reason_msg = f"시가대비 +{change_from_open:.1f}%, 거래량 {current_vol:,}"
+                reason_msg = (
+                    f"시가돌파(시가대비 +{change_from_open:.1f}%, "
+                    f"상승확인 {open_price:,}->{current:,}, "
+                    f"누적거래량 {current_vol:,})"
+                )
                 signals.append(TradeSignal(
                     code=code, name=stock_name, action="BUY", price=current, qty=1,
                     reason=reason_msg, strategy_name=self.name,
@@ -168,7 +172,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 continue
 
             try:
-                price_resp = await self._sqs.handle_get_current_stock_price(code, logger=self._logger)
+                price_resp = await self._sqs.handle_get_current_stock_price(code)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     self._logger.warning({
                         "event": "check_exits_failed",

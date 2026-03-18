@@ -118,7 +118,12 @@ class ProgramBuyFollowStrategy(LiveStrategy):
                 pg_buy_amt = pgtr_ntby * current
                 pg_ratio = (pg_buy_amt / acml_tr_pbmn * 100) if acml_tr_pbmn > 0 else 0.0
 
-                log_data.update({"program_net_buy": pgtr_ntby, "current_price": current, "pg_ratio": round(pg_ratio, 2)})
+                log_data.update({
+                    "program_net_buy": pgtr_ntby, 
+                    "current_price": current, 
+                    "pg_ratio": round(pg_ratio, 2),
+                    "trade_value": acml_tr_pbmn
+                })
 
                 # 조건: 순매수 수량 > 0 AND 거래대금 대비 비중 >= 5%
                 if pgtr_ntby <= 0 or pg_ratio < self._cfg.min_program_buy_ratio:
@@ -142,7 +147,14 @@ class ProgramBuyFollowStrategy(LiveStrategy):
         scored.sort(key=lambda x: x[0], reverse=True)
 
         for pg_ratio, code, stock_name, current, log_data in scored:
-            reason_msg = f"PG비중 {pg_ratio:.1f}%, 거래대금상위"
+            pgtr_ntby = log_data.get("program_net_buy", 0)
+            trade_value = log_data.get("trade_value", 0)
+            pg_buy_amt = pgtr_ntby * current
+            
+            reason_msg = (
+                f"PG추종(PG매수 {pg_buy_amt // 100_000_000:,}억({pg_ratio:.1f}%), "
+                f"누적대금 {trade_value // 100_000_000:,}억)"
+            )
             signals.append(TradeSignal(
                 code=code, name=stock_name, action="BUY", price=current, qty=1,
                 reason=reason_msg, strategy_name=self.name,

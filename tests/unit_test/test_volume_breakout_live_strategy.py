@@ -4,14 +4,15 @@ from unittest.mock import MagicMock, AsyncMock
 from common.types import ErrorCode, ResCommonResponse
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.volume_breakout_strategy import VolumeBreakoutConfig
+from services.stock_query_service import StockQueryService
 
 
 class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
     def _make_strategy(self, **config_kwargs):
-        sqs = MagicMock()
-        sqs.handle_get_current_stock_price = AsyncMock()
-        sqs.get_top_trading_value_stocks = AsyncMock()
+        sqs = MagicMock(spec=StockQueryService)
+        sqs.handle_get_current_stock_price = AsyncMock(spec=StockQueryService.handle_get_current_stock_price)
+        sqs.get_top_trading_value_stocks = AsyncMock(spec=StockQueryService.get_top_trading_value_stocks)
         tm = MagicMock()
         logger = MagicMock()
 

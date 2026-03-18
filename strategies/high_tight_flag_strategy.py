@@ -72,11 +72,20 @@ class HighTightFlagStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Market not open or just started"})
             return signals
 
+        # 마켓 타이밍 사전 체크
+        market_timing = {
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", logger=self._logger)
+        }
+        if not any(market_timing.values()):
+            self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
+            return signals
+
         for code, item in watchlist.items():
             if code in self._position_state:
                 continue
 
-            if not await self._universe.is_market_timing_ok(item.market, logger=self._logger):
+            if not market_timing.get(item.market, False):
                 continue
 
             try:
@@ -247,9 +256,13 @@ class HighTightFlagStrategy(LiveStrategy):
         )
         self._save_state()
 
+        vol_ratio = (proj_vol / avg_vol_50d * 100) if avg_vol_50d > 0 else 0.0
+
         reason_msg = (
-            f"HTF돌파(폭등 {pattern['surge_ratio']:.0%}, "
-            f"깃발 {pattern['flag_days']}일, "
+            f"HTF돌파(돌파 {current:,}>{pole_high:,}, "
+            f"예상거래 {vol_ratio:.0f}%, "
+            f"깃대폭등 {pattern['surge_ratio']:.0%}, "
+            f"깃발 {pattern['flag_days']}일(-{pattern['drawdown_pct']:.1f}%), "
             f"체결강도 {cgld_val:.1f}%)"
         )
 

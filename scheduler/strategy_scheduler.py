@@ -18,6 +18,7 @@ from managers.virtual_trade_manager import VirtualTradeManager
 from managers.notification_manager import NotificationManager
 from services.order_execution_service import OrderExecutionService
 from services.stock_query_service import StockQueryService
+from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from core.performance_manager import PerformanceManager
 
@@ -69,6 +70,7 @@ class StrategyScheduler:
         virtual_manager: VirtualTradeManager,
         order_execution_service: OrderExecutionService,
         stock_query_service: StockQueryService,
+        stock_code_mapper: StockCodeMapper,
         time_manager: TimeManager,
         market_date_manager: MarketDateManager,
         logger: Optional[logging.Logger] = None,
@@ -79,6 +81,7 @@ class StrategyScheduler:
         self._vm = virtual_manager
         self._oes = order_execution_service
         self._sqs = stock_query_service
+        self._mapper = stock_code_mapper
         self._tm = time_manager
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
@@ -329,6 +332,10 @@ class StrategyScheduler:
             except Exception:
                 pass  # 조회 실패 시 0원으로 기록 유지
 
+        # 종목명 보정 (이름이 비어있거나, 종목 코드와 동일하게 들어온 경우)
+        if not signal.name or signal.name == signal.code:
+            signal.name = self._mapper.get_name_by_code(signal.code) or signal.code
+
         # CSV 기록 (항상)
         return_rate = None
         if signal.action == "BUY":
@@ -404,6 +411,7 @@ class StrategyScheduler:
                 "qty": signal.qty,
                 "reason": signal.reason,
                 "api_success": api_success,
+                "return_rate": return_rate,
             })
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):

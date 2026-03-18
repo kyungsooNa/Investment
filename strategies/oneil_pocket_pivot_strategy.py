@@ -77,11 +77,20 @@ class OneilPocketPivotStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Market not open or just started"})
             return signals
 
+        # 3. 마켓 타이밍 사전 체크
+        market_timing = {
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", logger=self._logger)
+        }
+        if not any(market_timing.values()):
+            self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
+            return signals
+
         for code, item in watchlist.items():
             if code in self._position_state:
                 continue
 
-            if not await self._universe.is_market_timing_ok(item.market, logger=self._logger):
+            if not market_timing.get(item.market, False):
                 continue
 
             try:
@@ -145,7 +154,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         if not entry_result:
             return None
 
-        entry_type, supporting_ma, gap_day_low = entry_result
+        entry_type, supporting_ma, gap_day_low, extra_info = entry_result
 
         # 5. ★ 공통 스마트 머니 필터 (기술적 조건 통과 후에만 호출)
         if not self._check_smart_money(current, pg_buy, trade_value, item.market_cap):
@@ -172,6 +181,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
         qty = self._calculate_qty(current)
         pg_buy_amount = pg_buy * current
+        pg_ratio = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0.0
 
         self._position_state[code] = PPPositionState(
             entry_type=entry_type,
@@ -185,15 +195,32 @@ class OneilPocketPivotStrategy(LiveStrategy):
         )
         self._save_state()
 
-        reason_msg = (
-            f"{entry_type}진입(체결강도 {cgld_val:.1f}%, "
-            f"PG매수 {pg_buy_amount // 100_000_000}억)"
-        )
         if entry_type == "PP":
-            reason_msg = f"PP진입({supporting_ma}MA지지, 체결강도 {cgld_val:.1f}%)"
+            proj_vol = extra_info.get("proj_vol", 0)
+            max_down_vol = extra_info.get("max_down_vol", 0)
+            vol_ratio = (proj_vol / max_down_vol * 100) if max_down_vol > 0 else 0.0
+            reason_msg = (
+                f"PP진입({supporting_ma}MA지지, "
+                f"예상거래 {vol_ratio:.0f}%(하락최대대비), "
+                f"PG매수 {pg_buy_amount // 100_000_000:,}억({pg_ratio:.1f}%), "
+                f"체결강도 {cgld_val:.1f}%)"
+            )
         elif entry_type == "BGU":
-            gap_ratio = (today_open - prev_close) / prev_close * 100
-            reason_msg = f"BGU진입(갭 {gap_ratio:.1f}%, 체결강도 {cgld_val:.1f}%)"
+            gap_ratio = extra_info.get("gap_ratio", 0.0)
+            proj_vol = extra_info.get("proj_vol", 0)
+            avg_vol_50d = extra_info.get("avg_vol_50d", 0)
+            vol_ratio = (proj_vol / avg_vol_50d * 100) if avg_vol_50d > 0 else 0.0
+            reason_msg = (
+                f"BGU진입(갭 {gap_ratio:.1f}%, "
+                f"예상거래 {vol_ratio:.0f}%(50일평균대비), "
+                f"PG매수 {pg_buy_amount // 100_000_000:,}억({pg_ratio:.1f}%), "
+                f"체결강도 {cgld_val:.1f}%)"
+            )
+        else:
+            reason_msg = (
+                f"{entry_type}진입(체결강도 {cgld_val:.1f}%, "
+                f"PG매수 {pg_buy_amount // 100_000_000:,}억({pg_ratio:.1f}%))"
+            )
 
         self._logger.info({
             "event": "buy_signal_generated",
@@ -212,13 +239,14 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
     def _check_pocket_pivot(
         self, code, current, vol, progress, ohlcv, item, prev_close
-    ) -> Optional[Tuple[str, str, int]]:
+    ) -> Optional[Tuple[str, str, int, dict]]:
         """Pocket Pivot 조건 검사.
 
-        Returns: ("PP", supporting_ma, 0) 또는 None
+        Returns: ("PP", supporting_ma, 0, extra_info) 또는 None
         """
         closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
         if len(closes) < 10:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "insufficient_data"})
             return None
 
         # 1. MA 계산 (10일은 직접 계산, 20/50일은 item에서)
@@ -241,10 +269,12 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 break
 
         if not supporting_ma:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "not_near_ma"})
             return None
 
         # 3. 당일 상승일 확인 (현재가 > 전일 종가)
         if current <= prev_close:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "not_an_up_day"})
             return None
 
         # 4. 과거 10일 하락일(close < open) 거래량 중 MAX 산출
@@ -260,11 +290,17 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         max_down_vol = max(down_day_volumes) if down_day_volumes else 0
 
+        # 하락일(음봉)이 단 하루도 없었다면, 정상적인 조정(Base) 구간이 아니므로 기각
+        if max_down_vol <= 0:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "no_down_day_volume"})
+            return None
+        
         # 5. 거래량 우위: 환산 거래량 > 하락일 최대 거래량
         effective_progress = max(progress, 0.05)
         proj_vol = vol / effective_progress
 
         if proj_vol <= max_down_vol:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "insufficient_volume", "proj_vol": int(proj_vol), "max_down_vol": max_down_vol})
             return None
 
         self._logger.debug({
@@ -273,16 +309,16 @@ class OneilPocketPivotStrategy(LiveStrategy):
             "proj_vol": int(proj_vol), "max_down_vol": int(max_down_vol),
         })
 
-        return ("PP", supporting_ma, 0)
+        return ("PP", supporting_ma, 0, {"proj_vol": proj_vol, "max_down_vol": max_down_vol})
 
     # ── 조건 B: BGU ───────────────────────────────────────────────
 
     def _check_bgu(
         self, code, current, vol, progress, ohlcv, today_open, today_low, prev_close
-    ) -> Optional[Tuple[str, str, int]]:
+    ) -> Optional[Tuple[str, str, int, dict]]:
         """BGU(Buyable Gap-Up) 조건 검사.
 
-        Returns: ("BGU", "", gap_day_low) 또는 None
+        Returns: ("BGU", "", gap_day_low, extra_info) 또는 None
         """
         if today_open <= 0 or prev_close <= 0:
             return None
@@ -323,7 +359,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             "today_low": today_low,
         })
 
-        return ("BGU", "", today_low)
+        return ("BGU", "", today_low, {"gap_ratio": gap_ratio, "proj_vol": proj_vol, "avg_vol_50d": avg_vol_50d})
 
     # ── 스마트 머니 필터 ──────────────────────────────────────────
 
