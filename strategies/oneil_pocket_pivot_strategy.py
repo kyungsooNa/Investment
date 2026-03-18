@@ -278,6 +278,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         max_down_vol = max(down_day_volumes) if down_day_volumes else 0
 
+        # 하락일(음봉)이 단 하루도 없었다면, 정상적인 조정(Base) 구간이 아니므로 기각
+        if max_down_vol <= 0:
+            return None
+        
         # 5. 거래량 우위: 환산 거래량 > 하락일 최대 거래량
         effective_progress = max(progress, 0.05)
         proj_vol = vol / effective_progress

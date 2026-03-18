@@ -73,7 +73,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             "prdy_ctrt": "1.35"
         })
 
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={"output": mock_output}
@@ -84,7 +84,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("현재가 및 상세 정보 조회 성공", self.mock_logger.info.call_args[0][0])
 
     async def test_handle_get_current_stock_price_failure_rt_cd(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="1",
             msg1="실패",
             data={"stck_prpr": "75000", "stck_shrn_iscd": "005930"}
@@ -96,7 +96,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_get_current_stock_price_none_response(self):
         """handle_get_current_stock_price: 응답이 None일 때 (Line 80 coverage)"""
-        self.mock_trading_service.get_current_stock_price.return_value = None
+        self.mock_trading_service.get_current_price.return_value = None
         
         result = await self.stockQueryService.handle_get_current_stock_price("005930")
         
@@ -108,7 +108,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         """handle_get_current_stock_price에서 응답 데이터 파싱 오류 테스트"""
         # Arrange
         # output이 ResStockFullInfoApiOutput이 아닌 경우
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={"output": {"some_unexpected": "data"}}
@@ -127,26 +127,26 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         """get_current_price 성공 케이스 테스트"""
         # Arrange
         expected_response = ResCommonResponse(rt_cd="0", msg1="정상", data={"stck_prpr": "10000"})
-        self.mock_trading_service.get_current_stock_price.return_value = expected_response
+        self.mock_trading_service.get_current_price.return_value = expected_response
 
         # Act
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_stock_price.assert_awaited_once_with("005930")
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930")
         self.assertEqual(result, expected_response)
 
     async def test_get_current_price_failure(self):
         """get_current_price 실패 케이스 테스트"""
         # Arrange
         expected_response = ResCommonResponse(rt_cd="1", msg1="실패", data=None)
-        self.mock_trading_service.get_current_stock_price.return_value = expected_response
+        self.mock_trading_service.get_current_price.return_value = expected_response
 
         # Act
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_stock_price.assert_awaited_once_with("005930")
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930")
         self.assertEqual(result, expected_response)
 
     # --- New Wrapper Methods Tests ---
@@ -322,7 +322,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     # --- handle_display_stock_change_rate 함수 테스트 ---
     async def test_handle_display_stock_change_rate_increase(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -339,7 +339,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_change_rate_decrease(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -356,7 +356,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_change_rate_no_change(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -370,7 +370,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_change_rate_missing_fields(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -389,7 +389,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_handle_display_stock_change_rate_invalid_prdy_vrss(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -406,10 +406,10 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_handle_display_stock_change_rate_failure(self):
-        self.mock_trading_service.get_current_stock_price.return_value = {
+        self.mock_trading_service.get_current_price.return_value = {
             "rt_cd": "1", "msg1": "API 에러"
         }
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="1",
             msg1="API 에러",
             data=None
@@ -451,7 +451,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -538,7 +538,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     # --- handle_display_stock_vs_open_price 함수 테스트 (Previously provided) ---
     async def test_handle_display_stock_vs_open_price_increase(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -555,7 +555,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_display_stock_vs_open_price_decrease(self):
         """TC: 시가대비 등락률이 하락하는 경우"""
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -572,7 +572,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_display_stock_vs_open_price_no_change(self):
         """TC: 시가대비 등락률이 0인 경우 (보합)"""
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -589,7 +589,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_display_stock_vs_open_price_zero_open_price(self):
         """TC: 시가가 0원인 경우 (나누기 0 방지 및 N/A 처리)"""
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -605,7 +605,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_display_stock_vs_open_price_missing_price_data(self):
         """TC: 현재가 또는 시가 데이터가 누락되거나 'N/A'일 경우"""
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -621,7 +621,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.info.assert_called_once()
 
     async def test_handle_display_stock_vs_open_price_failure(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="1",
             msg1="API 에러",
             data=None
@@ -632,7 +632,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("시가대비 조회 실패", self.mock_logger.error.call_args[0][0])
 
     async def test_handle_display_stock_vs_open_price_output_data_missing(self):
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -677,7 +677,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_display_stock_change_rate_increase_sign_path(self):
         handler = self.stockQueryService  # 기존 asyncSetUp에서 생성된 handler
 
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -697,7 +697,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_display_stock_change_rate_positive_change(self):
         # Scenario 1: 양수 변화량
         stock_code = "005930"
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -722,7 +722,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_display_stock_change_rate_negative_change(self):
         # Scenario 2: 음수 변화량
         stock_code = "000660"
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -743,7 +743,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_handle_display_stock_change_rate_zero_change(self):
         # Scenario 3: 변화량 0
         stock_code = "000001"
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -769,7 +769,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             "stck_prpr": "10000",
             "new_hgpr_lwpr_cls_code": "1"
         })
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0", msg1="정상", data={"output": mock_output_high}
         )
         
@@ -783,7 +783,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             "stck_prpr": "5000",
             "new_hgpr_lwpr_cls_code": "신저가"
         })
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0", msg1="정상", data={"output": mock_output_low}
         )
         
@@ -801,7 +801,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             "prdy_vrss_sign": "2",
             "prdy_ctrt": "1.35"
         })
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0", msg1="정상", data={"output": mock_output}
         )
         self.mock_trading_service.get_name_by_code.return_value = "TestStock"
@@ -822,7 +822,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             "prdy_vrss_sign": "3",
             "prdy_ctrt": "0.00"
         })
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data={"output": mock_output}
         )
 
@@ -840,7 +840,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             "stck_prpr": "70000",
             "stck_oprc": "InvalidPrice"
         })
-        self.mock_trading_service.get_current_stock_price.return_value = ResCommonResponse(
+        self.mock_trading_service.get_current_price.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data={"output": mock_output}
         )
 

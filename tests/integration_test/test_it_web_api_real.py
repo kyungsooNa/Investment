@@ -6,7 +6,7 @@ FastAPI TestClient를 사용하여 HTTP 엔드포인트 → 서비스 레이어 
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from common.types import ResCommonResponse, ErrorCode
+from common.types import ResCommonResponse, ErrorCode, ResTopMarketCapApiItem
 from tests.integration_test.conftest import make_success_response, make_error_response
 
 
@@ -250,8 +250,8 @@ class TestRankingReal:
     def test_get_ranking_with_data(self, real_client, mock_real_ctx):
         """랭킹 데이터가 올바르게 직렬화된다."""
         ranking_items = [
-            MagicMock(to_dict=lambda: {"rank": "1", "name": "삼성전자", "code": "005930", "current_price": "70500"}),
-            MagicMock(to_dict=lambda: {"rank": "2", "name": "SK하이닉스", "code": "000660", "current_price": "180000"}),
+            {"rank": "1", "name": "삼성전자", "code": "005930", "current_price": "70500"},
+            {"rank": "2", "name": "SK하이닉스", "code": "000660", "current_price": "180000"},
         ]
         mock_real_ctx.stock_query_service.handle_get_top_stocks = AsyncMock(
             return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=ranking_items)
@@ -279,17 +279,15 @@ class TestMarketCapReal:
     def test_get_top_market_cap_kospi(self, real_client, mock_real_ctx):
         """코스피 시가총액 상위 종목 조회."""
         items = [
-            MagicMock(
-                hts_kor_isnm="삼성전자", mksc_shrn_iscd="005930",
-                stck_prpr="70500", prdy_ctrt="1.73", stck_avls="4200000",
+            ResTopMarketCapApiItem(
+                hts_kor_isnm="삼성전자", mksc_shrn_iscd="005930", data_rank="1",
+                stck_prpr="70500", prdy_ctrt="1.73", stck_avls="4200000"
             ),
-            MagicMock(
-                hts_kor_isnm="SK하이닉스", mksc_shrn_iscd="000660",
-                stck_prpr="180000", prdy_ctrt="-0.55", stck_avls="3500000",
+            ResTopMarketCapApiItem(
+                hts_kor_isnm="SK하이닉스", mksc_shrn_iscd="000660", data_rank="2",
+                stck_prpr="180000", prdy_ctrt="-0.55", stck_avls="3500000"
             ),
         ]
-        for item in items:
-            type(item).__instancecheck__ = lambda self, instance: False
 
         mock_real_ctx.broker.get_top_market_cap_stocks_code = AsyncMock(
             return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=items)

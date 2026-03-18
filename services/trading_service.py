@@ -168,7 +168,7 @@ class TradingService:
         self._logger.info(f"Service - {stock_code} 종목 상세 정보 조회 요청")
         return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
 
-    async def get_current_stock_price(self, stock_code) -> ResCommonResponse:
+    async def get_current_price(self, stock_code) -> ResCommonResponse:
         self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
         return await self._broker_api_wrapper.get_current_price(stock_code)
 
@@ -679,7 +679,7 @@ class TradingService:
     async def _fetch_today_ohlcv(self, stock_code: str, today_str: str) -> List[dict]:
         """현재가 API를 호출하여 오늘자 OHLCV 데이터를 생성합니다."""
         try:
-            current_resp = await self.get_current_stock_price(stock_code)
+            current_resp = await self.get_current_price(stock_code)
             if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
                 output = current_resp.data.get('output')
                 if output:

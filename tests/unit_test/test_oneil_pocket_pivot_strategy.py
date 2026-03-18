@@ -933,7 +933,7 @@ async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
 
     # Case 1: OHLCV 데이터 부족 (10일 미만)
     ts.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=_make_ohlcv(count=5))
-    ts.get_current_stock_price.return_value = _pp_price_output()
+    ts.get_current_price.return_value = _pp_price_output()
     ts.get_stock_conclusion.return_value = _cgld_output()
     signals = await strategy.scan()
     assert len(signals) == 0
@@ -945,7 +945,7 @@ async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
 
     # Case 3: 하락일이 없는 경우 (down_day_volumes가 비어 max() 에러 대신 통과)
     ts.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=_make_ohlcv(count=60, close=68000, open_=67000))
-    ts.get_current_stock_price.return_value = _pp_price_output()
+    ts.get_current_price.return_value = _pp_price_output()
     ts.get_stock_conclusion.return_value = _cgld_output()
     signals = await strategy.scan()
     assert len(signals) == 0
@@ -998,7 +998,7 @@ async def test_check_exits_edge_cases(mock_deps):
     assert len(signals) == 1
     assert "하드스탑" in signals[0].reason
 
-    # Case 3: get_current_stock_price 응답에 output이 없음
+    # Case 3: get_current_price 응답에 output이 없음
     sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None})
     signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
     assert len(signals) == 0

@@ -428,7 +428,7 @@ async def test_get_current_stock_price(trading_service_fixture, mock_deps):
     broker = mock_deps.broker
     broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={})
     
-    resp = await trading_service_fixture.get_current_stock_price("005930")
+    resp = await trading_service_fixture.get_current_price("005930")
     assert resp.rt_cd == "0"
     broker.get_current_price.assert_awaited_once_with("005930")
 

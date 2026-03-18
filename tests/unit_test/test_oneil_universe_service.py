@@ -114,12 +114,12 @@ async def test_analyze_candidate_success(mock_deps):
     
     # 3. BB Mock (스퀴즈 데이터 계산용)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
     )
     
     # 4. RS Mock
     indicator.get_relative_strength.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
+        rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
     )
     
     mapper.is_kosdaq.return_value = True
@@ -165,10 +165,10 @@ async def test_analyze_candidate_filter_market_cap(mock_deps):
     )
     # BB, RS Mock 필요 (통과를 위해)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
     )
     indicator.get_relative_strength.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
+        rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
     )
     
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
@@ -432,13 +432,13 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
     )
 
     # 2. RS Mock 설정 (특정 수익률 반환)
     expected_rs = 15.5
     indicator.get_relative_strength.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=MagicMock(return_pct=expected_rs)
+        rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=expected_rs)
     )
     
     mapper.is_kosdaq.return_value = False
@@ -469,7 +469,7 @@ async def test_analyze_candidate_rs_calculation_failure(mock_deps):
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
     )
 
     # RS Mock 설정 (실패 응답)
@@ -943,7 +943,7 @@ async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
     bands = []
     for i in range(50):
         width = 10 if i < 40 else 50 # 최근에 확 벌어짐
-        bands.append(MagicMock(upper=100+width, lower=100))
+        bands.append(ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=100+width, lower=100))
     
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=bands
@@ -1007,7 +1007,7 @@ async def test_analyze_candidate_insufficient_bb_data(mock_deps):
     )
     
     # BB Data Short
-    bands = [MagicMock(upper=110, lower=90) for _ in range(10)]
+    bands = [ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(10)]
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=bands
     )
@@ -1053,7 +1053,7 @@ async def test_build_pool_b_partial_api_failure(mock_deps):
 
 @pytest.mark.asyncio
 async def test_analyze_candidate_price_api_object_access(mock_deps):
-    """_analyze_candidate: get_current_stock_price 응답이 객체(속성 접근)일 때 처리 검증."""
+    """_analyze_candidate: get_current_price 응답이 객체(속성 접근)일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1109,7 +1109,7 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
     )
     
     # 1. 유효 데이터 부족 -> None 반환
-    bands_bad = [MagicMock(upper=None, lower=None) for _ in range(50)]
+    bands_bad = [ResBollingerBand(code="005930", date="20231231", close=1000, middle=None, upper=None, lower=None) for _ in range(50)]
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=bands_bad
     )
@@ -1117,12 +1117,12 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
     assert item is None
     
     # 2. 유효 데이터 충분 -> 성공
-    bands_good = [MagicMock(upper=110, lower=90) for _ in range(50)]
+    bands_good = [ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(50)]
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=bands_good
     )
     indicator.get_relative_strength.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
+        rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
     )
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
     assert item is not None
@@ -1261,10 +1261,10 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     
     # BB, RS Mock (통과 조건)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
     )
     indicator.get_relative_strength.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
+        rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
     )
     
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)

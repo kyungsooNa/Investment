@@ -37,7 +37,7 @@ class StockQueryService:
 
     async def get_current_price(self, stock_code: str) -> ResCommonResponse:
         """현재가만 빠르게 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_current_stock_price(stock_code)
+        return await self.trading_service.get_current_price(stock_code)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, TradingService 래퍼)."""
@@ -66,7 +66,7 @@ class StockQueryService:
     async def handle_get_current_stock_price(self, stock_code):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
-        resp: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        resp: ResCommonResponse = await self.trading_service.get_current_price(stock_code)
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
@@ -289,7 +289,7 @@ class StockQueryService:
             "change_rate": "0.71"             # API 그대로 문자열 유지
           }
         """
-        res: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        res: ResCommonResponse = await self.trading_service.get_current_price(stock_code)
         if not (res and res.rt_cd == ErrorCode.SUCCESS.value):
             self.logger.error(f"{stock_code} 전일대비 등락률 조회 실패: {res}")
             # 실패도 통일된 형태로 반환
@@ -338,7 +338,7 @@ class StockQueryService:
             "vs_open_rate_display": "+0.57%"   # 퍼센트 부호/0 처리
           }
         """
-        res: ResCommonResponse = await self.trading_service.get_current_stock_price(stock_code)
+        res: ResCommonResponse = await self.trading_service.get_current_price(stock_code)
         if not (res and res.rt_cd == ErrorCode.SUCCESS.value):
             self.logger.error(f"{stock_code} 시가대비 조회 실패: {res}")
             return ResCommonResponse(rt_cd="1", msg1="조회 실패", data={"stock_code": stock_code})
