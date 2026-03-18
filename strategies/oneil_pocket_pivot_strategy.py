@@ -237,6 +237,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         """
         closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
         if len(closes) < 10:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "insufficient_data"})
             return None
 
         # 1. MA 계산 (10일은 직접 계산, 20/50일은 item에서)
@@ -259,10 +260,12 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 break
 
         if not supporting_ma:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "not_near_ma"})
             return None
 
         # 3. 당일 상승일 확인 (현재가 > 전일 종가)
         if current <= prev_close:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "not_an_up_day"})
             return None
 
         # 4. 과거 10일 하락일(close < open) 거래량 중 MAX 산출
@@ -280,6 +283,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         # 하락일(음봉)이 단 하루도 없었다면, 정상적인 조정(Base) 구간이 아니므로 기각
         if max_down_vol <= 0:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "no_down_day_volume"})
             return None
         
         # 5. 거래량 우위: 환산 거래량 > 하락일 최대 거래량
@@ -287,6 +291,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         proj_vol = vol / effective_progress
 
         if proj_vol <= max_down_vol:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "insufficient_volume", "proj_vol": int(proj_vol), "max_down_vol": max_down_vol})
             return None
 
         self._logger.debug({

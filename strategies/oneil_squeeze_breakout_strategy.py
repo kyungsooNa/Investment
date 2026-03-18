@@ -129,6 +129,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         # 🚨 [관문 1] 가격 돌파
         if current <= item.high_20d:
+            # 너무 많은 로그를 피하기 위해 이 단계는 로그 생략
             return None
             
         # 🚨 [관문 2] 거래량 돌파 (+ 뻥튀기 방어)
@@ -136,22 +137,27 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         proj_vol = vol / effective_progress
         
         if vol < (item.avg_vol_20d * 0.3): # 최소 절대 거래량 (평소 20일 평균의 30%) 미달 시 가짜 돌파
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_absolute_volume", "vol": vol, "min_required": item.avg_vol_20d * 0.3})
             return None
         if proj_vol < item.avg_vol_20d * self._cfg.volume_breakout_multiplier:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "insufficient_projected_volume", "proj_vol": int(proj_vol), "threshold": item.avg_vol_20d * self._cfg.volume_breakout_multiplier})
             return None
             
         # 🚨 [관문 3] 스마트 머니(프로그램 수급) 상세 필터
         if pg_buy <= self._cfg.program_net_buy_min:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_net_buy", "pg_buy": pg_buy, "min_required": self._cfg.program_net_buy_min})
             return None
             
         pg_buy_amount = pg_buy * current # 프로그램 순매수 금액 (추정)
         
         # 3-1. 거래대금의 10% 이상 개입했는가?
         if trade_value > 0 and (pg_buy_amount / trade_value * 100) < self._cfg.program_to_trade_value_pct:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_to_trade_value", "pg_buy_amount": pg_buy_amount, "trade_value": trade_value})
             return None
             
         # 3-2. 시가총액의 0.5% 이상 개입했는가?
         if item.market_cap > 0 and (pg_buy_amount / item.market_cap * 100) < self._cfg.program_to_market_cap_pct:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_to_market_cap", "pg_buy_amount": pg_buy_amount, "market_cap": item.market_cap})
             return None
 
         # 🌟 [최종 관문] 매수 직전 체결강도 스냅샷 (>=120%) 🌟
