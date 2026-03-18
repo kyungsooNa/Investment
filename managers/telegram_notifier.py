@@ -30,11 +30,28 @@ class TelegramNotifier:
             "critical": "🚨"
         }.get(event.level.lower(), "🔔")
 
+        # 메타데이터에 수익률(return_rate) 정보가 있으면 메시지 본문에 이모지와 함께 삽입
+        message_body = event.message
+        if event.metadata and "return_rate" in event.metadata:
+            rr = event.metadata.get("return_rate")
+            if rr is not None:
+                if rr > 0:
+                    rt_emoji = "📈"
+                elif rr < 0:
+                    rt_emoji = "📉"
+                else:
+                    rt_emoji = "➖"
+                
+                if "사유:" in message_body:
+                    message_body = message_body.replace("사유:", f"{rt_emoji} 수익: {rr:+.2f}%\n사유:")
+                else:
+                    message_body += f"\n{rt_emoji} 수익: {rr:+.2f}%"
+
         # 텔레그램으로 보낼 메시지 포맷 구성
         text = (
             f"{level_emoji} <b>[{event.category}] {event.title}</b>\n"
             f"시간: {event.timestamp}\n"
-            f"내용:\n{event.message}"
+            f"내용:\n{message_body}"
         )
 
         payload = {

@@ -18,15 +18,17 @@ STRATEGIES_TO_TEST = [
 
 @pytest.fixture(autouse=True)
 def cleanup_logging():
-    """테스트 후 로거 핸들러를 정리하여 파일 잠금을 해제합니다."""
+    """테스트 전/후 로거 핸들러를 정리하여 파일 잠금을 해제하고 상태를 초기화합니다."""
+    def clean():
+        for name in list(logging.root.manager.loggerDict.keys()):
+            if name.startswith("strategy."):
+                logger = logging.getLogger(name)
+                for h in logger.handlers[:]:
+                    h.close()
+                    logger.removeHandler(h)
+    clean()
     yield
-    # 'strategy.'로 시작하는 모든 로거의 핸들러를 닫고 제거
-    for name in list(logging.root.manager.loggerDict.keys()):
-        if name.startswith("strategy."):
-            logger = logging.getLogger(name)
-            for h in logger.handlers[:]:
-                h.close()
-                logger.removeHandler(h)
+    clean()
 
 @pytest.mark.parametrize("module_path, class_name, expected_subdir", STRATEGIES_TO_TEST)
 def test_strategy_creates_log_file_integration(tmp_path, module_path, class_name, expected_subdir):
@@ -73,10 +75,17 @@ def test_strategy_creates_log_file_integration(tmp_path, module_path, class_name
         
         # 로그 파일에 내용이 기록되는지 확인하기 위해 테스트 로그 남기기
         test_message = f"Integration test log for {class_name}"
-        if hasattr(strategy, '_logger'):
-            strategy._logger.info(test_message)
-        elif hasattr(strategy, 'logger'):
-            strategy.logger.info(test_message)
+        strategy_logger = getattr(strategy, '_logger', getattr(strategy, 'logger', None))
+        
+        if strategy_logger:
+            strategy_logger.setLevel(logging.INFO)
+            # JsonFormatter가 문자열을 무시할 가능성을 대비해 dict 형태도 함께 남깁니다.
+            strategy_logger.info({"message": test_message})
+            strategy_logger.info(test_message)
+            # 버퍼에 남아있는 로그를 디스크(파일)에 즉시 기록하도록 핸들러를 플러시하고 닫습니다.
+            for handler in strategy_logger.handlers[:]:
+                handler.flush()
+                handler.close()
 
     # 4. 로그 파일 생성 확인
     # 예상 경로: tmp_path/strategies/{subdir}/...

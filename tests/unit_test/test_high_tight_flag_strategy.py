@@ -767,6 +767,7 @@ def breakout_setup(htf_scan_setup):
         "pole_high": 10000,
         "surge_ratio": 2.0,
         "flag_days": 15,
+        "drawdown_pct": 10.0,
     }
     # 50일치 데이터, 평균 거래량 100,000
     ohlcv = [{"volume": 100000} for _ in range(50)]

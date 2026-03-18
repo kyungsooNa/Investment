@@ -73,10 +73,17 @@ def test_strategy_creates_log_file_integration(tmp_path, module_path, class_name
         
         # 로그 파일에 내용이 기록되는지 확인하기 위해 테스트 로그 남기기
         test_message = f"Integration test log for {class_name}"
-        if hasattr(strategy, '_logger'):
-            strategy._logger.info(test_message)
-        elif hasattr(strategy, 'logger'):
-            strategy.logger.info(test_message)
+        strategy_logger = getattr(strategy, '_logger', getattr(strategy, 'logger', None))
+            
+        if strategy_logger:
+            strategy_logger.setLevel(logging.INFO)
+            # JsonFormatter가 문자열 형태를 누락할 가능성을 대비해 dict 형태도 함께 기록
+            strategy_logger.info({"message": test_message})
+            strategy_logger.info(test_message)
+            # 버퍼의 내용을 디스크에 즉시 기록하도록 플러시 및 닫기
+            for handler in strategy_logger.handlers[:]:
+                handler.flush()
+                handler.close()
 
     # 4. 로그 파일 생성 확인
     # 예상 경로: tmp_path/strategies/{subdir}/...

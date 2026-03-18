@@ -966,12 +966,13 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         vm = MagicMock()
         oes = MagicMock()
         sqs = MagicMock()
+        scm = AsyncMock()
         tm = MagicMock()
         mdm = AsyncMock()
 
         # 파일 로드 방지
         with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
-            scheduler = StrategyScheduler(vm, oes, sqs, tm, mdm, dry_run=True)
+            scheduler = StrategyScheduler(vm, oes, sqs, scm, tm, mdm, dry_run=True)
         
         record = MagicMock()
         
