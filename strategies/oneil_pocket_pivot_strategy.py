@@ -77,11 +77,20 @@ class OneilPocketPivotStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Market not open or just started"})
             return signals
 
+        # 3. 마켓 타이밍 사전 체크
+        market_timing = {
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", logger=self._logger)
+        }
+        if not any(market_timing.values()):
+            self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
+            return signals
+
         for code, item in watchlist.items():
             if code in self._position_state:
                 continue
 
-            if not await self._universe.is_market_timing_ok(item.market, logger=self._logger):
+            if not market_timing.get(item.market, False):
                 continue
 
             try:

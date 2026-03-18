@@ -86,13 +86,22 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Market not open or just started"})
             return signals
 
-        # 3. 종목별 돌파 체크
+        # 3. 마켓 타이밍 사전 체크 (루프 내 중복 await 방지)
+        market_timing = {
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", logger=self._logger)
+        }
+        if not any(market_timing.values()):
+            self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
+            return signals
+
+        # 4. 종목별 돌파 체크
         for code, item in watchlist.items():
             if code in self._position_state:
                 continue
 
-            # 마켓 타이밍 체크 (서비스 위임)
-            if not await self._universe.is_market_timing_ok(item.market, logger=self._logger):
+            # 마켓 타이밍 체크 (사전 체크된 값 사용)
+            if not market_timing.get(item.market, False):
                 continue
 
             # 스퀴즈 조건 (이미 유니버스에서 걸러졌지만, 전일 대비 BB폭 확인 등 추가 체크 가능)
