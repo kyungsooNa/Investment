@@ -945,6 +945,23 @@ async def test_scan_exception_logging(pp_scan_setup):
     )
             
     assert found, f"로그가 여전히 비어있습니다. 이전 단계(PP/스마트머니)에서 return 되었는지 확인 필요. 호출 로그: {logger.warning.call_args_list}"
+
+@pytest.mark.asyncio
+async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
+    """Case 3: 하락일이 없는 경우 (로직 수정 후 0개여야 함)"""
+    strategy, sqs, _, _, _ = pp_scan_setup
+
+    # 모든 봉을 양봉으로 생성 (close 68000 > open 67000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_make_ohlcv(count=60, close=68000, open_=67000)
+    )
+    sqs.get_current_price.return_value = _pp_price_output()
+    sqs.get_stock_conclusion.return_value = _cgld_output()
+    
+    signals = await strategy.scan()
+    
+    # 전략 로직 수정으로 인해 이제 하락일이 없으면 0을 반환합니다.
+    assert len(signals) == 0
     
 @pytest.mark.asyncio
 async def test_check_pocket_pivot_edge_cases(pp_scan_setup):
