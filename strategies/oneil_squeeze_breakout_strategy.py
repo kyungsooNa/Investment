@@ -185,7 +185,15 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         )
         self._save_state()
         
-        reason_msg = f"오닐돌파(체결강도 {cgld_val:.1f}%, PG매수 {pg_buy_amount//100_000_000}억)"
+        pg_ratio = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0.0
+        vol_ratio = (proj_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
+
+        reason_msg = (
+            f"오닐돌파(돌파 {current:,}>{item.high_20d:,}, "
+            f"예상거래 {vol_ratio:.0f}%, "
+            f"PG매수 {pg_buy_amount//100_000_000:,}억({pg_ratio:.1f}%), "
+            f"체결강도 {cgld_val:.1f}%)"
+        )
         
         self._logger.info({
             "event": "buy_signal_generated",
