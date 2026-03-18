@@ -178,10 +178,12 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                 )
                 self._save_state()
 
+                vol_ratio = (projected_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
+
                 reason_msg = (
-                    f"20일고가({item.high_20d:,}) 돌파, "
-                    f"예상거래량 {projected_vol:,.0f} "
-                    f"(기준 {vol_threshold:,.0f})"
+                    f"전통돌파(돌파 {current:,}>{item.high_20d:,}, "
+                    f"예상거래 {vol_ratio:.0f}%(20일평균대비), "
+                    f"5일평균대금 {item.avg_trading_value_5d / 100_000_000:,.0f}억)"
                 )
                 signals.append(TradeSignal(
                     code=code, name=item.name, action="BUY", price=current, qty=qty,

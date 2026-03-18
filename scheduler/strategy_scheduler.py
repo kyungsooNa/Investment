@@ -398,9 +398,12 @@ class StrategyScheduler:
             action_kr = "매수" if signal.action == "BUY" else "매도"
             level = "critical" if api_success else "error"
             title = f"[{signal.strategy_name}] {signal.name} {action_kr} {'성공' if api_success else '실패'}"
-            msg = (f"종목: {signal.name}({signal.code})\n"
-                   f"주문: {log_price:,}원 × {signal.qty}주\n"
-                   f"사유: {signal.reason}")
+            
+            msg = f"종목: {signal.name}({signal.code})\n주문: {log_price:,}원 × {signal.qty}주\n"
+            if return_rate is not None:
+                msg += f"수익: {return_rate:+.2f}%\n"
+            msg += f"사유: {signal.reason}"
+            
             if not api_success:
                 title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
             await self._nm.emit("TRADE", level, title, msg, metadata={
@@ -411,6 +414,7 @@ class StrategyScheduler:
                 "qty": signal.qty,
                 "reason": signal.reason,
                 "api_success": api_success,
+                "return_rate": return_rate,
             })
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
