@@ -149,26 +149,43 @@ async function loadInvestorRanking() {
         }
 
         const stockMap = new Map();
-        for (const json of results) {
+        results.forEach((json, index) => {
+            const inv = investors[index];
+            const f = _investorTypeFields[inv];
+
             for (const item of json.data) {
                 const code = item.stck_shrn_iscd || '';
                 if (!stockMap.has(code)) {
                     stockMap.set(code, { ...item });
+                } else {
+                    // 동일 종목이 존재하면, 현재 주체의 대금/수량 필드를 기존 데이터에 병합하여 유실 방지
+                    const existing = stockMap.get(code);
+                    if (item[f.pbmn] !== undefined) existing[f.pbmn] = item[f.pbmn];
+                    if (item[f.qty] !== undefined) existing[f.qty] = item[f.qty];
                 }
             }
-        }
+        });
 
         const merged = Array.from(stockMap.values());
         for (const item of merged) {
             let combinedPbmn = 0;
             let combinedQty = 0;
+            let calcLogStr = `[ranking calc] ${item.hts_kor_isnm}(${item.stck_shrn_iscd}) `;
+            
             for (const inv of investors) {
                 const f = _investorTypeFields[inv];
-                let pbmn = parseInt(item[f.pbmn] || 0);
+                let rawPbmn = parseInt(item[f.pbmn] || 0);
+                let pbmn = rawPbmn;
                 if (f.isMil) pbmn *= 1000000;
+                let qty = parseInt(item[f.qty] || 0);
+                
                 combinedPbmn += pbmn;
-                combinedQty += parseInt(item[f.qty] || 0);
+                combinedQty += qty;
+                
+                calcLogStr += `| ${f.label}: 대금(${rawPbmn}->${pbmn}), 수량(${qty}) `;
             }
+            calcLogStr += `=> 합산대금=${combinedPbmn}, 합산수량=${combinedQty}`;
+            
             item._combined_pbmn = combinedPbmn;
             item._combined_qty = combinedQty;
         }
@@ -179,6 +196,12 @@ async function loadInvestorRanking() {
         );
 
         const top = merged.slice(0, 30);
+        console.log(`[ranking] 정렬 완료. 상위 3개 종목 확인:`, top.slice(0, 3).map(i => ({
+            종목명: i.hts_kor_isnm,
+            합산대금: i._combined_pbmn,
+            합산수량: i._combined_qty
+        })));
+
         top.forEach((item, i) => { item.data_rank = String(i + 1); });
 
         _rankingData = top;
