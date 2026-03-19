@@ -18,10 +18,14 @@ class _LRUCache:
     def __init__(self, capacity: int = 500):
         self.cache = collections.OrderedDict()
         self.capacity = capacity
+        self.hits = 0
+        self.misses = 0
 
     def get(self, key):
         if key not in self.cache:
+            self.misses += 1
             return None
+        self.hits += 1
         self.cache.move_to_end(key)
         return self.cache[key]
 
@@ -30,6 +34,18 @@ class _LRUCache:
         self.cache.move_to_end(key)
         if len(self.cache) > self.capacity:
             self.cache.popitem(last=False)
+
+    def get_stats(self) -> dict:
+        """캐시 적중률 통계를 반환합니다."""
+        total = self.hits + self.misses
+        hit_rate = (self.hits / total * 100) if total > 0 else 0.0
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_rate": round(hit_rate, 2),
+            "total_requests": total,
+            "current_size": len(self.cache)
+        }
 
 
 class StockRepository:
@@ -185,6 +201,10 @@ class StockRepository:
             if time.time() - cached.get("price_updated_at", 0) <= max_age_sec:
                 return cached["current_price_data"]
         return None
+
+    def get_cache_stats(self) -> dict:
+        """메모리 캐시의 사용 통계(적중률 등)를 반환합니다."""
+        return self._stocks_cache.get_stats()
 
     def close(self):
         """DB 연결을 닫는다."""
