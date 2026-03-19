@@ -191,6 +191,10 @@ async def scheduler(request: Request):
 async def program(request: Request):
     return await render_page(request, "program.html", "program")
 
+@page_router.get("/system")
+async def system(request: Request):
+    return await render_page(request, "system.html", "system")
+
 # 5. 로그아웃
 @page_router.get("/logout")
 async def logout():

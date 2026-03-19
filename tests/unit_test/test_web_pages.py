@@ -12,6 +12,7 @@ PAGES = [
     ("/virtual", "virtual"),
     ("/scheduler", "scheduler"),
     ("/program", "program"),
+    ("/system", "system"),
 ]
 
 def test_pages_render_success_no_login(web_client, mock_web_ctx):
@@ -48,6 +49,8 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "전략 스케줄러" in response.text
         elif path == "/program":
             assert "프로그램매매 실시간 동향" in response.text
+        elif path == "/system":
+            assert "시스템 상태 모니터링" in response.text
 
 def test_pages_show_login_page_when_unauthorized(web_client, mock_web_ctx):
     """로그인 기능 활성화 시 토큰 없이 접근하면 로그인 페이지가 렌더링되는지 테스트"""
