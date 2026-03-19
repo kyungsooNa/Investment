@@ -14,6 +14,7 @@ from core.performance_manager import PerformanceManager
 from core.time_manager import TimeManager
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from managers.market_data_repository import MarketDataRepository
+from managers.stock_repository import StockRepository
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
 from market_data.stock_code_mapper import StockCodeMapper
@@ -46,7 +47,8 @@ class MarketDataCollectorTask(SchedulableTask):
         self,
         stock_query_service: "StockQueryService",
         stock_code_mapper: StockCodeMapper,
-        repository: MarketDataRepository,
+        market_data_repo: MarketDataRepository,
+        stock_repo: StockRepository,
         market_date_manager: Optional[MarketDateManager] = None,
         time_manager: Optional[TimeManager] = None,
         performance_manager: Optional[PerformanceManager] = None,
@@ -55,7 +57,8 @@ class MarketDataCollectorTask(SchedulableTask):
     ):
         self._stock_query_service = stock_query_service
         self._mapper = stock_code_mapper
-        self._repo = repository
+        self._market_data_repo = market_data_repo
+        self._stock_repo = stock_repo
         self._mdm = market_date_manager
         self._time_manager = time_manager
         self._pm = performance_manager or PerformanceManager(enabled=False)
@@ -223,7 +226,7 @@ class MarketDataCollectorTask(SchedulableTask):
 
                 # 배치 단위로 DB 저장
                 if batch_records:
-                    self._repo.upsert_prices(target_date, batch_records)
+                    self._market_data_repo.upsert_prices(target_date, batch_records)
                     collected_records.extend(batch_records)
 
                 processed += len(chunk)

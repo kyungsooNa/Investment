@@ -34,6 +34,7 @@ from task.background.ranking_task import RankingTask
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.market_data_collector_task import MarketDataCollectorTask
 from managers.market_data_repository import MarketDataRepository
+from managers.stock_repository import StockRepository
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
@@ -64,6 +65,7 @@ class WebAppContext:
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self.market_data_collector_task: MarketDataCollectorTask = None
         self.market_data_repository: MarketDataRepository = None
+        self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
         self._mdm: MarketDateManager = None
@@ -207,10 +209,12 @@ class WebAppContext:
 
         # MarketDataRepository + MarketDataCollectorTask 초기화
         self.market_data_repository = MarketDataRepository(logger=self.logger)
+        self.stock_repository = StockRepository(logger=self.logger)
         self.market_data_collector_task = MarketDataCollectorTask(
             stock_query_service=self.stock_query_service,
             stock_code_mapper=self.stock_code_mapper,
-            repository=self.market_data_repository,
+            market_data_repo=self.market_data_repository,
+            stock_repo=self.stock_repository,
             market_date_manager=self._mdm,
             time_manager=self.time_manager,
             performance_manager=self.pm,
