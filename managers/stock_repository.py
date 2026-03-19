@@ -21,11 +21,13 @@ class _LRUCache:
         self.hits = 0
         self.misses = 0
 
-    def get(self, key):
+    def get(self, key, count_stats: bool = True):
         if key not in self.cache:
-            self.misses += 1
+            if count_stats:
+                self.misses += 1
             return None
-        self.hits += 1
+        if count_stats:
+            self.hits += 1
         self.cache.move_to_end(key)
         return self.cache[key]
 
@@ -149,7 +151,8 @@ class StockRepository:
         """
         장 중에 수신된 실시간 틱 데이터를 메모리 캐시에 즉시 반영합니다.
         """
-        cached = self._stocks_cache.get(code)
+        # 내부 갱신용 접근이므로 통계 집계에서 제외
+        cached = self._stocks_cache.get(code, count_stats=False)
         if not cached:
             cached = {"code": code}
             self._stocks_cache.put(code, cached)
@@ -187,7 +190,8 @@ class StockRepository:
 
     def set_current_price(self, code: str, price_data: dict):
         """현재가 API 응답 전체 데이터를 캐시에 저장합니다."""
-        cached = self._stocks_cache.get(code)
+        # 내부 갱신용 접근이므로 통계 집계에서 제외
+        cached = self._stocks_cache.get(code, count_stats=False)
         if not cached:
             cached = {"code": code}
             self._stocks_cache.put(code, cached)

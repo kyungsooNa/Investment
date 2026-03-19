@@ -789,6 +789,11 @@ class TradingService:
             
             final_rows = sorted(merged_map.values(), key=lambda x: x['date'])
 
+            # [캐시 통계 출력 로직 추가]
+            if self._stock_repo:
+                stats = self._stock_repo.get_cache_stats()
+                self._logger.debug(f"[LRU Cache Stats] {stats}")
+
             self.pm.log_timer(f"TradingService.get_ohlcv({stock_code}, D)", t_ohlcv, threshold=0.5)
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(final_rows)}건", data=final_rows)
 
