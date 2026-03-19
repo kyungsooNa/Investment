@@ -99,6 +99,46 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository OHLCV upsert 실패: {e}")
 
+    def get_stock_data(self, code: str, ohlcv_limit: int = 120) -> Optional[Dict]:
+        """메모리 캐시 또는 로컬 DB에서 종목 정보(OHLCV)를 반환합니다."""
+        # 1. 메모리 캐시 확인
+        cached = self._stocks_cache.get(code)
+        if cached and len(cached.get("ohlcv", [])) >= ohlcv_limit:
+            return cached
+
+        # 2. 캐시에 없거나 데이터가 부족하면 DB에서 읽어오기
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT date, open, high, low, close, volume FROM ohlcv "
+                    "WHERE code = ? ORDER BY date DESC LIMIT ?",
+                    (code, ohlcv_limit)
+                )
+                ohlcv_rows = cursor.fetchall()
+                conn.row_factory = None
+
+            if not ohlcv_rows:
+                return None  # DB에도 데이터가 전혀 없는 경우
+
+            # 3. 통합 객체 구성 후 캐시에 적재
+            stock_data = {"code": code, "ohlcv": [dict(r) for r in reversed(ohlcv_rows)], "last_updated": time.time()}
+            self._stocks_cache.put(code, stock_data)
+            return stock_data
+        except Exception as e:
+            self._logger.error(f"StockRepository 종목 통합 데이터 조회 실패 ({code}): {e}")
+            return None
+
+    def update_realtime_data(self, code: str, current_price: float, volume: int = 0):
+        """
+        [인터페이스] 장 중에 수신된 실시간 틱 데이터를 
+        메모리 캐시의 통합 데이터(당일 OHLCV 및 현재가 정보)에 즉시 반영합니다.
+        """
+        # TODO: 메모리 캐시(_stocks_cache)에 해당 종목이 있으면,
+        # 'info'의 current_price, volume 등을 갱신하고
+        # 'ohlcv' 리스트의 마지막 요소(당일)의 high, low, close, volume을 최신화한다.
+        pass
+
     def close(self):
         """DB 연결을 닫는다."""
         if self._conn:
