@@ -24,6 +24,8 @@ def mock_deps():
     logger = MagicMock()
     cache_manager = MagicMock()  # Added cache_manager mock
     stock_repo = MagicMock()
+    stock_repo.get_current_price.return_value = None
+    stock_repo.get_stock_data.return_value = None
 
     return SimpleNamespace(
         broker=broker,
@@ -91,7 +93,8 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     stock_repo.get_stock_data.return_value = None
     
     # 과거 데이터 (백필 시 600건 이상 채워짐을 모사)
-    past_data = [{"stck_bsop_date": f"202412{i:02d}", "stck_clpr": "1000"} for i in range(1, 32)] * 20
+    base_date = datetime(2023, 1, 1)
+    past_data = [{"stck_bsop_date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "stck_clpr": "1000"} for i in range(605)]
     broker.inquire_daily_itemchartprice.side_effect = [ResCommonResponse(rt_cd="0", msg1="", data=past_data), ResCommonResponse(rt_cd="0", msg1="", data=[])]
     
     today_output = {
@@ -115,8 +118,9 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     
     # 2. 두 번째 호출: 로컬 데이터가 충분함 (600건 이상)
     # 과거 데이터 백필 API 호출은 스킵하고, 당일 데이터 API만 호출
+    base_date = datetime(2023, 1, 1)
     stock_repo.get_stock_data.return_value = {
-        "ohlcv": [{"date": "20250101", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}] * 605
+        "ohlcv": [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100} for i in range(605)]
     }
 
     resp2 = await trading_service.get_ohlcv("005930", period="D")
@@ -135,8 +139,9 @@ async def test_get_ohlcv_full_fetch_on_short_data(trading_service_fixture, mock_
     trading_service = trading_service_fixture
     
     # 로컬 데이터가 300건밖에 없음
+    base_date = datetime(2024, 1, 1)
     stock_repo.get_stock_data.return_value = {
-        "ohlcv": [{"date": "20241201", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}] * 300
+        "ohlcv": [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100} for i in range(300)]
     }
     
     broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[])
@@ -159,7 +164,8 @@ async def test_get_ohlcv_skip_today_api_if_cached_and_closed(trading_service_fix
     trading_service._mdm.is_market_open_now.return_value = False
     
     today_str = "20250102"
-    cached_data = [{"date": "20250101", "close": 1000.0}] * 600
+    base_date = datetime(2023, 1, 1)
+    cached_data = [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0} for i in range(600)]
     cached_data.append({"date": today_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100})
     stock_repo.get_stock_data.return_value = {"ohlcv": cached_data}
     
@@ -187,7 +193,8 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
     
     # 2. 캐시 설정 (어제인 2025-01-01까지 데이터 있음)
     yesterday_str = "20250101"
-    cached_past_data = [{"date": "20241231", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}] * 600
+    base_date = datetime(2023, 1, 1)
+    cached_past_data = [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100} for i in range(600)]
     cached_past_data.append({"date": yesterday_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100})
     stock_repo.get_stock_data.return_value = {"ohlcv": cached_past_data}
     
@@ -219,7 +226,9 @@ async def test_get_ohlcv_current_price_exception(trading_service_fixture, mock_d
     mock_deps.stock_repo.get_stock_data.return_value = None
     
     # 과거 데이터
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250101", "stck_clpr": "1000"}] * 600)
+    base_date = datetime(2023, 1, 1)
+    past_data = [{"stck_bsop_date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "stck_clpr": "1000"} for i in range(600)]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
     
     # 현재가 조회 예외
     broker.get_current_price.side_effect = Exception("API Error")
@@ -227,7 +236,7 @@ async def test_get_ohlcv_current_price_exception(trading_service_fixture, mock_d
     resp = await service.get_ohlcv("005930", period="D")
     
     assert resp.rt_cd == "0"
-    assert resp.data[0]['date'] == "20250101"
+    assert len(resp.data) == 600
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_weekend_filtering(trading_service_fixture, mock_deps):
@@ -241,7 +250,10 @@ async def test_get_ohlcv_weekend_filtering(trading_service_fixture, mock_deps):
     tm.get_current_kst_time.return_value = datetime(2025, 1, 4, 10, 0, 0)
     
     # 과거 데이터 (금요일까지)
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250103", "stck_clpr": "1000"}] * 600)
+    base_date = datetime(2023, 1, 1)
+    past_data = [{"stck_bsop_date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "stck_clpr": "1000"} for i in range(599)]
+    past_data.append({"stck_bsop_date": "20250103", "stck_clpr": "1000"})
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
     
     # 현재가 API는 금요일 데이터를 반환함
     today_output = {
@@ -252,7 +264,7 @@ async def test_get_ohlcv_weekend_filtering(trading_service_fixture, mock_deps):
     
     resp = await service.get_ohlcv("005930", period="D")
     
-    assert resp.data[0]['date'] == "20250103" # 1월 4일 데이터는 없음
+    assert resp.data[-1]['date'] == "20250103" # 1월 4일 데이터는 없음
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_duplicate_filtering(trading_service_fixture, mock_deps):
@@ -266,7 +278,10 @@ async def test_get_ohlcv_duplicate_filtering(trading_service_fixture, mock_deps)
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
     
     # 과거 데이터 (1월 1일)
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250101", "stck_oprc": "1000", "stck_hgpr": "1000", "stck_lwpr": "1000", "stck_clpr": "1000", "acml_vol": "100"}] * 600)
+    base_date = datetime(2023, 1, 1)
+    past_data = [{"stck_bsop_date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "stck_oprc": "1000", "stck_hgpr": "1000", "stck_lwpr": "1000", "stck_clpr": "1000", "acml_vol": "100"} for i in range(599)]
+    past_data.append({"stck_bsop_date": "20250101", "stck_oprc": "1000", "stck_hgpr": "1000", "stck_lwpr": "1000", "stck_clpr": "1000", "acml_vol": "100"})
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
     
     # 현재가 API가 1월 1일 데이터와 동일한 값을 반환
     today_output = {
@@ -277,7 +292,7 @@ async def test_get_ohlcv_duplicate_filtering(trading_service_fixture, mock_deps)
     
     resp = await service.get_ohlcv("005930", period="D")
     
-    assert resp.data[0]['date'] == "20250101"
+    assert resp.data[-1]['date'] == "20250101"
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
@@ -288,7 +303,9 @@ async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
     mock_deps.stock_repo.get_stock_data.return_value = None
     
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250101", "stck_clpr": "1000"}] * 600)
+    base_date = datetime(2023, 1, 1)
+    past_data = [{"stck_bsop_date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "stck_clpr": "1000"} for i in range(600)]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
     
     class MockOutput:
         stck_oprc = "2000"
