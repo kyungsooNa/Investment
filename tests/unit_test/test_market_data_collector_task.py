@@ -70,7 +70,8 @@ def task(mock_sqs, mock_mapper, repo, mock_mdm):
     return MarketDataCollectorTask(
         stock_query_service=mock_sqs,
         stock_code_mapper=mock_mapper,
-        repository=repo,
+        market_data_repo=repo,
+        stock_repo=MagicMock(),
         market_date_manager=mock_mdm,
         logger=MagicMock(),
     )
@@ -235,7 +236,8 @@ class TestLoadAllStocks:
         task = MarketDataCollectorTask(
             stock_query_service=mock_sqs,
             stock_code_mapper=mock_mapper_with_etf,
-            repository=repo,
+            market_data_repo=repo,
+            stock_repo=MagicMock(),
             market_date_manager=mock_mdm,
             logger=MagicMock(),
         )

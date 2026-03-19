@@ -22,12 +22,14 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_time_manager = MagicMock()
         self.mock_time_manager.async_sleep = AsyncMock()
         self.mock_indicator_service = AsyncMock()
+        self.mock_stock_repo = MagicMock()
         # _env 속성이 필요한 경우를 위해 AsyncMock으로 설정
         self.mock_trading_service._env = AsyncMock()
         self._original_stdout = sys.stdout
 
         self.stockQueryService = StockQueryService(
-            self.mock_trading_service, self.mock_logger, self.mock_time_manager, self.mock_indicator_service
+            self.mock_trading_service, self.mock_logger, self.mock_time_manager, self.mock_indicator_service,
+            stock_repository=self.mock_stock_repo
         )
 
     def _create_dummy_stock_info(self, overrides=None):
@@ -1125,23 +1127,48 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.error.assert_called_with("122630 ETF 정보 조회 실패: API 오류")
 
     # --- get_ohlcv ---
-    async def test_get_ohlcv_success(self):
-        """get_ohlcv 성공 케이스 테스트"""
+    async def test_get_ohlcv_local_cache_hit(self):
+        """일봉(D) 요청 시 로컬 StockRepository를 활용하는지 테스트"""
         # Arrange
-        expected_response = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=[{"date": "20230101"}])
-        self.mock_trading_service.get_ohlcv.return_value = expected_response
+        self.mock_stock_repo.get_stock_data.return_value = {
+            "ohlcv": [{"date": "20230101", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000}]
+        }
+        self.mock_time_manager.get_current_kst_time.return_value.strftime.return_value = "20230102"
+        self.mock_trading_service._mdm = AsyncMock()
+        self.mock_trading_service._mdm.is_market_open_now.return_value = False
+        
+        curr_resp = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_oprc": "105", "stck_hgpr": "115", "stck_lwpr": "100", "stck_prpr": "110", "acml_vol": "2000"}})
+        self.mock_trading_service.get_current_price.return_value = curr_resp
 
         # Act
         result = await self.stockQueryService.get_ohlcv("005930", period="D")
 
         # Assert
-        self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D")
+        self.mock_stock_repo.get_stock_data.assert_called_once_with("005930", ohlcv_limit=120)
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930")
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.assertEqual(len(result.data), 2)
+        self.assertEqual(result.data[-1]["date"], "20230102")
+        self.assertEqual(result.data[-1]["close"], 110.0)
+
+    async def test_get_ohlcv_fallback_to_api(self):
+        """로컬 DB에 데이터가 없거나 주봉/월봉일 때 API로 폴백하는지 테스트"""
+        # Arrange
+        self.mock_stock_repo.get_stock_data.return_value = None
+        expected_response = ResCommonResponse(rt_cd="0", msg1="정상", data=[{"date": "20230101"}])
+        self.mock_trading_service.get_ohlcv.return_value = expected_response
+
+        # Act
+        result = await self.stockQueryService.get_ohlcv("005930", period="W")
+
+        # Assert
+        self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="W")
         self.assertEqual(result, expected_response)
 
     async def test_get_ohlcv_exception(self):
         """get_ohlcv에서 예외 발생 시 테스트"""
         # Arrange
-        self.mock_trading_service.get_ohlcv.side_effect = Exception("Test Exception")
+        self.mock_stock_repo.get_stock_data.side_effect = Exception("Test Exception")
 
         # Act
         result = await self.stockQueryService.get_ohlcv("005930", period="D")
@@ -1574,12 +1601,20 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     # --- Realtime Helper Methods ---
     def test_dispatch_realtime_message(self):
-        """dispatch_realtime_message가 trading_service 핸들러를 호출하는지 테스트"""
-        # _default_realtime_message_handler는 동기 함수이므로 MagicMock으로 명시 (AsyncMock이면 coroutine never awaited 경고 발생)
+        """dispatch_realtime_message가 trading_service 및 stock_repository를 호출하는지 테스트"""
         self.mock_trading_service._default_realtime_message_handler = MagicMock()
-        data = {"type": "test"}
+        data = {
+            "type": "realtime_price",
+            "data": {
+                "유가증권단축종목코드": "005930",
+                "주식현재가": "75000",
+                "누적거래량": "100000"
+            }
+        }
         self.stockQueryService.dispatch_realtime_message(data)
+        
         self.mock_trading_service._default_realtime_message_handler.assert_called_once_with(data)
+        self.mock_stock_repo.update_realtime_data.assert_called_once_with("005930", 75000.0, 100000)
 
     def test_get_cached_realtime_price(self):
         """get_cached_realtime_price가 trading_service의 캐시를 반환하는지 테스트"""
