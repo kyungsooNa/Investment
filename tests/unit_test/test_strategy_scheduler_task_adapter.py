@@ -1,0 +1,122 @@
+"""
+StrategySchedulerTaskAdapter 단위 테스트.
+StrategyScheduler를 SchedulableTask 인터페이스로 래핑하는 어댑터 검증.
+"""
+import pytest
+from unittest.mock import MagicMock, AsyncMock, PropertyMock
+from task.background.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
+from interfaces.schedulable_task import TaskPriority, TaskState
+
+
+@pytest.fixture
+def mock_strategy_scheduler():
+    scheduler = MagicMock()
+    scheduler.restore_state = AsyncMock()
+    scheduler.stop = AsyncMock()
+    scheduler._running = False
+    return scheduler
+
+
+@pytest.fixture
+def adapter(mock_strategy_scheduler):
+    return StrategySchedulerTaskAdapter(mock_strategy_scheduler)
+
+
+def test_task_name(adapter):
+    assert adapter.task_name == "strategy_scheduler"
+
+
+def test_priority(adapter):
+    assert adapter.priority == TaskPriority.NORMAL
+
+
+def test_initial_state(adapter):
+    assert adapter.state == TaskState.IDLE
+
+
+async def test_start(adapter, mock_strategy_scheduler):
+    """start() 호출 시 restore_state가 호출되고 상태가 RUNNING으로 변경된다."""
+    await adapter.start()
+
+    mock_strategy_scheduler.restore_state.assert_awaited_once()
+    assert adapter.state == TaskState.RUNNING
+
+
+async def test_start_already_running(adapter, mock_strategy_scheduler):
+    """이미 RUNNING 상태이면 start()가 아무것도 하지 않는다."""
+    await adapter.start()
+    mock_strategy_scheduler.restore_state.reset_mock()
+
+    await adapter.start()
+
+    mock_strategy_scheduler.restore_state.assert_not_awaited()
+    assert adapter.state == TaskState.RUNNING
+
+
+async def test_stop_when_running(adapter, mock_strategy_scheduler):
+    """전략 스케줄러가 실행 중이면 stop(save_state=True)을 호출한다."""
+    mock_strategy_scheduler._running = True
+
+    await adapter.stop()
+
+    mock_strategy_scheduler.stop.assert_awaited_once_with(save_state=True)
+    assert adapter.state == TaskState.STOPPED
+
+
+async def test_stop_when_not_running(adapter, mock_strategy_scheduler):
+    """전략 스케줄러가 실행 중이 아니면 stop()을 호출하지 않는다."""
+    mock_strategy_scheduler._running = False
+
+    await adapter.stop()
+
+    mock_strategy_scheduler.stop.assert_not_awaited()
+    assert adapter.state == TaskState.STOPPED
+
+
+async def test_suspend(adapter):
+    """RUNNING 상태에서 suspend() 호출 시 SUSPENDED로 변경된다."""
+    await adapter.start()
+    await adapter.suspend()
+    assert adapter.state == TaskState.SUSPENDED
+
+
+async def test_suspend_not_running(adapter):
+    """RUNNING이 아닌 상태에서 suspend()는 상태를 변경하지 않는다."""
+    assert adapter.state == TaskState.IDLE
+    await adapter.suspend()
+    assert adapter.state == TaskState.IDLE
+
+
+async def test_resume(adapter):
+    """SUSPENDED 상태에서 resume() 호출 시 RUNNING으로 변경된다."""
+    await adapter.start()
+    await adapter.suspend()
+    await adapter.resume()
+    assert adapter.state == TaskState.RUNNING
+
+
+async def test_resume_not_suspended(adapter):
+    """SUSPENDED가 아닌 상태에서 resume()은 상태를 변경하지 않는다."""
+    await adapter.start()
+    assert adapter.state == TaskState.RUNNING
+    await adapter.resume()
+    assert adapter.state == TaskState.RUNNING
+
+
+async def test_full_lifecycle(adapter, mock_strategy_scheduler):
+    """전체 라이프사이클: IDLE → start → suspend → resume → stop."""
+    mock_strategy_scheduler._running = True
+
+    assert adapter.state == TaskState.IDLE
+
+    await adapter.start()
+    assert adapter.state == TaskState.RUNNING
+
+    await adapter.suspend()
+    assert adapter.state == TaskState.SUSPENDED
+
+    await adapter.resume()
+    assert adapter.state == TaskState.RUNNING
+
+    await adapter.stop()
+    assert adapter.state == TaskState.STOPPED

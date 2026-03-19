@@ -433,7 +433,7 @@ class TestVirtualReal:
 class TestRankingProgressReal:
     def test_get_ranking_progress(self, real_client, mock_real_ctx):
         """투자자 랭킹 수집 진행률 조회."""
-        mock_real_ctx.background_service.get_investor_ranking_progress.return_value = {
+        mock_real_ctx.ranking_task.get_investor_ranking_progress.return_value = {
             "running": True, "processed": 5, "total": 12, "collected": 50, "elapsed": 3.2
         }
 
@@ -445,9 +445,9 @@ class TestRankingProgressReal:
         assert body["processed"] == 5
         assert body["total"] == 12
 
-    def test_get_ranking_progress_no_background_service(self, real_client, mock_real_ctx):
-        """background_service가 None이면 기본값 반환."""
-        mock_real_ctx.background_service = None
+    def test_get_ranking_progress_no_ranking_task(self, real_client, mock_real_ctx):
+        """ranking_task가 None이면 기본값 반환."""
+        mock_real_ctx.ranking_task = None
 
         resp = real_client.get("/api/ranking/progress")
         assert resp.status_code == 200

@@ -2,6 +2,7 @@
 웹 애플리케이션용 서비스 초기화 모듈.
 TradingApp의 초기화 로직을 참고하여 서비스 레이어만 초기화한다.
 """
+import asyncio
 from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
@@ -17,6 +18,9 @@ from core.time_manager import TimeManager
 from core.logger import Logger, get_strategy_logger
 from core.performance_manager import PerformanceManager
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
+from scheduler.background_scheduler import BackgroundScheduler
+from scheduler.foreground_scheduler import ForegroundScheduler
+from task.background.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from services.naver_finance_scraper import NaverFinanceScraper
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -26,7 +30,10 @@ from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
-from services.background_service import BackgroundService
+from task.background.ranking_task import RankingTask
+from task.background.websocket_watchdog_task import WebSocketWatchdogTask
+from task.background.market_data_collector_task import MarketDataCollectorTask
+from managers.market_data_repository import MarketDataRepository
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
@@ -53,7 +60,12 @@ class WebAppContext:
         self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
-        self.background_service: BackgroundService = None
+        self.ranking_task: RankingTask = None
+        self.websocket_watchdog_task: WebSocketWatchdogTask = None
+        self.market_data_collector_task: MarketDataCollectorTask = None
+        self.market_data_repository: MarketDataRepository = None
+        self.background_scheduler: BackgroundScheduler = None
+        self.foreground_scheduler: ForegroundScheduler = None
         self._mdm: MarketDateManager = None
         self.notification_manager: NotificationManager = None
         self.initialized = False
@@ -101,7 +113,7 @@ class WebAppContext:
             )
             self.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
             
-            # [추가] Telegram Reporter 초기화 (BackgroundService 주입용)
+            # [추가] Telegram Reporter 초기화 (RankingTask 주입용)
             self.telegram_reporter = TelegramReporter(bot_token=telegram_token, chat_id=telegram_chat_id)
             self.logger.info("텔레그램 리포터가 초기화되었습니다.")
         else:
@@ -161,7 +173,7 @@ class WebAppContext:
 
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
         self.indicator_service = IndicatorService(cache_manager=cache_manager, performance_manager=self.pm)
-        self.background_service = BackgroundService(
+        self.ranking_task = RankingTask(
             broker_api_wrapper=self.broker,
             stock_code_mapper=self.stock_code_mapper,
             env=self.env,
@@ -172,20 +184,39 @@ class WebAppContext:
             notification_manager=self.notification_manager,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
             market_date_manager=self._mdm,
-            stock_query_service=None,  # stock_query_service 생성 후 주입
-            realtime_data_manager=self.realtime_data_manager,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
             indicator_service=self.indicator_service,
-            background_service=self.background_service,
+            ranking_task=self.ranking_task,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
-        # BackgroundService에 StockQueryService 주입 (순환 참조 방지를 위해 지연 주입)
-        self.background_service._stock_query_service = self.stock_query_service
+        # WebSocketWatchdogTask 초기화
+        self.websocket_watchdog_task = WebSocketWatchdogTask(
+            stock_query_service=self.stock_query_service,
+            trading_service=self.trading_service,
+            realtime_data_manager=self.realtime_data_manager,
+            market_date_manager=self._mdm,
+            performance_manager=self.pm,
+            notification_manager=self.notification_manager,
+            logger=self.logger,
+        )
+
+        # MarketDataRepository + MarketDataCollectorTask 초기화
+        self.market_data_repository = MarketDataRepository(logger=self.logger)
+        self.market_data_collector_task = MarketDataCollectorTask(
+            broker_api_wrapper=self.broker,
+            stock_code_mapper=self.stock_code_mapper,
+            repository=self.market_data_repository,
+            market_date_manager=self._mdm,
+            time_manager=self.time_manager,
+            performance_manager=self.pm,
+            notification_manager=self.notification_manager,
+            logger=self.logger,
+        )
 
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager,
@@ -203,6 +234,25 @@ class WebAppContext:
             scraper_service=NaverFinanceScraper(logger=self.logger),
             logger=self.logger,
             performance_manager=self.pm
+        )
+
+        # BackgroundScheduler 초기화 및 태스크 등록
+        self.background_scheduler = BackgroundScheduler(
+            logger=self.logger,
+            performance_manager=self.pm,
+        )
+        if self.ranking_task:
+            self.background_scheduler.register(self.ranking_task)
+        if self.websocket_watchdog_task:
+            self.background_scheduler.register(self.websocket_watchdog_task)
+        if self.market_data_collector_task:
+            self.background_scheduler.register(self.market_data_collector_task)
+
+        # ForegroundScheduler 초기화
+        self.foreground_scheduler = ForegroundScheduler(
+            background_scheduler=self.background_scheduler,
+            logger=self.logger,
+            performance_manager=self.pm,
         )
 
         self.initialized = True
@@ -362,17 +412,24 @@ class WebAppContext:
         ))
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
+        # StrategyScheduler를 BackgroundScheduler에 어댑터로 등록
+        if self.background_scheduler and self.scheduler:
+            adapter = StrategySchedulerTaskAdapter(self.scheduler)
+            self.background_scheduler.register(adapter)
+
     def start_background_tasks(self):
-        """백그라운드 태스크 시작 — BackgroundService에 위임."""
-        if self.background_service:
-            self.background_service.start_all(
-                realtime_callback=self._web_realtime_callback,
-            )
+        """백그라운드 태스크 시작 — BackgroundScheduler에 위임."""
+        # WebSocketWatchdogTask에 realtime_callback 설정
+        if self.websocket_watchdog_task:
+            self.websocket_watchdog_task._realtime_callback = self._web_realtime_callback
+
+        if self.background_scheduler:
+            asyncio.create_task(self.background_scheduler.start_all())
 
     async def shutdown(self):
-        """서비스 종료 처리 — BackgroundService에 위임."""
-        if self.background_service:
-            await self.background_service.shutdown()
+        """서비스 종료 처리 — BackgroundScheduler에 위임."""
+        if self.background_scheduler:
+            await self.background_scheduler.shutdown()
         self.logger.info("웹 앱: 서비스 종료 완료")
 
     # --- 프로그램매매 실시간 스트리밍 ---
@@ -407,7 +464,7 @@ class WebAppContext:
             if (self.trading_service
                     and not self.trading_service.is_websocket_receive_alive()):
                 self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
-                await self.background_service.force_reconnect_program_trading()
+                await self.websocket_watchdog_task.force_reconnect_program_trading()
 
                 # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
                 if not self.realtime_data_manager.is_subscribed(code):

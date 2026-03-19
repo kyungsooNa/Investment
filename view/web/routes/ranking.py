@@ -12,8 +12,8 @@ router = APIRouter()
 async def get_ranking_progress():
     """투자자 랭킹 수집 진행률 조회."""
     ctx = _get_ctx()
-    if ctx.background_service:
-        return ctx.background_service.get_investor_ranking_progress()
+    if ctx.ranking_task:
+        return ctx.ranking_task.get_investor_ranking_progress()
     return {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
 
 

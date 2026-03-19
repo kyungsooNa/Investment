@@ -526,7 +526,7 @@ class TestWebAppContextInitialization:
         from services.order_execution_service import OrderExecutionService
         from services.indicator_service import IndicatorService
         from services.oneil_universe_service import OneilUniverseService
-        from services.background_service import BackgroundService
+        from task.background.ranking_task import RankingTask
         from core.time_manager import TimeManager
         from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 
@@ -569,7 +569,7 @@ class TestWebAppContextInitialization:
             assert isinstance(ctx.order_execution_service, OrderExecutionService)
             assert isinstance(ctx.indicator_service, IndicatorService)
             assert isinstance(ctx.oneil_universe_service, OneilUniverseService)
-            assert isinstance(ctx.background_service, BackgroundService)
+            assert isinstance(ctx.ranking_task, RankingTask)
 
             # DI 연결 검증: IndicatorService ↔ StockQueryService 순환 주입
             assert ctx.indicator_service.stock_query_service is ctx.stock_query_service

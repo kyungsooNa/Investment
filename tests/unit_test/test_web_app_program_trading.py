@@ -20,9 +20,9 @@ def mock_ctx():
         ctx.trading_service = MagicMock()
         ctx.realtime_data_manager = MockRDM.return_value
 
-        # BackgroundService mock (force_reconnect 등 위임용)
-        ctx.background_service = MagicMock()
-        ctx.background_service.force_reconnect_program_trading = AsyncMock()
+        # WebSocketWatchdogTask mock (force_reconnect 등 위임용)
+        ctx.websocket_watchdog_task = MagicMock()
+        ctx.websocket_watchdog_task.force_reconnect_program_trading = AsyncMock()
 
         # PerformanceManager mock
         ctx.pm = MagicMock()
@@ -84,7 +84,7 @@ async def test_start_program_trading_dead_reconnect_success(mock_ctx):
     result = await mock_ctx.start_program_trading(code)
 
     assert result is True
-    mock_ctx.background_service.force_reconnect_program_trading.assert_called_once()
+    mock_ctx.websocket_watchdog_task.force_reconnect_program_trading.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_start_program_trading_dead_reconnect_fail_retry_success(mock_ctx):

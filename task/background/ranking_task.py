@@ -1,29 +1,26 @@
-# services/background_service.py
+# task/background/ranking_task.py
 """
-백그라운드 배치 작업 전담 서비스.
+랭킹 데이터 수집 및 캐시 관리 태스크.
 전체 종목 순회가 필요한 랭킹 집계(외국인/기관/개인 순매수 등)와
-장마감 후 기본 랭킹 캐시, 프로그램매매 워치독 등 모든 백그라운드 태스크를 관리한다.
+장마감 후 기본 랭킹 캐시를 관리한다.
 """
 import asyncio
 import logging
 import time
 from datetime import datetime
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Callable, TYPE_CHECKING
+from typing import List, Dict, Optional, TYPE_CHECKING
 
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ErrorCode
 from core.time_manager import TimeManager
+from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from managers.market_date_manager import MarketDateManager
 from market_data.stock_code_mapper import StockCodeMapper
 from core.performance_manager import PerformanceManager
 from managers.telegram_notifier import TelegramReporter
+from scheduler.after_market_loop import run_after_market_loop
 from managers.notification_manager import NotificationManager
-
-if TYPE_CHECKING:
-    from services.stock_query_service import StockQueryService
-    from managers.realtime_data_manager import RealtimeDataManager
 
 
 def _chunked(lst, size):
@@ -39,8 +36,8 @@ _ETF_PREFIXES = (
 )
 
 
-class BackgroundService:
-    """백그라운드 배치 작업을 관리하는 서비스."""
+class RankingTask(SchedulableTask):
+    """랭킹 데이터를 수집·캐시하는 백그라운드 태스크."""
 
     # 청크 크기 및 레이트 리밋
     API_CHUNK_SIZE = 8
@@ -61,8 +58,6 @@ class BackgroundService:
         notification_manager: Optional[NotificationManager] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
         market_date_manager: Optional[MarketDateManager] = None,
-        stock_query_service: Optional["StockQueryService"] = None,
-        realtime_data_manager: Optional["RealtimeDataManager"] = None,
     ):
         self._broker = broker_api_wrapper
         self._mapper = stock_code_mapper
@@ -74,8 +69,6 @@ class BackgroundService:
         self._nm = notification_manager
         self._telegram_reporter = telegram_reporter
         self.mdm = market_date_manager
-        self._stock_query_service = stock_query_service
-        self._realtime_data_manager = realtime_data_manager
 
         # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
@@ -95,9 +88,6 @@ class BackgroundService:
         self._basic_ranking_cache: Dict[str, ResCommonResponse] = {}
         self._basic_ranking_updated_at: Optional[datetime] = None
 
-        # 장마감 후 자동 갱신 태스크
-        self._after_market_task: Optional[asyncio.Task] = None
-
         # 진행률 상태
         self._progress: Dict = {
             "running": False,
@@ -107,65 +97,94 @@ class BackgroundService:
             "elapsed": 0.0,
         }
 
-        # 백그라운드 태스크 추적
+        # SchedulableTask 상태
+        self._state: TaskState = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
-        self._realtime_callback: Optional[Callable] = None
+        self._suspend_event: asyncio.Event = asyncio.Event()
+        self._suspend_event.set()  # 초기에는 실행 가능 상태
+
+    # ── SchedulableTask 인터페이스 구현 ────────────────────────
+
+    @property
+    def task_name(self) -> str:
+        return "ranking_refresh"
+
+    @property
+    def priority(self) -> TaskPriority:
+        return TaskPriority.LOW
+
+    @property
+    def state(self) -> TaskState:
+        return self._state
+
+    async def start(self) -> None:
+        """투자자 랭킹 1회 실행 + 장마감 후 자동 갱신 스케줄러 시작."""
+        if self._state == TaskState.RUNNING:
+            return
+        self._state = TaskState.RUNNING
+        self._suspend_event.set()
+
+        self._tasks.append(
+            asyncio.create_task(self.refresh_investor_ranking())
+        )
+        self._tasks.append(
+            asyncio.create_task(self.start_after_market_scheduler())
+        )
+        self._logger.info(f"RankingTask 시작: {len(self._tasks)}개 태스크")
+
+    async def stop(self) -> None:
+        """모든 랭킹 태스크를 취소하고 정리한다."""
+        self._logger.info(f"RankingTask 종료 시작: {len(self._tasks)}개 태스크")
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._state = TaskState.STOPPED
+        self._logger.info("RankingTask 종료 완료")
+
+    async def suspend(self) -> None:
+        """랭킹 수집을 일시 중지한다 (chunk 사이에서 대기)."""
+        if self._state == TaskState.RUNNING:
+            self._suspend_event.clear()
+            self._state = TaskState.SUSPENDED
+            self._logger.info("RankingTask 일시 중지")
+
+    async def resume(self) -> None:
+        """일시 중지된 랭킹 수집을 재개한다."""
+        if self._state == TaskState.SUSPENDED:
+            self._suspend_event.set()
+            self._state = TaskState.RUNNING
+            self._logger.info("RankingTask 재개")
 
     # ── 장마감 후 자동 갱신 스케줄러 ────────────────────────────
 
     async def start_after_market_scheduler(self) -> None:
         """장마감 후 자동으로 랭킹 갱신을 스케줄링하는 루프."""
-        self._logger.info("장마감 후 자동 갱신 스케줄러 시작")
-        
-        while True:
-            try:
-                # 1. 오늘이 주식 시장이 열리는 영업일인지 달력 확인
-                is_business_day = await self.mdm.is_business_day() if self.mdm else True
-                wait_sec = self._time_manager.get_sleep_seconds_until_market_close()
-                
-                # 영업일이면서 15:30 이전인 경우에만 대기 (주말/휴일이거나 15:30 이후면 즉시 통과)
-                if is_business_day and wait_sec > 0:
-                    self._logger.info(f"오늘 장 마감(15:30)까지 {wait_sec:.0f}초 대기합니다.")
-                    await asyncio.sleep(wait_sec + 60)
-                    continue 
+        await run_after_market_loop(
+            mdm=self.mdm,
+            time_manager=self._time_manager,
+            logger=self._logger,
+            on_market_closed=self._on_market_closed,
+            label="RankingTask",
+        )
 
-                # 2. 장 마감 이후 상태 (15:30 이후)
-                # 최근 거래일 기준으로 갱신 여부 판단 (자정 넘어도 전날 갱신분 인식)
-                latest_trading_date = await self.mdm.get_latest_trading_date() if self.mdm else None
+    async def _on_market_closed(self, latest_trading_date: str) -> None:
+        """장 마감 후 콜백: 해당 거래일의 랭킹 갱신이 필요하면 실행."""
+        needs_basic = (
+            not self._basic_ranking_updated_at
+            or self._basic_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
+        )
+        needs_investor = (
+            not self._investor_ranking_updated_at
+            or self._investor_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
+        )
 
-                if latest_trading_date:
-
-                    needs_investor = (
-                        not self._investor_ranking_updated_at
-                        or self._investor_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
-                    )
-                    needs_basic = (
-                        not self._basic_ranking_updated_at
-                        or self._basic_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
-                    )
-
-                    if needs_basic:
-                        await self.refresh_basic_ranking()
-                    if needs_investor:
-                        await self.refresh_investor_ranking()
-
-                # 3. 갱신을 마쳤으면 자정(다음날 00:00:01)까지 정확히 대기하여 다음 사이클 준비
-                now_after_task = self._time_manager.get_current_kst_time()
-                tomorrow = now_after_task + timedelta(days=1)
-                next_midnight = tomorrow.replace(hour=0, minute=0, second=1, microsecond=0)
-                sleep_to_midnight = (next_midnight - now_after_task).total_seconds()
-                
-                if sleep_to_midnight > 0:
-                    self._logger.info(f"오늘 장 마감 작업 완료. 자정까지 {sleep_to_midnight:.0f}초 대기합니다. 💤")
-                    await asyncio.sleep(sleep_to_midnight)
-                else:
-                    await asyncio.sleep(60)
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._logger.error(f"장마감 후 스케줄러 오류: {e}", exc_info=True)
-                await asyncio.sleep(60)
+        if needs_basic:
+            await self.refresh_basic_ranking()
+        if needs_investor:
+            await self.refresh_investor_ranking()
 
     # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
 
@@ -194,7 +213,7 @@ class BackgroundService:
 
             self._basic_ranking_updated_at = datetime.now()
             self._logger.info(f"기본 랭킹 캐시 갱신 완료: {list(self._basic_ranking_cache.keys())}")
-            self.pm.log_timer("BackgroundService.refresh_basic_ranking", t_start, threshold=1.0)
+            self.pm.log_timer("RankingTask.refresh_basic_ranking", t_start, threshold=1.0)
             if self._nm:
                 await self._nm.emit(
                     "API", "info", "기본 랭킹 갱신 완료",
@@ -224,7 +243,7 @@ class BackgroundService:
             try:
                 resp = await api_call(*args, **kwargs)
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
-                    self.pm.log_timer(f"BackgroundService._fetch_with_retry({api_call.__name__}, {args[0]})", t_start)
+                    self.pm.log_timer(f"RankingTask._fetch_with_retry({api_call.__name__}, {args[0]})", t_start)
                     return resp
 
                 error_msg = resp.msg1 if resp else "응답 없음"
@@ -242,7 +261,7 @@ class BackgroundService:
                 delay *= 1.5  # 약간의 지수 백오프
 
         self._logger.error(f"API 호출 최종 실패: {api_call.__name__}({args[0]})")
-        self.pm.log_timer(f"BackgroundService._fetch_with_retry({api_call.__name__}, {args[0]}) [최종실패]", t_start)
+        self.pm.log_timer(f"RankingTask._fetch_with_retry({api_call.__name__}, {args[0]}) [최종실패]", t_start)
         return None  # 최종 실패 시 None 반환
 
     async def refresh_investor_ranking(self) -> None:
@@ -259,9 +278,8 @@ class BackgroundService:
         t_start_total = self.pm.start_timer()
         self._is_refreshing = True
         start_time = time.time()
-        today = datetime.now().strftime("%Y%m%d")
         self._logger.info("투자자 랭킹 백그라운드 갱신 시작")
-        
+
         # [변경] 오늘 날짜 대신 실제 장이 열린 최근 날짜 조회
         target_date = None
         if self.mdm:
@@ -288,6 +306,9 @@ class BackgroundService:
             processed = 0
 
             for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
+                # suspend 상태이면 resume될 때까지 대기
+                await self._suspend_event.wait()
+
                 # 투자자 매매동향 + 프로그램매매추이 동시 호출
                 investor_tasks = [
                     self._fetch_with_retry(self._broker.get_investor_trade_by_stock_daily, code, target_date)
@@ -305,9 +326,8 @@ class BackgroundService:
 
                 for (code, name, market), resp in zip(chunk, investor_responses):
                     if isinstance(resp, Exception):
-                        # _fetch_with_retry에서 이미 로깅했으므로 여기서는 스킵
                         continue
-                    if not resp:  # 최종 실패 시 None이 반환됨
+                    if not resp:
                         continue
                     data = resp.data
                     if not data:
@@ -347,9 +367,8 @@ class BackgroundService:
                 # 프로그램매매추이 수집
                 for (code, name, market), resp in zip(chunk, program_responses):
                     if isinstance(resp, Exception):
-                        # _fetch_with_retry에서 이미 로깅했으므로 여기서는 스킵
                         continue
-                    if not resp:  # 최종 실패 시 None이 반환됨
+                    if not resp:
                         continue
                     data = resp.data
                     if not data:
@@ -398,7 +417,6 @@ class BackgroundService:
                     await asyncio.sleep(self.CHUNK_SLEEP_SEC)
 
             # 2-1. 프로그램 데이터의 acml_tr_pbmn으로 투자자 결과 보정
-            #      (투자자 API output1에 acml_tr_pbmn이 없거나 "0"일 수 있음)
             prog_tr_map = {r["stck_shrn_iscd"]: r["acml_tr_pbmn"] for r in program_results}
             for r in results:
                 if int(r.get("acml_tr_pbmn", "0") or "0") == 0:
@@ -425,7 +443,7 @@ class BackgroundService:
             self._logger.info(
                 f"투자자 랭킹 갱신 완료: {len(results)}개 종목 수집, 소요: {elapsed:.1f}s"
             )
-            self.pm.log_timer("BackgroundService.refresh_investor_ranking", t_start_total, threshold=10.0)
+            self.pm.log_timer("RankingTask.refresh_investor_ranking", t_start_total, threshold=10.0)
             if self._nm:
                 await self._nm.emit(
                     "API", "info", "투자자 랭킹 갱신 완료",
@@ -587,178 +605,3 @@ class BackgroundService:
             if market in ("KOSPI", "KOSDAQ"):
                 all_stocks.append((code, name, market))
         return all_stocks
-
-    # ══════════════════════════════════════════════════════════
-    # 백그라운드 태스크 통합 관리
-    # ══════════════════════════════════════════════════════════
-
-    def start_all(self, realtime_callback: Callable = None) -> None:
-        """모든 백그라운드 태스크를 시작하고 추적한다."""
-        self._realtime_callback = realtime_callback
-
-        # 1. 실시간 데이터 매니저 백그라운드 태스크 (데이터 정리 등)
-        if self._realtime_data_manager:
-            self._realtime_data_manager.start_background_tasks()
-
-        # 2. 이전 구독 상태 자동 복원
-        if self._realtime_data_manager:
-            saved_codes = self._realtime_data_manager.get_subscribed_codes()
-            if saved_codes:
-                self._tasks.append(
-                    asyncio.create_task(self._restore_program_trading(saved_codes))
-                )
-
-        # 3. 프로그램매매 연결 상태 워치독
-        self._tasks.append(
-            asyncio.create_task(self._program_trading_watchdog())
-        )
-
-        # 4. 투자자별 순매수 랭킹 백그라운드 갱신
-        self._tasks.append(
-            asyncio.create_task(self.refresh_investor_ranking())
-        )
-
-        # 5. 장마감 후 자동 갱신 스케줄러
-        self._tasks.append(
-            asyncio.create_task(self.start_after_market_scheduler())
-        )
-
-        self._logger.info(f"백그라운드 태스크 {len(self._tasks)}개 시작 완료")
-
-    async def shutdown(self) -> None:
-        """모든 백그라운드 태스크를 취소하고 정리한다."""
-        self._logger.info(f"백그라운드 태스크 {len(self._tasks)}개 종료 시작")
-
-        for task in self._tasks:
-            if not task.done():
-                task.cancel()
-
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-
-        self._tasks.clear()
-
-        # 실시간 데이터 매니저 종료
-        if self._realtime_data_manager:
-            await self._realtime_data_manager.shutdown()
-
-        self._logger.info("백그라운드 태스크 전체 종료 완료")
-
-    # ── 프로그램매매 워치독 / 복원 / 재연결 ──────────────────────
-
-    async def _restore_program_trading(self, codes: list) -> None:
-        """앱 시작 시 이전 구독 상태를 자동 복원 (백그라운드)."""
-        self._logger.info(f"프로그램매매 구독 복원 시작: {codes}")
-        success_count = 0
-        failed_codes = []
-        for code in codes:
-            try:
-                connected = await self._stock_query_service.connect_websocket(self._realtime_callback)
-                if not connected:
-                    self._logger.warning(f"프로그램매매 복원 실패 (WebSocket 연결 불가): {code}")
-                    failed_codes.append(code)
-                    continue
-                await self._stock_query_service.subscribe_program_trading(code)
-                await self._stock_query_service.subscribe_realtime_price(code)
-                success_count += 1
-            except Exception as e:
-                self._logger.error(f"프로그램매매 복원 중 오류 ({code}): {e}")
-                failed_codes.append(code)
-
-        if failed_codes:
-            self._logger.warning(f"복원에 실패한 구독 종목을 상태에서 제거합니다: {failed_codes}")
-            for code in failed_codes:
-                self._realtime_data_manager.remove_subscribed_code(code)
-
-        self._logger.info(f"프로그램매매 구독 복원 완료: {success_count}/{len(codes)}개 종목")
-
-    async def _program_trading_watchdog(self) -> None:
-        """프로그램매매 WebSocket 연결 상태를 주기적으로 감시하고, 데이터 수신이 끊기면 재연결."""
-        WATCHDOG_INTERVAL = 60   # 감시 주기 (초)
-        DATA_GAP_THRESHOLD = 120  # 데이터 미수신 허용 최대 시간 (초)
-
-        while True:
-            try:
-                await asyncio.sleep(WATCHDOG_INTERVAL)
-
-                if not self._realtime_data_manager:
-                    continue
-
-                codes = self._realtime_data_manager.get_subscribed_codes()
-                if not codes:
-                    continue  # 구독 중인 종목 없으면 스킵
-
-                if not self.mdm or not await self.mdm.is_market_open_now():
-                    # 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
-                    if self._trading_service and self._trading_service.is_websocket_receive_alive():
-                        self._logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
-                        await self._trading_service.disconnect_websocket()
-                    continue
-
-                # 조건 1: 수신 태스크가 죽었는지 확인
-                receive_alive = (
-                    self._trading_service
-                    and self._trading_service.is_websocket_receive_alive()
-                )
-
-                # 조건 2: 데이터 수신 갭 확인
-                last_ts = self._realtime_data_manager.last_data_ts
-                data_gap = (time.time() - last_ts) if last_ts > 0 else float('inf')
-
-                needs_reconnect = False
-                if not receive_alive:
-                    self._logger.warning(f"[워치독] WebSocket 수신 태스크가 종료됨. 재연결을 시도합니다.")
-                    needs_reconnect = True
-                elif data_gap > DATA_GAP_THRESHOLD:
-                    self._logger.warning(f"[워치독] {data_gap:.0f}초간 데이터 미수신 (임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다.")
-                    needs_reconnect = True
-
-                if needs_reconnect:
-                    await self.force_reconnect_program_trading()
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._logger.error(f"[워치독] 오류 발생: {e}")
-
-    async def force_reconnect_program_trading(self) -> None:
-        """WebSocket 연결을 강제로 끊고 재연결 + 재구독."""
-        if not self._realtime_data_manager:
-            return
-
-        codes = self._realtime_data_manager.get_subscribed_codes()
-        if not codes:
-            return
-
-        t_start = self.pm.start_timer()
-        self._logger.info(f"[워치독] 강제 재연결 시작 (구독 종목: {codes})")
-        try:
-            # 1. 기존 WebSocket 연결 강제 종료
-            await self._stock_query_service.trading_service.disconnect_websocket()
-        except Exception as e:
-            self._logger.warning(f"[워치독] 기존 연결 종료 중 오류 (무시): {e}")
-
-        # 2. 새 연결 + 재구독
-        success_count = 0
-        failed_codes = []
-        for code in codes:
-            try:
-                connected = await self._stock_query_service.connect_websocket(self._realtime_callback)
-                if not connected:
-                    self._logger.warning(f"[워치독] 재연결 실패: {code}")
-                    failed_codes.append(code)
-                    continue
-                await self._stock_query_service.subscribe_program_trading(code)
-                await self._stock_query_service.subscribe_realtime_price(code)
-                success_count += 1
-            except Exception as e:
-                self._logger.error(f"[워치독] 재구독 중 오류 ({code}): {e}")
-                failed_codes.append(code)
-
-        if failed_codes:
-            self._logger.warning(f"[워치독] 재구독에 실패한 종목을 상태에서 제거합니다: {failed_codes}")
-            for code in failed_codes:
-                self._realtime_data_manager.remove_subscribed_code(code)
-
-        self.pm.log_timer(f"BackgroundService.force_reconnect_program_trading({success_count}/{len(codes)})", t_start)
-        self._logger.info(f"[워치독] 강제 재연결 완료: {success_count}/{len(codes)}개 종목")
