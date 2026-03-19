@@ -35,9 +35,9 @@ class StockQueryService:
         else:  # 3:보합 (또는 기타)
             return ""
 
-    async def get_current_price(self, stock_code: str) -> ResCommonResponse:
+    async def get_current_price(self, stock_code: str, count_stats: bool = True) -> ResCommonResponse:
         """현재가만 빠르게 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_current_price(stock_code)
+        return await self.trading_service.get_current_price(stock_code, count_stats=count_stats)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, TradingService 래퍼)."""

@@ -198,9 +198,9 @@ class StockRepository:
         cached["current_price_data"] = price_data
         cached["price_updated_at"] = time.time()
 
-    def get_current_price(self, code: str, max_age_sec: float = 3.0) -> Optional[dict]:
+    def get_current_price(self, code: str, max_age_sec: float = 3.0, count_stats: bool = True) -> Optional[dict]:
         """캐시된 현재가 데이터(dict)를 반환합니다. 지정된 TTL(초)이 만료된 경우 None 반환."""
-        cached = self._stocks_cache.get(code)
+        cached = self._stocks_cache.get(code, count_stats=count_stats)
         if cached and "current_price_data" in cached:
             if time.time() - cached.get("price_updated_at", 0) <= max_age_sec:
                 return cached["current_price_data"]

@@ -181,14 +181,15 @@ class TradingService:
         self._logger.info(f"Service - {stock_code} 종목 상세 정보 조회 요청")
         return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
 
-    async def get_current_price(self, stock_code) -> ResCommonResponse:
+    async def get_current_price(self, stock_code, count_stats: bool = True) -> ResCommonResponse:
         # 1. StockRepository 단기 캐시 확인 (웹소켓 틱 갱신 또는 최근 API 조회 결과)
         if self._stock_repo:
-            cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0)
+            cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0, count_stats=count_stats)
             if cached_data:
                 return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(Cache)", data=cached_data)
                 
-        self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
+        if count_stats:
+            self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
         resp = await self._broker_api_wrapper.get_current_price(stock_code)
         
         # 2. 조회 결과를 StockRepository에 갱신
