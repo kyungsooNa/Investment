@@ -208,7 +208,7 @@ class WebAppContext:
         # MarketDataRepository + MarketDataCollectorTask 초기화
         self.market_data_repository = MarketDataRepository(logger=self.logger)
         self.market_data_collector_task = MarketDataCollectorTask(
-            broker_api_wrapper=self.broker,
+            stock_query_service=self.stock_query_service,
             stock_code_mapper=self.stock_code_mapper,
             repository=self.market_data_repository,
             market_date_manager=self._mdm,

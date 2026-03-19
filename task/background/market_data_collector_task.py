@@ -9,7 +9,6 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, TYPE_CHECKING
 
-from brokers.broker_api_wrapper import BrokerAPIWrapper
 from common.types import ErrorCode
 from core.performance_manager import PerformanceManager
 from core.time_manager import TimeManager
@@ -19,6 +18,9 @@ from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
 from market_data.stock_code_mapper import StockCodeMapper
 from scheduler.after_market_loop import run_after_market_loop
+
+if TYPE_CHECKING:
+    from services.stock_query_service import StockQueryService
 
 
 def _chunked(lst, size):
@@ -42,7 +44,7 @@ class MarketDataCollectorTask(SchedulableTask):
 
     def __init__(
         self,
-        broker_api_wrapper: BrokerAPIWrapper,
+        stock_query_service: "StockQueryService",
         stock_code_mapper: StockCodeMapper,
         repository: MarketDataRepository,
         market_date_manager: Optional[MarketDateManager] = None,
@@ -51,7 +53,7 @@ class MarketDataCollectorTask(SchedulableTask):
         notification_manager: Optional[NotificationManager] = None,
         logger=None,
     ):
-        self._broker = broker_api_wrapper
+        self._stock_query_service = stock_query_service
         self._mapper = stock_code_mapper
         self._repo = repository
         self._mdm = market_date_manager
@@ -280,7 +282,7 @@ class MarketDataCollectorTask(SchedulableTask):
         delay = 1.0
         for attempt in range(max_retries):
             try:
-                resp = await self._broker.get_current_price(code)
+                resp = await self._stock_query_service.get_current_price(code)
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     return resp
                 error_msg = resp.msg1 if resp else "응답 없음"
