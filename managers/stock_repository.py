@@ -99,7 +99,7 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository OHLCV upsert 실패: {e}")
 
-    def get_stock_data(self, code: str, ohlcv_limit: int = 120) -> Optional[Dict]:
+    def get_stock_data(self, code: str, ohlcv_limit: int = 600) -> Optional[Dict]:
         """메모리 캐시 또는 로컬 DB에서 종목 정보(OHLCV)를 반환합니다."""
         # 1. 메모리 캐시 확인
         cached = self._stocks_cache.get(code)
@@ -131,13 +131,60 @@ class StockRepository:
 
     def update_realtime_data(self, code: str, current_price: float, volume: int = 0):
         """
-        [인터페이스] 장 중에 수신된 실시간 틱 데이터를 
-        메모리 캐시의 통합 데이터(당일 OHLCV 및 현재가 정보)에 즉시 반영합니다.
+        장 중에 수신된 실시간 틱 데이터를 메모리 캐시에 즉시 반영합니다.
         """
-        # TODO: 메모리 캐시(_stocks_cache)에 해당 종목이 있으면,
-        # 'info'의 current_price, volume 등을 갱신하고
-        # 'ohlcv' 리스트의 마지막 요소(당일)의 high, low, close, volume을 최신화한다.
-        pass
+        cached = self._stocks_cache.get(code)
+        if not cached:
+            cached = {"code": code}
+            self._stocks_cache.put(code, cached)
+            
+        # 1. 현재가 데이터 갱신 (API 응답 구조와 호환 유지)
+        if "current_price_data" not in cached:
+            cached["current_price_data"] = {"output": {}}
+            
+        output = cached["current_price_data"].get("output")
+        if isinstance(output, dict):
+            output["stck_prpr"] = str(int(current_price))
+            if volume > 0:
+                output["acml_vol"] = str(volume)
+        elif output is not None:
+            try:
+                setattr(output, "stck_prpr", str(int(current_price)))
+                if volume > 0:
+                    setattr(output, "acml_vol", str(volume))
+            except Exception:
+                pass
+                
+        # TTL 갱신: 웹소켓 데이터가 들어오는 동안에는 캐시가 영구적으로 유효하도록 시간 갱신
+        cached["price_updated_at"] = time.time()
+        
+        # 2. 당일 OHLCV 캔들 데이터 갱신 (차트용)
+        if "ohlcv" in cached and cached["ohlcv"]:
+            last_candle = cached["ohlcv"][-1]
+            last_candle["close"] = current_price
+            if volume > 0:
+                last_candle["volume"] = volume
+            if current_price > last_candle.get("high", current_price):
+                last_candle["high"] = current_price
+            if current_price < last_candle.get("low", current_price):
+                last_candle["low"] = current_price
+
+    def set_current_price(self, code: str, price_data: dict):
+        """현재가 API 응답 전체 데이터를 캐시에 저장합니다."""
+        cached = self._stocks_cache.get(code)
+        if not cached:
+            cached = {"code": code}
+            self._stocks_cache.put(code, cached)
+        cached["current_price_data"] = price_data
+        cached["price_updated_at"] = time.time()
+
+    def get_current_price(self, code: str, max_age_sec: float = 3.0) -> Optional[dict]:
+        """캐시된 현재가 데이터(dict)를 반환합니다. 지정된 TTL(초)이 만료된 경우 None 반환."""
+        cached = self._stocks_cache.get(code)
+        if cached and "current_price_data" in cached:
+            if time.time() - cached.get("price_updated_at", 0) <= max_age_sec:
+                return cached["current_price_data"]
+        return None
 
     def close(self):
         """DB 연결을 닫는다."""

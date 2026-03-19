@@ -166,19 +166,20 @@ class WebAppContext:
         cache_manager = CacheManager(config_dict)
         cache_manager.set_logger(self.logger)
 
+        # Repository 초기화 (TradingService 주입을 위해 선 생성)
+        self.market_data_repository = MarketDataRepository(logger=self.logger)
+        self.stock_repository = StockRepository(logger=self.logger)
 
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
             market_date_manager=self._mdm,
-            performance_manager=self.pm
+            performance_manager=self.pm,
+            stock_repository=self.stock_repository
         )
 
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
         self.indicator_service = IndicatorService(cache_manager=cache_manager, performance_manager=self.pm)
         
-        # Repository 초기화 (의존성 주입을 위해 QueryService 생성 전으로 이동)
-        self.market_data_repository = MarketDataRepository(logger=self.logger)
-        self.stock_repository = StockRepository(logger=self.logger)
         self.ranking_task = RankingTask(
             broker_api_wrapper=self.broker,
             stock_code_mapper=self.stock_code_mapper,
@@ -197,7 +198,6 @@ class WebAppContext:
             ranking_task=self.ranking_task,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
-            stock_repository=self.stock_repository,
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service

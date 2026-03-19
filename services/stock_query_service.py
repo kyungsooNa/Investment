@@ -3,13 +3,10 @@ from __future__ import annotations
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, \
     ResStockFullInfoApiOutput
 from config.DynamicConfig import DynamicConfig
-from typing import List, Dict, Optional, Literal, TYPE_CHECKING
+from typing import List, Dict, Optional, Literal
 from core.performance_manager import PerformanceManager
 from managers.notification_manager import NotificationManager
-import time
-
-if TYPE_CHECKING:
-    from managers.stock_repository import StockRepository
+from services.trading_service import TradingService
 
 
 class StockQueryService:
@@ -18,10 +15,9 @@ class StockQueryService:
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
     """
 
-    def __init__(self, trading_service, logger, time_manager, indicator_service=None,
+    def __init__(self, trading_service: TradingService, logger, time_manager, indicator_service=None,
                  ranking_task=None, performance_manager: Optional[PerformanceManager] = None,
-                 notification_manager: Optional[NotificationManager] = None,
-                 stock_repository: Optional['StockRepository'] = None):
+                 notification_manager: Optional[NotificationManager] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
@@ -29,7 +25,6 @@ class StockQueryService:
         self.ranking_task = ranking_task
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
         self._nm = notification_manager
-        self._stock_repo = stock_repository
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -647,55 +642,10 @@ class StockQueryService:
 
     async def get_ohlcv(self, stock_code: str, period: str = "D") -> ResCommonResponse:
         """
-        OHLCV 데이터를 반환합니다.
-        일봉(D)의 경우 StockRepository의 메모리/DB를 우선 활용하여 
-        당일 데이터만 실시간 API로 병합하고, 과거 데이터 무거운 API 호출을 방지합니다.
+        OHLCV 데이터를 반환합니다 (TradingService 래퍼).
         """
         self.logger.info(f"ServiceHandler - {stock_code} OHLCV 데이터 요청 period={period}")
-        try:
-            # 일봉(D)이고 로컬 저장소가 주입된 경우
-            if period.upper() == "D" and self._stock_repo:
-                t0 = self.pm.start_timer()
-                stock_data = self._stock_repo.get_stock_data(stock_code, ohlcv_limit=120)
-                past_ohlcv = stock_data.get("ohlcv", []) if stock_data else []
-                
-                if past_ohlcv:
-                    today_str = self.time_manager.get_current_kst_time().strftime("%Y%m%d")
-                    last_date = past_ohlcv[-1]["date"]
-                    
-                    is_market_open = False
-                    if hasattr(self.trading_service, '_mdm') and self.trading_service._mdm:
-                        is_market_open = await self.trading_service._mdm.is_market_open_now()
-
-                    # 장 중이거나, 캐시된 마지막 날짜가 오늘이 아니라면 당일 현재가를 1건 호출하여 병합
-                    if is_market_open or last_date != today_str:
-                        curr_resp = await self.get_current_price(stock_code)
-                        if curr_resp and curr_resp.rt_cd == ErrorCode.SUCCESS.value:
-                            out = curr_resp.data.get("output", {})
-                            today_row = {
-                                "date": today_str,
-                                "open": float(out.get("stck_oprc", 0) or 0),
-                                "high": float(out.get("stck_hgpr", 0) or 0),
-                                "low": float(out.get("stck_lwpr", 0) or 0),
-                                "close": float(out.get("stck_prpr", 0) or 0),
-                                "volume": int(out.get("acml_vol", 0) or 0)
-                            }
-                            if last_date == today_str:
-                                past_ohlcv[-1] = today_row
-                            else:
-                                past_ohlcv.append(today_row)
-
-                    self.pm.log_timer(f"StockQueryService.get_ohlcv({stock_code}) - Local", t0)
-                    return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공 (Local)", data=past_ohlcv)
-
-            # 일봉이 아니거나 로컬 DB에 데이터가 없는 경우 API 폴백
-            resp: ResCommonResponse = await self.trading_service.get_ohlcv(
-                stock_code, period=period
-            )
-            return resp
-        except Exception as e:
-            self.logger.error(f"{stock_code} OHLCV 데이터 처리 중 오류: {e}", exc_info=True)
-            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=[])
+        return await self.trading_service.get_ohlcv(stock_code, period=period)
 
     async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None) -> ResCommonResponse:
         """
@@ -929,21 +879,6 @@ class StockQueryService:
         """실시간 메시지를 TradingService로 전달하여 처리."""
         if self.trading_service:
             self.trading_service._default_realtime_message_handler(data)
-
-        # 실시간 틱 데이터를 StockRepository 메모리 캐시에 반영 요청 (인터페이스 호출)
-        if self._stock_repo and data.get('type') == 'realtime_price':
-            realtime_data = data.get('data', {})
-            stock_code = realtime_data.get('유가증권단축종목코드')
-            current_price = realtime_data.get('주식현재가')
-            volume = realtime_data.get('누적거래량', 0)
-            
-            if stock_code and current_price:
-                try:
-                    self._stock_repo.update_realtime_data(
-                        stock_code, float(current_price), int(volume) if volume else 0
-                    )
-                except Exception as e:
-                    self.logger.warning(f"StockRepository 실시간 캐시 반영 실패: {e}")
 
     def get_cached_realtime_price(self, code: str) -> Optional[Dict | str]:
         """TradingService에 캐시된 실시간 현재가 정보를 반환."""

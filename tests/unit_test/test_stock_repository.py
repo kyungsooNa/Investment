@@ -1,6 +1,7 @@
 import os
 import pytest
 import sqlite3
+import time
 
 from managers.stock_repository import StockRepository, _LRUCache
 
@@ -117,12 +118,58 @@ def test_get_stock_data_not_found(repo):
     assert result is None
 
 
-def test_update_realtime_data_interface(repo):
-    """update_realtime_data 껍데기 인터페이스가 호출 시 예외를 발생시키지 않는지 테스트합니다."""
-    try:
-        repo.update_realtime_data("005930", 75000, 1000)
-    except Exception as e:
-        pytest.fail(f"update_realtime_data 호출 중 예외 발생: {e}")
+def test_current_price_caching(repo):
+    """현재가 데이터 단기 캐싱(set_current_price, get_current_price) 및 TTL 만료 동작을 검증합니다."""
+    price_data = {"output": {"stck_prpr": "80000", "acml_vol": "1000"}}
+    repo.set_current_price("005930", price_data)
+
+    # TTL 이내 조회
+    cached = repo.get_current_price("005930", max_age_sec=3.0)
+    assert cached is not None
+    assert cached["output"]["stck_prpr"] == "80000"
+
+    # 시간 조작으로 TTL 만료 시뮬레이션
+    repo._stocks_cache.get("005930")["price_updated_at"] = time.time() - 5.0
+    expired = repo.get_current_price("005930", max_age_sec=3.0)
+    assert expired is None
+
+
+def test_update_realtime_data_empty_cache(repo):
+    """캐시가 비어있는 상태에서 실시간 틱 데이터 반영 시 현재가 구조가 자동 생성되는지 검증합니다."""
+    repo.update_realtime_data("005930", 81000.0, 500)
+    
+    cached = repo.get_current_price("005930")
+    assert cached is not None
+    assert cached["output"]["stck_prpr"] == "81000"
+    assert cached["output"]["acml_vol"] == "500"
+
+
+def test_update_realtime_data_updates_ohlcv(repo):
+    """실시간 틱 데이터 수신 시 당일 OHLCV 캔들의 고/저/종가/거래량이 갱신되는지 검증합니다."""
+    initial_data = {
+        "code": "005930",
+        "ohlcv": [
+            {"date": "20250101", "open": 70000, "high": 71000, "low": 69000, "close": 70500, "volume": 1000},
+            {"date": "20250102", "open": 71000, "high": 72000, "low": 70500, "close": 71500, "volume": 2000}
+        ]
+    }
+    repo._stocks_cache.put("005930", initial_data)
+    
+    # 틱 업데이트 1: 현재가 상승 (고가 갱신)
+    repo.update_realtime_data("005930", 72500.0, 2500)
+    last_candle = repo._stocks_cache.get("005930")["ohlcv"][-1]
+    assert last_candle["close"] == 72500.0
+    assert last_candle["high"] == 72500.0
+    assert last_candle["low"] == 70500
+    assert last_candle["volume"] == 2500
+    
+    # 틱 업데이트 2: 현재가 하락 (저가 갱신)
+    repo.update_realtime_data("005930", 70000.0, 3000)
+    last_candle = repo._stocks_cache.get("005930")["ohlcv"][-1]
+    assert last_candle["close"] == 70000.0
+    assert last_candle["high"] == 72500.0
+    assert last_candle["low"] == 70000.0
+    assert last_candle["volume"] == 3000
 
 
 def test_upsert_ohlcv_empty_list(repo):

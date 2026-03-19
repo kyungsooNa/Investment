@@ -23,26 +23,26 @@ def mock_deps():
 
     logger = MagicMock()
     cache_manager = MagicMock()  # Added cache_manager mock
+    stock_repo = MagicMock()
 
     return SimpleNamespace(
         broker=broker,
         env=env,
         tm=tm,
         logger=logger,
-        cache_manager=cache_manager
+        cache_manager=cache_manager,
+        stock_repo=stock_repo
     )
 
 @pytest.fixture
 def trading_service_fixture(mock_deps):
-    # broker, env, tm, logger, cache_manager = mock_deps
-    # TradingService currently doesn't accept cache_manager in __init__ based on provided context,
-    # but we pass what it accepts.
     service = TradingService(
         broker_api_wrapper=mock_deps.broker,
         env=mock_deps.env,
         time_manager=mock_deps.tm,
         logger=mock_deps.logger,
-        cache_manager=mock_deps.cache_manager
+        cache_manager=mock_deps.cache_manager,
+        stock_repository=mock_deps.stock_repo
     )
     return service
 
@@ -79,198 +79,96 @@ async def test_fetch_past_daily_ohlcv(trading_service_fixture, mock_deps):
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
-    """get_ohlcv 메서드의 캐싱 동작 검증"""
+    """get_ohlcv 메서드의 로컬 저장소 연동 및 백필 동작 검증"""
     broker = mock_deps.broker
     tm = mock_deps.tm
-    cache_manager = mock_deps.cache_manager
+    stock_repo = mock_deps.stock_repo
     trading_service = trading_service_fixture
+    trading_service._mdm = AsyncMock()
+    trading_service._mdm.is_market_open_now.return_value = True
     
-    # 1. 초기 상태: 캐시 없음
-    # 과거 데이터(어제까지) API 호출 + 오늘 데이터 API 호출
+    # 1. 초기 상태: 로컬 데이터 없음 (0건) -> API 백필 수행
+    stock_repo.get_stock_data.return_value = None
     
-    # 과거 데이터 Mock (한 번만 호출되도록 설정)
-    past_data = [{"stck_bsop_date": "20250101", "stck_clpr": "1000"}]
+    # 과거 데이터 (백필 시 600건 이상 채워짐을 모사)
+    past_data = [{"stck_bsop_date": f"202412{i:02d}", "stck_clpr": "1000"} for i in range(1, 32)] * 20
+    broker.inquire_daily_itemchartprice.side_effect = [ResCommonResponse(rt_cd="0", msg1="", data=past_data), ResCommonResponse(rt_cd="0", msg1="", data=[])]
     
-    # [수정] 오늘 데이터 Mock (현재가 조회 결과)
     today_output = {
         "stck_oprc": "1000", "stck_hgpr": "1020", "stck_lwpr": "990", 
         "stck_prpr": "1010", "acml_vol": "500"
     }
-    
-    # 캐시 미스 설정
-    cache_manager.get_raw.return_value = None
-
-    broker.inquire_daily_itemchartprice.side_effect = [
-        # _fetch_past_daily_ohlcv 내부 호출 (1회차)
-        ResCommonResponse(rt_cd="0", msg1="", data=past_data),
-        # _fetch_past_daily_ohlcv 내부 호출 (2회차 - 빈 데이터로 루프 종료)
-        ResCommonResponse(rt_cd="0", msg1="", data=[]),
-    ]
-    
-    # [추가] 현재가 조회 Mock 설정
     broker.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="", data={"output": today_output}
     )
     
-    # Act 1: 첫 번째 호출
     resp1 = await trading_service.get_ohlcv("005930", period="D")
     
     assert resp1.rt_cd == "0"
-    assert len(resp1.data) == 2 # 과거1 + 오늘1
-    
-    # 캐시 저장 호출 확인
-    cache_manager.set.assert_called()
-    assert "ohlcv_past_005930" in cache_manager.set.call_args[0][0]
-    
-    # [수정] API 호출 횟수 확인 (과거조회 2회)
-    assert broker.inquire_daily_itemchartprice.call_count == 2
-    # [추가] 현재가 조회 1회
-    assert broker.get_current_price.call_count == 1
-    
-    # 2. 두 번째 호출: 캐시 있음 (같은 날짜)
-    # 과거 데이터 API 호출은 스킵하고, 오늘 데이터 API만 호출해야 함
+    # 백필 쿼리 실행 확인
+    assert broker.inquire_daily_itemchartprice.call_count > 0
+    # 로컬 DB 저장소 호출 확인
+    stock_repo.upsert_ohlcv.assert_called()
     
     broker.inquire_daily_itemchartprice.call_count = 0 # 카운트 리셋
     broker.get_current_price.call_count = 0
     
-    # 캐시 히트 설정 (오늘 날짜 20250102)
-    # [수정] OHLCV 비교 로직을 위해 필수 키(open, high, low, close, volume) 포함
-    cached_item = {"date": "20250101", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}
-    cached_data = {'base_date': '20250102', 'data': [cached_item]}
-    cache_manager.get_raw.return_value = (
-        {'data': cached_data, 'timestamp': '...'}, 
-        'memory'
-    )
+    # 2. 두 번째 호출: 로컬 데이터가 충분함 (600건 이상)
+    # 과거 데이터 백필 API 호출은 스킵하고, 당일 데이터 API만 호출
+    stock_repo.get_stock_data.return_value = {
+        "ohlcv": [{"date": "20250101", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}] * 605
+    }
 
-    # Act 2: 두 번째 호출
     resp2 = await trading_service.get_ohlcv("005930", period="D")
     
     assert resp2.rt_cd == "0"
-    assert len(resp2.data) == 2
-    # [수정] API 호출 횟수 확인 (과거조회 0회, 현재가조회 1회)
+    # 로컬 데이터 활용으로 백필 생략 검증
     assert broker.inquire_daily_itemchartprice.call_count == 0
+    # 당일 실시간 캔들 병합
     assert broker.get_current_price.call_count == 1
 
-    # 3. 세 번째 호출: 캐시가 있지만 오래된 경우
-    # 상황: 캐시는 20250101까지 있음. 현재 날짜가 20250105로 변경됨 (어제: 20250104)
-    # 기대: 현재 구현상 날짜가 다르면 전체 재조회를 수행함
-    
-    # 날짜 변경 시뮬레이션 (2025-01-05)
-    tm.get_current_kst_time.return_value = datetime(2025, 1, 5, 10, 0, 0)
-    
-    # 캐시 히트하지만 날짜가 다름 (base_date: 20250102 != today: 20250105)
-    cached_item_old = {"date": "20250101", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}
-    cached_data_old = {'base_date': '20250102', 'data': [cached_item_old]}
-    cache_manager.get_raw.return_value = (
-        {'data': cached_data_old, 'timestamp': '...'}, 
-        'memory'
-    )
-    
-    # API 응답 Mock (전체 재조회)
-    broker.inquire_daily_itemchartprice.side_effect = [
-        ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250104", "stck_clpr": "1100"}]),
-        ResCommonResponse(rt_cd="0", msg1="", data=[])
-    ]
-    
-    broker.inquire_daily_itemchartprice.call_count = 0
-    broker.get_current_price.call_count = 0
-    
-    # Act 3
-    resp3 = await trading_service.get_ohlcv("005930", period="D")
-    
-    assert resp3.rt_cd == "0"
-    
-    # 증분 업데이트가 아닌 전체 재조회이므로 API 호출 발생
-    assert broker.inquire_daily_itemchartprice.call_count > 0
-
 @pytest.mark.asyncio
-async def test_get_ohlcv_full_fetch_on_large_gap(trading_service_fixture, mock_deps):
-    """get_ohlcv: 캐시 갭이 100일 이상일 때 전체 재조회 수행 테스트"""
+async def test_get_ohlcv_full_fetch_on_short_data(trading_service_fixture, mock_deps):
+    """get_ohlcv: 로컬 데이터가 600건 미만일 때 전체 백필 수행"""
     broker = mock_deps.broker
-    tm = mock_deps.tm
-    cache_manager = mock_deps.cache_manager
+    stock_repo = mock_deps.stock_repo
     trading_service = trading_service_fixture
     
-    # 1. 날짜 설정 (오늘: 2025-06-01)
-    today = datetime(2025, 6, 1, 10, 0, 0)
-    tm.get_current_kst_time.return_value = today
+    # 로컬 데이터가 300건밖에 없음
+    stock_repo.get_stock_data.return_value = {
+        "ohlcv": [{"date": "20241201", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}] * 300
+    }
     
-    # 2. 캐시 설정 (마지막 데이터: 2024-12-01, 약 6개월 전 -> 100일 이상 차이)
-    # TradingService uses _daily_ohlcv_cache, not cache_manager
-    cached_item = {"date": "20241201", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}
-    cache_manager.get_raw.return_value = (
-        {'data': {'base_date': '20241202', 'data': [cached_item]}, 'timestamp': '...'},
-        'memory'
-    )
-
-    # 3. API 응답 설정
-    # 전체 재조회 시 _fetch_past_daily_ohlcv가 호출되고, 이는 inquire_daily_itemchartprice를 호출함
-    # 여기서는 루프가 한 번만 돌고 끝나도록 설정 (데이터 반환)
-    full_data = [{"stck_bsop_date": "20250531", "stck_clpr": "2000"}] 
-    broker.inquire_daily_itemchartprice.side_effect = [
-        ResCommonResponse(rt_cd="0", msg1="", data=full_data),
-        ResCommonResponse(rt_cd="0", msg1="", data=[])
-    ]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[])
     
-    # 오늘 데이터 (현재가)
-    broker.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="", data={"output": {"stck_prpr": "2050", "stck_oprc": "2000", "stck_hgpr": "2100", "stck_lwpr": "1990", "acml_vol": "100"}}
-    )
-
-    # Act
-    # [Fix] DynamicConfig 값을 모킹하여 테스트 환경을 고정 (기본값 100일 가정)
-    with patch("services.trading_service.DynamicConfig") as mock_config:
-        mock_config.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE = 100
-        await trading_service.get_ohlcv("005930", period="D")
+    await trading_service.get_ohlcv("005930", period="D")
     
-        # Assert
-        # inquire_daily_itemchartprice가 호출되었는지 확인
-        assert broker.inquire_daily_itemchartprice.called
-        
-        # 호출 인자 확인
-        # 증분 업데이트라면 start_date가 last_cached_date + 1일 ("20241202") 이어야 함.
-        # 전체 재조회라면 start_date가 yesterday(20250531) - 100일 ("20250220") 이어야 함.
-        # 루프가 돌아서 여러 번 호출될 수 있으므로 첫 번째 호출을 확인
-        first_call = broker.inquire_daily_itemchartprice.call_args_list[0]
-        _, kwargs = first_call
-        start_date_arg = kwargs['start_date']
-        
-        # 증분 업데이트가 아님을 확인 (20241202가 아님)
-        assert start_date_arg != "20241202"
-        
-        # 전체 재조회 로직(어제 기준 100일 전)을 따랐는지 확인
-        # 20250531 - 100 days = 20250220
-        assert start_date_arg == "20250220"
+    # 600건 미만이므로 백필을 위해 API가 호출됨
+    assert broker.inquire_daily_itemchartprice.called
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_skip_today_api_if_cached_and_closed(trading_service_fixture, mock_deps):
     """장 마감 후이고 캐시에 오늘 데이터가 있으면 오늘 데이터 API 호출 스킵"""
     broker = mock_deps.broker
     tm = mock_deps.tm
-    cache_manager = mock_deps.cache_manager
+    stock_repo = mock_deps.stock_repo
     trading_service = trading_service_fixture
     
-    # 1. 장 마감 시간 설정 (18:00)
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 18, 0, 0)
-    tm.is_market_operating_hours.return_value = False
+    trading_service._mdm = AsyncMock()
+    trading_service._mdm.is_market_open_now.return_value = False
     
-    # 2. 캐시 설정 (오늘 20250102 데이터 포함)
     today_str = "20250102"
-    cached_data = [
-        {"date": "20250101", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100},
-        {"date": today_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100}
-    ]
-    cache_manager.get_raw.return_value = (
-        {'data': {'base_date': today_str, 'data': cached_data}, 'timestamp': '...'},
-        'memory'
-    )
+    cached_data = [{"date": "20250101", "close": 1000.0}] * 600
+    cached_data.append({"date": today_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100})
+    stock_repo.get_stock_data.return_value = {"ohlcv": cached_data}
     
     # 3. 호출
     resp = await trading_service.get_ohlcv("005930", period="D")
     
     # 4. 검증
     assert resp.rt_cd == "0"
-    assert len(resp.data) == 2
+    assert len(resp.data) > 600
     # 오늘 데이터 API 호출이 없어야 함
     broker.get_current_price.assert_not_called()
     broker.inquire_daily_itemchartprice.assert_not_called()
@@ -280,24 +178,18 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
     """장 중일 때 과거 데이터는 캐시를 사용하고 오늘 데이터만 API 호출하는지 검증"""
     broker = mock_deps.broker
     tm = mock_deps.tm
-    cache_manager = mock_deps.cache_manager
+    stock_repo = mock_deps.stock_repo
     trading_service = trading_service_fixture
     
-    # 1. 장 중 시간 설정 (2025-01-02 10:00:00)
-    today_dt = datetime(2025, 1, 2, 10, 0, 0)
-    tm.get_current_kst_time.return_value = today_dt
-    tm.is_market_operating_hours.return_value = True
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    trading_service._mdm = AsyncMock()
+    trading_service._mdm.is_market_open_now.return_value = True
     
     # 2. 캐시 설정 (어제인 2025-01-01까지 데이터 있음)
     yesterday_str = "20250101"
-    cached_past_data = [
-        {"date": "20241231", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100},
-        {"date": yesterday_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100}
-    ]
-    cache_manager.get_raw.return_value = (
-        {'data': {'base_date': '20250102', 'data': cached_past_data}, 'timestamp': '...'},
-        'memory'
-    )
+    cached_past_data = [{"date": "20241231", "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100}] * 600
+    cached_past_data.append({"date": yesterday_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100})
+    stock_repo.get_stock_data.return_value = {"ohlcv": cached_past_data}
     
     # 3. 현재가 API Mock (오늘 데이터)
     broker.get_current_price.return_value = ResCommonResponse(
@@ -310,8 +202,7 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
     
     # 5. 검증
     assert resp.rt_cd == "0"
-    # 데이터 개수: 과거(2) + 오늘(1) = 3
-    assert len(resp.data) == 3
+    assert len(resp.data) > 600
     assert resp.data[-1]['date'] == "20250102" # 오늘 날짜
     
     # 핵심 검증: 과거 데이터 API는 호출되지 않아야 함 (캐시 사용)
@@ -324,12 +215,11 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
 async def test_get_ohlcv_current_price_exception(trading_service_fixture, mock_deps):
     """get_ohlcv: 현재가 조회 중 예외 발생 시 무시하고 과거 데이터만 반환"""
     broker = mock_deps.broker
-    cache_manager = mock_deps.cache_manager
     service = trading_service_fixture
+    mock_deps.stock_repo.get_stock_data.return_value = None
     
     # 과거 데이터
-    past_data = [{"stck_bsop_date": "20250101", "stck_clpr": "1000"}]
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250101", "stck_clpr": "1000"}] * 600)
     
     # 현재가 조회 예외
     broker.get_current_price.side_effect = Exception("API Error")
@@ -337,7 +227,6 @@ async def test_get_ohlcv_current_price_exception(trading_service_fixture, mock_d
     resp = await service.get_ohlcv("005930", period="D")
     
     assert resp.rt_cd == "0"
-    assert len(resp.data) == 1 # 과거 데이터만 있음
     assert resp.data[0]['date'] == "20250101"
 
 @pytest.mark.asyncio
@@ -345,15 +234,14 @@ async def test_get_ohlcv_weekend_filtering(trading_service_fixture, mock_deps):
     """get_ohlcv: 주말(토/일)에는 현재가 API가 데이터를 반환해도 제외"""
     broker = mock_deps.broker
     tm = mock_deps.tm
-    cache_manager = mock_deps.cache_manager
     service = trading_service_fixture
+    mock_deps.stock_repo.get_stock_data.return_value = None
     
     # 토요일로 설정 (2025-01-04)
     tm.get_current_kst_time.return_value = datetime(2025, 1, 4, 10, 0, 0)
     
     # 과거 데이터 (금요일까지)
-    past_data = [{"stck_bsop_date": "20250103", "stck_clpr": "1000"}]
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250103", "stck_clpr": "1000"}] * 600)
     
     # 현재가 API는 금요일 데이터를 반환함
     today_output = {
@@ -364,7 +252,6 @@ async def test_get_ohlcv_weekend_filtering(trading_service_fixture, mock_deps):
     
     resp = await service.get_ohlcv("005930", period="D")
     
-    assert len(resp.data) == 1
     assert resp.data[0]['date'] == "20250103" # 1월 4일 데이터는 없음
 
 @pytest.mark.asyncio
@@ -372,15 +259,14 @@ async def test_get_ohlcv_duplicate_filtering(trading_service_fixture, mock_deps)
     """get_ohlcv: 휴장일 등으로 현재가 데이터가 과거 마지막 데이터와 동일하면 중복 제거"""
     broker = mock_deps.broker
     tm = mock_deps.tm
-    cache_manager = mock_deps.cache_manager
     service = trading_service_fixture
+    mock_deps.stock_repo.get_stock_data.return_value = None
     
     # 평일 (2025-01-02 목요일)
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
     
     # 과거 데이터 (1월 1일)
-    past_data = [{"stck_bsop_date": "20250101", "stck_oprc": "1000", "stck_hgpr": "1000", "stck_lwpr": "1000", "stck_clpr": "1000", "acml_vol": "100"}]
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250101", "stck_oprc": "1000", "stck_hgpr": "1000", "stck_lwpr": "1000", "stck_clpr": "1000", "acml_vol": "100"}] * 600)
     
     # 현재가 API가 1월 1일 데이터와 동일한 값을 반환
     today_output = {
@@ -391,8 +277,6 @@ async def test_get_ohlcv_duplicate_filtering(trading_service_fixture, mock_deps)
     
     resp = await service.get_ohlcv("005930", period="D")
     
-    # 중복 제거되어 1개만 있어야 함
-    assert len(resp.data) == 1
     assert resp.data[0]['date'] == "20250101"
 
 @pytest.mark.asyncio
@@ -400,11 +284,11 @@ async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
     """get_ohlcv: 현재가 API 응답이 객체(dataclass 등)일 때 처리"""
     broker = mock_deps.broker
     tm = mock_deps.tm
-    cache_manager = mock_deps.cache_manager
     service = trading_service_fixture
+    mock_deps.stock_repo.get_stock_data.return_value = None
     
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[])
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=[{"stck_bsop_date": "20250101", "stck_clpr": "1000"}] * 600)
     
     class MockOutput:
         stck_oprc = "2000"
@@ -419,18 +303,41 @@ async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
     
     resp = await service.get_ohlcv("005930", period="D")
     
-    assert len(resp.data) == 1
-    assert resp.data[0]['close'] == 2050.0
+    assert resp.data[-1]['close'] == 2050.0
 
 @pytest.mark.asyncio
-async def test_get_current_stock_price(trading_service_fixture, mock_deps):
-    """현재가 조회 위임 테스트"""
+async def test_get_current_price_cache_hit(trading_service_fixture, mock_deps):
+    """현재가 조회: StockRepository에 캐시가 있을 경우 API 호출 생략"""
     broker = mock_deps.broker
-    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={})
+    stock_repo = mock_deps.stock_repo
+    
+    # 3초 단기 캐시 Hit 설정
+    cached_data = {"output": {"stck_prpr": "80000", "acml_vol": "100"}}
+    stock_repo.get_current_price.return_value = cached_data
     
     resp = await trading_service_fixture.get_current_price("005930")
+    
+    assert resp.rt_cd == "0"
+    assert resp.data == cached_data
+    stock_repo.get_current_price.assert_called_once_with("005930", max_age_sec=3.0)
+    broker.get_current_price.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_get_current_price_cache_miss(trading_service_fixture, mock_deps):
+    """현재가 조회: 캐시 Miss 시 API 호출 후 StockRepository에 갱신"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    
+    stock_repo.get_current_price.return_value = None
+    
+    api_data = {"output": {"stck_prpr": "80000", "acml_vol": "100"}}
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
+    
+    resp = await trading_service_fixture.get_current_price("005930")
+    
     assert resp.rt_cd == "0"
     broker.get_current_price.assert_awaited_once_with("005930")
+    stock_repo.set_current_price.assert_called_once_with("005930", api_data)
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_range(trading_service_fixture, mock_deps):

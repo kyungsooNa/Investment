@@ -5,7 +5,7 @@ import asyncio
 import logging
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from config.DynamicConfig import DynamicConfig
 
 # common/types에서 모든 ResTypedDict와 ErrorCode 임포트
@@ -17,6 +17,9 @@ from core.cache.cache_manager import CacheManager
 from core.performance_manager import PerformanceManager
 from managers import market_date_manager
 
+if TYPE_CHECKING:
+    from managers.stock_repository import StockRepository
+
 
 class TradingService:
     """
@@ -26,16 +29,17 @@ class TradingService:
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
                  time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None,
-                 market_date_manager=None, performance_manager: Optional[PerformanceManager] = None):
+                 market_date_manager=None, performance_manager: Optional[PerformanceManager] = None,
+                 stock_repository: Optional['StockRepository'] = None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
         self._time_manager = time_manager
         self.cache_manager = cache_manager
         self._latest_prices = {}
-        self._ohlcv_locks: Dict[str, asyncio.Lock] = {}  # 종목코드별 Lock (race condition 방지)
         self._mdm = market_date_manager
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self._stock_repo = stock_repository
 
     async def get_name_by_code(self, code: str) -> str:
         """종목코드로 종목명을 반환합니다 (BrokerAPIWrapper 위임)."""
@@ -61,6 +65,15 @@ class TradingService:
                     "rate": realtime_data.get('전일대비율', '0.00'),
                     "sign": realtime_data.get('전일대비부호', '3')
                 }
+                
+                # 메모리 캐시(StockRepository)에 실시간 틱 데이터 즉시 반영
+                if getattr(self, '_stock_repo', None):
+                    try:
+                        cum_vol = realtime_data.get('누적거래량', '0')
+                        vol_int = int(cum_vol) if cum_vol and cum_vol != 'N/A' else 0
+                        self._stock_repo.update_realtime_data(stock_code, float(current_price), vol_int)
+                    except Exception as e:
+                        self._logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
 
             change = realtime_data.get('전일대비', 'N/A')
             change_sign = realtime_data.get('전일대비부호', 'N/A')
@@ -169,8 +182,20 @@ class TradingService:
         return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
 
     async def get_current_price(self, stock_code) -> ResCommonResponse:
+        # 1. StockRepository 단기 캐시 확인 (웹소켓 틱 갱신 또는 최근 API 조회 결과)
+        if self._stock_repo:
+            cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0)
+            if cached_data:
+                return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(Cache)", data=cached_data)
+                
         self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
-        return await self._broker_api_wrapper.get_current_price(stock_code)
+        resp = await self._broker_api_wrapper.get_current_price(stock_code)
+        
+        # 2. 조회 결과를 StockRepository에 갱신
+        if resp and resp.rt_cd == ErrorCode.SUCCESS.value and self._stock_repo:
+            self._stock_repo.set_current_price(stock_code, resp.data)
+            
+        return resp
 
     async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
         """종목의 체결(체결강도 등) 정보를 조회합니다."""
@@ -664,18 +689,6 @@ class TradingService:
         self.pm.log_timer(f"TradingService._fetch_past_daily_ohlcv({stock_code}, {loop_cnt}회)", t_start, threshold=1.0)
         return all_rows
 
-    def _save_ohlcv_cache(self, key: str, base_date: str, data: List[dict]):
-        """OHLCV 데이터를 캐시에 저장하는 헬퍼 메서드"""
-        cache_payload = {
-            "timestamp": datetime.now().isoformat(),
-            "data": {
-                'base_date': base_date,
-                'data': data
-            }
-        }
-        if self.cache_manager:
-            self.cache_manager.set(key, cache_payload, save_to_file=True)
-
     async def _fetch_today_ohlcv(self, stock_code: str, today_str: str) -> List[dict]:
         """현재가 API를 호출하여 오늘자 OHLCV 데이터를 생성합니다."""
         try:
@@ -714,63 +727,44 @@ class TradingService:
             period: str = "D",
     ) -> ResCommonResponse:
         """
-        시작일~종료일 범위형 차트 API 호출 (일/분 공통).
+        일봉(D)의 경우 StockRepository 활용, 주봉/월봉은 기존 API 조회 방식 사용.
         """
         t_ohlcv = self.pm.start_timer()
-        # [수정] 일봉(D)인 경우 캐싱 및 최적화 적용
         if (period or "D").upper() == "D":
             now_dt = self._time_manager.get_current_kst_time()
             today_str = now_dt.strftime("%Y%m%d")
             yesterday_str = (now_dt - timedelta(days=1)).strftime("%Y%m%d")
 
-            # 종목코드별 Lock 획득 (동시 요청 시 race condition 방지)
-            if stock_code not in self._ohlcv_locks:
-                self._ohlcv_locks[stock_code] = asyncio.Lock()
+            past_rows = []
 
-            cache_key = f"ohlcv_past_{stock_code}"
+            # 1. 과거 데이터 가져오기 (StockRepository 캐시/DB 활용)
+            if self._stock_repo:
+                stock_data = self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600)
+                if stock_data and "ohlcv" in stock_data:
+                    past_rows = stock_data["ohlcv"]
 
-            async with self._ohlcv_locks[stock_code]:
-                # 1. 과거 데이터 가져오기 (캐시 활용)
-                past_rows = []
-                
-                cached_wrapper = None
-                if self.cache_manager:
-                    raw_cache = self.cache_manager.get_raw(cache_key)
-                    if raw_cache and isinstance(raw_cache, tuple):
-                        cached_wrapper, _ = raw_cache
-                
-                cached_data = cached_wrapper.get('data') if cached_wrapper else None
+            # 2. 로컬 DB에 데이터가 부족하거나 없으면 전체 API 백필 (약 800일)
+            if not past_rows or len(past_rows) < 600:
+                past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=8)
+                if self._stock_repo and past_rows:
+                    records_to_save = [{**r, "code": stock_code} for r in past_rows]
+                    self._stock_repo.upsert_ohlcv(records_to_save)
 
-                # 캐시가 있고, 기준일(base_date)이 오늘이라면 (즉, 어제까지의 데이터가 이미 로드됨)
-                if cached_data and cached_data.get('base_date') == today_str:
-                    past_rows = cached_data['data']
-                else:
-                    # 캐시 없거나 날짜 변경됨 -> 어제까지의 데이터 대량 조회 (약 2년치)
-                    past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=8)
-                    # 캐시 업데이트
-                    self._save_ohlcv_cache(cache_key, today_str, past_rows)
-
-            # 2. 오늘 데이터 처리
+            # 3. 오늘 데이터 처리 (실시간 API 병합)
             today_rows = []
-            
-            # 이미 캐시(past_rows)에 오늘 데이터가 포함되어 있고, 장이 마감된 상태라면 API 호출 스킵
-            is_today_cached = past_rows and past_rows[-1]['date'] == today_str
             is_market_open = (await self._mdm.is_market_open_now()) if self._mdm else False
+            is_today_cached = past_rows and past_rows[-1]['date'] == today_str
 
             if is_today_cached and not is_market_open:
-                # 이미 최신 데이터가 캐싱되어 있음 -> API 호출 안 함 (속도 향상)
                 pass
             else:
-                # 캐시에 없거나(최초 실행/어제까지 데이터만 있음), 장 중(실시간 갱신 필요)이면 API 호출
                 today_rows = await self._fetch_today_ohlcv(stock_code, today_str)
 
-                # 비거래일(주말) 체크 및 중복 제거
                 if today_rows and now_dt.weekday() >= 5:
                     today_rows = []
                 elif today_rows and past_rows:
                     last_past = past_rows[-1]
                     today = today_rows[0]
-                    # 날짜가 다른데 데이터가 같다면? (휴장일 등 API가 이전 거래일 데이터 반환 시)
                     if today['date'] != last_past['date']:
                         if (today['open'] == last_past['open'] and
                             today['high'] == last_past['high'] and
@@ -778,21 +772,17 @@ class TradingService:
                             today['close'] == last_past['close']):
                             today_rows = []
                             
-            # [최적화] 장 마감 후라면 오늘 데이터를 캐시에 영구 저장 (다음 조회 시 API 호출 방지)
-            is_market_closed = (not await self._mdm.is_market_open_now()) if self._mdm else False
+            # 4. 장 마감 후 오늘 데이터가 수집되었다면 DB에 영구 저장 (다음번 조회 시 백필 방지)
+            is_market_closed = not is_market_open
             if today_rows and is_market_closed:
-                # 오늘 데이터가 과거 데이터의 마지막보다 최신인 경우에만
                 if not past_rows or today_rows[0]['date'] > past_rows[-1]['date']:
-                    # 병합 및 캐시 저장 (base_date를 오늘로 갱신)
-                    updated_past_rows = past_rows + today_rows
-                    self._save_ohlcv_cache(cache_key, today_str, updated_past_rows)
-                    # 메모리 변수 갱신 (아래 병합 로직을 위해)
-                    past_rows = updated_past_rows
-                    today_rows = [] # 이미 past_rows에 들어갔으므로 중복 방지
+                    if self._stock_repo:
+                        tr = {**today_rows[0], "code": stock_code}
+                        self._stock_repo.upsert_ohlcv([tr])
+                    past_rows = past_rows + today_rows
+                    today_rows = []
 
-            # 3. 병합 및 정렬
-            # past_rows는 이미 정렬됨. today_rows는 0개 또는 1개.
-            # 중복 방지를 위해 dict 사용 (날짜 키)
+            # 5. 최종 병합 및 정렬
             merged_map = {r['date']: r for r in past_rows}
             for r in today_rows:
                 merged_map[r['date']] = r
