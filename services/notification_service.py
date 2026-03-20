@@ -29,7 +29,7 @@ class NotificationEvent:
         return asdict(self)
 
 
-class NotificationManager:
+class NotificationService:
     """시스템 전체 알림 이벤트 허브.
 
     사용법:

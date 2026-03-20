@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 
-class RealtimeDataManager:
+class RealtimeDataService:
     """
     실시간 데이터의 수신, 저장(SQLite), 클라이언트 전송을 담당하는 매니저.
     - 프로그램매매 히스토리: SQLite pt_history 테이블 (즉시 저장, 버퍼 불필요)

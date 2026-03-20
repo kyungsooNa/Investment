@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, AsyncMock, PropertyMock, patch
 import pandas as pd
 
 from task.background.market_data_collector_task import MarketDataCollectorTask
-from managers.market_data_repository import MarketDataRepository
+from repositories.market_data_repository import MarketDataRepository
 from interfaces.schedulable_task import TaskPriority, TaskState
 from common.types import ResCommonResponse, ErrorCode
 

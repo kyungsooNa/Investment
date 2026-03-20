@@ -3,7 +3,7 @@ import pytest
 import sqlite3
 import time
 
-from managers.stock_repository import StockRepository, _LRUCache
+from repositories.stock_repository import StockRepository, _LRUCache
 
 
 # --- _LRUCache 테스트 ---

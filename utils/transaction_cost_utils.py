@@ -1,4 +1,4 @@
-class TransactionCostManager:
+class TransactionCostUtils:
     """거래 비용(수수료 및 세금) 관리 클래스"""
     # 수수료율 (KRX/NXT 구분 없이 기본값 적용: 0.0140527%)
     FEE_RATE = 0.000140527

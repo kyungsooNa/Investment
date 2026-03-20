@@ -7,11 +7,11 @@ from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
 from brokers.broker_api_wrapper import BrokerAPIWrapper
-from managers import market_date_manager
+from core import market_calendar
 from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
-from managers.virtual_trade_manager import VirtualTradeManager
+from repositories.virtual_trade_repository import VirtualTradeRepository
 from market_data.stock_code_mapper import StockCodeMapper
 from services.indicator_service import IndicatorService
 from core.time_manager import TimeManager
@@ -33,12 +33,12 @@ from services.oneil_universe_service import OneilUniverseService
 from task.background.ranking_task import RankingTask
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.market_data_collector_task import MarketDataCollectorTask
-from managers.market_data_repository import MarketDataRepository
-from managers.stock_repository import StockRepository
-from managers.realtime_data_manager import RealtimeDataManager
-from managers.market_date_manager import MarketDateManager
-from managers.notification_manager import NotificationManager
-from managers.telegram_notifier import TelegramNotifier, TelegramReporter
+from repositories.market_data_repository import MarketDataRepository
+from repositories.stock_repository import StockRepository
+from services.realtime_data_service import RealtimeDataService
+from core.market_calendar import MarketCalendar
+from services.notification_service import NotificationService
+from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_manager import CacheManager
 
@@ -56,7 +56,7 @@ class WebAppContext:
         self.order_execution_service: OrderExecutionService = None
         self.indicator_service: IndicatorService = None
         self.indicator_service: IndicatorService = None
-        self.virtual_manager = VirtualTradeManager()
+        self.virtual_manager = VirtualTradeRepository()
         self.virtual_manager.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
         self.stock_code_mapper = StockCodeMapper(logger=self.logger)
         self.scheduler: StrategyScheduler = None
@@ -68,13 +68,13 @@ class WebAppContext:
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
-        self._mdm: MarketDateManager = None
-        self.notification_manager: NotificationManager = None
+        self._mdm: MarketCalendar = None
+        self.notification_manager: NotificationService = None
         self.initialized = False
         self.pm: PerformanceManager = None
 
         # [변경] 실시간 데이터 관리자 도입
-        self.realtime_data_manager = RealtimeDataManager(self.logger)
+        self.realtime_data_manager = RealtimeDataService(self.logger)
         
         web_api.set_ctx(self)
 
@@ -97,7 +97,7 @@ class WebAppContext:
             timezone=config_dict.get('market_timezone', "Asia/Seoul"),
             logger=self.logger
         )
-        self.notification_manager = NotificationManager(self.time_manager)
+        self.notification_manager = NotificationService(self.time_manager)
         # ---------------------------------------------------------
         # [추가] Telegram Notifier 초기화 및 핸들러 등록
         telegram_token = config_dict.get("telegram_bot_token")
@@ -124,7 +124,7 @@ class WebAppContext:
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
         # [신규] MarketDateManager 초기화
-        self._mdm = MarketDateManager(self.time_manager, self.logger, performance_manager=self.pm)
+        self._mdm = MarketCalendar(self.time_manager, self.logger, performance_manager=self.pm)
         
 
     async def initialize_services(self, is_paper_trading: bool = True):
@@ -140,7 +140,7 @@ class WebAppContext:
 
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, time_manager=self.time_manager,
-            market_date_manager=self._mdm
+            market_calendar=self._mdm
         )
 
         # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
