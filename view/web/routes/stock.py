@@ -73,7 +73,7 @@ async def get_stock_price(code: str):
             return {"rt_cd": "1", "msg1": f"종목명 '{code}'에 해당하는 종목코드를 찾을 수 없습니다.", "data": None}
         code = resolved
     t_start = ctx.pm.start_timer()
-    resp = await ctx.stock_query_service.handle_get_current_stock_price(code)
+    resp = await ctx.stock_query_service.handle_get_current_stock_price(code, caller = "stock.py - get_stock_price")
     result = _serialize_response(resp)
 
     ctx.pm.log_timer(f"get_stock_price({code})", t_start)
@@ -86,9 +86,9 @@ async def get_stock_chart(code: str, period: str = "D", indicators: bool = False
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
     if indicators:
-        resp = await ctx.stock_query_service.get_ohlcv_with_indicators(code, period)
+        resp = await ctx.stock_query_service.get_ohlcv_with_indicators(code, period, caller="stock.py - get_stock_chart")
     else:
-        resp = await ctx.stock_query_service.get_ohlcv(code, period)
+        resp = await ctx.stock_query_service.get_ohlcv(code, period, caller="stock.py - get_stock_chart")
     result = _serialize_response(resp)
     
     ctx.pm.log_timer(f"get_stock_chart({code}, indicators={indicators})", t_start)
