@@ -21,9 +21,13 @@ class _LRUCache:
         self.hits = 0
         self.misses = 0
         self.item_hits = collections.defaultdict(int)
-        self.caller_stats = collections.defaultdict(lambda: {"hits": 0, "misses": 0})
+        self.caller_stats = collections.defaultdict(lambda: {"hits": 0, "misses": 0, "keys": collections.defaultdict(int), "items": collections.defaultdict(int)})
 
-    def get(self, key, count_stats: bool = True, caller: str = "unknown"):
+    def get(self, key, count_stats: bool = True, caller: str = "unknown", item_type: str = "unknown"):
+        if count_stats:
+            self.caller_stats[caller]["keys"][key] += 1
+            self.caller_stats[caller]["items"][item_type] += 1
+            
         if key not in self.cache:
             if count_stats:
                 self.misses += 1
@@ -48,13 +52,25 @@ class _LRUCache:
         """캐시 적중률 통계를 반환합니다."""
         total = self.hits + self.misses
         hit_rate = (self.hits / total * 100) if total > 0 else 0.0
+        
+        callers_out = {}
+        for c, s in self.caller_stats.items():
+            callers_out[c] = {
+                "hits": s["hits"],
+                "misses": s["misses"],
+                "items": dict(s["items"])
+            }
+            if expand:
+                # 너무 길어지는 것을 방지하기 위해 각 caller별 가장 많이 찾은 종목 20개까지만 표시
+                callers_out[c]["keys"] = dict(sorted(s["keys"].items(), key=lambda item: item[1], reverse=True)[:20])
+
         stats = {
             "hits": self.hits,
             "misses": self.misses,
             "hit_rate": round(hit_rate, 2),
             "total_requests": total,
             "current_size": len(self.cache),
-            "callers": dict(self.caller_stats)
+            "callers": callers_out
         }
 
         if expand:
@@ -151,7 +167,7 @@ class StockRepository:
     def get_stock_data(self, code: str, ohlcv_limit: int = 600, caller: str = "unknown") -> Optional[Dict]:
         """메모리 캐시 또는 로컬 DB에서 종목 정보(OHLCV)를 반환합니다."""
         # 1. 메모리 캐시 확인
-        cached = self._stocks_cache.get(code, caller=caller)
+        cached = self._stocks_cache.get(code, caller=caller, item_type="ohlcv")
         if cached and len(cached.get("ohlcv", [])) >= ohlcv_limit:
             return cached
 
@@ -183,7 +199,7 @@ class StockRepository:
         장 중에 수신된 실시간 틱 데이터를 메모리 캐시에 즉시 반영합니다.
         """
         # 내부 갱신용 접근이므로 통계 집계에서 제외
-        cached = self._stocks_cache.get(code, count_stats=False)
+        cached = self._stocks_cache.get(code, count_stats=False, item_type="update_tick")
         if not cached:
             cached = {"code": code}
             self._stocks_cache.put(code, cached)
@@ -222,7 +238,7 @@ class StockRepository:
     def set_current_price(self, code: str, price_data: dict):
         """현재가 API 응답 전체 데이터를 캐시에 저장합니다."""
         # 내부 갱신용 접근이므로 통계 집계에서 제외
-        cached = self._stocks_cache.get(code, count_stats=False)
+        cached = self._stocks_cache.get(code, count_stats=False, item_type="set_price")
         if not cached:
             cached = {"code": code}
             self._stocks_cache.put(code, cached)
@@ -231,7 +247,7 @@ class StockRepository:
 
     def get_current_price(self, code: str, max_age_sec: float = 3.0, count_stats: bool = True, caller: str = "unknown") -> Optional[dict]:
         """캐시된 현재가 데이터(dict)를 반환합니다. 지정된 TTL(초)이 만료된 경우 None 반환."""
-        cached = self._stocks_cache.get(code, count_stats=count_stats, caller=caller)
+        cached = self._stocks_cache.get(code, count_stats=count_stats, caller=caller, item_type="current_price")
         if cached and "current_price_data" in cached:
             if time.time() - cached.get("price_updated_at", 0) <= max_age_sec:
                 return cached["current_price_data"]

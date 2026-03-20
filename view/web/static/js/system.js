@@ -59,6 +59,8 @@ async function updateCacheStatus() {
                                     <th>Hits</th>
                                     <th>Misses</th>
                                     <th>적중률 (%)</th>
+                                    <th>조회 데이터 (Items)</th>
+                                    <th>주요 대상 종목</th>
                                 </tr>
                             </thead>
                             <tbody id="cache-callers-body"></tbody>
@@ -78,12 +80,29 @@ async function updateCacheStatus() {
                     tbodyCallers.innerHTML = callersArray.map(item => {
                         const hitRate = item.total > 0 ? ((item.hits / item.total) * 100).toFixed(2) : '0.00';
                         const rateColor = hitRate >= 90 ? 'var(--success-color, #4CAF50)' : hitRate >= 50 ? 'orange' : 'var(--danger-color, #f44336)';
+                        
+                        let itemsStr = '-';
+                        if (item.items && Object.keys(item.items).length > 0) {
+                            itemsStr = Object.entries(item.items)
+                                .map(([k, v]) => `<span style="display:inline-block; margin-right:4px; margin-bottom:2px; background:var(--bg-color, #f0f0f0); color:var(--text-color, #333); border:1px solid #ccc; padding:2px 6px; border-radius:10px; font-size:0.85em;">${k}: ${v.toLocaleString()}</span>`)
+                                .join('');
+                        }
+                        
+                        let keysStr = '-';
+                        let keysTitle = '';
+                        if (item.keys && Object.keys(item.keys).length > 0) {
+                            keysStr = Object.entries(item.keys).map(([k, v]) => `${k} <span style="color:#888; font-size:0.9em;">(${v})</span>`).join(', ');
+                            keysTitle = Object.entries(item.keys).map(([k, v]) => `${k}(${v})`).join(', ');
+                        }
+
                         return `
                             <tr>
                                 <td style="font-weight: bold; color: var(--text-color);">${item.caller}</td>
                                 <td>${item.hits.toLocaleString()}</td>
                                 <td>${item.misses.toLocaleString()}</td>
                                 <td style="color: ${rateColor}; font-weight: bold;">${hitRate}</td>
+                                <td>${itemsStr}</td>
+                                <td style="font-size: 0.9em; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${keysTitle}">${keysStr}</td>
                             </tr>
                         `;
                     }).join('');
