@@ -16,7 +16,7 @@ from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from repositories.market_data_repository import MarketDataRepository
 from repositories.stock_repository import StockRepository
 from repositories.stock_code_repository import StockCodeRepository
-from services.market_calendar_service_service import MarketCalendarService
+from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService
 from scheduler.after_market_loop import run_after_market_loop
 

@@ -12,7 +12,7 @@ from common.types import ErrorCode
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
 from repositories.stock_code_repository import StockCodeRepository
-from services.naver_finance_scraper import NaverFinanceScraperService
+from services.naver_finance_scraper_service import NaverFinanceScraperService
 from core.time_manager import TimeManager
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from core.logger import get_strategy_logger

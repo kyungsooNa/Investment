@@ -558,7 +558,7 @@ async def test_mode_unknown(cache_manager, test_cache_config):
 
 @pytest.mark.asyncio
 async def test_cache_wrapper_with_market_calendar_service_valid(cache_manager, test_cache_config):
-    """MarketDateManager가 있고, 캐시가 최신 거래일의 장 마감 이후에 저장되었으면 유효"""
+    """MarketCalendarService가 있고, 캐시가 최신 거래일의 장 마감 이후에 저장되었으면 유효"""
     logger = MagicMock()
     time_manager = MagicMock()
     time_manager.is_market_operating_hours.return_value = False
@@ -610,7 +610,7 @@ async def test_cache_wrapper_with_market_calendar_service_valid(cache_manager, t
 
 @pytest.mark.asyncio
 async def test_cache_wrapper_with_market_calendar_service_expired(cache_manager, test_cache_config):
-    """MarketDateManager가 있고, 캐시 날짜가 최신 거래일보다 이전이면 만료"""
+    """MarketCalendarService가 있고, 캐시 날짜가 최신 거래일보다 이전이면 만료"""
     logger = MagicMock()
     time_manager = MagicMock()
     time_manager.is_market_operating_hours.return_value = False
@@ -831,7 +831,7 @@ async def test_cache_wrapper_skip_cache_flag(cache_manager, test_cache_config):
 
 @pytest.mark.asyncio
 async def test_cache_wrapper_with_market_calendar_service_fallback(cache_manager, test_cache_config):
-    """MarketDateManager가 None을 반환하면 기존 시간 비교 로직 사용"""
+    """MarketCalendarService가 None을 반환하면 기존 시간 비교 로직 사용"""
     logger = MagicMock()
     time_manager = MagicMock()
     time_manager.is_market_operating_hours.return_value = False

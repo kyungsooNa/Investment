@@ -48,11 +48,11 @@ class MarketCalendarService:
             if latest_date:
                 self._cached_date = latest_date
                 self._last_check_date = current_date
-            self._pm.log_timer("MarketDateManager.get_latest_trading_date", t_start)
+            self._pm.log_timer("MarketCalendarService.get_latest_trading_date", t_start)
             return latest_date
         except Exception as e:
             self._logger.error(f"최근 영업일 조회 실패: {e}")
-            self._pm.log_timer("MarketDateManager.get_latest_trading_date [예외]", t_start)
+            self._pm.log_timer("MarketCalendarService.get_latest_trading_date [예외]", t_start)
             return None
 
     async def _fetch_from_api(self) -> Optional[str]:
@@ -128,7 +128,7 @@ class MarketCalendarService:
                 self._business_days_cache[date_str] = is_open
 
         self._last_sync_month = target_month
-        self._pm.log_timer(f"MarketDateManager._sync_calendar_if_needed({target_date_str})", t_start)
+        self._pm.log_timer(f"MarketCalendarService._sync_calendar_if_needed({target_date_str})", t_start)
 
     async def is_business_day(self, date_str: str = None) -> bool:
         """특정 날짜(YYYYMMDD)가 공휴일/휴장일이 아닌 영업일인지 확인합니다."""

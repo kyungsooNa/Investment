@@ -977,7 +977,7 @@ async def test_get_latest_trading_date_success(trading_service_fixture, mock_dep
     """get_latest_trading_date 성공 케이스 테스트 (Delegation)"""
     service = trading_service_fixture
     
-    # Mock MarketDateManager
+    # Mock MarketCalendarService
     mock_mcs = AsyncMock()
     mock_mcs.get_latest_trading_date.return_value = "20250103"
     service._mcs = mock_mcs

@@ -235,7 +235,7 @@ def test_get_weekly_change_logic(manager):
 
 def test_snapshot_migration_from_old_format(tmp_path):
     """이전 JSON 포맷 마이그레이션 확인"""
-    journal_dir = tmp_path / "data" / "VirtualTradeManager"
+    journal_dir = tmp_path / "data" / "VirtualTradeRepository"
     journal_dir.mkdir(parents=True)
     snapshot_file = journal_dir / "portfolio_snapshots.json"
     old_data = {"2025-01-01": {"ALL": 1.0}}
@@ -317,8 +317,8 @@ def test_read_adds_qty_column_if_missing(temp_journal):
     df.loc[0] = ["S1", "005930", "2025-01-01", 1000, None, None, 0.0, "HOLD"]
     df.to_csv(temp_journal, index=False)
     
-    manager = VirtualTradeManager(filename=temp_journal)
-    df_read = manager._read()
+    virtualTradeRepository = VirtualTradeRepository(filename=temp_journal)
+    df_read = virtualTradeRepository._read()
     
     assert "qty" in df_read.columns
     assert df_read.iloc[0]['qty'] == 1

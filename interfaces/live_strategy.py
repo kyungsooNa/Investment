@@ -14,7 +14,7 @@ class LiveStrategy(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """전략 고유 이름 (VirtualTradeManager의 strategy 컬럼 값)."""
+        """전략 고유 이름 (VirtualTradeRepository strategy 컬럼 값)."""
         ...
 
     @abstractmethod
@@ -27,7 +27,7 @@ class LiveStrategy(ABC):
         """보유 종목의 청산 조건을 확인하고 SELL TradeSignal 리스트를 반환한다.
 
         Args:
-            holdings: VirtualTradeManager.get_holds_by_strategy()의 반환값.
+            holdings: VirtualTradeRepository.get_holds_by_strategy()의 반환값.
                       각 dict는 strategy, code, buy_date, buy_price, status 키를 포함.
         """
         ...

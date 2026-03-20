@@ -45,7 +45,7 @@ def mock_deps():
     env.is_paper_trading = False  # 기본: 실전투자 모드
     logger = MagicMock()
     time_manager = MagicMock()
-    market_calendar_service = AsyncMock(spec=MarketDateManager)
+    market_calendar_service = AsyncMock(spec=MarketCalendarService)
     market_calendar_service.is_market_open_now = AsyncMock(return_value=False) # 기본: 장 마감 상태 (갱신 허용)
     market_calendar_service.is_business_day = AsyncMock(return_value=True) # 기본: 영업일
     market_calendar_service.get_latest_trading_date = AsyncMock(return_value="20250101")
@@ -680,7 +680,7 @@ def test_chunked_helper():
 async def test_refresh_basic_ranking_exception_and_notification(bg_service, mock_deps):
     """기본 랭킹 갱신 중 예외 발생 시 로그 및 알림 테스트."""
     _, _, _, logger, _, _ = mock_deps
-    bg_service._notification_service = AsyncMock() # NotificationManager
+    bg_service._notification_service = AsyncMock() # NotificationService
 
     # asyncio.gather가 예외를 던지도록 설정하여 try-except 블록 진입 유도
     with patch("task.background.ranking_task.asyncio.gather", side_effect=Exception("Critical Error")):
@@ -693,7 +693,7 @@ async def test_refresh_basic_ranking_exception_and_notification(bg_service, mock
 @pytest.mark.asyncio
 async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps):
     """기본 랭킹 갱신 성공 시 알림 테스트."""
-    bg_service._notification_service = AsyncMock() # NotificationManager
+    bg_service._notification_service = AsyncMock() # NotificationService
 
     # Mock success responses
     bg_service._trading_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])

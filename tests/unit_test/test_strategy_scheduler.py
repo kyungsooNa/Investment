@@ -106,7 +106,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         config = StrategySchedulerConfig(strategy=strategy, interval_minutes=10, max_positions=5)
         scheduler.register(config)
 
-        # Mock VirtualTradeManager가 특정 전략의 보유 종목을 반환하도록 설정
+        # Mock VirtualTradeRepository 특정 전략의 보유 종목을 반환하도록 설정
         holding_item = {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 1, "status": "HOLD"}
         vm.get_holds_by_strategy.return_value = [holding_item]
 

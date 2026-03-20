@@ -18,7 +18,7 @@ class ClientWithCache:
             mode_fn: Callable[[], str],
             cache_manager: Optional[CacheManager] = None,
             config: Optional[dict] = None,
-            market_calendar_service: Optional[Any] = None  # [추가] MarketDateManager 주입
+            market_calendar_service: Optional[Any] = None  # [추가] MarketCalendarService 주입
     ):
         self._client = client
         self._logger = logger
@@ -92,7 +92,7 @@ class ClientWithCache:
                     next_open_time = await self._mcs.get_next_open_time() if self._mcs else None
 
                     if cache_time and next_open_time and cache_time < next_open_time:
-                        # [수정] MarketDateManager가 있으면 실제 거래일 기준으로 검증
+                        # [수정] MarketCalendarService가 있으면 실제 거래일 기준으로 검증
                         if self._mcs:
                             latest_trading_date_str = await self._mcs.get_latest_trading_date()
                             if latest_trading_date_str:

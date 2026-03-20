@@ -21,7 +21,7 @@ from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerCon
 from scheduler.background_scheduler import BackgroundScheduler
 from scheduler.foreground_scheduler import ForegroundScheduler
 from task.background.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
-from services.naver_finance_scraper import NaverFinanceScraperService
+from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
@@ -55,7 +55,6 @@ class WebAppContext:
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
         self.indicator_service: IndicatorService = None
-        self.indicator_service: IndicatorService = None
         self.virtual_repo = VirtualTradeRepository()
         self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, time_manager=self.time_manager)
         self.virtual_trade_service.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
@@ -75,7 +74,7 @@ class WebAppContext:
         self.pm: PerformanceManager = None
 
         # [변경] 실시간 데이터 관리자 도입
-        self.realtime_data_manager = RealtimeDataService(self.logger)
+        self.realtime_data_service = RealtimeDataService(self.logger)
         
         web_api.set_ctx(self)
 
@@ -124,7 +123,7 @@ class WebAppContext:
         # ---------------------------------------------------------
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
-        # [신규] MarketDateManager 초기화
+        # [신규] MarketCalendarService 초기화
         self._mcs = MarketCalendarService(self.time_manager, self.logger, performance_manager=self.pm)
         
 
@@ -144,7 +143,7 @@ class WebAppContext:
             market_calendar=self._mcs
         )
 
-        # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
+        # [수정] MarketCalendarService에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
         self._mcs.set_broker(self.broker)
         
         # [신규] 휴장일 정보 동기화 (TimeManager에 API 데이터 주입)
@@ -206,7 +205,7 @@ class WebAppContext:
         self.websocket_watchdog_task = WebSocketWatchdogTask(
             stock_query_service=self.stock_query_service,
             trading_service=self.trading_service,
-            realtime_data_manager=self.realtime_data_manager,
+            realtime_data_service=self.realtime_data_service,
             market_calendar_service=self._mcs,
             performance_manager=self.pm,
             notification_service=self.notification_service,
@@ -467,12 +466,12 @@ class WebAppContext:
                         item['price'] = price_data
 
             # [변경] 매니저에게 데이터 처리 위임
-            self.realtime_data_manager.on_data_received(item)
+            self.realtime_data_service.on_data_received(item)
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""
         # [변경] 매니저를 통해 구독 상태 확인
-        if self.realtime_data_manager.is_subscribed(code):
+        if self.realtime_data_service.is_subscribed(code):
             # [추가] 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
             if (self.trading_service
                     and not self.trading_service.is_websocket_receive_alive()):
@@ -480,7 +479,7 @@ class WebAppContext:
                 await self.websocket_watchdog_task.force_reconnect_program_trading()
 
                 # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
-                if not self.realtime_data_manager.is_subscribed(code):
+                if not self.realtime_data_service.is_subscribed(code):
                     self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
                 else:
                     return True
@@ -504,7 +503,7 @@ class WebAppContext:
             self.pm.log_timer(f"subscribe_realtime_price({code})", t_sub_price)
 
             if sub_pt_success and sub_price_success:
-                self.realtime_data_manager.add_subscribed_code(code)
+                self.realtime_data_service.add_subscribed_code(code)
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
                 return True
             else:
@@ -523,15 +522,15 @@ class WebAppContext:
     async def stop_program_trading(self, code: str):
         """특정 종목 프로그램매매 구독 해지."""
         # [변경] 매니저를 통해 구독 상태 확인
-        if self.realtime_data_manager.is_subscribed(code):
+        if self.realtime_data_service.is_subscribed(code):
             await self.stock_query_service.unsubscribe_program_trading(code)
             await self.stock_query_service.unsubscribe_realtime_price(code) # [추가]
-            self.realtime_data_manager.remove_subscribed_code(code)
+            self.realtime_data_service.remove_subscribed_code(code)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
         # [변경] 매니저에서 구독 목록 가져오기
-        for code in self.realtime_data_manager.get_subscribed_codes():
+        for code in self.realtime_data_service.get_subscribed_codes():
             await self.stock_query_service.unsubscribe_program_trading(code)
             await self.stock_query_service.unsubscribe_realtime_price(code)
-        self.realtime_data_manager.clear_subscribed_codes()
+        self.realtime_data_service.clear_subscribed_codes()

@@ -19,7 +19,6 @@ from services.notification_service import NotificationService
 from services.order_execution_service import OrderExecutionService
 from repositories.stock_code_repository import StockCodeRepository
 from services.stock_query_service import StockQueryService
-from services.stock_sync_service import StockSyncService
 from core.time_manager import TimeManager
 from core.performance_manager import PerformanceManager
 
@@ -445,7 +444,7 @@ class StrategyScheduler:
 
             stock_name = hold.get("name", code)
             
-            # 보유 수량 조회 (VirtualTradeManager가 qty를 반환해야 함)
+            # 보유 수량 조회 (VirtualTradeRepository qty를 반환해야 함)
             # 만약 qty 정보가 없다면 설정된 주문 수량(cfg.order_qty)을 fallback으로 사용
             holding_qty = int(hold.get("qty") or 0)
             if holding_qty <= 0:

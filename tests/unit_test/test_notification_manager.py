@@ -16,8 +16,8 @@ def mock_time_manager():
 
 @pytest.fixture
 def manager(mock_time_manager):
-    """테스트용 NotificationManager 인스턴스를 생성합니다."""
-    return NotificationManager(time_manager=mock_time_manager)
+    """테스트용 NotificationService 인스턴스를 생성합니다."""
+    return NotificationService(time_manager=mock_time_manager)
 
 # --- NotificationEvent Tests ---
 
@@ -37,10 +37,10 @@ def test_notification_event_to_dict():
     assert event_dict["category"] == "TEST"
     assert event_dict["metadata"] == {"extra": "data"}
 
-# --- NotificationManager Tests ---
+# --- NotificationService Tests ---
 
 def test_init(manager):
-    """NotificationManager 초기화 테스트"""
+    """NotificationService 초기화 테스트"""
     assert manager._history == []
     assert manager._subscriber_queues == []
     assert manager._external_handlers == []

@@ -394,7 +394,7 @@ def _build_mock_web_ctx(is_paper: bool = True):
     mock_ctx.virtual_trade_service = MagicMock()
     mock_ctx.ranking_task = MagicMock()
     mock_ctx.websocket_watchdog_task = MagicMock()
-    mock_ctx.realtime_data_manager = MagicMock()
+    mock_ctx.realtime_data_service = MagicMock()
     mock_ctx.stock_code_repository = MagicMock()
     mock_ctx.scheduler = MagicMock()
 
@@ -552,12 +552,12 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
         env = None
 
     with patch("view.web.web_app_initializer.load_configs", return_value=mock_config), \
-         patch("view.web.web_app_initializer.VirtualTradeManager") as MockVTM, \
+         patch("view.web.web_app_initializer.VirtualTradeRepository") as MockVTM, \
          patch("view.web.web_app_initializer.StockCodeMapper"), \
          patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-         patch("view.web.web_app_initializer.MarketDateManager") as Mockmcs:
+         patch("view.web.web_app_initializer.MarketCalendarService") as Mockmcs:
 
-        # MarketDateManager Mock 설정 (_sync_calendar_if_needed 누락 방지)
+        # MarketCalendarService Mock 설정 (_sync_calendar_if_needed 누락 방지)
         mock_mcs_instance = Mockmcs.return_value
         mock_mcs_instance._sync_calendar_if_needed = AsyncMock()
         mock_mcs_instance.is_market_open_now = AsyncMock(return_value=False)

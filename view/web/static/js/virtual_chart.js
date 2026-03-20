@@ -1,5 +1,5 @@
 /**
- * VirtualTradeManager 데이터를 이용한 수익률 차트 관리
+ * VirtualTradeRepository 데이터를 이용한 수익률 차트 관리
  * - 멀티셀렉트 전략 필터링 지원
  * - 전략별 고정 색상 매핑
  * - 전일/전주 기준선 annotation

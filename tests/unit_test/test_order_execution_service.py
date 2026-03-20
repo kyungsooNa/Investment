@@ -42,8 +42,8 @@ def mock_time_manager():
 
 @pytest.fixture
 def mock_market_calendar_service():
-    """MarketDateManager의 AsyncMock 인스턴스를 제공하는 픽스처."""
-    mock = AsyncMock(spec_set=MarketDateManager)
+    """MarketCalendarService의 AsyncMock 인스턴스를 제공하는 픽스처."""
+    mock = AsyncMock(spec_set=MarketCalendarService)
     mock.is_market_open_now.return_value = True # 기본값 설정
     return mock
 

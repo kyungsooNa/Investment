@@ -37,7 +37,7 @@ def test_notification_event_to_dict():
     assert event_dict["category"] == "TEST"
     assert event_dict["metadata"] == {"extra": "data"}
 
-# --- NotificationManager Tests ---
+# --- NotificationService Tests ---
 
 def test_init(manager):
     """NotificationService 초기화 테스트"""
