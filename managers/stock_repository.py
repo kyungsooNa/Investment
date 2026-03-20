@@ -20,6 +20,7 @@ class _LRUCache:
         self.capacity = capacity
         self.hits = 0
         self.misses = 0
+        self.item_hits = collections.defaultdict(int)
 
     def get(self, key, count_stats: bool = True):
         if key not in self.cache:
@@ -28,6 +29,7 @@ class _LRUCache:
             return None
         if count_stats:
             self.hits += 1
+            self.item_hits[key] += 1
         self.cache.move_to_end(key)
         return self.cache[key]
 
@@ -35,19 +37,44 @@ class _LRUCache:
         self.cache[key] = value
         self.cache.move_to_end(key)
         if len(self.cache) > self.capacity:
-            self.cache.popitem(last=False)
+            removed_key, _ = self.cache.popitem(last=False)
+            if removed_key in self.item_hits:
+                del self.item_hits[removed_key]
 
-    def get_stats(self) -> dict:
+    def get_stats(self, expand: bool = False) -> dict:
         """캐시 적중률 통계를 반환합니다."""
         total = self.hits + self.misses
         hit_rate = (self.hits / total * 100) if total > 0 else 0.0
-        return {
+        stats = {
             "hits": self.hits,
             "misses": self.misses,
             "hit_rate": round(hit_rate, 2),
             "total_requests": total,
             "current_size": len(self.cache)
         }
+
+        if expand:
+            items = []
+            for key, val in self.cache.items():
+                if isinstance(val, dict):
+                    items.append({
+                        "code": key,
+                        "hit_count": self.item_hits.get(key, 0),
+                        "has_ohlcv": "ohlcv" in val and len(val["ohlcv"]) > 0,
+                        "ohlcv_length": len(val["ohlcv"]) if "ohlcv" in val else 0,
+                        "has_current_price": "current_price_data" in val,
+                        "last_updated": val.get("last_updated"),
+                        "price_updated_at": val.get("price_updated_at")
+                    })
+                else:
+                    items.append({
+                        "code": key,
+                        "hit_count": self.item_hits.get(key, 0),
+                    })
+            items.sort(key=lambda x: x.get("hit_count", 0), reverse=True)
+            stats["items"] = items
+
+        return stats
 
 
 class StockRepository:
@@ -206,9 +233,9 @@ class StockRepository:
                 return cached["current_price_data"]
         return None
 
-    def get_cache_stats(self) -> dict:
+    def get_cache_stats(self, expand: bool = False) -> dict:
         """메모리 캐시의 사용 통계(적중률 등)를 반환합니다."""
-        return self._stocks_cache.get_stats()
+        return self._stocks_cache.get_stats(expand=expand)
 
     def close(self):
         """DB 연결을 닫는다."""

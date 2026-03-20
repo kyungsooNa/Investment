@@ -12,36 +12,30 @@
             <p style="font-size: 1.1rem; margin: 8px 0;">실패 횟수(Miss): <span id="cache-misses" style="font-weight: bold; color: var(--danger-color, #f44336);">0</span></p>
             <p style="font-size: 1.1rem; margin: 8px 0;">적중률: <strong id="cache-rate" style="font-size: 1.3rem;">0.00</strong><strong style="font-size: 1.3rem;">%</strong></p>
             <p style="font-size: 1.1rem; margin: 8px 0;">사용 중인 종목 수: <span id="cache-size" style="font-weight: bold;">0</span> / 500</p>
+            
+            <button id="toggle-details-btn" class="btn" style="margin-top: 16px;" onclick="toggleCacheDetails()">상세 정보 보기 ▼</button>
+            
+            <div id="cache-details-container" style="display: none; margin-top: 16px;">
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>종목명(종목코드)</th>
+                                <th>적중 수</th>
+                                <th>일봉(OHLCV)</th>
+                                <th>현재가 캐시</th>
+                                <th>최근 갱신</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cache-details-body"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 </div>
+{% endblock %}
 
-<script>
-    async function updateCacheStatus() {
-        try {
-            const response = await fetch('/api/cache/status');
-            if (!response.ok) throw new Error('네트워크 응답이 정상이 아닙니다.');
-            
-            const result = await response.json();
-            
-            if (result.success && result.data) {
-                const stats = result.data;
-                document.getElementById('cache-total').textContent = stats.total_requests.toLocaleString();
-                document.getElementById('cache-hits').textContent = stats.hits.toLocaleString();
-                document.getElementById('cache-misses').textContent = stats.misses.toLocaleString();
-                document.getElementById('cache-rate').textContent = stats.hit_rate.toFixed(2);
-                document.getElementById('cache-size').textContent = stats.current_size;
-                
-                const rateElement = document.getElementById('cache-rate');
-                rateElement.style.color = stats.hit_rate >= 90 ? 'var(--success-color, #4CAF50)' : 
-                                          stats.hit_rate >= 50 ? 'orange' : 'var(--danger-color, #f44336)';
-            }
-        } catch (error) {
-            console.error('캐시 상태를 가져오는 중 오류 발생:', error);
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', updateCacheStatus);
-    setInterval(updateCacheStatus, 5000);
-</script>
+{% block scripts %}
+<script src="/static/js/system.js?v=2"></script>
 {% endblock %}
