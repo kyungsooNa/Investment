@@ -69,7 +69,7 @@ class WebAppContext:
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
-        self._mdm: MarketCalendarService = None
+        self._mcs: MarketCalendarService = None
         self.notification_manager: NotificationService = None
         self.initialized = False
         self.pm: PerformanceManager = None
@@ -125,7 +125,7 @@ class WebAppContext:
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
         # [신규] MarketDateManager 초기화
-        self._mdm = MarketCalendarService(self.time_manager, self.logger, performance_manager=self.pm)
+        self._mcs = MarketCalendarService(self.time_manager, self.logger, performance_manager=self.pm)
         
 
     async def initialize_services(self, is_paper_trading: bool = True):
@@ -141,15 +141,15 @@ class WebAppContext:
 
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, time_manager=self.time_manager,
-            market_calendar=self._mdm
+            market_calendar=self._mcs
         )
 
         # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
-        self._mdm.set_broker(self.broker)
+        self._mcs.set_broker(self.broker)
         
         # [신규] 휴장일 정보 동기화 (TimeManager에 API 데이터 주입)
         # 이를 통해 get_next_market_open_time 등이 임시공휴일을 정확히 인지하게 됨
-        await self._mdm._sync_calendar_if_needed()
+        await self._mcs._sync_calendar_if_needed()
 
         # 캐시 매니저 생성
         # Pydantic 모델(AppConfig)을 dict로 변환하여 전달
@@ -173,7 +173,7 @@ class WebAppContext:
 
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
             performance_manager=self.pm,
             stock_repository=self.stock_repository
         )
@@ -191,7 +191,7 @@ class WebAppContext:
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
@@ -207,7 +207,7 @@ class WebAppContext:
             stock_query_service=self.stock_query_service,
             trading_service=self.trading_service,
             realtime_data_manager=self.realtime_data_manager,
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
             logger=self.logger,
@@ -218,7 +218,7 @@ class WebAppContext:
             stock_code_mapper=self.stock_code_mapper,
             market_data_repo=self.market_data_repository,
             stock_repo=self.stock_repository,
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
             time_manager=self.time_manager,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
@@ -229,7 +229,7 @@ class WebAppContext:
             self.trading_service, self.logger, self.time_manager,
             performance_manager=self.pm,
             notification_manager=self.notification_manager,
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
         )
         
         # [신규] 오닐 유니버스 서비스 초기화
@@ -273,9 +273,9 @@ class WebAppContext:
         return "모의투자" if self.env.is_paper_trading else "실전투자"
 
     async def is_market_open_now(self) -> bool:
-        if self._mdm is None:
+        if self._mcs is None:
             return False
-        return await self._mdm.is_market_open_now() if self._mdm else False
+        return await self._mcs.is_market_open_now() if self._mcs else False
 
     def get_current_time_str(self) -> str:
         if self.time_manager is None:
@@ -298,7 +298,7 @@ class WebAppContext:
             stock_query_service=self.stock_query_service,
             stock_code_mapper=self.stock_code_mapper,
             time_manager=self.time_manager,
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
             logger=get_strategy_logger('StrategyScheduler'),
             dry_run=False,
             notification_manager=self.notification_manager,

@@ -36,7 +36,7 @@ def mock_time_manager():
     return MagicMock()
 
 @pytest.fixture
-def mock_mdm():
+def mock_mcs():
     """모의 시장 날짜 관리자 객체를 생성합니다."""
     return MagicMock()
 
@@ -321,7 +321,7 @@ def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logg
 
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeMapper")
-def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_logger, mock_time_manager, mock_mdm):
+def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_logger, mock_time_manager, mock_mcs):
     """
     정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
     """
@@ -330,10 +330,10 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
                                env=mock_env, 
                                logger=mock_logger, 
                                time_manager=mock_time_manager,
-                               market_date_manager=mock_mdm)
+                               market_calendar_service=mock_mcs)
 
     # Assert
-    mock_client.assert_called_once_with(mock_env, mock_logger, mock_time_manager, mock_mdm)
+    mock_client.assert_called_once_with(mock_env, mock_logger, mock_time_manager, mock_mcs)
     mock_stock_mapper.assert_called_once_with(logger=mock_logger)
     assert wrapper._broker == "korea_investment"
     assert isinstance(wrapper._client, ClientWithCache)  # ✅ wrapping 여부 확인

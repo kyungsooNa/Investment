@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
-from core.market_calendar import MarketCalendar
+from services.market_calendar_service import MarketCalendarService
 from services.virtual_trade_service import VirtualTradeService
 from services.notification_service import NotificationService
 from services.order_execution_service import OrderExecutionService
@@ -68,15 +68,15 @@ class StrategyScheduler:
 
     def __init__(
         self,
-        virtual_manager: VirtualTradeManager,
+        virtual_manager: VirtualTradeService,
         order_execution_service: OrderExecutionService,
         stock_query_service: StockQueryService,
         stock_code_mapper: StockCodeRepository,
         time_manager: TimeManager,
-        market_calender: MarketCalendar,
+        market_calender: MarketCalendarService,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
-        notification_manager: Optional[NotificationManager] = None,
+        notification_manager: Optional[NotificationService] = None,
         performance_manager: Optional[PerformanceManager] = None,
     ):
         self._vm = virtual_manager
@@ -87,7 +87,7 @@ class StrategyScheduler:
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
         self._nm = notification_manager
-        self._mdm = market_calender
+        self._mcs = market_calender
         self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
         # 데이터 디렉토리 생성
@@ -161,7 +161,7 @@ class StrategyScheduler:
         self._logger.info("스케줄러 메인 루프 시작.")
         while self._running:
             try:
-                market_open = await self._mdm.is_market_open_now()
+                market_open = await self._mcs.is_market_open_now()
 
                 if not market_open:
                     # 장이 닫힌 직후(15:30~) 아직 강제 청산 미완료된 전략이 있으면 실행
@@ -183,7 +183,7 @@ class StrategyScheduler:
 
                     self._logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
                     self._force_exit_done.clear()
-                    await self._mdm.wait_until_next_open()
+                    await self._mcs.wait_until_next_open()
                     continue
 
                 # 장중: 시간 계산

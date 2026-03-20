@@ -45,16 +45,16 @@ def mock_deps():
     env.is_paper_trading = False  # 기본: 실전투자 모드
     logger = MagicMock()
     time_manager = MagicMock()
-    market_date_manager = AsyncMock(spec=MarketDateManager)
-    market_date_manager.is_market_open_now = AsyncMock(return_value=False) # 기본: 장 마감 상태 (갱신 허용)
-    market_date_manager.is_business_day = AsyncMock(return_value=True) # 기본: 영업일
-    market_date_manager.get_latest_trading_date = AsyncMock(return_value="20250101")
-    return broker, mapper, env, logger, time_manager, market_date_manager
+    market_calendar_service = AsyncMock(spec=MarketDateManager)
+    market_calendar_service.is_market_open_now = AsyncMock(return_value=False) # 기본: 장 마감 상태 (갱신 허용)
+    market_calendar_service.is_business_day = AsyncMock(return_value=True) # 기본: 영업일
+    market_calendar_service.get_latest_trading_date = AsyncMock(return_value="20250101")
+    return broker, mapper, env, logger, time_manager, market_calendar_service
 
 
 @pytest.fixture
 def bg_service(mock_deps):
-    broker, mapper, env, logger, time_manager, market_date_manager = mock_deps
+    broker, mapper, env, logger, time_manager, market_calendar_service = mock_deps
     
     trading_service = AsyncMock()
     
@@ -65,7 +65,7 @@ def bg_service(mock_deps):
         logger=logger,
         time_manager=time_manager,
         trading_service=trading_service,
-        market_date_manager=market_date_manager,
+        market_calendar_service=market_calendar_service,
     )
 
 
@@ -447,7 +447,7 @@ async def test_ranking_sorted_by_trade_amount(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_refresh_basic_ranking(mock_deps):
     """기본 랭킹 캐시 갱신 테스트."""
-    broker, mapper, env, logger, time_manager, market_date_manager = mock_deps
+    broker, mapper, env, logger, time_manager, market_calendar_service = mock_deps
     trading_service = MagicMock()
     trading_service.get_top_rise_fall_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "rise"}])
@@ -464,7 +464,7 @@ async def test_refresh_basic_ranking(mock_deps):
         env=env, logger=logger, time_manager=time_manager,
         trading_service=trading_service,
     )
-    bg.mdm = market_date_manager # Ensure mdm is set for this test
+    bg.mcs = market_calendar_service # Ensure mcs is set for this test
 
     await bg.refresh_basic_ranking()
 
@@ -495,9 +495,9 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
     """장마감 상태에서 스케줄러가 갱신을 트리거하는지 검증."""
     import asyncio
     from datetime import datetime
-    broker, mapper, env, logger, time_manager, market_date_manager = mock_deps
-    market_date_manager.is_market_open_now.return_value = False  # 장마감
-    market_date_manager.is_business_day.return_value = True
+    broker, mapper, env, logger, time_manager, market_calendar_service = mock_deps
+    market_calendar_service.is_market_open_now.return_value = False  # 장마감
+    market_calendar_service.is_business_day.return_value = True
     time_manager.get_sleep_seconds_until_market_close.return_value = 0.0
     time_manager.get_current_kst_time.return_value = datetime(2026, 3, 16, 16, 0, 0)
 
@@ -517,7 +517,7 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
         env=env, logger=logger, time_manager=time_manager,
         trading_service=trading_service,
     )
-    bg.mdm = market_date_manager # Ensure mdm is set for this test
+    bg.mcs = market_calendar_service # Ensure mcs is set for this test
 
     # asyncio.sleep를 1회만 실행 후 CancelledError로 종료
     call_count = 0
@@ -654,8 +654,8 @@ async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, mock_deps):
     """장 중에는 투자자 랭킹 갱신(직접 호출)을 스킵해야 한다."""
-    broker, _, _, logger, time_manager, market_date_manager = mock_deps
-    market_date_manager.is_market_open_now.return_value = True  # 장 중으로 설정
+    broker, _, _, logger, time_manager, market_calendar_service = mock_deps
+    market_calendar_service.is_market_open_now.return_value = True  # 장 중으로 설정
 
     await bg_service.refresh_investor_ranking()
 
@@ -757,8 +757,8 @@ async def test_check_and_trigger_refresh_no_loop(bg_service):
 async def test_start_after_market_scheduler_exception_handling(bg_service, mock_deps):
     """스케줄러 루프 내 일반 예외 발생 시 처리 테스트."""
     import asyncio
-    _, _, _, logger, time_manager, market_date_manager = mock_deps
-    market_date_manager.is_market_open_now.return_value = False
+    _, _, _, logger, time_manager, market_calendar_service = mock_deps
+    market_calendar_service.is_market_open_now.return_value = False
 
     # refresh_basic_ranking에서 예외 발생
     bg_service.refresh_basic_ranking = AsyncMock(side_effect=Exception("Scheduler Error"))
@@ -803,8 +803,8 @@ async def test_refresh_investor_ranking_invalid_response_data(bg_service, mock_d
 async def test_on_demand_trigger_skipped_during_market_open(bg_service, mock_deps):
     """장 중에는 온디맨드(on-demand) 랭킹 갱신이 트리거되지 않아야 한다."""
     import asyncio
-    _, _, _, logger, time_manager, market_date_manager = mock_deps
-    market_date_manager.is_market_open_now.return_value = True  # 장 중으로 설정
+    _, _, _, logger, time_manager, market_calendar_service = mock_deps
+    market_calendar_service.is_market_open_now.return_value = True  # 장 중으로 설정
 
     # 캐시가 비어있는 상태
     bg_service._foreign_net_buy_cache = []
@@ -1014,10 +1014,10 @@ async def test_progress_total_set_before_api_calls(bg_service, mock_deps):
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_no_target_date(bg_service, mock_deps):
     """최근 거래일 조회 실패 시 갱신 중단."""
-    _, _, _, logger, _, mdm = mock_deps
+    _, _, _, logger, _, mcs = mock_deps
     
     # target_date None 설정
-    mdm.get_latest_trading_date.return_value = None
+    mcs.get_latest_trading_date.return_value = None
     
     await bg_service.refresh_investor_ranking()
     
@@ -1129,10 +1129,10 @@ async def test_fetch_with_retry_all_fail(bg_service, mock_deps):
 async def test_start_after_market_scheduler_waits_efficiently(bg_service, mock_deps):
     """장 중일 때 효율적인 대기 시간(get_sleep_seconds_until_market_close)을 사용하는지 검증."""
     import asyncio
-    _, _, _, logger, time_manager, market_date_manager = mock_deps
+    _, _, _, logger, time_manager, market_calendar_service = mock_deps
 
     # 1. Market is Open
-    market_date_manager.is_market_open_now.return_value = True
+    market_calendar_service.is_market_open_now.return_value = True
     # 2. TimeManager suggests waiting 1000 seconds
     time_manager.get_sleep_seconds_until_market_close.return_value = 1000.0
 
@@ -1230,9 +1230,9 @@ async def test_refresh_investor_ranking_handles_none_response(bg_service, mock_d
 async def test_scheduler_no_refresh_during_market_hours(bg_service, mock_deps):
     """장 중(09:00~15:30)에는 refresh를 호출하지 않고 장 마감까지 대기만 한다."""
     import asyncio
-    _, _, _, _, time_manager, market_date_manager = mock_deps
+    _, _, _, _, time_manager, market_calendar_service = mock_deps
 
-    market_date_manager.is_market_open_now.return_value = True
+    market_calendar_service.is_market_open_now.return_value = True
     time_manager.get_sleep_seconds_until_market_close.return_value = 3600.0
 
     bg_service.refresh_basic_ranking = AsyncMock()
@@ -1253,12 +1253,12 @@ async def test_scheduler_refreshes_when_no_prior_update(bg_service, mock_deps):
     """장 마감 후 최근 거래일에 대한 갱신 이력이 없으면 basic+investor 모두 갱신한다."""
     import asyncio
     from datetime import datetime
-    _, _, _, _, time_manager, market_date_manager = mock_deps
+    _, _, _, _, time_manager, market_calendar_service = mock_deps
 
-    market_date_manager.is_business_day.return_value = True
+    market_calendar_service.is_business_day.return_value = True
     time_manager.get_sleep_seconds_until_market_close.return_value = 0.0
     time_manager.get_current_kst_time.return_value = datetime(2026, 3, 15, 16, 0, 0)
-    market_date_manager.get_latest_trading_date.return_value = "20260315"
+    market_calendar_service.get_latest_trading_date.return_value = "20260315"
 
     bg_service._basic_ranking_updated_at = None
     bg_service._investor_ranking_updated_at = None
@@ -1284,11 +1284,11 @@ async def test_scheduler_skips_if_already_updated_for_trading_date(bg_service, m
     최근 거래일(20260315) = 갱신 이력(20260315) → 스킵.
     """
     import asyncio
-    _, _, _, _, _, market_date_manager = mock_deps
+    _, _, _, _, _, market_calendar_service = mock_deps
 
-    market_date_manager.is_business_day.return_value = True
+    market_calendar_service.is_business_day.return_value = True
     mock_deps[4].get_sleep_seconds_until_market_close.return_value = 0.0
-    market_date_manager.get_latest_trading_date.return_value = "20260315"
+    market_calendar_service.get_latest_trading_date.return_value = "20260315"
 
     # 이미 20260315에 대해 갱신 완료
     updated_at = MagicMock()
@@ -1319,13 +1319,13 @@ async def test_scheduler_no_double_refresh_overnight(bg_service, mock_deps):
     """
     import asyncio
     from datetime import datetime
-    _, _, _, _, time_manager, market_date_manager = mock_deps
+    _, _, _, _, time_manager, market_calendar_service = mock_deps
 
-    market_date_manager.is_business_day.return_value = True
+    market_calendar_service.is_business_day.return_value = True
     time_manager.get_sleep_seconds_until_market_close.return_value = 0.0
     time_manager.get_current_kst_time.return_value = datetime(2026, 3, 16, 4, 0, 0)
     # 3/16 04:00이지만 최근 거래일은 여전히 3/15
-    market_date_manager.get_latest_trading_date.return_value = "20260315"
+    market_calendar_service.get_latest_trading_date.return_value = "20260315"
 
     # 3/15 16:00에 갱신 완료 → strftime("%Y%m%d") = "20260315"
     updated_at = MagicMock()
@@ -1356,12 +1356,12 @@ async def test_scheduler_skips_on_weekend_if_already_updated(bg_service, mock_de
     갱신 이력도 "20260313" → 스킵.
     """
     import asyncio
-    _, _, _, _, _, market_date_manager = mock_deps
+    _, _, _, _, _, market_calendar_service = mock_deps
 
-    market_date_manager.is_business_day.return_value = False
+    market_calendar_service.is_business_day.return_value = False
     mock_deps[4].get_sleep_seconds_until_market_close.return_value = 0.0
     # 토요일이지만 최근 거래일은 금요일
-    market_date_manager.get_latest_trading_date.return_value = "20260313"
+    market_calendar_service.get_latest_trading_date.return_value = "20260313"
 
     # 금요일 16:00에 갱신 완료
     updated_at = MagicMock()
@@ -1392,12 +1392,12 @@ async def test_scheduler_skips_on_holiday_if_already_updated(bg_service, mock_de
     갱신 이력도 "20260311" → 스킵.
     """
     import asyncio
-    _, _, _, _, _, market_date_manager = mock_deps
+    _, _, _, _, _, market_calendar_service = mock_deps
 
-    market_date_manager.is_business_day.return_value = False
+    market_calendar_service.is_business_day.return_value = False
     mock_deps[4].get_sleep_seconds_until_market_close.return_value = 0.0
     # 연휴 중이지만 최근 거래일은 연휴 전 수요일
-    market_date_manager.get_latest_trading_date.return_value = "20260311"
+    market_calendar_service.get_latest_trading_date.return_value = "20260311"
 
     # 수요일 16:00에 갱신 완료
     updated_at = MagicMock()
@@ -1422,11 +1422,11 @@ async def test_scheduler_skips_on_holiday_if_already_updated(bg_service, mock_de
 async def test_scheduler_skips_when_latest_trading_date_unavailable(bg_service, mock_deps):
     """get_latest_trading_date()가 None을 반환하면(API 오류 등) 갱신을 시도하지 않는다."""
     import asyncio
-    _, _, _, _, _, market_date_manager = mock_deps
+    _, _, _, _, _, market_calendar_service = mock_deps
 
-    market_date_manager.is_business_day.return_value = True
+    market_calendar_service.is_business_day.return_value = True
     mock_deps[4].get_sleep_seconds_until_market_close.return_value = 0.0
-    market_date_manager.get_latest_trading_date.return_value = None
+    market_calendar_service.get_latest_trading_date.return_value = None
 
     bg_service._basic_ranking_updated_at = None
     bg_service._investor_ranking_updated_at = None
@@ -1455,13 +1455,13 @@ async def test_scheduler_skips_on_substitute_holiday(bg_service, mock_deps):
     """
     import asyncio
     from datetime import datetime
-    _, _, _, _, time_manager, market_date_manager = mock_deps
+    _, _, _, _, time_manager, market_calendar_service = mock_deps
 
-    market_date_manager.is_business_day.return_value = False
+    market_calendar_service.is_business_day.return_value = False
     time_manager.get_sleep_seconds_until_market_close.return_value = 0.0
     time_manager.get_current_kst_time.return_value = datetime(2026, 3, 2, 4, 0, 0)
     # 3/2(월) 대체공휴일이지만 최근 거래일은 2/27(금)
-    market_date_manager.get_latest_trading_date.return_value = "20260227"
+    market_calendar_service.get_latest_trading_date.return_value = "20260227"
 
     # 2/27(금) 16:00에 갱신 완료
     updated_at = MagicMock()

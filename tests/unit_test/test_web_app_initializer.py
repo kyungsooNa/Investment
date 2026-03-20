@@ -186,14 +186,14 @@ async def test_time_manager_methods(mock_deps):
     
     # 1. time_manager가 없을 때
     ctx.time_manager = None
-    ctx._mdm = None
+    ctx._mcs = None
     assert await ctx.is_market_open_now() is False
     assert ctx.get_current_time_str() == ""
     
     # 2. time_manager가 있을 때
     ctx.time_manager = MagicMock()
-    ctx._mdm = AsyncMock()
-    ctx._mdm.is_market_open_now.return_value = True
+    ctx._mcs = AsyncMock()
+    ctx._mcs.is_market_open_now.return_value = True
     
     # datetime 객체 모킹
     mock_dt = MagicMock()

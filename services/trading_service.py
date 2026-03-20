@@ -964,8 +964,8 @@ class TradingService:
         대표 종목(삼성전자)의 일봉을 조회하여 데이터가 존재하는 가장 최근 날짜를 반환한다.
         """
         # [수정] MarketDateManager를 통해 조회
-        if self._mdm:
-            return await self._mdm.get_latest_trading_date()
+        if self._mcs:
+            return await self._mcs.get_latest_trading_date()
         
         self._logger.warning("MarketDateManager is not initialized in TradingService.")
         return None

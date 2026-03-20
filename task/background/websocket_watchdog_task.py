@@ -26,18 +26,18 @@ class WebSocketWatchdogTask(SchedulableTask):
         self,
         stock_query_service: Optional["StockQueryService"] = None,
         trading_service=None,
-        realtime_data_manager: Optional["RealtimeDataManager"] = None,
-        market_date_manager: Optional["MarketDateManager"] = None,
+        realtime_data_manager: Optional["RealtimeDataService"] = None,
+        market_calendar_service: Optional["MarketCalendarService"] = None,
         performance_manager: Optional[PerformanceManager] = None,
-        notification_manager: Optional[NotificationManager] = None,
+        notification_service: Optional[NotificationService] = None,
         logger=None,
     ):
         self._stock_query_service = stock_query_service
         self._trading_service = trading_service
         self._realtime_data_manager = realtime_data_manager
-        self.mdm = market_date_manager
+        self.mcs = market_calendar_service
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
-        self._nm = notification_manager
+        self._ns = notification_service
         self._logger = logger or logging.getLogger(__name__)
 
         # SchedulableTask 상태
@@ -167,7 +167,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if not codes:
                     continue  # 구독 중인 종목 없으면 스킵
 
-                if not self.mdm or not await self.mdm.is_market_open_now():
+                if not self.mcs or not await self.mcs.is_market_open_now():
                     # 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
                     if self._trading_service and self._trading_service.is_websocket_receive_alive():
                         self._logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")

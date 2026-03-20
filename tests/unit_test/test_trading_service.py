@@ -86,8 +86,8 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     tm = mock_deps.tm
     stock_repo = mock_deps.stock_repo
     trading_service = trading_service_fixture
-    trading_service._mdm = AsyncMock()
-    trading_service._mdm.is_market_open_now.return_value = True
+    trading_service._mcs = AsyncMock()
+    trading_service._mcs.is_market_open_now.return_value = True
     
     # 1. 초기 상태: 로컬 데이터 없음 (0건) -> API 백필 수행
     stock_repo.get_stock_data.return_value = None
@@ -160,8 +160,8 @@ async def test_get_ohlcv_skip_today_api_if_cached_and_closed(trading_service_fix
     trading_service = trading_service_fixture
     
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 18, 0, 0)
-    trading_service._mdm = AsyncMock()
-    trading_service._mdm.is_market_open_now.return_value = False
+    trading_service._mcs = AsyncMock()
+    trading_service._mcs.is_market_open_now.return_value = False
     
     today_str = "20250102"
     base_date = datetime(2023, 1, 1)
@@ -188,8 +188,8 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
     trading_service = trading_service_fixture
     
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
-    trading_service._mdm = AsyncMock()
-    trading_service._mdm.is_market_open_now.return_value = True
+    trading_service._mcs = AsyncMock()
+    trading_service._mcs.is_market_open_now.return_value = True
     
     # 2. 캐시 설정 (어제인 2025-01-01까지 데이터 있음)
     yesterday_str = "20250101"
@@ -978,35 +978,35 @@ async def test_get_latest_trading_date_success(trading_service_fixture, mock_dep
     service = trading_service_fixture
     
     # Mock MarketDateManager
-    mock_mdm = AsyncMock()
-    mock_mdm.get_latest_trading_date.return_value = "20250103"
-    service._mdm = mock_mdm
+    mock_mcs = AsyncMock()
+    mock_mcs.get_latest_trading_date.return_value = "20250103"
+    service._mcs = mock_mcs
     
     result = await service.get_latest_trading_date()
     
     assert result == "20250103"
-    mock_mdm.get_latest_trading_date.assert_awaited_once()
+    mock_mcs.get_latest_trading_date.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_get_latest_trading_date_none(trading_service_fixture, mock_deps):
     """get_latest_trading_date: 매니저가 None 반환 시 (Delegation)"""
     service = trading_service_fixture
     
-    mock_mdm = AsyncMock()
-    mock_mdm.get_latest_trading_date.return_value = None
-    service._mdm = mock_mdm
+    mock_mcs = AsyncMock()
+    mock_mcs.get_latest_trading_date.return_value = None
+    service._mcs = mock_mcs
     
     result = await service.get_latest_trading_date()
     
     assert result is None
-    mock_mdm.get_latest_trading_date.assert_awaited_once()
+    mock_mcs.get_latest_trading_date.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_get_latest_trading_date_no_manager(trading_service_fixture, mock_deps):
     """get_latest_trading_date: 매니저 미설정 시 None 반환"""
     logger = mock_deps.logger
     service = trading_service_fixture
-    service._mdm = None
+    service._mcs = None
 
     result = await service.get_latest_trading_date()
     

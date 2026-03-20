@@ -14,23 +14,23 @@ class BrokerAPIWrapper:
     """
 
     def __init__(self, broker: str = "korea_investment", env=None, logger=None, time_manager=None,
-                 cache_config=None, market_date_manager=None):
+                 cache_config=None, market_calendar_service=None):
         self._broker = broker
         self._logger = logger
         self._client = None
-        self._stock_mapper = StockCodeMapper(logger=logger)
+        self._stock_mapper = StockCodeRepository(logger=logger)
         self.env = env
         
         if broker == "korea_investment":
             if env is None:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
-            self._client = KoreaInvestApiClient(env, logger, time_manager, market_date_manager)
+            self._client = KoreaInvestApiClient(env, logger, time_manager, market_calendar_service)
             self._client = cache_wrap_client(
                 self._client, logger, time_manager,
                 lambda: "PAPER" if env.is_paper_trading else "REAL",
                 config=cache_config,  # ✅ 여기서 주입
-                market_date_manager=market_date_manager
+                market_calendar_service=market_calendar_service
             )
 
         else:

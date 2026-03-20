@@ -18,12 +18,12 @@ class ClientWithCache:
             mode_fn: Callable[[], str],
             cache_manager: Optional[CacheManager] = None,
             config: Optional[dict] = None,
-            market_date_manager: Optional[Any] = None  # [추가] MarketDateManager 주입
+            market_calendar_service: Optional[Any] = None  # [추가] MarketDateManager 주입
     ):
         self._client = client
         self._logger = logger
         self._time_manager = time_manager
-        self._mdm = market_date_manager  # [추가]
+        self._mcs = market_calendar_service  # [추가]
         self._mode_fn = mode_fn  # 동적으로 모드 가져오기
 
         # ✅ 설정에서 읽기
@@ -75,8 +75,8 @@ class ClientWithCache:
             # ✅ 1. 메모리 or 파일 캐시 조회
             # [수정] is_market_open_now는 async 메서드이므로 await 필요
             is_open = False
-            if self._mdm:
-                is_open = await self._mdm.is_market_open_now()
+            if self._mcs:
+                is_open = await self._mcs.is_market_open_now()
 
             if is_open:
                 self._logger.debug(f"⏳ 시장 개장 중 → 캐시 우회: {key}")
@@ -89,12 +89,12 @@ class ClientWithCache:
                     
                     is_valid = False
                     # [수정] next_open_time도 async 메서드
-                    next_open_time = await self._mdm.get_next_open_time() if self._mdm else None
+                    next_open_time = await self._mcs.get_next_open_time() if self._mcs else None
 
                     if cache_time and next_open_time and cache_time < next_open_time:
                         # [수정] MarketDateManager가 있으면 실제 거래일 기준으로 검증
-                        if self._mdm:
-                            latest_trading_date_str = await self._mdm.get_latest_trading_date()
+                        if self._mcs:
+                            latest_trading_date_str = await self._mcs.get_latest_trading_date()
                             if latest_trading_date_str:
                                 cache_date_str = cache_time.strftime("%Y%m%d")
                                 if cache_date_str > latest_trading_date_str:
@@ -115,7 +115,7 @@ class ClientWithCache:
                                 else:
                                     self._logger.debug(f"📉 캐시 만료 (최근 거래일 {latest_trading_date_str} > 캐시 데이터 {cache_date_str})")
                             else:
-                                # MDM이 거래일을 확인할 수 없는 경우 캐시를 유효한 것으로 간주
+                                # mcs이 거래일을 확인할 수 없는 경우 캐시를 유효한 것으로 간주
                                 is_valid = True
 
                     if is_valid:
@@ -188,7 +188,7 @@ def cache_wrap_client(
         mode_getter: Callable[[], str],
         config: Optional[dict] = None,
         cache_manager: Optional[CacheManager] = None,
-        market_date_manager: Optional[Any] = None
+        market_calendar_service: Optional[Any] = None
 ) -> T:
     return ClientWithCache(
         client=api_client,
@@ -197,5 +197,5 @@ def cache_wrap_client(
         mode_fn=mode_getter,
         cache_manager=cache_manager,
         config=config,
-        market_date_manager=market_date_manager
+        market_calendar_service=market_calendar_service
     )

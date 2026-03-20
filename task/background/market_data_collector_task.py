@@ -142,7 +142,7 @@ class MarketDataCollectorTask(SchedulableTask):
     async def _after_market_scheduler(self) -> None:
         """장 마감 후 자동으로 수집을 스케줄링하는 루프."""
         await run_after_market_loop(
-            mdm=self._mcs,
+            mcs=self._mcs,
             time_manager=self._time_manager,
             logger=self._logger,
             on_market_closed=self._on_market_closed,

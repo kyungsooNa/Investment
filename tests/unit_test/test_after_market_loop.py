@@ -46,9 +46,9 @@ class TestRunAfterMarketLoop:
 
     async def test_calls_callback_after_market_close(self):
         """장 마감 후 콜백이 latest_trading_date와 함께 호출된다."""
-        mdm = MagicMock()
-        mdm.is_market_open_now = AsyncMock(return_value=False)
-        mdm.get_latest_trading_date = AsyncMock(return_value="20260318")
+        mcs = MagicMock()
+        mcs.is_market_open_now = AsyncMock(return_value=False)
+        mcs.get_latest_trading_date = AsyncMock(return_value="20260318")
 
         callback = AsyncMock()
         call_count = 0
@@ -61,7 +61,7 @@ class TestRunAfterMarketLoop:
                 raise asyncio.CancelledError()  # 1회 실행 후 루프 종료
 
         await run_after_market_loop(
-            mdm=mdm,
+            mcs=mcs,
             time_manager=None,
             logger=MagicMock(),
             on_market_closed=_tracked_callback,
@@ -72,7 +72,7 @@ class TestRunAfterMarketLoop:
 
     async def test_waits_during_market_hours(self):
         """장 중이면 마감까지 대기 후 continue."""
-        mdm = MagicMock()
+        mcs = MagicMock()
         call_count = 0
 
         async def _mock_is_market_open():
@@ -82,8 +82,8 @@ class TestRunAfterMarketLoop:
                 return True  # 첫 번째: 장 중
             return False  # 두 번째: 장 마감
 
-        mdm.is_market_open_now = AsyncMock(side_effect=_mock_is_market_open)
-        mdm.get_latest_trading_date = AsyncMock(return_value="20260318")
+        mcs.is_market_open_now = AsyncMock(side_effect=_mock_is_market_open)
+        mcs.get_latest_trading_date = AsyncMock(return_value="20260318")
 
         tm = MagicMock()
         tm.get_sleep_seconds_until_market_close.return_value = 0.1  # 아주 짧게
@@ -96,7 +96,7 @@ class TestRunAfterMarketLoop:
             raise asyncio.CancelledError()
 
         await run_after_market_loop(
-            mdm=mdm, time_manager=tm, logger=MagicMock(),
+            mcs=mcs, time_manager=tm, logger=MagicMock(),
             on_market_closed=_callback, label="Test",
         )
 
@@ -104,9 +104,9 @@ class TestRunAfterMarketLoop:
 
     async def test_skips_when_no_trading_date(self):
         """거래일이 없으면 콜백을 호출하지 않는다."""
-        mdm = MagicMock()
-        mdm.is_market_open_now = AsyncMock(return_value=False)
-        mdm.get_latest_trading_date = AsyncMock(return_value=None)
+        mcs = MagicMock()
+        mcs.is_market_open_now = AsyncMock(return_value=False)
+        mcs.get_latest_trading_date = AsyncMock(return_value=None)
 
         callback = AsyncMock()
         loop_count = 0
@@ -121,7 +121,7 @@ class TestRunAfterMarketLoop:
 
         with patch("scheduler.after_market_loop._smart_sleep", side_effect=_mock_smart_sleep):
             await run_after_market_loop(
-                mdm=mdm, time_manager=None, logger=MagicMock(),
+                mcs=mcs, time_manager=None, logger=MagicMock(),
                 on_market_closed=callback, label="Test",
             )
 
@@ -129,9 +129,9 @@ class TestRunAfterMarketLoop:
 
     async def test_recovers_from_callback_error(self):
         """콜백 에러 시 60초 후 재시도한다."""
-        mdm = MagicMock()
-        mdm.is_market_open_now = AsyncMock(return_value=False)
-        mdm.get_latest_trading_date = AsyncMock(return_value="20260318")
+        mcs = MagicMock()
+        mcs.is_market_open_now = AsyncMock(return_value=False)
+        mcs.get_latest_trading_date = AsyncMock(return_value="20260318")
 
         call_count = 0
 
@@ -144,7 +144,7 @@ class TestRunAfterMarketLoop:
 
         with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             await run_after_market_loop(
-                mdm=mdm, time_manager=None, logger=MagicMock(),
+                mcs=mcs, time_manager=None, logger=MagicMock(),
                 on_market_closed=_failing_callback, label="Test",
             )
 

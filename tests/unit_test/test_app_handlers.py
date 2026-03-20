@@ -40,7 +40,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_env = mock.Mock(spec=KoreaInvestApiEnv)
         self.mock_env.is_paper_trading = False  # 기본값 설정
         self.mock_logger = MockLogger()
-        self.mock_market_date_manager = mock.AsyncMock(spec_set=MarketDateManager)
+        self.mock_market_calendar_service = mock.AsyncMock(spec_set=MarketCalendarService)
         self.mock_time_manager = mock.MagicMock()
         self.mock_time_manager.is_market_operating_hours.return_value = True  # 기본값 설정 (시장이 열려있다고 가정)
 
@@ -57,13 +57,13 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
             env=self.mock_env,
             logger=self.mock_logger,
             time_manager=self.mock_time_manager,
-            market_date_manager=self.mock_market_date_manager # Pass the mock
+            market_calendar_service=self.mock_market_calendar_service # Pass the mock
         )
 
         # DataHandlers와 TransactionHandlers 인스턴스 생성
         self.stock_query_service = StockQueryService(self.trading_service, self.mock_logger, self.mock_time_manager)
         self.order_execution_service = OrderExecutionService(self.trading_service, self.mock_logger,
-                                                             self.mock_time_manager, market_date_manager=self.mock_market_date_manager)
+                                                             self.mock_time_manager, market_calendar_service=self.mock_market_calendar_service)
 
         # print 함수 출력을 캡처 (콘솔 출력 검증용)
         self.original_print = builtins.print
@@ -176,7 +176,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         qty = "1"
 
         self.mock_time_manager.is_market_operating_hours.return_value = True
-        self.mock_market_date_manager.is_market_open_now.return_value = True # Market is open
+        self.mock_market_calendar_service.is_market_open_now.return_value = True # Market is open
         self.mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse( # Order succeeds
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="주문 성공",
@@ -184,7 +184,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         )
         await self.order_execution_service.handle_place_buy_order(stock_code, price, qty)
 
-        self.mock_market_date_manager.is_market_open_now.assert_awaited_once()
+        self.mock_market_calendar_service.is_market_open_now.assert_awaited_once()
         self.mock_broker_api_wrapper.place_stock_order.assert_called_once_with(
             stock_code=stock_code,
             order_price=price,
@@ -204,11 +204,11 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         qty = "1"
         order_dvsn = "00"
 
-        self.mock_market_date_manager.is_market_open_now.return_value = False
+        self.mock_market_calendar_service.is_market_open_now.return_value = False
 
         await self.order_execution_service.handle_place_buy_order(stock_code, price, qty)
 
-        self.mock_market_date_manager.is_market_open_now.assert_awaited_once()
+        self.mock_market_calendar_service.is_market_open_now.assert_awaited_once()
         self.mock_broker_api_wrapper.place_stock_order.assert_not_called()
         self.mock_logger.warning.assert_called_once()
 
@@ -218,7 +218,7 @@ class TestAppHandlers(unittest.IsolatedAsyncioTestCase):
         qty = "1"
         order_dvsn = "00"
 
-        self.mock_market_date_manager.is_market_open_now.return_value = True
+        self.mock_market_calendar_service.is_market_open_now.return_value = True
         self.mock_broker_api_wrapper.place_stock_order = mock.AsyncMock(return_value=ResCommonResponse(
             rt_cd="1",
             msg1="주문 실패",
