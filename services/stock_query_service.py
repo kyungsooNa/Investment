@@ -653,7 +653,7 @@ class StockQueryService:
         """
         return await self.trading_service.get_ohlcv_range(stock_code, period, start_date, end_date)
 
-    async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D") -> ResCommonResponse:
+    async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """
         OHLCV 데이터를 1회 조회한 후, 해당 데이터로 MA5/10/20/60/120 + 볼린저밴드 + RS를 한번에 계산하여 반환.
         차트 렌더링 시 7개 API 호출을 1개로 통합하기 위한 메서드.
@@ -663,7 +663,7 @@ class StockQueryService:
         try:
             # 1. OHLCV 1회 조회
             t0 = self.pm.start_timer()
-            resp = await self.trading_service.get_ohlcv(stock_code, period=period)
+            resp = await self.trading_service.get_ohlcv(stock_code, period=period, caller=caller)
             self.pm.log_timer(f"{stock_code} OHLCV 조회", t0)
 
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
