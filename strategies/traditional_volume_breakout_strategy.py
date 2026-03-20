@@ -81,7 +81,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
     def __init__(
         self,
         stock_query_service: StockQueryService,
-        stock_code_repository: StockCodeMapper,
+        stock_code_repository: StockCodeRepository,
         time_manager: TimeManager,
         config: Optional[TraditionalVBConfig] = None,
         logger: Optional[logging.Logger] = None,

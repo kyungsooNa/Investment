@@ -36,7 +36,7 @@ class BrokerAPIWrapper:
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
 
-    # --- StockCodeMapper delegation ---
+    # --- StockCodeRepository delegation ---
     async def get_name_by_code(self, code: str) -> str:
         """종목코드로 종목명을 반환합니다."""
         return self._stock_mapper.get_name_by_code(code)
@@ -46,11 +46,11 @@ class BrokerAPIWrapper:
         return self._stock_mapper.get_code_by_name(name)
 
     async def get_all_stock_codes(self) -> Any:
-        """StockCodeMapper를 통해 모든 종목의 코드와 이름을 포함하는 DataFrame을 반환합니다."""
+        """StockCodeRepository를 통해 모든 종목의 코드와 이름을 포함하는 DataFrame을 반환합니다."""
         if hasattr(self._stock_mapper, 'df'):
             return self._stock_mapper.df
         else:
-            self._logger.error("StockCodeMapper가 초기화되지 않았거나 df 속성이 없습니다.")
+            self._logger.error("StockCodeRepository가 초기화되지 않았거나 df 속성이 없습니다.")
             return None
 
     async def get_all_stock_code_list(self) -> List[str]:

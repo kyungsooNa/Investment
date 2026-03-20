@@ -535,8 +535,8 @@ class TestWebAppContextInitialization:
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
              patch("view.web.web_app_initializer.VirtualTradeRepository"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -590,8 +590,8 @@ class TestWebAppContextInitialization:
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
              patch("view.web.web_app_initializer.VirtualTradeRepository"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -620,8 +620,8 @@ class TestWebAppContextInitialization:
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
              patch("view.web.web_app_initializer.VirtualTradeRepository"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -650,8 +650,8 @@ class TestWebAppContextInitialization:
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
              patch("view.web.web_app_initializer.VirtualTradeRepository"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -688,8 +688,8 @@ class TestWebAppContextInitialization:
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
              patch("view.web.web_app_initializer.VirtualTradeRepository"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -725,8 +725,8 @@ class TestWebAppContextInitialization:
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
              patch("view.web.web_app_initializer.VirtualTradeRepository"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger

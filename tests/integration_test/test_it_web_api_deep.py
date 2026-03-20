@@ -286,7 +286,7 @@ class TestDeepStockPrice:
         payload = _make_stock_price_payload()
         patch_session_get(quot_api, mocker, payload)
 
-        # StockCodeMapper.get_name_by_code mock (CSV 파일 미사용)
+        # StockCodeRepository.get_name_by_code mock (CSV 파일 미사용)
         deep_paper_ctx.broker._stock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
 
         client = deep_paper_ctx._test_client

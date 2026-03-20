@@ -582,7 +582,7 @@ class RankingTask(SchedulableTask):
         )
 
     def _load_all_stocks(self) -> List[tuple]:
-        """StockCodeMapper에서 KOSPI/KOSDAQ 전체 종목 로드."""
+        """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드."""
         all_stocks = []
         for _, row in self.stock_code_repository.df.iterrows():
             code = row.get("종목코드", "")

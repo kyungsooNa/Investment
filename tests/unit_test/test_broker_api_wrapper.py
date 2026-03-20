@@ -44,13 +44,13 @@ def mock_mcs():
 # --- 테스트 케이스 ---
 
 @pytest.mark.asyncio
-@patch(f"{wrapper_module.__name__}.StockCodeMapper")  # 먼저 정의된 patch가
+@patch(f"{wrapper_module.__name__}.StockCodeRepository")  # 먼저 정의된 patch가
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")  # 아래쪽 인자로 먼저 들어감!
 async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger, mock_time_manager):
     """
     각 메서드가 내부의 올바른 객체로 호출을 위임하는지 테스트합니다.
     """
-    # 1. StockCodeMapper mock 설정 (동기)
+    # 1. StockCodeRepository mock 설정 (동기)
     mock_mapper = MagicMock()
     mock_mapper.get_name_by_code.return_value = "삼성전자"
     mock_mapper.get_code_by_name.return_value = "005930"
@@ -109,7 +109,7 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     """
     wrapper, mock_client, mock_stock_mapper, mock_logger = broker_wrapper_instance
 
-    # --- StockCodeMapper delegation (get_name_by_code, get_code_by_name) ---
+    # --- StockCodeRepository delegation (get_name_by_code, get_code_by_name) ---
     result = await wrapper.get_name_by_code("005930")
     assert result == "삼성전자_mapper"
     mock_stock_mapper.get_name_by_code.assert_called_once_with("005930")
@@ -118,17 +118,17 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     assert result == "005930_mapper"
     mock_stock_mapper.get_code_by_name.assert_called_once_with("삼성전자")
 
-    # --- StockCodeMapper delegation (get_all_stock_codes) ---
+    # --- StockCodeRepository delegation (get_all_stock_codes) ---
     result = await wrapper.get_all_stock_codes()
     assert result is mock_stock_mapper.df  # df 객체 자체를 반환하는지 확인
     mock_logger.error.assert_not_called()  # 에러 로그가 찍히지 않는지 확인 (성공 경로)
 
-    # --- StockCodeMapper delegation (get_all_stock_code_list) ---
+    # --- StockCodeRepository delegation (get_all_stock_code_list) ---
     result = await wrapper.get_all_stock_code_list()
     assert result == ['005930', '000660']
     # get_all_stock_codes가 호출되었음을 간접적으로 확인 가능
 
-    # --- StockCodeMapper delegation (get_all_stock_name_list) ---
+    # --- StockCodeRepository delegation (get_all_stock_name_list) ---
     result = await wrapper.get_all_stock_name_list()
     assert result == ['삼성전자', 'SK하이닉스']
     # get_all_stock_codes가 호출되었음을 간접적으로 확인 가능
@@ -219,9 +219,9 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
     사용자의 broker_api_wrapper.py 코드에 있는 논리적 오류(self._client, self._client 미초기화)를
     회피하기 위해 직접 해당 속성들을 mock으로 할당합니다.
     """
-    # BrokerAPIWrapper의 __init__에서 호출되는 KoreaInvestApiClient와 StockCodeMapper를 패치
+    # BrokerAPIWrapper의 __init__에서 호출되는 KoreaInvestApiClient와 StockCodeRepository를 패치
     MockClientClass = mocker.patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
-    MockStockMapperClass = mocker.patch(f"{wrapper_module.__name__}.StockCodeMapper")
+    MockStockMapperClass = mocker.patch(f"{wrapper_module.__name__}.StockCodeRepository")
 
     # KoreaInvestApiClient의 인스턴스 Mock (BrokerAPIWrapper의 _client가 됩니다)
     mock_client_instance = AsyncMock()
@@ -269,7 +269,7 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
 
     MockClientClass.return_value = mock_client_instance
 
-    # StockCodeMapper의 인스턴스 Mock
+    # StockCodeRepository의 인스턴스 Mock
     mock_stock_mapper_instance = MagicMock()
     mock_stock_mapper_instance.get_name_by_code.return_value = "삼성전자_mapper"
     mock_stock_mapper_instance.get_code_by_name.return_value = "005930_mapper"
@@ -305,7 +305,7 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
 # --- 테스트 케이스 ---
 
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
-@patch(f"{wrapper_module.__name__}.StockCodeMapper")
+@patch(f"{wrapper_module.__name__}.StockCodeRepository")
 def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logger):
     """
     정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
@@ -320,7 +320,7 @@ def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logg
 
 
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
-@patch(f"{wrapper_module.__name__}.StockCodeMapper")
+@patch(f"{wrapper_module.__name__}.StockCodeRepository")
 def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_logger, mock_time_manager, mock_mcs):
     """
     정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
@@ -341,7 +341,7 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
     assert wrapper._stock_mapper is mock_stock_mapper.return_value  # _stock_mapper가 mock_stock_mapper 인스턴스를 참조하는지 확인
 
 
-@patch(f"{wrapper_module.__name__}.StockCodeMapper")
+@patch(f"{wrapper_module.__name__}.StockCodeRepository")
 def test_initialization_no_env_raises_error(mock_mapper_class, mock_logger):
     """
     'korea_investment' 브로커 선택 시 env가 없으면 ValueError가 발생하는지 테스트합니다.
@@ -356,7 +356,7 @@ def test_initialization_no_env_raises_error(mock_mapper_class, mock_logger):
         )
 
 
-@patch(f"{wrapper_module.__name__}.StockCodeMapper")
+@patch(f"{wrapper_module.__name__}.StockCodeRepository")
 def test_initialization_unsupported_broker_raises_error(mock_mapper_class, mock_env):
     """
     지원되지 않는 브로커 이름으로 초기화 시 NotImplementedError가 발생하는지 테스트합니다.
@@ -383,7 +383,7 @@ async def test_get_all_stock_codes_no_df_attribute(broker_wrapper_instance, capl
         result = await wrapper.get_all_stock_codes()
 
         assert result is None
-        mock_logger.error.assert_called_once_with("StockCodeMapper가 초기화되지 않았거나 df 속성이 없습니다.")
+        mock_logger.error.assert_called_once_with("StockCodeRepository가 초기화되지 않았거나 df 속성이 없습니다.")
     caplog.clear()  # 다음 테스트를 위해 로그 캡처 초기화
 
 

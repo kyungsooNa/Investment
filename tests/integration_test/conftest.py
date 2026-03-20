@@ -553,8 +553,8 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
 
     with patch("view.web.web_app_initializer.load_configs", return_value=mock_config), \
          patch("view.web.web_app_initializer.VirtualTradeRepository") as MockVTM, \
-         patch("view.web.web_app_initializer.StockCodeMapper"), \
-         patch("brokers.broker_api_wrapper.StockCodeMapper"), \
+         patch("view.web.web_app_initializer.StockCodeRepository"), \
+         patch("brokers.broker_api_wrapper.StockCodeRepository"), \
          patch("view.web.web_app_initializer.MarketCalendarService") as Mockmcs:
 
         # MarketCalendarService Mock 설정 (_sync_calendar_if_needed 누락 방지)

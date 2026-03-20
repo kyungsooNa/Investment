@@ -431,7 +431,7 @@ class TestTraditionalVolumeBreakoutScan:
         )
 
         # 3. 시간 및 환경 설정
-        mock_mapper = MagicMock(spec=StockCodeMapper)
+        mock_mapper = MagicMock(spec=StockCodeRepository)
         mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
         
         from datetime import datetime
@@ -495,7 +495,7 @@ class TestTraditionalVolumeBreakoutScan:
             new_callable=AsyncMock, side_effect=_side_effect,
         )
 
-        mock_mapper = MagicMock(spec=StockCodeMapper)
+        mock_mapper = MagicMock(spec=StockCodeRepository)
         mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
 
         mocker.patch.object(
