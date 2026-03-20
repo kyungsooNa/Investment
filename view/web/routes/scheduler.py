@@ -77,7 +77,7 @@ async def stop_strategy(name: str):
     ctx = _get_ctx()
     if not ctx.scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
-    if not ctx.scheduler.stop_strategy(name):
+    if not await ctx.scheduler.stop_strategy(name):
         raise HTTPException(status_code=404, detail=f"전략 '{name}'을 찾을 수 없습니다")
     ctx.scheduler._save_scheduler_state()
     return {"success": True, "status": ctx.scheduler.get_status()}
