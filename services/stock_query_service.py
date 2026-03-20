@@ -6,7 +6,7 @@ from config.DynamicConfig import DynamicConfig
 from typing import List, Dict, Optional, Literal
 from core.performance_manager import PerformanceManager
 from managers.notification_manager import NotificationManager
-import time
+from services.trading_service import TradingService
 
 
 class StockQueryService:
@@ -15,7 +15,7 @@ class StockQueryService:
     TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
     """
 
-    def __init__(self, trading_service, logger, time_manager, indicator_service=None,
+    def __init__(self, trading_service: TradingService, logger, time_manager, indicator_service=None,
                  ranking_task=None, performance_manager: Optional[PerformanceManager] = None,
                  notification_manager: Optional[NotificationManager] = None):
         self.trading_service = trading_service
@@ -35,9 +35,9 @@ class StockQueryService:
         else:  # 3:보합 (또는 기타)
             return ""
 
-    async def get_current_price(self, stock_code: str) -> ResCommonResponse:
+    async def get_current_price(self, stock_code: str, count_stats: bool = True) -> ResCommonResponse:
         """현재가만 빠르게 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_current_price(stock_code)
+        return await self.trading_service.get_current_price(stock_code, count_stats=count_stats)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, TradingService 래퍼)."""
@@ -642,18 +642,10 @@ class StockQueryService:
 
     async def get_ohlcv(self, stock_code: str, period: str = "D") -> ResCommonResponse:
         """
-        OHLCV 데이터를 TradingService에서 받아 그대로 반환.
-        (출력은 하지 않음: viewer로 위임)
+        OHLCV 데이터를 반환합니다 (TradingService 래퍼).
         """
         self.logger.info(f"ServiceHandler - {stock_code} OHLCV 데이터 요청 period={period}")
-        try:
-            resp: ResCommonResponse = await self.trading_service.get_ohlcv(
-                stock_code, period=period
-            )
-            return resp
-        except Exception as e:
-            self.logger.error(f"{stock_code} OHLCV 데이터 처리 중 오류: {e}", exc_info=True)
-            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=[])
+        return await self.trading_service.get_ohlcv(stock_code, period=period)
 
     async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None) -> ResCommonResponse:
         """

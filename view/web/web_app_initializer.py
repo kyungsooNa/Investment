@@ -34,6 +34,7 @@ from task.background.ranking_task import RankingTask
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.market_data_collector_task import MarketDataCollectorTask
 from managers.market_data_repository import MarketDataRepository
+from managers.stock_repository import StockRepository
 from managers.realtime_data_manager import RealtimeDataManager
 from managers.market_date_manager import MarketDateManager
 from managers.notification_manager import NotificationManager
@@ -64,6 +65,7 @@ class WebAppContext:
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self.market_data_collector_task: MarketDataCollectorTask = None
         self.market_data_repository: MarketDataRepository = None
+        self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
         self._mdm: MarketDateManager = None
@@ -164,15 +166,20 @@ class WebAppContext:
         cache_manager = CacheManager(config_dict)
         cache_manager.set_logger(self.logger)
 
+        # Repository 초기화 (TradingService 주입을 위해 선 생성)
+        self.market_data_repository = MarketDataRepository(logger=self.logger)
+        self.stock_repository = StockRepository(logger=self.logger)
 
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
             market_date_manager=self._mdm,
-            performance_manager=self.pm
+            performance_manager=self.pm,
+            stock_repository=self.stock_repository
         )
 
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
         self.indicator_service = IndicatorService(cache_manager=cache_manager, performance_manager=self.pm)
+        
         self.ranking_task = RankingTask(
             broker_api_wrapper=self.broker,
             stock_code_mapper=self.stock_code_mapper,
@@ -205,12 +212,11 @@ class WebAppContext:
             logger=self.logger,
         )
 
-        # MarketDataRepository + MarketDataCollectorTask 초기화
-        self.market_data_repository = MarketDataRepository(logger=self.logger)
         self.market_data_collector_task = MarketDataCollectorTask(
-            broker_api_wrapper=self.broker,
+            stock_query_service=self.stock_query_service,
             stock_code_mapper=self.stock_code_mapper,
-            repository=self.market_data_repository,
+            market_data_repo=self.market_data_repository,
+            stock_repo=self.stock_repository,
             market_date_manager=self._mdm,
             time_manager=self.time_manager,
             performance_manager=self.pm,
@@ -274,6 +280,12 @@ class WebAppContext:
         if self.time_manager is None:
             return ""
         return self.time_manager.get_current_kst_time().strftime('%Y-%m-%d %H:%M:%S')
+
+    def get_cache_stats(self) -> dict:
+        """메모리 캐시 통계를 반환합니다."""
+        if self.stock_repository:
+            return self.stock_repository.get_cache_stats()
+        return {}
 
     # --- 전략 스케줄러 ---
 

@@ -17,10 +17,10 @@ from common.types import ResCommonResponse, ErrorCode
 
 
 @pytest.fixture
-def mock_broker():
-    broker = MagicMock()
-    broker.get_current_price = AsyncMock()
-    return broker
+def mock_sqs():
+    sqs = MagicMock()
+    sqs.get_current_price = AsyncMock()
+    return sqs
 
 
 @pytest.fixture
@@ -66,11 +66,12 @@ def mock_mdm():
 
 
 @pytest.fixture
-def task(mock_broker, mock_mapper, repo, mock_mdm):
+def task(mock_sqs, mock_mapper, repo, mock_mdm):
     return MarketDataCollectorTask(
-        broker_api_wrapper=mock_broker,
+        stock_query_service=mock_sqs,
         stock_code_mapper=mock_mapper,
-        repository=repo,
+        market_data_repo=repo,
+        stock_repo=MagicMock(),
         market_date_manager=mock_mdm,
         logger=MagicMock(),
     )
@@ -128,10 +129,10 @@ class TestTaskProperties:
 
 class TestCollectAllPrices:
 
-    async def test_collect_stores_to_db(self, task, mock_broker, repo):
+    async def test_collect_stores_to_db(self, task, mock_sqs, repo):
         """수집 완료 후 DB에 데이터가 저장된다."""
-        mock_broker.get_current_price = AsyncMock(
-            side_effect=lambda code: _make_price_response(code)
+        mock_sqs.get_current_price = AsyncMock(
+            side_effect=lambda code, **kwargs: _make_price_response(code)
         )
 
         await task._collect_all_prices()
@@ -141,9 +142,9 @@ class TestCollectAllPrices:
         codes = {r["code"] for r in result}
         assert codes == {"005930", "000660", "035420"}
 
-    async def test_collect_extracts_fields(self, task, mock_broker, repo):
+    async def test_collect_extracts_fields(self, task, mock_sqs, repo):
         """ResStockFullInfoApiOutput 필드가 정확히 추출된다."""
-        mock_broker.get_current_price = AsyncMock(
+        mock_sqs.get_current_price = AsyncMock(
             return_value=_make_price_response("005930", 70000)
         )
 
@@ -158,11 +159,11 @@ class TestCollectAllPrices:
         assert samsung["per"] == 12.5
         assert samsung["market"] == "KOSPI"
 
-    async def test_collect_skips_failed_responses(self, task, mock_broker, repo):
+    async def test_collect_skips_failed_responses(self, task, mock_sqs, repo):
         """API 실패 응답은 건너뛰고 성공한 종목만 저장한다."""
         call_count = 0
 
-        async def _mock_get_current_price(code):
+        async def _mock_get_current_price(code, **_):
             nonlocal call_count
             call_count += 1
             if code == "000660":
@@ -173,7 +174,7 @@ class TestCollectAllPrices:
                 )
             return _make_price_response(code)
 
-        mock_broker.get_current_price = AsyncMock(side_effect=_mock_get_current_price)
+        mock_sqs.get_current_price = AsyncMock(side_effect=_mock_get_current_price)
 
         await task._collect_all_prices()
 
@@ -182,10 +183,10 @@ class TestCollectAllPrices:
         assert "000660" not in codes
         assert "005930" in codes
 
-    async def test_collect_updates_progress(self, task, mock_broker):
+    async def test_collect_updates_progress(self, task, mock_sqs):
         """수집 중 진행률이 업데이트된다."""
-        mock_broker.get_current_price = AsyncMock(
-            side_effect=lambda code: _make_price_response(code)
+        mock_sqs.get_current_price = AsyncMock(
+            side_effect=lambda code, **kwargs: _make_price_response(code)
         )
 
         await task._collect_all_prices()
@@ -196,33 +197,33 @@ class TestCollectAllPrices:
         assert progress["processed"] == 3
         assert progress["collected"] == 3
 
-    async def test_collect_skip_during_market_hours(self, task, mock_mdm, mock_broker):
+    async def test_collect_skip_during_market_hours(self, task, mock_mdm, mock_sqs):
         """장 중에는 수집을 건너뛴다."""
         mock_mdm.is_market_open_now.return_value = True
 
         await task._collect_all_prices()
 
-        mock_broker.get_current_price.assert_not_called()
+        mock_sqs.get_current_price.assert_not_called()
 
-    async def test_collect_skip_already_collected(self, task, mock_broker):
+    async def test_collect_skip_already_collected(self, task, mock_sqs):
         """이미 수집한 날짜는 건너뛴다."""
-        mock_broker.get_current_price = AsyncMock(
+        mock_sqs.get_current_price = AsyncMock(
             side_effect=lambda code: _make_price_response(code)
         )
 
         await task._collect_all_prices()  # 첫 번째 수집
-        mock_broker.get_current_price.reset_mock()
+        mock_sqs.get_current_price.reset_mock()
 
         await task._collect_all_prices()  # 동일 날짜 → 스킵
-        mock_broker.get_current_price.assert_not_called()
+        mock_sqs.get_current_price.assert_not_called()
 
-    async def test_collect_no_trading_date(self, task, mock_mdm, mock_broker):
+    async def test_collect_no_trading_date(self, task, mock_mdm, mock_sqs):
         """거래일을 확인할 수 없으면 중단."""
         mock_mdm.get_latest_trading_date.return_value = None
 
         await task._collect_all_prices()
 
-        mock_broker.get_current_price.assert_not_called()
+        mock_sqs.get_current_price.assert_not_called()
 
 
 # --- ETF/우선주 필터링 테스트 ---
@@ -230,12 +231,13 @@ class TestCollectAllPrices:
 
 class TestLoadAllStocks:
 
-    def test_filters_etf_and_preferred(self, mock_broker, mock_mapper_with_etf, repo, mock_mdm):
+    def test_filters_etf_and_preferred(self, mock_sqs, mock_mapper_with_etf, repo, mock_mdm):
         """ETF, 우선주, 스팩이 필터링된다."""
         task = MarketDataCollectorTask(
-            broker_api_wrapper=mock_broker,
+            stock_query_service=mock_sqs,
             stock_code_mapper=mock_mapper_with_etf,
-            repository=repo,
+            market_data_repo=repo,
+            stock_repo=MagicMock(),
             market_date_manager=mock_mdm,
             logger=MagicMock(),
         )
@@ -268,20 +270,20 @@ class TestSuspendResume:
         assert task.state == TaskState.RUNNING
         assert task._suspend_event.is_set()
 
-    async def test_suspend_pauses_collection(self, task, mock_broker, repo):
+    async def test_suspend_pauses_collection(self, task, mock_sqs, repo):
         """suspend 시 chunk 사이에서 대기한다."""
         collected_codes = []
         barrier = asyncio.Event()
 
         original_get = _make_price_response
 
-        async def _mock_get_current_price(code):
+        async def _mock_get_current_price(code, **_):
             collected_codes.append(code)
             if len(collected_codes) == 1:
                 barrier.set()  # 첫 번째 chunk 완료 신호
             return original_get(code)
 
-        mock_broker.get_current_price = AsyncMock(side_effect=_mock_get_current_price)
+        mock_sqs.get_current_price = AsyncMock(side_effect=_mock_get_current_price)
 
         # chunk size를 1로 설정하여 종목 단위로 suspend 체크
         task.API_CHUNK_SIZE = 1
@@ -332,6 +334,7 @@ class TestStartStop:
         assert len(task._tasks) == tasks_count  # 태스크 추가 안 됨
 
         await task.stop()
+        assert task.state == TaskState.STOPPED
 
 
 # --- _extract_record 테스트 ---

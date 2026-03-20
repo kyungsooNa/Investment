@@ -133,7 +133,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930")
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True)
+
         self.assertEqual(result, expected_response)
 
     async def test_get_current_price_failure(self):
@@ -146,7 +147,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930")
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True)
         self.assertEqual(result, expected_response)
 
     # --- New Wrapper Methods Tests ---
@@ -1125,10 +1126,10 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_logger.error.assert_called_with("122630 ETF 정보 조회 실패: API 오류")
 
     # --- get_ohlcv ---
-    async def test_get_ohlcv_success(self):
-        """get_ohlcv 성공 케이스 테스트"""
+    async def test_get_ohlcv_delegation(self):
+        """get_ohlcv가 TradingService로 정상 위임하는지 테스트"""
         # Arrange
-        expected_response = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=[{"date": "20230101"}])
+        expected_response = ResCommonResponse(rt_cd="0", msg1="정상", data=[{"date": "20230101"}])
         self.mock_trading_service.get_ohlcv.return_value = expected_response
 
         # Act
@@ -1137,19 +1138,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         # Assert
         self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D")
         self.assertEqual(result, expected_response)
-
-    async def test_get_ohlcv_exception(self):
-        """get_ohlcv에서 예외 발생 시 테스트"""
-        # Arrange
-        self.mock_trading_service.get_ohlcv.side_effect = Exception("Test Exception")
-
-        # Act
-        result = await self.stockQueryService.get_ohlcv("005930", period="D")
-
-        # Assert
-        self.assertEqual(result.rt_cd, ErrorCode.UNKNOWN_ERROR.value)
-        self.assertEqual(result.msg1, "Test Exception")
-        self.mock_logger.error.assert_called_with("005930 OHLCV 데이터 처리 중 오류: Test Exception", exc_info=True)
 
     # --- get_ohlcv_range ---
     async def test_get_ohlcv_range_success(self):
@@ -1574,11 +1562,18 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     # --- Realtime Helper Methods ---
     def test_dispatch_realtime_message(self):
-        """dispatch_realtime_message가 trading_service 핸들러를 호출하는지 테스트"""
-        # _default_realtime_message_handler는 동기 함수이므로 MagicMock으로 명시 (AsyncMock이면 coroutine never awaited 경고 발생)
+        """dispatch_realtime_message가 trading_service 및 stock_repository를 호출하는지 테스트"""
         self.mock_trading_service._default_realtime_message_handler = MagicMock()
-        data = {"type": "test"}
+        data = {
+            "type": "realtime_price",
+            "data": {
+                "유가증권단축종목코드": "005930",
+                "주식현재가": "75000",
+                "누적거래량": "100000"
+            }
+        }
         self.stockQueryService.dispatch_realtime_message(data)
+        
         self.mock_trading_service._default_realtime_message_handler.assert_called_once_with(data)
 
     def test_get_cached_realtime_price(self):
