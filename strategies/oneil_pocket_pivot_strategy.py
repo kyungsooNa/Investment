@@ -106,7 +106,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
     async def _check_entry(self, code, item, progress) -> Optional[TradeSignal]:
         """진입 조건 검사: PP 또는 BGU → 스마트머니 → 체결강도."""
         # 1. 현재가 데이터 조회
-        resp = await self._sqs.get_current_price(code)
+        resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0":
             return None
 
@@ -424,7 +424,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 )
                 self._position_state[code] = state
 
-            resp = await self._sqs.get_current_price(code)
+            resp = await self._sqs.get_current_price(code, caller=self.name)
             if not resp or resp.rt_cd != "0":
                 continue
 

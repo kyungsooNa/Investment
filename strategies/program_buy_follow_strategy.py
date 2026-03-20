@@ -98,7 +98,7 @@ class ProgramBuyFollowStrategy(LiveStrategy):
 
             try:
                 # 2) 종목 상세 정보 조회 (pgtr_ntby_qty 포함)
-                full_resp = await self._sqs.get_current_price(code)
+                full_resp = await self._sqs.get_current_price(code, caller=self.name)
                 if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
                     log_data["reason"] = "Failed to get full stock price"
                     self._logger.info({"event": "candidate_rejected", **log_data})
@@ -187,7 +187,7 @@ class ProgramBuyFollowStrategy(LiveStrategy):
                 continue
 
             try:
-                full_resp = await self._sqs.get_current_price(code)
+                full_resp = await self._sqs.get_current_price(code, caller=self.name)
                 if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
                     self._logger.warning({
                         "event": "check_exits_failed",

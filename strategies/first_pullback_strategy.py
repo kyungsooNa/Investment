@@ -121,7 +121,7 @@ class FirstPullbackStrategy(LiveStrategy):
             return None
 
         # ── Phase 2: Pullback (건전한 숨 고르기) ──
-        resp = await self._sqs.get_current_price(code)
+        resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0":
             return None
 
@@ -362,7 +362,7 @@ class FirstPullbackStrategy(LiveStrategy):
                 self._position_state[code] = state
 
             # 현재가 조회
-            resp = await self._sqs.get_current_price(code)
+            resp = await self._sqs.get_current_price(code, caller=self.name)
             if not resp or resp.rt_cd != "0":
                 continue
 
