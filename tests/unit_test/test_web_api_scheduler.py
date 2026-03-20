@@ -102,10 +102,10 @@ async def test_scheduler_strategy_control(web_client, mock_web_ctx):
     mock_web_ctx.scheduler.start_strategy.assert_awaited_with("TestStrat")
 
     # Stop Strategy
-    mock_web_ctx.scheduler.stop_strategy = MagicMock(return_value=True)
+    mock_web_ctx.scheduler.stop_strategy = AsyncMock(return_value=True)
     resp = web_client.post("/api/scheduler/strategy/TestStrat/stop")
     assert resp.status_code == 200
-    mock_web_ctx.scheduler.stop_strategy.assert_called_with("TestStrat")
+    mock_web_ctx.scheduler.stop_strategy.assert_awaited_with("TestStrat")
 
 
 @pytest.mark.asyncio
@@ -130,7 +130,7 @@ async def test_scheduler_strategy_control_failure(web_client, mock_web_ctx):
     assert "찾을 수 없습니다" in resp.json()["detail"]
 
     # Stop Strategy - Not Found
-    mock_web_ctx.scheduler.stop_strategy = MagicMock(return_value=False)
+    mock_web_ctx.scheduler.stop_strategy = AsyncMock(return_value=False)
     resp = web_client.post("/api/scheduler/strategy/UnknownStrat/stop")
     assert resp.status_code == 404
     assert "찾을 수 없습니다" in resp.json()["detail"]

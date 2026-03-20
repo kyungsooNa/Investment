@@ -211,6 +211,7 @@ class HighTightFlagStrategy(LiveStrategy):
         # 2. 가격 돌파: 현재가 > 40일 최고가 (옵션 A)
         pole_high = pattern["pole_high"]
         if current <= pole_high:
+            # 너무 많은 로그를 피하기 위해 가격 미달 단계는 로그 생략
             return None
 
         # 3. 거래량 돌파: 예상거래량 >= 50일 평균 * 200%
@@ -220,10 +221,17 @@ class HighTightFlagStrategy(LiveStrategy):
         volumes = [r.get("volume", 0) for r in ohlcv if r.get("volume")]
         vol_count = min(50, len(volumes))
         if vol_count < 20:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "insufficient_volume_data"})
             return None
         avg_vol_50d = sum(volumes[-vol_count:]) / vol_count
 
-        if proj_vol < avg_vol_50d * self._cfg.volume_breakout_multiplier:
+        vol_threshold = avg_vol_50d * self._cfg.volume_breakout_multiplier
+        if proj_vol < vol_threshold:
+            self._logger.debug({
+                "event": "breakout_rejected", "code": code,
+                "reason": "insufficient_projected_volume",
+                "proj_vol": int(proj_vol), "threshold": int(vol_threshold)
+            })
             return None
 
         # 4. 체결강도 >= 120%
@@ -242,7 +250,8 @@ class HighTightFlagStrategy(LiveStrategy):
         if cgld_val < self._cfg.execution_strength_min:
             self._logger.debug({
                 "event": "breakout_rejected", "code": code,
-                "reason": "low_execution_strength", "cgld": cgld_val,
+                "reason": "low_execution_strength",
+                "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
             })
             return None
 

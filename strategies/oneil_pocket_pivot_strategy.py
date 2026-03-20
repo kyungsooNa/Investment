@@ -121,7 +121,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
             trade_value = int(out.get("acml_tr_pbmn", 0))
             today_open = int(out.get("stck_oprc", 0))
             today_low = int(out.get("stck_lwpr", 0))
-            prev_close = int(out.get("stck_prdy_clpr", 0))
+            prdy_vrss = int(out.get("prdy_vrss", 0))
+            prdy_vrss_sign = str(out.get("prdy_vrss_sign", "3"))
         else:
             current = int(getattr(out, "stck_prpr", 0) or 0)
             vol = int(getattr(out, "acml_vol", 0) or 0)
@@ -129,7 +130,16 @@ class OneilPocketPivotStrategy(LiveStrategy):
             trade_value = int(getattr(out, "acml_tr_pbmn", 0) or 0)
             today_open = int(getattr(out, "stck_oprc", 0) or 0)
             today_low = int(getattr(out, "stck_lwpr", 0) or 0)
-            prev_close = int(getattr(out, "stck_prdy_clpr", 0) or 0)
+            prdy_vrss = int(getattr(out, "prdy_vrss", 0) or 0)
+            prdy_vrss_sign = str(getattr(out, "prdy_vrss_sign", "3") or "3")
+
+        # 전일 종가 계산 (현재가와 전일대비를 이용해 역산)
+        if prdy_vrss_sign in ("1", "2"):  # 상한, 상승
+            prev_close = current - prdy_vrss
+        elif prdy_vrss_sign in ("4", "5"):  # 하한, 하락
+            prev_close = current + prdy_vrss
+        else:  # 보합
+            prev_close = current
 
         if current <= 0 or prev_close <= 0:
             return None
@@ -157,8 +167,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
         entry_type, supporting_ma, gap_day_low, extra_info = entry_result
 
         # 5. ★ 공통 스마트 머니 필터 (기술적 조건 통과 후에만 호출)
-        if not self._check_smart_money(current, pg_buy, trade_value, item.market_cap):
-            self._logger.debug({"event": "smart_money_rejected", "code": code, "entry_type": entry_type})
+        if not self._check_smart_money(code, current, pg_buy, trade_value, item.market_cap):
+            self._logger.debug({"event": "entry_rejected_by_smart_money", "code": code, "entry_type": entry_type})
             return None
 
         # 6. ★ 체결강도 스냅샷 (>=120%)
@@ -363,9 +373,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
     # ── 스마트 머니 필터 ──────────────────────────────────────────
 
-    def _check_smart_money(self, current, pg_buy, trade_value, market_cap) -> bool:
+    def _check_smart_money(self, code: str, current: int, pg_buy: int, trade_value: int, market_cap: int) -> bool:
         """스마트 머니(프로그램 수급) 필터."""
         if pg_buy <= 0:
+            self._logger.debug({"event": "smart_money_rejected", "code": code, "reason": "not_net_buy", "pg_buy": pg_buy})
             return False
 
         pg_buy_amount = pg_buy * current
@@ -374,14 +385,23 @@ class OneilPocketPivotStrategy(LiveStrategy):
         if trade_value > 0:
             pg_to_tv_pct = pg_buy_amount / trade_value * 100
             if pg_to_tv_pct < self._cfg.program_to_trade_value_pct:
+                self._logger.debug({
+                    "event": "smart_money_rejected", "code": code, "reason": "low_pg_to_trade_value",
+                    "pg_to_tv_pct": round(pg_to_tv_pct, 2), "threshold": self._cfg.program_to_trade_value_pct
+                })
                 return False
 
         # 시가총액의 0.3% 이상 개입
         if market_cap > 0:
             pg_to_mc_pct = pg_buy_amount / market_cap * 100
             if pg_to_mc_pct < self._cfg.program_to_market_cap_pct:
+                self._logger.debug({
+                    "event": "smart_money_rejected", "code": code, "reason": "low_pg_to_market_cap",
+                    "pg_to_mc_pct": round(pg_to_mc_pct, 2), "threshold": self._cfg.program_to_market_cap_pct
+                })
                 return False
 
+        self._logger.debug({"event": "smart_money_passed", "code": code, "pg_buy_amount": pg_buy_amount})
         return True
 
     # ── check_exits ────────────────────────────────────────────────

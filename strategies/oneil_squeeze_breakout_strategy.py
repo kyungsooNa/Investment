@@ -160,14 +160,26 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         pg_buy_amount = pg_buy * current # 프로그램 순매수 금액 (추정)
         
         # 3-1. 거래대금의 10% 이상 개입했는가?
-        if trade_value > 0 and (pg_buy_amount / trade_value * 100) < self._cfg.program_to_trade_value_pct:
-            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_to_trade_value", "pg_buy_amount": pg_buy_amount, "trade_value": trade_value})
-            return None
+        if trade_value > 0:
+            pg_to_tv_pct = pg_buy_amount / trade_value * 100
+            if pg_to_tv_pct < self._cfg.program_to_trade_value_pct:
+                self._logger.debug({
+                    "event": "breakout_rejected", "code": code, "reason": "low_program_to_trade_value",
+                    "pg_to_tv_pct": round(pg_to_tv_pct, 2), "threshold": self._cfg.program_to_trade_value_pct
+                })
+                return None
             
         # 3-2. 시가총액의 0.5% 이상 개입했는가?
-        if item.market_cap > 0 and (pg_buy_amount / item.market_cap * 100) < self._cfg.program_to_market_cap_pct:
-            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_to_market_cap", "pg_buy_amount": pg_buy_amount, "market_cap": item.market_cap})
-            return None
+        if item.market_cap > 0:
+            pg_to_mc_pct = pg_buy_amount / item.market_cap * 100
+            if pg_to_mc_pct < self._cfg.program_to_market_cap_pct:
+                self._logger.debug({
+                    "event": "breakout_rejected", "code": code, "reason": "low_program_to_market_cap",
+                    "pg_to_mc_pct": round(pg_to_mc_pct, 2), "threshold": self._cfg.program_to_market_cap_pct
+                })
+                return None
+
+        self._logger.debug({"event": "smart_money_passed", "code": code, "pg_buy_amount": pg_buy_amount})
 
         # 🌟 [최종 관문] 매수 직전 체결강도 스냅샷 (>=120%) 🌟
         # 이 관문까지 살아서 내려왔다면 조건이 완벽하게 맞은 상태입니다.

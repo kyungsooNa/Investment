@@ -133,12 +133,22 @@ class FirstPullbackStrategy(LiveStrategy):
             current = int(out.get("stck_prpr", 0))
             today_open = int(out.get("stck_oprc", 0))
             today_low = int(out.get("stck_lwpr", 0))
-            prev_close = int(out.get("stck_prdy_clpr", 0))
+            prdy_vrss = int(out.get("prdy_vrss", 0))
+            prdy_vrss_sign = str(out.get("prdy_vrss_sign", "3"))
         else:
             current = int(getattr(out, "stck_prpr", 0) or 0)
             today_open = int(getattr(out, "stck_oprc", 0) or 0)
             today_low = int(getattr(out, "stck_lwpr", 0) or 0)
-            prev_close = int(getattr(out, "stck_prdy_clpr", 0) or 0)
+            prdy_vrss = int(getattr(out, "prdy_vrss", 0) or 0)
+            prdy_vrss_sign = str(getattr(out, "prdy_vrss_sign", "3") or "3")
+
+        # 전일 종가 계산 (현재가와 전일대비를 이용해 역산)
+        if prdy_vrss_sign in ("1", "2"):  # 상한, 상승
+            prev_close = current - prdy_vrss
+        elif prdy_vrss_sign in ("4", "5"):  # 하한, 하락
+            prev_close = current + prdy_vrss
+        else:  # 보합
+            prev_close = current
 
         if current <= 0 or today_low <= 0:
             return None
@@ -150,17 +160,32 @@ class FirstPullbackStrategy(LiveStrategy):
             return None
 
         if not self._check_pullback_to_ma(today_low, ma_20d):
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "pullback_out_of_range"})
+            pullback_pct = (today_low - ma_20d) / ma_20d * 100 if ma_20d > 0 else 0.0
+            self._logger.debug({
+                "event": "entry_rejected", "code": code, "reason": "pullback_out_of_range",
+                "pullback_pct": round(pullback_pct, 2),
+                "allowed_range": f"{self._cfg.pullback_lower_pct}% ~ {self._cfg.pullback_upper_pct}%"
+            })
             return None
 
         if not self._check_volume_dryup(ohlcv, surge_volume):
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "volume_not_dry"})
+            days = self._cfg.volume_dryup_days
+            recent_vols = [r.get("volume", 0) for r in ohlcv[-days:]]
+            avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 0
+            vol_dryup_pct = (avg_vol / surge_volume * 100) if surge_volume > 0 else 0.0
+            self._logger.debug({
+                "event": "entry_rejected", "code": code, "reason": "volume_not_dry",
+                "vol_dryup_pct": round(vol_dryup_pct, 2), "threshold_pct": self._cfg.volume_dryup_ratio * 100
+            })
             return None
 
         # ── Phase 3: Trigger (매수 방아쇠) ──
         prev_high = ohlcv[-1].get("high", 0) if ohlcv else 0
         if not self._check_bullish_reversal(current, today_open, prev_high):
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "no_bullish_reversal"})
+            self._logger.debug({
+                "event": "entry_rejected", "code": code, "reason": "no_bullish_reversal",
+                "current": current, "today_open": today_open, "prev_high": prev_high
+            })
             return None
 
         # 체결강도 확인
@@ -177,7 +202,10 @@ class FirstPullbackStrategy(LiveStrategy):
             return None
 
         if cgld_val < self._cfg.execution_strength_min:
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val})
+            self._logger.debug({
+                "event": "entry_rejected", "code": code, "reason": "low_execution_strength",
+                "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
+            })
             return None
 
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
