@@ -41,6 +41,17 @@ async def get_status():
     return result
 
 
+@router.get("/stocks/list")
+async def get_stocks_list():
+    """전 종목 리스트 반환 (클라이언트 자동완성용, localStorage 캐싱 대상)."""
+    ctx = _get_ctx()
+    stock_list = [
+        {"c": code, "n": name}
+        for name, code in ctx.stock_code_mapper.name_to_code.items()
+    ]
+    return {"stocks": stock_list, "count": len(stock_list)}
+
+
 @router.get("/stock/search")
 async def search_stock_by_name(q: str = ""):
     """종목명 부분 일치 검색 (자동완성용)."""

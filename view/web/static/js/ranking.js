@@ -24,6 +24,25 @@ function setMarketFilter(market, btn) {
     else if (_rankingCurrentCategory) loadRanking(_rankingCurrentCategory);
 }
 
+function _showRankingSkeleton() {
+    const div = document.getElementById('ranking-result');
+    if (!div) return;
+    const rows = Array(10).fill(0).map(() => `
+        <tr class="skeleton-row">
+            <td><span class="skeleton-bar"></span></td>
+            <td><span class="skeleton-bar"></span></td>
+            <td><span class="skeleton-bar"></span></td>
+            <td><span class="skeleton-bar"></span></td>
+            <td><span class="skeleton-bar"></span></td>
+        </tr>`).join('');
+    div.innerHTML = `<div class="card"><table class="data-table">
+        <thead><tr>
+            <th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래량</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
 async function loadRanking(category) {
     if (_rankingPollTimer) {
         clearTimeout(_rankingPollTimer);
@@ -41,7 +60,7 @@ async function loadRanking(category) {
     if (invRow) invRow.style.display = 'none';
 
     const div = document.getElementById('ranking-result');
-    showLoading(div, '랭킹 데이터 조회 중...');
+    _showRankingSkeleton();
 
     try {
         const res = await fetchWithTimeout(`/api/ranking/${category}`);
@@ -123,7 +142,7 @@ async function loadInvestorRanking() {
     _rankingCurrentCategory = `investor_${dir}`;
 
     const div = document.getElementById('ranking-result');
-    showLoading(div, '투자자별 랭킹 조회 중...');
+    _showRankingSkeleton();
 
     const categories = investors.map(inv => `${inv}_${dir}`);
 

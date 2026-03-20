@@ -1,10 +1,11 @@
 """
 가상 매매 관련 API 엔드포인트 (virtual.html).
 """
+import asyncio
+import math
 import time
 from fastapi import APIRouter
 from view.web.api_common import _get_ctx, _PRICE_CACHE
-import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
@@ -122,6 +123,173 @@ async def get_strategy_chart(strategy_name: str):
         return {"histories": histories, "benchmarks": benchmarks}
 
 
+def _sanitize_for_json(obj):
+    """NaN / Infinity → 0.0 으로 치환하여 JSON 직렬화 안전성 보장."""
+    if isinstance(obj, float):
+        return 0.0 if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
+
+
+def _aggregate_virtual_data(trades, vm, apply_cost):
+    """Pandas 기반 집계 (CPU-bound) — thread pool에서 실행되는 순수 동기 함수."""
+    if not trades:
+        return {
+            "summary_agg": {}, "cumulative_returns": {},
+            "daily_changes": {}, "weekly_changes": {},
+            "daily_ref_dates": {}, "weekly_ref_dates": {},
+            "first_dates": {}, "counts": {},
+            "profit_factors": {}, "expectancies": {},
+        }
+
+    try:
+        df = pd.DataFrame(trades)
+
+        for col, default in [('status', 'HOLD'), ('sell_date', None)]:
+            if col not in df.columns:
+                df[col] = default
+        for col, default in [('qty', 1), ('buy_price', 0), ('current_price', 0), ('sell_price', 0)]:
+            if col not in df.columns:
+                df[col] = default
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(default)
+
+        df['eval_price'] = np.where(
+            df['status'] == 'HOLD', df['current_price'],
+            np.where(df['sell_price'] > 0, df['sell_price'], df['current_price'])
+        )
+        df['eval_price'] = np.where(df['eval_price'] <= 0, df['buy_price'], df['eval_price'])
+
+        df['buy_amt']  = df.apply(lambda x: vm.get_trade_amount(x['buy_price'],  x['qty'], is_sell=False, apply_cost=apply_cost), axis=1)
+        df['eval_amt'] = df.apply(lambda x: vm.get_trade_amount(x['eval_price'], x['qty'], is_sell=True,  apply_cost=apply_cost), axis=1)
+        df['pnl'] = df['eval_amt'] - df['buy_amt']
+
+        strategies = [s for s in df['strategy'].dropna().unique() if s]
+
+        # 전략별 누적수익률
+        summary_agg = {"ALL": {"buy_sum": float(df['buy_amt'].sum()), "eval_sum": float(df['eval_amt'].sum())}}
+        for strat in strategies:
+            mask = df['strategy'] == strat
+            summary_agg[strat] = {
+                "buy_sum":  float(df.loc[mask, 'buy_amt'].sum()),
+                "eval_sum": float(df.loc[mask, 'eval_amt'].sum()),
+            }
+        strategy_returns = {
+            k: (round(((v["eval_sum"] - v["buy_sum"]) / v["buy_sum"]) * 100, 2) if v["buy_sum"] > 0 else 0.0)
+            for k, v in summary_agg.items()
+        }
+
+        # 스냅샷 저장 및 변화율
+        daily_changes, weekly_changes, daily_ref_dates, weekly_ref_dates = {}, {}, {}, {}
+        try:
+            vm.save_daily_snapshot(strategy_returns)
+            snapshot_data = vm._load_data()
+            for key in ["ALL"] + list(strategies):
+                d_val, d_date = vm.get_daily_change(key, strategy_returns.get(key, 0), _data=snapshot_data)
+                w_val, w_date = vm.get_weekly_change(key, strategy_returns.get(key, 0), _data=snapshot_data)
+                daily_changes[key], weekly_changes[key] = d_val, w_val
+                if d_date: daily_ref_dates[key] = d_date
+                if w_date: weekly_ref_dates[key] = w_date
+        except Exception as e:
+            print(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
+
+        # 최초 매매일
+        df['buy_date_str'] = df['buy_date'].astype(str).str[:10]
+        valid_mask = df['buy_date_str'].str.match(r'^\d{4}-\d{2}-\d{2}$', na=False)
+        valid_df_dates = df[valid_mask]
+        all_min = valid_df_dates['buy_date_str'].min()
+        first_dates = {}
+        if pd.notna(all_min) and all_min:
+            first_dates["ALL"] = str(all_min)
+        for strat in strategies:
+            mn = valid_df_dates[valid_df_dates['strategy'] == strat]['buy_date_str'].min()
+            if pd.notna(mn) and mn:
+                first_dates[strat] = str(mn)
+
+        # 상태별 카운트
+        KST = timezone(timedelta(hours=9))
+        today_str = datetime.now(KST).strftime("%Y-%m-%d")
+        try:
+            snap = vm._load_data()
+            if isinstance(snap, dict) and snap.get('daily'):
+                daily_keys = sorted(snap['daily'].keys())
+                if daily_keys and today_str > daily_keys[-1]:
+                    today_str = daily_keys[-1]
+        except Exception:
+            pass
+
+        df['is_hold']       = df['status'] == 'HOLD'
+        df['is_today_buy']  = df['buy_date'].astype(str).str.startswith(today_str)
+        df['is_today_sell'] = (df['status'] == 'SOLD') & df['sell_date'].astype(str).str.startswith(today_str)
+
+        counts = {"ALL": {
+            "hold":       int(df['is_hold'].sum()),
+            "today_buy":  int(df['is_today_buy'].sum()),
+            "today_sell": int(df['is_today_sell'].sum()),
+        }}
+        for strat in strategies:
+            mask = df['strategy'] == strat
+            counts[strat] = {
+                "hold":       int(df.loc[mask, 'is_hold'].sum()),
+                "today_buy":  int(df.loc[mask, 'is_today_buy'].sum()),
+                "today_sell": int(df.loc[mask, 'is_today_sell'].sum()),
+            }
+
+        # Profit Factor & Expectancy
+        def calc_metrics(sub_df):
+            gains  = sub_df[sub_df['pnl'] >= 0]['pnl']
+            losses = sub_df[sub_df['pnl'] <  0]['pnl']
+            tot_g, tot_l = float(gains.sum()), abs(float(losses.sum()))
+            wins, loss_c = len(gains), len(losses)
+            tot_c = wins + loss_c
+            pf = {
+                "value": (round(tot_g / tot_l, 2) if tot_l > 0 else (None if tot_g > 0 else 0.0)),
+                "total_gain": round(tot_g), "total_loss": round(tot_l),
+            }
+            exp = {"value": 0.0, "win_rate": 0.0, "avg_gain": 0, "avg_loss": 0, "wins": 0, "losses": 0}
+            if tot_c > 0:
+                w_rate, l_rate = wins / tot_c, loss_c / tot_c
+                avg_g = tot_g / wins      if wins   > 0 else 0
+                avg_l = tot_l / loss_c   if loss_c  > 0 else 0
+                exp.update({
+                    "value": round((w_rate * avg_g) - (l_rate * avg_l), 0),
+                    "win_rate": round(w_rate * 100, 1),
+                    "avg_gain": round(avg_g), "avg_loss": round(avg_l),
+                    "wins": wins, "losses": loss_c,
+                })
+            return pf, exp
+
+        valid_df = df[df['buy_price'] > 0]
+        profit_factors, expectancies = {}, {}
+        pf_all, exp_all = calc_metrics(valid_df)
+        profit_factors["ALL"], expectancies["ALL"] = pf_all, exp_all
+        for strat in strategies:
+            pf_s, exp_s = calc_metrics(valid_df[valid_df['strategy'] == strat])
+            profit_factors[strat], expectancies[strat] = pf_s, exp_s
+
+    except Exception as e:
+        print(f"[WebAPI] virtual/history Pandas 집계 오류: {e}")
+        summary_agg = {}
+        strategy_returns = {}
+        daily_changes = weekly_changes = daily_ref_dates = weekly_ref_dates = {}
+        first_dates = counts = profit_factors = expectancies = {}
+
+    return {
+        "summary_agg":       summary_agg,
+        "cumulative_returns": strategy_returns,
+        "daily_changes":     daily_changes,
+        "weekly_changes":    weekly_changes,
+        "daily_ref_dates":   daily_ref_dates,
+        "weekly_ref_dates":  weekly_ref_dates,
+        "first_dates":       first_dates,
+        "counts":            counts,
+        "profit_factors":    profit_factors,
+        "expectancies":      expectancies,
+    }
+
+
 @router.get("/virtual/history")
 async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
     """가상 매매 전체 기록 조회 (force_code 지정 시 해당 종목은 캐시 무시)"""
@@ -234,172 +402,11 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
         print(f"[WebAPI] virtual/history enrichment 오류: {e}")
 
     # ---------------------------------------------------------
-    # 4~7단계: Pandas를 이용한 고속 데이터 집계 (기존 4개의 for문을 하나로 압축)
+    # 4~7단계: Pandas 고속 집계 — CPU-bound 작업을 thread pool로 위임
+    # (이벤트 루프 차단 방지: 집계 중에도 다른 요청 처리 가능)
     # ---------------------------------------------------------
-    if not trades:
-        return {"trades": [], "summary_agg": {}, "cumulative_returns": {}, "daily_changes": {}, "weekly_changes": {}, "counts": {}}
-
-    try:
-        df = pd.DataFrame(trades)
-        
-        # 데이터 전처리 - 컬럼 없을 때 기본값 설정 후 숫자형 변환
-        for col, default in [('status', 'HOLD'), ('sell_date', None)]:
-            if col not in df.columns:
-                df[col] = default
-        for col, default in [('qty', 1), ('buy_price', 0), ('current_price', 0), ('sell_price', 0)]:
-            if col not in df.columns:
-                df[col] = default
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(default)
-
-        # 평가가격(eval_price) 계산 벡터화
-        df['eval_price'] = np.where(
-            df['status'] == 'HOLD', df['current_price'],
-            np.where(df['sell_price'] > 0, df['sell_price'], df['current_price'])
-        )
-        df['eval_price'] = np.where(df['eval_price'] <= 0, df['buy_price'], df['eval_price'])
-
-        # 매수/평가 금액 계산 (수수료 로직 반영 위해 apply 사용)
-        df['buy_amt'] = df.apply(lambda x: vm.get_trade_amount(x['buy_price'], x['qty'], is_sell=False, apply_cost=apply_cost), axis=1)
-        df['eval_amt'] = df.apply(lambda x: vm.get_trade_amount(x['eval_price'], x['qty'], is_sell=True, apply_cost=apply_cost), axis=1)
-        df['pnl'] = df['eval_amt'] - df['buy_amt']
-
-        strategies = [s for s in df['strategy'].dropna().unique() if s]
-        
-        # 4. 전략별 누적수익률 집계
-        summary_agg = {"ALL": {"buy_sum": float(df['buy_amt'].sum()), "eval_sum": float(df['eval_amt'].sum())}}
-        strategy_returns = {}
-        
-        for strat in strategies:
-            mask = df['strategy'] == strat
-            summary_agg[strat] = {
-                "buy_sum": float(df.loc[mask, 'buy_amt'].sum()),
-                "eval_sum": float(df.loc[mask, 'eval_amt'].sum())
-            }
-
-        for key, val in summary_agg.items():
-            if val["buy_sum"] > 0:
-                strategy_returns[key] = round(((val["eval_sum"] - val["buy_sum"]) / val["buy_sum"]) * 100, 2)
-            else:
-                strategy_returns[key] = 0.0
-
-        # 스냅샷 저장 및 변화율 계산 (I/O 최소화)
-        daily_changes, weekly_changes, daily_ref_dates, weekly_ref_dates = {}, {}, {}, {}
-        snapshot_data = {}
-        try:
-            vm.save_daily_snapshot(strategy_returns)
-            snapshot_data = vm._load_data()  # 메모리 캐싱 적용 시 0초 소요
-            for key in ["ALL"] + strategies:
-                d_val, d_date = vm.get_daily_change(key, strategy_returns.get(key, 0), _data=snapshot_data)
-                w_val, w_date = vm.get_weekly_change(key, strategy_returns.get(key, 0), _data=snapshot_data)
-                daily_changes[key], weekly_changes[key] = d_val, w_val
-                if d_date: daily_ref_dates[key] = d_date
-                if w_date: weekly_ref_dates[key] = w_date
-        except Exception as e:
-            print(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
-
-        # 5. 최초매매일 계산 (YYYY-MM-DD 형식인 날짜만 유효로 처리)
-        df['buy_date_str'] = df['buy_date'].astype(str).str[:10]
-        valid_date_mask = df['buy_date_str'].str.match(r'^\d{4}-\d{2}-\d{2}$', na=False)
-        valid_dates_df = df[valid_date_mask]
-        all_min = valid_dates_df['buy_date_str'].min()
-        first_dates = {}
-        if pd.notna(all_min) and all_min:
-            first_dates["ALL"] = str(all_min)
-        for strat in strategies:
-            min_date = valid_dates_df[valid_dates_df['strategy'] == strat]['buy_date_str'].min()
-            if pd.notna(min_date) and min_date:
-                first_dates[strat] = str(min_date)
-
-        # 6. 상태별 카운트 집계
-        KST = timezone(timedelta(hours=9))
-        today_str = datetime.now(KST).strftime("%Y-%m-%d")
-        if isinstance(snapshot_data, dict) and snapshot_data.get('daily'):
-            daily_keys = sorted(snapshot_data['daily'].keys())
-            if daily_keys and today_str > daily_keys[-1]:
-                today_str = daily_keys[-1]
-
-        df['is_hold'] = df['status'] == 'HOLD'
-        df['is_today_buy'] = df['buy_date'].astype(str).str.startswith(today_str)
-        df['is_today_sell'] = (df['status'] == 'SOLD') & df['sell_date'].astype(str).str.startswith(today_str)
-
-        counts = {
-            "ALL": {
-                "hold": int(df['is_hold'].sum()),
-                "today_buy": int(df['is_today_buy'].sum()),
-                "today_sell": int(df['is_today_sell'].sum())
-            }
-        }
-        for strat in strategies:
-            mask = df['strategy'] == strat
-            counts[strat] = {
-                "hold": int(df.loc[mask, 'is_hold'].sum()),
-                "today_buy": int(df.loc[mask, 'is_today_buy'].sum()),
-                "today_sell": int(df.loc[mask, 'is_today_sell'].sum())
-            }
-
-        # 7. Profit Factor & Expectancy 계산
-        def calc_metrics(sub_df):
-            gains = sub_df[sub_df['pnl'] >= 0]['pnl']
-            losses = sub_df[sub_df['pnl'] < 0]['pnl']
-            tot_g, tot_l = float(gains.sum()), abs(float(losses.sum()))
-            wins, loss_c = len(gains), len(losses)
-            tot_c = wins + loss_c
-
-            pf = {"value": round(tot_g/tot_l, 2) if tot_l > 0 else (None if tot_g > 0 else 0.0), 
-                  "total_gain": round(tot_g), "total_loss": round(tot_l)}
-            
-            exp = {"value": 0.0, "win_rate": 0.0, "avg_gain": 0, "avg_loss": 0, "wins": 0, "losses": 0}
-            if tot_c > 0:
-                w_rate, l_rate = wins/tot_c, loss_c/tot_c
-                avg_g = tot_g/wins if wins > 0 else 0
-                avg_l = tot_l/loss_c if loss_c > 0 else 0
-                exp.update({"value": round((w_rate*avg_g) - (l_rate*avg_l), 0), "win_rate": round(w_rate*100, 1),
-                            "avg_gain": round(avg_g), "avg_loss": round(avg_l), "wins": wins, "losses": loss_c})
-            return pf, exp
-
-        valid_df = df[df['buy_price'] > 0]
-        profit_factors, expectancies = {}, {}
-        
-        pf_all, exp_all = calc_metrics(valid_df)
-        profit_factors["ALL"], expectancies["ALL"] = pf_all, exp_all
-        
-        for strat in strategies:
-            pf_s, exp_s = calc_metrics(valid_df[valid_df['strategy'] == strat])
-            profit_factors[strat], expectancies[strat] = pf_s, exp_s
-
-    except Exception as e:
-        print(f"[WebAPI] virtual/history Pandas 집계 오류: {e}")
-        # 오류 발생 시 빈 값으로 안전하게 리턴
-        summary_agg, strategy_returns, daily_changes, weekly_changes = {}, {}, {}, {}
-        daily_ref_dates, weekly_ref_dates, first_dates, counts, profit_factors, expectancies = {}, {}, {}, {}, {}, {}
+    loop = asyncio.get_event_loop()
+    agg = await loop.run_in_executor(None, _aggregate_virtual_data, trades, vm, apply_cost)
 
     ctx.pm.log_timer("get_virtual_history", t_start)
-    raw_result = {
-        "trades": trades,
-        "summary_agg": summary_agg,
-        "cumulative_returns": strategy_returns,
-        "daily_changes": daily_changes,
-        "weekly_changes": weekly_changes,
-        "daily_ref_dates": daily_ref_dates,
-        "weekly_ref_dates": weekly_ref_dates,
-        "first_dates": first_dates,
-        "counts": counts,
-        "profit_factors": profit_factors,
-        "expectancies": expectancies,
-    }
-
-    # [추가된 안전 장치] 딕셔너리 내부를 순회하며 NaN이나 Infinity를 0.0으로 바꿉니다.
-    import math
-    def sanitize_for_json(obj):
-        if isinstance(obj, float):
-            if math.isnan(obj) or math.isinf(obj):
-                return 0.0
-            return obj
-        elif isinstance(obj, dict):
-            return {k: sanitize_for_json(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [sanitize_for_json(v) for v in obj]
-        return obj
-
-    # 정제된 데이터를 반환합니다.
-    return sanitize_for_json(raw_result)
+    return _sanitize_for_json({"trades": trades, **agg})

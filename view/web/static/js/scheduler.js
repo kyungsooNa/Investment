@@ -7,14 +7,16 @@ let schedulerEventSource = null;
 
 async function loadSchedulerStatus() {
     try {
-        const [statusRes, historyRes] = await Promise.all([
-            fetch('/api/scheduler/status'),
-            fetch('/api/scheduler/history'),
-        ]);
-        const statusData = await statusRes.json();
-        const historyData = await historyRes.json();
+        // 두 요청을 동시에 시작 (병렬)
+        const statusPromise  = fetch('/api/scheduler/status');
+        const historyPromise = fetch('/api/scheduler/history');
+
+        // status가 도착하는 즉시 렌더링 — history를 기다리지 않음
+        const statusData = await statusPromise.then(r => r.json());
         renderSchedulerStatus(statusData);
 
+        // history가 도착하면 이력 테이블 렌더링
+        const historyData = await historyPromise.then(r => r.json());
         allSchedulerHistory = historyData.history || [];
         buildSchedulerHistoryTabs(statusData.strategies || []);
         filterSchedulerHistory(currentSchedulerFilter);

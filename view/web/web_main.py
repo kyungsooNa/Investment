@@ -152,16 +152,8 @@ async def index(request: Request):
 
 @page_router.get("/stock")
 async def stock(request: Request):
-    # 종목 리스트를 페이지 로드 시 1회 전달 (클라이언트 자동완성용)
-    try:
-        ctx = web_api._get_ctx()
-        stock_list = [
-            {"c": code, "n": name}
-            for name, code in ctx.stock_code_mapper.name_to_code.items()
-        ]
-    except Exception:
-        stock_list = []
-    return await render_page(request, "stock.html", "stock", extra_context={"stock_list": stock_list})
+    # 종목 리스트는 클라이언트에서 /api/stocks/list + localStorage로 관리
+    return await render_page(request, "stock.html", "stock")
 
 @page_router.get("/balance")
 async def balance(request: Request):

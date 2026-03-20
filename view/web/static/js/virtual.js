@@ -28,11 +28,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 300000);
 });
 
+function _showVirtualSkeleton() {
+    const holdBody = document.getElementById('virtual-hold-body');
+    const soldBody = document.getElementById('virtual-sold-body');
+    const rows = Array(3).fill(0).map(() =>
+        `<tr class="skeleton-row"><td colspan="5"><span class="skeleton-bar"></span></td></tr>`
+    ).join('');
+    if (holdBody) holdBody.innerHTML = rows;
+    if (soldBody) soldBody.innerHTML = rows;
+}
+
 async function loadVirtualHistory(forceCode = null) {
     const summaryBox = document.getElementById('virtual-summary-box');
     const tabContainer = document.getElementById('virtual-strategy-tabs');
 
     if (!tabContainer) return;
+
+    _showVirtualSkeleton();
 
     try {
         showLoading(summaryBox, '성과 데이터 로드 중...');
