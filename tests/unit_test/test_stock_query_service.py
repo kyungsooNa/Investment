@@ -133,7 +133,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True)
         self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
 
         self.assertEqual(result, expected_response)
@@ -148,7 +147,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True)
         self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
         self.assertEqual(result, expected_response)
 
@@ -1138,7 +1136,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_ohlcv("005930", period="D")
 
         # Assert
-        self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D")
         self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D", caller="unknown")
         self.assertEqual(result, expected_response)
 
@@ -1186,7 +1183,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data["ohlcv"], ohlcv_data)
         self.assertEqual(len(result.data["indicators"]["ma5"]), 1)
         self.assertEqual(len(result.data["indicators"]["bb"]), 1)
-        self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D")
+        self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D", caller="unknown")
         self.mock_indicator_service.get_chart_indicators.assert_awaited_once_with("005930", ohlcv_data)
 
     async def test_get_ohlcv_with_indicators_none_response(self):

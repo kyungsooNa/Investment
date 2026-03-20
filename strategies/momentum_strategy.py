@@ -50,7 +50,7 @@ class MomentumStrategy(Strategy):
                 )
                 after_price = await result if inspect.isawaitable(result) else result
             else:
-                price_data : ResCommonResponse = await self.broker.get_current_price(code)  # ✅ wrapper 통해 조회
+                price_data : ResCommonResponse = await self.broker.get_current_price(code, caller="MomentumStrategy")  # ✅ wrapper 통해 조회
                 after_price = int(price_data.data.get("stck_prpr", "0") or 0) if price_data and price_data.data else 0
 
             if after_price is None:

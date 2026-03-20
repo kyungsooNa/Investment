@@ -690,10 +690,10 @@ class TradingService:
         self.pm.log_timer(f"TradingService._fetch_past_daily_ohlcv({stock_code}, {loop_cnt}회)", t_start, threshold=1.0)
         return all_rows
 
-    async def _fetch_today_ohlcv(self, stock_code: str, today_str: str) -> List[dict]:
+    async def _fetch_today_ohlcv(self, stock_code: str, today_str: str, caller: str = "unknown") -> List[dict]:
         """현재가 API를 호출하여 오늘자 OHLCV 데이터를 생성합니다."""
         try:
-            current_resp = await self.get_current_price(stock_code)
+            current_resp = await self.get_current_price(stock_code, caller=caller)
             if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
                 output = current_resp.data.get('output')
                 if output:
