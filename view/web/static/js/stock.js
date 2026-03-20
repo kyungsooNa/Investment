@@ -21,18 +21,27 @@ function _isChosung(str) {
 /* ── 종목명 자동완성 (클라이언트 로컬 검색) ── */
 (function() {
     let activeIndex = -1;
+    let _stocks = []; // 초성 인덱스 포함 종목 배열
+
+    function _setupStocks(raw) {
+        _stocks = raw || [];
+        for (let i = 0; i < _stocks.length; i++) {
+            if (!_stocks[i].ch) _stocks[i].ch = _getChosung(_stocks[i].n);
+        }
+    }
 
     document.addEventListener('DOMContentLoaded', function() {
         const input = document.getElementById('stock-code-input');
         const list = document.getElementById('stock-autocomplete-list');
         if (!input || !list) return;
 
-        const stocks = (typeof ALL_STOCKS !== 'undefined') ? ALL_STOCKS : [];
+        // localStorage에서 이미 복원된 경우 즉시 사용
+        if (ALL_STOCKS) _setupStocks(ALL_STOCKS);
 
-        // 초성 인덱스를 1회 미리 계산
-        for (let i = 0; i < stocks.length; i++) {
-            stocks[i].ch = _getChosung(stocks[i].n);
-        }
+        // API 로드 완료 이벤트 (localStorage miss 시)
+        document.addEventListener('all-stocks-ready', function(e) {
+            _setupStocks(e.detail);
+        });
 
         input.addEventListener('input', function() {
             const q = input.value.trim();
@@ -49,14 +58,14 @@ function _isChosung(str) {
             const isCho = _isChosung(q);
             const qLower = q.toLowerCase();
 
-            for (let i = 0; i < stocks.length && results.length < 20; i++) {
-                const s = stocks[i];
+            for (let i = 0; i < _stocks.length && results.length < 20; i++) {
+                const s = _stocks[i];
                 if (isDigit) {
                     // 숫자 → 종목코드 앞자리 매칭
                     if (s.c.startsWith(q)) results.push(s);
                 } else if (isCho) {
                     // 초성 → 초성 필드에서 매칭
-                    if (s.ch.includes(q)) results.push(s);
+                    if (s.ch && s.ch.includes(q)) results.push(s);
                 } else {
                     // 일반 텍스트 → 종목명 부분 매칭
                     if (s.n.toLowerCase().includes(qLower)) results.push(s);
@@ -125,7 +134,7 @@ function _resolveStockCode(raw) {
     // 6자리 숫자 → 종목코드 그대로
     if (/^\d{6}$/.test(raw)) return { code: raw };
 
-    const stocks = (typeof ALL_STOCKS !== 'undefined') ? ALL_STOCKS : [];
+    const stocks = (ALL_STOCKS && Array.isArray(ALL_STOCKS)) ? ALL_STOCKS : [];
 
     // 숫자지만 6자리 미만 → 코드 앞자리 매칭
     if (/^\d+$/.test(raw)) {

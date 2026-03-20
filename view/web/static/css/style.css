@@ -606,3 +606,23 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     color: var(--text-secondary);
     line-height: 1.4;
 }
+
+/* ── Skeleton UI ── */
+@keyframes skeleton-shimmer {
+    0%   { background-position: -200% 0; }
+    100% { background-position:  200% 0; }
+}
+.skeleton-bar {
+    display: block;
+    height: 14px;
+    border-radius: 4px;
+    background: linear-gradient(
+        90deg,
+        var(--bg-primary) 25%,
+        var(--border)     50%,
+        var(--bg-primary) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-row td { padding: 10px 8px; }

@@ -10,6 +10,8 @@ let ptFilterCodes = new Set();
 let ptDataDirty = false;
 let ptTimeUnit = 1;
 let ptResubscribing = false;
+let _resubscribeAbortCtrl = null; // 구독 복구 fetch 취소용
+let _ptDataCachedJson = null;     // beforeunload용 직렬화 캐시
 
 // ==========================================
 // SSE 연결
@@ -50,18 +52,27 @@ function connectPtEventSource() {
                 showLoading(statusDiv, `구독 복구 중... (0/${missingCodes.length})`);
             }
 
-            await Promise.allSettled(
-                missingCodes.map((code, idx) =>
-                    fetch('/api/program-trading/subscribe', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ code })
-                    }).then(r => {
-                        if (statusDiv) statusDiv.innerHTML = `<span>구독 복구 중... (${idx + 1}/${missingCodes.length})</span>`;
-                        return r;
-                    }).catch(e => console.error(`[PT] Resubscribe failed: ${code}`, e))
-                )
-            );
+            _resubscribeAbortCtrl = new AbortController();
+            const signal = _resubscribeAbortCtrl.signal;
+            try {
+                await Promise.allSettled(
+                    missingCodes.map((code, idx) =>
+                        fetch('/api/program-trading/subscribe', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ code }),
+                            signal
+                        }).then(r => {
+                            if (statusDiv) statusDiv.innerHTML = `<span>구독 복구 중... (${idx + 1}/${missingCodes.length})</span>`;
+                            return r;
+                        }).catch(e => {
+                            if (e.name !== 'AbortError') console.error(`[PT] Resubscribe failed: ${code}`, e);
+                        })
+                    )
+                );
+            } finally {
+                _resubscribeAbortCtrl = null;
+            }
 
             if (statusDiv) statusDiv.innerHTML = `<span class="text-green">구독 중: ${ptSubscribedCodes.size}개 종목</span>`;
             ptResubscribing = false;
@@ -540,9 +551,27 @@ async function initProgramTrading() {
         }
     }, 5000);
 
+    // pagehide: 페이지 이동 시 SSE/pending fetch를 즉시 해제하여 connection pool 반환
+    window.addEventListener('pagehide', () => {
+        if (_resubscribeAbortCtrl) {
+            _resubscribeAbortCtrl.abort();
+            _resubscribeAbortCtrl = null;
+        }
+        if (ptEventSource) {
+            ptEventSource.close();
+            ptEventSource = null;
+        }
+    });
+
+    // beforeunload: 동기 JSON.stringify 없이 캐시된 직렬화 문자열로 keepalive fetch만 전송
     window.addEventListener('beforeunload', () => {
-        if (ptDataDirty) {
-            savePtData();
+        if (ptDataDirty && _ptDataCachedJson) {
+            fetch('/api/program-trading/save-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: _ptDataCachedJson,
+                keepalive: true
+            }).catch(() => {});
         }
     });
 
@@ -612,13 +641,15 @@ async function savePtData() {
         savedAt: new Date().toISOString()
     };
 
-    localStorage.setItem('ptData', JSON.stringify(data));
+    const serialized = JSON.stringify(data);
+    _ptDataCachedJson = serialized; // beforeunload에서 재직렬화 없이 사용
+    localStorage.setItem('ptData', serialized);
 
     try {
         await fetch('/api/program-trading/save-data', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
+            body: serialized,
             keepalive: true
         });
     } catch (e) {

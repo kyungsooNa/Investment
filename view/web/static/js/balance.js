@@ -98,9 +98,36 @@ function sortBalance(key) {
     renderBalanceTable();
 }
 
-async function loadBalance() {
+function _showBalanceSkeleton() {
     const div = document.getElementById('balance-result');
-    showLoading(div, '잔고 조회 중...');
+    if (!div) return;
+    const rows = Array(5).fill(0).map(() => `
+        <tr class="skeleton-row">
+            <td><span class="skeleton-bar"></span></td>
+            <td><span class="skeleton-bar"></span></td>
+            <td><span class="skeleton-bar"></span></td>
+            <td><span class="skeleton-bar"></span></td>
+            <td><span class="skeleton-bar"></span></td>
+        </tr>`).join('');
+    div.innerHTML = `
+        <div class="card">
+            <div class="balance-summary" style="margin-bottom:12px;">
+                <p style="margin-bottom:6px;"><span class="skeleton-bar" style="width:180px;"></span></p>
+                <p style="margin-bottom:6px;"><span class="skeleton-bar" style="width:140px;"></span></p>
+                <p style="margin-bottom:6px;"><span class="skeleton-bar" style="width:120px;"></span></p>
+                <p><span class="skeleton-bar" style="width:130px;"></span></p>
+            </div>
+            <table class="data-table">
+                <thead><tr>
+                    <th>종목</th><th>보유수량</th><th>매입가</th><th>현재가</th><th>수익률</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+}
+
+async function loadBalance() {
+    _showBalanceSkeleton();
     try {
         const res = await fetchWithTimeout('/api/balance');
         const json = await res.json();
