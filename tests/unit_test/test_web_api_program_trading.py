@@ -200,7 +200,7 @@ async def test_get_program_trading_history_detail(web_client, mock_web_ctx):
     # Mock Mapper
     mock_mapper = MagicMock()
     mock_mapper.get_name_by_code.return_value = "삼성전자"
-    mock_web_ctx.stock_code_mapper = mock_mapper
+    mock_web_ctx.stock_code_repository = mock_mapper
     
     # Mock Service Response
     mock_resp = ResCommonResponse(rt_cd="0", msg1="OK", data={"some": "data"})

@@ -391,11 +391,11 @@ def _build_mock_web_ctx(is_paper: bool = True):
     mock_ctx.order_execution_service = MagicMock()
     mock_ctx.indicator_service = MagicMock()
     mock_ctx.broker = MagicMock()
-    mock_ctx.virtual_manager = MagicMock()
+    mock_ctx.virtual_trade_service = MagicMock()
     mock_ctx.ranking_task = MagicMock()
     mock_ctx.websocket_watchdog_task = MagicMock()
     mock_ctx.realtime_data_manager = MagicMock()
-    mock_ctx.stock_code_mapper = MagicMock()
+    mock_ctx.stock_code_repository = MagicMock()
     mock_ctx.scheduler = MagicMock()
 
     # initialize_services (환경 전환용)

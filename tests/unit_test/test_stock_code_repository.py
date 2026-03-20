@@ -1,4 +1,4 @@
-# tests\unit_test\test_stock_code_mapper.py
+# tests\unit_test\test_stock_code_repository.py
 
 import pytest
 import pandas as pd

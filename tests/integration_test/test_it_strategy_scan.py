@@ -450,7 +450,7 @@ class TestTraditionalVolumeBreakoutScan:
         # 4. 전략 실행
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            stock_code_mapper=mock_mapper,
+            stock_code_repository=mock_mapper,
             time_manager=mock_tm,
             config=config,
         )
@@ -517,7 +517,7 @@ class TestTraditionalVolumeBreakoutScan:
         )
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            stock_code_mapper=mock_mapper,
+            stock_code_repository=mock_mapper,
             time_manager=mock_tm,
             config=config,
         )

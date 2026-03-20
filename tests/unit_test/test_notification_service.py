@@ -1,4 +1,4 @@
-# tests/unit_test/test_notification_manager.py
+# tests/unit_test/test_notification_service.py
 
 import pytest
 import asyncio

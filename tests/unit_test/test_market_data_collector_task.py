@@ -69,7 +69,7 @@ def mock_mcs():
 def task(mock_sqs, mock_mapper, repo, mock_mcs):
     return MarketDataCollectorTask(
         stock_query_service=mock_sqs,
-        stock_code_mapper=mock_mapper,
+        stock_code_repository=mock_mapper,
         market_data_repo=repo,
         stock_repo=MagicMock(),
         market_calendar_service=mock_mcs,
@@ -235,7 +235,7 @@ class TestLoadAllStocks:
         """ETF, 우선주, 스팩이 필터링된다."""
         task = MarketDataCollectorTask(
             stock_query_service=mock_sqs,
-            stock_code_mapper=mock_mapper_with_etf,
+            stock_code_repository=mock_mapper_with_etf,
             market_data_repo=repo,
             stock_repo=MagicMock(),
             market_calendar_service=mock_mcs,

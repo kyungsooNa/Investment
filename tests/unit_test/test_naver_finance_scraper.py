@@ -1,7 +1,7 @@
 # tests/services/test_naver_finance_scraper.py
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-from services.naver_finance_scraper import NaverFinanceScraper
+from services.naver_finance_scraper import NaverFinanceScraperService
 
 # ─── Mock HTML 생성 헬퍼 함수 ────────────────────────────────────
 def generate_mock_html(td_values: list) -> str:
@@ -25,7 +25,7 @@ def generate_mock_html(td_values: list) -> str:
 @pytest.fixture
 def scraper():
     # 로거 출력을 무시하기 위해 더미 로거 주입 (원하면 놔둬도 무방)
-    return NaverFinanceScraper(logger=MagicMock())
+    return NaverFinanceScraperService(logger=MagicMock())
 
 # ─── 테스트 케이스 정의 ───────────────────────────────────────────
 @pytest.mark.asyncio

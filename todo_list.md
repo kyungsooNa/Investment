@@ -27,7 +27,7 @@
 (e.g) foreground: 현재가 조회, 계자잔고 조회, 매수/매도(최우선 우선순위), 랭킹, 시가총액, 모의투자 기록, 전략 스케줄러(전략 실행/정지), 프로그램매매 구독 등 User Action에 의한 동작
 backgournd: 수행중인 전략 scheduler(전략에서 수행하는 매수/매도는 forground의 매수매도와 동일한 최우선순위) 랭킹정보 udpate, 전체 종목 정보 update, oneil_service의 poolA Update 등 장마감 이후 한번씩 고정된 data를 db에 올리는 작업 등.
 
-- telegram_notifier.py, notification_manager.py, naver_finance_scraper.py 도 background task로 전환.
+- telegram_notifier.py, notification_service.py, naver_finance_scraper.py 도 background task로 전환.
 - 과거의 OHLCV, 시가총액 등 장 중에 변하지 않는 기능은 background로 전환.
 - 현재가의 실시간성을 위해 구독하여 관리하도록 수정. 전체종목을 구독할 수 없으니 아래의 종목만 우선적으로 구독하고, 필요없어지면 끊는 방식으로 관리
   - 현재 보유 중인 종목 (Portfolio)

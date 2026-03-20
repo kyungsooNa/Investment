@@ -123,7 +123,7 @@ def test_initialize_scheduler(mock_deps):
     """스케줄러 초기화 및 전략 등록 검증"""
     ctx = WebAppContext(None)
     # 스케줄러 생성에 필요한 의존성 주입
-    ctx.virtual_manager = MagicMock()
+    ctx.virtual_trade_service = MagicMock()
     ctx.order_execution_service = MagicMock()
     ctx.time_manager = MagicMock()
     ctx.trading_service = MagicMock()

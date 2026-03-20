@@ -74,7 +74,7 @@ def oneil_service_fixture():
     service = OneilUniverseService(
         stock_query_service=mock_sqs,
         indicator_service=mock_indicator,
-        stock_code_mapper=mock_mapper,
+        stock_code_repository=mock_mapper,
         time_manager=mock_tm,
         logger=mock_logger
     )

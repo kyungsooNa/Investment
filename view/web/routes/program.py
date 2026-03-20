@@ -21,7 +21,7 @@ async def subscribe_program_trading(req: ProgramTradingRequest):
         success = await ctx.start_program_trading(req.code)
         if not success:
             raise HTTPException(status_code=500, detail="WebSocket 연결 실패")
-        mapper = getattr(ctx, 'stock_code_mapper', None)
+        mapper = getattr(ctx, 'stock_code_repository', None)
         stock_name = mapper.get_name_by_code(req.code) if mapper else ''
         # [변경] 매니저 사용
         return {"success": True, "code": req.code, "stock_name": stock_name, "codes": ctx.realtime_data_manager.get_subscribed_codes()}
@@ -37,7 +37,7 @@ async def get_program_trading_history(code: str):
         result = _serialize_response(resp)
 
         if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):
-            mapper = getattr(ctx, 'stock_code_mapper', None)
+            mapper = getattr(ctx, 'stock_code_repository', None)
             result["data"]["name"] = mapper.get_name_by_code(code) if mapper else ""
         ctx.pm.log_timer(f"get_program_trading_history({code})", t_start)
         return result

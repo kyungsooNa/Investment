@@ -133,10 +133,10 @@ def mock_web_ctx():
     ctx.stock_query_service = AsyncMock()
     ctx.order_execution_service = AsyncMock()
     ctx.broker = AsyncMock()
-    ctx.virtual_manager = MagicMock()
+    ctx.virtual_trade_service = MagicMock()
     # [Fix] get_trade_amount가 연산에 사용되므로 float 반환 설정 (TypeError 방지)
-    ctx.virtual_manager.get_trade_amount.side_effect = lambda p, q=1, **kwargs: float(p * q)
-    ctx.virtual_manager.calculate_return.return_value = 0.0
+    ctx.virtual_trade_service.get_trade_amount.side_effect = lambda p, q=1, **kwargs: float(p * q)
+    ctx.virtual_trade_service.calculate_return.return_value = 0.0
     
     # scheduler는 동기/비동기 메서드가 혼재하므로 MagicMock 기반에 비동기 메서드만 AsyncMock 할당
     ctx.scheduler = MagicMock()
@@ -150,8 +150,8 @@ def mock_web_ctx():
     ctx.full_config = {"auth": {"username": "admin", "password": "password"}}
     
     # 알림 매니저 Mocking
-    ctx.notification_manager = MagicMock()
-    ctx.notification_manager.emit = AsyncMock()
+    ctx.notification_service = MagicMock()
+    ctx.notification_service.emit = AsyncMock()
 
     # 전역 컨텍스트 설정
     web_api.set_ctx(ctx)

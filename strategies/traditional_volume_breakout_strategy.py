@@ -81,13 +81,13 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
     def __init__(
         self,
         stock_query_service: StockQueryService,
-        stock_code_mapper: StockCodeMapper,
+        stock_code_repository: StockCodeMapper,
         time_manager: TimeManager,
         config: Optional[TraditionalVBConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._sqs = stock_query_service
-        self._mapper = stock_code_mapper
+        self.stock_code_repository = stock_code_repository
         self._tm = time_manager
         self._cfg = config or TraditionalVBConfig()
         if logger:
@@ -283,7 +283,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                 if should_sell:
                     self._position_state.pop(code, None)
                     self._save_state()
-                    api_stock_name = data.get("name", "") or self._mapper.get_name_by_code(code) or code
+                    api_stock_name = data.get("name", "") or self.stock_code_repository.get_name_by_code(code) or code
                     signals.append(TradeSignal(
                         code=code, name=api_stock_name, action="SELL", price=current, qty=1,
                         reason=reason, strategy_name=self.name,
@@ -328,7 +328,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
             if not code:
                 continue
 
-            stock_name = stock.get("hts_kor_isnm", "") or self._mapper.get_name_by_code(code) or code
+            stock_name = stock.get("hts_kor_isnm", "") or self.stock_code_repository.get_name_by_code(code) or code
 
             try:
                 ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.high_period)

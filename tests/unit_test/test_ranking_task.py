@@ -60,7 +60,7 @@ def bg_service(mock_deps):
     
     return RankingTask(
         broker_api_wrapper=broker,
-        stock_code_mapper=mapper,
+        stock_code_repository=mapper,
         env=env,
         logger=logger,
         time_manager=time_manager,
@@ -460,7 +460,7 @@ async def test_refresh_basic_ranking(mock_deps):
     )
 
     bg = RankingTask(
-        broker_api_wrapper=broker, stock_code_mapper=mapper,
+        broker_api_wrapper=broker, stock_code_repository=mapper,
         env=env, logger=logger, time_manager=time_manager,
         trading_service=trading_service,
     )
@@ -513,7 +513,7 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
     )
 
     bg = RankingTask(
-        broker_api_wrapper=broker, stock_code_mapper=mapper,
+        broker_api_wrapper=broker, stock_code_repository=mapper,
         env=env, logger=logger, time_manager=time_manager,
         trading_service=trading_service,
     )
@@ -680,20 +680,20 @@ def test_chunked_helper():
 async def test_refresh_basic_ranking_exception_and_notification(bg_service, mock_deps):
     """기본 랭킹 갱신 중 예외 발생 시 로그 및 알림 테스트."""
     _, _, _, logger, _, _ = mock_deps
-    bg_service._nm = AsyncMock() # NotificationManager
+    bg_service._notification_service = AsyncMock() # NotificationManager
 
     # asyncio.gather가 예외를 던지도록 설정하여 try-except 블록 진입 유도
     with patch("task.background.ranking_task.asyncio.gather", side_effect=Exception("Critical Error")):
         await bg_service.refresh_basic_ranking()
 
     logger.error.assert_called()
-    bg_service._nm.emit.assert_awaited_with("SYSTEM", "error", "기본 랭킹 갱신 실패", "Critical Error")
+    bg_service._notification_service.emit.assert_awaited_with("SYSTEM", "error", "기본 랭킹 갱신 실패", "Critical Error")
 
 
 @pytest.mark.asyncio
 async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps):
     """기본 랭킹 갱신 성공 시 알림 테스트."""
-    bg_service._nm = AsyncMock() # NotificationManager
+    bg_service._notification_service = AsyncMock() # NotificationManager
 
     # Mock success responses
     bg_service._trading_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
@@ -702,8 +702,8 @@ async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps)
 
     await bg_service.refresh_basic_ranking()
 
-    bg_service._nm.emit.assert_awaited()
-    args = bg_service._nm.emit.call_args[0]
+    bg_service._notification_service.emit.assert_awaited()
+    args = bg_service._notification_service.emit.call_args[0]
     assert args[0] == "API"
     assert args[1] == "info"
     assert "기본 랭킹 갱신 완료" in args[2]
@@ -713,7 +713,7 @@ async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps)
 async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
     """투자자 랭킹 갱신 성공/실패 알림 테스트."""
     broker, mapper, _, _, _, _ = mock_deps
-    bg_service._nm = AsyncMock()
+    bg_service._notification_service = AsyncMock()
     mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
 
     # 1. Success case
@@ -722,18 +722,18 @@ async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
 
     await bg_service.refresh_investor_ranking()
 
-    bg_service._nm.emit.assert_awaited()
-    args = bg_service._nm.emit.call_args[0]
+    bg_service._notification_service.emit.assert_awaited()
+    args = bg_service._notification_service.emit.call_args[0]
     assert args[0] == "API"
     assert "투자자 랭킹 갱신 완료" in args[2]
 
     # 2. Failure case
-    bg_service._nm.reset_mock()
+    bg_service._notification_service.reset_mock()
     with patch("task.background.ranking_task.asyncio.gather", side_effect=Exception("API Fail")):
         await bg_service.refresh_investor_ranking()
 
-    bg_service._nm.emit.assert_awaited()
-    args = bg_service._nm.emit.call_args[0]
+    bg_service._notification_service.emit.assert_awaited()
+    args = bg_service._notification_service.emit.call_args[0]
     assert args[0] == "SYSTEM"
     assert "투자자 랭킹 갱신 실패" in args[2]
 

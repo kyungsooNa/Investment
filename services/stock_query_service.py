@@ -17,14 +17,14 @@ class StockQueryService:
 
     def __init__(self, trading_service: TradingService, logger, time_manager, indicator_service=None,
                  ranking_task=None, performance_manager: Optional[PerformanceManager] = None,
-                 notification_manager: Optional[NotificationManager] = None):
+                 notification_service: Optional[NotificationService] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.indicator_service = indicator_service
         self.ranking_task = ranking_task
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
-        self._nm = notification_manager
+        self._notification_service = notification_service
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -71,8 +71,8 @@ class StockQueryService:
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
             self.logger.error(f"{stock_code} 현재가 및 상세 정보 조회 실패: {msg}")
-            if self._nm:
-                await self._nm.emit("SYSTEM", "warning", "현재가 조회 실패",
+            if self._notification_service:
+                await self._notification_service.emit("SYSTEM", "warning", "현재가 조회 실패",
                                     f"{stock_code} - {msg}",
                                     metadata={"code": stock_code})
             return ResCommonResponse(
@@ -178,10 +178,10 @@ class StockQueryService:
             "mang_issu_cls_code": "예" if output.mang_issu_cls_code and output.mang_issu_cls_code.strip() else "아니오",
         }
         self.logger.info(f"{stock_code} 현재가 및 상세 정보 조회 성공")
-        if self._nm:
+        if self._notification_service:
             name = view.get("name", stock_code)
             sign_str = actual_sign if actual_sign == "+" else ""
-            await self._nm.emit("API", "info", "현재가 조회",
+            await self._notification_service.emit("API", "info", "현재가 조회",
                                 f"{name}({stock_code}) {view['price']}원 ({sign_str}{view['rate']}%)",
                                 metadata={"code": stock_code, "price": view["price"]})
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=view)
@@ -189,12 +189,12 @@ class StockQueryService:
     async def handle_get_account_balance(self) -> ResCommonResponse:
         """계좌 잔고 조회 요청 및 결과 출력."""
         resp = await self.trading_service.get_account_balance()
-        if self._nm:
+        if self._notification_service:
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
-                await self._nm.emit("API", "info", "잔고 조회 완료", "계좌 잔고 조회 성공")
+                await self._notification_service.emit("API", "info", "잔고 조회 완료", "계좌 잔고 조회 성공")
             else:
                 msg = resp.msg1 if resp else "응답 없음"
-                await self._nm.emit("SYSTEM", "warning", "잔고 조회 실패", msg)
+                await self._notification_service.emit("SYSTEM", "warning", "잔고 조회 실패", msg)
         return resp
 
     async def handle_get_top_market_cap_stocks_code(self, market_code: str = "0000", limit: int = 30) -> ResCommonResponse:
@@ -576,16 +576,16 @@ class StockQueryService:
 
         if response and response.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(f"{title} 상위 종목 조회 성공")
-            if self._nm:
+            if self._notification_service:
                 cnt = len(response.data) if response.data else 0
-                await self._nm.emit("API", "info", f"{title} 랭킹 조회",
+                await self._notification_service.emit("API", "info", f"{title} 랭킹 조회",
                                     f"{title} 상위 {cnt}개 종목 조회 완료",
                                     metadata={"category": category})
         else:
             msg = response.msg1 if response else "응답 없음"
             self.logger.error(f"{title} 상위 종목 조회 실패: {msg}")
-            if self._nm:
-                await self._nm.emit("SYSTEM", "warning", f"{title} 랭킹 조회 실패", msg,
+            if self._notification_service:
+                await self._notification_service.emit("SYSTEM", "warning", f"{title} 랭킹 조회 실패", msg,
                                     metadata={"category": category})
 
         self.pm.log_timer(f"StockQueryService.handle_get_top_stocks({category})", t_start, threshold=0.5)

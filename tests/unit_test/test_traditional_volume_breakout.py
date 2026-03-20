@@ -58,7 +58,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=sqs,
-            stock_code_mapper=mapper,
+            stock_code_repository=mapper,
             time_manager=tm,
             config=config,
             logger=logger,

@@ -1,10 +1,10 @@
-# services/naver_finance_scraper.py
+# services/naver_finance_scraper_service.py
 import aiohttp
 import logging
 from bs4 import BeautifulSoup
 from typing import Optional
 
-class NaverFinanceScraper:
+class NaverFinanceScraperService:
     """네이버 금융 웹페이지 스크래핑을 전담하는 서비스 클래스."""
 
     def __init__(self, logger: Optional[logging.Logger] = None):

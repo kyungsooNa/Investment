@@ -78,10 +78,10 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # CSV 파일 I/O를 차단하여 테스트 격리
         with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
             scheduler = StrategyScheduler(
-                virtual_manager=vm,
+                virtual_trade_service=vm,
                 order_execution_service=oes,
                 stock_query_service=sqs,
-                stock_code_mapper=scm,
+                stock_code_repository=scm,
                 time_manager=tm,
                 market_calendar_service=mcs,
                 logger=mock_logger,

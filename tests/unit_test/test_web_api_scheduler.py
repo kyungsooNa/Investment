@@ -80,7 +80,7 @@ async def test_get_scheduler_status_name_correction(web_client, mock_web_ctx):
 
     mock_mapper = MagicMock()
     mock_mapper.get_name_by_code.return_value = "삼성전자"
-    mock_web_ctx.stock_code_mapper = mock_mapper
+    mock_web_ctx.stock_code_repository = mock_mapper
 
     response = web_client.get("/api/scheduler/status")
 

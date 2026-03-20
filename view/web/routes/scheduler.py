@@ -24,7 +24,7 @@ async def get_scheduler_status():
     status = ctx.scheduler.get_status()
     
     # [BugFix] 보유 종목명 보정
-    mapper = getattr(ctx, 'stock_code_mapper', None)
+    mapper = getattr(ctx, 'stock_code_repository', None)
     if mapper:
         for s in status.get("strategies", []):
             for hold in s.get("holdings", []):

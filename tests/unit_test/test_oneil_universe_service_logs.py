@@ -177,7 +177,7 @@ async def test_build_pool_b_parallel_execution(mock_components):
     service = OneilUniverseService(
         stock_query_service=sqs,
         indicator_service=indicator,
-        stock_code_mapper=mapper,
+        stock_code_repository=mapper,
         time_manager=tm,
         scraper_service=mock_scraper,
         config=config,

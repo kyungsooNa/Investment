@@ -56,7 +56,7 @@ class MarketDataCollectorTask(SchedulableTask):
         logger=None,
     ):
         self._stock_query_service = stock_query_service
-        self._mapper = stock_code_repository
+        self.stock_code_repository = stock_code_repository
         self._market_data_repo = market_data_repo
         self._stock_repo = stock_repo
         self._mcs = market_calendar_service
@@ -368,7 +368,7 @@ class MarketDataCollectorTask(SchedulableTask):
     def _load_all_stocks(self) -> List[tuple]:
         """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외)."""
         all_stocks = []
-        for _, row in self._mapper.df.iterrows():
+        for _, row in self.stock_code_repository.df.iterrows():
             code = row.get("종목코드", "")
             name = row.get("종목명", "")
             market = row.get("시장구분", "")

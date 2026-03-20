@@ -18,11 +18,11 @@ async def get_virtual_summary(apply_cost: bool = False):
     """가상 매매 요약 정보 조회"""
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
-    # ctx에 virtual_manager가 초기화되어 있어야 합니다.
-    if not hasattr(ctx, 'virtual_manager'):
+    # ctx에 virtual_trade_service가 초기화되어 있어야 합니다.
+    if not hasattr(ctx, 'virtual_trade_service'):
         return {"total_trades": 0, "win_rate": 0, "avg_return": 0}
 
-    result = ctx.virtual_manager.get_summary(apply_cost=apply_cost)
+    result = ctx.virtual_trade_service.get_summary(apply_cost=apply_cost)
     ctx.pm.log_timer("get_virtual_summary", t_start)
     return result
 
@@ -31,7 +31,7 @@ async def get_virtual_summary(apply_cost: bool = False):
 async def get_strategies():
     """등록된 모든 전략 목록 반환 (UI 탭 생성용)"""
     ctx = _get_ctx()
-    return ctx.virtual_manager.get_all_strategies()
+    return ctx.virtual_trade_service.get_all_strategies()
 
 
 async def _calculate_benchmark(ctx, code: str, ref_history: list, start_date: str, end_date: str) -> list:
@@ -82,7 +82,7 @@ async def get_strategy_chart(strategy_name: str):
     ctx = _get_ctx()
     async with ctx.pm.profile_async(f"get_strategy_chart({strategy_name})"):
         t_start = ctx.pm.start_timer()
-        vm = ctx.virtual_manager
+        vm = ctx.virtual_trade_service
 
         # 1. 히스토리 데이터 수집
         if strategy_name == "ALL":
@@ -301,17 +301,17 @@ async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
 async def _get_virtual_history_impl(ctx, force_code, apply_cost):
     """get_virtual_history의 실제 구현 (Pandas 고속 집계 적용 버전)"""
     t_start = ctx.pm.start_timer()
-    if not hasattr(ctx, 'virtual_manager'):
+    if not hasattr(ctx, 'virtual_trade_service'):
         return {"trades": [], "weekly_changes": {}}
 
-    vm = ctx.virtual_manager
+    vm = ctx.virtual_trade_service
     trades = vm.get_all_trades(apply_cost=apply_cost)
 
     # ---------------------------------------------------------
     # 1~3단계: 종목명 및 현재가 Enrichment (기존 로직 유지 - API 통신)
     # ---------------------------------------------------------
     try:
-        mapper = getattr(ctx, 'stock_code_mapper', None)
+        mapper = getattr(ctx, 'stock_code_repository', None)
         hold_codes = set()
         
         for trade in trades:

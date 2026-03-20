@@ -19,7 +19,7 @@ async def test_place_order_buy(web_client, mock_web_ctx):
     assert response.json()["data"]["ord_no"] == "12345"
 
     mock_web_ctx.order_execution_service.handle_buy_stock.assert_awaited_once_with("005930", "10", "70000")
-    mock_web_ctx.virtual_manager.log_buy.assert_called_once()
+    mock_web_ctx.virtual_trade_service.log_buy.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -32,7 +32,7 @@ async def test_place_order_sell(web_client, mock_web_ctx):
     response = web_client.post("/api/order", json=payload)
     assert response.status_code == 200
     mock_web_ctx.order_execution_service.handle_sell_stock.assert_awaited_once()
-    mock_web_ctx.virtual_manager.log_sell.assert_called_once()
+    mock_web_ctx.virtual_trade_service.log_sell.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -57,10 +57,10 @@ async def test_place_order_market_price_and_exception(web_client, mock_web_ctx):
     payload = {"code": "005930", "price": "0", "qty": "1", "side": "buy"}
     response = web_client.post("/api/order", json=payload)
     assert response.status_code == 200
-    mock_web_ctx.virtual_manager.log_buy.assert_called_with("수동매매", "005930", 50000)
+    mock_web_ctx.virtual_trade_service.log_buy.assert_called_with("수동매매", "005930", 50000)
 
     # 2. 로깅 중 예외 발생 테스트
-    mock_web_ctx.virtual_manager.log_buy.side_effect = Exception("Logging Error")
+    mock_web_ctx.virtual_trade_service.log_buy.side_effect = Exception("Logging Error")
     response = web_client.post("/api/order", json=payload)
     assert response.status_code == 200  # 예외가 발생해도 API는 성공해야 함
 
@@ -80,7 +80,7 @@ async def test_place_order_market_price_api_fail(web_client, mock_web_ctx):
     assert response.status_code == 200
 
     # 가격이 0으로 전달되었는지 확인 (API 실패 시 0 유지)
-    mock_web_ctx.virtual_manager.log_buy.assert_called_with("수동매매", "005930", 0)
+    mock_web_ctx.virtual_trade_service.log_buy.assert_called_with("수동매매", "005930", 0)
 
 
 @pytest.mark.asyncio
@@ -100,4 +100,4 @@ async def test_place_order_market_price_lookup_exception(web_client, mock_web_ct
     assert response.status_code == 200
     
     # 예외가 발생하면 pass 되고 price_val은 0으로 유지된 채 log_buy가 호출되어야 함
-    mock_web_ctx.virtual_manager.log_buy.assert_called_with("수동매매", "005930", 0)
+    mock_web_ctx.virtual_trade_service.log_buy.assert_called_with("수동매매", "005930", 0)

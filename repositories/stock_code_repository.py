@@ -1,4 +1,4 @@
-# repositories/stock_code_mapper.py
+# repositories/stock_code_repository.py
 
 import os
 import sqlite3
