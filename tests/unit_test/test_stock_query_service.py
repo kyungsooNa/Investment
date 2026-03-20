@@ -134,6 +134,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True)
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
 
         self.assertEqual(result, expected_response)
 
@@ -148,6 +149,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True)
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
         self.assertEqual(result, expected_response)
 
     # --- New Wrapper Methods Tests ---
@@ -1137,6 +1139,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D")
+        self.mock_trading_service.get_ohlcv.assert_awaited_once_with("005930", period="D", caller="unknown")
         self.assertEqual(result, expected_response)
 
     # --- get_ohlcv_range ---

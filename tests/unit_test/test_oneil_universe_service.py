@@ -203,7 +203,7 @@ async def test_generate_pool_a(mock_deps, tmp_path):
     
     # 2. 1차 필터 (시총) Mock
     # StockA: 통과, StockB: 탈락 (시가총액 미달)
-        async def mock_get_price(code, **kwargs):
+    async def mock_get_price(code, **kwargs):
         if code == "000001":
             # 시가총액 5000억 (hts_avls는 억 단위)
             return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "5000"})})
