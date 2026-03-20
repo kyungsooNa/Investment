@@ -21,15 +21,18 @@ class _LRUCache:
         self.hits = 0
         self.misses = 0
         self.item_hits = collections.defaultdict(int)
+        self.caller_stats = collections.defaultdict(lambda: {"hits": 0, "misses": 0})
 
-    def get(self, key, count_stats: bool = True):
+    def get(self, key, count_stats: bool = True, caller: str = "unknown"):
         if key not in self.cache:
             if count_stats:
                 self.misses += 1
+                self.caller_stats[caller]["misses"] += 1
             return None
         if count_stats:
             self.hits += 1
             self.item_hits[key] += 1
+            self.caller_stats[caller]["hits"] += 1
         self.cache.move_to_end(key)
         return self.cache[key]
 
@@ -50,7 +53,8 @@ class _LRUCache:
             "misses": self.misses,
             "hit_rate": round(hit_rate, 2),
             "total_requests": total,
-            "current_size": len(self.cache)
+            "current_size": len(self.cache),
+            "callers": dict(self.caller_stats)
         }
 
         if expand:
@@ -144,10 +148,10 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository OHLCV upsert 실패: {e}")
 
-    def get_stock_data(self, code: str, ohlcv_limit: int = 600) -> Optional[Dict]:
+    def get_stock_data(self, code: str, ohlcv_limit: int = 600, caller: str = "unknown") -> Optional[Dict]:
         """메모리 캐시 또는 로컬 DB에서 종목 정보(OHLCV)를 반환합니다."""
         # 1. 메모리 캐시 확인
-        cached = self._stocks_cache.get(code)
+        cached = self._stocks_cache.get(code, caller=caller)
         if cached and len(cached.get("ohlcv", [])) >= ohlcv_limit:
             return cached
 
@@ -225,9 +229,9 @@ class StockRepository:
         cached["current_price_data"] = price_data
         cached["price_updated_at"] = time.time()
 
-    def get_current_price(self, code: str, max_age_sec: float = 3.0, count_stats: bool = True) -> Optional[dict]:
+    def get_current_price(self, code: str, max_age_sec: float = 3.0, count_stats: bool = True, caller: str = "unknown") -> Optional[dict]:
         """캐시된 현재가 데이터(dict)를 반환합니다. 지정된 TTL(초)이 만료된 경우 None 반환."""
-        cached = self._stocks_cache.get(code, count_stats=count_stats)
+        cached = self._stocks_cache.get(code, count_stats=count_stats, caller=caller)
         if cached and "current_price_data" in cached:
             if time.time() - cached.get("price_updated_at", 0) <= max_age_sec:
                 return cached["current_price_data"]

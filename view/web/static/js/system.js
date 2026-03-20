@@ -43,20 +43,70 @@ async function updateCacheStatus() {
                                       stats.hit_rate >= 50 ? 'orange' : 'var(--danger-color, #f44336)';
                                       
             // 상세 정보 영역이 열려 있을 때만 테이블 렌더링
-            if (isCacheExpanded && stats.items) {
-                const tbody = document.getElementById('cache-details-body');
-                tbody.innerHTML = stats.items.map(item => {
-                    const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : item.code;
-                    return `
-                        <tr>
-                            <td style="font-weight: bold; color: var(--accent);"><a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a></td>
-                            <td>${item.hit_count.toLocaleString()}</td>
-                            <td>${item.has_ohlcv ? `O (${item.ohlcv_length}일)` : 'X'}</td>
-                            <td>${item.has_current_price ? 'O' : 'X'}</td>
-                            <td>${formatTimestamp(item.price_updated_at || item.last_updated)}</td>
-                        </tr>
+            if (isCacheExpanded) {
+                // 1. 서비스별 호출자(Caller) 통계 테이블 동적 생성
+                let callersSection = document.getElementById('cache-callers-section');
+                if (!callersSection && stats.callers) {
+                    const container = document.getElementById('cache-details-container');
+                    callersSection = document.createElement('div');
+                    callersSection.id = 'cache-callers-section';
+                    callersSection.innerHTML = `
+                        <h3 style="margin-top: 10px;">🔍 서비스/전략별 호출 통계</h3>
+                        <table class="data-table" style="margin-bottom: 25px;">
+                            <thead>
+                                <tr>
+                                    <th>호출자 (Caller)</th>
+                                    <th>Hits</th>
+                                    <th>Misses</th>
+                                    <th>적중률 (%)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cache-callers-body"></tbody>
+                        </table>
+                        <h3 style="margin-top: 20px;">📋 종목별 상세 조회 통계</h3>
                     `;
-                }).join('');
+                    container.insertBefore(callersSection, container.firstChild);
+                }
+                
+                // 호출자 데이터 채우기 (호출 많은 순 정렬)
+                if (stats.callers) {
+                    const tbodyCallers = document.getElementById('cache-callers-body');
+                    const callersArray = Object.entries(stats.callers).map(([caller, data]) => {
+                        return { caller, ...data, total: data.hits + data.misses };
+                    }).sort((a, b) => b.total - a.total);
+
+                    tbodyCallers.innerHTML = callersArray.map(item => {
+                        const hitRate = item.total > 0 ? ((item.hits / item.total) * 100).toFixed(2) : '0.00';
+                        const rateColor = hitRate >= 90 ? 'var(--success-color, #4CAF50)' : hitRate >= 50 ? 'orange' : 'var(--danger-color, #f44336)';
+                        return `
+                            <tr>
+                                <td style="font-weight: bold; color: var(--text-color);">${item.caller}</td>
+                                <td>${item.hits.toLocaleString()}</td>
+                                <td>${item.misses.toLocaleString()}</td>
+                                <td style="color: ${rateColor}; font-weight: bold;">${hitRate}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+
+                // 2. 종목별 상세 통계 채우기
+                if (stats.items) {
+                    const tbody = document.getElementById('cache-details-body');
+                    if (tbody) {
+                        tbody.innerHTML = stats.items.map(item => {
+                            const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : item.code;
+                            return `
+                                <tr>
+                                    <td style="font-weight: bold; color: var(--accent);"><a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a></td>
+                                    <td>${item.hit_count.toLocaleString()}</td>
+                                    <td>${item.has_ohlcv ? `O (${item.ohlcv_length}일)` : 'X'}</td>
+                                    <td>${item.has_current_price ? 'O' : 'X'}</td>
+                                    <td>${formatTimestamp(item.price_updated_at || item.last_updated)}</td>
+                                </tr>
+                            `;
+                        }).join('');
+                    }
+                }
             }
         }
     } catch (error) {
