@@ -191,6 +191,8 @@ class StrategyScheduler:
                 minutes_to_close = (close_time - now).total_seconds() / 60
                 in_force_exit_window = minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE
 
+                # 1. 실행이 필요한 전략들을 수집 (기아 현상 방지를 위해 나중에 우선순위 정렬)
+                evaluations = []
                 for cfg in self._strategies:
                     if not cfg.enabled:
                         continue
@@ -209,26 +211,38 @@ class StrategyScheduler:
                                   and elapsed >= cfg.interval_minutes * 60)
 
                     if should_run or force_exit:
-                        # 전략 간 API 자원 충돌 방지 (강제 청산은 쿨다운 무시)
-                        if not force_exit and self._last_execution_time:
-                            since_last_exec = (now - self._last_execution_time).total_seconds()
-                            if since_last_exec < self.STAGGER_INTERVAL_SEC:
-                                continue
-
-                        self._last_run[name] = now
-                        if not force_exit:
-                            self._last_execution_time = now
+                        # 지연 시간(초) 계산 - 처음 실행 시(last가 None) 무한대로 처리
+                        overdue = elapsed - (cfg.interval_minutes * 60) if last else float('inf')
                         if force_exit:
-                            self._force_exit_done.add(name)
-                            self._logger.info(
-                                f"[Scheduler] {name}: 장 마감 {minutes_to_close:.1f}분 전 — 강제 청산 실행"
-                            )
-                        try:
-                            await self._run_strategy(cfg, force_exit_only=force_exit)
-                        except Exception as e:
-                            self._logger.error(
-                                f"[Scheduler] {name} 실행 오류: {e}", exc_info=True
-                            )
+                            overdue = float('inf') # 강제 청산은 최우선순위
+                        evaluations.append((overdue, cfg, force_exit))
+
+                # 2. 가장 오래 지연된(overdue가 큰) 전략부터 내림차순 정렬
+                evaluations.sort(key=lambda x: x[0], reverse=True)
+
+                for overdue, cfg, force_exit in evaluations:
+                    name = cfg.strategy.name
+
+                    # 전략 간 API 자원 충돌 방지 (강제 청산은 쿨다운 무시)
+                    if not force_exit and self._last_execution_time:
+                        since_last_exec = (now - self._last_execution_time).total_seconds()
+                        if since_last_exec < self.STAGGER_INTERVAL_SEC:
+                            continue
+
+                    self._last_run[name] = now
+                    if force_exit:
+                        self._force_exit_done.add(name)
+                        self._logger.info(f"[Scheduler] {name}: 장 마감 {minutes_to_close:.1f}분 전 — 강제 청산 실행")
+                    
+                    try:
+                        await self._run_strategy(cfg, force_exit_only=force_exit)
+                    except Exception as e:
+                        self._logger.error(f"[Scheduler] {name} 실행 오류: {e}", exc_info=True)
+                    finally:
+                        # 3. 전략 실행이 끝난 이후 시점을 기준으로 쿨다운 타이머를 갱신하여 
+                        # 실행 시간이 긴 전략 이후에도 확실하게 60초의 휴지기 보장
+                        if not force_exit:
+                            self._last_execution_time = self._tm.get_current_kst_time()
 
                 await asyncio.sleep(self.LOOP_INTERVAL_SEC)
 
