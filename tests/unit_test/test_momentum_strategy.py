@@ -16,13 +16,15 @@ async def test_momentum_strategy_live_mode():
             "change_rate": 10.0
         }
     ))
-    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
+    async def mock_get_current_price(code, **kwargs):
+        return ResCommonResponse(
         rt_cd="0",
         msg1="정상",
         data={
             "stck_prpr": "11500"
         }
-    ))
+        )
+    mock_quotations.get_current_price.side_effect = mock_get_current_price
     mock_quotations.get_name_by_code = AsyncMock(return_value="삼성전자")
 
     strategy = MomentumStrategy(
@@ -54,13 +56,15 @@ async def test_momentum_strategy_live_mode_not_follow():
         }
     ))
 
-    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
-        rt_cd="0",
-        msg1="정상",
-        data={
-            "stck_prpr": "11200"  # 1.8% 상승
-        }
-    ))
+    async def mock_get_current_price_not_follow(code, **kwargs):
+        return ResCommonResponse(
+            rt_cd="0",
+            msg1="정상",
+            data={
+                "stck_prpr": "11200"  # 1.8% 상승
+            }
+        )
+    mock_quotations.get_current_price.side_effect = mock_get_current_price_not_follow
 
     mock_quotations.get_name_by_code = AsyncMock(return_value="SK하이닉스")
 

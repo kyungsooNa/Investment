@@ -806,7 +806,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._force_liquidate_strategy(config)
 
         # 1. 현재가 조회 호출됨
-        scheduler._sqs.get_current_price.assert_called_with("005930")
+        scheduler._sqs.get_current_price.assert_called_with("005930", caller="StrategyScheduler")
         # 2. API 매도 주문은 가격 0(시장가)으로 호출됨
         oes.handle_place_sell_order.assert_called_once_with("005930", 0, 5)
         # 3. VM 로그 기록은 조회된 현재가(60000)로 기록됨
@@ -932,7 +932,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._execute_signal(signal)
 
         # 1. 현재가 조회 수행 확인
-        scheduler._sqs.get_current_price.assert_called_with("000660")
+        scheduler._sqs.get_current_price.assert_called_with("000660", caller="StrategyScheduler")
         # 2. 주문은 0원(시장가)으로 나갔는지 확인
         oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10)
         # 3. 로그는 조회된 80000원으로 기록되었는지 확인
@@ -1022,7 +1022,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._execute_signal(signal)
 
         # 1. 현재가 조회 수행 확인 (예외 발생했음)
-        scheduler._sqs.get_current_price.assert_called_with("000660")
+        scheduler._sqs.get_current_price.assert_called_with("000660", caller="StrategyScheduler")
         
         # 2. 주문은 0원(시장가)으로 나갔는지 확인
         oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10)

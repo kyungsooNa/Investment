@@ -32,7 +32,7 @@ async def test_get_stock_price(web_client, mock_web_ctx):
     json_resp = response.json()
     assert json_resp["rt_cd"] == "0"
     assert json_resp["data"]["price"] == 70000
-    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930")
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller = "stock.py - get_stock_price")
 
 
 @pytest.mark.asyncio

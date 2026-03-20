@@ -285,7 +285,7 @@ class MarketDataCollectorTask(SchedulableTask):
         delay = 1.0
         for attempt in range(max_retries):
             try:
-                resp = await self._stock_query_service.get_current_price(code, count_stats=False)
+                resp = await self._stock_query_service.get_current_price(code, count_stats=False, caller="MarketDataCollectorTask")
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     return resp
                 error_msg = resp.msg1 if resp else "응답 없음"

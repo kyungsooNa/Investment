@@ -190,7 +190,7 @@ class HighTightFlagStrategy(LiveStrategy):
     async def _check_breakout(self, code, item, pattern, ohlcv, progress) -> Optional[TradeSignal]:
         """Phase 3: 실시간 돌파 확인 (가격 + 거래량 + 체결강도)."""
         # 1. 현재가 조회
-        resp = await self._sqs.get_current_price(code)
+        resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0":
             return None
 
@@ -301,7 +301,7 @@ class HighTightFlagStrategy(LiveStrategy):
                 state = HTFPositionState(buy_price, "", buy_price, buy_price)
                 self._position_state[code] = state
 
-            resp = await self._sqs.get_current_price(code)
+            resp = await self._sqs.get_current_price(code, caller=self.name)
             if not resp or resp.rt_cd != "0":
                 continue
 

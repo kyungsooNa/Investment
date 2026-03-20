@@ -29,7 +29,7 @@ async def test_strategy_executor_with_mocked_quotations():
                           data={"symbol": "0003", "open": 15000, "current": 16000, "change_rate": 6.7}),
     ]
 
-    async def mock_get_current_price(code):
+    async def mock_get_current_price(code, **kwargs):
         data_map = {
             "0001": {"stck_prpr": 11500},
             "0002": {"stck_prpr": 25000},

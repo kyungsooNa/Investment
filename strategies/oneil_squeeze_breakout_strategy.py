@@ -119,7 +119,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
     async def _check_breakout(self, code, item, progress) -> Optional[TradeSignal]:
         # 1. 기본 시세 및 프로그램 수급 조회
-        resp = await self._sqs.get_current_price(code)
+        resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0": return None
 
         out = resp.data.get("output") if isinstance(resp.data, dict) else None
@@ -289,7 +289,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 state = OSBPositionState(buy_price, "", buy_price, buy_price)
                 self._position_state[code] = state
 
-            resp = await self._sqs.get_current_price(code)
+            resp = await self._sqs.get_current_price(code, caller=self.name)
             if not resp or resp.rt_cd != "0": continue
 
             output = resp.data.get("output") if isinstance(resp.data, dict) else None

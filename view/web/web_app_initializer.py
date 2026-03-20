@@ -281,10 +281,10 @@ class WebAppContext:
             return ""
         return self.time_manager.get_current_kst_time().strftime('%Y-%m-%d %H:%M:%S')
 
-    def get_cache_stats(self) -> dict:
+    def get_cache_stats(self, expand: bool = False) -> dict:
         """메모리 캐시 통계를 반환합니다."""
         if self.stock_repository:
-            return self.stock_repository.get_cache_stats()
+            return self.stock_repository.get_cache_stats(expand=expand)
         return {}
 
     # --- 전략 스케줄러 ---

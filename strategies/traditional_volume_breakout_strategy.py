@@ -139,7 +139,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
 
             log_data = {"code": code, "name": item.name, "watchlist_item": asdict(item)}
             try:
-                price_resp = await self._sqs.handle_get_current_stock_price(code)
+                price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     continue
 
@@ -219,7 +219,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                 continue
 
             try:
-                price_resp = await self._sqs.handle_get_current_stock_price(code)
+                price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     continue
 

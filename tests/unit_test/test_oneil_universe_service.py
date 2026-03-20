@@ -203,7 +203,7 @@ async def test_generate_pool_a(mock_deps, tmp_path):
     
     # 2. 1차 필터 (시총) Mock
     # StockA: 통과, StockB: 탈락 (시가총액 미달)
-    async def mock_get_price(code):
+    async def mock_get_price(code, **kwargs):
         if code == "000001":
             # 시가총액 5000억 (hts_avls는 억 단위)
             return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "5000"})})
@@ -1112,7 +1112,7 @@ async def test_generate_pool_a_fallback_market_cap(mock_deps, tmp_path):
     })
     
     # hts_avls 없음, stck_llam 있음 (5000 -> 5000억으로 처리되는지 확인)
-    async def mock_get_price(code):
+    async def mock_get_price(code, **kwargs):
         return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "", "stck_llam": "5000"})})
     
     sqs.get_current_price.side_effect = mock_get_price
@@ -1295,7 +1295,7 @@ async def test_generate_pool_a_api_failure_in_loop(mock_deps, tmp_path):
     })
     
     # A: 성공, B: 실패
-    async def mock_get_price(code):
+    async def mock_get_price(code, **kwargs):
         if code == "A":
             return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "5000"})})
         return ResCommonResponse(rt_cd="1", msg1="Fail")
@@ -1351,7 +1351,7 @@ async def test_generate_pool_a_price_output_as_object(mock_deps, tmp_path):
             self.hts_avls = "5000" # 5000억
             self.stck_llam = "0"
     
-    async def mock_get_price(code):
+    async def mock_get_price(code, **kwargs):
         return ResCommonResponse(rt_cd="0", msg1="OK", data={"output": MockOutput()})
     
     sqs.get_current_price.side_effect = mock_get_price

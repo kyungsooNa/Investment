@@ -35,9 +35,9 @@ class StockQueryService:
         else:  # 3:보합 (또는 기타)
             return ""
 
-    async def get_current_price(self, stock_code: str, count_stats: bool = True) -> ResCommonResponse:
+    async def get_current_price(self, stock_code: str, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
         """현재가만 빠르게 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_current_price(stock_code, count_stats=count_stats)
+        return await self.trading_service.get_current_price(stock_code, count_stats=count_stats, caller=caller)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, TradingService 래퍼)."""
@@ -63,10 +63,10 @@ class StockQueryService:
         """체결 정보 조회 (TradingService 래퍼)."""
         return await self.trading_service.get_stock_conclusion(stock_code)
 
-    async def handle_get_current_stock_price(self, stock_code):
+    async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown"):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
-        resp: ResCommonResponse = await self.trading_service.get_current_price(stock_code)
+        resp: ResCommonResponse = await self.trading_service.get_current_price(stock_code, caller=caller)
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
@@ -289,7 +289,7 @@ class StockQueryService:
             "change_rate": "0.71"             # API 그대로 문자열 유지
           }
         """
-        res: ResCommonResponse = await self.trading_service.get_current_price(stock_code)
+        res: ResCommonResponse = await self.trading_service.get_current_price(stock_code, caller="StockQueryService")
         if not (res and res.rt_cd == ErrorCode.SUCCESS.value):
             self.logger.error(f"{stock_code} 전일대비 등락률 조회 실패: {res}")
             # 실패도 통일된 형태로 반환
@@ -338,7 +338,7 @@ class StockQueryService:
             "vs_open_rate_display": "+0.57%"   # 퍼센트 부호/0 처리
           }
         """
-        res: ResCommonResponse = await self.trading_service.get_current_price(stock_code)
+        res: ResCommonResponse = await self.trading_service.get_current_price(stock_code, caller="StockQueryService")
         if not (res and res.rt_cd == ErrorCode.SUCCESS.value):
             self.logger.error(f"{stock_code} 시가대비 조회 실패: {res}")
             return ResCommonResponse(rt_cd="1", msg1="조회 실패", data={"stock_code": stock_code})
@@ -640,12 +640,12 @@ class StockQueryService:
         self.logger.info(f"StockQueryService - 실시간 스트림 요청: 종목={stock_codes}, 필드={fields}, 시간={duration}s")
         await self.trading_service.handle_realtime_stream(stock_codes, fields, duration)
 
-    async def get_ohlcv(self, stock_code: str, period: str = "D") -> ResCommonResponse:
+    async def get_ohlcv(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """
         OHLCV 데이터를 반환합니다 (TradingService 래퍼).
         """
         self.logger.info(f"ServiceHandler - {stock_code} OHLCV 데이터 요청 period={period}")
-        return await self.trading_service.get_ohlcv(stock_code, period=period)
+        return await self.trading_service.get_ohlcv(stock_code, period=period, caller=caller)
 
     async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None) -> ResCommonResponse:
         """
@@ -653,7 +653,7 @@ class StockQueryService:
         """
         return await self.trading_service.get_ohlcv_range(stock_code, period, start_date, end_date)
 
-    async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D") -> ResCommonResponse:
+    async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """
         OHLCV 데이터를 1회 조회한 후, 해당 데이터로 MA5/10/20/60/120 + 볼린저밴드 + RS를 한번에 계산하여 반환.
         차트 렌더링 시 7개 API 호출을 1개로 통합하기 위한 메서드.
@@ -663,7 +663,7 @@ class StockQueryService:
         try:
             # 1. OHLCV 1회 조회
             t0 = self.pm.start_timer()
-            resp = await self.trading_service.get_ohlcv(stock_code, period=period)
+            resp = await self.trading_service.get_ohlcv(stock_code, period=period, caller=caller)
             self.pm.log_timer(f"{stock_code} OHLCV 조회", t0)
 
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:

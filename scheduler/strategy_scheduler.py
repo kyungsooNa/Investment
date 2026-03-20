@@ -336,7 +336,7 @@ class StrategyScheduler:
         if log_price == 0:
             try:
                 # StockQueryService를 통해 현재가 조회
-                resp = await self._sqs.get_current_price(signal.code)
+                resp = await self._sqs.get_current_price(signal.code, caller="StrategyScheduler")
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     data = resp.data
                     output = data.get("output") if isinstance(data, dict) else getattr(data, "output", None)

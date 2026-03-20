@@ -181,10 +181,10 @@ class TradingService:
         self._logger.info(f"Service - {stock_code} 종목 상세 정보 조회 요청")
         return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
 
-    async def get_current_price(self, stock_code, count_stats: bool = True) -> ResCommonResponse:
+    async def get_current_price(self, stock_code, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
         # 1. StockRepository 단기 캐시 확인 (웹소켓 틱 갱신 또는 최근 API 조회 결과)
         if self._stock_repo:
-            cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0, count_stats=count_stats)
+            cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0, count_stats=count_stats, caller=caller)
             if cached_data:
                 return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(Cache)", data=cached_data)
                 
@@ -690,10 +690,10 @@ class TradingService:
         self.pm.log_timer(f"TradingService._fetch_past_daily_ohlcv({stock_code}, {loop_cnt}회)", t_start, threshold=1.0)
         return all_rows
 
-    async def _fetch_today_ohlcv(self, stock_code: str, today_str: str) -> List[dict]:
+    async def _fetch_today_ohlcv(self, stock_code: str, today_str: str, caller: str = "unknown") -> List[dict]:
         """현재가 API를 호출하여 오늘자 OHLCV 데이터를 생성합니다."""
         try:
-            current_resp = await self.get_current_price(stock_code)
+            current_resp = await self.get_current_price(stock_code, caller=caller)
             if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
                 output = current_resp.data.get('output')
                 if output:
@@ -726,6 +726,7 @@ class TradingService:
             self,
             stock_code: str,
             period: str = "D",
+            caller: str = "unknown",
     ) -> ResCommonResponse:
         """
         일봉(D)의 경우 StockRepository 활용, 주봉/월봉은 기존 API 조회 방식 사용.
@@ -740,7 +741,7 @@ class TradingService:
 
             # 1. 과거 데이터 가져오기 (StockRepository 캐시/DB 활용)
             if self._stock_repo:
-                stock_data = self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600)
+                stock_data = self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600, caller=caller)
                 if stock_data and "ohlcv" in stock_data:
                     past_rows = stock_data["ohlcv"]
 
@@ -759,7 +760,7 @@ class TradingService:
             if is_today_cached and not is_market_open:
                 pass
             else:
-                today_rows = await self._fetch_today_ohlcv(stock_code, today_str)
+                today_rows = await self._fetch_today_ohlcv(stock_code, today_str, caller=caller)
 
                 if today_rows and now_dt.weekday() >= 5:
                     today_rows = []
