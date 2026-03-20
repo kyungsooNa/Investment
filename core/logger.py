@@ -283,9 +283,9 @@ class Logger:
     def debug(self, message):
         self.debug_logger.debug(message)
 
-    def warning(self, message):
-        self.operational_logger.warning(message)
-        self.debug_logger.warning(message)
+    def warning(self, message, exc_info=False):
+        self.operational_logger.warning(message, exc_info=exc_info)
+        self.debug_logger.warning(message, exc_info=exc_info)
 
     def error(self, message, exc_info=False):
         self.operational_logger.error(message, exc_info=exc_info)
