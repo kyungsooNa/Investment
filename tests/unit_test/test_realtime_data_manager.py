@@ -17,10 +17,10 @@ def tmp_db_dir(tmp_path):
 
 @pytest.fixture
 def manager(tmp_db_dir):
-    """테스트용 RealtimeDataManager (임시 디렉토리 사용)."""
+    """테스트용 RealtimeDataService (임시 디렉토리 사용)."""
     mock_logger = MagicMock()
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr = RealtimeDataService(logger=mock_logger)
     yield mgr
     # cleanup: DB 연결 닫기
     if mgr._conn:
@@ -52,11 +52,11 @@ def test_init_creates_db(manager, tmp_db_dir):
 def test_init_db_failure():
     """DB 초기화 실패 시 에러 로그 확인."""
     mock_logger = MagicMock()
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value='/invalid/path/that/cannot/exist'):
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value='/invalid/path/that/cannot/exist'):
         with patch('os.makedirs', side_effect=OSError("Permission denied")):
             # 초기화 실패해도 크래시되지 않아야 함
             try:
-                mgr = RealtimeDataManager(logger=mock_logger)
+                mgr = RealtimeDataService(logger=mock_logger)
             except Exception:
                 pass  # DB 초기화 실패 허용
 
@@ -197,15 +197,15 @@ def test_subscription_restored_on_init(tmp_db_dir):
     mock_logger = MagicMock()
 
     # 첫 번째 인스턴스: 구독 추가
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr1 = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr1 = RealtimeDataService(logger=mock_logger)
         mgr1.add_subscribed_code("005930")
         mgr1.add_subscribed_code("000660")
         mgr1._conn.close()
 
     # 두 번째 인스턴스: 복원 확인
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr2 = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr2 = RealtimeDataService(logger=mock_logger)
         assert mgr2.is_subscribed("005930")
         assert mgr2.is_subscribed("000660")
         assert len(mgr2.get_subscribed_codes()) == 2
@@ -219,16 +219,16 @@ def test_load_pt_history_from_db(tmp_db_dir):
     mock_logger = MagicMock()
 
     # 첫 번째 인스턴스: 데이터 삽입
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr1 = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr1 = RealtimeDataService(logger=mock_logger)
         mgr1.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
         mgr1.on_data_received({"유가증권단축종목코드": "005930", "price": 101})
         mgr1.on_data_received({"유가증권단축종목코드": "000660", "price": 200})
         mgr1._conn.close()
 
     # 두 번째 인스턴스: 복원 확인
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr2 = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr2 = RealtimeDataService(logger=mock_logger)
         assert "005930" in mgr2._pt_history
         assert len(mgr2._pt_history["005930"]) == 2
         assert "000660" in mgr2._pt_history
@@ -241,8 +241,8 @@ def test_persistence_of_price_field(tmp_db_dir):
     mock_logger = MagicMock()
 
     # 1. 첫 번째 인스턴스: 데이터 수신 및 DB 삽입
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr1 = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr1 = RealtimeDataService(logger=mock_logger)
         test_data = {
             "유가증권단축종목코드": "005930",
             "주식체결시간": "100000",
@@ -260,8 +260,8 @@ def test_persistence_of_price_field(tmp_db_dir):
         mgr1._conn.close()
 
     # 2. 두 번째 인스턴스: DB에서 데이터 복원 (_load_pt_history 검증)
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr2 = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr2 = RealtimeDataService(logger=mock_logger)
         loaded_data = mgr2._pt_history.get("005930", [{}])[0]
         
         assert "price" in loaded_data, "로드된 메모리 데이터에 'price' 키가 누락되었습니다."
@@ -274,8 +274,8 @@ def test_persistence_of_rate_field(tmp_db_dir):
     mock_logger = MagicMock()
 
     # 1. 첫 번째 인스턴스: 데이터 수신 및 DB 삽입
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr1 = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr1 = RealtimeDataService(logger=mock_logger)
         test_data = {
             "유가증권단축종목코드": "005930",
             "주식체결시간": "100000",
@@ -294,8 +294,8 @@ def test_persistence_of_rate_field(tmp_db_dir):
         mgr1._conn.close()
 
     # 2. 두 번째 인스턴스: DB에서 데이터 복원 (_load_pt_history 검증)
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr2 = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr2 = RealtimeDataService(logger=mock_logger)
         loaded_data = mgr2._pt_history.get("005930", [{}])[0]
         
         assert "rate" in loaded_data, "로드된 메모리 데이터에 'rate' 키가 누락되었습니다."
@@ -307,8 +307,8 @@ def test_load_pt_history_only_today(tmp_db_dir):
     """전일 데이터는 로드되지 않는지 확인."""
     mock_logger = MagicMock()
 
-    with patch.object(RealtimeDataManager, '_get_base_dir', return_value=tmp_db_dir):
-        mgr = RealtimeDataManager(logger=mock_logger)
+    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
+        mgr = RealtimeDataService(logger=mock_logger)
 
         # 전일 데이터를 직접 DB에 삽입
         yesterday = time.time() - 86400 * 2
@@ -464,7 +464,7 @@ def test_get_history_data(manager):
 
 def test_retention_days_is_7():
     """보존 기간이 7일인지 확인."""
-    assert RealtimeDataManager.RETENTION_DAYS == 7
+    assert RealtimeDataService.RETENTION_DAYS == 7
 
 def test_on_data_received_log_gap(manager):
     """데이터 수신 간격이 10초 이상일 때 로그 기록 확인."""
@@ -539,8 +539,8 @@ def test_init_db_connect_failure():
     """DB 연결 실패 시 에러 로그 확인."""
     mock_logger = MagicMock()
     with patch('sqlite3.connect', side_effect=Exception("Connection failed")):
-        with patch.object(RealtimeDataManager, '_get_base_dir', return_value='.'):
-             mgr = RealtimeDataManager(logger=mock_logger)
+        with patch.object(RealtimeDataService, '_get_base_dir', return_value='.'):
+             mgr = RealtimeDataService(logger=mock_logger)
              mock_logger.error.assert_any_call("SQLite DB 초기화 실패: Connection failed")
 
 # --- 추가된 테스트 케이스 (Coverage 향상) ---

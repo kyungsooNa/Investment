@@ -18,7 +18,7 @@ def mock_deps():
         ("vtm", patch("view.web.web_app_initializer.VirtualTradeRepository", autospec=True)),
         ("scm", patch("view.web.web_app_initializer.StockCodeRepository", autospec=True)),
         ("sched", patch("view.web.web_app_initializer.StrategyScheduler", autospec=True)),
-        ("rdm", patch("view.web.web_app_initializer.RealtimeDataManager", autospec=True)),
+        ("rdm", patch("view.web.web_app_initializer.RealtimeDataService", autospec=True)),
         ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
         ("web_api", patch("view.web.web_app_initializer.web_api")),
         ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
@@ -150,7 +150,7 @@ async def test_program_trading_subscription(mock_deps):
     """프로그램 매매 구독/해지 로직 검증"""
     ctx = WebAppContext(None)
     
-    # RealtimeDataManager Mock 인스턴스 설정
+    # RealtimeDataService Mock 인스턴스 설정
     mock_rdm_instance = ctx.realtime_data_service
     mock_rdm_instance.is_subscribed.return_value = False
 

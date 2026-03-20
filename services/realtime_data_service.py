@@ -102,7 +102,7 @@ class RealtimeDataService:
                         updated_at REAL NOT NULL
                     )
                 """)
-            self.logger.info("RealtimeDataManager: SQLite DB 초기화 완료")
+            self.logger.info("RealtimeDataService: SQLite DB 초기화 완료")
         except Exception as e:
             self.logger.error(f"SQLite DB 초기화 실패: {e}")
 
@@ -363,7 +363,7 @@ class RealtimeDataService:
         """백그라운드 태스크 시작 (데이터 정리)."""
         self._cleanup_old_data()
         self._cleanup_old_files()
-        self.logger.info("RealtimeDataManager: 초기화 완료 (SQLite 즉시 저장 모드)")
+        self.logger.info("RealtimeDataService: 초기화 완료 (SQLite 즉시 저장 모드)")
 
     async def shutdown(self):
         """서비스 종료 처리."""
@@ -373,7 +373,7 @@ class RealtimeDataService:
             except Exception:
                 pass
             self._conn = None
-        self.logger.info("RealtimeDataManager: 종료 완료")
+        self.logger.info("RealtimeDataService: 종료 완료")
 
     def inspect_db_status(self) -> dict:
         """DB 상태(마지막 저장 시간, 데이터 건수 등)를 조회하여 반환 (디버깅용)."""
