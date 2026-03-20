@@ -121,7 +121,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
             trade_value = int(out.get("acml_tr_pbmn", 0))
             today_open = int(out.get("stck_oprc", 0))
             today_low = int(out.get("stck_lwpr", 0))
-            prev_close = int(out.get("stck_prdy_clpr", 0))
+            prdy_vrss = int(out.get("prdy_vrss", 0))
+            prdy_vrss_sign = str(out.get("prdy_vrss_sign", "3"))
         else:
             current = int(getattr(out, "stck_prpr", 0) or 0)
             vol = int(getattr(out, "acml_vol", 0) or 0)
@@ -129,7 +130,16 @@ class OneilPocketPivotStrategy(LiveStrategy):
             trade_value = int(getattr(out, "acml_tr_pbmn", 0) or 0)
             today_open = int(getattr(out, "stck_oprc", 0) or 0)
             today_low = int(getattr(out, "stck_lwpr", 0) or 0)
-            prev_close = int(getattr(out, "stck_prdy_clpr", 0) or 0)
+            prdy_vrss = int(getattr(out, "prdy_vrss", 0) or 0)
+            prdy_vrss_sign = str(getattr(out, "prdy_vrss_sign", "3") or "3")
+
+        # 전일 종가 계산 (현재가와 전일대비를 이용해 역산)
+        if prdy_vrss_sign in ("1", "2"):  # 상한, 상승
+            prev_close = current - prdy_vrss
+        elif prdy_vrss_sign in ("4", "5"):  # 하한, 하락
+            prev_close = current + prdy_vrss
+        else:  # 보합
+            prev_close = current
 
         if current <= 0 or prev_close <= 0:
             return None
