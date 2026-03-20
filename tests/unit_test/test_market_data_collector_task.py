@@ -163,7 +163,7 @@ class TestCollectAllPrices:
         """API 실패 응답은 건너뛰고 성공한 종목만 저장한다."""
         call_count = 0
 
-        async def _mock_get_current_price(code, **kwargs):
+        async def _mock_get_current_price(code, **_):
             nonlocal call_count
             call_count += 1
             if code == "000660":
@@ -277,7 +277,7 @@ class TestSuspendResume:
 
         original_get = _make_price_response
 
-        async def _mock_get_current_price(code):
+        async def _mock_get_current_price(code, **_):
             collected_codes.append(code)
             if len(collected_codes) == 1:
                 barrier.set()  # 첫 번째 chunk 완료 신호
@@ -334,6 +334,7 @@ class TestStartStop:
         assert len(task._tasks) == tasks_count  # 태스크 추가 안 됨
 
         await task.stop()
+        assert task.state == TaskState.STOPPED
 
 
 # --- _extract_record 테스트 ---

@@ -93,7 +93,6 @@ def oneil_service_fixture():
     )
     return service, mock_sqs, mock_indicator
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_success(mock_deps):
     """_analyze_candidate: 모든 필터 조건을 통과하는 경우 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -134,7 +133,6 @@ async def test_analyze_candidate_success(mock_deps):
     assert item.market == "KOSDAQ"
     assert item.rs_return_3m == 10.0
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_filter_market_cap(mock_deps):
     """_analyze_candidate: 시가총액 범위(2천억~2조) 벗어날 시 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -174,7 +172,6 @@ async def test_analyze_candidate_filter_market_cap(mock_deps):
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
     assert item is not None
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_filter_trading_value(mock_deps):
     """_analyze_candidate: 거래대금 부족 시 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -187,7 +184,6 @@ async def test_analyze_candidate_filter_trading_value(mock_deps):
     item = await service._analyze_candidate("005930", "Samsung")
     assert item is None
 
-@pytest.mark.asyncio
 async def test_generate_pool_a(mock_deps, tmp_path):
     """generate_pool_a: 전체 종목 스캔 및 파일 저장 로직 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -239,7 +235,6 @@ async def test_generate_pool_a(mock_deps, tmp_path):
             assert result['passed_first'] == 1  # StockA만 통과
             mock_save.assert_called_once()
 
-@pytest.mark.asyncio
 async def test_get_watchlist_refresh_logic(mock_deps):
     """get_watchlist: 시간 경과에 따른 갱신 및 캐싱 로직 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -271,7 +266,6 @@ async def test_get_watchlist_refresh_logic(mock_deps):
             mock_build.assert_awaited_once()
             assert 30 in service._watchlist_refresh_done
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_with_zero_volume(oneil_service_fixture):
     """
     _analyze_candidate가 최근 거래량이 모두 0인 종목을 처리할 때 ZeroDivisionError 없이 None을 반환하는지 테스트합니다.
@@ -290,7 +284,6 @@ async def test_analyze_candidate_with_zero_volume(oneil_service_fixture):
     assert result is None
     mock_sqs.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=90)
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_with_no_high_data(oneil_service_fixture):
     """
     _analyze_candidate가 최근 고가(high) 데이터가 없는 경우 None을 반환하는지 테스트합니다.
@@ -309,7 +302,6 @@ async def test_analyze_candidate_with_no_high_data(oneil_service_fixture):
     # 조기 반환되므로 추가 API 호출이 없어야 합니다.
     mock_sqs.get_current_price.assert_not_called()
 
-@pytest.mark.asyncio
 async def test_generate_pool_a_sorting_with_tie_score(mock_deps, tmp_path):
     """generate_pool_a: 총점이 같을 경우 회전율(거래대금/시총)이 높은 순으로 정렬되는지 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -376,7 +368,6 @@ async def test_generate_pool_a_sorting_with_tie_score(mock_deps, tmp_path):
         assert kospi_list[0].code == "B"  # 회전율 높은 B가 먼저
         assert kospi_list[1].code == "A"
 
-@pytest.mark.asyncio
 async def test_load_pool_a_date_validation(mock_deps):
     """_load_pool_a: 날짜 유효성 검사 로직 검증 (경계값 테스트)."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -418,7 +409,6 @@ async def test_load_pool_a_date_validation(mock_deps):
         result = service._load_pool_a()
         assert result == []
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_rs_calculation(mock_deps):
     """_analyze_candidate: RS 값 계산 및 매핑 로직 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -456,7 +446,6 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
     assert call_args[1]['period_days'] == service._cfg.rs_period_days
     assert call_args[1]['ohlcv_data'] == ohlcv
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_rs_calculation_failure(mock_deps):
     """_analyze_candidate: RS 계산 실패 시 0.0 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -560,7 +549,6 @@ def test_compute_rs_scores_edge_cases(mock_deps):
     for item in items:
         assert item.rs_score == 20.0
 
-@pytest.mark.asyncio
 async def test_compute_profit_growth_scores_api_failure(mock_deps):
     """_compute_profit_growth_scores: API 호출 실패 시 점수 미부여 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -586,7 +574,6 @@ async def test_compute_profit_growth_scores_api_failure(mock_deps):
     # 검증: 점수가 0이어야 함
     assert item.profit_growth_score == 0.0
 
-@pytest.mark.asyncio
 async def test_compute_profit_growth_scores_exception(mock_deps):
     """_compute_profit_growth_scores: API 호출 중 예외 발생 시 점수 미부여 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -611,7 +598,6 @@ async def test_compute_profit_growth_scores_exception(mock_deps):
     # 검증: 점수가 0이어야 함 (예외가 발생해도 크래시되지 않고 0점 처리)
     assert item.profit_growth_score == 0.0
 
-@pytest.mark.asyncio
 async def test_check_etf_ma_rising_logic(mock_deps):
     """_check_etf_ma_rising: ETF 이동평균 상승 여부 판단 로직 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -633,7 +619,6 @@ async def test_check_etf_ma_rising_logic(mock_deps):
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=data)
     assert await service._check_etf_ma_rising("000000") is False
 
-@pytest.mark.asyncio
 async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     """_check_etf_ma_rising: MA 값의 연속 상승/하락을 정확히 계산하고 로그를 남기는지 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -685,7 +670,6 @@ async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     assert "MA decline: 30.00 -> 28.00" in log_call["fail_detail"]
 
 
-@pytest.mark.asyncio
 async def test_build_pool_b_logic(mock_deps):
     """_build_pool_b: 실시간 랭킹 기반 Pool B 생성 및 필터링 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -757,7 +741,6 @@ def test_extract_op_profit_growth_logic(mock_deps):
     assert service._extract_op_profit_growth({}) == 0.0
     assert service._extract_op_profit_growth({"invalid_key": "100"}) == 0.0
 
-@pytest.mark.asyncio
 async def test_save_load_pool_a_exceptions(mock_deps):
     """_save_pool_a, _load_pool_a: 예외 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -774,7 +757,6 @@ async def test_save_load_pool_a_exceptions(mock_deps):
         items = service._load_pool_a()
         assert items == [] # 빈 리스트 반환
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_insufficient_data(mock_deps):
     """_analyze_candidate: 데이터 부족 시 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -786,7 +768,6 @@ async def test_analyze_candidate_insufficient_data(mock_deps):
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
     assert item is None
 
-@pytest.mark.asyncio
 async def test_update_market_timing_updates_cache(mock_deps):
     """_update_market_timing: KOSPI/KOSDAQ 각각에 대해 ETF MA 확인 후 캐시 업데이트 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -810,7 +791,6 @@ async def test_update_market_timing_updates_cache(mock_deps):
         ]
         mock_check.assert_has_awaits(expected_calls, any_order=True)
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_trend_filter_fail(mock_deps):
     """_analyze_candidate: 정배열 조건(Close > MA20 > MA50) 불만족 시 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -825,7 +805,6 @@ async def test_analyze_candidate_trend_filter_fail(mock_deps):
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
     assert item is None
 
-@pytest.mark.asyncio
 async def test_build_watchlist_merge_priority(mock_deps):
     """_build_watchlist: Pool A와 Pool B 병합 시 Pool A 우선순위 및 병합 로직 검증 (Line 114)."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -859,7 +838,6 @@ async def test_build_watchlist_merge_priority(mock_deps):
         assert watchlist["A"].name == "StockA_Pool"
         assert watchlist["B"].name == "StockB_Live"
 
-@pytest.mark.asyncio
 async def test_build_pool_b_skip_duplicates_and_dict_parsing(mock_deps):
     """_build_pool_b: API 응답이 dict일 때 파싱(Line 153) 및 중복 종목 스킵(Line 169) 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -905,7 +883,6 @@ async def test_build_pool_b_skip_duplicates_and_dict_parsing(mock_deps):
         assert "A" not in pool_b
         assert "B" in pool_b
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
     """_analyze_candidate: 52주 고가 대비 너무 많이 하락한 경우 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -925,7 +902,6 @@ async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
     assert item is None
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
     """_analyze_candidate: 볼린저 밴드 스퀴즈 조건 불만족 시 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -952,7 +928,6 @@ async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
     assert item is None
 
-@pytest.mark.asyncio
 async def test_is_market_timing_ok_caching(mock_deps):
     """is_market_timing_ok: 날짜 변경 시에만 업데이트 호출 및 캐싱 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -994,7 +969,6 @@ def test_calc_turnover_ratio_zero_cap(mock_deps):
     )
     assert OneilUniverseService._calc_turnover_ratio(item) == 0
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_insufficient_bb_data(mock_deps):
     """_analyze_candidate: BB 데이터가 부족할 때 None 반환."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1019,7 +993,6 @@ async def test_analyze_candidate_insufficient_bb_data(mock_deps):
 # 추가된 테스트 케이스
 # ════════════════════════════════════════════════════════════════
 
-@pytest.mark.asyncio
 async def test_build_pool_b_partial_api_failure(mock_deps):
     """_build_pool_b: API 호출 중 일부가 실패해도 나머지는 처리되는지 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1051,7 +1024,6 @@ async def test_build_pool_b_partial_api_failure(mock_deps):
         assert "A" in pool_b
         assert len(pool_b) == 1
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_price_api_object_access(mock_deps):
     """_analyze_candidate: get_current_price 응답이 객체(속성 접근)일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1096,7 +1068,6 @@ async def test_analyze_candidate_price_api_object_access(mock_deps):
     assert item is not None
     assert item.market_cap == 300000000000
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_bb_data_integrity(mock_deps):
     """_analyze_candidate: BB 데이터에 None이 포함된 경우 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1127,7 +1098,6 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
     assert item is not None
 
-@pytest.mark.asyncio
 async def test_generate_pool_a_fallback_market_cap(mock_deps, tmp_path):
     """generate_pool_a: hts_avls(시가총액) 누락 시 stck_llam(상장주식수) 사용 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1194,7 +1164,6 @@ def test_should_refresh_watchlist_logic(mock_deps):
     assert service._should_refresh_watchlist() is True
     assert 30 in service._watchlist_refresh_done
 
-@pytest.mark.asyncio
 async def test_build_pool_b_analyze_exception(mock_deps):
     """_build_pool_b: _analyze_candidate 예외 발생 시 건너뛰기 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1210,7 +1179,6 @@ async def test_build_pool_b_analyze_exception(mock_deps):
         pool_b = await service._build_pool_b()
         assert len(pool_b) == 0
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_price_api_failure(mock_deps):
     """_analyze_candidate: 현재가 API 호출 실패 시 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1228,7 +1196,6 @@ async def test_analyze_candidate_price_api_failure(mock_deps):
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
     assert item is None
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_no_price_output(mock_deps):
     """_analyze_candidate: 현재가 API 성공이나 output 없음 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1245,7 +1212,6 @@ async def test_analyze_candidate_no_price_output(mock_deps):
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
     assert item is None
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     """_analyze_candidate: 52주 고가가 0일 때 (신규 상장 등) 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1271,7 +1237,6 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     assert item is not None
     # w52_hgpr이 0이어도 다른 조건 만족하면 통과 (52주 고가 근접 체크 스킵)
 
-@pytest.mark.asyncio
 async def test_build_pool_b_response_items_as_objects(mock_deps):
     """_build_pool_b: API 응답 아이템이 객체(속성 접근)일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1316,7 +1281,6 @@ def test_extract_op_profit_growth_non_dict(mock_deps):
     data = [Obj()]
     assert service._extract_op_profit_growth(data) == 0.0
 
-@pytest.mark.asyncio
 async def test_generate_pool_a_api_failure_in_loop(mock_deps, tmp_path):
     """generate_pool_a: 1차 필터 루프 중 API 실패 시 건너뛰기 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1359,7 +1323,6 @@ async def test_generate_pool_a_api_failure_in_loop(mock_deps, tmp_path):
         assert result['passed_first'] == 1
         assert result['total_scanned'] == 2
 
-@pytest.mark.asyncio
 async def test_analyze_candidate_ohlcv_none(mock_deps):
     """_analyze_candidate: OHLCV 데이터가 None일 때 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1370,7 +1333,6 @@ async def test_analyze_candidate_ohlcv_none(mock_deps):
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
     assert item is None
 
-@pytest.mark.asyncio
 async def test_generate_pool_a_price_output_as_object(mock_deps, tmp_path):
     """generate_pool_a: 현재가 API 응답이 객체일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1438,7 +1400,6 @@ def test_load_pool_a_malformed_date(mock_deps):
         result = service._load_pool_a()
         assert result == []
 
-@pytest.mark.asyncio
 async def test_check_etf_ma_rising_ohlcv_none(mock_deps):
     """_check_etf_ma_rising: OHLCV 데이터가 None일 때 False 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
