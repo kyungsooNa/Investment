@@ -58,6 +58,8 @@ class RealtimeDataManager:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         code TEXT NOT NULL,
                         trade_time TEXT,       -- 주식체결시간
+                        price INTEGER DEFAULT 0, -- 현재가
+                        rate REAL DEFAULT 0.0,   -- 등락률
                         sell_vol INTEGER,      -- 매도체결량
                         sell_amt INTEGER,      -- 매도거래대금
                         buy_vol INTEGER,       -- 매수2체결량
@@ -72,6 +74,18 @@ class RealtimeDataManager:
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_pt_history_code ON pt_history(code)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_pt_history_created_at ON pt_history(created_at)")
+
+                # 기존 테이블 마이그레이션: price 컬럼 추가
+                try:
+                    conn.execute("ALTER TABLE pt_history ADD COLUMN price INTEGER DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass
+
+                # 기존 테이블 마이그레이션: rate 컬럼 추가
+                try:
+                    conn.execute("ALTER TABLE pt_history ADD COLUMN rate REAL DEFAULT 0.0")
+                except sqlite3.OperationalError:
+                    pass
 
                 # 구독 상태 테이블
                 conn.execute("""
@@ -112,7 +126,7 @@ class RealtimeDataManager:
             with self._get_connection() as conn:
                 cursor = conn.execute("""
                     SELECT 
-                        code, trade_time, sell_vol, sell_amt, buy_vol, buy_amt, 
+                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
                         net_vol, net_amt, sell_rem, buy_rem, net_rem
                     FROM pt_history 
                     WHERE created_at >= ? ORDER BY id ASC
@@ -120,13 +134,15 @@ class RealtimeDataManager:
                 
                 count = 0
                 for row in cursor.fetchall():
-                    (code, trade_time, sell_vol, sell_amt, buy_vol, buy_amt, 
+                    (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
                      net_vol, net_amt, sell_rem, buy_rem, net_rem) = row
                     
                     # 기존 웹 UI 및 타 서비스와 호환되도록 원래 JSON 구조로 완벽히 복원
                     restored_data = {
                         "유가증권단축종목코드": code,
                         "주식체결시간": trade_time,
+                        "price": price,
+                        "rate": rate,
                         "매도체결량": str(sell_vol),
                         "매도거래대금": str(sell_amt),
                         "매수2체결량": str(buy_vol),
@@ -179,7 +195,13 @@ class RealtimeDataManager:
                 try: return int(val)
                 except: return 0
 
+            def safe_float(val):
+                try: return float(val)
+                except: return 0.0
+
             trade_time = data.get('주식체결시간', '')
+            price = safe_int(data.get('price', 0))
+            rate = safe_float(data.get('rate', 0.0))
             sell_vol = safe_int(data.get('매도체결량', 0))
             sell_amt = safe_int(data.get('매도거래대금', 0))
             buy_vol = safe_int(data.get('매수2체결량', 0))
@@ -193,10 +215,10 @@ class RealtimeDataManager:
             with self._get_connection() as conn:
                 conn.execute("""
                     INSERT INTO pt_history (
-                        code, trade_time, sell_vol, sell_amt, buy_vol, buy_amt, 
+                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
                         net_vol, net_amt, sell_rem, buy_rem, net_rem, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (code, trade_time, sell_vol, sell_amt, buy_vol, buy_amt, 
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
                       net_vol, net_amt, sell_rem, buy_rem, net_rem, now))
         except Exception as e:
             self.logger.error(f"히스토리 DB 저장 실패: {e}")
@@ -205,17 +227,17 @@ class RealtimeDataManager:
         # 배열 순서: [종목코드, 체결시간, 현재가, 등락률, 대비, 부호, 매도체결, 매수체결, 순매수체결, 순매수대금, 매도호가잔량, 매수호가잔량]
         payload = [
             code,
-            data.get('주식체결시간', ''),
-            data.get('price', 0),
-            data.get('rate', 0),
+            trade_time,
+            price, # safe_int로 정제된 정수값 사용
+            rate,  # safe_float로 정제된 소수값 사용
             data.get('change', 0),
             data.get('sign', ''),
-            data.get('매도체결량', 0),
-            data.get('매수2체결량', 0),
-            data.get('순매수체결량', 0),
-            data.get('순매수거래대금', 0),
-            data.get('매도호가잔량', 0),
-            data.get('매수호가잔량', 0)
+            sell_vol,
+            buy_vol,
+            net_vol,
+            net_amt,
+            sell_rem,
+            buy_rem
         ]
         
         for q in list(self._pt_queues):
