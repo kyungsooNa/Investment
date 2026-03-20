@@ -20,11 +20,11 @@ import logging
 from typing import Optional, Callable, Awaitable
 
 from core.time_manager import TimeManager
-from managers.market_date_manager import MarketDateManager
+from services.market_calendar_service import MarketCalendarService
 
 
 async def run_after_market_loop(
-    mdm: Optional[MarketDateManager],
+    mdm: Optional[MarketCalendarService],
     time_manager: Optional[TimeManager],
     logger: Optional[logging.Logger],
     on_market_closed: Callable[[str], Awaitable[None]],
@@ -33,7 +33,7 @@ async def run_after_market_loop(
     """장 마감 후 작업을 자동으로 반복 실행하는 루프.
 
     Args:
-        mdm: 시장 개장/마감 판단용 MarketDateManager.
+        mdm: 시장 개장/마감 판단용 MarketCalendar.
         time_manager: 장 마감까지 남은 시간 계산용 TimeManager.
         logger: 로깅용 Logger.
         on_market_closed: 장 마감 후 호출할 콜백.

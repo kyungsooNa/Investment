@@ -5,7 +5,7 @@ from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, R
 from config.DynamicConfig import DynamicConfig
 from typing import List, Dict, Optional, Literal
 from core.performance_manager import PerformanceManager
-from managers.notification_manager import NotificationManager
+from services.notification_service import NotificationService
 from services.trading_service import TradingService
 
 

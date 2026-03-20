@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime, timedelta
 import pytz
-from core.market_calendar import MarketCalendar
+from services.market_calendar_service import MarketCalendarService
 from common.types import ResCommonResponse
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def mock_deps():
 @pytest.fixture
 def manager(mock_deps):
     tm, logger = mock_deps
-    return MarketCalendar(tm, logger)
+    return MarketDateManager(tm, logger)
 
 @pytest.fixture
 def mock_broker():
@@ -88,7 +88,7 @@ async def test_get_latest_trading_date_no_broker(manager, mock_deps):
     result = await manager.get_latest_trading_date()
     
     assert result is None
-    logger.warning.assert_called_with("MarketCalendar: Broker is not set.")
+    logger.warning.assert_called_with("MarketDateManager: Broker is not set.")
 
 @pytest.mark.asyncio
 @pytest.mark.asyncio
@@ -160,7 +160,7 @@ async def test_get_latest_trading_date_exception(manager, mock_deps, mock_broker
 def test_init_default_logger(mock_deps):
     """로거 없이 초기화 시 기본 로거 생성 확인"""
     tm, _ = mock_deps
-    manager = MarketCalendar(tm)
+    manager = MarketDateManager(tm)
     assert manager._logger is not None
 
 

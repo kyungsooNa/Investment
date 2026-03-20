@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
 from services.stock_query_service import StockQueryService
-from market_data.stock_code_mapper import StockCodeMapper
+from repositories.stock_code_repository import StockCodeRepository
 from core.time_manager import TimeManager
 from strategies.base_strategy_config import BaseStrategyConfig
 from core.logger import get_strategy_logger

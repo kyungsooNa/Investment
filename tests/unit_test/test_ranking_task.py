@@ -9,7 +9,7 @@ import pandas as pd
 from unittest.mock import MagicMock, AsyncMock, patch
 from task.background.ranking_task import RankingTask, _ETF_PREFIXES, _chunked
 from common.types import ResCommonResponse, ErrorCode
-from managers.market_date_manager import MarketDateManager
+from services.market_calendar_service import MarketCalendarService
 
 
 def _make_program_response(ntby_tr_pbmn=0, ntby_qty=0, stck_clpr="10000", prdy_ctrt="1.0"):

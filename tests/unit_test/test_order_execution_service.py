@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import builtins
 from unittest.mock import call, ANY
-from managers.market_date_manager import MarketDateManager
+from services.market_calendar_service import MarketCalendarService
 from common.types import ResCommonResponse, ErrorCode
 from services.order_execution_service import OrderExecutionService
 

@@ -13,7 +13,7 @@ httpx 네트워크 호출만 mock한다.
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from managers.market_date_manager import MarketDateManager
+from services.market_calendar_service import MarketCalendarService
 from tests.integration_test.conftest import (
     _get_quotations_api_from_ctx,
     _get_account_api_from_ctx,

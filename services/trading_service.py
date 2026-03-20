@@ -15,10 +15,9 @@ from common.types import (
 )
 from core.cache.cache_manager import CacheManager
 from core.performance_manager import PerformanceManager
-from core import market_calendar
+from services.market_calendar_service import MarketCalendarService
 
 if TYPE_CHECKING:
-    from managers.stock_repository import StockRepository
     from repositories.stock_repository import StockRepository
 
 
@@ -30,7 +29,7 @@ class TradingService:
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
                  time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None,
-                 market_calendar=None, performance_manager: Optional[PerformanceManager] = None,
+                 market_calendar: Optional[MarketCalendarService] = None, performance_manager: Optional[PerformanceManager] = None,
                  stock_repository: Optional['StockRepository'] = None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env

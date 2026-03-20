@@ -1,7 +1,7 @@
 # user_api/broker_api_wrapper.py
 
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
-from market_data.stock_code_mapper import StockCodeMapper
+from repositories.stock_code_repository import StockCodeRepository
 from typing import Any, List
 from common.types import ResCommonResponse
 from core.cache.cache_wrapper import cache_wrap_client

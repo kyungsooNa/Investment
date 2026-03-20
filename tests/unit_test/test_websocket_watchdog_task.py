@@ -7,7 +7,7 @@ import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
-from managers.market_date_manager import MarketDateManager
+from core.market_calendar import MarketCalendar
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def mock_deps():
     realtime_data_manager.last_data_ts = 0.0
     realtime_data_manager.shutdown = AsyncMock()
 
-    market_date_manager = AsyncMock(spec=MarketDateManager)
+    market_date_manager = AsyncMock(spec=MarketCalendar)
     market_date_manager.is_market_open_now = AsyncMock(return_value=False)
 
     logger = MagicMock()

@@ -5,7 +5,7 @@ import asyncio
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
 
-from managers.notification_manager import NotificationManager, NotificationEvent
+from services.notification_service import NotificationService, NotificationEvent
 
 @pytest.fixture
 def mock_time_manager():

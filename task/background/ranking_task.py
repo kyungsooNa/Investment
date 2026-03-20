@@ -15,12 +15,12 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ErrorCode
 from core.time_manager import TimeManager
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
-from managers.market_date_manager import MarketDateManager
-from market_data.stock_code_mapper import StockCodeMapper
+from services.market_calendar_service import MarketCalendarService
+from repositories.stock_code_repository import StockCodeRepository
 from core.performance_manager import PerformanceManager
 from managers.telegram_notifier import TelegramReporter
 from scheduler.after_market_loop import run_after_market_loop
-from managers.notification_manager import NotificationManager
+from services.notification_service import NotificationService
 
 
 def _chunked(lst, size):

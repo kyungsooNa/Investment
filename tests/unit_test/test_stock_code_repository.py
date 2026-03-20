@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 from services.stock_query_service import StockQueryService
 
 # 경로 문제를 피하기 위해, 테스트 실행 시 프로젝트 루트를 기준으로 import
-from market_data.stock_code_mapper import StockCodeMapper, _write_minimal_db, TABLE_NAME
+from repositories.stock_code_repository import StockCodeRepository, _write_minimal_db, TABLE_NAME
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem
 
 
@@ -58,13 +58,13 @@ def test_db_with_market(tmp_path):
     return db_path
 
 
-# --- StockCodeMapper 클래스 테스트 ---
+# --- StockCodeRepository 클래스 테스트 ---
 
 def test_initialization_with_explicit_path(test_db, mock_logger):
     """
     명시적인 DB 경로로 초기화가 정상적으로 동작하는지 테스트합니다.
     """
-    mapper = StockCodeMapper(db_path=test_db, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=test_db, logger=mock_logger)
 
     assert mapper.code_to_name['005930'] == '삼성전자'
     assert mapper.name_to_code['SK하이닉스'] == '000660'
@@ -85,12 +85,12 @@ def test_initialization_with_default_path(mock_logger):
             '종목코드': ['005930'], '종목명': ['삼성전자']
         })
 
-        mapper = StockCodeMapper()
+        mapper = StockCodeRepository()
 
         assert mapper.code_to_name['005930'] == '삼성전자'
 
 
-@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('repositories.stock_code_repository.save_stock_code_list')
 def test_initialization_file_not_found(mock_save_stock_code_list, mock_logger, tmp_path):
     """
     DB 파일을 찾지 못하고 생성에도 실패했을 때 예외가 발생하는지 테스트합니다.
@@ -100,14 +100,14 @@ def test_initialization_file_not_found(mock_save_stock_code_list, mock_logger, t
     mock_save_stock_code_list.side_effect = FileNotFoundError(error_message)
 
     with pytest.raises(FileNotFoundError):
-        StockCodeMapper(db_path=db_path, logger=mock_logger)
+        StockCodeRepository(db_path=db_path, logger=mock_logger)
 
     mock_logger.error.assert_called_once_with(f"❌ 종목코드 매핑 DB 파일 생성 실패: {error_message}")
 
 
 def test_get_name_by_code(test_db, mock_logger):
     """get_name_by_code 메서드의 성공/실패 시나리오를 테스트합니다."""
-    mapper = StockCodeMapper(db_path=test_db, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=test_db, logger=mock_logger)
 
     # 성공
     assert mapper.get_name_by_code('005930') == '삼성전자'
@@ -119,7 +119,7 @@ def test_get_name_by_code(test_db, mock_logger):
 
 def test_get_code_by_name(test_db, mock_logger):
     """get_code_by_name 메서드의 성공/실패 시나리오를 테스트합니다."""
-    mapper = StockCodeMapper(db_path=test_db, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=test_db, logger=mock_logger)
 
     # 성공
     assert mapper.get_code_by_name('카카오') == '035720'
@@ -129,7 +129,7 @@ def test_get_code_by_name(test_db, mock_logger):
     mock_logger.warning.assert_called_once_with("❗ 종목코드 없음: 없는회사")
 
 
-@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('repositories.stock_code_repository.save_stock_code_list')
 def test_initialization_file_not_found_without_logger(mock_save, tmp_path):
     """
     DB 로드 실패 시 logger가 없더라도 정상적으로 예외가 발생하는지 테스트합니다.
@@ -138,7 +138,7 @@ def test_initialization_file_not_found_without_logger(mock_save, tmp_path):
     mock_save.side_effect = FileNotFoundError("파일 없음")
 
     with pytest.raises(FileNotFoundError):
-        StockCodeMapper(db_path=db_path, logger=None)
+        StockCodeRepository(db_path=db_path, logger=None)
 
 
 # --- 추가 테스트 케이스 (Coverage 향상) ---
@@ -160,7 +160,7 @@ def test_write_minimal_db(tmp_path):
     logger.warning.assert_called_once()
 
 
-@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('repositories.stock_code_repository.save_stock_code_list')
 def test_init_creates_file_success(mock_save, mock_logger, tmp_path):
     """DB 파일이 없을 때 생성을 시도하고 성공하는 케이스를 테스트합니다."""
     db_path = str(tmp_path / "stock_code_list.db")
@@ -170,13 +170,13 @@ def test_init_creates_file_success(mock_save, mock_logger, tmp_path):
 
     mock_save.side_effect = create_db_side_effect
 
-    mapper = StockCodeMapper(db_path=db_path, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=db_path, logger=mock_logger)
 
     mock_save.assert_called_once_with(force_update=True)
     assert any("생성 완료" in call.args[0] for call in mock_logger.info.call_args_list)
 
 
-@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('repositories.stock_code_repository.save_stock_code_list')
 def test_load_data_empty_db_recovery_success(mock_save, mock_logger, tmp_path):
     """DB가 비어있을 때 갱신을 시도하여 성공하는 케이스를 테스트합니다."""
     db_path = str(tmp_path / "stock_code_list.db")
@@ -190,7 +190,7 @@ def test_load_data_empty_db_recovery_success(mock_save, mock_logger, tmp_path):
 
     mock_save.side_effect = create_db_side_effect
 
-    mapper = StockCodeMapper(db_path=db_path, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=db_path, logger=mock_logger)
 
     mock_save.assert_called_once_with(force_update=True)
     assert mapper.code_to_name['005930'] == '삼성전자'
@@ -199,8 +199,8 @@ def test_load_data_empty_db_recovery_success(mock_save, mock_logger, tmp_path):
     assert mock_logger.info.called or mock_logger.warning.called or mock_logger.error.called
 
 
-@patch('market_data.stock_code_mapper._write_minimal_db')
-@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('repositories.stock_code_repository._write_minimal_db')
+@patch('repositories.stock_code_repository.save_stock_code_list')
 def test_load_data_empty_db_recovery_fail_minimal(mock_save, mock_write_minimal, mock_logger, tmp_path):
     """DB가 비어있고 갱신도 실패했을 때 최소 DB를 사용하는 케이스를 테스트합니다."""
     db_path = str(tmp_path / "stock_code_list.db")
@@ -216,14 +216,14 @@ def test_load_data_empty_db_recovery_fail_minimal(mock_save, mock_write_minimal,
 
     mock_write_minimal.side_effect = write_minimal_side_effect
 
-    mapper = StockCodeMapper(db_path=db_path, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=db_path, logger=mock_logger)
 
     mock_write_minimal.assert_called_once()
     assert mapper.code_to_name['000000'] == '(종목목록 없음)'
     assert any("최소 DB" in call.args[0] for call in mock_logger.warning.call_args_list)
 
 
-@patch('market_data.stock_code_mapper.save_stock_code_list')
+@patch('repositories.stock_code_repository.save_stock_code_list')
 def test_load_data_generic_exception_recovery(mock_save, mock_logger, tmp_path):
     """일반적인 에러 발생 시 기존 DB를 삭제하고 자동 복구하는지 테스트합니다."""
     db_path = str(tmp_path / "stock_code_list.db")
@@ -237,14 +237,14 @@ def test_load_data_generic_exception_recovery(mock_save, mock_logger, tmp_path):
 
     # 갱신도 실패한다고 가정 (최종적으로 최소 DB가 생성됨)
     mock_save.side_effect = Exception("Update Failed")
-    mapper = StockCodeMapper(db_path=db_path, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=db_path, logger=mock_logger)
 
     assert mapper.code_to_name['000000'] == '(종목목록 없음)'
 
 
 def test_kosdaq_methods(test_db_with_market, mock_logger):
     """get_kosdaq_codes 및 is_kosdaq 메서드를 테스트합니다."""
-    mapper = StockCodeMapper(db_path=test_db_with_market, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=test_db_with_market, logger=mock_logger)
 
     # get_kosdaq_codes
     kosdaq = mapper.get_kosdaq_codes()
@@ -259,7 +259,7 @@ def test_kosdaq_methods(test_db_with_market, mock_logger):
 
 def test_kosdaq_methods_missing_column(test_db, mock_logger):
     """시장구분 컬럼이 없을 때 KOSDAQ 관련 메서드가 안전하게 동작하는지 테스트합니다."""
-    mapper = StockCodeMapper(db_path=test_db, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=test_db, logger=mock_logger)
 
     assert mapper.get_kosdaq_codes() == []
     assert mapper.is_kosdaq('005930') is False

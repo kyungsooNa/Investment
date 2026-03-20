@@ -389,7 +389,7 @@ class TestTraditionalVolumeBreakoutScan:
         from strategies.traditional_volume_breakout_strategy import (
             TraditionalVolumeBreakoutStrategy, TraditionalVBConfig,
         )
-        from market_data.stock_code_mapper import StockCodeMapper
+        from repositories.stock_code_repository import StockCodeRepository
         from common.types import ResCommonResponse
 
         # 1. 기초 데이터 준비 (msg1 필드 추가)
@@ -471,7 +471,7 @@ class TestTraditionalVolumeBreakoutScan:
         from strategies.traditional_volume_breakout_strategy import (
             TraditionalVolumeBreakoutStrategy, TraditionalVBConfig,
         )
-        from market_data.stock_code_mapper import StockCodeMapper
+        from repositories.stock_code_repository import StockCodeRepository
 
         quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
 

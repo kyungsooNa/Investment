@@ -6,7 +6,7 @@ import sqlite3
 import time
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
-from managers.realtime_data_manager import RealtimeDataManager
+from services.realtime_data_service import RealtimeDataService
 
 
 @pytest.fixture

@@ -8,7 +8,7 @@ import concurrent.futures
 import random
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
-from managers.virtual_trade_manager import VirtualTradeManager
+from services.virtual_trade_service import VirtualTradeService
 
 @pytest.fixture
 def temp_journal(tmp_path):

@@ -11,12 +11,12 @@ from typing import List, Optional, Callable, TYPE_CHECKING
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from core.performance_manager import PerformanceManager
-from managers.notification_manager import NotificationManager
+from services.notification_service import NotificationService
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
-    from managers.realtime_data_manager import RealtimeDataManager
-    from managers.market_date_manager import MarketDateManager
+    from services.realtime_data_service import RealtimeDataService
+    from services.market_calendar_service import MarketCalendarService
 
 
 class WebSocketWatchdogTask(SchedulableTask):

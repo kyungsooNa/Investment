@@ -12,7 +12,7 @@ from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
 from services.trading_service import TradingService
 from core.time_manager import TimeManager  # Mocking용
-from managers.market_date_manager import MarketDateManager # Mocking용
+from services.market_calendar_service import MarketCalendarService # Mocking용
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Mocking용
 
 # 로거의 출력을 캡처하기 위한 설정 (테스트 시 실제 파일에 로그를 남기지 않도록)

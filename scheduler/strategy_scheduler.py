@@ -13,12 +13,13 @@ from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
-from managers.market_date_manager import MarketDateManager
-from managers.virtual_trade_manager import VirtualTradeManager
-from managers.notification_manager import NotificationManager
+from core.market_calendar import MarketCalendar
+from services.virtual_trade_service import VirtualTradeService
+from services.notification_service import NotificationService
 from services.order_execution_service import OrderExecutionService
+from repositories.stock_code_repository import StockCodeRepository
 from services.stock_query_service import StockQueryService
-from market_data.stock_code_mapper import StockCodeMapper
+from services.stock_sync_service import StockSyncService
 from core.time_manager import TimeManager
 from core.performance_manager import PerformanceManager
 
@@ -70,9 +71,9 @@ class StrategyScheduler:
         virtual_manager: VirtualTradeManager,
         order_execution_service: OrderExecutionService,
         stock_query_service: StockQueryService,
-        stock_code_mapper: StockCodeMapper,
+        stock_code_mapper: StockCodeRepository,
         time_manager: TimeManager,
-        market_date_manager: MarketDateManager,
+        market_calender: MarketCalendar,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
         notification_manager: Optional[NotificationManager] = None,
@@ -86,7 +87,7 @@ class StrategyScheduler:
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
         self._nm = notification_manager
-        self._mdm = market_date_manager
+        self._mdm = market_calender
         self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
         # 데이터 디렉토리 생성

@@ -14,7 +14,7 @@ from base64 import b64decode
 
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # KoreaInvestEnv 클래스 임포트
 from core.time_manager import TimeManager
-from managers.market_date_manager import MarketDateManager  # TimeManager 임포트
+from core.market_calendar import MarketCalendar  # TimeManager 임포트
 
 
 class KoreaInvestWebSocketAPI:
@@ -24,7 +24,7 @@ class KoreaInvestWebSocketAPI:
     """
 
     def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None,
-                 market_date_manager: Optional[MarketDateManager] = None):
+                 market_date_manager: Optional[MarketCalendar] = None):
         self._env = env
         self._time_manager = time_manager
         self._mdm = market_date_manager

@@ -7,12 +7,12 @@ from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
 from brokers.broker_api_wrapper import BrokerAPIWrapper
-from core import market_calendar
 from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
 from repositories.virtual_trade_repository import VirtualTradeRepository
-from market_data.stock_code_mapper import StockCodeMapper
+from services.virtual_trade_service import VirtualTradeService
+from repositories.stock_code_repository import StockCodeRepository
 from services.indicator_service import IndicatorService
 from core.time_manager import TimeManager
 from core.logger import Logger, get_strategy_logger
@@ -36,7 +36,7 @@ from task.background.market_data_collector_task import MarketDataCollectorTask
 from repositories.market_data_repository import MarketDataRepository
 from repositories.stock_repository import StockRepository
 from services.realtime_data_service import RealtimeDataService
-from core.market_calendar import MarketCalendar
+from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
@@ -56,9 +56,10 @@ class WebAppContext:
         self.order_execution_service: OrderExecutionService = None
         self.indicator_service: IndicatorService = None
         self.indicator_service: IndicatorService = None
-        self.virtual_manager = VirtualTradeRepository()
+        self.virtual_repo = VirtualTradeRepository()
+        self.virtual_manager = VirtualTradeService(repository=self.virtual_repo, time_manager=self.time_manager)
         self.virtual_manager.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
-        self.stock_code_mapper = StockCodeMapper(logger=self.logger)
+        self.stock_code_mapper = StockCodeRepository(logger=self.logger)
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
@@ -68,7 +69,7 @@ class WebAppContext:
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
-        self._mdm: MarketCalendar = None
+        self._mdm: MarketCalendarService = None
         self.notification_manager: NotificationService = None
         self.initialized = False
         self.pm: PerformanceManager = None
@@ -124,7 +125,7 @@ class WebAppContext:
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
         # [신규] MarketDateManager 초기화
-        self._mdm = MarketCalendar(self.time_manager, self.logger, performance_manager=self.pm)
+        self._mdm = MarketCalendarService(self.time_manager, self.logger, performance_manager=self.pm)
         
 
     async def initialize_services(self, is_paper_trading: bool = True):

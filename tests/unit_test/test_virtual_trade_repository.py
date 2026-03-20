@@ -9,6 +9,7 @@ import random
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
 from repositories.virtual_trade_repository import VirtualTradeRepository
+from services.virtual_trade_service import VirtualTradeService
 
 @pytest.fixture
 def temp_journal(tmp_path):
@@ -27,8 +28,9 @@ def mock_time_manager():
 
 @pytest.fixture
 def manager(temp_journal, mock_time_manager):
-    """VirtualTradeRepository 인스턴스 생성"""
-    return VirtualTradeRepository(filename=temp_journal, time_manager=mock_time_manager)
+    """VirtualTradeRepository 및 VirtualTradeService 래퍼 인스턴스 생성"""
+    repo = VirtualTradeRepository(filename=temp_journal, time_manager=mock_time_manager)
+    return VirtualTradeService(repository=repo, time_manager=mock_time_manager)
 
 def test_init_creates_directory_and_file(temp_journal):
     """초기화 시 디렉토리와 파일이 생성되는지 확인"""

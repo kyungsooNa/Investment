@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 from common.types import ErrorCode
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
-from market_data.stock_code_mapper import StockCodeMapper
+from repositories.stock_code_repository import StockCodeRepository
 from services.naver_finance_scraper import NaverFinanceScraper
 from core.time_manager import TimeManager
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
@@ -37,7 +37,7 @@ class OneilUniverseService:
         self,
         stock_query_service: StockQueryService,
         indicator_service: IndicatorService,
-        stock_code_mapper: StockCodeMapper,
+        stock_code_mapper: StockCodeRepository,
         time_manager: TimeManager,
         scraper_service: Optional[NaverFinanceScraper] = None,  # 추가됨
         config: Optional[OneilUniverseConfig] = None,
