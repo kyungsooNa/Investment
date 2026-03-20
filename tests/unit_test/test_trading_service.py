@@ -336,7 +336,7 @@ async def test_get_current_price_cache_hit(trading_service_fixture, mock_deps):
     
     assert resp.rt_cd == "0"
     assert resp.data == cached_data
-    stock_repo.get_current_price.assert_called_once_with("005930", max_age_sec=3.0)
+    stock_repo.get_current_price.assert_called_once_with("005930", max_age_sec=3.0, count_stats=True)
     broker.get_current_price.assert_not_called()
 
 @pytest.mark.asyncio

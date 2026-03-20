@@ -133,7 +133,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930")
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True)
+
         self.assertEqual(result, expected_response)
 
     async def test_get_current_price_failure(self):
@@ -146,7 +147,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930")
+        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True)
         self.assertEqual(result, expected_response)
 
     # --- New Wrapper Methods Tests ---

@@ -132,7 +132,7 @@ class TestCollectAllPrices:
     async def test_collect_stores_to_db(self, task, mock_sqs, repo):
         """수집 완료 후 DB에 데이터가 저장된다."""
         mock_sqs.get_current_price = AsyncMock(
-            side_effect=lambda code: _make_price_response(code)
+            side_effect=lambda code, **kwargs: _make_price_response(code)
         )
 
         await task._collect_all_prices()
@@ -163,7 +163,7 @@ class TestCollectAllPrices:
         """API 실패 응답은 건너뛰고 성공한 종목만 저장한다."""
         call_count = 0
 
-        async def _mock_get_current_price(code):
+        async def _mock_get_current_price(code, **kwargs):
             nonlocal call_count
             call_count += 1
             if code == "000660":
@@ -186,7 +186,7 @@ class TestCollectAllPrices:
     async def test_collect_updates_progress(self, task, mock_sqs):
         """수집 중 진행률이 업데이트된다."""
         mock_sqs.get_current_price = AsyncMock(
-            side_effect=lambda code: _make_price_response(code)
+            side_effect=lambda code, **kwargs: _make_price_response(code)
         )
 
         await task._collect_all_prices()
