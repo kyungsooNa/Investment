@@ -97,12 +97,16 @@ def _pp_price_output(
     today_low="67500", prev_close="67000",
 ):
     """Pocket Pivot 매수 조건에 맞는 현재가 API 응답 생성."""
+    prdy_vrss = str(abs(int(current) - int(prev_close)))
+    prdy_vrss_sign = "2" if int(current) > int(prev_close) else ("5" if int(current) < int(prev_close) else "3")
     return ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
             "stck_prpr": current, "acml_vol": vol,
             "pgtr_ntby_qty": pg_buy, "acml_tr_pbmn": trade_value,
             "stck_oprc": today_open, "stck_lwpr": today_low,
             "stck_prdy_clpr": prev_close,
+            "prdy_vrss": prdy_vrss,
+            "prdy_vrss_sign": prdy_vrss_sign,
         }}
     )
 
@@ -236,12 +240,16 @@ def _bgu_price_output(
     today_low="72000", prev_close="70000",
 ):
     """BGU 매수 조건에 맞는 현재가 API 응답 (갭 +4%)."""
+    prdy_vrss = str(abs(int(current) - int(prev_close)))
+    prdy_vrss_sign = "2" if int(current) > int(prev_close) else ("5" if int(current) < int(prev_close) else "3")
     return ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
             "stck_prpr": current, "acml_vol": vol,
             "pgtr_ntby_qty": pg_buy, "acml_tr_pbmn": trade_value,
             "stck_oprc": today_open, "stck_lwpr": today_low,
             "stck_prdy_clpr": prev_close,
+            "prdy_vrss": prdy_vrss,
+            "prdy_vrss_sign": prdy_vrss_sign,
         }}
     )
 
@@ -1011,7 +1019,7 @@ def test_check_smart_money_filters(mock_deps, pg_buy, trade_value, market_cap, e
     """_check_smart_money: 다양한 필터링 조건 검증."""
     sqs, universe, tm, logger = mock_deps
     strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
-    result = strategy._check_smart_money(100, pg_buy, trade_value, market_cap)
+    result = strategy._check_smart_money("005930", 100, pg_buy, trade_value, market_cap)
     assert result is expected
 
 @pytest.mark.asyncio
