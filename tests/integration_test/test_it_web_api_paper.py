@@ -542,6 +542,9 @@ class TestWebAppContextInitialization:
             ctx.logger = test_logger
             ctx.load_config_and_env()
 
+            # _sync_calendar_if_needed는 실제 KIS HTTP 호출을 유발하므로 mock 처리
+            ctx._mcs._sync_calendar_if_needed = AsyncMock()
+
             # load_config_and_env 결과 검증
             assert ctx.env is not None
             assert isinstance(ctx.env, KoreaInvestApiEnv)
@@ -596,6 +599,7 @@ class TestWebAppContextInitialization:
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
             ctx.load_config_and_env()
+            ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
             ctx.env._token_provider_paper = MagicMock()
             ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
@@ -626,6 +630,7 @@ class TestWebAppContextInitialization:
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
             ctx.load_config_and_env()
+            ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
             # 토큰 발급 실패 mock
             ctx.env._token_provider_paper = MagicMock()
@@ -656,6 +661,7 @@ class TestWebAppContextInitialization:
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
             ctx.load_config_and_env()
+            ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
             ctx.env._token_provider_paper = MagicMock()
             ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
@@ -694,6 +700,7 @@ class TestWebAppContextInitialization:
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
             ctx.load_config_and_env()
+            ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
             ctx.env._token_provider_paper = MagicMock()
             ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
@@ -731,6 +738,7 @@ class TestWebAppContextInitialization:
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
             ctx.load_config_and_env()
+            ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
             ctx.env._token_provider_paper = MagicMock()
             ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
