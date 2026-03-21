@@ -1,6 +1,6 @@
 # services/trading_service.py
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 import asyncio
 import logging
 from brokers.broker_api_wrapper import BrokerAPIWrapper
@@ -13,8 +13,8 @@ from common.types import (
     ResPriceSummary, ResCommonResponse, ErrorCode,
     ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation,ResDailyChartApiItem
 )
-from core.cache.cache_manager import CacheManager
-from core.performance_manager import PerformanceManager
+from core.cache.cache_store import CacheStore
+from core.performance_profiler import PerformanceProfiler
 from services.market_calendar_service import MarketCalendarService
 
 if TYPE_CHECKING:
@@ -28,17 +28,17 @@ class TradingService:
     """
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
-                 time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None,
-                 market_calendar_service: Optional[MarketCalendarService] = None, performance_manager: Optional[PerformanceManager] = None,
+                 market_clock: MarketClock = None, cache_store: Optional[CacheStore] = None,
+                 market_calendar_service: Optional[MarketCalendarService] = None, performance_profiler: Optional[PerformanceProfiler] = None,
                  stock_repository: Optional['StockRepository'] = None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
-        self._time_manager = time_manager
-        self.cache_manager = cache_manager
+        self._market_clock = market_clock
+        self.cache_store = cache_store
         self._latest_prices = {}
         self._calendar = market_calendar_service
-        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._stock_repo = stock_repository
 
     async def get_name_by_code(self, code: str) -> str:
@@ -326,7 +326,7 @@ class TradingService:
                 self._logger.warning(f"{code} 현재 상한가 필터링 중 오류: {e}", exc_info=True)
                 continue  #
 
-        self._time_manager.get_current_kst_time()
+        self._market_clock.get_current_kst_time()
 
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
@@ -534,7 +534,7 @@ class TradingService:
 
             start_time = datetime.now()
             while (datetime.now() - start_time) < timedelta(seconds=duration):
-                await self._time_manager.async_sleep(1)  # 단순 대기 (메시지는 내부 handler에서 자동 처리됨)
+                await self._market_clock.async_sleep(1)  # 단순 대기 (메시지는 내부 handler에서 자동 처리됨)
 
         except Exception as e:
             self._logger.exception(f"실시간 스트림 처리 중 오류 발생: {str(e)}")
@@ -611,7 +611,7 @@ class TradingService:
         """
         if end_dt is None:
             # KST 기준 현재
-            end_dt = self._time_manager.get_current_kst_time()
+            end_dt = self._market_clock.get_current_kst_time()
 
         period = (period or "D").upper()
         if period == "D":
@@ -634,7 +634,7 @@ class TradingService:
             days = max((limit or 120) * 2, 240)
             start_dt = end_dt - timedelta(days=days)
 
-        return self._time_manager.to_yyyymmdd(start_dt), self._time_manager.to_yyyymmdd(end_dt)
+        return self._market_clock.to_yyyymmdd(start_dt), self._market_clock.to_yyyymmdd(end_dt)
 
     async def _fetch_past_daily_ohlcv(self, stock_code: str, end_yyyymmdd: str, max_loops: int = 8) -> List[dict]:
         """
@@ -657,8 +657,8 @@ class TradingService:
             # 한 번에 요청할 시작일 (종료일 - 100일)
             curr_start_dt = curr_end_dt - timedelta(days=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE)
             
-            s_date = self._time_manager.to_yyyymmdd(curr_start_dt)
-            e_date = self._time_manager.to_yyyymmdd(curr_end_dt)
+            s_date = self._market_clock.to_yyyymmdd(curr_start_dt)
+            e_date = self._market_clock.to_yyyymmdd(curr_end_dt)
             
             raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
                 stock_code=stock_code,
@@ -733,7 +733,7 @@ class TradingService:
         """
         t_ohlcv = self.pm.start_timer()
         if (period or "D").upper() == "D":
-            now_dt = self._time_manager.get_current_kst_time()
+            now_dt = self._market_clock.get_current_kst_time()
             today_str = now_dt.strftime("%Y%m%d")
             yesterday_str = (now_dt - timedelta(days=1)).strftime("%Y%m%d")
 
@@ -803,7 +803,7 @@ class TradingService:
             # 주봉/월봉 등은 기존 단일 호출 유지
             start_yyyymmdd, end_yyyymmdd = self._calc_range_by_period(
                 period=period,
-                end_dt=self._time_manager.get_current_kst_time() if hasattr(self, "_time_manager") else datetime.now(),
+                end_dt=self._market_clock.get_current_kst_time() if hasattr(self, "_market_clock") else datetime.now(),
                 limit=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE
             )
             
@@ -830,7 +830,7 @@ class TradingService:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
         """
-        ed = end_date or self._time_manager.get_current_kst_time()
+        ed = end_date or self._market_clock.get_current_kst_time()
         # start_date가 없다면 달력 기준 넉넉한 버퍼(예: 240일)로 설정
         sd = start_date or (datetime.strptime(ed, "%Y%m%d") - timedelta(days=240)).strftime("%Y%m%d")
 
@@ -864,13 +864,13 @@ class TradingService:
         if end_date:
             current_ed_dt = datetime.strptime(end_date, "%Y%m%d")
         else:
-            current_ed_dt = self._time_manager.get_current_kst_time()
+            current_ed_dt = self._market_clock.get_current_kst_time()
 
         all_rows = []
         
         # start_date가 명시된 경우: 해당 기간만 조회 (단일 호출 시도)
         if start_date:
-            resp = await self.get_ohlcv_range(code, period="D", start_date=start_date, end_date=self._time_manager.to_yyyymmdd(current_ed_dt))
+            resp = await self.get_ohlcv_range(code, period="D", start_date=start_date, end_date=self._market_clock.to_yyyymmdd(current_ed_dt))
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                 return resp.data or []
             return []
@@ -883,11 +883,11 @@ class TradingService:
                 break
 
             # 이번 요청의 종료일 문자열
-            ed_str = self._time_manager.to_yyyymmdd(current_ed_dt)
+            ed_str = self._market_clock.to_yyyymmdd(current_ed_dt)
             
             # 이번 요청의 시작일 = 종료일 - 100일
             current_sd_dt = current_ed_dt - timedelta(days=100)
-            sd_str = self._time_manager.to_yyyymmdd(current_sd_dt)
+            sd_str = self._market_clock.to_yyyymmdd(current_sd_dt)
 
             # API 호출
             resp = await self.get_ohlcv_range(code, period="D", start_date=sd_str, end_date=ed_str)
@@ -975,7 +975,7 @@ class TradingService:
         현재 날짜 기준으로 가장 빠른 개장일을 찾아 반환합니다 (YYYYMMDD).
         국내휴장일조회 API를 사용하여 휴장 여부를 정확히 판단합니다.
         """
-        current_date = self._time_manager.get_current_kst_time().date()
+        current_date = self._market_clock.get_current_kst_time().date()
         target_date_str = current_date.strftime("%Y%m%d")
 
         # 최대 30일 후까지만 탐색 (무한 루프 방지)

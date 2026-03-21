@@ -24,7 +24,7 @@ def mock_ctx():
         ctx.websocket_watchdog_task = MagicMock()
         ctx.websocket_watchdog_task.force_reconnect_program_trading = AsyncMock()
 
-        # PerformanceManager mock
+        # PerformanceProfiler mock
         ctx.pm = MagicMock()
         ctx.pm.start_timer.return_value = 0.0
 

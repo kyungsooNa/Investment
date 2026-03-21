@@ -8,7 +8,7 @@ from strategies.first_pullback_types import FirstPullbackConfig, FPPositionState
 from strategies.oneil_common_types import OSBWatchlistItem
 from services.stock_query_service import StockQueryService
 from services.oneil_universe_service import OneilUniverseService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 
 # ── 헬퍼 함수 ──────────────────────────────────────────────────
@@ -92,7 +92,7 @@ def _cgld_output(strength="105.0"):
 def mock_deps():
     sqs = MagicMock(spec=StockQueryService)
     universe = MagicMock(spec=OneilUniverseService)
-    tm = MagicMock(spec=TimeManager)
+    tm = MagicMock(spec=MarketClock)
     logger = MagicMock()
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)

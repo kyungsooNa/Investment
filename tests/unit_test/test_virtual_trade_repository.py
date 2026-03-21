@@ -20,16 +20,16 @@ def temp_journal(tmp_path):
     return str(journal_file)
 
 @pytest.fixture
-def mock_time_manager():
-    """TimeManager Mock 생성"""
+def mock_market_clock():
+    """MarketClock Mock 생성"""
     tm = MagicMock()
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
     return tm
 
 @pytest.fixture
-def virutal_trade_repository(temp_journal, mock_time_manager):
+def virutal_trade_repository(temp_journal, mock_market_clock):
     """VirtualTradeRepository 및 VirtualTradeService 래퍼 인스턴스 생성"""
-    return VirtualTradeRepository(filename=temp_journal, time_manager=mock_time_manager)
+    return VirtualTradeRepository(filename=temp_journal, market_clock=mock_market_clock)
 
 def test_init_creates_directory_and_file(temp_journal):
     """초기화 시 디렉토리와 파일이 생성되는지 확인"""

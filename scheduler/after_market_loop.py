@@ -9,7 +9,7 @@ Usage::
 
     await run_after_market_loop(
         mcs=self._mcs,
-        time_manager=self._time_manager,
+        market_clock=self._market_clock,
         logger=self._logger,
         on_market_closed=self._do_work,  # async (latest_date: str) -> None
         label="MyTask",
@@ -19,13 +19,13 @@ import asyncio
 import logging
 from typing import Optional, Callable, Awaitable
 
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from services.market_calendar_service import MarketCalendarService
 
 
 async def run_after_market_loop(
     mcs: Optional[MarketCalendarService],
-    time_manager: Optional[TimeManager],
+    market_clock: Optional[MarketClock],
     logger: Optional[logging.Logger],
     on_market_closed: Callable[[str], Awaitable[None]],
     label: str = "AfterMarketLoop",
@@ -34,7 +34,7 @@ async def run_after_market_loop(
 
     Args:
         mcs: 시장 개장/마감 판단용 MarketCalendar.
-        time_manager: 장 마감까지 남은 시간 계산용 TimeManager.
+        market_clock: 장 마감까지 남은 시간 계산용 MarketClock.
         logger: 로깅용 Logger.
         on_market_closed: 장 마감 후 호출할 콜백.
             ``latest_trading_date`` (YYYYMMDD) 문자열을 받으며,
@@ -49,8 +49,8 @@ async def run_after_market_loop(
             # ── 1. 장 중이면 마감 시각까지 정확히 대기 ──
             if mcs and await mcs.is_market_open_now():
                 wait_sec = (
-                    time_manager.get_sleep_seconds_until_market_close()
-                    if time_manager else 300
+                    market_clock.get_sleep_seconds_until_market_close()
+                    if market_clock else 300
                 )
                 if wait_sec and wait_sec > 0:
                     _log.info(
@@ -67,7 +67,7 @@ async def run_after_market_loop(
                 await on_market_closed(latest_trading_date)
 
             # ── 3. 스마트 대기: 다음 장 마감까지 ──
-            await _smart_sleep(time_manager, _log, label)
+            await _smart_sleep(market_clock, _log, label)
 
         except asyncio.CancelledError:
             _log.info(f"[{label}] 장마감 후 스케줄러 종료")
@@ -78,7 +78,7 @@ async def run_after_market_loop(
 
 
 async def _smart_sleep(
-    time_manager: Optional[TimeManager],
+    market_clock: Optional[MarketClock],
     logger: logging.Logger,
     label: str,
 ) -> None:
@@ -88,8 +88,8 @@ async def _smart_sleep(
     - 이미 장 마감 지났으면 → 12시간 대기 (다음날 장 마감 전 기상)
     """
     wait_sec = (
-        time_manager.get_sleep_seconds_until_market_close()
-        if time_manager else 0
+        market_clock.get_sleep_seconds_until_market_close()
+        if market_clock else 0
     )
     if wait_sec > 0:
         logger.info(

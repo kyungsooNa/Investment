@@ -25,11 +25,11 @@ class KoreaInvestApiClient:
     각 도메인별 API 클래스를 통해 접근합니다.
     """
 
-    def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager=None,
+    def __init__(self, env: KoreaInvestApiEnv, logger=None, market_clock=None,
                  market_calendar_service: Optional[MarketCalendarService] = None):
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
-        self.time_manager = time_manager
+        self.market_clock = market_clock
         self._mcs = market_calendar_service  # MarketCalendar는 나중에 set_market_calendar_service()로 주입받음
 
         ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -47,7 +47,7 @@ class KoreaInvestApiClient:
         self._quotations = KoreaInvestApiQuotations(
             self._env,
             self._logger,
-            self.time_manager,
+            self.market_clock,
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=quotation_url_provider,
@@ -57,7 +57,7 @@ class KoreaInvestApiClient:
         self._account = KoreaInvestApiAccount(
             self._env,
             self._logger,
-            self.time_manager,
+            self.market_clock,
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=url_provider,
@@ -66,13 +66,13 @@ class KoreaInvestApiClient:
         self._trading = KoreaInvestApiTrading(
             self._env,
             self._logger,
-            self.time_manager,
+            self.market_clock,
             async_client=shared_client,
             header_provider=header_provider.fork(),
             url_provider=url_provider,
             trid_provider=trid_provider,
         )
-        self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger, time_manager=self.time_manager, market_calendar_service=self._mcs)
+        self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger, market_clock=self.market_clock, market_calendar_service=self._mcs)
 
     # --- Account API delegation ---
     async def get_account_balance(self) -> ResCommonResponse:

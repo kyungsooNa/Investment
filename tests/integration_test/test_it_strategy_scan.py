@@ -247,7 +247,7 @@ class TestVolumeBreakoutLiveScan:
         config = VolumeBreakoutConfig(trigger_pct=3.0)
         strategy = VolumeBreakoutLiveStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            time_manager=deep_paper_ctx.time_manager,
+            market_clock=deep_paper_ctx.market_clock,
             config=config,
         )
 
@@ -288,7 +288,7 @@ class TestVolumeBreakoutLiveScan:
         config = VolumeBreakoutConfig(trigger_pct=3.0)
         strategy = VolumeBreakoutLiveStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            time_manager=deep_paper_ctx.time_manager,
+            market_clock=deep_paper_ctx.market_clock,
             config=config,
         )
 
@@ -336,7 +336,7 @@ class TestProgramBuyFollowScan:
         config = ProgramBuyFollowConfig(min_program_net_buy=0, min_program_buy_ratio=5.0)
         strategy = ProgramBuyFollowStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            time_manager=deep_paper_ctx.time_manager,
+            market_clock=deep_paper_ctx.market_clock,
             config=config,
         )
     
@@ -369,7 +369,7 @@ class TestProgramBuyFollowScan:
         config = ProgramBuyFollowConfig(min_program_net_buy=0)
         strategy = ProgramBuyFollowStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            time_manager=deep_paper_ctx.time_manager,
+            market_clock=deep_paper_ctx.market_clock,
             config=config,
         )
 
@@ -451,7 +451,7 @@ class TestTraditionalVolumeBreakoutScan:
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
             stock_code_repository=mock_mapper,
-            time_manager=mock_tm,
+            market_clock=mock_tm,
             config=config,
         )
         strategy._watchlist_date = ""
@@ -518,7 +518,7 @@ class TestTraditionalVolumeBreakoutScan:
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
             stock_code_repository=mock_mapper,
-            time_manager=mock_tm,
+            market_clock=mock_tm,
             config=config,
         )
         strategy._watchlist_date = ""
@@ -591,7 +591,7 @@ class TestOneilSqueezeBreakoutScan:
         strategy = OneilSqueezeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
             universe_service=mock_universe,
-            time_manager=mock_tm,
+            market_clock=mock_tm,
             config=config,
         )
         strategy._position_state.clear()  # 이전 테스트 잔여 상태 제거
@@ -659,7 +659,7 @@ class TestOneilSqueezeBreakoutScan:
         strategy = OneilSqueezeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
             universe_service=mock_universe,
-            time_manager=mock_tm,
+            market_clock=mock_tm,
             config=config,
         )
 
@@ -756,7 +756,7 @@ class TestOneilPocketPivotScan:
         strategy = OneilPocketPivotStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
             universe_service=mock_universe,
-            time_manager=mock_tm,
+            market_clock=mock_tm,
             config=config,
         )
         strategy._position_state.clear()  # 이전 테스트 잔여 상태 제거
@@ -809,7 +809,7 @@ class TestOneilPocketPivotScan:
         strategy = OneilPocketPivotStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
             universe_service=mock_universe,
-            time_manager=mock_tm,
+            market_clock=mock_tm,
         )
 
         signals = await strategy.scan()
@@ -836,7 +836,7 @@ class TestStrategyScanApiFailure:
 
         strategy = VolumeBreakoutLiveStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            time_manager=deep_paper_ctx.time_manager,
+            market_clock=deep_paper_ctx.market_clock,
         )
 
         signals = await strategy.scan()
@@ -855,7 +855,7 @@ class TestStrategyScanApiFailure:
 
         strategy = ProgramBuyFollowStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            time_manager=deep_paper_ctx.time_manager,
+            market_clock=deep_paper_ctx.market_clock,
         )
 
         signals = await strategy.scan()

@@ -6,9 +6,9 @@ from datetime import datetime
 from common.types import ResCommonResponse
 
 
-# Mock TimeManager 클래스 정의
-class MockTimeManager:
-    """테스트를 위해 고정된 시간을 반환하는 모의 TimeManager."""
+# Mock MarketClock 클래스 정의
+class MockMarketClock:
+    """테스트를 위해 고정된 시간을 반환하는 모의 MarketClock."""
 
     def get_current_kst_time(self):
         return datetime(2025, 1, 1, 9, 0, 0)  # 테스트를 위한 고정된 시간
@@ -18,9 +18,9 @@ class MockTimeManager:
 def backtest_data_provider_fixture():
     """BacktestDataProvider 인스턴스를 위한 픽스처."""
     stock_query_service = AsyncMock()
-    mock_time_manager = MockTimeManager()
+    mock_market_clock = MockMarketClock()
     # 로거는 테스트 출력을 깔끔하게 하기 위해 None으로 설정하거나, 필요시 목업
-    return BacktestDataProvider(stock_query_service=stock_query_service, time_manager=mock_time_manager)
+    return BacktestDataProvider(stock_query_service=stock_query_service, market_clock=mock_market_clock)
 
 
 @pytest.fixture(autouse=True)

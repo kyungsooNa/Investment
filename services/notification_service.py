@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Callable, Coroutine, Any, Dict, List, Optional
 
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 
 @dataclass
@@ -33,14 +33,14 @@ class NotificationService:
     """시스템 전체 알림 이벤트 허브.
 
     사용법:
-        nm = NotificationService(time_manager)
+        nm = NotificationService(market_clock)
         await nm.emit("TRADE", "critical", "매수 시그널", "삼성전자 72,000원")
     """
 
     MAX_HISTORY = 200
 
-    def __init__(self, time_manager: TimeManager):
-        self._time_manager = time_manager
+    def __init__(self, market_clock: MarketClock):
+        self._market_clock = market_clock
         self._history: List[NotificationEvent] = []
         self._subscriber_queues: List[asyncio.Queue] = []
         self._external_handlers: List[Callable[..., Coroutine[Any, Any, None]]] = []
@@ -58,7 +58,7 @@ class NotificationService:
         """이벤트 생성 → 히스토리 저장 → 구독자 전파."""
         event = NotificationEvent(
             id=uuid.uuid4().hex[:12],
-            timestamp=self._time_manager.get_current_kst_time().isoformat(),
+            timestamp=self._market_clock.get_current_kst_time().isoformat(),
             category=category,
             level=level,
             title=title,

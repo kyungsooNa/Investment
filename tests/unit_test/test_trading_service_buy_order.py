@@ -7,7 +7,7 @@ from common.types import ResCommonResponse, ErrorCode
 class TestTradingServiceBuyOrder(IsolatedAsyncioTestCase):
     def setUp(self):
         self.mock_logger = MagicMock()
-        self.mock_time_manager = MagicMock()
+        self.mock_market_clock = MagicMock()
         self.mock_env = MagicMock()
         self.mock_broker_api_wrapper = AsyncMock()
 
@@ -15,7 +15,7 @@ class TestTradingServiceBuyOrder(IsolatedAsyncioTestCase):
             broker_api_wrapper=self.mock_broker_api_wrapper,
             logger=self.mock_logger,
             env=self.mock_env,
-            time_manager=self.mock_time_manager
+            market_clock=self.mock_market_clock
         )
 
     async def test_place_buy_order_success(self):

@@ -8,7 +8,7 @@ from typing import List, Optional
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode, ResStockFullInfoApiOutput
 from services.stock_query_service import StockQueryService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from strategies.base_strategy_config import BaseStrategyConfig
 from core.logger import get_strategy_logger
 
@@ -41,12 +41,12 @@ class ProgramBuyFollowStrategy(LiveStrategy):
     def __init__(
         self,
         stock_query_service: StockQueryService,
-        time_manager: TimeManager,
+        market_clock: MarketClock,
         config: Optional[ProgramBuyFollowConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._sqs = stock_query_service
-        self._tm = time_manager
+        self._tm = market_clock
         self._cfg = config or ProgramBuyFollowConfig()
         if logger:
             self._logger = logger

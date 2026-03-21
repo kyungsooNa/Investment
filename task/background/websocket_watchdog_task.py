@@ -10,7 +10,7 @@ import time
 from typing import List, Optional, Callable, TYPE_CHECKING
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
-from core.performance_manager import PerformanceManager
+from core.performance_profiler import PerformanceProfiler
 from services.notification_service import NotificationService
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         trading_service=None,
         realtime_data_service: Optional["RealtimeDataService"] = None,
         market_calendar_service: Optional["MarketCalendarService"] = None,
-        performance_manager: Optional[PerformanceManager] = None,
+        performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
         logger=None,
     ):
@@ -36,7 +36,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._trading_service = trading_service
         self._realtime_data_service = realtime_data_service
         self.mcs = market_calendar_service
-        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._ns = notification_service
         self._logger = logger or logging.getLogger(__name__)
 

@@ -1,8 +1,8 @@
-# core/cache/memory_cache_manager.py
+# core/cache/memory_cache.py
 
 from typing import Any, Dict, Optional
 
-class MemoryCacheManager:
+class MemoryCache:
     def __init__(self):
         self._cache: Dict[str, Any] = {}
         self._logger = None

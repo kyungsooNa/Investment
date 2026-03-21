@@ -10,7 +10,7 @@ import math
 import logging
 from datetime import datetime, timedelta
 from functools import lru_cache
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from utils.transaction_cost_utils import TransactionCostUtils
 logger = logging.getLogger(__name__)
 
@@ -43,10 +43,10 @@ PRICE_CACHE_FILENAME = "close_price_cache.json"
 
 
 class VirtualTradeRepository:
-    def __init__(self, filename="data/VirtualTradeRepository/trade_journal.csv", time_manager: TimeManager = None):
+    def __init__(self, filename="data/VirtualTradeRepository/trade_journal.csv", market_clock: MarketClock = None):
         self._cached_data = None  # 메모리 캐시 변수 추가
         self.filename = filename
-        self.tm = time_manager if time_manager else TimeManager()
+        self.tm = market_clock if market_clock else MarketClock()
         self._lock = threading.Lock()
         os.makedirs(os.path.dirname(self.filename), exist_ok=True)  # 데이터 디렉토리 생성
         if not os.path.exists(self.filename):

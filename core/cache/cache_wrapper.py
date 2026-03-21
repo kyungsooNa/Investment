@@ -2,7 +2,7 @@
 from typing import TypeVar, Callable, Optional, Any
 
 from common.types import ResCommonResponse, ErrorCode
-from core.cache.cache_manager import CacheManager
+from core.cache.cache_store import CacheStore
 from core.cache.cache_config import load_cache_config
 from datetime import datetime
 
@@ -14,15 +14,15 @@ class ClientWithCache:
             self,
             client,
             logger,
-            time_manager,
+            market_clock,
             mode_fn: Callable[[], str],
-            cache_manager: Optional[CacheManager] = None,
+            cache_store: Optional[CacheStore] = None,
             config: Optional[dict] = None,
             market_calendar_service: Optional[Any] = None  # [추가] MarketCalendarService 주입
     ):
         self._client = client
         self._logger = logger
-        self._time_manager = time_manager
+        self._market_clock = market_clock
         self._mcs = market_calendar_service  # [추가]
         self._mode_fn = mode_fn  # 동적으로 모드 가져오기
 
@@ -36,7 +36,7 @@ class ClientWithCache:
         self._memory_enabled = bool(cache_cfg.get("memory_cache_enabled", True))
         self._caching_enabled = self._file_enabled or self._memory_enabled
 
-        self._cache = cache_manager if cache_manager else CacheManager(config)
+        self._cache = cache_store if cache_store else CacheStore(config)
         self._cache.set_logger(self._logger)
         self.cached_methods = set(config["cache"]["enabled_methods"])
 
@@ -105,7 +105,7 @@ class ClientWithCache:
                                     # 장 마감 전에 저장된 캐시는 전일 데이터이므로 무효
                                     # 최근 거래일 날짜 기준 장 마감 시간과 비교 (다음날 접근 시에도 정확히 비교)
                                     latest_trading_date_dt = datetime.strptime(latest_trading_date_str, "%Y%m%d")
-                                    market_close = self._time_manager.get_market_close_time(target_dt=latest_trading_date_dt)
+                                    market_close = self._market_clock.get_market_close_time(target_dt=latest_trading_date_dt)
                                     if cache_time >= market_close:
                                         is_valid = True
                                     else:
@@ -173,7 +173,7 @@ class ClientWithCache:
         try:
             dt = datetime.fromisoformat(timestamp_str)
             if dt.tzinfo is None:
-                return self._time_manager.market_timezone.localize(dt)
+                return self._market_clock.market_timezone.localize(dt)
             return dt
         except Exception as e:
             if self._logger:
@@ -184,18 +184,18 @@ class ClientWithCache:
 def cache_wrap_client(
         api_client: T,
         logger,
-        time_manager,
+        market_clock,
         mode_getter: Callable[[], str],
         config: Optional[dict] = None,
-        cache_manager: Optional[CacheManager] = None,
+        cache_store: Optional[CacheStore] = None,
         market_calendar_service: Optional[Any] = None
 ) -> T:
     return ClientWithCache(
         client=api_client,
         logger=logger,
-        time_manager=time_manager,
+        market_clock=market_clock,
         mode_fn=mode_getter,
-        cache_manager=cache_manager,
+        cache_store=cache_store,
         config=config,
         market_calendar_service=market_calendar_service
     )

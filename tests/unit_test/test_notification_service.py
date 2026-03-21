@@ -8,16 +8,16 @@ from datetime import datetime
 from services.notification_service import NotificationService, NotificationEvent
 
 @pytest.fixture
-def mock_time_manager():
-    """TimeManager의 Mock 객체를 생성합니다."""
+def mock_market_clock():
+    """MarketClock의 Mock 객체를 생성합니다."""
     tm = MagicMock()
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 10, 0, 0)
     return tm
 
 @pytest.fixture
-def manager(mock_time_manager):
+def manager(mock_market_clock):
     """테스트용 NotificationService 인스턴스를 생성합니다."""
-    return NotificationService(time_manager=mock_time_manager)
+    return NotificationService(market_clock=mock_market_clock)
 
 # --- NotificationEvent Tests ---
 

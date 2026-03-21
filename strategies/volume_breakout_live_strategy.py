@@ -8,7 +8,7 @@ from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
 from services.stock_query_service import StockQueryService
 from strategies.volume_breakout_strategy import VolumeBreakoutConfig
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from core.logger import get_strategy_logger
 
 
@@ -30,12 +30,12 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
     def __init__(
         self,
         stock_query_service: StockQueryService,
-        time_manager: TimeManager,
+        market_clock: MarketClock,
         config: Optional[VolumeBreakoutConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._sqs = stock_query_service
-        self._tm = time_manager
+        self._tm = market_clock
         self._cfg = config or VolumeBreakoutConfig()
         if logger:
             self._logger = logger

@@ -441,7 +441,7 @@ class ResCommonResponse(BaseModel, Generic[T]):
                     data_serialized.append(item.model_dump())
                 elif isinstance(item, (list, tuple, dict)): # 중첩된 리스트/딕셔너리도 처리
                     # 여기서 재귀적으로 self._serialize 같은 함수를 사용하면 좋지만,
-                    # types.py에서는 cache_manager._serialize를 직접 호출할 수 없으므로,
+                    # types.py에서는 cache_store._serialize를 직접 호출할 수 없으므로,
                     # to_dict를 가진 객체만 처리하거나, 더 일반적인 재귀 직렬화 로직을 이 안에 구현해야 함.
                     # 일단은 to_dict를 가진 객체만 처리하도록 간소화합니다.
                     data_serialized.append(item) # to_dict 없는 객체는 그대로

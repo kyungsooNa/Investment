@@ -13,10 +13,10 @@ from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
 from repositories.stock_code_repository import StockCodeRepository
 from services.naver_finance_scraper_service import NaverFinanceScraperService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from core.logger import get_strategy_logger
-from core.performance_manager import PerformanceManager
+from core.performance_profiler import PerformanceProfiler
 
 def _chunked(lst, size):
     for i in range(0, len(lst), size):
@@ -38,20 +38,20 @@ class OneilUniverseService:
         stock_query_service: StockQueryService,
         indicator_service: IndicatorService,
         stock_code_repository: StockCodeRepository,
-        time_manager: TimeManager,
+        market_clock: MarketClock,
         scraper_service: Optional[NaverFinanceScraperService] = None,  # 추가됨
         config: Optional[OneilUniverseConfig] = None,
         logger: Optional[logging.Logger] = None,
-        performance_manager: Optional[PerformanceManager] = None
+        performance_profiler: Optional[PerformanceProfiler] = None
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
         self.stock_code_repository = stock_code_repository
-        self._tm = time_manager
+        self._tm = market_clock
         self._scraper = scraper_service
         self._cfg = config or OneilUniverseConfig()
         self._logger = logger or logging.getLogger(__name__)
-        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
 
         # 상태 관리
         self._watchlist: Dict[str, OSBWatchlistItem] = {}

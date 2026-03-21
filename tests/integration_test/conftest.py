@@ -6,7 +6,7 @@ import shutil
 import pytest
 import logging
 import json
-from core.cache.cache_manager import CacheManager
+from core.cache.cache_store import CacheStore
 from core.logger import Logger  # ⬅️ 추가
 from unittest.mock import MagicMock, AsyncMock
 from typing import Any, Dict, Iterable, Optional
@@ -33,8 +33,8 @@ def test_cache_config():
 
 
 @pytest.fixture(scope="function")
-def cache_manager(test_cache_config):
-    return CacheManager(config=test_cache_config)
+def cache_store(test_cache_config):
+    return CacheStore(config=test_cache_config)
 
 
 @pytest.fixture(autouse=True)
@@ -568,10 +568,10 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
         web_ctx.load_config_and_env()
 
         # 토큰 발급 mock
-        web_ctx.env._token_manager_paper = MagicMock()
-        web_ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
-        web_ctx.env._token_manager_real = MagicMock()
-        web_ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
+        web_ctx.env._token_provider_paper = MagicMock()
+        web_ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
+        web_ctx.env._token_provider_real = MagicMock()
+        web_ctx.env._token_provider_real.get_access_token = AsyncMock(return_value="mock-real-token")
 
         await web_ctx.initialize_services(is_paper_trading=True)
 

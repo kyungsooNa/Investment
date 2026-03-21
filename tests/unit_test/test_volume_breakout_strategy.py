@@ -8,14 +8,14 @@ class TestVolumeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         self.mock_tm = MagicMock()
         self.mock_logger = MagicMock()
         
-        # TimeManager mock setup
+        # MarketClock mock setup
         # to_hhmmss는 입력을 그대로 반환하거나 간단한 처리를 하도록 설정
         self.mock_tm.to_hhmmss.side_effect = lambda x: str(x).zfill(6)
         self.mock_tm.get_current_kst_time.return_value.strftime.return_value = "20250101"
 
         self.strategy = VolumeBreakoutStrategy(
             stock_query_service=self.mock_sqs,
-            time_manager=self.mock_tm,
+            market_clock=self.mock_tm,
             logger=self.mock_logger
         )
 

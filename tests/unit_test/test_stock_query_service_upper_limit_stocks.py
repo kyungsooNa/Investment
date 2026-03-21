@@ -12,7 +12,7 @@ from services.trading_service import TradingService
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
-from core.time_manager import TimeManager  # Mocking용
+from core.market_clock import MarketClock  # Mocking용
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Mocking용
 from common.types import ResCommonResponse, ResStockFullInfoApiOutput, ResTopMarketCapApiItem
 from dataclasses import fields
@@ -67,7 +67,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_env = mock.MagicMock(spec=KoreaInvestApiEnv)  # MagicMock으로 변경
         self.mock_env.is_paper_trading = False  # 기본값 설정
         self.mock_logger = MockLogger()
-        self.mock_time_manager = mock.MagicMock(spec_set=TimeManager)  # MagicMock으로 변경
+        self.mock_market_clock = mock.MagicMock(spec_set=MarketClock)  # MagicMock으로 변경
 
         self.mock_broker_api_wrapper = AsyncMock()
         self.mock_broker_api_wrapper.client = AsyncMock(spec=KoreaInvestApiQuotations)
@@ -90,14 +90,14 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
             broker_api_wrapper=self.mock_broker_api_wrapper,  # 여기에서 Mock api_client를 주입
             env=self.mock_env,
             logger=self.mock_logger,
-            time_manager=self.mock_time_manager
+            market_clock=self.mock_market_clock
         )
 
         # 📌 DataHandlers 인스턴스 생성 (handle_upper_limit_stocks 포함) - setUp에서 한 번만 생성
         self.stock_query_service = StockQueryService(
             trading_service=self.trading_service,  # 여기에서 Mock trading_service를 주입
             logger=self.mock_logger,
-            time_manager=self.mock_time_manager
+            market_clock=self.mock_market_clock
         )
 
     # --- handle_upper_limit_stocks 테스트 케이스들 ---
@@ -140,7 +140,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         mock_env.is_paper_trading = False
 
         mock_logger = MagicMock()
-        mock_time_manager = MagicMock()
+        mock_market_clock = MagicMock()
 
         trading_service = MagicMock()
         trading_service._env = mock_env
@@ -165,7 +165,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         data_handler = StockQueryService(
             trading_service=trading_service,
-            time_manager=mock_time_manager,
+            market_clock=mock_market_clock,
             logger=mock_logger
         )
 

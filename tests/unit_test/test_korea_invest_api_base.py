@@ -5,7 +5,7 @@ import json
 from unittest.mock import MagicMock, AsyncMock, patch, call
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase, ApiRetryError
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
-from brokers.korea_investment.korea_invest_token_manager import TokenManager
+from brokers.korea_investment.korea_invest_token_provider import TokenProvider
 import requests
 import logging
 import httpx  # 에러 시뮬레이션을 위해 import
@@ -63,7 +63,7 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         """ 각 테스트 실행 전에 필요한 객체들을 초기화합니다. """
         self.mock_logger = MagicMock()
-        self.mock_time_manager = AsyncMock()
+        self.mock_market_clock = AsyncMock()
         self.mock_trid_provider = MagicMock()
 
         # spec=KoreaInvestApiEnv 인자를 추가하여 mock_env가
@@ -76,7 +76,7 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
         self.api_base = KoreaInvestApiBase(
             env=self.mock_env,
             logger=self.mock_logger,
-            time_manager=self.mock_time_manager,
+            market_clock=self.mock_market_clock,
             trid_provider=self.mock_trid_provider
         )
 
@@ -196,8 +196,8 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
             await self.api_base.call_api("GET", "/test", retry_count=2)
 
             # Assert
-            # time_manager.async_sleep이 custom_delay로 호출되었는지 확인
-            self.mock_time_manager.async_sleep.assert_awaited_with(custom_delay)
+            # market_clock.async_sleep이 custom_delay로 호출되었는지 확인
+            self.mock_market_clock.async_sleep.assert_awaited_with(custom_delay)
 
     async def test_handle_response_no_standard_schema(self):
         """
@@ -284,10 +284,10 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
 
 
 class DummyAPI(KoreaInvestApiBase):
-    def __init__(self, env, logger, time_manager, trid_provider=None):
+    def __init__(self, env, logger, market_clock, trid_provider=None):
         # 부모 클래스의 생성자를 먼저 호출합니다.
         # 이 시점에 self._async_session은 실제 httpx.AsyncClient 인스턴스가 됩니다.
-        super().__init__(env, logger, time_manager, trid_provider=trid_provider)
+        super().__init__(env, logger, market_clock, trid_provider=trid_provider)
 
         # 부모 생성자 호출 후, _async_session을 MagicMock으로 교체합니다.
         # 이렇게 하면 _async_session.get 같은 메서드들도 MagicMock 객체가 되어 side_effect를 할당할 수 있습니다.
@@ -304,11 +304,11 @@ class DummyAPI(KoreaInvestApiBase):
 def get_api():
     mock_env = get_mock_env()
     mock_logger = get_test_logger()
-    mock_time_manager = AsyncMock()
-    mock_time_manager.async_sleep = AsyncMock(return_value=None)
+    mock_market_clock = AsyncMock()
+    mock_market_clock.async_sleep = AsyncMock(return_value=None)
     mock_trid_provider = MagicMock()
 
-    return DummyAPI(mock_env, mock_logger, mock_time_manager, trid_provider=mock_trid_provider)
+    return DummyAPI(mock_env, mock_logger, mock_market_clock, trid_provider=mock_trid_provider)
 
 @pytest.mark.asyncio
 async def testcall_api_retry_exceed_failure(caplog):
@@ -436,7 +436,7 @@ async def testcall_api_retry_on_429(caplog):
     api = get_api()
 
     # ✅ 재시도 대기 비활성 + await 가능
-    api.time_manager.async_sleep = AsyncMock(return_value=None)
+    api.market_clock.async_sleep = AsyncMock(return_value=None)
 
     responses_list = []  # mock_get_async가 생성하는 응답 객체를 추적하기 위한 리스트
 
@@ -485,13 +485,13 @@ async def testcall_api_retry_on_429(caplog):
 
     # asyncio.sleep이 호출되었는지, 적절한 인자로 호출되었는지 확인
     # 429 에러가 2번 발생했으므로, 2번의 sleep 호출 예상 (첫 실패 후, 두 번째 실패 후)
-    assert api.time_manager.async_sleep.await_count == 2
+    assert api.market_clock.async_sleep.await_count == 2
     # 지수 백오프 적용: 1회차 0.01, 2회차 0.02
-    api.time_manager.async_sleep.assert_has_awaits([call(0.01), call(0.02)])
+    api.market_clock.async_sleep.assert_has_awaits([call(0.01), call(0.02)])
 
 
 @pytest.mark.asyncio
-@patch("core.time_manager.TimeManager.async_sleep", new_callable=AsyncMock)  # ← 타겟 교체
+@patch("core.market_clock.MarketClock.async_sleep", new_callable=AsyncMock)  # ← 타겟 교체
 async def testcall_api_retry_on_500_rate_limit(mock_sleep):
     api = get_api()
     api._logger = MagicMock(wraps=api._logger)
@@ -535,9 +535,9 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
 
     assert len(responses_list) == 3
     assert api._async_session.get.call_count == 3
-    assert api.time_manager.async_sleep.await_count == 2
+    assert api.market_clock.async_sleep.await_count == 2
     # 지수 백오프 적용: 1회차 0.01, 2회차 0.02
-    api.time_manager.async_sleep.assert_has_awaits([call(0.01), call(0.02)])
+    api.market_clock.async_sleep.assert_has_awaits([call(0.01), call(0.02)])
 
 
     # _log_request_exception은 예외가 call_api에서 잡힐 때만 호출됩니다.
@@ -557,7 +557,7 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
 
 @pytest.mark.asyncio
 async def testcall_api_token_expired_retry():
-    class MockTokenManager:
+    class MockTokenProvider:
         def __init__(self):
             self.invalidated = False
 
@@ -617,7 +617,7 @@ async def testcall_api_token_expired_retry():
 
 @pytest.mark.asyncio
 async def testcall_api_http_error(monkeypatch):
-    class MockTokenManager:
+    class MockTokenProvider:
         def __init__(self):
             self.invalidated = False
 
@@ -645,7 +645,7 @@ async def testcall_api_http_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def testcall_api_connection_error(monkeypatch):
-    class MockTokenManager:
+    class MockTokenProvider:
         def __init__(self):
             self.invalidated = False
 
@@ -670,7 +670,7 @@ async def testcall_api_connection_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def testcall_api_timeout(monkeypatch):
-    class MockTokenManager:
+    class MockTokenProvider:
         def __init__(self):
             self.invalidated = False
 
@@ -1011,7 +1011,7 @@ async def test_call_api_response_not_dict(caplog):
     mock_trid_provider = MagicMock()
     mock_session = AsyncMock()
     api = KoreaInvestApiBase(
-        mock_env, logger=None, time_manager=AsyncMock(),
+        mock_env, logger=None, market_clock=AsyncMock(),
         async_client=mock_session,
         header_provider=MagicMock(), url_provider=MagicMock(),
         trid_provider=mock_trid_provider,
@@ -1041,7 +1041,7 @@ async def test_call_api_response_missing_output(caplog):
     mock_trid_provider = MagicMock()
     mock_session = AsyncMock()
     api = KoreaInvestApiBase(
-        mock_env, logger=None, time_manager=AsyncMock(),
+        mock_env, logger=None, market_clock=AsyncMock(),
         async_client=mock_session,
         header_provider=MagicMock(), url_provider=MagicMock(),
         trid_provider=mock_trid_provider,

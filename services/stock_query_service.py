@@ -4,7 +4,7 @@ from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, R
     ResStockFullInfoApiOutput
 from config.DynamicConfig import DynamicConfig
 from typing import List, Dict, Optional, Literal
-from core.performance_manager import PerformanceManager
+from core.performance_profiler import PerformanceProfiler
 from services.notification_service import NotificationService
 from services.trading_service import TradingService
 
@@ -12,18 +12,18 @@ from services.trading_service import TradingService
 class StockQueryService:
     """
     주식 현재가, 계좌 잔고, 시가총액 조회 등 데이터 조회 관련 핸들러를 관리하는 클래스입니다.
-    TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
+    TradingService, Logger, MarketClock 인스턴스를 주입받아 사용합니다.
     """
 
-    def __init__(self, trading_service: TradingService, logger, time_manager, indicator_service=None,
-                 ranking_task=None, performance_manager: Optional[PerformanceManager] = None,
+    def __init__(self, trading_service: TradingService, logger, market_clock, indicator_service=None,
+                 ranking_task=None, performance_profiler: Optional[PerformanceProfiler] = None,
                  notification_service: Optional[NotificationService] = None):
         self.trading_service = trading_service
         self.logger = logger
-        self.time_manager = time_manager
+        self.market_clock = market_clock
         self.indicator_service = indicator_service
         self.ranking_task = ranking_task
-        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
 
     def _get_sign_from_code(self, sign_code):
@@ -124,7 +124,7 @@ class StockQueryService:
             "change_absolute": display_change,
             "rate": output.prdy_ctrt,
             "sign": actual_sign,
-            "time": self.time_manager.get_current_kst_time().strftime("%H:%M:%S"),
+            "time": self.market_clock.get_current_kst_time().strftime("%H:%M:%S"),
             "bstp_kor_isnm": output.bstp_kor_isnm,
             "iscd_stat_cls_code_desc": f"{status_description} ({output.iscd_stat_cls_code})",
 
@@ -761,19 +761,19 @@ class StockQueryService:
                 start_hhmmss = start_hhmmss or "090000"
                 end_hhmmss   = end_hhmmss   or "153000"
 
-        start_hhmmss = self.time_manager.to_hhmmss(start_hhmmss)
-        end_hhmmss   = self.time_manager.to_hhmmss(end_hhmmss)
+        start_hhmmss = self.market_clock.to_hhmmss(start_hhmmss)
+        end_hhmmss   = self.market_clock.to_hhmmss(end_hhmmss)
 
         # 조회 날짜
         if date_ymd:
             ymd = date_ymd
         else:
-            now_kst = self.time_manager.get_current_kst_time()
+            now_kst = self.market_clock.get_current_kst_time()
             ymd = now_kst.strftime("%Y%m%d")
 
         # 배치 호출 함수 선택
         async def _fetch_batch(cursor_hhmmss: str):
-            cursor_hhmmss = self.time_manager.to_hhmmss(cursor_hhmmss)
+            cursor_hhmmss = self.market_clock.to_hhmmss(cursor_hhmmss)
             if self.trading_service._env.is_paper_trading:
                 # 오늘(모의/실전; 배치당 30개)
                 return await self.get_intraday_minutes_today(
@@ -816,7 +816,7 @@ class StockQueryService:
 
             for row in rows:
                 d = str(row.get("stck_bsop_date") or ymd)
-                t = self.time_manager.to_hhmmss(row.get("stck_cntg_hour") or "")
+                t = self.market_clock.to_hhmmss(row.get("stck_cntg_hour") or "")
 
                 if (min_time_in_batch is None) or (t < min_time_in_batch):
                     min_time_in_batch = t
@@ -837,14 +837,14 @@ class StockQueryService:
 
             if added == 0:
                 if min_time_in_batch:
-                    cursor = self.time_manager.dec_minute(min_time_in_batch, 1)
+                    cursor = self.market_clock.dec_minute(min_time_in_batch, 1)
                     if cursor < start_hhmmss:
                         break
                     continue
                 break
 
             if min_time_in_batch:
-                cursor = self.time_manager.dec_minute(min_time_in_batch, 1)
+                cursor = self.market_clock.dec_minute(min_time_in_batch, 1)
                 if cursor < start_hhmmss:
                     break
             else:
@@ -869,7 +869,7 @@ class StockQueryService:
 
         # 3) 지정 시간 대기
         try:
-            await self.time_manager.async_sleep(duration)
+            await self.market_clock.async_sleep(duration)
         finally:
             # 4) 구독 해지 및 연결 해제 (예외가 나도 정리 보장)
             await self.trading_service.unsubscribe_program_trading(stock_code)

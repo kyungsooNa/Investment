@@ -9,14 +9,14 @@ def mock_deps(mocker):
     broker = mocker.Mock()
     env = mocker.Mock()
     logger = mocker.Mock()
-    time_manager = mocker.Mock()
-    return broker, env, logger, time_manager
+    market_clock = mocker.Mock()
+    return broker, env, logger, market_clock
 
 @pytest.fixture
 def trading_service(mock_deps):
     """TradingService 인스턴스 생성"""
-    broker, env, logger, time_manager = mock_deps
-    return TradingService(broker, env, logger, time_manager)
+    broker, env, logger, market_clock = mock_deps
+    return TradingService(broker, env, logger, market_clock)
 
 def make_response(data):
     """ResCommonResponse 헬퍼"""

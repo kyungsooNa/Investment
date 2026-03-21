@@ -13,7 +13,7 @@ from Crypto.Util.Padding import unpad
 from base64 import b64decode
 
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # KoreaInvestEnv 클래스 임포트
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from services.market_calendar_service import MarketCalendarService
 
 
@@ -23,10 +23,10 @@ class KoreaInvestWebSocketAPI:
     `websockets` 라이브러리(asyncio 기반)를 사용하며, 다양한 실시간 데이터 파싱을 포함합니다.
     """
 
-    def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager: TimeManager = None,
+    def __init__(self, env: KoreaInvestApiEnv, logger=None, market_clock: MarketClock = None,
                  market_calendar_service: Optional[MarketCalendarService] = None):
         self._env = env
-        self._time_manager = time_manager
+        self._market_clock = market_clock
         self._mcs = market_calendar_service
         self._logger = logger if logger else logging.getLogger(__name__)
         # self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)
@@ -155,7 +155,7 @@ class KoreaInvestWebSocketAPI:
         while self._auto_reconnect:
             # 1. 연결이 끊겨있다면 재연결 시도
             if not self._is_connected:
-                # 장 운영 시간 확인 (TimeManager가 있을 경우)
+                # 장 운영 시간 확인 (MarketCalendarService가 있을 경우)
                 if self._mcs and not await self._mcs.is_market_open_now():
                     self._logger.info("장이 종료되어 자동 재연결을 중단합니다.")
                     self._auto_reconnect = False

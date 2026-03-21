@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 from services.indicator_service import IndicatorService
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
-from core.cache.cache_manager import CacheManager
+from core.cache.cache_store import CacheStore
 
 @pytest.fixture
 def indicator_service():
@@ -686,8 +686,8 @@ async def test_get_moving_average_ema_case_insensitive(indicator_service):
 @pytest.fixture
 def indicator_service_with_cache():
     mock_sqs = AsyncMock()
-    mock_cache = MagicMock(spec=CacheManager)
-    return IndicatorService(mock_sqs, cache_manager=mock_cache), mock_sqs, mock_cache
+    mock_cache = MagicMock(spec=CacheStore)
+    return IndicatorService(mock_sqs, cache_store=mock_cache), mock_sqs, mock_cache
 
 @pytest.mark.asyncio
 async def test_service_without_sqs():
@@ -707,7 +707,7 @@ async def test_service_without_sqs():
 @pytest.mark.asyncio
 async def test_get_chart_indicators_no_cache_manager(indicator_service):
     """캐시 매니저 없이 차트 지표 계산 (전체 계산)"""
-    service, mock_sqs = indicator_service # cache_manager is None
+    service, mock_sqs = indicator_service # cache_store is None
     
     # 150일치 데이터 (충분한 데이터)
     data = [{"date": f"202501{i+1:03d}", "close": 10000 + i * 10} for i in range(150)]

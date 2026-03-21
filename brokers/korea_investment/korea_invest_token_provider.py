@@ -7,7 +7,7 @@ import pytz # pytz 임포트
 from typing import Optional
 
 
-class TokenManager:
+class TokenProvider:
     """
     한국투자증권 API의 액세스 토큰 관리를 전담하는 클래스.
     - 토큰을 파일에 저장하여 영속성을 보장합니다.

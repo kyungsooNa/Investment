@@ -527,7 +527,7 @@ class TestWebAppContextInitialization:
         from services.indicator_service import IndicatorService
         from services.oneil_universe_service import OneilUniverseService
         from task.background.ranking_task import RankingTask
-        from core.time_manager import TimeManager
+        from core.market_clock import MarketClock
         from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 
         class SimpleContext:
@@ -545,14 +545,14 @@ class TestWebAppContextInitialization:
             # load_config_and_env 결과 검증
             assert ctx.env is not None
             assert isinstance(ctx.env, KoreaInvestApiEnv)
-            assert ctx.time_manager is not None
-            assert isinstance(ctx.time_manager, TimeManager)
+            assert ctx.market_clock is not None
+            assert isinstance(ctx.market_clock, MarketClock)
 
             # 토큰 발급 mock (네트워크 호출 차단)
-            ctx.env._token_manager_paper = MagicMock()
-            ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
-            ctx.env._token_manager_real = MagicMock()
-            ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
+            ctx.env._token_provider_paper = MagicMock()
+            ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
+            ctx.env._token_provider_real = MagicMock()
+            ctx.env._token_provider_real.get_access_token = AsyncMock(return_value="mock-real-token")
 
             # initialize_services 실행
             result = await ctx.initialize_services(is_paper_trading=True)
@@ -597,10 +597,10 @@ class TestWebAppContextInitialization:
             ctx.logger = test_logger
             ctx.load_config_and_env()
 
-            ctx.env._token_manager_paper = MagicMock()
-            ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
-            ctx.env._token_manager_real = MagicMock()
-            ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
+            ctx.env._token_provider_paper = MagicMock()
+            ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
+            ctx.env._token_provider_real = MagicMock()
+            ctx.env._token_provider_real.get_access_token = AsyncMock(return_value="mock-real-token")
 
             result = await ctx.initialize_services(is_paper_trading=False)
 
@@ -628,8 +628,8 @@ class TestWebAppContextInitialization:
             ctx.load_config_and_env()
 
             # 토큰 발급 실패 mock
-            ctx.env._token_manager_paper = MagicMock()
-            ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value=None)
+            ctx.env._token_provider_paper = MagicMock()
+            ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value=None)
 
             result = await ctx.initialize_services(is_paper_trading=True)
 
@@ -657,10 +657,10 @@ class TestWebAppContextInitialization:
             ctx.logger = test_logger
             ctx.load_config_and_env()
 
-            ctx.env._token_manager_paper = MagicMock()
-            ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
-            ctx.env._token_manager_real = MagicMock()
-            ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
+            ctx.env._token_provider_paper = MagicMock()
+            ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
+            ctx.env._token_provider_real = MagicMock()
+            ctx.env._token_provider_real.get_access_token = AsyncMock(return_value="mock-real-token")
 
             await ctx.initialize_services(is_paper_trading=True)
 
@@ -695,10 +695,10 @@ class TestWebAppContextInitialization:
             ctx.logger = test_logger
             ctx.load_config_and_env()
 
-            ctx.env._token_manager_paper = MagicMock()
-            ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
-            ctx.env._token_manager_real = MagicMock()
-            ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
+            ctx.env._token_provider_paper = MagicMock()
+            ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
+            ctx.env._token_provider_real = MagicMock()
+            ctx.env._token_provider_real.get_access_token = AsyncMock(return_value="mock-real-token")
 
             # 1차 초기화: 모의투자
             await ctx.initialize_services(is_paper_trading=True)
@@ -732,10 +732,10 @@ class TestWebAppContextInitialization:
             ctx.logger = test_logger
             ctx.load_config_and_env()
 
-            ctx.env._token_manager_paper = MagicMock()
-            ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
-            ctx.env._token_manager_real = MagicMock()
-            ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
+            ctx.env._token_provider_paper = MagicMock()
+            ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
+            ctx.env._token_provider_real = MagicMock()
+            ctx.env._token_provider_real.get_access_token = AsyncMock(return_value="mock-real-token")
 
             await ctx.initialize_services(is_paper_trading=True)
 

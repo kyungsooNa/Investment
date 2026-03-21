@@ -60,9 +60,9 @@ async def test_place_stock_order_buy_success():
     }
 
     mock_logger = MagicMock()
-    mock_time_manager = MagicMock()
+    mock_market_clock = MagicMock()
     mock_trid_provider = MagicMock()
-    trading_api = KoreaInvestApiTrading(MagicMock(), mock_logger, mock_time_manager, trid_provider=mock_trid_provider)
+    trading_api = KoreaInvestApiTrading(MagicMock(), mock_logger, mock_market_clock, trid_provider=mock_trid_provider)
 
     # mock _get_hashkey and call_api
     trading_api._get_hashkey = AsyncMock(return_value='mocked_hash')

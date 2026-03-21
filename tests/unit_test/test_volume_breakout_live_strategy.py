@@ -23,7 +23,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
 
         strategy = VolumeBreakoutLiveStrategy(
             stock_query_service=sqs,
-            time_manager=tm,
+            market_clock=tm,
             config=config,
             logger=logger,
         )

@@ -167,7 +167,7 @@ async def test_build_pool_b_parallel_execution(mock_components):
     # 설정: 청크 사이즈를 2로 설정하여 5개 후보가 3번의 청크(2, 2, 1)로 나뉘어 처리되는지 간접 확인
     config = OneilUniverseConfig(api_chunk_size=2, pool_b_size=10)
     
-    # PerformanceManager Mock
+    # PerformanceProfiler Mock
     pm = MagicMock()
 
     # [수정] Mock Scraper 추가
@@ -178,11 +178,11 @@ async def test_build_pool_b_parallel_execution(mock_components):
         stock_query_service=sqs,
         indicator_service=indicator,
         stock_code_repository=mapper,
-        time_manager=tm,
+        market_clock=tm,
         scraper_service=mock_scraper,
         config=config,
         logger=logger,
-        performance_manager=pm
+        performance_profiler=pm
     )
     
     # Mock 데이터 설정

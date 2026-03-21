@@ -7,7 +7,7 @@ from functools import lru_cache
 from datetime import datetime, timedelta
 
 from repositories.virtual_trade_repository import VirtualTradeRepository
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from utils.transaction_cost_utils import TransactionCostUtils
 
 logger = logging.getLogger(__name__)
@@ -30,9 +30,9 @@ def _get_trading_dates(daily: dict) -> list[str]:
 
 class VirtualTradeService:
     """모의매매 통계 계산 및 성과 분석을 담당하는 비즈니스 서비스 계층"""
-    def __init__(self, repository: VirtualTradeRepository, time_manager: TimeManager):
+    def __init__(self, repository: VirtualTradeRepository, market_clock: MarketClock):
         self._repo = repository
-        self.tm = time_manager
+        self.tm = market_clock
 
     # ── 비즈니스 & 통계 계산 로직 ──
 

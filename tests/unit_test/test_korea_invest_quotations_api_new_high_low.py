@@ -10,7 +10,7 @@ def mock_api_quotations():
     """KoreaInvestApiQuotations의 mock 객체를 생성합니다."""
     mock_env = MagicMock()
     mock_logger = MagicMock()
-    mock_time_manager = MagicMock()
+    mock_market_clock = MagicMock()
     
     # Config 로딩 및 네트워크 연결을 방지하기 위해 의존성 주입
     mock_trid_provider = MagicMock()
@@ -19,7 +19,7 @@ def mock_api_quotations():
     mock_async_client = AsyncMock()
 
     api = KoreaInvestApiQuotations(
-        env=mock_env, logger=mock_logger, time_manager=mock_time_manager,
+        env=mock_env, logger=mock_logger, market_clock=mock_market_clock,
         trid_provider=mock_trid_provider, url_provider=mock_url_provider,
         header_provider=mock_header_provider, async_client=mock_async_client
     )

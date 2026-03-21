@@ -38,7 +38,7 @@ Investment/
 │   ├── korea_invest_trading_api.py     # 매수/매도 주문 API
 │   ├── korea_invest_websocket_api.py   # 실시간 WebSocket (체결가, 호가, 프로그램매매)
 │   ├── korea_invest_*_provider.py      # Header, URL, TrID, Params 프로바이더
-│   └── korea_invest_token_manager.py   # 토큰 발급/갱신/저장
+│   └── korea_invest_token_provider.py   # 토큰 발급/갱신/저장
 ├── common/types.py         # 공통 데이터 모델 (ResCommonResponse, ErrorCode, TradeSignal 등)
 ├── config/                 # YAML 설정 파일들
 │   ├── config.yaml(.example)   # API키, 계좌번호, URL (gitignore 대상)
@@ -46,7 +46,7 @@ Investment/
 │   ├── kis_config.yaml         # 엔드포인트 경로 + 쿼리 파라미터
 │   ├── cache_config.yaml       # 캐시 설정 (TTL, 활성 메서드 목록)
 │   └── DynamicConfig.py        # 코드 내 상수 (OHLCV 범위 등)
-├── core/                   # 인프라 (Logger, TimeManager, Cache 서브시스템)
+├── core/                   # 인프라 (Logger, MarketClock, Cache 서브시스템)
 ├── data/                   # stock_code_list.csv (KOSPI+KOSDAQ 종목코드)
 ├── interfaces/strategy.py  # Strategy 추상 인터페이스
 ├── managers/               # VirtualTradeManager (CSV 기반 모의매매 저널)
@@ -87,7 +87,7 @@ View (CLIView / FastAPI)
 ```
 
 ## 핵심 설계 패턴
-- **DI**: 모든 주요 클래스가 생성자를 통해 의존성 주입 (logger, time_manager, env 등)
+- **DI**: 모든 주요 클래스가 생성자를 통해 의존성 주입 (logger, market_clock, env 등)
 - **Command 패턴**: `UserActionExecutor.COMMANDS` dict → 메뉴 번호 → 핸들러 메서드 디스패치
 - **Strategy 패턴**: `Strategy` 추상 클래스 → `MomentumStrategy`, `GapUpPullbackStrategy` 구현
 - **Proxy/Decorator**: `ClientWithCache`가 API 클라이언트를 래핑 (장 마감 후 캐시 활성)

@@ -3,65 +3,65 @@
 import pytest
 import json
 from unittest.mock import MagicMock
-from core.cache.cache_manager import CacheManager
-from core.cache.file_cache_manager import FileCacheManager
-from core.cache.db_cache_manager import DBCacheManager
-from core.cache.memory_cache_manager import MemoryCacheManager
+from core.cache.cache_store import CacheStore
+from core.cache.file_cache import FileCache
+from core.cache.db_cache import DBCache
+from core.cache.memory_cache import MemoryCache
 from datetime import datetime
 
 
 @pytest.mark.asyncio
-async def test_cache_manager_basic_set_get(cache_manager):
+async def test_cache_manager_basic_set_get(cache_store):
     key = "test_key"
     data = {"foo": 123}
-    cache_manager.set(key, {
+    cache_store.set(key, {
         "timestamp": datetime.now().isoformat(),
         "data": data
     })
 
-    loaded, cache_type = cache_manager.get_raw(key)
+    loaded, cache_type = cache_store.get_raw(key)
     assert loaded['data'] == data
     assert cache_type == "memory"
 
 
 @pytest.mark.asyncio
-async def test_cache_manager_delete(cache_manager):
+async def test_cache_manager_delete(cache_store):
     key = "test_key"
     data = {"foo": "bar"}
-    cache_manager.set(key, {
+    cache_store.set(key, {
         "timestamp": datetime.now().isoformat(),
         "data": data
     })
     # 1. set
-    loaded, cache_type = cache_manager.get_raw(key)
+    loaded, cache_type = cache_store.get_raw(key)
     assert loaded['data'] == data
     assert cache_type == "memory"
 
     # 2. delete
-    cache_manager.delete(key)
-    assert cache_manager.get_raw(key) is None
+    cache_store.delete(key)
+    assert cache_store.get_raw(key) is None
 
 
 @pytest.mark.asyncio
-async def test_cache_manager_delete_failure(cache_manager):
+async def test_cache_manager_delete_failure(cache_store):
     key = "test_key"
     data = {"foo": "bar"}
 
     # 1. set
-    cache_manager.set(key, {
+    cache_store.set(key, {
         "timestamp": datetime.now().isoformat(),
         "data": data
     })
 
-    loaded, cache_type = cache_manager.get_raw(key)
+    loaded, cache_type = cache_store.get_raw(key)
     assert loaded['data'] == data
     assert cache_type == "memory"
 
     key2 = "test_key2"
 
     # 2. delete
-    cache_manager.delete(key2)
-    assert cache_manager.get_raw(key) is not None
+    cache_store.delete(key2)
+    assert cache_store.get_raw(key) is not None
 
 
 def test_cache_manager_set_creates_file(tmp_path):
@@ -73,13 +73,13 @@ def test_cache_manager_set_creates_file(tmp_path):
             "deserializable_classes": []
         }
     }
-    cache_manager = CacheManager(config=config)
+    cache_store = CacheStore(config=config)
 
     key = "file_cache_test"
     data = {"x": 123}
     # Act
 
-    cache_manager.set(key, {
+    cache_store.set(key, {
         "timestamp": datetime.now().isoformat(),
         "data": data
     }, save_to_file=True)
@@ -89,20 +89,20 @@ def test_cache_manager_set_creates_file(tmp_path):
     assert expected_file.exists()
 
 
-def test_cache_manager_file_cache_reuse(cache_manager, tmp_path):
+def test_cache_manager_file_cache_reuse(cache_store, tmp_path):
     key = "file_reuse_test"
     data = {"y": 999}
 
-    cache_manager.set(key, {
+    cache_store.set(key, {
         "timestamp": datetime.now().isoformat(),
         "data": data
     }, save_to_file=True)
 
     # 메모리 클리어 (의도적으로)
-    cache_manager.memory_cache.clear()
+    cache_store.memory_cache.clear()
 
     # 캐시 재조회 시 파일에서 읽히는지 확인
-    loaded, cache_type = cache_manager.get_raw(key)
+    loaded, cache_type = cache_store.get_raw(key)
     assert loaded['data'] == data
     assert cache_type == "file"
 
@@ -115,13 +115,13 @@ def test_cache_manager_file_cache_delete(tmp_path):
             "deserializable_classes": []
         }
     }
-    cache_manager = CacheManager(config=config)
+    cache_store = CacheStore(config=config)
 
     key = "file_cache_delete_test"
     data = {"z": 42}
 
     # 1. 파일 캐시 저장
-    cache_manager.set(key, {
+    cache_store.set(key, {
         "timestamp": datetime.now().isoformat(),
         "data": data
     }, save_to_file=True)
@@ -130,7 +130,7 @@ def test_cache_manager_file_cache_delete(tmp_path):
     assert file_path.exists()
 
     # 2. 삭제 실행
-    cache_manager.delete(key)
+    cache_store.delete(key)
 
     # 3. 파일이 실제 삭제되었는지 확인
     assert not file_path.exists()
@@ -145,18 +145,18 @@ def test_cache_manager_file_cache_clear(tmp_path):
             "deserializable_classes": []
         }
     }
-    cache_manager = CacheManager(config=config)
+    cache_store = CacheStore(config=config)
 
     key1, key2 = "clear_test_1", "clear_test_2"
     data1, data2 = {"a": 1}, {"b": 2}
 
     # ✅ 캐시 저장
-    cache_manager.set(key1, {
+    cache_store.set(key1, {
         "timestamp": datetime.now().isoformat(),
         "data": data1
     }, save_to_file=True)
 
-    cache_manager.set(key2, {
+    cache_store.set(key2, {
         "timestamp": datetime.now().isoformat(),
         "data": data2
     },save_to_file=True)
@@ -167,21 +167,21 @@ def test_cache_manager_file_cache_clear(tmp_path):
     assert path2.exists()
 
     # ✅ 메모리 확인
-    loaded, cache_type = cache_manager.get_raw(key1)
+    loaded, cache_type = cache_store.get_raw(key1)
     assert loaded['data'] == data1
     assert cache_type == "memory"
 
-    loaded, cache_type = cache_manager.get_raw(key2)
+    loaded, cache_type = cache_store.get_raw(key2)
     assert loaded['data'] == data2
     assert cache_type == "memory"
 
 
     # ✅ 캐시 클리어
-    cache_manager.clear()
+    cache_store.clear()
 
     # ✅ 메모리 캐시 제거 확인
-    assert cache_manager.get_raw(key1) is None
-    assert cache_manager.get_raw(key2) is None
+    assert cache_store.get_raw(key1) is None
+    assert cache_store.get_raw(key2) is None
 
     # ✅ 파일 캐시 제거 확인
     assert not path1.exists()
@@ -198,7 +198,7 @@ def test_cache_manager_memory_off_uses_file_only(tmp_path):
             "file_cache_enabled": True,
         }
     }
-    cm = CacheManager(config=config)
+    cm = CacheStore(config=config)
 
     key = "mem_off_file_on"
     payload = {"timestamp": datetime.now().isoformat(), "data": {"v": 1}}
@@ -224,7 +224,7 @@ def test_cache_manager_file_off_uses_memory_only(tmp_path):
             "file_cache_enabled": False,
         }
     }
-    cm = CacheManager(config=config)
+    cm = CacheStore(config=config)
 
     key = "file_off_mem_on"
     payload = {"timestamp": datetime.now().isoformat(), "data": {"v": 2}}
@@ -247,7 +247,7 @@ def test_cache_manager_both_off_is_noop(tmp_path):
             "file_cache_enabled": False,
         }
     }
-    cm = CacheManager(config=config)
+    cm = CacheStore(config=config)
 
     key = "both_off"
     payload = {"timestamp": datetime.now().isoformat(), "data": {"v": 3}}
@@ -270,7 +270,7 @@ def test_cache_manager_set_logger_calls_cleanup(tmp_path):
             "file_cache_enabled": True
         }
     }
-    cm = CacheManager(config=config)
+    cm = CacheStore(config=config)
     
     # Mocking cleanup_old_files to verify call
     cm.file_cache.cleanup_old_files = MagicMock()
@@ -281,7 +281,7 @@ def test_cache_manager_set_logger_calls_cleanup(tmp_path):
     cm.file_cache.cleanup_old_files.assert_called_once()
 
 def test_config_selection_db_cache(tmp_path):
-    """use_db_cache=True 설정 시 DBCacheManager 선택 검증"""
+    """use_db_cache=True 설정 시 DBCache 선택 검증"""
     config = {
         "cache": {
             "base_dir": str(tmp_path),
@@ -290,12 +290,12 @@ def test_config_selection_db_cache(tmp_path):
             "memory_cache_enabled": False
         }
     }
-    cm = CacheManager(config=config)
-    assert isinstance(cm.file_cache, DBCacheManager)
-    assert not isinstance(cm.file_cache, FileCacheManager)
+    cm = CacheStore(config=config)
+    assert isinstance(cm.file_cache, DBCache)
+    assert not isinstance(cm.file_cache, FileCache)
 
 def test_config_selection_file_cache(tmp_path):
-    """use_db_cache=False 설정 시 FileCacheManager 선택 검증"""
+    """use_db_cache=False 설정 시 FileCache 선택 검증"""
     config = {
         "cache": {
             "base_dir": str(tmp_path),
@@ -304,12 +304,12 @@ def test_config_selection_file_cache(tmp_path):
             "memory_cache_enabled": False
         }
     }
-    cm = CacheManager(config=config)
-    assert isinstance(cm.file_cache, FileCacheManager)
-    assert not isinstance(cm.file_cache, DBCacheManager)
+    cm = CacheStore(config=config)
+    assert isinstance(cm.file_cache, FileCache)
+    assert not isinstance(cm.file_cache, DBCache)
 
 def test_config_selection_memory_cache(tmp_path):
-    """memory_cache_enabled 설정에 따른 MemoryCacheManager 초기화 검증"""
+    """memory_cache_enabled 설정에 따른 MemoryCache 초기화 검증"""
     # Case 1: Enabled
     config_on = {
         "cache": {
@@ -317,8 +317,8 @@ def test_config_selection_memory_cache(tmp_path):
             "memory_cache_enabled": True
         }
     }
-    cm_on = CacheManager(config=config_on)
-    assert isinstance(cm_on.memory_cache, MemoryCacheManager)
+    cm_on = CacheStore(config=config_on)
+    assert isinstance(cm_on.memory_cache, MemoryCache)
 
     # Case 2: Disabled
     config_off = {
@@ -327,7 +327,7 @@ def test_config_selection_memory_cache(tmp_path):
             "memory_cache_enabled": False
         }
     }
-    cm_off = CacheManager(config=config_off)
+    cm_off = CacheStore(config=config_off)
     assert cm_off.memory_cache is None
 
 def test_config_selection_with_integer_flags(tmp_path):
@@ -336,10 +336,10 @@ def test_config_selection_with_integer_flags(tmp_path):
         "cache": {
             "base_dir": str(tmp_path),
             "file_cache_enabled": 1,  # True
-            "use_db_cache": 1,        # True -> DBCacheManager
+            "use_db_cache": 1,        # True -> DBCache
             "memory_cache_enabled": 0 # False
         }
     }
-    cm = CacheManager(config=config)
-    assert isinstance(cm.file_cache, DBCacheManager)
+    cm = CacheStore(config=config)
+    assert isinstance(cm.file_cache, DBCache)
     assert cm.memory_cache is None

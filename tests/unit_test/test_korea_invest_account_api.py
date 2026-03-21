@@ -2,19 +2,18 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
-from tests.unit_test.test_time_manager import time_manager
 
 
 def get_api():
     mock_logger = MagicMock()
     mock_env = MagicMock()
-    mock_time_manager = AsyncMock()
+    mock_market_clock = AsyncMock()
     mock_trid_provider = MagicMock()
 
     return  KoreaInvestApiAccount(
         env=mock_env,
         logger=mock_logger,
-        time_manager=mock_time_manager,
+        market_clock=mock_market_clock,
         trid_provider=mock_trid_provider,
     )
 

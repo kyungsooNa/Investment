@@ -4,17 +4,17 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from common.types import ResCommonResponse
-from core.performance_manager import PerformanceManager
+from core.performance_profiler import PerformanceProfiler
 
 class MarketCalendarService:
     """
     주식 시장의 개장일, 휴장일, 과거 최신 영업일 및 다음 개장 시간을 통합 관리하는 달력(Calendar) 매니저입니다.
     """
-    def __init__(self, time_manager, logger=None, performance_manager: Optional[PerformanceManager] = None):
-        self._time_manager = time_manager
+    def __init__(self, market_clock, logger=None, performance_profiler: Optional[PerformanceProfiler] = None):
+        self._market_clock = market_clock
         self._logger = logger or logging.getLogger(__name__)
         self._broker = None
-        self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         
         # [과거/현재] get_latest_trading_date 캐시 변수 (기존 로직 유지)
         self._cached_date = None
@@ -32,7 +32,7 @@ class MarketCalendarService:
     # ==============================================================================
     async def get_latest_trading_date(self) -> Optional[str]:
         """오늘을 포함하여 가장 최근에 장이 열렸던 영업일(YYYYMMDD)을 반환합니다."""
-        current_date = self._time_manager.get_current_kst_time().strftime("%Y%m%d")
+        current_date = self._market_clock.get_current_kst_time().strftime("%Y%m%d")
 
         # 캐시가 있고, 오늘 이미 확인했다면 캐시 반환
         if self._cached_date and self._last_check_date == current_date:
@@ -61,7 +61,7 @@ class MarketCalendarService:
             self._logger.warning("MarketCalendarService: Broker가 설정되지 않았습니다.")
             return None
             
-        now = self._time_manager.get_current_kst_time()
+        now = self._market_clock.get_current_kst_time()
         end_dt = now.strftime("%Y%m%d")
         # 7일 전부터 오늘까지 조회 (명절 연휴 등을 감안)
         start_dt = (now - timedelta(days=7)).strftime("%Y%m%d")
@@ -103,7 +103,7 @@ class MarketCalendarService:
     async def _sync_calendar_if_needed(self, target_date: Optional[datetime] = None):
         """특정 날짜가 속한 '월'의 달력 데이터가 캐시에 없다면 API를 호출해 동기화합니다."""
         if target_date is None:
-            target_date = self._time_manager.get_current_kst_time()
+            target_date = self._market_clock.get_current_kst_time()
 
         target_month = target_date.strftime("%Y%m")
 
@@ -133,7 +133,7 @@ class MarketCalendarService:
     async def is_business_day(self, date_str: str = None) -> bool:
         """특정 날짜(YYYYMMDD)가 공휴일/휴장일이 아닌 영업일인지 확인합니다."""
         if not date_str:
-            date_str = self._time_manager.get_current_kst_time().strftime("%Y%m%d")
+            date_str = self._market_clock.get_current_kst_time().strftime("%Y%m%d")
             
         target_date = datetime.strptime(date_str, "%Y%m%d")
         
@@ -148,14 +148,14 @@ class MarketCalendarService:
     async def is_market_open_now(self) -> bool:
         """현재 시점이 휴일이 아니며, 장 운영 시간(09:00~15:30) 이내인지 확인합니다."""
         # 장 운영 시간이 아니면 달력(API/캐시)을 확인할 필요도 없이 바로 False 반환 (성능 최적화)
-        if not self._time_manager.is_market_operating_hours():
+        if not self._market_clock.is_market_operating_hours():
             return False
         return await self.is_business_day()
 
     async def get_next_open_day(self, current_date_str: str = None) -> str:
         """기준일의 '다음 영업일(YYYYMMDD)'을 반환합니다 (연휴 완벽 스킵)."""
         if not current_date_str:
-            current_date_str = self._time_manager.get_current_kst_time().strftime("%Y%m%d")
+            current_date_str = self._market_clock.get_current_kst_time().strftime("%Y%m%d")
             
         check_dt = datetime.strptime(current_date_str, "%Y%m%d") + timedelta(days=1)
         
@@ -178,27 +178,27 @@ class MarketCalendarService:
 
     async def get_next_open_time(self) -> datetime:
         """다음 장이 열리는 정확한 '시간(datetime)'을 반환합니다."""
-        now = self._time_manager.get_current_kst_time()
+        now = self._market_clock.get_current_kst_time()
         today_str = now.strftime("%Y%m%d")
         
         # 오늘이 영업일인데 아직 장 시작 전(09:00 이전)이라면 오늘이 개장일임
-        if await self.is_business_day(today_str) and now < self._time_manager.get_market_open_time():
+        if await self.is_business_day(today_str) and now < self._market_clock.get_market_open_time():
             next_open_str = today_str
         else:
             # 이미 장이 끝났거나 장 중이라면, 혹은 휴일이라면 다음 영업일을 찾음
             next_open_str = await self.get_next_open_day(today_str)
             
-        open_time_str = self._time_manager.market_open_time_str
+        open_time_str = self._market_clock.market_open_time_str
         open_hour, open_minute = map(int, open_time_str.split(":"))
         next_open_date = datetime.strptime(next_open_str, "%Y%m%d")
         
-        return self._time_manager.market_timezone.localize(
+        return self._market_clock.market_timezone.localize(
             datetime(next_open_date.year, next_open_date.month, next_open_date.day, open_hour, open_minute)
         )
 
     async def wait_until_next_open(self):
         """다음 개장 시간까지 스케줄러를 비동기적으로 대기시킵니다."""
-        now = self._time_manager.get_current_kst_time()
+        now = self._market_clock.get_current_kst_time()
         next_open = await self.get_next_open_time()
         
         seconds_left = max(0.0, (next_open - now).total_seconds())
@@ -211,11 +211,11 @@ class MarketCalendarService:
         가장 최근에 장이 마감된 정확한 '시간(datetime)'을 반환합니다.
         (예: 월요일 오전 10시라면 -> 지난주 금요일 15:30 반환)
         """
-        now = self._time_manager.get_current_kst_time()
+        now = self._market_clock.get_current_kst_time()
         today_str = now.strftime("%Y%m%d")
 
         # 1. 오늘이 영업일이고, 현재 시간이 이미 오늘 장 마감(15:30) 이후라면? -> 오늘 15:30
-        if await self.is_business_day(today_str) and now >= self._time_manager.get_market_close_time():
+        if await self.is_business_day(today_str) and now >= self._market_clock.get_market_close_time():
             latest_close_str = today_str
         else:
             # 2. 휴장일이거나, 아직 오늘 장이 안 끝났다면(장전/장중) -> 과거로 거슬러 올라감
@@ -232,11 +232,11 @@ class MarketCalendarService:
                 self._logger.error("최근 15일 내에 영업일이 없습니다. (시스템 오류 의심)")
                 return None
 
-        # 찾아낸 영업일 문자열(latest_close_str)과 TimeManager의 마감 시간(15:30)을 결합
-        close_time_str = self._time_manager.market_close_time_str
+        # 찾아낸 영업일 문자열(latest_close_str)과 MarketClock의 마감 시간(15:30)을 결합
+        close_time_str = self._market_clock.market_close_time_str
         close_hour, close_minute = map(int, close_time_str.split(":"))
         close_date = datetime.strptime(latest_close_str, "%Y%m%d")
         
-        return self._time_manager.market_timezone.localize(
+        return self._market_clock.market_timezone.localize(
             datetime(close_date.year, close_date.month, close_date.day, close_hour, close_minute)
         )

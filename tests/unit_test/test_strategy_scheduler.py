@@ -82,7 +82,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                 order_execution_service=oes,
                 stock_query_service=sqs,
                 stock_code_repository=scm,
-                time_manager=tm,
+                market_clock=tm,
                 market_calendar_service=mcs,
                 logger=mock_logger,
                 dry_run=dry_run,

@@ -2,8 +2,8 @@
 import asyncio
 from typing import Optional
 from common.types import ErrorCode, ResCommonResponse
-from core.performance_manager import PerformanceManager
-from core.time_manager import TimeManager
+from core.performance_profiler import PerformanceProfiler
+from core.market_clock import MarketClock
 from services.notification_service import NotificationService
 from services.market_calendar_service import MarketCalendarService
 
@@ -11,21 +11,21 @@ from services.market_calendar_service import MarketCalendarService
 class OrderExecutionService:
     """
     주식 매수/매도 주문 및 실시간 체결가/호가 구독 관련 핸들러를 관리하는 클래스입니다.
-    TradingService, Logger, TimeManager 인스턴스를 주입받아 사용합니다.
+    TradingService, Logger, MarketClock 인스턴스를 주입받아 사용합니다.
     """
 
     _ORDER_MAX_RETRIES = 2
     _ORDER_RETRY_DELAY_SEC = 3
 
     def __init__(self, trading_service, logger, 
-                 time_manager: Optional[TimeManager] = None,
-                 performance_manager: Optional[PerformanceManager] = None,
+                 market_clock: Optional[MarketClock] = None,
+                 performance_profiler: Optional[PerformanceProfiler] = None,
                  notification_service: Optional[NotificationService] = None,
                  market_calendar_service: Optional[MarketCalendarService] = None):
         self.trading_service = trading_service
         self.logger = logger
-        self.time_manager = time_manager
-        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self.market_clock = market_clock
+        self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self.market_calendar_service = market_calendar_service
 
@@ -50,7 +50,7 @@ class OrderExecutionService:
                     f"주문 재시도 {attempt}/{self._ORDER_MAX_RETRIES}: "
                     f"{stock_code}, 사유: {result.msg1}"
                 )
-                await self.time_manager.async_sleep(self._ORDER_RETRY_DELAY_SEC * attempt)
+                await self.market_clock.async_sleep(self._ORDER_RETRY_DELAY_SEC * attempt)
                 continue
             break
         return last_result
@@ -62,7 +62,7 @@ class OrderExecutionService:
             self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
         # Fallback if market_calendar_service is not available (though it should be)
-        elif not self.market_calendar_service and not self.time_manager.is_market_operating_hours():
+        elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         buy_order_result: ResCommonResponse = await self._retry_order(
@@ -94,7 +94,7 @@ class OrderExecutionService:
             self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
         # Fallback if market_calendar_service is not available
-        elif not self.market_calendar_service and not self.time_manager.is_market_operating_hours():
+        elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         sell_order_result: ResCommonResponse = await self._retry_order(

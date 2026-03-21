@@ -8,15 +8,15 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from pydantic import BaseModel
-from core.cache.file_cache_manager import FileCacheManager, load_deserializable_classes
+from core.cache.file_cache import FileCache, load_deserializable_classes
 
 
 # ------------------------
 # 기본 유틸 / 더미 클래스
 # ------------------------
-def _mk_manager(base_dir: str, classes: list[type] | None = None) -> FileCacheManager:
+def _mk_manager(base_dir: str, classes: list[type] | None = None) -> FileCache:
     cfg = {"cache": {"base_dir": base_dir, "deserializable_classes": []}}
-    m = FileCacheManager(config=cfg)
+    m = FileCache(config=cfg)
     if classes is not None:
         m._deserializable_classes = classes  # 테스트용 주입
     return m
@@ -67,10 +67,10 @@ def test_load_deserializable_classes_invalid_path(capfd):
 def test_init_with_none_config(monkeypatch, tmp_path):
     dummy_config = {"cache": {"base_dir": str(tmp_path), "deserializable_classes": []}}
     monkeypatch.setattr(
-        "core.cache.file_cache_manager.load_cache_config",
+        "core.cache.file_cache.load_cache_config",
         lambda: dummy_config
     )
-    mgr = FileCacheManager(config=None)  # config None → load_cache_config 호출 :contentReference[oaicite:1]{index=1}
+    mgr = FileCache(config=None)  # config None → load_cache_config 호출 :contentReference[oaicite:1]{index=1}
     assert mgr._base_dir == str(tmp_path)
 
 

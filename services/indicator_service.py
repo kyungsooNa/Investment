@@ -6,8 +6,8 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, TYPE_CHECKING
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
-from core.cache.cache_manager import CacheManager
-from core.performance_manager import PerformanceManager
+from core.cache.cache_store import CacheStore
+from core.performance_profiler import PerformanceProfiler
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
@@ -18,11 +18,11 @@ class IndicatorService:
     StockQueryService를 통해 데이터를 조회하고 가공하여 지표 값을 반환합니다.
     """
     def __init__(self, stock_query_service: Optional['StockQueryService'] = None, 
-                 cache_manager: Optional[CacheManager] = None, 
-                 performance_manager: Optional[PerformanceManager] = None):
+                 cache_store: Optional[CacheStore] = None, 
+                 performance_profiler: Optional[PerformanceProfiler] = None):
         self.stock_query_service = stock_query_service
-        self.cache_manager = cache_manager
-        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self.cache_store = cache_store
+        self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
 
     async def _get_ohlcv_data(self, stock_code: str, candle_type: str, ohlcv_data: Optional[List[Dict]] = None) -> tuple:
         """
@@ -65,7 +65,7 @@ class IndicatorService:
             )
 
         # [최적화] 캐싱 적용
-        if self.cache_manager and candle_type == "D" and len(data) > 0:
+        if self.cache_store and candle_type == "D" and len(data) > 0:
             # 1. 확정된 과거 데이터 분리 (마지막 데이터 제외)
             confirmed_data = data[:-1]
             if confirmed_data:
@@ -73,7 +73,7 @@ class IndicatorService:
                 cache_key = f"bb_{stock_code}_{period}_{std_dev}_{confirmed_last_date}"
                 
                 # 2. 캐시 조회
-                raw_cache = self.cache_manager.get_raw(cache_key)
+                raw_cache = self.cache_store.get_raw(cache_key)
                 cached_wrapper = None
                 if raw_cache and isinstance(raw_cache, tuple):
                     cached_wrapper, _ = raw_cache
@@ -85,7 +85,7 @@ class IndicatorService:
                     full_resp = self._calculate_bollinger_bands_full(stock_code, confirmed_data, period, std_dev)
                     if full_resp.rt_cd == ErrorCode.SUCCESS.value:
                         past_results = full_resp.data
-                        self.cache_manager.set(cache_key, {
+                        self.cache_store.set(cache_key, {
                             "timestamp": datetime.now().isoformat(),
                             "data": past_results
                         }, save_to_file=True)
@@ -100,7 +100,7 @@ class IndicatorService:
                         latest_result = partial_resp.data[-1]
                         # 결과 병합 (과거 리스트 + 오늘 결과)
                         # ResBollingerBand 객체 리스트이므로 리스트 연산 사용
-                        # past_results는 dict 리스트일 수 있으므로 객체 변환 필요할 수 있음 (DBCacheManager 특성상)
+                        # past_results는 dict 리스트일 수 있으므로 객체 변환 필요할 수 있음 (DBCache 특성상)
                         # 여기서는 단순화를 위해 전체 재계산 fallback 대신, 캐시된 데이터가 있으면 활용하는 구조로 감.
                         
                         # 과거 데이터 객체 변환 (dict -> ResBollingerBand)
@@ -197,13 +197,13 @@ class IndicatorService:
             )
 
         # [최적화] RSI 캐싱 적용 (시계열 데이터 캐싱 후 마지막 값 반환)
-        if self.cache_manager and candle_type == "D" and len(ohlcv_data) > 0:
+        if self.cache_store and candle_type == "D" and len(ohlcv_data) > 0:
             confirmed_data = ohlcv_data[:-1]
             if confirmed_data:
                 confirmed_last_date = str(confirmed_data[-1]['date'])
                 cache_key = f"rsi_series_{stock_code}_{period}_{confirmed_last_date}"
                 
-                raw_cache = self.cache_manager.get_raw(cache_key)
+                raw_cache = self.cache_store.get_raw(cache_key)
                 cached_wrapper = None
                 if raw_cache and isinstance(raw_cache, tuple):
                     cached_wrapper, _ = raw_cache
@@ -215,7 +215,7 @@ class IndicatorService:
                     series_resp = self._calculate_rsi_series(stock_code, confirmed_data, period)
                     if series_resp.rt_cd == ErrorCode.SUCCESS.value:
                         past_series = series_resp.data
-                        self.cache_manager.set(cache_key, {
+                        self.cache_store.set(cache_key, {
                             "timestamp": datetime.now().isoformat(),
                             "data": past_series
                         }, save_to_file=True)
@@ -306,13 +306,13 @@ class IndicatorService:
             )
 
         # [최적화] MA 캐싱 적용
-        if self.cache_manager and candle_type == "D" and len(data) > 0:
+        if self.cache_store and candle_type == "D" and len(data) > 0:
             confirmed_data = data[:-1]
             if confirmed_data:
                 confirmed_last_date = str(confirmed_data[-1]['date'])
                 cache_key = f"ma_{stock_code}_{period}_{method}_{confirmed_last_date}"
                 
-                raw_cache = self.cache_manager.get_raw(cache_key)
+                raw_cache = self.cache_store.get_raw(cache_key)
                 cached_wrapper = None
                 if raw_cache and isinstance(raw_cache, tuple):
                     cached_wrapper, _ = raw_cache
@@ -323,7 +323,7 @@ class IndicatorService:
                     full_resp = self._calculate_moving_average_full(stock_code, confirmed_data, period, method)
                     if full_resp.rt_cd == ErrorCode.SUCCESS.value:
                         past_results = full_resp.data
-                        self.cache_manager.set(cache_key, {
+                        self.cache_store.set(cache_key, {
                             "timestamp": datetime.now().isoformat(),
                             "data": past_results
                         }, save_to_file=True)
@@ -457,7 +457,7 @@ class IndicatorService:
         t_start = self.pm.start_timer()
         
         # 데이터가 너무 적거나 캐시 매니저가 없으면 전체 계산 (최대 기간 120일 + 여유)
-        if not ohlcv_data or len(ohlcv_data) < 130 or not self.cache_manager:
+        if not ohlcv_data or len(ohlcv_data) < 130 or not self.cache_store:
              resp = self._calculate_indicators_full(stock_code, ohlcv_data)
              self.pm.log_timer(f"IndicatorService.get_chart_indicators({stock_code})", t_start, extra_info="Full Calc", threshold=0.5)
              return resp
@@ -472,7 +472,7 @@ class IndicatorService:
             cache_key = f"indicators_chart_{stock_code}_{confirmed_last_date}"
             
             # 2. 캐시 조회
-            raw_cache = self.cache_manager.get_raw(cache_key)
+            raw_cache = self.cache_store.get_raw(cache_key)
             cached_wrapper = None
             if raw_cache and isinstance(raw_cache, tuple):
                 cached_wrapper, _ = raw_cache
@@ -489,7 +489,7 @@ class IndicatorService:
                 past_indicators = resp.data
                 
                 # 캐시 저장 (파일 저장 포함)
-                self.cache_manager.set(cache_key, {
+                self.cache_store.set(cache_key, {
                     "timestamp": datetime.now().isoformat(),
                     "data": past_indicators
                 }, save_to_file=True)

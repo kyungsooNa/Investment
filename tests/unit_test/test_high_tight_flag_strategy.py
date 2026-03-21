@@ -7,7 +7,7 @@ from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.oneil_common_types import HTFConfig, HTFPositionState, OSBWatchlistItem
 from services.stock_query_service import StockQueryService
 from services.oneil_universe_service import OneilUniverseService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 
 # ── 헬퍼: 합성 OHLCV 데이터 생성 ────────────────────────────────────
@@ -65,7 +65,7 @@ def _make_ohlcv_pole_and_flag(
 def mock_deps():
     sqs = MagicMock(spec=StockQueryService)
     universe = MagicMock(spec=OneilUniverseService)
-    tm = MagicMock(spec=TimeManager)
+    tm = MagicMock(spec=MarketClock)
     logger = MagicMock()
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)

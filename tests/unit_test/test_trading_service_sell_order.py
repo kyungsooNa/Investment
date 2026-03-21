@@ -8,13 +8,13 @@ class TestTradingServiceSellOrder(unittest.IsolatedAsyncioTestCase):
         self.mock_broker_api_wrapper = AsyncMock()
         self.mock_logger = MagicMock()
         self.mock_env = MagicMock()
-        self.mock_time_manager = MagicMock()
+        self.mock_market_clock = MagicMock()
 
         self.trading_service = TradingService(
             broker_api_wrapper=self.mock_broker_api_wrapper,
             logger=self.mock_logger,
             env=self.mock_env,
-            time_manager=self.mock_time_manager
+            market_clock=self.mock_market_clock
         )
 
     async def test_place_sell_order_success(self):

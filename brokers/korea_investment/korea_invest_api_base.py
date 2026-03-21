@@ -7,7 +7,7 @@ import logging
 import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenProvider를 import
 from common.types import ErrorCode, ResCommonResponse
 from typing import Union, Optional
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, \
@@ -36,13 +36,13 @@ class KoreaInvestApiBase:
 
     def __init__(self, env: KoreaInvestApiEnv,
                  logger=None,
-                 time_manager=None,
+                 market_clock=None,
                  async_client: Optional[httpx.AsyncClient] = None,
                  header_provider: Optional[KoreaInvestHeaderProvider] = None,
                  url_provider: Optional[KoreaInvestUrlProvider] = None,
                  trid_provider: Optional[KoreaInvestTrIdProvider] = None):
         self._logger = logger if logger else logging.getLogger(__name__)
-        self.time_manager = time_manager
+        self.market_clock = market_clock
         self._env = env
         self._base_url = None
         self._headers: KoreaInvestHeaderProvider = header_provider or build_header_provider_from_env(env)
@@ -100,7 +100,7 @@ class KoreaInvestApiBase:
                 else:
                     wait_time = delay * (2 ** (attempt - 1))
                 self._logger.warning(f"재시도 필요: {attempt}/{retry_count}, 사유: {e}, 지연 {wait_time}초")
-                await self.time_manager.async_sleep(wait_time)
+                await self.market_clock.async_sleep(wait_time)
                 continue
 
             except ApiFatalError as e:
@@ -115,7 +115,7 @@ class KoreaInvestApiBase:
                 self._log_request_exception(e)
                 if attempt < retry_count:
                     self._logger.info(f"예외 발생, 재시도: {attempt}/{retry_count}, 지연 {delay}초")
-                    await self.time_manager.async_sleep(delay)  # 이 부분이 호출되어야 함
+                    await self.market_clock.async_sleep(delay)  # 이 부분이 호출되어야 함
                     continue
                 else:
                     pass
@@ -216,7 +216,7 @@ class KoreaInvestApiBase:
             # ✅ 토큰 만료 응답 감지 시 재발급 + 재시도 (단 1회만)
             if isinstance(res_json, dict) and res_json.get("msg_cd") == "EGW00123" and not token_refreshed:
                 self._logger.warning("🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도")
-                await self.time_manager.async_sleep(3)
+                await self.market_clock.async_sleep(3)
                 await self._env.refresh_token()
                 token_refreshed = True  # ✅ 재시도 플래그 설정
 

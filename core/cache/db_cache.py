@@ -1,4 +1,4 @@
-# core/cache/db_cache_manager.py
+# core/cache/db_cache.py
 
 import os
 import json
@@ -10,9 +10,9 @@ from typing import Optional, Any
 from dataclasses import fields, is_dataclass
 from pydantic import BaseModel
 from core.cache.cache_config import load_cache_config
-from core.cache.file_cache_manager import load_deserializable_classes
+from core.cache.file_cache import load_deserializable_classes
 
-class DBCacheManager:
+class DBCache:
     def __init__(self, config: Optional[dict] = None):
         if config is None:
             config = load_cache_config()
