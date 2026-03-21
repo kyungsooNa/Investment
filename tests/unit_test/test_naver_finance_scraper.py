@@ -1,7 +1,7 @@
 # tests/services/test_naver_finance_scraper.py
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-from services.naver_finance_scraper import NaverFinanceScraperService
+from services.naver_finance_scraper_service import NaverFinanceScraperService
 
 # ─── Mock HTML 생성 헬퍼 함수 ────────────────────────────────────
 def generate_mock_html(td_values: list) -> str:
