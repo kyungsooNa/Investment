@@ -442,6 +442,8 @@ class WebAppContext:
         """서비스 종료 처리 — BackgroundScheduler에 위임."""
         if self.background_scheduler:
             await self.background_scheduler.shutdown()
+        if self.broker:
+            await self.broker.stop()
         self.logger.info("웹 앱: 서비스 종료 완료")
 
     # --- 프로그램매매 실시간 스트리밍 ---
