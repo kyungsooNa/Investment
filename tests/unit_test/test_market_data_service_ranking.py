@@ -1,11 +1,13 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from services.trading_service import TradingService
+from services.market_data_service import MarketDataService
 from common.types import ResCommonResponse, ErrorCode
 
 @pytest.fixture
 def mock_deps(mocker):
     """TradingService의 의존성 Mock 객체 생성"""
+    """MarketDataService의 의존성 Mock 객체 생성"""
     broker = mocker.Mock()
     env = mocker.Mock()
     logger = mocker.Mock()
@@ -15,8 +17,11 @@ def mock_deps(mocker):
 @pytest.fixture
 def trading_service(mock_deps):
     """TradingService 인스턴스 생성"""
+def market_data_service(mock_deps):
+    """MarketDataService 인스턴스 생성"""
     broker, env, logger, market_clock = mock_deps
     return TradingService(broker, env, logger, market_clock)
+    return MarketDataService(broker, env, logger, market_clock)
 
 def make_response(data):
     """ResCommonResponse 헬퍼"""
@@ -28,6 +33,7 @@ def make_response(data):
 
 @pytest.mark.asyncio
 async def test_get_top_trading_value_stocks_logic(trading_service):
+async def test_get_top_trading_value_stocks_logic(market_data_service):
     """
     [Unit Test] 거래대금 상위 종목 조회 로직 검증
     1. 5개 소스(거래량, 코스피시총, 코스닥시총, 상승, 하락) 데이터 병합
@@ -36,6 +42,7 @@ async def test_get_top_trading_value_stocks_logic(trading_service):
     4. 상위 30개 절삭 확인
     """
     broker = trading_service._broker_api_wrapper
+    broker = market_data_service._broker_api_wrapper
 
     # --- 1. Mock Data 준비 ---
     # 각 API가 반환할 가짜 데이터 (중복 포함, 순서 뒤죽박죽)
@@ -74,6 +81,7 @@ async def test_get_top_trading_value_stocks_logic(trading_service):
 
     # --- 2. 실행 ---
     response = await trading_service.get_top_trading_value_stocks()
+    response = await market_data_service.get_top_trading_value_stocks()
 
     # --- 3. 검증 ---
     assert response.rt_cd == ErrorCode.SUCCESS.value
@@ -137,6 +145,7 @@ async def test_get_top_trading_value_stocks_calculation_error(trading_service):
     ])
     
     response = await trading_service.get_top_trading_value_stocks()
+    response = await market_data_service.get_top_trading_value_stocks()
     
     assert response.rt_cd == ErrorCode.SUCCESS.value
     data = response.data

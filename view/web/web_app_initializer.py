@@ -7,7 +7,6 @@ from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
 from brokers.broker_api_wrapper import BrokerAPIWrapper
-from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
 from repositories.virtual_trade_repository import VirtualTradeRepository
@@ -52,7 +51,6 @@ class WebAppContext:
         self.full_config = {}  # [추가] 전체 설정을 담을 그릇
         self.market_clock: MarketClock = None
         self.broker: BrokerAPIWrapper = None
-        self.trading_service: TradingService = None
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
         self.indicator_service: IndicatorService = None
@@ -171,8 +169,8 @@ class WebAppContext:
         # Repository 초기화 (TradingService 주입을 위해 선 생성)
         self.stock_repository = StockRepository(logger=self.logger)
 
-        self.trading_service = TradingService(
-            self.broker, self.env, self.logger, self.market_clock, cache_store=cache_store,
+        self.market_data_service = MarketDataService(
+            broker_api_wrapper=self.broker, env=self.env, logger=self.logger, market_clock=self.market_clock, cache_store=cache_store,
             market_calendar_service=self._mcs,
             performance_profiler=self.pm,
             stock_repository=self.stock_repository
@@ -187,25 +185,24 @@ class WebAppContext:
             env=self.env,
             logger=self.logger,
             market_clock=self.market_clock,
-            trading_service=self.trading_service,
             performance_profiler=self.pm,
             notification_service=self.notification_service,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
             market_calendar_service=self._mcs,
         )
         self.stock_query_service = StockQueryService(
-            self.trading_service, self.logger, self.market_clock,
+            market_data_service=self.market_data_service, logger=self.logger, market_clock=self.market_clock,
             indicator_service=self.indicator_service,
             ranking_task=self.ranking_task,
             performance_profiler=self.pm,
             notification_service=self.notification_service,
+            broker_api_wrapper=self.broker,
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
         # WebSocketWatchdogTask 초기화
         self.websocket_watchdog_task = WebSocketWatchdogTask(
             stock_query_service=self.stock_query_service,
-            trading_service=self.trading_service,
             realtime_data_service=self.realtime_data_service,
             market_calendar_service=self._mcs,
             performance_profiler=self.pm,
@@ -236,7 +233,8 @@ class WebAppContext:
         )
 
         self.order_execution_service = OrderExecutionService(
-            self.trading_service, self.logger, self.market_clock,
+            broker_api_wrapper=self.broker,
+            logger=self.logger, market_clock=self.market_clock,
             performance_profiler=self.pm,
             notification_service=self.notification_service,
             market_calendar_service=self._mcs,
@@ -497,8 +495,8 @@ class WebAppContext:
         # [변경] 매니저를 통해 구독 상태 확인
         if self.realtime_data_service.is_subscribed(code):
             # [추가] 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
-            if (self.trading_service
-                    and not self.trading_service.is_websocket_receive_alive()):
+            if (self.broker
+                    and not self.broker.is_websocket_receive_alive()):
                 self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
                 await self.websocket_watchdog_task.force_reconnect_program_trading()
 

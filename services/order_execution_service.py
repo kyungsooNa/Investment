@@ -17,12 +17,12 @@ class OrderExecutionService:
     _ORDER_MAX_RETRIES = 5
     _ORDER_RETRY_DELAY_SEC = 3
 
-    def __init__(self, trading_service, logger, 
+    def __init__(self, broker_api_wrapper, logger, 
                  market_clock: Optional[MarketClock] = None,
                  performance_profiler: Optional[PerformanceProfiler] = None,
                  notification_service: Optional[NotificationService] = None,
                  market_calendar_service: Optional[MarketCalendarService] = None):
-        self.trading_service = trading_service
+        self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
@@ -55,6 +55,15 @@ class OrderExecutionService:
             break
         return last_result
 
+    async def _execute_order_via_broker(self, stock_code, price, qty, is_buy: bool) -> ResCommonResponse:
+        action_str = "매수" if is_buy else "매도"
+        self.logger.info(f"OrderExecutionService - 주식 {action_str} 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
+        try:
+            return await self.broker_api_wrapper.place_stock_order(stock_code, price, qty, is_buy=is_buy)
+        except Exception as e:
+            self.logger.exception(f"{action_str} 주문 중 오류 발생: {str(e)}")
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"{action_str} 주문 처리 중 예외 발생: {str(e)}", data=None)
+
     async def handle_place_buy_order(self, stock_code, price, qty):
         """주식 매수 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
@@ -66,7 +75,7 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         buy_order_result: ResCommonResponse = await self._retry_order(
-            self.trading_service.place_buy_order, stock_code, price, qty
+            lambda c, p, q: self._execute_order_via_broker(c, p, q, is_buy=True), stock_code, price, qty
         )
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
@@ -98,7 +107,7 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         sell_order_result: ResCommonResponse = await self._retry_order(
-            self.trading_service.place_sell_order, stock_code, price, qty
+            lambda c, p, q: self._execute_order_via_broker(c, p, q, is_buy=False), stock_code, price, qty
         )
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
@@ -197,9 +206,9 @@ class OrderExecutionService:
                     self.logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
 
         # 웹소켓 연결 및 구독 요청
-        if await self.trading_service.connect_websocket(on_message_callback=realtime_data_display_callback):
-            await self.trading_service.subscribe_realtime_price(stock_code)
-            await self.trading_service.subscribe_realtime_quote(stock_code)
+        if await self.broker_api_wrapper.connect_websocket(on_message_callback=realtime_data_display_callback):
+            await self.broker_api_wrapper.subscribe_realtime_price(stock_code)
+            await self.broker_api_wrapper.subscribe_realtime_quote(stock_code)
 
             try:
                 await asyncio.to_thread(input)
@@ -209,9 +218,9 @@ class OrderExecutionService:
                 print("\n사용자에 의해 실시간 구독이 중단됩니다.")
                 self.logger.info("실시간 구독 중단 (KeyboardInterrupt).")
             finally:
-                await self.trading_service.unsubscribe_realtime_price(stock_code)
-                await self.trading_service.unsubscribe_realtime_quote(stock_code)
-                await self.trading_service.disconnect_websocket()
+                await self.broker_api_wrapper.unsubscribe_realtime_price(stock_code)
+                await self.broker_api_wrapper.unsubscribe_realtime_quote(stock_code)
+                await self.broker_api_wrapper.disconnect_websocket()
                 print("실시간 주식 스트림을 종료했습니다.")
                 self.logger.info(f"실시간 주식 스트림 종료: 종목={stock_code}")
         else:

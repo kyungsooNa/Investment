@@ -396,136 +396,6 @@ async def test_get_etf_info(trading_service_fixture, mock_deps):
     assert resp.rt_cd == "0"
     broker.get_etf_info.assert_awaited_once_with("005930")
 
-@pytest.mark.asyncio
-async def test_websocket_connection_methods(trading_service_fixture, mock_deps):
-    """웹소켓 연결/해제 위임 테스트"""
-    broker = mock_deps.broker
-    broker.connect_websocket = AsyncMock(return_value=True)
-    broker.disconnect_websocket = AsyncMock(return_value=True)
-    
-    cb = MagicMock()
-    assert await trading_service_fixture.connect_websocket(cb) is True
-    broker.connect_websocket.assert_awaited_once_with(on_message_callback=cb)
-    
-    assert await trading_service_fixture.disconnect_websocket() is True
-    broker.disconnect_websocket.assert_awaited_once()
-
-@pytest.mark.asyncio
-async def test_websocket_subscription_methods(trading_service_fixture, mock_deps):
-    """웹소켓 구독/해제 위임 테스트"""
-    broker = mock_deps.broker
-    broker.subscribe_realtime_price = AsyncMock(return_value=True)
-    broker.unsubscribe_realtime_price = AsyncMock(return_value=True)
-    broker.subscribe_realtime_quote = AsyncMock(return_value=True)
-    broker.unsubscribe_realtime_quote = AsyncMock(return_value=True)
-    
-    code = "005930"
-    
-    assert await trading_service_fixture.subscribe_realtime_price(code) is True
-    broker.subscribe_realtime_price.assert_awaited_once_with(code)
-    
-    assert await trading_service_fixture.unsubscribe_realtime_price(code) is True
-    broker.unsubscribe_realtime_price.assert_awaited_once_with(code)
-    
-    assert await trading_service_fixture.subscribe_realtime_quote(code) is True
-    broker.subscribe_realtime_quote.assert_awaited_once_with(code)
-    
-    assert await trading_service_fixture.unsubscribe_realtime_quote(code) is True
-    broker.unsubscribe_realtime_quote.assert_awaited_once_with(code)
-
-@pytest.mark.asyncio
-async def test_handle_realtime_stream(trading_service_fixture, mock_deps):
-    """실시간 스트림 처리 로직 테스트"""
-    broker = mock_deps.broker
-    tm = mock_deps.tm
-    broker.connect_websocket = AsyncMock(return_value=True)
-    broker.subscribe_realtime_price = AsyncMock(return_value=True)
-    broker.unsubscribe_realtime_price = AsyncMock(return_value=True)
-    broker.disconnect_websocket = AsyncMock(return_value=True)
-    tm.async_sleep = AsyncMock()
-
-    # datetime.now()를 모킹하여 루프 제어
-    # 1. start_time 설정
-    # 2. while 조건 확인 (진입)
-    # 3. while 조건 확인 (탈출)
-    base_time = datetime(2025, 1, 1, 12, 0, 0)
-    
-    with patch("services.trading_service.datetime") as mock_dt:
-        mock_dt.now.side_effect = [
-            base_time,
-            base_time,
-            base_time + timedelta(seconds=1.1)
-        ]
-        
-        # price 타입 구독
-        await trading_service_fixture.handle_realtime_stream(["005930"], ["price"], 1)
-
-    broker.connect_websocket.assert_awaited_once()
-    broker.subscribe_realtime_price.assert_awaited_once_with("005930")
-    tm.async_sleep.assert_awaited_once_with(1)
-    broker.unsubscribe_realtime_price.assert_awaited_once_with("005930")
-    broker.disconnect_websocket.assert_awaited_once()
-
-@pytest.mark.asyncio
-async def test_default_realtime_message_handler(trading_service_fixture, mock_deps):
-    """실시간 메시지 핸들러 테스트"""
-    service = trading_service_fixture
-    
-    # 1. realtime_price
-    data_price = {
-        'type': 'realtime_price',
-        'data': {
-            '유가증권단축종목코드': '005930',
-            '주식현재가': '70000',
-            '전일대비': '100',
-            '전일대비부호': '2',
-            '전일대비율': '0.14',
-            '누적거래량': '1000',
-            '주식체결시간': '100000'
-        }
-    }
-    service._default_realtime_message_handler(data_price)
-    # Verify internal state update
-    assert '005930' in service._latest_prices
-    assert service._latest_prices['005930']['price'] == '70000'
-
-    # 2. realtime_quote
-    data_quote = {
-        'type': 'realtime_quote',
-        'data': {
-            '유가증권단축종목코드': '005930',
-            '매도호가1': '70100',
-            '매수호가1': '70000',
-            '영업시간': '100000'
-        }
-    }
-    service._default_realtime_message_handler(data_quote)
-    
-    # 3. signing_notice
-    data_notice = {
-        'type': 'signing_notice',
-        'data': {
-            '주문번호': '123',
-            '체결수량': '10',
-            '체결단가': '70000',
-            '주식체결시간': '100000'
-        }
-    }
-    service._default_realtime_message_handler(data_notice)
-
-    # 4. realtime_program_trading
-    data_pgm = {
-        'type': 'realtime_program_trading',
-        'data': {
-            '주식체결시간': '100000',
-            '순매수거래대금': '1000000'
-        }
-    }
-    service._default_realtime_message_handler(data_pgm)
-
-    # 5. Unknown
-    data_unknown = {'type': 'unknown', 'tr_id': 'UNK', 'data': {}}
-    service._default_realtime_message_handler(data_unknown)
 
 def test_normalize_ohlcv_rows(trading_service_fixture):
     """OHLCV 데이터 정규화 로직 테스트"""
@@ -748,43 +618,6 @@ async def test_get_recent_daily_ohlcv_with_end_date(trading_service_fixture, moc
     assert kwargs['end_date'] == "20241231"
 
 @pytest.mark.asyncio
-async def test_unsubscribe_program_trading_success(trading_service_fixture, mock_deps):
-    """프로그램 매매 구독 해지 성공 위임 테스트"""
-    broker = mock_deps.broker
-    broker.unsubscribe_program_trading = AsyncMock(return_value=True)
-    
-    result = await trading_service_fixture.unsubscribe_program_trading("005930")
-    
-    assert result is True
-    broker.unsubscribe_program_trading.assert_awaited_once_with("005930")
-
-@pytest.mark.asyncio
-async def test_unsubscribe_program_trading_invalid_code(trading_service_fixture, mock_deps):
-    """프로그램 매매 구독 해지 시 종목 코드 누락 테스트"""
-    broker = mock_deps.broker
-    logger = mock_deps.logger
-    broker.unsubscribe_program_trading = AsyncMock()
-    
-    result = await trading_service_fixture.unsubscribe_program_trading("")
-    
-    assert result is False
-    broker.unsubscribe_program_trading.assert_not_awaited()
-    logger.warning.assert_called_with("프로그램 매매 구독 해지를 위한 종목 코드가 누락되었습니다.")
-
-@pytest.mark.asyncio
-async def test_unsubscribe_program_trading_exception(trading_service_fixture, mock_deps):
-    """프로그램 매매 구독 해지 중 예외 발생 테스트"""
-    broker = mock_deps.broker
-    logger = mock_deps.logger
-    broker.unsubscribe_program_trading = AsyncMock(side_effect=Exception("Network Error"))
-    
-    result = await trading_service_fixture.unsubscribe_program_trading("005930")
-    
-    assert result is False
-    broker.unsubscribe_program_trading.assert_awaited_once_with("005930")
-    logger.exception.assert_called_with("프로그램 매매 구독 해지 중 오류 발생: Network Error")
-
-@pytest.mark.asyncio
 async def test_get_price_summary(trading_service_fixture, mock_deps):
     """가격 요약 정보 조회 위임 테스트"""
     broker = mock_deps.broker
@@ -954,23 +787,6 @@ async def test_inquire_daily_itemchartprice(trading_service_fixture, mock_deps):
     broker.inquire_daily_itemchartprice.assert_awaited_once_with(
         stock_code="005930", start_date="20250101", end_date="20250110", fid_period_div_code="D"
     )
-
-@pytest.mark.asyncio
-async def test_handle_realtime_stream_exception(trading_service_fixture, mock_deps):
-    """실시간 스트림 처리 중 예외 발생 시 로그 기록 테스트"""
-    broker = mock_deps.broker
-    logger = mock_deps.logger
-    broker.connect_websocket.side_effect = Exception("Connection Failed")
-
-    # finally 블록에서 호출되는 메서드들이 await 가능해야 함
-    broker.unsubscribe_realtime_price = AsyncMock()
-    broker.unsubscribe_realtime_quote = AsyncMock()
-    broker.disconnect_websocket = AsyncMock()
-    
-    await trading_service_fixture.handle_realtime_stream(["005930"], ["price"], 1)
-    
-    logger.exception.assert_called_once()
-    assert "실시간 스트림 처리 중 오류 발생" in logger.exception.call_args[0][0]
 
 @pytest.mark.asyncio
 async def test_get_latest_trading_date_success(trading_service_fixture, mock_deps):
