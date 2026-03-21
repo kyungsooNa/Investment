@@ -72,7 +72,7 @@ class StrategyScheduler:
         stock_query_service: StockQueryService,
         stock_code_repository: StockCodeRepository,
         time_manager: TimeManager,
-        market_calender: MarketCalendarService,
+        market_calendar_service: MarketCalendarService,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
         notification_service: Optional[NotificationService] = None,
@@ -86,7 +86,7 @@ class StrategyScheduler:
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
         self._notification_service = notification_service
-        self._mcs = market_calender
+        self._mcs = market_calendar_service
         self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
         # 데이터 디렉토리 생성
