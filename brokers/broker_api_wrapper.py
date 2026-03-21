@@ -1,7 +1,7 @@
 # user_api/broker_api_wrapper.py
 
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
-from market_data.stock_code_mapper import StockCodeMapper
+from repositories.stock_code_repository import StockCodeRepository
 from typing import Any, List
 from common.types import ResCommonResponse
 from core.cache.cache_wrapper import cache_wrap_client
@@ -14,29 +14,29 @@ class BrokerAPIWrapper:
     """
 
     def __init__(self, broker: str = "korea_investment", env=None, logger=None, time_manager=None,
-                 cache_config=None, market_date_manager=None):
+                 cache_config=None, market_calendar_service=None):
         self._broker = broker
         self._logger = logger
         self._client = None
-        self._stock_mapper = StockCodeMapper(logger=logger)
+        self._stock_mapper = StockCodeRepository(logger=logger)
         self.env = env
         
         if broker == "korea_investment":
             if env is None:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
-            self._client = KoreaInvestApiClient(env, logger, time_manager, market_date_manager)
+            self._client = KoreaInvestApiClient(env, logger, time_manager, market_calendar_service)
             self._client = cache_wrap_client(
                 self._client, logger, time_manager,
                 lambda: "PAPER" if env.is_paper_trading else "REAL",
                 config=cache_config,  # ✅ 여기서 주입
-                market_date_manager=market_date_manager
+                market_calendar_service=market_calendar_service
             )
 
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
 
-    # --- StockCodeMapper delegation ---
+    # --- StockCodeRepository delegation ---
     async def get_name_by_code(self, code: str) -> str:
         """종목코드로 종목명을 반환합니다."""
         return self._stock_mapper.get_name_by_code(code)
@@ -46,11 +46,11 @@ class BrokerAPIWrapper:
         return self._stock_mapper.get_code_by_name(name)
 
     async def get_all_stock_codes(self) -> Any:
-        """StockCodeMapper를 통해 모든 종목의 코드와 이름을 포함하는 DataFrame을 반환합니다."""
+        """StockCodeRepository를 통해 모든 종목의 코드와 이름을 포함하는 DataFrame을 반환합니다."""
         if hasattr(self._stock_mapper, 'df'):
             return self._stock_mapper.df
         else:
-            self._logger.error("StockCodeMapper가 초기화되지 않았거나 df 속성이 없습니다.")
+            self._logger.error("StockCodeRepository가 초기화되지 않았거나 df 속성이 없습니다.")
             return None
 
     async def get_all_stock_code_list(self) -> List[str]:

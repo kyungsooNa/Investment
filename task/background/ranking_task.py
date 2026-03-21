@@ -15,12 +15,12 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ErrorCode
 from core.time_manager import TimeManager
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
-from managers.market_date_manager import MarketDateManager
-from market_data.stock_code_mapper import StockCodeMapper
+from services.market_calendar_service import MarketCalendarService
+from repositories.stock_code_repository import StockCodeRepository
 from core.performance_manager import PerformanceManager
-from managers.telegram_notifier import TelegramReporter
+from services.telegram_notifier import TelegramReporter
 from scheduler.after_market_loop import run_after_market_loop
-from managers.notification_manager import NotificationManager
+from services.notification_service import NotificationService
 
 
 def _chunked(lst, size):
@@ -49,26 +49,26 @@ class RankingTask(SchedulableTask):
     def __init__(
         self,
         broker_api_wrapper: BrokerAPIWrapper,
-        stock_code_mapper: StockCodeMapper,
+        stock_code_repository: StockCodeRepository,
         env: KoreaInvestApiEnv = None,
         logger=None,
         time_manager: TimeManager = None,
         trading_service=None,
         performance_manager: Optional[PerformanceManager] = None,
-        notification_manager: Optional[NotificationManager] = None,
+        notification_service: Optional[NotificationService] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
-        market_date_manager: Optional[MarketDateManager] = None,
+        market_calendar_service: Optional[MarketCalendarService] = None,
     ):
         self._broker = broker_api_wrapper
-        self._mapper = stock_code_mapper
+        self.stock_code_repository = stock_code_repository
         self._env = env
         self._logger = logger or logging.getLogger(__name__)
         self._time_manager = time_manager
         self._trading_service = trading_service
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
-        self._nm = notification_manager
+        self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
-        self.mdm = market_date_manager
+        self.mcs = market_calendar_service
 
         # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
@@ -163,7 +163,7 @@ class RankingTask(SchedulableTask):
     async def start_after_market_scheduler(self) -> None:
         """장마감 후 자동으로 랭킹 갱신을 스케줄링하는 루프."""
         await run_after_market_loop(
-            mdm=self.mdm,
+            mcs=self.mcs,
             time_manager=self._time_manager,
             logger=self._logger,
             on_market_closed=self._on_market_closed,
@@ -214,15 +214,15 @@ class RankingTask(SchedulableTask):
             self._basic_ranking_updated_at = datetime.now()
             self._logger.info(f"기본 랭킹 캐시 갱신 완료: {list(self._basic_ranking_cache.keys())}")
             self.pm.log_timer("RankingTask.refresh_basic_ranking", t_start, threshold=1.0)
-            if self._nm:
-                await self._nm.emit(
+            if self._notification_service:
+                await self._notification_service.emit(
                     "API", "info", "기본 랭킹 갱신 완료",
                     f"상승/하락/거래량/거래대금 캐시 갱신 완료",
                 )
         except Exception as e:
             self._logger.error(f"기본 랭킹 캐시 갱신 실패: {e}", exc_info=True)
-            if self._nm:
-                await self._nm.emit("SYSTEM", "error", "기본 랭킹 갱신 실패", str(e))
+            if self._notification_service:
+                await self._notification_service.emit("SYSTEM", "error", "기본 랭킹 갱신 실패", str(e))
 
     def get_investor_ranking_progress(self) -> Dict:
         """투자자 랭킹 수집 진행률 반환."""
@@ -267,7 +267,7 @@ class RankingTask(SchedulableTask):
     async def refresh_investor_ranking(self) -> None:
         """전체 종목을 순회하여 외국인/기관/개인 순매수/순매도 랭킹을 갱신한다."""
         # [성능 보호] 장 중에는 실행하지 않음
-        if self.mdm and await self.mdm.is_market_open_now():
+        if self.mcs and await self.mcs.is_market_open_now():
             self._logger.info("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
             return
 
@@ -282,8 +282,8 @@ class RankingTask(SchedulableTask):
 
         # [변경] 오늘 날짜 대신 실제 장이 열린 최근 날짜 조회
         target_date = None
-        if self.mdm:
-            target_date = await self.mdm.get_latest_trading_date()
+        if self.mcs:
+            target_date = await self.mcs.get_latest_trading_date()
 
         if not target_date:
             self._logger.error("최근 거래일을 확인할 수 없어 투자자 랭킹 갱신을 중단합니다.")
@@ -444,8 +444,8 @@ class RankingTask(SchedulableTask):
                 f"투자자 랭킹 갱신 완료: {len(results)}개 종목 수집, 소요: {elapsed:.1f}s"
             )
             self.pm.log_timer("RankingTask.refresh_investor_ranking", t_start_total, threshold=10.0)
-            if self._nm:
-                await self._nm.emit(
+            if self._notification_service:
+                await self._notification_service.emit(
                     "API", "info", "투자자 랭킹 갱신 완료",
                     f"{len(results)}개 종목 수집, 소요: {elapsed:.1f}초",
                 )
@@ -471,8 +471,8 @@ class RankingTask(SchedulableTask):
                     self._logger.error(f"텔레그램 랭킹 리포트 전송 중 오류: {e}", exc_info=True)
         except Exception as e:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
-            if self._nm:
-                await self._nm.emit("SYSTEM", "error", "투자자 랭킹 갱신 실패", str(e))
+            if self._notification_service:
+                await self._notification_service.emit("SYSTEM", "error", "투자자 랭킹 갱신 실패", str(e))
         finally:
             self._is_refreshing = False
             self._progress["running"] = False
@@ -509,7 +509,7 @@ class RankingTask(SchedulableTask):
     async def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
         """캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""
         # [성능 보호] 장 중에는 온디맨드 갱신 트리거 안 함
-        if self.mdm and await self.mdm.is_market_open_now():
+        if self.mcs and await self.mcs.is_market_open_now():
             return None
 
         # 캐시 비어있고 갱신 중이 아니면 온디맨드 트리거
@@ -582,9 +582,9 @@ class RankingTask(SchedulableTask):
         )
 
     def _load_all_stocks(self) -> List[tuple]:
-        """StockCodeMapper에서 KOSPI/KOSDAQ 전체 종목 로드."""
+        """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드."""
         all_stocks = []
-        for _, row in self._mapper.df.iterrows():
+        for _, row in self.stock_code_repository.df.iterrows():
             code = row.get("종목코드", "")
             name = row.get("종목명", "")
             market = row.get("시장구분", "")

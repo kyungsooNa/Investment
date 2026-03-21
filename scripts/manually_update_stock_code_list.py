@@ -4,7 +4,7 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from utils.stock_info_updater import save_stock_code_list
+from services.stock_sync_service import save_stock_code_list
 
 if __name__ == "__main__":
     save_stock_code_list(force_update=True)

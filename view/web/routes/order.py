@@ -23,8 +23,8 @@ async def place_order(req: OrderRequest):
 
     # 2. [추가됨] 주문 성공 시 가상 매매 장부에도 기록 (전략명: "수동매매")
     if resp and resp.rt_cd == "0":
-        # virtual_manager가 초기화되어 있는지 확인
-        if hasattr(ctx, 'virtual_manager') and ctx.virtual_manager:
+        # virtual_trade_service가 초기화되어 있는지 확인
+        if hasattr(ctx, 'virtual_trade_service') and ctx.virtual_trade_service:
             try:
                 # 가격 형변환 (문자열 -> 숫자)
                 price_val = int(req.price) if req.price and req.price.isdigit() else 0
@@ -41,10 +41,10 @@ async def place_order(req: OrderRequest):
 
                 if req.side == "buy":
                     # 매수 기록 (전략명: 수동매매)
-                    ctx.virtual_manager.log_buy("수동매매", req.code, price_val)
+                    ctx.virtual_trade_service.log_buy("수동매매", req.code, price_val)
                 elif req.side == "sell":
                     # 매도 기록 (수익률 계산됨)
-                    ctx.virtual_manager.log_sell(req.code, price_val)
+                    ctx.virtual_trade_service.log_sell(req.code, price_val)
 
             except Exception as e:
                 print(f"[WebAPI] 수동매매 기록 중 오류 발생: {e}")

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import builtins
 from unittest.mock import call, ANY
-from managers.market_date_manager import MarketDateManager
+from services.market_calendar_service import MarketCalendarService
 from common.types import ResCommonResponse, ErrorCode
 from services.order_execution_service import OrderExecutionService
 
@@ -41,20 +41,20 @@ def mock_time_manager():
     return mock
 
 @pytest.fixture
-def mock_market_date_manager():
-    """MarketDateManager의 AsyncMock 인스턴스를 제공하는 픽스처."""
-    mock = AsyncMock(spec_set=MarketDateManager)
+def mock_market_calendar_service():
+    """MarketCalendarService의 AsyncMock 인스턴스를 제공하는 픽스처."""
+    mock = AsyncMock(spec_set=MarketCalendarService)
     mock.is_market_open_now.return_value = True # 기본값 설정
     return mock
 
 @pytest.fixture
-def handler(mock_trading_service, mock_logger, mock_time_manager, mock_market_date_manager):
+def handler(mock_trading_service, mock_logger, mock_time_manager, mock_market_calendar_service):
     """TransactionHandlers 인스턴스를 제공하는 픽스처."""
     handler_instance = OrderExecutionService(
         trading_service=mock_trading_service,
         logger=mock_logger,
         time_manager=mock_time_manager,
-        market_date_manager=mock_market_date_manager
+        market_calendar_service=mock_market_calendar_service
     )
     return handler_instance
 
@@ -87,13 +87,13 @@ async def test_handle_buy_stock_success(handler, mock_trading_service):
 
 
 @pytest.mark.asyncio
-async def test_handle_buy_stock_market_closed(handler, mock_trading_service, mock_market_date_manager, mock_logger):
+async def test_handle_buy_stock_market_closed(handler, mock_trading_service, mock_market_calendar_service, mock_logger):
     """handle_buy_stock 시장 마감 시 매수 실패 테스트."""
     stock_code_input = "005930"
     qty_input = "10"
     price_input = "70000"
 
-    mock_market_date_manager.is_market_open_now.return_value = False
+    mock_market_calendar_service.is_market_open_now.return_value = False
 
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
@@ -150,13 +150,13 @@ async def test_handle_sell_stock_success(handler, mock_trading_service):
 
 
 @pytest.mark.asyncio
-async def test_handle_sell_stock_market_closed(handler, mock_trading_service, mock_market_date_manager, mock_logger):
+async def test_handle_sell_stock_market_closed(handler, mock_trading_service, mock_market_calendar_service, mock_logger):
     """handle_sell_stock 시장 마감 시 매도 실패 테스트."""
     stock_code_input = "005930"
     qty_input = "5"
     price_input = "60000"
 
-    mock_market_date_manager.is_market_open_now.return_value = False
+    mock_market_calendar_service.is_market_open_now.return_value = False
 
     await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
@@ -259,7 +259,7 @@ async def test_handle_place_sell_order_trading_service_failure(handler, mock_tra
     assert result.msg1 == "수량 부족"
 
 @pytest.mark.asyncio # This test is not directly related to the market open check, but it's good to ensure it still works.
-async def test_handle_realtime_price_quote_stream_success(handler, mock_trading_service, mock_logger, mock_market_date_manager):
+async def test_handle_realtime_price_quote_stream_success(handler, mock_trading_service, mock_logger, mock_market_calendar_service):
     """실시간 스트림이 성공적으로 연결, 구독, 종료되는지 테스트합니다."""
     mock_trading_service.connect_websocket.return_value = True
     mock_trading_service.subscribe_realtime_price.return_value = True
@@ -284,7 +284,7 @@ async def test_handle_realtime_price_quote_stream_success(handler, mock_trading_
         mock_logger.info.assert_called_once_with(f"실시간 주식 스트림 종료: 종목=005930")
 
 @pytest.mark.asyncio
-async def test_handle_realtime_price_quote_stream_connection_failure(handler, mock_trading_service, mock_logger, mock_market_date_manager):
+async def test_handle_realtime_price_quote_stream_connection_failure(handler, mock_trading_service, mock_logger, mock_market_calendar_service):
     """웹소켓 연결에 실패했을 때 스트림이 시작되지 않고 오류 메시지가 출력되는지 테스트합니다."""
     mock_trading_service.connect_websocket.return_value = False
 
@@ -297,7 +297,7 @@ async def test_handle_realtime_price_quote_stream_connection_failure(handler, mo
     mock_logger.error.assert_called_once_with("실시간 웹소켓 연결 실패.")
 
 @pytest.mark.asyncio
-async def test_handle_realtime_price_quote_stream_keyboard_interrupt(handler, mock_trading_service, mock_logger, mock_market_date_manager):
+async def test_handle_realtime_price_quote_stream_keyboard_interrupt(handler, mock_trading_service, mock_logger, mock_market_calendar_service):
     """스트림 수신 중 KeyboardInterrupt 발생 시 정상적으로 종료되는지 테스트합니다."""
     mock_trading_service.connect_websocket.return_value = True
     mock_trading_service.subscribe_realtime_price.return_value = True
@@ -319,9 +319,9 @@ async def test_handle_realtime_price_quote_stream_keyboard_interrupt(handler, mo
         mock_trading_service.disconnect_websocket.assert_awaited_once()
 
 @pytest.mark.asyncio # This test is directly related to the market open check.
-async def test_handle_buy_order_when_market_closed(handler, mock_market_date_manager, mock_logger, mock_trading_service):
+async def test_handle_buy_order_when_market_closed(handler, mock_market_calendar_service, mock_logger, mock_trading_service):
     """시장이 닫혀 있을 때 매수 주문이 제출되지 않는지 테스트합니다."""
-    mock_market_date_manager.is_market_open_now.return_value = False
+    mock_market_calendar_service.is_market_open_now.return_value = False
 
     await handler.handle_place_buy_order("005930", 70000, 10)
 

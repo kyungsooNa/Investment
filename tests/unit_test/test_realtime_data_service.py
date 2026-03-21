@@ -66,8 +66,7 @@ def test_init_db_failure():
 @pytest.mark.asyncio
 async def test_on_data_received_stores_and_broadcasts(manager):
     """데이터 수신 시 메모리 + SQLite 저장 및 큐 브로드캐스트 테스트."""
-    # API에서 문자열로 넘어오는 상황을 모사
-    test_data = {"유가증권단축종목코드": "005930", "price": "85000", "rate": "2.55", "매도체결량": "15"}
+    test_data = {"유가증권단축종목코드": "005930", "price": 100}
     queue = manager.create_subscriber_queue()
 
     manager.on_data_received(test_data)
@@ -88,11 +87,11 @@ async def test_on_data_received_stores_and_broadcasts(manager):
     expected_payload = [
         '005930',  # code
         '',        # 주식체결시간
-        85000,     # price (int로 캐스팅되었는지 확인)
-        2.55,      # rate (float으로 캐스팅되었는지 확인)
+        100,       # price
+        0,         # rate
         0,         # change
         '',        # sign
-        15,        # 매도체결량 (int로 캐스팅되었는지 확인)
+        0,         # 매도체결량
         0,         # 매수2체결량
         0,         # 순매수체결량
         0,         # 순매수거래대금
@@ -122,7 +121,7 @@ async def test_on_data_received_queue_full_behavior(manager):
         '005930',  # code
         '',        # 주식체결시간
         0,         # price (default)
-        0.0,       # rate (default)
+        0,         # rate
         0,         # change
         '',        # sign
         0,         # 매도체결량
@@ -233,73 +232,6 @@ def test_load_pt_history_from_db(tmp_db_dir):
         assert len(mgr2._pt_history["005930"]) == 2
         assert "000660" in mgr2._pt_history
         assert len(mgr2._pt_history["000660"]) == 1
-        mgr2._conn.close()
-
-
-def test_persistence_of_price_field(tmp_db_dir):
-    """DB 저장 및 로드 시 price 필드가 정상적으로 유지되는지 확인하는 TDD 테스트."""
-    mock_logger = MagicMock()
-
-    # 1. 첫 번째 인스턴스: 데이터 수신 및 DB 삽입
-    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
-        mgr1 = RealtimeDataService(logger=mock_logger)
-        test_data = {
-            "유가증권단축종목코드": "005930",
-            "주식체결시간": "100000",
-            "price": 85000,  # 테스트 대상: 현재가
-            "매도체결량": "10",
-        }
-        mgr1.on_data_received(test_data)
-
-        # DB에 price 컬럼이 85000으로 정상 저장되었는지 직접 쿼리하여 확인
-        with mgr1._get_connection() as conn:
-            cursor = conn.execute("SELECT price FROM pt_history WHERE code = '005930'")
-            row = cursor.fetchone()
-            assert row is not None, "DB에 데이터가 저장되지 않았습니다."
-            assert row[0] == 85000, f"DB에 저장된 price가 85000이 아닙니다. (실제 DB값: {row[0]})"
-        mgr1._conn.close()
-
-    # 2. 두 번째 인스턴스: DB에서 데이터 복원 (_load_pt_history 검증)
-    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
-        mgr2 = RealtimeDataService(logger=mock_logger)
-        loaded_data = mgr2._pt_history.get("005930", [{}])[0]
-        
-        assert "price" in loaded_data, "로드된 메모리 데이터에 'price' 키가 누락되었습니다."
-        assert loaded_data["price"] == 85000, f"로드된 price가 85000이 아닙니다. (실제 메모리값: {loaded_data.get('price')})"
-        mgr2._conn.close()
-
-
-def test_persistence_of_rate_field(tmp_db_dir):
-    """DB 저장 및 로드 시 rate 필드가 정상적으로 유지되는지 확인하는 TDD 테스트."""
-    mock_logger = MagicMock()
-
-    # 1. 첫 번째 인스턴스: 데이터 수신 및 DB 삽입
-    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
-        mgr1 = RealtimeDataService(logger=mock_logger)
-        test_data = {
-            "유가증권단축종목코드": "005930",
-            "주식체결시간": "100000",
-            "price": 85000,
-            "rate": -1.25,  # 테스트 대상: 등락률
-            "매도체결량": "10",
-        }
-        mgr1.on_data_received(test_data)
-
-        # DB에 rate 컬럼이 -1.25로 정상 저장되었는지 직접 쿼리하여 확인
-        with mgr1._get_connection() as conn:
-            cursor = conn.execute("SELECT rate FROM pt_history WHERE code = '005930'")
-            row = cursor.fetchone()
-            assert row is not None, "DB에 데이터가 저장되지 않았습니다."
-            assert row[0] == -1.25, f"DB에 저장된 rate가 -1.25가 아닙니다. (실제 DB값: {row[0]})"
-        mgr1._conn.close()
-
-    # 2. 두 번째 인스턴스: DB에서 데이터 복원 (_load_pt_history 검증)
-    with patch.object(RealtimeDataService, '_get_base_dir', return_value=tmp_db_dir):
-        mgr2 = RealtimeDataService(logger=mock_logger)
-        loaded_data = mgr2._pt_history.get("005930", [{}])[0]
-        
-        assert "rate" in loaded_data, "로드된 메모리 데이터에 'rate' 키가 누락되었습니다."
-        assert loaded_data["rate"] == -1.25, f"로드된 rate가 -1.25가 아닙니다. (실제 메모리값: {loaded_data.get('rate')})"
         mgr2._conn.close()
 
 

@@ -15,10 +15,10 @@ def mock_deps():
         ("ts", patch("view.web.web_app_initializer.TradingService", autospec=True)),
         ("sqs", patch("view.web.web_app_initializer.StockQueryService", autospec=True)),
         ("oes", patch("view.web.web_app_initializer.OrderExecutionService", autospec=True)),
-        ("vtm", patch("view.web.web_app_initializer.VirtualTradeManager", autospec=True)),
-        ("scm", patch("view.web.web_app_initializer.StockCodeMapper", autospec=True)),
+        ("vtm", patch("view.web.web_app_initializer.VirtualTradeRepository", autospec=True)),
+        ("scm", patch("view.web.web_app_initializer.StockCodeRepository", autospec=True)),
         ("sched", patch("view.web.web_app_initializer.StrategyScheduler", autospec=True)),
-        ("rdm", patch("view.web.web_app_initializer.RealtimeDataManager", autospec=True)),
+        ("rdm", patch("view.web.web_app_initializer.RealtimeDataService", autospec=True)),
         ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
         ("web_api", patch("view.web.web_app_initializer.web_api")),
         ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
@@ -123,7 +123,7 @@ def test_initialize_scheduler(mock_deps):
     """스케줄러 초기화 및 전략 등록 검증"""
     ctx = WebAppContext(None)
     # 스케줄러 생성에 필요한 의존성 주입
-    ctx.virtual_manager = MagicMock()
+    ctx.virtual_trade_service = MagicMock()
     ctx.order_execution_service = MagicMock()
     ctx.time_manager = MagicMock()
     ctx.trading_service = MagicMock()
@@ -150,8 +150,8 @@ async def test_program_trading_subscription(mock_deps):
     """프로그램 매매 구독/해지 로직 검증"""
     ctx = WebAppContext(None)
     
-    # RealtimeDataManager Mock 인스턴스 설정
-    mock_rdm_instance = ctx.realtime_data_manager
+    # RealtimeDataService Mock 인스턴스 설정
+    mock_rdm_instance = ctx.realtime_data_service
     mock_rdm_instance.is_subscribed.return_value = False
 
     ctx.pm = MagicMock()
@@ -186,14 +186,14 @@ async def test_time_manager_methods(mock_deps):
     
     # 1. time_manager가 없을 때
     ctx.time_manager = None
-    ctx._mdm = None
+    ctx._mcs = None
     assert await ctx.is_market_open_now() is False
     assert ctx.get_current_time_str() == ""
     
     # 2. time_manager가 있을 때
     ctx.time_manager = MagicMock()
-    ctx._mdm = AsyncMock()
-    ctx._mdm.is_market_open_now.return_value = True
+    ctx._mcs = AsyncMock()
+    ctx._mcs.is_market_open_now.return_value = True
     
     # datetime 객체 모킹
     mock_dt = MagicMock()
@@ -229,13 +229,13 @@ def test_web_realtime_callback(mock_deps):
     ctx.stock_query_service = MagicMock()
     ctx.stock_query_service.dispatch_realtime_message = MagicMock()
     ctx.stock_query_service.get_cached_realtime_price = MagicMock(return_value=None)
-    ctx.realtime_data_manager = MagicMock()
+    ctx.realtime_data_service = MagicMock()
     
     # 1. 일반 데이터 (program trading 아님)
     data_normal = {"type": "realtime_price", "data": {}}
     ctx._web_realtime_callback(data_normal)
     ctx.stock_query_service.dispatch_realtime_message.assert_called_with(data_normal)
-    ctx.realtime_data_manager.on_data_received.assert_not_called()
+    ctx.realtime_data_service.on_data_received.assert_not_called()
     
     # 2. 프로그램 매매 데이터 (가격 정보 주입 - dict 형태)
     mock_price_data = {"price": "70000", "change": "100", "rate": "0.1", "sign": "2"}
@@ -249,7 +249,7 @@ def test_web_realtime_callback(mock_deps):
     
     ctx.stock_query_service.get_cached_realtime_price.assert_called_with("005930")
     # 데이터가 주입되었는지 확인
-    received_data = ctx.realtime_data_manager.on_data_received.call_args[0][0]
+    received_data = ctx.realtime_data_service.on_data_received.call_args[0][0]
     assert received_data["price"] == "70000"
     assert received_data["rate"] == "0.1"
 
@@ -257,8 +257,8 @@ def test_web_realtime_callback(mock_deps):
 async def test_stop_all_program_trading(mock_deps):
     """모든 프로그램 매매 구독 해지 테스트"""
     ctx = WebAppContext(None)
-    ctx.realtime_data_manager = MagicMock()
-    ctx.realtime_data_manager.get_subscribed_codes.return_value = ["005930", "000660"]
+    ctx.realtime_data_service = MagicMock()
+    ctx.realtime_data_service.get_subscribed_codes.return_value = ["005930", "000660"]
     
     ctx.stock_query_service = MagicMock()
     ctx.stock_query_service.unsubscribe_program_trading = AsyncMock()
@@ -268,7 +268,7 @@ async def test_stop_all_program_trading(mock_deps):
     
     assert ctx.stock_query_service.unsubscribe_program_trading.call_count == 2
     assert ctx.stock_query_service.unsubscribe_realtime_price.call_count == 2
-    ctx.realtime_data_manager.clear_subscribed_codes.assert_called_once()
+    ctx.realtime_data_service.clear_subscribed_codes.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_initialize_services_with_pydantic_config_object(mock_deps):

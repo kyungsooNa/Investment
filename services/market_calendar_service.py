@@ -6,7 +6,7 @@ from typing import Optional
 from common.types import ResCommonResponse
 from core.performance_manager import PerformanceManager
 
-class MarketDateManager:
+class MarketCalendarService:
     """
     주식 시장의 개장일, 휴장일, 과거 최신 영업일 및 다음 개장 시간을 통합 관리하는 달력(Calendar) 매니저입니다.
     """
@@ -39,7 +39,7 @@ class MarketDateManager:
             return self._cached_date
 
         if not self._broker:
-            self._logger.warning("MarketDateManager: Broker is not set.")
+            self._logger.warning("MarketCalendarService: Broker is not set.")
             return None
 
         t_start = self._pm.start_timer()
@@ -48,17 +48,17 @@ class MarketDateManager:
             if latest_date:
                 self._cached_date = latest_date
                 self._last_check_date = current_date
-            self._pm.log_timer("MarketDateManager.get_latest_trading_date", t_start)
+            self._pm.log_timer("MarketCalendarService.get_latest_trading_date", t_start)
             return latest_date
         except Exception as e:
-            self._logger.error(f"Failed to fetch latest trading date: {e}")
-            self._pm.log_timer("MarketDateManager.get_latest_trading_date [예외]", t_start)
+            self._logger.error(f"최근 영업일 조회 실패: {e}")
+            self._pm.log_timer("MarketCalendarService.get_latest_trading_date [예외]", t_start)
             return None
 
     async def _fetch_from_api(self) -> Optional[str]:
         """삼성전자(005930) 일봉 조회를 통해 가장 최근 영업일을 API에서 가져옵니다."""
         if not self._broker:
-            self._logger.warning("MarketDateManager: Broker가 설정되지 않았습니다.")
+            self._logger.warning("MarketCalendarService: Broker가 설정되지 않았습니다.")
             return None
             
         now = self._time_manager.get_current_kst_time()
@@ -128,7 +128,7 @@ class MarketDateManager:
                 self._business_days_cache[date_str] = is_open
 
         self._last_sync_month = target_month
-        self._pm.log_timer(f"MarketDateManager._sync_calendar_if_needed({target_date_str})", t_start)
+        self._pm.log_timer(f"MarketCalendarService._sync_calendar_if_needed({target_date_str})", t_start)
 
     async def is_business_day(self, date_str: str = None) -> bool:
         """특정 날짜(YYYYMMDD)가 공휴일/휴장일이 아닌 영업일인지 확인합니다."""

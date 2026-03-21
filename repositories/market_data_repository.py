@@ -1,4 +1,4 @@
-# managers/market_data_repository.py
+# repositories/market_data_repository.py
 """
 전체 종목 마켓 데이터를 SQLite에 저장/조회하는 Repository.
 장 마감 후 수집한 현재가 및 관련 데이터를 날짜별로 관리한다.

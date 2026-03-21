@@ -8,7 +8,7 @@ RankingTask, MarketDataCollectorTask 등 장 마감 후 1회 실행되는
 Usage::
 
     await run_after_market_loop(
-        mdm=self._mdm,
+        mcs=self._mcs,
         time_manager=self._time_manager,
         logger=self._logger,
         on_market_closed=self._do_work,  # async (latest_date: str) -> None
@@ -20,11 +20,11 @@ import logging
 from typing import Optional, Callable, Awaitable
 
 from core.time_manager import TimeManager
-from managers.market_date_manager import MarketDateManager
+from services.market_calendar_service import MarketCalendarService
 
 
 async def run_after_market_loop(
-    mdm: Optional[MarketDateManager],
+    mcs: Optional[MarketCalendarService],
     time_manager: Optional[TimeManager],
     logger: Optional[logging.Logger],
     on_market_closed: Callable[[str], Awaitable[None]],
@@ -33,7 +33,7 @@ async def run_after_market_loop(
     """장 마감 후 작업을 자동으로 반복 실행하는 루프.
 
     Args:
-        mdm: 시장 개장/마감 판단용 MarketDateManager.
+        mcs: 시장 개장/마감 판단용 MarketCalendar.
         time_manager: 장 마감까지 남은 시간 계산용 TimeManager.
         logger: 로깅용 Logger.
         on_market_closed: 장 마감 후 호출할 콜백.
@@ -47,7 +47,7 @@ async def run_after_market_loop(
     while True:
         try:
             # ── 1. 장 중이면 마감 시각까지 정확히 대기 ──
-            if mdm and await mdm.is_market_open_now():
+            if mcs and await mcs.is_market_open_now():
                 wait_sec = (
                     time_manager.get_sleep_seconds_until_market_close()
                     if time_manager else 300
@@ -61,7 +61,7 @@ async def run_after_market_loop(
 
             # ── 2. 장 마감 이후 — 콜백 실행 ──
             latest_trading_date = (
-                await mdm.get_latest_trading_date() if mdm else None
+                await mcs.get_latest_trading_date() if mcs else None
             )
             if latest_trading_date:
                 await on_market_closed(latest_trading_date)

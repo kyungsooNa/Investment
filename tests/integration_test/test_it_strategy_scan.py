@@ -389,7 +389,7 @@ class TestTraditionalVolumeBreakoutScan:
         from strategies.traditional_volume_breakout_strategy import (
             TraditionalVolumeBreakoutStrategy, TraditionalVBConfig,
         )
-        from market_data.stock_code_mapper import StockCodeMapper
+        from repositories.stock_code_repository import StockCodeRepository
         from common.types import ResCommonResponse
 
         # 1. 기초 데이터 준비 (msg1 필드 추가)
@@ -431,7 +431,7 @@ class TestTraditionalVolumeBreakoutScan:
         )
 
         # 3. 시간 및 환경 설정
-        mock_mapper = MagicMock(spec=StockCodeMapper)
+        mock_mapper = MagicMock(spec=StockCodeRepository)
         mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
         
         from datetime import datetime
@@ -450,7 +450,7 @@ class TestTraditionalVolumeBreakoutScan:
         # 4. 전략 실행
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            stock_code_mapper=mock_mapper,
+            stock_code_repository=mock_mapper,
             time_manager=mock_tm,
             config=config,
         )
@@ -471,7 +471,7 @@ class TestTraditionalVolumeBreakoutScan:
         from strategies.traditional_volume_breakout_strategy import (
             TraditionalVolumeBreakoutStrategy, TraditionalVBConfig,
         )
-        from market_data.stock_code_mapper import StockCodeMapper
+        from repositories.stock_code_repository import StockCodeRepository
 
         quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
 
@@ -495,7 +495,7 @@ class TestTraditionalVolumeBreakoutScan:
             new_callable=AsyncMock, side_effect=_side_effect,
         )
 
-        mock_mapper = MagicMock(spec=StockCodeMapper)
+        mock_mapper = MagicMock(spec=StockCodeRepository)
         mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
 
         mocker.patch.object(
@@ -517,7 +517,7 @@ class TestTraditionalVolumeBreakoutScan:
         )
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            stock_code_mapper=mock_mapper,
+            stock_code_repository=mock_mapper,
             time_manager=mock_tm,
             config=config,
         )

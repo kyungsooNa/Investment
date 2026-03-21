@@ -4,8 +4,8 @@ from typing import Optional
 from common.types import ErrorCode, ResCommonResponse
 from core.performance_manager import PerformanceManager
 from core.time_manager import TimeManager
-from managers.notification_manager import NotificationManager
-from managers.market_date_manager import MarketDateManager
+from services.notification_service import NotificationService
+from services.market_calendar_service import MarketCalendarService
 
 
 class OrderExecutionService:
@@ -20,14 +20,14 @@ class OrderExecutionService:
     def __init__(self, trading_service, logger, 
                  time_manager: Optional[TimeManager] = None,
                  performance_manager: Optional[PerformanceManager] = None,
-                 notification_manager: Optional[NotificationManager] = None,
-                 market_date_manager: Optional[MarketDateManager] = None):
+                 notification_service: Optional[NotificationService] = None,
+                 market_calendar_service: Optional[MarketCalendarService] = None):
         self.trading_service = trading_service
         self.logger = logger
         self.time_manager = time_manager
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
-        self._nm = notification_manager
-        self.market_date_manager = market_date_manager
+        self._notification_service = notification_service
+        self.market_calendar_service = market_calendar_service
 
     async def _retry_order(self, order_fn, stock_code, price, qty) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도."""
@@ -58,11 +58,11 @@ class OrderExecutionService:
     async def handle_place_buy_order(self, stock_code, price, qty):
         """주식 매수 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
-        if self.market_date_manager and not await self.market_date_manager.is_market_open_now():
+        if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
             self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
-        # Fallback if market_date_manager is not available (though it should be)
-        elif not self.market_date_manager and not self.time_manager.is_market_operating_hours():
+        # Fallback if market_calendar_service is not available (though it should be)
+        elif not self.market_calendar_service and not self.time_manager.is_market_operating_hours():
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         buy_order_result: ResCommonResponse = await self._retry_order(
@@ -71,8 +71,8 @@ class OrderExecutionService:
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
                 f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
-            if self._nm:
-                await self._nm.emit("API", "info", "매수 주문 성공",
+            if self._notification_service:
+                await self._notification_service.emit("API", "info", "매수 주문 성공",
                                     f"{stock_code} {qty}주 @ {price}원",
                                     metadata={"code": stock_code, "qty": qty, "price": price})
         else:
@@ -80,8 +80,8 @@ class OrderExecutionService:
             msg1 = buy_order_result.msg1 if buy_order_result else '응답 없음'
             self.logger.error(
                 f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
-            if self._nm:
-                await self._nm.emit("SYSTEM", "error", "매수 주문 실패",
+            if self._notification_service:
+                await self._notification_service.emit("SYSTEM", "error", "매수 주문 실패",
                                     f"{stock_code} - {msg1}",
                                     metadata={"code": stock_code, "error": msg1})
         self.pm.log_timer(f"OrderExecutionService.handle_place_buy_order({stock_code})", t_start)
@@ -90,11 +90,11 @@ class OrderExecutionService:
     async def handle_place_sell_order(self, stock_code, price, qty):
         """주식 매도 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
-        if self.market_date_manager and not await self.market_date_manager.is_market_open_now():
+        if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
             self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
-        # Fallback if market_date_manager is not available
-        elif not self.market_date_manager and not self.time_manager.is_market_operating_hours():
+        # Fallback if market_calendar_service is not available
+        elif not self.market_calendar_service and not self.time_manager.is_market_operating_hours():
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         sell_order_result: ResCommonResponse = await self._retry_order(
@@ -103,8 +103,8 @@ class OrderExecutionService:
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
                 f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
-            if self._nm:
-                await self._nm.emit("API", "info", "매도 주문 성공",
+            if self._notification_service:
+                await self._notification_service.emit("API", "info", "매도 주문 성공",
                                     f"{stock_code} {qty}주 @ {price}원",
                                     metadata={"code": stock_code, "qty": qty, "price": price})
         else:
@@ -112,8 +112,8 @@ class OrderExecutionService:
             msg1 = sell_order_result.msg1 if sell_order_result else '응답 없음'
             self.logger.error(
                 f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
-            if self._nm:
-                await self._nm.emit("SYSTEM", "error", "매도 주문 실패",
+            if self._notification_service:
+                await self._notification_service.emit("SYSTEM", "error", "매도 주문 실패",
                                     f"{stock_code} - {msg1}",
                                     metadata={"code": stock_code, "error": msg1})
         self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)

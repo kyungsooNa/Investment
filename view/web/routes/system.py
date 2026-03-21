@@ -20,7 +20,7 @@ def get_cache_status(expand: bool = True):
             code = item.get("code")
             if code:
                 code_str = str(code).zfill(6)  # 확실한 6자리 문자열로 변환
-                name = ctx.stock_code_mapper.get_name_by_code(code_str)
+                name = ctx.stock_code_repository.get_name_by_code(code_str)
                 item["name"] = name if name and name != code_str else code_str
                 
     return {

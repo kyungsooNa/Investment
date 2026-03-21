@@ -12,7 +12,7 @@ from strategies.oneil_common_types import OSBWatchlistItem
 from core.logger import get_strategy_logger
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
-from market_data.stock_code_mapper import StockCodeMapper
+from repositories.stock_code_repository import StockCodeRepository
 from core.time_manager import TimeManager
 
 def create_mock_ohlcv(length=90, zero_volume_days=0, no_high_days=0):
@@ -45,7 +45,7 @@ def mock_deps():
     # ts = MagicMock() # Removed
     sqs = MagicMock(spec=StockQueryService)
     indicator = MagicMock(spec=IndicatorService)
-    mapper = MagicMock(spec=StockCodeMapper)
+    mapper = MagicMock(spec=StockCodeRepository)
     tm = MagicMock(spec=TimeManager)
     logger = MagicMock()
     
@@ -67,14 +67,14 @@ def oneil_service_fixture():
     # mock_ts = AsyncMock() # Removed
     mock_sqs = AsyncMock(spec=StockQueryService)
     mock_indicator = AsyncMock(spec=IndicatorService)
-    mock_mapper = MagicMock(spec=StockCodeMapper)
+    mock_mapper = MagicMock(spec=StockCodeRepository)
     mock_tm = MagicMock(spec=TimeManager)
     mock_logger = MagicMock()
 
     service = OneilUniverseService(
         stock_query_service=mock_sqs,
         indicator_service=mock_indicator,
-        stock_code_mapper=mock_mapper,
+        stock_code_repository=mock_mapper,
         time_manager=mock_tm,
         logger=mock_logger
     )

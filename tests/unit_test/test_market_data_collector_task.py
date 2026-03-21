@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, AsyncMock, PropertyMock, patch
 import pandas as pd
 
 from task.background.market_data_collector_task import MarketDataCollectorTask
-from managers.market_data_repository import MarketDataRepository
+from repositories.market_data_repository import MarketDataRepository
 from interfaces.schedulable_task import TaskPriority, TaskState
 from common.types import ResCommonResponse, ErrorCode
 
@@ -58,21 +58,21 @@ def repo(tmp_path):
 
 
 @pytest.fixture
-def mock_mdm():
-    mdm = MagicMock()
-    mdm.is_market_open_now = AsyncMock(return_value=False)
-    mdm.get_latest_trading_date = AsyncMock(return_value="20260318")
-    return mdm
+def mock_mcs():
+    mcs = MagicMock()
+    mcs.is_market_open_now = AsyncMock(return_value=False)
+    mcs.get_latest_trading_date = AsyncMock(return_value="20260318")
+    return mcs
 
 
 @pytest.fixture
-def task(mock_sqs, mock_mapper, repo, mock_mdm):
+def task(mock_sqs, mock_mapper, repo, mock_mcs):
     return MarketDataCollectorTask(
         stock_query_service=mock_sqs,
-        stock_code_mapper=mock_mapper,
+        stock_code_repository=mock_mapper,
         market_data_repo=repo,
         stock_repo=MagicMock(),
-        market_date_manager=mock_mdm,
+        market_calendar_service=mock_mcs,
         logger=MagicMock(),
     )
 
@@ -197,9 +197,9 @@ class TestCollectAllPrices:
         assert progress["processed"] == 3
         assert progress["collected"] == 3
 
-    async def test_collect_skip_during_market_hours(self, task, mock_mdm, mock_sqs):
+    async def test_collect_skip_during_market_hours(self, task, mock_mcs, mock_sqs):
         """장 중에는 수집을 건너뛴다."""
-        mock_mdm.is_market_open_now.return_value = True
+        mock_mcs.is_market_open_now.return_value = True
 
         await task._collect_all_prices()
 
@@ -217,9 +217,9 @@ class TestCollectAllPrices:
         await task._collect_all_prices()  # 동일 날짜 → 스킵
         mock_sqs.get_current_price.assert_not_called()
 
-    async def test_collect_no_trading_date(self, task, mock_mdm, mock_sqs):
+    async def test_collect_no_trading_date(self, task, mock_mcs, mock_sqs):
         """거래일을 확인할 수 없으면 중단."""
-        mock_mdm.get_latest_trading_date.return_value = None
+        mock_mcs.get_latest_trading_date.return_value = None
 
         await task._collect_all_prices()
 
@@ -231,14 +231,14 @@ class TestCollectAllPrices:
 
 class TestLoadAllStocks:
 
-    def test_filters_etf_and_preferred(self, mock_sqs, mock_mapper_with_etf, repo, mock_mdm):
+    def test_filters_etf_and_preferred(self, mock_sqs, mock_mapper_with_etf, repo, mock_mcs):
         """ETF, 우선주, 스팩이 필터링된다."""
         task = MarketDataCollectorTask(
             stock_query_service=mock_sqs,
-            stock_code_mapper=mock_mapper_with_etf,
+            stock_code_repository=mock_mapper_with_etf,
             market_data_repo=repo,
             stock_repo=MagicMock(),
-            market_date_manager=mock_mdm,
+            market_calendar_service=mock_mcs,
             logger=MagicMock(),
         )
         stocks = task._load_all_stocks()

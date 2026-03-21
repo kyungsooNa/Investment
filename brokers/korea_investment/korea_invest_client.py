@@ -16,7 +16,7 @@ import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from typing import Any
 from common.types import ResCommonResponse
-from managers.market_date_manager import MarketDateManager
+from services.market_calendar_service import MarketCalendarService
 
 
 class KoreaInvestApiClient:
@@ -26,11 +26,11 @@ class KoreaInvestApiClient:
     """
 
     def __init__(self, env: KoreaInvestApiEnv, logger=None, time_manager=None,
-                 market_date_manager: Optional[MarketDateManager] = None):
+                 market_calendar_service: Optional[MarketCalendarService] = None):
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
         self.time_manager = time_manager
-        self._mdm = market_date_manager  # MarketDateManager는 나중에 set_market_date_manager()로 주입받음
+        self._mcs = market_calendar_service  # MarketCalendar는 나중에 set_market_calendar_service()로 주입받음
 
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         shared_client = httpx.AsyncClient(verify=ssl_context)
@@ -72,7 +72,7 @@ class KoreaInvestApiClient:
             url_provider=url_provider,
             trid_provider=trid_provider,
         )
-        self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger, time_manager=self.time_manager, market_date_manager=self._mdm)
+        self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger, time_manager=self.time_manager, market_calendar_service=self._mcs)
 
     # --- Account API delegation ---
     async def get_account_balance(self) -> ResCommonResponse:

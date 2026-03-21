@@ -11,8 +11,8 @@ from typing import Dict, List, Optional
 from common.types import ErrorCode
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
-from market_data.stock_code_mapper import StockCodeMapper
-from services.naver_finance_scraper import NaverFinanceScraper
+from repositories.stock_code_repository import StockCodeRepository
+from services.naver_finance_scraper_service import NaverFinanceScraperService
 from core.time_manager import TimeManager
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from core.logger import get_strategy_logger
@@ -37,16 +37,16 @@ class OneilUniverseService:
         self,
         stock_query_service: StockQueryService,
         indicator_service: IndicatorService,
-        stock_code_mapper: StockCodeMapper,
+        stock_code_repository: StockCodeRepository,
         time_manager: TimeManager,
-        scraper_service: Optional[NaverFinanceScraper] = None,  # 추가됨
+        scraper_service: Optional[NaverFinanceScraperService] = None,  # 추가됨
         config: Optional[OneilUniverseConfig] = None,
         logger: Optional[logging.Logger] = None,
         performance_manager: Optional[PerformanceManager] = None
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
-        self._mapper = stock_code_mapper
+        self.stock_code_repository = stock_code_repository
         self._tm = time_manager
         self._scraper = scraper_service
         self._cfg = config or OneilUniverseConfig()
@@ -333,7 +333,7 @@ class OneilUniverseService:
         if rs_resp and rs_resp.data:
             rs_return = rs_resp.data.return_pct
 
-        market = "KOSDAQ" if self._mapper.is_kosdaq(code) else "KOSPI"
+        market = "KOSDAQ" if self.stock_code_repository.is_kosdaq(code) else "KOSPI"
 
         if logger: logger.debug({"event": "selected", "code": code, "name": name})
 
@@ -361,7 +361,7 @@ class OneilUniverseService:
         
         # 1. 전체 종목 로드
         all_stocks = []
-        for _, row in self._mapper.df.iterrows():
+        for _, row in self.stock_code_repository.df.iterrows():
             code = row.get("종목코드", "")
             name = row.get("종목명", "")
             market = row.get("시장구분", "")

@@ -47,7 +47,7 @@ async def get_stocks_list():
     ctx = _get_ctx()
     stock_list = [
         {"c": code, "n": name}
-        for name, code in ctx.stock_code_mapper.name_to_code.items()
+        for name, code in ctx.stock_code_repository.name_to_code.items()
     ]
     return {"stocks": stock_list, "count": len(stock_list)}
 
@@ -58,7 +58,7 @@ async def search_stock_by_name(q: str = ""):
     ctx = _get_ctx()
     if not q or len(q.strip()) == 0:
         return {"results": []}
-    results = ctx.stock_code_mapper.search_by_name(q.strip())
+    results = ctx.stock_code_repository.search_by_name(q.strip())
     return {"results": results}
 
 
@@ -68,7 +68,7 @@ async def get_stock_price(code: str):
     ctx = _get_ctx()
     # 숫자가 아닌 입력(종목명)이면 코드로 변환
     if not code.isdigit():
-        resolved = ctx.stock_code_mapper.get_code_by_name(code)
+        resolved = ctx.stock_code_repository.get_code_by_name(code)
         if not resolved:
             return {"rt_cd": "1", "msg1": f"종목명 '{code}'에 해당하는 종목코드를 찾을 수 없습니다.", "data": None}
         code = resolved

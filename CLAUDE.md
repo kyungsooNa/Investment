@@ -50,7 +50,7 @@ Investment/
 ├── data/                   # stock_code_list.csv (KOSPI+KOSDAQ 종목코드)
 ├── interfaces/strategy.py  # Strategy 추상 인터페이스
 ├── managers/               # VirtualTradeManager (CSV 기반 모의매매 저널)
-├── market_data/            # StockCodeMapper (종목코드 ↔ 이름 매핑)
+├── market_data/            # StockCodeRepository (종목코드 ↔ 이름 매핑)
 ├── services/               # 비즈니스 로직
 │   ├── trading_service.py          # 핵심 도메인 서비스
 │   ├── stock_query_service.py      # 시세 조회 서비스 (분봉 페이지네이션 포함)

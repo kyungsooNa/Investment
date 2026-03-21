@@ -1,7 +1,7 @@
 import aiohttp
 import logging
 from typing import Optional, List, Dict
-from managers.notification_manager import NotificationEvent
+from services.notification_service import NotificationEvent
 import unicodedata
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ class TelegramNotifier:
         self.allowed_categories = allowed_categories
 
     async def handle_event(self, event: NotificationEvent) -> None:
-        """NotificationManager에서 호출할 비동기 콜백 메서드입니다."""
+        """NotificationService에서 호출할 비동기 콜백 메서드입니다."""
         # ★ 필터링 로직: 허용된 카테고리가 설정되어 있고, 현재 이벤트 카테고리가 거기에 없으면 무시
         if self.allowed_categories is not None and event.category not in self.allowed_categories:
             return

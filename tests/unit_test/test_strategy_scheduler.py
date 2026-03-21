@@ -69,25 +69,25 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         tm = MagicMock()
         tm.is_market_operating_hours.return_value = True
 
-        mdm = AsyncMock()
-        mdm.is_market_open_now.return_value = True
-        mdm.wait_until_next_open = AsyncMock()
+        mcs = AsyncMock()
+        mcs.is_market_open_now.return_value = True
+        mcs.wait_until_next_open = AsyncMock()
 
         mock_logger = MagicMock()
 
         # CSV 파일 I/O를 차단하여 테스트 격리
         with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
             scheduler = StrategyScheduler(
-                virtual_manager=vm,
+                virtual_trade_service=vm,
                 order_execution_service=oes,
                 stock_query_service=sqs,
-                stock_code_mapper=scm,
+                stock_code_repository=scm,
                 time_manager=tm,
-                market_date_manager=mdm,
+                market_calendar_service=mcs,
                 logger=mock_logger,
                 dry_run=dry_run,
             )
-        return scheduler, vm, oes, tm, mdm
+        return scheduler, vm, oes, tm, mcs
 
     def test_register_strategy(self):
         """전략 등록이 정상 동작하는지 테스트."""
@@ -106,7 +106,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         config = StrategySchedulerConfig(strategy=strategy, interval_minutes=10, max_positions=5)
         scheduler.register(config)
 
-        # Mock VirtualTradeManager가 특정 전략의 보유 종목을 반환하도록 설정
+        # Mock VirtualTradeRepository 특정 전략의 보유 종목을 반환하도록 설정
         holding_item = {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 1, "status": "HOLD"}
         vm.get_holds_by_strategy.return_value = [holding_item]
 
@@ -702,15 +702,15 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
     async def test_loop_market_closed_smart_wait(self):
         """장 마감 시 스마트 대기(다음 영업일 개장까지) 테스트."""
-        scheduler, _, _, tm, mdm = self._make_scheduler()
+        scheduler, _, _, tm, mcs = self._make_scheduler()
         
         # 달력이 장이 닫혔다고 응답함
-        mdm.is_market_open_now.return_value = False
+        mcs.is_market_open_now.return_value = False
 
         scheduler._running = True
 
         # wait_until_next_open 안에서 CancelledError를 발생시켜 루프를 종료시킴
-        mdm.wait_until_next_open.side_effect = asyncio.CancelledError()
+        mcs.wait_until_next_open.side_effect = asyncio.CancelledError()
 
         try:
             await scheduler._loop()
@@ -718,7 +718,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             pass
 
         # 달력 매니저의 대기 메서드가 호출되었는지 완벽하게 확인됨!
-        mdm.wait_until_next_open.assert_awaited_once()
+        mcs.wait_until_next_open.assert_awaited_once()
 
     async def test_loop_force_exit(self):
         """장 마감 임박 시 강제 청산 로직 테스트 (전략별 설정 구분 확인)."""
@@ -968,11 +968,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         sqs = MagicMock()
         scm = AsyncMock()
         tm = MagicMock()
-        mdm = AsyncMock()
+        mcs = AsyncMock()
 
         # 파일 로드 방지
         with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
-            scheduler = StrategyScheduler(vm, oes, sqs, scm, tm, mdm, dry_run=True)
+            scheduler = StrategyScheduler(vm, oes, sqs, scm, tm, mcs, dry_run=True)
         
         record = MagicMock()
         

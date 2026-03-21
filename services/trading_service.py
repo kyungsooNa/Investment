@@ -15,10 +15,10 @@ from common.types import (
 )
 from core.cache.cache_manager import CacheManager
 from core.performance_manager import PerformanceManager
-from managers import market_date_manager
+from services.market_calendar_service import MarketCalendarService
 
 if TYPE_CHECKING:
-    from managers.stock_repository import StockRepository
+    from repositories.stock_repository import StockRepository
 
 
 class TradingService:
@@ -29,7 +29,7 @@ class TradingService:
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
                  time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None,
-                 market_date_manager=None, performance_manager: Optional[PerformanceManager] = None,
+                 market_calendar_service: Optional[MarketCalendarService] = None, performance_manager: Optional[PerformanceManager] = None,
                  stock_repository: Optional['StockRepository'] = None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
@@ -37,7 +37,7 @@ class TradingService:
         self._time_manager = time_manager
         self.cache_manager = cache_manager
         self._latest_prices = {}
-        self._mdm = market_date_manager
+        self._calendar = market_calendar_service
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
         self._stock_repo = stock_repository
 
@@ -754,7 +754,7 @@ class TradingService:
 
             # 3. 오늘 데이터 처리 (실시간 API 병합)
             today_rows = []
-            is_market_open = (await self._mdm.is_market_open_now()) if self._mdm else False
+            is_market_open = (await self._calendar.is_market_open_now()) if self._calendar else False
             is_today_cached = past_rows and past_rows[-1]['date'] == today_str
 
             if is_today_cached and not is_market_open:
@@ -963,11 +963,11 @@ class TradingService:
         """
         대표 종목(삼성전자)의 일봉을 조회하여 데이터가 존재하는 가장 최근 날짜를 반환한다.
         """
-        # [수정] MarketDateManager를 통해 조회
-        if self._mdm:
-            return await self._mdm.get_latest_trading_date()
+        # [수정] MarketCalendarService를 통해 조회
+        if self._mcs:
+            return await self._mcs.get_latest_trading_date()
         
-        self._logger.warning("MarketDateManager is not initialized in TradingService.")
+        self._logger.warning("MarketCalendarService is not initialized in TradingService.")
         return None
 
     async def get_next_open_day(self) -> Optional[str]:

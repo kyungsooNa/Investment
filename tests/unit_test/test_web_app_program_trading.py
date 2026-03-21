@@ -9,16 +9,16 @@ def mock_ctx():
     app_context.env = MagicMock()
 
     # [수정] WebAppContext 초기화 시 외부 의존성(파일I/O, 네트워크) 격리
-    with patch('view.web.web_app_initializer.RealtimeDataManager') as MockRDM, \
+    with patch('view.web.web_app_initializer.RealtimeDataService') as MockRDM, \
          patch('view.web.web_app_initializer.web_api') as MockWebApi, \
-         patch('view.web.web_app_initializer.StockCodeMapper') as MockMapper, \
-         patch('view.web.web_app_initializer.VirtualTradeManager') as MockVTM, \
+         patch('view.web.web_app_initializer.StockRepository') as MockMapper, \
+         patch('view.web.web_app_initializer.VirtualTradeService') as MockVTM, \
          patch('view.web.web_app_initializer.Logger') as MockLogger:
         ctx = WebAppContext(app_context)
         ctx.logger = MagicMock()
         ctx.stock_query_service = AsyncMock()
         ctx.trading_service = MagicMock()
-        ctx.realtime_data_manager = MockRDM.return_value
+        ctx.realtime_data_service = MockRDM.return_value
 
         # WebSocketWatchdogTask mock (force_reconnect 등 위임용)
         ctx.websocket_watchdog_task = MagicMock()
@@ -29,7 +29,7 @@ def mock_ctx():
         ctx.pm.start_timer.return_value = 0.0
 
         # Default behaviors
-        ctx.realtime_data_manager.is_subscribed.return_value = False
+        ctx.realtime_data_service.is_subscribed.return_value = False
         ctx.stock_query_service.connect_websocket.return_value = True
         ctx.stock_query_service.subscribe_program_trading.return_value = True
         ctx.stock_query_service.subscribe_realtime_price.return_value = True
@@ -43,7 +43,7 @@ async def test_start_program_trading_success(mock_ctx):
     result = await mock_ctx.start_program_trading(code)
     
     assert result is True
-    mock_ctx.realtime_data_manager.add_subscribed_code.assert_called_once_with(code)
+    mock_ctx.realtime_data_service.add_subscribed_code.assert_called_once_with(code)
     mock_ctx.stock_query_service.subscribe_program_trading.assert_called_once_with(code)
     mock_ctx.stock_query_service.subscribe_realtime_price.assert_called_once_with(code)
 
@@ -58,7 +58,7 @@ async def test_start_program_trading_partial_fail(mock_ctx):
     result = await mock_ctx.start_program_trading(code)
     
     assert result is False
-    mock_ctx.realtime_data_manager.add_subscribed_code.assert_not_called()
+    mock_ctx.realtime_data_service.add_subscribed_code.assert_not_called()
     # 성공했던 PT 구독 해지 요청(롤백) 확인
     mock_ctx.stock_query_service.unsubscribe_program_trading.assert_called_once_with(code)
 
@@ -66,7 +66,7 @@ async def test_start_program_trading_partial_fail(mock_ctx):
 async def test_start_program_trading_already_subscribed_alive(mock_ctx):
     """이미 구독 중이고 연결 살아있으면 스킵"""
     code = "005930"
-    mock_ctx.realtime_data_manager.is_subscribed.return_value = True
+    mock_ctx.realtime_data_service.is_subscribed.return_value = True
     mock_ctx.trading_service.is_websocket_receive_alive.return_value = True
     
     result = await mock_ctx.start_program_trading(code)
@@ -78,7 +78,7 @@ async def test_start_program_trading_already_subscribed_alive(mock_ctx):
 async def test_start_program_trading_dead_reconnect_success(mock_ctx):
     """구독 중이나 죽어있어서 재연결 시도 후 성공"""
     code = "005930"
-    mock_ctx.realtime_data_manager.is_subscribed.return_value = True
+    mock_ctx.realtime_data_service.is_subscribed.return_value = True
     mock_ctx.trading_service.is_websocket_receive_alive.return_value = False
     
     result = await mock_ctx.start_program_trading(code)
@@ -91,7 +91,7 @@ async def test_start_program_trading_dead_reconnect_fail_retry_success(mock_ctx)
     """재연결 시도 -> 실패하여 상태 제거됨 -> 신규 구독 시도 -> 성공"""
     code = "005930"
     # 1. 처음 체크 시 True, 2. 재연결 후 체크 시 False (실패 가정)
-    mock_ctx.realtime_data_manager.is_subscribed.side_effect = [True, False, False]
+    mock_ctx.realtime_data_service.is_subscribed.side_effect = [True, False, False]
     mock_ctx.trading_service.is_websocket_receive_alive.return_value = False
     
     result = await mock_ctx.start_program_trading(code)
@@ -99,4 +99,4 @@ async def test_start_program_trading_dead_reconnect_fail_retry_success(mock_ctx)
     assert result is True
     # 재연결 시도 후 상태가 False가 되어 아래의 신규 구독 로직(connect_websocket 등)이 호출되어야 함
     mock_ctx.stock_query_service.connect_websocket.assert_called_once()
-    mock_ctx.realtime_data_manager.add_subscribed_code.assert_called_once_with(code)
+    mock_ctx.realtime_data_service.add_subscribed_code.assert_called_once_with(code)

@@ -6,7 +6,7 @@ import os
 import pytest
 import tempfile
 
-from managers.market_data_repository import MarketDataRepository
+from repositories.market_data_repository import MarketDataRepository
 
 
 @pytest.fixture

@@ -1,9 +1,9 @@
-# market_data/stock_code_mapper.py
+# repositories/stock_code_repository.py
 
 import os
 import sqlite3
 import pandas as pd
-from utils.stock_info_updater import save_stock_code_list
+from services.stock_sync_service import save_stock_code_list
 
 TABLE_NAME = "stocks"
 
@@ -28,7 +28,7 @@ def _write_minimal_db(db_path: str, logger=None):
         logger.warning(f"종목코드 DB가 비어 있어 최소 파일로 생성했습니다. 나중에 스크립트로 갱신하세요: {db_path}")
 
 
-class StockCodeMapper:
+class StockCodeRepository:
     """
     종목코드 ↔ 종목명 변환 기능을 제공하는 SQLite 기반 유틸리티 클래스.
     """

@@ -16,7 +16,7 @@ from strategies.traditional_volume_breakout_strategy import (
     PositionState,
 )
 from services.stock_query_service import StockQueryService
-from market_data.stock_code_mapper import StockCodeMapper
+from repositories.stock_code_repository import StockCodeRepository
 from core.time_manager import TimeManager
 
 
@@ -28,7 +28,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         sqs.get_top_trading_value_stocks = AsyncMock(spec=StockQueryService.get_top_trading_value_stocks)
         sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
 
-        mapper = MagicMock(spec=StockCodeMapper)
+        mapper = MagicMock(spec=StockCodeRepository)
         mapper.is_kosdaq.return_value = True
         mapper.get_name_by_code.return_value = "테스트종목"
 
@@ -58,7 +58,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
 
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=sqs,
-            stock_code_mapper=mapper,
+            stock_code_repository=mapper,
             time_manager=tm,
             config=config,
             logger=logger,

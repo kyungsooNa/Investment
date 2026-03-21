@@ -1,4 +1,4 @@
-# managers/stock_repository.py
+# repositories/stock_repository.py
 """
 개별 종목의 상세 데이터(OHLCV 등)와 인메모리 캐시를 관리하는 Repository.
 차트 조회 및 개별 종목 지표 계산을 위한 초고속 데이터 제공을 목적으로 한다.

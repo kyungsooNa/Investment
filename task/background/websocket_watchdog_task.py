@@ -11,12 +11,12 @@ from typing import List, Optional, Callable, TYPE_CHECKING
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from core.performance_manager import PerformanceManager
-from managers.notification_manager import NotificationManager
+from services.notification_service import NotificationService
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
-    from managers.realtime_data_manager import RealtimeDataManager
-    from managers.market_date_manager import MarketDateManager
+    from services.realtime_data_service import RealtimeDataService
+    from services.market_calendar_service import MarketCalendarService
 
 
 class WebSocketWatchdogTask(SchedulableTask):
@@ -26,18 +26,18 @@ class WebSocketWatchdogTask(SchedulableTask):
         self,
         stock_query_service: Optional["StockQueryService"] = None,
         trading_service=None,
-        realtime_data_manager: Optional["RealtimeDataManager"] = None,
-        market_date_manager: Optional["MarketDateManager"] = None,
+        realtime_data_service: Optional["RealtimeDataService"] = None,
+        market_calendar_service: Optional["MarketCalendarService"] = None,
         performance_manager: Optional[PerformanceManager] = None,
-        notification_manager: Optional[NotificationManager] = None,
+        notification_service: Optional[NotificationService] = None,
         logger=None,
     ):
         self._stock_query_service = stock_query_service
         self._trading_service = trading_service
-        self._realtime_data_manager = realtime_data_manager
-        self.mdm = market_date_manager
+        self._realtime_data_service = realtime_data_service
+        self.mcs = market_calendar_service
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
-        self._nm = notification_manager
+        self._ns = notification_service
         self._logger = logger or logging.getLogger(__name__)
 
         # SchedulableTask 상태
@@ -69,12 +69,12 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._state = TaskState.RUNNING
 
         # 1. 실시간 데이터 매니저 백그라운드 태스크 (데이터 정리 등)
-        if self._realtime_data_manager:
-            self._realtime_data_manager.start_background_tasks()
+        if self._realtime_data_service:
+            self._realtime_data_service.start_background_tasks()
 
         # 2. 이전 구독 상태 자동 복원
-        if self._realtime_data_manager:
-            saved_codes = self._realtime_data_manager.get_subscribed_codes()
+        if self._realtime_data_service:
+            saved_codes = self._realtime_data_service.get_subscribed_codes()
             if saved_codes:
                 self._tasks.append(
                     asyncio.create_task(self._restore_program_trading(saved_codes))
@@ -101,8 +101,8 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._tasks.clear()
 
         # 실시간 데이터 매니저 종료
-        if self._realtime_data_manager:
-            await self._realtime_data_manager.shutdown()
+        if self._realtime_data_service:
+            await self._realtime_data_service.shutdown()
 
         self._state = TaskState.STOPPED
         self._logger.info("WebSocketWatchdogTask 종료 완료")
@@ -143,7 +143,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         if failed_codes:
             self._logger.warning(f"복원에 실패한 구독 종목을 상태에서 제거합니다: {failed_codes}")
             for code in failed_codes:
-                self._realtime_data_manager.remove_subscribed_code(code)
+                self._realtime_data_service.remove_subscribed_code(code)
 
         self._logger.info(f"프로그램매매 구독 복원 완료: {success_count}/{len(codes)}개 종목")
 
@@ -160,14 +160,14 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if self._state == TaskState.SUSPENDED:
                     continue
 
-                if not self._realtime_data_manager:
+                if not self._realtime_data_service:
                     continue
 
-                codes = self._realtime_data_manager.get_subscribed_codes()
+                codes = self._realtime_data_service.get_subscribed_codes()
                 if not codes:
                     continue  # 구독 중인 종목 없으면 스킵
 
-                if not self.mdm or not await self.mdm.is_market_open_now():
+                if not self.mcs or not await self.mcs.is_market_open_now():
                     # 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
                     if self._trading_service and self._trading_service.is_websocket_receive_alive():
                         self._logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
@@ -181,7 +181,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                 )
 
                 # 조건 2: 데이터 수신 갭 확인
-                last_ts = self._realtime_data_manager.last_data_ts
+                last_ts = self._realtime_data_service.last_data_ts
                 data_gap = (time.time() - last_ts) if last_ts > 0 else float('inf')
 
                 needs_reconnect = False
@@ -202,10 +202,10 @@ class WebSocketWatchdogTask(SchedulableTask):
 
     async def force_reconnect_program_trading(self) -> None:
         """WebSocket 연결을 강제로 끊고 재연결 + 재구독."""
-        if not self._realtime_data_manager:
+        if not self._realtime_data_service:
             return
 
-        codes = self._realtime_data_manager.get_subscribed_codes()
+        codes = self._realtime_data_service.get_subscribed_codes()
         if not codes:
             return
 
@@ -237,7 +237,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         if failed_codes:
             self._logger.warning(f"[워치독] 재구독에 실패한 종목을 상태에서 제거합니다: {failed_codes}")
             for code in failed_codes:
-                self._realtime_data_manager.remove_subscribed_code(code)
+                self._realtime_data_service.remove_subscribed_code(code)
 
         self.pm.log_timer(f"WebSocketWatchdogTask.force_reconnect_program_trading({success_count}/{len(codes)})", t_start)
         self._logger.info(f"[워치독] 강제 재연결 완료: {success_count}/{len(codes)}개 종목")

@@ -7,12 +7,12 @@ from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
 from brokers.broker_api_wrapper import BrokerAPIWrapper
-from managers import market_date_manager
 from services.trading_service import TradingService
 from services.stock_query_service import StockQueryService
 from services.order_execution_service import OrderExecutionService
-from managers.virtual_trade_manager import VirtualTradeManager
-from market_data.stock_code_mapper import StockCodeMapper
+from repositories.virtual_trade_repository import VirtualTradeRepository
+from services.virtual_trade_service import VirtualTradeService
+from repositories.stock_code_repository import StockCodeRepository
 from services.indicator_service import IndicatorService
 from core.time_manager import TimeManager
 from core.logger import Logger, get_strategy_logger
@@ -21,7 +21,7 @@ from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerCon
 from scheduler.background_scheduler import BackgroundScheduler
 from scheduler.foreground_scheduler import ForegroundScheduler
 from task.background.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
-from services.naver_finance_scraper import NaverFinanceScraper
+from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
 from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
@@ -33,12 +33,12 @@ from services.oneil_universe_service import OneilUniverseService
 from task.background.ranking_task import RankingTask
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.market_data_collector_task import MarketDataCollectorTask
-from managers.market_data_repository import MarketDataRepository
-from managers.stock_repository import StockRepository
-from managers.realtime_data_manager import RealtimeDataManager
-from managers.market_date_manager import MarketDateManager
-from managers.notification_manager import NotificationManager
-from managers.telegram_notifier import TelegramNotifier, TelegramReporter
+from repositories.market_data_repository import MarketDataRepository
+from repositories.stock_repository import StockRepository
+from services.realtime_data_service import RealtimeDataService
+from services.market_calendar_service import MarketCalendarService
+from services.notification_service import NotificationService
+from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_manager import CacheManager
 
@@ -55,10 +55,10 @@ class WebAppContext:
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
         self.indicator_service: IndicatorService = None
-        self.indicator_service: IndicatorService = None
-        self.virtual_manager = VirtualTradeManager()
-        self.virtual_manager.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
-        self.stock_code_mapper = StockCodeMapper(logger=self.logger)
+        self.virtual_repo = VirtualTradeRepository()
+        self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, time_manager=self.time_manager)
+        self.virtual_trade_service.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
+        self.stock_code_repository = StockCodeRepository(logger=self.logger)
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
@@ -68,13 +68,13 @@ class WebAppContext:
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
-        self._mdm: MarketDateManager = None
-        self.notification_manager: NotificationManager = None
+        self._mcs: MarketCalendarService = None
+        self.notification_service: NotificationService = None
         self.initialized = False
         self.pm: PerformanceManager = None
 
         # [변경] 실시간 데이터 관리자 도입
-        self.realtime_data_manager = RealtimeDataManager(self.logger)
+        self.realtime_data_service = RealtimeDataService(self.logger)
         
         web_api.set_ctx(self)
 
@@ -97,7 +97,7 @@ class WebAppContext:
             timezone=config_dict.get('market_timezone', "Asia/Seoul"),
             logger=self.logger
         )
-        self.notification_manager = NotificationManager(self.time_manager)
+        self.notification_service = NotificationService(self.time_manager)
         # ---------------------------------------------------------
         # [추가] Telegram Notifier 초기화 및 핸들러 등록
         telegram_token = config_dict.get("telegram_bot_token")
@@ -110,7 +110,7 @@ class WebAppContext:
                 chat_id=telegram_chat_id,
                 allowed_categories=["TRADE"]
             )
-            self.notification_manager.register_external_handler(
+            self.notification_service.register_external_handler(
                 self.telegram_notifier.handle_event
             )
             self.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
@@ -123,8 +123,8 @@ class WebAppContext:
         # ---------------------------------------------------------
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
-        # [신규] MarketDateManager 초기화
-        self._mdm = MarketDateManager(self.time_manager, self.logger, performance_manager=self.pm)
+        # [신규] MarketCalendarService 초기화
+        self._mcs = MarketCalendarService(self.time_manager, self.logger, performance_manager=self.pm)
         
 
     async def initialize_services(self, is_paper_trading: bool = True):
@@ -140,15 +140,15 @@ class WebAppContext:
 
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, time_manager=self.time_manager,
-            market_date_manager=self._mdm
+            market_calendar_service=self._mcs
         )
 
-        # [수정] MarketDateManager에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
-        self._mdm.set_broker(self.broker)
+        # [수정] MarketCalendarService에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
+        self._mcs.set_broker(self.broker)
         
         # [신규] 휴장일 정보 동기화 (TimeManager에 API 데이터 주입)
         # 이를 통해 get_next_market_open_time 등이 임시공휴일을 정확히 인지하게 됨
-        await self._mdm._sync_calendar_if_needed()
+        await self._mcs._sync_calendar_if_needed()
 
         # 캐시 매니저 생성
         # Pydantic 모델(AppConfig)을 dict로 변환하여 전달
@@ -172,7 +172,7 @@ class WebAppContext:
 
         self.trading_service = TradingService(
             self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
             performance_manager=self.pm,
             stock_repository=self.stock_repository
         )
@@ -182,22 +182,22 @@ class WebAppContext:
         
         self.ranking_task = RankingTask(
             broker_api_wrapper=self.broker,
-            stock_code_mapper=self.stock_code_mapper,
+            stock_code_repository=self.stock_code_repository,
             env=self.env,
             logger=self.logger,
             time_manager=self.time_manager,
             trading_service=self.trading_service,
             performance_manager=self.pm,
-            notification_manager=self.notification_manager,
+            notification_service=self.notification_service,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
         )
         self.stock_query_service = StockQueryService(
             self.trading_service, self.logger, self.time_manager,
             indicator_service=self.indicator_service,
             ranking_task=self.ranking_task,
             performance_manager=self.pm,
-            notification_manager=self.notification_manager,
+            notification_service=self.notification_service,
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
@@ -205,39 +205,39 @@ class WebAppContext:
         self.websocket_watchdog_task = WebSocketWatchdogTask(
             stock_query_service=self.stock_query_service,
             trading_service=self.trading_service,
-            realtime_data_manager=self.realtime_data_manager,
-            market_date_manager=self._mdm,
+            realtime_data_service=self.realtime_data_service,
+            market_calendar_service=self._mcs,
             performance_manager=self.pm,
-            notification_manager=self.notification_manager,
+            notification_service=self.notification_service,
             logger=self.logger,
         )
 
         self.market_data_collector_task = MarketDataCollectorTask(
             stock_query_service=self.stock_query_service,
-            stock_code_mapper=self.stock_code_mapper,
+            stock_code_repository=self.stock_code_repository,
             market_data_repo=self.market_data_repository,
             stock_repo=self.stock_repository,
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
             time_manager=self.time_manager,
             performance_manager=self.pm,
-            notification_manager=self.notification_manager,
+            notification_service=self.notification_service,
             logger=self.logger,
         )
 
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.time_manager,
             performance_manager=self.pm,
-            notification_manager=self.notification_manager,
-            market_date_manager=self._mdm,
+            notification_service=self.notification_service,
+            market_calendar_service=self._mcs,
         )
         
         # [신규] 오닐 유니버스 서비스 초기화
         self.oneil_universe_service = OneilUniverseService(
             stock_query_service=self.stock_query_service,
             indicator_service=self.indicator_service,
-            stock_code_mapper=self.stock_code_mapper,
+            stock_code_repository=self.stock_code_repository,
             time_manager=self.time_manager,
-            scraper_service=NaverFinanceScraper(logger=self.logger),
+            scraper_service=NaverFinanceScraperService(logger=self.logger),
             logger=self.logger,
             performance_manager=self.pm
         )
@@ -272,9 +272,9 @@ class WebAppContext:
         return "모의투자" if self.env.is_paper_trading else "실전투자"
 
     async def is_market_open_now(self) -> bool:
-        if self._mdm is None:
+        if self._mcs is None:
             return False
-        return await self._mdm.is_market_open_now() if self._mdm else False
+        return await self._mcs.is_market_open_now() if self._mcs else False
 
     def get_current_time_str(self) -> str:
         if self.time_manager is None:
@@ -292,15 +292,15 @@ class WebAppContext:
     def initialize_scheduler(self):
         """전략 스케줄러 생성 및 전략 등록 (자동 시작하지 않음, 웹 UI에서 수동 시작)."""
         self.scheduler = StrategyScheduler(
-            virtual_manager=self.virtual_manager,
+            virtual_trade_service=self.virtual_trade_service,
             order_execution_service=self.order_execution_service,
             stock_query_service=self.stock_query_service,
-            stock_code_mapper=self.stock_code_mapper,
+            stock_code_repository=self.stock_code_repository,
             time_manager=self.time_manager,
-            market_date_manager=self._mdm,
+            market_calendar_service=self._mcs,
             logger=get_strategy_logger('StrategyScheduler'),
             dry_run=False,
-            notification_manager=self.notification_manager,
+            notification_service=self.notification_service,
             performance_manager=self.pm,
         )
 
@@ -339,7 +339,7 @@ class WebAppContext:
         # 전통적 거래량 돌파 전략 등록
         tvb_strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=self.stock_query_service,
-            stock_code_mapper=self.stock_code_mapper,
+            stock_code_repository=self.stock_code_repository,
             time_manager=self.time_manager,
             logger=get_strategy_logger('TraditionalVolumeBreakout'),
         )
@@ -466,12 +466,12 @@ class WebAppContext:
                         item['price'] = price_data
 
             # [변경] 매니저에게 데이터 처리 위임
-            self.realtime_data_manager.on_data_received(item)
+            self.realtime_data_service.on_data_received(item)
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""
         # [변경] 매니저를 통해 구독 상태 확인
-        if self.realtime_data_manager.is_subscribed(code):
+        if self.realtime_data_service.is_subscribed(code):
             # [추가] 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
             if (self.trading_service
                     and not self.trading_service.is_websocket_receive_alive()):
@@ -479,7 +479,7 @@ class WebAppContext:
                 await self.websocket_watchdog_task.force_reconnect_program_trading()
 
                 # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
-                if not self.realtime_data_manager.is_subscribed(code):
+                if not self.realtime_data_service.is_subscribed(code):
                     self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
                 else:
                     return True
@@ -503,7 +503,7 @@ class WebAppContext:
             self.pm.log_timer(f"subscribe_realtime_price({code})", t_sub_price)
 
             if sub_pt_success and sub_price_success:
-                self.realtime_data_manager.add_subscribed_code(code)
+                self.realtime_data_service.add_subscribed_code(code)
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
                 return True
             else:
@@ -522,15 +522,15 @@ class WebAppContext:
     async def stop_program_trading(self, code: str):
         """특정 종목 프로그램매매 구독 해지."""
         # [변경] 매니저를 통해 구독 상태 확인
-        if self.realtime_data_manager.is_subscribed(code):
+        if self.realtime_data_service.is_subscribed(code):
             await self.stock_query_service.unsubscribe_program_trading(code)
             await self.stock_query_service.unsubscribe_realtime_price(code) # [추가]
-            self.realtime_data_manager.remove_subscribed_code(code)
+            self.realtime_data_service.remove_subscribed_code(code)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
         # [변경] 매니저에서 구독 목록 가져오기
-        for code in self.realtime_data_manager.get_subscribed_codes():
+        for code in self.realtime_data_service.get_subscribed_codes():
             await self.stock_query_service.unsubscribe_program_trading(code)
             await self.stock_query_service.unsubscribe_realtime_price(code)
-        self.realtime_data_manager.clear_subscribed_codes()
+        self.realtime_data_service.clear_subscribed_codes()

@@ -13,12 +13,12 @@ from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
-from managers.market_date_manager import MarketDateManager
-from managers.virtual_trade_manager import VirtualTradeManager
-from managers.notification_manager import NotificationManager
+from services.market_calendar_service import MarketCalendarService
+from services.virtual_trade_service import VirtualTradeService
+from services.notification_service import NotificationService
 from services.order_execution_service import OrderExecutionService
+from repositories.stock_code_repository import StockCodeRepository
 from services.stock_query_service import StockQueryService
-from market_data.stock_code_mapper import StockCodeMapper
 from core.time_manager import TimeManager
 from core.performance_manager import PerformanceManager
 
@@ -67,26 +67,26 @@ class StrategyScheduler:
 
     def __init__(
         self,
-        virtual_manager: VirtualTradeManager,
+        virtual_trade_service: VirtualTradeService,
         order_execution_service: OrderExecutionService,
         stock_query_service: StockQueryService,
-        stock_code_mapper: StockCodeMapper,
+        stock_code_repository: StockCodeRepository,
         time_manager: TimeManager,
-        market_date_manager: MarketDateManager,
+        market_calendar_service: MarketCalendarService,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
-        notification_manager: Optional[NotificationManager] = None,
+        notification_service: Optional[NotificationService] = None,
         performance_manager: Optional[PerformanceManager] = None,
     ):
-        self._vm = virtual_manager
+        self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
         self._sqs = stock_query_service
-        self._mapper = stock_code_mapper
+        self.stock_code_repository = stock_code_repository
         self._tm = time_manager
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
-        self._nm = notification_manager
-        self._mdm = market_date_manager
+        self._notification_service = notification_service
+        self._mcs = market_calendar_service
         self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
 
         # 데이터 디렉토리 생성
@@ -124,9 +124,9 @@ class StrategyScheduler:
         self._running = True
         self._task = asyncio.create_task(self._loop())
         self._logger.info("[Scheduler] 시작 (전체 전략 활성화)")
-        if self._nm:
+        if self._notification_service:
             names = [c.strategy.name for c in self._strategies if c.enabled]
-            await self._nm.emit("SYSTEM", "info", "스케줄러 시작", f"활성 전략: {', '.join(names)}")
+            await self._notification_service.emit("SYSTEM", "info", "스케줄러 시작", f"활성 전략: {', '.join(names)}")
 
     async def stop(self, save_state: bool = False):
         if save_state:
@@ -151,8 +151,8 @@ class StrategyScheduler:
             await self.stop_strategy(cfg.strategy.name, perform_force_exit=perform_exit)
 
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
-        if self._nm:
-            await self._nm.emit("SYSTEM", "info", "스케줄러 정지", "전체 전략 비활성화")
+        if self._notification_service:
+            await self._notification_service.emit("SYSTEM", "info", "스케줄러 정지", "전체 전략 비활성화")
 
     # ── 메인 루프 ──
 
@@ -160,7 +160,7 @@ class StrategyScheduler:
         self._logger.info("스케줄러 메인 루프 시작.")
         while self._running:
             try:
-                market_open = await self._mdm.is_market_open_now()
+                market_open = await self._mcs.is_market_open_now()
 
                 if not market_open:
                     # 장이 닫힌 직후(15:30~) 아직 강제 청산 미완료된 전략이 있으면 실행
@@ -182,7 +182,7 @@ class StrategyScheduler:
 
                     self._logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
                     self._force_exit_done.clear()
-                    await self._mdm.wait_until_next_open()
+                    await self._mcs.wait_until_next_open()
                     continue
 
                 # 장중: 시간 계산
@@ -250,8 +250,8 @@ class StrategyScheduler:
                 break
             except Exception as e:
                 self._logger.error(f"[Scheduler] 루프 오류: {e}", exc_info=True)
-                if self._nm:
-                    await self._nm.emit("SYSTEM", "error", "스케줄러 루프 오류", str(e))
+                if self._notification_service:
+                    await self._notification_service.emit("SYSTEM", "error", "스케줄러 루프 오류", str(e))
                 await asyncio.sleep(self.LOOP_INTERVAL_SEC)
 
     # ── 전략 실행 ──
@@ -268,7 +268,7 @@ class StrategyScheduler:
             return
 
         # 1) 보유 종목 청산 조건 체크
-        holdings = self._vm.get_holds_by_strategy(name)
+        holdings = self._virtual_trade_service.get_holds_by_strategy(name)
         if holdings:
             t_exit = self._pm.start_timer()
             sell_signals = await cfg.strategy.check_exits(holdings)
@@ -279,7 +279,7 @@ class StrategyScheduler:
                     await f
 
         # 2) 새 매수 스캔
-        current_holdings = self._vm.get_holds_by_strategy(name)
+        current_holdings = self._virtual_trade_service.get_holds_by_strategy(name)
         current_holds_count = len(current_holdings)
 
         if current_holds_count >= cfg.max_positions:
@@ -311,7 +311,7 @@ class StrategyScheduler:
 
             # 순차 실행: 매수마다 보유 수를 재확인하여 max_positions 초과 방지
             for sig in target_signals:
-                current_count = len(self._vm.get_holds_by_strategy(name))
+                current_count = len(self._virtual_trade_service.get_holds_by_strategy(name))
                 if current_count >= cfg.max_positions:
                     self._logger.info(
                         f"[Scheduler] {name}: 매수 중단 — 최대 포지션 도달 "
@@ -348,14 +348,14 @@ class StrategyScheduler:
 
         # 종목명 보정 (이름이 비어있거나, 종목 코드와 동일하게 들어온 경우)
         if not signal.name or signal.name == signal.code:
-            signal.name = self._mapper.get_name_by_code(signal.code) or signal.code
+            signal.name = self.stock_code_repository.get_name_by_code(signal.code) or signal.code
 
         # CSV 기록 (항상)
         return_rate = None
         if signal.action == "BUY":
-            await self._vm.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+            await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
         elif signal.action == "SELL":
-            return_rate = await self._vm.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+            return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
 
         api_success = True
 
@@ -408,7 +408,7 @@ class StrategyScheduler:
         await self._append_signal_csv(record)
         await self._notify_subscribers(record)
 
-        if self._nm:
+        if self._notification_service:
             action_kr = "매수" if signal.action == "BUY" else "매도"
             level = "critical" if api_success else "error"
             title = f"[{signal.strategy_name}] {signal.name} {action_kr} {'성공' if api_success else '실패'}"
@@ -417,7 +417,7 @@ class StrategyScheduler:
                    f"사유: {signal.reason}")
             if not api_success:
                 title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
-            await self._nm.emit("TRADE", level, title, msg, metadata={
+            await self._notification_service.emit("TRADE", level, title, msg, metadata={
                 "strategy_name": signal.strategy_name,
                 "code": signal.code,
                 "action": signal.action,
@@ -431,7 +431,7 @@ class StrategyScheduler:
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""
         name = cfg.strategy.name
-        holdings = self._vm.get_holds_by_strategy(name)
+        holdings = self._virtual_trade_service.get_holds_by_strategy(name)
         if not holdings:
             return
 
@@ -444,7 +444,7 @@ class StrategyScheduler:
 
             stock_name = hold.get("name", code)
             
-            # 보유 수량 조회 (VirtualTradeManager가 qty를 반환해야 함)
+            # 보유 수량 조회 (VirtualTradeRepository가 qty를 반환해야 함)
             # 만약 qty 정보가 없다면 설정된 주문 수량(cfg.order_qty)을 fallback으로 사용
             holding_qty = int(hold.get("qty") or 0)
             if holding_qty <= 0:
@@ -509,7 +509,7 @@ class StrategyScheduler:
         for cfg in self._strategies:
             name = cfg.strategy.name
             last = self._last_run.get(name)
-            holdings = self._vm.get_holds_by_strategy(name)
+            holdings = self._virtual_trade_service.get_holds_by_strategy(name)
             strategies.append({
                 "name": name,
                 "interval_minutes": cfg.interval_minutes,
@@ -568,7 +568,7 @@ class StrategyScheduler:
             cfg.strategy.name for cfg in self._strategies if cfg.enabled
         ]
         # 현재 보유 포지션 정보도 함께 저장 (안전장치)
-        current_positions = self._vm.get_holds()
+        current_positions = self._virtual_trade_service.get_holds()
         state = {
             "running": self._running,
             "enabled_strategies": enabled_names,

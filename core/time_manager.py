@@ -10,7 +10,7 @@ class TimeManager:
     """
     주식 거래와 관련된 '시간(시계)'을 관리하는 클래스입니다.
     순수 시간대 계산 및 포맷 변환, KST 타임존 처리를 담당하며,
-    공휴일 및 실제 영업일 판단은 MarketDateManager에서 수행해야 합니다.
+    공휴일 및 실제 영업일 판단은 MarketCalendarService에서 수행해야 합니다.
     """
 
     def __init__(self, market_open_time="09:00", market_close_time="15:30", timezone="Asia/Seoul", logger=None):
@@ -43,7 +43,7 @@ class TimeManager:
     def is_market_operating_hours(self, now=None) -> bool:
         """
         단순히 현재 '시간'이 시장 운영 시간(예: 09:00 ~ 15:30) 내에 있는지 확인합니다.
-        (주의: 공휴일, 임시휴일 등 '영업일' 여부는 MarketDateManager에서 판단해야 합니다.)
+        (주의: 공휴일, 임시휴일 등 '영업일' 여부는 MarketCalendarService에서 판단해야 합니다.)
         """
         now = now or self.get_current_kst_time()
 

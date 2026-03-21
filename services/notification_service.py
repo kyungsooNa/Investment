@@ -29,11 +29,11 @@ class NotificationEvent:
         return asdict(self)
 
 
-class NotificationManager:
+class NotificationService:
     """시스템 전체 알림 이벤트 허브.
 
     사용법:
-        nm = NotificationManager(time_manager)
+        nm = NotificationService(time_manager)
         await nm.emit("TRADE", "critical", "매수 시그널", "삼성전자 72,000원")
     """
 

@@ -200,7 +200,7 @@ class TestBuyOrderPaper:
             "005930", "10", "70000"
         )
         # 수동매매 기록 검증
-        mock_paper_ctx.virtual_manager.log_buy.assert_called_once_with("수동매매", "005930", 70000)
+        mock_paper_ctx.virtual_trade_service.log_buy.assert_called_once_with("수동매매", "005930", 70000)
 
     def test_buy_order_failure(self, paper_client, mock_paper_ctx):
         """매수 주문 실패 시 가상 매매 기록이 생성되지 않는다."""
@@ -214,7 +214,7 @@ class TestBuyOrderPaper:
         assert resp.status_code == 200
         body = resp.json()
         assert body["rt_cd"] == "1"
-        mock_paper_ctx.virtual_manager.log_buy.assert_not_called()
+        mock_paper_ctx.virtual_trade_service.log_buy.assert_not_called()
 
     def test_buy_order_market_price(self, paper_client, mock_paper_ctx):
         """시장가 매수 (price=0) 시 현재가를 조회하여 기록한다."""
@@ -234,7 +234,7 @@ class TestBuyOrderPaper:
         assert resp.json()["rt_cd"] == "0"
 
         # 현재가(71000)로 기록되어야 함
-        mock_paper_ctx.virtual_manager.log_buy.assert_called_once_with("수동매매", "005930", 71000)
+        mock_paper_ctx.virtual_trade_service.log_buy.assert_called_once_with("수동매매", "005930", 71000)
 
 
 # ============================================================================
@@ -260,7 +260,7 @@ class TestSellOrderPaper:
         mock_paper_ctx.order_execution_service.handle_sell_stock.assert_awaited_once_with(
             "005930", "5", "71000"
         )
-        mock_paper_ctx.virtual_manager.log_sell.assert_called_once_with("005930", 71000)
+        mock_paper_ctx.virtual_trade_service.log_sell.assert_called_once_with("005930", 71000)
 
     def test_sell_order_failure(self, paper_client, mock_paper_ctx):
         """매도 주문 실패 시 가상 매매 기록이 생성되지 않는다."""
@@ -273,7 +273,7 @@ class TestSellOrderPaper:
         })
         assert resp.status_code == 200
         assert resp.json()["rt_cd"] == "1"
-        mock_paper_ctx.virtual_manager.log_sell.assert_not_called()
+        mock_paper_ctx.virtual_trade_service.log_sell.assert_not_called()
 
     def test_order_invalid_side(self, paper_client, mock_paper_ctx):
         """잘못된 side 값이면 400 에러를 반환한다."""
@@ -534,9 +534,9 @@ class TestWebAppContextInitialization:
             env = None
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
-             patch("view.web.web_app_initializer.VirtualTradeManager"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("view.web.web_app_initializer.VirtualTradeRepository"), \
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -589,9 +589,9 @@ class TestWebAppContextInitialization:
             env = None
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
-             patch("view.web.web_app_initializer.VirtualTradeManager"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("view.web.web_app_initializer.VirtualTradeRepository"), \
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -619,9 +619,9 @@ class TestWebAppContextInitialization:
             env = None
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
-             patch("view.web.web_app_initializer.VirtualTradeManager"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("view.web.web_app_initializer.VirtualTradeRepository"), \
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -649,9 +649,9 @@ class TestWebAppContextInitialization:
             env = None
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
-             patch("view.web.web_app_initializer.VirtualTradeManager"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("view.web.web_app_initializer.VirtualTradeRepository"), \
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -687,9 +687,9 @@ class TestWebAppContextInitialization:
             env = None
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
-             patch("view.web.web_app_initializer.VirtualTradeManager"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("view.web.web_app_initializer.VirtualTradeRepository"), \
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger
@@ -724,9 +724,9 @@ class TestWebAppContextInitialization:
             env = None
 
         with patch("config.config_loader.load_configs", return_value=mock_config), \
-             patch("view.web.web_app_initializer.VirtualTradeManager"), \
-             patch("brokers.broker_api_wrapper.StockCodeMapper"), \
-             patch("view.web.web_app_initializer.StockCodeMapper"):
+             patch("view.web.web_app_initializer.VirtualTradeRepository"), \
+             patch("brokers.broker_api_wrapper.StockCodeRepository"), \
+             patch("view.web.web_app_initializer.StockCodeRepository"):
 
             ctx = WebAppContext(SimpleContext())
             ctx.logger = test_logger

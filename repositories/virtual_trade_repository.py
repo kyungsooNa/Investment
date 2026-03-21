@@ -1,4 +1,4 @@
-# managers/virtual_trade_manager.py
+# repositories/virtual_trade_repository.py
 import bisect
 import numpy as np
 import pandas as pd
@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 from functools import lru_cache
 from core.time_manager import TimeManager
-from managers.transaction_cost_manager import TransactionCostManager
+from utils.transaction_cost_utils import TransactionCostUtils
 logger = logging.getLogger(__name__)
 
 COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
@@ -42,8 +42,8 @@ def _get_trading_dates(daily: dict) -> list[str]:
 PRICE_CACHE_FILENAME = "close_price_cache.json"
 
 
-class VirtualTradeManager:
-    def __init__(self, filename="data/VirtualTradeManager/trade_journal.csv", time_manager: TimeManager = None):
+class VirtualTradeRepository:
+    def __init__(self, filename="data/VirtualTradeRepository/trade_journal.csv", time_manager: TimeManager = None):
         self._cached_data = None  # 메모리 캐시 변수 추가
         self.filename = filename
         self.tm = time_manager if time_manager else TimeManager()
@@ -155,7 +155,7 @@ class VirtualTradeManager:
 
     def calculate_return(self, buy_price, sell_price, qty=1, apply_cost=False) -> float:
         """수익률 계산 헬퍼 (TransactionCostManager 위임)"""
-        return round(TransactionCostManager.get_return_rate(buy_price, sell_price, qty, apply_cost), 2)
+        return round(TransactionCostUtils.get_return_rate(buy_price, sell_price, qty, apply_cost), 2)
 
     def get_trade_amount(self, price, qty=1, is_sell=False, apply_cost=False) -> float:
         """거래 금액 계산 (비용 포함 매수금액 또는 비용 차감 매도금액)"""
@@ -163,7 +163,7 @@ class VirtualTradeManager:
         if not apply_cost:
             return base_amount
         
-        cost = TransactionCostManager.calculate_cost(price, qty, is_sell)
+        cost = TransactionCostUtils.calculate_cost(price, qty, is_sell)
         return base_amount - cost if is_sell else base_amount + cost
 
     def get_all_trades(self, apply_cost: bool = False) -> list:

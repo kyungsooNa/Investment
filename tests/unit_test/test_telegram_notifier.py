@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from managers.telegram_notifier import TelegramNotifier, TelegramReporter
-from managers.notification_manager import NotificationEvent
+from services.telegram_notifier import TelegramNotifier, TelegramReporter
+from services.notification_service import NotificationEvent
 
 @pytest.fixture
 def telegram_notifier():

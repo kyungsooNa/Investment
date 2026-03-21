@@ -7,8 +7,7 @@ import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
-from managers.market_date_manager import MarketDateManager
-
+from services.market_calendar_service import MarketCalendarService
 
 @pytest.fixture
 def mock_deps():
@@ -22,27 +21,27 @@ def mock_deps():
     stock_query_service.subscribe_realtime_price = AsyncMock()
     stock_query_service.trading_service = trading_service
 
-    realtime_data_manager = MagicMock()
-    realtime_data_manager.get_subscribed_codes.return_value = []
-    realtime_data_manager.last_data_ts = 0.0
-    realtime_data_manager.shutdown = AsyncMock()
+    realtime_data_service = MagicMock()
+    realtime_data_service.get_subscribed_codes.return_value = []
+    realtime_data_service.last_data_ts = 0.0
+    realtime_data_service.shutdown = AsyncMock()
 
-    market_date_manager = AsyncMock(spec=MarketDateManager)
-    market_date_manager.is_market_open_now = AsyncMock(return_value=False)
+    market_calendar_service = AsyncMock(spec=MarketCalendarService)
+    market_calendar_service.is_market_open_now = AsyncMock(return_value=False)
 
     logger = MagicMock()
 
-    return stock_query_service, trading_service, realtime_data_manager, market_date_manager, logger
+    return stock_query_service, trading_service, realtime_data_service, market_calendar_service, logger
 
 
 @pytest.fixture
 def watchdog_task(mock_deps):
-    stock_query_service, trading_service, realtime_data_manager, market_date_manager, logger = mock_deps
+    stock_query_service, trading_service, realtime_data_service, market_calendar_service, logger = mock_deps
     return WebSocketWatchdogTask(
         stock_query_service=stock_query_service,
         trading_service=trading_service,
-        realtime_data_manager=realtime_data_manager,
-        market_date_manager=market_date_manager,
+        realtime_data_service=realtime_data_service,
+        market_calendar_service=market_calendar_service,
         logger=logger,
     )
 
@@ -92,8 +91,8 @@ async def test_restore_program_trading_partial_failure(watchdog_task, mock_deps)
 async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
     """_program_trading_watchdog: 장 마감 시 웹소켓 연결 종료 검증."""
     svc = watchdog_task
-    svc.mdm.is_market_open_now.return_value = False
-    svc._realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
+    svc.mcs.is_market_open_now.return_value = False
+    svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
     svc._trading_service.is_websocket_receive_alive.return_value = True
     svc._trading_service.disconnect_websocket = AsyncMock()
 
@@ -118,9 +117,9 @@ async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
 async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
     """_program_trading_watchdog: 데이터 미수신 감지 및 재연결 시도 검증."""
     svc = watchdog_task
-    svc.mdm.is_market_open_now.return_value = True
-    svc._realtime_data_manager.get_subscribed_codes.return_value = ["005930"]
-    svc._realtime_data_manager.last_data_ts = time.time() - 130  # 임계값 120초 초과
+    svc.mcs.is_market_open_now.return_value = True
+    svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
+    svc._realtime_data_service.last_data_ts = time.time() - 130  # 임계값 120초 초과
     svc._trading_service.is_websocket_receive_alive.return_value = True  # Zombie 상태
 
     svc.force_reconnect_program_trading = AsyncMock()
@@ -149,7 +148,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
     """force_reconnect_program_trading: 연결 종료 후 재구독 검증."""
     svc = watchdog_task
     svc._realtime_callback = MagicMock()
-    svc._realtime_data_manager.get_subscribed_codes.return_value = ["005930", "000660"]
+    svc._realtime_data_service.get_subscribed_codes.return_value = ["005930", "000660"]
 
     await svc.force_reconnect_program_trading()
 
@@ -179,4 +178,4 @@ async def test_stop_cancels_all_tasks(watchdog_task):
     mock_task1.cancel.assert_called_once()
     mock_task2.cancel.assert_not_called()
     assert len(svc._tasks) == 0
-    svc._realtime_data_manager.shutdown.assert_awaited_once()
+    svc._realtime_data_service.shutdown.assert_awaited_once()

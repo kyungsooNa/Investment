@@ -164,7 +164,7 @@ class TestBuyOrderReal:
         mock_real_ctx.order_execution_service.handle_buy_stock.assert_awaited_once_with(
             "005930", "10", "70000"
         )
-        mock_real_ctx.virtual_manager.log_buy.assert_called_once_with("수동매매", "005930", 70000)
+        mock_real_ctx.virtual_trade_service.log_buy.assert_called_once_with("수동매매", "005930", 70000)
 
     def test_buy_order_failure_no_log(self, real_client, mock_real_ctx):
         """매수 실패 시 가상 매매 기록 미생성."""
@@ -177,7 +177,7 @@ class TestBuyOrderReal:
         })
         assert resp.status_code == 200
         assert resp.json()["rt_cd"] == "1"
-        mock_real_ctx.virtual_manager.log_buy.assert_not_called()
+        mock_real_ctx.virtual_trade_service.log_buy.assert_not_called()
 
 
 # ============================================================================
@@ -202,7 +202,7 @@ class TestSellOrderReal:
         mock_real_ctx.order_execution_service.handle_sell_stock.assert_awaited_once_with(
             "005930", "5", "71000"
         )
-        mock_real_ctx.virtual_manager.log_sell.assert_called_once_with("005930", 71000)
+        mock_real_ctx.virtual_trade_service.log_sell.assert_called_once_with("005930", 71000)
 
     def test_sell_order_failure_no_log(self, real_client, mock_real_ctx):
         """매도 실패 시 가상 매매 기록 미생성."""
@@ -215,7 +215,7 @@ class TestSellOrderReal:
         })
         assert resp.status_code == 200
         assert resp.json()["rt_cd"] == "1"
-        mock_real_ctx.virtual_manager.log_sell.assert_not_called()
+        mock_real_ctx.virtual_trade_service.log_sell.assert_not_called()
 
     def test_order_invalid_side_returns_400(self, real_client, mock_real_ctx):
         """잘못된 side 값은 400 에러."""
@@ -397,7 +397,7 @@ class TestEnvironmentReal:
 class TestVirtualReal:
     def test_get_virtual_summary(self, real_client, mock_real_ctx):
         """가상 매매 요약 정보 조회."""
-        mock_real_ctx.virtual_manager.get_summary.return_value = {
+        mock_real_ctx.virtual_trade_service.get_summary.return_value = {
             "total_trades": 10,
             "win_rate": 60.0,
             "avg_return": 5.2,
@@ -412,7 +412,7 @@ class TestVirtualReal:
 
     def test_get_virtual_strategies(self, real_client, mock_real_ctx):
         """등록된 전략 목록 조회."""
-        mock_real_ctx.virtual_manager.get_all_strategies.return_value = [
+        mock_real_ctx.virtual_trade_service.get_all_strategies.return_value = [
             "수동매매", "모멘텀", "갭상승눌림목"
         ]
 

@@ -13,11 +13,11 @@ from common.types import ErrorCode
 from core.performance_manager import PerformanceManager
 from core.time_manager import TimeManager
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
-from managers.market_data_repository import MarketDataRepository
-from managers.stock_repository import StockRepository
-from managers.market_date_manager import MarketDateManager
-from managers.notification_manager import NotificationManager
-from market_data.stock_code_mapper import StockCodeMapper
+from repositories.market_data_repository import MarketDataRepository
+from repositories.stock_repository import StockRepository
+from repositories.stock_code_repository import StockCodeRepository
+from services.market_calendar_service import MarketCalendarService
+from services.notification_service import NotificationService
 from scheduler.after_market_loop import run_after_market_loop
 
 if TYPE_CHECKING:
@@ -46,23 +46,23 @@ class MarketDataCollectorTask(SchedulableTask):
     def __init__(
         self,
         stock_query_service: "StockQueryService",
-        stock_code_mapper: StockCodeMapper,
+        stock_code_repository: StockCodeRepository,
         market_data_repo: MarketDataRepository,
         stock_repo: StockRepository,
-        market_date_manager: Optional[MarketDateManager] = None,
+        market_calendar_service: Optional[MarketCalendarService] = None,
         time_manager: Optional[TimeManager] = None,
         performance_manager: Optional[PerformanceManager] = None,
-        notification_manager: Optional[NotificationManager] = None,
+        notification_service: Optional[NotificationService] = None,
         logger=None,
     ):
         self._stock_query_service = stock_query_service
-        self._mapper = stock_code_mapper
+        self.stock_code_repository = stock_code_repository
         self._market_data_repo = market_data_repo
         self._stock_repo = stock_repo
-        self._mdm = market_date_manager
+        self._mcs = market_calendar_service
         self._time_manager = time_manager
         self._pm = performance_manager or PerformanceManager(enabled=False)
-        self._nm = notification_manager
+        self._ns = notification_service
         self._logger = logger or logging.getLogger(__name__)
 
         # SchedulableTask 상태
@@ -142,7 +142,7 @@ class MarketDataCollectorTask(SchedulableTask):
     async def _after_market_scheduler(self) -> None:
         """장 마감 후 자동으로 수집을 스케줄링하는 루프."""
         await run_after_market_loop(
-            mdm=self._mdm,
+            mcs=self._mcs,
             time_manager=self._time_manager,
             logger=self._logger,
             on_market_closed=self._on_market_closed,
@@ -159,7 +159,7 @@ class MarketDataCollectorTask(SchedulableTask):
     async def _collect_all_prices(self) -> None:
         """전체 종목 현재가를 수집하여 DB에 저장한다."""
         # 장 중에는 수집하지 않음
-        if self._mdm and await self._mdm.is_market_open_now():
+        if self._mcs and await self._mcs.is_market_open_now():
             self._logger.info("장 운영 중이므로 현재가 수집을 건너뜁니다.")
             return
 
@@ -173,8 +173,8 @@ class MarketDataCollectorTask(SchedulableTask):
 
         # 기준일 확인
         target_date = None
-        if self._mdm:
-            target_date = await self._mdm.get_latest_trading_date()
+        if self._mcs:
+            target_date = await self._mcs.get_latest_trading_date()
 
         if not target_date:
             self._logger.error("최근 거래일을 확인할 수 없어 현재가 수집을 중단합니다.")
@@ -263,16 +263,16 @@ class MarketDataCollectorTask(SchedulableTask):
                 "MarketDataCollectorTask._collect_all_prices",
                 t_start_total, threshold=10.0,
             )
-            if self._nm:
-                await self._nm.emit(
+            if self._ns:
+                await self._ns.emit(
                     "API", "info", "전체 종목 현재가 수집 완료",
                     f"{len(collected_records)}개 종목 수집, 소요: {elapsed:.1f}초",
                 )
 
         except Exception as e:
             self._logger.error(f"현재가 수집 실패: {e}", exc_info=True)
-            if self._nm:
-                await self._nm.emit("SYSTEM", "error", "현재가 수집 실패", str(e))
+            if self._ns:
+                await self._ns.emit("SYSTEM", "error", "현재가 수집 실패", str(e))
         finally:
             self._is_collecting = False
             self._progress["running"] = False
@@ -366,9 +366,9 @@ class MarketDataCollectorTask(SchedulableTask):
             return None
 
     def _load_all_stocks(self) -> List[tuple]:
-        """StockCodeMapper에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외)."""
+        """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외)."""
         all_stocks = []
-        for _, row in self._mapper.df.iterrows():
+        for _, row in self.stock_code_repository.df.iterrows():
             code = row.get("종목코드", "")
             name = row.get("종목명", "")
             market = row.get("시장구분", "")

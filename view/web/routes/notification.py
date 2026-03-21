@@ -20,7 +20,7 @@ async def get_recent_notifications(
 ):
     """최근 알림 목록 조회."""
     ctx = _get_ctx()
-    items = ctx.notification_manager.get_recent(count=count, category=category)
+    items = ctx.notification_service.get_recent(count=count, category=category)
     return {"notifications": items}
 
 
@@ -28,7 +28,7 @@ async def get_recent_notifications(
 async def stream_notifications(request: Request):
     """SSE 스트리밍: 알림 이벤트를 실시간으로 브라우저에 전달."""
     ctx = _get_ctx()
-    queue = ctx.notification_manager.create_subscriber_queue()
+    queue = ctx.notification_service.create_subscriber_queue()
 
     async def event_generator():
         try:
@@ -47,6 +47,6 @@ async def stream_notifications(request: Request):
         except asyncio.CancelledError:
             pass
         finally:
-            ctx.notification_manager.remove_subscriber_queue(queue)
+            ctx.notification_service.remove_subscriber_queue(queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
