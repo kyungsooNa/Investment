@@ -421,6 +421,7 @@ class TestDeepBuyOrder:
             new_callable=AsyncMock, side_effect=_side_effect
         )
 
+        mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_buy")
         client = deep_paper_ctx._test_client
         resp = client.post("/api/order", json={
             "code": "005930", "price": "70000", "qty": "10", "side": "buy"
@@ -437,6 +438,7 @@ class TestDeepBuyOrder:
     async def test_buy_order_market_closed(self, deep_paper_ctx, mocker):
         """장 마감 시 매수 주문이 거부된다."""
         deep_paper_ctx.order_execution_service.market_calendar_service.is_market_open_now = AsyncMock(return_value=False)
+        mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_buy")
 
         client = deep_paper_ctx._test_client
         resp = client.post("/api/order", json={
@@ -488,6 +490,8 @@ class TestDeepSellOrder:
             new_callable=AsyncMock, side_effect=_side_effect
         )
 
+        mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_sell")
+        mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_sell")
         client = deep_paper_ctx._test_client
         resp = client.post("/api/order", json={
             "code": "005930", "price": "71000", "qty": "5", "side": "sell"
@@ -518,6 +522,7 @@ class TestDeepSellOrder:
             new_callable=AsyncMock, side_effect=_side_effect
         )
 
+        mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_sell")
         client = deep_paper_ctx._test_client
         resp = client.post("/api/order", json={
             "code": "005930", "price": "71000", "qty": "5", "side": "sell"

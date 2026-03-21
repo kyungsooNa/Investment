@@ -192,7 +192,7 @@ async def test_get_latest_trading_date_outer_exception(manager, mock_deps):
         
         assert result is None
         logger.error.assert_called()
-        assert "Failed to fetch latest trading date" in logger.error.call_args[0][0]
+        assert "최근 영업일 조회 실패" in logger.error.call_args[0][0]
 
 @pytest.mark.asyncio
 async def test_is_business_day_cache_logic(manager, mock_deps, mock_broker):
