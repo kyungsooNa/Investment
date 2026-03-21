@@ -13,8 +13,6 @@
 
 
 - [ ] **[랭킹]** 랭킹 조회중일때 ui에 진행률 표기하는 부분이 사라짐
-- [ ] **[Background]** Background에서 OHLCV도 update 하고있느지 확인
-- [ ] **[Background]** inquire_daily_itemchartprice가 캐싱 제대로 안되고있음.
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[아키텍처]** 단일 책임 원칙(SRP)에 따라 비대해진 `TradingService`를 `OrderService`(주문), `MarketDataService`(시세/조회), `StreamingService`(웹소켓)로 분리.

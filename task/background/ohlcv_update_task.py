@@ -1,0 +1,324 @@
+# task/background/ohlcv_update_task.py
+"""
+장 마감 후 전체 종목의 OHLCV를 DB에 저장하는 백그라운드 태스크.
+- 당일 OHLCV 및 전략에 필요한 최대 600일치 역사 데이터를 유지한다.
+- DB에 이미 존재하는 날짜는 API를 호출하지 않아 불필요한 중복 요청을 방지한다.
+"""
+import asyncio
+import logging
+import time
+from typing import List, Dict, Optional, TYPE_CHECKING
+
+from common.types import ErrorCode
+from core.performance_profiler import PerformanceProfiler
+from core.market_clock import MarketClock
+from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
+from repositories.stock_repository import StockRepository
+from repositories.stock_code_repository import StockCodeRepository
+from services.market_calendar_service import MarketCalendarService
+from services.notification_service import NotificationService
+from scheduler.after_market_loop import run_after_market_loop
+
+if TYPE_CHECKING:
+    from services.stock_query_service import StockQueryService
+
+
+def _chunked(lst, size):
+    for i in range(0, len(lst), size):
+        yield lst[i:i + size]
+
+
+# ETF/ETN 브랜드명 접두사 (MarketDataCollectorTask와 동일)
+_ETF_PREFIXES = (
+    "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
+    "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
+    "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
+)
+
+
+class OhlcvUpdateTask(SchedulableTask):
+    """장 마감 후 전체 종목의 OHLCV를 수집하여 DB에 저장하는 백그라운드 태스크.
+
+    - DB에 이미 TARGET_OHLCV_DAYS일치 데이터가 있고 당일 날짜까지 갱신된 종목은 스킵.
+    - 데이터가 부족하거나 당일 캔들이 없는 종목만 API를 호출하여 저장.
+    - StockQueryService.get_ohlcv()가 내부적으로 누락 구간만 API 호출 후 DB에 upsert하므로
+      중복된 날짜는 자동으로 INSERT OR REPLACE 처리된다.
+    """
+
+    TARGET_OHLCV_DAYS = 600  # 전략에서 최대 600일치를 사용하므로 동일하게 유지
+    API_CHUNK_SIZE = 4        # 병렬 처리 종목 수 (OHLCV는 현재가보다 API 비용이 높음)
+    CHUNK_SLEEP_SEC = 1.5     # 청크 간 대기 시간 (API 레이트 리밋 준수)
+
+    def __init__(
+        self,
+        stock_query_service: "StockQueryService",
+        stock_code_repository: StockCodeRepository,
+        stock_repo: StockRepository,
+        market_calendar_service: Optional[MarketCalendarService] = None,
+        market_clock: Optional[MarketClock] = None,
+        performance_profiler: Optional[PerformanceProfiler] = None,
+        notification_service: Optional[NotificationService] = None,
+        logger=None,
+    ):
+        self._stock_query_service = stock_query_service
+        self.stock_code_repository = stock_code_repository
+        self._stock_repo = stock_repo
+        self._mcs = market_calendar_service
+        self._market_clock = market_clock
+        self._pm = performance_profiler or PerformanceProfiler(enabled=False)
+        self._ns = notification_service
+        self._logger = logger or logging.getLogger(__name__)
+
+        # SchedulableTask 상태
+        self._state: TaskState = TaskState.IDLE
+        self._tasks: List[asyncio.Task] = []
+        self._suspend_event: asyncio.Event = asyncio.Event()
+        self._suspend_event.set()  # 초기에는 실행 가능
+
+        # 수집 상태
+        self._is_collecting: bool = False
+        self._last_collected_date: Optional[str] = None
+        self._progress: Dict = {
+            "running": False,
+            "processed": 0,
+            "total": 0,
+            "updated": 0,
+            "skipped": 0,
+            "elapsed": 0.0,
+        }
+
+    # ── SchedulableTask 인터페이스 구현 ────────────────────────
+
+    @property
+    def task_name(self) -> str:
+        return "ohlcv_update"
+
+    @property
+    def priority(self) -> TaskPriority:
+        return TaskPriority.LOW
+
+    @property
+    def state(self) -> TaskState:
+        return self._state
+
+    async def start(self) -> None:
+        """수집 1회 실행 + 장마감 후 자동 스케줄러 시작."""
+        if self._state == TaskState.RUNNING:
+            return
+        self._state = TaskState.RUNNING
+        self._suspend_event.set()
+
+        self._tasks.append(
+            asyncio.create_task(self._collect_all_ohlcv())
+        )
+        self._tasks.append(
+            asyncio.create_task(self._after_market_scheduler())
+        )
+        self._logger.info(f"OhlcvUpdateTask 시작: {len(self._tasks)}개 태스크")
+
+    async def stop(self) -> None:
+        """모든 태스크를 취소하고 정리한다."""
+        self._logger.info(f"OhlcvUpdateTask 종료 시작: {len(self._tasks)}개 태스크")
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._state = TaskState.STOPPED
+        self._logger.info("OhlcvUpdateTask 종료 완료")
+
+    async def suspend(self) -> None:
+        """수집을 일시 중지한다 (chunk 사이에서 대기)."""
+        if self._state == TaskState.RUNNING:
+            self._suspend_event.clear()
+            self._state = TaskState.SUSPENDED
+            self._logger.info("OhlcvUpdateTask 일시 중지")
+
+    async def resume(self) -> None:
+        """일시 중지된 수집을 재개한다."""
+        if self._state == TaskState.SUSPENDED:
+            self._suspend_event.set()
+            self._state = TaskState.RUNNING
+            self._logger.info("OhlcvUpdateTask 재개")
+
+    # ── 장마감 후 자동 스케줄러 ────────────────────────────
+
+    async def _after_market_scheduler(self) -> None:
+        """장 마감 후 자동으로 수집을 스케줄링하는 루프."""
+        await run_after_market_loop(
+            mcs=self._mcs,
+            market_clock=self._market_clock,
+            logger=self._logger,
+            on_market_closed=self._on_market_closed,
+            label="OhlcvUpdate",
+        )
+
+    async def _on_market_closed(self, latest_trading_date: str) -> None:
+        """장 마감 후 콜백: 해당 거래일의 수집이 필요하면 실행."""
+        if self._last_collected_date != latest_trading_date:
+            await self._collect_all_ohlcv()
+
+    # ── 전체 종목 OHLCV 수집 ────────────────────────────────
+
+    async def _collect_all_ohlcv(self) -> None:
+        """전체 종목 OHLCV를 수집하여 DB에 저장한다."""
+        if self._mcs and await self._mcs.is_market_open_now():
+            self._logger.info("장 운영 중이므로 OHLCV 수집을 건너뜁니다.")
+            return
+
+        if self._is_collecting:
+            self._logger.info("OHLCV 수집 이미 진행 중 — 스킵")
+            return
+
+        t_start_total = self._pm.start_timer()
+        self._is_collecting = True
+        start_time = time.time()
+
+        try:
+            # 기준일 확인
+            target_date = None
+            if self._mcs:
+                target_date = await self._mcs.get_latest_trading_date()
+
+            if not target_date:
+                self._logger.error("최근 거래일을 확인할 수 없어 OHLCV 수집을 중단합니다.")
+                return
+
+            if self._last_collected_date == target_date:
+                self._logger.info(f"이미 {target_date} OHLCV 수집 완료 — 스킵")
+                return
+
+            self._logger.info(f"전체 종목 OHLCV 수집 시작 (기준일: {target_date})")
+            self._progress = {
+                "running": True, "processed": 0, "total": 0,
+                "updated": 0, "skipped": 0, "elapsed": 0.0,
+            }
+            all_stocks = self._load_all_stocks()
+            total = len(all_stocks)
+            self._progress["total"] = total
+            self._logger.info(f"OHLCV 수집: 전체 {total}개 종목 순회 시작")
+
+            processed = 0
+            updated = 0
+            skipped = 0
+
+            for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
+                # suspend 체크포인트
+                await self._suspend_event.wait()
+
+                # 병렬 처리
+                tasks = [
+                    self._update_stock_ohlcv(code, target_date)
+                    for code, _, _ in chunk
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for result in results:
+                    if result is True:
+                        updated += 1
+                    elif result is False:
+                        skipped += 1
+                    # None은 오류 — 카운트 제외
+
+                processed += len(chunk)
+                elapsed = time.time() - start_time
+                self._progress.update({
+                    "processed": processed,
+                    "updated": updated,
+                    "skipped": skipped,
+                    "elapsed": round(elapsed, 1),
+                })
+
+                if processed % 100 == 0 or processed >= total:
+                    self._logger.info(
+                        f"OHLCV 수집 진행: {processed}/{total} "
+                        f"({processed / total * 100:.1f}%) "
+                        f"| 갱신: {updated} | 스킵: {skipped} | 소요: {elapsed:.1f}s"
+                    )
+
+                await asyncio.sleep(self.CHUNK_SLEEP_SEC)
+
+            # 완료 처리
+            self._last_collected_date = target_date
+            elapsed = time.time() - start_time
+            self._logger.info(
+                f"전체 종목 OHLCV 수집 완료: 갱신 {updated}개 / 스킵 {skipped}개, "
+                f"소요: {elapsed:.1f}s"
+            )
+            self._pm.log_timer(
+                "OhlcvUpdateTask._collect_all_ohlcv",
+                t_start_total, threshold=10.0,
+            )
+            if self._ns:
+                await self._ns.emit(
+                    "API", "info", "전체 종목 OHLCV 수집 완료",
+                    f"갱신 {updated}개, 소요: {elapsed:.1f}초",
+                )
+
+        except Exception as e:
+            self._logger.error(f"OHLCV 수집 실패: {e}", exc_info=True)
+            if self._ns:
+                await self._ns.emit("SYSTEM", "error", "OHLCV 수집 실패", str(e))
+        finally:
+            self._is_collecting = False
+            self._progress["running"] = False
+
+    # ── 내부 헬퍼 ─────────────────────────────────────────
+
+    async def _update_stock_ohlcv(self, code: str, target_date: str) -> Optional[bool]:
+        """단일 종목 OHLCV를 필요 시에만 API 호출하여 업데이트한다.
+
+        DB 상태를 먼저 조회하여:
+        - TARGET_OHLCV_DAYS 이상 보유 + 당일 데이터 완비 → 스킵 (False)
+        - 데이터 부족 또는 당일 누락 → get_ohlcv() 호출 후 DB 저장 (True)
+
+        Returns:
+            True  - API 호출 후 갱신 성공
+            False - 이미 최신 상태여서 스킵
+            None  - 오류 발생
+        """
+        try:
+            summary = self._stock_repo.get_ohlcv_summary(code)
+            count = summary["count"]
+            latest_date = summary["latest_date"]
+
+            # 이미 충분한 역사 데이터가 있고 당일 캔들도 존재하면 API 불필요
+            if count >= self.TARGET_OHLCV_DAYS and latest_date == target_date:
+                return False
+
+            # get_ohlcv: DB에 없는 구간은 자동으로 API 조회 후 StockRepository에 upsert
+            resp = await self._stock_query_service.get_ohlcv(code, caller="OhlcvUpdateTask")
+            if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                return True
+            return None
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._logger.warning(f"OHLCV 업데이트 실패 ({code}): {e}")
+            return None
+
+    def _load_all_stocks(self) -> List[tuple]:
+        """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외)."""
+        all_stocks = []
+        for _, row in self.stock_code_repository.df.iterrows():
+            code = row.get("종목코드", "")
+            name = row.get("종목명", "")
+            market = row.get("시장구분", "")
+
+            if not code:
+                continue
+            if any(name.startswith(p) for p in _ETF_PREFIXES):
+                continue
+            if code[-1] != '0':
+                continue
+            if "스팩" in name:
+                continue
+            if market in ("KOSPI", "KOSDAQ"):
+                all_stocks.append((code, name, market))
+        return all_stocks
+
+    def get_progress(self) -> Dict:
+        """수집 진행률 반환."""
+        return dict(self._progress)
