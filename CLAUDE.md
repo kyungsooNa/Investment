@@ -127,3 +127,90 @@ httpx, websockets, pycryptodome, fastapi, uvicorn, jinja2, pandas, PyYAML, pytz,
 - 한글 메뉴/메시지, 영문 코드/변수명
 - 테스트 파일명: `test_*.py` (단위), `test_it_*.py` (통합)
 - config.yaml, token_*.json은 git에 포함하지 않음
+
+---
+
+## 테스트 Hang 트러블슈팅 가이드
+
+### 증상
+`pytest tests/` 전체 실행 시 일부 TC가 무한 대기 (hang) → xdist worker가 멈춰 전체 스위트가 freeze.
+
+### 원인 패턴 1: `@patch` 데코레이터 + `async def` + pytest fixture 혼용 (pytest-asyncio 1.0.0)
+
+**문제**: `asyncio_mode=auto` 환경에서 `@patch` 데코레이터를 `async def` 테스트 함수에 사용하면서 동시에 pytest fixture를 인자로 받으면 데드락 발생.
+
+```python
+# ❌ 데드락 발생 패턴
+@patch("module.SomeClass")
+async def test_foo(mock_class, my_fixture):  # fixture + @patch 혼용 → hang
+    ...
+```
+
+**해결**: `@patch` 데코레이터 대신 `with patch()` 컨텍스트 매니저 사용.
+
+```python
+# ✅ 올바른 패턴
+async def test_foo(my_fixture):
+    with patch("module.SomeClass") as mock_class:
+        ...
+```
+
+### 원인 패턴 2: `ClientWithRetryQueue`를 통한 mock 호출 시 무한 재시도
+
+**문제**: `BrokerAPIWrapper` 는 내부적으로 `ClientWithCache → ClientWithRetryQueue → 실제 클라이언트` 체인으로 구성됨.
+테스트에서 mock이 `ResCommonResponse` 가 아닌 **plain dict / None** 을 반환하면 `classify()` 가 `RETRY` 판정 → `MAX_RETRIES(5)` 회 재시도 → `asyncio.sleep` 지연 누적 → hang.
+
+```python
+# ❌ plain dict 반환 → classify() → RETRY → 5회 재시도 → hang
+mock_client.some_method.return_value = {"key": "value"}
+wrapper = BrokerAPIWrapper(...)  # ClientWithRetryQueue 래핑됨
+await wrapper.some_method(...)   # hang!
+```
+
+**해결 방법 A (권장)**: `BrokerAPIWrapper` 의 래핑 레이어를 bypass 하여 mock client를 직접 주입.
+
+```python
+# ✅ cache_wrap_client, retry_queue_wrap_client 를 identity 함수로 패치
+async def test_delegation(mock_env, mock_logger):
+    with patch(f"{wrapper_module.__name__}.KoreaInvestApiClient") as mock_client_class, \
+         patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c), \
+         patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c):
+        wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger)
+        # wrapper._client 가 mock_client_class.return_value 로 직접 할당됨
+```
+
+**해결 방법 B**: 테스트 픽스처가 이미 `BrokerAPIWrapper` 를 생성한 경우 `_client` 를 직접 교체.
+
+```python
+# ✅ wrapper 생성 후 _client 를 mock 으로 직접 대체
+wrapper = BrokerAPIWrapper(...)
+wrapper._client = mock_client_instance  # 래핑 레이어 우회
+```
+
+**해결 방법 C**: mock이 `ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, ...)` 를 반환하도록 변경 → `classify()` → `DONE` → 즉시 완료.
+
+### 원인 패턴 3: conftest `fast_sleep` 가 `ApiRequestQueue` 의 sleep 을 커버 못 할 경우
+
+`conftest.py` 의 `fast_sleep` fixture 는 `asyncio.sleep` 을 전역 patch 하지만,
+**integration test** conftest 에서는 `core.retry_queue.api_request_queue.asyncio.sleep` 을 별도 patch 해야 할 수 있음.
+
+```python
+# integration test conftest 또는 개별 TC 내
+@pytest.fixture
+def mock_sleep():
+    with patch("core.retry_queue.api_request_queue.asyncio.sleep", new_callable=AsyncMock) as m:
+        yield m
+```
+
+### 진단 체크리스트
+
+TC가 hang 할 때 아래 순서로 확인:
+
+1. **`-n0` 으로 단독 실행** → 여전히 hang 하면 xdist 문제 아님, TC 자체 문제
+   ```bash
+   pytest tests/unit_test/test_foo.py::test_bar -v -n0
+   ```
+2. **`@patch` 데코레이터 + `async def` + fixture 혼용** 여부 확인 → `with patch()` 로 교체
+3. **mock 반환값이 `ResCommonResponse` 인지** 확인 → plain dict/None 이면 RETRY 루프 진입 가능
+4. **`BrokerAPIWrapper` 를 직접 생성하는 TC** 인지 확인 → `cache_wrap_client` / `retry_queue_wrap_client` bypass 패치 적용
+5. **`asyncio.sleep` 이 제대로 mock** 되는지 확인 → `fast_sleep` autouse fixture 가 동작 범위 내인지 점검

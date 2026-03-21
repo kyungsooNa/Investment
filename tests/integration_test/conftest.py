@@ -20,6 +20,13 @@ def patch_cache_wrap_client_for_tests(mocker):
         return client
     mocker.patch("brokers.broker_api_wrapper.cache_wrap_client", side_effect=bypass_cache)
 
+
+@pytest.fixture(autouse=True)
+def fast_sleep(mocker):
+    """asyncio.sleep을 즉시 반환으로 패치 — RetryQueue 재시도 sleep 지연 방지."""
+    mocker.patch("asyncio.sleep", new_callable=AsyncMock)
+    mocker.patch("core.retry_queue.api_request_queue.asyncio.sleep", new_callable=AsyncMock)
+
 @pytest.fixture(scope="session")
 def test_cache_config():
     test_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".cache"))

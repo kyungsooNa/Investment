@@ -5,6 +5,8 @@ from repositories.stock_code_repository import StockCodeRepository
 from typing import Any, List
 from common.types import ResCommonResponse
 from core.cache.cache_wrapper import cache_wrap_client
+from core.retry_queue.api_request_queue import ApiRequestQueue
+from core.retry_queue.client_with_retry_queue import retry_queue_wrap_client
 
 
 class BrokerAPIWrapper:
@@ -20,21 +22,34 @@ class BrokerAPIWrapper:
         self._client = None
         self._stock_mapper = StockCodeRepository(logger=logger)
         self.env = env
-        
+        self._retry_queue: ApiRequestQueue | None = None
+
         if broker == "korea_investment":
             if env is None:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
+
             self._client = KoreaInvestApiClient(env, logger, market_clock, market_calendar_service)
+            # RetryQueue는 Cache 안쪽에 위치: 캐시 히트 시 Queue를 거치지 않고,
+            # 캐시 miss 후 실제 API 호출 실패 시에만 KoreaInvestApiClient를 직접 재시도
+            self._retry_queue = ApiRequestQueue(logger=logger)
+            self._client = retry_queue_wrap_client(self._client, self._retry_queue)
             self._client = cache_wrap_client(
+
                 self._client, logger, market_clock,
                 lambda: "PAPER" if env.is_paper_trading else "REAL",
-                config=cache_config,  # ✅ 여기서 주입
+
+                config=cache_config,
                 market_calendar_service=market_calendar_service
             )
 
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
+
+    async def stop(self):
+        """이벤트 루프 종료 전 대기 중인 재시도 태스크를 정리합니다."""
+        if self._retry_queue:
+            await self._retry_queue.stop()
 
     # --- StockCodeRepository delegation ---
     async def get_name_by_code(self, code: str) -> str:

@@ -315,10 +315,11 @@ class TestDeepStockPrice:
     async def test_stock_price_api_error(self, deep_paper_ctx, mocker):
         """API 에러 응답이 전체 스택을 통해 올바르게 전파된다."""
         quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+        # "초당 거래건수" 는 RETRIABLE 패턴으로 5회 재시도(~15s) 유발 → 비 RETRIABLE 메시지 사용
         error_payload = {
             "rt_cd": "1",
             "msg_cd": "EGW00000",
-            "msg1": "초당 거래건수를 초과하였습니다.",
+            "msg1": "데이터가 존재하지 않습니다.",
         }
         patch_session_get(quot_api, mocker, error_payload)
 

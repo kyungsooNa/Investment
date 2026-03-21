@@ -14,7 +14,7 @@ class OrderExecutionService:
     TradingService, Logger, MarketClock 인스턴스를 주입받아 사용합니다.
     """
 
-    _ORDER_MAX_RETRIES = 2
+    _ORDER_MAX_RETRIES = 5
     _ORDER_RETRY_DELAY_SEC = 3
 
     def __init__(self, trading_service, logger, 
