@@ -33,6 +33,7 @@ from services.oneil_universe_service import OneilUniverseService
 from task.background.ranking_task import RankingTask
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.market_data_collector_task import MarketDataCollectorTask
+from task.background.ohlcv_update_task import OhlcvUpdateTask
 from repositories.market_data_repository import MarketDataRepository
 from repositories.stock_repository import StockRepository
 from services.realtime_data_service import RealtimeDataService
@@ -64,6 +65,7 @@ class WebAppContext:
         self.ranking_task: RankingTask = None
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self.market_data_collector_task: MarketDataCollectorTask = None
+        self.ohlcv_update_task: OhlcvUpdateTask = None
         self.market_data_repository: MarketDataRepository = None
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
@@ -224,6 +226,17 @@ class WebAppContext:
             logger=self.logger,
         )
 
+        self.ohlcv_update_task = OhlcvUpdateTask(
+            stock_query_service=self.stock_query_service,
+            stock_code_repository=self.stock_code_repository,
+            stock_repo=self.stock_repository,
+            market_calendar_service=self._mcs,
+            market_clock=self.market_clock,
+            performance_profiler=self.pm,
+            notification_service=self.notification_service,
+            logger=self.logger,
+        )
+
         self.order_execution_service = OrderExecutionService(
             self.trading_service, self.logger, self.market_clock,
             performance_profiler=self.pm,
@@ -253,6 +266,8 @@ class WebAppContext:
             self.background_scheduler.register(self.websocket_watchdog_task)
         if self.market_data_collector_task:
             self.background_scheduler.register(self.market_data_collector_task)
+        if self.ohlcv_update_task:
+            self.background_scheduler.register(self.ohlcv_update_task)
 
         # ForegroundScheduler 초기화
         self.foreground_scheduler = ForegroundScheduler(

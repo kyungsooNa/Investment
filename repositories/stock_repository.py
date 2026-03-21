@@ -10,7 +10,7 @@ import logging
 import threading
 import collections
 from contextlib import contextmanager
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 
 class _LRUCache:
@@ -252,6 +252,25 @@ class StockRepository:
             if time.time() - cached.get("price_updated_at", 0) <= max_age_sec:
                 return cached["current_price_data"]
         return None
+
+    def get_ohlcv_summary(self, code: str) -> Dict[str, Any]:
+        """DB에서 종목의 OHLCV 요약 정보를 반환합니다 (전체 데이터 로드 없이 메타만 조회).
+
+        Returns:
+            {"count": int, "latest_date": str|None, "oldest_date": str|None}
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT COUNT(*), MAX(date), MIN(date) FROM ohlcv WHERE code = ?",
+                    (code,),
+                )
+                row = cursor.fetchone()
+            if row and row[0]:
+                return {"count": row[0], "latest_date": row[1], "oldest_date": row[2]}
+        except Exception as e:
+            self._logger.error(f"StockRepository OHLCV 요약 조회 실패 ({code}): {e}")
+        return {"count": 0, "latest_date": None, "oldest_date": None}
 
     def get_cache_stats(self, expand: bool = False) -> dict:
         """메모리 캐시의 사용 통계(적중률 등)를 반환합니다."""
