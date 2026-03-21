@@ -465,7 +465,7 @@ async def test_retry_order_retriable_error_exhausted(handler, mock_trading_servi
         mock_trading_service.place_buy_order, "005930", 70000, 10
     )
     assert result.rt_cd == ErrorCode.RETRY_LIMIT.value
-    assert mock_trading_service.place_buy_order.await_count == 2
+    assert mock_trading_service.place_buy_order.await_count == 5  # _ORDER_MAX_RETRIES=5 회 모두 시도
 
 
 @pytest.mark.asyncio

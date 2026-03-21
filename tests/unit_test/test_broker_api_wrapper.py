@@ -31,6 +31,7 @@ def mock_logger():
 
 
 @pytest.fixture
+
 def mock_market_clock():
     """모의 로거(Logger) 객체를 생성합니다."""
     return MagicMock()
@@ -44,42 +45,54 @@ def mock_mcs():
 # --- 테스트 케이스 ---
 
 @pytest.mark.asyncio
+
 @patch(f"{wrapper_module.__name__}.StockCodeRepository")  # 먼저 정의된 patch가
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")  # 아래쪽 인자로 먼저 들어감!
 async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger, mock_market_clock):
     """
     각 메서드가 내부의 올바른 객체로 호출을 위임하는지 테스트합니다.
+    cache_wrap_client / retry_queue_wrap_client 를 bypass 해 wrapping 없이 mock client 를 직접 주입합니다.
     """
-    # 1. StockCodeRepository mock 설정 (동기)
-    mock_mapper = MagicMock()
-    mock_mapper.get_name_by_code.return_value = "삼성전자"
-    mock_mapper.get_code_by_name.return_value = "005930"
-    mock_mapper_class.return_value = mock_mapper
 
-    # 2. KoreaInvestApiClient mock 설정 (비동기)
-    mock_client = AsyncMock()
-    mock_client.inquire_daily_itemchartprice.return_value = {"chart": "data"}
-    mock_client_class.return_value = mock_client
+    with patch(f"{wrapper_module.__name__}.StockCodeRepository") as mock_mapper_class, \
+         patch(f"{wrapper_module.__name__}.KoreaInvestApiClient") as mock_client_class, \
+         patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c), \
+         patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c):
 
-    mock_market_clock.is_market_operating_hours.return_value = True  # ✅ 함수로 유지
 
-    # 3. 인스턴스 생성
-    wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, market_clock=mock_market_clock)
+        # 1. StockCodeRepository mock 설정 (동기)
+        mock_mapper = MagicMock()
+        mock_mapper.get_name_by_code.return_value = "삼성전자"
+        mock_mapper.get_code_by_name.return_value = "005930"
+        mock_mapper_class.return_value = mock_mapper
 
-    # 4. 실제 메서드 호출
-    name_result = await wrapper.get_name_by_code("005930")
-    code_result = await wrapper.get_code_by_name("삼성전자")
-    chart_result = await wrapper.inquire_daily_itemchartprice("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
 
-    # 5. 결과 검증
-    assert name_result == "삼성전자"
-    assert code_result == "005930"
-    assert chart_result == {"chart": "data"}
+        # 2. KoreaInvestApiClient mock 설정 (비동기)
+        mock_client = AsyncMock()
+        mock_client.inquire_daily_itemchartprice.return_value = {"chart": "data"}
+        mock_client_class.return_value = mock_client
 
-    # 6. 호출 여부 검증
-    mock_mapper.get_name_by_code.assert_called_once_with("005930")
-    mock_mapper.get_code_by_name.assert_called_once_with("삼성전자")
-    mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930",start_date="20250101", end_date="20250111", fid_period_div_code="D")
+
+        # 3. 인스턴스 생성 (wrapping 없이 mock_client 가 _client 에 직접 할당됨)
+        wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, market_clock=mock_market_clock)
+
+
+        # 4. 실제 메서드 호출
+        name_result = await wrapper.get_name_by_code("005930")
+        code_result = await wrapper.get_code_by_name("삼성전자")
+        chart_result = await wrapper.inquire_daily_itemchartprice("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
+
+
+        # 5. 결과 검증
+        assert name_result == "삼성전자"
+        assert code_result == "005930"
+        assert chart_result == {"chart": "data"}
+
+
+        # 6. 호출 여부 검증
+        mock_mapper.get_name_by_code.assert_called_once_with("005930")
+        mock_mapper.get_code_by_name.assert_called_once_with("삼성전자")
+        mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
 
 
 @pytest.mark.asyncio
@@ -337,7 +350,10 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
     mock_stock_mapper.assert_called_once_with(logger=mock_logger)
     assert wrapper._broker == "korea_investment"
     assert isinstance(wrapper._client, ClientWithCache)  # ✅ wrapping 여부 확인
-    assert wrapper._client._client is mock_client.return_value  # ✅ 내부 원본 확인
+    # 래핑 체인: ClientWithCache → ClientWithRetryQueue → KoreaInvestApiClient
+    from core.retry_queue.client_with_retry_queue import ClientWithRetryQueue
+    assert isinstance(wrapper._client._client, ClientWithRetryQueue)
+    assert wrapper._client._client._client is mock_client.return_value  # ✅ 내부 원본 확인
     assert wrapper._stock_mapper is mock_stock_mapper.return_value  # _stock_mapper가 mock_stock_mapper 인스턴스를 참조하는지 확인
 
 
