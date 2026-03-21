@@ -7,7 +7,7 @@ import logging
 import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenManager를 import
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenProvider를 import
 from common.types import ErrorCode, ResCommonResponse
 from typing import Union, Optional
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, \

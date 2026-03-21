@@ -38,7 +38,7 @@ Investment/
 │   ├── korea_invest_trading_api.py     # 매수/매도 주문 API
 │   ├── korea_invest_websocket_api.py   # 실시간 WebSocket (체결가, 호가, 프로그램매매)
 │   ├── korea_invest_*_provider.py      # Header, URL, TrID, Params 프로바이더
-│   └── korea_invest_token_manager.py   # 토큰 발급/갱신/저장
+│   └── korea_invest_token_provider.py   # 토큰 발급/갱신/저장
 ├── common/types.py         # 공통 데이터 모델 (ResCommonResponse, ErrorCode, TradeSignal 등)
 ├── config/                 # YAML 설정 파일들
 │   ├── config.yaml(.example)   # API키, 계좌번호, URL (gitignore 대상)

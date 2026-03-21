@@ -5,7 +5,7 @@ import json
 from unittest.mock import MagicMock, AsyncMock, patch, call
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase, ApiRetryError
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
-from brokers.korea_investment.korea_invest_token_manager import TokenManager
+from brokers.korea_investment.korea_invest_token_provider import TokenProvider
 import requests
 import logging
 import httpx  # 에러 시뮬레이션을 위해 import
@@ -557,7 +557,7 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
 
 @pytest.mark.asyncio
 async def testcall_api_token_expired_retry():
-    class MockTokenManager:
+    class MockTokenProvider:
         def __init__(self):
             self.invalidated = False
 
@@ -617,7 +617,7 @@ async def testcall_api_token_expired_retry():
 
 @pytest.mark.asyncio
 async def testcall_api_http_error(monkeypatch):
-    class MockTokenManager:
+    class MockTokenProvider:
         def __init__(self):
             self.invalidated = False
 
@@ -645,7 +645,7 @@ async def testcall_api_http_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def testcall_api_connection_error(monkeypatch):
-    class MockTokenManager:
+    class MockTokenProvider:
         def __init__(self):
             self.invalidated = False
 
@@ -670,7 +670,7 @@ async def testcall_api_connection_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def testcall_api_timeout(monkeypatch):
-    class MockTokenManager:
+    class MockTokenProvider:
         def __init__(self):
             self.invalidated = False
 

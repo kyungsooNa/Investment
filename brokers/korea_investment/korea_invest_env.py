@@ -8,7 +8,7 @@ import certifi
 import yaml
 import logging
 import pytz
-from brokers.korea_investment.korea_invest_token_manager import TokenManager  # TokenManager 임포트
+from brokers.korea_investment.korea_invest_token_provider import TokenProvider
 
 
 class KoreaInvestApiEnv:
@@ -23,9 +23,9 @@ class KoreaInvestApiEnv:
         self._config_data = config_data
         self._logger = logger if logger else logging.getLogger(__name__)
 
-        self._token_manager = None
-        self._token_manager_real = TokenManager(token_file_path="config/token_real.json", logger=self._logger)
-        self._token_manager_paper = TokenManager(token_file_path="config/token_paper.json", logger=self._logger)
+        self._token_provider = None
+        self._token_provider_real = TokenProvider(token_file_path="config/token_real.json", logger=self._logger)
+        self._token_provider_paper = TokenProvider(token_file_path="config/token_paper.json", logger=self._logger)
         self._load_config()
         self._set_base_urls()  # 초기 base_url, websocket_url 설정 (config.yaml의 is_paper_trading 기반)
         self._token_file_path = os.path.join(os.getcwd(), 'kis_access_token.yaml')
@@ -77,9 +77,9 @@ class KoreaInvestApiEnv:
             self.active_config = self.get_full_config()
 
             if self.is_paper_trading is True:
-                self._token_manager = self._token_manager_paper
+                self._token_provider = self._token_provider_paper
             else:
-                self._token_manager = self._token_manager_real
+                self._token_provider = self._token_provider_real
             self._logger.info(f"거래 모드가 {'모의투자' if is_paper else '실전투자'} 환경으로 변경되었습니다.")
         else:
             self._logger.info(f"거래 모드가 이미 {'모의투자' if is_paper else '실전투자'} 환경으로 설정되어 있습니다.")
@@ -106,9 +106,9 @@ class KoreaInvestApiEnv:
 
         tr_ids_from_config = self._config_data.get('tr_ids', {})
 
-        # TokenManager 에서 현재 활성 토큰과 만료 시간을 가져옴
-        # current_access_token = self.token_manager._access_token # 직접 접근 (혹은 TokenManager에 public getter 필요)
-        # current_token_expired_at = self.token_manager._token_expired_at # 직접 접근
+        # TokenProvider 에서 현재 활성 토큰과 만료 시간을 가져옴
+        # current_access_token = self._token_provider._access_token # 직접 접근
+        # current_token_expired_at = self._token_provider._token_expired_at # 직접 접근
 
         return {
             'api_key': active_api_key,
@@ -131,31 +131,31 @@ class KoreaInvestApiEnv:
     async def get_access_token(self, force_new=False):
         """
         접근 토큰을 발급받거나 갱신합니다.
-        토큰 관리를 TokenManager에 위임합니다.
+        토큰 관리를 TokenProvider에 위임합니다.
         """
-        # TokenManager의 get_access_token을 호출하고 결과를 반환합니다.
-        # TokenManager 내부에서 force_new 로직을 처리하므로, 여기서는 인자를 전달하지 않습니다.
-        if not self._token_manager:
-            raise RuntimeError("TokenManager가 초기화되지 않았습니다. set_trading_mode 먼저 호출하세요.")
+        # TokenProvider의 get_access_token을 호출하고 결과를 반환합니다.
+        # TokenProvider 내부에서 force_new 로직을 처리하므로, 여기서는 인자를 전달하지 않습니다.
+        if not self._token_provider:
+            raise RuntimeError("TokenProvider가 초기화되지 않았습니다. set_trading_mode 먼저 호출하세요.")
 
-        return await self._token_manager.get_access_token(
+        return await self._token_provider.get_access_token(
             base_url=self.active_config['base_url'],
             app_key=self.active_config['api_key'],
             app_secret=self.active_config['api_secret_key']
         )
 
     def save_access_token(self, token: str):
-        if not self._token_manager:
-            raise RuntimeError("TokenManager가 초기화되지 않았습니다.")
-        self._token_manager.save_access_token(token)
+        if not self._token_provider:
+            raise RuntimeError("TokenProvider가 초기화되지 않았습니다.")
+        self._token_provider.save_access_token(token)
 
     def invalidate_token(self):
-        if self._token_manager:
-            self._token_manager.invalidate_token()
+        if self._token_provider:
+            self._token_provider.invalidate_token()
 
     async def refresh_token(self):
-        if self._token_manager:
-            await self._token_manager.refresh_token(
+        if self._token_provider:
+            await self._token_provider.refresh_token(
                 base_url=self.active_config['base_url'],
                 app_key=self.active_config['api_key'],
                 app_secret=self.active_config['api_secret_key']
@@ -177,9 +177,9 @@ class KoreaInvestApiEnv:
         }
 
     async def get_real_access_token(self) -> str:
-        """항상 실전 토큰 반환 (_token_manager_real 사용)."""
+        """항상 실전 토큰 반환 (_token_provider_real 사용)."""
         real_cfg = self.get_real_config()
-        return await self._token_manager_real.get_access_token(
+        return await self._token_provider_real.get_access_token(
             base_url=real_cfg['base_url'],
             app_key=real_cfg['api_key'],
             app_secret=real_cfg['api_secret_key']

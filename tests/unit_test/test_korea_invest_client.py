@@ -35,7 +35,7 @@ async def test_quotations_get_price_summary_success(mocker):
         "is_paper_trading": False
     }
 
-    # 1. TokenManager에 대한 모의(mock) 객체를 생성합니다.
+    # 1. TokenProvider에 대한 모의(mock) 객체를 생성합니다.
     mock_token_manager = MagicMock()
 
     # KoreaInvestTrIdProvider.from_config_loader가 설정 파일을 읽지 않도록 모킹

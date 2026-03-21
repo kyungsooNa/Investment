@@ -5,18 +5,18 @@ import json
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch, AsyncMock, MagicMock
-from brokers.korea_investment.korea_invest_token_manager import TokenManager
+from brokers.korea_investment.korea_invest_token_provider import TokenProvider
 import pytz  # pytz 임포트
 import shutil # shutil 임포트
 import tempfile # tempfile 모듈 임포트
 
-class TestTokenManager(unittest.IsolatedAsyncioTestCase):
+class TestTokenProvider(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         # 각 테스트 실행마다 고유한 임시 디렉토리 생성
         self.temp_dir = tempfile.mkdtemp()  # unique temp directory for each test run
         self.test_token_file = os.path.join(self.temp_dir, 'test_token.json')
 
-        self.token_manager = TokenManager(token_file_path=self.test_token_file)
+        self.token_provider = TokenProvider(token_file_path=self.test_token_file)
         self.kst_timezone = pytz.timezone('Asia/Seoul')
 
         self.mock_config = {
@@ -41,11 +41,11 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     async def test_init(self):
         """
-        TC-1: TokenManager 초기화 검증
+        TC-1: TokenProvider 초기화 검증
         """
-        self.assertIsNone(self.token_manager._access_token)
-        self.assertIsNone(self.token_manager._token_expired_at)
-        self.assertEqual(self.token_manager.token_file_path, self.test_token_file)
+        self.assertIsNone(self.token_provider._access_token)
+        self.assertIsNone(self.token_provider._token_expired_at)
+        self.assertEqual(self.token_provider.token_file_path, self.test_token_file)
 
     async def test_issue_new_token_success(self):
         """
@@ -63,15 +63,15 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_response
 
             # _issue_new_token은 이제 base_url, app_key, app_secret을 직접 받습니다.
-            await self.token_manager._issue_new_token(
+            await self.token_provider._issue_new_token(
                 base_url=self.mock_config['url'],
                 app_key=self.mock_config['app_key'],
                 app_secret=self.mock_config['app_secret']
             )
 
             MockAsyncClient.return_value.__aenter__.return_value.post.assert_called_once()
-            self.assertEqual(self.token_manager._access_token, 'new_test_token')
-            self.assertIsNotNone(self.token_manager._token_expired_at)
+            self.assertEqual(self.token_provider._access_token, 'new_test_token')
+            self.assertIsNotNone(self.token_provider._token_expired_at)
             self.assertTrue(os.path.exists(self.test_token_file))
 
             # 저장된 파일 내용 검증
@@ -100,7 +100,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         with patch('httpx.AsyncClient') as MockAsyncClient:
             # --- Act (실행) ---
             # get_access_token은 이제 base_url, app_key, app_secret을 직접 받습니다.
-            access_token = await self.token_manager.get_access_token(
+            access_token = await self.token_provider.get_access_token(
                 base_url=self.mock_config['url'],
                 app_key=self.mock_config['app_key'],
                 app_secret=self.mock_config['app_secret']
@@ -118,8 +118,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
         # --- Arrange (준비) ---
         # 메모리에 유효한 토큰이 저장된 상황을 가정합니다.
-        self.token_manager._access_token = 'token_in_memory'
-        self.token_manager._token_expired_at = datetime.now(self.kst_timezone) + timedelta(
+        self.token_provider._access_token = 'token_in_memory'
+        self.token_provider._token_expired_at = datetime.now(self.kst_timezone) + timedelta(
             days=1)  # aware datetime으로 변경
 
         # 파일 시스템과 API 클라이언트를 모두 감시 대상으로 설정합니다.
@@ -127,7 +127,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
                 patch('httpx.AsyncClient') as MockAsyncClient:
             # --- Act (실행) ---
             # get_access_token은 이제 base_url, app_key, app_secret을 직접 받습니다.
-            access_token = await self.token_manager.get_access_token(
+            access_token = await self.token_provider.get_access_token(
                 base_url=self.mock_config['url'],
                 app_key=self.mock_config['app_key'],
                 app_secret=self.mock_config['app_secret']
@@ -175,7 +175,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
                 mock_open_func.side_effect = mock_open_side_effect
 
-                access_token = await self.token_manager.get_access_token(
+                access_token = await self.token_provider.get_access_token(
                     base_url=self.mock_config['url'],
                     app_key=self.mock_config['app_key'],
                     app_secret=self.mock_config['app_secret']
@@ -184,8 +184,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(access_token, 'fresh_new_token')
                 MockAsyncClient.return_value.__aenter__.return_value.post.assert_called_once()
 
-                self.assertEqual(self.token_manager._access_token, 'fresh_new_token')
-                self.assertIsNotNone(self.token_manager._token_expired_at)
+                self.assertEqual(self.token_provider._access_token, 'fresh_new_token')
+                self.assertIsNotNone(self.token_provider._token_expired_at)
 
     async def test_invalidate_token(self):
         """
@@ -193,18 +193,18 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         """
         # --- Arrange (준비) ---
         # 토큰을 메모리와 파일에 설정
-        self.token_manager._access_token = 'valid_token'
-        self.token_manager._token_expired_at = datetime.now() + timedelta(hours=1)
+        self.token_provider._access_token = 'valid_token'
+        self.token_provider._token_expired_at = datetime.now() + timedelta(hours=1)
         with open(self.test_token_file, 'w') as f:
             json.dump({'access_token': 'valid_token', 'expired_at': (datetime.now() + timedelta(hours=1)).isoformat(),
                        'base_url': self.mock_config['url']}, f)
 
         # --- Act (실행) ---
-        self.token_manager.invalidate_token()
+        self.token_provider.invalidate_token()
 
         # --- Assert (검증) ---
-        self.assertIsNone(self.token_manager._access_token)
-        self.assertIsNone(self.token_manager._token_expired_at)
+        self.assertIsNone(self.token_provider._access_token)
+        self.assertIsNone(self.token_provider._token_expired_at)
         self.assertFalse(os.path.exists(self.test_token_file))  # 파일도 삭제되었는지 확인
 
     async def test_get_token_from_file_base_url_mismatch(self):
@@ -241,7 +241,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
             # --- Act (실행) ---
             # 현재 환경의 base_url로 요청 (파일의 base_url과 다름)
-            access_token = await self.token_manager.get_access_token(
+            access_token = await self.token_provider.get_access_token(
                 base_url=self.mock_config['url'],  # 올바른 base_url
                 app_key=self.mock_config['app_key'],
                 app_secret=self.mock_config['app_secret']
@@ -257,7 +257,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(token_data['base_url'], self.mock_config['url'])
                 self.assertEqual(token_data['access_token'], 'fresh_new_token_for_correct_env')
 
-# --- TestTokenManager 클래스 밖으로 완전히 분리된 테스트 함수 ---
+# --- TestTokenProvider 클래스 밖으로 완전히 분리된 테스트 함수 ---
 @pytest.mark.asyncio
 async def test_get_token_no_file_new_issued_isolated(tmp_path):  # 이제 self 인수는 없습니다.
     """
@@ -275,8 +275,8 @@ async def test_get_token_no_file_new_issued_isolated(tmp_path):  # 이제 self �
         'app_secret': 'test_app_secret'
     }
 
-    # TokenManager 인스턴스 생성 시 고유한 파일 경로 전달
-    token_manager = TokenManager(token_file_path=unique_token_file)
+    # TokenProvider 인스턴스 생성 시 고유한 파일 경로 전달
+    token_provider = TokenProvider(token_file_path=unique_token_file)
 
     # 토큰 파일이 없음을 확인 (tmp_path는 기본적으로 비어있으므로 보통 필요 없음)
     if os.path.exists(unique_token_file):
@@ -297,7 +297,7 @@ async def test_get_token_no_file_new_issued_isolated(tmp_path):  # 이제 self �
         MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_new_token_response
 
         # --- Act (실행) ---
-        access_token = await token_manager.get_access_token(
+        access_token = await token_provider.get_access_token(
             base_url=mock_config['url'],
             app_key=mock_config['app_key'],
             app_secret=mock_config['app_secret']
@@ -319,17 +319,17 @@ async def test_is_token_valid_when_token_is_none():
     """
     _is_token_valid: _access_token이 None일 때 False 반환 검증.
     """
-    token_manager = TokenManager() # 초기화 시 _access_token과 _token_expired_at은 None
-    assert token_manager._is_token_valid() is False
+    token_provider = TokenProvider() # 초기화 시 _access_token과 _token_expired_at은 None
+    assert token_provider._is_token_valid() is False
 
 @pytest.mark.asyncio
 async def test_is_token_valid_when_expiry_is_none():
     """
     _is_token_valid: _token_expired_at이 None일 때 False 반환 검증.
     """
-    token_manager = TokenManager()
-    token_manager._access_token = "some_token" # access_token만 설정
-    assert token_manager._is_token_valid() is False
+    token_provider = TokenProvider()
+    token_provider._access_token = "some_token" # access_token만 설정
+    assert token_provider._is_token_valid() is False
 
 @pytest.mark.asyncio
 async def test_get_token_base_url_from_file_not_found(tmp_path):
@@ -337,8 +337,8 @@ async def test_get_token_base_url_from_file_not_found(tmp_path):
     _get_token_base_url_from_file: 토큰 파일이 없을 때 None 반환 검증.
     """
     non_existent_file = tmp_path / "non_existent_token.json"
-    token_manager = TokenManager(token_file_path=str(non_existent_file))
-    assert token_manager._get_token_base_url_from_file() is None
+    token_provider = TokenProvider(token_file_path=str(non_existent_file))
+    assert token_provider._get_token_base_url_from_file() is None
 
 @pytest.mark.asyncio
 async def test_get_token_base_url_from_file_invalid_json(tmp_path):
@@ -348,35 +348,35 @@ async def test_get_token_base_url_from_file_invalid_json(tmp_path):
     invalid_json_file = tmp_path / "invalid_token.json"
     with open(invalid_json_file, 'w') as f:
         f.write("this is not json")
-    token_manager = TokenManager(token_file_path=str(invalid_json_file))
-    assert token_manager._get_token_base_url_from_file() is None
+    token_provider = TokenProvider(token_file_path=str(invalid_json_file))
+    assert token_provider._get_token_base_url_from_file() is None
 
 @pytest.mark.asyncio
 async def test_issue_new_token_missing_base_url_raises_error():
     """
     _issue_new_token: base_url이 누락되었을 때 ValueError 발생 검증.
     """
-    token_manager = TokenManager()
+    token_provider = TokenProvider()
     with pytest.raises(ValueError, match="Missing environment configuration for token issuance."):
-        await token_manager._issue_new_token(base_url="", app_key="key", app_secret="secret")
+        await token_provider._issue_new_token(base_url="", app_key="key", app_secret="secret")
 
 @pytest.mark.asyncio
 async def test_issue_new_token_missing_app_key_raises_error():
     """
     _issue_new_token: app_key가 누락되었을 때 ValueError 발생 검증.
     """
-    token_manager = TokenManager()
+    token_provider = TokenProvider()
     with pytest.raises(ValueError, match="Missing environment configuration for token issuance."):
-        await token_manager._issue_new_token(base_url="url", app_key="", app_secret="secret")
+        await token_provider._issue_new_token(base_url="url", app_key="", app_secret="secret")
 
 @pytest.mark.asyncio
 async def test_issue_new_token_missing_app_secret_raises_error():
     """
     _issue_new_token: app_secret이 누락되었을 때 ValueError 발생 검증.
     """
-    token_manager = TokenManager()
+    token_provider = TokenProvider()
     with pytest.raises(ValueError, match="Missing environment configuration for token issuance."):
-        await token_manager._issue_new_token(base_url="url", app_key="key", app_secret="")
+        await token_provider._issue_new_token(base_url="url", app_key="key", app_secret="")
 
 @pytest.mark.asyncio
 async def test_invalidate_token_when_file_not_exists(tmp_path):
@@ -384,18 +384,18 @@ async def test_invalidate_token_when_file_not_exists(tmp_path):
     invalidate_token: 토큰 파일이 존재하지 않을 때 호출 시, 파일 삭제 시도 없이 토큰만 초기화되는지 검증.
     """
     non_existent_file = tmp_path / "non_existent_token.json"
-    token_manager = TokenManager(token_file_path=str(non_existent_file))
+    token_provider = TokenProvider(token_file_path=str(non_existent_file))
 
     # 토큰이 메모리에 있는 것처럼 설정
-    token_manager._access_token = 'token_to_invalidate'
-    token_manager._token_expired_at = datetime.now() + timedelta(hours=1)
+    token_provider._access_token = 'token_to_invalidate'
+    token_provider._token_expired_at = datetime.now() + timedelta(hours=1)
 
     # os.remove가 호출되지 않는지 확인하기 위해 patch
     with patch('os.remove') as mock_os_remove:
-        token_manager.invalidate_token()
+        token_provider.invalidate_token()
 
-        assert token_manager._access_token is None
-        assert token_manager._token_expired_at is None
+        assert token_provider._access_token is None
+        assert token_provider._token_expired_at is None
         mock_os_remove.assert_not_called()  # 파일이 없으므로 os.remove 호출되면 안 됨
 
 @pytest.mark.asyncio
@@ -413,15 +413,15 @@ async def test_load_token_from_file_no_expiry_str(tmp_path):
     with open(token_file, 'w') as f:
         json.dump(initial_token_data, f)
 
-    token_manager = TokenManager(token_file_path=str(token_file))
+    token_provider = TokenProvider(token_file_path=str(token_file))
 
     # 로드하기 전에 _token_expired_at이 None인지 확인 (초기 상태)
-    assert token_manager._token_expired_at is None
+    assert token_provider._token_expired_at is None
 
-    token_manager._load_token_from_file()
+    token_provider._load_token_from_file()
 
-    assert token_manager._access_token == 'token_without_expiry_field'
-    assert token_manager._token_expired_at is None  # expired_at이 없으므로 None으로 유지되어야 함
+    assert token_provider._access_token == 'token_without_expiry_field'
+    assert token_provider._token_expired_at is None  # expired_at이 없으므로 None으로 유지되어야 함
 
 @pytest.mark.asyncio
 async def test_refresh_token_success(monkeypatch, tmp_path):
@@ -429,7 +429,7 @@ async def test_refresh_token_success(monkeypatch, tmp_path):
     TC-9: refresh_token()이 강제로 새 토큰을 발급하고 상태를 초기화하는지 검증
     """
     token_file = tmp_path / "refresh_token_test.json"
-    token_manager = TokenManager(token_file_path=str(token_file))
+    token_provider = TokenProvider(token_file_path=str(token_file))
 
     # 테스트용 토큰 정보
     mock_base_url = "https://test-api.koreainvestment.com:9443"
@@ -451,15 +451,15 @@ async def test_refresh_token_success(monkeypatch, tmp_path):
         MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_response
 
         # --- Act ---
-        await token_manager.refresh_token(
+        await token_provider.refresh_token(
             base_url=mock_base_url,
             app_key=mock_app_key,
             app_secret=mock_app_secret
         )
 
         # --- Assert ---
-        assert token_manager._access_token == mock_access_token
-        assert token_manager._token_expired_at is not None
+        assert token_provider._access_token == mock_access_token
+        assert token_provider._token_expired_at is not None
         assert os.path.exists(token_file)
 
         with open(token_file, "r") as f:

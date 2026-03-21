@@ -2,7 +2,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
-from tests.unit_test.test_market_clock import market_clock
 
 
 def get_api():

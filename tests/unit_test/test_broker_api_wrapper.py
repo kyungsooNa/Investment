@@ -291,7 +291,7 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
     MockStockMapperClass.return_value = mock_stock_mapper_instance
 
     # BrokerAPIWrapper 인스턴스 생성 (사용자의 코드에 있는 __init__ 시그니처와 동일)
-    # broker: str = "korea_investment", env=None, token_manager=None, logger=None
+    # broker: str = "korea_investment", env=None, token_provider=None, logger=None
     wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, logger=mock_logger)
 
     # 사용자의 `broker_api_wrapper.py` 파일의 논리적 오류(self._client, self._client 미초기화)를
