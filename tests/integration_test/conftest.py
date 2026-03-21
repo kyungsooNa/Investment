@@ -568,10 +568,10 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
         web_ctx.load_config_and_env()
 
         # 토큰 발급 mock
-        web_ctx.env._token_manager_paper = MagicMock()
-        web_ctx.env._token_manager_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
-        web_ctx.env._token_manager_real = MagicMock()
-        web_ctx.env._token_manager_real.get_access_token = AsyncMock(return_value="mock-real-token")
+        web_ctx.env._token_provider_paper = MagicMock()
+        web_ctx.env._token_provider_paper.get_access_token = AsyncMock(return_value="mock-paper-token")
+        web_ctx.env._token_provider_real = MagicMock()
+        web_ctx.env._token_provider_real.get_access_token = AsyncMock(return_value="mock-real-token")
 
         await web_ctx.initialize_services(is_paper_trading=True)
 
