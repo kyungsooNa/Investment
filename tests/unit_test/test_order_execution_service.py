@@ -33,8 +33,8 @@ def mock_logger():
     return MockLogger()
 
 @pytest.fixture
-def mock_time_manager():
-    """TimeManager의 MagicMock 인스턴스를 제공하는 픽스처."""
+def mock_market_clock():
+    """MarketClock의 MagicMock 인스턴스를 제공하는 픽스처."""
     mock = MagicMock()
     mock.is_market_operating_hours.return_value = True # 기본값 설정
     mock.async_sleep = AsyncMock()
@@ -48,12 +48,12 @@ def mock_market_calendar_service():
     return mock
 
 @pytest.fixture
-def handler(mock_trading_service, mock_logger, mock_time_manager, mock_market_calendar_service):
+def handler(mock_trading_service, mock_logger, mock_market_clock, mock_market_calendar_service):
     """TransactionHandlers 인스턴스를 제공하는 픽스처."""
     handler_instance = OrderExecutionService(
         trading_service=mock_trading_service,
         logger=mock_logger,
-        time_manager=mock_time_manager,
+        market_clock=mock_market_clock,
         market_calendar_service=mock_market_calendar_service
     )
     return handler_instance
@@ -441,7 +441,7 @@ async def test_retry_order_success_on_first_attempt(handler, mock_trading_servic
 
 
 @pytest.mark.asyncio
-async def test_retry_order_retriable_error_then_success(handler, mock_trading_service, mock_time_manager):
+async def test_retry_order_retriable_error_then_success(handler, mock_trading_service, mock_market_clock):
     """NETWORK_ERROR 후 재시도에서 성공."""
     mock_trading_service.place_buy_order.side_effect = [
         ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None),
@@ -452,11 +452,11 @@ async def test_retry_order_retriable_error_then_success(handler, mock_trading_se
     )
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert mock_trading_service.place_buy_order.await_count == 2
-    mock_time_manager.async_sleep.assert_awaited_once()
+    mock_market_clock.async_sleep.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_retry_order_retriable_error_exhausted(handler, mock_trading_service, mock_time_manager):
+async def test_retry_order_retriable_error_exhausted(handler, mock_trading_service, mock_market_clock):
     """재시도 가능한 오류가 계속 발생하면 마지막 실패 결과 반환."""
     mock_trading_service.place_buy_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.RETRY_LIMIT.value, msg1="재시도 한도 초과", data=None
@@ -469,7 +469,7 @@ async def test_retry_order_retriable_error_exhausted(handler, mock_trading_servi
 
 
 @pytest.mark.asyncio
-async def test_retry_order_non_retriable_error_no_retry(handler, mock_trading_service, mock_time_manager):
+async def test_retry_order_non_retriable_error_no_retry(handler, mock_trading_service, mock_market_clock):
     """API_ERROR 같은 비재시도 오류는 즉시 반환 (재시도 안 함)."""
     mock_trading_service.place_buy_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.API_ERROR.value, msg1="잔고 부족", data=None
@@ -479,11 +479,11 @@ async def test_retry_order_non_retriable_error_no_retry(handler, mock_trading_se
     )
     assert result.rt_cd == ErrorCode.API_ERROR.value
     assert mock_trading_service.place_buy_order.await_count == 1
-    mock_time_manager.async_sleep.assert_not_awaited()
+    mock_market_clock.async_sleep.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_retry_order_integrates_with_handle_place_buy_order(handler, mock_trading_service, mock_time_manager):
+async def test_retry_order_integrates_with_handle_place_buy_order(handler, mock_trading_service, mock_market_clock):
     """handle_place_buy_order가 _retry_order를 통해 재시도하는지 확인."""
     mock_trading_service.place_buy_order.side_effect = [
         ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None),
@@ -495,7 +495,7 @@ async def test_retry_order_integrates_with_handle_place_buy_order(handler, mock_
 
 
 @pytest.mark.asyncio
-async def test_retry_order_integrates_with_handle_place_sell_order(handler, mock_trading_service, mock_time_manager):
+async def test_retry_order_integrates_with_handle_place_sell_order(handler, mock_trading_service, mock_market_clock):
     """handle_place_sell_order가 _retry_order를 통해 재시도하는지 확인."""
     mock_trading_service.place_sell_order.side_effect = [
         ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None),

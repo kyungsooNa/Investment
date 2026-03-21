@@ -1,10 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Dict, Optional, Literal
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 MarketCode = Literal["J", "Q"]  # J: 코스피(국내 주식), Q: 코스닥(필요시 확장)
-tm = TimeManager()
+tm = MarketClock()
 
 # ---- 개별 파라미터 dataclass들 ----
 

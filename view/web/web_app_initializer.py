@@ -14,9 +14,9 @@ from repositories.virtual_trade_repository import VirtualTradeRepository
 from services.virtual_trade_service import VirtualTradeService
 from repositories.stock_code_repository import StockCodeRepository
 from services.indicator_service import IndicatorService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from core.logger import Logger, get_strategy_logger
-from core.performance_manager import PerformanceManager
+from core.performance_profiler import PerformanceProfiler
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from scheduler.background_scheduler import BackgroundScheduler
 from scheduler.foreground_scheduler import ForegroundScheduler
@@ -40,7 +40,7 @@ from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
-from core.cache.cache_manager import CacheManager
+from core.cache.cache_store import CacheStore
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
@@ -49,14 +49,14 @@ class WebAppContext:
         self.logger = Logger()
         self.env = app_context.env if app_context else None
         self.full_config = {}  # [추가] 전체 설정을 담을 그릇
-        self.time_manager: TimeManager = None
+        self.market_clock: MarketClock = None
         self.broker: BrokerAPIWrapper = None
         self.trading_service: TradingService = None
         self.stock_query_service: StockQueryService = None
         self.order_execution_service: OrderExecutionService = None
         self.indicator_service: IndicatorService = None
         self.virtual_repo = VirtualTradeRepository()
-        self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, time_manager=self.time_manager)
+        self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, market_clock=self.market_clock)
         self.virtual_trade_service.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
         self.stock_code_repository = StockCodeRepository(logger=self.logger)
         self.scheduler: StrategyScheduler = None
@@ -71,7 +71,7 @@ class WebAppContext:
         self._mcs: MarketCalendarService = None
         self.notification_service: NotificationService = None
         self.initialized = False
-        self.pm: PerformanceManager = None
+        self.pm: PerformanceProfiler = None
 
         # [변경] 실시간 데이터 관리자 도입
         self.realtime_data_service = RealtimeDataService(self.logger)
@@ -91,13 +91,13 @@ class WebAppContext:
             config_dict = config_data.dict()
 
         self.env = KoreaInvestApiEnv(config_dict, self.logger)
-        self.time_manager = TimeManager(
+        self.market_clock = MarketClock(
             market_open_time=config_dict.get('market_open_time', "09:00"),
             market_close_time=config_dict.get('market_close_time', "15:30"),
             timezone=config_dict.get('market_timezone', "Asia/Seoul"),
             logger=self.logger
         )
-        self.notification_service = NotificationService(self.time_manager)
+        self.notification_service = NotificationService(self.market_clock)
         # ---------------------------------------------------------
         # [추가] Telegram Notifier 초기화 및 핸들러 등록
         telegram_token = config_dict.get("telegram_bot_token")
@@ -124,7 +124,7 @@ class WebAppContext:
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
         # [신규] MarketCalendarService 초기화
-        self._mcs = MarketCalendarService(self.time_manager, self.logger, performance_manager=self.pm)
+        self._mcs = MarketCalendarService(self.market_clock, self.logger, performance_profiler=self.pm)
         
 
     async def initialize_services(self, is_paper_trading: bool = True):
@@ -139,14 +139,14 @@ class WebAppContext:
             await self.env.get_real_access_token()
 
         self.broker = BrokerAPIWrapper(
-            env=self.env, logger=self.logger, time_manager=self.time_manager,
+            env=self.env, logger=self.logger, market_clock=self.market_clock,
             market_calendar_service=self._mcs
         )
 
         # [수정] MarketCalendarService에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
         self._mcs.set_broker(self.broker)
         
-        # [신규] 휴장일 정보 동기화 (TimeManager에 API 데이터 주입)
+        # [신규] 휴장일 정보 동기화 
         # 이를 통해 get_next_market_open_time 등이 임시공휴일을 정확히 인지하게 됨
         await self._mcs._sync_calendar_if_needed()
 
@@ -160,43 +160,43 @@ class WebAppContext:
 
         perf_log = config_dict.get("performance_logging", False)
         perf_threshold = config_dict.get("performance_threshold", 0.1)
-        # [변경] PerformanceManager 인스턴스 생성 및 주입 준비
-        self.pm = PerformanceManager(enabled=perf_log, threshold=perf_threshold)
+        # [변경] PerformanceProfiler 인스턴스 생성 및 주입 준비
+        self.pm = PerformanceProfiler(enabled=perf_log, threshold=perf_threshold)
 
-        cache_manager = CacheManager(config_dict)
-        cache_manager.set_logger(self.logger)
+        cache_store = CacheStore(config_dict)
+        cache_store.set_logger(self.logger)
 
         # Repository 초기화 (TradingService 주입을 위해 선 생성)
         self.market_data_repository = MarketDataRepository(logger=self.logger)
         self.stock_repository = StockRepository(logger=self.logger)
 
         self.trading_service = TradingService(
-            self.broker, self.env, self.logger, self.time_manager, cache_manager=cache_manager,
+            self.broker, self.env, self.logger, self.market_clock, cache_store=cache_store,
             market_calendar_service=self._mcs,
-            performance_manager=self.pm,
+            performance_profiler=self.pm,
             stock_repository=self.stock_repository
         )
 
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
-        self.indicator_service = IndicatorService(cache_manager=cache_manager, performance_manager=self.pm)
+        self.indicator_service = IndicatorService(cache_store=cache_store, performance_profiler=self.pm)
         
         self.ranking_task = RankingTask(
             broker_api_wrapper=self.broker,
             stock_code_repository=self.stock_code_repository,
             env=self.env,
             logger=self.logger,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             trading_service=self.trading_service,
-            performance_manager=self.pm,
+            performance_profiler=self.pm,
             notification_service=self.notification_service,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
             market_calendar_service=self._mcs,
         )
         self.stock_query_service = StockQueryService(
-            self.trading_service, self.logger, self.time_manager,
+            self.trading_service, self.logger, self.market_clock,
             indicator_service=self.indicator_service,
             ranking_task=self.ranking_task,
-            performance_manager=self.pm,
+            performance_profiler=self.pm,
             notification_service=self.notification_service,
         )
         # IndicatorService에 StockQueryService 주입
@@ -207,7 +207,7 @@ class WebAppContext:
             trading_service=self.trading_service,
             realtime_data_service=self.realtime_data_service,
             market_calendar_service=self._mcs,
-            performance_manager=self.pm,
+            performance_profiler=self.pm,
             notification_service=self.notification_service,
             logger=self.logger,
         )
@@ -218,15 +218,15 @@ class WebAppContext:
             market_data_repo=self.market_data_repository,
             stock_repo=self.stock_repository,
             market_calendar_service=self._mcs,
-            time_manager=self.time_manager,
-            performance_manager=self.pm,
+            market_clock=self.market_clock,
+            performance_profiler=self.pm,
             notification_service=self.notification_service,
             logger=self.logger,
         )
 
         self.order_execution_service = OrderExecutionService(
-            self.trading_service, self.logger, self.time_manager,
-            performance_manager=self.pm,
+            self.trading_service, self.logger, self.market_clock,
+            performance_profiler=self.pm,
             notification_service=self.notification_service,
             market_calendar_service=self._mcs,
         )
@@ -236,16 +236,16 @@ class WebAppContext:
             stock_query_service=self.stock_query_service,
             indicator_service=self.indicator_service,
             stock_code_repository=self.stock_code_repository,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             scraper_service=NaverFinanceScraperService(logger=self.logger),
             logger=self.logger,
-            performance_manager=self.pm
+            performance_profiler=self.pm
         )
 
         # BackgroundScheduler 초기화 및 태스크 등록
         self.background_scheduler = BackgroundScheduler(
             logger=self.logger,
-            performance_manager=self.pm,
+            performance_profiler=self.pm,
         )
         if self.ranking_task:
             self.background_scheduler.register(self.ranking_task)
@@ -258,7 +258,7 @@ class WebAppContext:
         self.foreground_scheduler = ForegroundScheduler(
             background_scheduler=self.background_scheduler,
             logger=self.logger,
-            performance_manager=self.pm,
+            performance_profiler=self.pm,
         )
 
         self.initialized = True
@@ -277,9 +277,9 @@ class WebAppContext:
         return await self._mcs.is_market_open_now() if self._mcs else False
 
     def get_current_time_str(self) -> str:
-        if self.time_manager is None:
+        if self.market_clock is None:
             return ""
-        return self.time_manager.get_current_kst_time().strftime('%Y-%m-%d %H:%M:%S')
+        return self.market_clock.get_current_kst_time().strftime('%Y-%m-%d %H:%M:%S')
 
     def get_cache_stats(self, expand: bool = False) -> dict:
         """메모리 캐시 통계를 반환합니다."""
@@ -296,18 +296,18 @@ class WebAppContext:
             order_execution_service=self.order_execution_service,
             stock_query_service=self.stock_query_service,
             stock_code_repository=self.stock_code_repository,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             market_calendar_service=self._mcs,
             logger=get_strategy_logger('StrategyScheduler'),
             dry_run=False,
             notification_service=self.notification_service,
-            performance_manager=self.pm,
+            performance_profiler=self.pm,
         )
 
         # 거래량 돌파 전략 등록
         vb_strategy = VolumeBreakoutLiveStrategy(
             stock_query_service=self.stock_query_service,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             logger=get_strategy_logger('VolumeBreakoutLive'),
         )
         self.scheduler.register(StrategySchedulerConfig(
@@ -323,7 +323,7 @@ class WebAppContext:
         # 프로그램 매수 추종 전략 등록
         pbf_strategy = ProgramBuyFollowStrategy(
             stock_query_service=self.stock_query_service,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             logger=get_strategy_logger('ProgramBuyFollow'),
         )
         self.scheduler.register(StrategySchedulerConfig(
@@ -340,7 +340,7 @@ class WebAppContext:
         tvb_strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=self.stock_query_service,
             stock_code_repository=self.stock_code_repository,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             logger=get_strategy_logger('TraditionalVolumeBreakout'),
         )
         self.scheduler.register(StrategySchedulerConfig(
@@ -357,7 +357,7 @@ class WebAppContext:
         osb_strategy = OneilSqueezeBreakoutStrategy(
             stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             logger=get_strategy_logger('OneilSqueezeBreakout'),
         )
         self.scheduler.register(StrategySchedulerConfig(
@@ -377,7 +377,7 @@ class WebAppContext:
         pp_strategy = OneilPocketPivotStrategy(
             stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             logger=get_strategy_logger('OneilPocketPivot'),
         )
         self.scheduler.register(StrategySchedulerConfig(
@@ -394,7 +394,7 @@ class WebAppContext:
         htf_strategy = HighTightFlagStrategy(
             stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             logger=get_strategy_logger('HighTightFlag'),
         )
         self.scheduler.register(StrategySchedulerConfig(
@@ -410,7 +410,7 @@ class WebAppContext:
         fp_strategy = FirstPullbackStrategy(
             stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
-            time_manager=self.time_manager,
+            market_clock=self.market_clock,
             logger=get_strategy_logger('FirstPullback'),
         )
         self.scheduler.register(StrategySchedulerConfig(

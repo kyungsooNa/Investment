@@ -7,13 +7,13 @@ from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrat
 from strategies.oneil_common_types import OSBWatchlistItem, OSBPositionState
 from services.stock_query_service import StockQueryService
 from services.oneil_universe_service import OneilUniverseService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 @pytest.fixture
 def mock_strategy_deps():
     sqs = MagicMock(spec=StockQueryService)
     universe = MagicMock(spec=OneilUniverseService)
-    tm = MagicMock(spec=TimeManager)
+    tm = MagicMock(spec=MarketClock)
     logger = MagicMock()
     
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)

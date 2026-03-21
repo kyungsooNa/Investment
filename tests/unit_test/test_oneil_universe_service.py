@@ -13,7 +13,7 @@ from core.logger import get_strategy_logger
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
 from repositories.stock_code_repository import StockCodeRepository
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 def create_mock_ohlcv(length=90, zero_volume_days=0, no_high_days=0):
     """테스트 목적에 맞는 OHLCV 목 데이터를 생성합니다."""
@@ -46,7 +46,7 @@ def mock_deps():
     sqs = MagicMock(spec=StockQueryService)
     indicator = MagicMock(spec=IndicatorService)
     mapper = MagicMock(spec=StockCodeRepository)
-    tm = MagicMock(spec=TimeManager)
+    tm = MagicMock(spec=MarketClock)
     logger = MagicMock()
     
     # 공통 Mock 설정 (SQS로 이동)
@@ -68,14 +68,14 @@ def oneil_service_fixture():
     mock_sqs = AsyncMock(spec=StockQueryService)
     mock_indicator = AsyncMock(spec=IndicatorService)
     mock_mapper = MagicMock(spec=StockCodeRepository)
-    mock_tm = MagicMock(spec=TimeManager)
+    mock_tm = MagicMock(spec=MarketClock)
     mock_logger = MagicMock()
 
     service = OneilUniverseService(
         stock_query_service=mock_sqs,
         indicator_service=mock_indicator,
         stock_code_repository=mock_mapper,
-        time_manager=mock_tm,
+        market_clock=mock_tm,
         logger=mock_logger
     )
     # 공통 Mock 응답 설정

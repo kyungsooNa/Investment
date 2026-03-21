@@ -33,15 +33,15 @@ def test_strategies_init_logger(module_path, class_name, expected_logger_name):
     # 3. 전략별 생성자 인자 준비
     kwargs = {}
     if class_name == "OneilSqueezeBreakoutStrategy":
-        kwargs = {'stock_query_service': sqs, 'universe_service': universe, 'time_manager': tm}
+        kwargs = {'stock_query_service': sqs, 'universe_service': universe, 'market_clock': tm}
     elif class_name == "OneilPocketPivotStrategy":
-        kwargs = {'stock_query_service': sqs, 'universe_service': universe, 'time_manager': tm}
+        kwargs = {'stock_query_service': sqs, 'universe_service': universe, 'market_clock': tm}
     elif "Traditional" in class_name:
-        kwargs = {'stock_query_service': sqs, 'stock_code_repository': mapper, 'time_manager': tm}
+        kwargs = {'stock_query_service': sqs, 'stock_code_repository': mapper, 'market_clock': tm}
     elif "VolumeBreakoutLive" in class_name:
-        kwargs = {'stock_query_service': sqs, 'time_manager': tm}
+        kwargs = {'stock_query_service': sqs, 'market_clock': tm}
     elif "Program" in class_name:
-        kwargs = {'stock_query_service': sqs, 'time_manager': tm}
+        kwargs = {'stock_query_service': sqs, 'market_clock': tm}
     elif "GapUp" in class_name:
         kwargs = {'broker': broker}
         

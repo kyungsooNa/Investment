@@ -15,7 +15,7 @@ from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
 from services.stock_query_service import StockQueryService
 from repositories.stock_code_repository import StockCodeRepository
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from strategies.base_strategy_config import BaseStrategyConfig
 from core.logger import get_strategy_logger
 
@@ -82,13 +82,13 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
         self,
         stock_query_service: StockQueryService,
         stock_code_repository: StockCodeRepository,
-        time_manager: TimeManager,
+        market_clock: MarketClock,
         config: Optional[TraditionalVBConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._sqs = stock_query_service
         self.stock_code_repository = stock_code_repository
-        self._tm = time_manager
+        self._tm = market_clock
         self._cfg = config or TraditionalVBConfig()
         if logger:
             self._logger = logger

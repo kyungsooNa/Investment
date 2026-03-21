@@ -10,7 +10,7 @@ from strategies.oneil_common_types import (
 )
 from services.stock_query_service import StockQueryService
 from services.oneil_universe_service import OneilUniverseService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 
 def _make_ohlcv(count=60, close=68000, open_=67000, volume=50000):
@@ -27,7 +27,7 @@ def _make_ohlcv(count=60, close=68000, open_=67000, volume=50000):
 def mock_deps():
     sqs = MagicMock(spec=StockQueryService)
     universe = MagicMock(spec=OneilUniverseService)
-    tm = MagicMock(spec=TimeManager)
+    tm = MagicMock(spec=MarketClock)
     logger = MagicMock()
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)

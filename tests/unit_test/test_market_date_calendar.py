@@ -11,7 +11,7 @@ def mock_deps():
     # Default time
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
     
-    # TimeManager 속성 및 메서드 모킹 추가 (get_next_open_time 테스트용)
+    # MarketClock 속성 및 메서드 모킹 추가 (get_next_open_time 테스트용)
     tm.market_open_time_str = "09:00"
     tm.market_close_time_str = "15:30"   # ✅ 이 줄을 반드시 추가해 주세요!
     tm.market_timezone = pytz.timezone("Asia/Seoul")

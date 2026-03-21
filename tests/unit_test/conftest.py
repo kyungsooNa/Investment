@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from unittest import mock
 from unittest.mock import MagicMock, AsyncMock
-from core.cache.cache_manager import CacheManager
+from core.cache.cache_store import CacheStore
 
 @pytest.fixture(autouse=True)
 def mock_heavy_io(monkeypatch):
@@ -62,8 +62,8 @@ def test_cache_config():
 
 
 @pytest.fixture(scope="function")
-def cache_manager(test_cache_config):
-    return CacheManager(config=test_cache_config)
+def cache_store(test_cache_config):
+    return CacheStore(config=test_cache_config)
 
 
 @pytest.fixture(autouse=True)

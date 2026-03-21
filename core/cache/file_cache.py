@@ -1,4 +1,4 @@
-# core/cache/file_cache_manager.py
+# core/cache/file_cache.py
 
 import os
 import json
@@ -22,7 +22,7 @@ def load_deserializable_classes(class_paths: list[str]) -> list[type]:
             print(f"[❌ 클래스 로드 실패] {path}: {e}")
     return classes
 
-class FileCacheManager:
+class FileCache:
     def __init__(self, config: Optional[dict] = None):
         if config is None:
             config = load_cache_config()

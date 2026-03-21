@@ -1,7 +1,7 @@
 # strategies/backtest_data_provider.py
 
 import logging
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from services.stock_query_service import StockQueryService
 
 
@@ -11,9 +11,9 @@ class BacktestDataProvider:
     모의(mock) 데이터 조회 및 실제 과거 데이터 조회 로직을 포함합니다.
     """
 
-    def __init__(self, stock_query_service: StockQueryService, time_manager: TimeManager, logger=None):
+    def __init__(self, stock_query_service: StockQueryService, market_clock: MarketClock, logger=None):
         self.stock_query_service = stock_query_service
-        self._time_manager = time_manager
+        self._market_clock = market_clock
         self._logger = logger if logger else logging.getLogger(__name__)
 
     async def mock_price_lookup(self, stock_code: str) -> int:
@@ -42,7 +42,7 @@ class BacktestDataProvider:
         :return: N분 후의 실제 종가
         """
         try:
-            backtest_date = self._time_manager.get_current_kst_time().strftime('%Y%m%d')
+            backtest_date = self._market_clock.get_current_kst_time().strftime('%Y%m%d')
 
             # StockQueryService를 통해 분봉 데이터 조회 (시간 오름차순 정렬됨)
             chart_data = await self.stock_query_service.get_day_intraday_minutes_list(

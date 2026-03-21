@@ -1,24 +1,24 @@
-# core/cache_manager.py
+# core/cache_store.py
 
 from typing import Any, Optional, Tuple
 from datetime import datetime
 from core.cache.cache_config import load_cache_config
-from core.cache.memory_cache_manager import MemoryCacheManager
-from core.cache.file_cache_manager import FileCacheManager
-from core.cache.db_cache_manager import DBCacheManager
+from core.cache.memory_cache import MemoryCache
+from core.cache.file_cache import FileCache
+from core.cache.db_cache import DBCache
 
 
-class CacheManager:
+class CacheStore:
     def __init__(self, config: Optional[dict] = None):
         if config is None:
             config = load_cache_config()
         self.cache_cfg = config.get("cache", {})
         cache_cfg = self.cache_cfg
 
-        self.memory_cache = MemoryCacheManager() if cache_cfg.get("memory_cache_enabled", True) else None
+        self.memory_cache = MemoryCache() if cache_cfg.get("memory_cache_enabled", True) else None
         
         if cache_cfg.get("file_cache_enabled", True):
-            self.file_cache = DBCacheManager(config) if cache_cfg.get("use_db_cache", False) else FileCacheManager(config)
+            self.file_cache = DBCache(config) if cache_cfg.get("use_db_cache", False) else FileCache(config)
         else:
             self.file_cache = None
         self._logger = None
@@ -73,7 +73,7 @@ class CacheManager:
 
         if not isinstance(raw, dict) or "timestamp" not in raw or "data" not in raw:
             if self._logger:
-                self._logger.warning(f"[CacheManager] ❌ 잘못된 캐시 구조 감지: {key} / 내용: {raw}")
+                self._logger.warning(f"[CacheStore] ❌ 잘못된 캐시 구조 감지: {key} / 내용: {raw}")
             return None
 
         try:
@@ -81,7 +81,7 @@ class CacheManager:
             datetime.fromisoformat(raw["timestamp"])
         except Exception as e:
             if self._logger:
-                self._logger.warning(f"[CacheManager] ❌ 잘못된 timestamp 형식: {raw['timestamp']}")
+                self._logger.warning(f"[CacheStore] ❌ 잘못된 timestamp 형식: {raw['timestamp']}")
             return None
 
         return raw, cache_type

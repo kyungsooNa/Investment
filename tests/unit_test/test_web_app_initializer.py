@@ -10,7 +10,7 @@ def mock_deps():
     patch_targets = [
         ("load_configs", patch("view.web.web_app_initializer.load_configs")),
         ("env", patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True)),
-        ("tm", patch("view.web.web_app_initializer.TimeManager", autospec=True)),
+        ("tm", patch("view.web.web_app_initializer.MarketClock", autospec=True)),
         ("broker", patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True)),
         ("ts", patch("view.web.web_app_initializer.TradingService", autospec=True)),
         ("sqs", patch("view.web.web_app_initializer.StockQueryService", autospec=True)),
@@ -30,7 +30,7 @@ def mock_deps():
         ("osb", patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True)),
         ("pp", patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True)),
         ("htf", patch("view.web.web_app_initializer.HighTightFlagStrategy", autospec=True)),
-        ("cm", patch("view.web.web_app_initializer.CacheManager", autospec=True)),
+        ("cm", patch("view.web.web_app_initializer.CacheStore", autospec=True)),
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
         ("tn", patch("view.web.web_app_initializer.TelegramNotifier", autospec=True)),
         ("tr", patch("view.web.web_app_initializer.TelegramReporter", autospec=True)),
@@ -125,7 +125,7 @@ def test_initialize_scheduler(mock_deps):
     # 스케줄러 생성에 필요한 의존성 주입
     ctx.virtual_trade_service = MagicMock()
     ctx.order_execution_service = MagicMock()
-    ctx.time_manager = MagicMock()
+    ctx.market_clock = MagicMock()
     ctx.trading_service = MagicMock()
     ctx.stock_query_service = MagicMock()
     ctx.broker = MagicMock()
@@ -180,25 +180,25 @@ async def test_program_trading_subscription(mock_deps):
     mock_rdm_instance.remove_subscribed_code.assert_called_with("005930")
 
 @pytest.mark.asyncio
-async def test_time_manager_methods(mock_deps):
-    """TimeManager 관련 메서드 테스트 (None 체크 포함)"""
+async def test_market_clock_methods(mock_deps):
+    """MarketClock 관련 메서드 테스트 (None 체크 포함)"""
     ctx = WebAppContext(None)
     
     # 1. time_manager가 없을 때
-    ctx.time_manager = None
+    ctx.market_clock = None
     ctx._mcs = None
     assert await ctx.is_market_open_now() is False
     assert ctx.get_current_time_str() == ""
     
     # 2. time_manager가 있을 때
-    ctx.time_manager = MagicMock()
+    ctx.market_clock = MagicMock()
     ctx._mcs = AsyncMock()
     ctx._mcs.is_market_open_now.return_value = True
     
     # datetime 객체 모킹
     mock_dt = MagicMock()
     mock_dt.strftime.return_value = "2025-01-01 12:00:00"
-    ctx.time_manager.get_current_kst_time.return_value = mock_dt
+    ctx.market_clock.get_current_kst_time.return_value = mock_dt
     
     assert await ctx.is_market_open_now() is True
     assert ctx.get_current_time_str() == "2025-01-01 12:00:00"
@@ -297,7 +297,7 @@ async def test_initialize_services_with_pydantic_config_object(mock_deps):
     await ctx.initialize_services(is_paper_trading=True)
 
     # Assert
-    # CacheManager 생성자에 전달된 인자가 dict 타입인지 확인
+    # CacheStore 생성자에 전달된 인자가 dict 타입인지 확인
     mock_deps["cm"].assert_called_once()
     init_arg = mock_deps["cm"].call_args[0][0]
     assert isinstance(init_arg, dict)

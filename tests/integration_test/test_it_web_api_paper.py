@@ -527,7 +527,7 @@ class TestWebAppContextInitialization:
         from services.indicator_service import IndicatorService
         from services.oneil_universe_service import OneilUniverseService
         from task.background.ranking_task import RankingTask
-        from core.time_manager import TimeManager
+        from core.market_clock import MarketClock
         from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 
         class SimpleContext:
@@ -545,8 +545,8 @@ class TestWebAppContextInitialization:
             # load_config_and_env 결과 검증
             assert ctx.env is not None
             assert isinstance(ctx.env, KoreaInvestApiEnv)
-            assert ctx.time_manager is not None
-            assert isinstance(ctx.time_manager, TimeManager)
+            assert ctx.market_clock is not None
+            assert isinstance(ctx.market_clock, MarketClock)
 
             # 토큰 발급 mock (네트워크 호출 차단)
             ctx.env._token_manager_paper = MagicMock()

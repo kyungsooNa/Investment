@@ -17,7 +17,7 @@ from strategies.traditional_volume_breakout_strategy import (
 )
 from services.stock_query_service import StockQueryService
 from repositories.stock_code_repository import StockCodeRepository
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 
 class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
@@ -33,7 +33,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         mapper.get_name_by_code.return_value = "테스트종목"
 
         kst = pytz.timezone("Asia/Seoul")
-        tm = MagicMock(spec=TimeManager)
+        tm = MagicMock(spec=MarketClock)
         now = kst.localize(datetime(2026, 2, 25, 11, 0))
         open_time = kst.localize(datetime(2026, 2, 25, 9, 0))
         close_time = kst.localize(datetime(2026, 2, 25, 15, 30))
@@ -59,7 +59,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         strategy = TraditionalVolumeBreakoutStrategy(
             stock_query_service=sqs,
             stock_code_repository=mapper,
-            time_manager=tm,
+            market_clock=tm,
             config=config,
             logger=logger,
         )

@@ -8,7 +8,7 @@ import logging
 from typing import Dict, List, Optional
 
 from interfaces.schedulable_task import SchedulableTask, TaskState
-from core.performance_manager import PerformanceManager
+from core.performance_profiler import PerformanceProfiler
 
 
 class BackgroundScheduler:
@@ -20,10 +20,10 @@ class BackgroundScheduler:
     def __init__(
         self,
         logger=None,
-        performance_manager: Optional[PerformanceManager] = None,
+        performance_profiler: Optional[PerformanceProfiler] = None,
     ):
         self._logger = logger or logging.getLogger(__name__)
-        self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._tasks: Dict[str, SchedulableTask] = {}  # name -> task
 
     def register(self, task: SchedulableTask) -> None:

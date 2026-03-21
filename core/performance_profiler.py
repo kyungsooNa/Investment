@@ -1,3 +1,4 @@
+# core/performance_profiler.py
 import time
 import logging
 import os
@@ -12,7 +13,7 @@ except ImportError:
     HAS_PYINSTRUMENT = False
 
 
-class PerformanceManager:
+class PerformanceProfiler:
     """
     시스템 전반의 성능 측정 및 로깅을 담당하는 클래스.
     - 타이머: 주요 함수별 동작 시간을 측정 (start_timer / log_timer)

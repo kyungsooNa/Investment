@@ -32,8 +32,8 @@ class TestSmartSleep:
             await _smart_sleep(tm, MagicMock(), "Test")
             mock_sleep.assert_awaited_once_with(12 * 3600)
 
-    async def test_sleep_12h_without_time_manager(self):
-        """TimeManager 없으면 12시간 대기."""
+    async def test_sleep_12h_without_market_clock(self):
+        """MarketClock 없으면 12시간 대기."""
         with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             await _smart_sleep(None, MagicMock(), "Test")
             mock_sleep.assert_awaited_once_with(12 * 3600)
@@ -62,7 +62,7 @@ class TestRunAfterMarketLoop:
 
         await run_after_market_loop(
             mcs=mcs,
-            time_manager=None,
+            market_clock=None,
             logger=MagicMock(),
             on_market_closed=_tracked_callback,
             label="Test",
@@ -96,7 +96,7 @@ class TestRunAfterMarketLoop:
             raise asyncio.CancelledError()
 
         await run_after_market_loop(
-            mcs=mcs, time_manager=tm, logger=MagicMock(),
+            mcs=mcs, market_clock=tm, logger=MagicMock(),
             on_market_closed=_callback, label="Test",
         )
 
@@ -121,7 +121,7 @@ class TestRunAfterMarketLoop:
 
         with patch("scheduler.after_market_loop._smart_sleep", side_effect=_mock_smart_sleep):
             await run_after_market_loop(
-                mcs=mcs, time_manager=None, logger=MagicMock(),
+                mcs=mcs, market_clock=None, logger=MagicMock(),
                 on_market_closed=callback, label="Test",
             )
 
@@ -144,7 +144,7 @@ class TestRunAfterMarketLoop:
 
         with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             await run_after_market_loop(
-                mcs=mcs, time_manager=None, logger=MagicMock(),
+                mcs=mcs, market_clock=None, logger=MagicMock(),
                 on_market_closed=_failing_callback, label="Test",
             )
 

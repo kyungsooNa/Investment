@@ -46,7 +46,7 @@ Investment/
 │   ├── kis_config.yaml         # 엔드포인트 경로 + 쿼리 파라미터
 │   ├── cache_config.yaml       # 캐시 설정 (TTL, 활성 메서드 목록)
 │   └── DynamicConfig.py        # 코드 내 상수 (OHLCV 범위 등)
-├── core/                   # 인프라 (Logger, TimeManager, Cache 서브시스템)
+├── core/                   # 인프라 (Logger, MarketClock, Cache 서브시스템)
 ├── data/                   # stock_code_list.csv (KOSPI+KOSDAQ 종목코드)
 ├── interfaces/strategy.py  # Strategy 추상 인터페이스
 ├── managers/               # VirtualTradeManager (CSV 기반 모의매매 저널)
@@ -87,7 +87,7 @@ View (CLIView / FastAPI)
 ```
 
 ## 핵심 설계 패턴
-- **DI**: 모든 주요 클래스가 생성자를 통해 의존성 주입 (logger, time_manager, env 등)
+- **DI**: 모든 주요 클래스가 생성자를 통해 의존성 주입 (logger, market_clock, env 등)
 - **Command 패턴**: `UserActionExecutor.COMMANDS` dict → 메뉴 번호 → 핸들러 메서드 디스패치
 - **Strategy 패턴**: `Strategy` 추상 클래스 → `MomentumStrategy`, `GapUpPullbackStrategy` 구현
 - **Proxy/Decorator**: `ClientWithCache`가 API 클라이언트를 래핑 (장 마감 후 캐시 활성)

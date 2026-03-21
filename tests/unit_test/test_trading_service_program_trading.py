@@ -9,13 +9,13 @@ def mock_deps(mocker):
     broker = AsyncMock()
     env = mocker.Mock()
     logger = mocker.Mock()
-    time_manager = mocker.Mock()
-    return SimpleNamespace(broker=broker, env=env, logger=logger, time_manager=time_manager)
+    market_clock = mocker.Mock()
+    return SimpleNamespace(broker=broker, env=env, logger=logger, market_clock=market_clock)
 
 @pytest.fixture
 def trading_service(mock_deps):
     """TradingService 인스턴스 생성"""
-    return TradingService(mock_deps.broker, mock_deps.env, mock_deps.logger, mock_deps.time_manager)
+    return TradingService(mock_deps.broker, mock_deps.env, mock_deps.logger, mock_deps.market_clock)
 
 @pytest.mark.asyncio
 async def test_start_program_trading_success(trading_service):

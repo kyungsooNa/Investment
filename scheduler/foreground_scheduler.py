@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from scheduler.background_scheduler import BackgroundScheduler
-from core.performance_manager import PerformanceManager
+from core.performance_profiler import PerformanceProfiler
 
 
 class ForegroundScheduler:
@@ -24,11 +24,11 @@ class ForegroundScheduler:
         self,
         background_scheduler: BackgroundScheduler,
         logger=None,
-        performance_manager: Optional[PerformanceManager] = None,
+        performance_profiler: Optional[PerformanceProfiler] = None,
     ):
         self._bg = background_scheduler
         self._logger = logger or logging.getLogger(__name__)
-        self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._active_count = 0
         self._lock = asyncio.Lock()
 

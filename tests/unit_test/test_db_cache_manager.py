@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from pydantic import BaseModel
 from dataclasses import dataclass
-from core.cache.db_cache_manager import DBCacheManager
+from core.cache.db_cache import DBCache
 
 class PydanticDummy(BaseModel):
     x: int
@@ -27,9 +27,9 @@ class DataClassDummy:
     def to_dict(self):
         return {"a": self.a, "b": self.b}
 
-def _mk_manager(base_dir: str, classes: list[type] | None = None) -> DBCacheManager:
+def _mk_manager(base_dir: str, classes: list[type] | None = None) -> DBCache:
     cfg = {"cache": {"base_dir": base_dir, "deserializable_classes": []}}
-    m = DBCacheManager(config=cfg)
+    m = DBCache(config=cfg)
     if classes is not None:
         m._deserializable_classes = classes
     return m
@@ -206,7 +206,7 @@ def test_singleton_connection_reuse(tmp_path):
     with mgr._get_connection() as conn2:
         pass
         
-    # 같은 객체여야 함 (DBCacheManager 인스턴스 내에서)
+    # 같은 객체여야 함 (DBCache 인스턴스 내에서)
     assert conn1 is conn2
     assert conn1 is mgr._conn
 
@@ -258,9 +258,9 @@ def test_persistence_across_instances(tmp_path):
 
 def test_init_with_none_config(tmp_path):
     """config가 None일 때 load_cache_config 호출 확인"""
-    with patch("core.cache.db_cache_manager.load_cache_config") as mock_load:
+    with patch("core.cache.db_cache.load_cache_config") as mock_load:
         mock_load.return_value = {"cache": {"base_dir": str(tmp_path)}}
-        mgr = DBCacheManager(config=None)
+        mgr = DBCache(config=None)
         assert mgr._base_dir == str(tmp_path)
 
 def test_init_db_exception(tmp_path):

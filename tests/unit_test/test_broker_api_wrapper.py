@@ -31,7 +31,7 @@ def mock_logger():
 
 
 @pytest.fixture
-def mock_time_manager():
+def mock_market_clock():
     """모의 로거(Logger) 객체를 생성합니다."""
     return MagicMock()
 
@@ -46,7 +46,7 @@ def mock_mcs():
 @pytest.mark.asyncio
 @patch(f"{wrapper_module.__name__}.StockCodeRepository")  # 먼저 정의된 patch가
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")  # 아래쪽 인자로 먼저 들어감!
-async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger, mock_time_manager):
+async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger, mock_market_clock):
     """
     각 메서드가 내부의 올바른 객체로 호출을 위임하는지 테스트합니다.
     """
@@ -61,10 +61,10 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
     mock_client.inquire_daily_itemchartprice.return_value = {"chart": "data"}
     mock_client_class.return_value = mock_client
 
-    mock_time_manager.is_market_operating_hours.return_value = True  # ✅ 함수로 유지
+    mock_market_clock.is_market_operating_hours.return_value = True  # ✅ 함수로 유지
 
     # 3. 인스턴스 생성
-    wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, time_manager=mock_time_manager)
+    wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, market_clock=mock_market_clock)
 
     # 4. 실제 메서드 호출
     name_result = await wrapper.get_name_by_code("005930")
@@ -321,7 +321,7 @@ def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logg
 
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeRepository")
-def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_logger, mock_time_manager, mock_mcs):
+def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_logger, mock_market_clock, mock_mcs):
     """
     정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
     """
@@ -329,11 +329,11 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
     wrapper = BrokerAPIWrapper(broker="korea_investment", 
                                env=mock_env, 
                                logger=mock_logger, 
-                               time_manager=mock_time_manager,
+                               market_clock=mock_market_clock,
                                market_calendar_service=mock_mcs)
 
     # Assert
-    mock_client.assert_called_once_with(mock_env, mock_logger, mock_time_manager, mock_mcs)
+    mock_client.assert_called_once_with(mock_env, mock_logger, mock_market_clock, mock_mcs)
     mock_stock_mapper.assert_called_once_with(logger=mock_logger)
     assert wrapper._broker == "korea_investment"
     assert isinstance(wrapper._client, ClientWithCache)  # ✅ wrapping 여부 확인

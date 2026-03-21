@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Tuple
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal
 from services.stock_query_service import StockQueryService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from strategies.first_pullback_types import FirstPullbackConfig, FPPositionState
 from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
@@ -37,13 +37,13 @@ class FirstPullbackStrategy(LiveStrategy):
         self,
         stock_query_service: StockQueryService,
         universe_service: OneilUniverseService,
-        time_manager: TimeManager,
+        market_clock: MarketClock,
         config: Optional[FirstPullbackConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._sqs = stock_query_service
         self._universe = universe_service
-        self._tm = time_manager
+        self._tm = market_clock
         self._cfg = config or FirstPullbackConfig()
         if logger:
             self._logger = logger

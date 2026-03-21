@@ -5,7 +5,7 @@ from common.types import ErrorCode, ResCommonResponse, ResStockFullInfoApiOutput
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy, ProgramBuyFollowConfig
 from typing import Optional
 from services.stock_query_service import StockQueryService
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 
 
 class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
@@ -14,7 +14,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         sqs = MagicMock(spec=StockQueryService)
         sqs.get_top_trading_value_stocks = AsyncMock(spec=StockQueryService.get_top_trading_value_stocks)
         sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
-        tm = MagicMock(spec=TimeManager)
+        tm = MagicMock(spec=MarketClock)
         from datetime import datetime
         import pytz
         kst = pytz.timezone("Asia/Seoul")
@@ -23,7 +23,7 @@ class TestProgramBuyFollowStrategy(unittest.IsolatedAsyncioTestCase):
         config = ProgramBuyFollowConfig(**config_kwargs)
         strategy = ProgramBuyFollowStrategy(
             stock_query_service=sqs,
-            time_manager=tm,
+            market_clock=tm,
             config=config,
         )
         strategy._logger = MagicMock()

@@ -6,7 +6,7 @@ import shutil
 import pytest
 import logging
 import json
-from core.cache.cache_manager import CacheManager
+from core.cache.cache_store import CacheStore
 from core.logger import Logger  # ⬅️ 추가
 from unittest.mock import MagicMock, AsyncMock
 from typing import Any, Dict, Iterable, Optional
@@ -33,8 +33,8 @@ def test_cache_config():
 
 
 @pytest.fixture(scope="function")
-def cache_manager(test_cache_config):
-    return CacheManager(config=test_cache_config)
+def cache_store(test_cache_config):
+    return CacheStore(config=test_cache_config)
 
 
 @pytest.fixture(autouse=True)

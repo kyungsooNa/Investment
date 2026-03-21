@@ -1,4 +1,4 @@
-# core/time_manager.py
+# core/market_clock.py
 import time
 from typing import Optional
 import pytz
@@ -6,7 +6,7 @@ import logging
 import asyncio
 from datetime import datetime, timedelta, date, time as dt_time
 
-class TimeManager:
+class MarketClock:
     """
     주식 거래와 관련된 '시간(시계)'을 관리하는 클래스입니다.
     순수 시간대 계산 및 포맷 변환, KST 타임존 처리를 담당하며,

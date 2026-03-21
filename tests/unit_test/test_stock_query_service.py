@@ -19,15 +19,15 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         """
         self.mock_trading_service = AsyncMock()
         self.mock_logger = MagicMock()
-        self.mock_time_manager = MagicMock()
-        self.mock_time_manager.async_sleep = AsyncMock()
+        self.mock_market_clock = MagicMock()
+        self.mock_market_clock.async_sleep = AsyncMock()
         self.mock_indicator_service = AsyncMock()
         # _env 속성이 필요한 경우를 위해 AsyncMock으로 설정
         self.mock_trading_service._env = AsyncMock()
         self._original_stdout = sys.stdout
 
         self.stockQueryService = StockQueryService(
-            self.mock_trading_service, self.mock_logger, self.mock_time_manager, self.mock_indicator_service
+            self.mock_trading_service, self.mock_logger, self.mock_market_clock, self.mock_indicator_service
         )
 
     def _create_dummy_stock_info(self, overrides=None):
@@ -1287,9 +1287,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         """get_day_intraday_minutes_list 오늘, 정규장 세션 테스트"""
         # Arrange
         self.mock_trading_service._env.is_paper_trading = True # 모의투자 환경
-        self.mock_time_manager.get_current_kst_time.return_value = MagicMock(strftime=MagicMock(return_value="20230101"))
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x.ljust(6, '0')
-        self.mock_time_manager.dec_minute.side_effect = ["152800", "085900"]
+        self.mock_market_clock.get_current_kst_time.return_value = MagicMock(strftime=MagicMock(return_value="20230101"))
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x.ljust(6, '0')
+        self.mock_market_clock.dec_minute.side_effect = ["152800", "085900"]
 
         # API 응답 모킹 (페이지네이션)
         resp1 = ResCommonResponse(rt_cd="0", msg1="정상", data=[
@@ -1317,7 +1317,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_day_intraday_minutes_list_extract_rows_dict_unknown_key(self):
         """_extract_rows: dict 응답이지만 알려진 키가 없을 때 (Line 697 coverage)"""
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x
         
         # _fetch_batch returns a dict without output2/rows/data
         resp = ResCommonResponse(rt_cd="0", msg1="OK", data={"unknown": []})
@@ -1330,7 +1330,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_day_intraday_minutes_list_extract_rows_dict_not_list(self):
         """_extract_rows: dict 응답의 값이 리스트가 아닐 때 (Line 697 coverage)"""
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x
         
         resp = ResCommonResponse(rt_cd="0", msg1="OK", data={"output2": "not_a_list"})
         self.mock_trading_service.get_intraday_minutes_by_date.return_value = resp
@@ -1342,7 +1342,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_day_intraday_minutes_list_loop_break_on_none_resp(self):
         """루프 중 resp가 None이면 중단 (Line 723 coverage)"""
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x
         
         self.mock_trading_service.get_intraday_minutes_by_date.return_value = None
         
@@ -1352,7 +1352,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_day_intraday_minutes_list_loop_break_on_fail_rt_cd(self):
         """루프 중 rt_cd가 0이 아니면 중단 (Line 723 coverage)"""
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x
         
         self.mock_trading_service.get_intraday_minutes_by_date.return_value = ResCommonResponse(
             rt_cd="1", msg1="Fail", data=[]
@@ -1364,11 +1364,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_day_intraday_minutes_list_pagination_and_filtering(self):
         """페이지네이션, 필터링, added==0 로직 테스트 (Line 739-744, 751 coverage)"""
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x
         # dec_minute: 단순히 1분 뺀 문자열 반환 (HHMMSS)
         def mock_dec_minute(t, m):
             return f"{int(t)-m:06d}"
-        self.mock_time_manager.dec_minute.side_effect = mock_dec_minute
+        self.mock_market_clock.dec_minute.side_effect = mock_dec_minute
 
         # Batch 1: 10:00:00 (valid), 09:01:00 (valid) -> min 090100 -> next cursor 090099 (mock logic)
         data1 = [
@@ -1401,11 +1401,11 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_day_intraday_minutes_list_pagination_with_duplicates(self):
         """페이지네이션 중 중복 데이터(added=0)가 발생해도 min_time_in_batch를 갱신하여 계속 진행하는지 테스트"""
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x
         # dec_minute: 단순히 1분 뺀 문자열 반환 (HHMMSS)
         def mock_dec_minute(t, m):
             return f"{int(t)-m:06d}"
-        self.mock_time_manager.dec_minute.side_effect = mock_dec_minute
+        self.mock_market_clock.dec_minute.side_effect = mock_dec_minute
 
         # Batch 1: 10:00:00
         data1 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "price": 100}]
@@ -1441,8 +1441,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         """get_day_intraday_minutes_list 특정일, 확장 세션 테스트"""
         # Arrange
         self.mock_trading_service._env.is_paper_trading = False # 실전투자 환경
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x.ljust(6, '0')
-        self.mock_time_manager.dec_minute.side_effect = ["080000"]
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x.ljust(6, '0')
+        self.mock_market_clock.dec_minute.side_effect = ["080000"]
 
         # API 응답 모킹
         resp1 = ResCommonResponse(rt_cd="0", msg1="정상", data={"output2": [
@@ -1483,8 +1483,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         """_extract_rows가 다양한 응답 구조를 처리하는지 테스트"""
         # Arrange
         self.mock_trading_service._env.is_paper_trading = False
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x.ljust(6, '0')
-        self.mock_time_manager.dec_minute.return_value = "085900"
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x.ljust(6, '0')
+        self.mock_market_clock.dec_minute.return_value = "085900"
 
         api_data = {data_key: [{"stck_bsop_date": "20230101", "stck_cntg_hour": "090000"}]}
         resp = ResCommonResponse(rt_cd="0", msg1="정상", data=api_data)
@@ -1503,8 +1503,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         """get_day_intraday_minutes_list API 실패 시 중단 테스트"""
         # Arrange
         self.mock_trading_service._env.is_paper_trading = True
-        self.mock_time_manager.get_current_kst_time.return_value = MagicMock(strftime=MagicMock(return_value="20230101"))
-        self.mock_time_manager.to_hhmmss.side_effect = lambda x: x.ljust(6, '0')
+        self.mock_market_clock.get_current_kst_time.return_value = MagicMock(strftime=MagicMock(return_value="20230101"))
+        self.mock_market_clock.to_hhmmss.side_effect = lambda x: x.ljust(6, '0')
 
         resp_fail = ResCommonResponse(rt_cd="1", msg1="API 오류")
         self.mock_trading_service.get_intraday_minutes_today.return_value = resp_fail
@@ -1543,14 +1543,14 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         # Assert
         self.mock_trading_service.connect_websocket.assert_awaited_once()
         self.mock_trading_service.subscribe_program_trading.assert_awaited_once_with(stock_code)
-        self.mock_time_manager.async_sleep.assert_awaited_once_with(duration)
+        self.mock_market_clock.async_sleep.assert_awaited_once_with(duration)
         self.mock_trading_service.unsubscribe_program_trading.assert_awaited_once_with(stock_code)
         self.mock_trading_service.disconnect_websocket.assert_awaited_once()
 
     async def test_handle_program_trading_stream_exception_safety(self):
         """handle_program_trading_stream에서 대기 중 예외 발생 시에도 해지/연결해제가 보장되는지 테스트"""
         # Arrange
-        self.mock_time_manager.async_sleep.side_effect = Exception("Test sleep error")
+        self.mock_market_clock.async_sleep.side_effect = Exception("Test sleep error")
 
         # Act & Assert
         with self.assertRaisesRegex(Exception, "Test sleep error"):
@@ -1629,7 +1629,7 @@ class TestHandleCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.service = StockQueryService(
             trading_service=self.mock_trading_service,
             logger=self.mock_logger,
-            time_manager=None
+            market_clock=None
         )
 
     def _create_dummy_fluctuation(self, overrides=None):
@@ -1791,7 +1791,7 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.mock_trading_service = AsyncMock()
         self.mock_logger = MagicMock()
-        self.mock_time_manager = MagicMock()
+        self.mock_market_clock = MagicMock()
         self.mock_ranking_task = MagicMock()
 
         # Configure AsyncMock for async methods
@@ -1806,7 +1806,7 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
         self.service = StockQueryService(
             trading_service=self.mock_trading_service,
             logger=self.mock_logger,
-            time_manager=self.mock_time_manager,
+            market_clock=self.mock_market_clock,
             ranking_task=self.mock_ranking_task,
         )
 
@@ -1840,7 +1840,7 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
         service_no_bg = StockQueryService(
             trading_service=self.mock_trading_service,
             logger=self.mock_logger,
-            time_manager=self.mock_time_manager,
+            market_clock=self.mock_market_clock,
             ranking_task=None,
         )
 
@@ -1912,7 +1912,7 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
         service_no_bg = StockQueryService(
             trading_service=self.mock_trading_service,
             logger=self.mock_logger,
-            time_manager=self.mock_time_manager,
+            market_clock=self.mock_market_clock,
             ranking_task=None,
         )
         self.mock_trading_service.get_top_trading_value_stocks.return_value = ResCommonResponse(

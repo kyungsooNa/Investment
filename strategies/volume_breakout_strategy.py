@@ -34,12 +34,12 @@ class VolumeBreakoutStrategy:
         self,
         *,
         stock_query_service: Any,
-        time_manager: Any,
+        market_clock: Any,
         logger: Optional[Any] = None,
         config: Optional[VolumeBreakoutConfig] = None,
     ) -> None:
         self.svc = stock_query_service   # 분봉 데이터를 가져오는 서비스
-        self.time_manager = time_manager # 시간 포맷 변환 등 유틸
+        self.market_clock = market_clock # 시간 포맷 변환 등 유틸
         self.log = logger
         self.cfg = config or VolumeBreakoutConfig()
 
@@ -59,7 +59,7 @@ class VolumeBreakoutStrategy:
         """분봉 데이터를 날짜+시간 순으로 정렬하기 위한 키"""
         d = str(self._get_first_available(r, ["stck_bsop_date", "bsop_date", "date"], ""))
         t = str(self._get_first_available(r, ["stck_cntg_hour", "cntg_hour", "time"], ""))
-        return d, self.time_manager.to_hhmmss(t)
+        return d, self.market_clock.to_hhmmss(t)
 
     # -------------------------
     # 공개 메서드: 분봉 백테스트
@@ -87,7 +87,7 @@ class VolumeBreakoutStrategy:
             date_ymd=date_ymd,
             session=session,
         )
-        day_label = date_ymd or self.time_manager.get_current_kst_time().strftime("%Y%m%d")
+        day_label = date_ymd or self.market_clock.get_current_kst_time().strftime("%Y%m%d")
         if not rows:
             return {"ok": False, "message": "분봉 데이터 없음", "stock_code": stock_code, "date": day_label, "trades": []}
 
@@ -151,7 +151,7 @@ class VolumeBreakoutStrategy:
         def fmt_ts(row: Dict[str, Any]) -> str:
             d = str(self._get_first_available(row, ["stck_bsop_date", "bsop_date", "date"], ""))
             t = str(self._get_first_available(row, ["stck_cntg_hour", "cntg_hour", "time"], ""))
-            return f"{d} {self.time_manager.to_hhmmss(t)}"
+            return f"{d} {self.market_clock.to_hhmmss(t)}"
 
         trade = {
             "entry_time": fmt_ts(rows[entry_idx]),

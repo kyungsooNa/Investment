@@ -19,8 +19,8 @@ from services.notification_service import NotificationService
 from services.order_execution_service import OrderExecutionService
 from repositories.stock_code_repository import StockCodeRepository
 from services.stock_query_service import StockQueryService
-from core.time_manager import TimeManager
-from core.performance_manager import PerformanceManager
+from core.market_clock import MarketClock
+from core.performance_profiler import PerformanceProfiler
 
 SIGNAL_HISTORY_FILE = "data/StrategyScheduler/signal_history.csv"
 SIGNAL_COLUMNS = ["strategy_name", "code", "name", "action", "price", "return_rate", "reason", "timestamp", "api_success"]
@@ -71,23 +71,23 @@ class StrategyScheduler:
         order_execution_service: OrderExecutionService,
         stock_query_service: StockQueryService,
         stock_code_repository: StockCodeRepository,
-        time_manager: TimeManager,
+        market_clock: MarketClock,
         market_calendar_service: MarketCalendarService,
         logger: Optional[logging.Logger] = None,
         dry_run: bool = False,
         notification_service: Optional[NotificationService] = None,
-        performance_manager: Optional[PerformanceManager] = None,
+        performance_profiler: Optional[PerformanceProfiler] = None,
     ):
         self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
         self._sqs = stock_query_service
         self.stock_code_repository = stock_code_repository
-        self._tm = time_manager
+        self._tm = market_clock
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
         self._notification_service = notification_service
         self._mcs = market_calendar_service
-        self._pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
 
         # 데이터 디렉토리 생성
         os.makedirs(os.path.dirname(SIGNAL_HISTORY_FILE), exist_ok=True)

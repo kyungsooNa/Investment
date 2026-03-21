@@ -10,8 +10,8 @@ from datetime import datetime
 from typing import List, Dict, Optional, TYPE_CHECKING
 
 from common.types import ErrorCode
-from core.performance_manager import PerformanceManager
-from core.time_manager import TimeManager
+from core.performance_profiler import PerformanceProfiler
+from core.market_clock import MarketClock
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from repositories.market_data_repository import MarketDataRepository
 from repositories.stock_repository import StockRepository
@@ -50,8 +50,8 @@ class MarketDataCollectorTask(SchedulableTask):
         market_data_repo: MarketDataRepository,
         stock_repo: StockRepository,
         market_calendar_service: Optional[MarketCalendarService] = None,
-        time_manager: Optional[TimeManager] = None,
-        performance_manager: Optional[PerformanceManager] = None,
+        market_clock: Optional[MarketClock] = None,
+        performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
         logger=None,
     ):
@@ -60,8 +60,8 @@ class MarketDataCollectorTask(SchedulableTask):
         self._market_data_repo = market_data_repo
         self._stock_repo = stock_repo
         self._mcs = market_calendar_service
-        self._time_manager = time_manager
-        self._pm = performance_manager or PerformanceManager(enabled=False)
+        self._market_clock = market_clock
+        self._pm = performance_profiler or PerformanceProfiler(enabled=False)
         self._ns = notification_service
         self._logger = logger or logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ class MarketDataCollectorTask(SchedulableTask):
         """장 마감 후 자동으로 수집을 스케줄링하는 루프."""
         await run_after_market_loop(
             mcs=self._mcs,
-            time_manager=self._time_manager,
+            market_clock=self._market_clock,
             logger=self._logger,
             on_market_closed=self._on_market_closed,
             label="MarketDataCollector",

@@ -1,8 +1,8 @@
 import time
 import pytest
-from core.cache.file_cache_manager import FileCacheManager
-from core.cache.db_cache_manager import DBCacheManager
-from core.cache.memory_cache_manager import MemoryCacheManager
+from core.cache.file_cache import FileCache
+from core.cache.db_cache import DBCache
+from core.cache.memory_cache import MemoryCache
 
 @pytest.fixture
 def benchmark_data():
@@ -13,7 +13,7 @@ def run_benchmark(manager, operation, count, data=None):
     start_time = time.time()
     if operation == "set":
         for i in range(count):
-            if isinstance(manager, (FileCacheManager, DBCacheManager)):
+            if isinstance(manager, (FileCache, DBCache)):
                 manager.set(f"key_{i}", data, save_to_file=True)
             else:
                 manager.set(f"key_{i}", data)
@@ -31,21 +31,21 @@ def run_benchmark(manager, operation, count, data=None):
 
 @pytest.mark.slow
 def test_cache_performance_comparison(tmp_path, benchmark_data):
-    """FileCacheManager vs DBCacheManager vs MemoryCacheManager 성능 비교 벤치마크"""
+    """FileCache vs DBCache vs MemoryCache 성능 비교 벤치마크"""
     count = 500  # 테스트 항목 수
     
-    # 1. FileCacheManager 설정
+    # 1. FileCache 설정
     file_cache_dir = tmp_path / "file_cache"
     file_config = {"cache": {"base_dir": str(file_cache_dir), "deserializable_classes": []}}
-    file_manager = FileCacheManager(config=file_config)
+    file_manager = FileCache(config=file_config)
     
-    # 2. DBCacheManager 설정
+    # 2. DBCache 설정
     db_cache_dir = tmp_path / "db_cache"
     db_config = {"cache": {"base_dir": str(db_cache_dir), "deserializable_classes": []}}
-    db_manager = DBCacheManager(config=db_config)
+    db_manager = DBCache(config=db_config)
 
-    # 3. MemoryCacheManager 설정
-    memory_manager = MemoryCacheManager()
+    # 3. MemoryCache 설정
+    memory_manager = MemoryCache()
     
     print(f"\n\n[Cache Benchmark (N={count})]")
     

@@ -13,11 +13,11 @@ from typing import List, Dict, Optional, TYPE_CHECKING
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ErrorCode
-from core.time_manager import TimeManager
+from core.market_clock import MarketClock
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from services.market_calendar_service import MarketCalendarService
 from repositories.stock_code_repository import StockCodeRepository
-from core.performance_manager import PerformanceManager
+from core.performance_profiler import PerformanceProfiler
 from services.telegram_notifier import TelegramReporter
 from scheduler.after_market_loop import run_after_market_loop
 from services.notification_service import NotificationService
@@ -52,9 +52,9 @@ class RankingTask(SchedulableTask):
         stock_code_repository: StockCodeRepository,
         env: KoreaInvestApiEnv = None,
         logger=None,
-        time_manager: TimeManager = None,
+        market_clock: MarketClock = None,
         trading_service=None,
-        performance_manager: Optional[PerformanceManager] = None,
+        performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
         market_calendar_service: Optional[MarketCalendarService] = None,
@@ -63,9 +63,9 @@ class RankingTask(SchedulableTask):
         self.stock_code_repository = stock_code_repository
         self._env = env
         self._logger = logger or logging.getLogger(__name__)
-        self._time_manager = time_manager
+        self._market_clock = market_clock
         self._trading_service = trading_service
-        self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
+        self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
         self.mcs = market_calendar_service
@@ -164,7 +164,7 @@ class RankingTask(SchedulableTask):
         """장마감 후 자동으로 랭킹 갱신을 스케줄링하는 루프."""
         await run_after_market_loop(
             mcs=self.mcs,
-            time_manager=self._time_manager,
+            market_clock=self._market_clock,
             logger=self._logger,
             on_market_closed=self._on_market_closed,
             label="RankingTask",

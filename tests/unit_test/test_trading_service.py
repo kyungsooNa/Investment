@@ -22,7 +22,7 @@ def mock_deps():
     tm.to_yyyymmdd.side_effect = lambda d: d.strftime("%Y%m%d") if isinstance(d, datetime) else str(d)
 
     logger = MagicMock()
-    cache_manager = MagicMock()  # Added cache_manager mock
+    cache_store = MagicMock()  # Added cache_store mock
     stock_repo = MagicMock()
     stock_repo.get_current_price.return_value = None
     stock_repo.get_stock_data.return_value = None
@@ -32,7 +32,7 @@ def mock_deps():
         env=env,
         tm=tm,
         logger=logger,
-        cache_manager=cache_manager,
+        cache_store=cache_store,
         stock_repo=stock_repo
     )
 
@@ -41,9 +41,9 @@ def trading_service_fixture(mock_deps):
     service = TradingService(
         broker_api_wrapper=mock_deps.broker,
         env=mock_deps.env,
-        time_manager=mock_deps.tm,
+        market_clock=mock_deps.tm,
         logger=mock_deps.logger,
-        cache_manager=mock_deps.cache_manager,
+        cache_store=mock_deps.cache_store,
         stock_repository=mock_deps.stock_repo
     )
     return service
@@ -1021,7 +1021,7 @@ class TestGetCurrentUpperLimitStocksAttributeError(unittest.IsolatedAsyncioTestC
             broker_api_wrapper=self.mock_broker_api_wrapper,
             env=MagicMock(),
             logger=self.mock_logger,
-            time_manager=MagicMock()
+            market_clock=MagicMock()
         )
 
     async def test_get_current_upper_limit_stocks_attribute_error(self):
@@ -1045,7 +1045,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
             broker_api_wrapper=self.mock_broker_api_wrapper,
             env=self.mock_env,
             logger=self.mock_logger,
-            time_manager=MagicMock()
+            market_clock=MagicMock()
         )
 
     def _create_dummy_fluctuation(self, overrides=None):
@@ -1198,7 +1198,7 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
             broker_api_wrapper=self.mock_broker_api_wrapper,
             env=self.mock_env,
             logger=self.mock_logger,
-            time_manager=MagicMock()
+            market_clock=MagicMock()
         )
 
     def _create_dummy_fluctuation(self, overrides=None):
