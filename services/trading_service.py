@@ -29,7 +29,7 @@ class TradingService:
 
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
                  time_manager: TimeManager = None, cache_manager: Optional[CacheManager] = None,
-                 market_calendar: Optional[MarketCalendarService] = None, performance_manager: Optional[PerformanceManager] = None,
+                 market_calendar_service: Optional[MarketCalendarService] = None, performance_manager: Optional[PerformanceManager] = None,
                  stock_repository: Optional['StockRepository'] = None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
@@ -37,7 +37,7 @@ class TradingService:
         self._time_manager = time_manager
         self.cache_manager = cache_manager
         self._latest_prices = {}
-        self._calendar = market_calendar
+        self._calendar = market_calendar_service
         self.pm = performance_manager if performance_manager else PerformanceManager(enabled=False)
         self._stock_repo = stock_repository
 
