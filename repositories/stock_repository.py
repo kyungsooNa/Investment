@@ -131,6 +131,36 @@ class StockRepository:
                     )
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_ohlcv_date ON ohlcv(date)")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_prices (
+                        code TEXT NOT NULL,
+                        trade_date TEXT NOT NULL,
+                        name TEXT,
+                        current_price INTEGER,
+                        open_price INTEGER,
+                        high_price INTEGER,
+                        low_price INTEGER,
+                        prev_close INTEGER,
+                        change_price INTEGER,
+                        change_sign TEXT,
+                        change_rate TEXT,
+                        volume INTEGER,
+                        trading_value INTEGER,
+                        market_cap INTEGER,
+                        per REAL,
+                        pbr REAL,
+                        eps REAL,
+                        w52_high INTEGER,
+                        w52_low INTEGER,
+                        market TEXT,
+                        collected_at REAL,
+                        PRIMARY KEY (code, trade_date)
+                    )
+                """)
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_daily_prices_trade_date "
+                    "ON daily_prices(trade_date)"
+                )
         except Exception as e:
             self._logger.error(f"StockRepository DB 초기화 실패: {e}")
 
@@ -271,6 +301,120 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository OHLCV 요약 조회 실패 ({code}): {e}")
         return {"count": 0, "latest_date": None, "oldest_date": None}
+
+    # ── daily_prices (장마감 후 전종목 스냅샷) ──────────────────────
+
+    def upsert_daily_snapshot(self, trade_date: str, records: List[Dict]):
+        """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert (INSERT OR REPLACE)."""
+        if not records:
+            return
+
+        now = time.time()
+        try:
+            with self._get_connection() as conn:
+                conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO daily_prices (
+                        code, trade_date, name,
+                        current_price, open_price, high_price, low_price, prev_close,
+                        change_price, change_sign, change_rate,
+                        volume, trading_value, market_cap,
+                        per, pbr, eps,
+                        w52_high, w52_low,
+                        market, collected_at
+                    ) VALUES (
+                        :code, :trade_date, :name,
+                        :current_price, :open_price, :high_price, :low_price, :prev_close,
+                        :change_price, :change_sign, :change_rate,
+                        :volume, :trading_value, :market_cap,
+                        :per, :pbr, :eps,
+                        :w52_high, :w52_low,
+                        :market, :collected_at
+                    )
+                    """,
+                    [{**r, "trade_date": trade_date, "collected_at": now} for r in records],
+                )
+            self._logger.debug(
+                f"StockRepository: daily_prices {len(records)}건 upsert 완료 (date={trade_date})"
+            )
+        except Exception as e:
+            self._logger.error(f"StockRepository daily_prices upsert 실패: {e}")
+
+    def get_prices_by_date(self, trade_date: str) -> List[Dict]:
+        """특정 날짜의 전체 종목 스냅샷 조회."""
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT * FROM daily_prices WHERE trade_date = ? ORDER BY code",
+                    (trade_date,),
+                )
+                rows = cursor.fetchall()
+                conn.row_factory = None
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockRepository daily_prices 날짜별 조회 실패: {e}")
+            return []
+
+    def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
+        """특정 종목의 최근 N일간 스냅샷 이력 조회."""
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT * FROM daily_prices WHERE code = ? "
+                    "ORDER BY trade_date DESC LIMIT ?",
+                    (code, days),
+                )
+                rows = cursor.fetchall()
+                conn.row_factory = None
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockRepository daily_prices 이력 조회 실패: {e}")
+            return []
+
+    def get_latest_trade_date(self) -> Optional[str]:
+        """daily_prices에 저장된 가장 최근 거래일 반환."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT MAX(trade_date) FROM daily_prices")
+                row = cursor.fetchone()
+                return row[0] if row and row[0] else None
+        except Exception as e:
+            self._logger.error(f"StockRepository daily_prices 최근 거래일 조회 실패: {e}")
+            return None
+
+    def get_count_by_date(self, trade_date: str) -> int:
+        """특정 날짜에 저장된 종목 수 반환."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM daily_prices WHERE trade_date = ?",
+                    (trade_date,),
+                )
+                row = cursor.fetchone()
+                return row[0] if row else 0
+        except Exception as e:
+            self._logger.error(f"StockRepository daily_prices 카운트 조회 실패: {e}")
+            return 0
+
+    def cleanup_old_data(self, keep_days: int = 365):
+        """오래된 daily_prices 데이터 정리."""
+        from datetime import datetime, timedelta
+
+        cutoff_date = (datetime.now() - timedelta(days=keep_days)).strftime("%Y%m%d")
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM daily_prices WHERE trade_date < ?", (cutoff_date,)
+                )
+                deleted = cursor.rowcount
+                if deleted > 0:
+                    self._logger.info(
+                        f"StockRepository: {deleted}건 오래된 daily_prices 삭제 (기준: {cutoff_date})"
+                    )
+        except Exception as e:
+            self._logger.error(f"StockRepository daily_prices 데이터 정리 실패: {e}")
 
     def get_cache_stats(self, expand: bool = False) -> dict:
         """메모리 캐시의 사용 통계(적중률 등)를 반환합니다."""

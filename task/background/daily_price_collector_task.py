@@ -1,6 +1,6 @@
-# task/background/market_data_collector_task.py
+# task/background/daily_price_collector_task.py
 """
-장 마감 후 전체 종목 현재가를 수집하여 DB에 저장하는 백그라운드 태스크.
+장 마감 후 전체 종목 현재가+펀더멘털을 수집하여 StockRepository에 저장하는 백그라운드 태스크.
 get_current_price API를 사용하여 종목별 50+ 필드(시가/고가/저가/현재가/PER/PBR 등)를 수집한다.
 """
 import asyncio
@@ -13,7 +13,6 @@ from common.types import ErrorCode
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
-from repositories.market_data_repository import MarketDataRepository
 from repositories.stock_repository import StockRepository
 from repositories.stock_code_repository import StockCodeRepository
 from services.market_calendar_service import MarketCalendarService
@@ -29,7 +28,7 @@ def _chunked(lst, size):
         yield lst[i:i + size]
 
 
-# ETF/ETN 브랜드명 접두사 (RankingTask와 동일)
+# ETF/ETN 브랜드명 접두사 (OhlcvUpdateTask와 동일)
 _ETF_PREFIXES = (
     "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
     "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
@@ -37,8 +36,8 @@ _ETF_PREFIXES = (
 )
 
 
-class MarketDataCollectorTask(SchedulableTask):
-    """장 마감 후 전체 종목 현재가를 수집하여 DB에 저장하는 백그라운드 태스크."""
+class DailyPriceCollectorTask(SchedulableTask):
+    """장 마감 후 전체 종목 현재가+펀더멘털을 수집하여 StockRepository에 저장하는 백그라운드 태스크."""
 
     API_CHUNK_SIZE = 8
     CHUNK_SLEEP_SEC = 1.1
@@ -47,7 +46,6 @@ class MarketDataCollectorTask(SchedulableTask):
         self,
         stock_query_service: "StockQueryService",
         stock_code_repository: StockCodeRepository,
-        market_data_repo: MarketDataRepository,
         stock_repo: StockRepository,
         market_calendar_service: Optional[MarketCalendarService] = None,
         market_clock: Optional[MarketClock] = None,
@@ -57,7 +55,6 @@ class MarketDataCollectorTask(SchedulableTask):
     ):
         self._stock_query_service = stock_query_service
         self.stock_code_repository = stock_code_repository
-        self._market_data_repo = market_data_repo
         self._stock_repo = stock_repo
         self._mcs = market_calendar_service
         self._market_clock = market_clock
@@ -86,7 +83,7 @@ class MarketDataCollectorTask(SchedulableTask):
 
     @property
     def task_name(self) -> str:
-        return "market_data_collector"
+        return "daily_price_collector"
 
     @property
     def priority(self) -> TaskPriority:
@@ -109,11 +106,11 @@ class MarketDataCollectorTask(SchedulableTask):
         self._tasks.append(
             asyncio.create_task(self._after_market_scheduler())
         )
-        self._logger.info(f"MarketDataCollectorTask 시작: {len(self._tasks)}개 태스크")
+        self._logger.info(f"DailyPriceCollectorTask 시작: {len(self._tasks)}개 태스크")
 
     async def stop(self) -> None:
         """모든 태스크를 취소하고 정리한다."""
-        self._logger.info(f"MarketDataCollectorTask 종료 시작: {len(self._tasks)}개 태스크")
+        self._logger.info(f"DailyPriceCollectorTask 종료 시작: {len(self._tasks)}개 태스크")
         for task in self._tasks:
             if not task.done():
                 task.cancel()
@@ -121,21 +118,21 @@ class MarketDataCollectorTask(SchedulableTask):
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         self._state = TaskState.STOPPED
-        self._logger.info("MarketDataCollectorTask 종료 완료")
+        self._logger.info("DailyPriceCollectorTask 종료 완료")
 
     async def suspend(self) -> None:
         """수집을 일시 중지한다 (chunk 사이에서 대기)."""
         if self._state == TaskState.RUNNING:
             self._suspend_event.clear()
             self._state = TaskState.SUSPENDED
-            self._logger.info("MarketDataCollectorTask 일시 중지")
+            self._logger.info("DailyPriceCollectorTask 일시 중지")
 
     async def resume(self) -> None:
         """일시 중지된 수집을 재개한다."""
         if self._state == TaskState.SUSPENDED:
             self._suspend_event.set()
             self._state = TaskState.RUNNING
-            self._logger.info("MarketDataCollectorTask 재개")
+            self._logger.info("DailyPriceCollectorTask 재개")
 
     # ── 장마감 후 자동 스케줄러 ────────────────────────────
 
@@ -146,7 +143,7 @@ class MarketDataCollectorTask(SchedulableTask):
             market_clock=self._market_clock,
             logger=self._logger,
             on_market_closed=self._on_market_closed,
-            label="MarketDataCollector",
+            label="DailyPriceCollector",
         )
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
@@ -157,7 +154,7 @@ class MarketDataCollectorTask(SchedulableTask):
     # ── 전체 종목 현재가 수집 ────────────────────────────
 
     async def _collect_all_prices(self) -> None:
-        """전체 종목 현재가를 수집하여 DB에 저장한다."""
+        """전체 종목 현재가+펀더멘털을 수집하여 StockRepository에 저장한다."""
         # 장 중에는 수집하지 않음
         if self._mcs and await self._mcs.is_market_open_now():
             self._logger.info("장 운영 중이므로 현재가 수집을 건너뜁니다.")
@@ -226,7 +223,7 @@ class MarketDataCollectorTask(SchedulableTask):
 
                 # 배치 단위로 DB 저장
                 if batch_records:
-                    self._market_data_repo.upsert_prices(target_date, batch_records)
+                    self._stock_repo.upsert_daily_snapshot(target_date, batch_records)
                     collected_records.extend(batch_records)
 
                 processed += len(chunk)
@@ -260,7 +257,7 @@ class MarketDataCollectorTask(SchedulableTask):
                 f"소요: {elapsed:.1f}s"
             )
             self._pm.log_timer(
-                "MarketDataCollectorTask._collect_all_prices",
+                "DailyPriceCollectorTask._collect_all_prices",
                 t_start_total, threshold=10.0,
             )
             if self._ns:
@@ -285,7 +282,7 @@ class MarketDataCollectorTask(SchedulableTask):
         delay = 1.0
         for attempt in range(max_retries):
             try:
-                resp = await self._stock_query_service.get_current_price(code, count_stats=False, caller="MarketDataCollectorTask")
+                resp = await self._stock_query_service.get_current_price(code, count_stats=False, caller="DailyPriceCollectorTask")
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     return resp
                 error_msg = resp.msg1 if resp else "응답 없음"
