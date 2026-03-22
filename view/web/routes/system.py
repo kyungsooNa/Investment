@@ -17,7 +17,7 @@ _SCHEDULE_TYPES = {
     "ranking_refresh":     "after_market",
     "daily_price_collector": "after_market",
     "ohlcv_update":        "after_market",
-    "전일기준우량주_생성":  "after_market",
+    "전일기준주도주_생성":  "after_market",
 }
 
 _SCHEDULE_ORDER = {

@@ -51,7 +51,7 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
 
     @property
     def task_name(self) -> str:
-        return "전일기준우량주_생성"
+        return "전일기준주도주_생성"
 
     @property
     def priority(self) -> TaskPriority:

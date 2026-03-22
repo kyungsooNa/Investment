@@ -188,7 +188,7 @@ function renderProgressCell(progress, taskName) {
     }
 
     // ── 전일 기준 우량주 생성 ──
-    if (taskName === '전일기준우량주_생성') {
+    if (taskName === '전일기준주도주_생성') {
         if (progress.running) {
             const phase = progress.phase || '진행 중';
             const total = progress.total ?? 0;
@@ -253,7 +253,7 @@ const FORCE_UPDATE_CONFIG = {
     ohlcv_update:         { endpoint: '/api/ohlcv/force-update',                  label: '강제 수집' },
     ranking_refresh:      { endpoint: '/api/background/ranking/force-update',     label: '강제 수집' },
     daily_price_collector:{ endpoint: '/api/background/daily-price/force-update', label: '강제 수집' },
-    '전일기준우량주_생성': { endpoint: '/api/background/watchlist/force-update',   label: '강제 생성' },
+    '전일기준주도주_생성': { endpoint: '/api/background/watchlist/force-update',   label: '강제 생성' },
 };
 
 function renderActionCell(task) {
