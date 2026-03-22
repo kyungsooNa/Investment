@@ -24,6 +24,7 @@ def mock_deps():
         ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
         ("ranking_task", patch("view.web.web_app_initializer.RankingTask", autospec=True)),
         ("watchdog_task", patch("view.web.web_app_initializer.WebSocketWatchdogTask", autospec=True)),
+        ("premium_watchlist_task", patch("view.web.web_app_initializer.PremiumWatchlistGeneratorTask", autospec=True)),
         ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
         ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
         ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),

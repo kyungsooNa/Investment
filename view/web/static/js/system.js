@@ -184,14 +184,33 @@ function renderProgressCell(progress, taskName) {
     // ── 전일 기준 우량주 생성 ──
     if (taskName === '전일기준우량주_생성') {
         if (progress.running) {
-            return '<span style="background:var(--primary-color,#2196F3); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">생성 중...</span>';
+            const phase = progress.phase || '진행 중';
+            const total = progress.total ?? 0;
+            const processed = progress.processed ?? 0;
+            const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+            const elapsed = progress.elapsed ? ` · ${progress.elapsed}s` : '';
+            const sub = phase === '1차_필터(시총)'
+                ? `통과 ${progress.passed ?? 0}`
+                : phase === '2차_필터(지표)'
+                ? `선정 ${progress.selected ?? 0}`
+                : '';
+            const barHtml = total > 0 ? `
+                <div style="background:#e0e0e0; border-radius:4px; height:7px; width:100%; margin-top:4px;">
+                    <div style="background:var(--primary-color,#2196F3); height:7px; border-radius:4px; width:${pct}%;"></div>
+                </div>` : '';
+            return `
+                <div style="font-size:0.85em;">
+                    <span style="background:var(--primary-color,#2196F3); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">${phase}</span>
+                    <span style="color:#888; margin-left:6px;">${total > 0 ? `${processed}/${total} (${pct}%)` : ''}${sub ? ' · ' + sub : ''}${elapsed}</span>
+                </div>${barHtml}`;
         }
         if (progress.last_generated_date) {
             const r = progress.last_result || {};
             const detail = (r.kospi_count !== undefined)
                 ? ` · KOSPI ${r.kospi_count} / KOSDAQ ${r.kosdaq_count}`
                 : '';
-            return `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">완료</span> <span style="font-size:0.85em; color:#888;">${progress.last_generated_date}${detail}</span>`;
+            const elapsed = progress.elapsed ? ` · ${progress.elapsed}s` : '';
+            return `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">완료</span> <span style="font-size:0.85em; color:#888;">${progress.last_generated_date}${detail}${elapsed}</span>`;
         }
         return '<span style="color:#888; font-size:0.88em;">대기 중</span>';
     }
