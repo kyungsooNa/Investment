@@ -363,8 +363,13 @@ class OneilUniverseService:
 
     # ── 전일 기준 우량주 생성 (배치) ─────────────────────────────────────────
 
-    async def generate_premium_watchlist(self) -> dict:
-        """전체 종목 스캔 -> 전일 기준 우량주 생성 및 파일 저장."""
+    async def generate_premium_watchlist(self, trading_date: Optional[str] = None) -> dict:
+        """전체 종목 스캔 -> 전일 기준 우량주 생성 및 파일 저장.
+
+        Args:
+            trading_date: 기준 거래일(YYYYMMDD). 지정하면 파일의 generated_date로 저장.
+                          None이면 현재 날짜를 사용 (직접 호출 시 하위 호환).
+        """
         # 전용 로거 생성 (logs/strategies/oneil/YYYYMMDD_HHMMSS_generate_premium_watchlist.log.json)
         pool_a_logger = get_strategy_logger("generate_premium_watchlist", sub_dir="oneil_pool")
         pool_a_logger.setLevel(logging.DEBUG)
@@ -485,7 +490,7 @@ class OneilUniverseService:
         kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.premium_stocks_kospi_size]
         kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.premium_stocks_kosdaq_size]
 
-        self._save_premium_stocks(kospi, kosdaq)
+        self._save_premium_stocks(kospi, kosdaq, trading_date=trading_date)
         pool_a_logger.info({"event": "save_done", "kospi_count": len(kospi), "kosdaq_count": len(kosdaq)})
 
         total_elapsed = time.time() - start_time
@@ -644,12 +649,20 @@ class OneilUniverseService:
                 })
         logger.debug({"event": "compute_total_scores_finished"})
 
-    def _save_premium_stocks(self, kospi, kosdaq):
+    def _save_premium_stocks(self, kospi, kosdaq, trading_date: Optional[str] = None):
+        """전일 기준 우량주를 파일에 저장한다.
+
+        Args:
+            trading_date: 기준 거래일(YYYYMMDD). generated_date 필드에 기록.
+                          None이면 현재 날짜를 사용.
+        """
         try:
             os.makedirs(os.path.dirname(self._cfg.premium_stocks_file), exist_ok=True)
             now = self._tm.get_current_kst_time()
             data = {
-                "generated_date": now.strftime("%Y%m%d"),
+                # generated_date: 어떤 거래일 기준으로 생성됐는지 (스킵 로직의 기준)
+                "generated_date": trading_date or now.strftime("%Y%m%d"),
+                # generated_at: 실제 파일을 저장한 시각 (주말/공휴일에 생성 가능)
                 "generated_at": now.strftime("%Y-%m-%dT%H:%M:%S"),
                 "kospi": [asdict(i) for i in kospi],
                 "kosdaq": [asdict(i) for i in kosdaq]
@@ -671,7 +684,9 @@ class OneilUniverseService:
             try:
                 gen_dt = datetime.strptime(gen_date, "%Y%m%d").date()
                 curr_dt = self._tm.get_current_kst_time().date()
-                if (curr_dt - gen_dt).days > 1:
+                # 7일 이내만 유효 (한국 최장 연휴 5일 + 여유)
+                # generated_date는 거래일 기준이므로 월요일에 금요일 파일도 유효
+                if (curr_dt - gen_dt).days > 7:
                     return []
             except ValueError:
                 return []

@@ -388,24 +388,31 @@ async def test_load_premium_stocks_date_validation(mock_deps):
         result = service._load_premium_stocks()
         assert isinstance(result, list)
 
-    # Case 2: 어제 날짜 (유효 - 차이 1일)
-    tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
+    # Case 2: 2일 전 날짜 (유효 - 주말 포함 거래일 기준이므로 월요일에 금요일 파일도 유효)
+    tm.get_current_kst_time.return_value = datetime(2024, 1, 8, 10, 0, 0)  # 월요일
     with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=create_file_data("20240104"))):
+         patch("builtins.open", mock_open(read_data=create_file_data("20240105"))):  # 금요일 (3일 전)
         result = service._load_premium_stocks()
         assert isinstance(result, list)
 
-    # Case 3: 2일 전 날짜 (무효)
-    tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
+    # Case 3: 7일 전 날짜 (유효 - 경계값: 최장 연휴 커버)
+    tm.get_current_kst_time.return_value = datetime(2024, 1, 12, 10, 0, 0)
     with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=create_file_data("20240103"))):
+         patch("builtins.open", mock_open(read_data=create_file_data("20240105"))):  # 7일 전
+        result = service._load_premium_stocks()
+        assert isinstance(result, list)
+
+    # Case 4: 8일 전 날짜 (무효 - 7일 초과)
+    tm.get_current_kst_time.return_value = datetime(2024, 1, 13, 10, 0, 0)
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=create_file_data("20240105"))):  # 8일 전
         result = service._load_premium_stocks()
         assert result == []
 
-    # Case 4: 연도가 바뀌는 경우 (12월 31일 생성 -> 1월 2일 로드: 2일 차이 -> 무효)
-    tm.get_current_kst_time.return_value = datetime(2024, 1, 2, 10, 0, 0)
+    # Case 5: 연도가 바뀌는 경우 (12월 25일 생성 -> 1월 5일 로드: 11일 차이 -> 무효)
+    tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
     with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=create_file_data("20231231"))):
+         patch("builtins.open", mock_open(read_data=create_file_data("20231225"))):
         result = service._load_premium_stocks()
         assert result == []
 

@@ -255,6 +255,36 @@ class TestOnMarketClosed:
 
         mock_universe_service.generate_premium_watchlist.assert_awaited_once()
 
+    async def test_skips_weekend_run_when_file_has_friday_trading_date(self, task, mock_universe_service):
+        """버그 재현 시나리오: 일요일(0322)에 실행, latest_trading_date=금요일(0320).
+        파일 generated_date가 거래일(0320)로 저장되어 있으면 재생성하지 않는다."""
+        task._last_generated_date = None
+        # 파일은 금요일 장 마감 후 생성됨 → generated_date = 거래일(금요일)
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value={
+            "generated_date": "20260320",   # 거래일 (금요일)
+            "generated_at": "2026-03-20T16:05:00",  # 실제 생성 시각
+        })
+
+        await task._on_market_closed("20260320")  # latest_trading_date = 금요일
+
+        mock_universe_service.generate_premium_watchlist.assert_not_called()
+        assert task._last_generated_date == "20260320"
+
+    async def test_generates_when_file_has_old_wall_clock_date_not_trading_date(self, task, mock_universe_service):
+        """과거 버그 패턴: 파일이 wall-clock 날짜(0322 일요일)로 저장된 경우
+        trading_date(0320 금요일)와 불일치 → 올바르게 생성을 실행한다."""
+        task._last_generated_date = None
+        # 과거 버그: generated_date = 저장 시점 날짜(일요일)
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value={
+            "generated_date": "20260322",   # 잘못된 값: 일요일 날짜
+            "generated_at": "2026-03-22T10:00:00",
+        })
+
+        await task._on_market_closed("20260320")  # latest_trading_date = 금요일
+
+        # 날짜 불일치이므로 생성을 실행해야 함 (버그가 있던 경우 이 TC가 통과하지 못했음)
+        mock_universe_service.generate_premium_watchlist.assert_awaited_once()
+
 
 # --- _run_generation 테스트 ---
 
@@ -293,7 +323,8 @@ class TestRunGeneration:
         """생성 성공 시 진행률, last_generated_date, last_result가 업데이트된다."""
         await task._run_generation("20260320")
 
-        mock_universe_service.generate_premium_watchlist.assert_awaited_once()
+        # trading_date가 서비스에 전달되어야 함 (generated_date를 거래일로 저장)
+        mock_universe_service.generate_premium_watchlist.assert_awaited_once_with(trading_date="20260320")
         assert task._last_generated_date == "20260320"
         assert task._progress["last_generated_date"] == "20260320"
         assert task._progress["last_result"]["kospi_count"] == 30
@@ -328,7 +359,7 @@ class TestRunGeneration:
         """생성 중에는 running 플래그가 True이다."""
         running_during = []
 
-        async def _mock_generate():
+        async def _mock_generate(trading_date=None):
             running_during.append(task._progress["running"])
             return {"kospi_count": 5, "kosdaq_count": 3}
 

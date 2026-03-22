@@ -142,7 +142,7 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
         self._logger.info(f"전일 기준 우량주 생성 시작 (기준일: {trading_date})")
 
         try:
-            result = await self._universe_service.generate_premium_watchlist()
+            result = await self._universe_service.generate_premium_watchlist(trading_date=trading_date)
             elapsed = time.time() - start_time
             self._last_generated_date = trading_date
             self._progress["last_generated_date"] = trading_date
