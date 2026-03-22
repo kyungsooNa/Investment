@@ -17,7 +17,8 @@ def mock_ctx():
         ctx = WebAppContext(app_context)
         ctx.logger = MagicMock()
         ctx.stock_query_service = AsyncMock()
-        ctx.trading_service = MagicMock()
+        ctx.broker = MagicMock()
+        ctx.broker.is_websocket_receive_alive = MagicMock(return_value=True)
         ctx.realtime_data_service = MockRDM.return_value
 
         # WebSocketWatchdogTask mock (force_reconnect 등 위임용)
@@ -67,7 +68,7 @@ async def test_start_program_trading_already_subscribed_alive(mock_ctx):
     """이미 구독 중이고 연결 살아있으면 스킵"""
     code = "005930"
     mock_ctx.realtime_data_service.is_subscribed.return_value = True
-    mock_ctx.trading_service.is_websocket_receive_alive.return_value = True
+    mock_ctx.broker.is_websocket_receive_alive.return_value = True
     
     result = await mock_ctx.start_program_trading(code)
     
@@ -79,7 +80,7 @@ async def test_start_program_trading_dead_reconnect_success(mock_ctx):
     """구독 중이나 죽어있어서 재연결 시도 후 성공"""
     code = "005930"
     mock_ctx.realtime_data_service.is_subscribed.return_value = True
-    mock_ctx.trading_service.is_websocket_receive_alive.return_value = False
+    mock_ctx.broker.is_websocket_receive_alive.return_value = False
     
     result = await mock_ctx.start_program_trading(code)
 
@@ -92,7 +93,7 @@ async def test_start_program_trading_dead_reconnect_fail_retry_success(mock_ctx)
     code = "005930"
     # 1. 처음 체크 시 True, 2. 재연결 후 체크 시 False (실패 가정)
     mock_ctx.realtime_data_service.is_subscribed.side_effect = [True, False, False]
-    mock_ctx.trading_service.is_websocket_receive_alive.return_value = False
+    mock_ctx.broker.is_websocket_receive_alive.return_value = False
     
     result = await mock_ctx.start_program_trading(code)
     

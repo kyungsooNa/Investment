@@ -8,7 +8,7 @@ import builtins
 
 # 테스트할 모듈 임포트
 from services.stock_query_service import StockQueryService
-from services.trading_service import TradingService
+from services.market_data_service import MarketDataService
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
@@ -85,8 +85,8 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.mock_broker_api_wrapper.client.trading.place_stock_order = mock.AsyncMock()
 
-        # 📌 TradingService 인스턴스 생성 (주입) - setUp에서 한 번만 생성
-        self.trading_service = TradingService(
+        # 📌 MarketDataService 인스턴스 생성 (주입) - setUp에서 한 번만 생성
+        self.market_data_service = MarketDataService(
             broker_api_wrapper=self.mock_broker_api_wrapper,  # 여기에서 Mock api_client를 주입
             env=self.mock_env,
             logger=self.mock_logger,
@@ -95,7 +95,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         # 📌 DataHandlers 인스턴스 생성 (handle_upper_limit_stocks 포함) - setUp에서 한 번만 생성
         self.stock_query_service = StockQueryService(
-            trading_service=self.trading_service,  # 여기에서 Mock trading_service를 주입
+            market_data_service=self.market_data_service,  # 여기에서 Mock market_data_service를 주입
             logger=self.mock_logger,
             market_clock=self.mock_market_clock
         )
@@ -110,7 +110,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, ResCommonResponse(rt_cd='100', msg1='시가총액 상위 종목 조회 실패', data=None))
         self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code.assert_not_called()
-        self.mock_logger.warning.assert_called_once_with("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
+        self.mock_logger.warning.assert_called_once_with("MarketDataService - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
 
     async def test_handle_upper_limit_stocks_no_top_stocks_found(self):
         """상위 종목 목록이 비어있을 때."""
@@ -119,7 +119,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.mock_env.is_paper_trading = False
 
-        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
+        self.market_data_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data=[]  # ✅ output → data 필드로 매핑
@@ -129,7 +129,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, ResCommonResponse(rt_cd='0', msg1='조회 성공', data=[]))
 
-        self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with(market_code, limit)
+        self.market_data_service.get_top_market_cap_stocks_code.assert_called_once_with(market_code, limit)
         self.mock_broker_api_wrapper.client.quotations.get_current_price.assert_not_called()
 
         self.assertTrue(self.mock_logger.info.called)
@@ -142,9 +142,9 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         mock_logger = MagicMock()
         mock_market_clock = MagicMock()
 
-        trading_service = MagicMock()
-        trading_service._env = mock_env
-        trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
+        market_data_service = MagicMock()
+        market_data_service._env = mock_env
+        market_data_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data=[
@@ -164,14 +164,14 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         ))
 
         data_handler = StockQueryService(
-            trading_service=trading_service,
+            market_data_service=market_data_service,
             market_clock=mock_market_clock,
             logger=mock_logger
         )
 
         await data_handler.handle_upper_limit_stocks(market_code="0000", limit=500)
 
-        trading_service.get_top_market_cap_stocks_code.assert_called_once_with("0000", 500)
+        market_data_service.get_top_market_cap_stocks_code.assert_called_once_with("0000", 500)
         assert mock_logger.info.called
 
     async def test_handle_upper_limit_stocks_individual_stock_price_failure(self):
@@ -180,7 +180,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         limit = 500
         self.mock_env.is_paper_trading = False
 
-        self.trading_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
+        self.market_data_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data=[
@@ -198,7 +198,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         result = await self.stock_query_service.handle_upper_limit_stocks(market_code=market_code, limit=limit)
 
         self.assertTrue(result)  # 상한가 종목 1개 발견되므로 True 반환
-        self.trading_service.get_top_market_cap_stocks_code.assert_called_once_with(market_code, limit)
+        self.market_data_service.get_top_market_cap_stocks_code.assert_called_once_with(market_code, limit)
 
         # logger.info도 마찬가지로 한 번이라도 호출되었는지만 확인
         self.assertTrue(self.mock_logger.info.called)

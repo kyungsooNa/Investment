@@ -521,7 +521,7 @@ class TestWebAppContextInitialization:
         """
         from view.web.web_app_initializer import WebAppContext
         from brokers.broker_api_wrapper import BrokerAPIWrapper
-        from services.trading_service import TradingService
+        from services.market_data_service import MarketDataService
         from services.stock_query_service import StockQueryService
         from services.order_execution_service import OrderExecutionService
         from services.indicator_service import IndicatorService
@@ -567,7 +567,7 @@ class TestWebAppContextInitialization:
 
             # 서비스 타입 검증
             assert isinstance(ctx.broker, BrokerAPIWrapper)
-            assert isinstance(ctx.trading_service, TradingService)
+            assert hasattr(ctx, "market_data_service") and isinstance(ctx.market_data_service, MarketDataService)
             assert isinstance(ctx.stock_query_service, StockQueryService)
             assert isinstance(ctx.order_execution_service, OrderExecutionService)
             assert isinstance(ctx.indicator_service, IndicatorService)

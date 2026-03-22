@@ -6,25 +6,28 @@ from config.DynamicConfig import DynamicConfig
 from typing import List, Dict, Optional, Literal
 from core.performance_profiler import PerformanceProfiler
 from services.notification_service import NotificationService
-from services.trading_service import TradingService
+from services.market_data_service import MarketDataService
 
 
 class StockQueryService:
     """
     주식 현재가, 계좌 잔고, 시가총액 조회 등 데이터 조회 관련 핸들러를 관리하는 클래스입니다.
-    TradingService, Logger, MarketClock 인스턴스를 주입받아 사용합니다.
+    MarketDataService, BrokerAPIWrapper 등 인스턴스를 주입받아 사용합니다.
     """
 
-    def __init__(self, trading_service: TradingService, logger, market_clock, indicator_service=None,
+    def __init__(self, market_data_service: MarketDataService, logger, market_clock, indicator_service=None,
                  ranking_task=None, performance_profiler: Optional[PerformanceProfiler] = None,
-                 notification_service: Optional[NotificationService] = None):
-        self.trading_service = trading_service
+                 notification_service: Optional[NotificationService] = None,
+                 broker_api_wrapper=None):
+        self.broker = broker_api_wrapper
+        self.market_data_service = market_data_service
         self.logger = logger
         self.market_clock = market_clock
         self.indicator_service = indicator_service
         self.ranking_task = ranking_task
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
+        self._latest_prices = {}
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -36,37 +39,37 @@ class StockQueryService:
             return ""
 
     async def get_current_price(self, stock_code: str, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
-        """현재가만 빠르게 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_current_price(stock_code, count_stats=count_stats, caller=caller)
+        """현재가만 빠르게 조회 (MarketDataService 래퍼)."""
+        return await self.market_data_service.get_current_price(stock_code, count_stats=count_stats, caller=caller)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
-        """복수종목 현재가 조회 (최대 30종목, TradingService 래퍼)."""
-        return await self.trading_service.get_multi_price(stock_codes)
+        """복수종목 현재가 조회 (최대 30종목, MarketDataService 래퍼)."""
+        return await self.market_data_service.get_multi_price(stock_codes)
 
     async def get_top_trading_value_stocks(self) -> ResCommonResponse:
-        """거래대금 상위 종목 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_top_trading_value_stocks()
+        """거래대금 상위 종목 조회 (MarketDataService 래퍼)."""
+        return await self.market_data_service.get_top_trading_value_stocks()
 
     async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
-        """상승/하락 상위 종목 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_top_rise_fall_stocks(rise)
+        """상승/하락 상위 종목 조회 (MarketDataService 래퍼)."""
+        return await self.market_data_service.get_top_rise_fall_stocks(rise)
 
     async def get_top_volume_stocks(self) -> ResCommonResponse:
-        """거래량 상위 종목 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_top_volume_stocks()
+        """거래량 상위 종목 조회 (MarketDataService 래퍼)."""
+        return await self.market_data_service.get_top_volume_stocks()
 
     async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
-        """재무비율 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_financial_ratio(stock_code)
+        """재무비율 조회 (MarketDataService 래퍼)."""
+        return await self.market_data_service.get_financial_ratio(stock_code)
 
     async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
-        """체결 정보 조회 (TradingService 래퍼)."""
-        return await self.trading_service.get_stock_conclusion(stock_code)
+        """체결 정보 조회 (MarketDataService 래퍼)."""
+        return await self.market_data_service.get_stock_conclusion(stock_code)
 
     async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown"):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
-        resp: ResCommonResponse = await self.trading_service.get_current_price(stock_code, caller=caller)
+        resp: ResCommonResponse = await self.market_data_service.get_current_price(stock_code, caller=caller)
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
@@ -116,7 +119,7 @@ class StockQueryService:
         view = {
             # 기본 정보
             "code": stock_code,
-            "name": await self.trading_service.get_name_by_code(stock_code),
+            "name": await self.market_data_service.get_name_by_code(stock_code),
             "is_new_high": output.is_new_high, # 신고가 여부 추가
             "is_new_low": output.is_new_low,   # 신저가 여부 추가
             "price": output.stck_prpr,
@@ -188,7 +191,7 @@ class StockQueryService:
 
     async def handle_get_account_balance(self) -> ResCommonResponse:
         """계좌 잔고 조회 요청 및 결과 출력."""
-        resp = await self.trading_service.get_account_balance()
+        resp = await self.broker.get_account_balance()
         if self._notification_service:
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                 await self._notification_service.emit("API", "info", "잔고 조회 완료", "계좌 잔고 조회 성공")
@@ -205,7 +208,7 @@ class StockQueryService:
         self.logger.debug(f"상한가 스캔 요청 (시장={market_code}, limit={limit})")
 
         # 모의투자 / 장시간 검증
-        if getattr(self.trading_service._env, "is_paper_trading", False):
+        if getattr(self.market_data_service._env, "is_paper_trading", False):
             self.logger.warning("모의투자 환경에서는 상한가 조회 미지원")
             return ResCommonResponse(
                 rt_cd=ErrorCode.API_ERROR.value,
@@ -215,7 +218,7 @@ class StockQueryService:
 
         try:
             # 상위 종목 조회
-            top_res: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code, limit)
+            top_res: ResCommonResponse = await self.market_data_service.get_top_market_cap_stocks_code(market_code, limit)
             if not top_res or top_res.rt_cd != ErrorCode.SUCCESS.value:
                 self.logger.error(f"상위 종목 목록 조회 실패: {top_res}")
                 return ResCommonResponse(
@@ -289,7 +292,7 @@ class StockQueryService:
             "change_rate": "0.71"             # API 그대로 문자열 유지
           }
         """
-        res: ResCommonResponse = await self.trading_service.get_current_price(stock_code, caller="StockQueryService")
+        res: ResCommonResponse = await self.market_data_service.get_current_price(stock_code, caller="StockQueryService")
         if not (res and res.rt_cd == ErrorCode.SUCCESS.value):
             self.logger.error(f"{stock_code} 전일대비 등락률 조회 실패: {res}")
             # 실패도 통일된 형태로 반환
@@ -338,7 +341,7 @@ class StockQueryService:
             "vs_open_rate_display": "+0.57%"   # 퍼센트 부호/0 처리
           }
         """
-        res: ResCommonResponse = await self.trading_service.get_current_price(stock_code, caller="StockQueryService")
+        res: ResCommonResponse = await self.market_data_service.get_current_price(stock_code, caller="StockQueryService")
         if not (res and res.rt_cd == ErrorCode.SUCCESS.value):
             self.logger.error(f"{stock_code} 시가대비 조회 실패: {res}")
             return ResCommonResponse(rt_cd="1", msg1="조회 실패", data={"stock_code": stock_code})
@@ -387,7 +390,7 @@ class StockQueryService:
         """
 
         try:
-            res: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code, limit)
+            res: ResCommonResponse = await self.market_data_service.get_top_market_cap_stocks_code(market_code, limit)
             if not res or res.rt_cd != ErrorCode.SUCCESS.value:
                 self.logger.error(f"시가총액 상위 종목 조회 실패: {res}")
                 return ResCommonResponse(
@@ -413,17 +416,16 @@ class StockQueryService:
     async def handle_current_upper_limit_stocks(self):
         """
         전체 종목 중 현재 상한가에 도달한 종목을 조회하여 출력합니다.
-        trading_service 내부의 get_all_stocks_code 및 get_current_upper_limit_stocks 사용.
         """
         self.logger.info("Service - 현재 상한가 종목 조회 요청 ")
 
         try:
-            rise_res: ResCommonResponse = await self.trading_service.get_top_rise_fall_stocks(rise=True)
+            rise_res: ResCommonResponse = await self.market_data_service.get_top_rise_fall_stocks(rise=True)
             if rise_res.rt_cd != ErrorCode.SUCCESS.value:
                 self.logger.warning("상승률 조회 실패.")
                 return rise_res
 
-            upper_limit_stocks: ResCommonResponse = await self.trading_service.get_current_upper_limit_stocks(
+            upper_limit_stocks: ResCommonResponse = await self.market_data_service.get_current_upper_limit_stocks(
                 rise_res.data)
 
             if upper_limit_stocks.rt_cd != ErrorCode.SUCCESS.value:
@@ -438,7 +440,7 @@ class StockQueryService:
     async def handle_get_asking_price(self, stock_code: str, depth: int = 10):
         """종목의 실시간 호가 정보 조회 및 출력."""
         self.logger.info(f"Service - {stock_code} 호가 정보 조회 요청")
-        response = await self.trading_service.get_asking_price(stock_code)
+        response = await self.market_data_service.get_asking_price(stock_code)
 
         if not response or response.rt_cd != ErrorCode.SUCCESS.value:
             msg = response.msg1 if response else "응답 없음"
@@ -480,7 +482,7 @@ class StockQueryService:
     async def handle_get_time_concluded_prices(self, stock_code: str):
         """종목의 시간대별 체결가 정보 조회 및 출력."""
         self.logger.info(f"Service - {stock_code} 시간대별 체결가 조회 요청")
-        response = await self.trading_service.get_time_concluded_prices(stock_code)
+        response = await self.market_data_service.get_time_concluded_prices(stock_code)
 
         if not response or response.rt_cd != ErrorCode.SUCCESS.value:
             msg = response.msg1 if response else "응답 없음"
@@ -521,10 +523,10 @@ class StockQueryService:
                 return cached
 
         category_map = {
-            "rise": ("상승률", self.trading_service.get_top_rise_fall_stocks, True, False),
-            "fall": ("하락률", self.trading_service.get_top_rise_fall_stocks, False, False),
-            "volume": ("거래량", self.trading_service.get_top_volume_stocks, None, False),
-            "trading_value": ("거래대금", self.trading_service.get_top_trading_value_stocks, None, False),
+            "rise": ("상승률", self.market_data_service.get_top_rise_fall_stocks, True, False),
+            "fall": ("하락률", self.market_data_service.get_top_rise_fall_stocks, False, False),
+            "volume": ("거래량", self.market_data_service.get_top_volume_stocks, None, False),
+            "trading_value": ("거래대금", self.market_data_service.get_top_trading_value_stocks, None, False),
         }
 
         # 랭킹 태스크 카테고리 (동기 함수)
@@ -598,7 +600,7 @@ class StockQueryService:
         """
         self.logger.info(f"Service - {etf_code} ETF 정보 조회 요청")
 
-        response = await self.trading_service.get_etf_info(etf_code)
+        response = await self.market_data_service.get_etf_info(etf_code)
 
         # 실패면 그대로 전달 (cli_view에서 실패 출력)
         if not response or response.rt_cd != ErrorCode.SUCCESS.value:
@@ -629,29 +631,18 @@ class StockQueryService:
         )
 
 
-    async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
-        """
-        TradingService를 통해 실시간 스트림을 구독 및 처리합니다.
-
-        :param stock_codes: 실시간 데이터를 구독할 종목 코드 리스트
-        :param fields: "price", "quote" 중 원하는 실시간 데이터 타입 리스트
-        :param duration: 실시간 스트리밍을 유지할 시간 (초)
-        """
-        self.logger.info(f"StockQueryService - 실시간 스트림 요청: 종목={stock_codes}, 필드={fields}, 시간={duration}s")
-        await self.trading_service.handle_realtime_stream(stock_codes, fields, duration)
-
     async def get_ohlcv(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """
-        OHLCV 데이터를 반환합니다 (TradingService 래퍼).
+        OHLCV 데이터를 반환합니다.
         """
         self.logger.info(f"ServiceHandler - {stock_code} OHLCV 데이터 요청 period={period}")
-        return await self.trading_service.get_ohlcv(stock_code, period=period, caller=caller)
+        return await self.market_data_service.get_ohlcv(stock_code, period=period, caller=caller)
 
     async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None) -> ResCommonResponse:
         """
-        특정 기간의 OHLCV 데이터를 조회합니다. (TradingService 래퍼)
+        특정 기간의 OHLCV 데이터를 조회합니다.
         """
-        return await self.trading_service.get_ohlcv_range(stock_code, period, start_date, end_date)
+        return await self.market_data_service.get_ohlcv_range(stock_code, period, start_date, end_date)
 
     async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """
@@ -663,7 +654,7 @@ class StockQueryService:
         try:
             # 1. OHLCV 1회 조회
             t0 = self.pm.start_timer()
-            resp = await self.trading_service.get_ohlcv(stock_code, period=period, caller=caller)
+            resp = await self.market_data_service.get_ohlcv(stock_code, period=period, caller=caller)
             self.pm.log_timer(f"{stock_code} OHLCV 조회", t0)
 
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
@@ -707,7 +698,7 @@ class StockQueryService:
         TradingService.get_recent_daily_ohlcv를 래핑하여 ResCommonResponse 형태로 통일.
         """
         try:
-            rows = await self.trading_service.get_recent_daily_ohlcv(stock_code, limit=limit)
+            rows = await self.market_data_service.get_recent_daily_ohlcv(stock_code, limit=limit)
             if not rows:
                 return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 없음", data=[])
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=rows)
@@ -717,9 +708,9 @@ class StockQueryService:
 
     async def get_intraday_minutes_today(self, stock_code: str, *, input_hour_1: str) -> ResCommonResponse:
         """
-        당일 분봉 조회. TradingService 위임.
+        당일 분봉 조회. MarketDataService 위임.
         """
-        return await self.trading_service.get_intraday_minutes_today(
+        return await self.market_data_service.get_intraday_minutes_today(
             stock_code=stock_code, input_hour_1=input_hour_1
         )
 
@@ -727,9 +718,9 @@ class StockQueryService:
         self, stock_code: str, *, input_date_1: str, input_hour_1: str = ""
     ) -> ResCommonResponse:
         """
-        일별(특정 일자) 분봉 조회. TradingService 위임.
+        일별(특정 일자) 분봉 조회. MarketDataService 위임.
         """
-        return await self.trading_service.get_intraday_minutes_by_date(
+        return await self.market_data_service.get_intraday_minutes_by_date(
             stock_code=stock_code, input_date_1=input_date_1, input_hour_1=input_hour_1
         )
 
@@ -774,7 +765,7 @@ class StockQueryService:
         # 배치 호출 함수 선택
         async def _fetch_batch(cursor_hhmmss: str):
             cursor_hhmmss = self.market_clock.to_hhmmss(cursor_hhmmss)
-            if self.trading_service._env.is_paper_trading:
+            if self.market_data_service._env.is_paper_trading:
                 # 오늘(모의/실전; 배치당 30개)
                 return await self.get_intraday_minutes_today(
                     stock_code, input_hour_1=cursor_hhmmss
@@ -861,47 +852,131 @@ class StockQueryService:
         실시간 프로그램매매(H0STPGM0) 구독 → duration초 수신 → 해지.
         UI는 UserActionExecutor에서만 처리하므로 이 레이어는 순수 위임만 수행.
         """
-        # 1) 웹소켓 연결 (기본 콜백: TradingService 쪽 핸들러)
-        await self.trading_service.connect_websocket()
+        # 1) 웹소켓 연결
+        await self.connect_websocket()
 
         # 2) 구독
-        await self.trading_service.subscribe_program_trading(stock_code)
+        await self.subscribe_program_trading(stock_code)
 
         # 3) 지정 시간 대기
         try:
             await self.market_clock.async_sleep(duration)
         finally:
             # 4) 구독 해지 및 연결 해제 (예외가 나도 정리 보장)
-            await self.trading_service.unsubscribe_program_trading(stock_code)
-            await self.trading_service.disconnect_websocket()
+            await self.unsubscribe_program_trading(stock_code)
+            await self.broker.disconnect_websocket()
 
     def dispatch_realtime_message(self, data: dict):
-        """실시간 메시지를 TradingService로 전달하여 처리."""
-        if self.trading_service:
-            self.trading_service._default_realtime_message_handler(data)
+        """실시간 메시지를 파싱하여 내부 상태 및 캐시 갱신."""
+        self.logger.info(f"실시간 데이터 수신: Type={data.get('type')}, TR_ID={data.get('tr_id')}, Data={data.get('data')}")
+
+        if data.get('type') == 'realtime_price':
+            realtime_data = data.get('data', {})
+            stock_code = realtime_data.get('유가증권단축종목코드')
+            current_price = realtime_data.get('주식현재가')
+            
+            if stock_code and current_price:
+                self._latest_prices[stock_code] = {
+                    "price": current_price,
+                    "change": realtime_data.get('전일대비', '0'),
+                    "rate": realtime_data.get('전일대비율', '0.00'),
+                    "sign": realtime_data.get('전일대비부호', '3')
+                }
+                
+                # 메모리 캐시(StockRepository)에 실시간 틱 데이터 즉시 반영
+                if hasattr(self.market_data_service, '_stock_repo') and self.market_data_service._stock_repo:
+                    try:
+                        cum_vol = realtime_data.get('누적거래량', '0')
+                        vol_int = int(cum_vol) if cum_vol and cum_vol != 'N/A' else 0
+                        self.market_data_service._stock_repo.update_realtime_data(stock_code, float(current_price), vol_int)
+                    except Exception as e:
+                        self.logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
+
+            # 콘솔 출력 (기존 TradingService 유지용)
+            change = realtime_data.get('전일대비', 'N/A')
+            change_sign = realtime_data.get('전일대비부호', 'N/A')
+            change_rate = realtime_data.get('전일대비율', 'N/A')
+            cumulative_volume = realtime_data.get('누적거래량', 'N/A')
+            trade_time = realtime_data.get('주식체결시간', 'N/A')
+            display_message = (
+                f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
+                f"전일대비: {change_sign}{change} ({change_rate}%), 누적량: {cumulative_volume}"
+            )
+            print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+
+        elif data.get('type') == 'realtime_quote':
+            quote_data = data.get('data', {})
+            stock_code = quote_data.get('유가증권단축종목코드', 'N/A')
+            askp1 = quote_data.get('매도호가1', 'N/A')
+            bidp1 = quote_data.get('매수호가1', 'N/A')
+            trade_time = quote_data.get('영업시간', 'N/A')
+            display_message = f"[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1호가: {askp1}, 매수1호가: {bidp1}"
+            print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+
+        elif data.get('type') == 'signing_notice':
+            notice_data = data.get('data', {})
+            order_num = notice_data.get('주문번호', 'N/A')
+            trade_qty = notice_data.get('체결수량', 'N/A')
+            trade_price = notice_data.get('체결단가', 'N/A')
+            trade_time = notice_data.get('주식체결시간', 'N/A')
+            print(f"\n[체결통보] 주문: {order_num}, 수량: {trade_qty}, 단가: {trade_price}, 시간: {trade_time}")
+
+        elif data.get('type') == 'realtime_program_trading':
+            d = data.get('data', {})
+            t = d.get('주식체결시간', 'N/A')
+            ntby = d.get('순매수거래대금', '0')
+            msg = f"[프로그램매매 - {t}] 순매수거래대금: {ntby}"
+            print(f"\r{msg}{' ' * max(0, 80 - len(msg))}", end="")
+
+        else:
+            self.logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
 
     def get_cached_realtime_price(self, code: str) -> Optional[Dict | str]:
-        """TradingService에 캐시된 실시간 현재가 정보를 반환."""
-        if self.trading_service and hasattr(self.trading_service, '_latest_prices'):
-            return self.trading_service._latest_prices.get(code)
-        return None
+        """캐시된 실시간 현재가 정보를 반환."""
+        return self._latest_prices.get(code)
 
     async def connect_websocket(self, callback=None):
-        """웹소켓 연결 (TradingService 위임)."""
-        return await self.trading_service.connect_websocket(callback)
+        """웹소켓 연결 (BrokerAPIWrapper 위임)."""
+        return await self.broker.connect_websocket(callback)
 
     async def subscribe_program_trading(self, code: str):
-        """프로그램 매매 구독 (TradingService 위임)."""
-        return await self.trading_service.subscribe_program_trading(code)
+        """프로그램 매매 구독 (BrokerAPIWrapper 위임)."""
+        return await self.broker.subscribe_program_trading(code)
 
     async def subscribe_realtime_price(self, code: str):
-        """실시간 체결가 구독 (TradingService 위임)."""
-        return await self.trading_service.subscribe_realtime_price(code)
+        """실시간 체결가 구독 (BrokerAPIWrapper 위임)."""
+        return await self.broker.subscribe_realtime_price(code)
 
     async def unsubscribe_program_trading(self, code: str):
-        """프로그램 매매 구독 해지 (TradingService 위임)."""
-        return await self.trading_service.unsubscribe_program_trading(code)
+        """프로그램 매매 구독 해지 (BrokerAPIWrapper 위임)."""
+        return await self.broker.unsubscribe_program_trading(code)
 
     async def unsubscribe_realtime_price(self, code: str):
-        """실시간 체결가 구독 해지 (TradingService 위임)."""
-        return await self.trading_service.unsubscribe_realtime_price(code)
+        """실시간 체결가 구독 해지 (BrokerAPIWrapper 위임)."""
+        return await self.broker.unsubscribe_realtime_price(code)
+        
+    async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
+        """실시간 스트림을 구독 및 처리합니다."""
+        self.logger.info(f"StockQueryService - 실시간 스트림 요청: 종목={stock_codes}, 필드={fields}, 시간={duration}s")
+        try:
+            await self.connect_websocket()
+            for code in stock_codes:
+                if "price" in fields:
+                    await self.subscribe_realtime_price(code)
+                if "quote" in fields:
+                    await self.broker.subscribe_realtime_quote(code)
+            
+            from datetime import datetime, timedelta
+            start_time = datetime.now()
+            while (datetime.now() - start_time) < timedelta(seconds=duration):
+                await self.market_clock.async_sleep(1)
+        except Exception as e:
+            self.logger.exception(f"실시간 스트림 처리 중 오류 발생: {str(e)}")
+        finally:
+            for code in stock_codes:
+                if "price" in fields:
+                    await self.unsubscribe_realtime_price(code)
+                if "quote" in fields:
+                    await self.broker.unsubscribe_realtime_quote(code)
+            await self.broker.disconnect_websocket()
+            self.logger.info("실시간 스트림 종료")

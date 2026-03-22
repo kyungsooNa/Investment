@@ -12,7 +12,7 @@ def mock_deps():
         ("env", patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True)),
         ("tm", patch("view.web.web_app_initializer.MarketClock", autospec=True)),
         ("broker", patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True)),
-        ("ts", patch("view.web.web_app_initializer.TradingService", autospec=True)),
+        ("mds", patch("view.web.web_app_initializer.MarketDataService", autospec=True)),
         ("sqs", patch("view.web.web_app_initializer.StockQueryService", autospec=True)),
         ("oes", patch("view.web.web_app_initializer.OrderExecutionService", autospec=True)),
         ("vtm", patch("view.web.web_app_initializer.VirtualTradeRepository", autospec=True)),
@@ -88,7 +88,7 @@ async def test_initialize_services_success(mock_deps):
     assert ctx.initialized is True
     env_instance.set_trading_mode.assert_called_with(True)
     mock_deps["broker"].assert_called()
-    mock_deps["ts"].assert_called()
+    mock_deps["mds"].assert_called()
     mock_deps["ind"].assert_called()
     mock_deps["sqs"].assert_called()
     mock_deps["oes"].assert_called()

@@ -11,15 +11,13 @@ from services.market_calendar_service import MarketCalendarService
 
 @pytest.fixture
 def mock_deps():
-    trading_service = MagicMock()
-    trading_service.disconnect_websocket = AsyncMock()
-    trading_service.is_websocket_receive_alive = MagicMock(return_value=True)
-
     stock_query_service = MagicMock()
     stock_query_service.connect_websocket = AsyncMock(return_value=True)
     stock_query_service.subscribe_program_trading = AsyncMock()
     stock_query_service.subscribe_realtime_price = AsyncMock()
-    stock_query_service.trading_service = trading_service
+    stock_query_service.broker = MagicMock()
+    stock_query_service.broker.disconnect_websocket = AsyncMock()
+    stock_query_service.broker.is_websocket_receive_alive = MagicMock(return_value=True)
 
     realtime_data_service = MagicMock()
     realtime_data_service.get_subscribed_codes.return_value = []
@@ -31,15 +29,14 @@ def mock_deps():
 
     logger = MagicMock()
 
-    return stock_query_service, trading_service, realtime_data_service, market_calendar_service, logger
+    return stock_query_service, realtime_data_service, market_calendar_service, logger
 
 
 @pytest.fixture
 def watchdog_task(mock_deps):
-    stock_query_service, trading_service, realtime_data_service, market_calendar_service, logger = mock_deps
+    stock_query_service, realtime_data_service, market_calendar_service, logger = mock_deps
     return WebSocketWatchdogTask(
         stock_query_service=stock_query_service,
-        trading_service=trading_service,
         realtime_data_service=realtime_data_service,
         market_calendar_service=market_calendar_service,
         logger=logger,
@@ -93,8 +90,8 @@ async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
     svc = watchdog_task
     svc.mcs.is_market_open_now.return_value = False
     svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
-    svc._trading_service.is_websocket_receive_alive.return_value = True
-    svc._trading_service.disconnect_websocket = AsyncMock()
+    svc._stock_query_service.broker.is_websocket_receive_alive.return_value = True
+    svc._stock_query_service.broker.disconnect_websocket = AsyncMock()
 
     async def sleep_side_effect(seconds):
         if sleep_side_effect.counter == 0:
@@ -109,7 +106,7 @@ async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
         except asyncio.CancelledError:
             pass
 
-    svc._trading_service.disconnect_websocket.assert_awaited_once()
+    svc._stock_query_service.broker.disconnect_websocket.assert_awaited_once()
     svc._logger.info.assert_any_call("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
 
 
@@ -120,7 +117,7 @@ async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
     svc.mcs.is_market_open_now.return_value = True
     svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
     svc._realtime_data_service.last_data_ts = time.time() - 130  # 임계값 120초 초과
-    svc._trading_service.is_websocket_receive_alive.return_value = True  # Zombie 상태
+    svc._stock_query_service.broker.is_websocket_receive_alive.return_value = True  # Zombie 상태
 
     svc.force_reconnect_program_trading = AsyncMock()
 
@@ -152,7 +149,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
 
     await svc.force_reconnect_program_trading()
 
-    svc._stock_query_service.trading_service.disconnect_websocket.assert_awaited_once()
+    svc._stock_query_service.broker.disconnect_websocket.assert_awaited_once()
     assert svc._stock_query_service.connect_websocket.call_count == 2
     assert svc._stock_query_service.subscribe_program_trading.call_count == 2
     assert svc._stock_query_service.subscribe_realtime_price.call_count == 2
@@ -242,7 +239,7 @@ async def test_program_trading_watchdog_sets_market_open_false(watchdog_task):
     svc = watchdog_task
     svc.mcs.is_market_open_now.return_value = False
     svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
-    svc._trading_service.is_websocket_receive_alive.return_value = False
+    svc._stock_query_service.broker.is_websocket_receive_alive.return_value = False
 
     async def sleep_side_effect(seconds):
         if sleep_side_effect.counter == 0:
@@ -267,7 +264,7 @@ async def test_program_trading_watchdog_sets_market_open_true(watchdog_task):
     svc.mcs.is_market_open_now.return_value = True
     svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
     svc._realtime_data_service.last_data_ts = time.time() - 1.0  # 최근 수신
-    svc._trading_service.is_websocket_receive_alive.return_value = True
+    svc._stock_query_service.broker.is_websocket_receive_alive.return_value = True
     svc.force_reconnect_program_trading = AsyncMock()
 
     async def sleep_side_effect(seconds):

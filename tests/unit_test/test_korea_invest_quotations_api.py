@@ -1041,6 +1041,144 @@ async def test_inquire_daily_itemchartprice_item_parsing_error(mock_quotations):
     assert "차트 데이터 항목 파싱 오류" in mock_quotations._logger.warning.call_args[0][0]
 
 @pytest.mark.asyncio
+async def test_get_price_summary_output_empty_dict(mock_quotations):
+    """get_price_summary: output이 빈 딕셔너리일 때 (Line 150-152)"""
+    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {}}
+    ))
+    
+    result = await mock_quotations.get_price_summary("005930")
+    
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert "output 데이터 없음" in result.msg1
+    mock_quotations._logger.warning.assert_called()
+
+@pytest.mark.asyncio
+async def test_get_price_summary_status_vs(mock_quotations):
+    """get_price_summary: status code에 'vs'가 포함된 경우 (Line 180)"""
+    mock_output = _create_dummy_output({
+        "stck_oprc": "1000", "stck_prpr": "1100", "prdy_ctrt": "10.0",
+        "new_hgpr_lwpr_cls_code": "1 vs 2"
+    })
+    
+    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": mock_output}
+    ))
+    
+    await mock_quotations.get_price_summary("005930")
+    
+    # 로그 확인
+    args_list = mock_quotations._logger.warning.call_args_list
+    assert any("신고/신저가 불일치" in str(args) for args in args_list)
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_data_empty_list(mock_quotations):
+    """inquire_daily_itemchartprice: data가 빈 리스트일 때 (Line 382-384)"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
+    ))
+    
+    result = await mock_quotations.inquire_daily_itemchartprice("005930", "20250101")
+    
+    assert result.rt_cd == ErrorCode.MISSING_KEY.value
+    assert "데이터가 비어있음" in result.msg1
+    mock_quotations._logger.warning.assert_called()
+
+@pytest.mark.asyncio
+async def test_get_top_rise_fall_stocks_exception(mock_quotations):
+    """get_top_rise_fall_stocks: 파싱 중 예외 발생 (Line 590)"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data="string_data" # dict가 아니므로 TypeError 유발
+    ))
+    
+    result = await mock_quotations.get_top_rise_fall_stocks(rise=True)
+    
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    mock_quotations._logger.error.assert_called()
+
+@pytest.mark.asyncio
+async def test_get_multi_price_invalid_item(mock_quotations):
+    """get_multi_price: 리스트 내 비정상 아이템 (Line 742)"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", 
+        data={"output": [{"stck_shrn_iscd": "005930", "stck_prpr": "1000"}, "string_item"]}
+    ))
+    
+    result = await mock_quotations.get_multi_price(["005930"])
+    
+    assert len(result.data) == 1
+    assert result.data[0]["stck_shrn_iscd"] == "005930"
+
+@pytest.mark.asyncio
+async def test_get_price_summary_output_empty_dict(mock_quotations):
+    """get_price_summary: output이 빈 딕셔너리일 때 (Line 150-152)"""
+    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {}}
+    ))
+    
+    result = await mock_quotations.get_price_summary("005930")
+    
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert "output 데이터 없음" in result.msg1
+    mock_quotations._logger.warning.assert_called()
+
+@pytest.mark.asyncio
+async def test_get_price_summary_status_vs(mock_quotations):
+    """get_price_summary: status code에 'vs'가 포함된 경우 (Line 180)"""
+    mock_output = _create_dummy_output({
+        "stck_oprc": "1000", "stck_prpr": "1100", "prdy_ctrt": "10.0",
+        "new_hgpr_lwpr_cls_code": "1 vs 2"
+    })
+    
+    mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": mock_output}
+    ))
+    
+    await mock_quotations.get_price_summary("005930")
+    
+    # 로그 확인
+    args_list = mock_quotations._logger.warning.call_args_list
+    assert any("신고/신저가 불일치" in str(args) for args in args_list)
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_data_empty_list(mock_quotations):
+    """inquire_daily_itemchartprice: data가 빈 리스트일 때 (Line 382-384)"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
+    ))
+    
+    result = await mock_quotations.inquire_daily_itemchartprice("005930", "20250101")
+    
+    assert result.rt_cd == ErrorCode.MISSING_KEY.value
+    assert "데이터가 비어있음" in result.msg1
+    mock_quotations._logger.warning.assert_called()
+
+@pytest.mark.asyncio
+async def test_get_top_rise_fall_stocks_exception(mock_quotations):
+    """get_top_rise_fall_stocks: 파싱 중 예외 발생 (Line 590)"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data="string_data" # dict가 아니므로 TypeError 유발
+    ))
+    
+    result = await mock_quotations.get_top_rise_fall_stocks(rise=True)
+    
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    mock_quotations._logger.error.assert_called()
+
+@pytest.mark.asyncio
+async def test_get_multi_price_invalid_item(mock_quotations):
+    """get_multi_price: 리스트 내 비정상 아이템 (Line 742)"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", 
+        data={"output": [{"stck_shrn_iscd": "005930", "stck_prpr": "1000"}, "string_item"]}
+    ))
+    
+    result = await mock_quotations.get_multi_price(["005930"])
+    
+    assert len(result.data) == 1
+    assert result.data[0]["stck_shrn_iscd"] == "005930"
+
+@pytest.mark.asyncio
 async def test_get_asking_price_failure(mock_quotations):
     """get_asking_price: API 실패"""
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
