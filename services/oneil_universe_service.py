@@ -27,8 +27,8 @@ class OneilUniverseService:
     """오닐 전략 유니버스 관리 서비스.
     
     역할:
-      1. Pool A (전일 기준 우량주) 생성 및 로드
-      2. Pool B (당일 급등주) 실시간 발굴
+      1. 전일 기준 우량주 생성 및 로드 (Pool A)
+      2. 당일 급등주 실시간 발굴 (Pool B)
       3. Watchlist (감시 대상 60종목) 병합 및 제공
       4. 마켓 타이밍 판단
     """
@@ -63,6 +63,22 @@ class OneilUniverseService:
         # 마켓 타이밍 캐시
         self._market_timing_cache: Dict[str, bool] = {}
         self._market_timing_date: str = ""
+
+        # 전일 기준 우량주 생성 진행률
+        self._generation_progress: Dict = {
+            "running": False,
+            "phase": None,
+            "processed": 0,
+            "total": 0,
+            "passed": 0,
+            "selected": 0,
+            "elapsed": 0.0,
+        }
+
+    @property
+    def generation_progress(self) -> Dict:
+        """전일 기준 우량주 생성 진행률 스냅샷 반환."""
+        return dict(self._generation_progress)
 
     async def get_watchlist(self, logger: Optional[logging.Logger] = None) -> Dict[str, OSBWatchlistItem]:
         """현재 유효한 워치리스트를 반환 (캐싱 + 자동 갱신)."""
@@ -107,12 +123,12 @@ class OneilUniverseService:
 
         # 1) Pool A 로드
         if not self._pool_a_loaded:
-            raw = self._load_pool_a()
+            raw = self._load_premium_stocks()
             self._pool_a_items = {item.code: item for item in raw}
             self._pool_a_loaded = True
 
-        # 2) Pool B 빌드 (실시간 랭킹)
-        pool_b_items = await self._build_pool_b(logger=logger)
+        # 2) 당일 급등주 빌드 (실시간 랭킹)
+        pool_b_items = await self._build_daily_surge_pool(logger=logger)
 
         # 3) 병합
         merged: Dict[str, OSBWatchlistItem] = dict(self._pool_a_items)
@@ -147,14 +163,14 @@ class OneilUniverseService:
         }
         logger.info({
             "event": "build_watchlist_finished",
-            "pool_a": len(self._pool_a_items),
-            "pool_b": len(pool_b_items),
+            "premium_stocks": len(self._pool_a_items),
+            "daily_surge_stocks": len(pool_b_items),
             "final_count": len(self._watchlist)
         })
         self.pm.log_timer("OneilUniverseService._build_watchlist", t_start, threshold=5.0)
 
-    async def _build_pool_b(self, logger: Optional[logging.Logger] = None) -> Dict[str, OSBWatchlistItem]:
-        """Pool B: 실시간 랭킹 기반 종목 발굴."""
+    async def _build_daily_surge_pool(self, logger: Optional[logging.Logger] = None) -> Dict[str, OSBWatchlistItem]:
+        """당일 급등주: 실시간 랭킹 기반 종목 발굴."""
         logger = logger or self._logger
         t_start = self.pm.start_timer()
         # 3가지 랭킹 병합
@@ -208,7 +224,7 @@ class OneilUniverseService:
         # Pool B 스코어링 후 정렬된 상위 종목 로그
         top_n_for_log = 10
         logger.debug({
-            "event": "pool_b_sorted",
+            "event": "daily_surge_pool_sorted",
             "top_n": top_n_for_log,
             "items": [
                 {
@@ -220,8 +236,8 @@ class OneilUniverseService:
             ]
         })
 
-        self.pm.log_timer("OneilUniverseService._build_pool_b", t_start, threshold=3.0)
-        return {item.code: item for item in items[:self._cfg.pool_b_size]}
+        self.pm.log_timer("OneilUniverseService._build_daily_surge_pool", t_start, threshold=3.0)
+        return {item.code: item for item in items[:self._cfg.daily_surge_size]}
 
     async def _analyze_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
         """개별 종목 분석 (OHLCV, BB, RS 등)."""
@@ -283,7 +299,7 @@ class OneilUniverseService:
         stck_llam = cap_billion * 100_000_000  # 억 단위 -> 원 단위 변환
 
         # 필터: 시가총액 (2천억 ~ 2조)
-        if not (self._cfg.pool_a_market_cap_min <= stck_llam <= self._cfg.pool_a_market_cap_max):
+        if not (self._cfg.premium_stocks_cap_min <= stck_llam <= self._cfg.premium_stocks_cap_max):
             if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
             return None
 
@@ -345,16 +361,21 @@ class OneilUniverseService:
             rs_return_3m=rs_return
         )
 
-    # ── Pool A 생성 (배치) ─────────────────────────────────────────
+    # ── 전일 기준 우량주 생성 (배치) ─────────────────────────────────────────
 
-    async def generate_pool_a(self) -> dict:
-        """전체 종목 스캔 -> Pool A 생성 및 파일 저장."""
-        # 전용 로거 생성 (logs/strategies/oneil/YYYYMMDD_HHMMSS_generate_poolA.log.json)
-        pool_a_logger = get_strategy_logger("generate_poolA", sub_dir="oneil_pool")
+    async def generate_premium_watchlist(self, trading_date: Optional[str] = None) -> dict:
+        """전체 종목 스캔 -> 전일 기준 우량주 생성 및 파일 저장.
+
+        Args:
+            trading_date: 기준 거래일(YYYYMMDD). 지정하면 파일의 generated_date로 저장.
+                          None이면 현재 날짜를 사용 (직접 호출 시 하위 호환).
+        """
+        # 전용 로거 생성 (logs/strategies/oneil/YYYYMMDD_HHMMSS_generate_premium_watchlist.log.json)
+        pool_a_logger = get_strategy_logger("generate_premium_watchlist", sub_dir="oneil_pool")
         pool_a_logger.setLevel(logging.DEBUG)
 
-        self._logger.info({"event": "generate_pool_a_started"})
-        pool_a_logger.info({"event": "generate_pool_a_started"})
+        self._logger.info({"event": "generate_premium_watchlist_started"})
+        pool_a_logger.info({"event": "generate_premium_watchlist_started"})
 
         start_time = time.time()
         start_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
@@ -369,8 +390,13 @@ class OneilUniverseService:
                 all_stocks.append((code, name, market))
 
         total_stocks = len(all_stocks)
-        print(f"[Pool A 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
+        print(f"[전일 기준 우량주 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
         pool_a_logger.info({"event": "1st_filter_start", "total_stocks": total_stocks})
+        self._generation_progress = {
+            "running": True, "phase": "1차_필터(시총)",
+            "processed": 0, "total": total_stocks,
+            "passed": 0, "selected": 0, "elapsed": 0.0,
+        }
 
         # 2. 1차 필터 (시총)
         passed_first = []
@@ -405,7 +431,7 @@ class OneilUniverseService:
                     val = int(val_llam or 0)
                     cap = val if val > 100_000_000 else val * 100_000_000
                 
-                if self._cfg.pool_a_market_cap_min <= cap <= self._cfg.pool_a_market_cap_max:
+                if self._cfg.premium_stocks_cap_min <= cap <= self._cfg.premium_stocks_cap_max:
                     passed_first.append((code, name, market))
                     pool_a_logger.debug({"event": "pass_1st", "code": code, "name": name, "market_cap(억)": cap/100_000_000})
                 else:
@@ -418,11 +444,17 @@ class OneilUniverseService:
                 elapsed = time.time() - start_time
                 print(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "1st_filter_progress", "processed": processed_count, "total": total_stocks, "passed": len(passed_first)})
+                self._generation_progress.update({
+                    "processed": processed_count, "passed": len(passed_first), "elapsed": round(elapsed, 1),
+                })
 
 
-        print(f"[Pool A 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
+        print(f"[전일 기준 우량주 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
         pool_a_logger.info({"event": "1st_filter_done", "passed": len(passed_first)})
         pool_a_logger.info({"event": "2nd_filter_start", "total_candidates": len(passed_first)})
+        self._generation_progress.update({
+            "phase": "2차_필터(지표)", "processed": 0, "total": len(passed_first), "selected": 0,
+        })
 
         # 3. 2차 필터 (상세 분석)
         items = []
@@ -440,9 +472,13 @@ class OneilUniverseService:
                 elapsed = time.time() - start_time
                 print(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "2nd_filter_progress", "processed": processed_count_2, "total": total_passed, "selected": len(items)})
+                self._generation_progress.update({
+                    "processed": processed_count_2, "selected": len(items), "elapsed": round(elapsed, 1),
+                })
 
 
         pool_a_logger.info({"event": "2nd_filter_done", "selected": len(items)})
+        self._generation_progress.update({"phase": "스코어링"})
 
         # 4. 스코어링 및 저장
         self._compute_rs_scores(items, logger=pool_a_logger)
@@ -451,22 +487,23 @@ class OneilUniverseService:
         pool_a_logger.info({"event": "scoring_done"})
 
         sort_key = lambda x: (x.total_score, self._calc_turnover_ratio(x))
-        kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_kospi_market]
-        kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_kosdaq_market]
+        kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.premium_stocks_kospi_size]
+        kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.premium_stocks_kosdaq_size]
 
-        self._save_pool_a(kospi, kosdaq)
+        self._save_premium_stocks(kospi, kosdaq, trading_date=trading_date)
         pool_a_logger.info({"event": "save_done", "kospi_count": len(kospi), "kosdaq_count": len(kosdaq)})
 
         total_elapsed = time.time() - start_time
-        print(f"[Pool A 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
-        pool_a_logger.info({"event": "generate_pool_a_finished", "elapsed_seconds": total_elapsed})
-        
+        print(f"[전일 기준 우량주 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
+        pool_a_logger.info({"event": "generate_premium_watchlist_finished", "elapsed_seconds": total_elapsed})
+        self._generation_progress.update({"running": False, "phase": None, "elapsed": round(total_elapsed, 1)})
+
         # 시총 범위 문자열 생성 (예: 2000억 ~ 2조)
-        min_cap = self._cfg.pool_a_market_cap_min // 100000000
-        max_cap = self._cfg.pool_a_market_cap_max // 100000000
+        min_cap = self._cfg.premium_stocks_cap_min // 100000000
+        max_cap = self._cfg.premium_stocks_cap_max // 100000000
         cap_str = f"{min_cap}억 ~ {max_cap}억"
-        if self._cfg.pool_a_market_cap_max >= 1000000000000:
-             cap_str = f"{min_cap}억 ~ {self._cfg.pool_a_market_cap_max // 1000000000000}조"
+        if self._cfg.premium_stocks_cap_max >= 1000000000000:
+             cap_str = f"{min_cap}억 ~ {self._cfg.premium_stocks_cap_max // 1000000000000}조"
 
         return {
             "kospi_count": len(kospi), "kosdaq_count": len(kosdaq),
@@ -612,36 +649,48 @@ class OneilUniverseService:
                 })
         logger.debug({"event": "compute_total_scores_finished"})
 
-    def _save_pool_a(self, kospi, kosdaq):
+    def _save_premium_stocks(self, kospi, kosdaq, trading_date: Optional[str] = None):
+        """전일 기준 우량주를 파일에 저장한다.
+
+        Args:
+            trading_date: 기준 거래일(YYYYMMDD). generated_date 필드에 기록.
+                          None이면 현재 날짜를 사용.
+        """
         try:
-            os.makedirs(os.path.dirname(self._cfg.pool_a_file), exist_ok=True)
+            os.makedirs(os.path.dirname(self._cfg.premium_stocks_file), exist_ok=True)
+            now = self._tm.get_current_kst_time()
             data = {
-                "generated_date": self._tm.get_current_kst_time().strftime("%Y%m%d"),
+                # generated_date: 어떤 거래일 기준으로 생성됐는지 (스킵 로직의 기준)
+                "generated_date": trading_date or now.strftime("%Y%m%d"),
+                # generated_at: 실제 파일을 저장한 시각 (주말/공휴일에 생성 가능)
+                "generated_at": now.strftime("%Y-%m-%dT%H:%M:%S"),
                 "kospi": [asdict(i) for i in kospi],
                 "kosdaq": [asdict(i) for i in kosdaq]
             }
-            with open(self._cfg.pool_a_file, "w", encoding="utf-8") as f:
+            with open(self._cfg.premium_stocks_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            self._logger.error(f"Failed to save Pool A: {e}")
+            self._logger.error(f"Failed to save premium stocks: {e}")
 
-    def _load_pool_a(self) -> List[OSBWatchlistItem]:
-        if not os.path.exists(self._cfg.pool_a_file):
+    def _load_premium_stocks(self) -> List[OSBWatchlistItem]:
+        if not os.path.exists(self._cfg.premium_stocks_file):
             return []
         try:
-            with open(self._cfg.pool_a_file, "r", encoding="utf-8") as f:
+            with open(self._cfg.premium_stocks_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             # 날짜 체크 (오늘/어제만 유효)
             gen_date = data.get("generated_date", "")
-            
+
             try:
                 gen_dt = datetime.strptime(gen_date, "%Y%m%d").date()
                 curr_dt = self._tm.get_current_kst_time().date()
-                if (curr_dt - gen_dt).days > 1:
+                # 7일 이내만 유효 (한국 최장 연휴 5일 + 여유)
+                # generated_date는 거래일 기준이므로 월요일에 금요일 파일도 유효
+                if (curr_dt - gen_dt).days > 7:
                     return []
             except ValueError:
                 return []
-            
+
             items = []
             for k in ["kospi", "kosdaq"]:
                 for d in data.get(k, []):
@@ -649,6 +698,20 @@ class OneilUniverseService:
             return items
         except Exception:
             return []
+
+    def get_premium_stocks_meta(self) -> Optional[dict]:
+        """저장된 전일 기준 우량주 파일의 메타데이터 반환. 파일 없으면 None."""
+        if not os.path.exists(self._cfg.premium_stocks_file):
+            return None
+        try:
+            with open(self._cfg.premium_stocks_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                "generated_date": data.get("generated_date"),
+                "generated_at": data.get("generated_at"),
+            }
+        except Exception:
+            return None
 
     @staticmethod
     def _calc_turnover_ratio(item: OSBWatchlistItem) -> float:

@@ -141,12 +141,12 @@ async def test_build_watchlist_sorted_logs(service, mock_components):
     # Pool A: 100점
     item_a = OSBWatchlistItem(code="A1", name="NA1", market="KOSPI", high_20d=100, ma_20d=90, ma_50d=80, avg_vol_20d=1000, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=120, avg_trading_value_5d=100)
     item_a.total_score = 100
-    service._load_pool_a = MagicMock(return_value=[item_a])
+    service._load_premium_stocks = MagicMock(return_value=[item_a])
     
     # Pool B: 50점
     item_b = OSBWatchlistItem(code="B1", name="NB1", market="KOSDAQ", high_20d=100, ma_20d=90, ma_50d=80, avg_vol_20d=1000, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=120, avg_trading_value_5d=100)
     item_b.total_score = 50
-    service._build_pool_b = AsyncMock(return_value={"B1": item_b})
+    service._build_daily_surge_pool = AsyncMock(return_value={"B1": item_b})  # noqa: F841
     
     await service._build_watchlist()
     
@@ -160,12 +160,12 @@ async def test_build_watchlist_sorted_logs(service, mock_components):
     assert sorted_log["items"][1]["code"] == "B1"
 
 @pytest.mark.asyncio
-async def test_build_pool_b_parallel_execution(mock_components):
-    """_build_pool_b 메서드가 후보 종목들을 병렬로 처리하여 수집하는지 검증"""
+async def test_build_daily_surge_pool_parallel_execution(mock_components):
+    """_build_daily_surge_pool 메서드가 후보 종목들을 병렬로 처리하여 수집하는지 검증"""
     _, sqs, indicator, mapper, tm, logger = mock_components
     
     # 설정: 청크 사이즈를 2로 설정하여 5개 후보가 3번의 청크(2, 2, 1)로 나뉘어 처리되는지 간접 확인
-    config = OneilUniverseConfig(api_chunk_size=2, pool_b_size=10)
+    config = OneilUniverseConfig(api_chunk_size=2, daily_surge_size=10)
     
     # PerformanceProfiler Mock
     pm = MagicMock()
@@ -218,7 +218,7 @@ async def test_build_pool_b_parallel_execution(mock_components):
     service._analyze_candidate = AsyncMock(side_effect=mock_analyze)
     
     # 실행
-    pool_b = await service._build_pool_b()
+    pool_b = await service._build_daily_surge_pool()
     
     # 검증
     # 총 5개 후보에 대해 analyze가 호출되었는지 확인

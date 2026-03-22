@@ -32,16 +32,16 @@ class OneilUniverseConfig(BaseStrategyConfig):
     profit_growth_score_points: float = 20.0
     api_chunk_size: int = 10
 
-    # Pool A/B 설정
-    pool_a_file: str = os.path.join("data", "osb_pool_a.json")
-    pool_a_size_per_kospi_market: int = 20
-    pool_a_size_per_kosdaq_market: int = 40
+    # 전일기준우량주 / 당일급등주 설정
+    premium_stocks_file: str = os.path.join("data", "premium_stocks.json")
+    premium_stocks_kospi_size: int = 20
+    premium_stocks_kosdaq_size: int = 40
 
-    pool_a_market_cap_min: int = 200_000_000_000 # 2000억
-    pool_a_market_cap_max: int = 20_000_000_000_000 # 20조
-    pool_b_size: int = 30
-    
-    max_watchlist: int = pool_a_size_per_kospi_market + pool_a_size_per_kosdaq_market + pool_b_size # 최대 감시 종목 수
+    premium_stocks_cap_min: int = 200_000_000_000   # 2000억
+    premium_stocks_cap_max: int = 20_000_000_000_000 # 20조
+    daily_surge_size: int = 30
+
+    max_watchlist: int = premium_stocks_kospi_size + premium_stocks_kosdaq_size + daily_surge_size # 최대 감시 종목 수
 
     # 돌파 기준 기간 (데이터 수집용)
     high_breakout_period: int = 20
