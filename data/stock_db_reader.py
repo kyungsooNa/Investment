@@ -5,8 +5,8 @@ import os
 def view_market_data():
     # 에러 로그에 남은 실제 경로를 반영하여 절대 경로로 지정했습니다.
     # 만약 db 파일들이 다른 곳에 있다면 이 경로를 수정해 주세요.
-    db_path = r"c:\Users\Kyungsoo\Documents\Code\Investment\data\market_data.db"
-    
+    db_path = r"c:\Users\Kyungsoo\Documents\Code\Investment\data\stocks.db"
+
     print(f"[{db_path}] 파일 위치를 확인합니다...")
 
     # 1. 파일 존재 여부 검사
