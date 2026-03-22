@@ -135,3 +135,111 @@ async function updateCacheStatus() {
 
 document.addEventListener('DOMContentLoaded', updateCacheStatus);
 setInterval(updateCacheStatus, 5000);
+
+// ── 백그라운드 태스크 모니터링 ──────────────────────────────
+
+const STATE_BADGE = {
+    running:   { label: 'RUNNING',   color: 'var(--success-color, #4CAF50)' },
+    suspended: { label: 'SUSPENDED', color: 'orange' },
+    stopped:   { label: 'STOPPED',   color: 'var(--danger-color, #f44336)' },
+    idle:      { label: 'IDLE',      color: '#888' },
+};
+
+const PRIORITY_LABEL = {
+    0:   'CRITICAL',
+    10:  'HIGH',
+    50:  'NORMAL',
+    100: 'LOW',
+};
+
+function renderProgressCell(progress, taskName) {
+    if (!progress) return '-';
+
+    // ── 웹소켓 워치독: 장중 / 장 마감 표시 ──
+    if (taskName === 'websocket_watchdog') {
+        const isOpen = progress.market_open;
+        let marketBadge;
+        if (isOpen === null || isOpen === undefined) {
+            marketBadge = '<span style="background:#888; color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">확인 중</span>';
+        } else if (isOpen) {
+            marketBadge = '<span style="background:var(--success-color,#4CAF50); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">장중</span>';
+        } else {
+            marketBadge = '<span style="background:#888; color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">장 마감</span>';
+        }
+        const sub = progress.subscribed_codes ?? 0;
+        const gap = (progress.data_gap_sec !== null && progress.data_gap_sec !== undefined)
+            ? ` · 갭 ${progress.data_gap_sec}s` : '';
+        return `${marketBadge} <span style="font-size:0.85em; color:#888;">구독 ${sub}종목${gap}</span>`;
+    }
+
+    // ── 전략 스케줄러: 활성 전략 수 표시 ──
+    if (taskName === 'strategy_scheduler') {
+        const active = progress.active_strategies ?? 0;
+        const total = progress.total_strategies ?? 0;
+        if (total === 0) return '<span style="color:#888; font-size:0.88em;">전략 없음</span>';
+        const color = active > 0 ? 'var(--success-color,#4CAF50)' : '#888';
+        return `<span style="font-size:0.88em; color:${color}; font-weight:bold;">활성 ${active} / ${total} 전략</span>`;
+    }
+
+    // ── 배치 태스크: 수집 진행률 ──
+    const total = progress.total ?? 0;
+    const processed = progress.processed ?? 0;
+    const isRunning = progress.running;
+
+    if (total === 0) {
+        return `<span style="color:#888; font-size:0.88em;">대기 중</span>`;
+    }
+
+    const pct = Math.min(100, Math.round((processed / total) * 100));
+    const elapsed = progress.elapsed ? ` · ${progress.elapsed.toFixed(0)}s` : '';
+    const detail = progress.updated !== undefined
+        ? `갱신 ${(progress.updated || 0).toLocaleString()} / 스킵 ${(progress.skipped || 0).toLocaleString()}`
+        : `수집 ${(progress.collected || 0).toLocaleString()}`;
+    const barColor = isRunning ? 'var(--primary-color,#2196F3)' : 'var(--success-color,#4CAF50)';
+    const statusLabel = isRunning ? '수집 중' : '완료';
+    return `
+        <div style="font-size:0.85em; margin-bottom:3px;">
+            ${statusLabel} · ${processed.toLocaleString()} / ${total.toLocaleString()} (${pct}%)${elapsed}
+        </div>
+        <div style="background:#e0e0e0; border-radius:4px; height:8px; width:100%;">
+            <div style="background:${barColor}; height:8px; border-radius:4px; width:${pct}%;"></div>
+        </div>
+        <div style="font-size:0.8em; color:#888; margin-top:2px;">${detail}</div>
+    `;
+}
+
+async function updateBackgroundStatus() {
+    try {
+        const response = await fetch('/api/background/status');
+        if (!response.ok) return;
+        const result = await response.json();
+        if (!result.success || !result.data) return;
+
+        const tbody = document.getElementById('background-tasks-body');
+        if (!tbody) return;
+
+        if (result.data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">등록된 태스크 없음</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = result.data.map(task => {
+            const badge = STATE_BADGE[task.state] || { label: task.state.toUpperCase(), color: '#888' };
+            const priorityLabel = PRIORITY_LABEL[task.priority] ?? task.priority;
+            const progressHtml = renderProgressCell(task.progress, task.name);
+            return `
+                <tr>
+                    <td style="font-weight:bold; color:var(--text-color);">${task.name}</td>
+                    <td><span style="background:${badge.color}; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em; font-weight:bold;">${badge.label}</span></td>
+                    <td style="font-size:0.88em; color:#888;">${priorityLabel}</td>
+                    <td>${progressHtml}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (e) {
+        console.error('백그라운드 태스크 상태 조회 오류:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', updateBackgroundStatus);
+setInterval(updateBackgroundStatus, 5000);

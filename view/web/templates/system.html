@@ -4,6 +4,26 @@
 <div class="section">
     <h2 style="margin-bottom: 20px;">⚙️ 시스템 상태 모니터링</h2>
     <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+        <!-- 백그라운드 태스크 모니터링 -->
+        <div class="card" style="padding: 20px; flex: 1; min-width: 340px;">
+            <h3 style="margin-top: 0; margin-bottom: 16px;">🔄 백그라운드 태스크 현황</h3>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>태스크명</th>
+                            <th>상태</th>
+                            <th>우선순위</th>
+                            <th style="min-width: 180px;">진행률</th>
+                        </tr>
+                    </thead>
+                    <tbody id="background-tasks-body">
+                        <tr><td colspan="4" style="text-align:center; color: #888;">로딩 중...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- 캐시 모니터링 대시보드 -->
         <div class="card cache-status-container" style="padding: 20px; flex: 1; min-width: 300px;">
             <h3 style="margin-top: 0; margin-bottom: 16px;">📊 Stock 메모리 캐시 상태</h3>
@@ -37,5 +57,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/system.js?v=3"></script>
+<script src="/static/js/system.js?v=5"></script>
 {% endblock %}

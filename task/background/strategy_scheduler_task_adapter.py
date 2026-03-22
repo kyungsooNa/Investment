@@ -3,6 +3,8 @@
 StrategyScheduler를 SchedulableTask 인터페이스로 래핑하는 어댑터.
 기존 StrategyScheduler 코드를 변경하지 않고 BackgroundScheduler에 등록할 수 있게 한다.
 """
+from typing import Dict
+
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from scheduler.strategy_scheduler import StrategyScheduler
 
@@ -57,3 +59,24 @@ class StrategySchedulerTaskAdapter(SchedulableTask):
         """전략 스케줄러를 재개한다."""
         if self._state == TaskState.SUSPENDED:
             self._state = TaskState.RUNNING
+
+    def get_progress(self) -> Dict:
+        """태스크 진행률 반환 (SchedulableTask 인터페이스 구현).
+
+        전략 스케줄러는 배치 진행률이 없으므로 활성 전략 수를 반환한다.
+        """
+        active_strategies = 0
+        total_strategies = 0
+        try:
+            status = self._scheduler.get_status()
+            strategies = status.get("strategies", [])
+            total_strategies = len(strategies)
+            active_strategies = sum(1 for s in strategies if s.get("enabled"))
+        except Exception:
+            pass
+
+        return {
+            "running": self._state == TaskState.RUNNING,
+            "active_strategies": active_strategies,
+            "total_strategies": total_strategies,
+        }

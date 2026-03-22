@@ -224,9 +224,13 @@ class RankingTask(SchedulableTask):
             if self._notification_service:
                 await self._notification_service.emit("SYSTEM", "error", "기본 랭킹 갱신 실패", str(e))
 
+    def get_progress(self) -> Dict:
+        """태스크 진행률 반환 (SchedulableTask 인터페이스 구현)."""
+        return dict(self._progress)
+
     def get_investor_ranking_progress(self) -> Dict:
         """투자자 랭킹 수집 진행률 반환."""
-        return dict(self._progress)
+        return self.get_progress()
 
     def get_basic_ranking_cache(self, category: str) -> Optional[ResCommonResponse]:
         """장마감 후 캐시된 기본 랭킹 반환. 캐시 없으면 None."""

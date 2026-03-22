@@ -1,6 +1,7 @@
 # interfaces/schedulable_task.py
 from abc import ABC, abstractmethod
 from enum import IntEnum, Enum
+from typing import Dict
 
 
 class TaskPriority(IntEnum):
@@ -62,4 +63,13 @@ class SchedulableTask(ABC):
     @abstractmethod
     def state(self) -> TaskState:
         """현재 태스크 상태."""
+        ...
+
+    @abstractmethod
+    def get_progress(self) -> Dict:
+        """태스크 진행률 및 상태 정보를 반환한다.
+
+        모든 구현체는 최소한 {"running": bool} 키를 포함해야 한다.
+        진행률이 있는 태스크는 processed, total, elapsed 등을 추가로 포함한다.
+        """
         ...

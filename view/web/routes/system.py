@@ -27,3 +27,24 @@ def get_cache_status(expand: bool = True):
         "success": True,
         "data": stats
     }
+
+
+@router.get("/background/status")
+def get_background_status():
+    """백그라운드 태스크 상태 및 진행률 반환"""
+    ctx = _get_ctx()
+    if not ctx.background_scheduler:
+        return {"success": True, "data": []}
+
+    result = []
+    for item in ctx.background_scheduler.get_all_status():
+        name = item["name"]
+        task = ctx.background_scheduler.get_task(name)
+        result.append({
+            "name": name,
+            "state": item["state"],
+            "priority": item["priority"],
+            "progress": task.get_progress() if task else None,
+        })
+
+    return {"success": True, "data": result}

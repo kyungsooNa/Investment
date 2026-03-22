@@ -7,7 +7,7 @@ WebSocket 수신 태스크 상태를 주기적으로 감시하고,
 import asyncio
 import logging
 import time
-from typing import List, Optional, Callable, TYPE_CHECKING
+from typing import Dict, List, Optional, Callable, TYPE_CHECKING
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from core.performance_profiler import PerformanceProfiler
@@ -44,6 +44,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._state: TaskState = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._realtime_callback: Optional[Callable] = None
+        self._market_open: Optional[bool] = None  # 가장 최근 시장 개장 여부 (워치독 루프에서 갱신)
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
@@ -167,7 +168,9 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if not codes:
                     continue  # 구독 중인 종목 없으면 스킵
 
-                if not self.mcs or not await self.mcs.is_market_open_now():
+                market_is_open = bool(self.mcs and await self.mcs.is_market_open_now())
+                self._market_open = market_is_open
+                if not market_is_open:
                     # 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
                     if self._trading_service and self._trading_service.is_websocket_receive_alive():
                         self._logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
@@ -199,6 +202,30 @@ class WebSocketWatchdogTask(SchedulableTask):
                 break
             except Exception as e:
                 self._logger.error(f"[워치독] 오류 발생: {e}")
+
+    def get_progress(self) -> Dict:
+        """태스크 진행률 반환 (SchedulableTask 인터페이스 구현).
+
+        Watchdog 태스크는 배치 진행률이 없으므로 연결 상태 정보를 반환한다.
+        """
+        subscribed = 0
+        if self._realtime_data_service:
+            codes = self._realtime_data_service.get_subscribed_codes()
+            subscribed = len(codes) if codes else 0
+
+        last_ts = 0.0
+        data_gap = None
+        if self._realtime_data_service:
+            last_ts = getattr(self._realtime_data_service, "last_data_ts", 0.0)
+            if last_ts > 0:
+                data_gap = round(time.time() - last_ts, 1)
+
+        return {
+            "running": self._state == TaskState.RUNNING,
+            "subscribed_codes": subscribed,
+            "data_gap_sec": data_gap,
+            "market_open": self._market_open,
+        }
 
     async def force_reconnect_program_trading(self) -> None:
         """WebSocket 연결을 강제로 끊고 재연결 + 재구독."""

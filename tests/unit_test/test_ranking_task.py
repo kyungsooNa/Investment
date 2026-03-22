@@ -547,6 +547,21 @@ def test_get_investor_ranking_progress_initial(bg_service):
     assert p["total"] == 0
 
 
+def test_get_progress_initial_state(bg_service):
+    """get_progress() 초기 상태: required 필드 모두 존재, 값은 0."""
+    p = bg_service.get_progress()
+    assert p["running"] is False
+    assert p["processed"] == 0
+    assert p["total"] == 0
+    assert p["collected"] == 0
+    assert p["elapsed"] == 0.0
+
+
+def test_get_progress_delegates_to_get_investor_ranking_progress(bg_service):
+    """get_progress()와 get_investor_ranking_progress()는 동일한 값을 반환한다."""
+    assert bg_service.get_progress() == bg_service.get_investor_ranking_progress()
+
+
 @pytest.mark.asyncio
 async def test_progress_updates_during_refresh(bg_service, mock_deps):
     """갱신 중 진행률이 업데이트되는지 확인."""
