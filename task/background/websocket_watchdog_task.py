@@ -25,7 +25,6 @@ class WebSocketWatchdogTask(SchedulableTask):
     def __init__(
         self,
         stock_query_service: Optional["StockQueryService"] = None,
-        trading_service=None,
         realtime_data_service: Optional["RealtimeDataService"] = None,
         market_calendar_service: Optional["MarketCalendarService"] = None,
         performance_profiler: Optional[PerformanceProfiler] = None,
@@ -33,7 +32,6 @@ class WebSocketWatchdogTask(SchedulableTask):
         logger=None,
     ):
         self._stock_query_service = stock_query_service
-        self._trading_service = trading_service
         self._realtime_data_service = realtime_data_service
         self.mcs = market_calendar_service
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
@@ -172,15 +170,15 @@ class WebSocketWatchdogTask(SchedulableTask):
                 self._market_open = market_is_open
                 if not market_is_open:
                     # 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
-                    if self._trading_service and self._trading_service.is_websocket_receive_alive():
+                    if self._stock_query_service and self._stock_query_service.broker.is_websocket_receive_alive():
                         self._logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
-                        await self._trading_service.disconnect_websocket()
+                        await self._stock_query_service.broker.disconnect_websocket()
                     continue
 
                 # 조건 1: 수신 태스크가 죽었는지 확인
                 receive_alive = (
-                    self._trading_service
-                    and self._trading_service.is_websocket_receive_alive()
+                    self._stock_query_service is not None
+                    and self._stock_query_service.broker.is_websocket_receive_alive()
                 )
 
                 # 조건 2: 데이터 수신 갭 확인
@@ -240,7 +238,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._logger.info(f"[워치독] 강제 재연결 시작 (구독 종목: {codes})")
         try:
             # 1. 기존 WebSocket 연결 강제 종료
-            await self._stock_query_service.trading_service.disconnect_websocket()
+            await self._stock_query_service.broker.disconnect_websocket()
         except Exception as e:
             self._logger.warning(f"[워치독] 기존 연결 종료 중 오류 (무시): {e}")
 

@@ -110,7 +110,7 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, ResCommonResponse(rt_cd='100', msg1='시가총액 상위 종목 조회 실패', data=None))
         self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code.assert_not_called()
-        self.mock_logger.warning.assert_called_once_with("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
+        self.mock_logger.warning.assert_called_once_with("MarketDataService - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
 
     async def test_handle_upper_limit_stocks_no_top_stocks_found(self):
         """상위 종목 목록이 비어있을 때."""

@@ -53,7 +53,7 @@ class RankingTask(SchedulableTask):
         env: KoreaInvestApiEnv = None,
         logger=None,
         market_clock: MarketClock = None,
-        trading_service=None,
+        market_data_service=None,
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
@@ -64,7 +64,7 @@ class RankingTask(SchedulableTask):
         self._env = env
         self._logger = logger or logging.getLogger(__name__)
         self._market_clock = market_clock
-        self._trading_service = trading_service
+        self._market_data_service = market_data_service
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
@@ -190,18 +190,18 @@ class RankingTask(SchedulableTask):
 
     async def refresh_basic_ranking(self) -> None:
         """상승률/하락률/거래량/거래대금 랭킹을 1회 조회하여 캐시."""
-        if not self._trading_service:
-            self._logger.warning("TradingService 미설정 — 기본 랭킹 캐시 스킵")
+        if not self._market_data_service:
+            self._logger.warning("MarketDataService 미설정 — 기본 랭킹 캐시 스킵")
             return
 
         t_start = self.pm.start_timer()
         self._logger.info("기본 랭킹 캐시 갱신 시작 (상승/하락/거래량/거래대금)")
         try:
             rise_resp, fall_resp, vol_resp, tv_resp = await asyncio.gather(
-                self._trading_service.get_top_rise_fall_stocks(True),
-                self._trading_service.get_top_rise_fall_stocks(False),
-                self._trading_service.get_top_volume_stocks(),
-                self._trading_service.get_top_trading_value_stocks(),
+                self._market_data_service.get_top_rise_fall_stocks(True),
+                self._market_data_service.get_top_rise_fall_stocks(False),
+                self._market_data_service.get_top_volume_stocks(),
+                self._market_data_service.get_top_trading_value_stocks(),
                 return_exceptions=True,
             )
             for key, resp in [("rise", rise_resp), ("fall", fall_resp),

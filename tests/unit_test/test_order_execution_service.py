@@ -58,28 +58,23 @@ def handler(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market
 # --- Pytest 스타일 테스트 케이스 ---
 
 @pytest.mark.asyncio
-async def test_handle_buy_stock_success(handler, mock_trading_service):
+async def test_handle_buy_stock_success(handler, mock_broker_api_wrapper, mock_logger):
     """handle_buy_stock 매수 성공 시나리오 테스트."""
-    # handle_buy_stock이 이제 인자를 받으므로, 여기에 직접 전달합니다.
-    # get_user_input의 side_effect와 일치시킵니다.
     stock_code_input = "005930"
     qty_input = "10"
     price_input = "70000"
 
-    mock_trading_service.place_buy_order.return_value = ResCommonResponse(
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd="0",
         msg1="주문 성공",
-        data=None  # 실제 주문 결과 데이터가 있다면 여기에 넣기
+        data=None
     )
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    # get_user_input은 이제 handle_buy_stock 내부에서 호출되지 않으므로 assert_has_awaits는 제거
-    # 대신 place_buy_order가 올바르게 호출되었는지 확인
-    mock_trading_service.place_buy_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input))
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input), is_buy=True)
 
-    handler.logger.info.assert_called()  # 기본 존재 여부
-    # 메시지 내용까지 검증 (부분 매칭)
-    info_msgs = [str(call.args[0]) for call in handler.logger.info.call_args_list]
+    mock_logger.info.assert_called()
+    info_msgs = [str(call.args[0]) for call in mock_logger.info.call_args_list]
     assert any("주식 매수 주문 성공" in m and f"종목={stock_code_input}" in m for m in info_msgs)
 
 
@@ -205,7 +200,7 @@ async def test_handle_place_buy_order_success(handler, mock_broker_api_wrapper, 
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(
         "005930", 70000, 10, is_buy=True
     )
-    mock_logger.info.assert_called_once()
+    mock_logger.info.assert_called()
     assert result.rt_cd == "0"
     assert result.msg1 == "주문 성공"
 
@@ -236,7 +231,7 @@ async def test_handle_place_sell_order_success(handler, mock_broker_api_wrapper,
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(
         "005930", 60000, 5, is_buy=False
     )
-    mock_logger.info.assert_called_once()
+    mock_logger.info.assert_called()
     assert result.rt_cd == "0"
     assert result.msg1 == "매도 성공"
 

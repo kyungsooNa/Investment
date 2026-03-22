@@ -56,15 +56,15 @@ def mock_deps():
 def bg_service(mock_deps):
     broker, mapper, env, logger, market_clock, market_calendar_service = mock_deps
     
-    trading_service = AsyncMock()
-    
+    market_data_service = AsyncMock()
+
     return RankingTask(
         broker_api_wrapper=broker,
         stock_code_repository=mapper,
         env=env,
         logger=logger,
         market_clock=market_clock,
-        trading_service=trading_service,
+        market_data_service=market_data_service,
         market_calendar_service=market_calendar_service,
     )
 
@@ -448,21 +448,21 @@ async def test_ranking_sorted_by_trade_amount(bg_service, mock_deps):
 async def test_refresh_basic_ranking(mock_deps):
     """기본 랭킹 캐시 갱신 테스트."""
     broker, mapper, env, logger, market_clock, market_calendar_service = mock_deps
-    trading_service = MagicMock()
-    trading_service.get_top_rise_fall_stocks = AsyncMock(
+    market_data_service = MagicMock()
+    market_data_service.get_top_rise_fall_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "rise"}])
     )
-    trading_service.get_top_volume_stocks = AsyncMock(
+    market_data_service.get_top_volume_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "vol"}])
     )
-    trading_service.get_top_trading_value_stocks = AsyncMock(
+    market_data_service.get_top_trading_value_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "tv"}])
     )
 
     bg = RankingTask(
         broker_api_wrapper=broker, stock_code_repository=mapper,
         env=env, logger=logger, market_clock=market_clock,
-        trading_service=trading_service,
+        market_data_service=market_data_service,
     )
     bg.mcs = market_calendar_service # Ensure mcs is set for this test
 
@@ -483,7 +483,7 @@ def test_get_basic_ranking_cache_miss(bg_service):
 @pytest.mark.asyncio
 async def test_refresh_basic_ranking_no_trading_service(bg_service):
     """TradingService 없으면 스킵."""
-    bg_service._trading_service = None
+    bg_service._market_data_service = None
     await bg_service.refresh_basic_ranking()
     assert bg_service._basic_ranking_cache == {}
 
@@ -501,21 +501,21 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
     market_clock.get_sleep_seconds_until_market_close.return_value = 0.0
     market_clock.get_current_kst_time.return_value = datetime(2026, 3, 16, 16, 0, 0)
 
-    trading_service = MagicMock()
-    trading_service.get_top_rise_fall_stocks = AsyncMock(
+    market_data_service = MagicMock()
+    market_data_service.get_top_rise_fall_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     )
-    trading_service.get_top_volume_stocks = AsyncMock(
+    market_data_service.get_top_volume_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     )
-    trading_service.get_top_trading_value_stocks = AsyncMock(
+    market_data_service.get_top_trading_value_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     )
 
     bg = RankingTask(
         broker_api_wrapper=broker, stock_code_repository=mapper,
         env=env, logger=logger, market_clock=market_clock,
-        trading_service=trading_service,
+        market_data_service=market_data_service,
     )
     bg.mcs = market_calendar_service # Ensure mcs is set for this test
 
@@ -711,9 +711,9 @@ async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps)
     bg_service._notification_service = AsyncMock() # NotificationService
 
     # Mock success responses
-    bg_service._trading_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
-    bg_service._trading_service.get_top_volume_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
-    bg_service._trading_service.get_top_trading_value_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    bg_service._market_data_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    bg_service._market_data_service.get_top_volume_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    bg_service._market_data_service.get_top_trading_value_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
 
     await bg_service.refresh_basic_ranking()
 
@@ -1047,14 +1047,14 @@ async def test_refresh_basic_ranking_partial_failure(bg_service, mock_deps):
     
     # TradingService Mock 설정
     # get_top_rise_fall_stocks는 2번 호출됨 (True, False)
-    bg_service._trading_service.get_top_rise_fall_stocks = AsyncMock(side_effect=[
+    bg_service._market_data_service.get_top_rise_fall_stocks = AsyncMock(side_effect=[
         ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "rise"}]), # rise success
         Exception("Fall API Error") # fall fail
     ])
-    bg_service._trading_service.get_top_volume_stocks = AsyncMock(
+    bg_service._market_data_service.get_top_volume_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "vol"}])
     )
-    bg_service._trading_service.get_top_trading_value_stocks = AsyncMock(
+    bg_service._market_data_service.get_top_trading_value_stocks = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[{"name": "tv"}])
     )
 

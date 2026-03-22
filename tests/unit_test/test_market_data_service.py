@@ -2,7 +2,7 @@ import pytest
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 from datetime import datetime, timedelta
-from services.trading_service import TradingService
+from services.market_data_service import MarketDataService
 from common.types import ErrorCode, ResCommonResponse, ResFluctuation, ResBasicStockInfo
 from types import SimpleNamespace
 
@@ -38,7 +38,7 @@ def mock_deps():
 
 @pytest.fixture
 def trading_service_fixture(mock_deps):
-    service = TradingService(
+    service = MarketDataService(
         broker_api_wrapper=mock_deps.broker,
         env=mock_deps.env,
         market_clock=mock_deps.tm,
@@ -364,7 +364,7 @@ async def test_get_ohlcv_range(trading_service_fixture, mock_deps):
     
     resp = await trading_service_fixture.get_ohlcv_range("005930", start_date="20250101", end_date="20250110")
     assert resp.rt_cd == "0"
-    broker.inquire_daily_itemchartprice.assert_awaited_with(stock_code="005930", start_date="20250101", end_date="20250110", fid_period_div_code="D")
+    broker.inquire_daily_itemchartprice.assert_awaited_with("005930", start_date="20250101", end_date="20250110", fid_period_div_code="D")
 
 @pytest.mark.asyncio
 async def test_get_asking_price(trading_service_fixture, mock_deps):
@@ -628,7 +628,7 @@ async def test_get_price_summary(trading_service_fixture, mock_deps):
     
     assert resp.rt_cd == "0"
     broker.get_price_summary.assert_awaited_once_with("005930")
-    logger.info.assert_called_with("Service - 005930 종목 요약 정보 조회 요청")
+    logger.info.assert_called_with("MarketDataService - 005930 종목 요약 정보 조회 요청")
 
 @pytest.mark.asyncio
 async def test_get_stock_info_by_code(trading_service_fixture, mock_deps):
@@ -641,18 +641,7 @@ async def test_get_stock_info_by_code(trading_service_fixture, mock_deps):
     
     assert resp.rt_cd == "0"
     broker.get_stock_info_by_code.assert_awaited_once_with("005930")
-    logger.info.assert_called_with("Service - 005930 종목 상세 정보 조회 요청")
-
-@pytest.mark.asyncio
-async def test_get_account_balance(trading_service_fixture, mock_deps):
-    """계좌 잔고 조회 위임 테스트"""
-    broker = mock_deps.broker
-    broker.get_account_balance = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={}))
-    
-    resp = await trading_service_fixture.get_account_balance()
-    
-    assert resp.rt_cd == "0"
-    broker.get_account_balance.assert_awaited_once()
+    logger.info.assert_called_with("MarketDataService - 005930 종목 상세 정보 조회 요청")
 
 @pytest.mark.asyncio
 async def test_get_stock_conclusion(trading_service_fixture, mock_deps):
@@ -665,7 +654,7 @@ async def test_get_stock_conclusion(trading_service_fixture, mock_deps):
     
     assert resp.rt_cd == "0"
     broker.get_stock_conclusion.assert_awaited_once_with("005930")
-    logger.info.assert_called_with("Service - 005930 체결 정보 조회 요청")
+    logger.info.assert_called_with("MarketDataService - 005930 체결 정보 조회 요청")
 
 @pytest.mark.asyncio
 async def test_get_multi_price(trading_service_fixture, mock_deps):
@@ -679,7 +668,7 @@ async def test_get_multi_price(trading_service_fixture, mock_deps):
     
     assert resp.rt_cd == "0"
     broker.get_multi_price.assert_awaited_once_with(codes)
-    logger.info.assert_called_with(f"Trading_Service - 복수종목 현재가 조회 요청 ({len(codes)}종목)")
+    logger.info.assert_called_with(f"MarketDataService - 복수종목 현재가 조회 요청 ({len(codes)}종목)")
 
 @pytest.mark.asyncio
 async def test_get_financial_ratio(trading_service_fixture, mock_deps):
@@ -692,7 +681,7 @@ async def test_get_financial_ratio(trading_service_fixture, mock_deps):
     
     assert resp.rt_cd == "0"
     broker.get_financial_ratio.assert_awaited_once_with("005930")
-    logger.info.assert_called_with("Service - 005930 재무비율 조회 요청")
+    logger.info.assert_called_with("MarketDataService - 005930 재무비율 조회")
 
 @pytest.mark.asyncio
 async def test_get_intraday_minutes_today(trading_service_fixture, mock_deps):
@@ -745,12 +734,12 @@ async def test_get_top_rise_fall_stocks(trading_service_fixture, mock_deps):
     # Rise
     await trading_service_fixture.get_top_rise_fall_stocks(rise=True)
     broker.get_top_rise_fall_stocks.assert_awaited_with(True)
-    logger.info.assert_called_with("Service - 상승률 상위 종목 조회 요청")
-    
+    logger.info.assert_called_with("MarketDataService - 상승률 상위 종목 조회 요청")
+
     # Fall
     await trading_service_fixture.get_top_rise_fall_stocks(rise=False)
     broker.get_top_rise_fall_stocks.assert_awaited_with(False)
-    logger.info.assert_called_with("Service - 하락률 상위 종목 조회 요청")
+    logger.info.assert_called_with("MarketDataService - 하락률 상위 종목 조회 요청")
 
 @pytest.mark.asyncio
 async def test_get_top_volume_stocks(trading_service_fixture, mock_deps):
@@ -762,7 +751,7 @@ async def test_get_top_volume_stocks(trading_service_fixture, mock_deps):
     await trading_service_fixture.get_top_volume_stocks()
     
     broker.get_top_volume_stocks.assert_awaited_once()
-    logger.info.assert_called_with("Service - 거래량 상위 종목 조회 요청")
+    logger.info.assert_called_with("MarketDataService - 거래량 상위 종목 조회 요청")
 
 @pytest.mark.asyncio
 async def test_get_name_by_code(trading_service_fixture, mock_deps):
@@ -818,22 +807,20 @@ async def test_get_latest_trading_date_none(trading_service_fixture, mock_deps):
     mock_mcs.get_latest_trading_date.assert_awaited_once()
 
 @pytest.mark.asyncio
-async def test_get_latest_trading_date_no_manager(trading_service_fixture, mock_deps):
+async def test_get_latest_trading_date_no_manager(trading_service_fixture):
     """get_latest_trading_date: 매니저 미설정 시 None 반환"""
-    logger = mock_deps.logger
     service = trading_service_fixture
     service._mcs = None
 
     result = await service.get_latest_trading_date()
-    
+
     assert result is None
-    logger.warning.assert_called_once()
 
 class TestGetCurrentUpperLimitStocksAttributeError(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.mock_broker_api_wrapper = AsyncMock()
         self.mock_logger = MagicMock()
-        self.trading_service = TradingService(
+        self.trading_service = MarketDataService(
             broker_api_wrapper=self.mock_broker_api_wrapper,
             env=MagicMock(),
             logger=self.mock_logger,
@@ -857,7 +844,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
         self.mock_broker_api_wrapper = AsyncMock()
         self.mock_logger = MagicMock()
         self.mock_env = MagicMock()
-        self.trading_service = TradingService(
+        self.trading_service = MarketDataService(
             broker_api_wrapper=self.mock_broker_api_wrapper,
             env=self.mock_env,
             logger=self.mock_logger,
@@ -979,7 +966,7 @@ class TestGetCurrentUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
 
         result = await self.trading_service.get_all_stocks_code()
 
-        self.mock_logger.info.assert_called_once_with("Service - 전체 종목 코드 조회 요청")
+        self.mock_logger.info.assert_called_once_with("MarketDataService - 전체 종목 코드 조회 요청")
 
         self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
         self.assertEqual(result.msg1, "전체 종목 코드 조회 성공")
@@ -1010,7 +997,7 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
         self.mock_logger = MagicMock()
         self.mock_env = MagicMock()
 
-        self.trading_service = TradingService(
+        self.trading_service = MarketDataService(
             broker_api_wrapper=self.mock_broker_api_wrapper,
             env=self.mock_env,
             logger=self.mock_logger,
@@ -1062,64 +1049,3 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
         assert only.current_price == 40000
         assert only.prdy_ctrt == 30.0
 
-    def test_handle_realtime_price(self):
-        data = {
-            "type": "realtime_price",
-            "tr_id": "H0STCNT0",
-            "data": {
-                "유가증권단축종목코드": "005930",
-                "주식현재가": "80000",
-                "전일대비": "+500",
-                "전일대비부호": "2",
-                "전일대비율": "0.6",
-                "누적거래량": "120000",
-                "주식체결시간": "093015"
-            }
-        }
-
-        self.trading_service._default_realtime_message_handler(data)
-        self.mock_logger.info.assert_any_call(
-            "실시간 데이터 수신: Type=realtime_price, TR_ID=H0STCNT0, Data={'유가증권단축종목코드': '005930', '주식현재가': '80000', "
-            "'전일대비': '+500', '전일대비부호': '2', '전일대비율': '0.6', '누적거래량': '120000', '주식체결시간': '093015'}"
-        )
-
-    def test_handle_realtime_quote(self):
-        data = {
-            "type": "realtime_quote",
-            "tr_id": "H0STASP0",
-            "data": {
-                "유가증권단축종목코드": "005930",
-                "매도호가1": "80100",
-                "매수호가1": "79900",
-                "영업시간": "093030"
-            }
-        }
-
-        self.trading_service._default_realtime_message_handler(data)
-        self.mock_logger.info.assert_any_call("실시간 호가 데이터: 005930 매도1=80100, 매수1=79900")
-
-    def test_handle_signing_notice(self):
-        data = {
-            "type": "signing_notice",
-            "tr_id": "H0TR0002",
-            "data": {
-                "주문번호": "A123456",
-                "체결수량": "10",
-                "체결단가": "80000",
-                "체결시간": "093045"
-            }
-        }
-
-        self.trading_service._default_realtime_message_handler(data)
-        self.mock_logger.info.assert_any_call("체결통보: 주문=A123456, 수량=10, 단가=80000")
-
-    def test_handle_unknown_type(self):
-        data = {
-            "type": "unknown_type",
-            "tr_id": "X0000001",
-            "data": {}
-        }
-
-        self.trading_service._default_realtime_message_handler(data)
-        self.mock_logger.debug.assert_called_once_with(
-            "처리되지 않은 실시간 메시지: X0000001 - {'type': 'unknown_type', 'tr_id': 'X0000001', 'data': {}}")

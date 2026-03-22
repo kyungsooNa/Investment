@@ -1,19 +1,19 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from services.trading_service import TradingService
+from services.market_data_service import MarketDataService
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResStockFullInfoApiOutput
 from typing import List
 import unittest
 
 
-class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
+class TestMarketDataServiceTopStocks(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.mock_broker_api_wrapper = AsyncMock()
         self.mock_logger = MagicMock()
         self.mock_env = MagicMock()
         self.mock_market_clock = MagicMock()
 
-        self.trading_service = TradingService(
+        self.trading_service = MarketDataService(
             broker_api_wrapper=self.mock_broker_api_wrapper,
             logger=self.mock_logger,
             env=self.mock_env,
@@ -31,7 +31,7 @@ class TestTradingServiceTopStocks(unittest.IsolatedAsyncioTestCase):
         assert isinstance(result.data, List)
         assert result.data == []
 
-        self.mock_logger.warning.assert_any_call("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
+        self.mock_logger.warning.assert_any_call("MarketDataService - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
 
     @pytest.mark.asyncio
     async def test_paper_trading_returns_error(self):

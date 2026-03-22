@@ -12,7 +12,7 @@ from services.market_data_service import MarketDataService
 class StockQueryService:
     """
     주식 현재가, 계좌 잔고, 시가총액 조회 등 데이터 조회 관련 핸들러를 관리하는 클래스입니다.
-    TradingService, MarketDataService 등 인스턴스를 주입받아 사용합니다.
+    MarketDataService, BrokerAPIWrapper 등 인스턴스를 주입받아 사용합니다.
     """
 
     def __init__(self, market_data_service: MarketDataService, logger, market_clock, indicator_service=None,
@@ -191,7 +191,7 @@ class StockQueryService:
 
     async def handle_get_account_balance(self) -> ResCommonResponse:
         """계좌 잔고 조회 요청 및 결과 출력."""
-        resp = await self.trading_service.get_account_balance()
+        resp = await self.broker.get_account_balance()
         if self._notification_service:
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                 await self._notification_service.emit("API", "info", "잔고 조회 완료", "계좌 잔고 조회 성공")
@@ -631,29 +631,18 @@ class StockQueryService:
         )
 
 
-    async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
-        """
-        TradingService를 통해 실시간 스트림을 구독 및 처리합니다.
-
-        :param stock_codes: 실시간 데이터를 구독할 종목 코드 리스트
-        :param fields: "price", "quote" 중 원하는 실시간 데이터 타입 리스트
-        :param duration: 실시간 스트리밍을 유지할 시간 (초)
-        """
-        self.logger.info(f"StockQueryService - 실시간 스트림 요청: 종목={stock_codes}, 필드={fields}, 시간={duration}s")
-        await self.trading_service.handle_realtime_stream(stock_codes, fields, duration)
-
     async def get_ohlcv(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """
-        OHLCV 데이터를 반환합니다 (TradingService 래퍼).
+        OHLCV 데이터를 반환합니다.
         """
         self.logger.info(f"ServiceHandler - {stock_code} OHLCV 데이터 요청 period={period}")
-        return await self.trading_service.get_ohlcv(stock_code, period=period, caller=caller)
+        return await self.market_data_service.get_ohlcv(stock_code, period=period, caller=caller)
 
     async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None) -> ResCommonResponse:
         """
-        특정 기간의 OHLCV 데이터를 조회합니다. (TradingService 래퍼)
+        특정 기간의 OHLCV 데이터를 조회합니다.
         """
-        return await self.trading_service.get_ohlcv_range(stock_code, period, start_date, end_date)
+        return await self.market_data_service.get_ohlcv_range(stock_code, period, start_date, end_date)
 
     async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """

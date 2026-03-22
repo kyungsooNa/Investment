@@ -36,6 +36,7 @@ from task.background.ohlcv_update_task import OhlcvUpdateTask
 from task.background.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from repositories.stock_repository import StockRepository
 from services.realtime_data_service import RealtimeDataService
+from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
@@ -166,7 +167,7 @@ class WebAppContext:
         cache_store = CacheStore(config_dict)
         cache_store.set_logger(self.logger)
 
-        # Repository 초기화 (TradingService 주입을 위해 선 생성)
+        # Repository 초기화 (StockQueryService 주입을 위해 선 생성)
         self.stock_repository = StockRepository(logger=self.logger)
 
         self.market_data_service = MarketDataService(
@@ -189,6 +190,7 @@ class WebAppContext:
             notification_service=self.notification_service,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
             market_calendar_service=self._mcs,
+            market_data_service=self.market_data_service,
         )
         self.stock_query_service = StockQueryService(
             market_data_service=self.market_data_service, logger=self.logger, market_clock=self.market_clock,

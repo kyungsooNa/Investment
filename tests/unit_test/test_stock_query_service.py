@@ -135,7 +135,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
 
         self.assertEqual(result, expected_response)
 
@@ -149,7 +149,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_trading_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
         self.assertEqual(result, expected_response)
 
     # --- New Wrapper Methods Tests ---
@@ -166,16 +166,16 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
     async def test_get_top_rise_fall_stocks(self):
         """get_top_rise_fall_stocks 위임 테스트"""
         expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
-        self.mock_trading_service.get_top_rise_fall_stocks.return_value = expected
-        
+        self.mock_market_data_service.get_top_rise_fall_stocks.return_value = expected
+
         # Default (rise=True)
         result = await self.stockQueryService.get_top_rise_fall_stocks()
-        self.mock_trading_service.get_top_rise_fall_stocks.assert_awaited_with(True)
+        self.mock_market_data_service.get_top_rise_fall_stocks.assert_awaited_with(True)
         self.assertEqual(result, expected)
-        
+
         # rise=False
         await self.stockQueryService.get_top_rise_fall_stocks(rise=False)
-        self.mock_trading_service.get_top_rise_fall_stocks.assert_awaited_with(False)
+        self.mock_market_data_service.get_top_rise_fall_stocks.assert_awaited_with(False)
 
     async def test_get_top_volume_stocks(self):
         """get_top_volume_stocks 위임 테스트"""
@@ -313,7 +313,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_get_top_10_market_cap_stocks_with_prices_empty_list(self):
         # TC 5.2
-        self.mock_trading_service.get_top_10_market_cap_stocks_with_prices.return_value = ResCommonResponse(
+        self.mock_market_data_service.get_top_market_cap_stocks_code.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data=[]
@@ -451,7 +451,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
+        self.mock_market_data_service.get_current_price.return_value = ResCommonResponse(
             rt_cd="0",
             msg1="정상",
             data={
@@ -461,7 +461,6 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
                     "prdy_ctrt": "30.00"
                 }
             }
-
         )
 
         result = await self.stockQueryService.handle_upper_limit_stocks()
@@ -651,16 +650,16 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             except 블록이 실행되고 False를 반환하는지 테스트
         """
         # Arrange
-        # trading_service의 해당 메서드가 호출될 때 Exception을 발생시키도록 설정
-        self.mock_trading_service._env.is_paper_trading = False
-        self.mock_trading_service.get_top_market_cap_stocks_code.side_effect = Exception("테스트 예외 발생")
+        # market_data_service의 해당 메서드가 호출될 때 Exception을 발생시키도록 설정
+        self.mock_market_data_service._env.is_paper_trading = False
+        self.mock_market_data_service.get_top_market_cap_stocks_code.side_effect = Exception("테스트 예외 발생")
 
         # Act
         result = await self.stockQueryService.handle_get_top_market_cap_stocks_code(market_code="0000", limit=10)
 
         # Assert
-        # trading_service 메서드가 호출되었는지 확인
-        self.mock_trading_service.get_top_market_cap_stocks_code.assert_awaited_once()
+        # market_data_service 메서드가 호출되었는지 확인
+        self.mock_market_data_service.get_top_market_cap_stocks_code.assert_awaited_once()
 
         self.mock_logger.exception.assert_called_once()
         self.assertIn(
@@ -859,14 +858,13 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         """handle_get_account_balance 위임 호출 테스트"""
         # Arrange
         expected_response = ResCommonResponse(rt_cd="0", msg1="정상", data={"balance": 10000})
-        self.mock_market_data_service.get_account_balance = AsyncMock(return_value=expected_response)
-        self.stockQueryService.trading_service = self.mock_market_data_service
+        self.mock_broker.get_account_balance = AsyncMock(return_value=expected_response)
 
         # Act
         result = await self.stockQueryService.handle_get_account_balance()
 
         # Assert
-        self.mock_market_data_service.get_account_balance.assert_awaited_once()
+        self.mock_broker.get_account_balance.assert_awaited_once()
         self.assertEqual(result, expected_response)
 
     # --- handle_get_asking_price ---
@@ -1518,17 +1516,16 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
     # --- Stream Handlers ---
     async def test_handle_realtime_stream(self):
-        """handle_realtime_stream이 trading_service의 메서드를 그대로 호출하는지 테스트"""
-        # Arrange
+        """handle_realtime_stream이 broker를 통해 직접 웹소켓을 제어하는지 테스트"""
         stock_codes = ["005930"]
         fields = ["price"]
-        duration = 10
+        duration = 0  # duration=0 so the while loop exits immediately
 
-        # Act
         await self.stockQueryService.handle_realtime_stream(stock_codes, fields, duration)
 
-        # Assert
-        self.mock_trading_service.handle_realtime_stream.assert_awaited_once_with(stock_codes, fields, duration)
+        self.mock_broker.connect_websocket.assert_awaited_once()
+        self.mock_broker.subscribe_realtime_price.assert_awaited_once_with("005930")
+        self.mock_broker.unsubscribe_realtime_price.assert_awaited_once_with("005930")
         self.mock_logger.info.assert_called()
 
     async def test_handle_program_trading_stream(self):
@@ -1622,19 +1619,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_broker.unsubscribe_realtime_price.assert_awaited_once_with("005930")
 
     async def test_handle_realtime_stream(self):
-        """handle_realtime_stream directly controls websocket via broker"""
+        """handle_realtime_stream이 broker를 통해 직접 웹소켓을 제어하는지 테스트"""
         stock_codes = ["005930"]
         fields = ["price"]
-        duration = 1
+        duration = 0  # duration=0 so the while loop exits immediately
 
-        with patch("services.stock_query_service.datetime") as mock_dt:
-            from datetime import timedelta
-            mock_dt.now.side_effect = [
-                datetime(2025, 1, 1, 12, 0, 0),
-                datetime(2025, 1, 1, 12, 0, 0),
-                datetime(2025, 1, 1, 12, 0, 0) + timedelta(seconds=1.1)
-            ]
-            await self.stockQueryService.handle_realtime_stream(stock_codes, fields, duration)
+        await self.stockQueryService.handle_realtime_stream(stock_codes, fields, duration)
 
         self.mock_broker.connect_websocket.assert_awaited_once()
         self.mock_broker.subscribe_realtime_price.assert_awaited_once_with("005930")
@@ -1933,7 +1923,7 @@ class TestHandleGetTopStocksForeign(unittest.IsolatedAsyncioTestCase):
     async def test_trading_value_without_ranking_task_uses_trading_service(self):
         """ranking_task 없으면 trading_value는 trading_service.get_top_trading_value_stocks() 호출."""
         service_no_bg = StockQueryService(
-            trading_service=self.mock_trading_service,
+            market_data_service=self.mock_market_data_service,
             logger=self.mock_logger,
             market_clock=self.mock_market_clock,
             ranking_task=None,
