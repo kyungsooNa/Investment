@@ -2,7 +2,7 @@
 """
 장 마감 후 작업을 자동 실행하는 공통 스케줄러 루프.
 
-RankingTask, MarketDataCollectorTask 등 장 마감 후 1회 실행되는
+RankingTask, DailyPriceCollectorTask 등 장 마감 후 1회 실행되는
 백그라운드 태스크가 공유하는 스케줄링 패턴을 모듈화한다.
 
 Usage::

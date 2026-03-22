@@ -1,14 +1,14 @@
 """
-MarketDataCollectorTask 단위 테스트.
+DailyPriceCollectorTask 단위 테스트.
 장 마감 후 전체 종목 현재가 수집 태스크 검증.
 """
 import asyncio
 import pytest
-from unittest.mock import MagicMock, AsyncMock, PropertyMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch
 import pandas as pd
 
-from task.background.market_data_collector_task import MarketDataCollectorTask
-from repositories.market_data_repository import MarketDataRepository
+from task.background.daily_price_collector_task import DailyPriceCollectorTask
+from repositories.stock_repository import StockRepository
 from interfaces.schedulable_task import TaskPriority, TaskState
 from common.types import ResCommonResponse, ErrorCode
 
@@ -51,8 +51,8 @@ def mock_mapper_with_etf():
 
 @pytest.fixture
 def repo(tmp_path):
-    db_path = str(tmp_path / "test_market_data.db")
-    r = MarketDataRepository(db_path=db_path)
+    db_path = str(tmp_path / "test_stocks.db")
+    r = StockRepository(db_path=db_path)
     yield r
     r.close()
 
@@ -67,11 +67,10 @@ def mock_mcs():
 
 @pytest.fixture
 def task(mock_sqs, mock_mapper, repo, mock_mcs):
-    return MarketDataCollectorTask(
+    return DailyPriceCollectorTask(
         stock_query_service=mock_sqs,
         stock_code_repository=mock_mapper,
-        market_data_repo=repo,
-        stock_repo=MagicMock(),
+        stock_repo=repo,
         market_calendar_service=mock_mcs,
         logger=MagicMock(),
     )
@@ -110,7 +109,7 @@ def _make_price_response(code="005930", price=70000):
 class TestTaskProperties:
 
     def test_task_name(self, task):
-        assert task.task_name == "market_data_collector"
+        assert task.task_name == "daily_price_collector"
 
     def test_priority(self, task):
         assert task.priority == TaskPriority.LOW
@@ -161,11 +160,7 @@ class TestCollectAllPrices:
 
     async def test_collect_skips_failed_responses(self, task, mock_sqs, repo):
         """API 실패 응답은 건너뛰고 성공한 종목만 저장한다."""
-        call_count = 0
-
         async def _mock_get_current_price(code, **_):
-            nonlocal call_count
-            call_count += 1
             if code == "000660":
                 return ResCommonResponse(
                     rt_cd=ErrorCode.API_ERROR.value,
@@ -233,11 +228,10 @@ class TestLoadAllStocks:
 
     def test_filters_etf_and_preferred(self, mock_sqs, mock_mapper_with_etf, repo, mock_mcs):
         """ETF, 우선주, 스팩이 필터링된다."""
-        task = MarketDataCollectorTask(
+        task = DailyPriceCollectorTask(
             stock_query_service=mock_sqs,
             stock_code_repository=mock_mapper_with_etf,
-            market_data_repo=repo,
-            stock_repo=MagicMock(),
+            stock_repo=repo,
             market_calendar_service=mock_mcs,
             logger=MagicMock(),
         )
@@ -275,34 +269,28 @@ class TestSuspendResume:
         collected_codes = []
         barrier = asyncio.Event()
 
-        original_get = _make_price_response
-
         async def _mock_get_current_price(code, **_):
             collected_codes.append(code)
             if len(collected_codes) == 1:
-                barrier.set()  # 첫 번째 chunk 완료 신호
-            return original_get(code)
+                barrier.set()
+            return _make_price_response(code)
 
         mock_sqs.get_current_price = AsyncMock(side_effect=_mock_get_current_price)
 
-        # chunk size를 1로 설정하여 종목 단위로 suspend 체크
         task.API_CHUNK_SIZE = 1
         task.CHUNK_SLEEP_SEC = 0
 
         collect_task = asyncio.create_task(task._collect_all_prices())
 
-        await barrier.wait()  # 첫 번째 종목 수집 완료 대기
+        await barrier.wait()
 
-        # suspend → 이벤트 클리어
         task._state = TaskState.RUNNING
         await task.suspend()
 
-        # 잠시 대기 후 수집이 멈추었는지 확인
         count_at_suspend = len(collected_codes)
         await asyncio.sleep(0.05)
-        assert len(collected_codes) == count_at_suspend  # 더 이상 진행 안 됨
+        assert len(collected_codes) == count_at_suspend
 
-        # resume → 나머지 수집 완료
         await task.resume()
         await collect_task
 
@@ -331,7 +319,7 @@ class TestStartStop:
         tasks_count = len(task._tasks)
 
         await task.start()  # 중복 호출
-        assert len(task._tasks) == tasks_count  # 태스크 추가 안 됨
+        assert len(task._tasks) == tasks_count
 
         await task.stop()
         assert task.state == TaskState.STOPPED
@@ -346,7 +334,7 @@ class TestExtractRecord:
         """Pydantic 모델(ResStockFullInfoApiOutput)에서 필드 추출."""
         resp = _make_price_response("005930", 70000)
 
-        record = MarketDataCollectorTask._extract_record(
+        record = DailyPriceCollectorTask._extract_record(
             "005930", "삼성전자", "KOSPI", resp
         )
 
@@ -382,7 +370,7 @@ class TestExtractRecord:
             },
         )
 
-        record = MarketDataCollectorTask._extract_record(
+        record = DailyPriceCollectorTask._extract_record(
             "005930", "삼성전자", "KOSPI", resp
         )
 
@@ -392,9 +380,9 @@ class TestExtractRecord:
 
     def test_extract_none_response(self):
         """None 응답은 None 반환."""
-        assert MarketDataCollectorTask._extract_record("005930", "삼성전자", "KOSPI", None) is None
+        assert DailyPriceCollectorTask._extract_record("005930", "삼성전자", "KOSPI", None) is None
 
     def test_extract_empty_data(self):
         """data가 None인 응답은 None 반환."""
         resp = ResCommonResponse(rt_cd="0", msg1="ok", data=None)
-        assert MarketDataCollectorTask._extract_record("005930", "삼성전자", "KOSPI", resp) is None
+        assert DailyPriceCollectorTask._extract_record("005930", "삼성전자", "KOSPI", resp) is None

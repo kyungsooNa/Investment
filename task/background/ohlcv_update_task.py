@@ -28,7 +28,7 @@ def _chunked(lst, size):
         yield lst[i:i + size]
 
 
-# ETF/ETN 브랜드명 접두사 (MarketDataCollectorTask와 동일)
+# ETF/ETN 브랜드명 접두사 (DailyPriceCollectorTask와 동일)
 _ETF_PREFIXES = (
     "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
     "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",

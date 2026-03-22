@@ -32,9 +32,8 @@ from strategies.first_pullback_strategy import FirstPullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
 from task.background.ranking_task import RankingTask
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
-from task.background.market_data_collector_task import MarketDataCollectorTask
+from task.background.daily_price_collector_task import DailyPriceCollectorTask
 from task.background.ohlcv_update_task import OhlcvUpdateTask
-from repositories.market_data_repository import MarketDataRepository
 from repositories.stock_repository import StockRepository
 from services.realtime_data_service import RealtimeDataService
 from services.market_calendar_service import MarketCalendarService
@@ -64,9 +63,8 @@ class WebAppContext:
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
-        self.market_data_collector_task: MarketDataCollectorTask = None
+        self.daily_price_collector_task: DailyPriceCollectorTask = None
         self.ohlcv_update_task: OhlcvUpdateTask = None
-        self.market_data_repository: MarketDataRepository = None
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
@@ -169,7 +167,6 @@ class WebAppContext:
         cache_store.set_logger(self.logger)
 
         # Repository 초기화 (TradingService 주입을 위해 선 생성)
-        self.market_data_repository = MarketDataRepository(logger=self.logger)
         self.stock_repository = StockRepository(logger=self.logger)
 
         self.trading_service = TradingService(
@@ -214,10 +211,9 @@ class WebAppContext:
             logger=self.logger,
         )
 
-        self.market_data_collector_task = MarketDataCollectorTask(
+        self.daily_price_collector_task = DailyPriceCollectorTask(
             stock_query_service=self.stock_query_service,
             stock_code_repository=self.stock_code_repository,
-            market_data_repo=self.market_data_repository,
             stock_repo=self.stock_repository,
             market_calendar_service=self._mcs,
             market_clock=self.market_clock,
@@ -264,8 +260,8 @@ class WebAppContext:
             self.background_scheduler.register(self.ranking_task)
         if self.websocket_watchdog_task:
             self.background_scheduler.register(self.websocket_watchdog_task)
-        if self.market_data_collector_task:
-            self.background_scheduler.register(self.market_data_collector_task)
+        if self.daily_price_collector_task:
+            self.background_scheduler.register(self.daily_price_collector_task)
         if self.ohlcv_update_task:
             self.background_scheduler.register(self.ohlcv_update_task)
 

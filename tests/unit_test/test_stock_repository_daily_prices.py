@@ -1,19 +1,16 @@
 """
-MarketDataRepository 단위 테스트.
-SQLite 기반 전체 종목 현재가 저장/조회 검증.
+StockRepository daily_prices 단위 테스트.
+SQLite 기반 전체 종목 일별 스냅샷(현재가+펀더멘털) 저장/조회 검증.
 """
-import os
 import pytest
-import tempfile
 
-from repositories.market_data_repository import MarketDataRepository
+from repositories.stock_repository import StockRepository
 
 
 @pytest.fixture
 def repo(tmp_path):
-    """임시 DB 경로로 Repository 생성."""
-    db_path = str(tmp_path / "test_market_data.db")
-    r = MarketDataRepository(db_path=db_path)
+    db_path = str(tmp_path / "test_stocks.db")
+    r = StockRepository(db_path=db_path)
     yield r
     r.close()
 
@@ -50,7 +47,7 @@ class TestUpsertAndGet:
             _make_record("005930", "삼성전자", "KOSPI", 70000),
             _make_record("000660", "SK하이닉스", "KOSPI", 130000),
         ]
-        repo.upsert_prices("20260318", records)
+        repo.upsert_daily_snapshot("20260318", records)
 
         result = repo.get_prices_by_date("20260318")
         assert len(result) == 2
@@ -59,8 +56,8 @@ class TestUpsertAndGet:
 
     def test_upsert_idempotent(self, repo):
         """동일 (code, date) 중복 삽입 시 최신값으로 갱신."""
-        repo.upsert_prices("20260318", [_make_record("005930", price=70000)])
-        repo.upsert_prices("20260318", [_make_record("005930", price=72000)])
+        repo.upsert_daily_snapshot("20260318", [_make_record("005930", price=70000)])
+        repo.upsert_daily_snapshot("20260318", [_make_record("005930", price=72000)])
 
         result = repo.get_prices_by_date("20260318")
         assert len(result) == 1
@@ -77,7 +74,7 @@ class TestPriceHistory:
 
     def test_get_price_history(self, repo):
         for i, date in enumerate(["20260316", "20260317", "20260318"]):
-            repo.upsert_prices(date, [_make_record("005930", price=70000 + i * 1000)])
+            repo.upsert_daily_snapshot(date, [_make_record("005930", price=70000 + i * 1000)])
 
         history = repo.get_price_history("005930", days=30)
         assert len(history) == 3
@@ -87,7 +84,7 @@ class TestPriceHistory:
 
     def test_get_price_history_limit(self, repo):
         for date in ["20260314", "20260315", "20260316", "20260317", "20260318"]:
-            repo.upsert_prices(date, [_make_record("005930")])
+            repo.upsert_daily_snapshot(date, [_make_record("005930")])
 
         history = repo.get_price_history("005930", days=2)
         assert len(history) == 2
@@ -101,9 +98,9 @@ class TestLatestTradeDate:
     """최신 거래일 반환 테스트."""
 
     def test_get_latest_trade_date(self, repo):
-        repo.upsert_prices("20260316", [_make_record()])
-        repo.upsert_prices("20260318", [_make_record()])
-        repo.upsert_prices("20260317", [_make_record()])
+        repo.upsert_daily_snapshot("20260316", [_make_record()])
+        repo.upsert_daily_snapshot("20260318", [_make_record()])
+        repo.upsert_daily_snapshot("20260317", [_make_record()])
 
         assert repo.get_latest_trade_date() == "20260318"
 
@@ -120,7 +117,7 @@ class TestCountByDate:
             _make_record("000660"),
             _make_record("035420"),
         ]
-        repo.upsert_prices("20260318", records)
+        repo.upsert_daily_snapshot("20260318", records)
         assert repo.get_count_by_date("20260318") == 3
         assert repo.get_count_by_date("20200101") == 0
 
@@ -129,8 +126,8 @@ class TestCleanup:
     """오래된 데이터 삭제 테스트."""
 
     def test_cleanup_old_data(self, repo):
-        repo.upsert_prices("20240101", [_make_record()])  # 오래된 데이터
-        repo.upsert_prices("20260318", [_make_record()])  # 최근 데이터
+        repo.upsert_daily_snapshot("20240101", [_make_record()])  # 오래된 데이터
+        repo.upsert_daily_snapshot("20260318", [_make_record()])  # 최근 데이터
 
         repo.cleanup_old_data(keep_days=365)
 
@@ -143,7 +140,7 @@ class TestUpsertEmpty:
     """빈 레코드 리스트 upsert 시 에러 없음."""
 
     def test_upsert_empty(self, repo):
-        repo.upsert_prices("20260318", [])
+        repo.upsert_daily_snapshot("20260318", [])
         assert repo.get_count_by_date("20260318") == 0
 
 
@@ -152,7 +149,7 @@ class TestAllFields:
 
     def test_all_fields_persisted(self, repo):
         record = _make_record("005930", "삼성전자", "KOSPI", 70000)
-        repo.upsert_prices("20260318", [record])
+        repo.upsert_daily_snapshot("20260318", [record])
 
         result = repo.get_prices_by_date("20260318")
         assert len(result) == 1
