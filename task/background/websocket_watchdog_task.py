@@ -7,7 +7,7 @@ WebSocket 수신 태스크 상태를 주기적으로 감시하고,
 import asyncio
 import logging
 import time
-from typing import List, Optional, Callable, TYPE_CHECKING
+from typing import Dict, List, Optional, Callable, TYPE_CHECKING
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from core.performance_profiler import PerformanceProfiler
@@ -199,6 +199,29 @@ class WebSocketWatchdogTask(SchedulableTask):
                 break
             except Exception as e:
                 self._logger.error(f"[워치독] 오류 발생: {e}")
+
+    def get_progress(self) -> Dict:
+        """태스크 진행률 반환 (SchedulableTask 인터페이스 구현).
+
+        Watchdog 태스크는 배치 진행률이 없으므로 연결 상태 정보를 반환한다.
+        """
+        subscribed = 0
+        if self._realtime_data_service:
+            codes = self._realtime_data_service.get_subscribed_codes()
+            subscribed = len(codes) if codes else 0
+
+        last_ts = 0.0
+        data_gap = None
+        if self._realtime_data_service:
+            last_ts = getattr(self._realtime_data_service, "last_data_ts", 0.0)
+            if last_ts > 0:
+                data_gap = round(time.time() - last_ts, 1)
+
+        return {
+            "running": self._state == TaskState.RUNNING,
+            "subscribed_codes": subscribed,
+            "data_gap_sec": data_gap,
+        }
 
     async def force_reconnect_program_trading(self) -> None:
         """WebSocket 연결을 강제로 끊고 재연결 + 재구독."""
