@@ -44,6 +44,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._state: TaskState = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._realtime_callback: Optional[Callable] = None
+        self._market_open: Optional[bool] = None  # 가장 최근 시장 개장 여부 (워치독 루프에서 갱신)
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
@@ -167,7 +168,9 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if not codes:
                     continue  # 구독 중인 종목 없으면 스킵
 
-                if not self.mcs or not await self.mcs.is_market_open_now():
+                market_is_open = bool(self.mcs and await self.mcs.is_market_open_now())
+                self._market_open = market_is_open
+                if not market_is_open:
                     # 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
                     if self._trading_service and self._trading_service.is_websocket_receive_alive():
                         self._logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
@@ -221,6 +224,7 @@ class WebSocketWatchdogTask(SchedulableTask):
             "running": self._state == TaskState.RUNNING,
             "subscribed_codes": subscribed,
             "data_gap_sec": data_gap,
+            "market_open": self._market_open,
         }
 
     async def force_reconnect_program_trading(self) -> None:

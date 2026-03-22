@@ -152,19 +152,57 @@ const PRIORITY_LABEL = {
     100: 'LOW',
 };
 
-function renderProgressCell(progress) {
-    if (!progress || progress.total === 0) return '-';
-    const pct = Math.min(100, Math.round((progress.processed / progress.total) * 100));
-    const elapsed = progress.elapsed ? ` (${progress.elapsed.toFixed(0)}s)` : '';
+function renderProgressCell(progress, taskName) {
+    if (!progress) return '-';
+
+    // ── 웹소켓 워치독: 장중 / 장 마감 표시 ──
+    if (taskName === 'websocket_watchdog') {
+        const isOpen = progress.market_open;
+        let marketBadge;
+        if (isOpen === null || isOpen === undefined) {
+            marketBadge = '<span style="background:#888; color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">확인 중</span>';
+        } else if (isOpen) {
+            marketBadge = '<span style="background:var(--success-color,#4CAF50); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">장중</span>';
+        } else {
+            marketBadge = '<span style="background:#888; color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">장 마감</span>';
+        }
+        const sub = progress.subscribed_codes ?? 0;
+        const gap = (progress.data_gap_sec !== null && progress.data_gap_sec !== undefined)
+            ? ` · 갭 ${progress.data_gap_sec}s` : '';
+        return `${marketBadge} <span style="font-size:0.85em; color:#888;">구독 ${sub}종목${gap}</span>`;
+    }
+
+    // ── 전략 스케줄러: 활성 전략 수 표시 ──
+    if (taskName === 'strategy_scheduler') {
+        const active = progress.active_strategies ?? 0;
+        const total = progress.total_strategies ?? 0;
+        if (total === 0) return '<span style="color:#888; font-size:0.88em;">전략 없음</span>';
+        const color = active > 0 ? 'var(--success-color,#4CAF50)' : '#888';
+        return `<span style="font-size:0.88em; color:${color}; font-weight:bold;">활성 ${active} / ${total} 전략</span>`;
+    }
+
+    // ── 배치 태스크: 수집 진행률 ──
+    const total = progress.total ?? 0;
+    const processed = progress.processed ?? 0;
+    const isRunning = progress.running;
+
+    if (total === 0) {
+        return `<span style="color:#888; font-size:0.88em;">대기 중</span>`;
+    }
+
+    const pct = Math.min(100, Math.round((processed / total) * 100));
+    const elapsed = progress.elapsed ? ` · ${progress.elapsed.toFixed(0)}s` : '';
     const detail = progress.updated !== undefined
-        ? `업데이트: ${progress.updated.toLocaleString()} / 스킵: ${(progress.skipped || 0).toLocaleString()}`
-        : `수집: ${(progress.collected || 0).toLocaleString()}`;
+        ? `갱신 ${(progress.updated || 0).toLocaleString()} / 스킵 ${(progress.skipped || 0).toLocaleString()}`
+        : `수집 ${(progress.collected || 0).toLocaleString()}`;
+    const barColor = isRunning ? 'var(--primary-color,#2196F3)' : 'var(--success-color,#4CAF50)';
+    const statusLabel = isRunning ? '수집 중' : '완료';
     return `
         <div style="font-size:0.85em; margin-bottom:3px;">
-            ${progress.processed.toLocaleString()} / ${progress.total.toLocaleString()}${elapsed}
+            ${statusLabel} · ${processed.toLocaleString()} / ${total.toLocaleString()} (${pct}%)${elapsed}
         </div>
         <div style="background:#e0e0e0; border-radius:4px; height:8px; width:100%;">
-            <div style="background:var(--primary-color,#2196F3); height:8px; border-radius:4px; width:${pct}%;"></div>
+            <div style="background:${barColor}; height:8px; border-radius:4px; width:${pct}%;"></div>
         </div>
         <div style="font-size:0.8em; color:#888; margin-top:2px;">${detail}</div>
     `;
@@ -188,7 +226,7 @@ async function updateBackgroundStatus() {
         tbody.innerHTML = result.data.map(task => {
             const badge = STATE_BADGE[task.state] || { label: task.state.toUpperCase(), color: '#888' };
             const priorityLabel = PRIORITY_LABEL[task.priority] ?? task.priority;
-            const progressHtml = renderProgressCell(task.progress);
+            const progressHtml = renderProgressCell(task.progress, task.name);
             return `
                 <tr>
                     <td style="font-weight:bold; color:var(--text-color);">${task.name}</td>
