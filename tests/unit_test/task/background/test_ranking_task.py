@@ -698,7 +698,7 @@ async def test_refresh_basic_ranking_exception_and_notification(bg_service, mock
     bg_service._notification_service = AsyncMock() # NotificationService
 
     # asyncio.gather가 예외를 던지도록 설정하여 try-except 블록 진입 유도
-    with patch("task.background.ranking_task.asyncio.gather", side_effect=Exception("Critical Error")):
+    with patch("task.background.after_market.ranking_task.asyncio.gather", side_effect=Exception("Critical Error")):
         await bg_service.refresh_basic_ranking()
 
     logger.error.assert_called()
@@ -744,8 +744,8 @@ async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
 
     # 2. Failure case
     bg_service._notification_service.reset_mock()
-    with patch("task.background.ranking_task.asyncio.gather", side_effect=Exception("API Fail")):
-        await bg_service.refresh_investor_ranking()
+    with patch("task.background.after_market.ranking_task.asyncio.gather", side_effect=Exception("API Fail")):
+        await bg_service.refresh_investor_ranking(force=True)
 
     bg_service._notification_service.emit.assert_awaited()
     args = bg_service._notification_service.emit.call_args[0]
@@ -797,18 +797,18 @@ async def test_refresh_investor_ranking_invalid_response_data(bg_service, mock_d
 
     # 1. data is None
     broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=None))
-    await bg_service.refresh_investor_ranking()
+    await bg_service.refresh_investor_ranking(force=True)
     assert len(bg_service._foreign_net_buy_cache) == 0
 
     # 2. data is not dict
     broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data="invalid"))
-    await bg_service.refresh_investor_ranking()
+    await bg_service.refresh_investor_ranking(force=True)
     assert len(bg_service._foreign_net_buy_cache) == 0
 
     # 3. program data invalid
     broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=_make_investor_response(100))
     broker.get_program_trade_by_stock_daily = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data="invalid"))
-    await bg_service.refresh_investor_ranking()
+    await bg_service.refresh_investor_ranking(force=True)
     # 투자자 데이터는 수집되었으나 프로그램 데이터는 수집되지 않음
     assert len(bg_service._foreign_net_buy_cache) == 1
     assert len(bg_service._program_net_buy_cache) == 0

@@ -100,7 +100,7 @@ async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
         raise asyncio.CancelledError
     sleep_side_effect.counter = 0
 
-    with patch("task.background.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -128,7 +128,7 @@ async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
         raise asyncio.CancelledError
     sleep_side_effect.counter = 0
 
-    with patch("task.background.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -169,7 +169,7 @@ async def test_stop_cancels_all_tasks(watchdog_task):
 
     svc._tasks = [mock_task1, mock_task2]
 
-    with patch("task.background.websocket_watchdog_task.asyncio.gather", new_callable=AsyncMock):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.gather", new_callable=AsyncMock):
         await svc.stop()
 
     mock_task1.cancel.assert_called_once()
@@ -248,7 +248,7 @@ async def test_program_trading_watchdog_sets_market_open_false(watchdog_task):
         raise asyncio.CancelledError
     sleep_side_effect.counter = 0
 
-    with patch("task.background.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -274,7 +274,7 @@ async def test_program_trading_watchdog_sets_market_open_true(watchdog_task):
         raise asyncio.CancelledError
     sleep_side_effect.counter = 0
 
-    with patch("task.background.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
