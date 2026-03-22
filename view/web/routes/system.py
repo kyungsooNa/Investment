@@ -10,6 +10,7 @@ router = APIRouter()
 # 태스크별 실행 스케줄 유형
 # intraday: 장 중에만 의미있는 태스크 (장 마감 후 비활성)
 # after_market: 장 마감 후 실행되는 배치 태스크 (장 중 비활성)
+# realtime: 항상 동작해야 하는 실시간 태스크
 _SCHEDULE_TYPES = {
     "websocket_watchdog":  "intraday",
     "strategy_scheduler":  "intraday",
@@ -17,6 +18,13 @@ _SCHEDULE_TYPES = {
     "daily_price_collector": "after_market",
     "ohlcv_update":        "after_market",
     "전일기준우량주_생성":  "after_market",
+}
+
+_SCHEDULE_ORDER = {
+    "realtime": 0,
+    "intraday": 1,
+    "after_market": 2,
+    "unknown": 99,
 }
 
 
@@ -54,14 +62,34 @@ def get_background_status():
     for item in ctx.background_scheduler.get_all_status():
         name = item["name"]
         task = ctx.background_scheduler.get_task(name)
+        schedule_type = _SCHEDULE_TYPES.get(name, "unknown")
+        
+        # --- 모듈(파일) 경로를 기반으로 스케줄 유형 동적 판별 ---
+        schedule_type = "unknown"
+        if task:
+            module_name = task.__class__.__module__  # 예: "task.background.after_market.ranking_task"
+            
+            # 특정 태스크명 우선 확인 (폴더 경로에 포함된 이름으로 인해 잘못 분류되는 것을 방지)
+            if "strategy_scheduler" in module_name:
+                schedule_type = "intraday"
+            elif "after_market" in module_name:
+                schedule_type = "after_market"
+            elif "intraday" in module_name:
+                schedule_type = "intraday"
+            elif "realtime" in module_name:
+                schedule_type = "realtime"
+
         result.append({
             "name": name,
             "state": item["state"],
             "priority": item["priority"],
-            "schedule_type": _SCHEDULE_TYPES.get(name, "unknown"),
+            "schedule_type": schedule_type,
+            "schedule_order": _SCHEDULE_ORDER.get(schedule_type, 99),
             "progress": task.get_progress() if task else None,
         })
 
+    # 스케줄 유형(실시간 -> 장중 -> 장마감) 순서로 정렬
+    result.sort(key=lambda x: x["schedule_order"])
     return {"success": True, "data": result}
 
 

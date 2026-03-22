@@ -146,8 +146,9 @@ const STATE_BADGE = {
 };
 
 const SCHEDULE_TYPE_BADGE = {
-    intraday:     { label: '장중 전용',  color: '#1976D2' },
-    after_market: { label: '장마감 후',  color: '#6A1B9A' },
+    realtime:     { label: '실시간',     color: '#E64A19' },
+    intraday:     { label: '장중 전용',   color: '#1976D2' },
+    after_market: { label: '장마감 후',   color: '#6A1B9A' },
 };
 
 const PRIORITY_LABEL = {
