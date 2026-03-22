@@ -304,10 +304,12 @@ async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
     mock_deps.stock_repo.get_stock_data.return_value = None
     
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = True
     base_date = datetime(2023, 1, 1)
     past_data = [{"stck_bsop_date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "stck_clpr": "1000"} for i in range(600)]
     broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
-    
+
     class MockOutput:
         stck_oprc = "2000"
         stck_hgpr = "2100"
