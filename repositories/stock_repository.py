@@ -302,6 +302,17 @@ class StockRepository:
             self._logger.error(f"StockRepository OHLCV 요약 조회 실패 ({code}): {e}")
         return {"count": 0, "latest_date": None, "oldest_date": None}
 
+    def get_ohlcv_max_trading_days(self) -> int:
+        """DB에 저장된 고유 거래일 수를 반환한다 (전체 종목 기준 최대 캔들 수 상한)."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT COUNT(DISTINCT date) FROM ohlcv")
+                row = cursor.fetchone()
+            return row[0] if row and row[0] else 0
+        except Exception as e:
+            self._logger.error(f"StockRepository 거래일 수 조회 실패: {e}")
+            return 0
+
     # ── daily_prices (장마감 후 전종목 스냅샷) ──────────────────────
 
     def upsert_daily_snapshot(self, trade_date: str, records: List[Dict]):

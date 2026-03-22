@@ -189,7 +189,14 @@ class OhlcvUpdateTask(SchedulableTask):
                 self._logger.info(f"이미 {target_date} OHLCV 수집 완료 — 스킵")
                 return
 
-            self._logger.info(f"전체 종목 OHLCV 수집 시작 (기준일: {target_date})")
+            # DB에 실제 저장된 거래일 수를 조회하여 유효 임계값 결정
+            # (API가 제공하는 최대 역사 데이터가 TARGET_OHLCV_DAYS보다 적을 수 있음)
+            db_max_days = self._stock_repo.get_ohlcv_max_trading_days()
+            effective_threshold = min(self.TARGET_OHLCV_DAYS, db_max_days) if db_max_days > 0 else self.TARGET_OHLCV_DAYS
+            self._logger.info(
+                f"전체 종목 OHLCV 수집 시작 (기준일: {target_date}, "
+                f"유효 임계값: {effective_threshold}일 / 목표: {self.TARGET_OHLCV_DAYS}일 / DB 최대: {db_max_days}일)"
+            )
             self._progress = {
                 "running": True, "processed": 0, "total": 0,
                 "updated": 0, "skipped": 0, "elapsed": 0.0,
@@ -209,7 +216,7 @@ class OhlcvUpdateTask(SchedulableTask):
 
                 # 병렬 처리
                 tasks = [
-                    self._update_stock_ohlcv(code, target_date)
+                    self._update_stock_ohlcv(code, target_date, effective_threshold)
                     for code, _, _ in chunk
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -272,25 +279,33 @@ class OhlcvUpdateTask(SchedulableTask):
 
     # ── 내부 헬퍼 ─────────────────────────────────────────
 
-    async def _update_stock_ohlcv(self, code: str, target_date: str) -> Optional[bool]:
+    async def _update_stock_ohlcv(
+        self, code: str, target_date: str, effective_threshold: Optional[int] = None
+    ) -> Optional[bool]:
         """단일 종목 OHLCV를 필요 시에만 API 호출하여 업데이트한다.
 
         DB 상태를 먼저 조회하여:
-        - TARGET_OHLCV_DAYS 이상 보유 + 당일 데이터 완비 → 스킵 (False)
+        - effective_threshold 이상 보유 + 당일 데이터 완비 → 스킵 (False)
         - 데이터 부족 또는 당일 누락 → get_ohlcv() 호출 후 DB 저장 (True)
+
+        Args:
+            effective_threshold: 스킵 판단 기준 일수.
+                None이면 TARGET_OHLCV_DAYS 사용.
+                DB 실제 최대 거래일이 TARGET_OHLCV_DAYS보다 적을 때 동적으로 낮춰서 전달.
 
         Returns:
             True  - API 호출 후 갱신 성공
             False - 이미 최신 상태여서 스킵
             None  - 오류 발생
         """
+        threshold = effective_threshold if effective_threshold is not None else self.TARGET_OHLCV_DAYS
         try:
             summary = self._stock_repo.get_ohlcv_summary(code)
             count = summary["count"]
             latest_date = summary["latest_date"]
 
             # 이미 충분한 역사 데이터가 있고 당일 캔들도 존재하면 API 불필요
-            if count >= self.TARGET_OHLCV_DAYS and latest_date == target_date:
+            if count >= threshold and latest_date == target_date:
                 return False
 
             # get_ohlcv: DB에 없는 구간은 자동으로 API 조회 후 StockRepository에 upsert

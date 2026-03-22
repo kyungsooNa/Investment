@@ -41,11 +41,16 @@ def mock_sqs():
 
 @pytest.fixture
 def mock_stock_repo():
-    """StockRepository mock — 기본값: 데이터 없음(신규 종목)."""
+    """StockRepository mock — 기본값: 데이터 없음(신규 종목).
+
+    get_ohlcv_max_trading_days는 600을 반환하여 effective_threshold == TARGET_OHLCV_DAYS가 되도록 설정.
+    DB가 600일 미달인 실제 상황은 TestEffectiveThreshold에서 별도 검증.
+    """
     repo = MagicMock()
     repo.get_ohlcv_summary = MagicMock(
         return_value={"count": 0, "latest_date": None, "oldest_date": None}
     )
+    repo.get_ohlcv_max_trading_days = MagicMock(return_value=600)
     return repo
 
 
@@ -692,3 +697,76 @@ class TestStartStop:
 
         assert len(task._tasks) == task_count
         await task.stop()
+
+
+# ──────────────────────────────────────────────
+# effective_threshold: DB 최대 거래일 < TARGET_OHLCV_DAYS 상황
+# (현실: API가 600일치 역사를 제공 못할 경우 재시작마다 API 재호출 문제)
+# ──────────────────────────────────────────────
+
+
+class TestEffectiveThreshold:
+
+    async def test_skip_when_db_max_days_below_target(
+        self, mock_sqs, mock_mapper, mock_stock_repo, mock_mcs
+    ):
+        """DB 최대 거래일(536)이 TARGET(600) 미만일 때, 종목이 536일+당일 보유하면 스킵해야 한다."""
+        DB_MAX = 536
+        mock_stock_repo.get_ohlcv_max_trading_days.return_value = DB_MAX
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": DB_MAX, "latest_date": TARGET_DATE, "oldest_date": "20240104"
+        }
+        task = OhlcvUpdateTask(
+            stock_query_service=mock_sqs,
+            stock_code_repository=mock_mapper,
+            stock_repo=mock_stock_repo,
+            market_calendar_service=mock_mcs,
+            logger=MagicMock(),
+        )
+
+        await task._collect_all_ohlcv()
+
+        p = task.get_progress()
+        assert p["skipped"] == 3
+        assert p["updated"] == 0
+        mock_sqs.get_ohlcv.assert_not_called()
+
+    async def test_update_stock_ohlcv_uses_effective_threshold(
+        self, mock_sqs, mock_mapper, mock_stock_repo, mock_mcs
+    ):
+        """effective_threshold=536 전달 시 count=536+당일이면 False(스킵) 반환."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 536, "latest_date": TARGET_DATE, "oldest_date": "20240104"
+        }
+        task = OhlcvUpdateTask(
+            stock_query_service=mock_sqs,
+            stock_code_repository=mock_mapper,
+            stock_repo=mock_stock_repo,
+            market_calendar_service=mock_mcs,
+            logger=MagicMock(),
+        )
+
+        result = await task._update_stock_ohlcv("005930", TARGET_DATE, effective_threshold=536)
+
+        assert result is False
+        mock_sqs.get_ohlcv.assert_not_called()
+
+    async def test_update_stock_ohlcv_calls_api_without_effective_threshold(
+        self, mock_sqs, mock_mapper, mock_stock_repo, mock_mcs
+    ):
+        """effective_threshold 미지정(None) 시 TARGET_OHLCV_DAYS(600) 기준 적용 → count=536이면 API 호출."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 536, "latest_date": TARGET_DATE, "oldest_date": "20240104"
+        }
+        task = OhlcvUpdateTask(
+            stock_query_service=mock_sqs,
+            stock_code_repository=mock_mapper,
+            stock_repo=mock_stock_repo,
+            market_calendar_service=mock_mcs,
+            logger=MagicMock(),
+        )
+
+        result = await task._update_stock_ohlcv("005930", TARGET_DATE)  # effective_threshold=None
+
+        assert result is True
+        mock_sqs.get_ohlcv.assert_called_once()
