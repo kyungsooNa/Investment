@@ -26,6 +26,7 @@ def mock_deps():
     stock_repo = MagicMock()
     stock_repo.get_current_price.return_value = None
     stock_repo.get_stock_data.return_value = None
+    stock_repo.get_latest_daily_snapshot.return_value = None
 
     return SimpleNamespace(
         broker=broker,
@@ -303,10 +304,12 @@ async def test_get_ohlcv_object_output(trading_service_fixture, mock_deps):
     mock_deps.stock_repo.get_stock_data.return_value = None
     
     tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = True
     base_date = datetime(2023, 1, 1)
     past_data = [{"stck_bsop_date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "stck_clpr": "1000"} for i in range(600)]
     broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="", data=past_data)
-    
+
     class MockOutput:
         stck_oprc = "2000"
         stck_hgpr = "2100"
@@ -341,20 +344,88 @@ async def test_get_current_price_cache_hit(trading_service_fixture, mock_deps):
 
 @pytest.mark.asyncio
 async def test_get_current_price_cache_miss(trading_service_fixture, mock_deps):
-    """현재가 조회: 캐시 Miss 시 API 호출 후 StockRepository에 갱신"""
+    """현재가 조회: 캐시 Miss + 장 중 → DB 건너뛰고 API 호출 후 StockRepository에 갱신"""
     broker = mock_deps.broker
     stock_repo = mock_deps.stock_repo
-    
+    service = trading_service_fixture
+
     stock_repo.get_current_price.return_value = None
-    
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = True  # 장 중
+
     api_data = {"output": {"stck_prpr": "80000", "acml_vol": "100"}}
     broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
-    
-    resp = await trading_service_fixture.get_current_price("005930")
-    
+
+    resp = await service.get_current_price("005930")
+
+    assert resp.rt_cd == "0"
+    stock_repo.get_latest_daily_snapshot.assert_not_called()
+    broker.get_current_price.assert_awaited_once_with("005930")
+    stock_repo.set_current_price.assert_called_once_with("005930", api_data)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_db_fallback_when_market_closed(trading_service_fixture, mock_deps):
+    """장 마감 + LRU miss → daily_prices DB 조회 → API 호출 없이 반환 및 LRU 적재"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    db_snapshot = {"output": {"stck_prpr": "70000"}, "_source": "daily_snapshot", "_trade_date": "20260318"}
+    stock_repo.get_latest_daily_snapshot.return_value = db_snapshot
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False  # 장 마감
+
+    resp = await service.get_current_price("005930")
+
+    assert resp.rt_cd == "0"
+    assert resp.msg1 == "성공(DB)"
+    assert resp.data == db_snapshot
+    broker.get_current_price.assert_not_called()
+    stock_repo.get_latest_daily_snapshot.assert_called_once_with("005930")
+    stock_repo.set_current_price.assert_called_once_with("005930", db_snapshot)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_db_miss_then_api_when_market_closed(trading_service_fixture, mock_deps):
+    """장 마감 + LRU miss + DB miss → API 호출"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    stock_repo.get_latest_daily_snapshot.return_value = None
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False  # 장 마감
+
+    api_data = {"output": {"stck_prpr": "70000"}}
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
+
+    resp = await service.get_current_price("005930")
+
     assert resp.rt_cd == "0"
     broker.get_current_price.assert_awaited_once_with("005930")
     stock_repo.set_current_price.assert_called_once_with("005930", api_data)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_skip_db_when_market_open(trading_service_fixture, mock_deps):
+    """장 중 + LRU miss → DB 확인 없이 바로 API 호출"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = True  # 장 중
+
+    api_data = {"output": {"stck_prpr": "70000"}}
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
+
+    await service.get_current_price("005930")
+
+    stock_repo.get_latest_daily_snapshot.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_range(trading_service_fixture, mock_deps):
@@ -1048,4 +1119,80 @@ class TestGetCurrentUpperLimitStocksFlows(unittest.IsolatedAsyncioTestCase):
         assert only.name == "종목C"
         assert only.current_price == 40000
         assert only.prdy_ctrt == 30.0
+
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_after_market_close_no_today_api_call(trading_service_fixture, mock_deps):
+    """장 마감 후에는 _fetch_today_ohlcv(현재가 API)를 호출하지 않고 과거 데이터만 반환"""
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    # 장 마감 후 (18:00)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 18, 0, 0)
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False
+
+    # 로컬 DB에 오늘 데이터 없이 어제까지만 존재하는 상황
+    base_date = datetime(2023, 1, 1)
+    past_rows = [
+        {"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"),
+         "open": 1000.0, "high": 1010.0, "low": 990.0, "close": 1005.0, "volume": 100}
+        for i in range(600)
+    ]
+    # 마지막 데이터는 어제(2025-01-01)
+    past_rows.append({"date": "20250101", "open": 1010.0, "high": 1020.0, "low": 1000.0, "close": 1015.0, "volume": 200})
+    stock_repo.get_stock_data.return_value = {"ohlcv": past_rows}
+
+    resp = await service.get_ohlcv("005930", period="D")
+
+    assert resp.rt_cd == "0"
+    # 현재가 API 호출 없어야 함 (장 마감 후)
+    broker.get_current_price.assert_not_called()
+    # 과거 일봉 API도 호출 없어야 함 (캐시 충분)
+    broker.inquire_daily_itemchartprice.assert_not_called()
+    # 마지막 데이터는 오늘이 아닌 어제
+    assert resp.data[-1]['date'] == "20250101"
+
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_during_market_open_calls_today_api(trading_service_fixture, mock_deps):
+    """장 중에는 오늘 실시간 데이터를 현재가 API로 병합하는지 검증"""
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    # 장 중 (10:00)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = True
+
+    # 로컬 DB에 어제까지 데이터 존재 (600건 이상)
+    base_date = datetime(2023, 1, 1)
+    past_rows = [
+        {"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"),
+         "open": 1000.0, "high": 1010.0, "low": 990.0, "close": 1005.0, "volume": 100}
+        for i in range(600)
+    ]
+    past_rows.append({"date": "20250101", "open": 1010.0, "high": 1020.0, "low": 1000.0, "close": 1015.0, "volume": 200})
+    stock_repo.get_stock_data.return_value = {"ohlcv": past_rows}
+
+    # 현재가 API: 오늘(2025-01-02) 데이터 반환
+    broker.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK",
+        data={"output": {"stck_oprc": "1020", "stck_hgpr": "1030", "stck_lwpr": "1010", "stck_prpr": "1025", "acml_vol": "500"}}
+    )
+
+    resp = await service.get_ohlcv("005930", period="D")
+
+    assert resp.rt_cd == "0"
+    # 장 중에는 현재가 API 호출되어야 함
+    broker.get_current_price.assert_called_once()
+    # 과거 일봉 API는 캐시가 충분하므로 호출되지 않아야 함
+    broker.inquire_daily_itemchartprice.assert_not_called()
+    # 오늘 데이터가 병합되어 마지막 항목이 오늘 날짜여야 함
+    assert resp.data[-1]['date'] == "20250102"
+    assert resp.data[-1]['close'] == 1025.0
 

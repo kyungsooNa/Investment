@@ -427,6 +427,48 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository daily_prices 데이터 정리 실패: {e}")
 
+    def get_latest_daily_snapshot(self, code: str) -> Optional[dict]:
+        """daily_prices에서 최신 스냅샷을 현재가 API 응답 포맷(output dict)으로 변환하여 반환합니다.
+        장 마감 후 LRU 캐시 miss 시 API 호출 전 fallback으로 사용합니다.
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT * FROM daily_prices WHERE code = ? ORDER BY trade_date DESC LIMIT 1",
+                    (code,),
+                )
+                row = cursor.fetchone()
+                conn.row_factory = None
+            if not row:
+                return None
+            r = dict(row)
+            # daily_prices 컬럼 → KIS API output 필드 매핑
+            output = {
+                "stck_prpr":     str(r.get("current_price") or 0),
+                "stck_oprc":     str(r.get("open_price") or 0),
+                "stck_hgpr":     str(r.get("high_price") or 0),
+                "stck_lwpr":     str(r.get("low_price") or 0),
+                "stck_sdpr":     str(r.get("prev_close") or 0),
+                "prdy_vrss":     str(r.get("change_price") or 0),
+                "prdy_vrss_sign": str(r.get("change_sign") or ""),
+                "prdy_ctrt":     str(r.get("change_rate") or "0"),
+                "acml_vol":      str(r.get("volume") or 0),
+                "acml_tr_pbmn":  str(r.get("trading_value") or 0),
+                "hts_avls":      str(r.get("market_cap") or 0),
+                "per":           str(r.get("per") or ""),
+                "pbr":           str(r.get("pbr") or ""),
+                "eps":           str(r.get("eps") or ""),
+                "d250_hgpr":     str(r.get("w52_high") or 0),
+                "d250_lwpr":     str(r.get("w52_low") or 0),
+                "hts_kor_isnm":  str(r.get("name") or ""),
+                "stck_bsop_date": str(r.get("trade_date") or ""),
+            }
+            return {"output": output, "_source": "daily_snapshot", "_trade_date": r.get("trade_date")}
+        except Exception as e:
+            self._logger.error(f"StockRepository daily_prices 스냅샷 조회 실패 ({code}): {e}")
+            return None
+
     def get_cache_stats(self, expand: bool = False) -> dict:
         """메모리 캐시의 사용 통계(적중률 등)를 반환합니다."""
         return self._stocks_cache.get_stats(expand=expand)

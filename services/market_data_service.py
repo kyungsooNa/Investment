@@ -62,15 +62,23 @@ class MarketDataService:
             cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0, count_stats=count_stats, caller=caller)
             if cached_data:
                 return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(Cache)", data=cached_data)
-                
+
+        # 2. 장 마감 시간대에는 daily_prices DB 스냅샷 확인 (API 호출 절약)
+        is_market_open = (await self._mcs.is_market_open_now()) if self._mcs else self._market_clock.is_market_operating_hours()
+        if self._stock_repo and not is_market_open:
+            db_data = self._stock_repo.get_latest_daily_snapshot(stock_code)
+            if db_data:
+                self._stock_repo.set_current_price(stock_code, db_data)
+                return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(DB)", data=db_data)
+
         if count_stats:
             self._logger.info(f"MarketDataService - {stock_code} 현재가 조회 요청")
         resp = await self._broker_api_wrapper.get_current_price(stock_code)
-        
-        # 2. 조회 결과를 StockRepository에 갱신
+
+        # 3. 조회 결과를 StockRepository에 갱신
         if resp and resp.rt_cd == ErrorCode.SUCCESS.value and self._stock_repo:
             self._stock_repo.set_current_price(stock_code, resp.data)
-            
+
         return resp
 
     async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
@@ -368,12 +376,11 @@ class MarketDataService:
                 if self._stock_repo and past_rows:
                     self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
 
-            # 3. 오늘 데이터 처리 (실시간 API 병합)
+            # 3. 오늘 데이터 처리 (실시간 API 병합) - 장 마감 후에는 불필요
             today_rows = []
             is_market_open = (await self._mcs.is_market_open_now()) if self._mcs else False
-            is_today_cached = past_rows and past_rows[-1]['date'] == today_str
 
-            if is_today_cached and not is_market_open:
+            if not is_market_open:
                 pass
             else:
                 today_rows = await self._fetch_today_ohlcv(stock_code, today_str, caller=caller)

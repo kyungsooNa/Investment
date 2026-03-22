@@ -60,7 +60,7 @@ def task(mock_universe_service, mock_mcs, mock_market_clock):
 class TestTaskProperties:
 
     def test_task_name(self, task):
-        assert task.task_name == "전일기준우량주_생성"
+        assert task.task_name == "전일기준주도주_생성"
 
     def test_priority(self, task):
         assert task.priority == TaskPriority.LOW

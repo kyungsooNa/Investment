@@ -144,6 +144,82 @@ class TestUpsertEmpty:
         assert repo.get_count_by_date("20260318") == 0
 
 
+class TestGetLatestDailySnapshot:
+    """get_latest_daily_snapshot: daily_prices → KIS API 포맷 변환 테스트."""
+
+    def test_returns_none_when_no_data(self, repo):
+        """데이터 없을 때 None 반환."""
+        assert repo.get_latest_daily_snapshot("005930") is None
+
+    def test_returns_latest_when_multiple_dates(self, repo):
+        """여러 날짜가 있을 때 가장 최신 날짜 데이터 반환."""
+        repo.upsert_daily_snapshot("20260316", [_make_record("005930", price=70000)])
+        repo.upsert_daily_snapshot("20260318", [_make_record("005930", price=72000)])
+        repo.upsert_daily_snapshot("20260317", [_make_record("005930", price=71000)])
+
+        result = repo.get_latest_daily_snapshot("005930")
+        assert result is not None
+        assert result["output"]["stck_prpr"] == "72000"
+        assert result["_trade_date"] == "20260318"
+
+    def test_field_mapping(self, repo):
+        """daily_prices 컬럼 → KIS API output 필드명 매핑 검증."""
+        repo.upsert_daily_snapshot("20260318", [_make_record("005930", price=70000)])
+
+        result = repo.get_latest_daily_snapshot("005930")
+        output = result["output"]
+        assert output["stck_prpr"] == "70000"          # current_price
+        assert output["stck_oprc"] == "69000"          # open_price
+        assert output["stck_hgpr"] == "71000"          # high_price
+        assert output["stck_lwpr"] == "68500"          # low_price
+        assert output["stck_sdpr"] == "69500"          # prev_close
+        assert output["prdy_vrss"] == "500"            # change_price
+        assert output["prdy_vrss_sign"] == "2"         # change_sign
+        assert output["prdy_ctrt"] == "0.72"           # change_rate
+        assert output["acml_vol"] == "10000000"        # volume
+        assert output["acml_tr_pbmn"] == "700000000000"  # trading_value
+        assert output["d250_hgpr"] == "80000"          # w52_high
+        assert output["d250_lwpr"] == "55000"          # w52_low
+        assert output["hts_kor_isnm"] == "삼성전자"    # name
+        assert output["stck_bsop_date"] == "20260318"  # trade_date
+
+    def test_source_metadata(self, repo):
+        """반환값에 _source, _trade_date 메타 포함 여부 검증."""
+        repo.upsert_daily_snapshot("20260318", [_make_record("005930")])
+        result = repo.get_latest_daily_snapshot("005930")
+        assert result["_source"] == "daily_snapshot"
+        assert result["_trade_date"] == "20260318"
+
+    def test_handles_none_numeric_fields(self, repo):
+        """nullable 숫자 컬럼이 None일 때 '0' 변환 검증."""
+        record = _make_record("005930")
+        record["market_cap"] = None
+        record["trading_value"] = None
+        record["w52_high"] = None
+        repo.upsert_daily_snapshot("20260318", [record])
+
+        result = repo.get_latest_daily_snapshot("005930")
+        assert result["output"]["hts_avls"] == "0"
+        assert result["output"]["acml_tr_pbmn"] == "0"
+        assert result["output"]["d250_hgpr"] == "0"
+
+    def test_handles_none_string_fields(self, repo):
+        """nullable 문자 컬럼이 None일 때 빈 문자열 변환 검증."""
+        record = _make_record("005930")
+        record["per"] = None
+        record["pbr"] = None
+        repo.upsert_daily_snapshot("20260318", [record])
+
+        result = repo.get_latest_daily_snapshot("005930")
+        assert result["output"]["per"] == ""
+        assert result["output"]["pbr"] == ""
+
+    def test_different_code_isolated(self, repo):
+        """다른 종목 코드로 조회 시 None 반환."""
+        repo.upsert_daily_snapshot("20260318", [_make_record("005930")])
+        assert repo.get_latest_daily_snapshot("000660") is None
+
+
 class TestAllFields:
     """모든 필드가 정확히 저장/조회되는지 검증."""
 
