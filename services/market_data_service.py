@@ -376,12 +376,11 @@ class MarketDataService:
                 if self._stock_repo and past_rows:
                     self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
 
-            # 3. 오늘 데이터 처리 (실시간 API 병합)
+            # 3. 오늘 데이터 처리 (실시간 API 병합) - 장 마감 후에는 불필요
             today_rows = []
             is_market_open = (await self._mcs.is_market_open_now()) if self._mcs else False
-            is_today_cached = past_rows and past_rows[-1]['date'] == today_str
 
-            if is_today_cached and not is_market_open:
+            if not is_market_open:
                 pass
             else:
                 today_rows = await self._fetch_today_ohlcv(stock_code, today_str, caller=caller)
