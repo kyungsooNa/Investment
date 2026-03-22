@@ -242,6 +242,36 @@ function renderProgressCell(progress, taskName) {
     `;
 }
 
+function renderActionCell(task) {
+    if (task.name !== 'ohlcv_update') return '-';
+    const isRunning = task.progress && task.progress.running;
+    const disabled = isRunning ? 'disabled' : '';
+    const label = isRunning ? '수집 중...' : '강제 수집';
+    return `<button class="btn btn-sm" ${disabled} onclick="forceOhlcvUpdate(this)" style="font-size:0.82em; padding:3px 10px;">${label}</button>`;
+}
+
+async function forceOhlcvUpdate(btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = '요청 중...';
+    try {
+        const res = await fetch('/api/ohlcv/force-update', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            btn.textContent = '수집 중...';
+            alert(data.message || '강제 수집이 시작되었습니다.');
+        } else {
+            btn.disabled = false;
+            btn.textContent = '강제 수집';
+            alert(data.detail || '요청 실패');
+        }
+    } catch (e) {
+        btn.disabled = false;
+        btn.textContent = '강제 수집';
+        alert('네트워크 오류: ' + e.message);
+    }
+}
+
 async function updateBackgroundStatus() {
     try {
         const response = await fetch('/api/background/status');
@@ -261,12 +291,14 @@ async function updateBackgroundStatus() {
             const badge = STATE_BADGE[task.state] || { label: task.state.toUpperCase(), color: '#888' };
             const priorityLabel = PRIORITY_LABEL[task.priority] ?? task.priority;
             const progressHtml = renderProgressCell(task.progress, task.name);
+            const actionHtml = renderActionCell(task);
             return `
                 <tr>
                     <td style="font-weight:bold; color:var(--text-color);">${task.name}</td>
                     <td><span style="background:${badge.color}; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em; font-weight:bold;">${badge.label}</span></td>
                     <td style="font-size:0.88em; color:#888;">${priorityLabel}</td>
                     <td>${progressHtml}</td>
+                    <td>${actionHtml}</td>
                 </tr>
             `;
         }).join('');

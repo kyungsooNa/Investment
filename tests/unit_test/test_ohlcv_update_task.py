@@ -770,3 +770,77 @@ class TestEffectiveThreshold:
 
         assert result is True
         mock_sqs.get_ohlcv.assert_called_once()
+
+
+# ──────────────────────────────────────────────
+# Force Collect: skip 조건 무시 강제 수집
+# ──────────────────────────────────────────────
+
+
+class TestForceCollect:
+
+    async def test_force_collect_ignores_last_collected_date(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """force=True이면 _last_collected_date == target_date여도 수집이 실행된다."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 0, "latest_date": None, "oldest_date": None
+        }
+        task._last_collected_date = TARGET_DATE  # 이미 오늘 수집 완료 표시
+
+        await task.force_collect()
+
+        mock_sqs.get_ohlcv.assert_called()
+
+    async def test_force_collect_calls_api_even_if_count_sufficient(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """force=True이면 count >= threshold + latest_date == today 조건을 무시하고 API를 호출한다."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231001"
+        }
+
+        await task.force_collect()
+
+        mock_sqs.get_ohlcv.assert_called()
+
+    async def test_force_collect_sets_progress_force_flag(
+        self, task, mock_stock_repo
+    ):
+        """force 수집 중 progress['force']가 True로 설정된다."""
+        captured = {}
+        original_update = task._progress.update
+
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 0, "latest_date": None, "oldest_date": None
+        }
+
+        await task.force_collect()
+
+        # 수집 완료 후 progress에 force 키가 존재했어야 함 (running=False로 리셋됨)
+        # _last_collected_date는 정상적으로 갱신
+        assert task._last_collected_date == TARGET_DATE
+
+    async def test_normal_collect_skips_when_already_done(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """일반 수집(force=False)에서는 _last_collected_date == target_date이면 스킵된다."""
+        task._last_collected_date = TARGET_DATE
+
+        await task._collect_all_ohlcv(force=False)
+
+        mock_sqs.get_ohlcv.assert_not_called()
+
+    async def test_update_stock_ohlcv_force_skips_db_check(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """_update_stock_ohlcv(force=True)는 DB 조회 없이 바로 API를 호출한다."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231001"
+        }
+
+        result = await task._update_stock_ohlcv("005930", TARGET_DATE, force=True)
+
+        assert result is True
+        mock_stock_repo.get_ohlcv_summary.assert_not_called()  # DB 조회 건너뜀
+        mock_sqs.get_ohlcv.assert_called_once()
