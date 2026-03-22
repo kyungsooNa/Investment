@@ -1,4 +1,4 @@
-# task/background/pool_a_generator_task.py
+# task/background/premium_watchlist_generator_task.py
 """
 전일 기준 우량주 생성 백그라운드 태스크.
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from core.market_clock import MarketClock
 
 
-class PoolAGeneratorTask(SchedulableTask):
+class PremiumWatchlistGeneratorTask(SchedulableTask):
     """장 마감 후 전일 기준 우량주 풀을 자동 생성하는 백그라운드 태스크."""
 
     def __init__(
@@ -63,10 +63,10 @@ class PoolAGeneratorTask(SchedulableTask):
             return
         self._state = TaskState.RUNNING
         self._tasks.append(asyncio.create_task(self._after_market_scheduler()))
-        self._logger.info("PoolAGeneratorTask 시작")
+        self._logger.info("PremiumWatchlistGeneratorTask 시작")
 
     async def stop(self) -> None:
-        self._logger.info(f"PoolAGeneratorTask 종료 시작: {len(self._tasks)}개 태스크")
+        self._logger.info(f"PremiumWatchlistGeneratorTask 종료 시작: {len(self._tasks)}개 태스크")
         for task in self._tasks:
             if not task.done():
                 task.cancel()
@@ -74,7 +74,7 @@ class PoolAGeneratorTask(SchedulableTask):
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         self._state = TaskState.STOPPED
-        self._logger.info("PoolAGeneratorTask 종료 완료")
+        self._logger.info("PremiumWatchlistGeneratorTask 종료 완료")
 
     async def suspend(self) -> None:
         # 배치 특성상 suspend는 지원하지 않음 — 현재 실행 중인 생성은 완료 후 다음 루프에서 반영

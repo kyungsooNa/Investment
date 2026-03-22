@@ -181,6 +181,21 @@ function renderProgressCell(progress, taskName) {
         return `<span style="font-size:0.88em; color:${color}; font-weight:bold;">활성 ${active} / ${total} 전략</span>`;
     }
 
+    // ── 전일 기준 우량주 생성 ──
+    if (taskName === '전일기준우량주_생성') {
+        if (progress.running) {
+            return '<span style="background:var(--primary-color,#2196F3); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">생성 중...</span>';
+        }
+        if (progress.last_generated_date) {
+            const r = progress.last_result || {};
+            const detail = (r.kospi_count !== undefined)
+                ? ` · KOSPI ${r.kospi_count} / KOSDAQ ${r.kosdaq_count}`
+                : '';
+            return `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">완료</span> <span style="font-size:0.85em; color:#888;">${progress.last_generated_date}${detail}</span>`;
+        }
+        return '<span style="color:#888; font-size:0.88em;">대기 중</span>';
+    }
+
     // ── 배치 태스크: 수집 진행률 ──
     const total = progress.total ?? 0;
     const processed = progress.processed ?? 0;

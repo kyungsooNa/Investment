@@ -34,7 +34,7 @@ from task.background.ranking_task import RankingTask
 from task.background.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.daily_price_collector_task import DailyPriceCollectorTask
 from task.background.ohlcv_update_task import OhlcvUpdateTask
-from task.background.pool_a_generator_task import PoolAGeneratorTask
+from task.background.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from repositories.stock_repository import StockRepository
 from services.realtime_data_service import RealtimeDataService
 from services.market_calendar_service import MarketCalendarService
@@ -66,7 +66,7 @@ class WebAppContext:
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self.daily_price_collector_task: DailyPriceCollectorTask = None
         self.ohlcv_update_task: OhlcvUpdateTask = None
-        self.pool_a_generator_task: PoolAGeneratorTask = None
+        self.premium_watchlist_generator_task: PremiumWatchlistGeneratorTask = None
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
@@ -253,7 +253,7 @@ class WebAppContext:
             performance_profiler=self.pm
         )
 
-        self.pool_a_generator_task = PoolAGeneratorTask(
+        self.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
             universe_service=self.oneil_universe_service,
             market_calendar_service=self._mcs,
             market_clock=self.market_clock,
@@ -273,8 +273,8 @@ class WebAppContext:
             self.background_scheduler.register(self.daily_price_collector_task)
         if self.ohlcv_update_task:
             self.background_scheduler.register(self.ohlcv_update_task)
-        if self.pool_a_generator_task:
-            self.background_scheduler.register(self.pool_a_generator_task)
+        if self.premium_watchlist_generator_task:
+            self.background_scheduler.register(self.premium_watchlist_generator_task)
 
         # ForegroundScheduler 초기화
         self.foreground_scheduler = ForegroundScheduler(
