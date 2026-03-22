@@ -6,7 +6,7 @@ import asyncio
 import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-from task.background.websocket_watchdog_task import WebSocketWatchdogTask
+from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from services.market_calendar_service import MarketCalendarService
 
 @pytest.fixture

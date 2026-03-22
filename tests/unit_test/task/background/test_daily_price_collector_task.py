@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 import pandas as pd
 
-from task.background.daily_price_collector_task import DailyPriceCollectorTask
+from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
 from repositories.stock_repository import StockRepository
 from interfaces.schedulable_task import TaskPriority, TaskState
 from common.types import ResCommonResponse, ErrorCode

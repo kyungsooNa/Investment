@@ -19,7 +19,12 @@ from core.performance_profiler import PerformanceProfiler
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from scheduler.background_scheduler import BackgroundScheduler
 from scheduler.foreground_scheduler import ForegroundScheduler
-from task.background.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
+from task.background.intraday.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
+from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
+from task.background.after_market.ranking_task import RankingTask
+from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
+from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
+from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -29,11 +34,6 @@ from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
-from task.background.ranking_task import RankingTask
-from task.background.websocket_watchdog_task import WebSocketWatchdogTask
-from task.background.daily_price_collector_task import DailyPriceCollectorTask
-from task.background.ohlcv_update_task import OhlcvUpdateTask
-from task.background.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from repositories.stock_repository import StockRepository
 from services.realtime_data_service import RealtimeDataService
 from services.market_data_service import MarketDataService
@@ -257,6 +257,7 @@ class WebAppContext:
             universe_service=self.oneil_universe_service,
             market_calendar_service=self._mcs,
             market_clock=self.market_clock,
+            notification_service=self.notification_service,
             logger=self.logger,
         )
 

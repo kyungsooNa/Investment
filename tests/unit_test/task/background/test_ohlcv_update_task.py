@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 import pandas as pd
 
-from task.background.ohlcv_update_task import OhlcvUpdateTask
+from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from interfaces.schedulable_task import TaskPriority, TaskState
 from common.types import ResCommonResponse, ErrorCode
 

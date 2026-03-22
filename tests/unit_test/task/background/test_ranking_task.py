@@ -7,7 +7,7 @@ import time
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock, AsyncMock, patch
-from task.background.ranking_task import RankingTask, _ETF_PREFIXES, _chunked
+from task.background.after_market.ranking_task import RankingTask, _ETF_PREFIXES, _chunked
 from common.types import ResCommonResponse, ErrorCode
 from services.market_calendar_service import MarketCalendarService
 
