@@ -178,3 +178,29 @@ def test_upsert_ohlcv_empty_list(repo):
         repo.upsert_ohlcv([])
     except Exception as e:
         pytest.fail(f"빈 리스트 upsert 중 예외 발생: {e}")
+
+
+def test_get_latest_daily_snapshot_none_when_empty(repo):
+    """daily_prices가 비었을 때 get_latest_daily_snapshot은 None을 반환합니다."""
+    assert repo.get_latest_daily_snapshot("005930") is None
+
+
+def test_get_latest_daily_snapshot_output_structure(repo):
+    """get_latest_daily_snapshot 반환값이 현재가 API 포맷 {'output': {...}} 구조인지 검증합니다."""
+    repo.upsert_daily_snapshot("20260318", [{
+        "code": "005930", "name": "삼성전자", "market": "KOSPI",
+        "current_price": 70000, "open_price": 69000, "high_price": 71000,
+        "low_price": 68500, "prev_close": 69500, "change_price": 500,
+        "change_sign": "2", "change_rate": "0.72", "volume": 1000000,
+        "trading_value": 70000000000, "market_cap": 420000000000,
+        "per": 12.5, "pbr": 1.3, "eps": 5600.0,
+        "w52_high": 80000, "w52_low": 55000,
+    }])
+
+    result = repo.get_latest_daily_snapshot("005930")
+    assert result is not None
+    assert "output" in result
+    assert "_source" in result
+    assert "_trade_date" in result
+    assert result["output"]["stck_prpr"] == "70000"
+    assert result["output"]["hts_kor_isnm"] == "삼성전자"

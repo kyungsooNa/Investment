@@ -26,6 +26,7 @@ def mock_deps():
     stock_repo = MagicMock()
     stock_repo.get_current_price.return_value = None
     stock_repo.get_stock_data.return_value = None
+    stock_repo.get_latest_daily_snapshot.return_value = None
 
     return SimpleNamespace(
         broker=broker,
@@ -341,20 +342,88 @@ async def test_get_current_price_cache_hit(trading_service_fixture, mock_deps):
 
 @pytest.mark.asyncio
 async def test_get_current_price_cache_miss(trading_service_fixture, mock_deps):
-    """현재가 조회: 캐시 Miss 시 API 호출 후 StockRepository에 갱신"""
+    """현재가 조회: 캐시 Miss + 장 중 → DB 건너뛰고 API 호출 후 StockRepository에 갱신"""
     broker = mock_deps.broker
     stock_repo = mock_deps.stock_repo
-    
+    service = trading_service_fixture
+
     stock_repo.get_current_price.return_value = None
-    
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = True  # 장 중
+
     api_data = {"output": {"stck_prpr": "80000", "acml_vol": "100"}}
     broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
-    
-    resp = await trading_service_fixture.get_current_price("005930")
-    
+
+    resp = await service.get_current_price("005930")
+
+    assert resp.rt_cd == "0"
+    stock_repo.get_latest_daily_snapshot.assert_not_called()
+    broker.get_current_price.assert_awaited_once_with("005930")
+    stock_repo.set_current_price.assert_called_once_with("005930", api_data)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_db_fallback_when_market_closed(trading_service_fixture, mock_deps):
+    """장 마감 + LRU miss → daily_prices DB 조회 → API 호출 없이 반환 및 LRU 적재"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    db_snapshot = {"output": {"stck_prpr": "70000"}, "_source": "daily_snapshot", "_trade_date": "20260318"}
+    stock_repo.get_latest_daily_snapshot.return_value = db_snapshot
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False  # 장 마감
+
+    resp = await service.get_current_price("005930")
+
+    assert resp.rt_cd == "0"
+    assert resp.msg1 == "성공(DB)"
+    assert resp.data == db_snapshot
+    broker.get_current_price.assert_not_called()
+    stock_repo.get_latest_daily_snapshot.assert_called_once_with("005930")
+    stock_repo.set_current_price.assert_called_once_with("005930", db_snapshot)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_db_miss_then_api_when_market_closed(trading_service_fixture, mock_deps):
+    """장 마감 + LRU miss + DB miss → API 호출"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    stock_repo.get_latest_daily_snapshot.return_value = None
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False  # 장 마감
+
+    api_data = {"output": {"stck_prpr": "70000"}}
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
+
+    resp = await service.get_current_price("005930")
+
     assert resp.rt_cd == "0"
     broker.get_current_price.assert_awaited_once_with("005930")
     stock_repo.set_current_price.assert_called_once_with("005930", api_data)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_skip_db_when_market_open(trading_service_fixture, mock_deps):
+    """장 중 + LRU miss → DB 확인 없이 바로 API 호출"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = True  # 장 중
+
+    api_data = {"output": {"stck_prpr": "70000"}}
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
+
+    await service.get_current_price("005930")
+
+    stock_repo.get_latest_daily_snapshot.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_get_ohlcv_range(trading_service_fixture, mock_deps):
