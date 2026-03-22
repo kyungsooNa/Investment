@@ -7,8 +7,9 @@ OhlcvUpdateTask 단위 테스트.
 3. 600일 미만 (최초/리셋)           → API 호출 (역사 데이터 포함 전체 갱신)
 """
 import asyncio
+import time
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 import pandas as pd
 
 from task.background.ohlcv_update_task import OhlcvUpdateTask
@@ -166,6 +167,28 @@ class TestSkipWhenAlreadyCurrent:
         assert p["skipped"] == 3
         assert p["updated"] == 0
         mock_sqs.get_ohlcv.assert_not_called()
+
+    async def test_skip_does_not_sleep_chunk_delay(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """전체 스킵 시 CHUNK_SLEEP_SEC 대기가 발생하지 않아야 한다 (재시작 후 빠름 검증)."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
+        }
+        task.CHUNK_SLEEP_SEC = 10.0  # 매우 큰 값: sleep이 실제 호출되면 테스트가 느려짐
+
+        slept_durations = []
+
+        async def _fake_sleep(sec):
+            slept_durations.append(sec)
+
+        with patch("task.background.ohlcv_update_task.asyncio.sleep", side_effect=_fake_sleep):
+            await task._collect_all_ohlcv()
+
+        # API 호출이 없었으므로 CHUNK_SLEEP_SEC(10.0) 대기는 없어야 함
+        assert all(d < task.CHUNK_SLEEP_SEC for d in slept_durations), (
+            f"스킵 시에도 CHUNK_SLEEP_SEC 대기가 발생함: {slept_durations}"
+        )
 
 
 # ──────────────────────────────────────────────

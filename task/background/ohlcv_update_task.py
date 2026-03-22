@@ -214,9 +214,11 @@ class OhlcvUpdateTask(SchedulableTask):
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
+                chunk_had_api_call = False
                 for result in results:
                     if result is True:
                         updated += 1
+                        chunk_had_api_call = True
                     elif result is False:
                         skipped += 1
                     # None은 오류 — 카운트 제외
@@ -237,7 +239,11 @@ class OhlcvUpdateTask(SchedulableTask):
                         f"| 갱신: {updated} | 스킵: {skipped} | 소요: {elapsed:.1f}s"
                     )
 
-                await asyncio.sleep(self.CHUNK_SLEEP_SEC)
+                # API 호출이 있었던 청크만 rate limit 대기
+                if chunk_had_api_call:
+                    await asyncio.sleep(self.CHUNK_SLEEP_SEC)
+                else:
+                    await asyncio.sleep(0)  # 이벤트 루프 양보만
 
             # 완료 처리
             self._last_collected_date = target_date
