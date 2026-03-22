@@ -34,7 +34,6 @@ class TestNeedsForeground:
         "/api/scheduler/stop",
         "/api/scheduler/strategy/모멘텀/start",
         "/api/scheduler/strategy/모멘텀/stop",
-        "/api/scheduler/strategy/오닐스퀴즈돌파/generate-pool-a",
         "/api/scheduler/strategy/모멘텀/max-positions",
         "/api/virtual/chart/ALL",
         "/api/virtual/history",

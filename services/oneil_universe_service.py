@@ -27,8 +27,8 @@ class OneilUniverseService:
     """오닐 전략 유니버스 관리 서비스.
     
     역할:
-      1. Pool A (전일 기준 우량주) 생성 및 로드
-      2. Pool B (당일 급등주) 실시간 발굴
+      1. 전일 기준 우량주 생성 및 로드 (Pool A)
+      2. 당일 급등주 실시간 발굴 (Pool B)
       3. Watchlist (감시 대상 60종목) 병합 및 제공
       4. 마켓 타이밍 판단
     """
@@ -111,8 +111,8 @@ class OneilUniverseService:
             self._pool_a_items = {item.code: item for item in raw}
             self._pool_a_loaded = True
 
-        # 2) Pool B 빌드 (실시간 랭킹)
-        pool_b_items = await self._build_pool_b(logger=logger)
+        # 2) 당일 급등주 빌드 (실시간 랭킹)
+        pool_b_items = await self._build_daily_surge_pool(logger=logger)
 
         # 3) 병합
         merged: Dict[str, OSBWatchlistItem] = dict(self._pool_a_items)
@@ -147,14 +147,14 @@ class OneilUniverseService:
         }
         logger.info({
             "event": "build_watchlist_finished",
-            "pool_a": len(self._pool_a_items),
-            "pool_b": len(pool_b_items),
+            "premium_stocks": len(self._pool_a_items),
+            "daily_surge_stocks": len(pool_b_items),
             "final_count": len(self._watchlist)
         })
         self.pm.log_timer("OneilUniverseService._build_watchlist", t_start, threshold=5.0)
 
-    async def _build_pool_b(self, logger: Optional[logging.Logger] = None) -> Dict[str, OSBWatchlistItem]:
-        """Pool B: 실시간 랭킹 기반 종목 발굴."""
+    async def _build_daily_surge_pool(self, logger: Optional[logging.Logger] = None) -> Dict[str, OSBWatchlistItem]:
+        """당일 급등주: 실시간 랭킹 기반 종목 발굴."""
         logger = logger or self._logger
         t_start = self.pm.start_timer()
         # 3가지 랭킹 병합
@@ -208,7 +208,7 @@ class OneilUniverseService:
         # Pool B 스코어링 후 정렬된 상위 종목 로그
         top_n_for_log = 10
         logger.debug({
-            "event": "pool_b_sorted",
+            "event": "daily_surge_pool_sorted",
             "top_n": top_n_for_log,
             "items": [
                 {
@@ -220,7 +220,7 @@ class OneilUniverseService:
             ]
         })
 
-        self.pm.log_timer("OneilUniverseService._build_pool_b", t_start, threshold=3.0)
+        self.pm.log_timer("OneilUniverseService._build_daily_surge_pool", t_start, threshold=3.0)
         return {item.code: item for item in items[:self._cfg.pool_b_size]}
 
     async def _analyze_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
@@ -345,16 +345,16 @@ class OneilUniverseService:
             rs_return_3m=rs_return
         )
 
-    # ── Pool A 생성 (배치) ─────────────────────────────────────────
+    # ── 전일 기준 우량주 생성 (배치) ─────────────────────────────────────────
 
-    async def generate_pool_a(self) -> dict:
-        """전체 종목 스캔 -> Pool A 생성 및 파일 저장."""
-        # 전용 로거 생성 (logs/strategies/oneil/YYYYMMDD_HHMMSS_generate_poolA.log.json)
-        pool_a_logger = get_strategy_logger("generate_poolA", sub_dir="oneil_pool")
+    async def generate_premium_watchlist(self) -> dict:
+        """전체 종목 스캔 -> 전일 기준 우량주 생성 및 파일 저장."""
+        # 전용 로거 생성 (logs/strategies/oneil/YYYYMMDD_HHMMSS_generate_premium_watchlist.log.json)
+        pool_a_logger = get_strategy_logger("generate_premium_watchlist", sub_dir="oneil_pool")
         pool_a_logger.setLevel(logging.DEBUG)
 
-        self._logger.info({"event": "generate_pool_a_started"})
-        pool_a_logger.info({"event": "generate_pool_a_started"})
+        self._logger.info({"event": "generate_premium_watchlist_started"})
+        pool_a_logger.info({"event": "generate_premium_watchlist_started"})
 
         start_time = time.time()
         start_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
@@ -369,7 +369,7 @@ class OneilUniverseService:
                 all_stocks.append((code, name, market))
 
         total_stocks = len(all_stocks)
-        print(f"[Pool A 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
+        print(f"[전일 기준 우량주 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
         pool_a_logger.info({"event": "1st_filter_start", "total_stocks": total_stocks})
 
         # 2. 1차 필터 (시총)
@@ -420,7 +420,7 @@ class OneilUniverseService:
                 pool_a_logger.info({"event": "1st_filter_progress", "processed": processed_count, "total": total_stocks, "passed": len(passed_first)})
 
 
-        print(f"[Pool A 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
+        print(f"[전일 기준 우량주 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
         pool_a_logger.info({"event": "1st_filter_done", "passed": len(passed_first)})
         pool_a_logger.info({"event": "2nd_filter_start", "total_candidates": len(passed_first)})
 
@@ -458,8 +458,8 @@ class OneilUniverseService:
         pool_a_logger.info({"event": "save_done", "kospi_count": len(kospi), "kosdaq_count": len(kosdaq)})
 
         total_elapsed = time.time() - start_time
-        print(f"[Pool A 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
-        pool_a_logger.info({"event": "generate_pool_a_finished", "elapsed_seconds": total_elapsed})
+        print(f"[전일 기준 우량주 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
+        pool_a_logger.info({"event": "generate_premium_watchlist_finished", "elapsed_seconds": total_elapsed})
         
         # 시총 범위 문자열 생성 (예: 2000억 ~ 2조)
         min_cap = self._cfg.pool_a_market_cap_min // 100000000

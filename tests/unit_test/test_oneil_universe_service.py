@@ -184,8 +184,8 @@ async def test_analyze_candidate_filter_trading_value(mock_deps):
     item = await service._analyze_candidate("005930", "Samsung")
     assert item is None
 
-async def test_generate_pool_a(mock_deps, tmp_path):
-    """generate_pool_a: 전체 종목 스캔 및 파일 저장 로직 검증."""
+async def test_generate_premium_watchlist(mock_deps, tmp_path):
+    """generate_premium_watchlist: 전체 종목 스캔 및 파일 저장 로직 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     
     # [수정] Scraper Mock 추가
@@ -229,7 +229,7 @@ async def test_generate_pool_a(mock_deps, tmp_path):
         
         # 4. 파일 저장 Mock
         with patch.object(service, '_save_pool_a') as mock_save:
-            result = await service.generate_pool_a()
+            result = await service.generate_premium_watchlist()
             
             assert result['total_scanned'] == 2
             assert result['passed_first'] == 1  # StockA만 통과
@@ -246,7 +246,7 @@ async def test_get_watchlist_refresh_logic(mock_deps):
     
     # 내부 메서드 Mock
     with patch.object(service, '_load_pool_a', return_value=[]), \
-         patch.object(service, '_build_pool_b', return_value={}):
+         patch.object(service, '_build_daily_surge_pool', return_value={}):
         
         # 1. 첫 호출: 워치리스트 빌드 수행
         await service.get_watchlist()
@@ -302,8 +302,8 @@ async def test_analyze_candidate_with_no_high_data(oneil_service_fixture):
     # 조기 반환되므로 추가 API 호출이 없어야 합니다.
     mock_sqs.get_current_price.assert_not_called()
 
-async def test_generate_pool_a_sorting_with_tie_score(mock_deps, tmp_path):
-    """generate_pool_a: 총점이 같을 경우 회전율(거래대금/시총)이 높은 순으로 정렬되는지 검증."""
+async def test_generate_premium_watchlist_sorting_with_tie_score(mock_deps, tmp_path):
+    """generate_premium_watchlist: 총점이 같을 경우 회전율(거래대금/시총)이 높은 순으로 정렬되는지 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
 
@@ -358,7 +358,7 @@ async def test_generate_pool_a_sorting_with_tie_score(mock_deps, tmp_path):
          patch.object(service, '_save_pool_a') as mock_save, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect):
         
-        await service.generate_pool_a()
+        await service.generate_premium_watchlist()
         
         # _save_pool_a(kospi, kosdaq) 호출 시 kospi 리스트의 순서 확인
         args, _ = mock_save.call_args
@@ -670,8 +670,8 @@ async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     assert "MA decline: 30.00 -> 28.00" in log_call["fail_detail"]
 
 
-async def test_build_pool_b_logic(mock_deps):
-    """_build_pool_b: 실시간 랭킹 기반 Pool B 생성 및 필터링 검증."""
+async def test_build_daily_surge_pool_logic(mock_deps):
+    """_build_daily_surge_pool: 실시간 랭킹 기반 Pool B 생성 및 필터링 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     
     # [수정] Scraper Mock 추가
@@ -708,7 +708,7 @@ async def test_build_pool_b_logic(mock_deps):
         return None
         
     with patch.object(service, '_analyze_candidate', side_effect=mock_analyze):
-        pool_b = await service._build_pool_b()
+        pool_b = await service._build_daily_surge_pool()
         
         assert "A" not in pool_b # Pool A 중복 제외
         assert "B" in pool_b     # 분석 통과
@@ -825,7 +825,7 @@ async def test_build_watchlist_merge_priority(mock_deps):
                                    high_20d=0, ma_20d=0, ma_50d=0, avg_vol_20d=0,
                                    bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0)
     
-    with patch.object(service, '_build_pool_b', new_callable=AsyncMock) as mock_build_b:
+    with patch.object(service, '_build_daily_surge_pool', new_callable=AsyncMock) as mock_build_b:
         mock_build_b.return_value = {"A": item_a_live, "B": item_b_live}
         
         await service._build_watchlist()
@@ -838,8 +838,8 @@ async def test_build_watchlist_merge_priority(mock_deps):
         assert watchlist["A"].name == "StockA_Pool"
         assert watchlist["B"].name == "StockB_Live"
 
-async def test_build_pool_b_skip_duplicates_and_dict_parsing(mock_deps):
-    """_build_pool_b: API 응답이 dict일 때 파싱(Line 153) 및 중복 종목 스킵(Line 169) 검증."""
+async def test_build_daily_surge_pool_skip_duplicates_and_dict_parsing(mock_deps):
+    """_build_daily_surge_pool: API 응답이 dict일 때 파싱(Line 153) 및 중복 종목 스킵(Line 169) 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -870,7 +870,7 @@ async def test_build_pool_b_skip_duplicates_and_dict_parsing(mock_deps):
          patch.object(service, '_compute_profit_growth_scores', new_callable=AsyncMock), \
          patch.object(service, '_compute_total_scores'):
         
-        pool_b = await service._build_pool_b()
+        pool_b = await service._build_daily_surge_pool()
         
         # 검증
         # 1. A는 Pool A에 있으므로 스킵되어야 함 -> analyze 호출 안됨 (혹은 결과에 없음)
@@ -993,8 +993,8 @@ async def test_analyze_candidate_insufficient_bb_data(mock_deps):
 # 추가된 테스트 케이스
 # ════════════════════════════════════════════════════════════════
 
-async def test_build_pool_b_partial_api_failure(mock_deps):
-    """_build_pool_b: API 호출 중 일부가 실패해도 나머지는 처리되는지 검증."""
+async def test_build_daily_surge_pool_partial_api_failure(mock_deps):
+    """_build_daily_surge_pool: API 호출 중 일부가 실패해도 나머지는 처리되는지 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     
     # [수정] Scraper Mock 추가
@@ -1019,7 +1019,7 @@ async def test_build_pool_b_partial_api_failure(mock_deps):
             bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200, avg_trading_value_5d=100
         )
         
-        pool_b = await service._build_pool_b()
+        pool_b = await service._build_daily_surge_pool()
         
         assert "A" in pool_b
         assert len(pool_b) == 1
@@ -1098,8 +1098,8 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
     assert item is not None
 
-async def test_generate_pool_a_fallback_market_cap(mock_deps, tmp_path):
-    """generate_pool_a: hts_avls(시가총액) 누락 시 stck_llam(상장주식수) 사용 검증."""
+async def test_generate_premium_watchlist_fallback_market_cap(mock_deps, tmp_path):
+    """generate_premium_watchlist: hts_avls(시가총액) 누락 시 stck_llam(상장주식수) 사용 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     
     # [수정] Scraper Mock 추가
@@ -1132,7 +1132,7 @@ async def test_generate_pool_a_fallback_market_cap(mock_deps, tmp_path):
             market_cap=500000000000
         )
         
-        result = await service.generate_pool_a()
+        result = await service.generate_premium_watchlist()
         
         # passed_first가 1이어야 함 (5000 * 1억 = 5000억 -> 범위 내)
         assert result['passed_first'] == 1
@@ -1164,8 +1164,8 @@ def test_should_refresh_watchlist_logic(mock_deps):
     assert service._should_refresh_watchlist() is True
     assert 30 in service._watchlist_refresh_done
 
-async def test_build_pool_b_analyze_exception(mock_deps):
-    """_build_pool_b: _analyze_candidate 예외 발생 시 건너뛰기 검증."""
+async def test_build_daily_surge_pool_analyze_exception(mock_deps):
+    """_build_daily_surge_pool: _analyze_candidate 예외 발생 시 건너뛰기 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1176,7 +1176,7 @@ async def test_build_pool_b_analyze_exception(mock_deps):
     sqs.get_top_volume_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     
     with patch.object(service, '_analyze_candidate', side_effect=Exception("Analysis Error")):
-        pool_b = await service._build_pool_b()
+        pool_b = await service._build_daily_surge_pool()
         assert len(pool_b) == 0
 
 async def test_analyze_candidate_price_api_failure(mock_deps):
@@ -1237,8 +1237,8 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     assert item is not None
     # w52_hgpr이 0이어도 다른 조건 만족하면 통과 (52주 고가 근접 체크 스킵)
 
-async def test_build_pool_b_response_items_as_objects(mock_deps):
-    """_build_pool_b: API 응답 아이템이 객체(속성 접근)일 때 처리 검증."""
+async def test_build_daily_surge_pool_response_items_as_objects(mock_deps):
+    """_build_daily_surge_pool: API 응답 아이템이 객체(속성 접근)일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     
     # [수정] Scraper Mock 추가
@@ -1265,7 +1265,7 @@ async def test_build_pool_b_response_items_as_objects(mock_deps):
             bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200, avg_trading_value_5d=100
         )
         
-        pool_b = await service._build_pool_b()
+        pool_b = await service._build_daily_surge_pool()
         
         assert "A" in pool_b
         assert pool_b["A"].name == "StockA"
@@ -1281,8 +1281,8 @@ def test_extract_op_profit_growth_non_dict(mock_deps):
     data = [Obj()]
     assert service._extract_op_profit_growth(data) == 0.0
 
-async def test_generate_pool_a_api_failure_in_loop(mock_deps, tmp_path):
-    """generate_pool_a: 1차 필터 루프 중 API 실패 시 건너뛰기 검증."""
+async def test_generate_premium_watchlist_api_failure_in_loop(mock_deps, tmp_path):
+    """generate_premium_watchlist: 1차 필터 루프 중 API 실패 시 건너뛰기 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     
     # [수정] Scraper Mock 추가
@@ -1317,7 +1317,7 @@ async def test_generate_pool_a_api_failure_in_loop(mock_deps, tmp_path):
             market_cap=500000000000
         )
         
-        result = await service.generate_pool_a()
+        result = await service.generate_premium_watchlist()
         
         # A만 통과
         assert result['passed_first'] == 1
@@ -1333,8 +1333,8 @@ async def test_analyze_candidate_ohlcv_none(mock_deps):
     item = await service._analyze_candidate("CODE", "Name", logger=logger)
     assert item is None
 
-async def test_generate_pool_a_price_output_as_object(mock_deps, tmp_path):
-    """generate_pool_a: 현재가 API 응답이 객체일 때 처리 검증."""
+async def test_generate_premium_watchlist_price_output_as_object(mock_deps, tmp_path):
+    """generate_premium_watchlist: 현재가 API 응답이 객체일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     
     # [수정] Scraper Mock 추가
@@ -1371,7 +1371,7 @@ async def test_generate_pool_a_price_output_as_object(mock_deps, tmp_path):
             market_cap=500000000000
         )
         
-        result = await service.generate_pool_a()
+        result = await service.generate_premium_watchlist()
         
         assert result['passed_first'] == 1
 
