@@ -5,7 +5,7 @@ PremiumWatchlistGeneratorTask 단위 테스트.
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from task.background.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
+from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from interfaces.schedulable_task import TaskPriority, TaskState
 
 

@@ -145,6 +145,12 @@ const STATE_BADGE = {
     idle:      { label: 'IDLE',      color: '#888' },
 };
 
+const SCHEDULE_TYPE_BADGE = {
+    realtime:     { label: '실시간',     color: '#E64A19' },
+    intraday:     { label: '장중 전용',   color: '#1976D2' },
+    after_market: { label: '장마감 후',   color: '#6A1B9A' },
+};
+
 const PRIORITY_LABEL = {
     0:   'CRITICAL',
     10:  'HIGH',
@@ -242,32 +248,43 @@ function renderProgressCell(progress, taskName) {
     `;
 }
 
+// 태스크별 강제 수집 설정 (task_name → {endpoint, label})
+const FORCE_UPDATE_CONFIG = {
+    ohlcv_update:         { endpoint: '/api/ohlcv/force-update',                  label: '강제 수집' },
+    ranking_refresh:      { endpoint: '/api/background/ranking/force-update',     label: '강제 수집' },
+    daily_price_collector:{ endpoint: '/api/background/daily-price/force-update', label: '강제 수집' },
+    '전일기준우량주_생성': { endpoint: '/api/background/watchlist/force-update',   label: '강제 생성' },
+};
+
 function renderActionCell(task) {
-    if (task.name !== 'ohlcv_update') return '-';
+    const config = FORCE_UPDATE_CONFIG[task.name];
+    if (!config) return '-';
     const isRunning = task.progress && task.progress.running;
     const disabled = isRunning ? 'disabled' : '';
-    const label = isRunning ? '수집 중...' : '강제 수집';
-    return `<button class="btn btn-sm" ${disabled} onclick="forceOhlcvUpdate(this)" style="font-size:0.82em; padding:3px 10px;">${label}</button>`;
+    const label = isRunning ? '진행 중...' : config.label;
+    return `<button class="btn btn-sm" ${disabled} onclick="forceTaskUpdate(this, '${task.name}')" style="font-size:0.82em; padding:3px 10px;">${label}</button>`;
 }
 
-async function forceOhlcvUpdate(btn) {
+async function forceTaskUpdate(btn, taskName) {
     if (btn.disabled) return;
+    const config = FORCE_UPDATE_CONFIG[taskName];
+    if (!config) return;
     btn.disabled = true;
     btn.textContent = '요청 중...';
     try {
-        const res = await fetch('/api/ohlcv/force-update', { method: 'POST' });
+        const res = await fetch(config.endpoint, { method: 'POST' });
         const data = await res.json();
         if (res.ok) {
-            btn.textContent = '수집 중...';
-            alert(data.message || '강제 수집이 시작되었습니다.');
+            btn.textContent = '진행 중...';
+            alert(data.message || `${config.label}이 시작되었습니다.`);
         } else {
             btn.disabled = false;
-            btn.textContent = '강제 수집';
+            btn.textContent = config.label;
             alert(data.detail || '요청 실패');
         }
     } catch (e) {
         btn.disabled = false;
-        btn.textContent = '강제 수집';
+        btn.textContent = config.label;
         alert('네트워크 오류: ' + e.message);
     }
 }
@@ -283,7 +300,7 @@ async function updateBackgroundStatus() {
         if (!tbody) return;
 
         if (result.data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">등록된 태스크 없음</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">등록된 태스크 없음</td></tr>';
             return;
         }
 
@@ -292,9 +309,13 @@ async function updateBackgroundStatus() {
             const priorityLabel = PRIORITY_LABEL[task.priority] ?? task.priority;
             const progressHtml = renderProgressCell(task.progress, task.name);
             const actionHtml = renderActionCell(task);
+            const schBadge = SCHEDULE_TYPE_BADGE[task.schedule_type];
+            const schHtml = schBadge
+                ? `<span style="background:${schBadge.color}; color:#fff; padding:1px 6px; border-radius:8px; font-size:0.75em; margin-left:6px; vertical-align:middle;">${schBadge.label}</span>`
+                : '';
             return `
                 <tr>
-                    <td style="font-weight:bold; color:var(--text-color);">${task.name}</td>
+                    <td style="font-weight:bold; color:var(--text-color);">${task.name}${schHtml}</td>
                     <td><span style="background:${badge.color}; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em; font-weight:bold;">${badge.label}</span></td>
                     <td style="font-size:0.88em; color:#888;">${priorityLabel}</td>
                     <td>${progressHtml}</td>

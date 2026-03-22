@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 import pandas as pd
 
-from task.background.ohlcv_update_task import OhlcvUpdateTask
+from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from interfaces.schedulable_task import TaskPriority, TaskState
 from common.types import ResCommonResponse, ErrorCode
 
@@ -182,7 +182,7 @@ class TestSkipWhenAlreadyCurrent:
         async def _fake_sleep(sec):
             slept_durations.append(sec)
 
-        with patch("task.background.ohlcv_update_task.asyncio.sleep", side_effect=_fake_sleep):
+        with patch("task.background.after_market.ohlcv_update_task.asyncio.sleep", side_effect=_fake_sleep):
             await task._collect_all_ohlcv()
 
         # API 호출이 없었으므로 CHUNK_SLEEP_SEC(10.0) 대기는 없어야 함

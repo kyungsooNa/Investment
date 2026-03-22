@@ -153,9 +153,9 @@ class DailyPriceCollectorTask(SchedulableTask):
 
     # ── 전체 종목 현재가 수집 ────────────────────────────
 
-    async def _collect_all_prices(self) -> None:
+    async def _collect_all_prices(self, force: bool = False) -> None:
         """전체 종목 현재가+펀더멘털을 수집하여 StockRepository에 저장한다."""
-        # 장 중에는 수집하지 않음
+        # 장 중에는 수집하지 않음 (force 시에도 장 중이면 스킵)
         if self._mcs and await self._mcs.is_market_open_now():
             self._logger.info("장 운영 중이므로 현재가 수집을 건너뜁니다.")
             return
@@ -179,8 +179,10 @@ class DailyPriceCollectorTask(SchedulableTask):
             return
 
         # 이미 수집한 날짜인지 확인
-        if self._last_collected_date == target_date:
+        if not force and self._last_collected_date == target_date:
             self._logger.info(f"이미 {target_date} 현재가 수집 완료 — 스킵")
+            if self._ns:
+                await self._ns.emit("API", "info", "현재가 수집 스킵", f"{target_date} 이미 수집 완료된 상태입니다.")
             self._is_collecting = False
             return
 
@@ -385,3 +387,8 @@ class DailyPriceCollectorTask(SchedulableTask):
     def get_progress(self) -> Dict:
         """수집 진행률 반환."""
         return dict(self._progress)
+
+    async def force_collect(self) -> None:
+        """강제 수집: skip 조건을 무시하고 전 종목 현재가를 API 재호출한다."""
+        self._logger.info("DailyPriceCollectorTask 강제 수집 요청")
+        await self._collect_all_prices(force=True)

@@ -83,6 +83,7 @@ class RankingTask(SchedulableTask):
         self._program_net_sell_cache: List[Dict] = []
         self._investor_ranking_updated_at: Optional[datetime] = None
         self._is_refreshing: bool = False
+        self._last_collected_date: Optional[str] = None
 
         # 기본 랭킹 캐시 (상승/하락/거래량/거래대금) — 장마감 후 1회
         self._basic_ranking_cache: Dict[str, ResCommonResponse] = {}
@@ -268,7 +269,7 @@ class RankingTask(SchedulableTask):
         self.pm.log_timer(f"RankingTask._fetch_with_retry({api_call.__name__}, {args[0]}) [최종실패]", t_start)
         return None  # 최종 실패 시 None 반환
 
-    async def refresh_investor_ranking(self) -> None:
+    async def refresh_investor_ranking(self, force: bool = False) -> None:
         """전체 종목을 순회하여 외국인/기관/개인 순매수/순매도 랭킹을 갱신한다."""
         # [성능 보호] 장 중에는 실행하지 않음
         if self.mcs and await self.mcs.is_market_open_now():
@@ -291,6 +292,16 @@ class RankingTask(SchedulableTask):
 
         if not target_date:
             self._logger.error("최근 거래일을 확인할 수 없어 투자자 랭킹 갱신을 중단합니다.")
+            self._is_refreshing = False
+            return
+
+        if not force and self._last_collected_date == target_date:
+            self._logger.info(f"이미 {target_date} 투자자 랭킹 갱신 완료 — 스킵")
+            if self._notification_service:
+                await self._notification_service.emit(
+                    "API", "info", "투자자 랭킹 갱신 스킵",
+                    f"{target_date} 이미 갱신 완료된 상태입니다."
+                )
             self._is_refreshing = False
             return
 
@@ -442,6 +453,7 @@ class RankingTask(SchedulableTask):
                 self._build_ranking(program_results, "whol_smtn_ntby_tr_pbmn")
 
             self._investor_ranking_updated_at = datetime.now()
+            self._last_collected_date = target_date
 
             elapsed = time.time() - start_time
             self._logger.info(
@@ -609,3 +621,8 @@ class RankingTask(SchedulableTask):
             if market in ("KOSPI", "KOSDAQ"):
                 all_stocks.append((code, name, market))
         return all_stocks
+
+    async def force_collect(self) -> None:
+        """강제 수집: skip 조건을 무시하고 투자자 랭킹을 재수집한다."""
+        self._logger.info("RankingTask 강제 수집 요청")
+        await self.refresh_investor_ranking(force=True)

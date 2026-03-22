@@ -1,4 +1,4 @@
-# task/background/premium_watchlist_generator_task.py
+# task/background/after_market/premium_watchlist_generator_task.py
 """
 전일 기준 우량주 생성 백그라운드 태스크.
 
@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from scheduler.after_market_loop import run_after_market_loop
+from services.notification_service import NotificationService
 
 if TYPE_CHECKING:
     from services.oneil_universe_service import OneilUniverseService
@@ -28,11 +29,13 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
         market_calendar_service: Optional["MarketCalendarService"] = None,
         market_clock: Optional["MarketClock"] = None,
         logger=None,
+        notification_service: Optional["NotificationService"] = None,
     ):
         self._universe_service = universe_service
         self._mcs = market_calendar_service
         self._market_clock = market_clock
         self._logger = logger or logging.getLogger(__name__)
+        self._ns = notification_service
 
         self._state: TaskState = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
@@ -116,6 +119,11 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
         이미 생성된 경우 재실행을 생략한다 (서버 재시작 후에도 유효).
         """
         if self._last_generated_date == latest_trading_date:
+            if self._ns:
+                await self._ns.emit(
+                    "API", "info", "전일기준우량주 생성 스킵",
+                    f"{latest_trading_date} 이미 생성 완료된 상태입니다."
+                )
             return
 
         # 파일에 이미 당일 기준 우량주가 저장되어 있으면 재생성 불필요
@@ -127,6 +135,11 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
                 f"전일 기준 우량주 이미 생성됨 (기준일: {latest_trading_date}, "
                 f"생성시각: {meta.get('generated_at', '알 수 없음')}) — 생성 스킵"
             )
+            if self._ns:
+                await self._ns.emit(
+                    "API", "info", "전일기준우량주 생성 스킵",
+                    f"{latest_trading_date} 이미 생성 완료된 상태입니다."
+                )
             return
 
         await self._run_generation(latest_trading_date)
@@ -158,3 +171,14 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
         finally:
             self._is_generating = False
             self._progress["running"] = False
+
+    async def force_generate(self) -> None:
+        """강제 생성: skip 조건을 무시하고 전일 기준 우량주를 재생성한다."""
+        self._logger.info("PremiumWatchlistGeneratorTask 강제 생성 요청")
+        target_date = None
+        if self._mcs:
+            target_date = await self._mcs.get_latest_trading_date()
+        if not target_date:
+            self._logger.error("최근 거래일을 확인할 수 없어 강제 생성을 중단합니다.")
+            return
+        await self._run_generation(target_date)
