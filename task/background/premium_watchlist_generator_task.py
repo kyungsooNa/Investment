@@ -86,7 +86,17 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
             self._state = TaskState.RUNNING
 
     def get_progress(self) -> Dict:
-        return dict(self._progress)
+        result = dict(self._progress)
+        gen = self._universe_service.generation_progress
+        result.update({
+            "phase":     gen.get("phase"),
+            "processed": gen.get("processed", 0),
+            "total":     gen.get("total", 0),
+            "passed":    gen.get("passed", 0),
+            "selected":  gen.get("selected", 0),
+            "elapsed":   gen.get("elapsed", 0.0),
+        })
+        return result
 
     # ── 장마감 후 자동 스케줄러 ────────────────────────────────
 

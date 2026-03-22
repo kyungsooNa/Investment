@@ -64,6 +64,22 @@ class OneilUniverseService:
         self._market_timing_cache: Dict[str, bool] = {}
         self._market_timing_date: str = ""
 
+        # 전일 기준 우량주 생성 진행률
+        self._generation_progress: Dict = {
+            "running": False,
+            "phase": None,
+            "processed": 0,
+            "total": 0,
+            "passed": 0,
+            "selected": 0,
+            "elapsed": 0.0,
+        }
+
+    @property
+    def generation_progress(self) -> Dict:
+        """전일 기준 우량주 생성 진행률 스냅샷 반환."""
+        return dict(self._generation_progress)
+
     async def get_watchlist(self, logger: Optional[logging.Logger] = None) -> Dict[str, OSBWatchlistItem]:
         """현재 유효한 워치리스트를 반환 (캐싱 + 자동 갱신)."""
         logger = logger or self._logger
@@ -371,6 +387,11 @@ class OneilUniverseService:
         total_stocks = len(all_stocks)
         print(f"[전일 기준 우량주 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
         pool_a_logger.info({"event": "1st_filter_start", "total_stocks": total_stocks})
+        self._generation_progress = {
+            "running": True, "phase": "1차_필터(시총)",
+            "processed": 0, "total": total_stocks,
+            "passed": 0, "selected": 0, "elapsed": 0.0,
+        }
 
         # 2. 1차 필터 (시총)
         passed_first = []
@@ -418,11 +439,17 @@ class OneilUniverseService:
                 elapsed = time.time() - start_time
                 print(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "1st_filter_progress", "processed": processed_count, "total": total_stocks, "passed": len(passed_first)})
+                self._generation_progress.update({
+                    "processed": processed_count, "passed": len(passed_first), "elapsed": round(elapsed, 1),
+                })
 
 
         print(f"[전일 기준 우량주 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
         pool_a_logger.info({"event": "1st_filter_done", "passed": len(passed_first)})
         pool_a_logger.info({"event": "2nd_filter_start", "total_candidates": len(passed_first)})
+        self._generation_progress.update({
+            "phase": "2차_필터(지표)", "processed": 0, "total": len(passed_first), "selected": 0,
+        })
 
         # 3. 2차 필터 (상세 분석)
         items = []
@@ -440,9 +467,13 @@ class OneilUniverseService:
                 elapsed = time.time() - start_time
                 print(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "2nd_filter_progress", "processed": processed_count_2, "total": total_passed, "selected": len(items)})
+                self._generation_progress.update({
+                    "processed": processed_count_2, "selected": len(items), "elapsed": round(elapsed, 1),
+                })
 
 
         pool_a_logger.info({"event": "2nd_filter_done", "selected": len(items)})
+        self._generation_progress.update({"phase": "스코어링"})
 
         # 4. 스코어링 및 저장
         self._compute_rs_scores(items, logger=pool_a_logger)
@@ -460,6 +491,7 @@ class OneilUniverseService:
         total_elapsed = time.time() - start_time
         print(f"[전일 기준 우량주 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
         pool_a_logger.info({"event": "generate_premium_watchlist_finished", "elapsed_seconds": total_elapsed})
+        self._generation_progress.update({"running": False, "phase": None, "elapsed": round(total_elapsed, 1)})
         
         # 시총 범위 문자열 생성 (예: 2000억 ~ 2조)
         min_cap = self._cfg.pool_a_market_cap_min // 100000000
