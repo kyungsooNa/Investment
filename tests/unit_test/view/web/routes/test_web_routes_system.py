@@ -205,69 +205,103 @@ def test_get_background_status_calls_get_progress_via_interface(web_client, mock
     mock_task.get_progress.assert_called_once()
 
 
-# ── POST /api/background/force-update/{task_name} ─────────────────────────
+# ── POST /api/background/ranking/force-update ─────────────────────────
 
 @pytest.mark.asyncio
-async def test_force_task_update_success(web_client, mock_web_ctx):
+async def test_force_ranking_update_success(web_client, mock_web_ctx):
     """특정 태스크(예: ranking_refresh) 강제 실행 성공 테스트"""
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
     mock_task.force_collect = AsyncMock()
     
-    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+    mock_web_ctx.ranking_task = mock_task
 
-    response = web_client.post("/api/background/force-update/ranking_refresh")
+    response = web_client.post("/api/background/ranking/force-update")
     
     assert response.status_code == 200
     assert response.json()["success"] is True
-    mock_web_ctx.background_scheduler.get_task.assert_called_once_with("ranking_refresh")
     
     # 백그라운드 Task가 실행될 수 있도록 제어권 양보
     await asyncio.sleep(0)
     mock_task.force_collect.assert_called_once()
 
-
 @pytest.mark.asyncio
-async def test_force_task_update_already_running(web_client, mock_web_ctx):
-    """이미 진행 중인 태스크 강제 실행 시 409 반환 테스트"""
+async def test_force_ranking_update_running(web_client, mock_web_ctx):
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": True}
-    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+    mock_web_ctx.ranking_task = mock_task
 
-    response = web_client.post("/api/background/force-update/daily_price_update")
+    response = web_client.post("/api/background/ranking/force-update")
     assert response.status_code == 409
-    assert "진행 중" in response.json()["detail"]
-
 
 @pytest.mark.asyncio
-async def test_force_task_update_not_found(web_client, mock_web_ctx):
-    """존재하지 않는 태스크 이름 요청 시 404 반환 테스트"""
-    mock_web_ctx.background_scheduler.get_task.return_value = None
+async def test_force_ranking_update_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.ranking_task = None
+    response = web_client.post("/api/background/ranking/force-update")
+    assert response.status_code == 503
 
-    response = web_client.post("/api/background/force-update/invalid_task")
-    assert response.status_code == 404
-    assert "찾을 수 없습니다" in response.json()["detail"]
 
+# ── POST /api/background/daily-price/force-update ─────────────────────────
 
 @pytest.mark.asyncio
-async def test_force_task_update_unsupported(web_client, mock_web_ctx):
-    """강제 실행 메서드가 없는 태스크 요청 시 400 반환 테스트"""
+async def test_force_daily_price_update_success(web_client, mock_web_ctx):
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
-    del mock_task.force_collect
-    del mock_task.force_run
-    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+    mock_task.force_collect = AsyncMock()
+    mock_web_ctx.daily_price_collector_task = mock_task
 
-    response = web_client.post("/api/background/force-update/watchlist_update")
-    assert response.status_code == 400
-    assert "지원하지 않는" in response.json()["detail"]
-
+    response = web_client.post("/api/background/daily-price/force-update")
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    
+    await asyncio.sleep(0)
+    mock_task.force_collect.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_force_task_update_no_scheduler(web_client, mock_web_ctx):
-    """스케줄러 미초기화 시 503 반환 테스트"""
-    mock_web_ctx.background_scheduler = None
+async def test_force_daily_price_update_running(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.daily_price_collector_task = mock_task
 
-    response = web_client.post("/api/background/force-update/ranking_refresh")
+    response = web_client.post("/api/background/daily-price/force-update")
+    assert response.status_code == 409
+
+@pytest.mark.asyncio
+async def test_force_daily_price_update_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.daily_price_collector_task = None
+    response = web_client.post("/api/background/daily-price/force-update")
     assert response.status_code == 503
-    assert "초기화되지 않았습니다" in response.json()["detail"]
+
+
+# ── POST /api/background/watchlist/force-update ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_force_watchlist_update_success(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+    mock_task.force_generate = AsyncMock()
+    mock_web_ctx.premium_watchlist_generator_task = mock_task
+
+    response = web_client.post("/api/background/watchlist/force-update")
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    
+    await asyncio.sleep(0)
+    mock_task.force_generate.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_force_watchlist_update_running(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.premium_watchlist_generator_task = mock_task
+
+    response = web_client.post("/api/background/watchlist/force-update")
+    assert response.status_code == 409
+
+@pytest.mark.asyncio
+async def test_force_watchlist_update_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.premium_watchlist_generator_task = None
+    response = web_client.post("/api/background/watchlist/force-update")
+    assert response.status_code == 503
