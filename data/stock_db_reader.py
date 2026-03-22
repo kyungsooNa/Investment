@@ -49,16 +49,60 @@ def view_market_data():
             print(df.head().to_string())
             print("-" * 50)
             
-            # 원하신다면 아래 주석(#)을 풀어서 데이터를 CSV 엑셀 파일로 바로 저장할 수도 있습니다.
             # 현재 실행 중인 파이썬 스크립트(.py)가 위치한 폴더의 절대 경로를 가져옵니다.
             current_dir = os.path.dirname(os.path.abspath(__file__))
 
             # 해당 폴더 경로와 저장할 파일 이름을 합칩니다.
             save_path = os.path.join(current_dir, f"{table_name}_extracted.csv")
+            summary_save_path = os.path.join(current_dir, f"{table_name}_db_summary.txt")
 
-            # 지정된 절대 경로에 저장합니다.
+            # --- 종목별 데이터 수 집계 (Summary) ---
+            if 'code' in df.columns:
+                summary_df = df.groupby('code').size().reset_index(name='data_count')
+                total_codes = len(summary_df)
+                avg_days = summary_df['data_count'].mean()
+                
+                summary_lines = [
+                    f"=== [{table_name} 데이터 요약] ===",
+                    f"- 총 종목 수: {total_codes:,}개",
+                    f"- 평균 저장 일수: {avg_days:.1f}일",
+                ]
+                
+                # ohlcv 테이블인 경우 600일 미만 종목 추출
+                if table_name == 'ohlcv':
+                    under_600_df = summary_df[summary_df['data_count'] < 600]
+                    under_600_count = len(under_600_df)
+                    summary_lines.append(f"- 600일 미만 데이터 보유 종목 수: {under_600_count:,}개")
+                    
+                    if under_600_count > 0:
+                        summary_lines.append("\n[600일 미만 종목 리스트]")
+                        under_600_list = under_600_df.to_dict('records')
+                        chunk_size_under = 10
+                        for i in range(0, under_600_count, chunk_size_under):
+                            chunk = under_600_list[i:i+chunk_size_under]
+                            chunk_str = ", ".join([f"{item['code']} ({item['data_count']}일)" for item in chunk])
+                            summary_lines.append(f"  {chunk_str}")
+
+                summary_lines.append("\n[전체 종목별 저장 일수]")
+                # 가독성을 위해 15개 종목씩 묶어서 한 줄에 표기
+                chunk_size = 15
+                for i in range(0, total_codes, chunk_size):
+                    chunk = summary_df.iloc[i:i+chunk_size]
+                    chunk_str = ", ".join([f"{row['code']} ({row['data_count']}일)" for _, row in chunk.iterrows()])
+                    summary_lines.append(f"  {chunk_str}")
+                
+                summary_lines.append(f"{'=' * 50}\n")
+                summary_text = "\n".join(summary_lines)
+
+                # 요약 정보는 별도의 텍스트 파일로 저장
+                with open(summary_save_path, 'w', encoding='utf-8-sig') as f:
+                    f.write(summary_text)
+                
+                print(f"✅ 요약 정보가 별도 파일로 분리되었습니다: [{summary_save_path}]")
+            
+            # 순수 원본 데이터만 CSV에 저장
             df.to_csv(save_path, index=False, encoding='utf-8-sig')
-            print(f"✅ [{save_path}]에 파일이 저장되었습니다.")
+            print(f"✅ 데이터가 저장되었습니다 (순수 데이터): [{save_path}]")
             
     except sqlite3.Error as e:
         print(f"❌ 데이터베이스 읽기 오류 발생: {e}")
