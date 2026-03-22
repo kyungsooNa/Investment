@@ -1056,11 +1056,10 @@ async def test_get_price_summary_output_empty_dict(mock_quotations):
 @pytest.mark.asyncio
 async def test_get_price_summary_status_vs(mock_quotations):
     """get_price_summary: status code에 'vs'가 포함된 경우 (Line 180)"""
-    mock_output = ResStockFullInfoApiOutput.from_dict({
-        "stck_oprc": "1000", "stck_prpr": "1100", "prdy_ctrt": "10.0"
+    mock_output = _create_dummy_output({
+        "stck_oprc": "1000", "stck_prpr": "1100", "prdy_ctrt": "10.0",
+        "new_hgpr_lwpr_cls_code": "1 vs 2"
     })
-    # 동적으로 속성 추가하여 조건 만족 유도
-    mock_output.new_hgpr_lwpr_cls_code = "1 vs 2"
     
     mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": mock_output}
@@ -1126,11 +1125,10 @@ async def test_get_price_summary_output_empty_dict(mock_quotations):
 @pytest.mark.asyncio
 async def test_get_price_summary_status_vs(mock_quotations):
     """get_price_summary: status code에 'vs'가 포함된 경우 (Line 180)"""
-    mock_output = ResStockFullInfoApiOutput.from_dict({
-        "stck_oprc": "1000", "stck_prpr": "1100", "prdy_ctrt": "10.0"
+    mock_output = _create_dummy_output({
+        "stck_oprc": "1000", "stck_prpr": "1100", "prdy_ctrt": "10.0",
+        "new_hgpr_lwpr_cls_code": "1 vs 2"
     })
-    # 동적으로 속성 추가하여 조건 만족 유도
-    mock_output.new_hgpr_lwpr_cls_code = "1 vs 2"
     
     mock_quotations.get_current_price = AsyncMock(return_value=ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": mock_output}

@@ -139,7 +139,7 @@ def _unwrap_client(app) -> Any:
     BrokerAPIWrapper._client 이 ClientWithCache 래퍼일 수 있으므로
     실제 KoreaInvestApiClient 까지 언랩해서 반환.
     """
-    client = app.stock_query_service.trading_service._broker_api_wrapper._client
+    client = app.broker._client
     if hasattr(client, "_client"):
         client = client._client
     return client
@@ -582,9 +582,9 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
 
         await web_ctx.initialize_services(is_paper_trading=True)
 
-        # [HOTFIX] StockQueryService -> TradingService 호출 간 서명 불일치 해결
-        # StockQueryService는 logger 인자를 전달하지만, TradingService는 이를 받지 않음.
-        ts = web_ctx.stock_query_service.trading_service
+        # [HOTFIX] StockQueryService -> MarketDataService 호출 간 서명 불일치 해결
+        # StockQueryService는 logger 인자를 전달하지만, MarketDataService는 이를 받지 않음.
+        ts = web_ctx.market_data_service
         if hasattr(ts, "get_top_trading_value_stocks"):
             real_get_top = ts.get_top_trading_value_stocks
             async def _patched_get_top(*args, **kwargs):
