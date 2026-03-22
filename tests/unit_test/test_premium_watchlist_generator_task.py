@@ -28,6 +28,7 @@ def mock_universe_service():
         "selected": 0,
         "elapsed": 0.0,
     }
+    svc.get_premium_stocks_meta = MagicMock(return_value=None)
     return svc
 
 
@@ -191,22 +192,64 @@ class TestOnMarketClosed:
     async def test_runs_generation_for_new_date(self, task, mock_universe_service):
         """장 마감 콜백에서 새 날짜이면 생성을 실행한다."""
         task._last_generated_date = None  # 아직 생성 안 함
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value=None)
 
         await task._on_market_closed("20260320")
 
         mock_universe_service.generate_premium_watchlist.assert_awaited_once()
 
-    async def test_skips_generation_for_same_date(self, task, mock_universe_service):
-        """동일 날짜에 대해 중복 생성을 건너뛴다."""
+    async def test_skips_generation_for_same_date_in_memory(self, task, mock_universe_service):
+        """인메모리에 동일 날짜가 기록된 경우 파일 확인 없이 즉시 건너뛴다."""
         task._last_generated_date = "20260320"
 
         await task._on_market_closed("20260320")
 
         mock_universe_service.generate_premium_watchlist.assert_not_called()
+        # 파일 메타 조회도 불필요
+        mock_universe_service.get_premium_stocks_meta.assert_not_called()
+
+    async def test_skips_generation_if_file_already_exists(self, task, mock_universe_service):
+        """파일에 당일 기준 우량주가 이미 있으면 재생성하지 않는다 (서버 재시작 후 스킵 시나리오)."""
+        task._last_generated_date = None  # 인메모리는 없음
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value={
+            "generated_date": "20260320",
+            "generated_at": "2026-03-20T16:05:00",
+        })
+
+        await task._on_market_closed("20260320")
+
+        mock_universe_service.generate_premium_watchlist.assert_not_called()
+        assert task._last_generated_date == "20260320"
+        assert task._progress["last_generated_date"] == "20260320"
+
+    async def test_runs_generation_if_file_has_different_date(self, task, mock_universe_service):
+        """파일이 있지만 다른 날짜(전전날 등)이면 생성을 실행한다."""
+        task._last_generated_date = None
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value={
+            "generated_date": "20260319",  # 어제 파일
+            "generated_at": "2026-03-19T16:05:00",
+        })
+
+        await task._on_market_closed("20260320")
+
+        mock_universe_service.generate_premium_watchlist.assert_awaited_once()
+
+    async def test_runs_generation_if_file_meta_is_none(self, task, mock_universe_service):
+        """파일이 없으면(메타 None) 생성을 실행한다."""
+        task._last_generated_date = None
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value=None)
+
+        await task._on_market_closed("20260320")
+
+        mock_universe_service.generate_premium_watchlist.assert_awaited_once()
 
     async def test_runs_generation_for_next_trading_date(self, task, mock_universe_service):
         """다음 거래일에 대해서는 다시 생성을 실행한다."""
         task._last_generated_date = "20260319"  # 전날 생성 완료
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value={
+            "generated_date": "20260319",
+            "generated_at": "2026-03-19T16:05:00",
+        })
 
         await task._on_market_closed("20260320")
 
@@ -214,6 +257,34 @@ class TestOnMarketClosed:
 
 
 # --- _run_generation 테스트 ---
+
+
+class TestOnMarketClosedFileSkip:
+    """서버 재시작 후 파일 기반 스킵 시나리오 상세 검증."""
+
+    async def test_skips_and_updates_progress_last_generated_date(self, task, mock_universe_service):
+        """파일 스킵 시 _progress['last_generated_date']가 업데이트된다."""
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value={
+            "generated_date": "20260320",
+            "generated_at": "2026-03-20T16:05:00",
+        })
+
+        await task._on_market_closed("20260320")
+
+        assert task._progress["last_generated_date"] == "20260320"
+        mock_universe_service.generate_premium_watchlist.assert_not_called()
+
+    async def test_skips_only_once_per_date(self, task, mock_universe_service):
+        """파일 스킵 후 인메모리에 날짜가 기록되어 다음 콜백은 파일 조회도 하지 않는다."""
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value={
+            "generated_date": "20260320",
+            "generated_at": "2026-03-20T16:05:00",
+        })
+
+        await task._on_market_closed("20260320")  # 1회차: 파일 확인 후 스킵
+        await task._on_market_closed("20260320")  # 2회차: 인메모리 확인 후 즉시 스킵
+
+        assert mock_universe_service.get_premium_stocks_meta.call_count == 1
 
 
 class TestRunGeneration:

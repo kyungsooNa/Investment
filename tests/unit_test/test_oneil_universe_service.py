@@ -228,7 +228,7 @@ async def test_generate_premium_watchlist(mock_deps, tmp_path):
         )
         
         # 4. 파일 저장 Mock
-        with patch.object(service, '_save_pool_a') as mock_save:
+        with patch.object(service, '_save_premium_stocks') as mock_save:
             result = await service.generate_premium_watchlist()
             
             assert result['total_scanned'] == 2
@@ -245,7 +245,7 @@ async def test_get_watchlist_refresh_logic(mock_deps):
     tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
     
     # 내부 메서드 Mock
-    with patch.object(service, '_load_pool_a', return_value=[]), \
+    with patch.object(service, '_load_premium_stocks', return_value=[]), \
          patch.object(service, '_build_daily_surge_pool', return_value={}):
         
         # 1. 첫 호출: 워치리스트 빌드 수행
@@ -355,12 +355,12 @@ async def test_generate_premium_watchlist_sorting_with_tie_score(mock_deps, tmp_
          patch.object(service, '_compute_rs_scores'), \
          patch.object(service, '_compute_profit_growth_scores', new_callable=AsyncMock), \
          patch.object(service, '_compute_total_scores'), \
-         patch.object(service, '_save_pool_a') as mock_save, \
+         patch.object(service, '_save_premium_stocks') as mock_save, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect):
         
         await service.generate_premium_watchlist()
         
-        # _save_pool_a(kospi, kosdaq) 호출 시 kospi 리스트의 순서 확인
+        # _save_premium_stocks(kospi, kosdaq) 호출 시 kospi 리스트의 순서 확인
         args, _ = mock_save.call_args
         kospi_list = args[0]
         
@@ -368,8 +368,8 @@ async def test_generate_premium_watchlist_sorting_with_tie_score(mock_deps, tmp_
         assert kospi_list[0].code == "B"  # 회전율 높은 B가 먼저
         assert kospi_list[1].code == "A"
 
-async def test_load_pool_a_date_validation(mock_deps):
-    """_load_pool_a: 날짜 유효성 검사 로직 검증 (경계값 테스트)."""
+async def test_load_premium_stocks_date_validation(mock_deps):
+    """_load_premium_stocks: 날짜 유효성 검사 로직 검증 (경계값 테스트)."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -385,28 +385,28 @@ async def test_load_pool_a_date_validation(mock_deps):
     tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
     with patch("os.path.exists", return_value=True), \
          patch("builtins.open", mock_open(read_data=create_file_data("20240105"))):
-        result = service._load_pool_a()
+        result = service._load_premium_stocks()
         assert isinstance(result, list)
 
     # Case 2: 어제 날짜 (유효 - 차이 1일)
     tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
     with patch("os.path.exists", return_value=True), \
          patch("builtins.open", mock_open(read_data=create_file_data("20240104"))):
-        result = service._load_pool_a()
+        result = service._load_premium_stocks()
         assert isinstance(result, list)
 
     # Case 3: 2일 전 날짜 (무효)
     tm.get_current_kst_time.return_value = datetime(2024, 1, 5, 10, 0, 0)
     with patch("os.path.exists", return_value=True), \
          patch("builtins.open", mock_open(read_data=create_file_data("20240103"))):
-        result = service._load_pool_a()
+        result = service._load_premium_stocks()
         assert result == []
 
     # Case 4: 연도가 바뀌는 경우 (12월 31일 생성 -> 1월 2일 로드: 2일 차이 -> 무효)
     tm.get_current_kst_time.return_value = datetime(2024, 1, 2, 10, 0, 0)
     with patch("os.path.exists", return_value=True), \
          patch("builtins.open", mock_open(read_data=create_file_data("20231231"))):
-        result = service._load_pool_a()
+        result = service._load_premium_stocks()
         assert result == []
 
 async def test_analyze_candidate_rs_calculation(mock_deps):
@@ -741,20 +741,20 @@ def test_extract_op_profit_growth_logic(mock_deps):
     assert service._extract_op_profit_growth({}) == 0.0
     assert service._extract_op_profit_growth({"invalid_key": "100"}) == 0.0
 
-async def test_save_load_pool_a_exceptions(mock_deps):
-    """_save_pool_a, _load_pool_a: 예외 처리 검증."""
+async def test_save_load_premium_stocks_exceptions(mock_deps):
+    """_save_premium_stocks, _load_premium_stocks: 예외 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     # Save Exception
     with patch("builtins.open", side_effect=IOError("Disk full")):
-        service._save_pool_a([], [])
+        service._save_premium_stocks([], [])
         logger.error.assert_called() # 에러 로그 호출 확인
         
     # Load Exception (Invalid JSON)
     with patch("os.path.exists", return_value=True), \
          patch("builtins.open", mock_open(read_data="{invalid_json")):
-        items = service._load_pool_a()
+        items = service._load_premium_stocks()
         assert items == [] # 빈 리스트 반환
 
 async def test_analyze_candidate_insufficient_data(mock_deps):
@@ -1123,7 +1123,7 @@ async def test_generate_premium_watchlist_fallback_market_cap(mock_deps, tmp_pat
 
     with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect), \
-         patch.object(service, '_save_pool_a'):
+         patch.object(service, '_save_premium_stocks'):
         
         mock_analyze.return_value = OSBWatchlistItem(
             code="000001", name="StockA", market="KOSPI",
@@ -1308,7 +1308,7 @@ async def test_generate_premium_watchlist_api_failure_in_loop(mock_deps, tmp_pat
 
     with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect), \
-         patch.object(service, '_save_pool_a'):
+         patch.object(service, '_save_premium_stocks'):
         
         mock_analyze.return_value = OSBWatchlistItem(
             code="A", name="StockA", market="KOSPI",
@@ -1362,7 +1362,7 @@ async def test_generate_premium_watchlist_price_output_as_object(mock_deps, tmp_
 
     with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect), \
-         patch.object(service, '_save_pool_a'):
+         patch.object(service, '_save_premium_stocks'):
         
         mock_analyze.return_value = OSBWatchlistItem(
             code="000001", name="StockA", market="KOSPI",
@@ -1375,17 +1375,17 @@ async def test_generate_premium_watchlist_price_output_as_object(mock_deps, tmp_
         
         assert result['passed_first'] == 1
 
-def test_load_pool_a_file_not_found(mock_deps):
-    """_load_pool_a: 파일이 없을 때 빈 리스트 반환 검증."""
+def test_load_premium_stocks_file_not_found(mock_deps):
+    """_load_premium_stocks: 파일이 없을 때 빈 리스트 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     with patch("os.path.exists", return_value=False):
-        result = service._load_pool_a()
+        result = service._load_premium_stocks()
         assert result == []
 
-def test_load_pool_a_malformed_date(mock_deps):
-    """_load_pool_a: 날짜 형식이 잘못되었을 때 빈 리스트 반환 검증."""
+def test_load_premium_stocks_malformed_date(mock_deps):
+    """_load_premium_stocks: 날짜 형식이 잘못되었을 때 빈 리스트 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1397,7 +1397,7 @@ def test_load_pool_a_malformed_date(mock_deps):
     
     with patch("os.path.exists", return_value=True), \
          patch("builtins.open", mock_open(read_data=file_data)):
-        result = service._load_pool_a()
+        result = service._load_premium_stocks()
         assert result == []
 
 async def test_check_etf_ma_rising_ohlcv_none(mock_deps):

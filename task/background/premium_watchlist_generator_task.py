@@ -110,9 +110,26 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
         )
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
-        """장 마감 후 콜백: 해당 거래일의 생성이 필요하면 실행."""
-        if self._last_generated_date != latest_trading_date:
-            await self._run_generation(latest_trading_date)
+        """장 마감 후 콜백: 해당 거래일의 생성이 필요하면 실행.
+
+        인메모리 기록과 파일 메타데이터를 모두 확인하여
+        이미 생성된 경우 재실행을 생략한다 (서버 재시작 후에도 유효).
+        """
+        if self._last_generated_date == latest_trading_date:
+            return
+
+        # 파일에 이미 당일 기준 우량주가 저장되어 있으면 재생성 불필요
+        meta = self._universe_service.get_premium_stocks_meta()
+        if meta and meta.get("generated_date") == latest_trading_date:
+            self._last_generated_date = latest_trading_date
+            self._progress["last_generated_date"] = latest_trading_date
+            self._logger.info(
+                f"전일 기준 우량주 이미 생성됨 (기준일: {latest_trading_date}, "
+                f"생성시각: {meta.get('generated_at', '알 수 없음')}) — 생성 스킵"
+            )
+            return
+
+        await self._run_generation(latest_trading_date)
 
     async def _run_generation(self, trading_date: str) -> None:
         if self._is_generating:

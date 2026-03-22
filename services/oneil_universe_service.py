@@ -123,7 +123,7 @@ class OneilUniverseService:
 
         # 1) Pool A 로드
         if not self._pool_a_loaded:
-            raw = self._load_pool_a()
+            raw = self._load_premium_stocks()
             self._pool_a_items = {item.code: item for item in raw}
             self._pool_a_loaded = True
 
@@ -237,7 +237,7 @@ class OneilUniverseService:
         })
 
         self.pm.log_timer("OneilUniverseService._build_daily_surge_pool", t_start, threshold=3.0)
-        return {item.code: item for item in items[:self._cfg.pool_b_size]}
+        return {item.code: item for item in items[:self._cfg.daily_surge_size]}
 
     async def _analyze_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
         """개별 종목 분석 (OHLCV, BB, RS 등)."""
@@ -299,7 +299,7 @@ class OneilUniverseService:
         stck_llam = cap_billion * 100_000_000  # 억 단위 -> 원 단위 변환
 
         # 필터: 시가총액 (2천억 ~ 2조)
-        if not (self._cfg.pool_a_market_cap_min <= stck_llam <= self._cfg.pool_a_market_cap_max):
+        if not (self._cfg.premium_stocks_cap_min <= stck_llam <= self._cfg.premium_stocks_cap_max):
             if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
             return None
 
@@ -426,7 +426,7 @@ class OneilUniverseService:
                     val = int(val_llam or 0)
                     cap = val if val > 100_000_000 else val * 100_000_000
                 
-                if self._cfg.pool_a_market_cap_min <= cap <= self._cfg.pool_a_market_cap_max:
+                if self._cfg.premium_stocks_cap_min <= cap <= self._cfg.premium_stocks_cap_max:
                     passed_first.append((code, name, market))
                     pool_a_logger.debug({"event": "pass_1st", "code": code, "name": name, "market_cap(억)": cap/100_000_000})
                 else:
@@ -482,23 +482,23 @@ class OneilUniverseService:
         pool_a_logger.info({"event": "scoring_done"})
 
         sort_key = lambda x: (x.total_score, self._calc_turnover_ratio(x))
-        kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_kospi_market]
-        kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.pool_a_size_per_kosdaq_market]
+        kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.premium_stocks_kospi_size]
+        kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.premium_stocks_kosdaq_size]
 
-        self._save_pool_a(kospi, kosdaq)
+        self._save_premium_stocks(kospi, kosdaq)
         pool_a_logger.info({"event": "save_done", "kospi_count": len(kospi), "kosdaq_count": len(kosdaq)})
 
         total_elapsed = time.time() - start_time
         print(f"[전일 기준 우량주 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
         pool_a_logger.info({"event": "generate_premium_watchlist_finished", "elapsed_seconds": total_elapsed})
         self._generation_progress.update({"running": False, "phase": None, "elapsed": round(total_elapsed, 1)})
-        
+
         # 시총 범위 문자열 생성 (예: 2000억 ~ 2조)
-        min_cap = self._cfg.pool_a_market_cap_min // 100000000
-        max_cap = self._cfg.pool_a_market_cap_max // 100000000
+        min_cap = self._cfg.premium_stocks_cap_min // 100000000
+        max_cap = self._cfg.premium_stocks_cap_max // 100000000
         cap_str = f"{min_cap}억 ~ {max_cap}억"
-        if self._cfg.pool_a_market_cap_max >= 1000000000000:
-             cap_str = f"{min_cap}억 ~ {self._cfg.pool_a_market_cap_max // 1000000000000}조"
+        if self._cfg.premium_stocks_cap_max >= 1000000000000:
+             cap_str = f"{min_cap}억 ~ {self._cfg.premium_stocks_cap_max // 1000000000000}조"
 
         return {
             "kospi_count": len(kospi), "kosdaq_count": len(kosdaq),
@@ -644,28 +644,30 @@ class OneilUniverseService:
                 })
         logger.debug({"event": "compute_total_scores_finished"})
 
-    def _save_pool_a(self, kospi, kosdaq):
+    def _save_premium_stocks(self, kospi, kosdaq):
         try:
-            os.makedirs(os.path.dirname(self._cfg.pool_a_file), exist_ok=True)
+            os.makedirs(os.path.dirname(self._cfg.premium_stocks_file), exist_ok=True)
+            now = self._tm.get_current_kst_time()
             data = {
-                "generated_date": self._tm.get_current_kst_time().strftime("%Y%m%d"),
+                "generated_date": now.strftime("%Y%m%d"),
+                "generated_at": now.strftime("%Y-%m-%dT%H:%M:%S"),
                 "kospi": [asdict(i) for i in kospi],
                 "kosdaq": [asdict(i) for i in kosdaq]
             }
-            with open(self._cfg.pool_a_file, "w", encoding="utf-8") as f:
+            with open(self._cfg.premium_stocks_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            self._logger.error(f"Failed to save Pool A: {e}")
+            self._logger.error(f"Failed to save premium stocks: {e}")
 
-    def _load_pool_a(self) -> List[OSBWatchlistItem]:
-        if not os.path.exists(self._cfg.pool_a_file):
+    def _load_premium_stocks(self) -> List[OSBWatchlistItem]:
+        if not os.path.exists(self._cfg.premium_stocks_file):
             return []
         try:
-            with open(self._cfg.pool_a_file, "r", encoding="utf-8") as f:
+            with open(self._cfg.premium_stocks_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             # 날짜 체크 (오늘/어제만 유효)
             gen_date = data.get("generated_date", "")
-            
+
             try:
                 gen_dt = datetime.strptime(gen_date, "%Y%m%d").date()
                 curr_dt = self._tm.get_current_kst_time().date()
@@ -673,7 +675,7 @@ class OneilUniverseService:
                     return []
             except ValueError:
                 return []
-            
+
             items = []
             for k in ["kospi", "kosdaq"]:
                 for d in data.get(k, []):
@@ -681,6 +683,20 @@ class OneilUniverseService:
             return items
         except Exception:
             return []
+
+    def get_premium_stocks_meta(self) -> Optional[dict]:
+        """저장된 전일 기준 우량주 파일의 메타데이터 반환. 파일 없으면 None."""
+        if not os.path.exists(self._cfg.premium_stocks_file):
+            return None
+        try:
+            with open(self._cfg.premium_stocks_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                "generated_date": data.get("generated_date"),
+                "generated_at": data.get("generated_at"),
+            }
+        except Exception:
+            return None
 
     @staticmethod
     def _calc_turnover_ratio(item: OSBWatchlistItem) -> float:
