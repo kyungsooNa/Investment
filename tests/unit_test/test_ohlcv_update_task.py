@@ -7,8 +7,9 @@ OhlcvUpdateTask 단위 테스트.
 3. 600일 미만 (최초/리셋)           → API 호출 (역사 데이터 포함 전체 갱신)
 """
 import asyncio
+import time
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 import pandas as pd
 
 from task.background.ohlcv_update_task import OhlcvUpdateTask
@@ -167,6 +168,28 @@ class TestSkipWhenAlreadyCurrent:
         assert p["updated"] == 0
         mock_sqs.get_ohlcv.assert_not_called()
 
+    async def test_skip_does_not_sleep_chunk_delay(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """전체 스킵 시 CHUNK_SLEEP_SEC 대기가 발생하지 않아야 한다 (재시작 후 빠름 검증)."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
+        }
+        task.CHUNK_SLEEP_SEC = 10.0  # 매우 큰 값: sleep이 실제 호출되면 테스트가 느려짐
+
+        slept_durations = []
+
+        async def _fake_sleep(sec):
+            slept_durations.append(sec)
+
+        with patch("task.background.ohlcv_update_task.asyncio.sleep", side_effect=_fake_sleep):
+            await task._collect_all_ohlcv()
+
+        # API 호출이 없었으므로 CHUNK_SLEEP_SEC(10.0) 대기는 없어야 함
+        assert all(d < task.CHUNK_SLEEP_SEC for d in slept_durations), (
+            f"스킵 시에도 CHUNK_SLEEP_SEC 대기가 발생함: {slept_durations}"
+        )
+
 
 # ──────────────────────────────────────────────
 # 동작 흐름 2: 당일 캔들 누락 (역사 데이터는 충분)
@@ -203,29 +226,33 @@ class TestUpdateWhenTodayMissing:
 
 
 # ──────────────────────────────────────────────
-# 동작 흐름 3: 역사 데이터 부족 (최초 실행 / 리셋)
+# 동작 흐름 3: 역사 데이터 없음 (최초 실행 / DB 완전 초기화)
 # ──────────────────────────────────────────────
 
 
 class TestUpdateWhenInsufficientHistory:
 
-    async def test_update_when_count_below_target(
+    async def test_update_when_count_below_target_but_today_present(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """보유일수 599 (< 600) → 당일 날짜가 맞아도 API 호출."""
+        """보유일수 599이지만 latest_date == today → 스킵.
+
+        today 날짜만 있으면 이미 수집 완료로 간주.
+        역사 부족은 최초 full backfill 또는 force collect로 해결.
+        """
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 599, "latest_date": TARGET_DATE, "oldest_date": "20240101"
         }
 
         result = await task._update_stock_ohlcv("005930", TARGET_DATE)
 
-        assert result is True
-        mock_sqs.get_ohlcv.assert_called_once_with("005930", caller="OhlcvUpdateTask")
+        assert result is False
+        mock_sqs.get_ohlcv.assert_not_called()
 
     async def test_update_when_no_data_at_all(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """count=0 (신규/초기화) → API 호출."""
+        """count=0, latest_date=None (신규/초기화) → API 호출."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 0, "latest_date": None, "oldest_date": None
         }
@@ -235,18 +262,18 @@ class TestUpdateWhenInsufficientHistory:
         assert result is True
         mock_sqs.get_ohlcv.assert_called_once()
 
-    async def test_update_when_only_1_day_stored(
+    async def test_skip_when_only_1_day_but_today(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """count=1이고 날짜도 오늘이지만 600 미달 → API 호출."""
+        """count=1이지만 latest_date == today → 스킵 (오늘 캔들 기준으로 판단)."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 1, "latest_date": TARGET_DATE, "oldest_date": TARGET_DATE
         }
 
         result = await task._update_stock_ohlcv("005930", TARGET_DATE)
 
-        assert result is True
-        mock_sqs.get_ohlcv.assert_called_once()
+        assert result is False
+        mock_sqs.get_ohlcv.assert_not_called()
 
 
 # ──────────────────────────────────────────────
@@ -669,3 +696,77 @@ class TestStartStop:
 
         assert len(task._tasks) == task_count
         await task.stop()
+
+
+# ──────────────────────────────────────────────
+# Force Collect: skip 조건 무시 강제 수집
+# ──────────────────────────────────────────────
+
+
+class TestForceCollect:
+
+    async def test_force_collect_ignores_last_collected_date(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """force=True이면 _last_collected_date == target_date여도 수집이 실행된다."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 0, "latest_date": None, "oldest_date": None
+        }
+        task._last_collected_date = TARGET_DATE  # 이미 오늘 수집 완료 표시
+
+        await task.force_collect()
+
+        mock_sqs.get_ohlcv.assert_called()
+
+    async def test_force_collect_calls_api_even_if_count_sufficient(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """force=True이면 latest_date == today 스킵 조건을 무시하고 API를 호출한다."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231001"
+        }
+
+        await task.force_collect()
+
+        mock_sqs.get_ohlcv.assert_called()
+
+    async def test_force_collect_sets_progress_force_flag(
+        self, task, mock_stock_repo
+    ):
+        """force 수집 중 progress['force']가 True로 설정된다."""
+        captured = {}
+        original_update = task._progress.update
+
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 0, "latest_date": None, "oldest_date": None
+        }
+
+        await task.force_collect()
+
+        # 수집 완료 후 progress에 force 키가 존재했어야 함 (running=False로 리셋됨)
+        # _last_collected_date는 정상적으로 갱신
+        assert task._last_collected_date == TARGET_DATE
+
+    async def test_normal_collect_skips_when_already_done(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """일반 수집(force=False)에서는 _last_collected_date == target_date이면 스킵된다."""
+        task._last_collected_date = TARGET_DATE
+
+        await task._collect_all_ohlcv(force=False)
+
+        mock_sqs.get_ohlcv.assert_not_called()
+
+    async def test_update_stock_ohlcv_force_skips_db_check(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """_update_stock_ohlcv(force=True)는 DB 조회 없이 바로 API를 호출한다."""
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231001"
+        }
+
+        result = await task._update_stock_ohlcv("005930", TARGET_DATE, force=True)
+
+        assert result is True
+        mock_stock_repo.get_ohlcv_summary.assert_not_called()  # DB 조회 건너뜀
+        mock_sqs.get_ohlcv.assert_called_once()

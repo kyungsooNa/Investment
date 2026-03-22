@@ -159,11 +159,24 @@ class OhlcvUpdateTask(SchedulableTask):
         if self._last_collected_date != latest_trading_date:
             await self._collect_all_ohlcv()
 
+    async def force_collect(self) -> None:
+        """강제 전체 수집: skip 조건을 무시하고 모든 종목을 API 재호출한다.
+
+        - 최초 설치(로컬 DB 없음) 또는 다른 머신으로 이전 시 전체 백필 보장
+        - 중간 날짜 누락 등 데이터 정합성이 의심될 때 사용
+        """
+        self._logger.info("OhlcvUpdateTask 강제 수집 요청")
+        await self._collect_all_ohlcv(force=True)
+
     # ── 전체 종목 OHLCV 수집 ────────────────────────────────
 
-    async def _collect_all_ohlcv(self) -> None:
-        """전체 종목 OHLCV를 수집하여 DB에 저장한다."""
-        if self._mcs and await self._mcs.is_market_open_now():
+    async def _collect_all_ohlcv(self, force: bool = False) -> None:
+        """전체 종목 OHLCV를 수집하여 DB에 저장한다.
+
+        Args:
+            force: True이면 skip 조건(count/latest_date)을 무시하고 전 종목 API 재호출.
+        """
+        if not force and self._mcs and await self._mcs.is_market_open_now():
             self._logger.info("장 운영 중이므로 OHLCV 수집을 건너뜁니다.")
             return
 
@@ -185,13 +198,13 @@ class OhlcvUpdateTask(SchedulableTask):
                 self._logger.error("최근 거래일을 확인할 수 없어 OHLCV 수집을 중단합니다.")
                 return
 
-            if self._last_collected_date == target_date:
+            if not force and self._last_collected_date == target_date:
                 self._logger.info(f"이미 {target_date} OHLCV 수집 완료 — 스킵")
                 return
 
             self._logger.info(f"전체 종목 OHLCV 수집 시작 (기준일: {target_date})")
             self._progress = {
-                "running": True, "processed": 0, "total": 0,
+                "running": True, "force": force, "processed": 0, "total": 0,
                 "updated": 0, "skipped": 0, "elapsed": 0.0,
             }
             all_stocks = self._load_all_stocks()
@@ -209,14 +222,16 @@ class OhlcvUpdateTask(SchedulableTask):
 
                 # 병렬 처리
                 tasks = [
-                    self._update_stock_ohlcv(code, target_date)
+                    self._update_stock_ohlcv(code, target_date, force=force)
                     for code, _, _ in chunk
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
+                chunk_had_api_call = False
                 for result in results:
                     if result is True:
                         updated += 1
+                        chunk_had_api_call = True
                     elif result is False:
                         skipped += 1
                     # None은 오류 — 카운트 제외
@@ -237,7 +252,11 @@ class OhlcvUpdateTask(SchedulableTask):
                         f"| 갱신: {updated} | 스킵: {skipped} | 소요: {elapsed:.1f}s"
                     )
 
-                await asyncio.sleep(self.CHUNK_SLEEP_SEC)
+                # API 호출이 있었던 청크만 rate limit 대기
+                if chunk_had_api_call:
+                    await asyncio.sleep(self.CHUNK_SLEEP_SEC)
+                else:
+                    await asyncio.sleep(0)  # 이벤트 루프 양보만
 
             # 완료 처리
             self._last_collected_date = target_date
@@ -266,12 +285,18 @@ class OhlcvUpdateTask(SchedulableTask):
 
     # ── 내부 헬퍼 ─────────────────────────────────────────
 
-    async def _update_stock_ohlcv(self, code: str, target_date: str) -> Optional[bool]:
+    async def _update_stock_ohlcv(
+        self, code: str, target_date: str, force: bool = False,
+    ) -> Optional[bool]:
         """단일 종목 OHLCV를 필요 시에만 API 호출하여 업데이트한다.
 
         DB 상태를 먼저 조회하여:
-        - TARGET_OHLCV_DAYS 이상 보유 + 당일 데이터 완비 → 스킵 (False)
-        - 데이터 부족 또는 당일 누락 → get_ohlcv() 호출 후 DB 저장 (True)
+        - 당일 데이터가 이미 존재하면 → 스킵 (False)
+          (역사 데이터는 최초 실행 시 full backfill로 채워지며, 이후에는 force collect로 복구)
+        - 당일 데이터 없으면 → get_ohlcv() 호출 후 DB 저장 (True)
+
+        Args:
+            force: True이면 skip 조건을 무시하고 무조건 API 호출.
 
         Returns:
             True  - API 호출 후 갱신 성공
@@ -279,13 +304,13 @@ class OhlcvUpdateTask(SchedulableTask):
             None  - 오류 발생
         """
         try:
-            summary = self._stock_repo.get_ohlcv_summary(code)
-            count = summary["count"]
-            latest_date = summary["latest_date"]
+            if not force:
+                summary = self._stock_repo.get_ohlcv_summary(code)
+                latest_date = summary["latest_date"]
 
-            # 이미 충분한 역사 데이터가 있고 당일 캔들도 존재하면 API 불필요
-            if count >= self.TARGET_OHLCV_DAYS and latest_date == target_date:
-                return False
+                # 당일 캔들이 이미 존재하면 API 불필요
+                if latest_date == target_date:
+                    return False
 
             # get_ohlcv: DB에 없는 구간은 자동으로 API 조회 후 StockRepository에 upsert
             resp = await self._stock_query_service.get_ohlcv(code, caller="OhlcvUpdateTask")

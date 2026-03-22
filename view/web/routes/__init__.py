@@ -14,6 +14,7 @@ from view.web.routes.program import router as program_router
 from view.web.routes.scheduler import router as scheduler_router
 from view.web.routes.notification import router as notification_router
 from view.web.routes.system import router as system_router
+from view.web.routes.ohlcv import router as ohlcv_router
 
 router = APIRouter(prefix="/api")
 
@@ -27,3 +28,4 @@ router.include_router(program_router)
 router.include_router(scheduler_router)
 router.include_router(notification_router)
 router.include_router(system_router)
+router.include_router(ohlcv_router)

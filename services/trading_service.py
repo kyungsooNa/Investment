@@ -1,0 +1,1010 @@
+# services/trading_service.py
+from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from core.market_clock import MarketClock
+import asyncio
+import logging
+from brokers.broker_api_wrapper import BrokerAPIWrapper
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from config.DynamicConfig import DynamicConfig
+
+# common/types에서 모든 ResTypedDict와 ErrorCode 임포트
+from common.types import (
+    ResPriceSummary, ResCommonResponse, ErrorCode,
+    ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation,ResDailyChartApiItem
+)
+from core.cache.cache_store import CacheStore
+from core.performance_profiler import PerformanceProfiler
+from services.market_calendar_service import MarketCalendarService
+
+if TYPE_CHECKING:
+    from repositories.stock_repository import StockRepository
+
+
+class TradingService:
+    """
+    한국투자증권 Open API와 관련된 핵심 비즈니스 로직을 제공하는 서비스 계층입니다.
+    이 클래스의 메서드는 UI와 독립적으로 데이터를 조회하고 처리하며, 결과를 반환합니다.
+    """
+
+    def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
+                 market_clock: MarketClock = None, cache_store: Optional[CacheStore] = None,
+                 market_calendar_service: Optional[MarketCalendarService] = None, performance_profiler: Optional[PerformanceProfiler] = None,
+                 stock_repository: Optional['StockRepository'] = None):
+        self._broker_api_wrapper = broker_api_wrapper
+        self._env = env
+        self._logger = logger if logger else logging.getLogger(__name__)
+        self._market_clock = market_clock
+        self.cache_store = cache_store
+        self._latest_prices = {}
+        self._calendar = market_calendar_service
+        self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
+        self._stock_repo = stock_repository
+
+    async def get_name_by_code(self, code: str) -> str:
+        """종목코드로 종목명을 반환합니다 (BrokerAPIWrapper 위임)."""
+        return await self._broker_api_wrapper.get_name_by_code(code)
+
+    def _default_realtime_message_handler(self, data):
+        """
+        웹소켓으로부터 수신된 실시간 데이터를 처리하는 기본 핸들러.
+        여기서 데이터를 파싱하여 콘솔에 보기 좋게 출력합니다.
+        """
+        self._logger.info(f"실시간 데이터 수신: Type={data.get('type')}, TR_ID={data.get('tr_id')}, Data={data.get('data')}")
+
+        # 주식 체결 데이터 (H0STCNT0) 처리
+        if data.get('type') == 'realtime_price':
+            realtime_data = data.get('data', {})
+            stock_code = realtime_data.get('유가증권단축종목코드')
+            current_price = realtime_data.get('주식현재가')
+            
+            if stock_code and current_price:
+                self._latest_prices[stock_code] = {
+                    "price": current_price,
+                    "change": realtime_data.get('전일대비', '0'),
+                    "rate": realtime_data.get('전일대비율', '0.00'),
+                    "sign": realtime_data.get('전일대비부호', '3')
+                }
+                
+                # 메모리 캐시(StockRepository)에 실시간 틱 데이터 즉시 반영
+                if getattr(self, '_stock_repo', None):
+                    try:
+                        cum_vol = realtime_data.get('누적거래량', '0')
+                        vol_int = int(cum_vol) if cum_vol and cum_vol != 'N/A' else 0
+                        self._stock_repo.update_realtime_data(stock_code, float(current_price), vol_int)
+                    except Exception as e:
+                        self._logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
+
+            change = realtime_data.get('전일대비', 'N/A')
+            change_sign = realtime_data.get('전일대비부호', 'N/A')
+            change_rate = realtime_data.get('전일대비율', 'N/A')
+            cumulative_volume = realtime_data.get('누적거래량', 'N/A')
+            trade_time = realtime_data.get('주식체결시간', 'N/A')
+
+            display_message = (
+                f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
+                f"전일대비: {change_sign}{change} ({change_rate}%), 누적량: {cumulative_volume}"
+            )
+            print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+            self._logger.info(
+                f"실시간 체결 데이터: {stock_code} 현재가={current_price}, 전일대비={change_sign}{change}({change_rate}%), 누적량={cumulative_volume}")
+
+        # 주식 호가 데이터 (H0STASP0) 처리
+        elif data.get('type') == 'realtime_quote':
+            quote_data = data.get('data', {})
+            stock_code = quote_data.get('유가증권단축종목코드', 'N/A')
+            askp1 = quote_data.get('매도호가1', 'N/A')
+            bidp1 = quote_data.get('매수호가1', 'N/A')
+            trade_time = quote_data.get('영업시간', 'N/A')
+
+            display_message = f"[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1호가: {askp1}, 매수1호가: {bidp1}"
+            print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+            self._logger.info(f"실시간 호가 데이터: {stock_code} 매도1={askp1}, 매수1={bidp1}")
+
+        elif data.get('type') == 'signing_notice':
+            notice_data = data.get('data', {})
+            order_num = notice_data.get('주문번호', 'N/A')
+            trade_qty = notice_data.get('체결수량', 'N/A')
+            trade_price = notice_data.get('체결단가', 'N/A')
+            trade_time = notice_data.get('주식체결시간', 'N/A')
+
+            print(f"\n[체결통보] 주문: {order_num}, 수량: {trade_qty}, 단가: {trade_price}, 시간: {trade_time}")
+            self._logger.info(f"체결통보: 주문={order_num}, 수량={trade_qty}, 단가={trade_price}")
+
+        elif data.get('type') == 'realtime_program_trading':
+            d = data.get('data', {})
+            t = d.get('주식체결시간', 'N/A')
+            ntby = d.get('순매수거래대금', '0')
+            msg = f"[프로그램매매 - {t}] 순매수거래대금: {ntby}"
+            print(f"\r{msg}{' ' * max(0, 80 - len(msg))}", end="")
+            self._logger.info(msg)
+
+        else:
+            self._logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
+
+    def is_websocket_receive_alive(self) -> bool:
+        """웹소켓 수신 태스크가 살아있는지 확인."""
+        return self._broker_api_wrapper.is_websocket_receive_alive()
+
+    async def connect_websocket(self, on_message_callback=None):
+        """웹소켓 연결을 비동기로 시작합니다."""
+        return await self._broker_api_wrapper.connect_websocket(
+            on_message_callback=on_message_callback if on_message_callback else self._default_realtime_message_handler)
+
+    async def disconnect_websocket(self):
+        """웹소켓 연결을 비동기로 종료합니다."""
+        return await self._broker_api_wrapper.disconnect_websocket()
+
+    async def subscribe_realtime_price(self, stock_code):
+        """실시간 주식체결 데이터(현재가)를 구독합니다."""
+        return await self._broker_api_wrapper.subscribe_realtime_price(stock_code)
+
+    async def unsubscribe_realtime_price(self, stock_code):
+        """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
+        return await self._broker_api_wrapper.unsubscribe_realtime_price(stock_code)
+
+    async def subscribe_realtime_quote(self, stock_code):
+        """실시간 주식호가 데이터를 구독합니다."""
+        return await self._broker_api_wrapper.subscribe_realtime_quote(stock_code)
+
+    async def unsubscribe_realtime_quote(self, stock_code):
+        """실시간 주식호가 데이터 구독을 해지합니다."""
+        return await self._broker_api_wrapper.unsubscribe_realtime_quote(stock_code)
+
+    async def subscribe_program_trading(self, stock_code: str) -> bool:
+        if not stock_code:
+            self._logger.warning("프로그램 매매 구독을 위한 종목 코드가 누락되었습니다.")
+            return False
+        try:
+            return await self._broker_api_wrapper.subscribe_program_trading(stock_code)
+        except Exception as e:
+            self._logger.exception(f"프로그램 매매 구독 중 오류 발생: {e}")
+            return False
+
+    async def unsubscribe_program_trading(self, stock_code: str) -> bool:
+        if not stock_code:
+            self._logger.warning("프로그램 매매 구독 해지를 위한 종목 코드가 누락되었습니다.")
+            return False
+        try:
+            return await self._broker_api_wrapper.unsubscribe_program_trading(stock_code)
+        except Exception as e:
+            self._logger.exception(f"프로그램 매매 구독 해지 중 오류 발생: {e}")
+            return False
+
+    async def get_price_summary(self, stock_code) -> ResCommonResponse:
+        """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
+        self._logger.info(f"Service - {stock_code} 종목 요약 정보 조회 요청")
+        return await self._broker_api_wrapper.get_price_summary(stock_code)
+
+    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+        """종목코드로 종목의 전체 정보를 가져옵니다 (BrokerAPIWrapper 위임)."""
+        self._logger.info(f"Service - {stock_code} 종목 상세 정보 조회 요청")
+        return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
+
+    async def get_current_price(self, stock_code, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
+        # 1. StockRepository 단기 캐시 확인 (웹소켓 틱 갱신 또는 최근 API 조회 결과)
+        if self._stock_repo:
+            cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0, count_stats=count_stats, caller=caller)
+            if cached_data:
+                return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(Cache)", data=cached_data)
+                
+        if count_stats:
+            self._logger.info(f"Trading_Service - {stock_code} 현재가 조회 요청")
+        resp = await self._broker_api_wrapper.get_current_price(stock_code)
+        
+        # 2. 조회 결과를 StockRepository에 갱신
+        if resp and resp.rt_cd == ErrorCode.SUCCESS.value and self._stock_repo:
+            self._stock_repo.set_current_price(stock_code, resp.data)
+            
+        return resp
+
+    async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
+        """종목의 체결(체결강도 등) 정보를 조회합니다."""
+        self._logger.info(f"Service - {stock_code} 체결 정보 조회 요청")
+        return await self._broker_api_wrapper.get_stock_conclusion(stock_code)
+
+    async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
+        """복수종목 현재가 조회 (최대 30종목)"""
+        self._logger.info(f"Trading_Service - 복수종목 현재가 조회 요청 ({len(stock_codes)}종목)")
+        return await self._broker_api_wrapper.get_multi_price(stock_codes)
+
+    async def get_account_balance(self) -> ResCommonResponse:
+        return await self._broker_api_wrapper.get_account_balance()
+
+    async def place_buy_order(self, stock_code, price, qty) -> ResCommonResponse:
+        t_start = self.pm.start_timer()
+        self._logger.info(
+            f"Service - 주식 매수 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
+        )
+
+        try:
+            response_common: ResCommonResponse = await self._broker_api_wrapper.place_stock_order(
+                stock_code=stock_code,
+                order_price=price,
+                order_qty=qty,
+                is_buy=True
+            )
+        except Exception as e:
+            self._logger.exception(f"Service - 매수 주문 중 오류 발생: {str(e)}")
+            self.pm.log_timer(f"TradingService.place_buy_order({stock_code}) [예외]", t_start)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,  # Enum 값 사용
+                msg1=f"매수 주문 처리 중 예외 발생: {str(e)}",
+                data=None
+            )
+
+        if response_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
+            msg = getattr(response_common, "msg1", "매수 주문 실패")  # 방어적 접근
+            self._logger.error(f"매수 주문 실패: {msg}")
+            self.pm.log_timer(f"TradingService.place_buy_order({stock_code}) [실패]", t_start)
+            return response_common
+
+        self.pm.log_timer(f"TradingService.place_buy_order({stock_code})", t_start)
+        return response_common
+
+    async def place_sell_order(self, stock_code, price, qty) -> ResCommonResponse:
+        t_start = self.pm.start_timer()
+        self._logger.info(
+            f"Service - 주식 매도 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}"
+        )
+
+        try:
+            response_common: ResCommonResponse = await self._broker_api_wrapper.place_stock_order(
+                stock_code=stock_code,
+                order_price=price,
+                order_qty=qty,
+                is_buy=False
+            )
+        except Exception as e:
+            self._logger.exception(f"Service - 매도 주문 중 오류 발생: {str(e)}")
+            self.pm.log_timer(f"TradingService.place_sell_order({stock_code}) [예외]", t_start)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,  # Enum 값 사용
+                msg1=f"매도 주문 처리 중 예외 발생: {str(e)}",
+                data=None
+            )
+
+        if response_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
+            msg = getattr(response_common, "msg1", "매도 주문 실패")
+            self._logger.error(f"매도 주문 실패: {msg}")
+            self.pm.log_timer(f"TradingService.place_sell_order({stock_code}) [실패]", t_start)
+            return response_common
+
+        self.pm.log_timer(f"TradingService.place_sell_order({stock_code})", t_start)
+        return response_common
+
+    async def get_top_market_cap_stocks_code(self, market_code: str, limit: int = None) -> ResCommonResponse:
+        """
+        시가총액 상위 종목을 조회하고 결과를 반환합니다 (모의투자 미지원).
+        ResCommonResponse 형태로 반환하며, data 필드에 List[ResTopMarketCapApiItem] 포함.
+        """
+        if limit is None:
+            limit = 30
+            self._logger.warning(f"[경고] count 파라미터가 명시되지 않아 기본값 30을 사용합니다. market_code={market_code}")
+
+        self._logger.info(f"Service - 시가총액 상위 종목 조회 요청 - 시장: {market_code}, 개수: {limit}")
+
+        if self._env.is_paper_trading:
+            self._logger.warning("Service - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1="모의투자 미지원 API입니다.", data=[])  # Enum 값 사용
+
+        return await self._broker_api_wrapper.get_top_market_cap_stocks_code(market_code, limit)
+
+    async def get_current_upper_limit_stocks(self, rise_stocks: List) -> ResCommonResponse:
+        """
+        전체 종목 리스트 중 현재 상한가에 도달한 종목을 필터링합니다.
+        ResCommonResponse 형태로 반환하며, data 필드에 List[Dict] (종목 정보) 포함.
+        """
+        results: List[ResBasicStockInfo] = []
+
+        for stock_info in rise_stocks:
+            code = "Unknown"
+            try:
+                # 로깅을 위해 코드 미리 추출 시도
+                if isinstance(stock_info, dict):
+                    code = stock_info.get("stck_shrn_iscd", "Unknown")
+                elif hasattr(stock_info, "stck_shrn_iscd"):
+                    code = stock_info.stck_shrn_iscd
+
+                fluctuation_info: ResFluctuation = stock_info
+                code = fluctuation_info.stck_shrn_iscd
+                current_price = int(fluctuation_info.stck_prpr)
+                prdy_ctrt = float(fluctuation_info.prdy_ctrt)
+                name = fluctuation_info.hts_kor_isnm
+                change_rate = float(fluctuation_info.prdy_vrss)
+
+                if prdy_ctrt > 29.0:  # 등락률 조건 (전일 대비 29% 이상을 상한가로 간주)
+                    stock_info = ResBasicStockInfo(
+                        code=code,
+                        name=name,
+                        current_price=current_price,
+                        change_rate=change_rate,
+                        prdy_ctrt=prdy_ctrt
+                    )
+                    results.append(stock_info)
+            except Exception as e:
+                self._logger.warning(f"{code} 현재 상한가 필터링 중 오류: {e}", exc_info=True)
+                continue  #
+
+        self._market_clock.get_current_kst_time()
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
+            msg1="현재 상한가 종목 필터링 성공",
+            data=results  # List[ResBasicStockInfo]
+        )
+
+    async def get_all_stocks_code(self) -> ResCommonResponse:
+        """
+        전체 종목 코드를 조회합니다.
+        ResCommonResponse 형태로 반환하며, data 필드에 List[str] (종목 코드 리스트) 포함.
+        """
+        self._logger.info("Service - 전체 종목 코드 조회 요청")
+
+        try:
+            codes = await self._broker_api_wrapper.get_all_stock_code_list()  # 현재 List[str] 반환
+
+            if not isinstance(codes, list):
+                msg = f"비정상 응답 형식: {codes}"
+                self._logger.warning(msg)
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.PARSING_ERROR.value,  # Enum 값 사용
+                    msg1=msg,
+                    data=[]
+                )
+
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,  # Enum 값 사용
+                msg1="전체 종목 코드 조회 성공",
+                data=codes
+            )
+
+        except Exception as e:
+            error_msg = f"전체 종목 코드 조회 실패: {e}"
+            self._logger.exception(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,  # Enum 값 사용
+                msg1=error_msg,
+                data=[]
+            )
+
+    async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
+        """종목의 실시간 호가 정보를 조회합니다."""
+        self._logger.info(f"Service - {stock_code} 종목 호가 정보 조회 요청")
+        return await self._broker_api_wrapper.get_asking_price(stock_code)
+
+    async def get_time_concluded_prices(self, stock_code: str) -> ResCommonResponse:
+        """종목의 시간대별 체결가 정보를 조회합니다."""
+        self._logger.info(f"Service - {stock_code} 종목 시간대별 체결가 조회 요청")
+        return await self._broker_api_wrapper.get_time_concluded_prices(stock_code)
+
+    async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str,
+                                           fid_period_div_code: str = 'D') -> ResCommonResponse:
+        """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""
+        self._logger.info(f"Service - {stock_code} 종목 일별/분봉 주식 시세 차트 데이터를 조회 요청")
+        return await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code=stock_code, start_date=start_date, end_date=end_date,
+                                                                           fid_period_div_code=fid_period_div_code)
+
+    # async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
+    #     """키워드로 종목을 검색합니다."""
+    #     self._logger.info(f"Service - '{keyword}' 키워드로 종목 검색 요청")
+    #     return await self._broker_api_wrapper.search_stocks_by_keyword(keyword)
+
+    async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
+        """상승률 또는 하락률 상위 종목을 조회합니다."""
+        direction = "상승" if rise else "하락"
+        self._logger.info(f"Service - {direction}률 상위 종목 조회 요청")
+        return await self._broker_api_wrapper.get_top_rise_fall_stocks(rise)
+
+    async def get_top_volume_stocks(self) -> ResCommonResponse:
+        """거래량 상위 종목을 조회합니다."""
+        self._logger.info("Service - 거래량 상위 종목 조회 요청")
+        return await self._broker_api_wrapper.get_top_volume_stocks()
+
+    # ETF/ETN 브랜드명 — 종목명이 이 접두사로 시작하면 개별종목이 아님
+    _ETF_PREFIXES = (
+        "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
+        "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
+        "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
+    )
+
+    async def get_top_trading_value_stocks(self) -> ResCommonResponse:
+        """
+        거래대금 상위 종목 조회.
+        거래량/코스피시가총액30/코스닥시가총액30/상승률/하락률 5개 기존 API 결과를 병합하여
+        acml_tr_pbmn(거래대금) 기준 상위 30개를 반환한다.
+        ETF/ETN 종목은 제외한다.
+        """
+        t_start = self.pm.start_timer()
+        self._logger.info("Service - 거래대금 상위 종목 조회 요청 (5개 소스 병합)")
+
+        # 5개 API 병렬 호출
+        vol_resp, mc_kospi_resp, mc_kosdaq_resp, rise_resp, fall_resp = await asyncio.gather(
+            self._broker_api_wrapper.get_top_volume_stocks(),
+            self._broker_api_wrapper.get_top_market_cap_stocks_code("0000", 30),
+            self._broker_api_wrapper.get_top_market_cap_stocks_code("1001", 30),
+            self._broker_api_wrapper.get_top_rise_fall_stocks(True),
+            self._broker_api_wrapper.get_top_rise_fall_stocks(False),
+        )
+
+        # 거래량 데이터 (acml_tr_pbmn 포함, dict 리스트)
+        volume_stocks = vol_resp.data if vol_resp and vol_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        if isinstance(volume_stocks, dict):
+            volume_stocks = volume_stocks.get("output", [])
+
+        # 시가총액 데이터 - 코스피 + 코스닥 (dict 또는 dataclass 리스트)
+        mc_kospi = mc_kospi_resp.data if mc_kospi_resp and mc_kospi_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        mc_kosdaq = mc_kosdaq_resp.data if mc_kosdaq_resp and mc_kosdaq_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        mc_stocks = list(mc_kospi or []) + list(mc_kosdaq or [])
+
+        # 상승률/하락률 데이터 (ResFluctuation dataclass 리스트)
+        rise_stocks = rise_resp.data if rise_resp and rise_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        fall_stocks = fall_resp.data if fall_resp and fall_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
+        def _to_dict(item):
+            return item.to_dict() if hasattr(item, 'to_dict') else (item if isinstance(item, dict) else {})
+
+        def _get_code(d):
+            return d.get("mksc_shrn_iscd") or d.get("stck_shrn_iscd") or d.get("iscd") or ""
+
+        # 종목코드 기준 병합 (거래량 데이터 우선 — acml_tr_pbmn 정확)
+        merged = {}
+        for stock in volume_stocks:
+            d = _to_dict(stock)
+            code = _get_code(d)
+            if code:
+                merged[code] = d
+
+        for stock in mc_stocks + list(rise_stocks or []) + list(fall_stocks or []):
+            d = _to_dict(stock)
+            code = _get_code(d)
+            if code and code not in merged:
+                if not d.get("acml_tr_pbmn"):
+                    try:
+                        price = int(d.get("stck_prpr", "0") or "0")
+                        vol = int(d.get("acml_vol", "0") or "0")
+                        d["acml_tr_pbmn"] = str(price * vol)
+                    except (ValueError, TypeError):
+                        d["acml_tr_pbmn"] = "0"
+                merged[code] = d
+
+        # ETF/ETN 제외
+        merged = {
+            code: d for code, d in merged.items()
+            if not self._is_etf(d)
+        }
+
+        # 거래대금 기준 내림차순 정렬, 상위 30개
+        result = list(merged.values())
+        result.sort(key=lambda x: int(x.get("acml_tr_pbmn", "0") or "0"), reverse=True)
+        result = result[:30]
+        for i, stock in enumerate(result, 1):
+            stock["data_rank"] = str(i)
+
+        self.pm.log_timer("TradingService.get_top_trading_value_stocks", t_start, threshold=1.0)
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="거래대금 상위 종목 조회 성공",
+            data=result
+        )
+
+    def _is_etf(self, stock: dict) -> bool:
+        """종목명 기반 ETF/ETN 여부 판별."""
+        name = stock.get("hts_kor_isnm") or stock.get("kor_shrt_ism") or ""
+        return any(name.startswith(prefix) for prefix in self._ETF_PREFIXES)
+
+    # async def get_top_foreign_buying_stocks(self) -> ResCommonResponse:
+    #     """외국인 순매수 상위 종목을 조회합니다."""
+    #     self._logger.info("Service - 외국인 순매수 상위 종목 조회 요청")
+    #     return await self._broker_api_wrapper.get_top_foreign_buying_stocks()
+    #
+    # async def get_stock_news(self, stock_code: str) -> ResCommonResponse:
+    #     """특정 종목의 뉴스를 조회합니다."""
+    #     self._logger.info(f"Service - {stock_code} 종목 뉴스 조회 요청")
+    #     return await self._broker_api_wrapper.get_stock_news(stock_code)
+
+    async def get_etf_info(self, etf_code: str) -> ResCommonResponse:
+        """특정 ETF의 상세 정보를 조회합니다."""
+        self._logger.info(f"Service - {etf_code} ETF 정보 조회 요청")
+        return await self._broker_api_wrapper.get_etf_info(etf_code)
+
+    async def get_financial_ratio(self, stock_code: str) -> ResCommonResponse:
+        """기업 재무비율을 조회합니다 (영업이익 증가율 등)."""
+        self._logger.info(f"Service - {stock_code} 재무비율 조회 요청")
+        return await self._broker_api_wrapper.get_financial_ratio(stock_code)
+
+    async def handle_realtime_stream(self, stock_codes: list[str], fields: list[str], duration: int = 30):
+        """
+        실시간 데이터 스트림을 구독하고 지정된 시간 동안 수신합니다.
+
+        :param stock_codes: 종목 코드 리스트
+        :param fields: 수신할 실시간 데이터 필드 (e.g. ["price", "quote"])
+        :param duration: 구독 유지 시간 (초), 기본 30초
+        """
+        self._logger.info(f"실시간 스트림 시작 - 종목: {stock_codes}, 필드: {fields}, 시간: {duration}s")
+
+        try:
+            await self.connect_websocket()
+
+            for code in stock_codes:
+                if "price" in fields:
+                    await self.subscribe_realtime_price(code)
+                if "quote" in fields:
+                    await self.subscribe_realtime_quote(code)
+
+            start_time = datetime.now()
+            while (datetime.now() - start_time) < timedelta(seconds=duration):
+                await self._market_clock.async_sleep(1)  # 단순 대기 (메시지는 내부 handler에서 자동 처리됨)
+
+        except Exception as e:
+            self._logger.exception(f"실시간 스트림 처리 중 오류 발생: {str(e)}")
+
+        finally:
+            for code in stock_codes:
+                if "price" in fields:
+                    await self.unsubscribe_realtime_price(code)
+                if "quote" in fields:
+                    await self.unsubscribe_realtime_quote(code)
+
+            await self.disconnect_websocket()
+            self._logger.info("실시간 스트림 종료")
+
+    def _normalize_ohlcv_rows(self, items: List[Any]) -> List[dict]:
+        """
+        한국투자 일봉 응답(ResDailyChartApiItem list) 또는 dict list를
+        표준 OHLCV 스키마로 정규화한다.
+          반환: [{"date":"YYYYMMDD","open":float,"high":float,"low":float,"close":float,"volume":int}, ...]
+        """
+
+        def _get(it, attr, default=None):
+            if it is None:
+                return default
+            if isinstance(it, dict):
+                return it.get(attr, default)
+            # dataclass/object 속성 접근
+            return getattr(it, attr, default)
+
+        def _to_float(x):
+            try:
+                return float(str(x).replace(",", ""))
+            except Exception:
+                return None
+
+        def _to_int(x):
+            try:
+                return int(float(str(x).replace(",", "")))
+            except Exception:
+                return None
+
+        rows = []
+        for it in items or []:
+            # ResDailyChartApiItem 필드 우선, 없으면 표준키 사용
+            date = _get(it, "stck_bsop_date") or _get(it, "date")
+            open_ = _get(it, "stck_oprc") or _get(it, "open")
+            high = _get(it, "stck_hgpr") or _get(it, "high")
+            low = _get(it, "stck_lwpr") or _get(it, "low")
+            close = _get(it, "stck_clpr") or _get(it, "close")
+            volume = _get(it, "acml_vol") or _get(it, "volume")
+
+            if not date:
+                continue
+
+            rows.append({
+                "date": date,
+                "open": _to_float(open_),
+                "high": _to_float(high),
+                "low": _to_float(low),
+                "close": _to_float(close),
+                "volume": _to_int(volume),
+            })
+
+        # 날짜 오름차순 정렬 + 날짜 없는 행 제거는 위에서 처리
+        rows.sort(key=lambda r: r["date"])
+        return rows
+
+    def _calc_range_by_period(self, period: str, end_dt: datetime | None, limit: int | None = None) -> tuple[str, str]:
+        """
+        period: 'D'|'W'|'M'
+        end_dt: 기준일(없으면 now KST)
+        limit : 원하는 봉 개수(없으면 합리적 기본값)
+        return: (start_yyyymmdd, end_yyyymmdd)
+        """
+        if end_dt is None:
+            # KST 기준 현재
+            end_dt = self._market_clock.get_current_kst_time()
+
+        period = (period or "D").upper()
+        if period == "D":
+            # 일봉: MA120 등 장기 이평선 계산을 위해 충분한 데이터(약 2년) 확보
+            days = max((limit or 365) * 2, 730)
+            start_dt = end_dt - timedelta(days=days)
+
+        elif period == "W":
+            # 주봉: 최소 104주(약 2년) 확보. limit 있으면 2배 버퍼.
+            weeks = max((limit or 52) * 2, 104)
+            start_dt = end_dt - timedelta(weeks=weeks)
+
+        elif period == "M":
+            # 월봉: 개략치로 31일 기준 산정(외부 lib 없이). 최소 60개월(5년).
+            months = max((limit or 24) * 2, 60)
+            days = months * 31
+            start_dt = end_dt - timedelta(days=days)
+        else:
+            # 알 수 없는 값 → 일봉처럼 처리
+            days = max((limit or 120) * 2, 240)
+            start_dt = end_dt - timedelta(days=days)
+
+        return self._market_clock.to_yyyymmdd(start_dt), self._market_clock.to_yyyymmdd(end_dt)
+
+    async def _fetch_past_daily_ohlcv(self, stock_code: str, end_yyyymmdd: str, max_loops: int = 8) -> List[dict]:
+        """
+        과거 일봉 데이터를 반복 조회하여 수집합니다.
+        :param end_yyyymmdd: 조회 종료일 (보통 어제 날짜)
+        :param max_loops: 반복 횟수 (10회 * 100일 = 약 1000일 ≈ 692 거래일)
+        """
+        t_start = self.pm.start_timer()
+        all_rows = []
+        curr_end_dt = datetime.strptime(end_yyyymmdd, "%Y%m%d")
+        # 시작일은 종료일로부터 충분히 과거로 설정 (max_loops 기반)
+        # 단순히 루프를 돌며 데이터를 모으는 구조이므로 target_start_dt는 루프 종료 조건으로만 사용
+        target_start_dt = curr_end_dt - timedelta(days=max_loops * 100 + 50)
+
+        loop_cnt = 0
+        
+        while loop_cnt < max_loops:
+            loop_cnt += 1
+            
+            # 한 번에 요청할 시작일 (종료일 - 100일)
+            curr_start_dt = curr_end_dt - timedelta(days=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE)
+            
+            s_date = self._market_clock.to_yyyymmdd(curr_start_dt)
+            e_date = self._market_clock.to_yyyymmdd(curr_end_dt)
+            
+            raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+                stock_code=stock_code,
+                start_date=s_date,
+                end_date=e_date,
+                fid_period_div_code="D",
+            )
+            
+            if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
+                break
+            
+            rows = self._normalize_ohlcv_rows(raw.data)
+            if not rows:
+                break
+            
+            # 병합: all_rows(미래) 앞에 rows(과거)를 붙임
+            if all_rows:
+                first_existing_date = all_rows[0]['date']
+                rows = [r for r in rows if r['date'] < first_existing_date]
+            
+            if not rows:
+                break
+                
+            all_rows = rows + all_rows
+            
+            # 다음 루프를 위해 종료일 갱신
+            curr_end_dt = curr_start_dt - timedelta(days=1)
+
+        self.pm.log_timer(f"TradingService._fetch_past_daily_ohlcv({stock_code}, {loop_cnt}회)", t_start, threshold=1.0)
+        return all_rows
+
+    async def _fetch_today_ohlcv(self, stock_code: str, today_str: str, caller: str = "unknown") -> List[dict]:
+        """현재가 API를 호출하여 오늘자 OHLCV 데이터를 생성합니다."""
+        try:
+            current_resp = await self.get_current_price(stock_code, caller=caller)
+            if current_resp.rt_cd == ErrorCode.SUCCESS.value and current_resp.data:
+                output = current_resp.data.get('output')
+                if output:
+                    # ResStockFullInfoApiOutput 객체 또는 dict 처리
+                    def _get_val(obj, attr_name):
+                        if isinstance(obj, dict):
+                            return obj.get(attr_name)
+                        return getattr(obj, attr_name, None)
+
+                    opn = _get_val(output, 'stck_oprc')
+                    high = _get_val(output, 'stck_hgpr')
+                    low = _get_val(output, 'stck_lwpr')
+                    close = _get_val(output, 'stck_prpr')
+                    vol = _get_val(output, 'acml_vol')
+
+                    if opn and high and low and close:
+                        return [{
+                            "date": today_str,
+                            "open": float(opn),
+                            "high": float(high),
+                            "low": float(low),
+                            "close": float(close),
+                            "volume": int(vol) if vol else 0
+                        }]
+        except Exception as e:
+            self._logger.warning(f"오늘자 OHLCV 구성을 위한 현재가 조회 실패: {e}")
+        return []
+
+    async def get_ohlcv(
+            self,
+            stock_code: str,
+            period: str = "D",
+            caller: str = "unknown",
+    ) -> ResCommonResponse:
+        """
+        일봉(D)의 경우 StockRepository 활용, 주봉/월봉은 기존 API 조회 방식 사용.
+        """
+        t_ohlcv = self.pm.start_timer()
+        if (period or "D").upper() == "D":
+            now_dt = self._market_clock.get_current_kst_time()
+            today_str = now_dt.strftime("%Y%m%d")
+            yesterday_str = (now_dt - timedelta(days=1)).strftime("%Y%m%d")
+
+            past_rows = []
+
+            # 1. 과거 데이터 가져오기 (StockRepository 캐시/DB 활용)
+            if self._stock_repo:
+                stock_data = self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600, caller=caller)
+                if stock_data and "ohlcv" in stock_data:
+                    past_rows = stock_data["ohlcv"]
+
+            # 2. 로컬 DB에 데이터가 부족하거나 없으면 전체 API 백필 (약 1000일 ≈ 692 거래일)
+            if not past_rows or len(past_rows) < 600:
+                past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=10)
+                if self._stock_repo and past_rows:
+                    records_to_save = [{**r, "code": stock_code} for r in past_rows]
+                    self._stock_repo.upsert_ohlcv(records_to_save)
+
+            # 3. 오늘 데이터 처리 (실시간 API 병합)
+            today_rows = []
+            is_market_open = (await self._calendar.is_market_open_now()) if self._calendar else False
+            is_today_cached = past_rows and past_rows[-1]['date'] == today_str
+
+            if is_today_cached and not is_market_open:
+                pass
+            else:
+                today_rows = await self._fetch_today_ohlcv(stock_code, today_str, caller=caller)
+
+                if today_rows and now_dt.weekday() >= 5:
+                    today_rows = []
+                elif today_rows and past_rows:
+                    last_past = past_rows[-1]
+                    today = today_rows[0]
+                    if today['date'] != last_past['date']:
+                        if (today['open'] == last_past['open'] and
+                            today['high'] == last_past['high'] and
+                            today['low'] == last_past['low'] and
+                            today['close'] == last_past['close']):
+                            today_rows = []
+                            
+            # 4. 장 마감 후 오늘 데이터가 수집되었다면 DB에 영구 저장 (다음번 조회 시 백필 방지)
+            is_market_closed = not is_market_open
+            if today_rows and is_market_closed:
+                if not past_rows or today_rows[0]['date'] > past_rows[-1]['date']:
+                    if self._stock_repo:
+                        tr = {**today_rows[0], "code": stock_code}
+                        self._stock_repo.upsert_ohlcv([tr])
+                    past_rows = past_rows + today_rows
+                    today_rows = []
+
+            # 5. 최종 병합 및 정렬
+            merged_map = {r['date']: r for r in past_rows}
+            for r in today_rows:
+                merged_map[r['date']] = r
+            
+            final_rows = sorted(merged_map.values(), key=lambda x: x['date'])
+
+            # [캐시 통계 출력 로직 추가]
+            if self._stock_repo:
+                stats = self._stock_repo.get_cache_stats()
+                self._logger.debug(f"[LRU Cache Stats] {stats}")
+
+            self.pm.log_timer(f"TradingService.get_ohlcv({stock_code}, D)", t_ohlcv, threshold=0.5)
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(final_rows)}건", data=final_rows)
+
+        else:
+            # 주봉/월봉 등은 기존 단일 호출 유지
+            start_yyyymmdd, end_yyyymmdd = self._calc_range_by_period(
+                period=period,
+                end_dt=self._market_clock.get_current_kst_time() if hasattr(self, "_market_clock") else datetime.now(),
+                limit=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE
+            )
+            
+            raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+                stock_code=stock_code,
+                start_date=start_yyyymmdd,
+                end_date=end_yyyymmdd,
+                fid_period_div_code=(period or "D").upper(),
+            )
+            if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
+                return raw or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="차트 API 실패", data=[])
+
+            rows = self._normalize_ohlcv_rows(raw.data)
+            self.pm.log_timer(f"TradingService.get_ohlcv({stock_code}, {period})", t_ohlcv, threshold=0.5)
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(rows)}건", data=rows)
+
+    async def get_ohlcv_range(
+            self,
+            stock_code: str,
+            period: str = "D",
+            start_date: Optional[str] = None,  # YYYYMMDD
+            end_date: Optional[str] = None,  # YYYYMMDD
+    ) -> ResCommonResponse:
+        """
+        시작일~종료일 범위형 차트 API 호출 (일/분 공통).
+        """
+        ed = end_date or self._market_clock.get_current_kst_time()
+        # start_date가 없다면 달력 기준 넉넉한 버퍼(예: 240일)로 설정
+        sd = start_date or (datetime.strptime(ed, "%Y%m%d") - timedelta(days=240)).strftime("%Y%m%d")
+
+        raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
+            stock_code=stock_code,
+            start_date=sd,
+            end_date=ed,
+            fid_period_div_code=(period or "D").upper(),
+        )
+        if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
+            return raw or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="차트 API 실패", data=[])
+
+        rows = self._normalize_ohlcv_rows(raw.data)
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(rows)}건", data=rows)
+
+    async def get_recent_daily_ohlcv(
+            self,
+            code: str,
+            limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE,
+            end_date: Optional[str] = None,
+            start_date: Optional[str] = None,  # (옵션) 달력기준 시작일 강제 시 사용
+    ) -> List[Dict[str, Any]]:
+        """
+        최근 'limit'개 *거래일* 일봉을 반환.
+        API는 시작/종료일 범위를 요구하므로 넉넉한 범위로 받아서 슬라이스로 limit개 보장.
+        한국투자증권 API 특성상 긴 기간(1년 이상) 조회 시 데이터가 잘릴 수 있으므로,
+        1년 단위로 끊어서 반복 호출하여 병합한다.
+        """
+        t_start = self.pm.start_timer()
+        # 1. 기준 종료일 설정
+        if end_date:
+            current_ed_dt = datetime.strptime(end_date, "%Y%m%d")
+        else:
+            current_ed_dt = self._market_clock.get_current_kst_time()
+
+        all_rows = []
+        
+        # start_date가 명시된 경우: 해당 기간만 조회 (단일 호출 시도)
+        if start_date:
+            resp = await self.get_ohlcv_range(code, period="D", start_date=start_date, end_date=self._market_clock.to_yyyymmdd(current_ed_dt))
+            if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                return resp.data or []
+            return []
+
+        # 2. limit 개수를 채울 때까지 반복 호출 (최대 20회 = 약 5.5년치 제한)
+        # 한 번에 요청하는 기간은 100일로 제한하여 API 안정성 확보
+        max_loops = 20
+        for _ in range(max_loops):
+            if len(all_rows) >= limit:
+                break
+
+            # 이번 요청의 종료일 문자열
+            ed_str = self._market_clock.to_yyyymmdd(current_ed_dt)
+            
+            # 이번 요청의 시작일 = 종료일 - 100일
+            current_sd_dt = current_ed_dt - timedelta(days=100)
+            sd_str = self._market_clock.to_yyyymmdd(current_sd_dt)
+
+            # API 호출
+            resp = await self.get_ohlcv_range(code, period="D", start_date=sd_str, end_date=ed_str)
+            
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                break # 에러 시 중단
+            
+            rows = resp.data or []
+            if not rows:
+                break # 데이터 없으면 중단 (상장 이전 등)
+
+            # 중복 제거 및 병합
+            # rows는 오름차순(과거->최신)으로 온다고 가정
+            # all_rows(뒤쪽/최신) 앞에 rows(앞쪽/과거)를 붙임
+            if all_rows:
+                # 겹치는 날짜 제거 (rows의 뒷부분이 all_rows의 앞부분과 겹칠 수 있음)
+                first_existing_date = all_rows[0]['date']
+                rows = [r for r in rows if r['date'] < first_existing_date]
+            
+            if not rows:
+                # 겹치는거 제거했더니 남은게 없으면 더 이상 과거 데이터가 없거나 이미 다 가져온 것
+                break
+
+            all_rows = rows + all_rows
+            
+            # 다음 루프를 위해 종료일 갱신 (이번 시작일의 하루 전)
+            current_ed_dt = current_sd_dt - timedelta(days=1)
+
+        # 3. 최근 limit개 슬라이스
+        if len(all_rows) > limit:
+            all_rows = all_rows[-limit:]
+
+        self.pm.log_timer(f"TradingService.get_recent_daily_ohlcv({code}, limit={limit})", t_start, threshold=1.0)
+        return all_rows
+
+    async def get_intraday_minutes_today(self, *, stock_code: str, input_hour_1: str) -> ResCommonResponse:
+        """
+        URL: /quotations/inquire-time-itemchartprice
+        TR : FHKST03010200 (모의/실전 공통)
+        """
+        # 기본값들(필요시 조정): UN=통합, 과거데이터 포함, 기타구분 "0"
+        return await self._broker_api_wrapper.inquire_time_itemchartprice(
+            stock_code=stock_code,
+            input_hour_1=input_hour_1,
+            pw_data_incu_yn="Y",
+            etc_cls_code="0",
+        )
+
+    async def get_intraday_minutes_by_date(
+        self, *, stock_code: str, input_date_1: str, input_hour_1: str = ""
+    ) -> ResCommonResponse:
+        """
+        URL: /quotations/inquire-time-dailychartprice
+        TR : FHKST03010230 (실전만)
+        """
+        if self._env.is_paper_trading:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value,
+                msg1="일별 분봉(inquire-time-dailychartprice)은 모의투자 미지원입니다.",
+                data=[]
+            )
+
+        # 허봉 포함은 '공백 필수' 스펙
+        return await self._broker_api_wrapper.inquire_time_dailychartprice(
+            stock_code=stock_code,
+            input_date_1=input_date_1,
+            input_hour_1=input_hour_1,
+            pw_data_incu_yn="Y",
+            fake_tick_incu_yn="",   # 공백 필수
+        )
+
+    async def get_latest_trading_date(self) -> Optional[str]:
+        """
+        대표 종목(삼성전자)의 일봉을 조회하여 데이터가 존재하는 가장 최근 날짜를 반환한다.
+        """
+        # [수정] MarketCalendarService를 통해 조회
+        if self._mcs:
+            return await self._mcs.get_latest_trading_date()
+        
+        self._logger.warning("MarketCalendarService is not initialized in TradingService.")
+        return None
+
+    async def get_next_open_day(self) -> Optional[str]:
+        """
+        현재 날짜 기준으로 가장 빠른 개장일을 찾아 반환합니다 (YYYYMMDD).
+        국내휴장일조회 API를 사용하여 휴장 여부를 정확히 판단합니다.
+        """
+        current_date = self._market_clock.get_current_kst_time().date()
+        target_date_str = current_date.strftime("%Y%m%d")
+
+        # 최대 30일 후까지만 탐색 (무한 루프 방지)
+        for _ in range(30):
+            resp = await self._broker_api_wrapper._client.check_holiday(target_date_str)
+
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                self._logger.warning(f"휴장일 조회 실패 ({target_date_str}), 다음 날짜로 시도합니다.")
+                current_date += timedelta(days=1)
+                target_date_str = current_date.strftime("%Y%m%d")
+                continue
+
+            # API 응답 파싱: output 리스트에 [기준일, 기준일+1, ...] 형태로 들어옴
+            outputs = resp.data.get("output", []) if isinstance(resp.data, dict) else []
+            if not outputs:
+                self._logger.warning(f"휴장일 데이터 없음 ({target_date_str})")
+                current_date += timedelta(days=1)
+                target_date_str = current_date.strftime("%Y%m%d")
+                continue
+
+            # 수신된 리스트 내에서 가장 빠른 개장일(bzdy_yn='Y') 탐색
+            for item in outputs:
+                # 영업일 여부 (Y/N)
+                if item.get("bzdy_yn") == "Y":
+                    return item.get("bass_dt")
+
+            # 리스트에 개장일이 없으면(모두 휴장), 리스트 마지막 날짜의 다음 날부터 다시 조회
+            last_dt_str = outputs[-1].get("bass_dt", target_date_str)
+            current_date = datetime.strptime(last_dt_str, "%Y%m%d").date() + timedelta(days=1)
+            target_date_str = current_date.strftime("%Y%m%d")
+
+        return None
