@@ -120,3 +120,82 @@ async def test_full_lifecycle(adapter, mock_strategy_scheduler):
 
     await adapter.stop()
     assert adapter.state == TaskState.STOPPED
+
+
+# ── get_progress() 테스트 ────────────────────────────────────────────────────
+
+
+def test_get_progress_initial_state(adapter, mock_strategy_scheduler):
+    """초기 상태: running=False, active/total 전략 수 = 0."""
+    mock_strategy_scheduler.get_status.return_value = {"strategies": []}
+
+    p = adapter.get_progress()
+
+    assert p["running"] is False
+    assert p["active_strategies"] == 0
+    assert p["total_strategies"] == 0
+
+
+async def test_get_progress_running_state(adapter, mock_strategy_scheduler):
+    """RUNNING 상태이면 running=True."""
+    mock_strategy_scheduler.get_status.return_value = {"strategies": []}
+
+    await adapter.start()
+    p = adapter.get_progress()
+
+    assert p["running"] is True
+
+
+def test_get_progress_counts_active_and_total_strategies(adapter, mock_strategy_scheduler):
+    """활성/비활성 전략 수가 올바르게 집계된다."""
+    mock_strategy_scheduler.get_status.return_value = {
+        "strategies": [
+            {"name": "momentum", "enabled": True},
+            {"name": "gap_up", "enabled": True},
+            {"name": "volume_breakout", "enabled": False},
+        ]
+    }
+
+    p = adapter.get_progress()
+
+    assert p["total_strategies"] == 3
+    assert p["active_strategies"] == 2
+
+
+def test_get_progress_all_strategies_active(adapter, mock_strategy_scheduler):
+    """모든 전략이 활성화된 경우."""
+    mock_strategy_scheduler.get_status.return_value = {
+        "strategies": [
+            {"name": "strat_a", "enabled": True},
+            {"name": "strat_b", "enabled": True},
+        ]
+    }
+
+    p = adapter.get_progress()
+
+    assert p["active_strategies"] == 2
+    assert p["total_strategies"] == 2
+
+
+def test_get_progress_no_active_strategies(adapter, mock_strategy_scheduler):
+    """활성화된 전략이 없는 경우."""
+    mock_strategy_scheduler.get_status.return_value = {
+        "strategies": [
+            {"name": "strat_a", "enabled": False},
+        ]
+    }
+
+    p = adapter.get_progress()
+
+    assert p["active_strategies"] == 0
+    assert p["total_strategies"] == 1
+
+
+def test_get_progress_scheduler_exception_returns_zeros(adapter, mock_strategy_scheduler):
+    """get_status() 예외 발생 시 active/total이 0으로 안전하게 반환된다."""
+    mock_strategy_scheduler.get_status.side_effect = RuntimeError("스케줄러 오류")
+
+    p = adapter.get_progress()
+
+    assert p["active_strategies"] == 0
+    assert p["total_strategies"] == 0

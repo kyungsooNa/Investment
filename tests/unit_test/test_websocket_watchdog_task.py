@@ -179,3 +179,108 @@ async def test_stop_cancels_all_tasks(watchdog_task):
     mock_task2.cancel.assert_not_called()
     assert len(svc._tasks) == 0
     svc._realtime_data_service.shutdown.assert_awaited_once()
+
+
+# ── get_progress() 테스트 ────────────────────────────────────────────────────
+
+
+def test_get_progress_initial_state(watchdog_task):
+    """초기 상태: market_open=None, subscribed_codes=0, data_gap_sec=None."""
+    p = watchdog_task.get_progress()
+
+    assert p["running"] is False
+    assert p["subscribed_codes"] == 0
+    assert p["data_gap_sec"] is None
+    assert p["market_open"] is None
+
+
+def test_get_progress_with_subscriptions(watchdog_task):
+    """구독 종목이 있으면 subscribed_codes에 개수가 반영된다."""
+    watchdog_task._realtime_data_service.get_subscribed_codes.return_value = ["005930", "000660"]
+
+    p = watchdog_task.get_progress()
+
+    assert p["subscribed_codes"] == 2
+
+
+def test_get_progress_data_gap_calculated(watchdog_task):
+    """last_data_ts가 설정되면 data_gap_sec을 계산한다."""
+    watchdog_task._realtime_data_service.last_data_ts = time.time() - 30.0
+
+    p = watchdog_task.get_progress()
+
+    assert p["data_gap_sec"] is not None
+    assert 28.0 <= p["data_gap_sec"] <= 33.0  # 30초 ± 여유
+
+
+def test_get_progress_no_data_ts_returns_none_gap(watchdog_task):
+    """last_data_ts=0이면 data_gap_sec은 None."""
+    watchdog_task._realtime_data_service.last_data_ts = 0.0
+
+    p = watchdog_task.get_progress()
+
+    assert p["data_gap_sec"] is None
+
+
+def test_get_progress_reflects_market_open_true(watchdog_task):
+    """_market_open=True면 get_progress()에 market_open=True 반영."""
+    watchdog_task._market_open = True
+
+    assert watchdog_task.get_progress()["market_open"] is True
+
+
+def test_get_progress_reflects_market_open_false(watchdog_task):
+    """_market_open=False면 get_progress()에 market_open=False 반영."""
+    watchdog_task._market_open = False
+
+    assert watchdog_task.get_progress()["market_open"] is False
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_sets_market_open_false(watchdog_task):
+    """장 마감 감지 후 _market_open이 False로 설정된다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = False
+    svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
+    svc._trading_service.is_websocket_receive_alive.return_value = False
+
+    async def sleep_side_effect(seconds):
+        if sleep_side_effect.counter == 0:
+            sleep_side_effect.counter += 1
+            return
+        raise asyncio.CancelledError
+    sleep_side_effect.counter = 0
+
+    with patch("task.background.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    assert svc._market_open is False
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_sets_market_open_true(watchdog_task):
+    """장 중 감지 후 _market_open이 True로 설정된다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
+    svc._realtime_data_service.last_data_ts = time.time() - 1.0  # 최근 수신
+    svc._trading_service.is_websocket_receive_alive.return_value = True
+    svc.force_reconnect_program_trading = AsyncMock()
+
+    async def sleep_side_effect(seconds):
+        if sleep_side_effect.counter == 0:
+            sleep_side_effect.counter += 1
+            return
+        raise asyncio.CancelledError
+    sleep_side_effect.counter = 0
+
+    with patch("task.background.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    assert svc._market_open is True
