@@ -237,17 +237,17 @@ def test_format_ranking_table_empty_data(telegram_reporter):
 def test_format_ranking_table_exceptions(telegram_reporter):
     """잘못된 데이터 형식이 들어왔을 때 예외 처리(try-except) 분기 검증"""
     data = [
-        {'hts_kor_isnm': '오류종목1', 'value': 'not_a_number', 'acml_tr_pbmn': '0', 'prdy_ctrt': 'not_a_number'},
-        {'hts_kor_isnm': '오류종목2', 'value': '100000000', 'acml_tr_pbmn': 'not_a_number', 'prdy_ctrt': '0'}
+        {'hts_kor_isnm': '오류1', 'value': 'not_a_number', 'acml_tr_pbmn': '0', 'prdy_ctrt': 'not_a_number'},
+        {'hts_kor_isnm': '오류2', 'value': '100000000', 'acml_tr_pbmn': 'not_a_number', 'prdy_ctrt': '0'}
     ]
     table = telegram_reporter._format_ranking_table("Title", data, "value")
     
     # 첫 번째 항목 검증 (value 예외, rate 예외)
-    assert "오류종목1" in table
+    assert "오류1" in table
     assert "-" in table  # 예외 시 '-' 할당 확인
     
     # 두 번째 항목 검증 (rate == 0, 비율 예외)
-    assert "오류종목2" in table
+    assert "오류2" in table
     assert "0.0%" in table
 
 @pytest.mark.asyncio
