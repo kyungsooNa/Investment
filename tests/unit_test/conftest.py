@@ -131,6 +131,7 @@ def mock_web_ctx():
     
     # 하위 서비스 Mocking
     ctx.stock_query_service = AsyncMock()
+    ctx.streaming_service = AsyncMock()
     ctx.order_execution_service = AsyncMock()
     ctx.broker = AsyncMock()
     ctx.virtual_trade_service = MagicMock()

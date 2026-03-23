@@ -157,27 +157,27 @@ async def test_program_trading_subscription(mock_deps):
 
     ctx.pm = MagicMock()
     ctx.pm.start_timer.return_value = 0.0
-    ctx.stock_query_service = MagicMock()
-    ctx.stock_query_service.connect_websocket = AsyncMock(return_value=True)
-    ctx.stock_query_service.subscribe_program_trading = AsyncMock()
-    ctx.stock_query_service.subscribe_realtime_price = AsyncMock()
-    ctx.stock_query_service.unsubscribe_program_trading = AsyncMock()
-    ctx.stock_query_service.unsubscribe_realtime_price = AsyncMock()
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
+    ctx.streaming_service.subscribe_program_trading = AsyncMock()
+    ctx.streaming_service.subscribe_realtime_price = AsyncMock()
+    ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
+    ctx.streaming_service.unsubscribe_realtime_price = AsyncMock()
 
     # 1. 구독 시작
     await ctx.start_program_trading("005930")
-    ctx.stock_query_service.connect_websocket.assert_awaited_once()
-    ctx.stock_query_service.subscribe_program_trading.assert_awaited_with("005930")
+    ctx.streaming_service.connect_websocket.assert_awaited_once()
+    ctx.streaming_service.subscribe_program_trading.assert_awaited_with("005930")
     mock_rdm_instance.add_subscribed_code.assert_called_with("005930")
-    
+
     # 2. 중복 구독 시도 (API 호출 없어야 함)
     mock_rdm_instance.is_subscribed.return_value = True
     await ctx.start_program_trading("005930")
-    assert ctx.stock_query_service.subscribe_program_trading.call_count == 1
-    
+    assert ctx.streaming_service.subscribe_program_trading.call_count == 1
+
     # 3. 구독 해지
     await ctx.stop_program_trading("005930")
-    ctx.stock_query_service.unsubscribe_program_trading.assert_awaited_with("005930")
+    ctx.streaming_service.unsubscribe_program_trading.assert_awaited_with("005930")
     mock_rdm_instance.remove_subscribed_code.assert_called_with("005930")
 
 @pytest.mark.asyncio
@@ -227,28 +227,28 @@ async def test_lifecycle_methods(mock_deps):
 def test_web_realtime_callback(mock_deps):
     """웹소켓 콜백 처리 테스트"""
     ctx = WebAppContext(None)
-    ctx.stock_query_service = MagicMock()
-    ctx.stock_query_service.dispatch_realtime_message = MagicMock()
-    ctx.stock_query_service.get_cached_realtime_price = MagicMock(return_value=None)
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.dispatch_realtime_message = MagicMock()
+    ctx.streaming_service.get_cached_realtime_price = MagicMock(return_value=None)
     ctx.realtime_data_service = MagicMock()
-    
+
     # 1. 일반 데이터 (program trading 아님)
     data_normal = {"type": "realtime_price", "data": {}}
     ctx._web_realtime_callback(data_normal)
-    ctx.stock_query_service.dispatch_realtime_message.assert_called_with(data_normal)
+    ctx.streaming_service.dispatch_realtime_message.assert_called_with(data_normal)
     ctx.realtime_data_service.on_data_received.assert_not_called()
-    
+
     # 2. 프로그램 매매 데이터 (가격 정보 주입 - dict 형태)
     mock_price_data = {"price": "70000", "change": "100", "rate": "0.1", "sign": "2"}
-    ctx.stock_query_service.get_cached_realtime_price.return_value = mock_price_data
-    
+    ctx.streaming_service.get_cached_realtime_price.return_value = mock_price_data
+
     data_pt = {
         "type": "realtime_program_trading",
         "data": {"유가증권단축종목코드": "005930"}
     }
     ctx._web_realtime_callback(data_pt)
-    
-    ctx.stock_query_service.get_cached_realtime_price.assert_called_with("005930")
+
+    ctx.streaming_service.get_cached_realtime_price.assert_called_with("005930")
     # 데이터가 주입되었는지 확인
     received_data = ctx.realtime_data_service.on_data_received.call_args[0][0]
     assert received_data["price"] == "70000"
@@ -261,14 +261,14 @@ async def test_stop_all_program_trading(mock_deps):
     ctx.realtime_data_service = MagicMock()
     ctx.realtime_data_service.get_subscribed_codes.return_value = ["005930", "000660"]
     
-    ctx.stock_query_service = MagicMock()
-    ctx.stock_query_service.unsubscribe_program_trading = AsyncMock()
-    ctx.stock_query_service.unsubscribe_realtime_price = AsyncMock()
-    
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
+    ctx.streaming_service.unsubscribe_realtime_price = AsyncMock()
+
     await ctx.stop_all_program_trading()
-    
-    assert ctx.stock_query_service.unsubscribe_program_trading.call_count == 2
-    assert ctx.stock_query_service.unsubscribe_realtime_price.call_count == 2
+
+    assert ctx.streaming_service.unsubscribe_program_trading.call_count == 2
+    assert ctx.streaming_service.unsubscribe_realtime_price.call_count == 2
     ctx.realtime_data_service.clear_subscribed_codes.assert_called_once()
 
 @pytest.mark.asyncio

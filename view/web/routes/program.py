@@ -33,7 +33,7 @@ async def get_program_trading_history(code: str):
     ctx = _get_ctx()
     async with ctx.pm.profile_async(f"get_program_trading_history({code})"):
         t_start = ctx.pm.start_timer()
-        resp = await ctx.stock_query_service.handle_get_program_trading_history(code)
+        resp = await ctx.streaming_service.handle_get_program_trading_history(code)
         result = _serialize_response(resp)
 
         if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):

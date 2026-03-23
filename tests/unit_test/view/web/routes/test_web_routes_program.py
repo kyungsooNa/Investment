@@ -204,15 +204,15 @@ async def test_get_program_trading_history_detail(web_client, mock_web_ctx):
     
     # Mock Service Response
     mock_resp = ResCommonResponse(rt_cd="0", msg1="OK", data={"some": "data"})
-    mock_web_ctx.stock_query_service.handle_get_program_trading_history = AsyncMock(return_value=mock_resp)
-    
+    mock_web_ctx.streaming_service.handle_get_program_trading_history = AsyncMock(return_value=mock_resp)
+
     response = web_client.get("/api/program-trading/history/005930")
-    
+
     assert response.status_code == 200
     data = response.json()
     assert data["rt_cd"] == "0"
     assert data["data"]["name"] == "삼성전자"
-    mock_web_ctx.stock_query_service.handle_get_program_trading_history.assert_awaited_once_with("005930")
+    mock_web_ctx.streaming_service.handle_get_program_trading_history.assert_awaited_once_with("005930")
 
 @pytest.mark.asyncio
 async def test_get_program_trading_status(web_client, mock_web_ctx):
