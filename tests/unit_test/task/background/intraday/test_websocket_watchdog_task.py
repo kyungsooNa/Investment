@@ -199,6 +199,31 @@ async def test_start_and_already_running(watchdog_task, mock_deps):
     await svc.start()
     assert len(svc._tasks) == 2
 
+
+@pytest.mark.asyncio
+async def test_suspend_and_resume(watchdog_task):
+    """suspend와 resume 메서드의 상태 전환 검증."""
+    svc = watchdog_task
+
+    # RUNNING 상태가 아닐 때 suspend 무시
+    await svc.suspend()
+    assert svc.state == TaskState.IDLE
+
+    # RUNNING 상태에서 suspend -> SUSPENDED
+    svc._state = TaskState.RUNNING
+    await svc.suspend()
+    assert svc.state == TaskState.SUSPENDED
+
+    # SUSPENDED 상태에서 resume -> RUNNING
+    await svc.resume()
+    assert svc.state == TaskState.RUNNING
+
+    # SUSPENDED 상태가 아닐 때 resume 무시
+    svc._state = TaskState.IDLE
+    await svc.resume()
+    assert svc.state == TaskState.IDLE
+
+
 # ── get_progress() 테스트 ────────────────────────────────────────────────────
 
 
