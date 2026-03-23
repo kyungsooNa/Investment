@@ -194,7 +194,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
                 # 배치 단위로 DB 저장
                 if batch_records:
-                    self._stock_repo.upsert_daily_snapshot(target_date, batch_records)
+                    await self._stock_repo.upsert_daily_snapshot(target_date, batch_records)
                     collected_records.extend(batch_records)
 
                 processed += len(chunk)

@@ -24,6 +24,18 @@ class IndicatorService:
         self.cache_store = cache_store
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
 
+    @staticmethod
+    def _safe_float(val):
+        if val is None or pd.isna(val):
+            return None
+        try:
+            f = float(val)
+            if math.isnan(f) or math.isinf(f):
+                return None
+            return f
+        except (ValueError, TypeError):
+            return None
+
     async def _get_ohlcv_data(self, stock_code: str, candle_type: str, ohlcv_data: Optional[List[Dict]] = None) -> tuple:
         """
         OHLCV 데이터를 가져옵니다. ohlcv_data가 전달되면 API 호출을 생략합니다.
@@ -136,16 +148,14 @@ class IndicatorService:
             # 하단밴드 (LB) = MB - (std * k)
             df['LB'] = df['MB'] - (df['std'] * std_dev)
 
-            df = df.replace([np.inf, -np.inf, np.nan], None)
-
             results = [
                 ResBollingerBand(
                     code=stock_code, 
                     date=str(row.date), 
-                    close=float(row.close) if row.close is not None else None,
-                    middle=float(row.MB) if row.MB is not None else None, 
-                    upper=float(row.UB) if row.UB is not None else None, 
-                    lower=float(row.LB) if row.LB is not None else None
+                    close=self._safe_float(row.close),
+                    middle=self._safe_float(row.MB), 
+                    upper=self._safe_float(row.UB), 
+                    lower=self._safe_float(row.LB)
                 )
                 for row in df.itertuples(index=False)
             ]
@@ -255,17 +265,16 @@ class IndicatorService:
             rs = au / ad
             df['rsi'] = 100 - (100 / (1 + rs))
 
-            df = df.replace([np.inf, -np.inf, np.nan], None)
             latest = list(df.itertuples(index=False))[-1]
 
-            if latest.rsi is None:
+            if self._safe_float(latest.rsi) is None:
                  return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
 
             result = ResRSI(
                 code=stock_code, 
                 date=str(latest.date), 
-                close=float(latest.close) if latest.close is not None else None, 
-                rsi=float(latest.rsi)
+                close=self._safe_float(latest.close), 
+                rsi=self._safe_float(latest.rsi)
             )
             
             if self.pm.enabled:
@@ -357,14 +366,12 @@ class IndicatorService:
             else: # sma
                 df['ma'] = df['close'].rolling(window=period).mean()
 
-            df = df.replace([np.inf, -np.inf, np.nan], None)
-
             results = [
                 ResMovingAverage(
                     code=stock_code,
                     date=str(row.date),
-                    close=float(row.close) if row.close is not None else None,
-                    ma=float(row.ma) if row.ma is not None else None
+                    close=self._safe_float(row.close),
+                    ma=self._safe_float(row.ma)
                 )
                 for row in df.itertuples(index=False)
             ]
@@ -580,15 +587,13 @@ class IndicatorService:
             df['UB'] = df['MB'] + (df['std'] * std_dev)
             df['LB'] = df['MB'] - (df['std'] * std_dev)
             
-            df = df.replace([np.inf, -np.inf, np.nan], None)
-            
             results = [
                 {
                     "code": stock_code, "date": str(row.date), 
-                    "close": float(row.close) if row.close is not None else None,
-                    "middle": float(row.MB) if row.MB is not None else None, 
-                    "upper": float(row.UB) if row.UB is not None else None, 
-                    "lower": float(row.LB) if row.LB is not None else None
+                    "close": self._safe_float(row.close),
+                    "middle": self._safe_float(row.MB), 
+                    "upper": self._safe_float(row.UB), 
+                    "lower": self._safe_float(row.LB)
                 }
                 for row in df.itertuples(index=False)
             ]
@@ -603,13 +608,12 @@ class IndicatorService:
             
             # 공통 로직 사용
             df = self._compute_rsi(df, period, target_col="rsi")
-            df = df.replace([np.inf, -np.inf, np.nan], None)
             
             results = [
                 {
                     "code": stock_code, "date": str(row.date), 
-                    "close": float(row.close) if row.close is not None else None, 
-                    "rsi": float(row.rsi) if row.rsi is not None else None
+                    "close": self._safe_float(row.close), 
+                    "rsi": self._safe_float(row.rsi)
                 }
                 for row in df.itertuples(index=False)
             ]
@@ -624,13 +628,12 @@ class IndicatorService:
             
             # 공통 로직 사용
             df = self._compute_ma(df, period, method, target_col="ma")
-            df = df.replace([np.inf, -np.inf, np.nan], None)
                 
             results = [
                 {
                     "code": stock_code, "date": str(row.date),
-                    "close": float(row.close) if row.close is not None else None, 
-                    "ma": float(row.ma) if row.ma is not None else None
+                    "close": self._safe_float(row.close), 
+                    "ma": self._safe_float(row.ma)
                 }
                 for row in df.itertuples(index=False)
             ]
@@ -659,37 +662,24 @@ class IndicatorService:
             df['rs'] = df['close'].pct_change(periods=rs_period) * 100
 
             # 3. 결과 포맷팅
-            # NaN 및 Inf 값은 JSON 직렬화 시 문제가 되므로 안전하게 변환
-            def _safe_float(val):
-                if val is None:
-                    return None
-                try:
-                    f = float(val)
-                    if math.isnan(f) or math.isinf(f):
-                        return None
-                    return f
-                except (ValueError, TypeError):
-                    return None
-
-            df = df.replace([np.inf, -np.inf, np.nan], None)
             indicators = {}
             rows = list(df.itertuples(index=False))
             
             for p in [5, 10, 20, 60, 120]:
                 ma_key = f'ma{p}'
-                indicators[ma_key] = [{"date": str(r.date), "close": _safe_float(r.close), "ma": _safe_float(getattr(r, ma_key, None))} for r in rows]
+                indicators[ma_key] = [{"date": str(r.date), "close": self._safe_float(r.close), "ma": self._safe_float(getattr(r, ma_key, None))} for r in rows]
 
             indicators["bb"] = [
                 {
-                    "code": stock_code, "date": str(r.date), "close": _safe_float(r.close),
-                    "middle": _safe_float(getattr(r, 'bb_middle', None)), # prefix 일치
-                    "upper": _safe_float(getattr(r, 'bb_upper', None)),
-                    "lower": _safe_float(getattr(r, 'bb_lower', None))
+                    "code": stock_code, "date": str(r.date), "close": self._safe_float(r.close),
+                    "middle": self._safe_float(getattr(r, 'bb_middle', None)), # prefix 일치
+                    "upper": self._safe_float(getattr(r, 'bb_upper', None)),
+                    "lower": self._safe_float(getattr(r, 'bb_lower', None))
                 } for r in rows
             ]
 
             indicators["rs"] = [
-                {"date": str(r.date), "rs": _safe_float(getattr(r, 'rs', None))} for r in rows
+                {"date": str(r.date), "rs": self._safe_float(getattr(r, 'rs', None))} for r in rows
             ]
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=indicators)

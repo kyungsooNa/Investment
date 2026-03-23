@@ -136,7 +136,7 @@ class TestCollectAllPrices:
 
         await task._collect_all_prices()
 
-        result = repo.get_prices_by_date("20260318")
+        result = await repo.get_prices_by_date("20260318")
         assert len(result) == 3
         codes = {r["code"] for r in result}
         assert codes == {"005930", "000660", "035420"}
@@ -149,7 +149,7 @@ class TestCollectAllPrices:
 
         await task._collect_all_prices()
 
-        result = repo.get_prices_by_date("20260318")
+        result = await repo.get_prices_by_date("20260318")
         assert len(result) == 3
         samsung = next(r for r in result if r["code"] == "005930")
         assert samsung["current_price"] == 70000
@@ -173,7 +173,7 @@ class TestCollectAllPrices:
 
         await task._collect_all_prices()
 
-        result = repo.get_prices_by_date("20260318")
+        result = await repo.get_prices_by_date("20260318")
         codes = {r["code"] for r in result}
         assert "000660" not in codes
         assert "005930" in codes
@@ -294,7 +294,7 @@ class TestSuspendResume:
         await task.resume()
         await collect_task
 
-        result = repo.get_prices_by_date("20260318")
+        result = await repo.get_prices_by_date("20260318")
         assert len(result) == 3
 
 
