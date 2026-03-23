@@ -143,8 +143,8 @@ async def test_change_environment_failure(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_get_status_ctx_none(web_client, monkeypatch):
     """GET /api/status - ctx가 None일 때의 동작 테스트"""
-    import view.web.api_common as api_common
-    monkeypatch.setattr(api_common, "_ctx", None)
+    import view.web.routes.stock as stock
+    monkeypatch.setattr(stock, "_get_ctx", lambda: None)
     
     response = web_client.get("/api/status")
     
