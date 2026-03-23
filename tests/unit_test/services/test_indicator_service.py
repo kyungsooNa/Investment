@@ -1125,6 +1125,38 @@ async def test_calculate_rsi_series_exception(indicator_service):
         assert "RSI Calc Error" in result.msg1
 
 @pytest.mark.asyncio
+async def test_get_bollinger_bands_inf_values(indicator_service):
+    """볼린저 밴드: 데이터에 inf 값이 있을 때 None으로 치환되는지 테스트 (벡터화 및 replace 연산 검증)"""
+    service, mock_sqs = indicator_service
+    
+    data = [{"date": f"202501{i+1:02d}", "close": float('inf') if i == 20 else 10000 + i * 10} for i in range(25)]
+    
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    result = await service.get_bollinger_bands("005930")
+    
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    # 20번째 인덱스의 close가 inf이므로 그 윈도우에 포함된 MB는 None이 되어야 함
+    assert result.data[20].middle is None
+
+@pytest.mark.asyncio
+async def test_get_rsi_inf_values(indicator_service):
+    """RSI: 데이터에 inf 값이 포함되어 RSI가 NaN/Inf가 될 때 None 반환 확인"""
+    service, mock_sqs = indicator_service
+    
+    data = [{"date": f"202501{i+1:02d}", "close": float('inf') if i == 29 else 10000 + i * 10} for i in range(30)]
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    result = await service.get_rsi("005930")
+    
+    # 마지막 값이 inf이므로 RSI 계산 불가로 처리됨
+    assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
+
+@pytest.mark.asyncio
 async def test_get_chart_indicators_merge_missing_key(indicator_service_with_cache):
     """get_chart_indicators: 병합 시 최신 데이터에 키가 없는 경우"""
     service, mock_sqs, mock_cache = indicator_service_with_cache

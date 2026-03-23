@@ -139,18 +139,19 @@ class IndicatorService:
             # 하단밴드 (LB) = MB - (std * k)
             df['LB'] = df['MB'] - (df['std'] * std_dev)
 
-            results = []
-            for i in range(len(df)):
-                row = df.iloc[i]
-                # NaN 처리 (데이터 부족 구간)
-                mb = float(row['MB']) if not pd.isna(row['MB']) else None
-                ub = float(row['UB']) if not pd.isna(row['UB']) else None
-                lb = float(row['LB']) if not pd.isna(row['LB']) else None
+            df = df.replace([np.inf, -np.inf, np.nan], None)
 
-                results.append(ResBollingerBand(
-                    code=stock_code, date=str(row['date']), close=float(row['close']),
-                    middle=mb, upper=ub, lower=lb
-                ))
+            results = [
+                ResBollingerBand(
+                    code=stock_code, 
+                    date=str(row.date), 
+                    close=float(row.close) if row.close is not None else None,
+                    middle=float(row.MB) if row.MB is not None else None, 
+                    upper=float(row.UB) if row.UB is not None else None, 
+                    lower=float(row.LB) if row.LB is not None else None
+                )
+                for row in df.itertuples(index=False)
+            ]
 
             if self.pm.enabled:
                 data_dur = t_data - t_start
@@ -257,15 +258,20 @@ class IndicatorService:
 
             # RS 및 RSI 계산
             rs = au / ad
-            rsi = 100 - (100 / (1 + rs))
+            df['rsi'] = 100 - (100 / (1 + rs))
 
-            latest = df.iloc[-1]
-            latest_rsi = rsi.iloc[-1]
+            df = df.replace([np.inf, -np.inf, np.nan], None)
+            latest = list(df.itertuples(index=False))[-1]
 
-            if pd.isna(latest_rsi):
+            if latest.rsi is None:
                  return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
 
-            result = ResRSI(code=stock_code, date=str(latest['date']), close=float(latest['close']), rsi=float(latest_rsi))
+            result = ResRSI(
+                code=stock_code, 
+                date=str(latest.date), 
+                close=float(latest.close) if latest.close is not None else None, 
+                rsi=float(latest.rsi)
+            )
             
             if self.pm.enabled:
                 data_dur = t_data - t_start
@@ -354,21 +360,21 @@ class IndicatorService:
                  df['close'] = pd.to_numeric(df['close'])
 
             if method.lower() == "ema":
-                ma_series = df['close'].ewm(span=period, adjust=False).mean()
+                df['ma'] = df['close'].ewm(span=period, adjust=False).mean()
             else: # sma
-                ma_series = df['close'].rolling(window=period).mean()
+                df['ma'] = df['close'].rolling(window=period).mean()
 
-            results = []
-            for i in range(len(df)):
-                val = ma_series.iloc[i]
-                ma_val = float(val) if not pd.isna(val) else None
+            df = df.replace([np.inf, -np.inf, np.nan], None)
 
-                results.append(ResMovingAverage(
+            results = [
+                ResMovingAverage(
                     code=stock_code,
-                    date=str(df.iloc[i]['date']),
-                    close=float(df.iloc[i]['close']),
-                    ma=ma_val
-                ))
+                    date=str(row.date),
+                    close=float(row.close) if row.close is not None else None,
+                    ma=float(row.ma) if row.ma is not None else None
+                )
+                for row in df.itertuples(index=False)
+            ]
 
             if self.pm.enabled:
                 data_dur = t_data - t_start
@@ -572,16 +578,18 @@ class IndicatorService:
             df['UB'] = df['MB'] + (df['std'] * std_dev)
             df['LB'] = df['MB'] - (df['std'] * std_dev)
             
-            results = []
-            for i in range(len(df)):
-                row = df.iloc[i]
-                mb = float(row['MB']) if not pd.isna(row['MB']) else None
-                ub = float(row['UB']) if not pd.isna(row['UB']) else None
-                lb = float(row['LB']) if not pd.isna(row['LB']) else None
-                results.append({
-                    "code": stock_code, "date": str(row['date']), "close": float(row['close']),
-                    "middle": mb, "upper": ub, "lower": lb
-                })
+            df = df.replace([np.inf, -np.inf, np.nan], None)
+            
+            results = [
+                {
+                    "code": stock_code, "date": str(row.date), 
+                    "close": float(row.close) if row.close is not None else None,
+                    "middle": float(row.MB) if row.MB is not None else None, 
+                    "upper": float(row.UB) if row.UB is not None else None, 
+                    "lower": float(row.LB) if row.LB is not None else None
+                }
+                for row in df.itertuples(index=False)
+            ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
@@ -594,15 +602,16 @@ class IndicatorService:
             
             # 공통 로직 사용
             df = self._compute_rsi(df, period, target_col="rsi")
+            df = df.replace([np.inf, -np.inf, np.nan], None)
             
-            results = []
-            for i in range(len(df)):
-                val = df['rsi'].iloc[i]
-                rsi_val = float(val) if not pd.isna(val) else None
-                results.append({
-                    "code": stock_code, "date": str(df.iloc[i]['date']), 
-                    "close": float(df.iloc[i]['close']), "rsi": rsi_val
-                })
+            results = [
+                {
+                    "code": stock_code, "date": str(row.date), 
+                    "close": float(row.close) if row.close is not None else None, 
+                    "rsi": float(row.rsi) if row.rsi is not None else None
+                }
+                for row in df.itertuples(index=False)
+            ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
@@ -615,15 +624,16 @@ class IndicatorService:
             
             # 공통 로직 사용
             df = self._compute_ma(df, period, method, target_col="ma")
+            df = df.replace([np.inf, -np.inf, np.nan], None)
                 
-            results = []
-            for i in range(len(df)):
-                val = df['ma'].iloc[i]
-                ma_val = float(val) if not pd.isna(val) else None
-                results.append({
-                    "code": stock_code, "date": str(df.iloc[i]['date']),
-                    "close": float(df.iloc[i]['close']), "ma": ma_val
-                })
+            results = [
+                {
+                    "code": stock_code, "date": str(row.date),
+                    "close": float(row.close) if row.close is not None else None, 
+                    "ma": float(row.ma) if row.ma is not None else None
+                }
+                for row in df.itertuples(index=False)
+            ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
@@ -664,6 +674,7 @@ class IndicatorService:
                 except (ValueError, TypeError):
                     return None
 
+            df = df.replace([np.inf, -np.inf, np.nan], None)
             indicators = {}
             rows = list(df.itertuples(index=False))
             
