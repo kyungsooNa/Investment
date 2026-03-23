@@ -88,6 +88,7 @@ class RankingTask(SchedulableTask):
         # 기본 랭킹 캐시 (상승/하락/거래량/거래대금) — 장마감 후 1회
         self._basic_ranking_cache: Dict[str, ResCommonResponse] = {}
         self._basic_ranking_updated_at: Optional[datetime] = None
+        self._basic_last_collected_date: Optional[str] = None
 
         # 진행률 상태
         self._progress: Dict = {
@@ -174,16 +175,17 @@ class RankingTask(SchedulableTask):
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         """장 마감 후 콜백: 해당 거래일의 랭킹 갱신이 필요하면 실행."""
         needs_basic = (
-            not self._basic_ranking_updated_at
-            or self._basic_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
+            not self._basic_last_collected_date
+            or self._basic_last_collected_date != latest_trading_date
         )
         needs_investor = (
-            not self._investor_ranking_updated_at
-            or self._investor_ranking_updated_at.strftime("%Y%m%d") != latest_trading_date
+            not self._last_collected_date
+            or self._last_collected_date != latest_trading_date
         )
 
         if needs_basic:
             await self.refresh_basic_ranking()
+            self._basic_last_collected_date = latest_trading_date
         if needs_investor:
             await self.refresh_investor_ranking()
 

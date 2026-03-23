@@ -1275,8 +1275,8 @@ async def test_scheduler_refreshes_when_no_prior_update(bg_service, mock_deps):
     market_clock.get_current_kst_time.return_value = datetime(2026, 3, 15, 16, 0, 0)
     market_calendar_service.get_latest_trading_date.return_value = "20260315"
 
-    bg_service._basic_ranking_updated_at = None
-    bg_service._investor_ranking_updated_at = None
+    bg_service._basic_last_collected_date = None
+    bg_service._last_collected_date = None
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
 
@@ -1306,10 +1306,8 @@ async def test_scheduler_skips_if_already_updated_for_trading_date(bg_service, m
     market_calendar_service.get_latest_trading_date.return_value = "20260315"
 
     # 이미 20260315에 대해 갱신 완료
-    updated_at = MagicMock()
-    updated_at.strftime.return_value = "20260315"
-    bg_service._basic_ranking_updated_at = updated_at
-    bg_service._investor_ranking_updated_at = updated_at
+    bg_service._basic_last_collected_date = "20260315"
+    bg_service._last_collected_date = "20260315"
 
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
@@ -1342,11 +1340,9 @@ async def test_scheduler_no_double_refresh_overnight(bg_service, mock_deps):
     # 3/16 04:00이지만 최근 거래일은 여전히 3/15
     market_calendar_service.get_latest_trading_date.return_value = "20260315"
 
-    # 3/15 16:00에 갱신 완료 → strftime("%Y%m%d") = "20260315"
-    updated_at = MagicMock()
-    updated_at.strftime.return_value = "20260315"
-    bg_service._basic_ranking_updated_at = updated_at
-    bg_service._investor_ranking_updated_at = updated_at
+    # 3/15 16:00에 갱신 완료 → 수집된 거래일 = "20260315"
+    bg_service._basic_last_collected_date = "20260315"
+    bg_service._last_collected_date = "20260315"
 
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
@@ -1379,10 +1375,8 @@ async def test_scheduler_skips_on_weekend_if_already_updated(bg_service, mock_de
     market_calendar_service.get_latest_trading_date.return_value = "20260313"
 
     # 금요일 16:00에 갱신 완료
-    updated_at = MagicMock()
-    updated_at.strftime.return_value = "20260313"
-    bg_service._basic_ranking_updated_at = updated_at
-    bg_service._investor_ranking_updated_at = updated_at
+    bg_service._basic_last_collected_date = "20260313"
+    bg_service._last_collected_date = "20260313"
 
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
@@ -1415,10 +1409,8 @@ async def test_scheduler_skips_on_holiday_if_already_updated(bg_service, mock_de
     market_calendar_service.get_latest_trading_date.return_value = "20260311"
 
     # 수요일 16:00에 갱신 완료
-    updated_at = MagicMock()
-    updated_at.strftime.return_value = "20260311"
-    bg_service._basic_ranking_updated_at = updated_at
-    bg_service._investor_ranking_updated_at = updated_at
+    bg_service._basic_last_collected_date = "20260311"
+    bg_service._last_collected_date = "20260311"
 
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
@@ -1443,8 +1435,8 @@ async def test_scheduler_skips_when_latest_trading_date_unavailable(bg_service, 
     mock_deps[4].get_sleep_seconds_until_market_close.return_value = 0.0
     market_calendar_service.get_latest_trading_date.return_value = None
 
-    bg_service._basic_ranking_updated_at = None
-    bg_service._investor_ranking_updated_at = None
+    bg_service._basic_last_collected_date = None
+    bg_service._last_collected_date = None
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
 
@@ -1479,10 +1471,8 @@ async def test_scheduler_skips_on_substitute_holiday(bg_service, mock_deps):
     market_calendar_service.get_latest_trading_date.return_value = "20260227"
 
     # 2/27(금) 16:00에 갱신 완료
-    updated_at = MagicMock()
-    updated_at.strftime.return_value = "20260227"
-    bg_service._basic_ranking_updated_at = updated_at
-    bg_service._investor_ranking_updated_at = updated_at
+    bg_service._basic_last_collected_date = "20260227"
+    bg_service._last_collected_date = "20260227"
 
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
@@ -1493,5 +1483,46 @@ async def test_scheduler_skips_on_substitute_holiday(bg_service, mock_deps):
         except asyncio.CancelledError:
             pass
 
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_monday_premarket_after_sunday_update(bg_service, mock_deps):
+    """일요일에 갱신 완료 후, 월요일 장 전(08:00)에 스케줄러가 재실행되어도 갱신하지 않아야 한다.
+
+    시나리오:
+    - 일요일(20260322) 16:00: 금요일(20260320) 데이터로 갱신 완료
+      → _investor_ranking_updated_at = datetime(2026, 3, 22, 16, 0)  # 실제 datetime, 일요일
+    - 월요일(20260323) 08:00: 스케줄러 루프 재실행
+      → is_market_open_now() = False (장 전)
+      → get_latest_trading_date() = "20260320" (금요일, 아직 월요일 장 미개장)
+    기대: refresh 호출 없음 (금요일 데이터는 이미 수집됨)
+    현재: _updated_at.strftime("%Y%m%d") = "20260322" ≠ "20260320" → 잘못된 재갱신 발생 (버그)
+    """
+    import asyncio
+    _, _, _, _, market_clock, market_calendar_service = mock_deps
+
+    # 월요일 08:00 환경
+    market_calendar_service.is_market_open_now.return_value = False
+    market_clock.get_sleep_seconds_until_market_close.return_value = 0.0
+    # 아직 월요일 장이 열리지 않았으므로 최근 거래일은 금요일
+    market_calendar_service.get_latest_trading_date.return_value = "20260320"
+
+    # 일요일(20260322) 16:00에 금요일(20260320) 데이터로 갱신 완료
+    # → 수집된 거래일을 기준으로 저장 (갱신 실행 날짜인 일요일이 아님)
+    bg_service._basic_last_collected_date = "20260320"
+    bg_service._last_collected_date = "20260320"
+
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+        try:
+            await bg_service.start_after_market_scheduler()
+        except asyncio.CancelledError:
+            pass
+
+    # 금요일 데이터는 일요일에 이미 수집했으므로 월요일 장 전에는 재갱신하면 안 됨
     bg_service.refresh_basic_ranking.assert_not_awaited()
     bg_service.refresh_investor_ranking.assert_not_awaited()
