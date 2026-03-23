@@ -224,6 +224,23 @@ async def test_suspend_and_resume(watchdog_task):
     assert svc.state == TaskState.IDLE
 
 
+@pytest.mark.asyncio
+async def test_force_reconnect_program_trading_early_returns(watchdog_task):
+    """데이터 서비스가 없거나 구독 종목이 없을 때 조기 리턴 검증."""
+    svc = watchdog_task
+    
+    # 데이터 서비스가 없을 때
+    svc._realtime_data_service = None
+    await svc.force_reconnect_program_trading()
+    svc._streaming_service.disconnect_websocket.assert_not_called()
+    
+    # 구독 종목이 없을 때
+    svc._realtime_data_service = MagicMock()
+    svc._realtime_data_service.get_subscribed_codes.return_value = []
+    await svc.force_reconnect_program_trading()
+    svc._streaming_service.disconnect_websocket.assert_not_called()
+
+
 # ── get_progress() 테스트 ────────────────────────────────────────────────────
 
 
