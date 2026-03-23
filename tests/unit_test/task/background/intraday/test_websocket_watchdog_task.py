@@ -183,21 +183,24 @@ def test_state_property(watchdog_task):
     """state 프로퍼티 검증."""
     assert watchdog_task.state == TaskState.IDLE
 
-# @pytest.mark.asyncio
-# async def test_start_and_already_running(watchdog_task, mock_deps):
-#     """start 메서드 호출 및 이미 실행 중일 때 조기 리턴 검증."""
-#     svc = watchdog_task
-#     svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
+@pytest.mark.asyncio
+async def test_start_and_already_running(watchdog_task, mock_deps):
+    """start 메서드 호출 및 이미 실행 중일 때 조기 리턴 검증."""
+    svc = watchdog_task
+    svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
 
-#     await svc.start()
+    await svc.start()
 
-#     assert svc.state == TaskState.RUNNING
-#     svc._realtime_data_service.start_background_tasks.assert_called_once()
-#     assert len(svc._tasks) == 2  # _restore_program_trading, _program_trading_watchdog
+    assert svc.state == TaskState.RUNNING
+    svc._realtime_data_service.start_background_tasks.assert_called_once()
+    assert len(svc._tasks) == 2  # _restore_program_trading, _program_trading_watchdog
 
-#     # 이미 RUNNING 상태일 때 start() 재호출 시 아무 작업도 하지 않음
-#     await svc.start()
-#     assert len(svc._tasks) == 2
+    # 이미 RUNNING 상태일 때 start() 재호출 시 아무 작업도 하지 않음
+    await svc.start()
+    assert len(svc._tasks) == 2
+    
+    # 🚨 무한 루프 태스크 취소를 위해 반드시 stop() 호출 (hang 방지)
+    await svc.stop()
 
 
 @pytest.mark.asyncio
