@@ -114,6 +114,50 @@ async def test_handle_event_filtered_out(filter_notifier):
         # SYSTEM 카테고리는 무시되어야 하므로 post 메서드가 단 한 번도 호출되지 않아야 함
         mock_post.assert_not_called()
 
+@pytest.mark.asyncio
+async def test_handle_event_return_rate_positive(telegram_notifier):
+    """수익률이 양수일 때 이모지와 텍스트 변환(사유 포함) 검증"""
+    event = NotificationEvent(
+        id="1", timestamp="2026", category="TRADE", level="info", title="매도",
+        message="테스트\n사유: 조건 만족", metadata={"return_rate": 5.5}
+    )
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+        await telegram_notifier.handle_event(event)
+        payload = mock_post.call_args[1]["json"]
+        assert "📈 수익: +5.50%\n사유:" in payload["text"]
+
+@pytest.mark.asyncio
+async def test_handle_event_return_rate_negative_no_reason(telegram_notifier):
+    """수익률이 음수이고 '사유:' 텍스트가 없을 때 검증"""
+    event = NotificationEvent(
+        id="1", timestamp="2026", category="TRADE", level="warning", title="매도",
+        message="테스트 메시지", metadata={"return_rate": -3.2}
+    )
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+        await telegram_notifier.handle_event(event)
+        payload = mock_post.call_args[1]["json"]
+        assert "테스트 메시지\n📉 수익: -3.20%" in payload["text"]
+
+@pytest.mark.asyncio
+async def test_handle_event_return_rate_zero(telegram_notifier):
+    """수익률이 0일 때 검증"""
+    event = NotificationEvent(
+        id="1", timestamp="2026", category="TRADE", level="error", title="매도",
+        message="테스트", metadata={"return_rate": 0.0}
+    )
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+        await telegram_notifier.handle_event(event)
+        payload = mock_post.call_args[1]["json"]
+        assert "➖ 수익: +0.00%" in payload["text"]
 
 # --- TelegramReporter Tests ---
 
@@ -137,6 +181,35 @@ async def test_reporter_send_message(telegram_reporter):
         assert payload['chat_id'] == "test_chat_id"
         assert payload['text'] == "테스트 메시지"
 
+@pytest.mark.asyncio
+async def test_reporter_send_message_empty(telegram_reporter):
+    """빈 텍스트 전송 시 API 호출 없이 True 반환 검증"""
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        result = await telegram_reporter._send_message("")
+        assert result is True
+        mock_post.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_reporter_send_message_api_error(telegram_reporter, caplog):
+    """Telegram API 에러 발생 (HTTP 400 등) 검증"""
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 400
+        mock_response.text.return_value = "Bad Request"
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        result = await telegram_reporter._send_message("test text")
+        assert result is False
+        assert "Telegram 리포트 전송 실패: 400 - Bad Request" in caplog.text
+
+@pytest.mark.asyncio
+async def test_reporter_send_message_exception(telegram_reporter, caplog):
+    """연결 오류 등 예외 발생 시 검증"""
+    with patch("aiohttp.ClientSession.post", side_effect=Exception("Connection Timeout")):
+        result = await telegram_reporter._send_message("test text")
+        assert result is False
+        assert "Telegram 리포트 전송 중 예외 발생: Connection Timeout" in caplog.text
+
 def test_format_ranking_table(telegram_reporter):
     """랭킹 테이블 포맷팅 검증"""
     data = [
@@ -156,6 +229,26 @@ def test_format_ranking_table(telegram_reporter):
     assert "50" in table  # 50억
     assert "5.0%" in table  # 비중 5%
     assert "-2.0%" in table # 등락 -2.0%
+
+def test_format_ranking_table_empty_data(telegram_reporter):
+    """데이터가 비어있을 때 빈 문자열 반환 검증"""
+    assert telegram_reporter._format_ranking_table("Title", [], "val") == ""
+
+def test_format_ranking_table_exceptions(telegram_reporter):
+    """잘못된 데이터 형식이 들어왔을 때 예외 처리(try-except) 분기 검증"""
+    data = [
+        {'hts_kor_isnm': '오류종목1', 'value': 'not_a_number', 'acml_tr_pbmn': '0', 'prdy_ctrt': 'not_a_number'},
+        {'hts_kor_isnm': '오류종목2', 'value': '100000000', 'acml_tr_pbmn': 'not_a_number', 'prdy_ctrt': '0'}
+    ]
+    table = telegram_reporter._format_ranking_table("Title", data, "value")
+    
+    # 첫 번째 항목 검증 (value 예외, rate 예외)
+    assert "오류종목1" in table
+    assert "-" in table  # 예외 시 '-' 할당 확인
+    
+    # 두 번째 항목 검증 (rate == 0, 비율 예외)
+    assert "오류종목2" in table
+    assert "0.0%" in table
 
 @pytest.mark.asyncio
 async def test_send_ranking_report_combined_ranking(telegram_reporter):
@@ -223,3 +316,30 @@ async def test_send_ranking_report_splits_message(telegram_reporter):
     # 첫 메시지는 타이틀이어야 함
     first_call_text = telegram_reporter._send_message.call_args_list[0][0][0]
     assert "장 마감 랭킹 리포트" in first_call_text
+
+@pytest.mark.asyncio
+async def test_send_ranking_report_combined_ranking_exception(telegram_reporter):
+    """조합 랭킹 계산 중 잘못된 데이터(문자열 등)가 있을 때 continue 분기 검증"""
+    all_stocks = [
+        {
+            'stck_shrn_iscd': '005930', 'hts_kor_isnm': '정상종목',
+            'frgn_ntby_tr_pbmn': '10000', 'orgn_ntby_tr_pbmn': '5000',
+            'acml_tr_pbmn': '100000000000'
+        },
+        {
+            'stck_shrn_iscd': '000660', 'hts_kor_isnm': '오류종목',
+            'frgn_ntby_tr_pbmn': 'invalid', 'orgn_ntby_tr_pbmn': '5000',
+            'acml_tr_pbmn': '100000000000'
+        }
+    ]
+    rankings = {'all_stocks': all_stocks}
+    
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    await telegram_reporter.send_ranking_report(rankings, "20250101")
+    
+    calls = telegram_reporter._send_message.call_args_list
+    full_message = "".join([call[0][0] for call in calls])
+    
+    # 정상 종목만 계산에 포함되고 오류종목은 건너뛰어야 함
+    assert "정상종목" in full_message
+    assert "오류종목" not in full_message
