@@ -1088,6 +1088,10 @@ def test_load_save_state_exceptions(mock_deps, tmp_path):
     test_file = tmp_path / "corrupted.json"
     test_file.write_text("{invalid json")
     strategy.STATE_FILE = str(test_file)
+    
+    # __init__ 시점에 로드되었을 수 있는 기존 찌꺼기 상태 비우기
+    strategy._position_state.clear()
+    
     strategy._load_state()
     assert strategy._position_state == {}
 

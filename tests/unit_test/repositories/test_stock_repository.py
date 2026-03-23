@@ -3,6 +3,7 @@ import pytest
 import sqlite3
 import time
 from unittest.mock import patch, MagicMock
+from contextlib import contextmanager
 
 from repositories.stock_repository import StockRepository, _LRUCache
 
@@ -240,25 +241,30 @@ def test_stock_repository_init_db_error(tmp_path):
         assert repo._conn is None
 
 def test_stock_repository_get_connection_rollback(repo):
+    m_conn = MagicMock()
+    repo._conn = m_conn
+
     with pytest.raises(ValueError):
         with repo._get_connection() as conn:
-            conn.execute("CREATE TABLE dummy (id INT)")
             raise ValueError("Rollback Trigger")
     
-    # 트랜잭션 롤백되었는지 확인
-    with repo._get_connection() as conn:
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dummy'")
-        assert cursor.fetchone() is None
+    # 예외 발생 시 트랜잭션 롤백이 호출되었는지 행위 검증
+    m_conn.rollback.assert_called_once()
 
 def test_stock_repository_upsert_ohlcv_db_error(repo):
-    with patch.object(repo._conn, "executemany", side_effect=Exception("Exec Error")):
-        # 에러가 발생해도 프로그램이 죽지 않고 로깅만 해야 함
-        repo.upsert_ohlcv([{"code": "005930", "date": "20250101"}])
+    m_conn = MagicMock()
+    m_conn.executemany.side_effect = Exception("Exec Error")
+    repo._conn = m_conn
+    # 에러가 발생해도 프로그램이 죽지 않고 로깅만 해야 함
+    repo.upsert_ohlcv([{"code": "005930", "date": "20250101", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100}])
 
 def test_stock_repository_get_stock_data_db_error(repo):
-    with patch.object(repo._conn, "execute", side_effect=Exception("Select Error")):
-        result = repo.get_stock_data("005930")
-        assert result is None
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("Select Error")
+    repo._conn = m_conn
+    
+    result = repo.get_stock_data("005930")
+    assert result is None
 
 def test_stock_repository_update_realtime_data_output_object(repo):
     """update_realtime_data: API 응답이 Dict가 아니라 Object 형태일 때 setattr 정상 동작 확인"""
@@ -279,37 +285,57 @@ def test_stock_repository_update_realtime_data_output_object(repo):
     assert getattr(output_obj, "acml_vol") == "50"
 
 def test_stock_repository_get_ohlcv_summary(repo):
-    repo.upsert_ohlcv([{"code": "005930", "date": "20250101"}, {"code": "005930", "date": "20250102"}])
+    repo.upsert_ohlcv([
+        {"code": "005930", "date": "20250101", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100},
+        {"code": "005930", "date": "20250102", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100}
+    ])
     summary = repo.get_ohlcv_summary("005930")
     assert summary["count"] == 2
     assert summary["latest_date"] == "20250102"
     
-    with patch.object(repo._conn, "execute", side_effect=Exception("DB Error")):
-        err_summary = repo.get_ohlcv_summary("005930")
-        assert err_summary["count"] == 0
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    
+    err_summary = repo.get_ohlcv_summary("005930")
+    assert err_summary["count"] == 0
 
 def test_stock_repository_get_ohlcv_max_trading_days(repo):
-    repo.upsert_ohlcv([{"code": "005930", "date": "20250101"}, {"code": "000660", "date": "20250102"}])
+    repo.upsert_ohlcv([
+        {"code": "005930", "date": "20250101", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100},
+        {"code": "000660", "date": "20250102", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100}
+    ])
     assert repo.get_ohlcv_max_trading_days() == 2
     
-    with patch.object(repo._conn, "execute", side_effect=Exception("DB Error")):
-        assert repo.get_ohlcv_max_trading_days() == 0
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    
+    assert repo.get_ohlcv_max_trading_days() == 0
 
 def test_stock_repository_upsert_daily_snapshot_error(repo):
-    with patch.object(repo._conn, "executemany", side_effect=Exception("DB Error")):
-        repo.upsert_daily_snapshot("20250101", [{"code": "005930"}])
+    m_conn = MagicMock()
+    m_conn.executemany.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    repo.upsert_daily_snapshot("20250101", [{"code": "005930"}])
 
 def test_stock_repository_get_prices_by_date_error(repo):
-    with patch.object(repo._conn, "execute", side_effect=Exception("DB Error")):
-        assert repo.get_prices_by_date("20250101") == []
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    assert repo.get_prices_by_date("20250101") == []
 
 def test_stock_repository_get_price_history_error(repo):
-    with patch.object(repo._conn, "execute", side_effect=Exception("DB Error")):
-        assert repo.get_price_history("005930") == []
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    assert repo.get_price_history("005930") == []
 
 def test_stock_repository_get_latest_trade_date_error(repo):
-    with patch.object(repo._conn, "execute", side_effect=Exception("DB Error")):
-        assert repo.get_latest_trade_date() is None
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    assert repo.get_latest_trade_date() is None
 
 def test_stock_repository_get_cache_stats(repo):
     stats = repo.get_cache_stats(expand=True)
