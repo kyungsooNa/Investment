@@ -241,6 +241,35 @@ async def test_force_reconnect_program_trading_early_returns(watchdog_task):
     svc._streaming_service.disconnect_websocket.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_force_reconnect_program_trading_errors(watchdog_task, mock_deps):
+    """연결 종료 오류 및 일부 재구독 실패 시나리오 검증."""
+    svc = watchdog_task
+    svc._realtime_callback = MagicMock()
+    svc._realtime_data_service.get_subscribed_codes.return_value = ["005930", "000660", "035720"]
+
+    # 1. disconnect_websocket에서 오류 발생 (무시하고 계속 진행되어야 함)
+    svc._streaming_service.disconnect_websocket = AsyncMock(side_effect=Exception("Disconnect Error"))
+
+    # 2. 005930: connect 실패, 000660: subscribe 실패, 035720: 성공
+    async def connect_side_effect(callback):
+        return svc._streaming_service.connect_websocket.await_count != 1
+        
+    async def subscribe_side_effect(code):
+        if code == "000660": raise Exception("Subscription Failed")
+
+    svc._streaming_service.connect_websocket = AsyncMock(side_effect=connect_side_effect)
+    svc._streaming_service.subscribe_program_trading = AsyncMock(side_effect=subscribe_side_effect)
+
+    await svc.force_reconnect_program_trading()
+
+    svc._logger.warning.assert_any_call("[워치독] 기존 연결 종료 중 오류 (무시): Disconnect Error")
+    svc._logger.warning.assert_any_call("[워치독] 재연결 실패: 005930")
+    svc._logger.error.assert_called_with("[워치독] 재구독 중 오류 (000660): Subscription Failed")
+    svc._realtime_data_service.remove_subscribed_code.assert_any_call("005930")
+    svc._realtime_data_service.remove_subscribed_code.assert_any_call("000660")
+
+    
 # ── get_progress() 테스트 ────────────────────────────────────────────────────
 
 
