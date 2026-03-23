@@ -8,7 +8,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from services.market_calendar_service import MarketCalendarService
-
+from interfaces.schedulable_task import TaskState
 @pytest.fixture
 def mock_deps():
     streaming_service = MagicMock()
@@ -178,6 +178,9 @@ async def test_stop_cancels_all_tasks(watchdog_task):
     assert len(svc._tasks) == 0
     svc._realtime_data_service.shutdown.assert_awaited_once()
 
+def test_state_property(watchdog_task):
+    """state 프로퍼티 검증."""
+    assert watchdog_task.state == TaskState.IDLE
 
 # ── get_progress() 테스트 ────────────────────────────────────────────────────
 
