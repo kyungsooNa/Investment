@@ -138,3 +138,95 @@ async def test_change_environment_failure(web_client, mock_web_ctx):
     mock_web_ctx.initialize_services = AsyncMock(return_value=False)
     response = web_client.post("/api/environment", json={"is_paper": True})
     assert response.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_get_status_ctx_none(web_client, monkeypatch):
+    """GET /api/status - ctx가 None일 때의 동작 테스트"""
+    import view.web.api_common as api_common
+    monkeypatch.setattr(api_common, "_ctx", None)
+    
+    response = web_client.get("/api/status")
+    
+    assert response.status_code == 200
+    assert response.json() == {
+        "market_open": False,
+        "env_type": "미설정",
+        "current_time": "",
+        "initialized": False
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_status_cached(web_client, mock_web_ctx):
+    """GET /api/status - 캐시된 status가 갱신되어 반환되는지 테스트"""
+    from view.web.routes import stock
+    import time
+    
+    # 캐시 강제 설정 (TTL 이내)
+    stock._status_cache = {
+        "market_open": True,
+        "env_type": "테스트",
+        "current_time": "old_time",
+        "initialized": True
+    }
+    stock._status_cache_ts = time.monotonic()
+    
+    mock_web_ctx.get_current_time_str.return_value = "new_time"
+    response = web_client.get("/api/status")
+    
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["env_type"] == "테스트"
+    # 캐시를 반환하되 시간은 갱신되었는지 확인
+    assert json_resp["current_time"] == "new_time"
+
+
+@pytest.mark.asyncio
+async def test_get_stocks_list(web_client, mock_web_ctx):
+    """GET /api/stocks/list 엔드포인트 테스트"""
+    mock_web_ctx.stock_code_repository.name_to_code = {"삼성전자": "005930", "카카오": "035720"}
+    response = web_client.get("/api/stocks/list")
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["count"] == 2
+    assert {"c": "005930", "n": "삼성전자"} in json_resp["stocks"]
+
+
+@pytest.mark.asyncio
+async def test_search_stock_by_name(web_client, mock_web_ctx):
+    """GET /api/stock/search 엔드포인트 테스트 (빈 쿼리 및 정상 쿼리)"""
+    # 빈 문자열 검색
+    response_empty = web_client.get("/api/stock/search?q=   ")
+    assert response_empty.status_code == 200
+    assert response_empty.json()["results"] == []
+
+    # 정상 검색
+    mock_web_ctx.stock_code_repository.search_by_name.return_value = [{"c": "005930", "n": "삼성전자"}]
+    response_valid = web_client.get("/api/stock/search?q=삼성")
+    assert response_valid.status_code == 200
+    assert response_valid.json()["results"] == [{"c": "005930", "n": "삼성전자"}]
+    mock_web_ctx.stock_code_repository.search_by_name.assert_called_once_with("삼성")
+
+
+@pytest.mark.asyncio
+async def test_get_stock_price_by_name_not_found(web_client, mock_web_ctx):
+    """GET /api/stock/{name} - 이름으로 검색 실패 시 에러 반환 테스트"""
+    mock_web_ctx.stock_code_repository.get_code_by_name.return_value = None
+    response = web_client.get("/api/stock/없는종목")
+    
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["rt_cd"] == "1"
+    assert "찾을 수 없습니다" in json_resp["msg1"]
+
+
+@pytest.mark.asyncio
+async def test_change_environment_ctx_none(web_client, monkeypatch):
+    """POST /api/environment - ctx가 None일 때의 503 동작 테스트"""
+    import view.web.api_common as api_common
+    monkeypatch.setattr(api_common, "_ctx", None)
+    
+    response = web_client.post("/api/environment", json={"is_paper": False})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "서비스가 초기화되지 않았습니다."
