@@ -705,6 +705,17 @@ class StockQueryService:
             self.logger.error(f"[OHLCV] {stock_code} 조회 실패: {e}", exc_info=True)
             return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1=str(e), data=[])
 
+    async def get_investor_trade_daily_multi(self, stock_code: str, date: str = None, days: int = 3) -> ResCommonResponse:
+        """종목별 투자자 매매동향 다중일 조회 (실전 전용).
+
+        Returns:
+            data: list[dict] — 최대 days개, 각 항목 {frgn_ntby_tr_pbmn, orgn_ntby_tr_pbmn, acml_tr_pbmn, stck_bsop_date, ...}
+                  단위: frgn/orgn_ntby_tr_pbmn 은 백만원, acml_tr_pbmn 은 원.
+        """
+        if not self.broker:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="broker 미설정", data=[])
+        return await self.broker.get_investor_trade_by_stock_daily_multi(stock_code, date, days)
+
     async def get_intraday_minutes_today(self, stock_code: str, *, input_hour_1: str) -> ResCommonResponse:
         """
         당일 분봉 조회. MarketDataService 위임.

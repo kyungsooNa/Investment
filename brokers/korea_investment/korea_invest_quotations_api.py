@@ -726,6 +726,58 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=None
             )
 
+    async def get_investor_trade_by_stock_daily_multi(self, stock_code: str, date: str = None, days: int = 3) -> ResCommonResponse:
+        """
+        종목별 투자자 매매동향(일별) 다중일 조회
+        실전 전용 (모의투자 미지원)
+        output2[:days] 를 리스트로 반환. 각 항목은 {frgn_ntby_tr_pbmn, orgn_ntby_tr_pbmn, acml_tr_pbmn, stck_bsop_date, ...} 형태.
+        단위: frgn/orgn_ntby_tr_pbmn 은 백만원, acml_tr_pbmn 은 원.
+        """
+        if date is None:
+            date = datetime.now().strftime("%Y%m%d")
+
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.quotations(TrIdLeaf.INVESTOR_TRADE_BY_STOCK_DAILY)
+
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        params = Params.investor_trade_by_stock_daily(stock_code=stock_code, date=date)
+
+        response: ResCommonResponse = await self.call_api(
+            "GET", EndpointKey.INVESTOR_TRADE_BY_STOCK_DAILY, params=params, retry_count=1
+        )
+
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            return response
+
+        try:
+            if not isinstance(response.data, dict):
+                raise TypeError(f"Expected dict, got {type(response.data)}")
+
+            output2 = response.data.get("output2", [])
+
+            if not isinstance(output2, list) or not output2:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="데이터 없음",
+                    data=[]
+                )
+
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="투자자 매매동향 다중일 조회 성공",
+                data=output2[:days]
+            )
+        except (TypeError, AttributeError) as e:
+            error_msg = f"투자자 매매동향 다중일 응답 형식 오류: {e}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PARSING_ERROR.value,
+                msg1=error_msg,
+                data=None
+            )
+
     async def get_program_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
         """
         종목별 프로그램매매추이(일별) 조회

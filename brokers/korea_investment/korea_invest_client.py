@@ -190,7 +190,11 @@ class KoreaInvestApiClient:
     async def get_investor_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
         """종목별 투자자 매매동향(일별) 조회 (실전 전용)"""
         return await self._quotations.get_investor_trade_by_stock_daily(stock_code, date)
-    
+
+    async def get_investor_trade_by_stock_daily_multi(self, stock_code: str, date: str = None, days: int = 3) -> ResCommonResponse:
+        """종목별 투자자 매매동향(일별) 다중일 조회 (실전 전용) — output2[:days] 리스트 반환"""
+        return await self._quotations.get_investor_trade_by_stock_daily_multi(stock_code, date, days)
+
     async def get_program_trade_by_stock_daily(self, stock_code: str, date: str = None) -> ResCommonResponse:
         """종목별 프로그램 매매동향(일별) 조회 (실전 전용)"""
         return await self._quotations.get_program_trade_by_stock_daily(stock_code, date)

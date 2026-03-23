@@ -46,6 +46,12 @@ class OneilUniverseConfig(BaseStrategyConfig):
     # 돌파 기준 기간 (데이터 수집용)
     high_breakout_period: int = 20
 
+    # 스마트 머니 (수급) 스코어링
+    smart_money_lookback_days: int = 3            # 3일 누적 기준
+    smart_money_to_mcap_pct: float = 0.5          # 시총의 0.5% 이상 매집 시
+    smart_money_to_tv_pct: float = 10.0           # 또는 누적 거래대금의 10% 이상 매집 시
+    smart_money_score_points: float = 15.0        # +15점 부여
+
 
 @dataclass
 class OneilBreakoutConfig(BaseStrategyConfig):
@@ -89,6 +95,7 @@ class OSBWatchlistItem:
     rs_return_3m: float = 0.0
     rs_score: float = 0.0
     profit_growth_score: float = 0.0
+    smart_money_score: float = 0.0
     total_score: float = 0.0
 
 
