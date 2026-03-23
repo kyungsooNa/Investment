@@ -4,7 +4,7 @@ import numpy as np
 import math
 import time
 from datetime import datetime
-from typing import List, Dict, Optional, TYPE_CHECKING
+from typing import List, Dict, Optional, TYPE_CHECKING, Union
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
 from core.cache.cache_store import CacheStore
 from core.performance_profiler import PerformanceProfiler
@@ -122,10 +122,7 @@ class IndicatorService:
         # 2. Pandas DataFrame 변환 및 계산
         t_calc = self.pm.start_timer()
         try:
-            df = pd.DataFrame(data)
-            # close 컬럼이 문자열일 수 있으므로 숫자형으로 변환
-            if df['close'].dtype == object:
-                 df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
 
             # 중심선 (MB) = n일 이동평균
             df['MB'] = df['close'].rolling(window=period).mean()
@@ -241,9 +238,7 @@ class IndicatorService:
 
         t_calc = self.pm.start_timer()
         try:
-            df = pd.DataFrame(ohlcv_data)
-            if df['close'].dtype == object:
-                 df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(ohlcv_data)
 
             # 전일 대비 변동분
             delta = df['close'].diff()
@@ -355,9 +350,7 @@ class IndicatorService:
 
         t_calc = self.pm.start_timer()
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object:
-                 df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
 
             if method.lower() == "ema":
                 df['ma'] = df['close'].ewm(span=period, adjust=False).mean()
@@ -420,9 +413,7 @@ class IndicatorService:
 
         t_calc = self.pm.start_timer()
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object:
-                df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
 
             recent_close = float(df['close'].iloc[-1])
             past_close = float(df['close'].iloc[-period_days])
@@ -537,6 +528,18 @@ class IndicatorService:
     # ── 계산 로직 공통화 (Helper Methods) ─────────────────────────────
 
     @staticmethod
+    def _to_dataframe(data: Union[List[Dict], pd.DataFrame]) -> pd.DataFrame:
+        """List[Dict] 또는 기존 DataFrame을 받아 pandas DataFrame으로 통일 및 데이터 전처리를 수행합니다."""
+        if isinstance(data, pd.DataFrame):
+            df = data.copy()
+        else:
+            df = pd.DataFrame(data)
+            
+        if not df.empty and 'close' in df.columns and df['close'].dtype == object:
+            df['close'] = pd.to_numeric(df['close'])
+        return df
+
+    @staticmethod
     def _compute_ma(df: pd.DataFrame, period: int, method: str = "sma", target_col: str = "ma") -> pd.DataFrame:
         """이동평균 계산 및 컬럼 추가"""
         if method.lower() == "ema":
@@ -570,8 +573,7 @@ class IndicatorService:
     def _calculate_bollinger_bands_full(self, stock_code, data, period, std_dev) -> ResCommonResponse:
         """볼린저 밴드 전체 계산 (내부용)"""
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object: df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
             
             df['MB'] = df['close'].rolling(window=period).mean()
             df['std'] = df['close'].rolling(window=period).std()
@@ -597,8 +599,7 @@ class IndicatorService:
     def _calculate_rsi_series(self, stock_code, data, period) -> ResCommonResponse:
         """RSI 시계열 전체 계산 (내부용)"""
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object: df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
             
             # 공통 로직 사용
             df = self._compute_rsi(df, period, target_col="rsi")
@@ -619,8 +620,7 @@ class IndicatorService:
     def _calculate_moving_average_full(self, stock_code, data, period, method) -> ResCommonResponse:
         """이동평균 전체 계산 (내부용)"""
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object: df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
             
             # 공통 로직 사용
             df = self._compute_ma(df, period, method, target_col="ma")
@@ -642,12 +642,9 @@ class IndicatorService:
         """전체 데이터를 받아 지표를 계산하는 내부 메서드"""
         try:
             # 1. DataFrame 변환 (1회 수행)
-            df = pd.DataFrame(ohlcv_data)
+            df = self._to_dataframe(ohlcv_data)
             if df.empty:
                  return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 없음", data=None)
-                 
-            if df['close'].dtype == object:
-                df['close'] = pd.to_numeric(df['close'])
 
             # 2. 지표 계산 (Vectorized operations)
             # MA
