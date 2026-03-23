@@ -215,7 +215,10 @@ class OneilUniverseService:
 
         # 스코어링
         self._compute_rs_scores(items, logger=logger)
-        await self._compute_profit_growth_scores(items, logger=logger)
+        # 2. 실적(스크래핑) 및 과거 3일 수급(API)은 장중 병목 방지 및 
+        # 당일 첫 급등주(Day-1) 포착을 위해 장 중에는 생략!
+        # await self._compute_profit_growth_scores(items, logger=logger)
+        # await self._compute_smart_money_scores(items, logger=logger)
         self._compute_total_scores(items, logger=logger)
 
         # 상위 N개
@@ -483,6 +486,7 @@ class OneilUniverseService:
         # 4. 스코어링 및 저장
         self._compute_rs_scores(items, logger=pool_a_logger)
         await self._compute_profit_growth_scores(items, logger=pool_a_logger)
+        await self._compute_smart_money_scores(items, logger=pool_a_logger, date=trading_date)
         self._compute_total_scores(items, logger=pool_a_logger)
         pool_a_logger.info({"event": "scoring_done"})
 
@@ -635,16 +639,71 @@ class OneilUniverseService:
 
         logger.debug({"event": "compute_profit_growth_scores_finished"})
 
+    async def _compute_smart_money_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None, date: Optional[str] = None):
+        """3일 누적 외국인+기관 순매수금액 기반 스마트머니 스코어링.
+
+        조건 A: 3일 누적 (외국인 + 기관 순매수금액) >= 시총의 smart_money_to_mcap_pct%
+        조건 B: 3일 누적 (외국인 + 기관 순매수금액) >= 3일 누적 총거래대금의 smart_money_to_tv_pct%
+        A 또는 B 만족 시 smart_money_score_points 부여.
+
+        단위: frgn/orgn_ntby_tr_pbmn 은 백만원 → *1_000_000 = 원, acml_tr_pbmn 은 원.
+        """
+        logger = logger or self._logger
+        if not items: return
+        days = self._cfg.smart_money_lookback_days
+        logger.debug({"event": "compute_smart_money_scores_started", "item_count": len(items), "lookback_days": days})
+
+        for chunk in _chunked(items, self._cfg.api_chunk_size):
+            tasks = [self._sqs.get_investor_trade_daily_multi(i.code, date, days) for i in chunk]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for item, resp in zip(chunk, results):
+                item.smart_money_score = 0.0
+                if isinstance(resp, Exception):
+                    logger.warning({"event": "smart_money_api_error", "code": item.code, "error": str(resp)})
+                    continue
+                if not resp or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+                    continue
+
+                rows = resp.data  # list of dicts, newest first
+                sum_fi_won = 0.0   # 3일 누적 외국인+기관 순매수금액 (원)
+                sum_tv_won = 0.0   # 3일 누적 총거래대금 (원)
+                for row in rows:
+                    frgn = float(row.get("frgn_ntby_tr_pbmn", "0") or "0")
+                    orgn = float(row.get("orgn_ntby_tr_pbmn", "0") or "0")
+                    tv   = float(row.get("acml_tr_pbmn", "0") or "0")
+                    sum_fi_won += (frgn + orgn) * 1_000_000  # 백만원 → 원
+                    sum_tv_won += tv                           # 이미 원 단위
+
+                mcap = float(item.market_cap) if item.market_cap else 0.0
+                cond_a = mcap > 0 and sum_fi_won >= mcap * (self._cfg.smart_money_to_mcap_pct / 100.0)
+                cond_b = sum_tv_won > 0 and sum_fi_won >= sum_tv_won * (self._cfg.smart_money_to_tv_pct / 100.0)
+
+                if cond_a or cond_b:
+                    item.smart_money_score = self._cfg.smart_money_score_points
+                    logger.debug({
+                        "event": "smart_money_score_assigned",
+                        "code": item.code, "name": item.name,
+                        "sum_fi_억": round(sum_fi_won / 1e8, 2),
+                        "mcap_억": round(mcap / 1e8, 2),
+                        "sum_tv_억": round(sum_tv_won / 1e8, 2),
+                        "cond_a": cond_a, "cond_b": cond_b,
+                        "score": item.smart_money_score,
+                    })
+
+        logger.debug({"event": "compute_smart_money_scores_finished"})
+
     def _compute_total_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None):
         logger = logger or self._logger
         if not items: return
         logger.debug({"event": "compute_total_scores_started", "item_count": len(items)})
         for item in items:
-            item.total_score = item.rs_score + item.profit_growth_score
+            item.total_score = item.rs_score + item.profit_growth_score + item.smart_money_score
             if item.total_score > 0:
                 logger.debug({
                     "event": "total_score_calculated", "code": item.code, "name": item.name,
                     "rs_score": item.rs_score, "profit_score": item.profit_growth_score,
+                    "smart_money_score": item.smart_money_score,
                     "total_score": item.total_score
                 })
         logger.debug({"event": "compute_total_scores_finished"})

@@ -12,12 +12,12 @@ from typing import List, Dict, Optional, TYPE_CHECKING
 from common.types import ErrorCode
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
-from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
+from task.background.after_market.after_market_task_base import AfterMarketTask
+from interfaces.schedulable_task import TaskState
 from repositories.stock_repository import StockRepository
 from repositories.stock_code_repository import StockCodeRepository
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService
-from scheduler.after_market_loop import run_after_market_loop
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
@@ -36,7 +36,7 @@ _ETF_PREFIXES = (
 )
 
 
-class OhlcvUpdateTask(SchedulableTask):
+class OhlcvUpdateTask(AfterMarketTask):
     """장 마감 후 전체 종목의 OHLCV를 수집하여 DB에 저장하는 백그라운드 태스크.
 
     - DB에 이미 TARGET_OHLCV_DAYS일치 데이터가 있고 당일 날짜까지 갱신된 종목은 스킵.
@@ -60,18 +60,16 @@ class OhlcvUpdateTask(SchedulableTask):
         notification_service: Optional[NotificationService] = None,
         logger=None,
     ):
+        super().__init__(
+            mcs=market_calendar_service,
+            market_clock=market_clock,
+            logger=logger or logging.getLogger(__name__),
+        )
         self._stock_query_service = stock_query_service
         self.stock_code_repository = stock_code_repository
         self._stock_repo = stock_repo
-        self._mcs = market_calendar_service
-        self._market_clock = market_clock
         self._pm = performance_profiler or PerformanceProfiler(enabled=False)
         self._ns = notification_service
-        self._logger = logger or logging.getLogger(__name__)
-
-        # SchedulableTask 상태
-        self._state: TaskState = TaskState.IDLE
-        self._tasks: List[asyncio.Task] = []
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능
 
@@ -94,12 +92,8 @@ class OhlcvUpdateTask(SchedulableTask):
         return "ohlcv_update"
 
     @property
-    def priority(self) -> TaskPriority:
-        return TaskPriority.LOW
-
-    @property
-    def state(self) -> TaskState:
-        return self._state
+    def _scheduler_label(self) -> str:
+        return "OhlcvUpdate"
 
     async def start(self) -> None:
         """수집 1회 실행 + 장마감 후 자동 스케줄러 시작."""
@@ -116,18 +110,6 @@ class OhlcvUpdateTask(SchedulableTask):
         )
         self._logger.info(f"OhlcvUpdateTask 시작: {len(self._tasks)}개 태스크")
 
-    async def stop(self) -> None:
-        """모든 태스크를 취소하고 정리한다."""
-        self._logger.info(f"OhlcvUpdateTask 종료 시작: {len(self._tasks)}개 태스크")
-        for task in self._tasks:
-            if not task.done():
-                task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
-        self._state = TaskState.STOPPED
-        self._logger.info("OhlcvUpdateTask 종료 완료")
-
     async def suspend(self) -> None:
         """수집을 일시 중지한다 (chunk 사이에서 대기)."""
         if self._state == TaskState.RUNNING:
@@ -141,18 +123,6 @@ class OhlcvUpdateTask(SchedulableTask):
             self._suspend_event.set()
             self._state = TaskState.RUNNING
             self._logger.info("OhlcvUpdateTask 재개")
-
-    # ── 장마감 후 자동 스케줄러 ────────────────────────────
-
-    async def _after_market_scheduler(self) -> None:
-        """장 마감 후 자동으로 수집을 스케줄링하는 루프."""
-        await run_after_market_loop(
-            mcs=self._mcs,
-            market_clock=self._market_clock,
-            logger=self._logger,
-            on_market_closed=self._on_market_closed,
-            label="OhlcvUpdate",
-        )
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         """장 마감 후 콜백: 해당 거래일의 수집이 필요하면 실행."""

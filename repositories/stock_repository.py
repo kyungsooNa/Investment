@@ -75,7 +75,7 @@ class _LRUCache:
 
         if expand:
             items = []
-            for key, val in self.cache.items():
+            for key, val in list(self.cache.items()):
                 if isinstance(val, dict):
                     items.append({
                         "code": key,

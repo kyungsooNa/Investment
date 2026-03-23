@@ -8,10 +8,10 @@
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, Optional, TYPE_CHECKING
 
-from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
-from scheduler.after_market_loop import run_after_market_loop
+from task.background.after_market.after_market_task_base import AfterMarketTask
+from interfaces.schedulable_task import TaskState
 from services.notification_service import NotificationService
 
 if TYPE_CHECKING:
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from core.market_clock import MarketClock
 
 
-class PremiumWatchlistGeneratorTask(SchedulableTask):
+class PremiumWatchlistGeneratorTask(AfterMarketTask):
     """장 마감 후 전일 기준 우량주 풀을 자동 생성하는 백그라운드 태스크."""
 
     def __init__(
@@ -31,14 +31,14 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
         logger=None,
         notification_service: Optional["NotificationService"] = None,
     ):
+        super().__init__(
+            mcs=market_calendar_service,
+            market_clock=market_clock,
+            logger=logger or logging.getLogger(__name__),
+        )
         self._universe_service = universe_service
-        self._mcs = market_calendar_service
-        self._market_clock = market_clock
-        self._logger = logger or logging.getLogger(__name__)
         self._ns = notification_service
 
-        self._state: TaskState = TaskState.IDLE
-        self._tasks: List[asyncio.Task] = []
         self._is_generating: bool = False
         self._last_generated_date: Optional[str] = None
         self._progress: Dict = {
@@ -54,12 +54,8 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
         return "전일기준주도주_생성"
 
     @property
-    def priority(self) -> TaskPriority:
-        return TaskPriority.LOW
-
-    @property
-    def state(self) -> TaskState:
-        return self._state
+    def _scheduler_label(self) -> str:
+        return "전일기준우량주생성"
 
     async def start(self) -> None:
         if self._state == TaskState.RUNNING:
@@ -67,26 +63,6 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
         self._state = TaskState.RUNNING
         self._tasks.append(asyncio.create_task(self._after_market_scheduler()))
         self._logger.info("PremiumWatchlistGeneratorTask 시작")
-
-    async def stop(self) -> None:
-        self._logger.info(f"PremiumWatchlistGeneratorTask 종료 시작: {len(self._tasks)}개 태스크")
-        for task in self._tasks:
-            if not task.done():
-                task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
-        self._state = TaskState.STOPPED
-        self._logger.info("PremiumWatchlistGeneratorTask 종료 완료")
-
-    async def suspend(self) -> None:
-        # 배치 특성상 suspend는 지원하지 않음 — 현재 실행 중인 생성은 완료 후 다음 루프에서 반영
-        if self._state == TaskState.RUNNING:
-            self._state = TaskState.SUSPENDED
-
-    async def resume(self) -> None:
-        if self._state == TaskState.SUSPENDED:
-            self._state = TaskState.RUNNING
 
     def get_progress(self) -> Dict:
         result = dict(self._progress)
@@ -100,17 +76,6 @@ class PremiumWatchlistGeneratorTask(SchedulableTask):
             "elapsed":   gen.get("elapsed", 0.0),
         })
         return result
-
-    # ── 장마감 후 자동 스케줄러 ────────────────────────────────
-
-    async def _after_market_scheduler(self) -> None:
-        await run_after_market_loop(
-            mcs=self._mcs,
-            market_clock=self._market_clock,
-            logger=self._logger,
-            on_market_closed=self._on_market_closed,
-            label="전일기준우량주생성",
-        )
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         """장 마감 후 콜백: 해당 거래일의 생성이 필요하면 실행.

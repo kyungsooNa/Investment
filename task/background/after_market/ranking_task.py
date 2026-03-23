@@ -14,12 +14,12 @@ from brokers.broker_api_wrapper import BrokerAPIWrapper
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from common.types import ResCommonResponse, ErrorCode
 from core.market_clock import MarketClock
-from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
+from task.background.after_market.after_market_task_base import AfterMarketTask
+from interfaces.schedulable_task import TaskState
 from services.market_calendar_service import MarketCalendarService
 from repositories.stock_code_repository import StockCodeRepository
 from core.performance_profiler import PerformanceProfiler
 from services.telegram_notifier import TelegramReporter
-from scheduler.after_market_loop import run_after_market_loop
 from services.notification_service import NotificationService
 
 
@@ -36,7 +36,7 @@ _ETF_PREFIXES = (
 )
 
 
-class RankingTask(SchedulableTask):
+class RankingTask(AfterMarketTask):
     """랭킹 데이터를 수집·캐시하는 백그라운드 태스크."""
 
     # 청크 크기 및 레이트 리밋
@@ -59,16 +59,20 @@ class RankingTask(SchedulableTask):
         telegram_reporter: Optional[TelegramReporter] = None,
         market_calendar_service: Optional[MarketCalendarService] = None,
     ):
+        super().__init__(
+            mcs=market_calendar_service,
+            market_clock=market_clock,
+            logger=logger or logging.getLogger(__name__),
+        )
         self._broker = broker_api_wrapper
         self.stock_code_repository = stock_code_repository
         self._env = env
-        self._logger = logger or logging.getLogger(__name__)
-        self._market_clock = market_clock
         self._market_data_service = market_data_service
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
-        self.mcs = market_calendar_service
+        self._suspend_event: asyncio.Event = asyncio.Event()
+        self._suspend_event.set()  # 초기에는 실행 가능 상태
 
         # 투자자별 순매수 랭킹 캐시
         self._foreign_net_buy_cache: List[Dict] = []
@@ -99,12 +103,6 @@ class RankingTask(SchedulableTask):
             "elapsed": 0.0,
         }
 
-        # SchedulableTask 상태
-        self._state: TaskState = TaskState.IDLE
-        self._tasks: List[asyncio.Task] = []
-        self._suspend_event: asyncio.Event = asyncio.Event()
-        self._suspend_event.set()  # 초기에는 실행 가능 상태
-
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
     @property
@@ -112,12 +110,8 @@ class RankingTask(SchedulableTask):
         return "ranking_refresh"
 
     @property
-    def priority(self) -> TaskPriority:
-        return TaskPriority.LOW
-
-    @property
-    def state(self) -> TaskState:
-        return self._state
+    def _scheduler_label(self) -> str:
+        return "RankingTask"
 
     async def start(self) -> None:
         """투자자 랭킹 1회 실행 + 장마감 후 자동 갱신 스케줄러 시작."""
@@ -133,18 +127,6 @@ class RankingTask(SchedulableTask):
             asyncio.create_task(self.start_after_market_scheduler())
         )
         self._logger.info(f"RankingTask 시작: {len(self._tasks)}개 태스크")
-
-    async def stop(self) -> None:
-        """모든 랭킹 태스크를 취소하고 정리한다."""
-        self._logger.info(f"RankingTask 종료 시작: {len(self._tasks)}개 태스크")
-        for task in self._tasks:
-            if not task.done():
-                task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
-        self._state = TaskState.STOPPED
-        self._logger.info("RankingTask 종료 완료")
 
     async def suspend(self) -> None:
         """랭킹 수집을 일시 중지한다 (chunk 사이에서 대기)."""
@@ -164,13 +146,7 @@ class RankingTask(SchedulableTask):
 
     async def start_after_market_scheduler(self) -> None:
         """장마감 후 자동으로 랭킹 갱신을 스케줄링하는 루프."""
-        await run_after_market_loop(
-            mcs=self.mcs,
-            market_clock=self._market_clock,
-            logger=self._logger,
-            on_market_closed=self._on_market_closed,
-            label="RankingTask",
-        )
+        await self._after_market_scheduler()
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         """장 마감 후 콜백: 해당 거래일의 랭킹 갱신이 필요하면 실행."""
@@ -274,7 +250,7 @@ class RankingTask(SchedulableTask):
     async def refresh_investor_ranking(self, force: bool = False) -> None:
         """전체 종목을 순회하여 외국인/기관/개인 순매수/순매도 랭킹을 갱신한다."""
         # [성능 보호] 장 중에는 실행하지 않음
-        if self.mcs and await self.mcs.is_market_open_now():
+        if self._mcs and await self._mcs.is_market_open_now():
             self._logger.info("장 운영 중이므로 투자자 랭킹 전체 갱신을 건너뜁니다.")
             return
 
@@ -289,8 +265,8 @@ class RankingTask(SchedulableTask):
 
         # [변경] 오늘 날짜 대신 실제 장이 열린 최근 날짜 조회
         target_date = None
-        if self.mcs:
-            target_date = await self.mcs.get_latest_trading_date()
+        if self._mcs:
+            target_date = await self._mcs.get_latest_trading_date()
 
         if not target_date:
             self._logger.error("최근 거래일을 확인할 수 없어 투자자 랭킹 갱신을 중단합니다.")
@@ -527,7 +503,7 @@ class RankingTask(SchedulableTask):
     async def _check_and_trigger_refresh(self) -> Optional[ResCommonResponse]:
         """캐시 비어있으면 온디맨드 갱신 트리거. 즉시 반환할 응답이 있으면 반환."""
         # [성능 보호] 장 중에는 온디맨드 갱신 트리거 안 함
-        if self.mcs and await self.mcs.is_market_open_now():
+        if self._mcs and await self._mcs.is_market_open_now():
             return None
 
         # 캐시 비어있고 갱신 중이 아니면 온디맨드 트리거
