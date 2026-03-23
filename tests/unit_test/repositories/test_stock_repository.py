@@ -2,6 +2,8 @@ import os
 import pytest
 import sqlite3
 import time
+from unittest.mock import patch, MagicMock
+from contextlib import contextmanager
 
 from repositories.stock_repository import StockRepository, _LRUCache
 
@@ -34,6 +36,31 @@ def test_lru_cache_eviction():
     assert cache.get("C") == 3
     assert cache.get("B") is None
 
+def test_lru_cache_stats():
+    """LRU 캐시의 get_stats 메서드 (expand=True/False) 검증"""
+    cache = _LRUCache(capacity=2)
+    cache.put("A", {"ohlcv": [1, 2], "current_price_data": {}, "last_updated": 100, "price_updated_at": 101})
+    cache.put("B", "NotADict")
+    
+    cache.get("A", caller="tester", item_type="ohlcv")
+    cache.get("C") # miss
+    
+    # expand=False
+    stats = cache.get_stats(expand=False)
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1
+    assert "tester" in stats["callers"]
+    assert "items" not in stats
+    
+    # expand=True
+    stats_expanded = cache.get_stats(expand=True)
+    assert "items" in stats_expanded
+    items = stats_expanded["items"]
+    assert items[0]["code"] == "A"
+    assert items[0]["has_ohlcv"] is True
+    assert items[0]["ohlcv_length"] == 2
+    assert items[1]["code"] == "B"
+    assert "has_ohlcv" not in items[1]
 
 # --- StockRepository 테스트 ---
 
@@ -204,3 +231,113 @@ def test_get_latest_daily_snapshot_output_structure(repo):
     assert "_trade_date" in result
     assert result["output"]["stck_prpr"] == "70000"
     assert result["output"]["hts_kor_isnm"] == "삼성전자"
+
+
+# --- DB 예외 및 Edge Case (커버리지 보완) ---
+
+def test_stock_repository_init_db_error(tmp_path):
+    with patch("sqlite3.connect", side_effect=Exception("DB Con Error")):
+        repo = StockRepository(db_path=str(tmp_path / "err.db"))
+        assert repo._conn is None
+
+def test_stock_repository_get_connection_rollback(repo):
+    m_conn = MagicMock()
+    repo._conn = m_conn
+
+    with pytest.raises(ValueError):
+        with repo._get_connection() as conn:
+            raise ValueError("Rollback Trigger")
+    
+    # 예외 발생 시 트랜잭션 롤백이 호출되었는지 행위 검증
+    m_conn.rollback.assert_called_once()
+
+def test_stock_repository_upsert_ohlcv_db_error(repo):
+    m_conn = MagicMock()
+    m_conn.executemany.side_effect = Exception("Exec Error")
+    repo._conn = m_conn
+    # 에러가 발생해도 프로그램이 죽지 않고 로깅만 해야 함
+    repo.upsert_ohlcv([{"code": "005930", "date": "20250101", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100}])
+
+def test_stock_repository_get_stock_data_db_error(repo):
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("Select Error")
+    repo._conn = m_conn
+    
+    result = repo.get_stock_data("005930")
+    assert result is None
+
+def test_stock_repository_update_realtime_data_output_object(repo):
+    """update_realtime_data: API 응답이 Dict가 아니라 Object 형태일 때 setattr 정상 동작 확인"""
+    class DummyOutput:
+        pass
+    
+    output_obj = DummyOutput()
+    cached_data = {
+        "code": "005930",
+        "current_price_data": {"output": output_obj},
+        "ohlcv": [{"date": "20250101", "close": 1000, "high": 1100, "low": 900, "volume": 100}]
+    }
+    repo._stocks_cache.put("005930", cached_data)
+    
+    repo.update_realtime_data("005930", 1200.0, 50)
+    
+    assert getattr(output_obj, "stck_prpr") == "1200"
+    assert getattr(output_obj, "acml_vol") == "50"
+
+def test_stock_repository_get_ohlcv_summary(repo):
+    repo.upsert_ohlcv([
+        {"code": "005930", "date": "20250101", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100},
+        {"code": "005930", "date": "20250102", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100}
+    ])
+    summary = repo.get_ohlcv_summary("005930")
+    assert summary["count"] == 2
+    assert summary["latest_date"] == "20250102"
+    
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    
+    err_summary = repo.get_ohlcv_summary("005930")
+    assert err_summary["count"] == 0
+
+def test_stock_repository_get_ohlcv_max_trading_days(repo):
+    repo.upsert_ohlcv([
+        {"code": "005930", "date": "20250101", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100},
+        {"code": "000660", "date": "20250102", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100}
+    ])
+    assert repo.get_ohlcv_max_trading_days() == 2
+    
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    
+    assert repo.get_ohlcv_max_trading_days() == 0
+
+def test_stock_repository_upsert_daily_snapshot_error(repo):
+    m_conn = MagicMock()
+    m_conn.executemany.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    repo.upsert_daily_snapshot("20250101", [{"code": "005930"}])
+
+def test_stock_repository_get_prices_by_date_error(repo):
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    assert repo.get_prices_by_date("20250101") == []
+
+def test_stock_repository_get_price_history_error(repo):
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    assert repo.get_price_history("005930") == []
+
+def test_stock_repository_get_latest_trade_date_error(repo):
+    m_conn = MagicMock()
+    m_conn.execute.side_effect = Exception("DB Error")
+    repo._conn = m_conn
+    assert repo.get_latest_trade_date() is None
+
+def test_stock_repository_get_cache_stats(repo):
+    stats = repo.get_cache_stats(expand=True)
+    assert "hits" in stats
+    assert "items" in stats
