@@ -66,7 +66,7 @@ class MarketDataService:
         # 2. 장 마감 시간대에는 daily_prices DB 스냅샷 확인 (API 호출 절약)
         is_market_open = (await self._mcs.is_market_open_now()) if self._mcs else self._market_clock.is_market_operating_hours()
         if self._stock_repo and not is_market_open:
-            db_data = self._stock_repo.get_latest_daily_snapshot(stock_code)
+            db_data = await self._stock_repo.get_latest_daily_snapshot(stock_code)
             if db_data:
                 self._stock_repo.set_current_price(stock_code, db_data)
                 return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(DB)", data=db_data)
@@ -366,7 +366,7 @@ class MarketDataService:
 
             # 1. 과거 데이터 가져오기 (StockRepository 캐시/DB 활용)
             if self._stock_repo:
-                stock_data = self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600, caller=caller)
+                stock_data = await self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600, caller=caller)
                 if stock_data and "ohlcv" in stock_data:
                     past_rows = stock_data["ohlcv"]
 
@@ -374,7 +374,7 @@ class MarketDataService:
             if not past_rows or len(past_rows) < 600:
                 past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=10)
                 if self._stock_repo and past_rows:
-                    self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
+                    await self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
 
             # 3. 오늘 데이터 처리 (실시간 API 병합) - 장 마감 후에는 불필요
             today_rows = []
@@ -393,7 +393,7 @@ class MarketDataService:
 
             if today_rows and not is_market_open:
                 if not past_rows or today_rows[0]['date'] > past_rows[-1]['date']:
-                    if self._stock_repo: self._stock_repo.upsert_ohlcv([{**today_rows[0], "code": stock_code}])
+                    if self._stock_repo: await self._stock_repo.upsert_ohlcv([{**today_rows[0], "code": stock_code}])
                     past_rows = past_rows + today_rows
                     today_rows = []
 

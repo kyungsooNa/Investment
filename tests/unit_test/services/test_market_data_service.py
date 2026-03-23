@@ -25,8 +25,9 @@ def mock_deps():
     cache_store = MagicMock()  # Added cache_store mock
     stock_repo = MagicMock()
     stock_repo.get_current_price.return_value = None
-    stock_repo.get_stock_data.return_value = None
-    stock_repo.get_latest_daily_snapshot.return_value = None
+    stock_repo.get_stock_data = AsyncMock(return_value=None)
+    stock_repo.get_latest_daily_snapshot = AsyncMock(return_value=None)
+    stock_repo.upsert_ohlcv = AsyncMock()
 
     return SimpleNamespace(
         broker=broker,
@@ -1195,4 +1196,3 @@ async def test_get_ohlcv_during_market_open_calls_today_api(trading_service_fixt
     # 오늘 데이터가 병합되어 마지막 항목이 오늘 날짜여야 함
     assert resp.data[-1]['date'] == "20250102"
     assert resp.data[-1]['close'] == 1025.0
-
