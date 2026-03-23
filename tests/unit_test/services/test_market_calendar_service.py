@@ -351,3 +351,79 @@ async def test_get_latest_market_close_time_weekday(manager, mock_deps):
     assert latest_close.hour == 15
     assert latest_close.minute == 30
     assert latest_close < tm.get_current_kst_time()
+
+@pytest.mark.asyncio
+async def test_get_latest_market_close_time_today_after_close(manager, mock_deps):
+    """오늘이 영업일이고 이미 장이 마감된 상태(15:30 이후)일 때 오늘 마감 시간 반환 테스트"""
+    tm, logger = mock_deps
+    
+    # 오늘 16시로 설정 (장 마감 이후)
+    target_dt = datetime(2025, 8, 4, 16, 0, 0)
+    tm.get_current_kst_time.return_value = tm.market_timezone.localize(target_dt)
+    
+    # 평일 체크 모킹 (오늘은 영업일)
+    manager.is_business_day = AsyncMock(return_value=True)
+
+    latest_close = await manager.get_latest_market_close_time()
+
+    assert latest_close.year == 2025
+    assert latest_close.month == 8
+    assert latest_close.day == 4
+    assert latest_close.hour == 15
+    assert latest_close.minute == 30
+
+@pytest.mark.asyncio
+async def test_get_latest_market_close_time_no_business_day_in_15_days(manager, mock_deps):
+    """최근 15일 내에 영업일이 없는 경우 (시스템 오류 의심) None 반환 테스트"""
+    tm, logger = mock_deps
+    target_dt = datetime(2025, 8, 4, 10, 0, 0)
+    tm.get_current_kst_time.return_value = tm.market_timezone.localize(target_dt)
+    
+    # 계속 휴장일이라 가정
+    manager.is_business_day = AsyncMock(return_value=False)
+
+    latest_close = await manager.get_latest_market_close_time()
+
+    assert latest_close is None
+    logger.error.assert_called()
+
+@pytest.mark.asyncio
+async def test_get_next_open_day_no_args(manager, mock_deps):
+    """get_next_open_day 파라미터 없이 호출 시 현재 시간 기준 다음 영업일 반환 테스트"""
+    tm, logger = mock_deps
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0) # 수요일
+    
+    manager._sync_calendar_if_needed = AsyncMock()
+    manager._business_days_cache = {"20250102": True} # 다음날 영업일로 캐시 조작
+
+    result = await manager.get_next_open_day()
+    assert result == "20250102"
+    
+@pytest.mark.asyncio
+async def test_get_next_open_day_with_args(manager, mock_deps):
+    """get_next_open_day 특정 기준일 입력 시 연휴 건너뛰고 영업일 반환 테스트"""
+    manager._sync_calendar_if_needed = AsyncMock()
+    # 20250103(금) 기준. 주말 건너뛰고 20250106(월)로 이동하는지 검증
+    manager._business_days_cache = {"20250106": True}
+    
+    result = await manager.get_next_open_day("20250103")
+    assert result == "20250106"
+
+@pytest.mark.asyncio
+async def test_get_next_open_day_no_business_day_found(manager, mock_deps):
+    """15일간 탐색했음에도 영업일이 없을 경우 원본 날짜를 반환하는지 테스트"""
+    manager._sync_calendar_if_needed = AsyncMock()
+    manager._business_days_cache = {} # 캐시에 영업일 없음 (계속 False 반환)
+    
+    result = await manager.get_next_open_day("20250101")
+    assert result == "20250101"
+
+@pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)
+async def test_wait_until_next_open_no_sleep(mock_sleep, manager, mock_deps):
+    """장 중일 때 wait_until_next_open 호출 시 sleep 없이 바로 통과하는지 테스트"""
+    tm, logger = mock_deps
+    # 현재 시간이 다음 오픈 시간보다 크거나 같을 때 대기 안 함을 보장
+    manager.get_next_open_time = AsyncMock(return_value=tm.get_current_kst_time.return_value)
+    await manager.wait_until_next_open()
+    mock_sleep.assert_not_awaited()
