@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from services.market_calendar_service import MarketCalendarService
 from interfaces.schedulable_task import TaskState
+
 @pytest.fixture
 def mock_deps():
     streaming_service = MagicMock()
@@ -181,6 +182,22 @@ async def test_stop_cancels_all_tasks(watchdog_task):
 def test_state_property(watchdog_task):
     """state 프로퍼티 검증."""
     assert watchdog_task.state == TaskState.IDLE
+
+@pytest.mark.asyncio
+async def test_start_and_already_running(watchdog_task, mock_deps):
+    """start 메서드 호출 및 이미 실행 중일 때 조기 리턴 검증."""
+    svc = watchdog_task
+    svc._realtime_data_service.get_subscribed_codes.return_value = ["005930"]
+
+    await svc.start()
+
+    assert svc.state == TaskState.RUNNING
+    svc._realtime_data_service.start_background_tasks.assert_called_once()
+    assert len(svc._tasks) == 2  # _restore_program_trading, _program_trading_watchdog
+
+    # 이미 RUNNING 상태일 때 start() 재호출 시 아무 작업도 하지 않음
+    await svc.start()
+    assert len(svc._tasks) == 2
 
 # ── get_progress() 테스트 ────────────────────────────────────────────────────
 
