@@ -215,8 +215,10 @@ class OneilUniverseService:
 
         # 스코어링
         self._compute_rs_scores(items, logger=logger)
-        await self._compute_profit_growth_scores(items, logger=logger)
-        await self._compute_smart_money_scores(items, logger=logger)
+        # 2. 실적(스크래핑) 및 과거 3일 수급(API)은 장중 병목 방지 및 
+        # 당일 첫 급등주(Day-1) 포착을 위해 장 중에는 생략!
+        # await self._compute_profit_growth_scores(items, logger=logger)
+        # await self._compute_smart_money_scores(items, logger=logger)
         self._compute_total_scores(items, logger=logger)
 
         # 상위 N개
