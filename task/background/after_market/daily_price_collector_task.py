@@ -6,18 +6,17 @@ get_current_price API를 사용하여 종목별 50+ 필드(시가/고가/저가/
 import asyncio
 import logging
 import time
-from datetime import datetime
-from typing import List, Dict, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 from common.types import ErrorCode
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
-from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
+from task.background.after_market.after_market_task_base import AfterMarketTask
+from interfaces.schedulable_task import TaskState
 from repositories.stock_repository import StockRepository
 from repositories.stock_code_repository import StockCodeRepository
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService
-from scheduler.after_market_loop import run_after_market_loop
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
@@ -36,7 +35,7 @@ _ETF_PREFIXES = (
 )
 
 
-class DailyPriceCollectorTask(SchedulableTask):
+class DailyPriceCollectorTask(AfterMarketTask):
     """장 마감 후 전체 종목 현재가+펀더멘털을 수집하여 StockRepository에 저장하는 백그라운드 태스크."""
 
     API_CHUNK_SIZE = 8
@@ -53,18 +52,16 @@ class DailyPriceCollectorTask(SchedulableTask):
         notification_service: Optional[NotificationService] = None,
         logger=None,
     ):
+        super().__init__(
+            mcs=market_calendar_service,
+            market_clock=market_clock,
+            logger=logger or logging.getLogger(__name__),
+        )
         self._stock_query_service = stock_query_service
         self.stock_code_repository = stock_code_repository
         self._stock_repo = stock_repo
-        self._mcs = market_calendar_service
-        self._market_clock = market_clock
         self._pm = performance_profiler or PerformanceProfiler(enabled=False)
         self._ns = notification_service
-        self._logger = logger or logging.getLogger(__name__)
-
-        # SchedulableTask 상태
-        self._state: TaskState = TaskState.IDLE
-        self._tasks: List[asyncio.Task] = []
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능
 
@@ -86,12 +83,8 @@ class DailyPriceCollectorTask(SchedulableTask):
         return "daily_price_collector"
 
     @property
-    def priority(self) -> TaskPriority:
-        return TaskPriority.LOW
-
-    @property
-    def state(self) -> TaskState:
-        return self._state
+    def _scheduler_label(self) -> str:
+        return "DailyPriceCollector"
 
     async def start(self) -> None:
         """수집 1회 실행 + 장마감 후 자동 스케줄러 시작."""
@@ -108,18 +101,6 @@ class DailyPriceCollectorTask(SchedulableTask):
         )
         self._logger.info(f"DailyPriceCollectorTask 시작: {len(self._tasks)}개 태스크")
 
-    async def stop(self) -> None:
-        """모든 태스크를 취소하고 정리한다."""
-        self._logger.info(f"DailyPriceCollectorTask 종료 시작: {len(self._tasks)}개 태스크")
-        for task in self._tasks:
-            if not task.done():
-                task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
-        self._state = TaskState.STOPPED
-        self._logger.info("DailyPriceCollectorTask 종료 완료")
-
     async def suspend(self) -> None:
         """수집을 일시 중지한다 (chunk 사이에서 대기)."""
         if self._state == TaskState.RUNNING:
@@ -133,18 +114,6 @@ class DailyPriceCollectorTask(SchedulableTask):
             self._suspend_event.set()
             self._state = TaskState.RUNNING
             self._logger.info("DailyPriceCollectorTask 재개")
-
-    # ── 장마감 후 자동 스케줄러 ────────────────────────────
-
-    async def _after_market_scheduler(self) -> None:
-        """장 마감 후 자동으로 수집을 스케줄링하는 루프."""
-        await run_after_market_loop(
-            mcs=self._mcs,
-            market_clock=self._market_clock,
-            logger=self._logger,
-            on_market_closed=self._on_market_closed,
-            label="DailyPriceCollector",
-        )
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         """장 마감 후 콜백: 해당 거래일의 수집이 필요하면 실행."""

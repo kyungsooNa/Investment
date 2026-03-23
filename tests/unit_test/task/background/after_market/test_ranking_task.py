@@ -464,7 +464,7 @@ async def test_refresh_basic_ranking(mock_deps):
         env=env, logger=logger, market_clock=market_clock,
         market_data_service=market_data_service,
     )
-    bg.mcs = market_calendar_service # Ensure mcs is set for this test
+    bg._mcs = market_calendar_service  # Ensure mcs is set for this test
 
     await bg.refresh_basic_ranking()
 
@@ -517,7 +517,7 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
         env=env, logger=logger, market_clock=market_clock,
         market_data_service=market_data_service,
     )
-    bg.mcs = market_calendar_service # Ensure mcs is set for this test
+    bg._mcs = market_calendar_service  # Ensure mcs is set for this test
 
     # asyncio.sleep를 1회만 실행 후 CancelledError로 종료
     call_count = 0
