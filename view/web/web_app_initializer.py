@@ -8,6 +8,7 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from services.stock_query_service import StockQueryService
+from services.streaming_service import StreamingService
 from services.order_execution_service import OrderExecutionService
 from repositories.virtual_trade_repository import VirtualTradeRepository
 from services.virtual_trade_service import VirtualTradeService
@@ -53,6 +54,7 @@ class WebAppContext:
         self.market_clock: MarketClock = None
         self.broker: BrokerAPIWrapper = None
         self.stock_query_service: StockQueryService = None
+        self.streaming_service: StreamingService = None
         self.order_execution_service: OrderExecutionService = None
         self.indicator_service: IndicatorService = None
         self.virtual_repo = VirtualTradeRepository()
@@ -202,9 +204,16 @@ class WebAppContext:
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
+        # StreamingService 초기화
+        self.streaming_service = StreamingService(
+            broker_api_wrapper=self.broker,
+            logger=self.logger,
+            market_clock=self.market_clock,
+            market_data_service=self.market_data_service,
+        )
         # WebSocketWatchdogTask 초기화
         self.websocket_watchdog_task = WebSocketWatchdogTask(
-            stock_query_service=self.stock_query_service,
+            streaming_service=self.streaming_service,
             realtime_data_service=self.realtime_data_service,
             market_calendar_service=self._mcs,
             performance_profiler=self.pm,
@@ -473,14 +482,14 @@ class WebAppContext:
 
     def _web_realtime_callback(self, data):
         """웹소켓 실시간 콜백: 기존 핸들러 + 웹 SSE 전달."""
-        if self.stock_query_service:
-            self.stock_query_service.dispatch_realtime_message(data)
+        if self.streaming_service:
+            self.streaming_service.dispatch_realtime_message(data)
         if data.get('type') == 'realtime_program_trading':
             item = data.get('data', {})
             # [추가] 현재가 정보 주입
-            if self.stock_query_service:
+            if self.streaming_service:
                 code = item.get('유가증권단축종목코드')
-                price_data = self.stock_query_service.get_cached_realtime_price(code)
+                price_data = self.streaming_service.get_cached_realtime_price(code)
                 if price_data:
                     if isinstance(price_data, dict):
                         item['price'] = price_data.get('price')
@@ -513,18 +522,18 @@ class WebAppContext:
 
         try:
             t_start = self.pm.start_timer()
-            connected = await self.stock_query_service.connect_websocket(self._web_realtime_callback)
+            connected = await self.streaming_service.connect_websocket(self._web_realtime_callback)
             self.pm.log_timer(f"connect_websocket({code})", t_start)
             if not connected:
                 self.logger.warning(f"프로그램매매 구독 실패 (WebSocket 연결 불가): {code}")
                 return False
 
             t_sub_pt = self.pm.start_timer()
-            sub_pt_success = await self.stock_query_service.subscribe_program_trading(code)
+            sub_pt_success = await self.streaming_service.subscribe_program_trading(code)
             self.pm.log_timer(f"subscribe_program_trading({code})", t_sub_pt)
 
             t_sub_price = self.pm.start_timer()
-            sub_price_success = await self.stock_query_service.subscribe_realtime_price(code)
+            sub_price_success = await self.streaming_service.subscribe_realtime_price(code)
             self.pm.log_timer(f"subscribe_realtime_price({code})", t_sub_price)
 
             if sub_pt_success and sub_price_success:
@@ -535,9 +544,9 @@ class WebAppContext:
                 # 하나라도 실패하면, 성공했을 수 있는 다른 구독을 해지하여 상태를 정리한다.
                 self.logger.warning(f"프로그램매매 구독 실패 (pt: {sub_pt_success}, price: {sub_price_success}) - {code}")
                 if sub_pt_success:
-                    await self.stock_query_service.unsubscribe_program_trading(code)
+                    await self.streaming_service.unsubscribe_program_trading(code)
                 if sub_price_success:
-                    await self.stock_query_service.unsubscribe_realtime_price(code)
+                    await self.streaming_service.unsubscribe_realtime_price(code)
                 return False
 
         except Exception as e:
@@ -546,16 +555,14 @@ class WebAppContext:
 
     async def stop_program_trading(self, code: str):
         """특정 종목 프로그램매매 구독 해지."""
-        # [변경] 매니저를 통해 구독 상태 확인
         if self.realtime_data_service.is_subscribed(code):
-            await self.stock_query_service.unsubscribe_program_trading(code)
-            await self.stock_query_service.unsubscribe_realtime_price(code) # [추가]
+            await self.streaming_service.unsubscribe_program_trading(code)
+            await self.streaming_service.unsubscribe_realtime_price(code)
             self.realtime_data_service.remove_subscribed_code(code)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
-        # [변경] 매니저에서 구독 목록 가져오기
         for code in self.realtime_data_service.get_subscribed_codes():
-            await self.stock_query_service.unsubscribe_program_trading(code)
-            await self.stock_query_service.unsubscribe_realtime_price(code)
+            await self.streaming_service.unsubscribe_program_trading(code)
+            await self.streaming_service.unsubscribe_realtime_price(code)
         self.realtime_data_service.clear_subscribed_codes()
