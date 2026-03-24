@@ -10,7 +10,8 @@ from core.market_clock import MarketClock
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from common.types import (
     ResPriceSummary, ResCommonResponse, ErrorCode,
-    ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation, ResDailyChartApiItem,
+
+    ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation, ResDailyChartApiItem, Exchange,
     ResStockFullInfoApiOutput
 )
 from core.cache.cache_store import CacheStore
@@ -48,16 +49,17 @@ class MarketDataService:
         return await self._broker_api_wrapper.get_name_by_code(code)
 
     async def get_price_summary(self, stock_code) -> ResCommonResponse:
+    async def get_price_summary(self, stock_code, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
         self._logger.info(f"MarketDataService - {stock_code} 종목 요약 정보 조회 요청")
-        return await self._broker_api_wrapper.get_price_summary(stock_code)
+        return await self._broker_api_wrapper.get_price_summary(stock_code, exchange=exchange)
 
-    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+    async def get_stock_info_by_code(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목코드로 종목의 전체 정보를 가져옵니다 (BrokerAPIWrapper 위임)."""
         self._logger.info(f"MarketDataService - {stock_code} 종목 상세 정보 조회 요청")
-        return await self._broker_api_wrapper.get_stock_info_by_code(stock_code)
+        return await self._broker_api_wrapper.get_stock_info_by_code(stock_code, exchange=exchange)
 
-    async def get_current_price(self, stock_code, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
+    async def get_current_price(self, stock_code, exchange: Exchange = Exchange.KRX, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
         # 1. StockRepository 단기 캐시 확인 (웹소켓 틱 갱신 또는 최근 API 조회 결과)
         if self._stock_repo:
             cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0, count_stats=count_stats, caller=caller)
@@ -75,7 +77,7 @@ class MarketDataService:
 
         if count_stats:
             self._logger.info(f"MarketDataService - {stock_code} 현재가 조회 요청")
-        resp = await self._broker_api_wrapper.get_current_price(stock_code)
+        resp = await self._broker_api_wrapper.get_current_price(stock_code, exchange=exchange)
 
         # 3. 조회 결과를 StockRepository에 갱신
         if resp and resp.rt_cd == ErrorCode.SUCCESS.value and self._stock_repo:
@@ -83,10 +85,10 @@ class MarketDataService:
 
         return resp
 
-    async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
+    async def get_stock_conclusion(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목의 체결(체결강도 등) 정보를 조회합니다."""
         self._logger.info(f"MarketDataService - {stock_code} 체결 정보 조회 요청")
-        return await self._broker_api_wrapper.get_stock_conclusion(stock_code)
+        return await self._broker_api_wrapper.get_stock_conclusion(stock_code, exchange=exchange)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목)"""
@@ -161,20 +163,20 @@ class MarketDataService:
             self._logger.exception(error_msg)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=error_msg, data=[])
 
-    async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
+    async def get_asking_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목의 실시간 호가 정보를 조회합니다."""
         self._logger.info(f"MarketDataService - {stock_code} 종목 호가 정보 조회 요청")
-        return await self._broker_api_wrapper.get_asking_price(stock_code)
+        return await self._broker_api_wrapper.get_asking_price(stock_code, exchange=exchange)
 
-    async def get_time_concluded_prices(self, stock_code: str) -> ResCommonResponse:
+    async def get_time_concluded_prices(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목의 시간대별 체결가 정보를 조회합니다."""
         self._logger.info(f"MarketDataService - {stock_code} 종목 시간대별 체결가 조회 요청")
-        return await self._broker_api_wrapper.get_time_concluded_prices(stock_code)
+        return await self._broker_api_wrapper.get_time_concluded_prices(stock_code, exchange=exchange)
 
-    async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str, fid_period_div_code: str = 'D') -> ResCommonResponse:
+    async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str, fid_period_div_code: str = 'D', exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""
         self._logger.info(f"MarketDataService - {stock_code} 종목 차트 데이터 조회 요청")
-        return await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code=stock_code, start_date=start_date, end_date=end_date, fid_period_div_code=fid_period_div_code)
+        return await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code=stock_code, start_date=start_date, end_date=end_date, fid_period_div_code=fid_period_div_code, exchange=exchange)
 
     async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
         """상승률 또는 하락률 상위 종목을 조회합니다."""
@@ -371,7 +373,7 @@ class MarketDataService:
             self._logger.warning(f"오늘자 OHLCV 구성을 위한 현재가 조회 실패: {e}")
         return []
 
-    async def get_ohlcv(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
+    async def get_ohlcv(self, stock_code: str, period: str = "D", caller: str = "unknown", exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         일봉(D)의 경우 StockRepository 활용, 주봉/월봉은 기존 API 조회 방식 사용.
         """
@@ -422,21 +424,21 @@ class MarketDataService:
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(final_rows)}건", data=final_rows)
         else:
             s, e = self._calc_range_by_period(period, end_dt=self._market_clock.get_current_kst_time())
-            raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code, start_date=s, end_date=e, fid_period_div_code=period.upper())
+            raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code, start_date=s, end_date=e, fid_period_div_code=period.upper(), exchange=exchange)
             if not raw or raw.rt_cd != ErrorCode.SUCCESS.value: return raw
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=self._normalize_ohlcv_rows(raw.data))
 
-    async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: Optional[str] = None, end_date: Optional[str] = None) -> ResCommonResponse:
+    async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: Optional[str] = None, end_date: Optional[str] = None, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
         """
         ed = end_date or self._market_clock.get_current_kst_time()
         sd = start_date or (datetime.strptime(ed, "%Y%m%d") - timedelta(days=240)).strftime("%Y%m%d")
-        raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code, start_date=sd, end_date=ed, fid_period_div_code=period.upper())
+        raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code, start_date=sd, end_date=ed, fid_period_div_code=period.upper(), exchange=exchange)
         if not raw or raw.rt_cd != ErrorCode.SUCCESS.value: return raw
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=self._normalize_ohlcv_rows(raw.data))
 
-    async def get_recent_daily_ohlcv(self, code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE, end_date: Optional[str] = None, start_date: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_recent_daily_ohlcv(self, code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE, end_date: Optional[str] = None, start_date: Optional[str] = None, exchange: Exchange = Exchange.KRX) -> List[Dict[str, Any]]:
         """
         최근 'limit'개 *거래일* 일봉을 반환.
         API는 시작/종료일 범위를 요구하므로 넉넉한 범위로 받아서 슬라이스로 limit개 보장.
@@ -447,7 +449,8 @@ class MarketDataService:
         current_ed_dt = datetime.strptime(end_date, "%Y%m%d") if end_date else self._market_clock.get_current_kst_time()
         
         if start_date:
-            resp = await self.get_ohlcv_range(code, "D", start_date, self._market_clock.to_yyyymmdd(current_ed_dt))
+
+            resp = await self.get_ohlcv_range(code, "D", start_date, self._market_clock.to_yyyymmdd(current_ed_dt), exchange=exchange)
             return resp.data or [] if resp and resp.rt_cd == ErrorCode.SUCCESS.value else []
 
         # limit을 만족하기 위해 대략 영업일을 고려해 1.5를 곱하고 100일 단위로 끊습니다.

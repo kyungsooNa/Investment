@@ -9,7 +9,7 @@ from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlPro
 from brokers.korea_investment.korea_invest_url_keys import EndpointKey
 from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 from typing import Optional
-from common.types import ResCommonResponse
+from common.types import ResCommonResponse, Exchange
 
 
 class KoreaInvestApiAccount(KoreaInvestApiBase):
@@ -29,10 +29,11 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
                          url_provider=url_provider,
                          trid_provider=trid_provider)
 
-    async def get_account_balance(self) -> ResCommonResponse:
+    async def get_account_balance(self, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         모의투자 또는 실전투자 계좌의 잔고를 조회하는 메서드.
         투자환경(env)에 따라 자동 분기된다.
+        exchange=Exchange.NXT 인 경우 시간외단일가 파라미터(AFHR_FLPR_YN)를 "X"로 설정한다.
         """
         full_config = self._env.active_config
 
@@ -50,7 +51,9 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
             cano = full_account_number
             acnt_prdt_cd = "01"
 
-        params = Params.account_balance(cano=cano, acnt_prdt_cd=acnt_prdt_cd)
+        # NXT 거래소는 AFHR_FLPR_YN을 "X"로 설정
+        afhr_flpr_yn = "X" if exchange == Exchange.NXT else "N"
+        params = Params.account_balance(cano=cano, acnt_prdt_cd=acnt_prdt_cd, afhr_flpr_yn=afhr_flpr_yn)
 
         mode_str = "모의투자" if is_paper else "실전투자"
         self._logger.info(f"{mode_str} 계좌 잔고 조회 시도...")

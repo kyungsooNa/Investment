@@ -15,7 +15,7 @@ import logging
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from typing import Any
-from common.types import ResCommonResponse
+from common.types import ResCommonResponse, Exchange
 from services.market_calendar_service import MarketCalendarService
 
 
@@ -75,44 +75,47 @@ class KoreaInvestApiClient:
         self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger, market_clock=self.market_clock, market_calendar_service=self._mcs)
 
     # --- Account API delegation ---
-    async def get_account_balance(self) -> ResCommonResponse:
-        return await self._account.get_account_balance()
+    async def get_account_balance(self, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
+        return await self._account.get_account_balance(exchange=exchange)
 
     # --- Trading API delegation ---
-    async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool) -> ResCommonResponse:
-        return await self._trading.place_stock_order(stock_code, order_price, order_qty, is_buy)
+    async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
+                                exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, is_buy, exchange=exchange)
 
     # --- Quotations API delegation (Updated) ---
     # KoreaInvestApiQuotations의 모든 메서드가 ResCommonResponse를 반환하도록 이미 수정되었으므로, 해당 반환 타입을 반영
-    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+    async def get_stock_info_by_code(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목코드로 종목의 전체 정보를 가져옵니다. ResCommonResponse를 반환합니다."""
-        return await self._quotations.get_stock_info_by_code(stock_code)
+        return await self._quotations.get_stock_info_by_code(stock_code, exchange=exchange)
 
-    async def get_current_price(self, code: str) -> ResCommonResponse:
+    async def get_current_price(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """현재가를 조회합니다. ResCommonResponse를 반환합니다."""
-        return await self._quotations.get_current_price(code)
+        return await self._quotations.get_current_price(code, exchange=exchange)
 
-    async def get_stock_conclusion(self, code: str) -> ResCommonResponse:
+    async def get_stock_conclusion(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주식 체결(체결강도) 정보를 조회합니다."""
-        return await self._quotations.get_stock_conclusion(code)
+        return await self._quotations.get_stock_conclusion(code, exchange=exchange)
 
-    async def get_price_summary(self, code: str) -> ResCommonResponse:  # 반환 타입 변경
+    async def get_price_summary(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다. ResCommonResponse를 반환합니다."""
-        return await self._quotations.get_price_summary(code)
+        return await self._quotations.get_price_summary(code, exchange=exchange)
 
-    async def get_market_cap(self, code: str) -> ResCommonResponse:  # 반환 타입 변경
+    async def get_market_cap(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목코드로 시가총액을 반환합니다. ResCommonResponse를 반환합니다."""
-        return await self._quotations.get_market_cap(code)
+        return await self._quotations.get_market_cap(code, exchange=exchange)
 
-    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> ResCommonResponse:  # 반환 타입 변경
+    async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> ResCommonResponse:
         """시가총액 상위 종목 목록을 반환합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.get_top_market_cap_stocks_code(market_code, count)
 
     async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str,
-                                           fid_period_div_code: str = 'D') -> ResCommonResponse:  # 반환 타입 변경
+                                           fid_period_div_code: str = 'D',
+                                           exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """일별/분별 주식 시세 차트 데이터를 조회합니다. ResCommonResponse를 반환합니다."""
         return await self._quotations.inquire_daily_itemchartprice(stock_code, start_date=start_date, end_date=end_date,
-                                                                   fid_period_div_code=fid_period_div_code)
+                                                                   fid_period_div_code=fid_period_div_code,
+                                                                   exchange=exchange)
 
     async def inquire_time_itemchartprice(
         self,
@@ -154,17 +157,17 @@ class KoreaInvestApiClient:
             include_past=pw_data_incu_yn,
             fid_pw_data_incu_yn=fake_tick_incu_yn)
 
-    async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
+    async def get_asking_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         종목의 실시간 호가(매도/매수 잔량 포함) 정보를 조회합니다.
         """
-        return await self._quotations.get_asking_price(stock_code)
+        return await self._quotations.get_asking_price(stock_code, exchange=exchange)
 
-    async def get_time_concluded_prices(self, stock_code: str) -> ResCommonResponse:
+    async def get_time_concluded_prices(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         종목의 시간대별 체결가/체결량 정보를 조회합니다.
         """
-        return await self._quotations.get_time_concluded_prices(stock_code)
+        return await self._quotations.get_time_concluded_prices(stock_code, exchange=exchange)
 
     # async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
     #     """

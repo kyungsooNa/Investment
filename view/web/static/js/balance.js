@@ -4,6 +4,17 @@ let balanceSortState = { key: null, dir: 'asc' };
 let balanceStocksCache = [];
 let balanceSummaryCache = {};
 let balanceAccInfoCache = {};
+let currentBalanceExchange = 'KRX';
+
+function toggleBalanceExchange(exchange, btn) {
+    if (currentBalanceExchange === exchange) return;
+    currentBalanceExchange = exchange;
+    // 버튼 active 상태 갱신
+    const btns = document.querySelectorAll('.balance-exchange-btn');
+    btns.forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    loadBalance(exchange);
+}
 
 function renderBalanceTable() {
     const div = document.getElementById('balance-result');
@@ -43,12 +54,16 @@ function renderBalanceTable() {
         return `sortable sort-${balanceSortState.dir}`;
     };
 
+    const exchLabel = accInfo.exchange === 'NXT' ? 'NXT' : 'KRX';
+    const exchBadgeClass = accInfo.exchange === 'NXT' ? 'nxt' : 'krx';
+
     let html = `
         <div class="card">
         <div class="balance-summary">
             <p>
                 <strong>계좌번호:</strong> ${accInfo.number}
                 <span class="badge ${badgeClass}" style="margin-left:5px; font-size:0.8em;">${accInfo.type}</span>
+                <span class="badge ${exchBadgeClass}" style="margin-left:5px; font-size:0.8em;">${exchLabel}</span>
             </p>
             <p><strong>총 평가금액:</strong> ${parseInt(summary.tot_evlu_amt || 0).toLocaleString()}원</p>
             <p><strong>예수금:</strong> ${parseInt(summary.dnca_tot_amt || 0).toLocaleString()}원</p>
@@ -126,10 +141,12 @@ function _showBalanceSkeleton() {
         </div>`;
 }
 
-async function loadBalance() {
+async function loadBalance(exchange) {
+    const exch = exchange || currentBalanceExchange || 'KRX';
+    currentBalanceExchange = exch;
     _showBalanceSkeleton();
     try {
-        const res = await fetchWithTimeout('/api/balance');
+        const res = await fetchWithTimeout(`/api/balance?exchange=${exch}`);
         const json = await res.json();
 
         if (json.rt_cd !== "0") {

@@ -33,6 +33,16 @@ class TrIdLeaf(str, Enum):
     ORDER_CASH_SELL_PAPER = "order_cash_sell_paper"
 
 
+class TrIdLeafWebSocket(str, Enum):
+    """웹소켓 TR ID 키 (NXT 포함)"""
+    NXT_REALTIME_PRICE = "nxt_realtime_price"
+    NXT_REALTIME_QUOTE = "nxt_realtime_quote"
+    NXT_REALTIME_PROGRAM_TRADING = "nxt_realtime_program_trading"
+    NXT_REALTIME_EXPECTED = "nxt_realtime_expected"
+    NXT_REALTIME_MEMBER = "nxt_realtime_member"
+    NXT_MARKET_STATUS = "nxt_market_status"
+
+
 class TrId(str, Enum):
     """
     논리 키(모드에 따라 leaf가 달라지는 항목을 하나의 키로 표현)

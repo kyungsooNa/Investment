@@ -1,9 +1,23 @@
 {% extends "base.html" %}
 
 {% block content %}
+    <style>
+        .balance-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+        .balance-exchange-btn { padding: 4px 10px; font-size: 12px; background: var(--bg-primary, #f5f5f5); border: 1px solid var(--border, #ccc); color: var(--text-secondary, #555); border-radius: 4px; cursor: pointer; }
+        .balance-exchange-btn.active { background: var(--accent, #4a90e2); color: white; border-color: var(--accent, #4a90e2); font-weight: bold; }
+        .balance-exchange-btn:hover { background: var(--bg-card, #e8e8e8); }
+        .badge.nxt { background-color: #9b59b6; color: white; padding: 2px 6px; border-radius: 4px; }
+        .badge.krx { background-color: #2980b9; color: white; padding: 2px 6px; border-radius: 4px; }
+    </style>
     <div id="section-balance" class="section">
         <div class="card">
-            <h2>계좌 잔고</h2>
+            <div class="balance-header">
+                <h2>계좌 잔고</h2>
+                <div>
+                    <button class="balance-exchange-btn active" onclick="toggleBalanceExchange('KRX', this)">KRX</button>
+                    <button class="balance-exchange-btn" onclick="toggleBalanceExchange('NXT', this)">NXT</button>
+                </div>
+            </div>
             <button class="btn" onclick="loadBalance()">잔고 조회</button>
         </div>
         <div id="balance-result">
@@ -13,7 +27,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/balance.js?v=1"></script>
+<script src="/static/js/balance.js?v=2"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         loadBalance();

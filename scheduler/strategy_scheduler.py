@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
-from common.types import TradeSignal, ErrorCode
+from common.types import TradeSignal, ErrorCode, Exchange
 from services.market_calendar_service import MarketCalendarService
 from services.virtual_trade_service import VirtualTradeService
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
@@ -363,13 +363,17 @@ class StrategyScheduler:
         # API 주문 (dry_run이 아닐 때)
         if not self._dry_run:
             try:
+                try:
+                    signal_exchange = Exchange(signal.exchange) if signal.exchange else Exchange.KRX
+                except ValueError:
+                    signal_exchange = Exchange.KRX
                 if signal.action == "BUY":
                     resp = await self._oes.handle_place_buy_order(
-                        signal.code, signal.price, signal.qty
+                        signal.code, signal.price, signal.qty, exchange=signal_exchange
                     )
                 else:
                     resp = await self._oes.handle_place_sell_order(
-                        signal.code, signal.price, signal.qty
+                        signal.code, signal.price, signal.qty, exchange=signal_exchange
                     )
 
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:

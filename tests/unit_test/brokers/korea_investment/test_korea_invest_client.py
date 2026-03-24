@@ -152,7 +152,8 @@ async def test_quotations_get_price_summary_success(korea_invest_client_instance
     result: ResCommonResponse = await client.get_price_summary("005930")
 
     # 검증
-    mock_quotations.get_price_summary.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    mock_quotations.get_price_summary.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     assert result.data["symbol"] == "005930"
     assert result.data["open"] == 10000
     assert result.data["current"] == 10500
@@ -180,7 +181,8 @@ async def test_place_stock_order_sell_delegation(korea_invest_client_instance):
 
     result = await client.place_stock_order("005930", 69000, 5, is_buy=False)  # 시장가 매수
 
-    mock_trading.place_stock_order.assert_awaited_once_with("005930", 69000, 5, False)
+    from common.types import Exchange
+    mock_trading.place_stock_order.assert_awaited_once_with("005930", 69000, 5, False, exchange=Exchange.KRX)
     assert result == {"rt_cd": "0", "msg1": "매도 주문 성공"}
 
 
@@ -192,7 +194,8 @@ async def test_place_stock_order_buy_delegation(korea_invest_client_instance):
 
     result = await client.place_stock_order("005930", 70000, 10, is_buy=True)  # 시장가 매수
 
-    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, True)
+    from common.types import Exchange
+    mock_trading.place_stock_order.assert_awaited_once_with("005930", 70000, 10, True, exchange=Exchange.KRX)
     assert result == {"rt_cd": "0", "msg1": "주문 성공"}
 
 
@@ -205,7 +208,8 @@ async def test_get_stock_info_by_code_delegation(korea_invest_client_instance):
 
     result = await client.get_stock_info_by_code("005930")
 
-    mock_quotations.get_stock_info_by_code.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    mock_quotations.get_stock_info_by_code.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     assert result == {"hts_kor_isnm": "삼성전자"}
 
 
@@ -217,7 +221,8 @@ async def test_get_current_price_delegation(korea_invest_client_instance):
 
     result = await client.get_current_price("005930")
 
-    mock_quotations.get_current_price.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    mock_quotations.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     assert result == {"output": {"stck_prpr": "75000"}}
 
 
@@ -229,7 +234,8 @@ async def test_get_market_cap_delegation(korea_invest_client_instance):
 
     result = await client.get_market_cap("005930")
 
-    mock_quotations.get_market_cap.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    mock_quotations.get_market_cap.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     assert result == 500000000000000
 
 
@@ -252,7 +258,8 @@ async def test_inquire_daily_itemchartprice_delegation(korea_invest_client_insta
 
     result = await client.inquire_daily_itemchartprice("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
 
-    mock_quotations.inquire_daily_itemchartprice.assert_awaited_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
+    from common.types import Exchange
+    mock_quotations.inquire_daily_itemchartprice.assert_awaited_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D", exchange=Exchange.KRX)
     assert result == [{"date": "20230101", "price": "70000"}]
 
 @pytest.mark.asyncio
@@ -263,7 +270,8 @@ async def test_get_stock_conclusion_delegation(korea_invest_client_instance):
 
     result = await client.get_stock_conclusion("005930")
 
-    mock_quotations.get_stock_conclusion.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    mock_quotations.get_stock_conclusion.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     assert result == {"rt_cd": "0", "msg1": "OK"}
 
 
@@ -321,7 +329,8 @@ async def test_get_asking_price_delegation(korea_invest_client_instance):
 
     result = await client.get_asking_price("005930")
 
-    mock_quotations.get_asking_price.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    mock_quotations.get_asking_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     assert result == {"rt_cd": "0", "msg1": "OK"}
 
 
@@ -333,7 +342,8 @@ async def test_get_time_concluded_prices_delegation(korea_invest_client_instance
 
     result = await client.get_time_concluded_prices("005930")
 
-    mock_quotations.get_time_concluded_prices.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    mock_quotations.get_time_concluded_prices.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     assert result == {"rt_cd": "0", "msg1": "OK"}
 
 

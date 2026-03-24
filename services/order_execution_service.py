@@ -1,7 +1,7 @@
 # app/order_execution_service.py
 import asyncio
 from typing import Optional
-from common.types import ErrorCode, ResCommonResponse
+from common.types import ErrorCode, ResCommonResponse, Exchange
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
@@ -55,16 +55,16 @@ class OrderExecutionService:
             break
         return last_result
 
-    async def _execute_order_via_broker(self, stock_code, price, qty, is_buy: bool) -> ResCommonResponse:
+    async def _execute_order_via_broker(self, stock_code, price, qty, is_buy: bool, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         action_str = "매수" if is_buy else "매도"
         self.logger.info(f"OrderExecutionService - 주식 {action_str} 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
         try:
-            return await self.broker_api_wrapper.place_stock_order(stock_code, price, qty, is_buy=is_buy)
+            return await self.broker_api_wrapper.place_stock_order(stock_code, price, qty, is_buy=is_buy, exchange=exchange)
         except Exception as e:
             self.logger.exception(f"{action_str} 주문 중 오류 발생: {str(e)}")
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"{action_str} 주문 처리 중 예외 발생: {str(e)}", data=None)
 
-    async def handle_place_buy_order(self, stock_code, price, qty):
+    async def handle_place_buy_order(self, stock_code, price, qty, exchange: Exchange = Exchange.KRX):
         """주식 매수 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
         if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
@@ -75,7 +75,7 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         buy_order_result: ResCommonResponse = await self._retry_order(
-            lambda c, p, q: self._execute_order_via_broker(c, p, q, is_buy=True), stock_code, price, qty
+            lambda c, p, q: self._execute_order_via_broker(c, p, q, is_buy=True, exchange=exchange), stock_code, price, qty
         )
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
@@ -96,7 +96,7 @@ class OrderExecutionService:
         self.pm.log_timer(f"OrderExecutionService.handle_place_buy_order({stock_code})", t_start)
         return buy_order_result
 
-    async def handle_place_sell_order(self, stock_code, price, qty):
+    async def handle_place_sell_order(self, stock_code, price, qty, exchange: Exchange = Exchange.KRX):
         """주식 매도 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
         if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
@@ -107,7 +107,7 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
         sell_order_result: ResCommonResponse = await self._retry_order(
-            lambda c, p, q: self._execute_order_via_broker(c, p, q, is_buy=False), stock_code, price, qty
+            lambda c, p, q: self._execute_order_via_broker(c, p, q, is_buy=False, exchange=exchange), stock_code, price, qty
         )
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
@@ -128,7 +128,7 @@ class OrderExecutionService:
         self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)
         return sell_order_result
 
-    async def handle_buy_stock(self, stock_code, qty_input, price_input):  # 파라미터 추가
+    async def handle_buy_stock(self, stock_code, qty_input, price_input, exchange: Exchange = Exchange.KRX):
         """
         사용자 입력을 받아 주식 매수 주문을 처리합니다.
         trading_app.py의 '3'번 옵션에 매핑됩니다.
@@ -143,9 +143,9 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
 
         # handle_place_buy_order 호출
-        return await self.handle_place_buy_order(stock_code, price, qty)
+        return await self.handle_place_buy_order(stock_code, price, qty, exchange=exchange)
 
-    async def handle_sell_stock(self, stock_code, qty_input, price_input):  # 파라미터 추가
+    async def handle_sell_stock(self, stock_code, qty_input, price_input, exchange: Exchange = Exchange.KRX):
         """
         사용자 입력을 받아 주식 매도 주문을 처리합니다.
         trading_app.py의 '4'번 옵션에 매핑됩니다.
@@ -159,7 +159,7 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
 
         # handle_place_sell_order 호출
-        return await self.handle_place_sell_order(stock_code, price, qty)
+        return await self.handle_place_sell_order(stock_code, price, qty, exchange=exchange)
 
     async def handle_realtime_price_quote_stream(self, stock_code):
         """

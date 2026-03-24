@@ -13,7 +13,7 @@ from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlPro
 from brokers.korea_investment.korea_invest_url_keys import EndpointKey
 from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 from typing import Optional
-from common.types import ResCommonResponse, ErrorCode
+from common.types import ResCommonResponse, ErrorCode, Exchange
 
 
 class KoreaInvestApiTrading(KoreaInvestApiBase):
@@ -74,12 +74,20 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             return None
 
     async def place_stock_order(self, stock_code, order_price, order_qty,
-                                is_buy: bool) -> ResCommonResponse:  # async def로 변경됨
+                                is_buy: bool, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:  # async def로 변경됨
         full_config = self._env.active_config
 
         tr_id = self._trid_provider.trading_order_cash(is_buy)  # 모드에 따라 자동
 
         order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
+
+        # NXT 거래소에서 시장가 주문은 지원하지 않음
+        if exchange == Exchange.NXT and order_dvsn == '01':
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="NXT 거래소에서는 시장가 주문을 지원하지 않습니다. 지정가 주문을 사용하세요.",
+                data=None
+            )
 
         data = Params.order_cash_body(
             cano=full_config['stock_account_number'],
@@ -88,6 +96,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             ord_dvsn=order_dvsn,
             ord_qty=order_qty,
             ord_unpr=order_price,
+            excg_id_dvsn_cd=exchange.value if exchange != Exchange.KRX else "",
         )
 
         calculated_hashkey = await self._get_hashkey(data)

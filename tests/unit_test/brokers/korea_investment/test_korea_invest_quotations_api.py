@@ -161,7 +161,8 @@ async def test_get_price_summary(mock_quotations):
     )
 
     # get_current_price가 올바른 인자로 호출되었는지 확인 (선택 사항)
-    mock_quotations.get_current_price.assert_called_once_with("005930")
+    from common.types import Exchange
+    mock_quotations.get_current_price.assert_called_once_with("005930", exchange=Exchange.KRX)
 
 
 @pytest.mark.asyncio
