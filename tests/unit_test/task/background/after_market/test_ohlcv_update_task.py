@@ -43,7 +43,7 @@ def mock_sqs():
 def mock_stock_repo():
     """StockRepository mock — 기본값: 데이터 없음(신규 종목)."""
     repo = MagicMock()
-    repo.get_ohlcv_summary = MagicMock(
+    repo.get_ohlcv_summary = AsyncMock(
         return_value={"count": 0, "latest_date": None, "oldest_date": None}
     )
     return repo
