@@ -55,7 +55,7 @@ async def test_handle_event_success(telegram_notifier, sample_event):
         # 메시지 텍스트 포맷팅 검증 ('critical' 레벨이므로 🚨 이모지 포함 예상)
         text = payload["text"]
         assert "🚨" in text
-        assert "[TRADE] 매수 시그널" in text
+        assert "[STRATEGY] 매수 시그널" in text
         assert "삼성전자 72,000원 매수 체결" in text
 
 @pytest.mark.asyncio
@@ -88,7 +88,7 @@ async def test_handle_event_exception(telegram_notifier, sample_event, caplog):
 
 @pytest.fixture
 def filter_notifier():
-    """TRADE 카테고리만 허용하는 TelegramNotifier 인스턴스 픽스처"""
+    """STRATEGY 카테고리만 허용하는 TelegramNotifier 인스턴스 픽스처"""
     return TelegramNotifier(
         bot_token="test_bot_token", 
         chat_id="test_chat_id"
@@ -100,7 +100,7 @@ async def test_handle_event_filtered_out(filter_notifier):
     system_event = NotificationEvent(
         id="test_id_999",
         timestamp="2026-03-11T10:00:00",
-        category="SYSTEM",  # TRADE가 아님
+        category=NotificationCategory.SYSTEM,  # STRATEGY가 아님
         level=NotificationLevel.INFO,
         title="시스템 시작",
         message="시스템이 성공적으로 시작되었습니다.",

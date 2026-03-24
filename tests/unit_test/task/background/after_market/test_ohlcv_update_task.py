@@ -478,7 +478,7 @@ class TestCollectCompletion:
 
         ns.emit.assert_called_once()
         args = ns.emit.call_args[0]
-        assert args[0] == "API"
+        assert args[0] == "BACKGROUND"
         assert "OHLCV" in args[2]
 
     async def test_second_run_same_date_skips_all(self, task, mock_sqs, mock_stock_repo):
