@@ -216,7 +216,6 @@ class FirstPullbackStrategy(LiveStrategy):
             entry_date=self._tm.get_current_kst_time().strftime("%Y%m%d"),
             peak_price=current,
             surge_day_high=surge_day_high,
-            partial_sold=False,
         )
         self._save_state()
 
@@ -357,7 +356,6 @@ class FirstPullbackStrategy(LiveStrategy):
                     entry_date="",
                     peak_price=buy_price,
                     surge_day_high=0,
-                    partial_sold=False,
                 )
                 self._position_state[code] = state
 
@@ -398,25 +396,27 @@ class FirstPullbackStrategy(LiveStrategy):
                 if current < threshold:
                     reason = f"손절(20MA {ma_20d:,.0f} 하향이탈 {pnl:.1f}%)"
 
-            # 🌟 부분 익절: +10~15% 도달 & 미실행
-            if not reason and not state.partial_sold:
-                if pnl >= self._cfg.take_profit_lower_pct:
+            # 🌟 부분 익절: 직전 익절가(또는 진입가) 대비 +10% 도달 시 반복 실행
+            if not reason:
+                ref_price = state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price
+                pnl_from_ref = (current - ref_price) / ref_price * 100
+                if pnl_from_ref >= self._cfg.take_profit_lower_pct:
                     holding_qty = int(hold.get("qty", 1))
                     sell_qty = max(1, int(holding_qty * self._cfg.partial_sell_ratio))
 
                     if sell_qty >= holding_qty:
                         sell_qty = holding_qty
-                        sell_reason = f"전량익절({pnl:.1f}%, 잔고 {holding_qty}주)"
+                        sell_reason = f"전량익절({pnl_from_ref:.1f}%, 잔고 {holding_qty}주)"
                     else:
-                        sell_reason = f"부분익절({pnl:.1f}%, {sell_qty}주/{holding_qty}주)"
+                        sell_reason = f"부분익절({pnl_from_ref:.1f}%, {sell_qty}주/{holding_qty}주)"
 
                     self._logger.info({
                         "event": "partial_profit_signal",
-                        "code": code, "pnl": round(pnl, 2),
+                        "code": code, "pnl": round(pnl_from_ref, 2),
                         "sell_qty": sell_qty, "holding_qty": holding_qty,
                     })
 
-                    state.partial_sold = True
+                    state.last_partial_sell_price = current
                     self._save_state()
 
                     signals.append(TradeSignal(

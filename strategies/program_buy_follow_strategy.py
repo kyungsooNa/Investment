@@ -230,8 +230,9 @@ class ProgramBuyFollowStrategy(LiveStrategy):
 
                 if should_sell:
                     stock_name_from_api = self._get_str_field(output, "hts_kor_isnm") or stock_name
+                    holding_qty = int(hold.get("qty", 1))
                     signals.append(TradeSignal(
-                        code=code, name=stock_name_from_api, action="SELL", price=current, qty=1,
+                        code=code, name=stock_name_from_api, action="SELL", price=current, qty=holding_qty,
                         reason=reason, strategy_name=self.name,
                     ))
                     self._logger.info({

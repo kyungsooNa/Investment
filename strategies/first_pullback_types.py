@@ -39,8 +39,9 @@ class FirstPullbackConfig(BaseStrategyConfig):
 @dataclass
 class FPPositionState:
     """첫 눌림목 포지션 추적 상태."""
-    entry_price: int            # 진입가
-    entry_date: str             # 진입일 (YYYYMMDD)
-    peak_price: int             # 진입 후 최고가
-    surge_day_high: int         # 급등기 고점 (익절 참조가)
-    partial_sold: bool          # 50% 부분 익절 완료 여부
+    entry_price: int                    # 진입가
+    entry_date: str                     # 진입일 (YYYYMMDD)
+    peak_price: int                     # 진입 후 최고가
+    surge_day_high: int                 # 급등기 고점 (익절 참조가)
+    partial_sold: bool = False          # deprecated (JSON 하위호환용)
+    last_partial_sell_price: int = 0    # 마지막 부분익절 가격 (0=미실행, >0=기준가)
