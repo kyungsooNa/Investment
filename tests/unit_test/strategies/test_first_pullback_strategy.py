@@ -816,6 +816,7 @@ def test_load_state_corrupted(mock_deps, tmp_path):
     test_file = tmp_path / "corrupted.json"
     test_file.write_text("{invalid json")
     strategy.STATE_FILE = str(test_file)
+    strategy._position_state = {}
     strategy._load_state()
     assert strategy._position_state == {}
 
