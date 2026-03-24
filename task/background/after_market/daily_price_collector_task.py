@@ -16,7 +16,7 @@ from interfaces.schedulable_task import TaskState
 from repositories.stock_repository import StockRepository
 from repositories.stock_code_repository import StockCodeRepository
 from services.market_calendar_service import MarketCalendarService
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
@@ -151,7 +151,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         if not force and self._last_collected_date == target_date:
             self._logger.info(f"이미 {target_date} 현재가 수집 완료 — 스킵")
             if self._ns:
-                await self._ns.emit("API", "info", "현재가 수집 스킵", f"{target_date} 이미 수집 완료된 상태입니다.")
+                await self._ns.emit(NotificationCategory.BACKGROUND, NotificationLevel.INFO, "현재가 수집 스킵", f"{target_date} 이미 수집 완료된 상태입니다.")
             self._is_collecting = False
             return
 
@@ -233,14 +233,14 @@ class DailyPriceCollectorTask(AfterMarketTask):
             )
             if self._ns:
                 await self._ns.emit(
-                    "API", "info", "전체 종목 현재가 수집 완료",
+                    NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전체 종목 현재가 수집 완료",
                     f"{len(collected_records)}개 종목 수집, 소요: {elapsed:.1f}초",
                 )
 
         except Exception as e:
             self._logger.error(f"현재가 수집 실패: {e}", exc_info=True)
             if self._ns:
-                await self._ns.emit("SYSTEM", "error", "현재가 수집 실패", str(e))
+                await self._ns.emit(NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "현재가 수집 실패", str(e))
         finally:
             self._is_collecting = False
             self._progress["running"] = False

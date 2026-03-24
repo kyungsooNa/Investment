@@ -12,7 +12,7 @@ from typing import Dict, Optional, TYPE_CHECKING
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
 from interfaces.schedulable_task import TaskState
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
 if TYPE_CHECKING:
     from services.oneil_universe_service import OneilUniverseService
@@ -86,7 +86,7 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
         if self._last_generated_date == latest_trading_date:
             if self._ns:
                 await self._ns.emit(
-                    "API", "info", "전일기준우량주 생성 스킵",
+                    NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전일기준우량주 생성 스킵",
                     f"{latest_trading_date} 이미 생성 완료된 상태입니다."
                 )
             return
@@ -102,7 +102,7 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
             )
             if self._ns:
                 await self._ns.emit(
-                    "API", "info", "전일기준우량주 생성 스킵",
+                    NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전일기준우량주 생성 스킵",
                     f"{latest_trading_date} 이미 생성 완료된 상태입니다."
                 )
             return
@@ -131,8 +131,15 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
                 f"KOSDAQ {result.get('kosdaq_count')}종목, "
                 f"소요: {elapsed:.1f}초"
             )
+            if self._ns:
+                await self._ns.emit(
+                    NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전일기준우량주 생성 완료",
+                    f"KOSPI {result.get('kospi_count')}개, KOSDAQ {result.get('kosdaq_count')}개 종목 수집 완료 (소요: {elapsed:.1f}초)"
+                )
         except Exception as e:
             self._logger.error(f"전일 기준 우량주 생성 실패: {e}", exc_info=True)
+            if self._ns:
+                await self._ns.emit(NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "전일기준우량주 생성 실패", str(e))
         finally:
             self._is_generating = False
             self._progress["running"] = False

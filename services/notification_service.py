@@ -10,8 +10,23 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Callable, Coroutine, Any, Dict, List, Optional
+from enum import Enum
 
 from core.market_clock import MarketClock
+
+
+class NotificationCategory(str, Enum):
+    STRATEGY = "STRATEGY"
+    BACKGROUND = "BACKGROUND"
+    TRADE = "TRADE"
+    API = "API"
+    SYSTEM = "SYSTEM"
+
+class NotificationLevel(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
 
 
 @dataclass
@@ -19,8 +34,8 @@ class NotificationEvent:
     """알림 이벤트."""
     id: str
     timestamp: str          # ISO format (KST)
-    category: str           # "TRADE" | "API" | "SYSTEM"
-    level: str              # "critical" | "info" | "warning" | "error"
+    category: NotificationCategory
+    level: NotificationLevel
     title: str
     message: str
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -34,7 +49,7 @@ class NotificationService:
 
     사용법:
         nm = NotificationService(market_clock)
-        await nm.emit("TRADE", "critical", "매수 시그널", "삼성전자 72,000원")
+        await nm.emit(NotificationCategory.TRADE, NotificationCategory.CIRITICAL, "매수 시그널", "삼성전자 72,000원")
     """
 
     MAX_HISTORY = 200
@@ -49,8 +64,8 @@ class NotificationService:
 
     async def emit(
         self,
-        category: str,
-        level: str,
+        category: NotificationCategory,
+        level: NotificationLevel,
         title: str,
         message: str,
         metadata: Optional[Dict[str, Any]] = None,
@@ -65,6 +80,7 @@ class NotificationService:
             message=message,
             metadata=metadata or {},
         )
+        
         self._history.append(event)
         if len(self._history) > self.MAX_HISTORY:
             self._history = self._history[-self.MAX_HISTORY:]
@@ -98,7 +114,7 @@ class NotificationService:
     # ── 최근 이벤트 조회 ──
 
     def get_recent(
-        self, count: int = 50, category: Optional[str] = None
+        self, count: int = 50, category: Optional[NotificationCategory] = None
     ) -> List[dict]:
         items = self._history
         if category:

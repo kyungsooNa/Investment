@@ -719,7 +719,7 @@ async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps)
 
     bg_service._notification_service.emit.assert_awaited()
     args = bg_service._notification_service.emit.call_args[0]
-    assert args[0] == "API"
+    assert args[0] == "BACKGROUND"
     assert args[1] == "info"
     assert "기본 랭킹 갱신 완료" in args[2]
 
@@ -739,7 +739,7 @@ async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
 
     bg_service._notification_service.emit.assert_awaited()
     args = bg_service._notification_service.emit.call_args[0]
-    assert args[0] == "API"
+    assert args[0] == "BACKGROUND"
     assert "투자자 랭킹 갱신 완료" in args[2]
 
     # 2. Failure case

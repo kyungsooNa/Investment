@@ -39,7 +39,7 @@ from repositories.stock_repository import StockRepository
 from services.realtime_data_service import RealtimeDataService
 from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, NotificationCategory
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
@@ -111,7 +111,6 @@ class WebAppContext:
             self.telegram_notifier = TelegramNotifier(
                 bot_token=telegram_token, 
                 chat_id=telegram_chat_id,
-                allowed_categories=["TRADE"]
             )
             self.notification_service.register_external_handler(
                 self.telegram_notifier.handle_event

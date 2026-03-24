@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from view.web.routes.notification import router, stream_notifications
+from services.notification_service import NotificationCategory
 
 @pytest.fixture
 def app():
@@ -30,8 +31,8 @@ def test_get_recent_notifications(mock_get_ctx, client, mock_ctx):
     mock_get_ctx.return_value = mock_ctx
     
     mock_notifications = [
-        {"id": 1, "message": "test1", "category": "info"},
-        {"id": 2, "message": "test2", "category": "error"}
+        {"id": 1, "message": "test1", "category": NotificationCategory.SYSTEM.value},
+        {"id": 2, "message": "test2", "category": NotificationCategory.API.value}
     ]
     mock_ctx.notification_service.get_recent.return_value = mock_notifications
 
@@ -42,9 +43,9 @@ def test_get_recent_notifications(mock_get_ctx, client, mock_ctx):
     mock_ctx.notification_service.get_recent.assert_called_with(count=50, category=None)
 
     # 2. 파라미터 전달 호출
-    response = client.get("/notifications/recent?count=10&category=info")
+    response = client.get(f"/notifications/recent?count=10&category={NotificationCategory.SYSTEM.value}")
     assert response.status_code == 200
-    mock_ctx.notification_service.get_recent.assert_called_with(count=10, category="info")
+    mock_ctx.notification_service.get_recent.assert_called_with(count=10, category=NotificationCategory.SYSTEM)
 
 @pytest.mark.asyncio
 @patch("view.web.routes.notification._get_ctx")

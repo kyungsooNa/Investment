@@ -15,7 +15,7 @@ from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
 from services.market_calendar_service import MarketCalendarService
 from services.virtual_trade_service import VirtualTradeService
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 from services.order_execution_service import OrderExecutionService
 from repositories.stock_code_repository import StockCodeRepository
 from services.stock_query_service import StockQueryService
@@ -126,7 +126,7 @@ class StrategyScheduler:
         self._logger.info("[Scheduler] 시작 (전체 전략 활성화)")
         if self._notification_service:
             names = [c.strategy.name for c in self._strategies if c.enabled]
-            await self._notification_service.emit("SYSTEM", "info", "스케줄러 시작", f"활성 전략: {', '.join(names)}")
+            await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "스케줄러 시작", f"활성 전략: {', '.join(names)}")
 
     async def stop(self, save_state: bool = False):
         if save_state:
@@ -152,7 +152,7 @@ class StrategyScheduler:
 
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
         if self._notification_service:
-            await self._notification_service.emit("SYSTEM", "info", "스케줄러 정지", "전체 전략 비활성화")
+            await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "스케줄러 정지", "전체 전략 비활성화")
 
     # ── 메인 루프 ──
 
@@ -251,7 +251,7 @@ class StrategyScheduler:
             except Exception as e:
                 self._logger.error(f"[Scheduler] 루프 오류: {e}", exc_info=True)
                 if self._notification_service:
-                    await self._notification_service.emit("SYSTEM", "error", "스케줄러 루프 오류", str(e))
+                    await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "스케줄러 루프 오류", str(e))
                 await asyncio.sleep(self.LOOP_INTERVAL_SEC)
 
     # ── 전략 실행 ──
@@ -410,14 +410,14 @@ class StrategyScheduler:
 
         if self._notification_service:
             action_kr = "매수" if signal.action == "BUY" else "매도"
-            level = "critical" if api_success else "error"
+            level = NotificationLevel.CRITICAL if api_success else NotificationLevel.ERROR
             title = f"[{signal.strategy_name}] {signal.name} {action_kr} {'성공' if api_success else '실패'}"
             msg = (f"종목: {signal.name}({signal.code})\n"
                    f"주문: {log_price:,}원 × {signal.qty}주\n"
                    f"사유: {signal.reason}")
             if not api_success:
                 title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
-            await self._notification_service.emit("TRADE", level, title, msg, metadata={
+            await self._notification_service.emit(NotificationCategory.STRATEGY, level, title, msg, metadata={
                 "strategy_name": signal.strategy_name,
                 "code": signal.code,
                 "action": signal.action,
