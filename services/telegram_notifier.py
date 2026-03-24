@@ -1,7 +1,7 @@
 import aiohttp
 import logging
 from typing import Optional, List, Dict
-from services.notification_service import NotificationEvent, NotificationCategory
+from services.notification_service import NotificationEvent, NotificationCategory, NotificationLevel
 import unicodedata
 
 logger = logging.getLogger(__name__)
@@ -9,12 +9,12 @@ logger = logging.getLogger(__name__)
 class TelegramNotifier:
     """Telegram 알림을 비동기적으로 전송하는 핸들러 클래스입니다."""
 
-    def __init__(self, bot_token: str, chat_id: str, allowed_categories: Optional[List[NotificationCategory]] = None):
+    def __init__(self, bot_token: str, chat_id: str):
         self.bot_token = bot_token
         self.chat_id = chat_id
         self.api_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         # 허용할 카테고리 목록 설정 (기본값: STRATEGY, BACKGROUND)
-        self.allowed_categories = allowed_categories or [NotificationCategory.STRATEGY, NotificationCategory.BACKGROUND]
+        self.allowed_categories = [NotificationCategory.STRATEGY, NotificationCategory.BACKGROUND]
 
     async def handle_event(self, event: NotificationEvent) -> None:
         """NotificationService에서 호출할 비동기 콜백 메서드입니다."""
@@ -28,7 +28,7 @@ class TelegramNotifier:
             "warning": "⚠️",
             "error": "❌",
             "critical": "🚨"
-        }.get(event.level.lower(), "🔔")
+        }.get(event.level.value.lower(), "🔔")
 
         # 메타데이터에 수익률(return_rate) 정보가 있으면 메시지 본문에 이모지와 함께 삽입
         message_body = event.message

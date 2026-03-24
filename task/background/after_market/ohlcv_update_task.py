@@ -17,7 +17,7 @@ from interfaces.schedulable_task import TaskState
 from repositories.stock_repository import StockRepository
 from repositories.stock_code_repository import StockCodeRepository
 from services.market_calendar_service import MarketCalendarService
-from services.notification_service import NotificationService, NotificationCategory
+from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
@@ -241,14 +241,14 @@ class OhlcvUpdateTask(AfterMarketTask):
             )
             if self._ns:
                 await self._ns.emit(
-                    NotificationCategory.BACKGROUND, "info", "전체 종목 OHLCV 수집 완료",
+                    NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전체 종목 OHLCV 수집 완료",
                     f"갱신 {updated}개, 소요: {elapsed:.1f}초",
                 )
 
         except Exception as e:
             self._logger.error(f"OHLCV 수집 실패: {e}", exc_info=True)
             if self._ns:
-                await self._ns.emit(NotificationCategory.BACKGROUND, "error", "OHLCV 수집 실패", str(e))
+                await self._ns.emit(NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "OHLCV 수집 실패", str(e))
         finally:
             self._is_collecting = False
             self._progress["running"] = False

@@ -22,13 +22,20 @@ class NotificationCategory(str, Enum):
     API = "API"
     SYSTEM = "SYSTEM"
 
+class NotificationLevel(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
 @dataclass
 class NotificationEvent:
     """알림 이벤트."""
     id: str
     timestamp: str          # ISO format (KST)
     category: NotificationCategory
-    level: str              # "critical" | "info" | "warning" | "error"
+    level: NotificationLevel
     title: str
     message: str
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -42,7 +49,7 @@ class NotificationService:
 
     사용법:
         nm = NotificationService(market_clock)
-        await nm.emit(NotificationCategory.TRADE, "critical", "매수 시그널", "삼성전자 72,000원")
+        await nm.emit(NotificationCategory.TRADE, NotificationCategory.CIRITICAL, "매수 시그널", "삼성전자 72,000원")
     """
 
     MAX_HISTORY = 200
@@ -58,7 +65,7 @@ class NotificationService:
     async def emit(
         self,
         category: NotificationCategory,
-        level: str,
+        level: NotificationLevel,
         title: str,
         message: str,
         metadata: Optional[Dict[str, Any]] = None,

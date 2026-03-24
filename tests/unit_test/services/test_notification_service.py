@@ -5,7 +5,7 @@ import asyncio
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
 
-from services.notification_service import NotificationService, NotificationEvent, NotificationCategory
+from services.notification_service import NotificationService, NotificationEvent, NotificationCategory, NotificationLevel
 
 @pytest.fixture
 def mock_market_clock():
@@ -27,7 +27,7 @@ def test_notification_event_to_dict():
         id="123",
         timestamp="2025-01-01T10:00:00",
         category=NotificationCategory.SYSTEM,
-        level="info",
+        level=NotificationLevel.INFO,
         title="Test Event",
         message="This is a test.",
         metadata={"extra": "data"}
@@ -35,6 +35,7 @@ def test_notification_event_to_dict():
     event_dict = event.to_dict()
     assert event_dict["id"] == "123"
     assert event_dict["category"] == NotificationCategory.SYSTEM.value
+    assert event_dict["level"] == NotificationLevel.INFO.value
     assert event_dict["metadata"] == {"extra": "data"}
 
 # --- NotificationService Tests ---
@@ -48,7 +49,7 @@ def test_init(manager):
 @pytest.mark.asyncio
 async def test_emit_basic(manager):
     """emit 메서드의 기본 동작(이벤트 생성, 히스토리 저장, 반환)을 테스트합니다."""
-    event = await manager.emit(NotificationCategory.TRADE, "info", "매수", "삼성전자 1주 매수")
+    event = await manager.emit(NotificationCategory.TRADE, NotificationLevel.INFO, "매수", "삼성전자 1주 매수")
     
     assert isinstance(event, NotificationEvent)
     assert event.category == NotificationCategory.TRADE
@@ -62,7 +63,7 @@ async def test_emit_sends_to_subscribers(manager):
     queue1 = manager.create_subscriber_queue()
     queue2 = manager.create_subscriber_queue()
     
-    event = await manager.emit(NotificationCategory.SYSTEM, "warning", "API 지연", "응답 시간 5초 초과")
+    event = await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.WARNING, "API 지연", "응답 시간 5초 초과")
     
     # 큐에서 데이터 확인
     data1 = await queue1.get()
@@ -83,7 +84,7 @@ async def test_emit_handles_full_queue(manager):
     
     # 큐가 가득 찬 상태에서 emit 호출. asyncio.QueueFull 예외가 발생하지 않아야 함.
     try:
-        await manager.emit(NotificationCategory.SYSTEM, "error", "에러", "큐 Full 테스트")
+        await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "에러", "큐 Full 테스트")
     except asyncio.QueueFull:
         pytest.fail("asyncio.QueueFull 예외가 처리되지 않았습니다.")
         
@@ -100,7 +101,7 @@ async def test_emit_calls_external_handlers(manager):
     manager.register_external_handler(handler1)
     manager.register_external_handler(handler2)
     
-    event = await manager.emit(NotificationCategory.API, "info", "응답", "정상")
+    event = await manager.emit(NotificationCategory.API, NotificationLevel.INFO, "응답", "정상")
     
     handler1.assert_awaited_once_with(event)
     handler2.assert_awaited_once_with(event)
@@ -116,7 +117,7 @@ async def test_emit_handles_handler_exception(manager):
     
     # 예외가 전파되지 않아야 함
     try:
-        await manager.emit(NotificationCategory.SYSTEM, "critical", "장애", "DB 연결 실패")
+        await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.CRITICAL, "장애", "DB 연결 실패")
     except Exception:
         pytest.fail("외부 핸들러의 예외가 처리되지 않았습니다.")
         
@@ -129,10 +130,10 @@ async def test_emit_history_trimming(manager):
     """MAX_HISTORY 초과 시 가장 오래된 알림이 제거되는지 테스트합니다."""
     manager.MAX_HISTORY = 3
     
-    event1 = await manager.emit(NotificationCategory.SYSTEM, "info", "1", "1")
-    await manager.emit(NotificationCategory.SYSTEM, "info", "2", "2")
-    await manager.emit(NotificationCategory.SYSTEM, "info", "3", "3")
-    event4 = await manager.emit(NotificationCategory.SYSTEM, "info", "4", "4")
+    event1 = await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "1", "1")
+    await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "2", "2")
+    await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "3", "3")
+    event4 = await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "4", "4")
     
     assert len(manager._history) == 3
     assert manager._history[0] != event1 # 첫 번째 이벤트는 제거됨
@@ -162,11 +163,11 @@ def test_subscriber_queue_management(manager):
 async def test_get_recent(manager):
     """get_recent 메서드 기능 테스트 (count, category, 정렬)"""
     # 5개의 이벤트 생성
-    event1 = await manager.emit(NotificationCategory.TRADE, "info", "T1", "msg")
-    await manager.emit(NotificationCategory.SYSTEM, "info", "S1", "msg")
-    await manager.emit(NotificationCategory.TRADE, "info", "T2", "msg")
-    await manager.emit(NotificationCategory.API, "info", "A1", "msg")
-    event5 = await manager.emit(NotificationCategory.TRADE, "info", "T3", "msg") # 가장 최신
+    event1 = await manager.emit(NotificationCategory.TRADE, NotificationLevel.INFO, "T1", "msg")
+    await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "S1", "msg")
+    await manager.emit(NotificationCategory.TRADE, NotificationLevel.INFO, "T2", "msg")
+    await manager.emit(NotificationCategory.API, NotificationLevel.INFO, "A1", "msg")
+    event5 = await manager.emit(NotificationCategory.TRADE, NotificationLevel.INFO, "T3", "msg") # 가장 최신
     
     # 1. 기본 호출 (count=50, category=None) -> 5개 모두, 최신순
     recent = manager.get_recent()

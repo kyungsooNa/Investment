@@ -111,7 +111,6 @@ class WebAppContext:
             self.telegram_notifier = TelegramNotifier(
                 bot_token=telegram_token, 
                 chat_id=telegram_chat_id,
-                allowed_categories=[NotificationCategory.STRATEGY, NotificationCategory.BACKGROUND]
             )
             self.notification_service.register_external_handler(
                 self.telegram_notifier.handle_event

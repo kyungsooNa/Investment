@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
-from services.notification_service import NotificationEvent, NotificationCategory
+from services.notification_service import NotificationEvent, NotificationCategory, NotificationLevel
 
 @pytest.fixture
 def telegram_notifier():
@@ -15,7 +15,7 @@ def sample_event():
         id="test_id_123",
         timestamp="2026-03-11T10:00:00",
         category=NotificationCategory.STRATEGY,
-        level="critical",
+        level=NotificationLevel.CRITICAL,
         title="매수 시그널",
         message="삼성전자 72,000원 매수 체결",
         metadata={}
@@ -55,7 +55,7 @@ async def test_handle_event_success(telegram_notifier, sample_event):
         # 메시지 텍스트 포맷팅 검증 ('critical' 레벨이므로 🚨 이모지 포함 예상)
         text = payload["text"]
         assert "🚨" in text
-        assert "[STRATEGY] 매수 시그널" in text
+        assert "[TRADE] 매수 시그널" in text
         assert "삼성전자 72,000원 매수 체결" in text
 
 @pytest.mark.asyncio
@@ -88,11 +88,10 @@ async def test_handle_event_exception(telegram_notifier, sample_event, caplog):
 
 @pytest.fixture
 def filter_notifier():
-    """STRATEGY 카테고리만 허용하는 TelegramNotifier 인스턴스 픽스처"""
+    """TRADE 카테고리만 허용하는 TelegramNotifier 인스턴스 픽스처"""
     return TelegramNotifier(
         bot_token="test_bot_token", 
-        chat_id="test_chat_id", 
-        allowed_categories=[NotificationCategory.STRATEGY]
+        chat_id="test_chat_id"
     )
 
 @pytest.mark.asyncio
@@ -101,8 +100,8 @@ async def test_handle_event_filtered_out(filter_notifier):
     system_event = NotificationEvent(
         id="test_id_999",
         timestamp="2026-03-11T10:00:00",
-        category=NotificationCategory.SYSTEM,  # STRATEGY가 아님
-        level="info",
+        category="SYSTEM",  # TRADE가 아님
+        level=NotificationLevel.INFO,
         title="시스템 시작",
         message="시스템이 성공적으로 시작되었습니다.",
     )
@@ -118,7 +117,7 @@ async def test_handle_event_filtered_out(filter_notifier):
 async def test_handle_event_return_rate_positive(telegram_notifier):
     """수익률이 양수일 때 이모지와 텍스트 변환(사유 포함) 검증"""
     event = NotificationEvent(
-        id="1", timestamp="2026", category=NotificationCategory.STRATEGY, level="info", title="매도",
+        id="1", timestamp="2026", category=NotificationCategory.STRATEGY, level=NotificationLevel.INFO, title="매도",
         message="테스트\n사유: 조건 만족", metadata={"return_rate": 5.5}
     )
     with patch("aiohttp.ClientSession.post") as mock_post:
@@ -133,7 +132,7 @@ async def test_handle_event_return_rate_positive(telegram_notifier):
 async def test_handle_event_return_rate_negative_no_reason(telegram_notifier):
     """수익률이 음수이고 '사유:' 텍스트가 없을 때 검증"""
     event = NotificationEvent(
-        id="1", timestamp="2026", category=NotificationCategory.STRATEGY, level="warning", title="매도",
+        id="1", timestamp="2026", category=NotificationCategory.STRATEGY, level=NotificationLevel.WARNING, title="매도",
         message="테스트 메시지", metadata={"return_rate": -3.2}
     )
     with patch("aiohttp.ClientSession.post") as mock_post:
@@ -148,7 +147,7 @@ async def test_handle_event_return_rate_negative_no_reason(telegram_notifier):
 async def test_handle_event_return_rate_zero(telegram_notifier):
     """수익률이 0일 때 검증"""
     event = NotificationEvent(
-        id="1", timestamp="2026", category=NotificationCategory.STRATEGY, level="error", title="매도",
+        id="1", timestamp="2026", category=NotificationCategory.STRATEGY, level=NotificationLevel.ERROR, title="매도",
         message="테스트", metadata={"return_rate": 0.0}
     )
     with patch("aiohttp.ClientSession.post") as mock_post:
