@@ -466,6 +466,7 @@ class StockRepository:
                 "d250_lwpr":     str(r.get("w52_low") or 0),
                 "hts_kor_isnm":  str(r.get("name") or ""),
                 "stck_bsop_date": str(r.get("trade_date") or ""),
+                "stck_shrn_iscd": str(r.get("code") or ""),
             }
             return {"output": output, "_source": "daily_snapshot", "_trade_date": r.get("trade_date")}
         except Exception as e:
