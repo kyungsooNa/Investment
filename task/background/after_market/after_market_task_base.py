@@ -36,6 +36,14 @@ if TYPE_CHECKING:
     from core.market_clock import MarketClock
     from services.market_calendar_service import MarketCalendarService
 
+from pydantic import BaseModel, Field
+
+class AfterMarketTasksConfig(BaseModel):
+    after_market_delay_sec: Dict[str, int] = Field(default_factory=dict)
+
+class TaskConfigModel(BaseModel):
+    after_market_tasks: AfterMarketTasksConfig = Field(default_factory=AfterMarketTasksConfig)
+
 _TASK_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "..", "..", "..", "config", "task_config.yaml",
@@ -49,10 +57,11 @@ def _load_after_market_delays() -> Dict[str, int]:
         return _DEFAULT_DELAYS
     try:
         with open(_TASK_CONFIG_PATH, encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
-        _DEFAULT_DELAYS = (
-            raw.get("after_market_tasks", {}).get("after_market_delay_sec", {}) * 60 # yaml에서 분 단위로 설정 → 초 단위로 변환
-        )
+            raw = yaml.safe_load(f) or {}
+        
+        # Pydantic 모델을 통한 안전한 파싱, 타입 캐스팅 및 기본값 할당
+        config = TaskConfigModel(**raw)
+        _DEFAULT_DELAYS = {k: v * 60 for k, v in config.after_market_tasks.after_market_delay_sec.items()}
     except Exception:
         _DEFAULT_DELAYS = {}
     return _DEFAULT_DELAYS
