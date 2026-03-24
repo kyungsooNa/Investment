@@ -211,7 +211,7 @@ function renderSchedulerHistory(history) {
     ensureTableInCard(tbody.closest('table'));
 
     if (!history || history.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:15px;">실행 이력이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:15px;">실행 이력이 없습니다.</td></tr>';
         return;
     }
 
@@ -234,6 +234,7 @@ function renderSchedulerHistory(history) {
             <td><a href="/stock?code=${h.code}" target="_blank" class="stock-link">${h.name}(${h.code})</a></td>
             <td class="${actionClass}"><strong>${actionLabel}</strong>${statusIcon}</td>
             <td>${Number(h.price).toLocaleString()}</td>
+            <td>${h.qty ?? 1}</td>
             ${returnRateHtml}
             <td style="font-size:0.85em;">${h.reason}</td>
         </tr>`;

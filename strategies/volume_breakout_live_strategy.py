@@ -209,8 +209,9 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                     should_sell = True
 
                 if should_sell:
+                    holding_qty = int(hold.get("qty", 1))
                     signals.append(TradeSignal(
-                        code=code, name=stock_name, action="SELL", price=current, qty=1,
+                        code=code, name=stock_name, action="SELL", price=current, qty=holding_qty,
                         reason=reason, strategy_name=self.name,
                     ))
                     self._logger.info({

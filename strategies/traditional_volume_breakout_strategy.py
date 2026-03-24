@@ -284,8 +284,9 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                     self._position_state.pop(code, None)
                     self._save_state()
                     api_stock_name = data.get("name", "") or self.stock_code_repository.get_name_by_code(code) or code
+                    holding_qty = int(hold.get("qty", 1))
                     signals.append(TradeSignal(
-                        code=code, name=api_stock_name, action="SELL", price=current, qty=1,
+                        code=code, name=api_stock_name, action="SELL", price=current, qty=holding_qty,
                         reason=reason, strategy_name=self.name,
                     ))
                     self._logger.info({

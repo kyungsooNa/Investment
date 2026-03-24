@@ -23,7 +23,7 @@ from core.market_clock import MarketClock
 from core.performance_profiler import PerformanceProfiler
 
 SIGNAL_HISTORY_FILE = "data/StrategyScheduler/signal_history.csv"
-SIGNAL_COLUMNS = ["strategy_name", "code", "name", "action", "price", "return_rate", "reason", "timestamp", "api_success"]
+SIGNAL_COLUMNS = ["strategy_name", "code", "name", "action", "price", "qty", "return_rate", "reason", "timestamp", "api_success"]
 SCHEDULER_STATE_FILE = "data/StrategyScheduler/scheduler_state.json"
 
 
@@ -35,8 +35,9 @@ class SignalRecord:
     name: str
     action: str          # BUY / SELL
     price: int
-    reason: str
-    timestamp: str       # ISO format
+    qty: int = 1
+    reason: str = ""
+    timestamp: str = ""       # ISO format
     api_success: bool = True
     return_rate: Optional[float] = None
 
@@ -397,6 +398,7 @@ class StrategyScheduler:
             name=signal.name,
             action=signal.action,
             price=log_price,
+            qty=signal.qty,
             reason=signal.reason,
             timestamp=now.strftime("%Y-%m-%d %H:%M:%S"),
             api_success=api_success,
@@ -548,6 +550,7 @@ class StrategyScheduler:
                         name=row["name"],
                         action=row["action"],
                         price=int(row["price"]),
+                        qty=int(row.get("qty") or 1),
                         return_rate=return_rate,
                         reason=row["reason"],
                         timestamp=row["timestamp"],
@@ -649,6 +652,7 @@ class StrategyScheduler:
                         "name": record.name,
                         "action": record.action,
                         "price": record.price,
+                        "qty": record.qty,
                         "return_rate": record.return_rate,
                         "reason": record.reason,
                         "timestamp": record.timestamp,
@@ -670,6 +674,7 @@ class StrategyScheduler:
                 "name": r.name,
                 "action": r.action,
                 "price": r.price,
+                "qty": r.qty,
                 "return_rate": r.return_rate,
                 "reason": r.reason,
                 "timestamp": r.timestamp,
