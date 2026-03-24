@@ -4,6 +4,7 @@ DailyPriceCollectorTask 단위 테스트.
 """
 import asyncio
 import pytest
+import pytest_asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 import pandas as pd
 
@@ -49,12 +50,12 @@ def mock_mapper_with_etf():
     return mapper
 
 
-@pytest.fixture
-def repo(tmp_path):
+@pytest_asyncio.fixture
+async def repo(tmp_path):
     db_path = str(tmp_path / "test_stocks.db")
     r = StockRepository(db_path=db_path)
     yield r
-    r.close()
+    await r.close()
 
 
 @pytest.fixture
@@ -130,9 +131,9 @@ class TestCollectAllPrices:
 
     async def test_collect_stores_to_db(self, task, mock_sqs, repo):
         """수집 완료 후 DB에 데이터가 저장된다."""
-        mock_sqs.get_current_price = AsyncMock(
-            side_effect=lambda code, **kwargs: _make_price_response(code)
-        )
+        async def _mock_get_price(code, **kwargs):
+            return _make_price_response(code)
+        mock_sqs.get_current_price.side_effect = _mock_get_price
 
         await task._collect_all_prices()
 
@@ -143,9 +144,9 @@ class TestCollectAllPrices:
 
     async def test_collect_extracts_fields(self, task, mock_sqs, repo):
         """ResStockFullInfoApiOutput 필드가 정확히 추출된다."""
-        mock_sqs.get_current_price = AsyncMock(
-            return_value=_make_price_response("005930", 70000)
-        )
+        async def _mock_get_price(code, **kwargs):
+            return _make_price_response("005930", 70000)
+        mock_sqs.get_current_price.side_effect = _mock_get_price
 
         await task._collect_all_prices()
 
@@ -169,7 +170,7 @@ class TestCollectAllPrices:
                 )
             return _make_price_response(code)
 
-        mock_sqs.get_current_price = AsyncMock(side_effect=_mock_get_current_price)
+        mock_sqs.get_current_price.side_effect = _mock_get_current_price
 
         await task._collect_all_prices()
 
@@ -180,9 +181,9 @@ class TestCollectAllPrices:
 
     async def test_collect_updates_progress(self, task, mock_sqs):
         """수집 중 진행률이 업데이트된다."""
-        mock_sqs.get_current_price = AsyncMock(
-            side_effect=lambda code, **kwargs: _make_price_response(code)
-        )
+        async def _mock_get_price(code, **kwargs):
+            return _make_price_response(code)
+        mock_sqs.get_current_price.side_effect = _mock_get_price
 
         await task._collect_all_prices()
 
@@ -202,9 +203,9 @@ class TestCollectAllPrices:
 
     async def test_collect_skip_already_collected(self, task, mock_sqs):
         """이미 수집한 날짜는 건너뛴다."""
-        mock_sqs.get_current_price = AsyncMock(
-            side_effect=lambda code: _make_price_response(code)
-        )
+        async def _mock_get_price(code, **kwargs):
+            return _make_price_response(code)
+        mock_sqs.get_current_price.side_effect = _mock_get_price
 
         await task._collect_all_prices()  # 첫 번째 수집
         mock_sqs.get_current_price.reset_mock()

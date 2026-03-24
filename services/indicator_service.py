@@ -267,7 +267,7 @@ class IndicatorService:
 
             latest = list(df.itertuples(index=False))[-1]
 
-            if self._safe_float(latest.rsi) is None:
+            if self._safe_float(latest.rsi) is None or self._safe_float(latest.close) is None:
                  return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
 
             result = ResRSI(
@@ -543,7 +543,11 @@ class IndicatorService:
             df = pd.DataFrame(data)
             
         if not df.empty and 'close' in df.columns and df['close'].dtype == object:
-            df['close'] = pd.to_numeric(df['close'])
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        # [추가] inf 값을 NaN으로 치환하여 이후 연산(rolling, ewm 등)의 예외를 원천 방지
+        if not df.empty:
+            df = df.replace([np.inf, -np.inf], np.nan)
+            
         return df
 
     @staticmethod

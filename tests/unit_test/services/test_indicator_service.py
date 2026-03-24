@@ -75,25 +75,19 @@ async def test_get_bollinger_bands_api_failure(indicator_service):
 
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_calculation_error(indicator_service):
-    """계산 중 예외 발생 시 (예: 숫자가 아닌 데이터)"""
+    """close='invalid_number' → _to_dataframe이 NaN으로 coerce → 예외 없이 SUCCESS 반환 (middle 등은 None)"""
     service, mock_sqs = indicator_service
-    
+
     # 숫자가 아닌 문자열 데이터
     data = [{"date": "20250101", "close": "invalid_number"}] * 25
     mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
-    with patch("services.indicator_service.logging.getLogger") as mock_get_logger:
-        mock_logger = MagicMock()
-        mock_get_logger.return_value = mock_logger
+    result = await service.get_bollinger_bands("005930")
 
-        result = await service.get_bollinger_bands("005930")
-        
-        # pd.to_numeric 변환 실패로 ValueError 발생 -> PARSING_ERROR 반환 예상
-        assert result.rt_cd == ErrorCode.PARSING_ERROR.value
-        assert "데이터 변환 실패" in result.msg1
-        mock_logger.exception.assert_called_once()
+    # _to_dataframe이 errors='coerce'로 NaN 처리하므로 예외 없이 SUCCESS 반환
+    assert result.rt_cd == ErrorCode.SUCCESS.value
 
 @pytest.mark.asyncio
 async def test_get_rsi_success(indicator_service):
@@ -210,23 +204,17 @@ async def test_get_rsi_api_failure(indicator_service):
 
 @pytest.mark.asyncio
 async def test_get_rsi_calculation_error(indicator_service):
-    """RSI 계산 중 예외 발생 (예: 숫자가 아닌 데이터)"""
+    """RSI 계산 중 숫자가 아닌 데이터 — _to_dataframe이 NaN으로 coerce하여 RSI=NaN → EMPTY_VALUES 반환"""
     service, mock_sqs = indicator_service
-    
+
     data_invalid = [{"date": f"202501{i+1:02d}", "close": "invalid"} for i in range(30)]
     mock_sqs.get_ohlcv.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data_invalid
     )
-    
-    with patch("services.indicator_service.logging.getLogger") as mock_get_logger:
-        mock_logger = MagicMock()
-        mock_get_logger.return_value = mock_logger
 
-        result = await service.get_rsi("005930")
+    result = await service.get_rsi("005930")
 
-        assert result.rt_cd == ErrorCode.PARSING_ERROR.value
-        assert "데이터 변환 실패" in result.msg1
-        mock_logger.exception.assert_called_once()
+    assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
 
 @pytest.mark.asyncio
 async def test_get_moving_average_with_preloaded_data(indicator_service):
@@ -462,7 +450,7 @@ async def test_get_relative_strength_generic_exception(indicator_service):
     data = [{"date": "20250101", "close": 10000}] * 70
     
     # pandas.DataFrame 생성 시 예외 발생 유도
-    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("Unexpected Error")):
+    with patch.object(service, "_to_dataframe", side_effect=Exception("Unexpected Error")):
         result = await service.get_relative_strength("005930", ohlcv_data=data)
         
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
@@ -483,7 +471,7 @@ async def test_get_bollinger_bands_unknown_exception(indicator_service):
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
-    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("Unexpected Error")):
+    with patch.object(service, "_to_dataframe", side_effect=Exception("Unexpected Error")):
         result = await service.get_bollinger_bands("005930")
         
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
@@ -499,7 +487,7 @@ async def test_get_rsi_unknown_exception(indicator_service):
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
-    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("Unexpected Error")):
+    with patch.object(service, "_to_dataframe", side_effect=Exception("Unexpected Error")):
         result = await service.get_rsi("005930")
         
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
@@ -515,7 +503,7 @@ async def test_get_moving_average_unknown_exception(indicator_service):
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
     )
 
-    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("Unexpected Error")):
+    with patch.object(service, "_to_dataframe", side_effect=Exception("Unexpected Error")):
         result = await service.get_moving_average("005930")
         
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
@@ -855,7 +843,7 @@ async def test_calculate_indicators_full_empty_data(indicator_service):
 async def test_calculate_indicators_full_exception(indicator_service):
     """_calculate_indicators_full: 예외 처리"""
     service, _ = indicator_service
-    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("Test Error")):
+    with patch.object(service, "_to_dataframe", side_effect=Exception("Test Error")):
         result = service._calculate_indicators_full("005930", [{"date": "20250101"}])
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
 
@@ -927,16 +915,15 @@ async def test_get_moving_average_caching_hit_partial_fail_fallback(indicator_se
 
 @pytest.mark.asyncio
 async def test_calculate_moving_average_full_exception(indicator_service):
-    """_calculate_moving_average_full: 예외 처리"""
+    """_calculate_moving_average_full: close='invalid' → _to_dataframe이 NaN으로 coerce → 예외 없이 SUCCESS 반환"""
     service, _ = indicator_service
-    
-    # 데이터 변환 실패 유도 (close가 숫자가 아님)
+
+    # 데이터 변환 실패 유도 (close가 숫자가 아님) — coerce 방식으로 NaN 처리
     data = [{"date": "20250101", "close": "invalid"}]
-    
-    # 직접 호출
+
     result = service._calculate_moving_average_full("005930", data, 5, "sma")
-    
-    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
 
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_caching_miss(indicator_service_with_cache):
@@ -1109,7 +1096,7 @@ async def test_calculate_bollinger_bands_full_exception(indicator_service):
     """_calculate_bollinger_bands_full: 내부 예외 처리"""
     service, _ = indicator_service
     
-    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("BB Calc Error")):
+    with patch.object(service, "_to_dataframe", side_effect=Exception("BB Calc Error")):
         result = service._calculate_bollinger_bands_full("005930", [], 20, 2.0)
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
         assert "BB Calc Error" in result.msg1
@@ -1119,7 +1106,7 @@ async def test_calculate_rsi_series_exception(indicator_service):
     """_calculate_rsi_series: 내부 예외 처리"""
     service, _ = indicator_service
     
-    with patch("services.indicator_service.pd.DataFrame", side_effect=Exception("RSI Calc Error")):
+    with patch.object(service, "_to_dataframe", side_effect=Exception("RSI Calc Error")):
         result = service._calculate_rsi_series("005930", [], 14)
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
         assert "RSI Calc Error" in result.msg1
