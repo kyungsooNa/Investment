@@ -361,7 +361,8 @@ async def test_get_current_price_cache_miss(trading_service_fixture, mock_deps):
 
     assert resp.rt_cd == "0"
     stock_repo.get_latest_daily_snapshot.assert_not_called()
-    broker.get_current_price.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    broker.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     stock_repo.set_current_price.assert_called_once_with("005930", api_data)
 
 
@@ -408,7 +409,8 @@ async def test_get_current_price_db_miss_then_api_when_market_closed(trading_ser
     resp = await service.get_current_price("005930")
 
     assert resp.rt_cd == "0"
-    broker.get_current_price.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    broker.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     stock_repo.set_current_price.assert_called_once_with("005930", api_data)
 
 
@@ -438,7 +440,8 @@ async def test_get_ohlcv_range(trading_service_fixture, mock_deps):
     
     resp = await trading_service_fixture.get_ohlcv_range("005930", start_date="20250101", end_date="20250110")
     assert resp.rt_cd == "0"
-    broker.inquire_daily_itemchartprice.assert_awaited_with("005930", start_date="20250101", end_date="20250110", fid_period_div_code="D")
+    from common.types import Exchange
+    broker.inquire_daily_itemchartprice.assert_awaited_with("005930", start_date="20250101", end_date="20250110", fid_period_div_code="D", exchange=Exchange.KRX)
 
 @pytest.mark.asyncio
 async def test_get_asking_price(trading_service_fixture, mock_deps):
@@ -448,7 +451,8 @@ async def test_get_asking_price(trading_service_fixture, mock_deps):
     
     resp = await trading_service_fixture.get_asking_price("005930")
     assert resp.rt_cd == "0"
-    broker.get_asking_price.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    broker.get_asking_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
 
 @pytest.mark.asyncio
 async def test_get_time_concluded_prices(trading_service_fixture, mock_deps):
@@ -458,7 +462,8 @@ async def test_get_time_concluded_prices(trading_service_fixture, mock_deps):
     
     resp = await trading_service_fixture.get_time_concluded_prices("005930")
     assert resp.rt_cd == "0"
-    broker.get_time_concluded_prices.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    broker.get_time_concluded_prices.assert_awaited_once_with("005930", exchange=Exchange.KRX)
 
 @pytest.mark.asyncio
 async def test_get_etf_info(trading_service_fixture, mock_deps):
@@ -706,7 +711,8 @@ async def test_get_price_summary(trading_service_fixture, mock_deps):
     resp = await trading_service_fixture.get_price_summary("005930")
     
     assert resp.rt_cd == "0"
-    broker.get_price_summary.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    broker.get_price_summary.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     logger.info.assert_called_with("MarketDataService - 005930 종목 요약 정보 조회 요청")
 
 @pytest.mark.asyncio
@@ -719,7 +725,8 @@ async def test_get_stock_info_by_code(trading_service_fixture, mock_deps):
     resp = await trading_service_fixture.get_stock_info_by_code("005930")
     
     assert resp.rt_cd == "0"
-    broker.get_stock_info_by_code.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    broker.get_stock_info_by_code.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     logger.info.assert_called_with("MarketDataService - 005930 종목 상세 정보 조회 요청")
 
 @pytest.mark.asyncio
@@ -732,7 +739,8 @@ async def test_get_stock_conclusion(trading_service_fixture, mock_deps):
     resp = await trading_service_fixture.get_stock_conclusion("005930")
     
     assert resp.rt_cd == "0"
-    broker.get_stock_conclusion.assert_awaited_once_with("005930")
+    from common.types import Exchange
+    broker.get_stock_conclusion.assert_awaited_once_with("005930", exchange=Exchange.KRX)
     logger.info.assert_called_with("MarketDataService - 005930 체결 정보 조회 요청")
 
 @pytest.mark.asyncio
@@ -852,8 +860,9 @@ async def test_inquire_daily_itemchartprice(trading_service_fixture, mock_deps):
     resp = await trading_service_fixture.inquire_daily_itemchartprice("005930", "20250101", "20250110")
     
     assert resp.rt_cd == "0"
+    from common.types import Exchange
     broker.inquire_daily_itemchartprice.assert_awaited_once_with(
-        stock_code="005930", start_date="20250101", end_date="20250110", fid_period_div_code="D"
+        stock_code="005930", start_date="20250101", end_date="20250110", fid_period_div_code="D", exchange=Exchange.KRX
     )
 
 @pytest.mark.asyncio

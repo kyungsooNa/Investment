@@ -179,7 +179,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._execute_signal(signal)
 
         vm.log_buy_async.assert_awaited_once_with("테스트전략", "005930", 70000, 1)
-        oes.handle_place_buy_order.assert_called_once_with("005930", 70000, 1)
+        from common.types import Exchange
+        oes.handle_place_buy_order.assert_called_once_with("005930", 70000, 1, exchange=Exchange.KRX)
 
     async def test_run_strategy_scan_respects_max_positions(self):
         """max_positions에 도달하면 스캔을 스킵하는지 테스트."""
@@ -808,7 +809,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 1. 현재가 조회 호출됨
         scheduler._sqs.get_current_price.assert_called_with("005930", caller="StrategyScheduler")
         # 2. API 매도 주문은 가격 0(시장가)으로 호출됨
-        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 5)
+        from common.types import Exchange
+        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 5, exchange=Exchange.KRX)
         # 3. VM 로그 기록은 조회된 현재가(60000)로 기록됨
         vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrategy", "005930", 60000, 5)
 
@@ -835,7 +837,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._force_liquidate_strategy(config)
 
         # API 매도 주문은 실제 보유 수량인 3으로 호출되어야 함 (설정값 10 무시)
-        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 3)
+        from common.types import Exchange
+        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 3, exchange=Exchange.KRX)
         # VM 로그 기록도 3으로 기록되어야 함
         vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrategy", "005930", 60000, 3)
 
@@ -934,7 +937,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 1. 현재가 조회 수행 확인
         scheduler._sqs.get_current_price.assert_called_with("000660", caller="StrategyScheduler")
         # 2. 주문은 0원(시장가)으로 나갔는지 확인
-        oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10)
+        from common.types import Exchange
+        oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10, exchange=Exchange.KRX)
         # 3. 로그는 조회된 80000원으로 기록되었는지 확인
         vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrat", "000660", 80000, 10)
 
@@ -1025,8 +1029,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler._sqs.get_current_price.assert_called_with("000660", caller="StrategyScheduler")
         
         # 2. 주문은 0원(시장가)으로 나갔는지 확인
-        oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10)
-        
+        from common.types import Exchange
+        oes.handle_place_sell_order.assert_called_once_with("000660", 0, 10, exchange=Exchange.KRX)
+
         # 3. 로그는 0원으로 기록되었는지 확인 (조회 실패 시 fallback)
         vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrat", "000660", 0, 10)
 
@@ -1392,8 +1397,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         vm.get_holds_by_strategy.return_value = [{"code": "005930", "name": "Samsung", "qty": 0}]
         
         await scheduler._force_liquidate_strategy(config)
-        
-        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 10)
+
+        from common.types import Exchange
+        oes.handle_place_sell_order.assert_called_once_with("005930", 0, 10, exchange=Exchange.KRX)
 
     async def test_execute_signal_market_price_api_error(self):
         """시장가 주문 시 현재가 조회 API가 실패 코드를 반환할 때 0원 유지 테스트."""
