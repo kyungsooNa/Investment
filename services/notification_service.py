@@ -10,16 +10,24 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Callable, Coroutine, Any, Dict, List, Optional
+from enum import Enum
 
 from core.market_clock import MarketClock
 
+
+class NotificationCategory(str, Enum):
+    STRATEGY = "STRATEGY"
+    BACKGROUND = "BACKGROUND"
+    TRADE = "TRADE"
+    API = "API"
+    SYSTEM = "SYSTEM"
 
 @dataclass
 class NotificationEvent:
     """알림 이벤트."""
     id: str
     timestamp: str          # ISO format (KST)
-    category: str           # "TRADE" | "API" | "SYSTEM"
+    category: NotificationCategory
     level: str              # "critical" | "info" | "warning" | "error"
     title: str
     message: str
@@ -49,13 +57,16 @@ class NotificationService:
 
     async def emit(
         self,
-        category: str,
+        category: NotificationCategory | str,
         level: str,
         title: str,
         message: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> NotificationEvent:
         """이벤트 생성 → 히스토리 저장 → 구독자 전파."""
+        if isinstance(category, str):
+            category = NotificationCategory(category.upper())
+        
         event = NotificationEvent(
             id=uuid.uuid4().hex[:12],
             timestamp=self._market_clock.get_current_kst_time().isoformat(),
@@ -65,6 +76,7 @@ class NotificationService:
             message=message,
             metadata=metadata or {},
         )
+        
         self._history.append(event)
         if len(self._history) > self.MAX_HISTORY:
             self._history = self._history[-self.MAX_HISTORY:]
@@ -98,8 +110,10 @@ class NotificationService:
     # ── 최근 이벤트 조회 ──
 
     def get_recent(
-        self, count: int = 50, category: Optional[str] = None
+        self, count: int = 50, category: Optional[NotificationCategory | str] = None
     ) -> List[dict]:
+        if category and isinstance(category, str):
+            category = NotificationCategory(category.upper())
         items = self._history
         if category:
             items = [e for e in items if e.category == category]

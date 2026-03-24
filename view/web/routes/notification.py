@@ -9,13 +9,14 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
 from view.web.api_common import _get_ctx
+from services.notification_service import NotificationCategory
 
 router = APIRouter()
 
 
 @router.get("/notifications/recent")
 async def get_recent_notifications(
-    category: Optional[str] = Query(None),
+    category: Optional[NotificationCategory] = Query(None),
     count: int = Query(50, ge=1, le=200),
 ):
     """최근 알림 목록 조회."""
