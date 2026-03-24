@@ -570,7 +570,7 @@ async def test_cache_wrapper_with_market_calendar_service_valid(cache_store, tes
     market_clock.get_current_kst_time.return_value = now
     # 다음 장 시작 시간 (내일 9시)
     market_clock.get_next_market_open_time.return_value = now + timedelta(hours=15)
-    # 오늘 장 마감 시간 (15:30)
+    # 오늘 장 마감 시간 (15:40)
     market_clock.get_market_close_time.return_value = seoul_tz.localize(datetime(2025, 1, 1, 15, 30, 0))
 
     market_calendar_service = AsyncMock()
@@ -592,7 +592,7 @@ async def test_cache_wrapper_with_market_calendar_service_valid(cache_store, tes
     # 1. 캐시 생성 (오늘 장 마감 이후 데이터 → 유효해야 함)
     key = "TEST_get_data_1"
     cache_data = {
-        "timestamp": datetime(2025, 1, 1, 16, 0, 0).isoformat(),  # 장 마감(15:30) 이후
+        "timestamp": datetime(2025, 1, 1, 16, 0, 0).isoformat(),  # 장 마감(15:40) 이후
         "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": "cached"})
     }
     cache_store.set(key, cache_data)
@@ -745,7 +745,7 @@ async def test_cache_wrapper_early_morning_cache_miss_at_evening(cache_store, te
     # 18시에 접근
     result = await wrapped.get_data(1)
 
-    # 캐시 MISS: 새벽 02:00 < 장 마감 15:30 이므로 무효 → API 호출
+    # 캐시 MISS: 새벽 02:00 < 장 마감 15:40 이므로 무효 → API 호출
     assert result.data["key"] == "value-1"  # DummyApiClient 반환값
     debug_logs = [c.args[0] for c in logger.debug.call_args_list]
     assert any("장 마감 전 저장" in msg for msg in debug_logs)
@@ -763,7 +763,7 @@ async def test_cache_wrapper_post_close_cache_hit_next_day(cache_store, test_cac
     # 현재 시간: 다음날(화요일) 02시 또는 08시
     now = seoul_tz.localize(datetime(2025, 3, 18, access_hour, 0, 0))
     market_clock.get_current_kst_time.return_value = now
-    # 최근 거래일(월요일) 기준 장 마감 시간 → target_dt로 정확한 날짜의 15:30 반환
+    # 최근 거래일(월요일) 기준 장 마감 시간 → target_dt로 정확한 날짜의 15:40 반환
     market_clock.get_market_close_time.return_value = seoul_tz.localize(datetime(2025, 3, 17, 15, 30, 0))
 
     market_calendar_service = AsyncMock()
@@ -783,7 +783,7 @@ async def test_cache_wrapper_post_close_cache_hit_next_day(cache_store, test_cac
         market_calendar_service=market_calendar_service
     )
 
-    # 캐시: 월요일 16:00에 저장 (장 마감 15:30 이후 → 유효한 데이터)
+    # 캐시: 월요일 16:00에 저장 (장 마감 15:40 이후 → 유효한 데이터)
     key = "TEST_get_data_1"
     cache_data = {
         "timestamp": datetime(2025, 3, 17, 16, 0, 0).isoformat(),
@@ -794,7 +794,7 @@ async def test_cache_wrapper_post_close_cache_hit_next_day(cache_store, test_cac
     # 다음날 접근
     result = await wrapped.get_data(1)
 
-    # 캐시 HIT: 16:00 >= 15:30 (거래일 기준 장 마감) → 유효
+    # 캐시 HIT: 16:00 >= 15:40 (거래일 기준 장 마감) → 유효
     assert result.data["key"] == "valid_post_close", f"{label} 접근 시 cache HIT 실패"
     debug_logs = [c.args[0] for c in logger.debug.call_args_list]
     assert any("Cache HIT" in msg for msg in debug_logs), f"{label} 접근 시 Cache HIT 로그 없음"
@@ -841,7 +841,7 @@ async def test_cache_wrapper_with_market_calendar_service_fallback(cache_store, 
     now = seoul_tz.localize(datetime(2025, 1, 1, 20, 0, 0))
     market_clock.get_current_kst_time.return_value = now
     market_clock.get_next_market_open_time.return_value = now + timedelta(hours=13)
-    # 최근 장 종료: 오늘 15:30
+    # 최근 장 종료: 오늘 15:40
     latest_close = seoul_tz.localize(datetime(2025, 1, 1, 15, 30, 0))
     market_clock.get_latest_market_close_time.return_value = latest_close
 
@@ -862,7 +862,7 @@ async def test_cache_wrapper_with_market_calendar_service_fallback(cache_store, 
 
     # 1. 캐시 생성 (장 종료 후 생성된 데이터 -> 유효해야 함)
     key = "TEST_get_data_1"
-    cache_time = datetime(2025, 1, 1, 16, 0, 0) # 16:00 > 15:30
+    cache_time = datetime(2025, 1, 1, 16, 0, 0) # 16:00 > 15:40
     cache_data = {
         "timestamp": cache_time.isoformat(),
         "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": "cached_fallback"})

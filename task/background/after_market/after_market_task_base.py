@@ -23,8 +23,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
-from typing import List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
+
+import yaml
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from scheduler.after_market_loop import run_after_market_loop
@@ -32,6 +35,27 @@ from scheduler.after_market_loop import run_after_market_loop
 if TYPE_CHECKING:
     from core.market_clock import MarketClock
     from services.market_calendar_service import MarketCalendarService
+
+_TASK_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "..", "..", "config", "task_config.yaml",
+)
+_DEFAULT_DELAYS: Dict[str, int] = {}
+
+def _load_after_market_delays() -> Dict[str, int]:
+    """task_config.yaml 에서 after_market_delay_sec 매핑을 로드한다."""
+    global _DEFAULT_DELAYS
+    if _DEFAULT_DELAYS:
+        return _DEFAULT_DELAYS
+    try:
+        with open(_TASK_CONFIG_PATH, encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+        _DEFAULT_DELAYS = (
+            raw.get("after_market_tasks", {}).get("after_market_delay_sec", {})
+        )
+    except Exception:
+        _DEFAULT_DELAYS = {}
+    return _DEFAULT_DELAYS
 
 
 class AfterMarketTask(SchedulableTask, ABC):
@@ -89,12 +113,14 @@ class AfterMarketTask(SchedulableTask, ABC):
 
     async def _after_market_scheduler(self) -> None:
         """장 마감 후 자동으로 작업을 스케줄링하는 루프."""
+        delay_sec = _load_after_market_delays().get(self.task_name, 0)
         await run_after_market_loop(
             mcs=self._mcs,
             market_clock=self._market_clock,
             logger=self._logger,
             on_market_closed=self._on_market_closed,
             label=self._scheduler_label,
+            delay_sec=delay_sec,
         )
 
     @abstractmethod

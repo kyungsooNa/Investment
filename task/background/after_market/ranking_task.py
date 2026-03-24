@@ -43,9 +43,6 @@ class RankingTask(AfterMarketTask):
     API_CHUNK_SIZE = 8
     CHUNK_SLEEP_SEC = 1.1
 
-    # 장마감 후 대기 시간 (초) — 15:30 이후 약간의 여유
-    AFTER_MARKET_DELAY_SEC = 60
-
     def __init__(
         self,
         broker_api_wrapper: BrokerAPIWrapper,

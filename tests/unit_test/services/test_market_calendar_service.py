@@ -13,7 +13,7 @@ def mock_deps():
     
     # MarketClock 속성 및 메서드 모킹 추가 (get_next_open_time 테스트용)
     tm.market_open_time_str = "09:00"
-    tm.market_close_time_str = "15:30"   # ✅ 이 줄을 반드시 추가해 주세요!
+    tm.market_close_time_str = "15:40"   # ✅ 이 줄을 반드시 추가해 주세요!
     tm.market_timezone = pytz.timezone("Asia/Seoul")
     
     def _get_market_open_time():
@@ -338,7 +338,7 @@ async def test_get_latest_market_close_time_weekday(manager, mock_deps):
     """평일 기준으로 직전 마감 시간 반환 테스트"""
     tm, logger = mock_deps
     
-    # 월요일 오전 8시 기준: 직전 금요일 15:30 반환해야 함
+    # 월요일 오전 8시 기준: 직전 금요일 15:40 반환해야 함
     target_dt = datetime(2025, 8, 4, 8, 0, 0)
     tm.get_current_kst_time.return_value = tm.market_timezone.localize(target_dt)
     
@@ -354,7 +354,7 @@ async def test_get_latest_market_close_time_weekday(manager, mock_deps):
 
 @pytest.mark.asyncio
 async def test_get_latest_market_close_time_today_after_close(manager, mock_deps):
-    """오늘이 영업일이고 이미 장이 마감된 상태(15:30 이후)일 때 오늘 마감 시간 반환 테스트"""
+    """오늘이 영업일이고 이미 장이 마감된 상태(15:40 이후)일 때 오늘 마감 시간 반환 테스트"""
     tm, logger = mock_deps
     
     # 오늘 16시로 설정 (장 마감 이후)

@@ -13,7 +13,7 @@ class MarketClock:
     공휴일 및 실제 영업일 판단은 MarketCalendarService에서 수행해야 합니다.
     """
 
-    def __init__(self, market_open_time="09:00", market_close_time="15:30", timezone="Asia/Seoul", logger=None):
+    def __init__(self, market_open_time="09:00", market_close_time="15:40", timezone="Asia/Seoul", logger=None):
         self.market_open_time_str = market_open_time
         self.market_close_time_str = market_close_time
         self.timezone_name = timezone
@@ -42,7 +42,7 @@ class MarketClock:
 
     def is_market_operating_hours(self, now=None) -> bool:
         """
-        단순히 현재 '시간'이 시장 운영 시간(예: 09:00 ~ 15:30) 내에 있는지 확인합니다.
+        단순히 현재 '시간'이 시장 운영 시간(예: 09:00 ~ 15:40) 내에 있는지 확인합니다.
         (주의: 공휴일, 임시휴일 등 '영업일' 여부는 MarketCalendarService에서 판단해야 합니다.)
         """
         now = now or self.get_current_kst_time()
@@ -65,7 +65,7 @@ class MarketClock:
         ))
 
     def get_market_close_time(self, target_dt: Optional[datetime] = None) -> datetime:
-        """오늘 날짜 또는 지정된 날짜 기준 시장 마감 시간(15:30) 반환"""
+        """오늘 날짜 또는 지정된 날짜 기준 시장 마감 시간(15:40) 반환"""
         now = target_dt or self.get_current_kst_time()
         return self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
@@ -76,7 +76,7 @@ class MarketClock:
 
     def get_seconds_until_market_close(self, now=None) -> float:
         """
-        현재 시간 또는 지정된 시간부터 해당 날짜의 장 마감(15:30)까지 남은 초(seconds)를 계산합니다.
+        현재 시간 또는 지정된 시간부터 해당 날짜의 장 마감(15:40)까지 남은 초(seconds)를 계산합니다.
         (장 마감 후 계산 시 음수가 반환될 수 있습니다.)
         """
         now = now or self.get_current_kst_time()
@@ -86,7 +86,7 @@ class MarketClock:
 
     def get_sleep_seconds_until_market_close(self, now=None) -> float:
         """
-        현재 시간부터 오늘 장 마감(15:30)까지 대기해야 할 남은 초를 반환합니다.
+        현재 시간부터 오늘 장 마감(15:40)까지 대기해야 할 남은 초를 반환합니다.
         이미 마감 시간을 지났다면 0.0을 반환합니다.
         """
         diff = self.get_seconds_until_market_close(now)

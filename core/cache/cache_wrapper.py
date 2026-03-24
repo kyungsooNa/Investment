@@ -101,7 +101,7 @@ class ClientWithCache:
                                     # 캐시가 최근 거래일 이후에 저장됨 → 유효
                                     is_valid = True
                                 elif cache_date_str == latest_trading_date_str:
-                                    # 캐시 날짜 == 최근 거래일: 장 마감(15:30) 이후에 저장된 경우만 유효
+                                    # 캐시 날짜 == 최근 거래일: 장 마감(15:40) 이후에 저장된 경우만 유효
                                     # 장 마감 전에 저장된 캐시는 전일 데이터이므로 무효
                                     # 최근 거래일 날짜 기준 장 마감 시간과 비교 (다음날 접근 시에도 정확히 비교)
                                     latest_trading_date_dt = datetime.strptime(latest_trading_date_str, "%Y%m%d")

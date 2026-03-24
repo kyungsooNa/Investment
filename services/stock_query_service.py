@@ -739,7 +739,7 @@ class StockQueryService:
         stock_code: str,
         *,
         date_ymd: Optional[str] = None,                                    # None이면 '오늘'(KST) 조회
-        session: Literal["REGULAR", "EXTENDED"] = "REGULAR",                # REGULAR=09:00~15:30, EXTENDED=08:00~20:00
+        session: Literal["REGULAR", "EXTENDED"] = "REGULAR",                # REGULAR=09:00~15:40, EXTENDED=08:00~20:00
         start_hhmmss: Optional[str] = None,
         end_hhmmss: Optional[str] = None,
         max_batches: int = 200

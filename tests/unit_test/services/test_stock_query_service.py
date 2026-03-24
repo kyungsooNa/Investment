@@ -1383,7 +1383,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         
         self.mock_market_data_service.get_intraday_minutes_by_date.side_effect = [resp1, resp2]
         
-        # Call with range 09:00:00 to 15:30:00
+        # Call with range 09:00:00 to 15:40:00
         result = await self.stockQueryService.get_day_intraday_minutes_list(
             "005930", date_ymd="20250101", start_hhmmss="090000", end_hhmmss="153000"
         )

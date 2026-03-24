@@ -41,7 +41,7 @@ def mock_deps():
         mocks = {name: stack.enter_context(p) for name, p in patch_targets}
         mocks["load_configs"].return_value = {
             "market_open_time": "09:00",
-            "market_close_time": "15:30",
+            "market_close_time": "15:40",
             "market_timezone": "Asia/Seoul"
         }
         yield mocks
@@ -283,7 +283,7 @@ async def test_initialize_services_with_pydantic_config_object(mock_deps):
     # Pydantic 모델 흉내 (dict 메서드 또는 model_dump 메서드 보유, get 메서드 없음)
     class MockAppConfig(BaseModel):
         market_open_time: str = "09:00"
-        market_close_time: str = "15:30"
+        market_close_time: str = "15:40"
         market_timezone: str = "Asia/Seoul"
         cache: dict = {"base_dir": ".cache"}
 
@@ -330,7 +330,7 @@ def test_load_config_and_env_with_telegram(mock_deps):
     # Arrange
     mock_deps["load_configs"].return_value = {
         "market_open_time": "09:00",
-        "market_close_time": "15:30",
+        "market_close_time": "15:40",
         "market_timezone": "Asia/Seoul",
         "telegram_bot_token": "TEST_TOKEN",
         "telegram_chat_id": "TEST_CHAT_ID"

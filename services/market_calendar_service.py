@@ -146,7 +146,7 @@ class MarketCalendarService:
         return self._business_days_cache.get(date_str, False)
 
     async def is_market_open_now(self) -> bool:
-        """현재 시점이 휴일이 아니며, 장 운영 시간(09:00~15:30) 이내인지 확인합니다."""
+        """현재 시점이 휴일이 아니며, 장 운영 시간(09:00~15:40) 이내인지 확인합니다."""
         # 장 운영 시간이 아니면 달력(API/캐시)을 확인할 필요도 없이 바로 False 반환 (성능 최적화)
         if not self._market_clock.is_market_operating_hours():
             return False
@@ -209,12 +209,12 @@ class MarketCalendarService:
     async def get_latest_market_close_time(self) -> Optional[datetime]:
         """
         가장 최근에 장이 마감된 정확한 '시간(datetime)'을 반환합니다.
-        (예: 월요일 오전 10시라면 -> 지난주 금요일 15:30 반환)
+        (예: 월요일 오전 10시라면 -> 지난주 금요일 15:40 반환)
         """
         now = self._market_clock.get_current_kst_time()
         today_str = now.strftime("%Y%m%d")
 
-        # 1. 오늘이 영업일이고, 현재 시간이 이미 오늘 장 마감(15:30) 이후라면? -> 오늘 15:30
+        # 1. 오늘이 영업일이고, 현재 시간이 이미 오늘 장 마감(15:40) 이후라면? -> 오늘 15:40
         if await self.is_business_day(today_str) and now >= self._market_clock.get_market_close_time():
             latest_close_str = today_str
         else:
@@ -232,7 +232,7 @@ class MarketCalendarService:
                 self._logger.error("최근 15일 내에 영업일이 없습니다. (시스템 오류 의심)")
                 return None
 
-        # 찾아낸 영업일 문자열(latest_close_str)과 MarketClock의 마감 시간(15:30)을 결합
+        # 찾아낸 영업일 문자열(latest_close_str)과 MarketClock의 마감 시간(15:40)을 결합
         close_time_str = self._market_clock.market_close_time_str
         close_hour, close_minute = map(int, close_time_str.split(":"))
         close_date = datetime.strptime(latest_close_str, "%Y%m%d")

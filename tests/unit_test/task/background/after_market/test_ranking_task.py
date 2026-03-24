@@ -1243,7 +1243,7 @@ async def test_refresh_investor_ranking_handles_none_response(bg_service, mock_d
 
 @pytest.mark.asyncio
 async def test_scheduler_no_refresh_during_market_hours(bg_service, mock_deps):
-    """장 중(09:00~15:30)에는 refresh를 호출하지 않고 장 마감까지 대기만 한다."""
+    """장 중(09:00~15:40)에는 refresh를 호출하지 않고 장 마감까지 대기만 한다."""
     import asyncio
     _, _, _, _, market_clock, market_calendar_service = mock_deps
 
