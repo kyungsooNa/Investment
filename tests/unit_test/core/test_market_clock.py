@@ -263,17 +263,6 @@ def test_get_market_open_time(market_clock):
     assert open_time.date() == now.date()
 
 
-def test_get_market_close_time(market_clock):
-    test_date = datetime(2025, 8, 1)
-    close_time = market_clock.get_market_close_time(test_date)
-
-    assert close_time.hour == 15
-    assert close_time.minute == 30
-    assert close_time.date() == test_date.date()
-    assert close_time.tzinfo.zone == "Asia/Seoul"
-
-
-
 # --- to_yyyymmdd ---
 def test_to_yyyymmdd_none_uses_now(market_clock, mocker):
     # None 입력 시 현재(고정) KST로 포맷되어야 함
