@@ -158,6 +158,7 @@ class RankingTask(AfterMarketTask):
             self._basic_last_collected_date = latest_trading_date
         if needs_investor:
             await self.refresh_investor_ranking()
+            self._last_collected_date = latest_trading_date
 
     # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
 
