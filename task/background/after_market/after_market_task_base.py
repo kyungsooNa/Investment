@@ -51,7 +51,7 @@ def _load_after_market_delays() -> Dict[str, int]:
         with open(_TASK_CONFIG_PATH, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
         _DEFAULT_DELAYS = (
-            raw.get("after_market_tasks", {}).get("after_market_delay_sec", {})
+            raw.get("after_market_tasks", {}).get("after_market_delay_sec", {}) * 60 # yaml에서 분 단위로 설정 → 초 단위로 변환
         )
     except Exception:
         _DEFAULT_DELAYS = {}
