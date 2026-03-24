@@ -57,16 +57,13 @@ class NotificationService:
 
     async def emit(
         self,
-        category: NotificationCategory | str,
+        category: NotificationCategory,
         level: str,
         title: str,
         message: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> NotificationEvent:
         """이벤트 생성 → 히스토리 저장 → 구독자 전파."""
-        if isinstance(category, str):
-            category = NotificationCategory(category.upper())
-        
         event = NotificationEvent(
             id=uuid.uuid4().hex[:12],
             timestamp=self._market_clock.get_current_kst_time().isoformat(),
@@ -110,10 +107,8 @@ class NotificationService:
     # ── 최근 이벤트 조회 ──
 
     def get_recent(
-        self, count: int = 50, category: Optional[NotificationCategory | str] = None
+        self, count: int = 50, category: Optional[NotificationCategory] = None
     ) -> List[dict]:
-        if category and isinstance(category, str):
-            category = NotificationCategory(category.upper())
         items = self._history
         if category:
             items = [e for e in items if e.category == category]
