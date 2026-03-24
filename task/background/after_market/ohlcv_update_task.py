@@ -275,7 +275,7 @@ class OhlcvUpdateTask(AfterMarketTask):
         """
         try:
             if not force:
-                summary = self._stock_repo.get_ohlcv_summary(code)
+                summary = await self._stock_repo.get_ohlcv_summary(code)
                 latest_date = summary["latest_date"]
 
                 # 당일 캔들이 이미 존재하면 API 불필요

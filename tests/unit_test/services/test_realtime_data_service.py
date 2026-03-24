@@ -406,9 +406,9 @@ def test_on_data_received_log_gap(manager):
     manager.on_data_received(test_data)
     
     # 로그 메시지 확인
-    manager.logger.info.assert_called()
+    manager.logger.debug.assert_called()
     found = False
-    for call_args in manager.logger.info.call_args_list:
+    for call_args in manager.logger.debug.call_args_list:
         if "실시간 데이터 수신 재개" in str(call_args):
             found = True
             break
