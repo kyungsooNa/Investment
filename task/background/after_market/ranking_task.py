@@ -20,7 +20,7 @@ from services.market_calendar_service import MarketCalendarService
 from repositories.stock_code_repository import StockCodeRepository
 from core.performance_profiler import PerformanceProfiler
 from services.telegram_notifier import TelegramReporter
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, NotificationCategory
 
 
 def _chunked(lst, size):
@@ -195,13 +195,13 @@ class RankingTask(AfterMarketTask):
             self.pm.log_timer("RankingTask.refresh_basic_ranking", t_start, threshold=1.0)
             if self._notification_service:
                 await self._notification_service.emit(
-                    "API", "info", "기본 랭킹 갱신 완료",
+                    NotificationCategory.BACKGROUND, "info", "기본 랭킹 갱신 완료",
                     f"상승/하락/거래량/거래대금 캐시 갱신 완료",
                 )
         except Exception as e:
             self._logger.error(f"기본 랭킹 캐시 갱신 실패: {e}", exc_info=True)
             if self._notification_service:
-                await self._notification_service.emit("SYSTEM", "error", "기본 랭킹 갱신 실패", str(e))
+                await self._notification_service.emit(NotificationCategory.BACKGROUND, "error", "기본 랭킹 갱신 실패", str(e))
 
     def get_progress(self) -> Dict:
         """태스크 진행률 반환 (SchedulableTask 인터페이스 구현)."""
@@ -277,7 +277,7 @@ class RankingTask(AfterMarketTask):
             self._logger.info(f"이미 {target_date} 투자자 랭킹 갱신 완료 — 스킵")
             if self._notification_service:
                 await self._notification_service.emit(
-                    "API", "info", "투자자 랭킹 갱신 스킵",
+                    NotificationCategory.BACKGROUND, "info", "투자자 랭킹 갱신 스킵",
                     f"{target_date} 이미 갱신 완료된 상태입니다."
                 )
             self._is_refreshing = False
@@ -440,7 +440,7 @@ class RankingTask(AfterMarketTask):
             self.pm.log_timer("RankingTask.refresh_investor_ranking", t_start_total, threshold=10.0)
             if self._notification_service:
                 await self._notification_service.emit(
-                    "API", "info", "투자자 랭킹 갱신 완료",
+                    NotificationCategory.BACKGROUND, "info", "투자자 랭킹 갱신 완료",
                     f"{len(results)}개 종목 수집, 소요: {elapsed:.1f}초",
                 )
             if self._telegram_reporter:
@@ -466,7 +466,7 @@ class RankingTask(AfterMarketTask):
         except Exception as e:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
             if self._notification_service:
-                await self._notification_service.emit("SYSTEM", "error", "투자자 랭킹 갱신 실패", str(e))
+                await self._notification_service.emit(NotificationCategory.BACKGROUND, "error", "투자자 랭킹 갱신 실패", str(e))
         finally:
             self._is_refreshing = False
             self._progress["running"] = False

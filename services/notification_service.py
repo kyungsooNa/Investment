@@ -42,7 +42,7 @@ class NotificationService:
 
     사용법:
         nm = NotificationService(market_clock)
-        await nm.emit("TRADE", "critical", "매수 시그널", "삼성전자 72,000원")
+        await nm.emit(NotificationCategory.TRADE, "critical", "매수 시그널", "삼성전자 72,000원")
     """
 
     MAX_HISTORY = 200

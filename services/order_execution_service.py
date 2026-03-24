@@ -4,7 +4,7 @@ from typing import Optional
 from common.types import ErrorCode, ResCommonResponse
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, NotificationCategory
 from services.market_calendar_service import MarketCalendarService
 
 
@@ -81,7 +81,7 @@ class OrderExecutionService:
             self.logger.info(
                 f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
             if self._notification_service:
-                await self._notification_service.emit("API", "info", "매수 주문 성공",
+                await self._notification_service.emit(NotificationCategory.API, "info", "매수 주문 성공",
                                     f"{stock_code} {qty}주 @ {price}원",
                                     metadata={"code": stock_code, "qty": qty, "price": price})
         else:
@@ -90,7 +90,7 @@ class OrderExecutionService:
             self.logger.error(
                 f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
             if self._notification_service:
-                await self._notification_service.emit("SYSTEM", "error", "매수 주문 실패",
+                await self._notification_service.emit(NotificationCategory.SYSTEM, "error", "매수 주문 실패",
                                     f"{stock_code} - {msg1}",
                                     metadata={"code": stock_code, "error": msg1})
         self.pm.log_timer(f"OrderExecutionService.handle_place_buy_order({stock_code})", t_start)
@@ -113,7 +113,7 @@ class OrderExecutionService:
             self.logger.info(
                 f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
             if self._notification_service:
-                await self._notification_service.emit("API", "info", "매도 주문 성공",
+                await self._notification_service.emit(NotificationCategory.API, "info", "매도 주문 성공",
                                     f"{stock_code} {qty}주 @ {price}원",
                                     metadata={"code": stock_code, "qty": qty, "price": price})
         else:
@@ -122,7 +122,7 @@ class OrderExecutionService:
             self.logger.error(
                 f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
             if self._notification_service:
-                await self._notification_service.emit("SYSTEM", "error", "매도 주문 실패",
+                await self._notification_service.emit(NotificationCategory.SYSTEM, "error", "매도 주문 실패",
                                     f"{stock_code} - {msg1}",
                                     metadata={"code": stock_code, "error": msg1})
         self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)

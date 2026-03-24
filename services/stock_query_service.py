@@ -5,7 +5,7 @@ from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, R
 from config.DynamicConfig import DynamicConfig
 from typing import List, Dict, Optional, Literal
 from core.performance_profiler import PerformanceProfiler
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, NotificationCategory
 from services.market_data_service import MarketDataService
 
 
@@ -74,7 +74,7 @@ class StockQueryService:
             msg = resp.msg1 if resp else "응답 없음"
             self.logger.error(f"{stock_code} 현재가 및 상세 정보 조회 실패: {msg}")
             if self._notification_service:
-                await self._notification_service.emit("SYSTEM", "warning", "현재가 조회 실패",
+                await self._notification_service.emit(NotificationCategory.SYSTEM, "warning", "현재가 조회 실패",
                                     f"{stock_code} - {msg}",
                                     metadata={"code": stock_code})
             return ResCommonResponse(
@@ -183,7 +183,7 @@ class StockQueryService:
         if self._notification_service:
             name = view.get("name", stock_code)
             sign_str = actual_sign if actual_sign == "+" else ""
-            await self._notification_service.emit("API", "info", "현재가 조회",
+            await self._notification_service.emit(NotificationCategory.API, "info", "현재가 조회",
                                 f"{name}({stock_code}) {view['price']}원 ({sign_str}{view['rate']}%)",
                                 metadata={"code": stock_code, "price": view["price"]})
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=view)
@@ -193,10 +193,10 @@ class StockQueryService:
         resp = await self.broker.get_account_balance()
         if self._notification_service:
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
-                await self._notification_service.emit("API", "info", "잔고 조회 완료", "계좌 잔고 조회 성공")
+                await self._notification_service.emit(NotificationCategory.API, "info", "잔고 조회 완료", "계좌 잔고 조회 성공")
             else:
                 msg = resp.msg1 if resp else "응답 없음"
-                await self._notification_service.emit("SYSTEM", "warning", "잔고 조회 실패", msg)
+                await self._notification_service.emit(NotificationCategory.SYSTEM, "warning", "잔고 조회 실패", msg)
         return resp
 
     async def handle_get_top_market_cap_stocks_code(self, market_code: str = "0000", limit: int = 30) -> ResCommonResponse:
@@ -579,14 +579,14 @@ class StockQueryService:
             self.logger.info(f"{title} 상위 종목 조회 성공")
             if self._notification_service:
                 cnt = len(response.data) if response.data else 0
-                await self._notification_service.emit("API", "info", f"{title} 랭킹 조회",
+                await self._notification_service.emit(NotificationCategory.BACKGROUND, "info", f"{title} 랭킹 조회",
                                     f"{title} 상위 {cnt}개 종목 조회 완료",
                                     metadata={"category": category})
         else:
             msg = response.msg1 if response else "응답 없음"
             self.logger.error(f"{title} 상위 종목 조회 실패: {msg}")
             if self._notification_service:
-                await self._notification_service.emit("SYSTEM", "warning", f"{title} 랭킹 조회 실패", msg,
+                await self._notification_service.emit(NotificationCategory.BACKGROUND, "warning", f"{title} 랭킹 조회 실패", msg,
                                     metadata={"category": category})
 
         self.pm.log_timer(f"StockQueryService.handle_get_top_stocks({category})", t_start, threshold=0.5)
@@ -856,4 +856,3 @@ class StockQueryService:
 
         self.pm.log_timer(f"StockQueryService.get_day_intraday_minutes_list({stock_code}, {batches}배치)", t_start, threshold=1.0)
         return collected
-
