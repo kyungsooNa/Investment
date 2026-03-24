@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 from datetime import datetime, timedelta
 from services.market_data_service import MarketDataService
-from common.types import ErrorCode, ResCommonResponse, ResFluctuation, ResBasicStockInfo
+from common.types import ErrorCode, ResCommonResponse, ResFluctuation, ResBasicStockInfo, ResStockFullInfoApiOutput
 from types import SimpleNamespace
 
 # --- Pytest Fixtures (새로운 테스트용) ---
@@ -382,10 +382,12 @@ async def test_get_current_price_db_fallback_when_market_closed(trading_service_
 
     assert resp.rt_cd == "0"
     assert resp.msg1 == "성공(DB)"
-    assert resp.data == db_snapshot
+    assert isinstance(resp.data["output"], ResStockFullInfoApiOutput)
+    assert resp.data["output"].stck_prpr == "70000"
+    assert resp.data["_source"] == "daily_snapshot"
     broker.get_current_price.assert_not_called()
     stock_repo.get_latest_daily_snapshot.assert_called_once_with("005930")
-    stock_repo.set_current_price.assert_called_once_with("005930", db_snapshot)
+    stock_repo.set_current_price.assert_called_once_with("005930", resp.data)
 
 
 @pytest.mark.asyncio
