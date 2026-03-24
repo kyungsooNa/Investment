@@ -43,9 +43,6 @@ class RankingTask(AfterMarketTask):
     API_CHUNK_SIZE = 8
     CHUNK_SLEEP_SEC = 1.1
 
-    # 장마감 후 대기 시간 (초) — 15:30 이후 약간의 여유
-    AFTER_MARKET_DELAY_SEC = 60
-
     def __init__(
         self,
         broker_api_wrapper: BrokerAPIWrapper,
@@ -114,15 +111,12 @@ class RankingTask(AfterMarketTask):
         return "RankingTask"
 
     async def start(self) -> None:
-        """투자자 랭킹 1회 실행 + 장마감 후 자동 갱신 스케줄러 시작."""
+        """장마감 후 자동 갱신 스케줄러 시작."""
         if self._state == TaskState.RUNNING:
             return
         self._state = TaskState.RUNNING
         self._suspend_event.set()
 
-        self._tasks.append(
-            asyncio.create_task(self.refresh_investor_ranking())
-        )
         self._tasks.append(
             asyncio.create_task(self.start_after_market_scheduler())
         )
@@ -164,6 +158,7 @@ class RankingTask(AfterMarketTask):
             self._basic_last_collected_date = latest_trading_date
         if needs_investor:
             await self.refresh_investor_ranking()
+            self._last_collected_date = latest_trading_date
 
     # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
 

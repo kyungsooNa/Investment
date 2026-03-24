@@ -73,7 +73,7 @@ def test_init_default_values(mock_logger):
 
     tm = MarketClock()
     assert tm.market_open_time_str == "09:00"
-    assert tm.market_close_time_str == "15:30"
+    assert tm.market_close_time_str == "15:40"
     assert tm.timezone_name == "Asia/Seoul"
     assert tm.logger == dummy_logger  # 로거가 패치된 것인지 확인
 
@@ -157,7 +157,7 @@ def test_is_market_open_during_hours(market_clock):
     """
     is_market_operating_hours 메서드 커버: 평일, 개장 시간 내
     """
-    # 평일 개장 시간 (09:00 ~ 15:30) 내의 시간
+    # 평일 개장 시간 (09:00 ~ 15:40) 내의 시간
     weekday_in_hours = market_clock.market_timezone.localize(dt.datetime(2025, 6, 27, 10, 0, 0))  # 금요일 10시
     assert market_clock.is_market_operating_hours(now=weekday_in_hours)
 
@@ -248,7 +248,7 @@ def test_get_market_close_time(market_clock):
     close_time = market_clock.get_market_close_time()
 
     assert close_time.hour == 15
-    assert close_time.minute == 30
+    assert close_time.minute == 40
     assert close_time.tzinfo.zone == "Asia/Seoul"
     assert close_time.date() == now.date()
 
@@ -261,17 +261,6 @@ def test_get_market_open_time(market_clock):
     assert open_time.minute == 0
     assert open_time.tzinfo.zone == "Asia/Seoul"
     assert open_time.date() == now.date()
-
-
-def test_get_market_close_time(market_clock):
-    test_date = datetime(2025, 8, 1)
-    close_time = market_clock.get_market_close_time(test_date)
-
-    assert close_time.hour == 15
-    assert close_time.minute == 30
-    assert close_time.date() == test_date.date()
-    assert close_time.tzinfo.zone == "Asia/Seoul"
-
 
 
 # --- to_yyyymmdd ---
@@ -364,7 +353,7 @@ def test_get_sleep_seconds_until_market_close_long_wait(market_clock, mock_logge
 
 def test_get_sleep_seconds_until_market_close_short_wait(market_clock):
     """장 마감 임박 시 정확히 남은 초 반환 검증."""
-    # 15:28 (마감 15:30) -> 2분 남음 (120초 반환)
+    # 15:28 (마감 15:40) -> 2분 남음 (120초 반환)
     now = market_clock.market_timezone.localize(dt.datetime(2025, 6, 27, 15, 28, 0))
     close = market_clock.market_timezone.localize(dt.datetime(2025, 6, 27, 15, 30, 0))
 

@@ -96,15 +96,12 @@ class OhlcvUpdateTask(AfterMarketTask):
         return "OhlcvUpdate"
 
     async def start(self) -> None:
-        """수집 1회 실행 + 장마감 후 자동 스케줄러 시작."""
+        """장마감 후 자동 스케줄러 시작."""
         if self._state == TaskState.RUNNING:
             return
         self._state = TaskState.RUNNING
         self._suspend_event.set()
 
-        self._tasks.append(
-            asyncio.create_task(self._collect_all_ohlcv())
-        )
         self._tasks.append(
             asyncio.create_task(self._after_market_scheduler())
         )
@@ -275,7 +272,7 @@ class OhlcvUpdateTask(AfterMarketTask):
         """
         try:
             if not force:
-                summary = self._stock_repo.get_ohlcv_summary(code)
+                summary = await self._stock_repo.get_ohlcv_summary(code)
                 latest_date = summary["latest_date"]
 
                 # 당일 캔들이 이미 존재하면 API 불필요

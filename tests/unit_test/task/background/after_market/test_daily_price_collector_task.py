@@ -308,7 +308,7 @@ class TestStartStop:
         """start() 호출 시 asyncio 태스크가 생성된다."""
         await task.start()
         assert task.state == TaskState.RUNNING
-        assert len(task._tasks) == 2  # collect + scheduler
+        assert len(task._tasks) == 1  # scheduler
 
         await task.stop()
         assert task.state == TaskState.STOPPED

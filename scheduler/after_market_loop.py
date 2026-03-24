@@ -29,6 +29,7 @@ async def run_after_market_loop(
     logger: Optional[logging.Logger],
     on_market_closed: Callable[[str], Awaitable[None]],
     label: str = "AfterMarketLoop",
+    delay_sec: int = 0,
 ) -> None:
     """장 마감 후 작업을 자동으로 반복 실행하는 루프.
 
@@ -40,9 +41,11 @@ async def run_after_market_loop(
             ``latest_trading_date`` (YYYYMMDD) 문자열을 받으며,
             내부에서 이미 처리한 날짜인지 직접 판단한다.
         label: 로그 메시지에 표시할 태스크 이름.
+        delay_sec: 장 마감 감지 후 콜백 실행 전까지의 Padding 시간(초).
+            여러 태스크의 실행 시점을 분산시킬 때 사용한다.
     """
     _log = logger or logging.getLogger(__name__)
-    _log.info(f"[{label}] 장마감 후 자동 스케줄러 시작")
+    _log.info(f"[{label}] 장마감 후 자동 스케줄러 시작 (delay={delay_sec}s)")
 
     while True:
         try:
@@ -59,7 +62,11 @@ async def run_after_market_loop(
                     await asyncio.sleep(wait_sec + 60)  # 마감 1분 뒤
                 continue
 
-            # ── 2. 장 마감 이후 — 콜백 실행 ──
+            # ── 2. 장 마감 이후 — Padding 대기 후 콜백 실행 ──
+            if delay_sec > 0:
+                _log.info(f"[{label}] 장 마감 감지 — {delay_sec}초 Padding 대기 후 실행")
+                await asyncio.sleep(delay_sec)
+
             latest_trading_date = (
                 await mcs.get_latest_trading_date() if mcs else None
             )

@@ -96,7 +96,7 @@ class WebAppContext:
         self.env = KoreaInvestApiEnv(config_dict, self.logger)
         self.market_clock = MarketClock(
             market_open_time=config_dict.get('market_open_time', "09:00"),
-            market_close_time=config_dict.get('market_close_time', "15:30"),
+            market_close_time=config_dict.get('market_close_time', "15:40"),
             timezone=config_dict.get('market_timezone', "Asia/Seoul"),
             logger=self.logger
         )

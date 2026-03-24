@@ -87,15 +87,12 @@ class DailyPriceCollectorTask(AfterMarketTask):
         return "DailyPriceCollector"
 
     async def start(self) -> None:
-        """수집 1회 실행 + 장마감 후 자동 스케줄러 시작."""
+        """장마감 후 자동 스케줄러 시작."""
         if self._state == TaskState.RUNNING:
             return
         self._state = TaskState.RUNNING
         self._suspend_event.set()
 
-        self._tasks.append(
-            asyncio.create_task(self._collect_all_prices())
-        )
         self._tasks.append(
             asyncio.create_task(self._after_market_scheduler())
         )

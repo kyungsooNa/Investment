@@ -10,7 +10,8 @@ from core.market_clock import MarketClock
 from brokers.broker_api_wrapper import BrokerAPIWrapper
 from common.types import (
     ResPriceSummary, ResCommonResponse, ErrorCode,
-    ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation, ResDailyChartApiItem
+    ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation, ResDailyChartApiItem,
+    ResStockFullInfoApiOutput
 )
 from core.cache.cache_store import CacheStore
 from core.performance_profiler import PerformanceProfiler
@@ -68,6 +69,7 @@ class MarketDataService:
         if self._stock_repo and not is_market_open:
             db_data = await self._stock_repo.get_latest_daily_snapshot(stock_code)
             if db_data:
+                db_data = self._wrap_snapshot_output(db_data)
                 self._stock_repo.set_current_price(stock_code, db_data)
                 return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(DB)", data=db_data)
 
@@ -243,6 +245,16 @@ class MarketDataService:
 
         self.pm.log_timer("MarketDataService.get_top_trading_value_stocks", t_start, threshold=1.0)
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="거래대금 상위 성공", data=result)
+
+    def _wrap_snapshot_output(self, db_data: dict) -> dict:
+        """get_latest_daily_snapshot의 plain dict output을 ResStockFullInfoApiOutput으로 변환합니다."""
+        output = db_data.get("output")
+        if not isinstance(output, dict):
+            return db_data
+        defaults = {f: "" for f in ResStockFullInfoApiOutput.model_fields}
+        defaults["new_hgpr_lwpr_cls_code"] = None
+        merged = {**defaults, **output}
+        return {**db_data, "output": ResStockFullInfoApiOutput.model_validate(merged)}
 
     def _is_etf(self, stock: dict) -> bool:
         """종목명 기반 ETF/ETN 여부 판별."""

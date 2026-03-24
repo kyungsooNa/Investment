@@ -1243,7 +1243,7 @@ async def test_refresh_investor_ranking_handles_none_response(bg_service, mock_d
 
 @pytest.mark.asyncio
 async def test_scheduler_no_refresh_during_market_hours(bg_service, mock_deps):
-    """장 중(09:00~15:30)에는 refresh를 호출하지 않고 장 마감까지 대기만 한다."""
+    """장 중(09:00~15:40)에는 refresh를 호출하지 않고 장 마감까지 대기만 한다."""
     import asyncio
     _, _, _, _, market_clock, market_calendar_service = mock_deps
 
@@ -1280,8 +1280,8 @@ async def test_scheduler_refreshes_when_no_prior_update(bg_service, mock_deps):
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
 
-    # 12시간 딥슬립(첫 번째 sleep)에서 CancelledError → 루프 1회만 실행
-    with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+    # padding sleep(delay_sec=600)은 통과, 12시간 딥슬립에서 CancelledError → 루프 1회만 실행
+    with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError()]):
         try:
             await bg_service.start_after_market_scheduler()
         except asyncio.CancelledError:

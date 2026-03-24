@@ -62,7 +62,7 @@ class StrategyScheduler:
 
     LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
-    FORCE_EXIT_MINUTES_BEFORE = 15  # 장 마감 N분 전 강제 청산
+    FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산
     STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
 
     def __init__(
@@ -163,7 +163,7 @@ class StrategyScheduler:
                 market_open = await self._mcs.is_market_open_now()
 
                 if not market_open:
-                    # 장이 닫힌 직후(15:30~) 아직 강제 청산 미완료된 전략이 있으면 실행
+                    # 장이 닫힌 직후(15:40~) 아직 강제 청산 미완료된 전략이 있으면 실행
                     if self._force_exit_done is not None:
                         for cfg in self._strategies:
                             if (cfg.enabled and cfg.force_exit_on_close

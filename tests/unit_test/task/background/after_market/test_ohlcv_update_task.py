@@ -43,7 +43,7 @@ def mock_sqs():
 def mock_stock_repo():
     """StockRepository mock — 기본값: 데이터 없음(신규 종목)."""
     repo = MagicMock()
-    repo.get_ohlcv_summary = MagicMock(
+    repo.get_ohlcv_summary = AsyncMock(
         return_value={"count": 0, "latest_date": None, "oldest_date": None}
     )
     return repo
@@ -676,9 +676,9 @@ class TestStartStop:
         await task.stop()
 
     async def test_start_creates_two_tasks(self, task):
-        """start() 시 collect + scheduler 2개 asyncio.Task 생성."""
+        """start() 시 scheduler 1개 asyncio.Task 생성."""
         await task.start()
-        assert len(task._tasks) == 2
+        assert len(task._tasks) == 1
         await task.stop()
 
     async def test_stop_sets_stopped_state(self, task):

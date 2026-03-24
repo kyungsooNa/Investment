@@ -101,7 +101,7 @@ class TestVolumeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         """장 마감 청산 테스트"""
         # 시가 10000
         # 09:01: 11000 (+10%) -> 매수 진입
-        # 이후 손절/익절 조건에 닿지 않고 장 마감(15:30) 가격 11500원으로 종료
+        # 이후 손절/익절 조건에 닿지 않고 장 마감(15:40) 가격 11500원으로 종료
         rows = [
             {"stck_bsop_date": "20250101", "stck_cntg_hour": "090000", "stck_oprc": "10000", "stck_prpr": "10000"},
             {"stck_bsop_date": "20250101", "stck_cntg_hour": "090100", "stck_prpr": "11000"}, # Entry

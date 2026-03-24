@@ -1,0 +1,14 @@
+# config/task_config.yaml
+# 장 마감 후 백그라운드 태스크 설정
+#
+# after_market_delay_sec
+#   장 마감 감지 후 해당 태스크를 실제로 실행하기까지의 Padding 시간(초).
+#   여러 태스크가 동시에 API를 호출하지 않도록 실행 시점을 분산시킨다.
+#   키는 각 태스크의 task_name 프로퍼티 값과 일치해야 한다.
+#
+after_market_tasks:
+  after_market_delay_sec:
+    ranking_refresh: 10          # RankingTask — 장 마감 10분 후
+    daily_price_collector: 60      # DailyPriceCollectorTask — 장 60분 후
+    ohlcv_update: 120             # OhlcvUpdateTask — 장 마감 120분 후
+    전일기준주도주_생성: 180        # PremiumWatchlistGeneratorTask — 장 마감 180분 후

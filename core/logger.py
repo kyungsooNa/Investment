@@ -234,6 +234,7 @@ class Logger:
             root_logger.addHandler(h)
 
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
+        logging.getLogger('aiosqlite').setLevel(logging.WARNING)
         http.client.HTTPConnection.debuglevel = 0  # HTTP 통신 디버그 레벨 비활성화
 
     def _cleanup_old_logs(self, days=30):
@@ -281,11 +282,15 @@ class Logger:
         self.debug_logger.info(message)
 
     def debug(self, message):
-        self.debug_logger.debug(message)
+        caller_info = self._get_caller_info()
+        full_message = f"{caller_info} - {message}"
+        self.debug_logger.debug(full_message)
 
     def warning(self, message, exc_info=False):
         self.operational_logger.warning(message, exc_info=exc_info)
-        self.debug_logger.warning(message, exc_info=exc_info)
+        caller_info = self._get_caller_info()
+        full_message = f"{caller_info} - {message}"
+        self.debug_logger.warning(full_message, exc_info=exc_info)
 
     def error(self, message, exc_info=False):
         self.operational_logger.error(message, exc_info=exc_info)

@@ -483,7 +483,7 @@ def _build_deep_mock_config():
         "htsid": "test-htsid",
         "custtype": "P",
         "market_open_time": "09:00",
-        "market_close_time": "15:30",
+        "market_close_time": "15:40",
         "market_timezone": "Asia/Seoul",
         "web": {"host": "0.0.0.0", "port": 8000},
         "tr_ids": {

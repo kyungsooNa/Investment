@@ -734,7 +734,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         config_b = StrategySchedulerConfig(strategy=strategy_b, force_exit_on_close=False, interval_minutes=0)
         scheduler.register(config_b)
 
-        # 현재 시간: 15:20, 마감 시간: 15:30 (10분 남음 -> FORCE_EXIT_MINUTES_BEFORE(15) 이내)
+        # 현재 시간: 15:20, 마감 시간: 15:40 (10분 남음 -> FORCE_EXIT_MINUTES_BEFORE(15) 이내)
         import pytz
         from datetime import datetime
         kst = pytz.timezone("Asia/Seoul")

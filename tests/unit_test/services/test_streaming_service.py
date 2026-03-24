@@ -168,7 +168,7 @@ def test_dispatch_realtime_message_unknown_type(streaming_service):
     }
     
     streaming_service.dispatch_realtime_message(data)
-    streaming_service.logger.debug.assert_called_once()
+    assert streaming_service.logger.debug.call_count == 2
 
 @pytest.mark.asyncio
 async def test_handle_get_program_trading_history_success(streaming_service, mock_broker):

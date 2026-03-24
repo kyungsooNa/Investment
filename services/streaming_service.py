@@ -121,7 +121,7 @@ class StreamingService:
 
     def dispatch_realtime_message(self, data: dict) -> None:
         """실시간 WebSocket 메시지를 파싱하여 내부 최신가 캐시를 갱신한다."""
-        self.logger.info(
+        self.logger.debug(
             f"실시간 데이터 수신: Type={data.get('type')}, TR_ID={data.get('tr_id')}, Data={data.get('data')}"
         )
 
