@@ -248,7 +248,7 @@ def test_get_market_close_time(market_clock):
     close_time = market_clock.get_market_close_time()
 
     assert close_time.hour == 15
-    assert close_time.minute == 30
+    assert close_time.minute == 40
     assert close_time.tzinfo.zone == "Asia/Seoul"
     assert close_time.date() == now.date()
 

@@ -111,15 +111,12 @@ class RankingTask(AfterMarketTask):
         return "RankingTask"
 
     async def start(self) -> None:
-        """투자자 랭킹 1회 실행 + 장마감 후 자동 갱신 스케줄러 시작."""
+        """장마감 후 자동 갱신 스케줄러 시작."""
         if self._state == TaskState.RUNNING:
             return
         self._state = TaskState.RUNNING
         self._suspend_event.set()
 
-        self._tasks.append(
-            asyncio.create_task(self.refresh_investor_ranking())
-        )
         self._tasks.append(
             asyncio.create_task(self.start_after_market_scheduler())
         )

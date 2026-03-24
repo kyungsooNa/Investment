@@ -349,7 +349,7 @@ async def test_get_latest_market_close_time_weekday(manager, mock_deps):
 
     assert latest_close.weekday() == 4  # 금요일(4)
     assert latest_close.hour == 15
-    assert latest_close.minute == 30
+    assert latest_close.minute == 40
     assert latest_close < tm.get_current_kst_time()
 
 @pytest.mark.asyncio
@@ -370,7 +370,7 @@ async def test_get_latest_market_close_time_today_after_close(manager, mock_deps
     assert latest_close.month == 8
     assert latest_close.day == 4
     assert latest_close.hour == 15
-    assert latest_close.minute == 30
+    assert latest_close.minute == 40
 
 @pytest.mark.asyncio
 async def test_get_latest_market_close_time_no_business_day_in_15_days(manager, mock_deps):
