@@ -66,7 +66,7 @@ class MarketDataService:
         # 2. 장 마감 시간대에는 daily_prices DB 스냅샷 확인 (API 호출 절약)
         is_market_open = (await self._mcs.is_market_open_now()) if self._mcs else self._market_clock.is_market_operating_hours()
         if self._stock_repo and not is_market_open:
-            db_data = self._stock_repo.get_latest_daily_snapshot(stock_code)
+            db_data = await self._stock_repo.get_latest_daily_snapshot(stock_code)
             if db_data:
                 self._stock_repo.set_current_price(stock_code, db_data)
                 return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(DB)", data=db_data)
@@ -312,25 +312,31 @@ class MarketDataService:
         :param max_loops: 반복 횟수 (10회 * 100일 = 약 1000일 ≈ 692 거래일)
         """
         t_start = self.pm.start_timer()
-        all_rows = []
+        tasks = []
         curr_end_dt = datetime.strptime(end_yyyymmdd, "%Y%m%d")
-        loop_cnt = 0
-        while loop_cnt < max_loops:
-            loop_cnt += 1
+        
+        for _ in range(max_loops):
             curr_start_dt = curr_end_dt - timedelta(days=DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE)
             s_date = self._market_clock.to_yyyymmdd(curr_start_dt)
             e_date = self._market_clock.to_yyyymmdd(curr_end_dt)
-            raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(
-                stock_code=stock_code, start_date=s_date, end_date=e_date, fid_period_div_code="D")
-            if not raw or raw.rt_cd != ErrorCode.SUCCESS.value: break
-            rows = self._normalize_ohlcv_rows(raw.data)
-            if not rows: break
-            if all_rows:
-                first_existing_date = all_rows[0]['date']
-                rows = [r for r in rows if r['date'] < first_existing_date]
-            if not rows: break
-            all_rows = rows + all_rows
+            
+            tasks.append(self._broker_api_wrapper.inquire_daily_itemchartprice(
+                stock_code=stock_code, start_date=s_date, end_date=e_date, fid_period_div_code="D"
+            ))
             curr_end_dt = curr_start_dt - timedelta(days=1)
+
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+        all_rows_map = {}
+        for raw in responses:
+            if isinstance(raw, Exception) or not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
+                continue
+            rows = self._normalize_ohlcv_rows(raw.data)
+            for r in rows:
+                all_rows_map[r['date']] = r
+                
+        all_rows = sorted(all_rows_map.values(), key=lambda x: x['date'])
+        
         self.pm.log_timer(f"MarketData._fetch_past_daily_ohlcv({stock_code})", t_start)
         return all_rows
 
@@ -366,7 +372,7 @@ class MarketDataService:
 
             # 1. 과거 데이터 가져오기 (StockRepository 캐시/DB 활용)
             if self._stock_repo:
-                stock_data = self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600, caller=caller)
+                stock_data = await self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600, caller=caller)
                 if stock_data and "ohlcv" in stock_data:
                     past_rows = stock_data["ohlcv"]
 
@@ -374,7 +380,7 @@ class MarketDataService:
             if not past_rows or len(past_rows) < 600:
                 past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=10)
                 if self._stock_repo and past_rows:
-                    self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
+                    await self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
 
             # 3. 오늘 데이터 처리 (실시간 API 병합) - 장 마감 후에는 불필요
             today_rows = []
@@ -393,7 +399,7 @@ class MarketDataService:
 
             if today_rows and not is_market_open:
                 if not past_rows or today_rows[0]['date'] > past_rows[-1]['date']:
-                    if self._stock_repo: self._stock_repo.upsert_ohlcv([{**today_rows[0], "code": stock_code}])
+                    if self._stock_repo: await self._stock_repo.upsert_ohlcv([{**today_rows[0], "code": stock_code}])
                     past_rows = past_rows + today_rows
                     today_rows = []
 
@@ -427,27 +433,39 @@ class MarketDataService:
         """
         t_start = self.pm.start_timer()
         current_ed_dt = datetime.strptime(end_date, "%Y%m%d") if end_date else self._market_clock.get_current_kst_time()
-        all_rows = []
+        
         if start_date:
             resp = await self.get_ohlcv_range(code, "D", start_date, self._market_clock.to_yyyymmdd(current_ed_dt))
             return resp.data or [] if resp and resp.rt_cd == ErrorCode.SUCCESS.value else []
 
-        for _ in range(20):
-            if len(all_rows) >= limit: break
-            ed_str = self._market_clock.to_yyyymmdd(current_ed_dt)
-            current_sd_dt = current_ed_dt - timedelta(days=100)
-            sd_str = self._market_clock.to_yyyymmdd(current_sd_dt)
-            resp = await self.get_ohlcv_range(code, "D", sd_str, ed_str)
-            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value: break
-            rows = resp.data or []
-            if not rows: break
-            if all_rows:
-                first_existing = all_rows[0]['date']
-                rows = [r for r in rows if r['date'] < first_existing]
-            if not rows: break
-            all_rows = rows + all_rows
-            current_ed_dt = current_sd_dt - timedelta(days=1)
-        if len(all_rows) > limit: all_rows = all_rows[-limit:]
+        # limit을 만족하기 위해 대략 영업일을 고려해 1.5를 곱하고 100일 단위로 끊습니다.
+        max_loops = int((limit * 1.5) // 100) + 1
+        max_loops = max(1, min(max_loops, 20))  # 최소 1, 최대 20으로 한정
+
+        tasks = []
+        curr_end_dt = current_ed_dt
+        for _ in range(max_loops):
+            ed_str = self._market_clock.to_yyyymmdd(curr_end_dt)
+            curr_start_dt = curr_end_dt - timedelta(days=100)
+            sd_str = self._market_clock.to_yyyymmdd(curr_start_dt)
+            
+            tasks.append(self.get_ohlcv_range(code, "D", sd_str, ed_str))
+            curr_end_dt = curr_start_dt - timedelta(days=1)
+
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+        all_rows_map = {}
+        for resp in responses:
+            if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                continue
+            for r in (resp.data or []):
+                all_rows_map[r['date']] = r
+
+        all_rows = sorted(all_rows_map.values(), key=lambda x: x['date'])
+        
+        if len(all_rows) > limit: 
+            all_rows = all_rows[-limit:]
+            
         self.pm.log_timer(f"MarketData.get_recent_daily_ohlcv({code})", t_start)
         return all_rows
 

@@ -366,7 +366,7 @@ class ResFluctuation(BaseModel):
 class ResBollingerBand(BaseModel):
     code: str
     date: str
-    close: float
+    close: Optional[float]
     middle: Optional[float]
     upper: Optional[float]
     lower: Optional[float]

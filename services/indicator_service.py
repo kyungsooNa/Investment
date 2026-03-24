@@ -4,7 +4,7 @@ import numpy as np
 import math
 import time
 from datetime import datetime
-from typing import List, Dict, Optional, TYPE_CHECKING
+from typing import List, Dict, Optional, TYPE_CHECKING, Union
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
 from core.cache.cache_store import CacheStore
 from core.performance_profiler import PerformanceProfiler
@@ -23,6 +23,18 @@ class IndicatorService:
         self.stock_query_service = stock_query_service
         self.cache_store = cache_store
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
+
+    @staticmethod
+    def _safe_float(val):
+        if val is None or pd.isna(val):
+            return None
+        try:
+            f = float(val)
+            if math.isnan(f) or math.isinf(f):
+                return None
+            return f
+        except (ValueError, TypeError):
+            return None
 
     async def _get_ohlcv_data(self, stock_code: str, candle_type: str, ohlcv_data: Optional[List[Dict]] = None) -> tuple:
         """
@@ -122,10 +134,7 @@ class IndicatorService:
         # 2. Pandas DataFrame 변환 및 계산
         t_calc = self.pm.start_timer()
         try:
-            df = pd.DataFrame(data)
-            # close 컬럼이 문자열일 수 있으므로 숫자형으로 변환
-            if df['close'].dtype == object:
-                 df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
 
             # 중심선 (MB) = n일 이동평균
             df['MB'] = df['close'].rolling(window=period).mean()
@@ -139,18 +148,17 @@ class IndicatorService:
             # 하단밴드 (LB) = MB - (std * k)
             df['LB'] = df['MB'] - (df['std'] * std_dev)
 
-            results = []
-            for i in range(len(df)):
-                row = df.iloc[i]
-                # NaN 처리 (데이터 부족 구간)
-                mb = float(row['MB']) if not pd.isna(row['MB']) else None
-                ub = float(row['UB']) if not pd.isna(row['UB']) else None
-                lb = float(row['LB']) if not pd.isna(row['LB']) else None
-
-                results.append(ResBollingerBand(
-                    code=stock_code, date=str(row['date']), close=float(row['close']),
-                    middle=mb, upper=ub, lower=lb
-                ))
+            results = [
+                ResBollingerBand(
+                    code=stock_code, 
+                    date=str(row.date), 
+                    close=self._safe_float(row.close),
+                    middle=self._safe_float(row.MB), 
+                    upper=self._safe_float(row.UB), 
+                    lower=self._safe_float(row.LB)
+                )
+                for row in df.itertuples(index=False)
+            ]
 
             if self.pm.enabled:
                 data_dur = t_data - t_start
@@ -240,9 +248,7 @@ class IndicatorService:
 
         t_calc = self.pm.start_timer()
         try:
-            df = pd.DataFrame(ohlcv_data)
-            if df['close'].dtype == object:
-                 df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(ohlcv_data)
 
             # 전일 대비 변동분
             delta = df['close'].diff()
@@ -257,15 +263,19 @@ class IndicatorService:
 
             # RS 및 RSI 계산
             rs = au / ad
-            rsi = 100 - (100 / (1 + rs))
+            df['rsi'] = 100 - (100 / (1 + rs))
 
-            latest = df.iloc[-1]
-            latest_rsi = rsi.iloc[-1]
+            latest = list(df.itertuples(index=False))[-1]
 
-            if pd.isna(latest_rsi):
+            if self._safe_float(latest.rsi) is None or self._safe_float(latest.close) is None:
                  return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
 
-            result = ResRSI(code=stock_code, date=str(latest['date']), close=float(latest['close']), rsi=float(latest_rsi))
+            result = ResRSI(
+                code=stock_code, 
+                date=str(latest.date), 
+                close=self._safe_float(latest.close), 
+                rsi=self._safe_float(latest.rsi)
+            )
             
             if self.pm.enabled:
                 data_dur = t_data - t_start
@@ -349,26 +359,22 @@ class IndicatorService:
 
         t_calc = self.pm.start_timer()
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object:
-                 df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
 
             if method.lower() == "ema":
-                ma_series = df['close'].ewm(span=period, adjust=False).mean()
+                df['ma'] = df['close'].ewm(span=period, adjust=False).mean()
             else: # sma
-                ma_series = df['close'].rolling(window=period).mean()
+                df['ma'] = df['close'].rolling(window=period).mean()
 
-            results = []
-            for i in range(len(df)):
-                val = ma_series.iloc[i]
-                ma_val = float(val) if not pd.isna(val) else None
-
-                results.append(ResMovingAverage(
+            results = [
+                ResMovingAverage(
                     code=stock_code,
-                    date=str(df.iloc[i]['date']),
-                    close=float(df.iloc[i]['close']),
-                    ma=ma_val
-                ))
+                    date=str(row.date),
+                    close=self._safe_float(row.close),
+                    ma=self._safe_float(row.ma)
+                )
+                for row in df.itertuples(index=False)
+            ]
 
             if self.pm.enabled:
                 data_dur = t_data - t_start
@@ -414,9 +420,7 @@ class IndicatorService:
 
         t_calc = self.pm.start_timer()
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object:
-                df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
 
             recent_close = float(df['close'].iloc[-1])
             past_close = float(df['close'].iloc[-period_days])
@@ -531,6 +535,22 @@ class IndicatorService:
     # ── 계산 로직 공통화 (Helper Methods) ─────────────────────────────
 
     @staticmethod
+    def _to_dataframe(data: Union[List[Dict], pd.DataFrame]) -> pd.DataFrame:
+        """List[Dict] 또는 기존 DataFrame을 받아 pandas DataFrame으로 통일 및 데이터 전처리를 수행합니다."""
+        if isinstance(data, pd.DataFrame):
+            df = data.copy()
+        else:
+            df = pd.DataFrame(data)
+            
+        if not df.empty and 'close' in df.columns and df['close'].dtype == object:
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        # [추가] inf 값을 NaN으로 치환하여 이후 연산(rolling, ewm 등)의 예외를 원천 방지
+        if not df.empty:
+            df = df.replace([np.inf, -np.inf], np.nan)
+            
+        return df
+
+    @staticmethod
     def _compute_ma(df: pd.DataFrame, period: int, method: str = "sma", target_col: str = "ma") -> pd.DataFrame:
         """이동평균 계산 및 컬럼 추가"""
         if method.lower() == "ema":
@@ -564,24 +584,23 @@ class IndicatorService:
     def _calculate_bollinger_bands_full(self, stock_code, data, period, std_dev) -> ResCommonResponse:
         """볼린저 밴드 전체 계산 (내부용)"""
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object: df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
             
             df['MB'] = df['close'].rolling(window=period).mean()
             df['std'] = df['close'].rolling(window=period).std()
             df['UB'] = df['MB'] + (df['std'] * std_dev)
             df['LB'] = df['MB'] - (df['std'] * std_dev)
             
-            results = []
-            for i in range(len(df)):
-                row = df.iloc[i]
-                mb = float(row['MB']) if not pd.isna(row['MB']) else None
-                ub = float(row['UB']) if not pd.isna(row['UB']) else None
-                lb = float(row['LB']) if not pd.isna(row['LB']) else None
-                results.append({
-                    "code": stock_code, "date": str(row['date']), "close": float(row['close']),
-                    "middle": mb, "upper": ub, "lower": lb
-                })
+            results = [
+                {
+                    "code": stock_code, "date": str(row.date), 
+                    "close": self._safe_float(row.close),
+                    "middle": self._safe_float(row.MB), 
+                    "upper": self._safe_float(row.UB), 
+                    "lower": self._safe_float(row.LB)
+                }
+                for row in df.itertuples(index=False)
+            ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
@@ -589,20 +608,19 @@ class IndicatorService:
     def _calculate_rsi_series(self, stock_code, data, period) -> ResCommonResponse:
         """RSI 시계열 전체 계산 (내부용)"""
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object: df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
             
             # 공통 로직 사용
             df = self._compute_rsi(df, period, target_col="rsi")
             
-            results = []
-            for i in range(len(df)):
-                val = df['rsi'].iloc[i]
-                rsi_val = float(val) if not pd.isna(val) else None
-                results.append({
-                    "code": stock_code, "date": str(df.iloc[i]['date']), 
-                    "close": float(df.iloc[i]['close']), "rsi": rsi_val
-                })
+            results = [
+                {
+                    "code": stock_code, "date": str(row.date), 
+                    "close": self._safe_float(row.close), 
+                    "rsi": self._safe_float(row.rsi)
+                }
+                for row in df.itertuples(index=False)
+            ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
@@ -610,20 +628,19 @@ class IndicatorService:
     def _calculate_moving_average_full(self, stock_code, data, period, method) -> ResCommonResponse:
         """이동평균 전체 계산 (내부용)"""
         try:
-            df = pd.DataFrame(data)
-            if df['close'].dtype == object: df['close'] = pd.to_numeric(df['close'])
+            df = self._to_dataframe(data)
             
             # 공통 로직 사용
             df = self._compute_ma(df, period, method, target_col="ma")
                 
-            results = []
-            for i in range(len(df)):
-                val = df['ma'].iloc[i]
-                ma_val = float(val) if not pd.isna(val) else None
-                results.append({
-                    "code": stock_code, "date": str(df.iloc[i]['date']),
-                    "close": float(df.iloc[i]['close']), "ma": ma_val
-                })
+            results = [
+                {
+                    "code": stock_code, "date": str(row.date),
+                    "close": self._safe_float(row.close), 
+                    "ma": self._safe_float(row.ma)
+                }
+                for row in df.itertuples(index=False)
+            ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
@@ -632,12 +649,9 @@ class IndicatorService:
         """전체 데이터를 받아 지표를 계산하는 내부 메서드"""
         try:
             # 1. DataFrame 변환 (1회 수행)
-            df = pd.DataFrame(ohlcv_data)
+            df = self._to_dataframe(ohlcv_data)
             if df.empty:
                  return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 없음", data=None)
-                 
-            if df['close'].dtype == object:
-                df['close'] = pd.to_numeric(df['close'])
 
             # 2. 지표 계산 (Vectorized operations)
             # MA
@@ -652,36 +666,24 @@ class IndicatorService:
             df['rs'] = df['close'].pct_change(periods=rs_period) * 100
 
             # 3. 결과 포맷팅
-            # NaN 및 Inf 값은 JSON 직렬화 시 문제가 되므로 안전하게 변환
-            def _safe_float(val):
-                if val is None:
-                    return None
-                try:
-                    f = float(val)
-                    if math.isnan(f) or math.isinf(f):
-                        return None
-                    return f
-                except (ValueError, TypeError):
-                    return None
-
             indicators = {}
             rows = list(df.itertuples(index=False))
             
             for p in [5, 10, 20, 60, 120]:
                 ma_key = f'ma{p}'
-                indicators[ma_key] = [{"date": str(r.date), "close": _safe_float(r.close), "ma": _safe_float(getattr(r, ma_key, None))} for r in rows]
+                indicators[ma_key] = [{"date": str(r.date), "close": self._safe_float(r.close), "ma": self._safe_float(getattr(r, ma_key, None))} for r in rows]
 
             indicators["bb"] = [
                 {
-                    "code": stock_code, "date": str(r.date), "close": _safe_float(r.close),
-                    "middle": _safe_float(getattr(r, 'bb_middle', None)), # prefix 일치
-                    "upper": _safe_float(getattr(r, 'bb_upper', None)),
-                    "lower": _safe_float(getattr(r, 'bb_lower', None))
+                    "code": stock_code, "date": str(r.date), "close": self._safe_float(r.close),
+                    "middle": self._safe_float(getattr(r, 'bb_middle', None)), # prefix 일치
+                    "upper": self._safe_float(getattr(r, 'bb_upper', None)),
+                    "lower": self._safe_float(getattr(r, 'bb_lower', None))
                 } for r in rows
             ]
 
             indicators["rs"] = [
-                {"date": str(r.date), "rs": _safe_float(getattr(r, 'rs', None))} for r in rows
+                {"date": str(r.date), "rs": self._safe_float(getattr(r, 'rs', None))} for r in rows
             ]
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=indicators)

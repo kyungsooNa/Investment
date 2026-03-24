@@ -25,8 +25,9 @@ def mock_deps():
     cache_store = MagicMock()  # Added cache_store mock
     stock_repo = MagicMock()
     stock_repo.get_current_price.return_value = None
-    stock_repo.get_stock_data.return_value = None
-    stock_repo.get_latest_daily_snapshot.return_value = None
+    stock_repo.get_stock_data = AsyncMock(return_value=None)
+    stock_repo.get_latest_daily_snapshot = AsyncMock(return_value=None)
+    stock_repo.upsert_ohlcv = AsyncMock()
 
     return SimpleNamespace(
         broker=broker,
@@ -623,14 +624,16 @@ async def test_get_recent_daily_ohlcv_loop_merging(trading_service_fixture, mock
         ResCommonResponse(rt_cd="0", msg1="OK", data=batch1),
         ResCommonResponse(rt_cd="0", msg1="OK", data=batch2),
         ResCommonResponse(rt_cd="0", msg1="OK", data=batch3),
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[]),
     ]
     
-    result = await service.get_recent_daily_ohlcv("005930", limit=5)
+    # limit 200이면 (200*1.5//100)+1 = 4개의 태스크를 생성합니다.
+    result = await service.get_recent_daily_ohlcv("005930", limit=200)
     
     assert len(result) == 5
     assert result[0]['date'] == "20250101"
     assert result[-1]['date'] == "20250105"
-    assert broker.inquire_daily_itemchartprice.call_count == 3
+    assert broker.inquire_daily_itemchartprice.call_count == 4
 
 @pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_api_error_break(trading_service_fixture, mock_deps):
@@ -645,10 +648,12 @@ async def test_get_recent_daily_ohlcv_api_error_break(trading_service_fixture, m
         ResCommonResponse(rt_cd="1", msg1="Error", data=[]),
     ]
     
-    result = await service.get_recent_daily_ohlcv("005930", limit=5)
+    # limit 60이면 (60*1.5//100)+1 = 1개의 태스크만 생성 (하지만 에러 발생 루틴을 타기 위해 limit을 100으로 주어 2개의 태스크 생성)
+    result = await service.get_recent_daily_ohlcv("005930", limit=100)
     
     assert len(result) == 1
     assert result[0]['date'] == "20250105"
+    assert broker.inquire_daily_itemchartprice.call_count == 2
 
 @pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_overlap_handling(trading_service_fixture, mock_deps):
@@ -665,7 +670,8 @@ async def test_get_recent_daily_ohlcv_overlap_handling(trading_service_fixture, 
         ResCommonResponse(rt_cd="0", msg1="OK", data=[]),
     ]
     
-    result = await service.get_recent_daily_ohlcv("005930", limit=10)
+    # limit 150이면 (150*1.5//100)+1 = 3개의 태스크 생성
+    result = await service.get_recent_daily_ohlcv("005930", limit=150)
     
     assert len(result) == 3
     assert result[0]['date'] == "20250103"
@@ -1195,4 +1201,3 @@ async def test_get_ohlcv_during_market_open_calls_today_api(trading_service_fixt
     # 오늘 데이터가 병합되어 마지막 항목이 오늘 날짜여야 함
     assert resp.data[-1]['date'] == "20250102"
     assert resp.data[-1]['close'] == 1025.0
-

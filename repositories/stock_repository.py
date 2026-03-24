@@ -7,9 +7,10 @@ import os
 import sqlite3
 import time
 import logging
-import threading
 import collections
-from contextlib import contextmanager
+import asyncio
+import aiosqlite
+from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 
 
@@ -104,19 +105,18 @@ class StockRepository:
         self._logger = logger or logging.getLogger(__name__)
         # MarketData와 DB 파일을 물리적으로 분리하여 Lock 경합 방지
         self._db_path = db_path or os.path.join("data", "stocks.db")
-        self._lock = threading.Lock()
-        self._conn: Optional[sqlite3.Connection] = None
+        self._lock = None
+        self._conn: Optional[aiosqlite.Connection] = None
 
         # 최대 500개 종목의 통합 데이터(현재가 + OHLCV)를 들고 있는 인메모리 캐시
         self._stocks_cache = _LRUCache(capacity=500)
 
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
-        self._init_db()
+        self._init_db_sync()
 
-    def _init_db(self):
+    def _init_db_sync(self):
         try:
-            self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
-            with self._get_connection() as conn:
+            with sqlite3.connect(self._db_path) as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS ohlcv (
@@ -164,24 +164,27 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository DB 초기화 실패: {e}")
 
-    @contextmanager
-    def _get_connection(self):
-        with self._lock:
+    @asynccontextmanager
+    async def _get_connection(self):
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._conn is None:
+                self._conn = await aiosqlite.connect(self._db_path)
             try:
                 yield self._conn
-                self._conn.commit()
+                await self._conn.commit()
             except Exception:
-                self._conn.rollback()
+                await self._conn.rollback()
                 raise
 
-    def upsert_ohlcv(self, records: List[Dict]):
+    async def upsert_ohlcv(self, records: List[Dict]):
         """여러 종목의 일봉(OHLCV) 데이터를 일괄 upsert (INSERT OR REPLACE)."""
         if not records:
             return
-
         try:
-            with self._get_connection() as conn:
-                conn.executemany(
+            async with self._get_connection() as conn:
+                await conn.executemany(
                     """
                     INSERT OR REPLACE INTO ohlcv (
                         code, date, open, high, low, close, volume
@@ -194,7 +197,7 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository OHLCV upsert 실패: {e}")
 
-    def get_stock_data(self, code: str, ohlcv_limit: int = 600, caller: str = "unknown") -> Optional[Dict]:
+    async def get_stock_data(self, code: str, ohlcv_limit: int = 600, caller: str = "unknown") -> Optional[Dict]:
         """메모리 캐시 또는 로컬 DB에서 종목 정보(OHLCV)를 반환합니다."""
         # 1. 메모리 캐시 확인
         cached = self._stocks_cache.get(code, caller=caller, item_type="ohlcv")
@@ -203,14 +206,14 @@ class StockRepository:
 
         # 2. 캐시에 없거나 데이터가 부족하면 DB에서 읽어오기
         try:
-            with self._get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute(
+            async with self._get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
                     "SELECT date, open, high, low, close, volume FROM ohlcv "
                     "WHERE code = ? ORDER BY date DESC LIMIT ?",
                     (code, ohlcv_limit)
-                )
-                ohlcv_rows = cursor.fetchall()
+                ) as cursor:
+                    ohlcv_rows = await cursor.fetchall()
                 conn.row_factory = None
 
             if not ohlcv_rows:
@@ -283,31 +286,31 @@ class StockRepository:
                 return cached["current_price_data"]
         return None
 
-    def get_ohlcv_summary(self, code: str) -> Dict[str, Any]:
+    async def get_ohlcv_summary(self, code: str) -> Dict[str, Any]:
         """DB에서 종목의 OHLCV 요약 정보를 반환합니다 (전체 데이터 로드 없이 메타만 조회).
 
         Returns:
             {"count": int, "latest_date": str|None, "oldest_date": str|None}
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.execute(
+            async with self._get_connection() as conn:
+                async with conn.execute(
                     "SELECT COUNT(*), MAX(date), MIN(date) FROM ohlcv WHERE code = ?",
                     (code,),
-                )
-                row = cursor.fetchone()
+                ) as cursor:
+                    row = await cursor.fetchone()
             if row and row[0]:
                 return {"count": row[0], "latest_date": row[1], "oldest_date": row[2]}
         except Exception as e:
             self._logger.error(f"StockRepository OHLCV 요약 조회 실패 ({code}): {e}")
         return {"count": 0, "latest_date": None, "oldest_date": None}
 
-    def get_ohlcv_max_trading_days(self) -> int:
+    async def get_ohlcv_max_trading_days(self) -> int:
         """DB에 저장된 고유 거래일 수를 반환한다 (전체 종목 기준 최대 캔들 수 상한)."""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.execute("SELECT COUNT(DISTINCT date) FROM ohlcv")
-                row = cursor.fetchone()
+            async with self._get_connection() as conn:
+                async with conn.execute("SELECT COUNT(DISTINCT date) FROM ohlcv") as cursor:
+                    row = await cursor.fetchone()
             return row[0] if row and row[0] else 0
         except Exception as e:
             self._logger.error(f"StockRepository 거래일 수 조회 실패: {e}")
@@ -315,15 +318,15 @@ class StockRepository:
 
     # ── daily_prices (장마감 후 전종목 스냅샷) ──────────────────────
 
-    def upsert_daily_snapshot(self, trade_date: str, records: List[Dict]):
+    async def upsert_daily_snapshot(self, trade_date: str, records: List[Dict]):
         """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert (INSERT OR REPLACE)."""
         if not records:
             return
 
         now = time.time()
         try:
-            with self._get_connection() as conn:
-                conn.executemany(
+            async with self._get_connection() as conn:
+                await conn.executemany(
                     """
                     INSERT OR REPLACE INTO daily_prices (
                         code, trade_date, name,
@@ -351,75 +354,75 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository daily_prices upsert 실패: {e}")
 
-    def get_prices_by_date(self, trade_date: str) -> List[Dict]:
+    async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         try:
-            with self._get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute(
+            async with self._get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
                     "SELECT * FROM daily_prices WHERE trade_date = ? ORDER BY code",
                     (trade_date,),
-                )
-                rows = cursor.fetchall()
+                ) as cursor:
+                    rows = await cursor.fetchall()
                 conn.row_factory = None
                 return [dict(row) for row in rows]
         except Exception as e:
             self._logger.error(f"StockRepository daily_prices 날짜별 조회 실패: {e}")
             return []
 
-    def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
+    async def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
         """특정 종목의 최근 N일간 스냅샷 이력 조회."""
         try:
-            with self._get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute(
+            async with self._get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
                     "SELECT * FROM daily_prices WHERE code = ? "
                     "ORDER BY trade_date DESC LIMIT ?",
                     (code, days),
-                )
-                rows = cursor.fetchall()
+                ) as cursor:
+                    rows = await cursor.fetchall()
                 conn.row_factory = None
                 return [dict(row) for row in rows]
         except Exception as e:
             self._logger.error(f"StockRepository daily_prices 이력 조회 실패: {e}")
             return []
 
-    def get_latest_trade_date(self) -> Optional[str]:
+    async def get_latest_trade_date(self) -> Optional[str]:
         """daily_prices에 저장된 가장 최근 거래일 반환."""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.execute("SELECT MAX(trade_date) FROM daily_prices")
-                row = cursor.fetchone()
+            async with self._get_connection() as conn:
+                async with conn.execute("SELECT MAX(trade_date) FROM daily_prices") as cursor:
+                    row = await cursor.fetchone()
                 return row[0] if row and row[0] else None
         except Exception as e:
             self._logger.error(f"StockRepository daily_prices 최근 거래일 조회 실패: {e}")
             return None
 
-    def get_count_by_date(self, trade_date: str) -> int:
+    async def get_count_by_date(self, trade_date: str) -> int:
         """특정 날짜에 저장된 종목 수 반환."""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.execute(
+            async with self._get_connection() as conn:
+                async with conn.execute(
                     "SELECT COUNT(*) FROM daily_prices WHERE trade_date = ?",
                     (trade_date,),
-                )
-                row = cursor.fetchone()
+                ) as cursor:
+                    row = await cursor.fetchone()
                 return row[0] if row else 0
         except Exception as e:
             self._logger.error(f"StockRepository daily_prices 카운트 조회 실패: {e}")
             return 0
 
-    def cleanup_old_data(self, keep_days: int = 365):
+    async def cleanup_old_data(self, keep_days: int = 365):
         """오래된 daily_prices 데이터 정리."""
         from datetime import datetime, timedelta
 
         cutoff_date = (datetime.now() - timedelta(days=keep_days)).strftime("%Y%m%d")
         try:
-            with self._get_connection() as conn:
-                cursor = conn.execute(
+            async with self._get_connection() as conn:
+                async with conn.execute(
                     "DELETE FROM daily_prices WHERE trade_date < ?", (cutoff_date,)
-                )
-                deleted = cursor.rowcount
+                ) as cursor:
+                    deleted = cursor.rowcount
                 if deleted > 0:
                     self._logger.info(
                         f"StockRepository: {deleted}건 오래된 daily_prices 삭제 (기준: {cutoff_date})"
@@ -427,18 +430,18 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository daily_prices 데이터 정리 실패: {e}")
 
-    def get_latest_daily_snapshot(self, code: str) -> Optional[dict]:
+    async def get_latest_daily_snapshot(self, code: str) -> Optional[dict]:
         """daily_prices에서 최신 스냅샷을 현재가 API 응답 포맷(output dict)으로 변환하여 반환합니다.
         장 마감 후 LRU 캐시 miss 시 API 호출 전 fallback으로 사용합니다.
         """
         try:
-            with self._get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute(
+            async with self._get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
                     "SELECT * FROM daily_prices WHERE code = ? ORDER BY trade_date DESC LIMIT 1",
                     (code,),
-                )
-                row = cursor.fetchone()
+                ) as cursor:
+                    row = await cursor.fetchone()
                 conn.row_factory = None
             if not row:
                 return None
@@ -473,11 +476,12 @@ class StockRepository:
         """메모리 캐시의 사용 통계(적중률 등)를 반환합니다."""
         return self._stocks_cache.get_stats(expand=expand)
 
-    def close(self):
+    async def close(self):
         """DB 연결을 닫는다."""
         if self._conn:
-            self._conn.close()
+            await self._conn.close()
             self._conn = None
 
     def __del__(self):
-        self.close()
+        if self._conn:
+            self._logger.warning("StockRepository was not closed explicitly.")
