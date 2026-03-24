@@ -591,7 +591,7 @@ async def test_exits_partial_profit_50pct(mock_deps):
     assert signals[0].action == "SELL"
     assert "부분익절" in signals[0].reason
     assert signals[0].qty == 2  # 4주의 50%
-    assert strategy._position_state["005930"].partial_sold is True
+    assert strategy._position_state["005930"].last_partial_sell_price == 11600
 
 
 @pytest.mark.asyncio
@@ -623,16 +623,17 @@ async def test_exits_partial_profit_1_share_full_exit(mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_exits_no_partial_if_already_done(mock_deps):
-    """부분 익절: partial_sold=True이면 재실행 안 함."""
+async def test_exits_no_partial_if_price_not_risen(mock_deps):
+    """부분 익절: 직전 익절가 대비 +15% 미만이면 재실행 안 함."""
     sqs, universe, tm, logger = mock_deps
     strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
     strategy._save_state = MagicMock()
     universe.is_market_timing_ok.return_value = True
 
-    # partial_sold=True → 이미 50% 익절 완료
+    # last_partial_sell_price=11600 → 현재가 12000은 +3.4% 미만이므로 재실행 안 함
     strategy._position_state["005930"] = PPPositionState(
-        "PP", 10000, "20250101", 12000, "20", 0, True, "20250105"
+        "PP", 10000, "20250101", 12000, "20", 0, False, "20250105",
+        last_partial_sell_price=11600
     )
 
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=_make_ohlcv(60, close=11000))
@@ -646,6 +647,39 @@ async def test_exits_no_partial_if_already_done(mock_deps):
         {"code": "005930", "buy_price": 10000, "qty": 2, "market": "KOSPI"}
     ])
     assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_exits_repeated_partial_profit(mock_deps):
+    """부분 익절: 직전 익절가 대비 +15% 도달 시 반복 실행."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+    universe.is_market_timing_ok.return_value = True
+
+    # 1차 익절(11500원)이 이미 된 상태 → last_partial_sell_price=11500
+    strategy._position_state["005930"] = PPPositionState(
+        "PP", 10000, "20250101", 13225, "20", 0, False, "20250105",
+        last_partial_sell_price=11500
+    )
+
+    ohlcv = _make_ohlcv(60, close=12000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+
+    # 현재가 13225 → 11500 대비 +15% (2차 부분 익절 조건 충족)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "13225"}}
+    )
+
+    signals = await strategy.check_exits([
+        {"code": "005930", "buy_price": 10000, "qty": 4, "market": "KOSPI"}
+    ])
+
+    assert len(signals) == 1
+    assert "부분익절" in signals[0].reason
+    assert signals[0].qty == 2  # 4주의 50%
+    assert strategy._position_state["005930"].last_partial_sell_price == 13225
 
 
 # ════════════════════════════════════════════════════════════════
@@ -863,7 +897,7 @@ def test_load_save_state(mock_deps, tmp_path):
 
     strategy._position_state = {
         "005930": PPPositionState("PP", 68000, "20250101", 70000, "20", 0, False, "20250105"),
-        "035420": PPPositionState("BGU", 350000, "20250102", 370000, "", 340000, True, "20250103"),
+        "035420": PPPositionState("BGU", 350000, "20250102", 370000, "", 340000, False, "20250103", last_partial_sell_price=378000),
     }
     strategy._save_state()
 
@@ -878,11 +912,12 @@ def test_load_save_state(mock_deps, tmp_path):
     assert strategy2._position_state["005930"].entry_type == "PP"
     assert strategy2._position_state["005930"].supporting_ma == "20"
     assert strategy2._position_state["005930"].holding_start_date == "20250105"
+    assert strategy2._position_state["005930"].last_partial_sell_price == 0
 
     assert "035420" in strategy2._position_state
     assert strategy2._position_state["035420"].entry_type == "BGU"
     assert strategy2._position_state["035420"].gap_day_low == 340000
-    assert strategy2._position_state["035420"].partial_sold is True
+    assert strategy2._position_state["035420"].last_partial_sell_price == 378000
 
 
 def test_name_property(mock_deps):

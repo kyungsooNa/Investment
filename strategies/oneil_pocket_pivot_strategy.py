@@ -200,8 +200,6 @@ class OneilPocketPivotStrategy(LiveStrategy):
             peak_price=current,
             supporting_ma=supporting_ma,
             gap_day_low=gap_day_low,
-            partial_sold=False,
-            holding_start_date="",
         )
         self._save_state()
 
@@ -420,7 +418,6 @@ class OneilPocketPivotStrategy(LiveStrategy):
                     entry_type="PP", entry_price=buy_price,
                     entry_date="", peak_price=buy_price,
                     supporting_ma="20", gap_day_low=0,
-                    partial_sold=False, holding_start_date="",
                 )
                 self._position_state[code] = state
 
@@ -476,12 +473,13 @@ class OneilPocketPivotStrategy(LiveStrategy):
                     if bgu_reason:
                         reason = bgu_reason
 
-            # 🌟 우선순위 3: 부분 익절 (+15% & 미실행)
-            if not reason and not state.partial_sold:
-                partial_signal = self._check_partial_profit(code, state, current, buy_price, hold)
+            # 🌟 우선순위 3: 부분 익절 (직전 익절가 대비 +15% 시 반복 실행)
+            if not reason:
+                ref_price = state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price
+                partial_signal = self._check_partial_profit(code, state, current, ref_price, hold)
                 if partial_signal:
                     signals.append(partial_signal)
-                    state.partial_sold = True
+                    state.last_partial_sell_price = current
                     self._save_state()
                     continue  # 부분 매도 후 전량 청산하지 않음
 

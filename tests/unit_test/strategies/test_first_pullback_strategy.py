@@ -488,7 +488,7 @@ async def test_exits_partial_profit_50pct(mock_deps):
     assert signals[0].action == "SELL"
     assert "부분익절" in signals[0].reason
     assert signals[0].qty == 2  # 4주의 50%
-    assert strategy._position_state["005930"].partial_sold is True
+    assert strategy._position_state["005930"].last_partial_sell_price == 11200
 
 
 @pytest.mark.asyncio
@@ -517,14 +517,16 @@ async def test_exits_partial_profit_1_share_full_exit(mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_exits_no_partial_if_already_done(mock_deps):
-    """부분 익절: partial_sold=True이면 재실행 안 함."""
+async def test_exits_no_partial_if_price_not_risen(mock_deps):
+    """부분 익절: 직전 익절가 대비 +10% 미만이면 재실행 안 함."""
     sqs, universe, tm, logger = mock_deps
     strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
     strategy._save_state = MagicMock()
 
-    # partial_sold=True → 이미 50% 익절 완료
-    strategy._position_state["005930"] = FPPositionState(10000, "20250101", 12000, 12000, True)
+    # last_partial_sell_price=11200 → 현재가 12000은 +7.1% 미만이므로 재실행 안 함
+    strategy._position_state["005930"] = FPPositionState(
+        10000, "20250101", 12000, 12000, last_partial_sell_price=11200
+    )
 
     ohlcv = _make_ohlcv(20, close=11000)
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
@@ -546,8 +548,10 @@ async def test_exits_stop_loss_after_partial_sold(mock_deps):
     strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
     strategy._save_state = MagicMock()
 
-    # partial_sold=True, 잔량 2주
-    strategy._position_state["005930"] = FPPositionState(10000, "20250101", 11500, 12000, True)
+    # 부분익절 후 잔량 2주 (last_partial_sell_price=11500 설정)
+    strategy._position_state["005930"] = FPPositionState(
+        10000, "20250101", 11500, 12000, last_partial_sell_price=11500
+    )
 
     ohlcv = _make_ohlcv(20, close=10000)
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
@@ -565,6 +569,36 @@ async def test_exits_stop_loss_after_partial_sold(mock_deps):
     assert "손절" in signals[0].reason
     assert signals[0].qty == 2  # 남은 잔량 전체
     assert "005930" not in strategy._position_state
+
+
+@pytest.mark.asyncio
+async def test_exits_repeated_partial_profit(mock_deps):
+    """부분 익절: 직전 익절가 대비 +10% 도달 시 반복 실행."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    # 1차 익절(11000원)이 이미 된 상태 → last_partial_sell_price=11000
+    strategy._position_state["005930"] = FPPositionState(
+        10000, "20250101", 12100, 12000, last_partial_sell_price=11000
+    )
+
+    ohlcv = _make_ohlcv(20, close=11500)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+
+    # 현재가 12100 → 11000 대비 +10% (2차 부분 익절 조건 충족)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "12100"}}
+    )
+
+    signals = await strategy.check_exits([
+        {"code": "005930", "buy_price": 10000, "qty": 4, "market": "KOSPI"}
+    ])
+
+    assert len(signals) == 1
+    assert "부분익절" in signals[0].reason
+    assert signals[0].qty == 2  # 4주의 50%
+    assert strategy._position_state["005930"].last_partial_sell_price == 12100
 
 
 # ════════════════════════════════════════════════════════════════
@@ -787,8 +821,8 @@ def test_load_save_state(mock_deps, tmp_path):
     strategy.STATE_FILE = str(test_file)
 
     strategy._position_state = {
-        "005930": FPPositionState(10000, "20250101", 10500, 12000, False),
-        "035420": FPPositionState(30000, "20250102", 33000, 35000, True),
+        "005930": FPPositionState(10000, "20250101", 10500, 12000),
+        "035420": FPPositionState(30000, "20250102", 33000, 35000, last_partial_sell_price=33000),
     }
     strategy._save_state()
 
@@ -801,10 +835,10 @@ def test_load_save_state(mock_deps, tmp_path):
 
     assert "005930" in strategy2._position_state
     assert strategy2._position_state["005930"].entry_price == 10000
-    assert strategy2._position_state["005930"].partial_sold is False
+    assert strategy2._position_state["005930"].last_partial_sell_price == 0
 
     assert "035420" in strategy2._position_state
-    assert strategy2._position_state["035420"].partial_sold is True
+    assert strategy2._position_state["035420"].last_partial_sell_price == 33000
     assert strategy2._position_state["035420"].surge_day_high == 35000
 
 
