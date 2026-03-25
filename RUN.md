@@ -10,11 +10,7 @@
    cd c:\Users\Kyungsoo\Documents\Code\Investment
    pip install -r requirements.txt
    ```
-2. **Cursor에서 사용할 인터프리터 지정**  
-   - `Ctrl+Shift+P` → **Python: Select Interpreter**  
-   - 목록에서 **py310** (또는 `C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe`) 선택  
 
-이렇게 하면 IDE에서 **Run** 버튼으로 실행할 때도 같은 환경이 사용되어 `httpx` 등을 찾을 수 있습니다.
 
 **인터프리터를 py310으로 바꿨는데도 `httpx` 에러가 나는 경우**  
 - Cursor가 실제로는 **다른 Python**(예: python.org 설치본)을 쓰고 있을 수 있습니다.  
