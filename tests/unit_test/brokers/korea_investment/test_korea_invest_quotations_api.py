@@ -330,7 +330,7 @@ async def test_get_stock_info_by_code_failure(mock_quotations):
 
 @pytest.mark.asyncio
 async def test_get_stock_info_by_code_parsing_error(mock_quotations):
-    # 필수 필드가 누락된 mock output (ResStockFullInfoApiOutput에 정의되지 않은 필드)
+    # 필수 필드(stck_prpr 등)가 누락된 mock output 반환 -> ValidationError 유발
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
         rt_cd="0",
         msg1="SUCCESS",
@@ -775,13 +775,12 @@ async def test_get_current_price_parsing_error(mock_quotations):
     """
     get_current_price: API 응답은 성공했으나 데이터 파싱(Pydantic 검증 등)에 실패하는 경우
     """
-    # 1. call_api 모킹: 필수 필드가 누락된 데이터 반환
-    # ResStockFullInfoApiOutput은 많은 필드를 요구하므로, 빈 dict나 일부만 있는 dict는 ValidationError를 유발함
+    # 1. call_api 모킹: 필수 필드가 누락된 데이터 반환 -> ValidationError 유발
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
         rt_cd="0",
         msg1="정상",
         data={
-            "output": {"invalid_field": "value"}  # 필수 필드 누락 -> ValidationError 유발
+            "output": {"invalid_field": "value"}
         }
     ))
 

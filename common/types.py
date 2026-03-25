@@ -160,13 +160,13 @@ class ResStockFullInfoApiOutput(BaseModel):
     stck_dryy_hgpr: str = ""  # 당해 연도 최고가
     stck_dryy_lwpr: str = ""  # 당해 연도 최저가
     stck_fcam: str = ""  # 액면가
-    stck_hgpr: str = ""  # 금일 고가
+    stck_hgpr: str  # 금일 고가
     stck_llam: str = ""  # 종가 기준 시가총액 (원)
-    stck_lwpr: str = ""  # 금일 저가
+    stck_lwpr: str  # 금일 저가
     stck_mxpr: str = ""  # 상한가
-    stck_oprc: str = ""  # 시가
-    stck_prpr: str = ""  # 현재가
-    stck_sdpr: str = ""  # 기준가 (기준가격)
+    stck_oprc: str  # 시가
+    stck_prpr: str  # 현재가
+    stck_sdpr: str  # 기준가 (기준가격)
     stck_shrn_iscd: str = ""  # 단축 종목코드
     stck_sspr: str = ""  # 하한가
     temp_stop_yn: str = ""  # 일시 정지 여부 (Y/N)
@@ -279,11 +279,11 @@ class ResTopMarketCapApiItem(BaseModel):
 
 
 class ResDailyChartApiItem(BaseModel):
-    stck_bsop_date: str = ""
-    stck_oprc: str = ""
-    stck_hgpr: str = ""
-    stck_lwpr: str = ""
-    stck_clpr: str = ""
+    stck_bsop_date: str
+    stck_oprc: str
+    stck_hgpr: str
+    stck_lwpr: str
+    stck_clpr: str
     acml_vol: str = ""
 
     def to_dict(self):
@@ -337,10 +337,10 @@ class ResBasicStockInfo(BaseModel):
 
 
 class ResFluctuation(BaseModel):
-    stck_shrn_iscd: str = ""   #주식 단축 종목코드
+    stck_shrn_iscd: str   #주식 단축 종목코드
     data_rank: str = ""   #데이터 순위
     hts_kor_isnm: str = ""   #HTS 한글 종목명
-    stck_prpr: str = ""   #주식 현재가
+    stck_prpr: str   #주식 현재가
     prdy_vrss: str = ""   #전일 대비
     prdy_vrss_sign: str = ""   #전일 대비 부호
     prdy_ctrt: str = ""   #전일 대비율
