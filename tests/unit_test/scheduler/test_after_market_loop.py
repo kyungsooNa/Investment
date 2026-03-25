@@ -4,6 +4,7 @@ run_after_market_loop 공통 스케줄러 단위 테스트.
 """
 import asyncio
 import pytest
+from datetime import time as dt_time
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 
 from scheduler.after_market_loop import run_after_market_loop, _smart_sleep
@@ -89,6 +90,12 @@ class TestRunAfterMarketLoop:
 
         tm = MagicMock()
         tm.get_sleep_seconds_until_market_close.return_value = 0.1  # 아주 짧게
+        # 1b 체크(장 시작 전 guard)가 오작동하지 않도록 장 마감 이후 시각으로 설정
+        fake_now = MagicMock()
+        fake_now.weekday.return_value = 1  # 화요일
+        fake_now.time.return_value = dt_time(16, 0)  # 15:40 이후 → 1b 미진입
+        tm.get_current_kst_time.return_value = fake_now
+        tm._open_time_obj = dt_time(9, 0)
 
         callback_called = False
 
@@ -97,10 +104,11 @@ class TestRunAfterMarketLoop:
             callback_called = True
             raise asyncio.CancelledError()
 
-        await run_after_market_loop(
-            mcs=mcs, market_clock=tm, logger=MagicMock(),
-            on_market_closed=_callback, label="Test",
-        )
+        with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock):
+            await run_after_market_loop(
+                mcs=mcs, market_clock=tm, logger=MagicMock(),
+                on_market_closed=_callback, label="Test",
+            )
 
         assert callback_called
 
@@ -128,6 +136,45 @@ class TestRunAfterMarketLoop:
             )
 
         callback.assert_not_awaited()
+
+    async def test_does_not_run_before_market_open(self):
+        """앱이 장 시작 전(09:00 이전 평일)에 기동되면 콜백을 즉시 실행하지 않고 장 마감까지 대기한다."""
+        mcs = MagicMock()
+        mcs.is_market_open_now = AsyncMock(return_value=False)
+        mcs.get_latest_trading_date = AsyncMock(return_value="20260325")
+
+        tm = MagicMock()
+        # 현재 시각: 08:50 (평일, 장 시작 전)
+        fake_now = MagicMock()
+        fake_now.weekday.return_value = 1  # 화요일
+        fake_now.time.return_value = dt_time(8, 50)
+        tm.get_current_kst_time.return_value = fake_now
+        tm._open_time_obj = dt_time(9, 0)
+        # 장 마감까지 6시간 50분 남음
+        tm.get_sleep_seconds_until_market_close.return_value = 6 * 3600 + 50 * 60
+
+        sleep_calls = []
+        callback_called = False
+
+        async def _mock_sleep(sec):
+            sleep_calls.append(sec)
+            if len(sleep_calls) >= 1:
+                raise asyncio.CancelledError()
+
+        async def _callback(_date):
+            nonlocal callback_called
+            callback_called = True
+
+        with patch("scheduler.after_market_loop.asyncio.sleep", side_effect=_mock_sleep):
+            await run_after_market_loop(
+                mcs=mcs, market_clock=tm, logger=MagicMock(),
+                on_market_closed=_callback, label="Test",
+            )
+
+        # 콜백이 실행되지 않아야 하며, 장 마감까지의 대기가 발생해야 한다
+        assert not callback_called
+        assert len(sleep_calls) == 1
+        assert sleep_calls[0] == 6 * 3600 + 50 * 60 + 60  # get_sleep_seconds_until_market_close() + 60
 
     async def test_recovers_from_callback_error(self):
         """콜백 에러 시 60초 후 재시도한다."""
