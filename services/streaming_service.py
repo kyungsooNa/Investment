@@ -7,9 +7,9 @@ WebSocket 스트리밍 관련 기능을 담당하는 서비스.
   - 수신 메시지 dispatch 및 최신가 메모리 캐시 유지
   - 프로그램매매 히스토리 조회 (REST)
 
-RealtimeDataService와의 역할 구분:
-  - StreamingService : WebSocket 연결·구독·메시지 처리 (프로토콜 레이어)
-  - RealtimeDataService: 수신된 데이터의 저장·버퍼링·SSE 배포 (데이터 레이어)
+ProgramTradingStreamService와의 역할 구분:
+  - StreamingService           : WebSocket 연결·구독·메시지 처리 (프로토콜 레이어)
+  - ProgramTradingStreamService: 프로그램매매 데이터의 저장·버퍼링·SSE 배포 (데이터 레이어)
 """
 from __future__ import annotations
 
@@ -68,6 +68,14 @@ class StreamingService:
     async def unsubscribe_realtime_price(self, code: str):
         """실시간 체결가 구독 해지 (BrokerAPIWrapper 위임)."""
         return await self.broker.unsubscribe_realtime_price(code)
+
+    async def subscribe_unified_price(self, code: str) -> bool:
+        """실시간 통합 체결가(H0UNCNT0) 구독 — PriceSubscriptionService 전용."""
+        return await self.broker.subscribe_unified_price(code)
+
+    async def unsubscribe_unified_price(self, code: str) -> bool:
+        """실시간 통합 체결가(H0UNCNT0) 구독 해지 — PriceSubscriptionService 전용."""
+        return await self.broker.unsubscribe_unified_price(code)
 
     # ── 고수준 스트림 핸들러 ──────────────────────────────────────
 

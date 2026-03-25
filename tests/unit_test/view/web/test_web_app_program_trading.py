@@ -9,7 +9,7 @@ def mock_ctx():
     app_context.env = MagicMock()
 
     # [수정] WebAppContext 초기화 시 외부 의존성(파일I/O, 네트워크) 격리
-    with patch('view.web.web_app_initializer.RealtimeDataService') as MockRDM, \
+    with patch('view.web.web_app_initializer.ProgramTradingStreamService') as MockRDM, \
          patch('view.web.web_app_initializer.web_api') as MockWebApi, \
          patch('view.web.web_app_initializer.StockRepository') as MockMapper, \
          patch('view.web.web_app_initializer.VirtualTradeService') as MockVTM, \

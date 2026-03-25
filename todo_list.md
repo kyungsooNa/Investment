@@ -25,19 +25,24 @@
 backgournd: 수행중인 전략 scheduler(전략에서 수행하는 매수/매도는 forground의 매수매도와 동일한 최우선순위) 랭킹정보 udpate, 전체 종목 정보 update, oneil_service의 poolA Update 등 장마감 이후 한번씩 고정된 data를 db에 올리는 작업 등.
 
 - telegram_notifier.py, notification_service.py, naver_finance_scraper.py 도 background task로 전환.
-- 과거의 OHLCV, 시가총액 등 장 중에 변하지 않는 기능은 background로 전환.
+
 - 현재가의 실시간성을 위해 구독하여 관리하도록 수정. 전체종목을 구독할 수 없으니 아래의 종목만 우선적으로 구독하고, 필요없어지면 끊는 방식으로 관리
   - 현재 보유 중인 종목 (Portfolio)
+  - 전략에서 생성한 Premiums 종목 (data/premium_stocks.json)
+      - 실행 중인 매매 전략이 감시 대상으로 삼고 있는 종목 (oneil_universe_service.py의 _build_daily_surge_pool (POOL B))
   - 사용자가 등록한 관심 종목 (Watchlist)
   - 현재 웹 UI 화면에서 보고 있는 종목
-  - 실행 중인 매매 전략이 감시 대상으로 삼고 있는 종목
 
-    참조 카운팅(Reference Counting): 하나의 종목(예: 삼성전자)에 대해 여러 곳에서 구독을 요청할 수 있습니다. (보유 종목이라서 + 전략 A가 감시해서 + 웹 UI에서 보고 있어서)
+    1차적인 가장 큰 목적은 주요 종목을 streaming 해서 전략에서 stock_repository.py에 종목 cache에 접근할때 streaming flag가 set 되어있으면 API 호출 없이 바로 현재가를 전략에서 즉시 사용할 수 있도록하는 것.
+    이외에 우선순위가 떨어지는 내용들에 대해서는 중요도가 떨어짐.
+
+    참고 포인트: 참조 카운팅(Reference Counting): 하나의 종목(예: 삼성전자)에 대해 여러 곳에서 구독을 요청할 수 있습니다. (보유 종목이라서 + 전략 A가 감시해서 + 웹 UI에서 보고 있어서)
 
     구독 요청: "삼성전자"의 참조 카운트를 1 올립니다. (카운트가 0 -> 1이 될 때 실제 구독)
     구독 해제 요청: "삼성전자"의 참조 카운트를 1 내립니다. (카운트가 1 -> 0이 될 때 실제 구독 해제)
     우선순위(Priority): 모든 구독 요청이 동일한 중요도를 갖지는 않습니다.
 
+  - 구독 우선순위:
     최우선 (High): 매매와 직결되는 보유 종목의 실시간 가격
     중간 (Medium): 매매 판단에 필요한 전략 감시 종목
     낮음 (Low): 사용자의 편의를 위한 웹 UI 조회 종목

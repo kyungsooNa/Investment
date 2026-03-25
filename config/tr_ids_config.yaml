@@ -33,8 +33,10 @@ tr_ids:
   # --- 웹소켓 TR ID 추가 ---
   websocket:
     approval_key: 실시간-000 # 웹소켓 접속키 발급 TR ID (문서에 명시된 값)
-    realtime_price: H0STCNT0 # 실시간 주식체결 TR ID (KRX)
-    realtime_quote: H0STASP0 # 실시간 주식호가 TR ID (KRX)
+
+
+    realtime_price: H0STCNT0 # 실시간 주식체결 TR ID (KRX/KOSDAQ)
+    unified_realtime_price: H0UNCNT0 # 실시간 통합체결 TR ID (KRX+NXT 통합)
     realtime_program_trading: "H0STPGM0"  # 프로그램매매 TR ID (KRX)
     nxt_realtime_price: H0NXCNT0       # 실시간 주식체결 TR ID (NXT)
     nxt_realtime_quote: H0NXASP0       # 실시간 주식호가 TR ID (NXT)

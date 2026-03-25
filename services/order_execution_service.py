@@ -6,6 +6,7 @@ from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 from services.market_calendar_service import MarketCalendarService
+from services.price_subscription_service import SubscriptionPriority
 
 
 class OrderExecutionService:
@@ -17,17 +18,19 @@ class OrderExecutionService:
     _ORDER_MAX_RETRIES = 5
     _ORDER_RETRY_DELAY_SEC = 3
 
-    def __init__(self, broker_api_wrapper, logger, 
+    def __init__(self, broker_api_wrapper, logger,
                  market_clock: Optional[MarketClock] = None,
                  performance_profiler: Optional[PerformanceProfiler] = None,
                  notification_service: Optional[NotificationService] = None,
-                 market_calendar_service: Optional[MarketCalendarService] = None):
+                 market_calendar_service: Optional[MarketCalendarService] = None,
+                 price_subscription_service=None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self.market_calendar_service = market_calendar_service
+        self._price_sub_svc = price_subscription_service
 
     async def _retry_order(self, order_fn, stock_code, price, qty) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도."""
@@ -80,6 +83,10 @@ class OrderExecutionService:
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
                 f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
+            if self._price_sub_svc:
+                asyncio.create_task(self._price_sub_svc.add_subscription(
+                    stock_code, SubscriptionPriority.HIGH, "portfolio"
+                ))
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매수 주문 성공",
                                     f"{stock_code} {qty}주 @ {price}원",
@@ -112,6 +119,10 @@ class OrderExecutionService:
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
                 f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
+            if self._price_sub_svc:
+                asyncio.create_task(self._price_sub_svc.remove_subscription(
+                    stock_code, "portfolio"
+                ))
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매도 주문 성공",
                                     f"{stock_code} {qty}주 @ {price}원",
