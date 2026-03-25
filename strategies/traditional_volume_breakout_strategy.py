@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -130,83 +131,91 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
         if market_progress <= 0:
             return signals
 
-        # 3) 각 종목 돌파 조건 체크
-        for code, item in self._watchlist.items():
-            # 이미 보유중인 종목은 매수 대상에서 제외
-            if code in self._position_state:
-                self._logger.debug({"event": "scan_skipped_already_holding", "code": code, "name": item.name})
-                continue
+        # 3) 각 종목 돌파 조건 체크 (청크 기반 병렬 처리, TPS 제한 대응)
+        candidates = [
+            (code, item) for code, item in self._watchlist.items()
+            if code not in self._position_state
+        ]
+        for i in range(0, len(candidates), 10):
+            chunk = candidates[i:i + 10]
+            results = await asyncio.gather(
+                *[self._check_breakout_for_code(code, item, market_progress) for code, item in chunk],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    self._logger.error({"event": "scan_error", "error": str(result)})
+                elif result:
+                    signals.append(result)
 
-            log_data = {"code": code, "name": item.name, "watchlist_item": asdict(item)}
-            try:
-                price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
-                if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
-                    continue
-
-                data = price_resp.data or {}
-                current = int(data.get("price", "0") or "0")
-                acml_vol = int(data.get("acml_vol", "0") or "0")
-                log_data.update({"current_price": current, "accumulated_volume": acml_vol})
-
-                if current <= 0:
-                    continue
-
-                # 가격 돌파: 현재가 > 20일 최고가
-                if current <= item.high_20d:
-                    # 너무 많은 로그를 피하기 위해 이 단계는 로그 생략
-                    continue
-
-                # 거래량 돌파: 예상 일 거래량 >= 20일 평균 × 1.5
-                projected_vol = acml_vol / market_progress if market_progress > 0 else acml_vol
-                vol_threshold = item.avg_vol_20d * self._cfg.volume_breakout_multiplier
-                log_data.update({"projected_volume": projected_vol, "volume_threshold": vol_threshold})
-
-                if projected_vol < vol_threshold:
-                    log_data["reason"] = "Projected volume below threshold"
-                    self._logger.info({"event": "candidate_rejected", **log_data})
-                    continue
-                
-                self._logger.info({"event": "breakout_detected", **log_data})
-
-                # 포지션 사이즈 계산
-                qty = self._calculate_qty(current)
-
-                # 포지션 상태 기록 + 저장
-                self._position_state[code] = PositionState(
-                    breakout_level=item.high_20d,
-                    peak_price=current,
-                )
-                self._save_state()
-
-                vol_ratio = (projected_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
-
-                reason_msg = (
-                    f"전통돌파(돌파 {current:,}>{item.high_20d:,}, "
-                    f"예상거래 {vol_ratio:.0f}%(20일평균대비), "
-                    f"5일평균대금 {item.avg_trading_value_5d / 100_000_000:,.0f}억)"
-                )
-                signals.append(TradeSignal(
-                    code=code, name=item.name, action="BUY", price=current, qty=qty,
-                    reason=reason_msg, strategy_name=self.name,
-                ))
-                self._logger.info({
-                    "event": "buy_signal_generated",
-                    "code": code, "name": item.name, "price": current, "qty": qty,
-                    "reason": reason_msg, "data": log_data,
-                })
-
-            except Exception as e:
-                self._logger.error({
-                    "event": "scan_error", "code": code, "error": str(e),
-                }, exc_info=True)
-        
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
+
+    async def _check_breakout_for_code(
+        self, code: str, item: WatchlistItem, market_progress: float
+    ) -> Optional[TradeSignal]:
+        """단일 종목의 가격·거래량 돌파 조건을 검사하고 매수 시그널을 반환한다."""
+        log_data = {"code": code, "name": item.name, "watchlist_item": asdict(item)}
+        try:
+            price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
+            if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
+                return None
+
+            data = price_resp.data or {}
+            current = int(data.get("price", "0") or "0")
+            acml_vol = int(data.get("acml_vol", "0") or "0")
+            log_data.update({"current_price": current, "accumulated_volume": acml_vol})
+
+            if current <= 0:
+                return None
+
+            # 가격 돌파: 현재가 > 20일 최고가
+            if current <= item.high_20d:
+                return None
+
+            # 거래량 돌파: 예상 일 거래량 >= 20일 평균 × 1.5
+            projected_vol = acml_vol / market_progress if market_progress > 0 else acml_vol
+            vol_threshold = item.avg_vol_20d * self._cfg.volume_breakout_multiplier
+            log_data.update({"projected_volume": projected_vol, "volume_threshold": vol_threshold})
+
+            if projected_vol < vol_threshold:
+                log_data["reason"] = "Projected volume below threshold"
+                self._logger.info({"event": "candidate_rejected", **log_data})
+                return None
+
+            self._logger.info({"event": "breakout_detected", **log_data})
+
+            qty = self._calculate_qty(current)
+            self._position_state[code] = PositionState(
+                breakout_level=item.high_20d,
+                peak_price=current,
+            )
+            self._save_state()
+
+            vol_ratio = (projected_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
+            reason_msg = (
+                f"전통돌파(돌파 {current:,}>{item.high_20d:,}, "
+                f"예상거래 {vol_ratio:.0f}%(20일평균대비), "
+                f"5일평균대금 {item.avg_trading_value_5d / 100_000_000:,.0f}억)"
+            )
+            self._logger.info({
+                "event": "buy_signal_generated",
+                "code": code, "name": item.name, "price": current, "qty": qty,
+                "reason": reason_msg, "data": log_data,
+            })
+            return TradeSignal(
+                code=code, name=item.name, action="BUY", price=current, qty=qty,
+                reason=reason_msg, strategy_name=self.name,
+            )
+        except Exception as e:
+            self._logger.error({"event": "scan_error", "code": code, "error": str(e)}, exc_info=True)
+            return None
 
     # ── 매도 체크 ──
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
+        state_dirty = False
         self._logger.info({"event": "check_exits_started", "holdings_count": len(holdings)})
 
         for hold in holdings:
@@ -239,10 +248,10 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                 
                 log_data["position_state"] = asdict(state)
 
-                # 최고가 갱신
+                # 최고가 갱신 (dirty flag — 루프 후 1회 저장)
                 if current > state.peak_price:
                     state.peak_price = current
-                    self._save_state()
+                    state_dirty = True
                     self._logger.info({"event": "peak_price_updated", "code": code, "new_peak": current})
 
                 reason = ""
@@ -282,7 +291,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
 
                 if should_sell:
                     self._position_state.pop(code, None)
-                    self._save_state()
+                    state_dirty = True
                     api_stock_name = data.get("name", "") or self.stock_code_repository.get_name_by_code(code) or code
                     holding_qty = int(hold.get("qty", 1))
                     signals.append(TradeSignal(
@@ -303,6 +312,8 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                     "event": "check_exits_error", "code": code, "error": str(e),
                 }, exc_info=True)
         
+        if state_dirty:
+            self._save_state()
         self._logger.info({"event": "check_exits_finished", "signals_found": len(signals)})
         return signals
 

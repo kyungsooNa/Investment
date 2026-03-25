@@ -1,6 +1,7 @@
 # strategies/oneil/pocket_pivot_strategy.py
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import json
@@ -86,19 +87,22 @@ class OneilPocketPivotStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
             return signals
 
-        for code, item in watchlist.items():
-            if code in self._position_state:
-                continue
-
-            if not market_timing.get(item.market, False):
-                continue
-
-            try:
-                signal = await self._check_entry(code, item, market_progress)
-                if signal:
-                    signals.append(signal)
-            except Exception as e:
-                self._logger.error(f"Scan error {code}: {e}")
+        candidates = [
+            (code, item) for code, item in watchlist.items()
+            if code not in self._position_state
+            and market_timing.get(item.market, False)
+        ]
+        for i in range(0, len(candidates), 10):
+            chunk = candidates[i:i + 10]
+            results = await asyncio.gather(
+                *[self._check_entry(code, item, market_progress) for code, item in chunk],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    self._logger.error(f"Scan error: {result}")
+                elif result:
+                    signals.append(result)
 
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
@@ -406,6 +410,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         signals = []
+        state_dirty = False
         for hold in holdings:
             code = hold.get("code")
             buy_price = hold.get("buy_price")
@@ -437,10 +442,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
             if current <= 0:
                 continue
 
-            # 최고가 갱신
+            # 최고가 갱신 (dirty flag — 루프 후 1회 저장)
             if current > state.peak_price:
                 state.peak_price = current
-                self._save_state()
+                state_dirty = True
 
             pnl = (current - buy_price) / buy_price * 100
             today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
@@ -448,7 +453,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             # 수익 안착 추적 (+5% 돌파 시 1회만 기록)
             if pnl >= self._cfg.holding_profit_anchor_pct and state.holding_start_date == "":
                 state.holding_start_date = today_str
-                self._save_state()
+                state_dirty = True
 
             # OHLCV (MA 기반 체크용)
             ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=60)
@@ -480,7 +485,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 if partial_signal:
                     signals.append(partial_signal)
                     state.last_partial_sell_price = current
-                    self._save_state()
+                    state_dirty = True
                     continue  # 부분 매도 후 전량 청산하지 않음
 
             # 🌟 우선순위 4: 7주 룰 만료 (수익 안착 후 35거래일 & 50MA 이탈)
@@ -493,12 +498,14 @@ class OneilPocketPivotStrategy(LiveStrategy):
             if reason:
                 holding_qty = int(hold.get("qty", 1))
                 self._position_state.pop(code, None)
-                self._save_state()
+                state_dirty = True
                 signals.append(TradeSignal(
                     code=code, name=hold.get("name", code), action="SELL",
                     price=current, qty=holding_qty, reason=reason, strategy_name=self.name
                 ))
 
+        if state_dirty:
+            self._save_state()
         return signals
 
     async def _check_hard_stop(self, state: PPPositionState, current: int, market: str) -> Optional[str]:
