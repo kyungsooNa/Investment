@@ -122,7 +122,8 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     # 과거 데이터 백필 API 호출은 스킵하고, 당일 데이터 API만 호출
     base_date = datetime(2023, 1, 1)
     stock_repo.get_stock_data.return_value = {
-        "ohlcv": [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100} for i in range(605)]
+        "ohlcv": [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100} for i in range(605)],
+        "historical_complete": True,
     }
 
     resp2 = await trading_service.get_ohlcv("005930", period="D")
@@ -169,7 +170,7 @@ async def test_get_ohlcv_skip_today_api_if_cached_and_closed(trading_service_fix
     base_date = datetime(2023, 1, 1)
     cached_data = [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0} for i in range(600)]
     cached_data.append({"date": today_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100})
-    stock_repo.get_stock_data.return_value = {"ohlcv": cached_data}
+    stock_repo.get_stock_data.return_value = {"ohlcv": cached_data, "historical_complete": True}
     
     # 3. 호출
     resp = await trading_service.get_ohlcv("005930", period="D")
@@ -198,7 +199,7 @@ async def test_get_ohlcv_during_market_open_uses_cache_for_past(trading_service_
     base_date = datetime(2023, 1, 1)
     cached_past_data = [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100} for i in range(600)]
     cached_past_data.append({"date": yesterday_str, "close": 1010.0, "open": 1010.0, "high": 1010.0, "low": 1010.0, "volume": 100})
-    stock_repo.get_stock_data.return_value = {"ohlcv": cached_past_data}
+    stock_repo.get_stock_data.return_value = {"ohlcv": cached_past_data, "historical_complete": True}
     
     # 3. 현재가 API Mock (오늘 데이터)
     broker.get_current_price.return_value = ResCommonResponse(
@@ -1160,7 +1161,7 @@ async def test_get_ohlcv_after_market_close_no_today_api_call(trading_service_fi
     ]
     # 마지막 데이터는 어제(2025-01-01)
     past_rows.append({"date": "20250101", "open": 1010.0, "high": 1020.0, "low": 1000.0, "close": 1015.0, "volume": 200})
-    stock_repo.get_stock_data.return_value = {"ohlcv": past_rows}
+    stock_repo.get_stock_data.return_value = {"ohlcv": past_rows, "historical_complete": True}
 
     resp = await service.get_ohlcv("005930", period="D")
 
@@ -1194,7 +1195,7 @@ async def test_get_ohlcv_during_market_open_calls_today_api(trading_service_fixt
         for i in range(600)
     ]
     past_rows.append({"date": "20250101", "open": 1010.0, "high": 1020.0, "low": 1000.0, "close": 1015.0, "volume": 200})
-    stock_repo.get_stock_data.return_value = {"ohlcv": past_rows}
+    stock_repo.get_stock_data.return_value = {"ohlcv": past_rows, "historical_complete": True}
 
     # 현재가 API: 오늘(2025-01-02) 데이터 반환
     broker.get_current_price.return_value = ResCommonResponse(

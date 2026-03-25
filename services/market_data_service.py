@@ -384,13 +384,15 @@ class MarketDataService:
             past_rows = []
 
             # 1. 과거 데이터 가져오기 (StockRepository 캐시/DB 활용)
+            stock_data = None
             if self._stock_repo:
                 stock_data = await self._stock_repo.get_stock_data(stock_code, ohlcv_limit=600, caller=caller)
                 if stock_data and "ohlcv" in stock_data:
                     past_rows = stock_data["ohlcv"]
 
-            # 2. 로컬 DB에 데이터가 부족하거나 없으면 전체 API 백필 (약 1000일 ≈ 692 거래일)
-            if not past_rows or len(past_rows) < 600:
+            # 2. historical_complete=True면 DB가 줄 수 있는 전부를 이미 보유 중 → 백필 생략
+            #    그렇지 않으면(첫 조회 또는 캐시 없음) API 백필 수행 (약 1000일 ≈ 692 거래일)
+            if not stock_data or not stock_data.get("historical_complete"):
                 past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=10)
                 if self._stock_repo and past_rows:
                     await self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
