@@ -835,5 +835,79 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 0)
         logger.error.assert_called()
 
+    # ── 성능 개선 검증 ──
+
+    async def test_check_exits_dirty_flag_saves_once_on_peak_update(self):
+        """check_exits: 여러 보유종목의 최고가 갱신 시 _save_state는 루프 후 1회만 호출."""
+        strategy, sqs, tm, mapper, logger = self._make_strategy(
+            stop_loss_pct=-10.0,   # 손절 기준 완화
+            trailing_stop_pct=50.0,  # 트레일링 기준 완화
+        )
+        strategy._save_state = MagicMock()
+
+        # 2개 종목 보유 — peak 10000, 현재가 11000 → 갱신 대상
+        for code in ["A", "B"]:
+            strategy._position_state[code] = PositionState(
+                breakout_level=9000, peak_price=10000
+            )
+            strategy._watchlist[code] = WatchlistItem(code, f"Stock{code}", 10500, 9000, 1000000, 10000)
+
+        # 현재가 11000: pnl +10% (손절 -10% 미달), peak 갱신, fake breakout 없음
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK", data={"price": "11000", "acml_vol": "30000", "name": "테스트"}
+        )
+        # MA 조회: MA=9000 < current 11000 → 추세종료 없음
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd="0", msg1="OK",
+            data=[{"close": 9000, "volume": 500000} for _ in range(20)]
+        )
+
+        holdings = [
+            {"code": "A", "buy_price": 10000},
+            {"code": "B", "buy_price": 10000},
+        ]
+        signals = await strategy.check_exits(holdings)
+
+        # 매도 없음, 양쪽 peak 갱신
+        self.assertEqual(signals, [])
+        self.assertEqual(strategy._position_state["A"].peak_price, 11000)
+        self.assertEqual(strategy._position_state["B"].peak_price, 11000)
+        # dirty flag: 1회만 저장
+        strategy._save_state.assert_called_once()
+
+    async def test_scan_chunk_exception_does_not_prevent_other_signals(self):
+        """scan: asyncio.gather — 한 종목 예외가 다른 종목 시그널 생성을 막지 않음."""
+        strategy, sqs, tm, mapper, logger = self._make_strategy()
+        strategy._save_state = MagicMock()
+
+        # 2개 종목 워치리스트: A는 예외, B는 돌파 성공
+        strategy._watchlist = {
+            "A": WatchlistItem("A", "StockA", high_20d=10500, ma_20d=9000,
+                               avg_vol_20d=1000000, avg_trading_value_5d=50_000_000_000),
+            "B": WatchlistItem("B", "StockB", high_20d=10500, ma_20d=9000,
+                               avg_vol_20d=1000000, avg_trading_value_5d=50_000_000_000),
+        }
+        strategy._watchlist_date = "20260225"
+
+        async def price_side_effect(code, caller=None):
+            if code == "A":
+                raise Exception("네트워크 오류")
+            # B: 돌파 성공 (price 12000 > high_20d 10500, vol 충분)
+            return ResCommonResponse(
+                rt_cd="0", msg1="OK",
+                data={"price": "12000", "acml_vol": "3000000", "name": "StockB"}
+            )
+
+        sqs.handle_get_current_stock_price.side_effect = price_side_effect
+
+        signals = await strategy.scan()
+
+        # A 예외 → 로그
+        logger.error.assert_called()
+        # B 시그널 생성
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].code, "B")
+
+
 if __name__ == "__main__":
     unittest.main()

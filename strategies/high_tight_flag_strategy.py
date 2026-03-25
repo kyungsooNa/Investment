@@ -1,6 +1,7 @@
 # strategies/high_tight_flag_strategy.py
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import json
@@ -81,19 +82,22 @@ class HighTightFlagStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
             return signals
 
-        for code, item in watchlist.items():
-            if code in self._position_state:
-                continue
-
-            if not market_timing.get(item.market, False):
-                continue
-
-            try:
-                signal = await self._check_htf_setup(code, item, market_progress)
-                if signal:
-                    signals.append(signal)
-            except Exception as e:
-                self._logger.error(f"Scan error {code}: {e}")
+        candidates = [
+            (code, item) for code, item in watchlist.items()
+            if code not in self._position_state
+            and market_timing.get(item.market, False)
+        ]
+        for i in range(0, len(candidates), 10):
+            chunk = candidates[i:i + 10]
+            results = await asyncio.gather(
+                *[self._check_htf_setup(code, item, market_progress) for code, item in chunk],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    self._logger.error(f"Scan error: {result}")
+                elif result:
+                    signals.append(result)
 
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
@@ -290,6 +294,7 @@ class HighTightFlagStrategy(LiveStrategy):
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         signals = []
+        state_dirty = False
         for hold in holdings:
             code = hold.get("code")
             buy_price = hold.get("buy_price")
@@ -317,10 +322,10 @@ class HighTightFlagStrategy(LiveStrategy):
             if current <= 0:
                 continue
 
-            # 최고가 갱신
+            # 최고가 갱신 (dirty flag — 루프 후 1회 저장)
             if current > state.peak_price:
                 state.peak_price = current
-                self._save_state()
+                state_dirty = True
 
             pnl = (current - buy_price) / buy_price * 100
             reason = ""
@@ -339,12 +344,14 @@ class HighTightFlagStrategy(LiveStrategy):
             if reason:
                 holding_qty = int(hold.get("qty", 1))
                 self._position_state.pop(code, None)
-                self._save_state()
+                state_dirty = True
                 signals.append(TradeSignal(
                     code=code, name=hold.get("name", code), action="SELL",
                     price=current, qty=holding_qty, reason=reason, strategy_name=self.name,
                 ))
 
+        if state_dirty:
+            self._save_state()
         return signals
 
     async def _check_trailing_ma_stop(self, code: str, current_price: int) -> tuple:

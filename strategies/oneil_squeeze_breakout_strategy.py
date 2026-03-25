@@ -1,6 +1,7 @@
 # strategies/oneil/breakout_strategy.py
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import json
@@ -95,24 +96,23 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
             return signals
 
-        # 4. 종목별 돌파 체크
-        for code, item in watchlist.items():
-            if code in self._position_state:
-                continue
-
-            # 마켓 타이밍 체크 (사전 체크된 값 사용)
-            if not market_timing.get(item.market, False):
-                continue
-
-            # 스퀴즈 조건 (이미 유니버스에서 걸러졌지만, 전일 대비 BB폭 확인 등 추가 체크 가능)
-            # 여기서는 유니버스 필터를 통과했으므로, 실시간 돌파 여부만 확인
-            
-            try:
-                signal = await self._check_breakout(code, item, market_progress)
-                if signal:
-                    signals.append(signal)
-            except Exception as e:
-                self._logger.error(f"Scan error {code}: {e}")
+        # 4. 종목별 돌파 체크 (청크 기반 병렬 처리, TPS 제한 대응)
+        candidates = [
+            (code, item) for code, item in watchlist.items()
+            if code not in self._position_state
+            and market_timing.get(item.market, False)
+        ]
+        for i in range(0, len(candidates), 10):
+            chunk = candidates[i:i + 10]
+            results = await asyncio.gather(
+                *[self._check_breakout(code, item, market_progress) for code, item in chunk],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    self._logger.error(f"Scan error: {result}")
+                elif result:
+                    signals.append(result)
 
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
@@ -235,13 +235,10 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             reason=reason_msg, strategy_name=self.name
         )
 
-    async def _check_trend_break(self, code: str, current_price: int, current_vol: int) -> tuple[bool, str]:
-        """추세 이탈 검사 (10일선 붕괴 + 대량 거래량 동반)."""
+    def _check_trend_break(self, code: str, current_price: int, current_vol: int, ohlcv: list) -> tuple[bool, str]:
+        """추세 이탈 검사 (10일선 붕괴 + 대량 거래량 동반). ohlcv는 호출자가 미리 조회해서 전달."""
         period = self._cfg.trend_exit_ma_period  # 10일
-        
-        # 1. 10일 MA와 20일 평균 거래량을 계산하기 위해 20일치 데이터 1회 조회
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=max(period, 20))
-        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
         if not ohlcv or len(ohlcv) < period:
             return False, ""
             
@@ -279,11 +276,14 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         signals = []
+        state_dirty = False
+        ohlcv_limit = max(self._cfg.time_stop_days + 20, max(self._cfg.trend_exit_ma_period, 20))
+
         for hold in holdings:
             code = hold.get("code")
             buy_price = hold.get("buy_price")
             if not code or not buy_price: continue
-            
+
             state = self._position_state.get(code)
             if not state:
                 state = OSBPositionState(buy_price, "", buy_price, buy_price)
@@ -304,14 +304,14 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
             if current <= 0: continue
 
-            # 최고가 갱신
+            # 최고가 갱신 (dirty flag — 루프 후 1회 저장)
             if current > state.peak_price:
                 state.peak_price = current
-                self._save_state()
+                state_dirty = True
 
             pnl = (current - buy_price) / buy_price * 100
             reason = ""
-            
+
             # 1. 손절
             if pnl <= self._cfg.stop_loss_pct:
                 reason = f"손절({pnl:.1f}%)"
@@ -320,32 +320,36 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 drop = (current - state.peak_price) / state.peak_price * 100
                 if drop <= -self._cfg.trailing_stop_pct:
                     reason = f"트레일링스탑({drop:.1f}%)"
-            
-            # 3. 시간 손절 (박스권 횡보)
-            if not reason and await self._check_time_stop(code, state, current):
-                reason = f"시간손절({self._cfg.time_stop_days}일 횡보)"
 
-            # 🌟 4. [신규 추가] 추세 이탈 (10MA 하향 + 대량 거래량)
+            # 3·4. 시간손절 + 추세이탈 — OHLCV 1회 조회 후 양쪽에 전달
             if not reason:
-                is_break, break_reason = await self._check_trend_break(code, current, current_vol)
-                if is_break:
-                    reason = break_reason
+                ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=ohlcv_limit)
+                ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
+                if self._check_time_stop(state, current, ohlcv):
+                    reason = f"시간손절({self._cfg.time_stop_days}일 횡보)"
+                elif ohlcv:
+                    is_break, break_reason = self._check_trend_break(code, current, current_vol, ohlcv)
+                    if is_break:
+                        reason = break_reason
 
             # 매도 시그널 생성
             if reason:
                 holding_qty = int(hold.get("qty", 1))
                 self._position_state.pop(code, None)
-                self._save_state()
+                state_dirty = True
                 signals.append(TradeSignal(
                     code=code, name=hold.get("name", code), action="SELL",
                     price=current, qty=holding_qty, reason=reason, strategy_name=self.name
                 ))
-                
+
+        if state_dirty:
+            self._save_state()
         return signals
 
-    async def _check_time_stop(self, code: str, state: OSBPositionState, current_price: int) -> bool:
-        """시간 손절 조건 체크.
-        
+    def _check_time_stop(self, state: OSBPositionState, current_price: int, ohlcv: list) -> bool:
+        """시간 손절 조건 체크. ohlcv는 호출자가 미리 조회해서 전달.
+
         조건:
           1. 진입 후 N거래일(time_stop_days) 경과
           2. 현재가가 진입가 대비 박스권(time_stop_box_range_pct) 이내 횡보
@@ -353,15 +357,11 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         """
         if not state.entry_date or state.entry_price <= 0:
             return False
-            
-        # 🌟 최적화: 당일 진입한 종목은 굳이 API를 쏠 필요 없이 즉시 리턴 (API TPS 절약)
+
         today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
         if state.entry_date.replace("-", "") == today_str:
             return False
-        
-        # 1. 거래일 수 계산 (OHLCV 조회)
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.time_stop_days + 20)
-        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
         if not ohlcv:
             return False
             
@@ -392,7 +392,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         self._logger.info({
             "event": "time_stop_triggered",
-            "code": code,
+            "entry_date": state.entry_date,
             "trading_days": trading_days,
             "pnl_pct": round(pnl_pct, 2)
         })

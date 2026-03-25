@@ -451,43 +451,42 @@ def test_load_save_state(mock_strategy_deps, tmp_path):
     assert "005930" in strategy2._position_state
     assert strategy2._position_state["005930"].peak_price == 11000
 
-@pytest.mark.asyncio
-async def test_check_time_stop_logic(mock_strategy_deps):
-    """_check_time_stop: 시간 손절 로직 상세 검증."""
+def test_check_time_stop_logic(mock_strategy_deps):
+    """_check_time_stop: 시간 손절 로직 상세 검증 (OHLCV를 직접 전달하는 동기 메서드)."""
     sqs, universe, tm, logger = mock_strategy_deps
     strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
-    
+
     # 설정: 5일 경과, 박스권 2%
     strategy._cfg.time_stop_days = 5
     strategy._cfg.time_stop_box_range_pct = 2.0
-    
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 10, 12, 0, 0)
+
     state = OSBPositionState(entry_price=10000, entry_date="20250101", peak_price=10000, breakout_level=10000)
-    
-    # OHLCV Mock: 진입일(0101) 이후 5일치 데이터 생성 (0102~0106)
+
+    # 진입일(0101) 이후 5거래일치 데이터 (0102~0106)
     ohlcv = [
-        {"date": "20250101"}, # 진입일
-        {"date": "20250102"}, {"date": "20250103"}, {"date": "20250104"}, {"date": "20250105"}, {"date": "20250106"} # 5일 경과
+        {"date": "20250101"},  # 진입일
+        {"date": "20250102"}, {"date": "20250103"}, {"date": "20250104"},
+        {"date": "20250105"}, {"date": "20250106"},  # 5일 경과
     ]
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
-    
+
     # Case 1: 5일 경과 & 횡보(10100원, +1%) & 급등이력 없음 -> True (손절)
-    assert await strategy._check_time_stop("005930", state, 10100) is True
-    
+    assert strategy._check_time_stop(state, 10100, ohlcv) is True
+
     # Case 2: 5일 경과 & 상승 이탈(10300원, +3%) -> False
-    assert await strategy._check_time_stop("005930", state, 10300) is False
-    
-    # Case 3: 5일 경과 & 하락 이탈(9700원, -3%) -> True (상승 실패)
-    # 전략 로직 변경(abs 제거)으로 인해 하락 상태여도 시간 손절 조건(상승 미달)에 해당함
-    assert await strategy._check_time_stop("005930", state, 9700) is True
-    
+    assert strategy._check_time_stop(state, 10300, ohlcv) is False
+
+    # Case 3: 5일 경과 & 하락 이탈(9700원, -3%) -> True (상승 미달로 손절)
+    assert strategy._check_time_stop(state, 9700, ohlcv) is True
+
     # Case 4: 5일 경과 & 횡보(10100원) & 급등이력 있음(peak 10600원, +6%) -> False
     state_peak = OSBPositionState(entry_price=10000, entry_date="20250101", peak_price=10600, breakout_level=10000)
-    assert await strategy._check_time_stop("005930", state_peak, 10100) is False
-    
+    assert strategy._check_time_stop(state_peak, 10100, ohlcv) is False
+
     # Case 5: 4일 경과 (데이터 부족) -> False
-    ohlcv_short = ohlcv[:-1] # 4일치
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv_short)
-    assert await strategy._check_time_stop("005930", state, 10100) is False
+    ohlcv_short = ohlcv[:-1]  # 4일치
+    assert strategy._check_time_stop(state, 10100, ohlcv_short) is False
 
 @pytest.mark.asyncio
 async def test_check_exits_trend_break(mock_strategy_deps):
@@ -603,3 +602,132 @@ async def test_scan_mixed_market_timing(scan_setup):
     # KOSPI 종목은 제외되고 KOSDAQ 종목만 시그널 생성되어야 함
     assert len(signals) == 1
     assert signals[0].code == "123456"
+
+
+# ============================================================================
+# 성능 개선 검증: OHLCV 중복 호출 제거 + Dirty Flag
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_check_exits_ohlcv_fetched_once_per_holding(mock_strategy_deps):
+    """check_exits: _check_time_stop과 _check_trend_break가 OHLCV를 공유 — 보유 1종목당 1회 조회."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    # 손절/트레일링스탑 조건을 모두 피하도록 설정 (pnl +10%, peak 동일)
+    strategy._position_state["005930"] = OSBPositionState(
+        entry_price=10000, entry_date="20250101", peak_price=11000, breakout_level=9500
+    )
+
+    # 현재가 11000 → pnl +10% (손절 -5% 미달), peak 동일 → trailing stop 없음
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "11000", "acml_vol": "30000"}}
+    )
+    # OHLCV: 시간손절·추세이탈 조건 미달 (데이터 부족)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 10, 12, 0, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 10, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 10, 15, 30, 0)
+
+    await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
+
+    # OHLCV는 1회만 조회 (time_stop + trend_break 공유)
+    assert sqs.get_recent_daily_ohlcv.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_check_exits_dirty_flag_saves_once(mock_strategy_deps):
+    """check_exits: 여러 보유종목 최고가 갱신 시 _save_state는 루프 후 1회만 호출."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    # 3개 종목 보유 — 모두 최고가 갱신 대상 (peak 10000 < current 11000)
+    for code in ["005930", "000660", "035420"]:
+        strategy._position_state[code] = OSBPositionState(
+            entry_price=10000, entry_date="20250101", peak_price=10000, breakout_level=9500
+        )
+
+    # 현재가 11000 → pnl +10%, peak 갱신, 어떤 청산 조건도 미달
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "11000", "acml_vol": "30000"}}
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 10, 12, 0, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 10, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 10, 15, 30, 0)
+
+    holdings = [
+        {"code": "005930", "buy_price": 10000},
+        {"code": "000660", "buy_price": 10000},
+        {"code": "035420", "buy_price": 10000},
+    ]
+    signals = await strategy.check_exits(holdings)
+
+    # 매도 시그널 없음, 3종목 모두 peak 갱신
+    assert signals == []
+    for code in ["005930", "000660", "035420"]:
+        assert strategy._position_state[code].peak_price == 11000
+    # dirty flag: 루프 후 1회만 저장
+    strategy._save_state.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scan_parallel_exception_in_one_does_not_block_others(mock_strategy_deps):
+    """scan: asyncio.gather — 한 종목 처리 중 예외 발생해도 나머지 종목 시그널은 정상 생성."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state = {}
+    strategy._save_state = MagicMock()
+
+    # 2개 종목: 000001은 예외, 000002는 돌파 성공
+    item_fail = OSBWatchlistItem(
+        code="000001", name="예외종목", market="KOSPI",
+        high_20d=10000, ma_20d=9000, ma_50d=8000,
+        avg_vol_20d=100000, bb_width_min_20d=500, prev_bb_width=600,
+        w52_hgpr=12000, avg_trading_value_5d=50_000_000_000,
+        market_cap=100_000_000_000,
+    )
+    item_ok = OSBWatchlistItem(
+        code="000002", name="정상종목", market="KOSPI",
+        high_20d=10000, ma_20d=9000, ma_50d=8000,
+        avg_vol_20d=100000, bb_width_min_20d=500, prev_bb_width=600,
+        w52_hgpr=12000, avg_trading_value_5d=50_000_000_000,
+        market_cap=100_000_000_000,
+    )
+    universe.get_watchlist.return_value = {"000001": item_fail, "000002": item_ok}
+    universe.is_market_timing_ok.return_value = True
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 1, 15, 30, 0)
+
+    # 000001은 예외, 000002는 모든 관문 통과
+    async def price_side_effect(code, caller=None):
+        if code == "000001":
+            raise Exception("API 타임아웃")
+        # 000002: 가격돌파(11000 > 10000), 거래량 돌파, 스마트머니 통과
+        # pg_buy_amount = 200000 * 11000 = 22억 / 142억 = 15.5% > 10% ✓
+        # pg_to_mc_pct = 22억 / 1000억 = 2.2% > 0.5% ✓
+        return ResCommonResponse(
+            rt_cd="0", msg1="OK", data={"output": {
+                "stck_prpr": "11000", "acml_vol": "200000",
+                "pgtr_ntby_qty": "200000", "acml_tr_pbmn": "14200000000",
+            }}
+        )
+
+    sqs.get_current_price.side_effect = price_side_effect
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "150.0"}]}
+    )
+
+    signals = await strategy.scan()
+
+    # 예외 로그 기록
+    logger.error.assert_called()
+    # 정상 종목은 시그널 생성
+    assert len(signals) == 1
+    assert signals[0].code == "000002"
