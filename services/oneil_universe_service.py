@@ -17,6 +17,7 @@ from core.market_clock import MarketClock
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from core.logger import get_strategy_logger
 from core.performance_profiler import PerformanceProfiler
+from services.price_subscription_service import SubscriptionPriority
 
 def _chunked(lst, size):
     for i in range(0, len(lst), size):
@@ -42,7 +43,8 @@ class OneilUniverseService:
         scraper_service: Optional[NaverFinanceScraperService] = None,  # 추가됨
         config: Optional[OneilUniverseConfig] = None,
         logger: Optional[logging.Logger] = None,
-        performance_profiler: Optional[PerformanceProfiler] = None
+        performance_profiler: Optional[PerformanceProfiler] = None,
+        price_subscription_service=None
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
@@ -52,6 +54,7 @@ class OneilUniverseService:
         self._cfg = config or OneilUniverseConfig()
         self._logger = logger or logging.getLogger(__name__)
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
+        self._price_sub_svc = price_subscription_service
 
         # 상태 관리
         self._watchlist: Dict[str, OSBWatchlistItem] = {}
@@ -101,6 +104,12 @@ class OneilUniverseService:
         elif self._should_refresh_watchlist():
             await self._build_watchlist(logger=logger)
 
+        if self._price_sub_svc and self._watchlist:
+            asyncio.create_task(self._price_sub_svc.sync_subscriptions(
+                codes=list(self._watchlist.keys()),
+                category_key="strategy_oneil",
+                priority=SubscriptionPriority.MEDIUM,
+            ))
         return self._watchlist
 
     async def is_market_timing_ok(self, market: str, logger: Optional[logging.Logger] = None) -> bool:

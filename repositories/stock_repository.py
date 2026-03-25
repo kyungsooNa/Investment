@@ -111,6 +111,10 @@ class StockRepository:
         # 최대 500개 종목의 통합 데이터(현재가 + OHLCV)를 들고 있는 인메모리 캐시
         self._stocks_cache = _LRUCache(capacity=500)
 
+        # 현재 WebSocket으로 실시간 스트리밍 중인 종목 코드 집합
+        # get_current_price() 호출 시 이 집합에 있는 종목은 TTL을 무시하고 캐시 반환
+        self._streaming_codes: set = set()
+
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         self._init_db_sync()
 
@@ -282,7 +286,8 @@ class StockRepository:
         """캐시된 현재가 데이터(dict)를 반환합니다. 지정된 TTL(초)이 만료된 경우 None 반환."""
         cached = self._stocks_cache.get(code, count_stats=count_stats, caller=caller, item_type="current_price")
         if cached and "current_price_data" in cached:
-            if time.time() - cached.get("price_updated_at", 0) <= max_age_sec:
+            effective_max_age = float('inf') if code in self._streaming_codes else max_age_sec
+            if time.time() - cached.get("price_updated_at", 0) <= effective_max_age:
                 return cached["current_price_data"]
         return None
 
@@ -472,6 +477,18 @@ class StockRepository:
         except Exception as e:
             self._logger.error(f"StockRepository daily_prices 스냅샷 조회 실패 ({code}): {e}")
             return None
+
+    def mark_streaming(self, code: str) -> None:
+        """해당 종목이 실시간 스트리밍 중임을 등록. get_current_price() TTL 우회 활성화."""
+        self._streaming_codes.add(code)
+
+    def unmark_streaming(self, code: str) -> None:
+        """실시간 스트리밍 종료. TTL 우회 해제."""
+        self._streaming_codes.discard(code)
+
+    def is_streaming(self, code: str) -> bool:
+        """해당 종목이 현재 스트리밍 중인지 여부."""
+        return code in self._streaming_codes
 
     def get_cache_stats(self, expand: bool = False) -> dict:
         """메모리 캐시의 사용 통계(적중률 등)를 반환합니다."""

@@ -238,6 +238,14 @@ class BrokerAPIWrapper:
         """실시간 체결 데이터 구독 해지합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.unsubscribe_realtime_price(stock_code)
 
+    async def subscribe_unified_price(self, stock_code: str) -> bool:
+        """실시간 통합 체결가(H0UNCNT0) 구독합니다 (KRX+NXT 통합)."""
+        return await self._client.subscribe_unified_price(stock_code)
+
+    async def unsubscribe_unified_price(self, stock_code: str) -> bool:
+        """실시간 통합 체결가(H0UNCNT0) 구독 해지합니다."""
+        return await self._client.unsubscribe_unified_price(stock_code)
+
     async def subscribe_realtime_quote(self, stock_code: str) -> Any:  # 실제 반환 값에 따라 타입 변경
         """실시간 호가 데이터 구독합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.subscribe_realtime_quote(stock_code)

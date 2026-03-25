@@ -15,7 +15,7 @@ from services.notification_service import NotificationService
 
 if TYPE_CHECKING:
     from services.streaming_service import StreamingService
-    from services.realtime_data_service import RealtimeDataService
+    from services.program_trading_stream_service import ProgramTradingStreamService
     from services.market_calendar_service import MarketCalendarService
 
 
@@ -25,7 +25,7 @@ class WebSocketWatchdogTask(SchedulableTask):
     def __init__(
         self,
         streaming_service: Optional["StreamingService"] = None,
-        realtime_data_service: Optional["RealtimeDataService"] = None,
+        realtime_data_service: Optional["ProgramTradingStreamService"] = None,
         market_calendar_service: Optional["MarketCalendarService"] = None,
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,

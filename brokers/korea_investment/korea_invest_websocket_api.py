@@ -226,6 +226,9 @@ class KoreaInvestWebSocketAPI:
             if tr_id == self._env.active_config['tr_ids']['websocket']['realtime_price']:  # H0STCNT0 (주식 체결)
                 parsed_data = self._parse_stock_contract_data(data_body)
                 message_type = 'realtime_price'
+            elif tr_id == self._env.active_config['tr_ids']['websocket'].get('unified_realtime_price', 'H0UNCNT0'):  # H0UNCNT0 (KRX+NXT 통합 체결)
+                parsed_data = self._parse_stock_contract_data(data_body)  # H0STCNT0와 동일 포맷
+                message_type = 'realtime_price'
             elif tr_id == self._env.active_config['tr_ids']['websocket']['realtime_quote']:  # H0STASP0 (주식 호가)
                 parsed_data = self._parse_stock_quote_data(data_body)
                 message_type = 'realtime_quote'
@@ -668,6 +671,18 @@ class KoreaInvestWebSocketAPI:
         """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
         tr_id = self._env.active_config['tr_ids']['websocket']['realtime_price']
         self._logger.info(f"종목 {stock_code} 실시간 체결 데이터 구독 해지 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
+    async def subscribe_unified_price(self, stock_code: str) -> bool:
+        """실시간 통합 체결가(H0UNCNT0)를 구독합니다. KRX+NXT 통합."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_realtime_price', 'H0UNCNT0')
+        self._logger.info(f"종목 {stock_code} 통합 체결가 구독 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
+
+    async def unsubscribe_unified_price(self, stock_code: str) -> bool:
+        """실시간 통합 체결가(H0UNCNT0) 구독을 해지합니다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_realtime_price', 'H0UNCNT0')
+        self._logger.info(f"종목 {stock_code} 통합 체결가 구독 해지 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
     async def subscribe_realtime_quote(self, stock_code):

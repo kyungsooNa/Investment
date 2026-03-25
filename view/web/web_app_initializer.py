@@ -36,10 +36,11 @@ from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
 from repositories.stock_repository import StockRepository
-from services.realtime_data_service import RealtimeDataService
+from services.program_trading_stream_service import ProgramTradingStreamService
 from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
+from services.price_subscription_service import PriceSubscriptionService
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
@@ -76,8 +77,9 @@ class WebAppContext:
         self.initialized = False
         self.pm: PerformanceProfiler = None
 
-        # [변경] 실시간 데이터 관리자 도입
-        self.realtime_data_service = RealtimeDataService(self.logger)
+        # 프로그램매매 실시간 데이터 서비스
+        self.realtime_data_service = ProgramTradingStreamService(self.logger)
+        self.price_subscription_service: PriceSubscriptionService = None
         
         web_api.set_ctx(self)
 
@@ -210,6 +212,13 @@ class WebAppContext:
             market_clock=self.market_clock,
             market_data_service=self.market_data_service,
         )
+        # PriceSubscriptionService 초기화 (StreamingService 생성 이후)
+        self.price_subscription_service = PriceSubscriptionService(
+            streaming_service=self.streaming_service,
+            stock_repo=self.stock_repository,
+            logger=self.logger,
+        )
+
         # WebSocketWatchdogTask 초기화
         self.websocket_watchdog_task = WebSocketWatchdogTask(
             streaming_service=self.streaming_service,
@@ -248,6 +257,7 @@ class WebAppContext:
             performance_profiler=self.pm,
             notification_service=self.notification_service,
             market_calendar_service=self._mcs,
+            price_subscription_service=self.price_subscription_service,
         )
         
         # [신규] 오닐 유니버스 서비스 초기화
@@ -258,7 +268,8 @@ class WebAppContext:
             market_clock=self.market_clock,
             scraper_service=NaverFinanceScraperService(logger=self.logger),
             logger=self.logger,
-            performance_profiler=self.pm
+            performance_profiler=self.pm,
+            price_subscription_service=self.price_subscription_service,
         )
 
         self.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
@@ -292,10 +303,51 @@ class WebAppContext:
             performance_profiler=self.pm,
         )
 
+        # 기동 시 포트폴리오/프리미엄 종목 구독 초기화
+        asyncio.create_task(self._initialize_price_subscriptions())
+
         self.initialized = True
         mode = "모의투자" if is_paper_trading else "실전투자"
         self.logger.info(f"웹 앱: 서비스 초기화 완료 ({mode})")
         return True
+
+    async def _initialize_price_subscriptions(self) -> None:
+        """기동 시 포트폴리오(HIGH) 및 프리미엄 종목(MEDIUM) 구독을 초기화."""
+        if not self.price_subscription_service:
+            return
+
+        from services.price_subscription_service import SubscriptionPriority
+
+        # 1. 보유 종목 → HIGH 구독
+        try:
+            resp = await self.broker.get_account_balance()
+            if resp and resp.rt_cd == "0" and resp.data:
+                holdings = resp.data.get("output2", []) if isinstance(resp.data, dict) else []
+                for item in holdings:
+                    code = item.get("pdno", "").strip()
+                    if code:
+                        await self.price_subscription_service.add_subscription(
+                            code, SubscriptionPriority.HIGH, "portfolio"
+                        )
+        except Exception as e:
+            self.logger.warning(f"보유 종목 구독 초기화 실패: {e}")
+
+        # 2. 프리미엄 종목 → MEDIUM 구독
+        try:
+            import json, os
+            premium_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "premium_stocks.json")
+            if os.path.exists(premium_path):
+                with open(premium_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                codes = data.get("kospi", []) + data.get("kosdaq", [])
+                if codes:
+                    await self.price_subscription_service.sync_subscriptions(
+                        codes=codes,
+                        category_key="strategy_premium",
+                        priority=SubscriptionPriority.MEDIUM,
+                    )
+        except Exception as e:
+            self.logger.warning(f"프리미엄 종목 구독 초기화 실패: {e}")
 
     def get_env_type(self) -> str:
         if self.env is None:
