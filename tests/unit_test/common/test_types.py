@@ -136,20 +136,31 @@ def test_res_top_market_cap_item_from_api():
 
 # --- Test for ResStockFullInfoApiOutput ---
 
-def test_res_stock_full_info_output_from_dict_missing_fields_raises_error():
-    """ResStockFullInfoApiOutput.from_dict raises ValidationError if required fields are missing."""
-    payload = {"stck_prpr": "70000"}  # Only provide one field
-    with pytest.raises(ValidationError):
-        ResStockFullInfoApiOutput.from_dict(payload)
+def test_res_stock_full_info_output_from_dict_missing_fields_handled_gracefully():
+    """ResStockFullInfoApiOutput.from_dict handles missing fields by setting default empty strings."""
+    payload = {"stck_prpr": "70000"}  # 하나만 제공
+    obj = ResStockFullInfoApiOutput.from_dict(payload)
+    assert obj.stck_prpr == "70000"
+    assert obj.bstp_kor_isnm == ""  # 누락된 필드는 빈 문자열로 초기화됨
+    assert obj.stck_shrn_iscd == ""
 
 
 # --- Test for ResFluctuation ---
 
-def test_res_fluctuation_from_dict_missing_fields_raises_error():
-    """ResFluctuation.from_dict raises ValidationError if required fields are missing."""
+def test_res_fluctuation_from_dict_missing_fields_handled_gracefully():
+    """ResFluctuation.from_dict handles missing fields by setting default empty strings."""
     payload = {"stck_shrn_iscd": "005930", "prdy_ctrt": "10.5"}
-    with pytest.raises(ValidationError):
-        ResFluctuation.from_dict(payload)
+    obj = ResFluctuation.from_dict(payload)
+    assert obj.stck_shrn_iscd == "005930"
+    assert obj.prdy_ctrt == "10.5"
+    assert obj.hts_kor_isnm == ""  # 누락된 필드는 빈 문자열로 초기화됨
+
+def test_res_daily_chart_api_item_missing_fields_handled_gracefully():
+    """ResDailyChartApiItem handles missing fields gracefully."""
+    payload = {"stck_bsop_date": "20260325"}
+    obj = ResDailyChartApiItem.from_dict(payload)
+    assert obj.stck_bsop_date == "20260325"
+    assert obj.stck_clpr == ""
 
 
 # --- Test for other simple to_dict methods ---
