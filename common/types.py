@@ -103,7 +103,7 @@ class ResStockFullInfoApiOutput(BaseModel):
     acml_vol: str  # 누적 거래량 (주)
     aspr_unit: str  # 호가 단위
     bps: str  # 주당순자산 (Book-value Per Share)
-    bstp_kor_isnm: str  # 업종명 (예: 일반서비스)
+    bstp_kor_isnm: str = ""  # 업종명 (예: 일반서비스)
     clpr_rang_cont_yn: str  # 종가 범위제 적용 여부
     cpfn: str  # 자본금 (억원)
     cpfn_cnnm: str  # 자본금 (단위표기 포함, 예: 468 억)
