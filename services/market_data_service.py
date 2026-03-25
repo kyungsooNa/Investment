@@ -48,7 +48,6 @@ class MarketDataService:
         """종목코드로 종목명을 반환합니다 (BrokerAPIWrapper 위임)."""
         return await self._broker_api_wrapper.get_name_by_code(code)
 
-    async def get_price_summary(self, stock_code) -> ResCommonResponse:
     async def get_price_summary(self, stock_code, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
         self._logger.info(f"MarketDataService - {stock_code} 종목 요약 정보 조회 요청")
