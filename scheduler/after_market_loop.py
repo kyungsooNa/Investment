@@ -62,6 +62,19 @@ async def run_after_market_loop(
                     await asyncio.sleep(wait_sec + 60)  # 마감 1분 뒤
                 continue
 
+            # ── 1b. 장 시작 전(09:00 이전)이면 마감 이후까지 대기 ──
+            # is_market_open_now()는 장 중(09:00~15:40)에만 True를 반환하므로,
+            # 09:00 이전과 15:40 이후를 구분하기 위해 별도로 확인한다.
+            # 장 중이 아닌데도 마감까지 1시간(3600초) 이상 남아있다면 = 장 시작 전.
+            if market_clock:
+                secs_until_close = market_clock.get_sleep_seconds_until_market_close()
+                if isinstance(secs_until_close, (int, float)) and secs_until_close > 3600:
+                    _log.info(
+                        f"[{label}] 장 시작 전 — 장 마감까지 {secs_until_close:.0f}초 대기 후 실행"
+                    )
+                    await asyncio.sleep(secs_until_close + 60)
+                    continue
+
             # ── 2. 장 마감 이후 — Padding 대기 후 콜백 실행 ──
             if delay_sec > 0:
                 _log.info(f"[{label}] 장 마감 감지 — {delay_sec}초 Padding 대기 후 실행")
