@@ -3,7 +3,8 @@
 현재가, 차트(OHLCV), 기술 지표, 시장 상태, 환경 전환.
 """
 import time
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from common.types import Exchange
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
 import view.web.api_common as api_common
 
@@ -63,8 +64,8 @@ async def search_stock_by_name(q: str = ""):
 
 
 @router.get("/stock/{code}")
-async def get_stock_price(code: str):
-    """현재가 조회. 종목명이 들어오면 종목코드로 변환 후 조회."""
+async def get_stock_price(code: str, exchange: str = Query("KRX")):
+    """현재가 조회. 종목명이 들어오면 종목코드로 변환 후 조회. exchange=KRX|NXT|UN 선택 가능."""
     ctx = _get_ctx()
     # 숫자가 아닌 입력(종목명)이면 코드로 변환
     if not code.isdigit():
@@ -72,8 +73,12 @@ async def get_stock_price(code: str):
         if not resolved:
             return {"rt_cd": "1", "msg1": f"종목명 '{code}'에 해당하는 종목코드를 찾을 수 없습니다.", "data": None}
         code = resolved
+    try:
+        exchange_enum = Exchange(exchange.upper())
+    except ValueError:
+        exchange_enum = Exchange.KRX
     t_start = ctx.pm.start_timer()
-    resp = await ctx.stock_query_service.handle_get_current_stock_price(code, caller = "stock.py - get_stock_price")
+    resp = await ctx.stock_query_service.handle_get_current_stock_price(code, caller="stock.py - get_stock_price", exchange=exchange_enum)
     result = _serialize_response(resp)
 
     ctx.pm.log_timer(f"get_stock_price({code})", t_start)
@@ -81,16 +86,20 @@ async def get_stock_price(code: str):
 
 
 @router.get("/chart/{code}")
-async def get_stock_chart(code: str, period: str = "D", indicators: bool = False):
-    """종목의 OHLCV 차트 데이터 조회 (기본 일봉). indicators=true 시 MA+BB 지표 포함."""
+async def get_stock_chart(code: str, period: str = "D", indicators: bool = False, exchange: str = Query("KRX")):
+    """종목의 OHLCV 차트 데이터 조회 (기본 일봉). indicators=true 시 MA+BB 지표 포함. exchange=KRX|NXT|UN 선택 가능."""
     ctx = _get_ctx()
+    try:
+        exchange_enum = Exchange(exchange.upper())
+    except ValueError:
+        exchange_enum = Exchange.KRX
     t_start = ctx.pm.start_timer()
     if indicators:
         resp = await ctx.stock_query_service.get_ohlcv_with_indicators(code, period, caller="stock.py - get_stock_chart")
     else:
-        resp = await ctx.stock_query_service.get_ohlcv(code, period, caller="stock.py - get_stock_chart")
+        resp = await ctx.stock_query_service.get_ohlcv(code, period, caller="stock.py - get_stock_chart", exchange=exchange_enum)
     result = _serialize_response(resp)
-    
+
     ctx.pm.log_timer(f"get_stock_chart({code}, indicators={indicators})", t_start)
     return result
 

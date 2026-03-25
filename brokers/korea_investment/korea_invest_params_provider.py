@@ -3,7 +3,7 @@ from dataclasses import dataclass, asdict
 from typing import Dict, Optional, Literal
 from core.market_clock import MarketClock
 
-MarketCode = Literal["J", "Q"]  # J: 코스피(국내 주식), Q: 코스닥(필요시 확장)
+MarketCode = Literal["J", "Q", "NX", "UN"]  # J: 코스피(KRX), Q: 코스닥, NX: NXT, UN: 통합
 tm = MarketClock()
 
 # ---- 개별 파라미터 dataclass들 ----
@@ -244,8 +244,8 @@ class FinancialRatioParams:
     fid_input_iscd: str     # 종목코드
 
     @classmethod
-    def of(cls, stock_code: str):
-        return cls(fid_cond_mrkt_div_code="J", fid_div_cls_code="0", fid_input_iscd=stock_code)
+    def of(cls, stock_code: str, market: MarketCode = "J"):
+        return cls(fid_cond_mrkt_div_code=market, fid_div_cls_code="0", fid_input_iscd=stock_code)
 
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
@@ -640,6 +640,9 @@ class OrderCashBody:
     ORD_DVSN: str  # 00 지정가 / 01 시장가 ...
     ORD_QTY: str
     ORD_UNPR: str  # 시장가일 땐 "0" 등 규약대로
+    EXCG_ID_DVSN_CD: str = ""  # 거래소 ID 구분 코드 (NXT: "NX", KRX: "" 또는 "KRX")
+    SLL_TYPE: str = ""          # 매도 유형 (NXT 전용)
+    CNDT_PRIC: str = ""         # 조건가격 (NXT 전용)
 
     def to_dict(self):
         return asdict(self)
@@ -708,8 +711,8 @@ class Params:
         return ItemNewsParams.of(stock_code).to_dict()
 
     @staticmethod
-    def financial_ratio(stock_code: str) -> Dict[str, str]:
-        return FinancialRatioParams.of(stock_code).to_dict()
+    def financial_ratio(stock_code: str, market: MarketCode = "J") -> Dict[str, str]:
+        return FinancialRatioParams.of(stock_code, market).to_dict()
 
     @staticmethod
     def check_holiday(date: str) -> Dict[str, str]:
@@ -801,7 +804,8 @@ class Params:
 
     @staticmethod
     def order_cash_body(*, cano: str, acnt_prdt_cd: str, pdno: str,
-                        ord_dvsn: str, ord_qty: str | int, ord_unpr: str | int) -> dict:
+                        ord_dvsn: str, ord_qty: str | int, ord_unpr: str | int,
+                        excg_id_dvsn_cd: str = "", sll_type: str = "", cndt_pric: str = "") -> dict:
         return OrderCashBody(
             CANO=cano,
             ACNT_PRDT_CD=acnt_prdt_cd,
@@ -809,4 +813,7 @@ class Params:
             ORD_DVSN=ord_dvsn,
             ORD_QTY=str(ord_qty),
             ORD_UNPR=str(ord_unpr),
+            EXCG_ID_DVSN_CD=excg_id_dvsn_cd,
+            SLL_TYPE=sll_type,
+            CNDT_PRIC=cndt_pric,
         ).to_dict()

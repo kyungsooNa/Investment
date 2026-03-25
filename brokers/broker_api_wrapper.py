@@ -3,7 +3,7 @@
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from repositories.stock_code_repository import StockCodeRepository
 from typing import Any, List
-from common.types import ResCommonResponse
+from common.types import ResCommonResponse, Exchange
 from core.cache.cache_wrapper import cache_wrap_client
 from core.retry_queue.api_request_queue import ApiRequestQueue
 from core.retry_queue.client_with_retry_queue import retry_queue_wrap_client
@@ -83,35 +83,37 @@ class BrokerAPIWrapper:
         return []
 
     # --- KoreaInvestApiClient / Quotations API delegation ---
-    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+    async def get_stock_info_by_code(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목코드로 종목의 전체 정보를 가져옵니다 (KoreaInvestApiQuotations 위임)."""
-        return await self._client.get_stock_info_by_code(stock_code)
+        return await self._client.get_stock_info_by_code(stock_code, exchange=exchange)
 
-    async def get_current_price(self, code: str) -> ResCommonResponse:
+    async def get_current_price(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """현재가를 조회합니다 (KoreaInvestApiQuotations 위임)."""
-        return await self._client.get_current_price(code)
+        return await self._client.get_current_price(code, exchange=exchange)
 
-    async def get_stock_conclusion(self, code: str) -> ResCommonResponse:
+    async def get_stock_conclusion(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주식 체결(체결강도) 정보를 조회합니다."""
-        return await self._client.get_stock_conclusion(code)
+        return await self._client.get_stock_conclusion(code, exchange=exchange)
 
-    async def get_price_summary(self, code: str) -> ResCommonResponse:
+    async def get_price_summary(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
-        return await self._client.get_price_summary(code)
+        return await self._client.get_price_summary(code, exchange=exchange)
 
-    async def get_market_cap(self, code: str) -> ResCommonResponse:
+    async def get_market_cap(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목코드로 시가총액을 반환합니다 (KoreaInvestApiQuotations 위임)."""
-        return await self._client.get_market_cap(code)
+        return await self._client.get_market_cap(code, exchange=exchange)
 
     async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> ResCommonResponse:
         """시가총액 상위 종목 목록을 반환합니다 (KoreaInvestApiQuotations 위임)."""
         return await self._client.get_top_market_cap_stocks_code(market_code, count)
 
     async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str,
-                                           fid_period_div_code: str = 'D', **kwargs) -> ResCommonResponse:
+                                           fid_period_div_code: str = 'D',
+                                           exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""
         return await self._client.inquire_daily_itemchartprice(stock_code, start_date=start_date, end_date=end_date,
-                                                               fid_period_div_code=fid_period_div_code, **kwargs)
+                                                               fid_period_div_code=fid_period_div_code,
+                                                               exchange=exchange)
     async def inquire_time_itemchartprice(
         self, *, stock_code: str, input_hour_1: str,
         pw_data_incu_yn: str = "Y", etc_cls_code: str = "0"
@@ -135,17 +137,17 @@ class BrokerAPIWrapper:
             fake_tick_incu_yn=fake_tick_incu_yn,
         )
 
-    async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
+    async def get_asking_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         종목의 실시간 호가(매도/매수 잔량 포함) 정보를 조회합니다.
         """
-        return await self._client.get_asking_price(stock_code)
+        return await self._client.get_asking_price(stock_code, exchange=exchange)
 
-    async def get_time_concluded_prices(self, stock_code: str) -> ResCommonResponse:
+    async def get_time_concluded_prices(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         종목의 시간대별 체결가/체결량 정보를 조회합니다.
         """
-        return await self._client.get_time_concluded_prices(stock_code)
+        return await self._client.get_time_concluded_prices(stock_code, exchange=exchange)
 
     # async def search_stocks_by_keyword(self, keyword: str) -> ResCommonResponse:
     #     """
@@ -205,14 +207,15 @@ class BrokerAPIWrapper:
         return await self._client.check_holiday(date)
     
     # --- KoreaInvestApiClient / Account API delegation ---
-    async def get_account_balance(self) -> ResCommonResponse:
+    async def get_account_balance(self, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """계좌 잔고를 조회합니다 (KoreaInvestApiAccount 위임)."""
-        return await self._client.get_account_balance()
+        return await self._client.get_account_balance(exchange=exchange)
 
     # --- KoreaInvestApiClient / Trading API delegation ---
-    async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool) -> ResCommonResponse:
+    async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
+                                exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """범용 주식 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
-        return await self._client.place_stock_order(stock_code, order_price, order_qty, is_buy)
+        return await self._client.place_stock_order(stock_code, order_price, order_qty, is_buy, exchange=exchange)
 
     # --- KoreaInvestApiClient / WebSocket API delegation ---
     def is_websocket_receive_alive(self) -> bool:

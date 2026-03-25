@@ -70,7 +70,8 @@ async function loadAndRenderStockChart(code) {
     try {
         // [최적화] 7개 API 호출 → 1개 통합 API로 변경 (OHLCV + 지표 한번에 조회)
         const t0 = performance.now();
-        const res = await fetch(`/api/chart/${code}?period=D&indicators=true`);
+        const exchParam = (typeof _currentExchange !== 'undefined') ? _currentExchange : 'KRX';
+        const res = await fetch(`/api/chart/${code}?period=D&indicators=true&exchange=${exchParam}`);
         const json = await res.json();
         const tFetch = performance.now();
 

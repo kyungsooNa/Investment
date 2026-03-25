@@ -57,7 +57,8 @@ class TestStockPricePaper:
         assert body["data"]["stck_prpr"] == "70500"
 
         # 서비스가 올바른 종목코드로 호출되었는지 검증
-        mock_paper_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price")
+        from common.types import Exchange
+        mock_paper_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price", exchange=Exchange.KRX)
 
     def test_get_stock_price_api_error(self, paper_client, mock_paper_ctx):
         """API 오류 시 에러 응답을 반환한다."""
@@ -92,7 +93,8 @@ class TestChartPaper:
 
         body = resp.json()
         assert body["rt_cd"] == "0"
-        mock_paper_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", "D", caller="stock.py - get_stock_chart")
+        from common.types import Exchange
+        mock_paper_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", "D", caller="stock.py - get_stock_chart", exchange=Exchange.KRX)
 
     def test_get_chart_weekly(self, paper_client, mock_paper_ctx):
         """주봉 차트 조회."""
@@ -102,7 +104,8 @@ class TestChartPaper:
 
         resp = paper_client.get("/api/chart/005930?period=W")
         assert resp.status_code == 200
-        mock_paper_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", "W", caller="stock.py - get_stock_chart")
+        from common.types import Exchange
+        mock_paper_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", "W", caller="stock.py - get_stock_chart", exchange=Exchange.KRX)
 
     def test_get_chart_monthly(self, paper_client, mock_paper_ctx):
         """월봉 차트 조회."""
@@ -112,7 +115,8 @@ class TestChartPaper:
 
         resp = paper_client.get("/api/chart/005930?period=M")
         assert resp.status_code == 200
-        mock_paper_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", "M", caller="stock.py - get_stock_chart")
+        from common.types import Exchange
+        mock_paper_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", "M", caller="stock.py - get_stock_chart", exchange=Exchange.KRX)
 
     def test_get_chart_yearly(self, paper_client, mock_paper_ctx):
         """년봉 차트 조회."""
@@ -122,7 +126,8 @@ class TestChartPaper:
 
         resp = paper_client.get("/api/chart/005930?period=Y")
         assert resp.status_code == 200
-        mock_paper_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", "Y", caller="stock.py - get_stock_chart")
+        from common.types import Exchange
+        mock_paper_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", "Y", caller="stock.py - get_stock_chart", exchange=Exchange.KRX)
 
     def test_get_chart_with_indicators(self, paper_client, mock_paper_ctx):
         """지표 포함 차트 조회 시 get_ohlcv_with_indicators 호출."""

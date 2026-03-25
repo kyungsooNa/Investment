@@ -58,7 +58,8 @@ class TestStockPriceReal:
         assert body["data"]["stck_prpr"] == "70500"
         assert body["data"]["prdy_vrss"] == "1200"
         assert body["data"]["prdy_ctrt"] == "1.73"
-        mock_real_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price")
+        from common.types import Exchange
+        mock_real_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price", exchange=Exchange.KRX)
         
     def test_get_stock_price_error(self, real_client, mock_real_ctx):
         """실전 모드 API 오류 시 에러 응답."""
@@ -93,7 +94,9 @@ class TestChartReal:
 
         body = resp.json()
         assert body["rt_cd"] == "0"
-        mock_real_ctx.stock_que
+        from common.types import Exchange
+        mock_real_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with("005930", period, caller="stock.py - get_stock_chart", exchange=Exchange.KRX)
+
     def test_get_chart_with_indicators(self, real_client, mock_real_ctx):
         """지표 포함 차트 조회."""
         mock_real_ctx.stock_query_service.get_ohlcv_with_indicators = AsyncMock(

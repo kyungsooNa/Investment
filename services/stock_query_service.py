@@ -1,7 +1,7 @@
 # app/stock_query_service.py
 from __future__ import annotations
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, \
-    ResStockFullInfoApiOutput
+    ResStockFullInfoApiOutput, Exchange
 from config.DynamicConfig import DynamicConfig
 from typing import List, Dict, Optional, Literal
 from core.performance_profiler import PerformanceProfiler
@@ -37,9 +37,9 @@ class StockQueryService:
         else:  # 3:보합 (또는 기타)
             return ""
 
-    async def get_current_price(self, stock_code: str, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
+    async def get_current_price(self, stock_code: str, exchange: Exchange = Exchange.KRX, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
         """현재가만 빠르게 조회 (MarketDataService 래퍼)."""
-        return await self.market_data_service.get_current_price(stock_code, count_stats=count_stats, caller=caller)
+        return await self.market_data_service.get_current_price(stock_code, exchange=exchange, count_stats=count_stats, caller=caller)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, MarketDataService 래퍼)."""
@@ -65,10 +65,10 @@ class StockQueryService:
         """체결 정보 조회 (MarketDataService 래퍼)."""
         return await self.market_data_service.get_stock_conclusion(stock_code)
 
-    async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown"):
+    async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown", exchange: Exchange = Exchange.KRX):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
-        resp: ResCommonResponse = await self.market_data_service.get_current_price(stock_code, caller=caller)
+        resp: ResCommonResponse = await self.market_data_service.get_current_price(stock_code, exchange=exchange, caller=caller)
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
@@ -188,9 +188,9 @@ class StockQueryService:
                                 metadata={"code": stock_code, "price": view["price"]})
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=view)
 
-    async def handle_get_account_balance(self) -> ResCommonResponse:
+    async def handle_get_account_balance(self, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """계좌 잔고 조회 요청 및 결과 출력."""
-        resp = await self.broker.get_account_balance()
+        resp = await self.broker.get_account_balance(exchange=exchange)
         if self._notification_service:
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                 await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "잔고 조회 완료", "계좌 잔고 조회 성공")
@@ -630,18 +630,18 @@ class StockQueryService:
         )
 
 
-    async def get_ohlcv(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
+    async def get_ohlcv(self, stock_code: str, period: str = "D", caller: str = "unknown", exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         OHLCV 데이터를 반환합니다.
         """
         self.logger.info(f"ServiceHandler - {stock_code} OHLCV 데이터 요청 period={period}")
-        return await self.market_data_service.get_ohlcv(stock_code, period=period, caller=caller)
+        return await self.market_data_service.get_ohlcv(stock_code, period=period, caller=caller, exchange=exchange)
 
-    async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None) -> ResCommonResponse:
+    async def get_ohlcv_range(self, stock_code: str, period: str = "D", start_date: str = None, end_date: str = None, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         특정 기간의 OHLCV 데이터를 조회합니다.
         """
-        return await self.market_data_service.get_ohlcv_range(stock_code, period, start_date, end_date)
+        return await self.market_data_service.get_ohlcv_range(stock_code, period, start_date, end_date, exchange=exchange)
 
     async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """

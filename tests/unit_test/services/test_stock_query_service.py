@@ -135,7 +135,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
+        from common.types import Exchange
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX, count_stats=True, caller="unknown")
 
         self.assertEqual(result, expected_response)
 
@@ -149,7 +150,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_current_price("005930")
 
         # Assert
-        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", count_stats=True, caller="unknown")
+        from common.types import Exchange
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX, count_stats=True, caller="unknown")
         self.assertEqual(result, expected_response)
 
     # --- New Wrapper Methods Tests ---
@@ -1134,7 +1136,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_ohlcv("005930", period="D")
 
         # Assert
-        self.mock_market_data_service.get_ohlcv.assert_awaited_once_with("005930", period="D", caller="unknown")
+        from common.types import Exchange
+        self.mock_market_data_service.get_ohlcv.assert_awaited_once_with("005930", period="D", caller="unknown", exchange=Exchange.KRX)
         self.assertEqual(result, expected_response)
 
     # --- get_ohlcv_range ---
@@ -1148,7 +1151,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_ohlcv_range("005930", period="D", start_date="20230101", end_date="20230131")
 
         # Assert
-        self.mock_market_data_service.get_ohlcv_range.assert_awaited_once_with("005930", "D", "20230101", "20230131")
+        from common.types import Exchange
+        self.mock_market_data_service.get_ohlcv_range.assert_awaited_once_with("005930", "D", "20230101", "20230131", exchange=Exchange.KRX)
         self.assertEqual(result, expected_response)
 
     # --- get_ohlcv_with_indicators ---

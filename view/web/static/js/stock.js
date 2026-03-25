@@ -1,5 +1,21 @@
 /* view/web/static/js/stock.js — 종목 조회 (searchStock) */
 
+let _currentExchange = 'KRX';
+let _currentStockCode = null;
+
+function changeExchange(exchange, btn) {
+    if (_currentExchange === exchange) return;
+    _currentExchange = exchange;
+    // 버튼 active 상태 갱신
+    const btns = document.querySelectorAll('.exchange-btn');
+    btns.forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    // 현재 종목이 있으면 재조회
+    if (_currentStockCode) {
+        searchStock(_currentStockCode, exchange);
+    }
+}
+
 /* ── 초성 추출 유틸 ── */
 const _CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
 const _CHO_SET = new Set(_CHO);
@@ -163,7 +179,7 @@ function _resolveStockCode(raw) {
     return { error: `'${raw}'에 해당하는 종목을 찾을 수 없습니다.` };
 }
 
-async function searchStock(codeOverride) {
+async function searchStock(codeOverride, exchangeOverride) {
     const input = document.getElementById('stock-code-input');
     const raw = codeOverride || (input ? input.value.trim() : '');
     if (!raw) {
@@ -183,6 +199,8 @@ async function searchStock(codeOverride) {
         return;
     }
     const code = resolved.code;
+    _currentStockCode = code;
+    if (exchangeOverride) _currentExchange = exchangeOverride;
     if (input) input.value = code;
 
     const resultDiv = document.getElementById('stock-result');
@@ -199,7 +217,7 @@ async function searchStock(codeOverride) {
     showLoading(resultDiv, '종목 정보 조회 중...');
 
     try {
-        const res = await fetchWithTimeout(`/api/stock/${code}`);
+        const res = await fetchWithTimeout(`/api/stock/${code}?exchange=${_currentExchange}`);
         if (!res.ok) {
             const errorText = await res.text();
             console.error("Server error response:", errorText);
@@ -244,6 +262,10 @@ async function searchStock(codeOverride) {
 
         const styles = `
             <style>
+                .exchange-toggle { display: flex; gap: 4px; }
+                .exchange-btn { padding: 4px 10px; font-size: 12px; background: var(--bg-primary, #f5f5f5); border: 1px solid var(--border, #ccc); color: var(--text-secondary, #555); border-radius: 4px; cursor: pointer; }
+                .exchange-btn.active { background: var(--accent, #4a90e2); color: white; border-color: var(--accent, #4a90e2); font-weight: bold; }
+                .exchange-btn:hover { background: var(--bg-card, #e8e8e8); }
                 .stock-title { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
                 .badge.new-high {
                     background-color: #ff6b35; color: white; font-size: 0.8em;
@@ -274,8 +296,17 @@ async function searchStock(codeOverride) {
             </style>
         `;
 
+        const exchangeButtons = `
+            <div class="exchange-toggle" style="margin-bottom:8px;">
+                <button class="exchange-btn${_currentExchange==='KRX'?' active':''}" onclick="changeExchange('KRX', this)">KRX</button>
+                <button class="exchange-btn${_currentExchange==='NXT'?' active':''}" onclick="changeExchange('NXT', this)">NXT</button>
+                <button class="exchange-btn${_currentExchange==='UN'?' active':''}" onclick="changeExchange('UN', this)">통합</button>
+            </div>
+        `;
+
         resultDiv.innerHTML = styles + `
             <div class="card stock-info-box">
+                ${exchangeButtons}
                 <h3 class="stock-title">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
                 <p class="price ${changeClass}">${fnum(data.price, '원')}</p>
                 <p class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>

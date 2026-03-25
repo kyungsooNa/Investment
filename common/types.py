@@ -5,6 +5,13 @@ from pydantic import BaseModel, Field, model_validator, ConfigDict
 
 T = TypeVar("T")
 
+
+class Exchange(str, Enum):
+    KRX = "KRX"
+    NXT = "NXT"
+    UN = "UN"     # 통합시세 (KRX+NXT, 시세 조회 전용)
+
+
 # API 응답 결과의 성공/실패를 나타내는 Enum
 class ErrorCode(Enum):
     SUCCESS = "0"
@@ -35,6 +42,7 @@ class TradeSignal(BaseModel):
     qty: int = 1
     reason: str = ""
     strategy_name: str = ""
+    exchange: str = "KRX"  # "KRX" 또는 "NXT"
 
     def to_dict(self):
         return self.model_dump()
@@ -130,7 +138,7 @@ class ResStockFullInfoApiOutput(BaseModel):
     mrkt_warn_cls_code: str  # 시장경고종목 분류코드
     new_hgpr_lwpr_cls_code: Optional[str]  # 신고가/신저가 구분 코드
     oprc_rang_cont_yn: str  # 시가 범위제 적용 여부
-    ovtm_vi_cls_code: str  # 시간외 VI 발동 분류코드
+    ovtm_vi_cls_code: str = ""  # 시간외 VI 발동 분류코드 (NXT 응답에 미포함)
     pbr: str  # 주가순자산비율 (Price to Book Ratio)
     per: str  # 주가수익비율 (Price Earnings Ratio)
     pgtr_ntby_qty: str  # 프로그램 매매 순매수 수량
@@ -148,7 +156,7 @@ class ResStockFullInfoApiOutput(BaseModel):
     short_over_yn: str  # 공매도 과열 여부 (Y/N)
     sltr_yn: str  # 정리매매 여부 (Y/N)
     ssts_yn: str  # 정지 여부 (Y/N)
-    stac_month: str  # 결산월
+    stac_month: str = ""  # 결산월 (NXT 응답에 미포함)
     stck_dryy_hgpr: str  # 당해 연도 최고가
     stck_dryy_lwpr: str  # 당해 연도 최저가
     stck_fcam: str  # 액면가

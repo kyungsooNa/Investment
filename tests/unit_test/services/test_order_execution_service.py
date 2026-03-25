@@ -71,7 +71,8 @@ async def test_handle_buy_stock_success(handler, mock_broker_api_wrapper, mock_l
     )
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input), is_buy=True)
+    from common.types import Exchange
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input), is_buy=True, exchange=Exchange.KRX)
 
     mock_logger.info.assert_called()
     info_msgs = [str(call.args[0]) for call in mock_logger.info.call_args_list]
@@ -119,7 +120,8 @@ async def test_handle_buy_stock_place_order_delegation_failure(handler, mock_bro
     )
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with("005930", 70000, 10, is_buy=True)
+    from common.types import Exchange
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with("005930", 70000, 10, is_buy=True, exchange=Exchange.KRX)
     logged_msg = mock_logger.error.call_args[0][0]
     assert "매수 주문 실패" in logged_msg
     assert "005930" in logged_msg
@@ -138,7 +140,8 @@ async def test_handle_sell_stock_success(handler, mock_broker_api_wrapper):
     )
     await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
-    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with("005930", 60000, 5, is_buy=False)
+    from common.types import Exchange
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with("005930", 60000, 5, is_buy=False, exchange=Exchange.KRX)
 
 
 @pytest.mark.asyncio
@@ -182,7 +185,8 @@ async def test_handle_sell_stock_place_order_delegation_failure(handler, mock_br
 
     await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
-    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with("005930", 60000, 5, is_buy=False)
+    from common.types import Exchange
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with("005930", 60000, 5, is_buy=False, exchange=Exchange.KRX)
     logged_msg = mock_logger.error.call_args[0][0]
     assert "매도 주문 실패" in logged_msg
     assert "005930" in logged_msg
@@ -197,8 +201,9 @@ async def test_handle_place_buy_order_success(handler, mock_broker_api_wrapper, 
     )
     result = await handler.handle_place_buy_order("005930", 70000, 10)
 
+    from common.types import Exchange
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(
-        "005930", 70000, 10, is_buy=True
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
     )
     mock_logger.info.assert_called()
     assert result.rt_cd == "0"
@@ -228,8 +233,9 @@ async def test_handle_place_sell_order_success(handler, mock_broker_api_wrapper,
     )
     result = await handler.handle_place_sell_order("005930", 60000, 5)
 
+    from common.types import Exchange
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(
-        "005930", 60000, 5, is_buy=False
+        "005930", 60000, 5, is_buy=False, exchange=Exchange.KRX
     )
     mock_logger.info.assert_called()
     assert result.rt_cd == "0"

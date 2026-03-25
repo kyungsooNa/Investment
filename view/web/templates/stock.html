@@ -29,7 +29,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/candle_chart.js?v=1"></script>
+<script src="/static/js/candle_chart.js?v=2"></script>
 <script>
     // 종목 리스트: localStorage에서 즉시 복원, 없으면 API 로드 후 저장
     var ALL_STOCKS = (function() {
@@ -51,7 +51,7 @@
             .catch(function() { ALL_STOCKS = []; });
     }
 </script>
-<script src="/static/js/stock.js?v=5"></script>
+<script src="/static/js/stock.js?v=6"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const urlParams = new URLSearchParams(window.location.search);

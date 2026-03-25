@@ -92,7 +92,8 @@ async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env,
         # 6. 호출 여부 검증
         mock_mapper.get_name_by_code.assert_called_once_with("005930")
         mock_mapper.get_code_by_name.assert_called_once_with("삼성전자")
-        mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D")
+        from common.types import Exchange
+        mock_client.inquire_daily_itemchartprice.assert_awaited_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="D", exchange=Exchange.KRX)
 
 
 @pytest.mark.asyncio
@@ -152,10 +153,11 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     # assert result == {"hts_kor_isnm": "삼성전자_info"}
     # wrapper._client.get_stock_info_by_code.assert_called_once_with("005930")
 
+    from common.types import Exchange
     # get_current_price (lines 63, 65) - calls self._client.get_current_price
     result = await wrapper.get_current_price("005930")
     assert result == {"output": {"stck_prpr": "70000"}}
-    mock_client.get_current_price.assert_called_once_with("005930")
+    mock_client.get_current_price.assert_called_once_with("005930", exchange=Exchange.KRX)
 
     # get_price_summary (lines 67, 69) - calls self._client.get_price_summary
     result = await wrapper.get_price_summary("005930")
@@ -163,12 +165,12 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
         "symbol": "005930",
         "current": 70000
     }
-    wrapper._client.get_price_summary.assert_called_once_with("005930")
+    wrapper._client.get_price_summary.assert_called_once_with("005930", exchange=Exchange.KRX)
 
     # get_market_cap (lines 71, 73) - calls self._client.get_market_cap
     result = await wrapper.get_market_cap("005930")
     assert result == 1234567890
-    wrapper._client.get_market_cap.assert_called_once_with("005930")
+    wrapper._client.get_market_cap.assert_called_once_with("005930", exchange=Exchange.KRX)
 
     # get_top_market_cap_stocks_code (lines 75, 79) - calls self._client.get_top_market_cap_stocks_code
     result = await wrapper.get_top_market_cap_stocks_code("0000", count=1)
@@ -178,18 +180,20 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
     # inquire_daily_itemchartprice (lines 92, 94) - calls self._client.inquire_daily_itemchartprice
     result = await wrapper.inquire_daily_itemchartprice("005930", start_date="20250101", end_date="20250111", fid_period_div_code="M")
     assert result == [{"stck_clpr": "70000_chart"}]
-    mock_client.inquire_daily_itemchartprice.assert_called_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="M")
+    from common.types import Exchange
+    mock_client.inquire_daily_itemchartprice.assert_called_once_with("005930", start_date="20250101", end_date="20250111", fid_period_div_code="M", exchange=Exchange.KRX)
 
     # --- KoreaInvestApiClient / Account API delegation ---
     # get_account_balance (lines 98, 100) - calls self._client.get_account_balance
     result = await wrapper.get_account_balance()
     assert result == {"output": {"dnca_tot_amt": "1000000"}}
-    mock_client.get_account_balance.assert_called_once()
+    mock_client.get_account_balance.assert_called_once_with(exchange=Exchange.KRX)
 
     # place_stock_order (lines 115, 117) - calls self._client.place_stock_order
     result = await wrapper.place_stock_order("005930", 69500, 15, is_buy=True)
     assert result == {"rt_cd": "0", "msg1": "주문 성공"}
-    wrapper._client.place_stock_order.assert_called_once_with("005930", 69500, 15, True)
+    from common.types import Exchange
+    wrapper._client.place_stock_order.assert_called_once_with("005930", 69500, 15, True, exchange=Exchange.KRX)
 
     # --- KoreaInvestApiClient / WebSocket API delegation ---
     # connect_websocket (lines 120, 122) - calls self._client.connect_websocket
@@ -490,16 +494,17 @@ async def test_additional_delegations(broker_wrapper_instance):
     """
     wrapper, mock_client, _, _ = broker_wrapper_instance
 
+    from common.types import Exchange
     # 1. get_stock_info_by_code
     mock_client.get_stock_info_by_code.return_value = {"info": "data"}
     result = await wrapper.get_stock_info_by_code("005930")
-    mock_client.get_stock_info_by_code.assert_called_once_with("005930")
+    mock_client.get_stock_info_by_code.assert_called_once_with("005930", exchange=Exchange.KRX)
     assert result == {"info": "data"}
 
     # 2. get_stock_conclusion
     mock_client.get_stock_conclusion.return_value = {"conclusion": "data"}
     result = await wrapper.get_stock_conclusion("005930")
-    mock_client.get_stock_conclusion.assert_called_once_with("005930")
+    mock_client.get_stock_conclusion.assert_called_once_with("005930", exchange=Exchange.KRX)
     assert result == {"conclusion": "data"}
 
     # 3. inquire_time_itemchartprice
@@ -526,13 +531,13 @@ async def test_additional_delegations(broker_wrapper_instance):
     # 5. get_asking_price
     mock_client.get_asking_price.return_value = {"asking": "price"}
     result = await wrapper.get_asking_price("005930")
-    mock_client.get_asking_price.assert_called_once_with("005930")
+    mock_client.get_asking_price.assert_called_once_with("005930", exchange=Exchange.KRX)
     assert result == {"asking": "price"}
 
     # 6. get_time_concluded_prices
     mock_client.get_time_concluded_prices.return_value = {"concluded": "prices"}
     result = await wrapper.get_time_concluded_prices("005930")
-    mock_client.get_time_concluded_prices.assert_called_once_with("005930")
+    mock_client.get_time_concluded_prices.assert_called_once_with("005930", exchange=Exchange.KRX)
     assert result == {"concluded": "prices"}
 
     # 7. get_top_rise_fall_stocks

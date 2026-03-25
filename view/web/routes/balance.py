@@ -1,18 +1,23 @@
 """
 계좌 잔고 관련 API 엔드포인트 (balance.html).
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
+from common.types import Exchange
 from view.web.api_common import _get_ctx, _serialize_response
 
 router = APIRouter()
 
 
 @router.get("/balance")
-async def get_balance():
-    """계좌 잔고 조회."""
+async def get_balance(exchange: str = Query("KRX")):
+    """계좌 잔고 조회. exchange 파라미터로 KRX 또는 NXT 선택 가능."""
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
-    resp = await ctx.stock_query_service.handle_get_account_balance()
+    try:
+        exchange_enum = Exchange(exchange.upper())
+    except ValueError:
+        exchange_enum = Exchange.KRX
+    resp = await ctx.stock_query_service.handle_get_account_balance(exchange=exchange_enum)
 
     # 1. 기존 응답 직렬화
     result = _serialize_response(resp)
@@ -51,12 +56,14 @@ async def get_balance():
 
         result['account_info'] = {
             "number": acc_no,
-            "type": acc_type
+            "type": acc_type,
+            "exchange": exchange_enum.value,
         }
     else:
         result['account_info'] = {
             "number": "연동실패",
-            "type": "Env Not Found"
+            "type": "Env Not Found",
+            "exchange": exchange_enum.value,
         }
 
     ctx.pm.log_timer("get_balance", t_start)

@@ -15,7 +15,17 @@ from brokers.korea_investment.korea_invest_trid_keys import TrIdLeaf
 from common.types import (
     ResPriceSummary, ResMomentumStock, ResCommonResponse, ErrorCode,
     ResStockFullInfoApiOutput, ResTopMarketCapApiItem, ResDailyChartApiItem, ResFluctuation,
+    Exchange,
 )
+
+
+def _exchange_to_market_code(exchange: Exchange) -> str:
+    """Exchange enum을 API 마켓코드 문자열로 변환합니다."""
+    if exchange == Exchange.NXT:
+        return "NX"
+    elif exchange == Exchange.UN:
+        return "UN"
+    return "J"  # KRX 기본값
 
 
 class KoreaInvestApiQuotations(KoreaInvestApiBase):
@@ -35,7 +45,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                          url_provider=url_provider,
                          trid_provider=trid_provider)
 
-    async def get_stock_info_by_code(self, stock_code: str) -> ResCommonResponse:
+    async def get_stock_info_by_code(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         종목코드로 종목의 전체 정보 (이름, 현재가, 시가총액 등)를 가져옵니다.
         ResCommonResponse 형태로 반환하며, data 필드에 ResStockFullInfoApiOutput 포함.
@@ -48,7 +58,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         params = Params.search_info(stock_code=stock_code, prdt_type_cd=full_config["params"]["fid_div_cls_code"])
 
-        self._logger.info(f"{stock_code} 종목 정보 조회 시도...")
+        self._logger.info(f"{stock_code} 종목 정보 조회 시도... (exchange={exchange.value})")
         response: ResCommonResponse = await self.call_api("GET", EndpointKey.SEARCH_INFO, params=params, retry_count=1)
 
         if response.rt_cd == ErrorCode.SUCCESS.value:
@@ -81,7 +91,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=None
             )
 
-    async def get_current_price(self, stock_code) -> ResCommonResponse:
+    async def get_current_price(self, stock_code, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         현재가를 조회합니다. API 원본 응답을 ResCommonResponse의 data 필드에 담아 반환.
         """
@@ -91,7 +101,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config['custtype'])
 
-        params = Params.inquire_price(stock_code=stock_code)
+        market_code = _exchange_to_market_code(exchange)
+        params = Params.inquire_price(stock_code=stock_code, market=market_code)
         self._logger.info(f"{stock_code} 현재가 조회 시도...")
 
         response: ResCommonResponse = await self.call_api("GET", EndpointKey.INQUIRE_PRICE, params=params,
@@ -118,7 +129,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             )
         return response
 
-    async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
+    async def get_stock_conclusion(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주식 체결(체결강도 포함) 정보를 조회합니다."""
         full_config = self._env.active_config
         tr_id = self._trid_provider.quotations(TrIdLeaf.INQUIRE_CONCLUSION)
@@ -126,16 +137,17 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config['custtype'])
 
-        params = Params.inquire_conclusion(stock_code=stock_code)
+        market_code = _exchange_to_market_code(exchange)
+        params = Params.inquire_conclusion(stock_code=stock_code, market=market_code)
         self._logger.info(f"{stock_code} 체결(체결강도) 조회 시도...")
         return await self.call_api("GET", EndpointKey.INQUIRE_CONCLUSION, params=params, retry_count=1)
 
-    async def get_price_summary(self, stock_code: str) -> ResCommonResponse:
+    async def get_price_summary(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보 반환
         ResCommonResponse 형태로 반환하며, data 필드에 ResPriceSummary 포함.
         """
-        response_common = await self.get_current_price(stock_code)
+        response_common = await self.get_current_price(stock_code, exchange=exchange)
 
         if response_common.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning(f"({stock_code}) get_current_price 실패: {response_common.msg1}")
@@ -213,12 +225,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             data=price_summary_data
         )
 
-    async def get_market_cap(self, stock_code: str) -> ResCommonResponse:
+    async def get_market_cap(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         종목코드로 시가총액을 반환합니다. (단위: 원)
         ResCommonResponse 형태로 반환하며, data 필드에 int 시가총액 값 포함.
         """
-        response_common = await self.get_stock_info_by_code(stock_code)
+        response_common = await self.get_stock_info_by_code(stock_code, exchange=exchange)
 
         if response_common.rt_cd != ErrorCode.SUCCESS.value:  # Enum 값 사용
             return response_common
@@ -371,7 +383,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                                            end_date: str = '',
                                            fid_period_div_code: str = 'D',
                                            fid_input_iscd: str = '00',
-                                           fid_org_adj_prc: str = '0') -> ResCommonResponse:
+                                           fid_org_adj_prc: str = '0',
+                                           exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         일별/주별/월별/분별/틱별 주식 시세 차트 데이터를 조회합니다.
         TRID: FHKST03010100 (일별), FHNKF03060000 (분봉)
@@ -391,7 +404,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         self._logger.debug(f"차트 조회 시도 현재 tr_id: {tr_id}")
 
-        params = Params.daily_itemchartprice(stock_code=stock_code, start_date=start_date,end_date= end_date,period=fid_period_div_code)
+        market_code = _exchange_to_market_code(exchange)
+        params = Params.daily_itemchartprice(stock_code=stock_code, start_date=start_date, end_date=end_date, period=fid_period_div_code, market=market_code)
 
         with self._headers.temp(tr_id=tr_id):
             response_data: ResCommonResponse = await self.call_api(
@@ -527,7 +541,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         rows = rows if isinstance(rows, list) else ([rows] if rows else [])
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="일변 분봉 조회 성공", data=rows)
 
-    async def get_asking_price(self, stock_code: str) -> ResCommonResponse:
+    async def get_asking_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         종목의 실시간 호가(매도/매수 잔량 포함) 정보를 조회합니다.
         ResCommonResponse 형태로 반환되며, data는 원시 output 딕셔너리입니다.
@@ -538,7 +552,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
-        params = Params.asking_price(stock_code=stock_code)
+        market_code = _exchange_to_market_code(exchange)
+        params = Params.asking_price(stock_code=stock_code, market=market_code)
 
         self._logger.info(f"{stock_code} 종목 호가잔량 조회 시도...")
 
@@ -550,7 +565,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         return response
 
-    async def get_time_concluded_prices(self, stock_code: str) -> ResCommonResponse:
+    async def get_time_concluded_prices(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         종목의 시간대별 체결가/체결량 정보를 조회합니다.
         """
@@ -560,7 +575,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         self._headers.set_tr_id(tr_id)
         self._headers.set_custtype(full_config["custtype"])
 
-        params = Params.time_conclude(stock_code=stock_code)
+        market_code = _exchange_to_market_code(exchange)
+        params = Params.time_conclude(stock_code=stock_code, market=market_code)
 
         self._logger.info(f"{stock_code} 종목 체결가 조회 시도...")
         response: ResCommonResponse = await self.call_api("GET", EndpointKey.TIME_CONCLUDE, params=params,
