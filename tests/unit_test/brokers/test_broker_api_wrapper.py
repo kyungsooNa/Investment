@@ -116,6 +116,48 @@ async def test_inquire_daily_itemchartprice_delegation(mock_env, mock_logger):
 
 
 @pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_skip_cache_propagation(mock_env, mock_logger, mock_market_clock):
+    """
+    BrokerAPIWrapper.inquire_daily_itemchartprice에 _skip_cache=True를 전달하면
+    **kwargs를 통해 _client.inquire_daily_itemchartprice까지 전파되는지 검증합니다.
+
+    이 테스트는 메서드 시그니처에서 **kwargs가 누락되었을 때 TypeError로 실패합니다.
+    (MarketCalendarService._fetch_from_api에서 _skip_cache=True를 전달하므로 반드시 필요)
+    """
+    from common.types import Exchange, ResCommonResponse
+
+    with patch(f"{wrapper_module.__name__}.StockCodeRepository"), \
+         patch(f"{wrapper_module.__name__}.KoreaInvestApiClient") as mock_client_class, \
+         patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c), \
+         patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c):
+
+        mock_client = AsyncMock()
+        mock_client.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+        mock_client_class.return_value = mock_client
+
+        wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, market_clock=mock_market_clock)
+
+        # _skip_cache=True 를 **kwargs 로 전달 — **kwargs 누락 시 TypeError 발생
+        await wrapper.inquire_daily_itemchartprice(
+            "005930",
+            start_date="20250101",
+            end_date="20250107",
+            fid_period_div_code="D",
+            _skip_cache=True,
+        )
+
+        # _client 까지 _skip_cache=True 가 그대로 전달되었는지 확인
+        mock_client.inquire_daily_itemchartprice.assert_awaited_once_with(
+            "005930",
+            start_date="20250101",
+            end_date="20250107",
+            fid_period_div_code="D",
+            exchange=Exchange.KRX,
+            _skip_cache=True,
+        )
+
+
+@pytest.mark.asyncio
 async def test_all_delegations(broker_wrapper_instance, mocker):
     """
     BrokerAPIWrapper의 모든 위임 메서드(StockMapper, KoreaInvestApiClient의 모든 도메인)를 테스트하고
@@ -239,6 +281,8 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
     # BrokerAPIWrapper의 __init__에서 호출되는 KoreaInvestApiClient와 StockCodeRepository를 패치
     MockClientClass = mocker.patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
     MockStockMapperClass = mocker.patch(f"{wrapper_module.__name__}.StockCodeRepository")
+    mocker.patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c)
+    mocker.patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c)
 
     # KoreaInvestApiClient의 인스턴스 Mock (BrokerAPIWrapper의 _client가 됩니다)
     mock_client_instance = AsyncMock()
