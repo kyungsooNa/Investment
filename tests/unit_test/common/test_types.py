@@ -6,6 +6,7 @@ from common.types import (
     ResCommonResponse,
     ResStockFullInfoApiOutput,
     ResTopMarketCapApiItem,
+    ResDailyChartApiItem,
     ResFluctuation,
     ResPriceSummary,
     TradeSignal,
