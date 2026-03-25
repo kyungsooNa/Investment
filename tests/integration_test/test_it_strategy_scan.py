@@ -817,6 +817,156 @@ class TestOneilPocketPivotScan:
 
 
 # ============================================================================
+# scan() 청크 기반 병렬화 안전성 테스트
+# ============================================================================
+
+class TestScanChunkParallelism:
+    """asyncio.gather 청크 병렬화 — 예외 격리 및 다중 종목 처리 검증."""
+
+    def _make_osb_strategy(self, deep_paper_ctx, mock_universe, mock_tm, config=None):
+        """OneilSqueezeBreakoutStrategy 인스턴스 생성 헬퍼."""
+        from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
+        from strategies.oneil_common_types import OneilBreakoutConfig
+
+        cfg = config or OneilBreakoutConfig(
+            program_net_buy_min=0,
+            program_to_trade_value_pct=0.0,
+            program_to_market_cap_pct=0.0,
+        )
+        strategy = OneilSqueezeBreakoutStrategy(
+            stock_query_service=deep_paper_ctx.stock_query_service,
+            universe_service=mock_universe,
+            market_clock=mock_tm,
+            config=cfg,
+        )
+        strategy._position_state.clear()
+        strategy._save_state = MagicMock()
+        return strategy
+
+    def _make_watchlist_item(self, code, **kwargs):
+        from strategies.oneil_common_types import OSBWatchlistItem
+        defaults = dict(
+            name=f"종목{code}", market="KOSPI",
+            high_20d=70000, ma_20d=68000.0, ma_50d=65000.0,
+            avg_vol_20d=1_000_000.0, bb_width_min_20d=0.03, prev_bb_width=0.04,
+            w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
+            market_cap=400_000_000_000_000,
+        )
+        defaults.update(kwargs)
+        return OSBWatchlistItem(code=code, **defaults)
+
+    async def test_exception_in_one_candidate_does_not_block_others(
+        self, deep_paper_ctx, mocker
+    ):
+        """scan: asyncio.gather — 한 종목 API 예외 발생 시 다른 종목 시그널은 정상 반환."""
+        from services.oneil_universe_service import OneilUniverseService
+        from datetime import datetime
+        from pytz import timezone
+
+        kst = timezone("Asia/Seoul")
+        mock_tm = MagicMock()
+        mock_tm.get_current_kst_time.return_value = datetime(2026, 3, 8, 12, 0, tzinfo=kst)
+        mock_tm.get_market_open_time.return_value = datetime(2026, 3, 8, 9, 0, tzinfo=kst)
+        mock_tm.get_market_close_time.return_value = datetime(2026, 3, 8, 15, 30, tzinfo=kst)
+
+        mock_universe = MagicMock(spec=OneilUniverseService)
+        # 2개 종목: 000001은 API 예외 유발, 005930은 정상 돌파
+        mock_universe.get_watchlist = AsyncMock(return_value={
+            "000001": self._make_watchlist_item("000001", high_20d=70000),
+            "005930": self._make_watchlist_item("005930", high_20d=70000),
+        })
+        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+
+        strategy = self._make_osb_strategy(deep_paper_ctx, mock_universe, mock_tm)
+
+        # 000001: 예외, 005930: 모든 관문 통과
+        from common.types import ResCommonResponse
+        price_ok = ResCommonResponse(
+            rt_cd="0", msg1="OK",
+            data={"output": {
+                "stck_prpr": "75000", "acml_vol": "3000000",
+                "pgtr_ntby_qty": "100000", "acml_tr_pbmn": "500000000000",
+            }}
+        )
+        conclusion_ok = ResCommonResponse(
+            rt_cd="0", msg1="OK",
+            data={"output": [{"tday_rltv": "135.0"}]}
+        )
+
+        async def price_side_effect(code, caller=None):
+            if code == "000001":
+                raise Exception("의도적 타임아웃")
+            return price_ok
+
+        mocker.patch.object(
+            deep_paper_ctx.stock_query_service, "get_current_price",
+            new_callable=AsyncMock, side_effect=price_side_effect,
+        )
+        mocker.patch.object(
+            deep_paper_ctx.stock_query_service, "get_stock_conclusion",
+            new_callable=AsyncMock, return_value=conclusion_ok,
+        )
+
+        signals = await strategy.scan()
+
+        # 005930 시그널 생성
+        assert len(signals) == 1
+        assert signals[0].code == "005930"
+        assert signals[0].action == "BUY"
+
+    async def test_multiple_candidates_all_processed_within_chunk(
+        self, deep_paper_ctx, mocker
+    ):
+        """scan: 워치리스트 내 여러 종목이 동일 청크(≤10)에서 모두 처리됨."""
+        from services.oneil_universe_service import OneilUniverseService
+        from datetime import datetime
+        from pytz import timezone
+
+        kst = timezone("Asia/Seoul")
+        mock_tm = MagicMock()
+        mock_tm.get_current_kst_time.return_value = datetime(2026, 3, 8, 12, 0, tzinfo=kst)
+        mock_tm.get_market_open_time.return_value = datetime(2026, 3, 8, 9, 0, tzinfo=kst)
+        mock_tm.get_market_close_time.return_value = datetime(2026, 3, 8, 15, 30, tzinfo=kst)
+
+        mock_universe = MagicMock(spec=OneilUniverseService)
+        codes = [f"00{i:04d}" for i in range(1, 4)]  # 3개 종목 (1 청크 내)
+        mock_universe.get_watchlist = AsyncMock(return_value={
+            code: self._make_watchlist_item(code, high_20d=70000) for code in codes
+        })
+        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+
+        strategy = self._make_osb_strategy(deep_paper_ctx, mock_universe, mock_tm)
+
+        # 모든 종목 돌파 성공
+        from common.types import ResCommonResponse
+        price_ok = ResCommonResponse(
+            rt_cd="0", msg1="OK",
+            data={"output": {
+                "stck_prpr": "75000", "acml_vol": "3000000",
+                "pgtr_ntby_qty": "100000", "acml_tr_pbmn": "500000000000",
+            }}
+        )
+        conclusion_ok = ResCommonResponse(
+            rt_cd="0", msg1="OK",
+            data={"output": [{"tday_rltv": "135.0"}]}
+        )
+        mocker.patch.object(
+            deep_paper_ctx.stock_query_service, "get_current_price",
+            new_callable=AsyncMock, return_value=price_ok,
+        )
+        mocker.patch.object(
+            deep_paper_ctx.stock_query_service, "get_stock_conclusion",
+            new_callable=AsyncMock, return_value=conclusion_ok,
+        )
+
+        signals = await strategy.scan()
+
+        # 3개 종목 모두 시그널 생성
+        assert len(signals) == len(codes)
+        assert {s.code for s in signals} == set(codes)
+
+
+# ============================================================================
 # API 실패 시 전략 안전성 테스트
 # ============================================================================
 

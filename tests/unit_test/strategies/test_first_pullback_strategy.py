@@ -870,3 +870,49 @@ def test_name_property(mock_deps):
     sqs, universe, tm, logger = mock_deps
     strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
     assert strategy.name == "첫눌림목"
+
+
+# ============================================================================
+# 성능 개선 검증: Dirty Flag
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_check_exits_dirty_flag_saves_once(mock_deps):
+    """check_exits: 여러 보유종목의 최고가 갱신 시 _save_state는 루프 후 1회만 호출."""
+    from strategies.first_pullback_types import FPPositionState
+
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    # 2개 종목 보유 — peak 10000, 현재가 10500 → 갱신 대상
+    for code in ["005930", "000660"]:
+        strategy._position_state[code] = FPPositionState(
+            entry_price=10000, entry_date="20250101",
+            peak_price=10000, surge_day_high=11000,
+        )
+
+    # 현재가 10500: peak 갱신, ref_price(=buy_price) 대비 +5% → 부분익절 기준(기본 10%) 미달
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500"}}
+    )
+    # 20MA < current 10500 → 손절 없음 (MA=9000)
+    ohlcv = [{"close": 9000} for _ in range(20)]
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 10, 12, 0, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 10, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 10, 15, 30, 0)
+
+    holdings = [
+        {"code": "005930", "buy_price": 10000, "qty": 10},
+        {"code": "000660", "buy_price": 10000, "qty": 10},
+    ]
+    signals = await strategy.check_exits(holdings)
+
+    # 매도 시그널 없음, 양쪽 peak 갱신
+    assert signals == []
+    assert strategy._position_state["005930"].peak_price == 10500
+    assert strategy._position_state["000660"].peak_price == 10500
+    # dirty flag: 루프 후 1회만 저장
+    strategy._save_state.assert_called_once()
