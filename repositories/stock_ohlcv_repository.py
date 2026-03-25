@@ -1,0 +1,400 @@
+# repositories/stock_ohlcv_repository.py
+"""
+OHLCV 일봉 데이터 및 daily_prices 스냅샷을 관리하는 Repository.
+- LFU 캐시(용량 500): 자주 분석되는 종목이 캐시에 오래 남음
+- historical_complete 플래그: DB가 줄 수 있는 전체를 받은 경우 표시 → 불필요한 DB 재조회 방지
+- upsert_ohlcv 호출 시 해당 종목의 캐시 무효화 → 항상 신선한 DB 데이터 보장
+"""
+import os
+import sqlite3
+import time
+import logging
+import asyncio
+import aiosqlite
+from contextlib import asynccontextmanager
+from typing import Optional, List, Dict, Any
+
+from repositories.cache import _LFUCache
+
+
+class StockOhlcvRepository:
+    """OHLCV 일봉 데이터 전담 저장소 (LFU 인메모리 캐시 + SQLite)."""
+
+    def __init__(self, db_path: str = None, logger=None):
+        self._logger = logger or logging.getLogger(__name__)
+        self._db_path = db_path or os.path.join("data", "stocks.db")
+        self._lock = None
+        self._conn: Optional[aiosqlite.Connection] = None
+
+        # OHLCV 전용 LFU 캐시 — price 캐시와 물리적으로 분리
+        self._ohlcv_cache = _LFUCache(capacity=500)
+
+        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        self._init_db_sync()
+
+    def _init_db_sync(self):
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS ohlcv (
+                        code TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        open INTEGER,
+                        high INTEGER,
+                        low INTEGER,
+                        close INTEGER,
+                        volume INTEGER,
+                        PRIMARY KEY (code, date)
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_ohlcv_date ON ohlcv(date)")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_prices (
+                        code TEXT NOT NULL,
+                        trade_date TEXT NOT NULL,
+                        name TEXT,
+                        current_price INTEGER,
+                        open_price INTEGER,
+                        high_price INTEGER,
+                        low_price INTEGER,
+                        prev_close INTEGER,
+                        change_price INTEGER,
+                        change_sign TEXT,
+                        change_rate TEXT,
+                        volume INTEGER,
+                        trading_value INTEGER,
+                        market_cap INTEGER,
+                        per REAL,
+                        pbr REAL,
+                        eps REAL,
+                        w52_high INTEGER,
+                        w52_low INTEGER,
+                        market TEXT,
+                        collected_at REAL,
+                        PRIMARY KEY (code, trade_date)
+                    )
+                """)
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_daily_prices_trade_date "
+                    "ON daily_prices(trade_date)"
+                )
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository DB 초기화 실패: {e}")
+
+    @asynccontextmanager
+    async def _get_connection(self):
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._conn is None:
+                self._conn = await aiosqlite.connect(self._db_path)
+            try:
+                yield self._conn
+                await self._conn.commit()
+            except Exception:
+                await self._conn.rollback()
+                raise
+
+    # ── OHLCV 캐시/DB ──────────────────────────────────────────────────────────
+
+    async def get_stock_data(self, code: str, ohlcv_limit: int = 600,
+                             caller: str = "unknown") -> Optional[Dict]:
+        """
+        메모리 캐시 또는 로컬 DB에서 OHLCV 데이터를 반환합니다.
+
+        historical_complete=True이면 ohlcv_limit 미달이어도 캐시 히트 처리하여
+        DB가 줄 수 있는 전부를 이미 보유 중인 종목(예: 신규 상장 종목)의
+        반복 DB 재조회 loop를 방지합니다.
+        """
+        # 1. LFU 캐시 확인 — historical_complete 플래그 기반
+        cached = self._ohlcv_cache.get(code, count_stats=True, caller=caller, item_type="ohlcv")
+        if cached and cached.get("historical_complete"):
+            ohlcv = cached["ohlcv_historical"][:]
+            if cached.get("ohlcv_today"):
+                ohlcv = ohlcv + [cached["ohlcv_today"]]
+            return {
+                "code": code,
+                "ohlcv": ohlcv,
+                "last_updated": cached["last_loaded"],
+                "historical_complete": True,
+            }
+
+        # 2. DB에서 읽기
+        try:
+            async with self._get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
+                    "SELECT date, open, high, low, close, volume FROM ohlcv "
+                    "WHERE code = ? ORDER BY date DESC LIMIT ?",
+                    (code, ohlcv_limit)
+                ) as cursor:
+                    ohlcv_rows = await cursor.fetchall()
+                conn.row_factory = None
+
+            if not ohlcv_rows:
+                return None
+
+            historical = [dict(r) for r in reversed(ohlcv_rows)]
+            entry = {
+                "ohlcv_historical": historical,
+                "ohlcv_today": None,
+                "historical_complete": True,  # DB가 줄 수 있는 전부를 받았음
+                "last_loaded": time.time(),
+            }
+            self._ohlcv_cache.put(code, entry)
+            return {
+                "code": code,
+                "ohlcv": historical[:],
+                "last_updated": entry["last_loaded"],
+                "historical_complete": True,
+            }
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository OHLCV 조회 실패 ({code}): {e}")
+            return None
+
+    def update_today_candle(self, code: str, current_price: float, volume: int = 0):
+        """
+        WebSocket 틱 데이터로 당일 OHLCV 캔들을 갱신합니다.
+        - ohlcv_today가 있으면 해당 캔들 업데이트
+        - ohlcv_today가 없으면 마지막 historical 캔들을 업데이트 (기존 동작 유지)
+        """
+        cached = self._ohlcv_cache.get(code, count_stats=False, item_type="update_tick")
+        if not cached:
+            return
+
+        target = cached.get("ohlcv_today")
+        if target is None and cached.get("ohlcv_historical"):
+            target = cached["ohlcv_historical"][-1]
+
+        if target is None:
+            return
+
+        target["close"] = current_price
+        if volume > 0:
+            target["volume"] = volume
+        if current_price > target.get("high", current_price):
+            target["high"] = current_price
+        if current_price < target.get("low", current_price):
+            target["low"] = current_price
+
+    async def upsert_ohlcv(self, records: List[Dict]):
+        """여러 종목의 일봉(OHLCV) 데이터를 일괄 upsert 후 관련 캐시 무효화."""
+        if not records:
+            return
+        codes_to_invalidate = {r["code"] for r in records if "code" in r}
+        try:
+            async with self._get_connection() as conn:
+                await conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO ohlcv (
+                        code, date, open, high, low, close, volume
+                    ) VALUES (
+                        :code, :date, :open, :high, :low, :close, :volume
+                    )
+                    """,
+                    records,
+                )
+            # upsert 성공 후에만 캐시 무효화 — 다음 get_stock_data 시 신선한 DB 데이터 로드
+            for code in codes_to_invalidate:
+                self._ohlcv_cache.delete(code)
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository OHLCV upsert 실패: {e}")
+
+    async def get_ohlcv_summary(self, code: str) -> Dict[str, Any]:
+        """DB에서 종목의 OHLCV 요약 정보를 반환합니다 (전체 데이터 로드 없이 메타만 조회).
+
+        Returns:
+            {"count": int, "latest_date": str|None, "oldest_date": str|None}
+        """
+        try:
+            async with self._get_connection() as conn:
+                async with conn.execute(
+                    "SELECT COUNT(*), MAX(date), MIN(date) FROM ohlcv WHERE code = ?",
+                    (code,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+            if row and row[0]:
+                return {"count": row[0], "latest_date": row[1], "oldest_date": row[2]}
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository OHLCV 요약 조회 실패 ({code}): {e}")
+        return {"count": 0, "latest_date": None, "oldest_date": None}
+
+    async def get_ohlcv_max_trading_days(self) -> int:
+        """DB에 저장된 고유 거래일 수를 반환합니다."""
+        try:
+            async with self._get_connection() as conn:
+                async with conn.execute("SELECT COUNT(DISTINCT date) FROM ohlcv") as cursor:
+                    row = await cursor.fetchone()
+            return row[0] if row and row[0] else 0
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository 거래일 수 조회 실패: {e}")
+            return 0
+
+    # ── daily_prices (장마감 후 전종목 스냅샷) ──────────────────────────────────
+
+    async def upsert_daily_snapshot(self, trade_date: str, records: List[Dict]):
+        """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert."""
+        if not records:
+            return
+
+        now = time.time()
+        try:
+            async with self._get_connection() as conn:
+                await conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO daily_prices (
+                        code, trade_date, name,
+                        current_price, open_price, high_price, low_price, prev_close,
+                        change_price, change_sign, change_rate,
+                        volume, trading_value, market_cap,
+                        per, pbr, eps,
+                        w52_high, w52_low,
+                        market, collected_at
+                    ) VALUES (
+                        :code, :trade_date, :name,
+                        :current_price, :open_price, :high_price, :low_price, :prev_close,
+                        :change_price, :change_sign, :change_rate,
+                        :volume, :trading_value, :market_cap,
+                        :per, :pbr, :eps,
+                        :w52_high, :w52_low,
+                        :market, :collected_at
+                    )
+                    """,
+                    [{**r, "trade_date": trade_date, "collected_at": now} for r in records],
+                )
+            self._logger.debug(
+                f"StockOhlcvRepository: daily_prices {len(records)}건 upsert 완료 (date={trade_date})"
+            )
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository daily_prices upsert 실패: {e}")
+
+    async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
+        """특정 날짜의 전체 종목 스냅샷 조회."""
+        try:
+            async with self._get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
+                    "SELECT * FROM daily_prices WHERE trade_date = ? ORDER BY code",
+                    (trade_date,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                conn.row_factory = None
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository daily_prices 날짜별 조회 실패: {e}")
+            return []
+
+    async def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
+        """특정 종목의 최근 N일간 스냅샷 이력 조회."""
+        try:
+            async with self._get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
+                    "SELECT * FROM daily_prices WHERE code = ? "
+                    "ORDER BY trade_date DESC LIMIT ?",
+                    (code, days),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                conn.row_factory = None
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository daily_prices 이력 조회 실패: {e}")
+            return []
+
+    async def get_latest_trade_date(self) -> Optional[str]:
+        """daily_prices에 저장된 가장 최근 거래일 반환."""
+        try:
+            async with self._get_connection() as conn:
+                async with conn.execute("SELECT MAX(trade_date) FROM daily_prices") as cursor:
+                    row = await cursor.fetchone()
+                return row[0] if row and row[0] else None
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository daily_prices 최근 거래일 조회 실패: {e}")
+            return None
+
+    async def get_count_by_date(self, trade_date: str) -> int:
+        """특정 날짜에 저장된 종목 수 반환."""
+        try:
+            async with self._get_connection() as conn:
+                async with conn.execute(
+                    "SELECT COUNT(*) FROM daily_prices WHERE trade_date = ?",
+                    (trade_date,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                return row[0] if row else 0
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository daily_prices 카운트 조회 실패: {e}")
+            return 0
+
+    async def cleanup_old_data(self, keep_days: int = 365):
+        """오래된 daily_prices 데이터 정리."""
+        from datetime import datetime, timedelta
+
+        cutoff_date = (datetime.now() - timedelta(days=keep_days)).strftime("%Y%m%d")
+        try:
+            async with self._get_connection() as conn:
+                async with conn.execute(
+                    "DELETE FROM daily_prices WHERE trade_date < ?", (cutoff_date,)
+                ) as cursor:
+                    deleted = cursor.rowcount
+                if deleted > 0:
+                    self._logger.info(
+                        f"StockOhlcvRepository: {deleted}건 오래된 daily_prices 삭제 (기준: {cutoff_date})"
+                    )
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository daily_prices 데이터 정리 실패: {e}")
+
+    async def get_latest_daily_snapshot(self, code: str) -> Optional[dict]:
+        """daily_prices에서 최신 스냅샷을 현재가 API 응답 포맷으로 변환하여 반환합니다."""
+        try:
+            async with self._get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
+                    "SELECT * FROM daily_prices WHERE code = ? ORDER BY trade_date DESC LIMIT 1",
+                    (code,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                conn.row_factory = None
+            if not row:
+                return None
+            r = dict(row)
+            output = {
+                "stck_prpr":     str(r.get("current_price") or 0),
+                "stck_oprc":     str(r.get("open_price") or 0),
+                "stck_hgpr":     str(r.get("high_price") or 0),
+                "stck_lwpr":     str(r.get("low_price") or 0),
+                "stck_sdpr":     str(r.get("prev_close") or 0),
+                "prdy_vrss":     str(r.get("change_price") or 0),
+                "prdy_vrss_sign": str(r.get("change_sign") or ""),
+                "prdy_ctrt":     str(r.get("change_rate") or "0"),
+                "acml_vol":      str(r.get("volume") or 0),
+                "acml_tr_pbmn":  str(r.get("trading_value") or 0),
+                "hts_avls":      str(r.get("market_cap") or 0),
+                "per":           str(r.get("per") or ""),
+                "pbr":           str(r.get("pbr") or ""),
+                "eps":           str(r.get("eps") or ""),
+                "d250_hgpr":     str(r.get("w52_high") or 0),
+                "d250_lwpr":     str(r.get("w52_low") or 0),
+                "hts_kor_isnm":  str(r.get("name") or ""),
+                "stck_bsop_date": str(r.get("trade_date") or ""),
+                "stck_shrn_iscd": str(r.get("code") or ""),
+            }
+            return {"output": output, "_source": "daily_snapshot", "_trade_date": r.get("trade_date")}
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository daily_prices 스냅샷 조회 실패 ({code}): {e}")
+            return None
+
+    def get_cache_stats(self, expand: bool = False) -> dict:
+        """OHLCV 캐시 통계를 반환합니다."""
+        return self._ohlcv_cache.get_stats(expand=expand)
+
+    async def close(self):
+        """DB 연결을 닫습니다."""
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+
+    def __del__(self):
+        if self._conn:
+            self._logger.warning("StockOhlcvRepository was not closed explicitly.")
