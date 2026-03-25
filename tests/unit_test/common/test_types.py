@@ -6,6 +6,7 @@ from common.types import (
     ResCommonResponse,
     ResStockFullInfoApiOutput,
     ResTopMarketCapApiItem,
+    ResDailyChartApiItem,
     ResFluctuation,
     ResPriceSummary,
     TradeSignal,
@@ -136,20 +137,26 @@ def test_res_top_market_cap_item_from_api():
 
 # --- Test for ResStockFullInfoApiOutput ---
 
-def test_res_stock_full_info_output_from_dict_missing_fields_raises_error():
+def test_res_stock_full_info_output_from_dict_missing_required_fields_raises_error():
     """ResStockFullInfoApiOutput.from_dict raises ValidationError if required fields are missing."""
-    payload = {"stck_prpr": "70000"}  # Only provide one field
+    payload = {"stck_prpr": "70000"}  # 하나만 제공
     with pytest.raises(ValidationError):
         ResStockFullInfoApiOutput.from_dict(payload)
 
 
 # --- Test for ResFluctuation ---
 
-def test_res_fluctuation_from_dict_missing_fields_raises_error():
+def test_res_fluctuation_from_dict_missing_required_fields_raises_error():
     """ResFluctuation.from_dict raises ValidationError if required fields are missing."""
-    payload = {"stck_shrn_iscd": "005930", "prdy_ctrt": "10.5"}
+    payload = {"stck_shrn_iscd": "005930"}  # stck_prpr 누락
     with pytest.raises(ValidationError):
         ResFluctuation.from_dict(payload)
+
+def test_res_daily_chart_api_item_missing_required_fields_raises_error():
+    """ResDailyChartApiItem.from_dict raises ValidationError if required fields are missing."""
+    payload = {"stck_bsop_date": "20260325"}
+    with pytest.raises(ValidationError):
+        ResDailyChartApiItem.from_dict(payload)
 
 
 # --- Test for other simple to_dict methods ---

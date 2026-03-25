@@ -5,9 +5,10 @@ class TestResStockFullInfoApiOutputNewHighLow(unittest.TestCase):
     """ResStockFullInfoApiOutput의 신고가/신저가 프로퍼티 로직 테스트"""
 
     def _create_obj(self, code_val):
-        # Pydantic 모델 유효성 검사를 통과하기 위해 모든 필수 필드에 더미 값을 채웁니다.
-        data = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
-        data["new_hgpr_lwpr_cls_code"] = code_val
+        data = {
+            "stck_prpr": "0", "stck_oprc": "0", "stck_hgpr": "0", "stck_lwpr": "0", "stck_sdpr": "0",
+            "new_hgpr_lwpr_cls_code": code_val
+        }
         return ResStockFullInfoApiOutput.model_validate(data)
 
     def test_is_new_high(self):
@@ -40,3 +41,10 @@ class TestResStockFullInfoApiOutputNewHighLow(unittest.TestCase):
         self.assertEqual(self._create_obj("2").new_high_low_status, "신저가")
         self.assertEqual(self._create_obj("신저가").new_high_low_status, "신저가")
         self.assertEqual(self._create_obj("0").new_high_low_status, "-")
+
+    def test_missing_required_fields_raises_error(self):
+        """필수 가격 속성이 누락된 상태의 dict를 넣으면 에러가 발생하는지 확인"""
+        from pydantic import ValidationError
+        data = {"new_hgpr_lwpr_cls_code": "1"}
+        with self.assertRaises(ValidationError):
+            ResStockFullInfoApiOutput.model_validate(data)

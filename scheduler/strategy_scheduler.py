@@ -103,6 +103,7 @@ class StrategyScheduler:
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._csv_lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._subscriber_queues: List[asyncio.Queue] = []
 
     # ── 전략 등록 ──
@@ -585,31 +586,54 @@ class StrategyScheduler:
                 for cfg in self._strategies
             }
         }
-        try:
-            with open(SCHEDULER_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-            self._logger.info(f"[Scheduler] 상태 저장 완료: {enabled_names}, 보유종목 {len(current_positions)}건")
-        except Exception as e:
-            self._logger.error(f"[Scheduler] 상태 저장 실패: {e}")
+        with self._state_lock:
+            try:
+                with open(SCHEDULER_STATE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(state, f, ensure_ascii=False, indent=2)
+                self._logger.info(f"[Scheduler] 상태 저장 완료: {enabled_names}, 보유종목 {len(current_positions)}건")
+            except Exception as e:
+                self._logger.error(f"[Scheduler] 상태 저장 실패: {e}")
 
     def clear_saved_state(self):
         """저장된 상태 파일 삭제 (수동 정지 시 호출)."""
-        if os.path.exists(SCHEDULER_STATE_FILE):
-            os.remove(SCHEDULER_STATE_FILE)
-            self._logger.info("[Scheduler] 저장된 상태 파일 삭제")
+        with self._state_lock:
+            if os.path.exists(SCHEDULER_STATE_FILE):
+                try:
+                    os.remove(SCHEDULER_STATE_FILE)
+                    self._logger.info("[Scheduler] 저장된 상태 파일 삭제")
+                except OSError as e:
+                    self._logger.error(f"[Scheduler] 상태 파일 삭제 실패: {e}")
 
     async def restore_state(self):
         """이전 실행 상태 복원. 활성 전략이 있으면 자동 시작."""
-        if not os.path.exists(SCHEDULER_STATE_FILE):
-            return
-        try:
-            with open(SCHEDULER_STATE_FILE, "r", encoding="utf-8") as f:
-                try:
-                    state = json.load(f)
-                except json.JSONDecodeError:
+        state = None
+        with self._state_lock:
+            if not os.path.exists(SCHEDULER_STATE_FILE):
+                return
+
+            corrupted = False
+            try:
+                with open(SCHEDULER_STATE_FILE, "r", encoding="utf-8") as f:
+                    try:
+                        state = json.load(f)
+                    except json.JSONDecodeError:
+                        corrupted = True
+
+                if corrupted:
                     self._logger.warning("[Scheduler] 상태 파일이 손상됨 — 삭제 후 초기화")
-                    os.remove(SCHEDULER_STATE_FILE)
+                    try:
+                        os.remove(SCHEDULER_STATE_FILE)
+                    except OSError as e:
+                        self._logger.error(f"[Scheduler] 손상된 상태 파일 삭제 실패: {e}")
                     return
+            except Exception as e:
+                self._logger.error(f"[Scheduler] 상태 복원 파일 읽기 실패: {e}")
+                return
+
+        if not state:
+            return
+
+        try:
             enabled_names = state.get("enabled_strategies", [])
             saved_positions = state.get("current_positions", [])
             strategy_configs = state.get("strategy_configs", {})

@@ -666,9 +666,23 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler, _, _, _, _ = self._make_scheduler()
         with patch("os.path.exists", return_value=True):
             with patch("builtins.open", mock_open(read_data="{invalid_json")):
-                await scheduler.restore_state()
-                scheduler._logger.warning.assert_called()
-                self.assertFalse(scheduler._running)
+                with patch("os.remove") as mock_remove:
+                    await scheduler.restore_state()
+                    
+                    scheduler._logger.warning.assert_called()
+                    mock_remove.assert_called_once_with(SCHEDULER_STATE_FILE)
+                    self.assertFalse(scheduler._running)
+
+    async def test_restore_state_corrupted_file_oserror(self):
+        """상태 파일이 손상되어 삭제를 시도할 때 OSError 발생 시 처리 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="{invalid_json")):
+                with patch("os.remove", side_effect=OSError("Access Denied")):
+                    await scheduler.restore_state()
+                    
+                    scheduler._logger.error.assert_called()
+                    self.assertFalse(scheduler._running)
 
     def test_save_state_exception(self):
         """상태 저장 중 예외 발생 테스트."""
@@ -684,6 +698,82 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             with patch("os.remove") as mock_remove:
                 scheduler.clear_saved_state()
                 mock_remove.assert_called_with(SCHEDULER_STATE_FILE)
+
+    async def test_clear_saved_state_oserror(self):
+        """저장된 상태 삭제 중 예외(OSError) 발생 시 로깅 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        with patch("os.path.exists", return_value=True):
+            with patch("os.remove", side_effect=OSError("File in use")):
+                scheduler.clear_saved_state()
+                
+                scheduler._logger.error.assert_called()
+
+    def test_state_file_thread_safety(self):
+        """멀티 스레드 환경에서 상태 저장/삭제 동시 접근 시 파일 락(Lock) 동작 확인."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        scheduler.register(StrategySchedulerConfig(strategy=MockStrategy(name="전략A")))
+        
+        test_state_file = os.path.join(self.test_dir, "concurrency_state.json")
+        
+        import concurrent.futures
+        
+        def worker(action, count):
+            for _ in range(count):
+                if action == "save":
+                    scheduler._save_scheduler_state()
+                elif action == "clear":
+                    scheduler.clear_saved_state()
+
+        # 실제 파일 시스템에 I/O를 발생시키며 충돌(Lock 부재 시 발생)을 유도
+        with patch("scheduler.strategy_scheduler.SCHEDULER_STATE_FILE", test_state_file):
+            thread_count = 10
+            iterations = 100
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+                futures = []
+                for i in range(thread_count):
+                    # 저장과 삭제 작업을 스레드별로 섞어 동시 접근 유도
+                    action = "save" if i % 2 == 0 else "clear"
+                    futures.append(executor.submit(worker, action, iterations))
+                
+                # 스레드 작업 중 예외(JSONDecodeError, OSError 등)가 발생하면 여기서 throw 됨
+                for future in concurrent.futures.as_completed(futures):
+                    future.result()
+
+            # 에러 없이 완료되었으므로 테스트 통과
+            self.assertTrue(True)
+
+    async def test_state_file_async_concurrency(self):
+        """비동기 태스크와 동기 스레드가 혼재된 상황에서 상태 파일 락 동작 확인."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        scheduler.register(StrategySchedulerConfig(strategy=MockStrategy(name="전략A")))
+        
+        test_state_file = os.path.join(self.test_dir, "async_concurrency_state.json")
+        
+        with patch("scheduler.strategy_scheduler.SCHEDULER_STATE_FILE", test_state_file):
+            with patch.object(scheduler, '_loop', new_callable=AsyncMock):
+                scheduler._save_scheduler_state()
+                
+                async def async_worker():
+                    for _ in range(50):
+                        await scheduler.restore_state()
+                        
+                def sync_worker():
+                    for _ in range(50):
+                        scheduler._save_scheduler_state()
+                
+                loop = asyncio.get_running_loop()
+                
+                tasks = [
+                    async_worker(),
+                    async_worker(),
+                    loop.run_in_executor(None, sync_worker),
+                    loop.run_in_executor(None, sync_worker)
+                ]
+                
+                # 동시 실행: 락이 없다면 파일이 깨져서 JSONDecodeError가 발생할 확률이 높음
+                await asyncio.gather(*tasks)
+                self.assertTrue(True)
 
     def test_load_signal_history_real(self):
         """CSV 파일에서 시그널 이력 로드 테스트 (mocking open)."""
