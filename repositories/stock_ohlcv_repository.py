@@ -385,9 +385,9 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository daily_prices 스냅샷 조회 실패 ({code}): {e}")
             return None
 
-    def get_cache_stats(self, expand: bool = False) -> dict:
+    def get_cache_stats(self, expand: bool = False, latest_trading_date: str = None) -> dict:
         """OHLCV 캐시 통계를 반환합니다."""
-        return self._ohlcv_cache.get_stats(expand=expand)
+        return self._ohlcv_cache.get_stats(expand=expand, latest_trading_date=latest_trading_date)
 
     async def close(self):
         """DB 연결을 닫습니다."""

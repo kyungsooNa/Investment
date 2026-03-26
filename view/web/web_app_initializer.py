@@ -364,10 +364,10 @@ class WebAppContext:
             return ""
         return self.market_clock.get_current_kst_time().strftime('%Y-%m-%d %H:%M:%S')
 
-    def get_cache_stats(self, expand: bool = False) -> dict:
+    def get_cache_stats(self, expand: bool = False, latest_trading_date: str = None) -> dict:
         """메모리 캐시 통계를 반환합니다."""
         if self.stock_repository:
-            return self.stock_repository.get_cache_stats(expand=expand)
+            return self.stock_repository.get_cache_stats(expand=expand, latest_trading_date=latest_trading_date)
         return {}
 
     # --- 전략 스케줄러 ---

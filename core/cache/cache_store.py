@@ -85,6 +85,10 @@ class CacheStore:
             return None
 
         return raw, cache_type
+    
+    def get(self, key: str):
+        # 내부적으로 get_raw를 호출하거나 구현체에서 오버라이드
+        pass
 
     def set(self, key: str, value: Any, save_to_file: bool = False):
         if self.memory_cache:

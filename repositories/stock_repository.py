@@ -128,10 +128,10 @@ class StockRepository:
 
     # ── 통합 캐시 통계 ────────────────────────────────────────────────────────────
 
-    def get_cache_stats(self, expand: bool = False) -> dict:
+    def get_cache_stats(self, expand: bool = False, latest_trading_date: str = None) -> dict:
         """현재가 캐시 + OHLCV 캐시의 통합 통계를 반환합니다."""
         price_stats = self._price_repo.get_cache_stats(expand=expand)
-        ohlcv_stats = self._ohlcv_repo.get_cache_stats(expand=expand)
+        ohlcv_stats = self._ohlcv_repo.get_cache_stats(expand=expand, latest_trading_date=latest_trading_date)
 
         total_hits = price_stats["hits"] + ohlcv_stats["hits"]
         total_misses = price_stats["misses"] + ohlcv_stats["misses"]

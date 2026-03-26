@@ -106,6 +106,12 @@ function renderPriceCacheDetails(stats) {
     }).join('');
 }
 
+function formatOhlcvDate(d) {
+    // "YYYYMMDD" → "YY/MM/DD"
+    if (!d || d.length !== 8) return d || '-';
+    return `${d.slice(2, 4)}/${d.slice(4, 6)}/${d.slice(6, 8)}`;
+}
+
 function renderOhlcvCacheDetails(stats) {
     renderCallersSection('ohlcv-details-inner', stats.callers);
     const tbody = document.getElementById('ohlcv-items-body');
@@ -115,6 +121,12 @@ function renderOhlcvCacheDetails(stats) {
         const completeBadge = item.historical_complete
             ? `<span style="color:var(--success-color,#4CAF50);">완전</span>`
             : `<span style="color:orange;">미완</span>`;
+        const dates = (item.recent_dates || []);
+        const datesHtml = dates.length
+            ? dates.map((d, i) =>
+                `<span style="display:inline-block;margin-right:3px;margin-bottom:2px;background:${i === 0 ? 'var(--primary-color,#2196F3)' : 'var(--bg-color,#f0f0f0)'};color:${i === 0 ? '#fff' : 'var(--text-color,#333)'};border:1px solid #ccc;padding:1px 5px;border-radius:8px;font-size:0.8em;">${formatOhlcvDate(d)}</span>`
+              ).join('')
+            : '<span style="color:#aaa;">-</span>';
         return `<tr>
             <td style="font-weight:bold;color:var(--accent);">
                 <a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a>
@@ -123,6 +135,7 @@ function renderOhlcvCacheDetails(stats) {
             <td>${item.ohlcv_count || 0}일</td>
             <td>${item.has_today_candle ? 'O' : 'X'}</td>
             <td>${completeBadge}</td>
+            <td style="white-space:nowrap;">${datesHtml}</td>
         </tr>`;
     }).join('');
 }

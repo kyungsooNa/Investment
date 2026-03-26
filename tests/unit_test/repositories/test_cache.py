@@ -377,14 +377,18 @@ class TestLFUCacheGetStats:
 
     def test_expand_true_includes_items(self):
         cache = _LFUCache(capacity=3)
+        latest_date = "20260325"
         entry = {
-            "ohlcv_historical": [1, 2, 3],
-            "ohlcv_today": {"close": 100},
+            "ohlcv_historical": [
+                {"date": "20260323", "close": 90},
+                {"date": "20260324", "close": 95},
+                {"date": latest_date, "close": 100},
+            ],
             "historical_complete": True,
         }
         cache.put("A", entry)
         cache.get("A")   # freq = 1
-        stats = cache.get_stats(expand=True)
+        stats = cache.get_stats(expand=True, latest_trading_date=latest_date)
         assert "items" in stats
         a_item = stats["items"][0]
         assert a_item["code"] == "A"
