@@ -1059,3 +1059,34 @@ async def test_call_api_response_missing_output(caplog):
 
     assert result.data is None
     assert any("API 응답에 output 데이터가 없습니다" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_post_request_body_is_string():
+    """POST 요청 시 _dumps로 직렬화된 body가 str 타입인지 검증합니다.
+
+    orjson 도입 후 _dumps()가 bytes가 아닌 str을 반환하는지 확인합니다.
+    """
+    mock_env = get_mock_env()
+    mock_trid_provider = MagicMock()
+    api = KoreaInvestApiBase(mock_env, logger=None, trid_provider=mock_trid_provider)
+
+    captured_data = {}
+
+    async def capture_post(url, headers, data, **kwargs):
+        captured_data["body"] = data
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {"rt_cd": "0", "output": {"result": "ok"}}
+        resp.raise_for_status.return_value = None
+        return resp
+
+    api._async_session.post = capture_post
+
+    await api._execute_request("POST", "http://test", None, {"key": "value"})
+
+    assert "body" in captured_data, "POST 요청이 발생하지 않았습니다"
+    assert isinstance(captured_data["body"], str), (
+        f"POST body가 str이 아닌 {type(captured_data['body'])} 타입입니다"
+    )
+    assert '"key"' in captured_data["body"]
