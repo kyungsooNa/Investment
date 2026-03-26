@@ -168,7 +168,7 @@ class _LFUCache:
         }
         if expand:
             items = []
-            for k, v in self._cache.items():
+            for k, v in list(self._cache.items()):
                 recent_dates: list[str] = []
                 if isinstance(v, dict):
                     historical = v.get("ohlcv_historical", [])
