@@ -52,406 +52,136 @@ class IndicatorService:
             return None, resp
         return resp.data, None
 
-    async def get_bollinger_bands(self, stock_code: str, period: int = 20, std_dev: float = 2.0,
-                                  candle_type: str = "D", ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
+    async def _get_with_incremental_cache(
+        self, 
+        stock_code: str, 
+        candle_type: str, 
+        indicator_name: str, 
+        data: List[Dict], 
+        lookback_period: int, 
+        calc_func: callable, 
+        *calc_args
+    ) -> ResCommonResponse:
         """
-        특정 종목의 볼린저 밴드(상단, 중단, 하단)를 계산하여 반환합니다.
-
+        [공통 지표 캐싱 & 병합 파이프라인]
+        과거 확정 데이터는 캐싱하고, 당일(미확정) 데이터만 증분 계산하여 O(1)로 병합합니다.
+        
         :param stock_code: 종목코드
-        :param period: 이동평균 기간 (기본 20)
-        :param std_dev: 표준편차 승수 (기본 2.0)
-        :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
-        :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
+        :param candle_type: 캔들 타입 ("D", "W", "M" 등)
+        :param indicator_name: 캐시 키 생성을 위한 지표명 (예: "rsi_14", "bb_20_2.0")
+        :param data: 전체 OHLCV 데이터
+        :param lookback_period: 증분 계산 시 필요한 최소 과거 데이터 개수 (예: RSI 14면 14)
+        :param calc_func: 실제 지표 계산을 수행하고 List[Dict]를 반환하는 콜백 함수
+        :param calc_args: calc_func에 전달할 추가 인자들
         """
-        t_start = self.pm.start_timer()
-        data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
-        t_data = self.pm.start_timer()
-        if err:
-            return err
+        # 1. 예외 처리 및 캐시 미적용 조건 (데이터가 너무 적거나, 일봉이 아니거나, 캐시가 꺼진 경우)
+        if not self.cache_store or candle_type != "D" or len(data) <= lookback_period:
+            full_result = calc_func(stock_code, data, *calc_args)
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(NoCache)", data=full_result)
 
-        if len(data) < period:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.EMPTY_VALUES.value,
-                msg1=f"데이터 부족: {len(data)} < {period}",
-                data=None
-            )
+        # 2. 확정 데이터(어제까지)와 당일 데이터 분리
+        confirmed_data = data[:-1]
+        confirmed_last_date = str(confirmed_data[-1]['date'])
+        
+        # 캐시 키 생성 (지표명_종목코드_마지막확정일자)
+        cache_key = f"{indicator_name}_{stock_code}_{confirmed_last_date}"
 
-        # [최적화] 캐싱 적용
-        if self.cache_store and candle_type == "D" and len(data) > 0:
-            # 1. 확정된 과거 데이터 분리 (마지막 데이터 제외)
-            confirmed_data = data[:-1]
-            if confirmed_data:
-                confirmed_last_date = str(confirmed_data[-1]['date'])
-                cache_key = f"bb_{stock_code}_{period}_{std_dev}_{confirmed_last_date}"
-                
-                # 2. 캐시 조회
-                raw_cache = self.cache_store.get_raw(cache_key)
-                cached_wrapper = None
-                if raw_cache and isinstance(raw_cache, tuple):
-                    cached_wrapper, _ = raw_cache
-                
-                past_results = cached_wrapper.get('data') if cached_wrapper else None
+        # 3. 캐시 조회
+        cached_result = self.cache_store.get(cache_key)
 
-                # 3. 캐시 미스 시 전체 계산 및 저장
-                if not past_results:
-                    full_resp = self._calculate_bollinger_bands_full(stock_code, confirmed_data, period, std_dev)
-                    if full_resp.rt_cd == ErrorCode.SUCCESS.value:
-                        past_results = full_resp.data
-                        self.cache_store.set(cache_key, {
-                            "timestamp": datetime.now().isoformat(),
-                            "data": past_results
-                        }, save_to_file=True)
-                
-                # 4. 당일 데이터 증분 계산 (과거 데이터 일부 + 오늘 데이터)
-                if past_results:
-                    lookback = period + 5 # 여유분
-                    partial_data = data[-lookback:]
-                    partial_resp = self._calculate_bollinger_bands_full(stock_code, partial_data, period, std_dev)
-                    
-                    if partial_resp.rt_cd == ErrorCode.SUCCESS.value and partial_resp.data:
-                        latest_result = partial_resp.data[-1]
-                        # 결과 병합 (과거 리스트 + 오늘 결과)
-                        # ResBollingerBand 객체 리스트이므로 리스트 연산 사용
-                        # past_results는 dict 리스트일 수 있으므로 객체 변환 필요할 수 있음 (DBCache 특성상)
-                        # 여기서는 단순화를 위해 전체 재계산 fallback 대신, 캐시된 데이터가 있으면 활용하는 구조로 감.
-                        
-                        # 과거 데이터 객체 변환 (dict -> ResBollingerBand)
-                        final_results = [ResBollingerBand(**item) if isinstance(item, dict) else item for item in past_results]
-                        
-                        # 오늘 데이터 (마지막 1개)
-                        latest_dict = partial_resp.data[-1]
-                        latest_obj = ResBollingerBand(**latest_dict)
-                        
-                        # 날짜 비교하여 병합 (중복 방지)
-                        if final_results and final_results[-1].date == latest_obj.date:
-                            final_results[-1] = latest_obj
-                        else:
-                            final_results.append(latest_obj)
-                            
-                        self.pm.log_timer(f"IndicatorService.get_bollinger_bands({stock_code})", t_start, extra_info="Cached")
-                        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=final_results)
+        # 4. 캐시 미스: 확정 데이터 전체에 대해 지표 계산 후 캐시 저장
+        if not cached_result:
+            cached_result = calc_func(stock_code, confirmed_data, *calc_args)
+            self.cache_store.set(cache_key, cached_result) # 필요시 TTL 지정
 
-        # 2. Pandas DataFrame 변환 및 계산
-        t_calc = self.pm.start_timer()
-        try:
-            df = self._to_dataframe(data)
+        # 5. 당일 증분 계산
+        # 계산에 필요한 최소한의 과거 데이터만 슬라이싱 (여유분으로 +5 설정)
+        slice_size = lookback_period + 5
+        partial_data = data[-slice_size:]
+        
+        # 부분 데이터로 계산 (가장 마지막 요소가 오늘자 지표 값임)
+        partial_result = calc_func(stock_code, partial_data, *calc_args)
+        if not partial_result:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="부분 지표 계산 실패", data=None)
+            
+        latest_indicator = partial_result[-1]
 
-            # 중심선 (MB) = n일 이동평균
-            df['MB'] = df['close'].rolling(window=period).mean()
+        # 6. O(1) 속도로 병합 (리스트 '+' 연산자 제거 최적화)
+        final_data = cached_result.copy() # 얕은 복사로 원본 캐시 리스트 보호
+        
+        if final_data and final_data[-1]['date'] == latest_indicator['date']:
+            final_data[-1] = latest_indicator # 덮어쓰기
+        else:
+            final_data.append(latest_indicator) # 맨 뒤에 추가
 
-            # 표준편차 (std)
-            df['std'] = df['close'].rolling(window=period).std()
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(CacheHit)", data=final_data)
 
-            # 상단밴드 (UB) = MB + (std * k)
-            df['UB'] = df['MB'] + (df['std'] * std_dev)
+    async def get_bollinger_bands(self, stock_code: str, period: int = 20, multiplier: float = 2.0, candle_type: str = "D") -> ResCommonResponse:
+        """볼린저 밴드 조회"""
+        data, err_resp = await self._get_ohlcv_data_with_error_handling(stock_code, candle_type)
+        if err_resp: return err_resp
 
-            # 하단밴드 (LB) = MB - (std * k)
-            df['LB'] = df['MB'] - (df['std'] * std_dev)
-
-            results = [
-                ResBollingerBand(
-                    code=stock_code, 
-                    date=str(row.date), 
-                    close=self._safe_float(row.close),
-                    middle=self._safe_float(row.MB), 
-                    upper=self._safe_float(row.UB), 
-                    lower=self._safe_float(row.LB)
-                )
-                for row in df.itertuples(index=False)
-            ]
-
-            if self.pm.enabled:
-                data_dur = t_data - t_start
-                calc_dur = time.time() - t_calc
-                self.pm.log_timer(f"IndicatorService.get_bollinger_bands({stock_code})", t_start, extra_info=f"data={data_dur:.4f}s, calc={calc_dur:.4f}s")
-
-            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
-
-        except ValueError as e:
-            logging.getLogger(__name__).exception(f"볼린저 밴드 계산 데이터 변환 실패: {str(e)}")
-            return ResCommonResponse(rt_cd=ErrorCode.PARSING_ERROR.value, msg1=f"데이터 변환 실패: {str(e)}", data=None)
-
-        except Exception as e:
-            logging.getLogger(__name__).exception(f"볼린저 밴드 계산 중 오류: {str(e)}")
-            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"볼린저 밴드 계산 중 오류: {str(e)}", data=None)
+        return await self._get_with_incremental_cache(
+            stock_code,
+            candle_type,
+            f"bb_{period}_{multiplier}",
+            data,
+            period,
+            self._calculate_bollinger_bands_full, # DataFrame 변환 및 순수 계산 로직만 있는 내부 함수
+            period,      # *calc_args 첫 번째
+            multiplier   # *calc_args 두 번째
+        )
 
     async def get_rsi(self, stock_code: str, period: int = 14, candle_type: str = "D") -> ResCommonResponse:
-        """
-        특정 종목의 RSI(상대강도지수)를 계산하여 반환합니다.
+        """RSI (상대강도지수) 조회"""
+        # 1. OHLCV 데이터 가져오기
+        data, err_resp = await self._get_ohlcv_data_with_error_handling(stock_code, candle_type)
+        if err_resp: return err_resp
 
-        :param stock_code: 종목코드
-        :param period: RSI 기간 (기본 14)
-        :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
-        """
-        t_start = self.pm.start_timer()
-        # 1. OHLCV 데이터 조회
-        if not self.stock_query_service:
-            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="StockQueryService not initialized", data=None)
+        # 2. 공통 파이프라인에 위임 (순수 계산 함수인 _calculate_rsi_series_internal 등을 넘김)
+        return await self._get_with_incremental_cache(
+            stock_code,
+            candle_type,
+            f"rsi_{period}",
+            data,
+            period,
+            self._calculate_rsi_series, # DataFrame 변환 및 순수 계산 로직만 있는 내부 함수
+            period  # <-- calc_func에 전달될 *calc_args (정상 작동!)
+        )
 
-        resp = await self.stock_query_service.get_ohlcv(stock_code, period=candle_type)
-        t_data = self.pm.start_timer()
+    async def get_moving_average(self, stock_code: str, period: int = 20, candle_type: str = "D") -> ResCommonResponse:
+        """이동평균선 조회"""
+        # 1. OHLCV 데이터 로드 및 에러 처리
+        data, err_resp = await self._get_ohlcv_data_with_error_handling(stock_code, candle_type)
+        if err_resp: return err_resp
 
-        if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
-            return resp
+        # 2. 공통 캐시 파이프라인에 위임 (순서대로 인자 전달)
+        return await self._get_with_incremental_cache(
+            stock_code,
+            candle_type,
+            f"ma_{period}",
+            data,
+            period,
+            self._calculate_ma_series,  # 순수 이동평균선 계산 함수
+            period                      # *calc_args 로 전달될 period 값
+        )
 
-        ohlcv_data = resp.data
+    async def get_relative_strength(self, stock_code: str, period: int = 63, candle_type: str = "D") -> ResCommonResponse:
+        """상대강도 (RS) 조회"""
+        # 1. OHLCV 데이터 로드 및 에러 처리
+        data, err_resp = await self._get_ohlcv_data_with_error_handling(stock_code, candle_type)
+        if err_resp: return err_resp
 
-        # 전일 대비 계산을 위해 최소 period + 1개 데이터 필요
-        if len(ohlcv_data) < period + 1:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.EMPTY_VALUES.value,
-                msg1=f"데이터 부족: {len(ohlcv_data)} < {period + 1}",
-                data=None
-            )
-
-        # [최적화] RSI 캐싱 적용 (시계열 데이터 캐싱 후 마지막 값 반환)
-        if self.cache_store and candle_type == "D" and len(ohlcv_data) > 0:
-            confirmed_data = ohlcv_data[:-1]
-            if confirmed_data:
-                confirmed_last_date = str(confirmed_data[-1]['date'])
-                cache_key = f"rsi_series_{stock_code}_{period}_{confirmed_last_date}"
-                
-                raw_cache = self.cache_store.get_raw(cache_key)
-                cached_wrapper = None
-                if raw_cache and isinstance(raw_cache, tuple):
-                    cached_wrapper, _ = raw_cache
-                
-                past_series = cached_wrapper.get('data') if cached_wrapper else None
-
-                if not past_series:
-                    # 전체 시계열 계산
-                    series_resp = self._calculate_rsi_series(stock_code, confirmed_data, period)
-                    if series_resp.rt_cd == ErrorCode.SUCCESS.value:
-                        past_series = series_resp.data
-                        self.cache_store.set(cache_key, {
-                            "timestamp": datetime.now().isoformat(),
-                            "data": past_series
-                        }, save_to_file=True)
-                
-                # 당일 데이터 증분 계산
-                if past_series:
-                    lookback = period + 5
-                    partial_data = ohlcv_data[-lookback:]
-                    partial_resp = self._calculate_rsi_series(stock_code, partial_data, period)
-                    
-                    if partial_resp.rt_cd == ErrorCode.SUCCESS.value and partial_resp.data:
-                        latest_dict = partial_resp.data[-1]
-                        
-                        if latest_dict.get("rsi") is None:
-                             return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
-
-                        # get_rsi는 단일 ResRSI 객체를 반환함
-                        result = ResRSI(**latest_dict)
-                        
-                        self.pm.log_timer(f"IndicatorService.get_rsi({stock_code})", t_start, extra_info="Cached")
-                        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
-
-        t_calc = self.pm.start_timer()
-        try:
-            df = self._to_dataframe(ohlcv_data)
-
-            # 전일 대비 변동분
-            delta = df['close'].diff()
-
-            # 상승분(U)과 하락분(D) 분리
-            u = delta.clip(lower=0)
-            d = -1 * delta.clip(upper=0)
-
-            # Wilder's Smoothing (alpha=1/period) 적용
-            au = u.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-            ad = d.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-
-            # RS 및 RSI 계산
-            rs = au / ad
-            df['rsi'] = 100 - (100 / (1 + rs))
-
-            latest = list(df.itertuples(index=False))[-1]
-
-            if self._safe_float(latest.rsi) is None or self._safe_float(latest.close) is None:
-                 return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="계산 불가 (데이터 부족)", data=None)
-
-            result = ResRSI(
-                code=stock_code, 
-                date=str(latest.date), 
-                close=self._safe_float(latest.close), 
-                rsi=self._safe_float(latest.rsi)
-            )
-            
-            if self.pm.enabled:
-                data_dur = t_data - t_start
-                calc_dur = time.time() - t_calc
-                self.pm.log_timer(f"IndicatorService.get_rsi({stock_code})", t_start, extra_info=f"data={data_dur:.4f}s, calc={calc_dur:.4f}s")
-            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
-
-        except ValueError as e:
-            logging.getLogger(__name__).exception(f"RSI 계산 데이터 변환 실패: {str(e)}")
-            return ResCommonResponse(rt_cd=ErrorCode.PARSING_ERROR.value, msg1=f"데이터 변환 실패: {str(e)}", data=None)
-
-        except Exception as e:
-            logging.getLogger(__name__).exception(f"RSI 계산 중 오류: {str(e)}")
-            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"RSI 계산 중 오류: {str(e)}", data=None)
-
-    async def get_moving_average(self, stock_code: str, period: int = 20, method: str = "sma",
-                                  candle_type: str = "D", ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
-        """
-        특정 종목의 이동평균선(MA)을 계산하여 반환합니다.
-
-        :param stock_code: 종목코드
-        :param period: 기간 (기본 20)
-        :param method: 방식 ('sma': 단순, 'ema': 지수)
-        :param candle_type: 봉 타입 ('D':일봉, 'W':주봉, 'M':월봉 등)
-        :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
-        """
-        t_start = self.pm.start_timer()
-        data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
-        t_data = self.pm.start_timer()
-        if err:
-            return err
-
-        if len(data) < period:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.EMPTY_VALUES.value,
-                msg1=f"데이터 부족: {len(data)} < {period}",
-                data=None
-            )
-
-        # [최적화] MA 캐싱 적용
-        if self.cache_store and candle_type == "D" and len(data) > 0:
-            confirmed_data = data[:-1]
-            if confirmed_data:
-                confirmed_last_date = str(confirmed_data[-1]['date'])
-                cache_key = f"ma_{stock_code}_{period}_{method}_{confirmed_last_date}"
-                
-                raw_cache = self.cache_store.get_raw(cache_key)
-                cached_wrapper = None
-                if raw_cache and isinstance(raw_cache, tuple):
-                    cached_wrapper, _ = raw_cache
-                
-                past_results = cached_wrapper.get('data') if cached_wrapper else None
-
-                if not past_results:
-                    full_resp = self._calculate_moving_average_full(stock_code, confirmed_data, period, method)
-                    if full_resp.rt_cd == ErrorCode.SUCCESS.value:
-                        past_results = full_resp.data
-                        self.cache_store.set(cache_key, {
-                            "timestamp": datetime.now().isoformat(),
-                            "data": past_results
-                        }, save_to_file=True)
-                
-                if past_results:
-                    lookback = period + 5
-                    partial_data = data[-lookback:]
-                    partial_resp = self._calculate_moving_average_full(stock_code, partial_data, period, method)
-                    
-                    if partial_resp.rt_cd == ErrorCode.SUCCESS.value and partial_resp.data:
-                        final_results = [ResMovingAverage(**item) if isinstance(item, dict) else item for item in past_results]
-                        
-                        latest_dict = partial_resp.data[-1]
-                        latest_obj = ResMovingAverage(**latest_dict)
-                        
-                        if final_results and final_results[-1].date == latest_obj.date:
-                            final_results[-1] = latest_obj
-                        else:
-                            final_results.append(latest_obj)
-                            
-                        self.pm.log_timer(f"IndicatorService.get_moving_average({stock_code})", t_start, extra_info="Cached")
-                        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=final_results)
-
-        t_calc = self.pm.start_timer()
-        try:
-            df = self._to_dataframe(data)
-
-            if method.lower() == "ema":
-                df['ma'] = df['close'].ewm(span=period, adjust=False).mean()
-            else: # sma
-                df['ma'] = df['close'].rolling(window=period).mean()
-
-            results = [
-                ResMovingAverage(
-                    code=stock_code,
-                    date=str(row.date),
-                    close=self._safe_float(row.close),
-                    ma=self._safe_float(row.ma)
-                )
-                for row in df.itertuples(index=False)
-            ]
-
-            if self.pm.enabled:
-                data_dur = t_data - t_start
-                calc_dur = time.time() - t_calc
-                self.pm.log_timer(f"IndicatorService.get_moving_average({stock_code}, p={period})", t_start, extra_info=f"data={data_dur:.4f}s, calc={calc_dur:.4f}s")
-
-            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=results)
-
-        except ValueError as e:
-            logging.getLogger(__name__).exception(f"MA 계산 데이터 변환 실패: {str(e)}")
-            return ResCommonResponse(rt_cd=ErrorCode.PARSING_ERROR.value, msg1=f"데이터 변환 실패: {str(e)}", data=None)
-
-        except Exception as e:
-            logging.getLogger(__name__).exception(f"MA 계산 중 오류: {str(e)}")
-            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"MA 계산 중 오류: {str(e)}", data=None)
-
-    async def get_relative_strength(self, stock_code: str, period_days: int = 63,
-                                     candle_type: str = "D",
-                                     ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
-        """N일 수익률(상대강도 원시값)을 계산하여 반환합니다.
-
-        오닐의 RS 지수는 전 상장 종목 대비 상대 순위이나,
-        API 제약상 호출 측에서 후보군 내 퍼센타일을 별도로 산출해야 합니다.
-        이 메서드는 개별 종목의 절대 N일 수익률만 반환합니다.
-
-        :param stock_code: 종목코드
-        :param period_days: 수익률 계산 기간 (기본 63 ≈ 3개월)
-        :param candle_type: 봉 타입 ('D':일봉)
-        :param ohlcv_data: 미리 조회된 OHLCV 데이터 (전달 시 API 호출 생략)
-        """
-        t_start = self.pm.start_timer()
-        data, err = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
-        t_data = self.pm.start_timer()
-        if err:
-            return err
-
-        if len(data) < period_days:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.EMPTY_VALUES.value,
-                msg1=f"데이터 부족: {len(data)} < {period_days}",
-                data=None
-            )
-
-        t_calc = self.pm.start_timer()
-        try:
-            df = self._to_dataframe(data)
-
-            recent_close = float(df['close'].iloc[-1])
-            past_close = float(df['close'].iloc[-period_days])
-
-            if past_close <= 0:
-                return ResCommonResponse(
-                    rt_cd=ErrorCode.EMPTY_VALUES.value,
-                    msg1=f"과거 종가가 0 이하: {past_close}",
-                    data=None
-                )
-
-            return_pct = ((recent_close - past_close) / past_close) * 100
-
-            result = ResRelativeStrength(
-                code=stock_code,
-                date=str(df['date'].iloc[-1]),
-                return_pct=round(return_pct, 2),
-            )
-            
-            if self.pm.enabled:
-                data_dur = t_data - t_start
-                calc_dur = time.time() - t_calc
-                self.pm.log_timer(f"IndicatorService.get_relative_strength({stock_code})", t_start, extra_info=f"data={data_dur:.4f}s, calc={calc_dur:.4f}s")
-            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
-
-        except Exception as e:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.UNKNOWN_ERROR.value,
-                msg1=f"상대강도 계산 중 오류: {str(e)}",
-                data=None
-            )
+        # 2. 공통 캐시 파이프라인에 위임 (순서대로 인자 전달)
+        return await self._get_with_incremental_cache(
+            stock_code,
+            candle_type,
+            f"rs_{period}",
+            data,
+            period,
+            self._calculate_rs_series,  # 순수 RS 계산 함수
+            period                      # *calc_args 로 전달될 period 값
+        )
 
     async def get_chart_indicators(self, stock_code: str, ohlcv_data: List[Dict]) -> ResCommonResponse:
         """
