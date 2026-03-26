@@ -517,8 +517,12 @@ class IndicatorService:
                     # latest_indicators[key]의 마지막 요소(오늘치) 가져오기
                     if key in latest_indicators and latest_indicators[key]:
                         latest_item = latest_indicators[key][-1]
-                        # 리스트 합치기 (새 리스트 생성)
-                        merged_indicators[key] = val_list + [latest_item]
+                        merged_list = val_list.copy()
+                        if merged_list and merged_list[-1].get('date') == latest_item.get('date'):
+                            merged_list[-1] = latest_item
+                        else:
+                            merged_list.append(latest_item)
+                        merged_indicators[key] = merged_list
                     else:
                         merged_indicators[key] = val_list
                 else:

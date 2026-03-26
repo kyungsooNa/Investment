@@ -127,6 +127,50 @@ async def force_daily_price_update():
     return {"success": True, "message": "현재가 강제 수집이 시작되었습니다."}
 
 
+@router.get("/subscriptions/status")
+def get_subscription_status():
+    """실시간 현재가 구독 현황 반환 (우선순위별 종목 + 마지막 수신 시각)"""
+    ctx = _get_ctx()
+    svc = getattr(ctx, "price_subscription_service", None)
+    if not svc:
+        return {"success": True, "data": None}
+
+    status = svc.get_status()
+
+    # 우선순위별 종목 목록 (active 여부 + 이름 + 마지막 수신 시각 부가)
+    streaming_svc = getattr(ctx, "streaming_service", None)
+    active_set = set(status.get("active_codes", []))
+
+    def _enrich(codes: list) -> list:
+        result = []
+        for code in codes:
+            name = ctx.stock_code_repository.get_name_by_code(code) or code
+            price_info = streaming_svc.get_cached_realtime_price(code) if streaming_svc else None
+            received_at = None
+            if isinstance(price_info, dict):
+                received_at = price_info.get("received_at")
+            result.append({
+                "code": code,
+                "name": name,
+                "active": code in active_set,
+                "received_at": received_at,
+            })
+        return result
+
+    by_priority = status.get("pending_by_priority", {})
+    return {
+        "success": True,
+        "data": {
+            "active_count": status["active_count"],
+            "max_subscriptions": status["max_subscriptions"],
+            "pending_count": status["pending_count"],
+            "HIGH":   _enrich(by_priority.get("HIGH", [])),
+            "MEDIUM": _enrich(by_priority.get("MEDIUM", [])),
+            "LOW":    _enrich(by_priority.get("LOW", [])),
+        },
+    }
+
+
 @router.post("/background/watchlist/force-update")
 async def force_watchlist_update():
     """skip 조건을 무시하고 전일 기준 우량주를 강제 재생성한다."""

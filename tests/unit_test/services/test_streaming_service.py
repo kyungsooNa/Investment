@@ -135,7 +135,9 @@ def test_dispatch_realtime_message_realtime_price(streaming_service, mock_market
     assert cached is not None
     assert cached["price"] == "70000"
     assert cached["change"] == "1000"
-    
+    assert "received_at" in cached
+    assert isinstance(cached["received_at"], float)
+
     mock_market_data_service._stock_repo.update_realtime_data.assert_called_once_with("005930", 70000.0, 1000000)
     
     captured = capsys.readouterr()

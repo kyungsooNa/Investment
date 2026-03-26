@@ -52,6 +52,12 @@ class FakeClient:
     async def unsubscribe_program_trading(self, stock_code: str) -> None:
         pass
 
+    async def subscribe_unified_price(self, stock_code: str) -> bool:
+        return True
+
+    async def unsubscribe_unified_price(self, stock_code: str) -> bool:
+        return True
+
     def is_websocket_receive_alive(self) -> bool:
         return True
 
@@ -136,6 +142,17 @@ class TestExcludedMethodsBypassQueue:
         await wrapped.unsubscribe_program_trading("005930")
         assert queue.done_queue.empty()
 
+    async def test_subscribe_unified_price_bypasses_queue(self, wrapped, queue):
+        """bool 반환 메서드가 retry queue를 거치면 classify()에서 AttributeError 발생 — 반드시 제외되어야 함"""
+        result = await wrapped.subscribe_unified_price("005930")
+        assert result is True
+        assert queue.done_queue.empty()
+
+    async def test_unsubscribe_unified_price_bypasses_queue(self, wrapped, queue):
+        result = await wrapped.unsubscribe_unified_price("005930")
+        assert result is True
+        assert queue.done_queue.empty()
+
 
 class TestSyncMethodsBypassQueue:
     def test_sync_method_bypasses_queue(self, wrapped, queue):
@@ -201,6 +218,8 @@ class TestExcludedMethodsSet:
             "unsubscribe_realtime_quote",
             "subscribe_program_trading",
             "unsubscribe_program_trading",
+            "subscribe_unified_price",
+            "unsubscribe_unified_price",
             "is_websocket_receive_alive",
         }
         assert expected.issubset(_EXCLUDED_METHODS)

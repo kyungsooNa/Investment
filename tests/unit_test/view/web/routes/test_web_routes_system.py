@@ -1,6 +1,6 @@
 """
 시스템 상태 및 캐시 모니터링 관련 테스트.
-GET /api/cache/status, GET /api/background/status
+GET /api/cache/status, GET /api/background/status, GET /api/subscriptions/status
 """
 import asyncio
 import pytest
@@ -305,3 +305,114 @@ async def test_force_watchlist_update_not_init(web_client, mock_web_ctx):
     mock_web_ctx.premium_watchlist_generator_task = None
     response = web_client.post("/api/background/watchlist/force-update")
     assert response.status_code == 503
+
+
+# ── GET /api/subscriptions/status ─────────────────────────────────────────
+
+def test_get_subscription_status_no_service(web_client, mock_web_ctx):
+    """price_subscription_service가 None이면 data: null을 반환한다."""
+    mock_web_ctx.price_subscription_service = None
+
+    response = web_client.get("/api/subscriptions/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"] is None
+
+
+def test_get_subscription_status_basic(web_client, mock_web_ctx):
+    """구독 현황 기본 구조 및 우선순위별 종목 반환을 검증한다."""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 2,
+        "max_subscriptions": 35,
+        "active_codes": ["005930", "035720"],
+        "pending_count": 2,
+        "pending_by_priority": {
+            "HIGH":   ["005930"],
+            "MEDIUM": ["035720"],
+            "LOW":    [],
+        },
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+
+    mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
+    mock_web_ctx.stock_code_repository.get_name_by_code.side_effect = lambda c: {
+        "005930": "삼성전자",
+        "035720": "카카오",
+    }.get(c, c)
+
+    response = web_client.get("/api/subscriptions/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["active_count"] == 2
+    assert data["max_subscriptions"] == 35
+    assert data["pending_count"] == 2
+
+    high = data["HIGH"]
+    assert len(high) == 1
+    assert high[0]["code"] == "005930"
+    assert high[0]["name"] == "삼성전자"
+    assert high[0]["active"] is True
+    assert high[0]["received_at"] is None
+
+    medium = data["MEDIUM"]
+    assert medium[0]["code"] == "035720"
+    assert medium[0]["name"] == "카카오"
+    assert medium[0]["active"] is True
+
+    assert data["LOW"] == []
+
+
+def test_get_subscription_status_received_at_populated(web_client, mock_web_ctx):
+    """캐시에 received_at이 있으면 응답에 포함된다."""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 1,
+        "max_subscriptions": 35,
+        "active_codes": ["005930"],
+        "pending_count": 1,
+        "pending_by_priority": {
+            "HIGH":   ["005930"],
+            "MEDIUM": [],
+            "LOW":    [],
+        },
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+
+    mock_web_ctx.streaming_service.get_cached_realtime_price = MagicMock(return_value={
+        "price": "70000",
+        "received_at": 1700000000.0,
+    })
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
+
+    response = web_client.get("/api/subscriptions/status")
+
+    data = response.json()["data"]
+    assert data["HIGH"][0]["received_at"] == 1700000000.0
+
+
+def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):
+    """active_codes에 없는 종목은 active=False로 반환된다."""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 0,
+        "max_subscriptions": 35,
+        "active_codes": [],
+        "pending_count": 1,
+        "pending_by_priority": {
+            "HIGH":   [],
+            "MEDIUM": [],
+            "LOW":    ["000660"],
+        },
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "SK하이닉스"
+
+    response = web_client.get("/api/subscriptions/status")
+
+    data = response.json()["data"]
+    assert data["LOW"][0]["active"] is False

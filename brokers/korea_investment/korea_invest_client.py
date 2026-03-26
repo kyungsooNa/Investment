@@ -245,6 +245,14 @@ class KoreaInvestApiClient:
         """실시간 주식체결 데이터(현재가) 구독을 해지합니다."""
         return await self._websocketAPI.unsubscribe_realtime_price(stock_code)
 
+    async def subscribe_unified_price(self, stock_code: str) -> bool:
+        """실시간 통합 체결가(H0UNCNT0) 구독합니다 (KRX+NXT 통합)."""
+        return await self._websocketAPI.subscribe_unified_price(stock_code)
+
+    async def unsubscribe_unified_price(self, stock_code: str) -> bool:
+        """실시간 통합 체결가(H0UNCNT0) 구독을 해지합니다."""
+        return await self._websocketAPI.unsubscribe_unified_price(stock_code)
+
     async def subscribe_realtime_quote(self, stock_code) -> Any:
         """실시간 주식호가 데이터를 구독합니다."""
         return await self._websocketAPI.subscribe_realtime_quote(stock_code)
