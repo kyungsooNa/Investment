@@ -1,14 +1,15 @@
-let isCacheExpanded = false;
+// ── 캐시 상태 모니터링 ───────────────────────────────────────
 
-function toggleCacheDetails() {
-    isCacheExpanded = !isCacheExpanded;
-    const container = document.getElementById('cache-details-container');
-    const btn = document.getElementById('toggle-details-btn');
-    
-    if (isCacheExpanded) {
+const _cacheExpanded = { price: false, ohlcv: false };
+
+function toggleCacheDetails(type) {
+    _cacheExpanded[type] = !_cacheExpanded[type];
+    const container = document.getElementById(`${type}-cache-details`);
+    const btn = document.getElementById(`toggle-${type}-details-btn`);
+    if (_cacheExpanded[type]) {
         container.style.display = 'block';
         btn.textContent = '상세 정보 닫기 ▲';
-        updateCacheStatus(); // 열자마자 즉시 업데이트 수행
+        updateCacheStatus();
     } else {
         container.style.display = 'none';
         btn.textContent = '상세 정보 보기 ▼';
@@ -21,113 +22,124 @@ function formatTimestamp(ts) {
     return d.toLocaleString('ko-KR', { hour12: false });
 }
 
+function renderCacheSummary(type, stats, capacity) {
+    const s = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    s(`${type}-cache-total`,  (stats.total_requests || 0).toLocaleString());
+    s(`${type}-cache-hits`,   (stats.hits  || 0).toLocaleString());
+    s(`${type}-cache-misses`, (stats.misses || 0).toLocaleString());
+    s(`${type}-cache-size`,   `${stats.current_size || 0} / ${capacity}`);
+    const rateEl = document.getElementById(`${type}-cache-rate`);
+    if (rateEl) {
+        const rate = stats.hit_rate || 0;
+        rateEl.textContent = rate.toFixed(2);
+        rateEl.style.color = rate >= 90 ? 'var(--success-color,#4CAF50)' : rate >= 50 ? 'orange' : 'var(--danger-color,#f44336)';
+    }
+}
+
+function renderCallersSection(innerId, callers) {
+    if (!callers || !Object.keys(callers).length) return;
+    const wrapId = `${innerId}-callers-wrap`;
+    let section = document.getElementById(wrapId);
+    if (!section) {
+        const inner = document.getElementById(innerId);
+        if (!inner) return;
+        section = document.createElement('div');
+        section.id = wrapId;
+        section.innerHTML = `
+            <h3 style="margin-top:10px;">🔍 서비스/전략별 호출 통계</h3>
+            <table class="data-table" style="margin-bottom:25px;">
+                <thead><tr>
+                    <th>호출자 (Caller)</th><th>Hits</th><th>Misses</th>
+                    <th>적중률 (%)</th><th>조회 유형</th><th>주요 대상 종목</th>
+                </tr></thead>
+                <tbody id="${wrapId}-body"></tbody>
+            </table>
+            <h3 style="margin-top:20px;">📋 종목별 상세 조회 통계</h3>
+        `;
+        inner.insertBefore(section, inner.firstChild);
+    }
+    const tbody = document.getElementById(`${wrapId}-body`);
+    if (!tbody) return;
+    const arr = Object.entries(callers)
+        .map(([caller, data]) => ({ caller, ...data, total: data.hits + data.misses }))
+        .sort((a, b) => b.total - a.total);
+    tbody.innerHTML = arr.map(item => {
+        const total = item.hits + item.misses;
+        const hitRate = total > 0 ? ((item.hits / total) * 100).toFixed(2) : '0.00';
+        const rateColor = hitRate >= 90 ? 'var(--success-color,#4CAF50)' : hitRate >= 50 ? 'orange' : 'var(--danger-color,#f44336)';
+        let itemsStr = '-';
+        if (item.items && Object.keys(item.items).length) {
+            itemsStr = Object.entries(item.items)
+                .map(([k, v]) => `<span style="display:inline-block;margin-right:4px;margin-bottom:2px;background:var(--bg-color,#f0f0f0);color:var(--text-color,#333);border:1px solid #ccc;padding:2px 6px;border-radius:10px;font-size:0.85em;">${k}: ${v.toLocaleString()}</span>`)
+                .join('');
+        }
+        let keysStr = '-', keysTitle = '';
+        if (item.keys && Object.keys(item.keys).length) {
+            keysStr = Object.entries(item.keys).map(([k, v]) => `${k} <span style="color:#888;font-size:0.9em;">(${v})</span>`).join(', ');
+            keysTitle = Object.entries(item.keys).map(([k, v]) => `${k}(${v})`).join(', ');
+        }
+        return `<tr>
+            <td style="font-weight:bold;color:var(--text-color);">${item.caller}</td>
+            <td>${item.hits.toLocaleString()}</td>
+            <td>${item.misses.toLocaleString()}</td>
+            <td style="color:${rateColor};font-weight:bold;">${hitRate}</td>
+            <td>${itemsStr}</td>
+            <td style="font-size:0.9em;max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${keysTitle}">${keysStr}</td>
+        </tr>`;
+    }).join('');
+}
+
+function renderPriceCacheDetails(stats) {
+    renderCallersSection('price-details-inner', stats.callers);
+    const tbody = document.getElementById('price-items-body');
+    if (!tbody || !stats.items) return;
+    tbody.innerHTML = stats.items.map(item => {
+        const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : (item.code || '-');
+        return `<tr>
+            <td style="font-weight:bold;color:var(--accent);">
+                <a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a>
+            </td>
+            <td>${(item.hit_count || 0).toLocaleString()}</td>
+            <td>${item.has_current_price ? 'O' : 'X'}</td>
+            <td>${formatTimestamp(item.price_updated_at || item.last_updated)}</td>
+        </tr>`;
+    }).join('');
+}
+
+function renderOhlcvCacheDetails(stats) {
+    renderCallersSection('ohlcv-details-inner', stats.callers);
+    const tbody = document.getElementById('ohlcv-items-body');
+    if (!tbody || !stats.items) return;
+    tbody.innerHTML = stats.items.map(item => {
+        const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : (item.code || '-');
+        const completeBadge = item.historical_complete
+            ? `<span style="color:var(--success-color,#4CAF50);">완전</span>`
+            : `<span style="color:orange;">미완</span>`;
+        return `<tr>
+            <td style="font-weight:bold;color:var(--accent);">
+                <a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a>
+            </td>
+            <td>${item.freq || 0}</td>
+            <td>${item.ohlcv_count || 0}일</td>
+            <td>${item.has_today_candle ? 'O' : 'X'}</td>
+            <td>${completeBadge}</td>
+        </tr>`;
+    }).join('');
+}
+
 async function updateCacheStatus() {
     try {
-        // 펼쳐져 있을 때만 expand=true로 호출하여 API 부하 및 응답 사이즈를 최소화
-        const url = isCacheExpanded ? '/api/cache/status?expand=true' : '/api/cache/status';
+        const needExpand = _cacheExpanded.price || _cacheExpanded.ohlcv;
+        const url = needExpand ? '/api/cache/status?expand=true' : '/api/cache/status';
         const response = await fetch(url);
         if (!response.ok) throw new Error('네트워크 응답이 정상이 아닙니다.');
-        
         const result = await response.json();
-        
-        if (result.success && result.data) {
-            const stats = result.data;
-            document.getElementById('cache-total').textContent = stats.total_requests.toLocaleString();
-            document.getElementById('cache-hits').textContent = stats.hits.toLocaleString();
-            document.getElementById('cache-misses').textContent = stats.misses.toLocaleString();
-            document.getElementById('cache-rate').textContent = stats.hit_rate.toFixed(2);
-            document.getElementById('cache-size').textContent = stats.current_size;
-            
-            const rateElement = document.getElementById('cache-rate');
-            rateElement.style.color = stats.hit_rate >= 90 ? 'var(--success-color, #4CAF50)' : 
-                                      stats.hit_rate >= 50 ? 'orange' : 'var(--danger-color, #f44336)';
-                                      
-            // 상세 정보 영역이 열려 있을 때만 테이블 렌더링
-            if (isCacheExpanded) {
-                // 1. 서비스별 호출자(Caller) 통계 테이블 동적 생성
-                let callersSection = document.getElementById('cache-callers-section');
-                if (!callersSection && stats.callers) {
-                    const container = document.getElementById('cache-details-container');
-                    callersSection = document.createElement('div');
-                    callersSection.id = 'cache-callers-section';
-                    callersSection.innerHTML = `
-                        <h3 style="margin-top: 10px;">🔍 서비스/전략별 호출 통계</h3>
-                        <table class="data-table" style="margin-bottom: 25px;">
-                            <thead>
-                                <tr>
-                                    <th>호출자 (Caller)</th>
-                                    <th>Hits</th>
-                                    <th>Misses</th>
-                                    <th>적중률 (%)</th>
-                                    <th>조회 데이터 (Items)</th>
-                                    <th>주요 대상 종목</th>
-                                </tr>
-                            </thead>
-                            <tbody id="cache-callers-body"></tbody>
-                        </table>
-                        <h3 style="margin-top: 20px;">📋 종목별 상세 조회 통계</h3>
-                    `;
-                    container.insertBefore(callersSection, container.firstChild);
-                }
-                
-                // 호출자 데이터 채우기 (호출 많은 순 정렬)
-                if (stats.callers) {
-                    const tbodyCallers = document.getElementById('cache-callers-body');
-                    const callersArray = Object.entries(stats.callers).map(([caller, data]) => {
-                        return { caller, ...data, total: data.hits + data.misses };
-                    }).sort((a, b) => b.total - a.total);
-
-                    tbodyCallers.innerHTML = callersArray.map(item => {
-                        const hitRate = item.total > 0 ? ((item.hits / item.total) * 100).toFixed(2) : '0.00';
-                        const rateColor = hitRate >= 90 ? 'var(--success-color, #4CAF50)' : hitRate >= 50 ? 'orange' : 'var(--danger-color, #f44336)';
-                        
-                        let itemsStr = '-';
-                        if (item.items && Object.keys(item.items).length > 0) {
-                            itemsStr = Object.entries(item.items)
-                                .map(([k, v]) => `<span style="display:inline-block; margin-right:4px; margin-bottom:2px; background:var(--bg-color, #f0f0f0); color:var(--text-color, #333); border:1px solid #ccc; padding:2px 6px; border-radius:10px; font-size:0.85em;">${k}: ${v.toLocaleString()}</span>`)
-                                .join('');
-                        }
-                        
-                        let keysStr = '-';
-                        let keysTitle = '';
-                        if (item.keys && Object.keys(item.keys).length > 0) {
-                            keysStr = Object.entries(item.keys).map(([k, v]) => `${k} <span style="color:#888; font-size:0.9em;">(${v})</span>`).join(', ');
-                            keysTitle = Object.entries(item.keys).map(([k, v]) => `${k}(${v})`).join(', ');
-                        }
-
-                        return `
-                            <tr>
-                                <td style="font-weight: bold; color: var(--text-color);">${item.caller}</td>
-                                <td>${item.hits.toLocaleString()}</td>
-                                <td>${item.misses.toLocaleString()}</td>
-                                <td style="color: ${rateColor}; font-weight: bold;">${hitRate}</td>
-                                <td>${itemsStr}</td>
-                                <td style="font-size: 0.9em; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${keysTitle}">${keysStr}</td>
-                            </tr>
-                        `;
-                    }).join('');
-                }
-
-                // 2. 종목별 상세 통계 채우기
-                if (stats.items) {
-                    const tbody = document.getElementById('cache-details-body');
-                    if (tbody) {
-                        tbody.innerHTML = stats.items.map(item => {
-                            const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : item.code;
-                            return `
-                                <tr>
-                                    <td style="font-weight: bold; color: var(--accent);"><a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a></td>
-                                    <td>${item.hit_count.toLocaleString()}</td>
-                                    <td>${item.has_ohlcv ? `O (${item.ohlcv_length}일)` : 'X'}</td>
-                                    <td>${item.has_current_price ? 'O' : 'X'}</td>
-                                    <td>${formatTimestamp(item.price_updated_at || item.last_updated)}</td>
-                                </tr>
-                            `;
-                        }).join('');
-                    }
-                }
-            }
-        }
+        if (!result.success || !result.data) return;
+        const stats = result.data;
+        renderCacheSummary('price', stats.price_cache || {}, 3000);
+        renderCacheSummary('ohlcv', stats.ohlcv_cache || {}, 500);
+        if (_cacheExpanded.price)  renderPriceCacheDetails(stats.price_cache || {});
+        if (_cacheExpanded.ohlcv)  renderOhlcvCacheDetails(stats.ohlcv_cache || {});
     } catch (error) {
         console.error('캐시 상태를 가져오는 중 오류 발생:', error);
     }

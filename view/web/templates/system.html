@@ -53,30 +53,60 @@
             </div>
         </div>
 
-        <!-- 캐시 모니터링 대시보드 -->
-        <div class="card cache-status-container" style="padding: 20px 12px;">
-            <h3 style="margin-top: 0; margin-bottom: 16px; padding-left: 4px;">📊 Stock 메모리 캐시 상태</h3>
-            <p style="font-size: 1.1rem; margin: 8px 0;">요청 횟수: <span id="cache-total" style="font-weight: bold;">0</span></p>
-            <p style="font-size: 1.1rem; margin: 8px 0;">적중 횟수(Hit): <span id="cache-hits" style="font-weight: bold; color: var(--primary-color, #2196F3);">0</span></p>
-            <p style="font-size: 1.1rem; margin: 8px 0;">실패 횟수(Miss): <span id="cache-misses" style="font-weight: bold; color: var(--danger-color, #f44336);">0</span></p>
-            <p style="font-size: 1.1rem; margin: 8px 0;">적중률: <strong id="cache-rate" style="font-size: 1.3rem;">0.00</strong><strong style="font-size: 1.3rem;">%</strong></p>
-            <p style="font-size: 1.1rem; margin: 8px 0;">사용 중인 종목 수: <span id="cache-size" style="font-weight: bold;">0</span> / 500</p>
-            
-            <button id="toggle-details-btn" class="btn" style="margin-top: 16px;" onclick="toggleCacheDetails()">상세 정보 보기 ▼</button>
-            
-            <div id="cache-details-container" style="display: none; margin-top: 16px;">
+        <!-- 현재가 캐시 모니터링 -->
+        <div class="card" style="padding: 20px 12px;">
+            <h3 style="margin-top: 0; margin-bottom: 16px; padding-left: 4px;">💰 현재가 캐시 상태 (LRU · 용량 3,000)</h3>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px 28px; margin-bottom: 14px; font-size: 1.05rem;">
+                <span>요청: <strong id="price-cache-total">0</strong></span>
+                <span>적중: <strong id="price-cache-hits" style="color: var(--primary-color, #2196F3);">0</strong></span>
+                <span>실패: <strong id="price-cache-misses" style="color: var(--danger-color, #f44336);">0</strong></span>
+                <span>적중률: <strong id="price-cache-rate" style="font-size: 1.2rem;">0.00</strong><strong>%</strong></span>
+                <span>사용 종목: <strong id="price-cache-size">0 / 3000</strong></span>
+            </div>
+            <button id="toggle-price-details-btn" class="btn" onclick="toggleCacheDetails('price')">상세 정보 보기 ▼</button>
+            <div id="price-cache-details" style="display: none; margin-top: 16px;">
+                <div id="price-details-inner"></div>
                 <div class="table-container">
                     <table class="data-table">
                         <thead>
                             <tr>
-                                <th>종목명(종목코드)</th>
+                                <th>종목명(코드)</th>
                                 <th>적중 수</th>
-                                <th>일봉(OHLCV)</th>
                                 <th>현재가 캐시</th>
                                 <th>최근 갱신</th>
                             </tr>
                         </thead>
-                        <tbody id="cache-details-body"></tbody>
+                        <tbody id="price-items-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 일봉 OHLCV 캐시 모니터링 -->
+        <div class="card" style="padding: 20px 12px;">
+            <h3 style="margin-top: 0; margin-bottom: 16px; padding-left: 4px;">📈 일봉 OHLCV 캐시 상태 (LFU · 용량 500)</h3>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px 28px; margin-bottom: 14px; font-size: 1.05rem;">
+                <span>요청: <strong id="ohlcv-cache-total">0</strong></span>
+                <span>적중: <strong id="ohlcv-cache-hits" style="color: var(--primary-color, #2196F3);">0</strong></span>
+                <span>실패: <strong id="ohlcv-cache-misses" style="color: var(--danger-color, #f44336);">0</strong></span>
+                <span>적중률: <strong id="ohlcv-cache-rate" style="font-size: 1.2rem;">0.00</strong><strong>%</strong></span>
+                <span>사용 종목: <strong id="ohlcv-cache-size">0 / 500</strong></span>
+            </div>
+            <button id="toggle-ohlcv-details-btn" class="btn" onclick="toggleCacheDetails('ohlcv')">상세 정보 보기 ▼</button>
+            <div id="ohlcv-cache-details" style="display: none; margin-top: 16px;">
+                <div id="ohlcv-details-inner"></div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>종목명(코드)</th>
+                                <th>접근 빈도</th>
+                                <th>일봉 수</th>
+                                <th>당일 캔들</th>
+                                <th>로드 완료</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ohlcv-items-body"></tbody>
                     </table>
                 </div>
             </div>
@@ -86,5 +116,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/system.js?v=9"></script>
+<script src="/static/js/system.js?v=10"></script>
 {% endblock %}

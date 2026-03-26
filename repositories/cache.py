@@ -108,15 +108,21 @@ class _LFUCache:
         self.capacity = capacity
         self.hits = 0
         self.misses = 0
+        self.caller_stats = collections.defaultdict(lambda: {"hits": 0, "misses": 0, "keys": collections.defaultdict(int), "items": collections.defaultdict(int)})
 
     def get(self, key, count_stats: bool = True, caller: str = "unknown", item_type: str = "unknown") -> Optional[Any]:
         if key not in self._cache:
             if count_stats:
                 self.misses += 1
+                self.caller_stats[caller]["misses"] += 1
+                self.caller_stats[caller]["items"][item_type] += 1
             return None
         if count_stats:
             self.hits += 1
             self._freq[key] += 1
+            self.caller_stats[caller]["hits"] += 1
+            self.caller_stats[caller]["keys"][key] += 1
+            self.caller_stats[caller]["items"][item_type] += 1
         return self._cache[key]
 
     def put(self, key, value):
@@ -141,12 +147,24 @@ class _LFUCache:
         """캐시 적중률 통계를 반환합니다."""
         total = self.hits + self.misses
         hit_rate = (self.hits / total * 100) if total > 0 else 0.0
+
+        callers_out = {}
+        for c, s in self.caller_stats.items():
+            callers_out[c] = {
+                "hits": s["hits"],
+                "misses": s["misses"],
+                "items": dict(s["items"]),
+            }
+            if expand:
+                callers_out[c]["keys"] = dict(sorted(s["keys"].items(), key=lambda item: item[1], reverse=True)[:20])
+
         stats = {
             "hits": self.hits,
             "misses": self.misses,
             "hit_rate": round(hit_rate, 2),
             "total_requests": total,
             "current_size": len(self._cache),
+            "callers": callers_out,
         }
         if expand:
             items = [
