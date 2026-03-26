@@ -116,9 +116,10 @@ class IndicatorService:
 
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(CacheHit)", data=final_data)
 
-    async def get_bollinger_bands(self, stock_code: str, period: int = 20, multiplier: float = 2.0, candle_type: str = "D") -> ResCommonResponse:
+    async def get_bollinger_bands(self, stock_code: str, period: int = 20, multiplier: float = 2.0, candle_type: str = "D",
+                                 ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
         """볼린저 밴드 조회"""
-        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type)
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
         if err_resp: return err_resp
 
         return await self._get_with_incremental_cache(
@@ -132,10 +133,11 @@ class IndicatorService:
             multiplier   # *calc_args 두 번째
         )
 
-    async def get_rsi(self, stock_code: str, period: int = 14, candle_type: str = "D") -> ResCommonResponse:
+    async def get_rsi(self, stock_code: str, period: int = 14, candle_type: str = "D",
+                                 ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
         """RSI (상대강도지수) 조회"""
         # 1. OHLCV 데이터 가져오기
-        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type)
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
         if err_resp: return err_resp
 
         # 2. 공통 파이프라인에 위임 (순수 계산 함수인 _calculate_rsi_series_internal 등을 넘김)
@@ -149,10 +151,11 @@ class IndicatorService:
             period  # <-- calc_func에 전달될 *calc_args (정상 작동!)
         )
 
-    async def get_moving_average(self, stock_code: str, period: int = 20, candle_type: str = "D") -> ResCommonResponse:
+    async def get_moving_average(self, stock_code: str, period: int = 20, candle_type: str = "D",
+                                 ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
         """이동평균선 조회"""
         # 1. OHLCV 데이터 로드 및 에러 처리
-        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type)
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
         if err_resp: return err_resp
 
         # 2. 공통 캐시 파이프라인에 위임 (순서대로 인자 전달)
@@ -166,10 +169,11 @@ class IndicatorService:
             period                      # *calc_args 로 전달될 period 값
         )
 
-    async def get_relative_strength(self, stock_code: str, period: int = 63, candle_type: str = "D") -> ResCommonResponse:
+    async def get_relative_strength(self, stock_code: str, period: int = 63, candle_type: str = "D",
+                                 ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
         """상대강도 (RS) 조회"""
         # 1. OHLCV 데이터 로드 및 에러 처리
-        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type)
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
         if err_resp: return err_resp
 
         # 2. 공통 캐시 파이프라인에 위임 (순서대로 인자 전달)
