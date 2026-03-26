@@ -509,3 +509,27 @@ async def test_unsubscribe_program_trading_delegation(korea_invest_client_instan
 
     mock_websocket_api.unsubscribe_program_trading.assert_awaited_once_with("005930")
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_subscribe_unified_price_delegation(korea_invest_client_instance):
+    """subscribe_unified_price 메서드가 _websocketAPI.subscribe_unified_price를 호출하는지 테스트합니다."""
+    client, _, _, _, mock_websocket_api, _, _ = korea_invest_client_instance
+    mock_websocket_api.subscribe_unified_price.return_value = True
+
+    result = await client.subscribe_unified_price("003530")
+
+    mock_websocket_api.subscribe_unified_price.assert_awaited_once_with("003530")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_unified_price_delegation(korea_invest_client_instance):
+    """unsubscribe_unified_price 메서드가 _websocketAPI.unsubscribe_unified_price를 호출하는지 테스트합니다."""
+    client, _, _, _, mock_websocket_api, _, _ = korea_invest_client_instance
+    mock_websocket_api.unsubscribe_unified_price.return_value = True
+
+    result = await client.unsubscribe_unified_price("003530")
+
+    mock_websocket_api.unsubscribe_unified_price.assert_awaited_once_with("003530")
+    assert result is True
