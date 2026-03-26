@@ -36,6 +36,7 @@ tr_ids:
 
 
     realtime_price: H0STCNT0 # 실시간 주식체결 TR ID (KRX/KOSDAQ)
+    realtime_quote: H0STASP0  # 실시간 주식호가 TR ID (KRX/KOSDAQ)
     unified_realtime_price: H0UNCNT0 # 실시간 통합체결 TR ID (KRX+NXT 통합)
     realtime_program_trading: "H0STPGM0"  # 프로그램매매 TR ID (KRX)
     nxt_realtime_price: H0NXCNT0       # 실시간 주식체결 TR ID (NXT)

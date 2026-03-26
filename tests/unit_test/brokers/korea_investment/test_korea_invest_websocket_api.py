@@ -2217,3 +2217,46 @@ async def test_websocket_reconnection_and_resubscription(websocket_api_instance)
                 mock_est_conn.assert_called_once()
                 # 구독 복구 요청 확인 (_resubscribe_all -> send_realtime_request)
                 mock_send_request.assert_awaited_once_with(tr_id, tr_key, tr_type="1")
+
+
+# ─── tr_ids_config.yaml 웹소켓 필수 키 검증 ──────────────────────────────────
+
+def test_tr_ids_config_yaml_websocket_required_keys():
+    """tr_ids_config.yaml에 웹소켓 필수 TR ID 키가 모두 존재하는지 검증합니다.
+
+    이 테스트는 config 파일에서 필수 키가 실수로 삭제됐을 때 즉시 감지하기 위해 존재합니다.
+    실제 장애 사례: realtime_quote 키 누락 → _handle_websocket_message에서 KeyError 발생
+    → 웹소켓 재연결 루프 진입.
+    """
+    import yaml
+    from config.config_loader import TR_IDS_CONFIG_PATH
+
+    with open(TR_IDS_CONFIG_PATH, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+
+    websocket_cfg = config['tr_ids']['websocket']
+    required_keys = ['realtime_price', 'realtime_quote', 'realtime_program_trading']
+    for key in required_keys:
+        assert key in websocket_cfg, (
+            f"tr_ids_config.yaml의 tr_ids.websocket.{key} 키가 누락되었습니다. "
+            f"이 키가 없으면 웹소켓 메시지 처리 중 KeyError가 발생합니다."
+        )
+
+
+def test_handle_websocket_message_realtime_quote_key_missing_raises_key_error(websocket_api_instance):
+    """active_config에 realtime_quote 키가 없을 때 KeyError가 발생함을 검증합니다.
+
+    실제 장애 재현: tr_ids_config.yaml에서 websocket.realtime_quote 키가 누락된 경우,
+    H0STASP0(주식 호가) 메시지 수신 시 elif 조건 평가 중 KeyError → _receive_messages의
+    except Exception 블록이 잡아 '웹소켓 연결 끊김' 경고 + 재연결 루프 진입.
+    """
+    api = websocket_api_instance
+    del api._env.active_config['tr_ids']['websocket']['realtime_quote']
+
+    # realtime_price(H0STCNT0)도 unified_realtime_price(H0UNCNT0)도 아닌 tr_id 전송
+    # → elif realtime_quote 조건 평가 시 KeyError 발생
+    data_body = '^'.join([''] * 59)
+    message = f"0|H0STASP0|some_key|{data_body}"
+
+    with pytest.raises(KeyError, match='realtime_quote'):
+        api._handle_websocket_message(message)
