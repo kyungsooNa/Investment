@@ -232,17 +232,25 @@ class MarketDataService:
             if code and code not in merged:
                 if not d.get("acml_tr_pbmn"):
                     try:
-                        d["acml_tr_pbmn"] = str(int(d.get("stck_prpr", "0") or "0") * int(d.get("acml_vol", "0") or "0"))
+                        d["_tr_val_int"] = int(d.get("stck_prpr", "0") or "0") * int(d.get("acml_vol", "0") or "0")
+                        d["acml_tr_pbmn"] = str(d["_tr_val_int"])
                     except (ValueError, TypeError):
+                        d["_tr_val_int"] = 0
                         d["acml_tr_pbmn"] = "0"
+                else:
+                    try:
+                        d["_tr_val_int"] = int(d["acml_tr_pbmn"] or "0")
+                    except (ValueError, TypeError):
+                        d["_tr_val_int"] = 0
                 merged[code] = d
 
         merged = {c: d for c, d in merged.items() if not self._is_etf(d)}
         result = list(merged.values())
-        result.sort(key=lambda x: int(x.get("acml_tr_pbmn", "0") or "0"), reverse=True)
+        result.sort(key=lambda x: x.get("_tr_val_int", 0), reverse=True)
         result = result[:30]
         for i, stock in enumerate(result, 1):
             stock["data_rank"] = str(i)
+            stock.pop("_tr_val_int", None)
 
         self.pm.log_timer("MarketDataService.get_top_trading_value_stocks", t_start, threshold=1.0)
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="거래대금 상위 성공", data=result)
@@ -418,9 +426,14 @@ class MarketDataService:
                     past_rows = past_rows + today_rows
                     today_rows = []
 
-            merged_map = {r['date']: r for r in past_rows}
-            for r in today_rows: merged_map[r['date']] = r
-            final_rows = sorted(merged_map.values(), key=lambda x: x['date'])
+            # past_rows는 이미 날짜 오름차순 정렬 상태 → O(1) 업데이트
+            final_rows = past_rows.copy()
+            if today_rows:
+                today = today_rows[0]
+                if final_rows and final_rows[-1]['date'] == today['date']:
+                    final_rows[-1] = today
+                else:
+                    final_rows.append(today)
             self.pm.log_timer(f"MarketData.get_ohlcv({stock_code})", t_ohlcv)
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1=f"OHLCV {len(final_rows)}건", data=final_rows)
         else:
