@@ -147,6 +147,7 @@ class StreamingService:
                     "change": realtime_data.get('전일대비', '0'),
                     "rate": realtime_data.get('전일대비율', '0.00'),
                     "sign": realtime_data.get('전일대비부호', '3'),
+                    "received_at": time.time(),
                 }
 
                 # StockRepository 실시간 틱 캐시 즉시 반영

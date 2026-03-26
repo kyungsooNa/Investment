@@ -330,3 +330,71 @@ async function updateBackgroundStatus() {
 
 document.addEventListener('DOMContentLoaded', updateBackgroundStatus);
 setInterval(updateBackgroundStatus, 5000);
+
+// ── 실시간 현재가 구독 현황 ──────────────────────────────────
+
+let _subData = null;
+let _subTab = 'HIGH';
+
+function selectSubTab(btn, priority) {
+    _subTab = priority;
+    document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderSubTable();
+}
+
+function renderSubTable() {
+    const tbody = document.getElementById('sub-table-body');
+    if (!tbody || !_subData) return;
+
+    const rows = _subData[_subTab] || [];
+    if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = rows.map(item => {
+        const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : item.code;
+        const activeBadge = item.active
+            ? `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em; font-weight:bold;">구독 중</span>`
+            : `<span style="background:#888; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em;">대기</span>`;
+        const received = item.received_at
+            ? formatTimestamp(item.received_at)
+            : '<span style="color:#aaa;">-</span>';
+        return `
+            <tr>
+                <td style="font-weight:bold; color:var(--accent);">
+                    <a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a>
+                </td>
+                <td>${activeBadge}</td>
+                <td style="font-size:0.9em; color:#888;">${received}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function updateSubscriptionStatus() {
+    try {
+        const res = await fetch('/api/subscriptions/status');
+        if (!res.ok) return;
+        const result = await res.json();
+        if (!result.success || !result.data) return;
+
+        const d = result.data;
+        _subData = d;
+
+        const activeEl = document.getElementById('sub-active-count');
+        const maxEl    = document.getElementById('sub-max');
+        const pendEl   = document.getElementById('sub-pending-count');
+        if (activeEl) activeEl.textContent = d.active_count;
+        if (maxEl)    maxEl.textContent    = d.max_subscriptions;
+        if (pendEl)   pendEl.textContent   = d.pending_count;
+
+        renderSubTable();
+    } catch (e) {
+        console.error('구독 현황 조회 오류:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', updateSubscriptionStatus);
+setInterval(updateSubscriptionStatus, 5000);
