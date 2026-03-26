@@ -533,3 +533,29 @@ async def test_unsubscribe_unified_price_delegation(korea_invest_client_instance
 
     mock_websocket_api.unsubscribe_unified_price.assert_awaited_once_with("003530")
     assert result is True
+
+
+def test_shared_client_created_with_explicit_limits(mocker):
+    """KoreaInvestApiClient 초기화 시 httpx.AsyncClient가 명시적 Limits으로 생성되는지 검증합니다.
+
+    장 초반 동시 요청 폭증 시 연결 풀 고갈을 방지하기 위해
+    max_keepalive_connections=50, max_connections=100 설정이 적용되어야 합니다.
+    """
+    import httpx
+    mock_async_client = mocker.patch("brokers.korea_investment.korea_invest_client.httpx.AsyncClient")
+    mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiQuotations")
+    mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiAccount")
+    mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestApiTrading")
+    mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestWebSocketAPI")
+    mocker.patch("brokers.korea_investment.korea_invest_client.KoreaInvestTrIdProvider")
+
+    mock_env = MagicMock()
+
+    KoreaInvestApiClient(env=mock_env)
+
+    assert mock_async_client.called, "httpx.AsyncClient가 생성되지 않았습니다"
+    call_kwargs = mock_async_client.call_args.kwargs
+    assert "limits" in call_kwargs, "httpx.AsyncClient에 limits 인자가 전달되지 않았습니다"
+    limits = call_kwargs["limits"]
+    assert limits.max_keepalive_connections == 50
+    assert limits.max_connections == 100

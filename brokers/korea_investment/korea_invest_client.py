@@ -33,7 +33,8 @@ class KoreaInvestApiClient:
         self._mcs = market_calendar_service  # MarketCalendar는 나중에 set_market_calendar_service()로 주입받음
 
         ssl_context = ssl.create_default_context(cafile=certifi.where())
-        shared_client = httpx.AsyncClient(verify=ssl_context)
+        limits = httpx.Limits(max_keepalive_connections=50, max_connections=100, keepalive_expiry=30.0)
+        shared_client = httpx.AsyncClient(verify=ssl_context, limits=limits)
 
         header_provider = build_header_provider_from_env(env)  # UA만 갖고 생성
         url_provider = KoreaInvestUrlProvider.from_env_and_kis_config(env=env)

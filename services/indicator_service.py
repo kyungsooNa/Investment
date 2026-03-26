@@ -544,7 +544,8 @@ class IndicatorService:
         if isinstance(data, pd.DataFrame):
             df = data.copy()
         else:
-            df = pd.DataFrame(data)
+            # Dict-of-lists 방식이 List[Dict]보다 DataFrame 생성 속도가 빠름
+            df = pd.DataFrame({k: [d[k] for d in data] for k in data[0]}) if data else pd.DataFrame()
             
         if not df.empty and 'close' in df.columns and df['close'].dtype == object:
             df['close'] = pd.to_numeric(df['close'], errors='coerce')

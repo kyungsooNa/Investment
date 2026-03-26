@@ -9,9 +9,11 @@ def mock_ctx():
     app_context.env = MagicMock()
 
     # [수정] WebAppContext 초기화 시 외부 의존성(파일I/O, 네트워크) 격리
+    # StockCodeRepository: DB 없을 때 save_stock_code_list(FinanceDataReader/pykrx) → 실제 HTTP → xdist 병렬 시 429
     with patch('view.web.web_app_initializer.ProgramTradingStreamService') as MockRDM, \
          patch('view.web.web_app_initializer.web_api') as MockWebApi, \
          patch('view.web.web_app_initializer.StockRepository') as MockMapper, \
+         patch('view.web.web_app_initializer.StockCodeRepository') as MockSCR, \
          patch('view.web.web_app_initializer.VirtualTradeService') as MockVTM, \
          patch('view.web.web_app_initializer.Logger') as MockLogger:
         ctx = WebAppContext(app_context)

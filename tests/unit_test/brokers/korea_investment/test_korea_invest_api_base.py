@@ -766,11 +766,12 @@ async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
     assert result.status_code == 200
 
     # 변경: 모킹된 post 메서드가 올바른 인자로 호출되었는지 확인합니다.
-    # httpx는 딕셔너리 데이터를 'json' 파라미터로 받습니다.
+    # _dumps는 orjson 설치 여부에 따라 직렬화 결과가 다를 수 있으므로 _dumps로 비교합니다.
+    from brokers.korea_investment.korea_invest_api_base import _dumps
     api._async_session.post.assert_called_once_with(
         "http://test",
-        headers=api._headers.build(),             # ← provider 객체가 아니라 build() 결과
-        data=json.dumps({"x": "y"})  # ✅ 문자열로 바꿔야 함
+        headers=api._headers.build(),
+        data=_dumps({"x": "y"})
     )
 
 
@@ -1059,3 +1060,34 @@ async def test_call_api_response_missing_output(caplog):
 
     assert result.data is None
     assert any("API 응답에 output 데이터가 없습니다" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_post_request_body_is_string():
+    """POST 요청 시 _dumps로 직렬화된 body가 str 타입인지 검증합니다.
+
+    orjson 도입 후 _dumps()가 bytes가 아닌 str을 반환하는지 확인합니다.
+    """
+    mock_env = get_mock_env()
+    mock_trid_provider = MagicMock()
+    api = KoreaInvestApiBase(mock_env, logger=None, trid_provider=mock_trid_provider)
+
+    captured_data = {}
+
+    async def capture_post(url, headers, data, **kwargs):
+        captured_data["body"] = data
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {"rt_cd": "0", "output": {"result": "ok"}}
+        resp.raise_for_status.return_value = None
+        return resp
+
+    api._async_session.post = capture_post
+
+    await api._execute_request("POST", "http://test", None, {"key": "value"})
+
+    assert "body" in captured_data, "POST 요청이 발생하지 않았습니다"
+    assert isinstance(captured_data["body"], str), (
+        f"POST body가 str이 아닌 {type(captured_data['body'])} 타입입니다"
+    )
+    assert '"key"' in captured_data["body"]

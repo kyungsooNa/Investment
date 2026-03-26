@@ -2,6 +2,14 @@
 from typing import Optional
 import websockets  # pip install websockets
 import json
+try:
+    import orjson as _orjson
+    def _loads(s): return _orjson.loads(s)
+    def _dumps(obj) -> str: return _orjson.dumps(obj).decode()
+except ImportError:
+    _orjson = None
+    _loads = json.loads
+    _dumps = json.dumps
 import logging
 import requests
 import certifi  # requests의 SSL 인증서 검증에 필요
@@ -299,7 +307,7 @@ class KoreaInvestWebSocketAPI:
 
         else:  # 제어 메시지 (응답, PINGPONG 등)
             try:
-                json_object = json.loads(message)
+                json_object = _loads(message)
                 header = json_object.get("header", {})
                 tr_id = header.get("tr_id")
 
@@ -643,7 +651,7 @@ class KoreaInvestWebSocketAPI:
         }
 
         request_message = {"header": header, "body": body}
-        message_json = json.dumps(request_message)
+        message_json = _dumps(request_message)
 
         self._logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")
         try:
@@ -700,7 +708,7 @@ class KoreaInvestWebSocketAPI:
     # For test only
     async def _on_receive(self, message):
         try:
-            parsed = json.loads(message)  # <-- JSON 문자열을 dict로 파싱
+            parsed = _loads(message)  # <-- JSON 문자열을 dict로 파싱
             if self.on_realtime_message_callback:
                 await self.on_realtime_message_callback(parsed)
             else:

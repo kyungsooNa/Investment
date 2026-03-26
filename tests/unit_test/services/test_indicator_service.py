@@ -1164,3 +1164,33 @@ async def test_get_chart_indicators_merge_missing_key(indicator_service_with_cac
     # extra_key는 업데이트되지 않고 그대로 유지되어야 함 (else 분기)
     assert "extra_key" in result.data
     assert len(result.data["extra_key"]) == 1
+
+
+# ─── _to_dataframe 최적화 (Dict-of-Lists 변환) 테스트 ─────────────────────────
+
+def test_to_dataframe_empty_list_returns_empty():
+    """_to_dataframe에 빈 리스트를 전달하면 빈 DataFrame을 반환하는지 검증합니다."""
+    result = IndicatorService._to_dataframe([])
+    assert isinstance(result, pd.DataFrame)
+    assert result.empty
+
+
+def test_to_dataframe_list_of_dicts_preserves_columns():
+    """_to_dataframe이 List[Dict] 입력 시 모든 컬럼과 값을 올바르게 변환하는지 검증합니다."""
+    data = [
+        {"date": "20250101", "close": 10000, "open": 9900, "high": 10100, "low": 9800, "volume": 500},
+        {"date": "20250102", "close": 10200, "open": 10000, "high": 10300, "low": 9900, "volume": 700},
+    ]
+    result = IndicatorService._to_dataframe(data)
+    assert list(result.columns) == ["date", "close", "open", "high", "low", "volume"]
+    assert len(result) == 2
+    assert result["close"].tolist() == [10000, 10200]
+
+
+def test_to_dataframe_dataframe_passthrough():
+    """_to_dataframe에 DataFrame을 전달하면 복사본을 그대로 반환하는지 검증합니다."""
+    df = pd.DataFrame({"date": ["20250101"], "close": [10000]})
+    result = IndicatorService._to_dataframe(df)
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) == 1
+    assert result["close"].iloc[0] == 10000

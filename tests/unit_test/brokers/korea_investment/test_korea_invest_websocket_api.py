@@ -2260,3 +2260,45 @@ def test_handle_websocket_message_realtime_quote_key_missing_raises_key_error(we
 
     with pytest.raises(KeyError, match='realtime_quote'):
         api._handle_websocket_message(message)
+
+
+# ─── orjson compat layer (_loads / _dumps) 테스트 ────────────────────────────
+
+def test_json_compat_loads_parses_json_string():
+    """_loads가 JSON 문자열을 dict로 파싱하는지 검증합니다."""
+    from brokers.korea_investment.korea_invest_websocket_api import _loads
+    result = _loads('{"rt_cd": "0", "msg1": "정상"}')
+    assert result == {"rt_cd": "0", "msg1": "정상"}
+
+
+def test_json_compat_loads_parses_json_bytes():
+    """_loads가 JSON bytes를 dict로 파싱하는지 검증합니다."""
+    from brokers.korea_investment.korea_invest_websocket_api import _loads
+    result = _loads(b'{"rt_cd": "0", "msg1": "OK"}')
+    assert result == {"rt_cd": "0", "msg1": "OK"}
+
+
+def test_json_compat_dumps_returns_str():
+    """_dumps가 dict를 str로 직렬화하는지 검증합니다 (orjson 설치 여부와 무관하게 항상 str)."""
+    from brokers.korea_investment.korea_invest_websocket_api import _dumps
+    result = _dumps({"header": {"tr_id": "H0STCNT0"}, "body": {}})
+    assert isinstance(result, str), f"_dumps가 str이 아닌 {type(result)} 반환"
+    assert '"tr_id"' in result
+
+
+@pytest.mark.asyncio
+async def test_send_realtime_request_sends_str_to_websocket(websocket_api_instance):
+    """send_realtime_request가 ws.send()에 str(bytes 아닌)을 전달하는지 검증합니다.
+
+    orjson 도입 후 _dumps()가 str을 반환해야 websockets 라이브러리와 호환됩니다.
+    """
+    api = websocket_api_instance
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.approval_key = "dummy_approval_key"
+
+    await api.send_realtime_request("H0STCNT0", "005930", tr_type="1")
+
+    api.ws.send.assert_called_once()
+    sent_arg = api.ws.send.call_args[0][0]
+    assert isinstance(sent_arg, str), f"ws.send()에 str이 아닌 {type(sent_arg)} 전달됨"

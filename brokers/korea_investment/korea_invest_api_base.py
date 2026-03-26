@@ -2,6 +2,12 @@
 
 import requests
 import json
+try:
+    import orjson as _orjson
+    def _dumps(obj) -> str: return _orjson.dumps(obj).decode()
+except ImportError:
+    _orjson = None
+    _dumps = json.dumps
 import certifi
 import logging
 import asyncio  # 비동기 처리를 위해 추가
@@ -192,7 +198,7 @@ class KoreaInvestApiBase:
                 self._logger.debug(f"[GET] 요청 Data: {params}")
                 return await self._async_session.get(url, headers=headers, params=params)
             elif method.upper() == 'POST':
-                json_body = json.dumps(data) if data else None
+                json_body = _dumps(data) if data else None
 
                 self._logger.debug(f"[POST] 요청 Url: {url}")
                 self._logger.debug(f"[POST] 요청 Headers: {headers}")
