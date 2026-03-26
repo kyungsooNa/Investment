@@ -67,7 +67,9 @@ def test_get_cache_status_expand_false(web_client, mock_web_ctx):
     response = web_client.get("/api/cache/status?expand=false")
     
     assert response.status_code == 200
-    mock_web_ctx.get_cache_stats.assert_called_once_with(expand=False)
+    call_kwargs = mock_web_ctx.get_cache_stats.call_args.kwargs
+    assert call_kwargs["expand"] is False
+    assert "latest_trading_date" in call_kwargs
 
 # ── GET /api/background/status ──────────────────────────────────────────────
 

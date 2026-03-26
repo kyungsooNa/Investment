@@ -150,6 +150,10 @@ def mock_web_ctx():
     ctx.env.active_config = {"auth": {"username": "admin", "password": "password", "secret_key": "secret"}}
     ctx.full_config = {"auth": {"username": "admin", "password": "password"}}
     
+    # MarketCalendarService Mocking
+    ctx._mcs = MagicMock()
+    ctx._mcs.get_latest_trading_date = AsyncMock(return_value="20260326")
+
     # 알림 매니저 Mocking
     ctx.notification_service = MagicMock()
     ctx.notification_service.emit = AsyncMock()

@@ -170,6 +170,7 @@ class _LFUCache:
             items = []
             for k, v in list(self._cache.items()):
                 recent_dates: list[str] = []
+                has_today_candle = False
                 if isinstance(v, dict):
                     historical = v.get("ohlcv_historical", [])
                     tail = historical[-5:] if len(historical) >= 5 else historical
@@ -185,8 +186,6 @@ class _LFUCache:
                             isinstance(last_candle, dict) and
                             last_candle.get("date") == latest_trading_date
                         )
-                    else:
-                        has_today_candle = False
 
                 items.append({
                     "code": k,
