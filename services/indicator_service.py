@@ -178,23 +178,68 @@ class IndicatorService:
             method                                # [수정됨] *calc_args 두 번째 인자로 method 전달
         )
 
-    async def get_relative_strength(self, stock_code: str, period: int = 63, candle_type: str = "D",
-                                 ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
-        """상대강도 (RS) 조회"""
-        # 1. OHLCV 데이터 로드 및 에러 처리
-        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
+    async def get_relative_strength(
+        self, 
+        stock_code: str, 
+        period_days: int = 63,
+        candle_type: str = "D",
+        ohlcv_data: Optional[List[Dict]] = None
+    ) -> ResCommonResponse:
+        """N일 수익률(상대강도 원시값)을 계산하여 반환합니다.
+        (단일 스칼라 값만 필요하므로, Pandas 변환 및 캐싱 없이 O(1) 리스트 직접 연산으로 초고속 처리합니다.)
+        """
+        t_start = self.pm.start_timer()
+        
+        # 1. OHLCV 데이터 로드
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
         if err_resp: return err_resp
 
-        # 2. 공통 캐시 파이프라인에 위임 (순서대로 인자 전달)
-        return await self._get_with_incremental_cache(
-            stock_code,
-            candle_type,
-            f"rs_{period}",
-            data,
-            period,
-            self._calculate_rs_series,  # 순수 RS 계산 함수
-            period                      # *calc_args 로 전달될 period 값
-        )
+        # pct_change(period_days)와 동일한 간격을 구하려면 데이터가 period_days + 1 개 필요합니다.
+        if len(data) < period_days + 1:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.EMPTY_VALUES.value,
+                msg1=f"데이터 부족: {len(data)} < {period_days + 1}",
+                data=None
+            )
+
+        t_calc = self.pm.start_timer()
+        try:
+            # 2. 무거운 DataFrame 변환 없이 리스트 인덱싱으로 즉시 추출!
+            recent_candle = data[-1]                  # 오늘(최근) 캔들
+            past_candle = data[-(period_days + 1)]    # N일 전 캔들 (예: 63일 전)
+
+            recent_close = self._safe_float(recent_candle.get('close'))
+            past_close = self._safe_float(past_candle.get('close'))
+
+            # 데이터 유효성 검증
+            if recent_close is None or past_close is None or past_close <= 0:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.EMPTY_VALUES.value,
+                    msg1=f"유효하지 않은 종가 (past_close={past_close})",
+                    data=None
+                )
+
+            # 3. 수익률 계산
+            return_pct = ((recent_close - past_close) / past_close) * 100
+
+            result = ResRelativeStrength(
+                code=stock_code,
+                date=str(recent_candle.get('date')),
+                return_pct=round(return_pct, 2),
+            )
+            
+            if self.pm.enabled:
+                self.pm.log_timer(f"IndicatorService.get_relative_strength({stock_code})", t_start)
+
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=result)
+
+        except Exception as e:
+            logging.getLogger(__name__).exception(f"상대강도 계산 중 오류: {e}")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,
+                msg1=f"상대강도 계산 중 오류: {str(e)}",
+                data=None
+            )
 
     async def get_chart_indicators(self, stock_code: str, ohlcv_data: List[Dict]) -> ResCommonResponse:
         """
