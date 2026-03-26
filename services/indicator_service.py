@@ -551,8 +551,10 @@ class IndicatorService:
             df['close'] = pd.to_numeric(df['close'], errors='coerce')
         # [추가] inf 값을 NaN으로 치환하여 이후 연산(rolling, ewm 등)의 예외를 원천 방지
         if not df.empty:
-            df = df.replace([np.inf, -np.inf], np.nan)
-            
+            # 숫자형 컬럼에 대해서만 replace 수행 (속도 극대화)
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
+
         return df
 
     @staticmethod
