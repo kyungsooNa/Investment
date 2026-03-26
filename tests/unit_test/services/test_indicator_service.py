@@ -291,7 +291,7 @@ async def test_get_moving_average_not_enough_data(indicator_service):
 # ═══════════════════════════════════════════════════════
 
 @pytest.mark.asyncio
-async def test_get_rsi_success(indicator_service):
+async def test_get_relative_strength_success(indicator_service):
     """3개월 수익률 정상 계산"""
     service, mock_sqs = indicator_service
 
@@ -304,7 +304,7 @@ async def test_get_rsi_success(indicator_service):
             "open": 10000, "high": 10000, "low": 10000, "volume": 100,
         })
 
-    result = await service.get_rsi("005930", period_days=63, ohlcv_data=data)
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert result.data is not None
@@ -317,7 +317,7 @@ async def test_get_rsi_success(indicator_service):
 
 
 @pytest.mark.asyncio
-async def test_get_rsi_insufficient_data(indicator_service):
+async def test_get_relative_strength_insufficient_data(indicator_service):
     """데이터 부족 시 EMPTY_VALUES 반환"""
     service, mock_sqs = indicator_service
 
@@ -326,14 +326,14 @@ async def test_get_rsi_insufficient_data(indicator_service):
              "open": 10000, "high": 10000, "low": 10000, "volume": 100}
             for i in range(30)]
 
-    result = await service.get_rsi("005930", period_days=63, ohlcv_data=data)
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
 
     assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
     assert "데이터 부족" in result.msg1
 
 
 @pytest.mark.asyncio
-async def test_get_rsi_with_ohlcv_data_no_api_call(indicator_service):
+async def test_get_relative_strength_with_ohlcv_data_no_api_call(indicator_service):
     """ohlcv_data 직접 전달 시 API 호출 안함"""
     service, mock_sqs = indicator_service
 
@@ -341,7 +341,7 @@ async def test_get_rsi_with_ohlcv_data_no_api_call(indicator_service):
              "close": 10000, "open": 10000, "high": 10000, "low": 10000, "volume": 100}
             for i in range(70)]
 
-    result = await service.get_rsi("005930", period_days=63, ohlcv_data=data)
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert result.data.return_pct == 0.0  # 종가 일정 → 수익률 0%
@@ -349,7 +349,7 @@ async def test_get_rsi_with_ohlcv_data_no_api_call(indicator_service):
 
 
 @pytest.mark.asyncio
-async def test_get_rsi_zero_past_close(indicator_service):
+async def test_get_relative_strength_zero_past_close(indicator_service):
     """과거 종가가 0이면 EMPTY_VALUES 반환"""
     service, mock_sqs = indicator_service
 
@@ -358,7 +358,7 @@ async def test_get_rsi_zero_past_close(indicator_service):
              "open": 10000, "high": 10000, "low": 10000, "volume": 100}
             for i in range(70)]
 
-    result = await service.get_rsi("005930", period_days=63, ohlcv_data=data)
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
 
     assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
 
@@ -443,7 +443,7 @@ async def test_get_moving_average_unknown_method(indicator_service):
     assert result.data[-1].ma == 10000.0
 
 @pytest.mark.asyncio
-async def test_get_rsi_generic_exception(indicator_service):
+async def test_get_relative_strength_generic_exception(indicator_service):
     """상대강도: 계산 중 알 수 없는 예외 발생 시 처리"""
     service, mock_sqs = indicator_service
     
@@ -451,7 +451,7 @@ async def test_get_rsi_generic_exception(indicator_service):
     
     # pandas.DataFrame 생성 시 예외 발생 유도
     with patch.object(service, "_to_dataframe", side_effect=Exception("Unexpected Error")):
-        result = await service.get_rsi("005930", ohlcv_data=data)
+        result = await service.get_relative_strength("005930", ohlcv_data=data)
         
         assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
         assert "상대강도 계산 중 오류" in result.msg1
@@ -510,14 +510,14 @@ async def test_get_moving_average_unknown_exception(indicator_service):
         assert "MA 계산 중 오류" in result.msg1
 
 @pytest.mark.asyncio
-async def test_get_rsi_string_conversion(indicator_service):
+async def test_get_relative_strength_string_conversion(indicator_service):
     """상대강도: 문자열 데이터 변환 성공 테스트"""
     service, mock_sqs = indicator_service
     
     # 문자열 데이터 (period_days=63 이므로 충분한 데이터 생성)
     data = [{"date": f"202501{i+1:02d}", "close": str(10000 + i * 10)} for i in range(70)]
     
-    result = await service.get_rsi("005930", period_days=63, ohlcv_data=data)
+    result = await service.get_relative_strength("005930", period_days=63, ohlcv_data=data)
     
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert isinstance(result.data.return_pct, float)
@@ -602,13 +602,13 @@ async def test_get_moving_average_missing_column(indicator_service):
     assert "MA 계산 중 오류" in result.msg1
 
 @pytest.mark.asyncio
-async def test_get_rsi_missing_column(indicator_service):
+async def test_get_relative_strength_missing_column(indicator_service):
     """상대강도: 데이터에 'close' 컬럼이 없는 경우 (KeyError -> UNKNOWN_ERROR)"""
     service, mock_sqs = indicator_service
     
     data = [{"date": "20250101", "open": 10000}] * 70
     
-    result = await service.get_rsi("005930", ohlcv_data=data)
+    result = await service.get_relative_strength("005930", ohlcv_data=data)
     
     assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
     assert "상대강도 계산 중 오류" in result.msg1
@@ -995,7 +995,7 @@ async def test_get_rsi_caching_miss(indicator_service_with_cache):
     assert "rsi_series_005930" in args[0]
 
 @pytest.mark.asyncio
-async def test_get_rsi_past_close_zero_via_api(indicator_service):
+async def test_get_relative_strength_past_close_zero_via_api(indicator_service):
     """상대강도: API를 통해 조회한 과거 종가가 0 이하인 경우"""
     service, mock_sqs = indicator_service
     
@@ -1006,7 +1006,7 @@ async def test_get_rsi_past_close_zero_via_api(indicator_service):
     
     mock_sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data)
     
-    result = await service.get_rsi("005930", period_days=63)
+    result = await service.get_relative_strength("005930", period_days=63)
     
     assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
     assert "과거 종가가 0 이하" in result.msg1

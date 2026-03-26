@@ -161,8 +161,10 @@ class IndicatorService:
     ) -> ResCommonResponse:
         """이동평균선 조회"""
         # 1. OHLCV 데이터 로드 및 에러 처리
-        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
+
         if err_resp: return err_resp
+
 
         # 2. 공통 캐시 파이프라인에 위임 (method 파라미터 포함)
         return await self._get_with_incremental_cache(
@@ -174,6 +176,24 @@ class IndicatorService:
             self._calculate_moving_average_full,  # 기존 이동평균선 전체 계산 함수
             period,                               # *calc_args 첫 번째 인자
             method                                # [수정됨] *calc_args 두 번째 인자로 method 전달
+        )
+
+    async def get_relative_strength(self, stock_code: str, period: int = 63, candle_type: str = "D",
+                                 ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
+        """상대강도 (RS) 조회"""
+        # 1. OHLCV 데이터 로드 및 에러 처리
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
+        if err_resp: return err_resp
+
+        # 2. 공통 캐시 파이프라인에 위임 (순서대로 인자 전달)
+        return await self._get_with_incremental_cache(
+            stock_code,
+            candle_type,
+            f"rs_{period}",
+            data,
+            period,
+            self._calculate_rs_series,  # 순수 RS 계산 함수
+            period                      # *calc_args 로 전달될 period 값
         )
 
     async def get_chart_indicators(self, stock_code: str, ohlcv_data: List[Dict]) -> ResCommonResponse:

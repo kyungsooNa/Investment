@@ -355,7 +355,7 @@ class OneilUniverseService:
         
         # RS 계산
         rs_return = 0.0
-        rs_resp = await self._indicator.get_rsi(
+        rs_resp = await self._indicator.get_relative_strength(
             code, period_days=self._cfg.rs_period_days, ohlcv_data=ohlcv
         )
         if rs_resp and rs_resp.data:
