@@ -653,7 +653,7 @@ class IndicatorService:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
     def _calculate_indicators_full(self, stock_code: str, ohlcv_data: List[Dict]) -> ResCommonResponse:
-        """전체 데이터를 받아 지표를 계산하는 내부 메서드"""
+        """전체 데이터를 받아 지표를 계산하는 내부 메서드 (Vectorized 최적화 버전)"""
         try:
             # 1. DataFrame 변환 (1회 수행)
             df = self._to_dataframe(ohlcv_data)
@@ -672,26 +672,34 @@ class IndicatorService:
             rs_period = 63
             df['rs'] = df['close'].pct_change(periods=rs_period) * 100
 
-            # 3. 결과 포맷팅
-            indicators = {}
-            rows = list(df.itertuples(index=False))
+            # 3. 결과 포맷팅 전처리 (빠른 일괄 변환)
+            # 3-1. 응답 규격을 맞추기 위해 date 컬럼을 일괄 문자열로 캐스팅
+            df['date'] = df['date'].astype(str)
             
+            # 3-2. 숫자형 컬럼의 무한대(inf)를 NaN으로 치환 (문자열 컬럼 순회 방지로 속도 극대화)
+            num_cols = df.select_dtypes(include=[np.number]).columns
+            df[num_cols] = df[num_cols].replace([np.inf, -np.inf], np.nan)
+            
+            # 3-3. JSON 직렬화를 위해 모든 NaN을 None으로 일괄 치환
+            df = df.where(pd.notnull(df), None)
+
+            # 4. 결과 포맷팅 (Pandas to_dict 활용 - 파이썬 반복문 0번)
+            indicators = {}
+            
+            # MA 추출
             for p in [5, 10, 20, 60, 120]:
                 ma_key = f'ma{p}'
-                indicators[ma_key] = [{"date": str(r.date), "close": self._safe_float(r.close), "ma": self._safe_float(getattr(r, ma_key, None))} for r in rows]
+                indicators[ma_key] = df[['date', 'close', ma_key]].rename(
+                    columns={ma_key: 'ma'}
+                ).to_dict('records')
 
-            indicators["bb"] = [
-                {
-                    "code": stock_code, "date": str(r.date), "close": self._safe_float(r.close),
-                    "middle": self._safe_float(getattr(r, 'bb_middle', None)), # prefix 일치
-                    "upper": self._safe_float(getattr(r, 'bb_upper', None)),
-                    "lower": self._safe_float(getattr(r, 'bb_lower', None))
-                } for r in rows
-            ]
+            # BB 추출 (이름 매핑 및 code 컬럼 동적 추가)
+            indicators["bb"] = df[['date', 'close', 'bb_middle', 'bb_upper', 'bb_lower']].rename(
+                columns={'bb_middle': 'middle', 'bb_upper': 'upper', 'bb_lower': 'lower'}
+            ).assign(code=stock_code)[['code', 'date', 'close', 'middle', 'upper', 'lower']].to_dict('records')
 
-            indicators["rs"] = [
-                {"date": str(r.date), "rs": self._safe_float(getattr(r, 'rs', None))} for r in rows
-            ]
+            # RS 추출
+            indicators["rs"] = df[['date', 'rs']].to_dict('records')
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=indicators)
 
