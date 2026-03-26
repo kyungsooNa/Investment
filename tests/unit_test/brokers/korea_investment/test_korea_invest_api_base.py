@@ -766,11 +766,12 @@ async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
     assert result.status_code == 200
 
     # 변경: 모킹된 post 메서드가 올바른 인자로 호출되었는지 확인합니다.
-    # httpx는 딕셔너리 데이터를 'json' 파라미터로 받습니다.
+    # _dumps는 orjson 설치 여부에 따라 직렬화 결과가 다를 수 있으므로 _dumps로 비교합니다.
+    from brokers.korea_investment.korea_invest_api_base import _dumps
     api._async_session.post.assert_called_once_with(
         "http://test",
-        headers=api._headers.build(),             # ← provider 객체가 아니라 build() 결과
-        data=json.dumps({"x": "y"})  # ✅ 문자열로 바꿔야 함
+        headers=api._headers.build(),
+        data=_dumps({"x": "y"})
     )
 
 
