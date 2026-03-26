@@ -167,16 +167,30 @@ class _LFUCache:
             "callers": callers_out,
         }
         if expand:
-            items = [
-                {
+            items = []
+            for k, v in self._cache.items():
+                recent_dates: list[str] = []
+                if isinstance(v, dict):
+                    historical = v.get("ohlcv_historical", [])
+                    tail = historical[-5:] if len(historical) >= 5 else historical
+                    recent_dates = [
+                        c["date"] for c in reversed(tail)
+                        if isinstance(c, dict) and "date" in c
+                    ]
+                    today = v.get("ohlcv_today")
+                    if today and isinstance(today, dict) and "date" in today:
+                        date_str = today["date"]
+                        if date_str not in recent_dates:
+                            recent_dates.insert(0, date_str)
+                    recent_dates = recent_dates[:5]
+                items.append({
                     "code": k,
                     "freq": self._freq.get(k, 0),
                     "historical_complete": v.get("historical_complete", False) if isinstance(v, dict) else False,
                     "ohlcv_count": len(v.get("ohlcv_historical", [])) if isinstance(v, dict) else 0,
                     "has_today_candle": bool(v.get("ohlcv_today")) if isinstance(v, dict) else False,
-                }
-                for k, v in self._cache.items()
-            ]
+                    "recent_dates": recent_dates,
+                })
             items.sort(key=lambda x: x["freq"], reverse=True)
             stats["items"] = items
         return stats

@@ -403,17 +403,22 @@ class MarketDataService:
                 if stock_data and "ohlcv" in stock_data:
                     past_rows = stock_data["ohlcv"]
 
-            # 2. historical_complete=True면 DB가 줄 수 있는 전부를 이미 보유 중 → 전체 백필 생략
-            #    단, DB 최신일이 yesterday보다 오래됐으면 누락 구간만 보완 백필 수행
-            #    그렇지 않으면(첫 조회 또는 캐시 없음) API 백필 수행 (약 1000일 ≈ 692 거래일)
+            # 2. 백필 범위 결정: 장 마감 후에는 오늘 최종 캔들이 확정 → today_str까지 조회
+            #    장 중에는 오늘 캔들이 미완성 → yesterday_str까지만 조회
+            is_market_open = (await self._mcs.is_market_open_now()) if self._mcs else False
+            fetch_end_date = yesterday_str if is_market_open else today_str
+
+            # historical_complete=True면 DB가 줄 수 있는 전부를 이미 보유 중 → 전체 백필 생략
+            # 단, DB 최신일 < fetch_end_date이면 누락 구간 보완 백필 수행
+            # 그렇지 않으면(첫 조회 또는 캐시 없음) API 백필 수행 (약 1000일 ≈ 692 거래일)
             latest_in_db = past_rows[-1]['date'] if past_rows else None
             if not stock_data or not stock_data.get("historical_complete"):
-                past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=10)
+                past_rows = await self._fetch_past_daily_ohlcv(stock_code, fetch_end_date, max_loops=10)
                 if self._stock_repo and past_rows:
                     await self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
-            elif latest_in_db and latest_in_db < yesterday_str:
-                # DB 데이터가 오래됨 (여러 거래일 누락) → 최근 구간만 보완 백필
-                new_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=1)
+            elif latest_in_db and latest_in_db < fetch_end_date:
+                # DB 데이터가 오래됨 (거래일 누락) → 최근 구간만 보완 백필 후 병합
+                new_rows = await self._fetch_past_daily_ohlcv(stock_code, fetch_end_date, max_loops=1)
                 if new_rows:
                     if self._stock_repo:
                         await self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in new_rows])
@@ -422,13 +427,9 @@ class MarketDataService:
                     merged.update({r['date']: r for r in new_rows})
                     past_rows = sorted(merged.values(), key=lambda r: r['date'])
 
-            # 3. 오늘 데이터 처리 (실시간 API 병합) - 장 마감 후에는 불필요
+            # 3. 오늘 데이터 처리 (실시간 API 병합) - 장 중에만 수행 (장 마감 후는 backfill에서 포함)
             today_rows = []
-            is_market_open = (await self._mcs.is_market_open_now()) if self._mcs else False
-
-            if not is_market_open:
-                pass
-            else:
+            if is_market_open:
                 today_rows = await self._fetch_today_ohlcv(stock_code, today_str, caller=caller)
                 if today_rows and now_dt.weekday() >= 5: today_rows = []
                 elif today_rows and past_rows:
