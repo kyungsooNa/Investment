@@ -178,7 +178,7 @@ class StreamingService:
                     f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
                     f"전일대비: {change_sign}{change} ({change_rate}%), 누적량: {cumulative_volume}"
                 )
-                print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+                self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
 
         elif data.get('type') == 'realtime_quote':
             quote_data = data.get('data', {})
@@ -192,7 +192,7 @@ class StreamingService:
                 display_message = (
                     f"[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1호가: {askp1}, 매수1호가: {bidp1}"
                 )
-                print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+                self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
 
         elif data.get('type') == 'signing_notice':
             notice_data = data.get('data', {})
@@ -200,7 +200,7 @@ class StreamingService:
             trade_qty = notice_data.get('체결수량', 'N/A')
             trade_price = notice_data.get('체결단가', 'N/A')
             trade_time = notice_data.get('주식체결시간', 'N/A')
-            print(
+            self.logger.debug(
                 f"\n[체결통보] 주문: {order_num}, 수량: {trade_qty}, "
                 f"단가: {trade_price}, 시간: {trade_time}"
             )
@@ -213,7 +213,7 @@ class StreamingService:
             if now - self._last_console_print_time >= self._PRINT_THROTTLE_SEC:
                 self._last_console_print_time = now
                 msg = f"[프로그램매매 - {t}] 순매수거래대금: {ntby}"
-                print(f"\r{msg}{' ' * max(0, 80 - len(msg))}", end="")
+                self.logger.debug(f"\r{msg}{' ' * max(0, 80 - len(msg))}", end="")
 
         else:
             self.logger.debug(

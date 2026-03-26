@@ -177,8 +177,7 @@ class OrderExecutionService:
         실시간 주식 체결가/호가 스트림을 시작하고,
         사용자 입력이 있을 때까지 데이터를 수신합니다.
         """
-        print(f"\n--- 실시간 주식 체결가/호가 구독 시작 ({stock_code}) ---")
-        print("실시간 데이터를 수신 중입니다... (종료하려면 Enter를 누르세요)")
+        self.logger.info(f"\n--- 실시간 주식 체결가/호가 구독 시작 ({stock_code}) ---")
 
         # 콜백 함수 정의
         def realtime_data_display_callback(data):
@@ -198,7 +197,7 @@ class OrderExecutionService:
                         f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
                         f"전일대비: {change_sign}{change_val} ({change_rate}%), 누적량: {acml_vol}"
                     )
-                    print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+                    self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
                 elif data_type == 'realtime_quote':  # 주식 호가
                     askp1 = output.get('매도호가1', 'N/A')
                     bidp1 = output.get('매수호가1', 'N/A')
@@ -206,13 +205,13 @@ class OrderExecutionService:
                     display_message = (
                         f"\r[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1: {askp1}, 매수1: {bidp1}{' ' * 20}"
                     )
-                    print(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+                    self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
                 elif data_type == 'signing_notice':  # 체결 통보
                     order_num = output.get('주문번호', 'N/A')
                     trade_qty = output.get('체결수량', 'N/A')
                     trade_price = output.get('체결단가', 'N/A')
                     trade_time = output.get('주식체결시간', 'N/A')
-                    print(f"\n[체결통보] 주문: {order_num}, 수량: {trade_qty}, 단가: {trade_price}, 시간: {trade_time}")
+                    self.logger.debug(f"\n[체결통보] 주문: {order_num}, 수량: {trade_qty}, 단가: {trade_price}, 시간: {trade_time}")
                 else:
                     self.logger.debug(f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}")
 
@@ -223,17 +222,13 @@ class OrderExecutionService:
 
             try:
                 await asyncio.to_thread(input)
-                print("\n")
 
             except KeyboardInterrupt:
-                print("\n사용자에 의해 실시간 구독이 중단됩니다.")
                 self.logger.info("실시간 구독 중단 (KeyboardInterrupt).")
             finally:
                 await self.broker_api_wrapper.unsubscribe_realtime_price(stock_code)
                 await self.broker_api_wrapper.unsubscribe_realtime_quote(stock_code)
                 await self.broker_api_wrapper.disconnect_websocket()
-                print("실시간 주식 스트림을 종료했습니다.")
                 self.logger.info(f"실시간 주식 스트림 종료: 종목={stock_code}")
         else:
-            print("실시간 웹소켓 연결에 실패했습니다.")
             self.logger.error("실시간 웹소켓 연결 실패.")
