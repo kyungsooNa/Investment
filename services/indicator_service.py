@@ -76,9 +76,10 @@ class IndicatorService:
         """
         # 1. 예외 처리 및 캐시 미적용 조건 (데이터가 너무 적거나, 일봉이 아니거나, 캐시가 꺼진 경우)
         if not self.cache_store or candle_type != "D" or len(data) <= lookback_period:
-            full_result = calc_func(stock_code, data, *calc_args)
-            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(NoCache)", data=full_result)
-
+            resp = calc_func(stock_code, data, *calc_args)
+            # [수정포인트 1] 이미 ResCommonResponse 객체라면 이중 래핑 방지
+            return resp if isinstance(resp, ResCommonResponse) else ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(NoCache)", data=resp)
+        
         # 2. 확정 데이터(어제까지)와 당일 데이터 분리
         confirmed_data = data[:-1]
         confirmed_last_date = str(confirmed_data[-1]['date'])
@@ -89,23 +90,37 @@ class IndicatorService:
         # 3. 캐시 조회
         cached_result = self.cache_store.get(cache_key)
 
-        # 4. 캐시 미스: 확정 데이터 전체에 대해 지표 계산 후 캐시 저장
+        # 4. 캐시 미스: 확정 데이터 전체에 대해 계산 후 캐시 저장
         if not cached_result:
-            cached_result = calc_func(stock_code, confirmed_data, *calc_args)
-            self.cache_store.set(cache_key, cached_result) # 필요시 TTL 지정
+            calc_resp = calc_func(stock_code, confirmed_data, *calc_args)
+            # [수정포인트 2] 반환값이 ResCommonResponse면 내부 data만 추출해서 캐싱
+            if isinstance(calc_resp, ResCommonResponse):
+                if calc_resp.rt_cd != ErrorCode.SUCCESS.value:
+                    return calc_resp # 에러 발생 시 즉시 반환
+                cached_result = calc_resp.data
+            else:
+                cached_result = calc_resp
+                
+            self.cache_store.set(cache_key, cached_result)
 
         # 5. 당일 증분 계산
-        # 계산에 필요한 최소한의 과거 데이터만 슬라이싱 (여유분으로 +5 설정)
         slice_size = lookback_period + 5
         partial_data = data[-slice_size:]
         
-        # 부분 데이터로 계산 (가장 마지막 요소가 오늘자 지표 값임)
-        partial_result = calc_func(stock_code, partial_data, *calc_args)
+        partial_resp = calc_func(stock_code, partial_data, *calc_args)
+        
+        # [수정포인트 3] 반환값이 ResCommonResponse면 내부 data만 추출해서 병합 준비
+        if isinstance(partial_resp, ResCommonResponse):
+            if partial_resp.rt_cd != ErrorCode.SUCCESS.value:
+                return partial_resp
+            partial_result = partial_resp.data
+        else:
+            partial_result = partial_resp
+            
         if not partial_result:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="부분 지표 계산 실패", data=None)
             
         latest_indicator = partial_result[-1]
-
         # 6. O(1) 속도로 병합 (리스트 '+' 연산자 제거 최적화)
         final_data = cached_result.copy() # 얕은 복사로 원본 캐시 리스트 보호
         
@@ -189,21 +204,20 @@ class IndicatorService:
         (단일 스칼라 값만 필요하므로, Pandas 변환 및 캐싱 없이 O(1) 리스트 직접 연산으로 초고속 처리합니다.)
         """
         t_start = self.pm.start_timer()
-        
-        # 1. OHLCV 데이터 로드
-        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
-        if err_resp: return err_resp
-
-        # pct_change(period_days)와 동일한 간격을 구하려면 데이터가 period_days + 1 개 필요합니다.
-        if len(data) < period_days + 1:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.EMPTY_VALUES.value,
-                msg1=f"데이터 부족: {len(data)} < {period_days + 1}",
-                data=None
-            )
-
         t_calc = self.pm.start_timer()
         try:
+            # 1. OHLCV 데이터 로드
+            data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data)
+            if err_resp: return err_resp
+
+            # pct_change(period_days)와 동일한 간격을 구하려면 데이터가 period_days + 1 개 필요합니다.
+            if len(data) < period_days + 1:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.EMPTY_VALUES.value,
+                    msg1=f"데이터 부족: {len(data)} < {period_days + 1}",
+                    data=None
+                )
+
             # 2. 무거운 DataFrame 변환 없이 리스트 인덱싱으로 즉시 추출!
             recent_candle = data[-1]                  # 오늘(최근) 캔들
             past_candle = data[-(period_days + 1)]    # N일 전 캔들 (예: 63일 전)
@@ -326,24 +340,27 @@ class IndicatorService:
 
     # ── 계산 로직 공통화 (Helper Methods) ─────────────────────────────
 
-    @staticmethod
-    def _to_dataframe(data: Union[List[Dict], pd.DataFrame]) -> pd.DataFrame:
-        """List[Dict] 또는 기존 DataFrame을 받아 pandas DataFrame으로 통일 및 데이터 전처리를 수행합니다."""
-        if isinstance(data, pd.DataFrame):
-            df = data.copy()
-        else:
-            # Dict-of-lists 방식이 List[Dict]보다 DataFrame 생성 속도가 빠름
-            df = pd.DataFrame({k: [d[k] for d in data] for k in data[0]}) if data else pd.DataFrame()
+    def _to_dataframe(self, ohlcv_data: list) -> pd.DataFrame:
+        """리스트 데이터를 데이터프레임으로 변환하고 수치 전처리를 수행"""
+        try:
+            df = pd.DataFrame(ohlcv_data)
             
-        if not df.empty and 'close' in df.columns and df['close'].dtype == object:
-            df['close'] = pd.to_numeric(df['close'], errors='coerce')
-        # [추가] inf 값을 NaN으로 치환하여 이후 연산(rolling, ewm 등)의 예외를 원천 방지
-        if not df.empty:
-            # 숫자형 컬럼에 대해서만 replace 수행 (속도 극대화)
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
+            if df.empty:
+                return df
 
-        return df
+            # 1. 수치형 변환 (errors='coerce'는 숫자가 아닌 것을 NaN으로 만듭니다)
+            if 'close' in df.columns:
+                df['close'] = pd.to_numeric(df['close'], errors='coerce')
+                
+                # 2. [핵심] 무한대(inf) 값을 실제 NaN으로 치환
+                # np.inf를 쓰려면 위에 import numpy as np가 필요합니다.
+                df['close'] = df['close'].replace([np.inf, -np.inf], np.nan)
+            
+            return df
+            
+        except Exception as e:
+            # 여기서 에러가 나면 IndicatorService에서 999 에러를 반환하게 됩니다.
+            raise e
 
     @staticmethod
     def _compute_ma(df: pd.DataFrame, period: int, method: str = "sma", target_col: str = "ma") -> pd.DataFrame:
