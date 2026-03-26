@@ -29,10 +29,11 @@ _SCHEDULE_ORDER = {
 
 
 @router.get("/cache/status")
-def get_cache_status(expand: bool = True):
+async def get_cache_status(expand: bool = True):
     """메모리 캐시 상태 및 적중률 통계 반환"""
     ctx = _get_ctx()
-    stats = ctx.get_cache_stats(expand=expand) or {}
+    latest_trading_date = await ctx._mcs.get_latest_trading_date() if ctx._mcs else None
+    stats = ctx.get_cache_stats(expand=expand, latest_trading_date=latest_trading_date) or {}
 
     if "items" not in stats:
         stats["items"] = []

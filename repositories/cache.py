@@ -143,7 +143,7 @@ class _LFUCache:
             if key in self._freq:
                 del self._freq[key]
 
-    def get_stats(self, expand: bool = False) -> dict:
+    def get_stats(self, expand: bool = False, latest_trading_date: str = None) -> dict:
         """캐시 적중률 통계를 반환합니다."""
         total = self.hits + self.misses
         hit_rate = (self.hits / total * 100) if total > 0 else 0.0
@@ -177,18 +177,23 @@ class _LFUCache:
                         c["date"] for c in reversed(tail)
                         if isinstance(c, dict) and "date" in c
                     ]
-                    today = v.get("ohlcv_today")
-                    if today and isinstance(today, dict) and "date" in today:
-                        date_str = today["date"]
-                        if date_str not in recent_dates:
-                            recent_dates.insert(0, date_str)
                     recent_dates = recent_dates[:5]
+
+                    if latest_trading_date and historical:
+                        last_candle = historical[-1]
+                        has_today_candle = (
+                            isinstance(last_candle, dict) and
+                            last_candle.get("date") == latest_trading_date
+                        )
+                    else:
+                        has_today_candle = False
+
                 items.append({
                     "code": k,
                     "freq": self._freq.get(k, 0),
                     "historical_complete": v.get("historical_complete", False) if isinstance(v, dict) else False,
                     "ohlcv_count": len(v.get("ohlcv_historical", [])) if isinstance(v, dict) else 0,
-                    "has_today_candle": bool(v.get("ohlcv_today")) if isinstance(v, dict) else False,
+                    "has_today_candle": has_today_candle,
                     "recent_dates": recent_dates,
                 })
             items.sort(key=lambda x: x["freq"], reverse=True)
