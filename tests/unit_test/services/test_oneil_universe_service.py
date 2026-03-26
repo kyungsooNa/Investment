@@ -57,7 +57,7 @@ def mock_deps():
     sqs.get_top_rise_fall_stocks = AsyncMock(spec=StockQueryService.get_top_rise_fall_stocks)
     sqs.get_top_volume_stocks = AsyncMock(spec=StockQueryService.get_top_volume_stocks)
     indicator.get_bollinger_bands = AsyncMock(spec=IndicatorService.get_bollinger_bands)
-    indicator.get_rsi = AsyncMock(spec=IndicatorService.get_rsi)
+    indicator.get_relative_strength = AsyncMock(spec=IndicatorService.get_relative_strength)
     
     return None, sqs, indicator, mapper, tm, logger # ts is None
 
@@ -87,7 +87,7 @@ def oneil_service_fixture():
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
         data=[ResBollingerBand(code="TEST", date="20231231", close=1, upper=1, lower=1, middle=1)] * 90
     )
-    mock_indicator.get_rsi.return_value = ResCommonResponse(
+    mock_indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
         data=ResRelativeStrength(code="TEST", date="20231231", return_pct=10.0)
     )
@@ -117,7 +117,7 @@ async def test_analyze_candidate_success(mock_deps):
     )
     
     # 4. RS Mock
-    indicator.get_rsi.return_value = ResCommonResponse(
+    indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
     )
     
@@ -165,7 +165,7 @@ async def test_analyze_candidate_filter_market_cap(mock_deps):
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
     )
-    indicator.get_rsi.return_value = ResCommonResponse(
+    indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
     )
     
@@ -434,7 +434,7 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
 
     # 2. RS Mock 설정 (특정 수익률 반환)
     expected_rs = 15.5
-    indicator.get_rsi.return_value = ResCommonResponse(
+    indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=expected_rs)
     )
     
@@ -447,8 +447,8 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
     assert item is not None
     assert item.rs_return_3m == expected_rs
     # indicator 서비스가 올바른 파라미터로 호출되었는지 확인
-    indicator.get_rsi.assert_awaited_once()
-    call_args = indicator.get_rsi.call_args
+    indicator.get_relative_strength.assert_awaited_once()
+    call_args = indicator.get_relative_strength.call_args
     assert call_args[0][0] == "005930" # code
     assert call_args[1]['period_days'] == service._cfg.rs_period_days
     assert call_args[1]['ohlcv_data'] == ohlcv
@@ -469,7 +469,7 @@ async def test_analyze_candidate_rs_calculation_failure(mock_deps):
     )
 
     # RS Mock 설정 (실패 응답)
-    indicator.get_rsi.return_value = ResCommonResponse(
+    indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="1", msg1="Fail", data=None
     )
     
@@ -1065,7 +1065,7 @@ async def test_analyze_candidate_price_api_object_access(mock_deps):
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
     )
-    indicator.get_rsi.return_value = ResCommonResponse(
+    indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
     )
     
@@ -1099,7 +1099,7 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=bands_good
     )
-    indicator.get_rsi.return_value = ResCommonResponse(
+    indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
     )
     item = await service._analyze_candidate("005930", "Samsung", logger=logger)
@@ -1236,7 +1236,7 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
     )
-    indicator.get_rsi.return_value = ResCommonResponse(
+    indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
     )
     
