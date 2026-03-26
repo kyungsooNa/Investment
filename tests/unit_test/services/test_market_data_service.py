@@ -118,11 +118,14 @@ async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     broker.inquire_daily_itemchartprice.call_count = 0 # 카운트 리셋
     broker.get_current_price.call_count = 0
     
-    # 2. 두 번째 호출: 로컬 데이터가 충분함 (600건 이상)
+    # 2. 두 번째 호출: 로컬 데이터가 충분함 (600건 이상, 최신일 = yesterday)
     # 과거 데이터 백필 API 호출은 스킵하고, 당일 데이터 API만 호출
+    # 최신일이 yesterday(20250101) 이상이어야 stale backfill을 건너뜀
     base_date = datetime(2023, 1, 1)
+    rows_600 = [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100} for i in range(604)]
+    rows_600.append({"date": "20250101", "close": 1010.0, "open": 1010.0, "high": 1020.0, "low": 1000.0, "volume": 200})  # yesterday
     stock_repo.get_stock_data.return_value = {
-        "ohlcv": [{"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"), "close": 1000.0, "open": 1000.0, "high": 1000.0, "low": 1000.0, "volume": 100} for i in range(605)],
+        "ohlcv": rows_600,
         "historical_complete": True,
     }
 
@@ -1213,3 +1216,56 @@ async def test_get_ohlcv_during_market_open_calls_today_api(trading_service_fixt
     # 오늘 데이터가 병합되어 마지막 항목이 오늘 날짜여야 함
     assert resp.data[-1]['date'] == "20250102"
     assert resp.data[-1]['close'] == 1025.0
+
+
+@pytest.mark.asyncio
+async def test_get_ohlcv_after_market_close_with_stale_db_backfills(trading_service_fixture, mock_deps):
+    """장 마감 + DB 데이터가 수일 전까지만 있을 때(yesterday보다 오래됨) 과거 일봉 API 백필 수행 검증.
+
+    버그 재현:
+      - DB에 0320까지 600일치 데이터 있음 (historical_complete=True)
+      - 오늘은 0326 18:00 (장 마감 후)
+      - yesterday = 0325, DB 최신일 0320 < yesterday → 5개 거래일 누락
+      - 기존 코드: historical_complete=True → backfill 스킵,
+                  is_market_open=False → 오늘 fetch 스킵 → 누락 데이터 그대로 반환
+      - 수정 후: DB 최신일 < yesterday이면 API backfill 호출해야 함
+    """
+    broker = mock_deps.broker
+    tm = mock_deps.tm
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    # 장 마감 후 (0326 18:00), yesterday = 0325
+    tm.get_current_kst_time.return_value = datetime(2025, 3, 26, 18, 0, 0)
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False
+
+    # DB에 0320까지만 데이터 존재 (historical_complete=True)
+    base_date = datetime(2023, 1, 1)
+    past_rows = [
+        {"date": (base_date + timedelta(days=i)).strftime("%Y%m%d"),
+         "open": 1000.0, "high": 1010.0, "low": 990.0, "close": 1005.0, "volume": 100}
+        for i in range(599)
+    ]
+    past_rows.append({"date": "20250320", "open": 1010.0, "high": 1020.0, "low": 1000.0, "close": 1015.0, "volume": 200})
+    stock_repo.get_stock_data.return_value = {"ohlcv": past_rows, "historical_complete": True}
+
+    # API: 0320-0325 누락 구간 포함 데이터 반환
+    new_rows = [
+        {"stck_bsop_date": "20250320", "stck_oprc": "1010", "stck_hgpr": "1020", "stck_lwpr": "1000", "stck_clpr": "1015", "acml_vol": "200"},
+        {"stck_bsop_date": "20250321", "stck_oprc": "1020", "stck_hgpr": "1030", "stck_lwpr": "1010", "stck_clpr": "1025", "acml_vol": "300"},
+        {"stck_bsop_date": "20250324", "stck_oprc": "1025", "stck_hgpr": "1035", "stck_lwpr": "1015", "stck_clpr": "1030", "acml_vol": "250"},
+        {"stck_bsop_date": "20250325", "stck_oprc": "1030", "stck_hgpr": "1040", "stck_lwpr": "1020", "stck_clpr": "1035", "acml_vol": "280"},
+    ]
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=new_rows)
+
+    resp = await service.get_ohlcv("005930", period="D")
+
+    assert resp.rt_cd == "0"
+    # 장 마감 후라도 DB 데이터가 오래됐으면 일봉 API를 호출해야 함
+    broker.inquire_daily_itemchartprice.assert_called()
+    # 최종 데이터에 0325(어제) 포함되어야 함
+    dates = [r['date'] for r in resp.data]
+    assert "20250325" in dates, f"어제(0325) 데이터가 누락됨: {dates[-5:]}"
+    # DB의 전체 600일치도 포함되어야 함
+    assert len(resp.data) >= 600

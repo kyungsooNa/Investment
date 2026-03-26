@@ -403,12 +403,24 @@ class MarketDataService:
                 if stock_data and "ohlcv" in stock_data:
                     past_rows = stock_data["ohlcv"]
 
-            # 2. historical_complete=True면 DB가 줄 수 있는 전부를 이미 보유 중 → 백필 생략
+            # 2. historical_complete=True면 DB가 줄 수 있는 전부를 이미 보유 중 → 전체 백필 생략
+            #    단, DB 최신일이 yesterday보다 오래됐으면 누락 구간만 보완 백필 수행
             #    그렇지 않으면(첫 조회 또는 캐시 없음) API 백필 수행 (약 1000일 ≈ 692 거래일)
+            latest_in_db = past_rows[-1]['date'] if past_rows else None
             if not stock_data or not stock_data.get("historical_complete"):
                 past_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=10)
                 if self._stock_repo and past_rows:
                     await self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in past_rows])
+            elif latest_in_db and latest_in_db < yesterday_str:
+                # DB 데이터가 오래됨 (여러 거래일 누락) → 최근 구간만 보완 백필
+                new_rows = await self._fetch_past_daily_ohlcv(stock_code, yesterday_str, max_loops=1)
+                if new_rows:
+                    if self._stock_repo:
+                        await self._stock_repo.upsert_ohlcv([{**r, "code": stock_code} for r in new_rows])
+                    # 기존 데이터와 병합 (날짜 기준 dedup → 오름차순 정렬)
+                    merged = {r['date']: r for r in past_rows}
+                    merged.update({r['date']: r for r in new_rows})
+                    past_rows = sorted(merged.values(), key=lambda r: r['date'])
 
             # 3. 오늘 데이터 처리 (실시간 API 병합) - 장 마감 후에는 불필요
             today_rows = []
