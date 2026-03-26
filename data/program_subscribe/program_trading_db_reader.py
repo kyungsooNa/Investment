@@ -45,6 +45,10 @@ def view_program_trading_data():
             # pandas로 데이터 읽기
             df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
             
+            # created_at 컬럼이 존재하면 사람이 읽을 수 있는 형식으로 변환하여 열 추가
+            if 'created_at' in df.columns:
+                df['created_at_readable'] = pd.to_datetime(df['created_at'], unit='s', utc=True).dt.tz_convert('Asia/Seoul').dt.strftime('%Y-%m-%d %H:%M:%S')
+
             print(f"총 {len(df):,}건의 프로그램 매매 데이터가 있습니다.\n")
             print("[상위 5개 데이터 미리보기]")
             print(df.head().to_string())

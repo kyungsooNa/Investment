@@ -229,10 +229,8 @@ class MarketDataService:
             else:
                 try:
                     d["_tr_val_int"] = int(d.get("stck_prpr", "0") or "0") * int(d.get("acml_vol", "0") or "0")
-                    d["acml_tr_pbmn"] = str(d["_tr_val_int"])
                 except (ValueError, TypeError):
                     d["_tr_val_int"] = 0
-                    d["acml_tr_pbmn"] = "0"
 
         merged = {}
         for stock in volume_stocks:
@@ -255,7 +253,9 @@ class MarketDataService:
         result = result[:30]
         for i, stock in enumerate(result, 1):
             stock["data_rank"] = str(i)
-            stock.pop("_tr_val_int", None)
+            tr_val_int = stock.pop("_tr_val_int", None)
+            if "acml_tr_pbmn" not in stock and tr_val_int is not None:
+                stock["acml_tr_pbmn"] = str(tr_val_int)
 
         self.pm.log_timer("MarketDataService.get_top_trading_value_stocks", t_start, threshold=1.0)
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="거래대금 상위 성공", data=result)

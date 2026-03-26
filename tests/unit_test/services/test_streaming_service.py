@@ -114,8 +114,8 @@ async def test_handle_realtime_stream_exception(streaming_service, mock_broker):
     mock_broker.unsubscribe_realtime_price.assert_awaited_once_with("005930")
     mock_broker.disconnect_websocket.assert_awaited_once()
 
-def test_dispatch_realtime_message_realtime_price(streaming_service, mock_market_data_service, capsys):
-    """메시지 디스패치: 실시간 체결가 수신 시 메모리 캐시 갱신 및 콘솔 출력 확인"""
+def test_dispatch_realtime_message_realtime_price(streaming_service, mock_market_data_service):
+    """메시지 디스패치: 실시간 체결가 수신 시 메모리 캐시 갱신 및 로깅 확인"""
     data = {
         'type': 'realtime_price',
         'data': {
@@ -128,9 +128,9 @@ def test_dispatch_realtime_message_realtime_price(streaming_service, mock_market
             '주식체결시간': '100000'
         }
     }
-    
+
     streaming_service.dispatch_realtime_message(data)
-    
+
     cached = streaming_service.get_cached_realtime_price("005930")
     assert cached is not None
     assert cached["price"] == "70000"
@@ -139,13 +139,13 @@ def test_dispatch_realtime_message_realtime_price(streaming_service, mock_market
     assert isinstance(cached["received_at"], float)
 
     mock_market_data_service._stock_repo.update_realtime_data.assert_called_once_with("005930", 70000.0, 1000000)
-    
-    captured = capsys.readouterr()
-    assert "[실시간 체결 - 100000]" in captured.out
-    assert "현재가 70000원" in captured.out
 
-def test_dispatch_realtime_message_realtime_quote(streaming_service, capsys):
-    """메시지 디스패치: 실시간 호가 수신 시 콘솔 출력 확인"""
+    debug_calls_str = str(streaming_service.logger.debug.call_args_list)
+    assert "[실시간 체결 - 100000]" in debug_calls_str
+    assert "현재가 70000원" in debug_calls_str
+
+def test_dispatch_realtime_message_realtime_quote(streaming_service):
+    """메시지 디스패치: 실시간 호가 수신 시 로깅 확인"""
     data = {
         'type': 'realtime_quote',
         'data': {
@@ -155,11 +155,11 @@ def test_dispatch_realtime_message_realtime_quote(streaming_service, capsys):
             '영업시간': '100000'
         }
     }
-    
+
     streaming_service.dispatch_realtime_message(data)
-    captured = capsys.readouterr()
-    assert "[실시간 호가 - 100000]" in captured.out
-    assert "매도1호가: 70100" in captured.out
+    debug_calls_str = str(streaming_service.logger.debug.call_args_list)
+    assert "[실시간 호가 - 100000]" in debug_calls_str
+    assert "매도1호가: 70100" in debug_calls_str
 
 def test_dispatch_realtime_message_unknown_type(streaming_service):
     """메시지 디스패치: 알 수 없는 타입의 메시지 수신 시 로깅 처리"""

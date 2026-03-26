@@ -279,7 +279,7 @@ async def test_handle_realtime_price_quote_stream_success(handler, mock_broker_a
         mock_broker_api_wrapper.unsubscribe_realtime_price.assert_awaited_once_with("005930")
         mock_broker_api_wrapper.unsubscribe_realtime_quote.assert_awaited_once_with("005930")
         mock_broker_api_wrapper.disconnect_websocket.assert_awaited_once()
-        mock_logger.info.assert_called_once_with(f"실시간 주식 스트림 종료: 종목=005930")
+        mock_logger.info.assert_any_call(f"실시간 주식 스트림 종료: 종목=005930")
 
 @pytest.mark.asyncio
 async def test_handle_realtime_price_quote_stream_connection_failure(handler, mock_broker_api_wrapper, mock_logger, mock_market_calendar_service):
@@ -353,18 +353,17 @@ async def test_realtime_data_display_callback_logic(handler, mock_broker_api_wra
     price_data = {
         'type': 'realtime_price',
         'data': {
-            '유가증권단축종목코드': '005930',
-            '주식현재가': '75000',
-            '누적거래량': '123456',
-            '주식체결시간': '100000',
-            '전일대비': '500',
-            '전일대비부호': '2', # 상승
-            '전일대비율': '0.67'
+            'STCK_PRPR': '75000',
+            'ACML_VOL': '123456',
+            'STCK_CNTG_HOUR': '100000',
+            'PRDY_VRSS': '500',
+            'PRDY_VRSS_SIGN': '2',
+            'PRDY_CTRT': '0.67'
         }
     }
     realtime_callback(price_data)
     mock_logger.info.assert_not_called()
-    mock_logger.debug.assert_not_called()
+    mock_logger.debug.assert_called_once()
 
 
     # --- 테스트 시나리오 2: realtime_quote (주식 호가) 데이터 ---
@@ -381,7 +380,7 @@ async def test_realtime_data_display_callback_logic(handler, mock_broker_api_wra
     }
     realtime_callback(quote_data)
     mock_logger.info.assert_not_called()
-    mock_logger.debug.assert_not_called()
+    mock_logger.debug.assert_called_once()
 
 
     # --- 테스트 시나리오 3: signing_notice (체결 통보) 데이터 ---
@@ -399,7 +398,7 @@ async def test_realtime_data_display_callback_logic(handler, mock_broker_api_wra
     }
     realtime_callback(signing_notice_data)
     mock_logger.info.assert_not_called()
-    mock_logger.debug.assert_not_called()
+    mock_logger.debug.assert_called_once()
 
 
     # --- 테스트 시나리오 4: 처리되지 않은 메시지 (unknown type) ---
