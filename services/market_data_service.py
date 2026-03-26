@@ -220,28 +220,33 @@ class MarketDataService:
         def _get_code(d):
             return d.get("mksc_shrn_iscd") or d.get("stck_shrn_iscd") or d.get("iscd") or ""
 
+        def _compute_tr_val(d):
+            if d.get("acml_tr_pbmn"):
+                try:
+                    d["_tr_val_int"] = int(d["acml_tr_pbmn"] or "0")
+                except (ValueError, TypeError):
+                    d["_tr_val_int"] = 0
+            else:
+                try:
+                    d["_tr_val_int"] = int(d.get("stck_prpr", "0") or "0") * int(d.get("acml_vol", "0") or "0")
+                    d["acml_tr_pbmn"] = str(d["_tr_val_int"])
+                except (ValueError, TypeError):
+                    d["_tr_val_int"] = 0
+                    d["acml_tr_pbmn"] = "0"
+
         merged = {}
         for stock in volume_stocks:
             d = _to_dict(stock)
             code = _get_code(d)
-            if code: merged[code] = d
+            if code:
+                _compute_tr_val(d)
+                merged[code] = d
 
         for stock in mc_stocks + list(rise_stocks or []) + list(fall_stocks or []):
             d = _to_dict(stock)
             code = _get_code(d)
             if code and code not in merged:
-                if not d.get("acml_tr_pbmn"):
-                    try:
-                        d["_tr_val_int"] = int(d.get("stck_prpr", "0") or "0") * int(d.get("acml_vol", "0") or "0")
-                        d["acml_tr_pbmn"] = str(d["_tr_val_int"])
-                    except (ValueError, TypeError):
-                        d["_tr_val_int"] = 0
-                        d["acml_tr_pbmn"] = "0"
-                else:
-                    try:
-                        d["_tr_val_int"] = int(d["acml_tr_pbmn"] or "0")
-                    except (ValueError, TypeError):
-                        d["_tr_val_int"] = 0
+                _compute_tr_val(d)
                 merged[code] = d
 
         merged = {c: d for c, d in merged.items() if not self._is_etf(d)}
