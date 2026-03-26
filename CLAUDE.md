@@ -202,6 +202,41 @@ def mock_sleep():
         yield m
 ```
 
+### 원인 패턴 4: 픽스처에서 외부 네트워크 호출 누락 패치 → xdist 병렬 실행 시 429
+
+**증상**: `pytest tests/unit_test -n auto` 병렬 실행 시에만 `ERROR ... urllib.error.HTTPError: HTTP Error 429: Too Many Requests` 발생. 단독(`-n0`) 또는 파일 단위 실행에서는 통과.
+
+**원인**: `WebAppContext.__init__` 에서 `StockCodeRepository` 를 직접 인스턴스화하는데, 픽스처가 이를 패치하지 않으면 DB 파일 부재 시 실제 네트워크 요청 발생.
+
+```
+WebAppContext.__init__
+ └─ StockCodeRepository.__init__
+     └─ (DB 파일 없으면) save_stock_code_list(force_update=True)  ← stock_sync_service.py
+         ├─ FinanceDataReader (내부적으로 urllib.request 사용)
+         └─ pykrx (requests 사용)
+```
+
+xdist 가 worker 별 임시 환경을 만들 때 DB 파일이 없는 경우 여러 worker 가 동시에 외부 서버 호출 → 레이트 리밋(429) 발생.
+
+**해결**: `WebAppContext` 를 생성하는 픽스처에서 `StockCodeRepository` 를 반드시 패치.
+
+```python
+# ❌ StockCodeRepository 미패치 → xdist 병렬 시 429
+with patch('view.web.web_app_initializer.StockRepository') as MockSR, \
+     patch('view.web.web_app_initializer.Logger') as MockLogger:
+    ctx = WebAppContext(app_context)
+
+# ✅ StockCodeRepository 추가 패치
+with patch('view.web.web_app_initializer.StockRepository') as MockSR, \
+     patch('view.web.web_app_initializer.StockCodeRepository') as MockSCR, \
+     patch('view.web.web_app_initializer.Logger') as MockLogger:
+    ctx = WebAppContext(app_context)
+```
+
+**진단 포인트**: `ERROR` (FAILED 아님) 이면서 `-n0` 단독 실행에서 통과 → 픽스처 setup 중 실제 네트워크/파일 I/O 호출 누락 패치 의심.
+
+---
+
 ### 진단 체크리스트
 
 TC가 hang 할 때 아래 순서로 확인:
@@ -214,3 +249,4 @@ TC가 hang 할 때 아래 순서로 확인:
 3. **mock 반환값이 `ResCommonResponse` 인지** 확인 → plain dict/None 이면 RETRY 루프 진입 가능
 4. **`BrokerAPIWrapper` 를 직접 생성하는 TC** 인지 확인 → `cache_wrap_client` / `retry_queue_wrap_client` bypass 패치 적용
 5. **`asyncio.sleep` 이 제대로 mock** 되는지 확인 → `fast_sleep` autouse fixture 가 동작 범위 내인지 점검
+6. **ERROR(FAILED 아님) + `-n0` 단독 통과** → 픽스처 setup 중 외부 I/O 누락 패치 의심 → `WebAppContext` 생성 픽스처에서 `StockCodeRepository` 등 네트워크 호출 가능 클래스 패치 확인
