@@ -195,7 +195,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                     self._logger.debug("[워치독] 수신 루프가 재연결 중입니다. 워치독 개입 생략.")
                     continue
 
-                # 조건 2: PT 구독 중일 때만 데이터 수신 갭 확인
+                # 조건 2: 데이터 수신 갭 확인 (PT → PT 서비스 타임스탬프, 체결가 전용 → 최신가 캐시)
                 needs_reconnect = False
                 if not receive_alive:
                     self._logger.warning("[워치독] WebSocket 수신 태스크가 종료됨. 재연결을 시도합니다.")
@@ -209,6 +209,22 @@ class WebSocketWatchdogTask(SchedulableTask):
                             f"(임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다."
                         )
                         needs_reconnect = True
+                elif has_price and self._streaming_service:
+                    active_codes = self._subscription_service._active_codes
+                    received_times = [
+                        v["received_at"]
+                        for code in active_codes
+                        if isinstance(v := self._streaming_service._latest_prices.get(code), dict)
+                        and "received_at" in v
+                    ]
+                    if received_times:
+                        data_gap = time.time() - max(received_times)
+                        if data_gap > DATA_GAP_THRESHOLD:
+                            self._logger.warning(
+                                f"[워치독] {data_gap:.0f}초간 체결가 데이터 미수신 "
+                                f"(임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다."
+                            )
+                            needs_reconnect = True
 
                 if needs_reconnect:
                     await self.force_reconnect_all()
@@ -233,13 +249,23 @@ class WebSocketWatchdogTask(SchedulableTask):
         data_gap = None
         if self._realtime_data_service:
             last_ts = getattr(self._realtime_data_service, "last_data_ts", 0.0)
-            if last_ts > 0:
-                data_gap = round(time.time() - last_ts, 1)
+        if last_ts == 0.0 and self._streaming_service and self._subscription_service:
+            # PT 데이터가 없으면 체결가 최신가 캐시에서 가장 최근 수신 시각으로 대체
+            active_codes = self._subscription_service._active_codes
+            received_times = [
+                v["received_at"]
+                for code in active_codes
+                if isinstance(v := self._streaming_service._latest_prices.get(code), dict)
+                and "received_at" in v
+            ]
+            if received_times:
+                last_ts = max(received_times)
+        if last_ts > 0:
+            data_gap = round(time.time() - last_ts, 1)
 
         return {
             "running": self._state == TaskState.RUNNING,
-            "subscribed_pt_codes": pt_count,
-            "subscribed_price_codes": price_count,
+            "subscribed_codes": pt_count + price_count,
             "data_gap_sec": data_gap,
             "market_open": self._market_open,
         }

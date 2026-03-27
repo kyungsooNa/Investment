@@ -241,10 +241,22 @@ async def test_get_status_reflects_current_state(svc):
 
     status = svc.get_status()
 
-    assert status["active_price_count"] == 2
-    assert "005930" in status["active_price_codes"]
-    assert "035720" in status["active_price_codes"]
+    assert status["price_count"] == 2
+    assert status["pt_count"] == 0
+    assert status["total_count"] == 2
+    assert "005930" in status["price_codes"]
+    assert "035720" in status["price_codes"]
     assert status["max_subscriptions"] == RealtimeSubscriptionService.MAX_SUBSCRIPTIONS
+
+    high_codes = [i["code"] for i in status["by_priority"]["HIGH"]]
+    medium_codes = [i["code"] for i in status["by_priority"]["MEDIUM"]]
+    assert "005930" in high_codes
+    assert "035720" in medium_codes
+
+    # active 여부 및 subscribed_at 포함 확인
+    high_item = next(i for i in status["by_priority"]["HIGH"] if i["code"] == "005930")
+    assert high_item["active"] is True
+    assert high_item["subscribed_at"] is not None
 
 
 # ── subscribe 실패 처리 ───────────────────────────────────────────────────

@@ -31,6 +31,7 @@ def mock_deps(mock_subscription_service):
     streaming_service.broker.disconnect_websocket = AsyncMock()
     streaming_service.broker.is_websocket_receive_alive = MagicMock(return_value=True)
     streaming_service.broker.is_websocket_connected = MagicMock(return_value=True)
+    streaming_service._latest_prices = {}
 
     realtime_data_service = MagicMock()
     realtime_data_service.last_data_ts = 0.0
@@ -335,23 +336,23 @@ async def test_suspend_and_resume(watchdog_task):
 # ── get_progress() ───────────────────────────────────────────────────────────
 
 def test_get_progress_initial_state(watchdog_task):
-    """초기 상태: market_open=None, pt=0, price=0, data_gap_sec=None."""
+    """초기 상태: market_open=None, subscribed_codes=0, data_gap_sec=None."""
     p = watchdog_task.get_progress()
 
     assert p["running"] is False
-    assert p["subscribed_pt_codes"] == 0
-    assert p["subscribed_price_codes"] == 0
+    assert p["subscribed_codes"] == 0
     assert p["data_gap_sec"] is None
     assert p["market_open"] is None
 
 
-def test_get_progress_with_pt_subscriptions(watchdog_task, mock_subscription_service):
-    """PT 구독 종목이 있으면 subscribed_pt_codes에 개수가 반영된다."""
+def test_get_progress_subscribed_codes_is_total(watchdog_task, mock_subscription_service):
+    """PT + 체결가 구독 합산 수가 subscribed_codes에 반영된다."""
     mock_subscription_service.get_program_trading_codes.return_value = ["005930", "000660"]
+    mock_subscription_service._active_codes = {"035720", "051910"}
 
     p = watchdog_task.get_progress()
 
-    assert p["subscribed_pt_codes"] == 2
+    assert p["subscribed_codes"] == 4  # PT 2 + price 2
 
 
 def test_get_progress_data_gap_calculated(watchdog_task):
@@ -371,3 +372,86 @@ def test_get_progress_no_data_ts_returns_none_gap(watchdog_task):
     p = watchdog_task.get_progress()
 
     assert p["data_gap_sec"] is None
+
+
+def test_get_progress_uses_price_cache_when_no_pt_data(watchdog_task, mock_subscription_service):
+    """PT last_data_ts=0일 때 체결가 최신가 캐시의 received_at으로 data_gap_sec을 계산한다."""
+    watchdog_task._realtime_data_service.last_data_ts = 0.0
+    code = "005930"
+    mock_subscription_service._active_codes = {code}
+    watchdog_task._streaming_service._latest_prices = {
+        code: {"price": "70000", "received_at": time.time() - 20.0}
+    }
+
+    p = watchdog_task.get_progress()
+
+    assert p["data_gap_sec"] is not None
+    assert 18.0 <= p["data_gap_sec"] <= 23.0
+
+
+@pytest.mark.asyncio
+async def test_websocket_watchdog_price_data_gap_triggers_reconnect(watchdog_task, mock_subscription_service):
+    """PT 없이 체결가만 구독 중일 때 데이터 갭 초과 시 재연결을 시도한다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    mock_subscription_service.has_program_trading_subscriptions.return_value = False
+    code = "035720"
+    mock_subscription_service._active_codes = {code}
+    # 130초 전 마지막 수신 (임계값 120초 초과)
+    svc._streaming_service._latest_prices = {
+        code: {"price": "50000", "received_at": time.time() - 130}
+    }
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc._streaming_service.broker.is_websocket_connected.return_value = True
+
+    svc.force_reconnect_all = AsyncMock()
+
+    async def sleep_side_effect(seconds):
+        if sleep_side_effect.counter == 0:
+            sleep_side_effect.counter += 1
+            return
+        raise asyncio.CancelledError
+    sleep_side_effect.counter = 0
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+        try:
+            await svc._websocket_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect_all.assert_called_once()
+    args, _ = svc._logger.warning.call_args
+    assert "체결가 데이터 미수신" in args[0]
+    assert "재연결을 시도합니다" in args[0]
+
+
+@pytest.mark.asyncio
+async def test_websocket_watchdog_price_data_gap_no_reconnect_if_recent(watchdog_task, mock_subscription_service):
+    """체결가 데이터를 최근에 수신한 경우 재연결하지 않는다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    mock_subscription_service.has_program_trading_subscriptions.return_value = False
+    code = "035720"
+    mock_subscription_service._active_codes = {code}
+    svc._streaming_service._latest_prices = {
+        code: {"price": "50000", "received_at": time.time() - 10}  # 최근 수신
+    }
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc._streaming_service.broker.is_websocket_connected.return_value = True
+
+    svc.force_reconnect_all = AsyncMock()
+
+    async def sleep_side_effect(seconds):
+        if sleep_side_effect.counter == 0:
+            sleep_side_effect.counter += 1
+            return
+        raise asyncio.CancelledError
+    sleep_side_effect.counter = 0
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+        try:
+            await svc._websocket_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect_all.assert_not_called()

@@ -234,26 +234,33 @@ class RealtimeSubscriptionService:
 
     def get_status(self) -> dict:
         """현재 구독 현황을 반환합니다 (모니터링/API 용)."""
-        pending_by_priority: Dict[int, List[str]] = {}
+        _priority_names = {
+            SubscriptionPriority.CRITICAL: "CRITICAL",
+            SubscriptionPriority.HIGH: "HIGH",
+            SubscriptionPriority.MEDIUM: "MEDIUM",
+            SubscriptionPriority.LOW: "LOW",
+        }
+        by_priority: Dict[str, list] = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "LOW": []}
+
         for code, cats in self._refs.items():
-            best = min(int(p) for p in cats.values())
-            pending_by_priority.setdefault(best, []).append(code)
+            best = min(cats.values(), key=lambda p: int(p))
+            by_priority[_priority_names[best]].append({
+                "code": code,
+                "active": code in self._active_codes,
+                "subscribed_at": self._subscribed_at.get(code),
+            })
+
+        for key in by_priority:
+            by_priority[key].sort(key=lambda x: x["code"])
 
         return {
-            "active_subs_count": len(self._active_codes),
-            "active_pt_count": len(self._pt_codes),
-            "total_slots_used": len(self._active_codes) + len(self._pt_codes),
+            "total_count": len(self._active_codes) + len(self._pt_codes),
+            "pt_count": len(self._pt_codes),
+            "price_count": len(self._active_codes),
             "max_subscriptions": self.MAX_SUBSCRIPTIONS,
-            "active_price_codes": sorted(self._active_codes),
-            "active_pt_codes": sorted(self._pt_codes),
-            "pending_count": len(self._refs),
-            "subscribed_at": {code: self._subscribed_at[code] for code in self._active_codes if code in self._subscribed_at},
-            "pending_by_priority": {
-                "CRITICAL": sorted(pending_by_priority.get(int(SubscriptionPriority.CRITICAL), [])),
-                "HIGH": sorted(pending_by_priority.get(int(SubscriptionPriority.HIGH), [])),
-                "MEDIUM": sorted(pending_by_priority.get(int(SubscriptionPriority.MEDIUM), [])),
-                "LOW": sorted(pending_by_priority.get(int(SubscriptionPriority.LOW), [])),
-            },
+            "pt_codes": sorted(self._pt_codes),
+            "price_codes": sorted(self._active_codes),
+            "by_priority": by_priority,
         }
 
     # ── Internal rebalance logic ────────────────────────────────────
