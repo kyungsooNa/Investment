@@ -27,22 +27,25 @@
 
         <!-- 실시간 구독 현황 -->
         <div class="card" style="padding: 20px 12px;">
-            <h3 style="margin-top: 0; margin-bottom: 16px;">📡 실시간 현재가 구독 현황</h3>
+            <h3 style="margin-top: 0; margin-bottom: 16px;">📡 실시간 구독 현황</h3>
             <p style="font-size: 1.05rem; margin: 0 0 12px;">
                 활성 구독: <strong id="sub-active-count">-</strong> / <span id="sub-max">35</span>
                 &nbsp;|&nbsp; 요청 종목: <span id="sub-pending-count">-</span>
             </p>
             <div id="sub-priority-tabs" style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
-                <button class="btn btn-sm sub-tab-btn active" onclick="selectSubTab(this, 'HIGH')"   style="background:var(--danger-color,#f44336);  color:#fff;">HIGH</button>
-                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'MEDIUM')" style="background:var(--primary-color,#2196F3); color:#fff;">MEDIUM</button>
-                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'LOW')"    style="background:#888; color:#fff;">LOW</button>
+                <button class="btn btn-sm sub-tab-btn active" onclick="selectSubTab(this, 'ALL')"      style="background:#333;                        color:#fff;">ALL</button>
+                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'CRITICAL')" style="background:#B71C1C;                      color:#fff;">CRITICAL</button>
+                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'HIGH')"     style="background:var(--danger-color,#f44336);  color:#fff;">HIGH</button>
+                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'MEDIUM')"   style="background:var(--primary-color,#2196F3); color:#fff;">MEDIUM</button>
+                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'LOW')"      style="background:#888;                        color:#fff;">LOW</button>
             </div>
             <div class="table-container">
                 <table class="data-table">
-                    <thead>
+                    <thead id="sub-table-header">
                         <tr>
                             <th>종목명(코드)</th>
                             <th>구독 상태</th>
+                            <th>구독 시작</th>
                             <th>마지막 수신</th>
                         </tr>
                     </thead>

@@ -22,8 +22,9 @@ PT(프로그램매매) 구독 구조:
 from __future__ import annotations
 
 import logging
+import time
 from enum import IntEnum
-from typing import Dict, Set, List, TYPE_CHECKING
+from typing import Dict, Set, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.streaming_service import StreamingService
@@ -77,6 +78,9 @@ class RealtimeSubscriptionService:
 
         # 현재 구독 중인 프로그램매매 종목 집합 (H0STPGM0)
         self._pt_codes: Set[str] = set()
+
+        # 체결가 구독 시작 시각 (code -> epoch seconds)
+        self._subscribed_at: Dict[str, float] = {}
 
     # ── 체결가 구독 Public API ──────────────────────────────────────
 
@@ -209,6 +213,7 @@ class RealtimeSubscriptionService:
                 success = await self._streaming.subscribe_unified_price(code)
                 if success:
                     self._active_codes.add(code)
+                    self._subscribed_at[code] = time.time()
                     self._stock_repo.mark_streaming(code)
                     price_success += 1
                 else:
@@ -235,13 +240,14 @@ class RealtimeSubscriptionService:
             pending_by_priority.setdefault(best, []).append(code)
 
         return {
-            "active_price_count": len(self._active_codes),
+            "active_subs_count": len(self._active_codes),
             "active_pt_count": len(self._pt_codes),
             "total_slots_used": len(self._active_codes) + len(self._pt_codes),
             "max_subscriptions": self.MAX_SUBSCRIPTIONS,
             "active_price_codes": sorted(self._active_codes),
             "active_pt_codes": sorted(self._pt_codes),
             "pending_count": len(self._refs),
+            "subscribed_at": {code: self._subscribed_at[code] for code in self._active_codes if code in self._subscribed_at},
             "pending_by_priority": {
                 "CRITICAL": sorted(pending_by_priority.get(int(SubscriptionPriority.CRITICAL), [])),
                 "HIGH": sorted(pending_by_priority.get(int(SubscriptionPriority.HIGH), [])),
@@ -288,6 +294,7 @@ class RealtimeSubscriptionService:
             success = await self._streaming.subscribe_unified_price(code)
             if success:
                 self._active_codes.add(code)
+                self._subscribed_at[code] = time.time()
                 self._stock_repo.mark_streaming(code)
                 self._logger.debug(f"RealtimeSubscriptionService: 체결가 구독 등록 {code}")
         except Exception as e:
@@ -297,6 +304,7 @@ class RealtimeSubscriptionService:
         try:
             await self._streaming.unsubscribe_unified_price(code)
             self._active_codes.discard(code)
+            self._subscribed_at.pop(code, None)
             self._stock_repo.unmark_streaming(code)
             self._logger.debug(f"RealtimeSubscriptionService: 체결가 구독 해지 {code}")
         except Exception as e:

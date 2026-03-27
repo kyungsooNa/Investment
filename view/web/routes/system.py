@@ -138,9 +138,10 @@ def get_subscription_status():
 
     status = svc.get_status()
 
-    # 우선순위별 종목 목록 (active 여부 + 이름 + 마지막 수신 시각 부가)
+    # 우선순위별 종목 목록 (active 여부 + 이름 + 구독 시작 시각 + 마지막 수신 시각 부가)
     streaming_svc = getattr(ctx, "streaming_service", None)
-    active_set = set(status.get("active_codes", []))
+    active_set = set(status.get("active_price_codes", status.get("active_codes", [])))
+    subscribed_at_map: dict = status.get("subscribed_at", {})
 
     def _enrich(codes: list) -> list:
         result = []
@@ -154,6 +155,7 @@ def get_subscription_status():
                 "code": code,
                 "name": name,
                 "active": code in active_set,
+                "subscribed_at": subscribed_at_map.get(code),
                 "received_at": received_at,
             })
         return result
@@ -162,12 +164,13 @@ def get_subscription_status():
     return {
         "success": True,
         "data": {
-            "active_count": status["active_count"],
+            "active_count": status.get("active_price_count", status.get("active_count", 0)),
             "max_subscriptions": status["max_subscriptions"],
             "pending_count": status["pending_count"],
-            "HIGH":   _enrich(by_priority.get("HIGH", [])),
-            "MEDIUM": _enrich(by_priority.get("MEDIUM", [])),
-            "LOW":    _enrich(by_priority.get("LOW", [])),
+            "CRITICAL": _enrich(by_priority.get("CRITICAL", [])),
+            "HIGH":     _enrich(by_priority.get("HIGH", [])),
+            "MEDIUM":   _enrich(by_priority.get("MEDIUM", [])),
+            "LOW":      _enrich(by_priority.get("LOW", [])),
         },
     }
 

@@ -359,7 +359,7 @@ setInterval(updateBackgroundStatus, 5000);
 // ── 실시간 현재가 구독 현황 ──────────────────────────────────
 
 let _subData = null;
-let _subTab = 'HIGH';
+let _subTab = 'ALL';
 
 function selectSubTab(btn, priority) {
     _subTab = priority;
@@ -368,14 +368,36 @@ function selectSubTab(btn, priority) {
     renderSubTable();
 }
 
+const SUB_PRIORITY_STYLE = {
+    CRITICAL: { bg: '#B71C1C',                      label: 'CRITICAL' },
+    HIGH:     { bg: 'var(--danger-color,#f44336)',   label: 'HIGH' },
+    MEDIUM:   { bg: 'var(--primary-color,#2196F3)',  label: 'MEDIUM' },
+    LOW:      { bg: '#888',                          label: 'LOW' },
+};
+const ALL_PRIORITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+
 function renderSubTable() {
     const tbody = document.getElementById('sub-table-body');
     if (!tbody || !_subData) return;
 
-    const rows = _subData[_subTab] || [];
+    let rows;
+    const showPriority = _subTab === 'ALL';
+    if (showPriority) {
+        rows = ALL_PRIORITIES.flatMap(p => (_subData[p] || []).map(item => ({ ...item, _priority: p })));
+    } else {
+        rows = (_subData[_subTab] || []).map(item => ({ ...item, _priority: _subTab }));
+    }
+
     if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${showPriority ? 4 : 3}" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
         return;
+    }
+
+    const header = document.getElementById('sub-table-header');
+    if (header) {
+        header.innerHTML = showPriority
+            ? '<tr><th>종목명(코드)</th><th>우선순위</th><th>구독 상태</th><th>구독 시작</th><th>마지막 수신</th></tr>'
+            : '<tr><th>종목명(코드)</th><th>구독 상태</th><th>구독 시작</th><th>마지막 수신</th></tr>';
     }
 
     tbody.innerHTML = rows.map(item => {
@@ -383,15 +405,24 @@ function renderSubTable() {
         const activeBadge = item.active
             ? `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em; font-weight:bold;">구독 중</span>`
             : `<span style="background:#888; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em;">대기</span>`;
+        const subscribedAt = item.subscribed_at
+            ? formatTimestamp(item.subscribed_at)
+            : '<span style="color:#aaa;">-</span>';
         const received = item.received_at
             ? formatTimestamp(item.received_at)
             : '<span style="color:#aaa;">-</span>';
+        const pStyle = SUB_PRIORITY_STYLE[item._priority] || { bg: '#888', label: item._priority };
+        const priorityCell = showPriority
+            ? `<td><span style="background:${pStyle.bg}; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.78em; font-weight:bold;">${pStyle.label}</span></td>`
+            : '';
         return `
             <tr>
                 <td style="font-weight:bold; color:var(--accent);">
                     <a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a>
                 </td>
+                ${priorityCell}
                 <td>${activeBadge}</td>
+                <td style="font-size:0.9em; color:#888;">${subscribedAt}</td>
                 <td style="font-size:0.9em; color:#888;">${received}</td>
             </tr>
         `;
