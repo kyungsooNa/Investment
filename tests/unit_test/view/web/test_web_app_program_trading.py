@@ -24,83 +24,69 @@ def mock_ctx():
         ctx.broker.is_websocket_receive_alive = MagicMock(return_value=True)
         ctx.realtime_data_service = MockRDM.return_value
 
+        # subscription_service mock
+        ctx.subscription_service = MagicMock()
+        ctx.subscription_service._pt_codes = set()
+        ctx.subscription_service.add_program_trading = AsyncMock(return_value=True)
+        ctx.subscription_service.remove_program_trading = AsyncMock()
+        ctx.subscription_service.get_program_trading_codes = MagicMock(return_value=[])
+
         # WebSocketWatchdogTask mock (force_reconnect 등 위임용)
         ctx.websocket_watchdog_task = MagicMock()
-        ctx.websocket_watchdog_task.force_reconnect_program_trading = AsyncMock()
+        ctx.websocket_watchdog_task.force_reconnect_all = AsyncMock()
 
         # PerformanceProfiler mock
         ctx.pm = MagicMock()
         ctx.pm.start_timer.return_value = 0.0
 
         # Default behaviors
-        ctx.realtime_data_service.is_subscribed.return_value = False
-        ctx.streaming_service.connect_websocket.return_value = True
-        ctx.streaming_service.subscribe_program_trading.return_value = True
-        ctx.streaming_service.subscribe_realtime_price.return_value = True
+        ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
+        ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
+        ctx.streaming_service.subscribe_realtime_price = AsyncMock(return_value=True)
 
         yield ctx
 
 @pytest.mark.asyncio
 async def test_start_program_trading_success(mock_ctx):
-    """신규 구독 성공 케이스: 모든 구독 API 호출 및 상태 등록 확인"""
+    """신규 구독 성공 케이스: subscription_service.add_program_trading 호출 확인"""
     code = "005930"
     result = await mock_ctx.start_program_trading(code)
-    
+
     assert result is True
-    mock_ctx.realtime_data_service.add_subscribed_code.assert_called_once_with(code)
-    mock_ctx.streaming_service.subscribe_program_trading.assert_called_once_with(code)
-    mock_ctx.streaming_service.subscribe_realtime_price.assert_called_once_with(code)
-
-@pytest.mark.asyncio
-async def test_start_program_trading_partial_fail(mock_ctx):
-    """구독 하나만 성공하고 하나는 실패 시 롤백 및 실패 반환 확인"""
-    code = "005930"
-    # PT 구독 성공, 가격 구독 실패 설정
-    mock_ctx.streaming_service.subscribe_program_trading.return_value = True
-    mock_ctx.streaming_service.subscribe_realtime_price.return_value = False
-
-    result = await mock_ctx.start_program_trading(code)
-
-    assert result is False
-    mock_ctx.realtime_data_service.add_subscribed_code.assert_not_called()
-    # 성공했던 PT 구독 해지 요청(롤백) 확인
-    mock_ctx.streaming_service.unsubscribe_program_trading.assert_called_once_with(code)
+    mock_ctx.subscription_service.add_program_trading.assert_awaited_once_with(code)
+    mock_ctx.streaming_service.connect_websocket.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_start_program_trading_already_subscribed_alive(mock_ctx):
     """이미 구독 중이고 연결 살아있으면 스킵"""
     code = "005930"
-    mock_ctx.realtime_data_service.is_subscribed.return_value = True
+    mock_ctx.subscription_service._pt_codes = {code}
     mock_ctx.broker.is_websocket_receive_alive.return_value = True
-    
+
     result = await mock_ctx.start_program_trading(code)
-    
+
     assert result is True
-    mock_ctx.streaming_service.connect_websocket.assert_not_called()
+    mock_ctx.streaming_service.connect_websocket.assert_not_awaited()
 
 @pytest.mark.asyncio
-async def test_start_program_trading_dead_reconnect_success(mock_ctx):
-    """구독 중이나 죽어있어서 재연결 시도 후 성공"""
+async def test_start_program_trading_dead_reconnect(mock_ctx):
+    """구독 중이나 수신 태스크 죽어있어서 force_reconnect_all 호출"""
     code = "005930"
-    mock_ctx.realtime_data_service.is_subscribed.return_value = True
+    mock_ctx.subscription_service._pt_codes = {code}
     mock_ctx.broker.is_websocket_receive_alive.return_value = False
-    
+
     result = await mock_ctx.start_program_trading(code)
 
     assert result is True
-    mock_ctx.websocket_watchdog_task.force_reconnect_program_trading.assert_called_once()
+    mock_ctx.websocket_watchdog_task.force_reconnect_all.assert_awaited_once()
 
 @pytest.mark.asyncio
-async def test_start_program_trading_dead_reconnect_fail_retry_success(mock_ctx):
-    """재연결 시도 -> 실패하여 상태 제거됨 -> 신규 구독 시도 -> 성공"""
+async def test_start_program_trading_connect_fail(mock_ctx):
+    """WebSocket 연결 실패 시 False 반환"""
     code = "005930"
-    # 1. 처음 체크 시 True, 2. 재연결 후 체크 시 False (실패 가정)
-    mock_ctx.realtime_data_service.is_subscribed.side_effect = [True, False, False]
-    mock_ctx.broker.is_websocket_receive_alive.return_value = False
-    
+    mock_ctx.streaming_service.connect_websocket = AsyncMock(return_value=False)
+
     result = await mock_ctx.start_program_trading(code)
-    
-    assert result is True
-    # 재연결 시도 후 상태가 False가 되어 아래의 신규 구독 로직(connect_websocket 등)이 호출되어야 함
-    mock_ctx.streaming_service.connect_websocket.assert_called_once()
-    mock_ctx.realtime_data_service.add_subscribed_code.assert_called_once_with(code)
+
+    assert result is False
+    mock_ctx.subscription_service.add_program_trading.assert_not_awaited()

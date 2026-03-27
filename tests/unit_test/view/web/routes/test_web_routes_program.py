@@ -13,8 +13,9 @@ async def test_subscribe_program_trading(web_client, mock_web_ctx):
 
     # 구독 성공 Mocking
     mock_web_ctx.start_program_trading = AsyncMock(return_value=True)
-    mock_rdm.get_subscribed_codes.return_value = ["005930"] # 구독 후 상태 시뮬레이션
-    
+    mock_web_ctx.subscription_service = MagicMock()
+    mock_web_ctx.subscription_service.get_program_trading_codes = MagicMock(return_value=["005930"])
+
     response = web_client.post("/api/program-trading/subscribe", json={"code": "005930"})
     
     assert response.status_code == 200
@@ -167,8 +168,8 @@ async def test_unsubscribe_program_trading_specific(web_client, mock_web_ctx):
     """POST /api/program-trading/unsubscribe 개별 해지 테스트"""
     mock_web_ctx.stop_program_trading = AsyncMock()
     mock_web_ctx.stop_all_program_trading = AsyncMock()
-    mock_web_ctx.realtime_data_service = MagicMock()
-    mock_web_ctx.realtime_data_service.get_subscribed_codes.return_value = ["005930"]
+    mock_web_ctx.subscription_service = MagicMock()
+    mock_web_ctx.subscription_service.get_program_trading_codes = MagicMock(return_value=["005930"])
 
     response = web_client.post("/api/program-trading/unsubscribe", json={"code": "005930"})
     
@@ -182,8 +183,8 @@ async def test_unsubscribe_program_trading_all(web_client, mock_web_ctx):
     """POST /api/program-trading/unsubscribe 전체 해지 테스트"""
     mock_web_ctx.stop_all_program_trading = AsyncMock()
     mock_web_ctx.stop_program_trading = AsyncMock()
-    mock_web_ctx.realtime_data_service = MagicMock()
-    mock_web_ctx.realtime_data_service.get_subscribed_codes.return_value = []
+    mock_web_ctx.subscription_service = MagicMock()
+    mock_web_ctx.subscription_service.get_program_trading_codes = MagicMock(return_value=[])
 
     response = web_client.post("/api/program-trading/unsubscribe", json={})
     
@@ -217,9 +218,9 @@ async def test_get_program_trading_history_detail(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_get_program_trading_status(web_client, mock_web_ctx):
     """GET /api/program-trading/status 테스트"""
-    mock_web_ctx.realtime_data_service = MagicMock()
-    mock_web_ctx.realtime_data_service.get_subscribed_codes.return_value = ["005930", "000660"]
-    
+    mock_web_ctx.subscription_service = MagicMock()
+    mock_web_ctx.subscription_service.get_program_trading_codes = MagicMock(return_value=["005930", "000660"])
+
     response = web_client.get("/api/program-trading/status")
     
     assert response.status_code == 200

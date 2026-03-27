@@ -313,7 +313,7 @@ async def test_force_watchlist_update_not_init(web_client, mock_web_ctx):
 
 def test_get_subscription_status_no_service(web_client, mock_web_ctx):
     """price_subscription_service가 None이면 data: null을 반환한다."""
-    mock_web_ctx.price_subscription_service = None
+    mock_web_ctx.subscription_service = None
 
     response = web_client.get("/api/subscriptions/status")
 
@@ -337,7 +337,7 @@ def test_get_subscription_status_basic(web_client, mock_web_ctx):
             "LOW":    [],
         },
     }
-    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.subscription_service = mock_svc
 
     mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
     mock_web_ctx.stock_code_repository.get_name_by_code.side_effect = lambda c: {
@@ -382,7 +382,7 @@ def test_get_subscription_status_received_at_populated(web_client, mock_web_ctx)
             "LOW":    [],
         },
     }
-    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.subscription_service = mock_svc
 
     mock_web_ctx.streaming_service.get_cached_realtime_price = MagicMock(return_value={
         "price": "70000",
@@ -410,7 +410,7 @@ def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):
             "LOW":    ["000660"],
         },
     }
-    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.subscription_service = mock_svc
     mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
     mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "SK하이닉스"
 

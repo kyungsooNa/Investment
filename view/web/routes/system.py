@@ -132,7 +132,7 @@ async def force_daily_price_update():
 def get_subscription_status():
     """실시간 현재가 구독 현황 반환 (우선순위별 종목 + 마지막 수신 시각)"""
     ctx = _get_ctx()
-    svc = getattr(ctx, "price_subscription_service", None)
+    svc = getattr(ctx, "subscription_service", None)
     if not svc:
         return {"success": True, "data": None}
 

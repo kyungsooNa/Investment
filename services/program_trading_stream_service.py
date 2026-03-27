@@ -12,9 +12,14 @@ from datetime import datetime
 class ProgramTradingStreamService:
     """
     프로그램매매 실시간 데이터의 수신, 저장(SQLite), 클라이언트 전송을 담당하는 서비스.
-    - 프로그램매매 히스토리: SQLite pt_history 테이블 (즉시 저장, 버퍼 불필요)
-    - 스냅샷(차트 데이터): SQLite pt_snapshot 테이블
-    - 구독 상태: SQLite pt_subscriptions 테이블 (재시작 시 복구)
+
+    역할:
+      - 프로그램매매 히스토리: SQLite pt_history 테이블 (즉시 저장, 버퍼 불필요)
+      - 스냅샷(차트 데이터): SQLite pt_snapshot 테이블
+      - SSE 브로드캐스트: 웹 클라이언트에 실시간 데이터 전송
+      - last_data_ts: WebSocketWatchdogTask 헬스체크용 마지막 수신 시간
+
+    구독 상태 관리는 RealtimeSubscriptionService가 담당합니다.
     """
 
     RETENTION_DAYS = 7  # 데이터 보존 기간
@@ -24,11 +29,10 @@ class ProgramTradingStreamService:
 
         # 메모리 캐시 (성능 최적화)
         self._pt_history: dict = {}  # {code: [data1, data2, ...]}
-        self.last_data_ts = 0.0      # [추가] 마지막 데이터 수신 시간 (Timestamp)
+        self.last_data_ts = 0.0      # 마지막 데이터 수신 시간 (Timestamp) — watchdog용
 
         # 클라이언트 스트리밍
         self._pt_queues: list = []  # 접속한 클라이언트들의 큐 리스트
-        self._pt_codes: set = set()  # 현재 구독 중인 종목 코드 집합
 
         # SQLite
         self._db_path = os.path.join(self._get_base_dir(), "program_trading.db")
@@ -38,7 +42,6 @@ class ProgramTradingStreamService:
         # 초기화
         os.makedirs(self._get_base_dir(), exist_ok=True)
         self._init_db()
-        self._load_subscribed_codes()
         self._load_pt_history()
 
     # --- SQLite 초기화 ---
@@ -51,7 +54,7 @@ class ProgramTradingStreamService:
             self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
             with self._get_connection() as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
-                
+
                 # 프로그램매매 히스토리 테이블 (모든 필드 분리 및 정수형 최적화)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS pt_history (
@@ -87,13 +90,6 @@ class ProgramTradingStreamService:
                 except sqlite3.OperationalError:
                     pass
 
-                # 구독 상태 테이블
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS pt_subscriptions (
-                        code TEXT PRIMARY KEY
-                    )
-                """)
-
                 # 스냅샷 테이블
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS pt_snapshot (
@@ -125,18 +121,18 @@ class ProgramTradingStreamService:
 
             with self._get_connection() as conn:
                 cursor = conn.execute("""
-                    SELECT 
-                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
+                    SELECT
+                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt,
                         net_vol, net_amt, sell_rem, buy_rem, net_rem
-                    FROM pt_history 
+                    FROM pt_history
                     WHERE created_at >= ? ORDER BY id ASC
                 """, (today_ts,))
-                
+
                 count = 0
                 for row in cursor.fetchall():
-                    (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
+                    (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt,
                      net_vol, net_amt, sell_rem, buy_rem, net_rem) = row
-                    
+
                     # 기존 웹 UI 및 타 서비스와 호환되도록 원래 JSON 구조로 완벽히 복원
                     restored_data = {
                         "유가증권단축종목코드": code,
@@ -161,18 +157,6 @@ class ProgramTradingStreamService:
         except Exception as e:
             self.logger.error(f"히스토리 로드 중 오류: {e}")
 
-    def _load_subscribed_codes(self):
-        """DB에서 구독 상태를 복원."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.execute("SELECT code FROM pt_subscriptions")
-                codes = [row[0] for row in cursor.fetchall()]
-                self._pt_codes = set(codes)
-            if self._pt_codes:
-                self.logger.info(f"구독 상태 복원: {sorted(self._pt_codes)}")
-        except Exception as e:
-            self.logger.error(f"구독 상태 로드 실패: {e}")
-
     # --- 데이터 처리 ---
     def on_data_received(self, data: dict):
         """웹소켓 등에서 수신한 데이터를 처리 (SQLite 분할 저장 및 브로드캐스트)."""
@@ -185,7 +169,7 @@ class ProgramTradingStreamService:
             self.logger.info(f"실시간 데이터 수신 재개 (Gap: {now - self.last_data_ts:.1f}초)")
 
         self.last_data_ts = now
-        
+
         # 1. 메모리 저장 (기존 프론트엔드/백엔드 호환용 원본 유지)
         self._pt_history.setdefault(code, []).append(data)
 
@@ -215,10 +199,10 @@ class ProgramTradingStreamService:
             with self._get_connection() as conn:
                 conn.execute("""
                     INSERT INTO pt_history (
-                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
+                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt,
                         net_vol, net_amt, sell_rem, buy_rem, net_rem, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
+                """, (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt,
                       net_vol, net_amt, sell_rem, buy_rem, net_rem, now))
         except Exception as e:
             self.logger.error(f"히스토리 DB 저장 실패: {e}")
@@ -239,7 +223,7 @@ class ProgramTradingStreamService:
             sell_rem,
             buy_rem
         ]
-        
+
         for q in list(self._pt_queues):
             try:
                 q.put_nowait(payload)  # data 대신 payload(리스트) 전송
@@ -267,40 +251,6 @@ class ProgramTradingStreamService:
     def get_history_data(self):
         """현재 메모리에 있는 히스토리 데이터 반환."""
         return self._pt_history
-
-    # --- 구독 상태 관리 (SQLite 영속) ---
-    def add_subscribed_code(self, code: str):
-        self._pt_codes.add(code)
-        try:
-            with self._get_connection() as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO pt_subscriptions (code) VALUES (?)",
-                    (code,)
-                )
-        except Exception as e:
-            self.logger.error(f"구독 상태 저장 실패: {e}")
-
-    def remove_subscribed_code(self, code: str):
-        self._pt_codes.discard(code)
-        try:
-            with self._get_connection() as conn:
-                conn.execute("DELETE FROM pt_subscriptions WHERE code = ?", (code,))
-        except Exception as e:
-            self.logger.error(f"구독 상태 삭제 실패: {e}")
-
-    def clear_subscribed_codes(self):
-        self._pt_codes.clear()
-        try:
-            with self._get_connection() as conn:
-                conn.execute("DELETE FROM pt_subscriptions")
-        except Exception as e:
-            self.logger.error(f"구독 상태 전체 삭제 실패: {e}")
-
-    def is_subscribed(self, code: str) -> bool:
-        return code in self._pt_codes
-
-    def get_subscribed_codes(self) -> list:
-        return sorted(list(self._pt_codes))
 
     # --- 스냅샷 저장/로드 (SQLite) ---
     def save_snapshot(self, data_dict: dict):
@@ -380,7 +330,7 @@ class ProgramTradingStreamService:
         status = {
             "snapshot": {"exists": False, "updated_at": None},
             "history": {"count": 0, "last_record": None, "hourly_counts": {}},
-            "memory": {"last_received_at": None}  # [추가] 메모리 수신 상태
+            "memory": {"last_received_at": None}
         }
         try:
             with self._get_connection() as conn:
@@ -393,9 +343,9 @@ class ProgramTradingStreamService:
 
                 # 2. History 확인 (오늘 기준)
                 today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-                
+
                 cursor = conn.execute(
-                    "SELECT COUNT(*), MAX(created_at) FROM pt_history WHERE created_at >= ?", 
+                    "SELECT COUNT(*), MAX(created_at) FROM pt_history WHERE created_at >= ?",
                     (today_start,)
                 )
                 cnt, last_ts = cursor.fetchone()
@@ -405,16 +355,16 @@ class ProgramTradingStreamService:
 
                 # 시간대별 건수
                 cursor = conn.execute("""
-                    SELECT strftime('%H', datetime(created_at, 'unixepoch', 'localtime')) as hour, count(*) 
-                    FROM pt_history 
-                    WHERE created_at >= ? 
-                    GROUP BY hour 
+                    SELECT strftime('%H', datetime(created_at, 'unixepoch', 'localtime')) as hour, count(*)
+                    FROM pt_history
+                    WHERE created_at >= ?
+                    GROUP BY hour
                     ORDER BY hour
                 """, (today_start,))
-                
+
                 for r in cursor.fetchall():
                     status["history"]["hourly_counts"][r[0]] = r[1]
-                    
+
             # 메모리 상태 추가
             if self.last_data_ts > 0:
                 status["memory"]["last_received_at"] = datetime.fromtimestamp(self.last_data_ts).strftime("%Y-%m-%d %H:%M:%S")
@@ -422,5 +372,5 @@ class ProgramTradingStreamService:
         except Exception as e:
             self.logger.error(f"DB 검사 중 오류: {e}")
             status["error"] = str(e)
-            
+
         return status

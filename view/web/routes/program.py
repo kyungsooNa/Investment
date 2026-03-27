@@ -24,7 +24,8 @@ async def subscribe_program_trading(req: ProgramTradingRequest):
         mapper = getattr(ctx, 'stock_code_repository', None)
         stock_name = mapper.get_name_by_code(req.code) if mapper else ''
         # [변경] 매니저 사용
-        return {"success": True, "code": req.code, "stock_name": stock_name, "codes": ctx.realtime_data_service.get_subscribed_codes()}
+        codes = ctx.subscription_service.get_program_trading_codes() if ctx.subscription_service else []
+        return {"success": True, "code": req.code, "stock_name": stock_name, "codes": codes}
 
 
 @router.get("/program-trading/history/{code}")
@@ -51,15 +52,15 @@ async def unsubscribe_program_trading(req: ProgramTradingUnsubscribeRequest = No
         await ctx.stop_program_trading(req.code)
     else:
         await ctx.stop_all_program_trading()
-    # [변경] 매니저 사용
-    return {"success": True, "codes": ctx.realtime_data_service.get_subscribed_codes()}
+    codes = ctx.subscription_service.get_program_trading_codes() if ctx.subscription_service else []
+    return {"success": True, "codes": codes}
 
 
 @router.get("/program-trading/status")
 async def get_program_trading_status():
     """프로그램매매 구독 상태 확인 (시장 개장 여부 포함)."""
     ctx = _get_ctx()
-    codes = ctx.realtime_data_service.get_subscribed_codes()
+    codes = ctx.subscription_service.get_program_trading_codes() if ctx.subscription_service else []
     is_market_open = await ctx.is_market_open_now()
     return {
         "subscribed": len(codes) > 0,

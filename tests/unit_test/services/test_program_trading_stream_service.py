@@ -45,7 +45,6 @@ def test_init_creates_db(manager, tmp_db_dir):
     conn.close()
 
     assert 'pt_history' in tables
-    assert 'pt_subscriptions' in tables
     assert 'pt_snapshot' in tables
 
 
@@ -150,65 +149,6 @@ def test_on_data_received_queue_exception(manager):
     test_data = {"유가증권단축종목코드": "005930"}
     manager.on_data_received(test_data)
     assert queue in manager._pt_queues
-
-
-# --- 구독 상태 관리 (SQLite 영속) ---
-
-def test_subscription_management(manager):
-    """구독 상태 관리 기능 테스트."""
-    code = "005930"
-
-    assert not manager.is_subscribed(code)
-
-    manager.add_subscribed_code(code)
-    assert manager.is_subscribed(code)
-    assert code in manager.get_subscribed_codes()
-
-    manager.remove_subscribed_code(code)
-    assert not manager.is_subscribed(code)
-
-    manager.add_subscribed_code("000660")
-    manager.clear_subscribed_codes()
-    assert len(manager.get_subscribed_codes()) == 0
-
-
-def test_subscription_persisted_in_db(manager, tmp_db_dir):
-    """구독 상태가 SQLite에 영속되는지 확인."""
-    manager.add_subscribed_code("005930")
-    manager.add_subscribed_code("000660")
-
-    # DB 직접 확인
-    with manager._get_connection() as conn:
-        cursor = conn.execute("SELECT code FROM pt_subscriptions ORDER BY code")
-        codes = [row[0] for row in cursor.fetchall()]
-    assert codes == ["000660", "005930"]
-
-    # 삭제 후 확인
-    manager.remove_subscribed_code("005930")
-    with manager._get_connection() as conn:
-        cursor = conn.execute("SELECT code FROM pt_subscriptions")
-        codes = [row[0] for row in cursor.fetchall()]
-    assert codes == ["000660"]
-
-
-def test_subscription_restored_on_init(tmp_db_dir):
-    """재시작 시 구독 상태가 DB에서 복원되는지 확인."""
-    mock_logger = MagicMock()
-
-    # 첫 번째 인스턴스: 구독 추가
-    with patch.object(ProgramTradingStreamService, '_get_base_dir', return_value=tmp_db_dir):
-        mgr1 = ProgramTradingStreamService(logger=mock_logger)
-        mgr1.add_subscribed_code("005930")
-        mgr1.add_subscribed_code("000660")
-        mgr1._conn.close()
-
-    # 두 번째 인스턴스: 복원 확인
-    with patch.object(ProgramTradingStreamService, '_get_base_dir', return_value=tmp_db_dir):
-        mgr2 = ProgramTradingStreamService(logger=mock_logger)
-        assert mgr2.is_subscribed("005930")
-        assert mgr2.is_subscribed("000660")
-        assert len(mgr2.get_subscribed_codes()) == 2
-        mgr2._conn.close()
 
 
 # --- 히스토리 로드 ---
@@ -448,24 +388,6 @@ def test_load_snapshot_json_error(manager):
     assert result is None
     manager.logger.error.assert_called()
 
-def test_subscription_db_errors(manager):
-    """구독 관리 시 DB 에러 발생해도 메모리에는 반영되는지 확인."""
-    # Add
-    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
-        manager.add_subscribed_code("005930")
-    assert "005930" in manager._pt_codes
-    manager.logger.error.assert_called()
-    
-    # Remove
-    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
-        manager.remove_subscribed_code("005930")
-    assert "005930" not in manager._pt_codes
-    
-    # Clear
-    manager.add_subscribed_code("005930")
-    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
-        manager.clear_subscribed_codes()
-    assert len(manager._pt_codes) == 0
 
 def test_init_db_connect_failure():
     """DB 연결 실패 시 에러 로그 확인."""

@@ -6,7 +6,7 @@ from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 from services.market_calendar_service import MarketCalendarService
-from services.price_subscription_service import SubscriptionPriority
+from services.realtime_subscription_service import SubscriptionPriority
 
 
 class OrderExecutionService:

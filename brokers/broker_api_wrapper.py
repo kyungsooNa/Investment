@@ -222,6 +222,10 @@ class BrokerAPIWrapper:
         """웹소켓 수신 태스크가 살아있는지 확인."""
         return self._client.is_websocket_receive_alive()
 
+    def is_websocket_connected(self) -> bool:
+        """웹소켓이 현재 연결(OPEN) 상태인지 확인."""
+        return self._client.is_websocket_connected()
+
     async def connect_websocket(self, on_message_callback=None) -> Any:  # 실제 반환 값에 따라 타입 변경
         """웹소켓 연결을 시작합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.connect_websocket(on_message_callback)

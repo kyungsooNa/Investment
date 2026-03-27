@@ -40,7 +40,7 @@ from services.program_trading_stream_service import ProgramTradingStreamService
 from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
-from services.price_subscription_service import PriceSubscriptionService
+from services.realtime_subscription_service import RealtimeSubscriptionService
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
@@ -79,7 +79,7 @@ class WebAppContext:
 
         # 프로그램매매 실시간 데이터 서비스
         self.realtime_data_service = ProgramTradingStreamService(self.logger)
-        self.price_subscription_service: PriceSubscriptionService = None
+        self.subscription_service: RealtimeSubscriptionService = None
         
         web_api.set_ctx(self)
 
@@ -212,8 +212,8 @@ class WebAppContext:
             market_clock=self.market_clock,
             market_data_service=self.market_data_service,
         )
-        # PriceSubscriptionService 초기화 (StreamingService 생성 이후)
-        self.price_subscription_service = PriceSubscriptionService(
+        # RealtimeSubscriptionService 초기화 (StreamingService 생성 이후)
+        self.subscription_service = RealtimeSubscriptionService(
             streaming_service=self.streaming_service,
             stock_repo=self.stock_repository,
             logger=self.logger,
@@ -223,6 +223,7 @@ class WebAppContext:
         self.websocket_watchdog_task = WebSocketWatchdogTask(
             streaming_service=self.streaming_service,
             realtime_data_service=self.realtime_data_service,
+            subscription_service=self.subscription_service,
             market_calendar_service=self._mcs,
             performance_profiler=self.pm,
             notification_service=self.notification_service,
@@ -257,9 +258,9 @@ class WebAppContext:
             performance_profiler=self.pm,
             notification_service=self.notification_service,
             market_calendar_service=self._mcs,
-            price_subscription_service=self.price_subscription_service,
+            price_subscription_service=self.subscription_service,
         )
-        
+
         # [신규] 오닐 유니버스 서비스 초기화
         self.oneil_universe_service = OneilUniverseService(
             stock_query_service=self.stock_query_service,
@@ -269,7 +270,7 @@ class WebAppContext:
             scraper_service=NaverFinanceScraperService(logger=self.logger),
             logger=self.logger,
             performance_profiler=self.pm,
-            price_subscription_service=self.price_subscription_service,
+            price_subscription_service=self.subscription_service,
         )
 
         self.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
@@ -313,10 +314,10 @@ class WebAppContext:
 
     async def _initialize_price_subscriptions(self) -> None:
         """기동 시 포트폴리오(HIGH) 및 프리미엄 종목(MEDIUM) 구독을 초기화."""
-        if not self.price_subscription_service:
+        if not self.subscription_service:
             return
 
-        from services.price_subscription_service import SubscriptionPriority
+        from services.realtime_subscription_service import SubscriptionPriority
 
         # 1. 보유 종목 → HIGH 구독
         try:
@@ -326,7 +327,7 @@ class WebAppContext:
                 for item in holdings:
                     code = item.get("pdno", "").strip()
                     if code:
-                        await self.price_subscription_service.add_subscription(
+                        await self.subscription_service.add_subscription(
                             code, SubscriptionPriority.HIGH, "portfolio"
                         )
         except Exception as e:
@@ -341,7 +342,7 @@ class WebAppContext:
                     data = json.load(f)
                 codes = data.get("kospi", []) + data.get("kosdaq", [])
                 if codes:
-                    await self.price_subscription_service.sync_subscriptions(
+                    await self.subscription_service.sync_subscriptions(
                         codes=codes,
                         category_key="strategy_premium",
                         priority=SubscriptionPriority.MEDIUM,
@@ -555,21 +556,15 @@ class WebAppContext:
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""
-        # [변경] 매니저를 통해 구독 상태 확인
-        if self.realtime_data_service.is_subscribed(code):
-            # [추가] 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
-            if (self.broker
-                    and not self.broker.is_websocket_receive_alive()):
-                self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
-                await self.websocket_watchdog_task.force_reconnect_program_trading()
+        if not self.subscription_service:
+            return False
 
-                # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
-                if not self.realtime_data_service.is_subscribed(code):
-                    self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
-                else:
-                    return True
-            else:
-                return True
+        # 이미 구독 중이지만 수신 태스크가 죽었으면 강제 재연결
+        if code in self.subscription_service._pt_codes:
+            if self.broker and not self.broker.is_websocket_receive_alive():
+                self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
+                await self.websocket_watchdog_task.force_reconnect_all()
+            return True
 
         try:
             t_start = self.pm.start_timer()
@@ -579,26 +574,12 @@ class WebAppContext:
                 self.logger.warning(f"프로그램매매 구독 실패 (WebSocket 연결 불가): {code}")
                 return False
 
-            t_sub_pt = self.pm.start_timer()
-            sub_pt_success = await self.streaming_service.subscribe_program_trading(code)
-            self.pm.log_timer(f"subscribe_program_trading({code})", t_sub_pt)
-
-            t_sub_price = self.pm.start_timer()
-            sub_price_success = await self.streaming_service.subscribe_realtime_price(code)
-            self.pm.log_timer(f"subscribe_realtime_price({code})", t_sub_price)
-
-            if sub_pt_success and sub_price_success:
-                self.realtime_data_service.add_subscribed_code(code)
+            t_sub = self.pm.start_timer()
+            success = await self.subscription_service.add_program_trading(code)
+            self.pm.log_timer(f"add_program_trading({code})", t_sub)
+            if success:
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
-                return True
-            else:
-                # 하나라도 실패하면, 성공했을 수 있는 다른 구독을 해지하여 상태를 정리한다.
-                self.logger.warning(f"프로그램매매 구독 실패 (pt: {sub_pt_success}, price: {sub_price_success}) - {code}")
-                if sub_pt_success:
-                    await self.streaming_service.unsubscribe_program_trading(code)
-                if sub_price_success:
-                    await self.streaming_service.unsubscribe_realtime_price(code)
-                return False
+            return success
 
         except Exception as e:
             self.logger.error(f"프로그램매매 구독 중 예외 발생 ({code}): {e}", exc_info=True)
@@ -606,14 +587,12 @@ class WebAppContext:
 
     async def stop_program_trading(self, code: str):
         """특정 종목 프로그램매매 구독 해지."""
-        if self.realtime_data_service.is_subscribed(code):
-            await self.streaming_service.unsubscribe_program_trading(code)
-            await self.streaming_service.unsubscribe_realtime_price(code)
-            self.realtime_data_service.remove_subscribed_code(code)
+        if self.subscription_service:
+            await self.subscription_service.remove_program_trading(code)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
-        for code in self.realtime_data_service.get_subscribed_codes():
-            await self.streaming_service.unsubscribe_program_trading(code)
-            await self.streaming_service.unsubscribe_realtime_price(code)
-        self.realtime_data_service.clear_subscribed_codes()
+        if not self.subscription_service:
+            return
+        for code in self.subscription_service.get_program_trading_codes():
+            await self.subscription_service.remove_program_trading(code)

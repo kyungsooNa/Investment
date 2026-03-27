@@ -20,6 +20,7 @@ _EXCLUDED_METHODS = frozenset({
     "subscribe_unified_price",
     "unsubscribe_unified_price",
     "is_websocket_receive_alive",
+    "is_websocket_connected",
 })
 
 

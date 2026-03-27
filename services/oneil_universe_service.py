@@ -17,7 +17,7 @@ from core.market_clock import MarketClock
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from core.logger import get_strategy_logger
 from core.performance_profiler import PerformanceProfiler
-from services.price_subscription_service import SubscriptionPriority
+from services.realtime_subscription_service import SubscriptionPriority
 
 def _chunked(lst, size):
     for i in range(0, len(lst), size):

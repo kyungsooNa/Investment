@@ -1,8 +1,13 @@
-# task/background/websocket_watchdog_task.py
+# task/background/intraday/websocket_watchdog_task.py
 """
-프로그램매매 WebSocket 연결 감시 및 자동 복원 태스크.
+WebSocket 연결 감시 및 자동 복원 태스크.
 WebSocket 수신 태스크 상태를 주기적으로 감시하고,
 데이터 수신이 끊기면 재연결한다.
+
+감시 대상:
+  - 프로그램매매(H0STPGM0) 구독
+  - 체결가(H0UNCNT0) 구독
+  → 재연결 시 RealtimeSubscriptionService.restore_all_subscriptions() 로 모두 복원
 """
 import asyncio
 import logging
@@ -16,23 +21,26 @@ from services.notification_service import NotificationService
 if TYPE_CHECKING:
     from services.streaming_service import StreamingService
     from services.program_trading_stream_service import ProgramTradingStreamService
+    from services.realtime_subscription_service import RealtimeSubscriptionService
     from services.market_calendar_service import MarketCalendarService
 
 
 class WebSocketWatchdogTask(SchedulableTask):
-    """프로그램매매 WebSocket 연결을 감시·복원하는 백그라운드 태스크."""
+    """WebSocket 연결(프로그램매매 + 체결가)을 감시·복원하는 백그라운드 태스크."""
 
     def __init__(
         self,
         streaming_service: Optional["StreamingService"] = None,
         realtime_data_service: Optional["ProgramTradingStreamService"] = None,
+        subscription_service: Optional["RealtimeSubscriptionService"] = None,
         market_calendar_service: Optional["MarketCalendarService"] = None,
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
         logger=None,
     ):
         self._streaming_service = streaming_service
-        self._realtime_data_service = realtime_data_service
+        self._realtime_data_service = realtime_data_service   # last_data_ts 헬스체크용
+        self._subscription_service = subscription_service     # 구독 상태 관리 + 복원
         self.mcs = market_calendar_service
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._ns = notification_service
@@ -71,17 +79,18 @@ class WebSocketWatchdogTask(SchedulableTask):
         if self._realtime_data_service:
             self._realtime_data_service.start_background_tasks()
 
-        # 2. 이전 구독 상태 자동 복원
-        if self._realtime_data_service:
-            saved_codes = self._realtime_data_service.get_subscribed_codes()
-            if saved_codes:
-                self._tasks.append(
-                    asyncio.create_task(self._restore_program_trading(saved_codes))
-                )
+        # 2. 이전 구독 상태 자동 복원 (PT + 체결가 모두)
+        if self._subscription_service and (
+            self._subscription_service.has_program_trading_subscriptions()
+            or self._subscription_service._active_codes
+        ):
+            self._tasks.append(
+                asyncio.create_task(self._restore_subscriptions())
+            )
 
-        # 3. 프로그램매매 연결 상태 워치독
+        # 3. WebSocket 연결 상태 워치독
         self._tasks.append(
-            asyncio.create_task(self._program_trading_watchdog())
+            asyncio.create_task(self._websocket_watchdog())
         )
 
         self._logger.info(f"WebSocketWatchdogTask 시작: {len(self._tasks)}개 태스크")
@@ -118,38 +127,32 @@ class WebSocketWatchdogTask(SchedulableTask):
             self._state = TaskState.RUNNING
             self._logger.info("WebSocketWatchdogTask 재개")
 
-    # ── 프로그램매매 워치독 / 복원 / 재연결 ──────────────────────
+    # ── 구독 복원 ──────────────────────────────────────────────
 
-    async def _restore_program_trading(self, codes: list) -> None:
+    async def _restore_subscriptions(self) -> None:
         """앱 시작 시 이전 구독 상태를 자동 복원 (백그라운드)."""
-        self._logger.info(f"프로그램매매 구독 복원 시작: {codes}")
-        success_count = 0
-        failed_codes = []
-        for code in codes:
-            try:
-                connected = await self._streaming_service.connect_websocket(self._realtime_callback)
-                if not connected:
-                    self._logger.warning(f"프로그램매매 복원 실패 (WebSocket 연결 불가): {code}")
-                    failed_codes.append(code)
-                    continue
-                await self._streaming_service.subscribe_program_trading(code)
-                await self._streaming_service.subscribe_realtime_price(code)
-                success_count += 1
-            except Exception as e:
-                self._logger.error(f"프로그램매매 복원 중 오류 ({code}): {e}")
-                failed_codes.append(code)
+        if not self._subscription_service:
+            return
 
-        if failed_codes:
-            self._logger.warning(f"복원에 실패한 구독 종목을 상태에서 제거합니다: {failed_codes}")
-            for code in failed_codes:
-                self._realtime_data_service.remove_subscribed_code(code)
+        pt_codes = self._subscription_service.get_program_trading_codes()
+        price_codes = list(self._subscription_service._active_codes)
+        self._logger.info(f"구독 복원 시작 — PT: {pt_codes}, 체결가: {len(price_codes)}개")
 
-        self._logger.info(f"프로그램매매 구독 복원 완료: {success_count}/{len(codes)}개 종목")
+        try:
+            connected = await self._streaming_service.connect_websocket(self._realtime_callback)
+            if not connected:
+                self._logger.warning("구독 복원 실패 (WebSocket 연결 불가)")
+                return
+            await self._subscription_service.restore_all_subscriptions()
+        except Exception as e:
+            self._logger.error(f"구독 복원 중 오류: {e}")
 
-    async def _program_trading_watchdog(self) -> None:
-        """프로그램매매 WebSocket 연결 상태를 주기적으로 감시하고, 데이터 수신이 끊기면 재연결."""
+    # ── WebSocket 워치독 ────────────────────────────────────────
+
+    async def _websocket_watchdog(self) -> None:
+        """WebSocket 연결 상태를 주기적으로 감시하고, 이상이 감지되면 재연결."""
         WATCHDOG_INTERVAL = 60   # 감시 주기 (초)
-        DATA_GAP_THRESHOLD = 120  # 데이터 미수신 허용 최대 시간 (초)
+        DATA_GAP_THRESHOLD = 120  # 데이터 미수신 허용 최대 시간 (초) — PT 구독 시에만 적용
 
         while True:
             try:
@@ -159,12 +162,14 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if self._state == TaskState.SUSPENDED:
                     continue
 
-                if not self._realtime_data_service:
+                if not self._subscription_service:
                     continue
 
-                codes = self._realtime_data_service.get_subscribed_codes()
-                if not codes:
-                    continue  # 구독 중인 종목 없으면 스킵
+                # 구독 중인 종목이 없으면 스킵
+                has_pt = self._subscription_service.has_program_trading_subscriptions()
+                has_price = bool(self._subscription_service._active_codes)
+                if not has_pt and not has_price:
+                    continue
 
                 market_is_open = bool(self.mcs and await self.mcs.is_market_open_now())
                 self._market_open = market_is_open
@@ -181,20 +186,32 @@ class WebSocketWatchdogTask(SchedulableTask):
                     and self._streaming_service.broker.is_websocket_receive_alive()
                 )
 
-                # 조건 2: 데이터 수신 갭 확인
-                last_ts = self._realtime_data_service.last_data_ts
-                data_gap = (time.time() - last_ts) if last_ts > 0 else float('inf')
+                # 조건 1b: 루프는 살아있지만 현재 재연결 시도 중인지 확인 (간섭 방지)
+                is_connected = (
+                    self._streaming_service is not None
+                    and self._streaming_service.broker.is_websocket_connected()
+                )
+                if receive_alive and not is_connected:
+                    self._logger.debug("[워치독] 수신 루프가 재연결 중입니다. 워치독 개입 생략.")
+                    continue
 
+                # 조건 2: PT 구독 중일 때만 데이터 수신 갭 확인
                 needs_reconnect = False
                 if not receive_alive:
-                    self._logger.warning(f"[워치독] WebSocket 수신 태스크가 종료됨. 재연결을 시도합니다.")
+                    self._logger.warning("[워치독] WebSocket 수신 태스크가 종료됨. 재연결을 시도합니다.")
                     needs_reconnect = True
-                elif data_gap > DATA_GAP_THRESHOLD:
-                    self._logger.warning(f"[워치독] {data_gap:.0f}초간 데이터 미수신 (임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다.")
-                    needs_reconnect = True
+                elif has_pt and self._realtime_data_service:
+                    last_ts = self._realtime_data_service.last_data_ts
+                    data_gap = (time.time() - last_ts) if last_ts > 0 else float('inf')
+                    if data_gap > DATA_GAP_THRESHOLD:
+                        self._logger.warning(
+                            f"[워치독] {data_gap:.0f}초간 PT 데이터 미수신 "
+                            f"(임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다."
+                        )
+                        needs_reconnect = True
 
                 if needs_reconnect:
-                    await self.force_reconnect_program_trading()
+                    await self.force_reconnect_all()
 
             except asyncio.CancelledError:
                 break
@@ -206,10 +223,11 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         Watchdog 태스크는 배치 진행률이 없으므로 연결 상태 정보를 반환한다.
         """
-        subscribed = 0
-        if self._realtime_data_service:
-            codes = self._realtime_data_service.get_subscribed_codes()
-            subscribed = len(codes) if codes else 0
+        pt_count = 0
+        price_count = 0
+        if self._subscription_service:
+            pt_count = len(self._subscription_service.get_program_trading_codes())
+            price_count = len(self._subscription_service._active_codes)
 
         last_ts = 0.0
         data_gap = None
@@ -220,49 +238,51 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         return {
             "running": self._state == TaskState.RUNNING,
-            "subscribed_codes": subscribed,
+            "subscribed_pt_codes": pt_count,
+            "subscribed_price_codes": price_count,
             "data_gap_sec": data_gap,
             "market_open": self._market_open,
         }
 
-    async def force_reconnect_program_trading(self) -> None:
-        """WebSocket 연결을 강제로 끊고 재연결 + 재구독."""
-        if not self._realtime_data_service:
+    async def force_reconnect_all(self) -> None:
+        """WebSocket 연결을 강제로 끊고 재연결 + PT/체결가 모든 구독 복원."""
+        if not self._subscription_service:
             return
 
-        codes = self._realtime_data_service.get_subscribed_codes()
-        if not codes:
+        has_pt = self._subscription_service.has_program_trading_subscriptions()
+        has_price = bool(self._subscription_service._active_codes)
+        if not has_pt and not has_price:
             return
 
         t_start = self.pm.start_timer()
-        self._logger.info(f"[워치독] 강제 재연결 시작 (구독 종목: {codes})")
+        pt_codes = self._subscription_service.get_program_trading_codes()
+        price_count = len(self._subscription_service._active_codes)
+        self._logger.info(
+            f"[워치독] 강제 재연결 시작 (PT: {pt_codes}, 체결가: {price_count}개)"
+        )
+
         try:
             # 1. 기존 WebSocket 연결 강제 종료
             await self._streaming_service.disconnect_websocket()
         except Exception as e:
             self._logger.warning(f"[워치독] 기존 연결 종료 중 오류 (무시): {e}")
 
-        # 2. 새 연결 + 재구독
-        success_count = 0
-        failed_codes = []
-        for code in codes:
-            try:
-                connected = await self._streaming_service.connect_websocket(self._realtime_callback)
-                if not connected:
-                    self._logger.warning(f"[워치독] 재연결 실패: {code}")
-                    failed_codes.append(code)
-                    continue
-                await self._streaming_service.subscribe_program_trading(code)
-                await self._streaming_service.subscribe_realtime_price(code)
-                success_count += 1
-            except Exception as e:
-                self._logger.error(f"[워치독] 재구독 중 오류 ({code}): {e}")
-                failed_codes.append(code)
+        # 2. 재연결
+        try:
+            connected = await self._streaming_service.connect_websocket(self._realtime_callback)
+            if not connected:
+                self._logger.warning("[워치독] 재연결 실패")
+                self.pm.log_timer("WebSocketWatchdogTask.force_reconnect_all(FAILED)", t_start)
+                return
+        except Exception as e:
+            self._logger.error(f"[워치독] 재연결 중 오류: {e}")
+            return
 
-        if failed_codes:
-            self._logger.warning(f"[워치독] 재구독에 실패한 종목을 상태에서 제거합니다: {failed_codes}")
-            for code in failed_codes:
-                self._realtime_data_service.remove_subscribed_code(code)
+        # 3. 모든 구독 복원 (PT + 체결가)
+        await self._subscription_service.restore_all_subscriptions()
 
-        self.pm.log_timer(f"WebSocketWatchdogTask.force_reconnect_program_trading({success_count}/{len(codes)})", t_start)
-        self._logger.info(f"[워치독] 강제 재연결 완료: {success_count}/{len(codes)}개 종목")
+        self.pm.log_timer(
+            f"WebSocketWatchdogTask.force_reconnect_all(PT:{len(pt_codes)}, price:{price_count})",
+            t_start
+        )
+        self._logger.info("[워치독] 강제 재연결 완료")

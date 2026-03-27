@@ -65,6 +65,9 @@ class KoreaInvestWebSocketAPI:
         # 재연결 시 복구를 위한 구독 목록 저장소 set((tr_id, tr_key))
         self._subscribed_items = set()
 
+        # 서버 측 appkey 충돌 시 긴 대기 필요 플래그
+        self._appkey_in_use = False
+
     def _aes_cbc_base64_dec(self, key, iv, cipher_text):
         """
         AES256 DECODE (Base64 인코딩된 암호문을 복호화)
@@ -174,8 +177,13 @@ class KoreaInvestWebSocketAPI:
                     self._auto_reconnect = False
                     break
 
-                delay = min(max_delay, base_delay * (2 ** retry_count))
-                self._logger.info(f"웹소켓 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
+                if self._appkey_in_use:
+                    delay = 30  # 서버 측 세션 정리 대기
+                    self._logger.info(f"서버 appkey 세션 정리 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
+                    self._appkey_in_use = False
+                else:
+                    delay = min(max_delay, base_delay * (2 ** retry_count))
+                    self._logger.info(f"웹소켓 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
                 await asyncio.sleep(delay)
                 
                 retry_count += 1
@@ -208,6 +216,11 @@ class KoreaInvestWebSocketAPI:
                 if self._auto_reconnect:
                     self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.", exc_info=True)
                 self._is_connected = False
+                if self.ws:
+                    try:
+                        await self.ws.close()
+                    except Exception:
+                        pass
                 self.ws = None
                 self.approval_key = None  # 재연결 시 새로운 접속키 발급 강제
 
@@ -324,10 +337,14 @@ class KoreaInvestWebSocketAPI:
                         self._aes_iv = json_object["body"]["output"].get("iv")
                         self._logger.info(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
                 else:
+                    msg1 = json_object.get("body", {}).get("msg1", "")
                     self._logger.error(
-                        f"실시간 요청 응답 오류: TR_KEY={header.get('tr_key')}, RT_CD={json_object.get('body', {}).get('rt_cd')}, MSG={json_object.get('body', {}).get('msg1')}")
-                    if json_object.get("body", {}).get("msg1") == 'ALREADY IN SUBSCRIBE':
+                        f"실시간 요청 응답 오류: TR_KEY={header.get('tr_key')}, RT_CD={json_object.get('body', {}).get('rt_cd')}, MSG={msg1}")
+                    if msg1 == 'ALREADY IN SUBSCRIBE':
                         self._logger.warning("이미 구독 중인 종목입니다.")
+                    elif msg1 == 'ALREADY IN USE appkey':
+                        self._logger.warning("서버 측 appkey 세션이 아직 정리되지 않았습니다. 재연결 전 대기합니다.")
+                        self._appkey_in_use = True
             except json.JSONDecodeError:
                 self._logger.exception(f"제어 메시지 JSON 디코딩 실패: {message}")
             except Exception as e:
