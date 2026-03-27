@@ -674,6 +674,81 @@ async def test_receive_messages_general_exception(websocket_api_instance):
     assert api.ws is None
 
 
+# _receive_messages: asyncio.TimeoutError — 장중에는 재연결 트리거
+@pytest.mark.asyncio
+async def test_receive_messages_timeout_during_market_hours_triggers_reconnect(websocket_api_instance):
+    """장이 열린 상태에서 DATA_TIMEOUT이 발생하면 _is_connected=False / ws=None으로 재연결을 준비한다."""
+    api = websocket_api_instance
+    api._is_connected = True
+    api._auto_reconnect = True
+    api.ws = AsyncMock()
+    api.ws.close = AsyncMock()
+
+    # recv()에서 TimeoutError 발생, 이후 루프가 계속 도는 것을 막기 위해 두 번째 호출부터 중단
+    call_count = 0
+    async def fake_recv():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError()
+        # 두 번째 호출: 재연결 루프 진입 후 sleep에서 종료
+        await asyncio.sleep(0)
+
+    api.ws.recv.side_effect = fake_recv
+
+    mock_mcs = AsyncMock()
+    mock_mcs.is_market_open_now = AsyncMock(return_value=True)  # 장중
+    api._mcs = mock_mcs
+
+    _real_sleep = asyncio.sleep
+    async def fast_sleep(delay):
+        api._auto_reconnect = False
+        await _real_sleep(0)
+
+    with patch('brokers.korea_investment.korea_invest_websocket_api.asyncio.sleep', side_effect=fast_sleep), \
+         patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=False):
+        await api._receive_messages()
+
+    assert not api._is_connected
+    assert api.ws is None
+    api._logger.warning.assert_called()
+    log_msg = api._logger.warning.call_args[0][0]
+    assert "Dead Connection" in log_msg or "재연결" in log_msg
+
+
+# _receive_messages: asyncio.TimeoutError — 장 마감 후에는 재연결 안 함
+@pytest.mark.asyncio
+async def test_receive_messages_timeout_after_market_close_no_reconnect(websocket_api_instance):
+    """장이 닫힌 상태에서 DATA_TIMEOUT이 발생해도 연결을 끊지 않는다."""
+    api = websocket_api_instance
+    api._is_connected = True
+    api._auto_reconnect = True
+    original_ws = AsyncMock()
+    api.ws = original_ws
+
+    call_count = 0
+    async def fake_recv():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError()
+        # 두 번째 루프에서 정상 종료
+        api._auto_reconnect = False
+        return '{"header": {"tr_id": "PINGPONG"}}'
+
+    api.ws.recv.side_effect = fake_recv
+
+    mock_mcs = AsyncMock()
+    mock_mcs.is_market_open_now = AsyncMock(return_value=False)  # 장 마감
+    api._mcs = mock_mcs
+
+    await api._receive_messages()
+
+    # 장 마감 후 timeout은 무시 — ws와 _is_connected 그대로 유지
+    assert api._is_connected is True
+    assert api.ws is original_ws
+
+
 # send_realtime_request: 연결되지 않았을 때 False 반환 테스트
 @pytest.mark.asyncio
 async def test_send_realtime_request_not_connected(websocket_api_instance):

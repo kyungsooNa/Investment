@@ -327,11 +327,13 @@ def test_get_subscription_status_basic(web_client, mock_web_ctx):
     """구독 현황 기본 구조 및 우선순위별 종목 반환을 검증한다."""
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
-        "active_count": 2,
+        "active_subs_count": 2,
         "max_subscriptions": 35,
-        "active_codes": ["005930", "035720"],
+        "active_price_codes": ["005930", "035720"],
         "pending_count": 2,
+        "subscribed_at": {},
         "pending_by_priority": {
+            "CRITICAL": [],
             "HIGH":   ["005930"],
             "MEDIUM": ["035720"],
             "LOW":    [],
@@ -372,11 +374,13 @@ def test_get_subscription_status_received_at_populated(web_client, mock_web_ctx)
     """캐시에 received_at이 있으면 응답에 포함된다."""
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
-        "active_count": 1,
+        "active_subs_count": 1,
         "max_subscriptions": 35,
-        "active_codes": ["005930"],
+        "active_price_codes": ["005930"],
         "pending_count": 1,
+        "subscribed_at": {"005930": 1700000000.0},
         "pending_by_priority": {
+            "CRITICAL": [],
             "HIGH":   ["005930"],
             "MEDIUM": [],
             "LOW":    [],
@@ -397,14 +401,16 @@ def test_get_subscription_status_received_at_populated(web_client, mock_web_ctx)
 
 
 def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):
-    """active_codes에 없는 종목은 active=False로 반환된다."""
+    """active_price_codes에 없는 종목은 active=False로 반환된다."""
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
-        "active_count": 0,
+        "active_subs_count": 0,
         "max_subscriptions": 35,
-        "active_codes": [],
+        "active_price_codes": [],
         "pending_count": 1,
+        "subscribed_at": {},
         "pending_by_priority": {
+            "CRITICAL": [],
             "HIGH":   [],
             "MEDIUM": [],
             "LOW":    ["000660"],
@@ -418,3 +424,31 @@ def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):
 
     data = response.json()["data"]
     assert data["LOW"][0]["active"] is False
+
+
+def test_get_subscription_status_active_count_uses_active_subs_count(web_client, mock_web_ctx):
+    """active_count는 get_status()의 active_subs_count 키에서 올바르게 읽혀야 한다.
+    (active_price_count / active_count 키가 없어도 0이 아닌 실제 값을 반환해야 함)"""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_subs_count": 3,
+        "max_subscriptions": 40,
+        "active_price_codes": ["005930", "000660", "035720"],
+        "pending_count": 3,
+        "subscribed_at": {},
+        "pending_by_priority": {
+            "CRITICAL": [],
+            "HIGH":   ["005930", "000660"],
+            "MEDIUM": ["035720"],
+            "LOW":    [],
+        },
+    }
+    mock_web_ctx.subscription_service = mock_svc
+    mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
+    mock_web_ctx.stock_code_repository.get_name_by_code.side_effect = lambda c: c
+
+    response = web_client.get("/api/subscriptions/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["active_count"] == 3  # active_subs_count에서 읽혀야 함 (0이 아님)

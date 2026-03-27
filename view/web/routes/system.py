@@ -164,7 +164,7 @@ def get_subscription_status():
     return {
         "success": True,
         "data": {
-            "active_count": status.get("active_price_count", status.get("active_count", 0)),
+            "active_count": status.get("active_subs_count", 0),
             "max_subscriptions": status["max_subscriptions"],
             "pending_count": status["pending_count"],
             "CRITICAL": _enrich(by_priority.get("CRITICAL", [])),
