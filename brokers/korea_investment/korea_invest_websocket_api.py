@@ -204,7 +204,7 @@ class KoreaInvestWebSocketAPI:
                 self._handle_websocket_message(message)
             except asyncio.TimeoutError:
                 # 장 운영 시간 중에만 재연결 시도 (장 마감 후에는 데이터가 없는 것이 정상이므로 무시)
-                if self._mcs and not await self._mcs.is_market_open_now():
+                if self._mcs and await self._mcs.is_market_open_now():
                     self._logger.warning(f"{DATA_TIMEOUT}초간 데이터 수신 없음 (Dead Connection 의심). 재연결을 시도합니다.")
                     self._is_connected = False
                     if self.ws:
