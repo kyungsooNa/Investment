@@ -3,14 +3,19 @@
 WebSocket 실시간 구독 정책을 담당하는 서비스.
 
 역할:
-  - 체결가(H0UNCNT0)와 프로그램매매(H0STPGM0) 구독을 통합 카운트로 관리
+  - 체결가(H0UNCNT0)와 프로그램매매(H0STPGM0) 구독을 TR별 독립 한도로 관리
   - 우선순위(CRITICAL > HIGH > MEDIUM > LOW) 기반으로 MAX_SUBSCRIPTIONS(40) 한도 내 최적 구독 유지
   - 실제 WebSocket 구독/해지는 StreamingService에 위임
   - 체결가 구독 활성화 시 StockRepository에 mark_streaming() 알림 (TTL 우회 활성화)
 
+TR별 독립 슬롯 구조:
+  - H0UNCNT0 (통합 체결가) : 최대 40슬롯 독립 관리
+  - H0STPGM0 (프로그램매매): 최대 40슬롯 독립 관리
+  → 두 TR은 하나의 WebSocket 연결을 공유하지만 슬롯 한도는 별개
+
 PT(프로그램매매) 구독 구조:
-  - H0STPGM0 = 프로그램매매 데이터 (1슬롯, 별도 카운트)
-  - 체결가(H0UNCNT0) = CRITICAL 우선순위로 통합 풀에 등록 (ref-count: "program_trading_price")
+  - H0STPGM0 구독 → _pt_codes 로 추적 (H0UNCNT0 한도에 영향 없음)
+  - 동시에 체결가(H0UNCNT0)를 CRITICAL 우선순위로 별도 등록 (ref-count: "program_trading_price")
     → PT 종목이 이미 portfolio/strategy로 구독 중이면 ref-count만 증가 (추가 구독 없음)
 
 우선순위 카테고리:
@@ -58,7 +63,9 @@ class RealtimeSubscriptionService:
       - 우선순위가 동일하면 종목코드 오름차순으로 결정적(deterministic) 선택
     """
 
-    MAX_SUBSCRIPTIONS = 40  # KIS WebSocket 전체 한도
+    MAX_PRICE_SUBSCRIPTIONS = 40   # H0UNCNT0 (통합 체결가) TR 슬롯 한도
+    MAX_PT_SUBSCRIPTIONS = 40      # H0STPGM0 (프로그램매매) TR 슬롯 한도
+    MAX_SUBSCRIPTIONS = MAX_PRICE_SUBSCRIPTIONS  # 하위 호환용 alias
 
     def __init__(
         self,
@@ -254,10 +261,10 @@ class RealtimeSubscriptionService:
             by_priority[key].sort(key=lambda x: x["code"])
 
         return {
-            "total_count": len(self._active_codes) + len(self._pt_codes),
-            "pt_count": len(self._pt_codes),
             "price_count": len(self._active_codes),
-            "max_subscriptions": self.MAX_SUBSCRIPTIONS,
+            "pt_count": len(self._pt_codes),
+            "max_price_subscriptions": self.MAX_PRICE_SUBSCRIPTIONS,
+            "max_pt_subscriptions": self.MAX_PT_SUBSCRIPTIONS,
             "pt_codes": sorted(self._pt_codes),
             "price_codes": sorted(self._active_codes),
             "by_priority": by_priority,
@@ -267,16 +274,14 @@ class RealtimeSubscriptionService:
 
     async def _rebalance(self) -> None:
         """
-        요청된 체결가 구독 목록을 우선순위로 정렬하여 한도 내로 유지.
-        PT 슬롯(H0STPGM0)을 먼저 확보한 뒤 남은 슬롯으로 체결가 구독 관리.
+        요청된 체결가(H0UNCNT0) 구독 목록을 우선순위로 정렬하여 한도 내로 유지.
+        H0STPGM0(PT)은 별도 TR이므로 H0UNCNT0 슬롯에 영향을 주지 않는다.
         """
         def _best_priority(code: str) -> int:
             return min(int(p) for p in self._refs[code].values())
 
         ranked = sorted(self._refs.keys(), key=lambda c: (_best_priority(c), c))
-        # PT 슬롯 먼저 확보 후 남은 슬롯으로 체결가 구독
-        available_price_slots = self.MAX_SUBSCRIPTIONS - len(self._pt_codes)
-        desired: Set[str] = set(ranked[:available_price_slots])
+        desired: Set[str] = set(ranked[:self.MAX_PRICE_SUBSCRIPTIONS])
 
         to_unsubscribe = self._active_codes - desired
         to_subscribe = desired - self._active_codes
@@ -287,13 +292,13 @@ class RealtimeSubscriptionService:
         for code in to_subscribe:
             await self._do_subscribe(code)
 
-        # MAX 초과로 탈락된 종목이 있으면 경고 로그
+        # MAX_PRICE_SUBSCRIPTIONS 초과로 탈락된 종목이 있으면 경고 로그
         dropped = len(self._refs) - len(desired)
         if dropped > 0:
             self._logger.warning(
-                f"RealtimeSubscriptionService: 구독 한도 초과 — {dropped}개 종목이 대기 상태 "
+                f"RealtimeSubscriptionService: H0UNCNT0 한도 초과 — {dropped}개 종목이 대기 상태 "
                 f"(active_price={len(self._active_codes)}, active_pt={len(self._pt_codes)}, "
-                f"requested={len(self._refs)}, max={self.MAX_SUBSCRIPTIONS})"
+                f"requested={len(self._refs)}, max={self.MAX_PRICE_SUBSCRIPTIONS})"
             )
 
     async def _do_subscribe(self, code: str) -> None:

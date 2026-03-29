@@ -157,10 +157,10 @@ def get_subscription_status():
     return {
         "success": True,
         "data": {
-            "total_count": status.get("total_count", 0),
-            "pt_count": status.get("pt_count", 0),
             "price_count": status.get("price_count", 0),
-            "max_subscriptions": status["max_subscriptions"],
+            "pt_count": status.get("pt_count", 0),
+            "max_price_subscriptions": status.get("max_price_subscriptions", 40),
+            "max_pt_subscriptions": status.get("max_pt_subscriptions", 40),
             "pt_codes": status.get("pt_codes", []),
             "CRITICAL": [_enrich_item(i) for i in by_priority.get("CRITICAL", [])],
             "HIGH":     [_enrich_item(i) for i in by_priority.get("HIGH", [])],

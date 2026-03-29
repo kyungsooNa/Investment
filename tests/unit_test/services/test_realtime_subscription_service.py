@@ -90,7 +90,7 @@ async def test_max_limit_evicts_low_priority(mock_streaming, mock_stock_repo):
         streaming_service=mock_streaming,
         stock_repo=mock_stock_repo,
     )
-    svc.MAX_SUBSCRIPTIONS = 2  # 테스트용으로 한도 축소
+    svc.MAX_PRICE_SUBSCRIPTIONS = 2  # 테스트용으로 한도 축소
 
     await svc.add_subscription("A", SubscriptionPriority.LOW, "ui_view")
     await svc.add_subscription("B", SubscriptionPriority.LOW, "ui_view")
@@ -110,7 +110,7 @@ async def test_max_limit_deterministic_code_sort(mock_streaming, mock_stock_repo
         streaming_service=mock_streaming,
         stock_repo=mock_stock_repo,
     )
-    svc.MAX_SUBSCRIPTIONS = 2
+    svc.MAX_PRICE_SUBSCRIPTIONS = 2
 
     await svc.add_subscription("C", SubscriptionPriority.LOW, "ui_view")
     await svc.add_subscription("A", SubscriptionPriority.LOW, "ui_view")
@@ -122,30 +122,29 @@ async def test_max_limit_deterministic_code_sort(mock_streaming, mock_stock_repo
     assert "C" not in svc._active_codes
 
 
-async def test_pt_slots_reduce_available_price_slots(mock_streaming, mock_stock_repo):
-    """PT 구독 시 해당 슬롯만큼 체결가 구독 한도가 줄어야 한다."""
+async def test_pt_does_not_reduce_available_price_slots(mock_streaming, mock_stock_repo):
+    """PT(H0STPGM0)와 체결가(H0UNCNT0)는 독립 한도이므로 PT 구독이 price 슬롯을 차지하지 않아야 한다."""
     svc = RealtimeSubscriptionService(
         streaming_service=mock_streaming,
         stock_repo=mock_stock_repo,
     )
-    svc.MAX_SUBSCRIPTIONS = 3  # 전체 한도 3
+    svc.MAX_PRICE_SUBSCRIPTIONS = 3  # H0UNCNT0 한도 3 (H0STPGM0 한도는 별개)
 
     # PT 구독 1개 →
-    #  - H0STPGM0 1슬롯 (len(_pt_codes)=1)
-    #  - available_price_slots = 3 - 1 = 2
-    #  - 005930 CRITICAL 가격 구독도 price 풀에서 1슬롯 소비
-    # → 비-PT LOW 종목은 1슬롯만 남음 (A만 활성)
+    #  - H0STPGM0 1슬롯 (_pt_codes)  → price 한도에 영향 없음
+    #  - 005930 CRITICAL 체결가도 price 풀 1슬롯 소비
+    # → price 풀 잔여 = 3 - 1(005930) = 2 → A, B 모두 활성 (C만 탈락)
     await svc.add_program_trading("005930")
     mock_streaming.reset_mock()
 
     await svc.add_subscription("A", SubscriptionPriority.LOW, "ui_view")
-    await svc.add_subscription("B", SubscriptionPriority.LOW, "ui_view")  # 한도 초과 → 탈락
+    await svc.add_subscription("B", SubscriptionPriority.LOW, "ui_view")
     await svc.add_subscription("C", SubscriptionPriority.LOW, "ui_view")  # 한도 초과 → 탈락
 
-    # 005930(CRITICAL) + A(LOW) = 2 슬롯 → B, C 탈락
+    # 005930(CRITICAL) + A(LOW) + B(LOW) = 3슬롯 → C 탈락
     assert "005930" in svc._active_codes
     assert "A" in svc._active_codes
-    assert "B" not in svc._active_codes
+    assert "B" in svc._active_codes
     assert "C" not in svc._active_codes
 
 
@@ -243,10 +242,10 @@ async def test_get_status_reflects_current_state(svc):
 
     assert status["price_count"] == 2
     assert status["pt_count"] == 0
-    assert status["total_count"] == 2
     assert "005930" in status["price_codes"]
     assert "035720" in status["price_codes"]
-    assert status["max_subscriptions"] == RealtimeSubscriptionService.MAX_SUBSCRIPTIONS
+    assert status["max_price_subscriptions"] == RealtimeSubscriptionService.MAX_PRICE_SUBSCRIPTIONS
+    assert status["max_pt_subscriptions"] == RealtimeSubscriptionService.MAX_PT_SUBSCRIPTIONS
 
     high_codes = [i["code"] for i in status["by_priority"]["HIGH"]]
     medium_codes = [i["code"] for i in status["by_priority"]["MEDIUM"]]
