@@ -1,6 +1,7 @@
 # tests/unit_test/test_notification_service.py
 
 import pytest
+import json
 import asyncio
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
@@ -69,13 +70,16 @@ async def test_emit_sends_to_subscribers(manager):
     data1 = await queue1.get()
     data2 = await queue2.get()
     
+    data1 = json.loads(data1)
+    data2 = json.loads(data2)
+
     assert data1["id"] == event.id
     assert data1["message"] == "응답 시간 5초 초과"
     assert data2["id"] == event.id
 
 @pytest.mark.asyncio
 async def test_emit_handles_full_queue(manager):
-    """emit 시 큐가 가득 찼을 때 예외를 처리하고 넘어가는지 테스트합니다."""
+    """emit 시 큐가 가득 찼을 때 오래된 데이터를 버리고 새 데이터를 넣는지 테스트합니다."""
     # maxsize=1인 큐 생성 후 데이터 채우기
     queue = asyncio.Queue(maxsize=1)
     await queue.put("dummy")
@@ -83,16 +87,16 @@ async def test_emit_handles_full_queue(manager):
     manager._subscriber_queues.append(queue)
     
     # 큐가 가득 찬 상태에서 emit 호출. asyncio.QueueFull 예외가 발생하지 않아야 함.
-    try:
-        await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "에러", "큐 Full 테스트")
-    except asyncio.QueueFull:
-        pytest.fail("asyncio.QueueFull 예외가 처리되지 않았습니다.")
+    event = await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "에러", "큐 Full 테스트")
         
-    # 큐에 추가 데이터가 들어가지 않았는지 확인
+    # 큐에 새 데이터가 들어갔는지 확인 (오래된 데이터는 버려짐)
     assert queue.full()
-    assert await queue.get() == "dummy" # 기존 데이터만 있어야 함
+    data = json.loads(await queue.get())
+    assert data["id"] == event.id
+    assert data["message"] == "큐 Full 테스트"
 
 @pytest.mark.asyncio
+@pytest.mark.real_sleep
 async def test_emit_calls_external_handlers(manager):
     """emit 시 등록된 외부 핸들러가 호출되는지 테스트합니다."""
     handler1 = AsyncMock()
@@ -103,10 +107,17 @@ async def test_emit_calls_external_handlers(manager):
     
     event = await manager.emit(NotificationCategory.API, NotificationLevel.INFO, "응답", "정상")
     
+    # 외부 핸들러가 백그라운드 태스크로 실행될 수 있으므로 충분히 대기 후 남은 태스크 회수
+    await asyncio.sleep(0.05)
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if pending:
+        await asyncio.wait(pending, timeout=1.0)
+
     handler1.assert_awaited_once_with(event)
     handler2.assert_awaited_once_with(event)
 
 @pytest.mark.asyncio
+@pytest.mark.real_sleep
 async def test_emit_handles_handler_exception(manager):
     """외부 핸들러에서 예외 발생 시 처리하고 계속 진행하는지 테스트합니다."""
     handler_ok = AsyncMock()
@@ -121,6 +132,12 @@ async def test_emit_handles_handler_exception(manager):
     except Exception:
         pytest.fail("외부 핸들러의 예외가 처리되지 않았습니다.")
         
+    # 백그라운드 태스크 실행 대기
+    await asyncio.sleep(0.05)
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if pending:
+        await asyncio.wait(pending, timeout=1.0)
+
     # 실패한 핸들러와 성공한 핸들러 모두 호출 시도되었는지 확인
     handler_fail.assert_awaited_once()
     handler_ok.assert_awaited_once()

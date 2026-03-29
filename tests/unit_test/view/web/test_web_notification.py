@@ -60,7 +60,7 @@ async def test_stream_notifications_data(mock_get_ctx, mock_ctx):
     mock_request.is_disconnected = AsyncMock(return_value=False)
     
     # 데이터 주입
-    test_data = {"msg": "hello"}
+    test_data = json.dumps({"msg": "hello"}, ensure_ascii=False)
     await queue.put(test_data)
     await queue.put(None) # 종료 신호
     
@@ -69,7 +69,7 @@ async def test_stream_notifications_data(mock_get_ctx, mock_ctx):
     
     # 첫 번째 데이터 확인
     item = await iterator.__anext__()
-    assert item == f"data: {json.dumps(test_data, ensure_ascii=False)}\n\n"
+    assert item == f"data: {test_data}\n\n"
     
     # 종료 확인
     with pytest.raises(StopAsyncIteration):
@@ -88,10 +88,9 @@ async def test_stream_notifications_timeout_keepalive(mock_get_ctx, mock_ctx):
     mock_ctx.notification_service.create_subscriber_queue.return_value = queue
     
     mock_request = MagicMock(spec=Request)
-    # 1. 루프 진입 (False)
-    # 2. Timeout 발생 후 연결 확인 (False) -> keepalive 전송
-    # 3. 루프 재진입 연결 확인 (True) -> 종료
-    mock_request.is_disconnected = AsyncMock(side_effect=[False, False, True])
+    # 1. 첫 Timeout 발생 후 연결 확인 (False) -> keepalive 전송
+    # 2. 두 번째 Timeout 발생 후 연결 확인 (True) -> 종료
+    mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
     
     async def raise_timeout(coro, *args, **kwargs):
         if asyncio.iscoroutine(coro):
@@ -173,9 +172,8 @@ async def test_stream_notifications_timeout_disconnect_check(mock_get_ctx, mock_
     mock_ctx.notification_service.create_subscriber_queue.return_value = queue
     
     mock_request = MagicMock(spec=Request)
-    # 1. 루프 진입 시 연결 확인 (False)
-    # 2. TimeoutError 발생 후 예외 처리 블록 내 연결 확인 (True) -> break
-    mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
+    # TimeoutError 발생 후 예외 처리 블록 내 연결 확인 (True) -> break
+    mock_request.is_disconnected = AsyncMock(return_value=True)
     
     async def raise_timeout(coro, *args, **kwargs):
         if asyncio.iscoroutine(coro):
