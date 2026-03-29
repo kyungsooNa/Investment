@@ -8,6 +8,7 @@ let ptSubscribedCodes = new Set();
 let ptCodeNameMap = {};
 let ptFilterCodes = new Set();
 let ptDataDirty = false;
+let ptRenderTimer = null; // throttle 타이머
 let ptTimeUnit = 1;
 let ptResubscribing = false;
 let _resubscribeAbortCtrl = null; // 구독 복구 fetch 취소용
@@ -363,9 +364,15 @@ function handleProgramTradingData(d) {
     }
     ptDataDirty = true;
 
-    if (ptFilterCodes.size === 0 || ptFilterCodes.has(code)) {
-        updateProgramChart(ptChartData, ptSubscribedCodes, ptFilterCodes, ptCodeNameMap, ptTimeUnit);
-        _renderPtTable();
+    // 즉시 렌더링하지 않고 200ms 주기로 일괄 처리 (Throttling)
+    if (!ptRenderTimer) {
+        ptRenderTimer = setTimeout(() => {
+            if (ptFilterCodes.size === 0 || ptFilterCodes.has(code)) {
+                updateProgramChart(ptChartData, ptSubscribedCodes, ptFilterCodes, ptCodeNameMap, ptTimeUnit);
+                _renderPtTable();
+            }
+            ptRenderTimer = null;
+        }, 200);
     }
 }
 
@@ -434,6 +441,8 @@ function _renderPtTable() {
 
     if (allRows.length > 200) allRows = allRows.slice(0, 200);
 
+    const fragment = document.createDocumentFragment();
+
     for (const row of allRows) {
         const date = new Date(row.timestamp);
         const hh = String(date.getHours()).padStart(2, '0');
@@ -482,9 +491,11 @@ function _renderPtTable() {
             <td>${parseInt(d['매도호가잔량'] || 0).toLocaleString()}</td>
             <td>${parseInt(d['매수호가잔량'] || 0).toLocaleString()}</td>
         `;
-        tbody.appendChild(tr);
+        fragment.appendChild(tr);
         ptRowCount++;
     }
+
+    tbody.appendChild(fragment);
 }
 
 // ==========================================
