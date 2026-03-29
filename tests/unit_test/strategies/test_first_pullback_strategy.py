@@ -916,3 +916,58 @@ async def test_check_exits_dirty_flag_saves_once(mock_deps):
     assert strategy._position_state["000660"].peak_price == 10500
     # dirty flag: 루프 후 1회만 저장
     strategy._save_state.assert_called_once()
+
+
+# ════════════════════════════════════════════════════════════════
+# OHLCV 최적화: 캐시 활용 (end_date=어제)
+# ════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_scan_ohlcv_called_with_yesterday_end_date(fp_scan_setup):
+    """OHLCV 조회 시 end_date=어제 날짜로 호출하여 캐시 활용."""
+    strategy, sqs, _, tm, _ = fp_scan_setup
+
+    await strategy.scan()
+
+    # tm.get_current_kst_time은 2025-01-01 12:00 → end_date="20241231"
+    sqs.get_recent_daily_ohlcv.assert_called_once()
+    call_args = sqs.get_recent_daily_ohlcv.call_args
+    assert call_args[0][0] == "005930"
+    assert call_args[1]["end_date"] == "20241231"
+
+
+@pytest.mark.asyncio
+async def test_scan_current_price_called_before_ohlcv(fp_scan_setup):
+    """현재가 API가 OHLCV보다 먼저 호출되어야 함."""
+    strategy, sqs, _, _, _ = fp_scan_setup
+
+    call_order = []
+    original_get_price = sqs.get_current_price.side_effect
+    original_get_ohlcv = sqs.get_recent_daily_ohlcv.side_effect
+
+    async def track_price(*args, **kwargs):
+        call_order.append("get_current_price")
+        return sqs.get_current_price.return_value
+
+    async def track_ohlcv(*args, **kwargs):
+        call_order.append("get_recent_daily_ohlcv")
+        return sqs.get_recent_daily_ohlcv.return_value
+
+    sqs.get_current_price.side_effect = track_price
+    sqs.get_recent_daily_ohlcv.side_effect = track_ohlcv
+
+    await strategy.scan()
+
+    assert call_order.index("get_current_price") < call_order.index("get_recent_daily_ohlcv")
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_ohlcv_on_price_failure(fp_scan_setup):
+    """현재가 API 실패 시 OHLCV 호출 없이 빠르게 return."""
+    strategy, sqs, _, _, _ = fp_scan_setup
+
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="1", msg1="Fail")
+
+    await strategy.scan()
+
+    sqs.get_recent_daily_ohlcv.assert_not_called()

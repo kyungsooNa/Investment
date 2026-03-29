@@ -101,7 +101,7 @@ async def test_analyze_candidate_success(mock_deps):
     # 1. OHLCV Mock (정배열 조건: Close > MA20 > MA50)
     # 최근 50일 데이터 생성
     # 거래대금 조건(100억)을 만족하기 위해 volume을 충분히 크게 설정 (1000원 * 15,000,000주 = 150억)
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # 2. 현재가 Mock (52주 고가 대비 20% 이내)
@@ -113,7 +113,7 @@ async def test_analyze_candidate_success(mock_deps):
     
     # 3. BB Mock (스퀴즈 데이터 계산용)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(90)]
     )
     
     # 4. RS Mock
@@ -139,7 +139,7 @@ async def test_analyze_candidate_filter_market_cap(mock_deps):
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     # 1. OHLCV Mock (기본 통과 조건)
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # Case 1: 시가총액 미달 (1000억)
@@ -163,7 +163,7 @@ async def test_analyze_candidate_filter_market_cap(mock_deps):
     )
     # BB, RS Mock 필요 (통과를 위해)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(90)]
     )
     indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)
@@ -423,13 +423,13 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
 
     # 1. 기본 Mock 설정 (필터 통과용)
     # 거래대금 조건(100억)을 만족하기 위해 volume을 충분히 크게 설정
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(90)]
     )
 
     # 2. RS Mock 설정 (특정 수익률 반환)
@@ -459,13 +459,13 @@ async def test_analyze_candidate_rs_calculation_failure(mock_deps):
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
 
     # 기본 Mock 설정 (필터 통과용)
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
     )
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(90)]
     )
 
     # RS Mock 설정 (실패 응답)
@@ -896,7 +896,7 @@ async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     # 1. OHLCV Mock (정배열 등 다른 조건은 만족시켜야 함)
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 1000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # 2. 현재가 Mock
@@ -915,7 +915,7 @@ async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     # 1. OHLCV & Price Mock (기본 통과 조건)
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 1000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
@@ -924,8 +924,8 @@ async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
     # 2. BB Mock
     # 최근 폭이 최소 폭보다 훨씬 큼 (확장 국면)
     bands = []
-    for i in range(50):
-        width = 10 if i < 40 else 50 # 최근에 확 벌어짐
+    for i in range(90):
+        width = 10 if i < 80 else 50 # 최근에 확 벌어짐
         bands.append(ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=100+width, lower=100))
     
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
@@ -981,7 +981,7 @@ async def test_analyze_candidate_insufficient_bb_data(mock_deps):
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
-    ohlcv = [{"close": 1000, "high": 1100, "volume": 1000000} for _ in range(100)]
+    ohlcv = [{"close": 1000, "high": 1100, "volume": 100000000} for _ in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
@@ -1037,7 +1037,7 @@ async def test_analyze_candidate_price_api_object_access(mock_deps):
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     # OHLCV Mock
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # Price Mock (Object with attributes)
@@ -1063,7 +1063,7 @@ async def test_analyze_candidate_price_api_object_access(mock_deps):
     
     # BB, RS Mock
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[MagicMock(upper=110, lower=90) for _ in range(90)]
     )
     indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=MagicMock(return_pct=10.0)
@@ -1080,7 +1080,7 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {"w52_hgpr": "1200", "hts_avls": "3000"}}
@@ -1095,7 +1095,7 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
     assert item is None
     
     # 2. 유효 데이터 충분 -> 성공
-    bands_good = [ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(50)]
+    bands_good = [ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(90)]
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=bands_good
     )
@@ -1192,7 +1192,7 @@ async def test_analyze_candidate_price_api_failure(mock_deps):
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     # OHLCV OK
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # Price API Fail
@@ -1208,7 +1208,7 @@ async def test_analyze_candidate_no_price_output(mock_deps):
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # Output None
@@ -1224,7 +1224,7 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
-    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 15000000} for i in range(100)]
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # w52_hgpr = 0
@@ -1234,7 +1234,7 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     
     # BB, RS Mock (통과 조건)
     indicator.get_bollinger_bands.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(30)]
+        rt_cd="0", msg1="OK", data=[ResBollingerBand(code="005930", date="20231231", close=1000, middle=100, upper=110, lower=90) for _ in range(90)]
     )
     indicator.get_relative_strength.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data=ResRelativeStrength(code="005930", date="20231231", return_pct=10.0)

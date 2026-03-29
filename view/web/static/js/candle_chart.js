@@ -301,6 +301,13 @@ function renderStockChart(period) {
             }
         }
     });
+    // 길이 비교
+    console.log("OHLCV:", g_chartRawData.length, "MA5:", g_chartIndicators.ma5.length)
+
+    // 마지막 날짜 비교 (정렬 여부)
+    const last = g_chartRawData.length - 1;
+    console.log("ohlcv last date:", g_chartRawData[last].date, "close:", g_chartRawData[last].close)
+    console.log("ma5 last date:", g_chartIndicators.ma5[last]?.date, "ma:", g_chartIndicators.ma5[last]?.ma)
 
     // [성능 측정] 데이터 가공 + Chart.js 생성 시간 로깅
     const tRenderEnd = performance.now();

@@ -1344,19 +1344,20 @@ async def test_get_chart_indicators_merge_missing_key(indicator_service_with_cac
     # 140개 데이터
     data = [{"date": f"202501{i+1:03d}", "close": 10000 + i} for i in range(140)]
     
-    # 캐시 히트 (extra_key 포함)
+    # 캐시 히트 (extra_key 포함, 길이 검증 통과를 위해 confirmed_data 길이(139)와 동일)
+    confirmed_len = len(data) - 1  # 139
     cached_indicators = {
-        "ma5": [{"date": "old", "ma": 100}],
-        "extra_key": [{"date": "old", "val": 1}] 
+        "ma5": [{"date": f"202501{i+1:03d}", "ma": 100} for i in range(confirmed_len)],
+        "extra_key": [{"date": f"202501{i+1:03d}", "val": 1} for i in range(confirmed_len)]
     }
     mock_cache.get_raw.return_value = ({"data": cached_indicators}, None)
-    
+
     result = await service.get_chart_indicators("005930", ohlcv_data=data)
-    
+
     assert result.rt_cd == ErrorCode.SUCCESS.value
-    # extra_key는 업데이트되지 않고 그대로 유지되어야 함 (else 분기)
+    # extra_key는 latest_indicators에 없으므로 캐시된 그대로 유지 (else 분기)
     assert "extra_key" in result.data
-    assert len(result.data["extra_key"]) == 1
+    assert len(result.data["extra_key"]) == confirmed_len
 
 
 # ─── _to_dataframe 최적화 (Dict-of-Lists 변환) 테스트 ─────────────────────────
