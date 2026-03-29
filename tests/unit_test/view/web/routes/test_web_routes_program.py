@@ -127,20 +127,21 @@ async def test_stream_program_trading_logic(mock_web_ctx):
     iterator = response.body_iterator
     
     # 5. 데이터 주입 및 검증 루프
+    # 서비스에서 미리 직렬화된 JSON 문자열을 큐에 삽입 (서비스 변경 반영)
     for data in test_datasets:
-        await test_queue.put(data)
-        
+        await test_queue.put(json.dumps(data, ensure_ascii=False))
+
         # 제너레이터에서 청크 가져오기
         chunk = await iterator.__anext__()
-        
+
         # SSE 포맷 검증 ("data: ...\n\n")
         assert chunk.startswith("data: ")
         assert chunk.endswith("\n\n")
-        
+
         # JSON 파싱 및 내용 검증
         json_str = chunk.replace("data: ", "").strip()
         received_data = json.loads(json_str)
-        
+
         # 원본 데이터와 일치하는지 확인
         assert received_data == data
 

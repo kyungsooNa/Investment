@@ -2,7 +2,6 @@
 알림 센터 API 엔드포인트.
 """
 import asyncio
-import json
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request
@@ -34,13 +33,11 @@ async def stream_notifications(request: Request):
     async def event_generator():
         try:
             while True:
-                if await request.is_disconnected():
-                    break
                 try:
                     data = await asyncio.wait_for(queue.get(), timeout=15)
                     if data is None:
                         break
-                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
                     if await request.is_disconnected():
                         break

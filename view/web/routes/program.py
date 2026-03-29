@@ -100,15 +100,13 @@ async def stream_program_trading(request: Request):
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.0001)
 
-            # 2. 실시간 데이터 전송 (이미 realtime_data_service에서 Array로 변환하여 큐에 넣음)
+            # 2. 실시간 데이터 전송 (realtime_data_service에서 JSON 직렬화 후 큐에 삽입됨)
             while True:
-                if await request.is_disconnected():
-                    break
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=0.1)
+                    data = await asyncio.wait_for(queue.get(), timeout=15.0)
                     if data is None:  # 테스트 종료 신호 (Poison Pill)
                         break
-                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
                     if await request.is_disconnected():
                         break

@@ -715,7 +715,7 @@ class StrategyScheduler:
 
     def create_subscriber_queue(self) -> asyncio.Queue:
         """SSE 클라이언트용 큐 생성 및 등록."""
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         self._subscriber_queues.append(queue)
         return queue
 
@@ -726,7 +726,7 @@ class StrategyScheduler:
 
     async def _notify_subscribers(self, record: SignalRecord):
         """새 시그널을 모든 SSE 구독자에게 전파."""
-        data = {
+        json_data = json.dumps({
             "strategy_name": record.strategy_name,
             "code": record.code,
             "name": record.name,
@@ -736,9 +736,13 @@ class StrategyScheduler:
             "reason": record.reason,
             "timestamp": record.timestamp,
             "api_success": record.api_success,
-        }
+        }, ensure_ascii=False)
         for queue in list(self._subscriber_queues):
             try:
-                queue.put_nowait(data)
+                queue.put_nowait(json_data)
             except asyncio.QueueFull:
-                pass
+                try:
+                    queue.get_nowait()
+                    queue.put_nowait(json_data)
+                except Exception:
+                    pass
