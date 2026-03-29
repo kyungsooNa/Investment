@@ -45,7 +45,14 @@ function connectNotificationSSE() {
             if (_notifications.length > 200) _notifications = _notifications.slice(0, 200);
             _notifUnreadCount++;
             updateNotificationBadge();
-            renderNotifications();
+
+            // 필터가 걸려있고 해당 카테고리가 아니면 전체 다시 그리기
+            if (_notifCurrentFilter !== 'all' && notif.category !== _notifCurrentFilter) {
+                // 데이터는 저장했지만 현재 필터에 안 맞으므로 DOM 업데이트 불필요
+            } else {
+                // 전체를 다시 그리지 않고 새 항목만 DOM 상단에 삽입
+                _appendSingleNotification(notif);
+            }
 
             if (notif.level === 'critical') {
                 showToast(`[${notif.category}] ${notif.title}: ${notif.message}`, 'success');
@@ -112,6 +119,33 @@ function renderNotifications() {
             </div>
         `;
     }).join('');
+}
+
+function _appendSingleNotification(n) {
+    const list = document.getElementById('notification-list');
+    if (!list) return;
+
+    const emptyDiv = list.querySelector('.notification-empty');
+    if (emptyDiv) emptyDiv.remove();
+
+    const time = formatNotifTime(n.timestamp);
+    const levelIcon = n.level === 'critical' ? '\uD83D\uDD34' : n.level === 'error' ? '\u2757' : n.level === 'warning' ? '\u26A0\uFE0F' : '';
+    const html = `
+        <div class="notif-item category-${n.category}">
+            <div class="notif-item-header">
+                <span class="notif-category cat-${n.category}">${n.category}</span>
+                <span class="notif-time">${time}</span>
+            </div>
+            <div class="notif-title">${levelIcon} ${escapeHtml(n.title)}</div>
+            <div class="notif-message">${escapeHtml(n.message)}</div>
+        </div>
+    `;
+
+    list.insertAdjacentHTML('afterbegin', html);
+
+    if (list.children.length > 200) {
+        list.removeChild(list.lastElementChild);
+    }
 }
 
 function updateNotificationBadge() {
