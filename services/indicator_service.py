@@ -375,7 +375,7 @@ class IndicatorService:
     def _compute_bb(df: pd.DataFrame, period: int, std_dev: float, prefix: str = "bb") -> pd.DataFrame:
         """볼린저 밴드 계산 및 컬럼 추가"""
         mb = df['close'].rolling(window=period).mean()
-        std = df['close'].rolling(window=period).std()
+        std = df['close'].rolling(window=period).std(ddof=0)
         df[f'{prefix}_middle'] = mb
         df[f'{prefix}_upper'] = mb + (std * std_dev)
         df[f'{prefix}_lower'] = mb - (std * std_dev)
@@ -399,7 +399,7 @@ class IndicatorService:
             df = self._to_dataframe(data)
             
             df['MB'] = df['close'].rolling(window=period).mean()
-            df['std'] = df['close'].rolling(window=period).std()
+            df['std'] = df['close'].rolling(window=period).std(ddof=0)
             df['UB'] = df['MB'] + (df['std'] * std_dev)
             df['LB'] = df['MB'] - (df['std'] * std_dev)
             
