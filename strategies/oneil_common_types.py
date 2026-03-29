@@ -15,7 +15,7 @@ class OneilUniverseConfig(BaseStrategyConfig):
 
     # 스퀴즈 조건
     bb_period: int = 20
-    bb_std_dev: float = 2.0
+    multiplier: float = 2.0 # 표준편차의 배수
     squeeze_tolerance: float = 1.2  # BB 폭이 20일 최소폭의 1.2배 이내
 
     # 마켓 타이밍

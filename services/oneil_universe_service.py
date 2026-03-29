@@ -261,7 +261,7 @@ class OneilUniverseService:
             return None
 
         period = self._cfg.high_breakout_period
-        closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
+        closes = [r.get("close", 0) for r in ohlcv if r.get("close") is not None]
         if len(closes) < 50:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "insufficient_data_len", "len": len(closes)})
             return None
@@ -281,7 +281,7 @@ class OneilUniverseService:
 
         # 필터: 거래대금, 정배열
         recent_5 = ohlcv[-5:]
-        tv_5d = sum([(r.get("volume",0)*r.get("close",0)) for r in recent_5]) / len(recent_5)
+        tv_5d = sum([(r.get("volume", 0) * r.get("close", 0)) for r in recent_5]) / len(recent_5)
         if tv_5d < self._cfg.min_avg_trading_value_5d:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "low_trading_value", "value": tv_5d})
             return None
@@ -315,22 +315,23 @@ class OneilUniverseService:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
             return None
 
+        dist = 0
         if w52_hgpr > 0:
             dist = ((w52_hgpr - prev_close) / w52_hgpr) * 100
             if dist > self._cfg.near_52w_high_pct:
                 if logger: logger.debug({"event": "drop", "code": code, "reason": "far_from_52w_high", "dist": dist})
                 return None
         
-        if logger: logger.debug({"event": "pass_52w", "code": code, "dist": dist if w52_hgpr > 0 else 0})
+        if logger: logger.debug({"event": "pass_52w", "code": code, "dist": dist})
 
         # BB 스퀴즈
         bb_resp = await self._indicator.get_bollinger_bands(
-            code, period=self._cfg.bb_period, std_dev=self._cfg.bb_std_dev, ohlcv_data=ohlcv
+            code, period=self._cfg.bb_period, multiplier=self._cfg.multiplier, ohlcv_data=ohlcv
         )
         widths = []
         for band in (bb_resp.data or []):
-            if band.upper is not None and band.lower is not None:
-                widths.append(band.upper - band.lower)
+            if isinstance(band, dict) and band.get('upper') is not None and band.get('lower') is not None:
+                widths.append(band['upper'] - band['lower'])
         
         if len(widths) < period:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "insufficient_bb_data"})
@@ -359,7 +360,7 @@ class OneilUniverseService:
             code, period_days=self._cfg.rs_period_days, ohlcv_data=ohlcv
         )
         if rs_resp and rs_resp.data:
-            rs_return = rs_resp.data.return_pct
+            rs_return = getattr(rs_resp.data, "return_pct", 0.0)
 
         market = "KOSDAQ" if self.stock_code_repository.is_kosdaq(code) else "KOSPI"
 
