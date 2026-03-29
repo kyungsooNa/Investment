@@ -328,10 +328,16 @@ class OneilUniverseService:
         bb_resp = await self._indicator.get_bollinger_bands(
             code, period=self._cfg.bb_period, multiplier=self._cfg.multiplier, ohlcv_data=ohlcv
         )
+        
+        def _get_val(obj, key):
+            return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
         widths = []
         for band in (bb_resp.data or []):
-            if isinstance(band, dict) and band.get('upper') is not None and band.get('lower') is not None:
-                widths.append(band['upper'] - band['lower'])
+            upper = _get_val(band, 'upper')
+            lower = _get_val(band, 'lower')
+            if upper is not None and lower is not None:
+                widths.append(upper - lower)
         
         if len(widths) < period:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "insufficient_bb_data"})
