@@ -1617,6 +1617,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
     async def test_notify_subscribers_queue_full(self):
         """구독자 큐가 가득 찬 경우 오래된 메시지를 버리고 최신 메시지로 교체되는지 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler(dry_run=True)
+        # json.dumps가 성공하도록 market_clock mock 설정
+        scheduler._tm.get_current_kst_time.return_value.strftime.return_value = "2025-01-01 10:00:00"
 
         # maxsize=1인 큐 생성
         q = asyncio.Queue(maxsize=1)
