@@ -6,6 +6,7 @@ SSE 구독자에게 실시간 전파한다.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -85,18 +86,19 @@ class NotificationService:
         if len(self._history) > self.MAX_HISTORY:
             self._history = self._history[-self.MAX_HISTORY:]
 
-        data = event.to_dict()
+        json_data = json.dumps(event.to_dict(), ensure_ascii=False)
         for queue in list(self._subscriber_queues):
             try:
-                queue.put_nowait(data)
+                queue.put_nowait(json_data)
             except asyncio.QueueFull:
-                pass
+                try:
+                    queue.get_nowait()
+                    queue.put_nowait(json_data)
+                except Exception:
+                    pass
 
         for handler in self._external_handlers:
-            try:
-                await handler(event)
-            except Exception:
-                pass
+            asyncio.create_task(handler(event))
 
         return event
 

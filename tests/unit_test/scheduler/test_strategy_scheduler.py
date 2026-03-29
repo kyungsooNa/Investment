@@ -45,8 +45,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
     def _make_scheduler(self, dry_run=True):
         vm = MagicMock()
         vm.get_holds_by_strategy.return_value = []
-        vm.log_buy_async = AsyncMock()
-        vm.log_sell_by_strategy_async = AsyncMock()
+        vm.log_buy_async = AsyncMock(return_value=True)
+        vm.log_sell_by_strategy_async = AsyncMock(return_value=True)
 
         oes = MagicMock()
         oes.handle_place_buy_order = AsyncMock(
@@ -68,6 +68,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         tm = MagicMock()
         tm.is_market_operating_hours.return_value = True
+        tm.get_current_kst_time.return_value.strftime.return_value = "2023-01-01 10:00:00"
 
         mcs = AsyncMock()
         mcs.is_market_open_now.return_value = True
@@ -1586,6 +1587,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 큐에 데이터가 들어왔는지 확인
         self.assertFalse(q.empty())
         data = q.get_nowait()
+        data = json.loads(data)
         self.assertEqual(data["code"], "005930")
         self.assertEqual(data["action"], "BUY")
         self.assertEqual(data["strategy_name"], "TestStrat")
@@ -1611,18 +1613,20 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(q2.empty())
         d1 = q1.get_nowait()
         d2 = q2.get_nowait()
+        d1 = json.loads(d1)
+        d2 = json.loads(d2)
         self.assertEqual(d1["code"], "000660")
         self.assertEqual(d2["code"], "000660")
 
     async def test_notify_subscribers_queue_full(self):
-        """구독자 큐가 가득 찬 경우 예외 없이 스킵되는지 테스트."""
+        """구독자 큐가 가득 찬 경우 오래된 메시지를 버리고 최신 메시지로 교체되는지 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler(dry_run=True)
 
         # maxsize=1인 큐 생성
         q = asyncio.Queue(maxsize=1)
         scheduler._subscriber_queues.append(q)
-        # 큐를 가득 채움
-        q.put_nowait({"dummy": True})
+        # 큐를 가득 채움 (JSON 문자열로 삽입 — 서비스 직렬화 방식 반영)
+        q.put_nowait('{"dummy": true}')
 
         signal = TradeSignal(
             strategy_name="S", code="005930", name="삼성전자",
@@ -1631,10 +1635,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 예외 없이 실행되어야 함
         await scheduler._execute_signal(signal)
 
-        # 큐에는 기존 데이터만 있어야 함
+        # 큐가 가득 찼을 때 오래된 메시지를 제거하고 최신 시그널로 교체
         self.assertEqual(q.qsize(), 1)
-        data = q.get_nowait()
-        self.assertEqual(data["dummy"], True)
+        data = json.loads(q.get_nowait())
+        self.assertEqual(data["code"], "005930")
+        self.assertEqual(data["action"], "BUY")
 
     async def test_no_subscribers_no_error(self):
         """구독자가 없을 때 _notify_subscribers 호출 시 에러 없음 테스트."""

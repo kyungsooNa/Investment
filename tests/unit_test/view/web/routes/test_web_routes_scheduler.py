@@ -165,8 +165,9 @@ async def test_scheduler_stream_connects(web_client, mock_web_ctx):
     mock_web_ctx.scheduler.create_subscriber_queue = MagicMock(return_value=mock_queue)
     mock_web_ctx.scheduler.remove_subscriber_queue = MagicMock()
 
-    # 큐에 데이터 넣고 None(종료 신호) 추가
-    await mock_queue.put({
+    # 큐에 데이터 넣고 None(종료 신호) 추가 (스케줄러에서 미리 직렬화된 JSON 문자열 삽입 반영)
+    import json as _json
+    await mock_queue.put(_json.dumps({
         "strategy_name": "TestStrat",
         "code": "005930",
         "name": "삼성전자",
@@ -175,7 +176,7 @@ async def test_scheduler_stream_connects(web_client, mock_web_ctx):
         "reason": "모멘텀 돌파",
         "timestamp": "2025-01-01 10:00:00",
         "api_success": True,
-    })
+    }, ensure_ascii=False))
     await mock_queue.put(None)  # 종료 신호
 
     response = web_client.get("/api/scheduler/stream")

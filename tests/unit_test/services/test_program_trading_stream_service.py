@@ -83,12 +83,13 @@ async def test_on_data_received_stores_and_broadcasts(manager):
     # 3. 큐 브로드캐스트 확인
     assert queue.qsize() == 1
     item = await queue.get()
+    item = json.loads(item)
     # The payload is a list, not the original dict
     expected_payload = [
         '005930',  # code
         '',        # 주식체결시간
         100,       # price
-        0,         # rate
+        0.0,       # rate
         0,         # change
         '',        # sign
         0,         # 매도체결량
@@ -117,11 +118,12 @@ async def test_on_data_received_queue_full_behavior(manager):
     item2 = await queue.get()
     assert item1 == "old_2"
     # The payload is a list, not the original dict
+    item2 = json.loads(item2)
     expected_payload = [
         '005930',  # code
         '',        # 주식체결시간
         0,         # price (default)
-        0,         # rate
+        0.0,       # rate
         0,         # change
         '',        # sign
         0,         # 매도체결량

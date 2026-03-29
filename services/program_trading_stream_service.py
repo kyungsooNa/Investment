@@ -240,13 +240,14 @@ class ProgramTradingStreamService:
             buy_rem
         ]
         
+        json_payload = json.dumps(payload, ensure_ascii=False)
         for q in list(self._pt_queues):
             try:
-                q.put_nowait(payload)  # data 대신 payload(리스트) 전송
+                q.put_nowait(json_payload)
             except asyncio.QueueFull:
                 try:
                     q.get_nowait()
-                    q.put_nowait(payload)
+                    q.put_nowait(json_payload)
                 except Exception:
                     pass
             except Exception:
