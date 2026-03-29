@@ -272,20 +272,28 @@ class IndicatorService:
             # 1. 확정된 과거 데이터 분리 (마지막 데이터 제외)
             # 마지막 데이터는 장 중 실시간으로 변할 수 있으므로 캐시 대상에서 제외
             confirmed_data = ohlcv_data[:-1]
-            # 마지막 데이터 날짜 (캐시 키용)
+            confirmed_len = len(confirmed_data)
+            # 캐시 키: 시작일 + 종료일 + 데이터 수로 구성하여 ohlcv_limit 변경이나
+            # DB 행 수 변화로 인한 캐시 불일치 방지
+            confirmed_first_date = str(confirmed_data[0]['date'])
             confirmed_last_date = str(confirmed_data[-1]['date'])
-            
-            cache_key = f"indicators_chart_{stock_code}_{confirmed_last_date}"
-            
+
+            cache_key = f"indicators_chart_{stock_code}_{confirmed_first_date}_{confirmed_last_date}_{confirmed_len}"
+
             # 2. 캐시 조회
             raw_cache = self.cache_store.get_raw(cache_key)
             cached_wrapper = None
             if raw_cache and isinstance(raw_cache, tuple):
                 cached_wrapper, _ = raw_cache
-            
+
             past_indicators = None
             if cached_wrapper:
-                past_indicators = cached_wrapper.get('data')
+                cached_data = cached_wrapper.get('data')
+                # 캐시된 지표 행 수가 confirmed_data와 일치하는지 검증
+                if cached_data:
+                    sample_key = next((k for k, v in cached_data.items() if isinstance(v, list)), None)
+                    if sample_key and len(cached_data[sample_key]) == confirmed_len:
+                        past_indicators = cached_data
 
             # 3. 캐시 미스 시 과거 데이터 전체 계산 및 저장
             if not past_indicators:
@@ -293,7 +301,7 @@ class IndicatorService:
                 if resp.rt_cd != ErrorCode.SUCCESS.value:
                     return resp
                 past_indicators = resp.data
-                
+
                 # 캐시 저장 (파일 저장 포함)
                 self.cache_store.set(cache_key, {
                     "timestamp": datetime.now().isoformat(),
