@@ -6,6 +6,7 @@ import logging
 import os
 import json
 from dataclasses import asdict
+from datetime import timedelta
 from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
@@ -107,24 +108,7 @@ class FirstPullbackStrategy(LiveStrategy):
 
     async def _check_entry(self, code, item, progress) -> Optional[TradeSignal]:
         """진입 조건 검사: Phase 1 → 2 → 3 순서로 필터링."""
-        # ── Phase 1: Setup (로켓 발사) ──
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=30)
-        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
-        if not ohlcv or len(ohlcv) < 25:
-            return None
-
-        surge_result = self._check_surge_history(ohlcv)
-        if not surge_result:
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "no_surge_history"})
-            return None
-
-        surge_volume, surge_day_high = surge_result
-
-        if not self._check_ma_uptrend(ohlcv):
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "ma_not_uptrending"})
-            return None
-
-        # ── Phase 2: Pullback (건전한 숨 고르기) ──
+        # ── 현재가 데이터 선행 조회 (OHLCV 캐시 활용 위해) ──
         resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0":
             return None
@@ -157,7 +141,27 @@ class FirstPullbackStrategy(LiveStrategy):
         if current <= 0 or today_low <= 0:
             return None
 
-        # 20MA 계산 (OHLCV의 최근 20일)
+        # ── Phase 1: Setup (로켓 발사) ── 어제까지 확정 OHLCV(캐시)
+        now = self._tm.get_current_kst_time()
+        yesterday_str = (now - timedelta(days=1)).strftime("%Y%m%d")
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=30, end_date=yesterday_str)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
+        if not ohlcv or len(ohlcv) < 25:
+            return None
+
+        surge_result = self._check_surge_history(ohlcv)
+        if not surge_result:
+            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "no_surge_history"})
+            return None
+
+        surge_volume, surge_day_high = surge_result
+
+        if not self._check_ma_uptrend(ohlcv):
+            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "ma_not_uptrending"})
+            return None
+
+        # ── Phase 2: Pullback (건전한 숨 고르기) ──
+        # 20MA 계산 (어제까지 확정 OHLCV 기준)
         closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
         ma_20d = sum(closes[-self._cfg.ma_period:]) / self._cfg.ma_period if len(closes) >= self._cfg.ma_period else 0
         if ma_20d <= 0:

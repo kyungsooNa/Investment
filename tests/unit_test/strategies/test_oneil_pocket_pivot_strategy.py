@@ -94,7 +94,7 @@ def pp_scan_setup(mock_deps, watchlist_item):
 def _pp_price_output(
     current="68500", vol="200000", pg_buy="30000",
     trade_value="14200000000", today_open="68000",
-    today_low="67500", prev_close="67000",
+    today_high="69000", today_low="67500", prev_close="67000",
 ):
     """Pocket Pivot 매수 조건에 맞는 현재가 API 응답 생성."""
     prdy_vrss = str(abs(int(current) - int(prev_close)))
@@ -103,7 +103,8 @@ def _pp_price_output(
         rt_cd="0", msg1="OK", data={"output": {
             "stck_prpr": current, "acml_vol": vol,
             "pgtr_ntby_qty": pg_buy, "acml_tr_pbmn": trade_value,
-            "stck_oprc": today_open, "stck_lwpr": today_low,
+            "stck_oprc": today_open, "stck_hgpr": today_high,
+            "stck_lwpr": today_low,
             "stck_prdy_clpr": prev_close,
             "prdy_vrss": prdy_vrss,
             "prdy_vrss_sign": prdy_vrss_sign,
@@ -237,7 +238,7 @@ def bgu_scan_setup(mock_deps, watchlist_item):
 def _bgu_price_output(
     current="72900", vol="500000", pg_buy="30000",
     trade_value="14200000000", today_open="72800",
-    today_low="72000", prev_close="70000",
+    today_high="73500", today_low="72000", prev_close="70000",
 ):
     """BGU 매수 조건에 맞는 현재가 API 응답 (갭 +4%)."""
     prdy_vrss = str(abs(int(current) - int(prev_close)))
@@ -246,7 +247,8 @@ def _bgu_price_output(
         rt_cd="0", msg1="OK", data={"output": {
             "stck_prpr": current, "acml_vol": vol,
             "pgtr_ntby_qty": pg_buy, "acml_tr_pbmn": trade_value,
-            "stck_oprc": today_open, "stck_lwpr": today_low,
+            "stck_oprc": today_open, "stck_hgpr": today_high,
+            "stck_lwpr": today_low,
             "stck_prdy_clpr": prev_close,
             "prdy_vrss": prdy_vrss,
             "prdy_vrss_sign": prdy_vrss_sign,
@@ -1114,6 +1116,105 @@ def test_check_7week_rule_not_triggered(mock_deps):
     assert strategy._check_7week_hold(state, 10500, ohlcv_short) is None
     ohlcv_insufficient_ma = _make_ohlcv(40)
     assert strategy._check_7week_hold(state, 10500, ohlcv_insufficient_ma) is None
+
+# ════════════════════════════════════════════════════════════════
+# OHLCV 최적화: 캐시 활용 + 오늘 캔들 합성
+# ════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_scan_ohlcv_called_with_yesterday_end_date(pp_scan_setup):
+    """OHLCV 조회 시 end_date=어제 날짜로 호출하여 캐시 활용."""
+    strategy, sqs, _, tm, _ = pp_scan_setup
+    sqs.get_current_price.return_value = _pp_price_output()
+    sqs.get_stock_conclusion.return_value = _cgld_output()
+
+    await strategy.scan()
+
+    # tm.get_current_kst_time은 2025-01-01 12:00 → end_date="20241231"
+    sqs.get_recent_daily_ohlcv.assert_called_once()
+    call_args = sqs.get_recent_daily_ohlcv.call_args
+    assert call_args[0][0] == "005930"
+    assert call_args[1]["end_date"] == "20241231"
+
+
+@pytest.mark.asyncio
+async def test_scan_today_candle_appended_to_ohlcv(pp_scan_setup):
+    """OHLCV에 오늘 날짜가 없으면 현재가 데이터로 오늘 캔들을 합성하여 추가."""
+    strategy, sqs, _, tm, _ = pp_scan_setup
+
+    # 59일치 어제까지 데이터 (오늘 20250101 아님)
+    ohlcv = _make_ohlcv(59, close=67500, open_=68000, volume=50000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+
+    sqs.get_current_price.return_value = _pp_price_output(
+        current="68500", vol="200000", today_open="68000",
+        today_high="69000", today_low="67500", prev_close="67000",
+    )
+    sqs.get_stock_conclusion.return_value = _cgld_output()
+
+    signals = await strategy.scan()
+
+    # 59(기존) + 1(오늘 합성) = 60일치로 PP 조건 평가 → 시그널 생성
+    assert len(signals) == 1
+    assert signals[0].action == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_scan_today_candle_replaces_existing(pp_scan_setup):
+    """OHLCV 마지막 항목이 오늘 날짜이면 현재가 데이터로 교체."""
+    strategy, sqs, _, tm, _ = pp_scan_setup
+
+    # 60일치 데이터 중 마지막이 오늘(20250101) 날짜
+    ohlcv = _make_ohlcv(59, close=67500, open_=68000, volume=50000)
+    ohlcv.append({"date": "20250101", "open": 67000, "close": 67500,
+                  "high": 68000, "low": 66500, "volume": 10000})
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+
+    sqs.get_current_price.return_value = _pp_price_output(
+        current="68500", vol="200000", today_open="68000",
+        today_high="69000", today_low="67500", prev_close="67000",
+    )
+    sqs.get_stock_conclusion.return_value = _cgld_output()
+
+    signals = await strategy.scan()
+
+    # 교체된 오늘 캔들(close=68500, vol=200000)로 PP 조건 평가
+    assert len(signals) == 1
+    assert signals[0].action == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_scan_today_candle_high_from_stck_hgpr(pp_scan_setup):
+    """오늘 캔들의 high 값이 stck_hgpr에서 정상 추출."""
+    strategy, sqs, _, tm, _ = pp_scan_setup
+
+    ohlcv = _make_ohlcv(59, close=67500, open_=68000, volume=50000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+
+    sqs.get_current_price.return_value = _pp_price_output(today_high="70000")
+    sqs.get_stock_conclusion.return_value = _cgld_output()
+
+    # _check_pocket_pivot을 스파이하여 전달된 ohlcv의 마지막 캔들 검증
+    original_check_pp = strategy._check_pocket_pivot
+    captured_ohlcv = []
+
+    def spy_check_pp(code, current, vol, progress, ohlcv_arg, item, prev_close):
+        captured_ohlcv.append(ohlcv_arg)
+        return original_check_pp(code, current, vol, progress, ohlcv_arg, item, prev_close)
+
+    strategy._check_pocket_pivot = spy_check_pp
+
+    await strategy.scan()
+
+    assert len(captured_ohlcv) == 1
+    today_candle = captured_ohlcv[0][-1]
+    assert today_candle["date"] == "20250101"
+    assert today_candle["high"] == 70000.0
+    assert today_candle["open"] == 68000.0
+    assert today_candle["low"] == 67500.0
+    assert today_candle["close"] == 68500.0
+    assert today_candle["volume"] == 200000
+
 
 def test_load_save_state_exceptions(mock_deps, tmp_path):
     """_load_state, _save_state: 파일 입출력 예외 처리 검증."""

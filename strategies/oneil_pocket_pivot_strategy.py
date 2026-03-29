@@ -6,6 +6,7 @@ import logging
 import os
 import json
 from dataclasses import dataclass, asdict
+from datetime import timedelta
 from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
@@ -124,6 +125,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             pg_buy = int(out.get("pgtr_ntby_qty", 0))
             trade_value = int(out.get("acml_tr_pbmn", 0))
             today_open = int(out.get("stck_oprc", 0))
+            today_high = int(out.get("stck_hgpr", 0))
             today_low = int(out.get("stck_lwpr", 0))
             prdy_vrss = int(out.get("prdy_vrss", 0))
             prdy_vrss_sign = str(out.get("prdy_vrss_sign", "3"))
@@ -133,6 +135,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             pg_buy = int(getattr(out, "pgtr_ntby_qty", 0) or 0)
             trade_value = int(getattr(out, "acml_tr_pbmn", 0) or 0)
             today_open = int(getattr(out, "stck_oprc", 0) or 0)
+            today_high = int(getattr(out, "stck_hgpr", 0) or 0)
             today_low = int(getattr(out, "stck_lwpr", 0) or 0)
             prdy_vrss = int(getattr(out, "prdy_vrss", 0) or 0)
             prdy_vrss_sign = str(getattr(out, "prdy_vrss_sign", "3") or "3")
@@ -148,10 +151,27 @@ class OneilPocketPivotStrategy(LiveStrategy):
         if current <= 0 or prev_close <= 0:
             return None
 
-        # 2. OHLCV 조회 (MA 계산 + 하락일 거래량 분석용)
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=60)
+        # 2. OHLCV: 어제까지 확정 데이터(캐시) + 오늘 캔들(현재가로 합성)
+        now = self._tm.get_current_kst_time()
+        yesterday_str = (now - timedelta(days=1)).strftime("%Y%m%d")
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=60, end_date=yesterday_str)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
-        if not ohlcv or len(ohlcv) < 10:
+
+        today_str = now.strftime("%Y%m%d")
+        today_candle = {
+            "date": today_str,
+            "open": float(today_open),
+            "high": float(today_high),
+            "low": float(today_low),
+            "close": float(current),
+            "volume": vol,
+        }
+        if ohlcv and ohlcv[-1].get("date") == today_str:
+            ohlcv[-1] = today_candle
+        else:
+            ohlcv.append(today_candle)
+
+        if len(ohlcv) < 10:
             return None
 
         # 3. 조건 A (Pocket Pivot) 시도
