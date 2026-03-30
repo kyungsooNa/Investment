@@ -26,6 +26,7 @@ from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
+from task.background.after_market.cache_warmup_task import CacheWarmupTask
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -69,6 +70,7 @@ class WebAppContext:
         self.daily_price_collector_task: DailyPriceCollectorTask = None
         self.ohlcv_update_task: OhlcvUpdateTask = None
         self.premium_watchlist_generator_task: PremiumWatchlistGeneratorTask = None
+        self.cache_warmup_task: CacheWarmupTask = None
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
@@ -280,6 +282,16 @@ class WebAppContext:
             logger=self.logger,
         )
 
+        self.cache_warmup_task = CacheWarmupTask(
+            market_data_service=self.market_data_service,
+            stock_query_service=self.stock_query_service,
+            universe_service=self.oneil_universe_service,
+            market_calendar_service=self._mcs,
+            market_clock=self.market_clock,
+            notification_service=self.notification_service,
+            logger=self.logger,
+        )
+
         # BackgroundScheduler 초기화 및 태스크 등록
         self.background_scheduler = BackgroundScheduler(
             logger=self.logger,
@@ -295,6 +307,8 @@ class WebAppContext:
             self.background_scheduler.register(self.ohlcv_update_task)
         if self.premium_watchlist_generator_task:
             self.background_scheduler.register(self.premium_watchlist_generator_task)
+        if self.cache_warmup_task:
+            self.background_scheduler.register(self.cache_warmup_task)
 
         # ForegroundScheduler 초기화
         self.foreground_scheduler = ForegroundScheduler(
