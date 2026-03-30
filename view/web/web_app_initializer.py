@@ -283,7 +283,8 @@ class WebAppContext:
         )
 
         self.cache_warmup_task = CacheWarmupTask(
-            broker=self.broker,
+            market_data_service=self.market_data_service,
+            stock_query_service=self.stock_query_service,
             universe_service=self.oneil_universe_service,
             market_calendar_service=self._mcs,
             market_clock=self.market_clock,

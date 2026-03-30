@@ -25,7 +25,8 @@ from interfaces.schedulable_task import TaskState
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
 if TYPE_CHECKING:
-    from brokers.broker_api_wrapper import BrokerAPIWrapper
+    from services.market_data_service import MarketDataService
+    from services.stock_query_service import StockQueryService
     from services.oneil_universe_service import OneilUniverseService
     from services.market_calendar_service import MarketCalendarService
     from core.market_clock import MarketClock
@@ -50,7 +51,8 @@ class CacheWarmupTask(AfterMarketTask):
 
     def __init__(
         self,
-        broker: "BrokerAPIWrapper",
+        market_data_service: "MarketDataService",
+        stock_query_service: "StockQueryService",
         universe_service: Optional["OneilUniverseService"] = None,
         market_calendar_service: Optional["MarketCalendarService"] = None,
         market_clock: Optional["MarketClock"] = None,
@@ -62,7 +64,8 @@ class CacheWarmupTask(AfterMarketTask):
             market_clock=market_clock,
             logger=logger or logging.getLogger(__name__),
         )
-        self._broker = broker
+        self._mds = market_data_service
+        self._sqs = stock_query_service
         self._universe_service = universe_service
         self._ns = notification_service
 
@@ -232,7 +235,7 @@ class CacheWarmupTask(AfterMarketTask):
             False — 실패 또는 응답 오류
         """
         try:
-            resp = await self._broker.get_price_summary(code)
+            resp = await self._mds.get_price_summary(code)
             if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                 return True
             return False
@@ -278,7 +281,7 @@ class CacheWarmupTask(AfterMarketTask):
     async def _get_holdings_codes(self) -> List[str]:
         """계좌 잔고(output2)에서 보유 종목 코드를 반환한다."""
         try:
-            resp = await self._broker.get_account_balance()
+            resp = await self._sqs.handle_get_account_balance()
             if not (resp and resp.rt_cd == ErrorCode.SUCCESS.value and resp.data):
                 return []
             holdings = (
