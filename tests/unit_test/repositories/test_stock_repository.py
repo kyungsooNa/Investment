@@ -440,11 +440,8 @@ async def test_stock_repository_get_ohlcv_summary(repo):
     assert summary["count"] == 2
     assert summary["latest_date"] == "20250102"
 
-    m_conn = AsyncMock()
-    m_conn.execute.side_effect = Exception("DB Error")
-    repo._conn = m_conn
-
-    err_summary = await repo.get_ohlcv_summary("005930")
+    with patch("repositories.stock_ohlcv_repository.aiosqlite.connect", side_effect=Exception("DB Error")):
+        err_summary = await repo.get_ohlcv_summary("005930")
     assert err_summary["count"] == 0
 
 @pytest.mark.asyncio
@@ -455,11 +452,8 @@ async def test_stock_repository_get_ohlcv_max_trading_days(repo):
     ])
     assert await repo.get_ohlcv_max_trading_days() == 2
 
-    m_conn = AsyncMock()
-    m_conn.execute.side_effect = Exception("DB Error")
-    repo._conn = m_conn
-
-    assert await repo.get_ohlcv_max_trading_days() == 0
+    with patch("repositories.stock_ohlcv_repository.aiosqlite.connect", side_effect=Exception("DB Error")):
+        assert await repo.get_ohlcv_max_trading_days() == 0
 
 @pytest.mark.asyncio
 async def test_stock_repository_upsert_daily_snapshot_error(repo):

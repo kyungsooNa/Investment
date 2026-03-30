@@ -23,8 +23,8 @@ class StockOhlcvRepository:
     def __init__(self, db_path: str = None, logger=None):
         self._logger = logger or logging.getLogger(__name__)
         self._db_path = db_path or os.path.join("data", "stocks.db")
-        self._lock = None
-        self._conn: Optional[aiosqlite.Connection] = None
+        self._write_lock = None
+        self._write_conn: Optional[aiosqlite.Connection] = None
 
         # OHLCV 전용 LFU 캐시 — price 캐시와 물리적으로 분리
         self._ohlcv_cache = _LFUCache(capacity=500)
@@ -36,6 +36,7 @@ class StockOhlcvRepository:
         try:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS ohlcv (
                         code TEXT NOT NULL,
@@ -83,18 +84,26 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository DB 초기화 실패: {e}")
 
     @asynccontextmanager
-    async def _get_connection(self):
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        async with self._lock:
-            if self._conn is None:
-                self._conn = await aiosqlite.connect(self._db_path)
+    async def _get_write_connection(self):
+        """쓰기 전용 연결 — asyncio.Lock으로 직렬화, 커밋/롤백 보장."""
+        if self._write_lock is None:
+            self._write_lock = asyncio.Lock()
+        async with self._write_lock:
+            if self._write_conn is None:
+                self._write_conn = await aiosqlite.connect(self._db_path)
+                await self._write_conn.execute("PRAGMA synchronous=NORMAL")
             try:
-                yield self._conn
-                await self._conn.commit()
+                yield self._write_conn
+                await self._write_conn.commit()
             except Exception:
-                await self._conn.rollback()
+                await self._write_conn.rollback()
                 raise
+
+    @asynccontextmanager
+    async def _get_read_connection(self):
+        """읽기 전용 연결 — Lock 없이 새 연결을 열어 WAL 동시 읽기를 활용."""
+        async with aiosqlite.connect(self._db_path) as conn:
+            yield conn
 
     # ── OHLCV 캐시/DB ──────────────────────────────────────────────────────────
 
@@ -122,7 +131,7 @@ class StockOhlcvRepository:
 
         # 2. DB에서 읽기
         try:
-            async with self._get_connection() as conn:
+            async with self._get_read_connection() as conn:
                 conn.row_factory = aiosqlite.Row
                 async with conn.execute(
                     "SELECT date, open, high, low, close, volume FROM ohlcv "
@@ -130,7 +139,6 @@ class StockOhlcvRepository:
                     (code, ohlcv_limit)
                 ) as cursor:
                     ohlcv_rows = await cursor.fetchall()
-                conn.row_factory = None
 
             if not ohlcv_rows:
                 return None
@@ -184,7 +192,7 @@ class StockOhlcvRepository:
             return
         codes_to_invalidate = {r["code"] for r in records if "code" in r}
         try:
-            async with self._get_connection() as conn:
+            async with self._get_write_connection() as conn:
                 await conn.executemany(
                     """
                     INSERT OR REPLACE INTO ohlcv (
@@ -208,7 +216,7 @@ class StockOhlcvRepository:
             {"count": int, "latest_date": str|None, "oldest_date": str|None}
         """
         try:
-            async with self._get_connection() as conn:
+            async with self._get_read_connection() as conn:
                 async with conn.execute(
                     "SELECT COUNT(*), MAX(date), MIN(date) FROM ohlcv WHERE code = ?",
                     (code,),
@@ -223,7 +231,7 @@ class StockOhlcvRepository:
     async def get_ohlcv_max_trading_days(self) -> int:
         """DB에 저장된 고유 거래일 수를 반환합니다."""
         try:
-            async with self._get_connection() as conn:
+            async with self._get_read_connection() as conn:
                 async with conn.execute("SELECT COUNT(DISTINCT date) FROM ohlcv") as cursor:
                     row = await cursor.fetchone()
             return row[0] if row and row[0] else 0
@@ -240,7 +248,7 @@ class StockOhlcvRepository:
 
         now = time.time()
         try:
-            async with self._get_connection() as conn:
+            async with self._get_write_connection() as conn:
                 await conn.executemany(
                     """
                     INSERT OR REPLACE INTO daily_prices (
@@ -272,14 +280,13 @@ class StockOhlcvRepository:
     async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         try:
-            async with self._get_connection() as conn:
+            async with self._get_read_connection() as conn:
                 conn.row_factory = aiosqlite.Row
                 async with conn.execute(
                     "SELECT * FROM daily_prices WHERE trade_date = ? ORDER BY code",
                     (trade_date,),
                 ) as cursor:
                     rows = await cursor.fetchall()
-                conn.row_factory = None
                 return [dict(row) for row in rows]
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices 날짜별 조회 실패: {e}")
@@ -288,7 +295,7 @@ class StockOhlcvRepository:
     async def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
         """특정 종목의 최근 N일간 스냅샷 이력 조회."""
         try:
-            async with self._get_connection() as conn:
+            async with self._get_read_connection() as conn:
                 conn.row_factory = aiosqlite.Row
                 async with conn.execute(
                     "SELECT * FROM daily_prices WHERE code = ? "
@@ -296,7 +303,6 @@ class StockOhlcvRepository:
                     (code, days),
                 ) as cursor:
                     rows = await cursor.fetchall()
-                conn.row_factory = None
                 return [dict(row) for row in rows]
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices 이력 조회 실패: {e}")
@@ -305,7 +311,7 @@ class StockOhlcvRepository:
     async def get_latest_trade_date(self) -> Optional[str]:
         """daily_prices에 저장된 가장 최근 거래일 반환."""
         try:
-            async with self._get_connection() as conn:
+            async with self._get_read_connection() as conn:
                 async with conn.execute("SELECT MAX(trade_date) FROM daily_prices") as cursor:
                     row = await cursor.fetchone()
                 return row[0] if row and row[0] else None
@@ -316,7 +322,7 @@ class StockOhlcvRepository:
     async def get_count_by_date(self, trade_date: str) -> int:
         """특정 날짜에 저장된 종목 수 반환."""
         try:
-            async with self._get_connection() as conn:
+            async with self._get_read_connection() as conn:
                 async with conn.execute(
                     "SELECT COUNT(*) FROM daily_prices WHERE trade_date = ?",
                     (trade_date,),
@@ -333,7 +339,7 @@ class StockOhlcvRepository:
 
         cutoff_date = (datetime.now() - timedelta(days=keep_days)).strftime("%Y%m%d")
         try:
-            async with self._get_connection() as conn:
+            async with self._get_write_connection() as conn:
                 async with conn.execute(
                     "DELETE FROM daily_prices WHERE trade_date < ?", (cutoff_date,)
                 ) as cursor:
@@ -348,14 +354,13 @@ class StockOhlcvRepository:
     async def get_latest_daily_snapshot(self, code: str) -> Optional[dict]:
         """daily_prices에서 최신 스냅샷을 현재가 API 응답 포맷으로 변환하여 반환합니다."""
         try:
-            async with self._get_connection() as conn:
+            async with self._get_read_connection() as conn:
                 conn.row_factory = aiosqlite.Row
                 async with conn.execute(
                     "SELECT * FROM daily_prices WHERE code = ? ORDER BY trade_date DESC LIMIT 1",
                     (code,),
                 ) as cursor:
                     row = await cursor.fetchone()
-                conn.row_factory = None
             if not row:
                 return None
             r = dict(row)
@@ -390,11 +395,11 @@ class StockOhlcvRepository:
         return self._ohlcv_cache.get_stats(expand=expand, latest_trading_date=latest_trading_date)
 
     async def close(self):
-        """DB 연결을 닫습니다."""
-        if self._conn:
-            await self._conn.close()
-            self._conn = None
+        """쓰기 전용 DB 연결을 닫습니다."""
+        if self._write_conn:
+            await self._write_conn.close()
+            self._write_conn = None
 
     def __del__(self):
-        if self._conn:
+        if self._write_conn:
             self._logger.warning("StockOhlcvRepository was not closed explicitly.")
