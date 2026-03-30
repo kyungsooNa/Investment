@@ -739,6 +739,8 @@ async def test_get_recent_daily_ohlcv_db_insufficient_falls_back_to_api(trading_
 
     broker.inquire_daily_itemchartprice.assert_awaited()
     assert len(result) >= 1
+    # API에서 온 데이터가 실제 결과에 포함되어 있는지 검증
+    assert any(r['date'] == "20250101" for r in result)
 
 
 @pytest.mark.asyncio
