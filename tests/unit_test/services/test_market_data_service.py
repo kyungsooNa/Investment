@@ -706,6 +706,62 @@ async def test_get_recent_daily_ohlcv_with_end_date(trading_service_fixture, moc
     assert kwargs['end_date'] == "20241231"
 
 @pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_db_first_when_sufficient(trading_service_fixture, mock_deps):
+    """get_recent_daily_ohlcv: DB에 충분한 데이터가 있으면 API 호출 없이 DB에서 반환."""
+    broker = mock_deps.broker
+    service = trading_service_fixture
+    db_rows = [{"date": f"2025010{i}", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000} for i in range(1, 6)]
+
+    mock_deps.stock_repo.get_stock_data.return_value = {"ohlcv": db_rows, "historical_complete": True}
+
+    result = await service.get_recent_daily_ohlcv("005930", limit=5)
+
+    assert len(result) == 5
+    assert result[0]['date'] == "20250101"
+    broker.inquire_daily_itemchartprice.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_db_insufficient_falls_back_to_api(trading_service_fixture, mock_deps):
+    """get_recent_daily_ohlcv: DB 데이터가 limit보다 적으면 API fallback."""
+    broker = mock_deps.broker
+    service = trading_service_fixture
+    db_rows = [{"date": "20250101", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000}]
+
+    mock_deps.stock_repo.get_stock_data.return_value = {"ohlcv": db_rows, "historical_complete": True}
+
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK",
+        data=[{"stck_bsop_date": "20250101", "stck_clpr": "105", "stck_oprc": "100", "stck_hgpr": "110", "stck_lwpr": "90", "acml_vol": "1000"}],
+    )
+
+    result = await service.get_recent_daily_ohlcv("005930", limit=5)
+
+    broker.inquire_daily_itemchartprice.assert_awaited()
+    assert len(result) >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_end_date_skips_db(trading_service_fixture, mock_deps):
+    """get_recent_daily_ohlcv: end_date 지정 시 DB-first 경로를 건너뛰고 API 호출."""
+    broker = mock_deps.broker
+    service = trading_service_fixture
+    db_rows = [{"date": f"2025010{i}", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000} for i in range(1, 6)]
+
+    mock_deps.stock_repo.get_stock_data.return_value = {"ohlcv": db_rows, "historical_complete": True}
+
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK",
+        data=[{"stck_bsop_date": "20241231", "stck_clpr": "100", "stck_oprc": "100", "stck_hgpr": "100", "stck_lwpr": "100", "acml_vol": "100"}],
+    )
+
+    await service.get_recent_daily_ohlcv("005930", limit=5, end_date="20241231")
+
+    broker.inquire_daily_itemchartprice.assert_awaited()
+    mock_deps.stock_repo.get_stock_data.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_price_summary(trading_service_fixture, mock_deps):
     """가격 요약 정보 조회 위임 테스트"""
     broker = mock_deps.broker
