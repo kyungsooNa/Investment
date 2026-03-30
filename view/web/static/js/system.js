@@ -246,6 +246,30 @@ function renderProgressCell(progress, taskName) {
         return '<span style="color:#888; font-size:0.88em;">대기 중</span>';
     }
 
+    // ── 캐시 웜업 태스크 ──
+    if (taskName === 'cache_warmup') {
+        const isRunning = progress.running;
+        const total = progress.total ?? 0;
+        const processed = progress.processed ?? 0;
+        const cached = progress.cached ?? 0;
+        const failed = progress.failed ?? 0;
+        const elapsed = progress.elapsed ? ` · ${progress.elapsed}s` : '';
+        if (isRunning) {
+            const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+            return `
+                <div style="font-size:0.85em; margin-bottom:3px;">웜업 중 · ${processed.toLocaleString()} / ${total.toLocaleString()} (${pct}%)${elapsed}</div>
+                <div style="background:#e0e0e0; border-radius:4px; height:8px; width:100%;">
+                    <div style="background:var(--primary-color,#2196F3); height:8px; border-radius:4px; width:${pct}%;"></div>
+                </div>
+                <div style="font-size:0.8em; color:#888; margin-top:2px;">적재 ${cached.toLocaleString()} / 실패 ${failed.toLocaleString()}</div>
+            `;
+        }
+        if (progress.last_warmed_date) {
+            return `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">완료</span> <span style="font-size:0.85em; color:#888;">${progress.last_warmed_date} · 적재 ${cached.toLocaleString()}${elapsed}</span>`;
+        }
+        return '<span style="color:#888; font-size:0.88em;">대기 중</span>';
+    }
+
     // ── 배치 태스크: 수집 진행률 ──
     const total = progress.total ?? 0;
     const processed = progress.processed ?? 0;
@@ -275,10 +299,11 @@ function renderProgressCell(progress, taskName) {
 
 // 태스크별 강제 수집 설정 (task_name → {endpoint, label})
 const FORCE_UPDATE_CONFIG = {
-    ohlcv_update:         { endpoint: '/api/ohlcv/force-update',                  label: '강제 수집' },
-    ranking_refresh:      { endpoint: '/api/background/ranking/force-update',     label: '강제 수집' },
-    daily_price_collector:{ endpoint: '/api/background/daily-price/force-update', label: '강제 수집' },
-    '전일기준주도주_생성': { endpoint: '/api/background/watchlist/force-update',   label: '강제 생성' },
+    ohlcv_update:         { endpoint: '/api/ohlcv/force-update',                       label: '강제 수집' },
+    ranking_refresh:      { endpoint: '/api/background/ranking/force-update',          label: '강제 수집' },
+    daily_price_collector:{ endpoint: '/api/background/daily-price/force-update',      label: '강제 수집' },
+    '전일기준주도주_생성': { endpoint: '/api/background/watchlist/force-update',        label: '강제 생성' },
+    cache_warmup:         { endpoint: '/api/background/cache-warmup/force-update',     label: '강제 웜업' },
 };
 
 function renderActionCell(task) {

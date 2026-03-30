@@ -29,15 +29,15 @@ class StockRepository:
 
     @property
     def _conn(self):
-        return self._ohlcv_repo._conn
+        return self._ohlcv_repo._write_conn
 
     @_conn.setter
     def _conn(self, value):
-        self._ohlcv_repo._conn = value
+        self._ohlcv_repo._write_conn = value
 
     def _get_connection(self):
-        """DB 연결 컨텍스트 매니저 (테스트에서 직접 접근 시 사용)."""
-        return self._ohlcv_repo._get_connection()
+        """쓰기 전용 DB 연결 컨텍스트 매니저 (테스트에서 직접 접근 시 사용)."""
+        return self._ohlcv_repo._get_write_connection()
 
     # ── 현재가 캐시 ──────────────────────────────────────────────────────────────
 
@@ -157,5 +157,5 @@ class StockRepository:
         await self._ohlcv_repo.close()
 
     def __del__(self):
-        if self._ohlcv_repo._conn:
+        if self._ohlcv_repo._write_conn:
             self._logger.warning("StockRepository was not closed explicitly.")

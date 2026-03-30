@@ -186,3 +186,19 @@ async def force_watchlist_update():
 
     asyncio.create_task(task.force_generate())
     return {"success": True, "message": "전일기준우량주 강제 생성이 시작되었습니다."}
+
+
+@router.post("/background/cache-warmup/force-update")
+async def force_cache_warmup():
+    """skip 조건을 무시하고 캐시 웜업을 강제 실행한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "cache_warmup_task", None)
+    if not task:
+        raise HTTPException(status_code=503, detail="CacheWarmupTask가 초기화되지 않았습니다")
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 웜업이 진행 중입니다")
+
+    asyncio.create_task(task.force_warmup())
+    return {"success": True, "message": "캐시 웜업이 시작되었습니다."}
