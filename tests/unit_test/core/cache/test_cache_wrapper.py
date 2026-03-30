@@ -874,3 +874,51 @@ async def test_cache_wrapper_with_market_calendar_service_fallback(cache_store, 
 
     # 3. 검증: 캐시 HIT (fallback 로직: latest_close_time <= cache_time)
     assert result.data["key"] == "cached_fallback"
+
+
+@pytest.mark.asyncio
+async def test_market_close_cache_avoids_repeated_parsing(cache_store, test_cache_config):
+    """동일 거래일로 여러 번 캐시 검증 시 get_market_close_time이 한 번만 호출된다 (strptime 캐싱 검증)"""
+    logger = MagicMock()
+    market_clock = MagicMock()
+    market_clock.is_market_operating_hours.return_value = False
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    market_clock.market_timezone = seoul_tz
+
+    now = seoul_tz.localize(datetime(2025, 3, 17, 18, 0, 0))
+    market_clock.get_current_kst_time.return_value = now
+    # 장 마감 시간: 15:40 (캐시 저장 시각인 16:00보다 이전 → 캐시 유효)
+    market_clock.get_market_close_time.return_value = seoul_tz.localize(datetime(2025, 3, 17, 15, 40, 0))
+
+    market_calendar_service = AsyncMock()
+    market_calendar_service.is_market_open_now.return_value = False
+    market_calendar_service.get_next_open_time.return_value = seoul_tz.localize(datetime(2025, 3, 18, 9, 0, 0))
+    market_calendar_service.get_latest_trading_date.return_value = "20250317"
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        market_clock=market_clock,
+        mode_getter=lambda: "TEST",
+        cache_store=cache_store,
+        config=test_cache_config,
+        market_calendar_service=market_calendar_service
+    )
+
+    # 캐시 주입: 장 마감(15:40) 이후 저장 → 유효
+    for arg in (1, 2):
+        key = f"TEST_get_data_{arg}"
+        cache_store.set(key, {
+            "timestamp": datetime(2025, 3, 17, 16, 0, 0).isoformat(),
+            "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": f"cached_{arg}"})
+        })
+
+    # 두 번 호출 → 동일 거래일("20250317")로 market_close 계산이 두 번 발생할 수 있음
+    result1 = await wrapped.get_data(1)
+    result2 = await wrapped.get_data(2)
+
+    assert result1.data["key"] == "cached_1"
+    assert result2.data["key"] == "cached_2"
+
+    # _market_close_cache 덕분에 get_market_close_time은 최초 1회만 호출되어야 함
+    market_clock.get_market_close_time.assert_called_once()

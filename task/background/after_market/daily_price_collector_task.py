@@ -40,6 +40,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
     API_CHUNK_SIZE = 8
     CHUNK_SLEEP_SEC = 1.1
+    DB_UPSERT_BATCH_SIZE = 500
 
     def __init__(
         self,
@@ -167,6 +168,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
             # 2. 청크별 수집
             collected_records: List[Dict] = []
+            db_upsert_buffer: List[Dict] = []
             processed = 0
 
             for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
@@ -189,10 +191,14 @@ class DailyPriceCollectorTask(AfterMarketTask):
                     if record:
                         batch_records.append(record)
 
-                # 배치 단위로 DB 저장
+                # 메모리 버퍼에 누적 후 임계치(DB_UPSERT_BATCH_SIZE) 도달 시 일괄 저장
                 if batch_records:
-                    await self._stock_repo.upsert_daily_snapshot(target_date, batch_records)
+                    db_upsert_buffer.extend(batch_records)
                     collected_records.extend(batch_records)
+
+                if len(db_upsert_buffer) >= self.DB_UPSERT_BATCH_SIZE:
+                    await self._stock_repo.upsert_daily_snapshot(target_date, db_upsert_buffer)
+                    db_upsert_buffer.clear()
 
                 processed += len(chunk)
                 elapsed = time.time() - start_time
@@ -216,6 +222,11 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 )
                 if not all_cache_hit:
                     await asyncio.sleep(self.CHUNK_SLEEP_SEC)
+
+            # 루프 종료 후 버퍼에 남은 데이터 일괄 저장
+            if db_upsert_buffer:
+                await self._stock_repo.upsert_daily_snapshot(target_date, db_upsert_buffer)
+                db_upsert_buffer.clear()
 
             # 3. 완료 처리
             self._last_collected_date = target_date
@@ -331,24 +342,23 @@ class DailyPriceCollectorTask(AfterMarketTask):
             return None
 
     def _load_all_stocks(self) -> List[tuple]:
-        """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외)."""
-        all_stocks = []
-        for _, row in self.stock_code_repository.df.iterrows():
-            code = row.get("종목코드", "")
-            name = row.get("종목명", "")
-            market = row.get("시장구분", "")
+        """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외).
 
-            if not code:
-                continue
-            if any(name.startswith(p) for p in _ETF_PREFIXES):
-                continue
-            if code[-1] != '0':
-                continue
-            if "스팩" in name:
-                continue
-            if market in ("KOSPI", "KOSDAQ"):
-                all_stocks.append((code, name, market))
-        return all_stocks
+        iterrows() 대신 벡터화 마스킹을 사용하여 수십 배 빠르게 필터링한다.
+        """
+        df = self.stock_code_repository.df
+        codes = df["종목코드"].astype(str)
+        names = df["종목명"].astype(str)
+
+        mask = (
+            codes.ne("")
+            & df["시장구분"].isin(("KOSPI", "KOSDAQ"))
+            & (codes.str[-1] == "0")
+            & ~names.str.startswith(_ETF_PREFIXES)
+            & ~names.str.contains("스팩", na=False)
+        )
+        filtered = df[mask]
+        return list(zip(filtered["종목코드"], filtered["종목명"], filtered["시장구분"]))
 
     def get_progress(self) -> Dict:
         """수집 진행률 반환."""
