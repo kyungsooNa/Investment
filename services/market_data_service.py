@@ -476,10 +476,23 @@ class MarketDataService:
         API는 시작/종료일 범위를 요구하므로 넉넉한 범위로 받아서 슬라이스로 limit개 보장.
         한국투자증권 API 특성상 긴 기간(1년 이상) 조회 시 데이터가 잘릴 수 있으므로,
         1년 단위로 끊어서 반복 호출하여 병합한다.
+
+        DB-first 최적화: end_date/start_date 미지정 시(최근 N건 요청) DB에 충분한 데이터가
+        있으면 API를 호출하지 않고 DB에서 바로 반환한다. ohlcv_update_task가 장 마감 후
+        전 종목을 갱신하므로 장중에는 API 호출 없이 DB 조회만으로 충분하다.
         """
         t_start = self.pm.start_timer()
         current_ed_dt = datetime.strptime(end_date, "%Y%m%d") if end_date else self._market_clock.get_current_kst_time()
-        
+
+        # DB-first: 날짜 범위가 명시되지 않은 경우에만 시도
+        if not end_date and not start_date and self._stock_repo:
+            stock_data = await self._stock_repo.get_stock_data(code, ohlcv_limit=limit, caller="get_recent_daily_ohlcv")
+            if stock_data:
+                rows = stock_data.get("ohlcv", [])
+                if len(rows) >= limit:
+                    self.pm.log_timer(f"MarketData.get_recent_daily_ohlcv({code})[DB]", t_start)
+                    return rows[-limit:]
+
         if start_date:
 
             resp = await self.get_ohlcv_range(code, "D", start_date, self._market_clock.to_yyyymmdd(current_ed_dt), exchange=exchange)
