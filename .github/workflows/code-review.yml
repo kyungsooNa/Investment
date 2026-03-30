@@ -1,0 +1,25 @@
+name: Gemini Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize] # PR이 열리거나 코드가 업데이트될 때 실행
+
+permissions:
+  contents: read
+  pull-requests: write # Gemini가 PR에 댓글을 달 수 있도록 권한 부여
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Gemini Code Review
+        uses: sshnaidm/gemini-code-review-action@v2
+        with:
+          gemini-key: ${{ secrets.GEMINI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          model: "gemini-1.5-pro" # 또는 gemini-1.5-flash (속도 중시)
+          # 한국어로 리뷰를 받고 싶다면 아래 prompt 설정을 추가하세요.
+          prompt: "Please review the code changes in the provided diff. Give feedback in Korean."
