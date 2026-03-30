@@ -722,6 +722,36 @@ async def test_get_recent_daily_ohlcv_db_first_when_sufficient(trading_service_f
 
 
 @pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_no_api_call_during_market_hours_when_db_full(trading_service_fixture, mock_deps):
+    """장중(is_market_open=True) + ohlcv_update_task로 DB가 완전히 채워진 상태에서
+    get_recent_daily_ohlcv 호출 시 OHLCV API(inquire_daily_itemchartprice)가 절대 호출되지 않아야 한다.
+    _analyze_candidate가 실제 사용하는 limit=90 기준으로 검증한다.
+    """
+    broker = mock_deps.broker
+    service = trading_service_fixture
+
+    # ohlcv_update_task가 저장한 600일치 데이터 시뮬레이션
+    from datetime import date, timedelta
+    base = date(2024, 1, 1)
+    db_rows = [
+        {"date": (base + timedelta(days=i)).strftime("%Y%m%d"),
+         "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000}
+        for i in range(600)
+    ]
+    mock_deps.stock_repo.get_stock_data.return_value = {"ohlcv": db_rows, "historical_complete": True}
+
+    # 장중 상태 명시 (fixture에 mcs가 없으므로 직접 주입)
+    mcs = MagicMock()
+    mcs.is_market_open_now = AsyncMock(return_value=True)
+    service._mcs = mcs
+
+    result = await service.get_recent_daily_ohlcv("005930", limit=90)
+
+    assert len(result) == 90
+    broker.inquire_daily_itemchartprice.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_db_insufficient_falls_back_to_api(trading_service_fixture, mock_deps):
     """get_recent_daily_ohlcv: DB 데이터가 limit보다 적으면 API fallback."""
     broker = mock_deps.broker
