@@ -40,6 +40,9 @@ class ClientWithCache:
         self._cache.set_logger(self._logger)
         self.cached_methods = set(config["cache"]["enabled_methods"])
 
+        # market_close datetime 파싱 결과를 거래일 문자열 단위로 캐시 (hot-path strptime 절감)
+        self._market_close_cache: dict = {}
+
     def __getattr__(self, name: str):
         # ✅ 무한 루프 방지
         if name.startswith("_"):  # ✅ 내부 속성은 직접 접근
@@ -104,8 +107,11 @@ class ClientWithCache:
                                     # 캐시 날짜 == 최근 거래일: 장 마감(15:40) 이후에 저장된 경우만 유효
                                     # 장 마감 전에 저장된 캐시는 전일 데이터이므로 무효
                                     # 최근 거래일 날짜 기준 장 마감 시간과 비교 (다음날 접근 시에도 정확히 비교)
-                                    latest_trading_date_dt = datetime.strptime(latest_trading_date_str, "%Y%m%d")
-                                    market_close = self._market_clock.get_market_close_time(target_dt=latest_trading_date_dt)
+                                    if latest_trading_date_str not in self._market_close_cache:
+                                        latest_trading_date_dt = datetime.strptime(latest_trading_date_str, "%Y%m%d")
+                                        self._market_close_cache[latest_trading_date_str] = \
+                                            self._market_clock.get_market_close_time(target_dt=latest_trading_date_dt)
+                                    market_close = self._market_close_cache[latest_trading_date_str]
                                     if cache_time >= market_close:
                                         is_valid = True
                                     else:
