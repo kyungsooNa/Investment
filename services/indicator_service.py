@@ -401,6 +401,43 @@ class IndicatorService:
         df[target_col] = 100 - (100 / (1 + rs))
         return df
 
+    def calc_bb_widths_sync(
+        self,
+        ohlcv_data: List[Dict],
+        period: int = 20,
+        multiplier: float = 2.0,
+    ) -> List[float]:
+        """이미 확보한 OHLCV 데이터로 BB 폭(upper-lower) 목록을 동기 계산합니다.
+        async 오버헤드 없이 순수 pandas 계산만 수행합니다."""
+        resp = self._calculate_bollinger_bands_full("", ohlcv_data, period, multiplier)
+        if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+            return []
+        widths = []
+        for band in resp.data:
+            upper = band.get('upper') if isinstance(band, dict) else getattr(band, 'upper', None)
+            lower = band.get('lower') if isinstance(band, dict) else getattr(band, 'lower', None)
+            if upper is not None and lower is not None:
+                widths.append(upper - lower)
+        return widths
+
+    def calc_rs_sync(
+        self,
+        ohlcv_data: List[Dict],
+        period_days: int = 63,
+    ) -> float:
+        """이미 확보한 OHLCV 데이터로 RS 수익률을 동기 계산합니다.
+        async 오버헤드 없이 O(1) 리스트 인덱싱만 수행합니다."""
+        try:
+            if len(ohlcv_data) < period_days + 1:
+                return 0.0
+            recent_close = self._safe_float(ohlcv_data[-1].get('close'))
+            past_close = self._safe_float(ohlcv_data[-(period_days + 1)].get('close'))
+            if recent_close is None or past_close is None or past_close <= 0:
+                return 0.0
+            return round(((recent_close - past_close) / past_close) * 100, 2)
+        except Exception:
+            return 0.0
+
     def _calculate_bollinger_bands_full(self, stock_code, data, period, std_dev) -> ResCommonResponse:
         """볼린저 밴드 전체 계산 (내부용)"""
         try:

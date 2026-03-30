@@ -1,11 +1,11 @@
 # core/logger.py
 import logging
 import os
+import sys
 import time
 import glob
 from datetime import datetime
 import http.client
-import inspect
 import json
 from logging.handlers import RotatingFileHandler
 
@@ -312,11 +312,9 @@ class Logger:
         self.error(message, exc_info=True)
 
     def _get_caller_info(self):
-        frame = inspect.currentframe()
+        frame = sys._getframe(0)
         while frame:
-            info = inspect.getframeinfo(frame)
-            if "logger.py" not in info.filename:
-                filename = os.path.basename(info.filename)
-                return f"{filename}:{info.lineno}"
+            if "logger.py" not in frame.f_code.co_filename:
+                return f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_lineno}"
             frame = frame.f_back
         return "unknown"

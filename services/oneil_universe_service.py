@@ -324,25 +324,15 @@ class OneilUniverseService:
         
         if logger: logger.debug({"event": "pass_52w", "code": code, "dist": dist})
 
-        # BB 스퀴즈
-        bb_resp = await self._indicator.get_bollinger_bands(
-            code, period=self._cfg.bb_period, multiplier=self._cfg.multiplier, ohlcv_data=ohlcv
+        # BB 스퀴즈 (동기 계산: async/await 오버헤드 제거)
+        widths = self._indicator.calc_bb_widths_sync(
+            ohlcv, period=self._cfg.bb_period, multiplier=self._cfg.multiplier
         )
-        
-        def _get_val(obj, key):
-            return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
 
-        widths = []
-        for band in (bb_resp.data or []):
-            upper = _get_val(band, 'upper')
-            lower = _get_val(band, 'lower')
-            if upper is not None and lower is not None:
-                widths.append(upper - lower)
-        
         if len(widths) < period:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "insufficient_bb_data"})
             return None
-        
+
         bb_min = min(widths[-period:])
         prev_width = widths[-1]
 
@@ -360,13 +350,10 @@ class OneilUniverseService:
             "prev_width": prev_width, "bb_min": bb_min
         })
         
-        # RS 계산
-        rs_return = 0.0
-        rs_resp = await self._indicator.get_relative_strength(
-            code, period_days=self._cfg.rs_period_days, ohlcv_data=ohlcv
+        # RS 계산 (동기 계산: async/await 오버헤드 제거)
+        rs_return = self._indicator.calc_rs_sync(
+            ohlcv, period_days=self._cfg.rs_period_days
         )
-        if rs_resp and rs_resp.data:
-            rs_return = getattr(rs_resp.data, "return_pct", 0.0)
 
         market = "KOSDAQ" if self.stock_code_repository.is_kosdaq(code) else "KOSPI"
 
