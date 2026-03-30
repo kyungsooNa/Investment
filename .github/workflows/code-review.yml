@@ -12,15 +12,17 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Gemini Code Review
+      - name: Gemini AI Review
+        # 통신에 성공했던 원래 액션 사용
         uses: sshnaidm/gemini-code-review-action@v2
         with:
           gemini-key: ${{ secrets.GEMINI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          # model 설정을 지우고 실행해 보세요.
-          prompt: "Review in Korean."
+          # 핵심: 무료 티어용 최신 모델 지정
+          model: "gemini-2.5-flash"
+          prompt: "Please review the code changes and provide feedback in Korean."
