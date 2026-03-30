@@ -37,9 +37,15 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.test_signal_file = os.path.join(self.test_dir, "test_signal_history.csv")
         self.patcher = patch("scheduler.strategy_scheduler.SIGNAL_HISTORY_FILE", self.test_signal_file)
         self.patcher.start()
+        self._scheduler = None  # tearDown에서 파일 핸들 해제용
 
     def tearDown(self):
         self.patcher.stop()
+        # CSV 파일 핸들 keep-alive로 인해 Windows에서 파일이 열린 채 rmtree하면 PermissionError 발생.
+        # _make_scheduler로 생성된 scheduler가 있으면 close()로 핸들 해제.
+        if hasattr(self, "_scheduler") and self._scheduler is not None:
+            self._scheduler.close()
+            self._scheduler = None
         shutil.rmtree(self.test_dir)
 
     def _make_scheduler(self, dry_run=True):
@@ -77,7 +83,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         mock_logger = MagicMock()
 
         # CSV 파일 I/O를 차단하여 테스트 격리
-        with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
+        with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]), \
+             patch.object(StrategyScheduler, '_open_csv_file'), \
+             patch.object(StrategyScheduler, '_open_csv_file_unsafe'):
             scheduler = StrategyScheduler(
                 virtual_trade_service=vm,
                 order_execution_service=oes,
@@ -88,6 +96,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                 logger=mock_logger,
                 dry_run=dry_run,
             )
+        # tearDown에서 파일 핸들을 닫을 수 있도록 마지막 생성된 scheduler를 저장
+        self._scheduler = scheduler
         return scheduler, vm, oes, tm, mcs
 
     def test_register_strategy(self):
@@ -1065,15 +1075,18 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         tm = MagicMock()
         mcs = AsyncMock()
 
-        # 파일 로드 방지
-        with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]):
+        # 파일 로드 및 CSV 파일 열기 방지 (파일 핸들 keep-alive로 인한 Windows PermissionError 방지)
+        with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]), \
+             patch.object(StrategyScheduler, '_open_csv_file'), \
+             patch.object(StrategyScheduler, '_open_csv_file_unsafe'):
             scheduler = StrategyScheduler(vm, oes, sqs, scm, tm, mcs, dry_run=True)
-        
+        self._scheduler = scheduler
+
         record = MagicMock()
-        
+
         with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
             await scheduler._append_signal_csv(record)
-            
+
             # asyncio.to_thread가 호출되었는지 확인
             mock_to_thread.assert_awaited_once_with(scheduler._append_signal_csv_sync, record)
 
@@ -1250,11 +1263,13 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         """새 파일 생성 시 헤더 작성 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
         record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
-        
+
+        # _csv_file을 None으로 설정하여 _open_csv_file 경로 진입 유도
+        scheduler._csv_file = None
         with patch("os.path.exists", return_value=False): # 파일 없음
             with patch("builtins.open", mock_open()) as mock_file:
                 scheduler._append_signal_csv_sync(record)
-                
+
                 handle = mock_file()
                 # 헤더가 쓰였는지 확인 (write 호출 인자 확인)
                 writes = [call[0][0] for call in handle.write.call_args_list]
@@ -1319,8 +1334,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         """CSV 저장 시 헤더 작성 분기 테스트 (Line 490~491 coverage)."""
         scheduler, _, _, _, _ = self._make_scheduler()
         record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
-        
-        # Case 1: 파일 없음 -> 헤더 작성 (Line 490 True branch)
+
+        # Case 1: _csv_file=None + 파일 없음 -> _open_csv_file 호출 -> 헤더 작성
+        scheduler._csv_file = None
         with patch("os.path.exists", return_value=False):
             with patch("builtins.open", mock_open()) as mock_file:
                 scheduler._append_signal_csv_sync(record)
@@ -1328,12 +1344,13 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                 writes = [call[0][0] for call in handle.write.call_args_list]
                 # 헤더가 포함되어 있는지 확인
                 self.assertTrue(any("strategy_name" in w for w in writes))
-                
-        # Case 2: 파일 있음 -> 헤더 작성 안 함 (Line 490 False branch)
+
+        # Case 2: _csv_file=None + 파일 있음 -> _open_csv_file 호출 -> 헤더 작성 안 함
+        scheduler._csv_file = None
         with patch("os.path.exists", return_value=True):
             with patch("builtins.open", mock_open()) as mock_file:
                 scheduler._append_signal_csv_sync(record)
-                
+
                 handle = mock_file()
                 writes = [call[0][0] for call in handle.write.call_args_list]
                 # 헤더가 포함되지 않아야 함
@@ -1444,11 +1461,12 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         """CSV 저장 중 예외 발생 시 로그 기록 테스트 (Line 490~491 coverage)."""
         scheduler, _, _, _, _ = self._make_scheduler()
         record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
-        
-        # open() 호출 시 예외 발생 유도
+
+        # _csv_file=None으로 설정하여 open() 경로로 진입하게 한 뒤 예외 발생 유도
+        scheduler._csv_file = None
         with patch("builtins.open", side_effect=IOError("Disk full")):
             scheduler._append_signal_csv_sync(record)
-            
+
             # 에러 로그가 호출되었는지 확인
             scheduler._logger.error.assert_called()
             args, _ = scheduler._logger.error.call_args

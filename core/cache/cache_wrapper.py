@@ -1,4 +1,5 @@
 # core/cache_wrapper.py
+import asyncio
 from typing import TypeVar, Callable, Optional, Any
 
 from common.types import ResCommonResponse, ErrorCode
@@ -42,6 +43,8 @@ class ClientWithCache:
 
         # market_close datetime 파싱 결과를 거래일 문자열 단위로 캐시 (hot-path strptime 절감)
         self._market_close_cache: dict = {}
+        # in-flight 요청 중복 방지 (Thundering Herd 방어)
+        self._in_flight: dict = {}
 
     def __getattr__(self, name: str):
         # ✅ 무한 루프 방지
@@ -145,12 +148,30 @@ class ClientWithCache:
                         if self._cache.memory_cache:
                             self._cache.memory_cache.delete(key)
 
-            # ✅ 2. API 호출
+            # ✅ 2. In-flight 중복 방지 (같은 키에 동시 요청 시 첫 번째 결과 공유)
+            if key in self._in_flight:
+                self._logger.debug(f"⏳ In-flight HIT (중복 요청 방지): {key}")
+                return await asyncio.shield(self._in_flight[key])
+
+            loop = asyncio.get_event_loop()
+            future = loop.create_future()
+            self._in_flight[key] = future
+
+            # ✅ 3. API 호출
             self._logger.debug(f"🌐 실시간 API 호출: {key}")
-            result = await orig_attr(*args, **kwargs)
+            try:
+                result = await orig_attr(*args, **kwargs)
+                if not future.done():
+                    future.set_result(result)
+            except Exception as exc:
+                if not future.done():
+                    future.set_exception(exc)
+                raise
+            finally:
+                self._in_flight.pop(key, None)
 
             if isinstance(result, ResCommonResponse) and result.rt_cd == ErrorCode.SUCCESS.value:
-                # ✅ 3. 캐싱 데이터 저장
+                # ✅ 4. 캐싱 데이터 저장
                 self._cache.set(key, {
                     "data": result,
                     "timestamp": datetime.now().isoformat()

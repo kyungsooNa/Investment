@@ -103,6 +103,8 @@ class StrategyScheduler:
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._csv_lock = threading.Lock()
+        self._csv_file = None
+        self._open_csv_file()
         self._state_lock = threading.Lock()
         self._subscriber_queues: List[asyncio.Queue] = []
 
@@ -152,6 +154,7 @@ class StrategyScheduler:
         for cfg in self._strategies:
             await self.stop_strategy(cfg.strategy.name, perform_force_exit=perform_exit)
 
+        self.close()
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
         if self._notification_service:
             await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "스케줄러 정지", "전체 전략 비활성화")
@@ -534,6 +537,27 @@ class StrategyScheduler:
 
     # ── CSV 영속화 ──
 
+    def _open_csv_file_unsafe(self):
+        """CSV 파일 핸들을 열어 유지합니다. 반드시 _csv_lock 보유 상태에서 호출하세요."""
+        file_exists = os.path.exists(SIGNAL_HISTORY_FILE)
+        self._csv_file = open(SIGNAL_HISTORY_FILE, "a", newline="", encoding="utf-8")
+        if not file_exists:
+            writer = csv.DictWriter(self._csv_file, fieldnames=SIGNAL_COLUMNS)
+            writer.writeheader()
+            self._csv_file.flush()
+
+    def _open_csv_file(self):
+        """CSV 파일 핸들을 한 번 열어 유지합니다."""
+        with self._csv_lock:
+            self._open_csv_file_unsafe()
+
+    def close(self):
+        """열린 CSV 파일 핸들을 닫습니다."""
+        with self._csv_lock:
+            if self._csv_file and not self._csv_file.closed:
+                self._csv_file.close()
+                self._csv_file = None
+
     def _load_signal_history(self) -> List[SignalRecord]:
         """서버 시작 시 CSV에서 시그널 이력 복원."""
         if not os.path.exists(SIGNAL_HISTORY_FILE):
@@ -666,28 +690,28 @@ class StrategyScheduler:
         await asyncio.to_thread(self._append_signal_csv_sync, record)
 
     def _append_signal_csv_sync(self, record: SignalRecord):
-        """시그널 1건을 CSV에 append (동기 구현)."""
+        """시그널 1건을 CSV에 append (동기 구현, 파일 핸들 재사용)."""
         with self._csv_lock:
-            file_exists = os.path.exists(SIGNAL_HISTORY_FILE)
             try:
-                with open(SIGNAL_HISTORY_FILE, "a", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=SIGNAL_COLUMNS)
-                    if not file_exists:
-                        writer.writeheader()
-                    writer.writerow({
-                        "strategy_name": record.strategy_name,
-                        "code": record.code,
-                        "name": record.name,
-                        "action": record.action,
-                        "price": record.price,
-                        "qty": record.qty,
-                        "return_rate": record.return_rate,
-                        "reason": record.reason,
-                        "timestamp": record.timestamp,
-                        "api_success": record.api_success,
-                    })
+                if self._csv_file is None or self._csv_file.closed:
+                    self._open_csv_file_unsafe()
+                writer = csv.DictWriter(self._csv_file, fieldnames=SIGNAL_COLUMNS)
+                writer.writerow({
+                    "strategy_name": record.strategy_name,
+                    "code": record.code,
+                    "name": record.name,
+                    "action": record.action,
+                    "price": record.price,
+                    "qty": record.qty,
+                    "return_rate": record.return_rate,
+                    "reason": record.reason,
+                    "timestamp": record.timestamp,
+                    "api_success": record.api_success,
+                })
+                self._csv_file.flush()
             except Exception as e:
                 self._logger.error(f"[Scheduler] 시그널 CSV 저장 실패: {e}")
+                self._csv_file = None
 
     def get_signal_history(self, strategy_name: str = None) -> list:
         """시그널 실행 이력 반환. strategy_name 지정 시 해당 전략만 필터."""
