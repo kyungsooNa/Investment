@@ -15,13 +15,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 전체 이력을 가져와야 diff 분석이 정확합니다.
+          fetch-depth: 0
 
       - name: Gemini Code Review
-        uses: google-gemini/gemini-review-action@v1
+        uses: sshnaidm/gemini-code-review-action@v2
         with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          model: "gemini-1.5-flash" # 혹은 "gemini-1.5-pro"
-          # 한국어로 결과를 받고 싶다면 아래 라인을 추가하세요.
-          custom_prompt: "Please review the following code changes and provide feedback in Korean."
+          gemini-key: ${{ secrets.GEMINI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # model 설정을 지우고 실행해 보세요.
+          prompt: "Review in Korean."
