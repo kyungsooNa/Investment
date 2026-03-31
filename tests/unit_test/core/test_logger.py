@@ -3,7 +3,6 @@ import time
 import glob
 import logging
 import json
-from unittest.mock import patch, MagicMock
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 
@@ -76,16 +75,9 @@ def test_logger_creates_log_files(clean_logger_instance):
         assert "critical message" in content
         if "debug" in f.name:
             assert "debug message" in content
-            # 수정된 부분: _get_caller_info가 반환할 수 있는 두 가지 경우를 모두 허용
-            # 1. 'unknown - message' (inspect.currentframe이 None을 반환하는 등 호출자를 찾지 못할 때)
-            # 2. 'filename:lineno - message' (호출자를 찾을 때)
-            # test_logger_creates_log_files 자체의 파일 이름과, pytest 실행 스크립트의 이름을 모두 고려합니다.
-            assert ("unknown - error message" in content or
-                    f"{os.path.basename(__file__).replace('.py', '')}:" in content and "error message" in content or
-                    "python.py:" in content and "error message" in content) #
-            assert ("unknown - critical message" in content or
-                    f"{os.path.basename(__file__).replace('.py', '')}:" in content and "critical message" in content or
-                    "python.py:" in content and "critical message" in content) #
+            # %(filename)s:%(lineno)d 포맷터로 호출자 정보가 포맷에 포함됨
+            assert f"{os.path.basename(__file__)}:" in content and "error message" in content
+            assert f"{os.path.basename(__file__)}:" in content and "critical message" in content
         else:
             assert "debug message" not in content
 
@@ -133,39 +125,6 @@ def test_logger_critical_with_exc_info(clean_logger_instance):
         assert "RuntimeError: Critical error occurred" in content
         assert "Traceback" in content
 
-
-def test_logger_get_caller_info_unknown_caller(clean_logger_instance):
-    """
-    _get_caller_info가 호출자 정보를 찾지 못해 'unknown'을 반환하는 경우를 테스트합니다.
-    이것이 `logger.py`의 94번 라인을 커버합니다.
-    """
-    logger, _ = clean_logger_instance
-    mock_frame = MagicMock()
-    mock_frame.f_code.co_filename = "core/logger.py"
-    mock_frame.f_back = None
-    with patch('core.logger.sys._getframe', return_value=mock_frame) as mock_getframe:
-        caller_info = logger._get_caller_info()
-    assert caller_info == "unknown"
-    mock_getframe.assert_called_once_with(0)
-
-
-def test_logger_get_caller_info_skips_logger_frames(clean_logger_instance):
-    """
-    _get_caller_info가 logger.py 내부의 프레임을 건너뛰고 외부 호출자를 올바르게 찾는 경우를 테스트합니다.
-    이는 87-94 라인에 걸친 _get_caller_info의 핵심 로직을 커버합니다.
-    """
-    logger, _ = clean_logger_instance
-    mock_outer_frame = MagicMock()
-    mock_outer_frame.f_code.co_filename = "path/to/my_app/main_script.py"
-    mock_outer_frame.f_lineno = 100
-    mock_outer_frame.f_back = None
-    mock_inner_frame = MagicMock()
-    mock_inner_frame.f_code.co_filename = "path/to/core/logger.py"
-    mock_inner_frame.f_back = mock_outer_frame
-    with patch('core.logger.sys._getframe', return_value=mock_inner_frame) as mock_getframe:
-        caller_info = logger._get_caller_info()
-    assert caller_info == "main_script.py:100"
-    mock_getframe.assert_called_once_with(0)
 
 def test_logger_creates_log_dir_if_not_exists(tmp_path):
     """
@@ -336,11 +295,11 @@ def test_log_rotation(clean_logger_instance):
     # operational_logger의 RotatingFileHandler 찾기
     handler = next(h for h in logger.operational_logger.handlers if isinstance(h, SizeTimeRotatingFileHandler))
     
-    # 테스트를 위해 maxBytes를 매우 작게 설정 (예: 100 바이트)
-    # 기본 포맷터 헤더 등을 고려하여 100바이트로 설정
-    handler.maxBytes = 100
-    
-    # 1. 첫 번째 로그 기록 (약 50바이트 메시지 + 헤더 -> 80~90바이트 예상)
+    # 포맷터: %(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s
+    # 헤더(~56) + 파일명:라인(~20) + 메시지(50) ≈ 130바이트 → maxBytes=200이면 1건은 미초과
+    handler.maxBytes = 200
+
+    # 1. 첫 번째 로그 기록 (단일 라인 ~130바이트 → 200 미초과)
     msg = "A" * 50
     logger.info(msg)
     

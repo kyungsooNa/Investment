@@ -1,7 +1,6 @@
 # core/logger.py
 import logging
 import os
-import sys
 import time
 import glob
 from datetime import datetime
@@ -293,37 +292,29 @@ class Logger:
             backupCount=LOG_BACKUP_COUNT
         )
         file_handler.setLevel(level)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'))
         logger.addHandler(file_handler)
 
         return logger
 
     def info(self, message):
-        self.operational_logger.info(message)
-        self.debug_logger.info(message)
+        self.operational_logger.info(message, stacklevel=2)
+        self.debug_logger.info(message, stacklevel=2)
 
     def debug(self, message):
-        caller_info = self._get_caller_info()
-        full_message = f"{caller_info} - {message}"
-        self.debug_logger.debug(full_message)
+        self.debug_logger.debug(message, stacklevel=2)
 
     def warning(self, message, exc_info=False):
-        self.operational_logger.warning(message, exc_info=exc_info)
-        caller_info = self._get_caller_info()
-        full_message = f"{caller_info} - {message}"
-        self.debug_logger.warning(full_message, exc_info=exc_info)
+        self.operational_logger.warning(message, exc_info=exc_info, stacklevel=2)
+        self.debug_logger.warning(message, exc_info=exc_info, stacklevel=2)
 
     def error(self, message, exc_info=False):
-        self.operational_logger.error(message, exc_info=exc_info)
-        caller_info = self._get_caller_info()
-        full_message = f"{caller_info} - {message}"
-        self.debug_logger.error(full_message, exc_info=exc_info)
+        self.operational_logger.error(message, exc_info=exc_info, stacklevel=2)
+        self.debug_logger.error(message, exc_info=exc_info, stacklevel=2)
 
     def critical(self, message, exc_info=False):
-        self.operational_logger.critical(message, exc_info=exc_info)
-        caller_info = self._get_caller_info()
-        full_message = f"{caller_info} - {message}"
-        self.debug_logger.critical(full_message, exc_info=exc_info)
+        self.operational_logger.critical(message, exc_info=exc_info, stacklevel=2)
+        self.debug_logger.critical(message, exc_info=exc_info, stacklevel=2)
 
     def exception(self, message):
         """
@@ -331,11 +322,3 @@ class Logger:
         주로 except 블록 안에서 사용합니다.
         """
         self.error(message, exc_info=True)
-
-    def _get_caller_info(self):
-        frame = sys._getframe(0)
-        while frame:
-            if "logger.py" not in frame.f_code.co_filename:
-                return f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_lineno}"
-            frame = frame.f_back
-        return "unknown"
