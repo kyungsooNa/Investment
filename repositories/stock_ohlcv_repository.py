@@ -25,6 +25,7 @@ class StockOhlcvRepository:
         self._db_path = db_path or os.path.join("data", "stocks.db")
         self._write_lock = None
         self._write_conn: Optional[aiosqlite.Connection] = None
+        self._read_conn: Optional[aiosqlite.Connection] = None
 
         # OHLCV 전용 LFU 캐시 — price 캐시와 물리적으로 분리
         self._ohlcv_cache = _LFUCache(capacity=500)
@@ -101,9 +102,12 @@ class StockOhlcvRepository:
 
     @asynccontextmanager
     async def _get_read_connection(self):
-        """읽기 전용 연결 — Lock 없이 새 연결을 열어 WAL 동시 읽기를 활용."""
-        async with aiosqlite.connect(self._db_path) as conn:
-            yield conn
+        """읽기 전용 연결 — 한 번만 열고 재사용 (WAL 모드에서 안전)."""
+        if self._read_conn is None:
+            conn = await aiosqlite.connect(self._db_path)
+            conn.row_factory = aiosqlite.Row
+            self._read_conn = conn
+        yield self._read_conn
 
     # ── OHLCV 캐시/DB ──────────────────────────────────────────────────────────
 
@@ -132,7 +136,6 @@ class StockOhlcvRepository:
         # 2. DB에서 읽기
         try:
             async with self._get_read_connection() as conn:
-                conn.row_factory = aiosqlite.Row
                 async with conn.execute(
                     "SELECT date, open, high, low, close, volume FROM ohlcv "
                     "WHERE code = ? ORDER BY date DESC LIMIT ?",
@@ -281,7 +284,6 @@ class StockOhlcvRepository:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         try:
             async with self._get_read_connection() as conn:
-                conn.row_factory = aiosqlite.Row
                 async with conn.execute(
                     "SELECT * FROM daily_prices WHERE trade_date = ? ORDER BY code",
                     (trade_date,),
@@ -296,7 +298,6 @@ class StockOhlcvRepository:
         """특정 종목의 최근 N일간 스냅샷 이력 조회."""
         try:
             async with self._get_read_connection() as conn:
-                conn.row_factory = aiosqlite.Row
                 async with conn.execute(
                     "SELECT * FROM daily_prices WHERE code = ? "
                     "ORDER BY trade_date DESC LIMIT ?",
@@ -355,7 +356,6 @@ class StockOhlcvRepository:
         """daily_prices에서 최신 스냅샷을 현재가 API 응답 포맷으로 변환하여 반환합니다."""
         try:
             async with self._get_read_connection() as conn:
-                conn.row_factory = aiosqlite.Row
                 async with conn.execute(
                     "SELECT * FROM daily_prices WHERE code = ? ORDER BY trade_date DESC LIMIT 1",
                     (code,),
@@ -395,11 +395,14 @@ class StockOhlcvRepository:
         return self._ohlcv_cache.get_stats(expand=expand, latest_trading_date=latest_trading_date)
 
     async def close(self):
-        """쓰기 전용 DB 연결을 닫습니다."""
+        """DB 연결(쓰기/읽기)을 닫습니다."""
         if self._write_conn:
             await self._write_conn.close()
             self._write_conn = None
+        if self._read_conn:
+            await self._read_conn.close()
+            self._read_conn = None
 
     def __del__(self):
-        if self._write_conn:
+        if self._write_conn or self._read_conn:
             self._logger.warning("StockOhlcvRepository was not closed explicitly.")
