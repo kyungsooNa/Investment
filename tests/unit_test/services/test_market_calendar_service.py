@@ -418,6 +418,113 @@ async def test_get_next_open_day_no_business_day_found(manager, mock_deps):
     result = await manager.get_next_open_day("20250101")
     assert result == "20250101"
 
+# ── 월 경계(Month Boundary) 캐시 테스트 ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_sync_calendar_month_boundary_calls_api_twice(manager, mock_deps, mock_broker):
+    """3월 말 → 4월 초로 넘어갈 때 각 월에 대해 API가 1회씩(총 2회) 호출되는지 확인"""
+    _, _ = mock_deps
+    broker, _ = mock_broker
+    manager.set_broker(broker)
+
+    def _make_resp(dates):
+        return ResCommonResponse(
+            rt_cd="0", msg1="OK",
+            data={"output": [{"bass_dt": d, "bzdy_yn": "Y", "tr_day_yn": "Y"} for d in dates]}
+        )
+
+    broker.check_holiday = AsyncMock(side_effect=[
+        _make_resp(["20260331"]),  # 3월 API 응답
+        _make_resp(["20260401"]),  # 4월 API 응답
+    ])
+
+    # 3월 31일 조회 → 3월 API 호출
+    assert await manager.is_business_day("20260331") is True
+    assert broker.check_holiday.await_count == 1
+
+    # 4월 1일 조회 → 4월 API 호출 (다른 월이므로 추가 1회)
+    assert await manager.is_business_day("20260401") is True
+    assert broker.check_holiday.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_calendar_month_boundary_no_extra_api_after_both_synced(manager, mock_deps, mock_broker):
+    """3월/4월 모두 동기화 후 같은 날짜를 재조회해도 API 추가 호출 없음 (원래 버그 재현 방지)"""
+    _, _ = mock_deps
+    broker, _ = mock_broker
+    manager.set_broker(broker)
+
+    def _make_resp(dates):
+        return ResCommonResponse(
+            rt_cd="0", msg1="OK",
+            data={"output": [{"bass_dt": d, "bzdy_yn": "Y", "tr_day_yn": "Y"} for d in dates]}
+        )
+
+    broker.check_holiday = AsyncMock(side_effect=[
+        _make_resp(["20260331"]),
+        _make_resp(["20260401"]),
+    ])
+
+    await manager.is_business_day("20260331")  # 3월 동기화
+    await manager.is_business_day("20260401")  # 4월 동기화
+    assert broker.check_holiday.await_count == 2
+
+    # 3월로 다시 돌아와 재조회 → 캐시 사용, API 추가 호출 없어야 함
+    await manager.is_business_day("20260331")
+    await manager.is_business_day("20260401")
+    assert broker.check_holiday.await_count == 2  # 여전히 2회
+
+
+@pytest.mark.asyncio
+async def test_sync_calendar_month_boundary_api_fail_retries(manager, mock_deps, mock_broker):
+    """4월 API 호출 실패 시 _synced_months에 추가되지 않아 다음 호출 때 재시도하는지 확인"""
+    _, logger = mock_deps
+    broker, _ = mock_broker
+    manager.set_broker(broker)
+
+    success_resp = ResCommonResponse(
+        rt_cd="0", msg1="OK",
+        data={"output": [{"bass_dt": "20260401", "bzdy_yn": "Y", "tr_day_yn": "Y"}]}
+    )
+    fail_resp = ResCommonResponse(rt_cd="1", msg1="Error", data=None)
+
+    broker.check_holiday = AsyncMock(side_effect=[fail_resp, success_resp])
+
+    # 1차 호출: API 실패 → _synced_months에 추가되지 않음
+    result1 = await manager.is_business_day("20260401")
+    assert result1 is False  # 캐시에 없으므로 False
+    assert broker.check_holiday.await_count == 1
+    assert "202604" not in manager._synced_months  # 실패 시 synced 처리 안 됨
+    logger.warning.assert_called()
+
+    # 2차 호출: 재시도 → API 성공
+    result2 = await manager.is_business_day("20260401")
+    assert result2 is True
+    assert broker.check_holiday.await_count == 2
+    assert "202604" in manager._synced_months
+
+
+@pytest.mark.asyncio
+async def test_get_next_open_day_crosses_month_boundary(manager, mock_deps, mock_broker):
+    """get_next_open_day가 3월 말 → 4월 초로 넘어갈 때 올바른 영업일을 반환하는지 확인"""
+    _, _ = mock_deps
+    broker, _ = mock_broker
+    manager.set_broker(broker)
+
+    # 3월 31일(화) 기준으로 다음 날 4월 1일(수)이 영업일
+    def _make_resp(dates):
+        return ResCommonResponse(
+            rt_cd="0", msg1="OK",
+            data={"output": [{"bass_dt": d, "bzdy_yn": "Y", "tr_day_yn": "Y"} for d in dates]}
+        )
+
+    broker.check_holiday = AsyncMock(return_value=_make_resp(["20260401"]))
+
+    result = await manager.get_next_open_day("20260331")
+    assert result == "20260401"
+    assert broker.check_holiday.await_count == 1  # 4월 API 1회만 호출
+
+
 @pytest.mark.asyncio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 async def test_wait_until_next_open_no_sleep(mock_sleep, manager, mock_deps):

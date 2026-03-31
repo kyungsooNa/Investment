@@ -22,7 +22,7 @@ class MarketCalendarService:
         
         # [미래/달력] check_holiday API 기반 휴장일 캐시 변수 (신규 추가)
         self._business_days_cache = {}
-        self._last_sync_month = None
+        self._synced_months: set = set()  # 동기화 완료된 월 집합 (단일 변수 → set으로 변경: 월 경계 재호출 방지)
 
     def set_broker(self, broker):
         self._broker = broker
@@ -107,8 +107,8 @@ class MarketCalendarService:
 
         target_month = target_date.strftime("%Y%m")
 
-        # 이미 이번 달 데이터를 가져왔고, 해당 날짜가 캐시에 있다면 스킵
-        if self._last_sync_month == target_month and target_date.strftime("%Y%m%d") in self._business_days_cache:
+        # 이미 해당 월 데이터를 가져왔고, 해당 날짜가 캐시에 있다면 스킵
+        if target_month in self._synced_months and target_date.strftime("%Y%m%d") in self._business_days_cache:
             return
 
         if not self._broker:
@@ -126,8 +126,10 @@ class MarketCalendarService:
                 # 영업일이면서 거래일이어야 개장일
                 is_open = (day_info["bzdy_yn"] == "Y" and day_info["tr_day_yn"] == "Y")
                 self._business_days_cache[date_str] = is_open
+            self._synced_months.add(target_month)
+        else:
+            self._logger.warning(f"휴장일 API 동기화 실패 ({target_month}): {holiday_data.msg1 if holiday_data else 'No response'}")
 
-        self._last_sync_month = target_month
         self._pm.log_timer(f"MarketCalendarService._sync_calendar_if_needed({target_date_str})", t_start)
 
     async def is_business_day(self, date_str: str = None) -> bool:
