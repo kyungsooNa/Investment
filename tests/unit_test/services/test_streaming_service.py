@@ -52,6 +52,30 @@ async def test_connect_disconnect_websocket(streaming_service, mock_broker):
     await streaming_service.disconnect_websocket()
     mock_broker.disconnect_websocket.assert_awaited_once()
 
+
+@pytest.mark.asyncio
+async def test_connect_websocket_stores_callback(streaming_service, mock_broker):
+    """connect_websocket: 콜백이 내부에 저장되어 재연결 시 유지되는지 검증"""
+    callback = MagicMock()
+
+    # 첫 호출: 콜백 전달 → 내부 저장
+    await streaming_service.connect_websocket(callback)
+    assert streaming_service._callback is callback
+    mock_broker.connect_websocket.assert_awaited_with(callback)
+
+    mock_broker.connect_websocket.reset_mock()
+
+    # 두 번째 호출: 콜백 없이 호출 → 저장된 콜백 사용
+    await streaming_service.connect_websocket()
+    mock_broker.connect_websocket.assert_awaited_with(callback)
+
+
+@pytest.mark.asyncio
+async def test_connect_websocket_no_callback(streaming_service, mock_broker):
+    """connect_websocket: 콜백 없이 호출 시 None이 전달됨"""
+    await streaming_service.connect_websocket()
+    mock_broker.connect_websocket.assert_awaited_with(None)
+
 @pytest.mark.asyncio
 async def test_subscribe_unsubscribe_program_trading(streaming_service, mock_broker):
     """프로그램매매 실시간 구독 및 해지 위임 테스트"""

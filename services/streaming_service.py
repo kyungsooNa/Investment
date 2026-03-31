@@ -43,12 +43,19 @@ class StreamingService:
         self._latest_prices: Dict[str, dict | str] = {}
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
+        self._callback = None  # 재연결 시 콜백 유실 방지용 저장
 
     # ── 연결 수명주기 ──────────────────────────────────────────────
 
     async def connect_websocket(self, callback=None):
-        """WebSocket 연결 (BrokerAPIWrapper 위임)."""
-        return await self.broker.connect_websocket(callback)
+        """WebSocket 연결 (BrokerAPIWrapper 위임).
+
+        callback이 전달되면 내부에 저장하여 이후 재연결 시에도 동일한 콜백을 사용한다.
+        callback이 None이면 기존에 저장된 콜백을 사용한다.
+        """
+        if callback is not None:
+            self._callback = callback
+        return await self.broker.connect_websocket(self._callback)
 
     async def disconnect_websocket(self):
         """WebSocket 연결 해제 (BrokerAPIWrapper 위임)."""

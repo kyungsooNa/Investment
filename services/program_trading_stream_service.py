@@ -7,24 +7,27 @@ import threading
 import logging
 from contextlib import contextmanager
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 
 class ProgramTradingStreamService:
     """
     프로그램매매 실시간 데이터의 수신, 저장(SQLite), 클라이언트 전송을 담당하는 서비스.
-    - 프로그램매매 히스토리: SQLite pt_history 테이블 (즉시 저장, 버퍼 불필요)
+    - 프로그램매매 히스토리: SQLite pt_history 테이블 (버퍼 기반 일괄 저장)
     - 스냅샷(차트 데이터): SQLite pt_snapshot 테이블
     - 구독 상태: SQLite pt_subscriptions 테이블 (재시작 시 복구)
     """
 
     RETENTION_DAYS = 7  # 데이터 보존 기간
+    FLUSH_INTERVAL_SEC = 1.0   # 버퍼 플러시 주기 (초)
+    FLUSH_BATCH_SIZE = 100     # 이 개수 이상이면 즉시 플러시
 
     def __init__(self, logger=None):
         self.logger = logger if logger else logging.getLogger(__name__)
 
         # 메모리 캐시 (성능 최적화)
         self._pt_history: dict = {}  # {code: [data1, data2, ...]}
-        self.last_data_ts = 0.0      # [추가] 마지막 데이터 수신 시간 (Timestamp)
+        self.last_data_ts = 0.0      # 마지막 데이터 수신 시간 (Timestamp)
 
         # 클라이언트 스트리밍
         self._pt_queues: list = []  # 접속한 클라이언트들의 큐 리스트
@@ -34,6 +37,12 @@ class ProgramTradingStreamService:
         self._db_path = os.path.join(self._get_base_dir(), "program_trading.db")
         self._lock = threading.Lock()
         self._conn = None
+
+        # 버퍼 기반 일괄 저장
+        self._write_buffer: list = []
+        self._buffer_lock = threading.Lock()
+        self._flush_task: asyncio.Task = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pt_db")
 
         # 초기화
         os.makedirs(self._get_base_dir(), exist_ok=True)
@@ -51,7 +60,7 @@ class ProgramTradingStreamService:
             self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
             with self._get_connection() as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
-                
+
                 # 프로그램매매 히스토리 테이블 (모든 필드 분리 및 정수형 최적화)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS pt_history (
@@ -125,18 +134,18 @@ class ProgramTradingStreamService:
 
             with self._get_connection() as conn:
                 cursor = conn.execute("""
-                    SELECT 
-                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
+                    SELECT
+                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt,
                         net_vol, net_amt, sell_rem, buy_rem, net_rem
-                    FROM pt_history 
+                    FROM pt_history
                     WHERE created_at >= ? ORDER BY id ASC
                 """, (today_ts,))
-                
+
                 count = 0
                 for row in cursor.fetchall():
-                    (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
+                    (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt,
                      net_vol, net_amt, sell_rem, buy_rem, net_rem) = row
-                    
+
                     # 기존 웹 UI 및 타 서비스와 호환되도록 원래 JSON 구조로 완벽히 복원
                     restored_data = {
                         "유가증권단축종목코드": code,
@@ -174,8 +183,26 @@ class ProgramTradingStreamService:
             self.logger.error(f"구독 상태 로드 실패: {e}")
 
     # --- 데이터 처리 ---
+    @staticmethod
+    def _safe_int(val):
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _safe_float(val):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
     def on_data_received(self, data: dict):
-        """웹소켓 등에서 수신한 데이터를 처리 (SQLite 분할 저장 및 브로드캐스트)."""
+        """웹소켓 등에서 수신한 데이터를 처리 (버퍼 저장 및 브로드캐스트).
+
+        DB 쓰기는 버퍼에 적재 후 백그라운드에서 일괄 처리하여
+        이벤트 루프 블로킹을 방지한다.
+        """
         code = data.get('유가증권단축종목코드')
         if not code:
             return
@@ -185,51 +212,35 @@ class ProgramTradingStreamService:
             self.logger.info(f"실시간 데이터 수신 재개 (Gap: {now - self.last_data_ts:.1f}초)")
 
         self.last_data_ts = now
-        
+
         # 1. 메모리 저장 (기존 프론트엔드/백엔드 호환용 원본 유지)
         self._pt_history.setdefault(code, []).append(data)
 
-        # 2. SQLite 즉시 저장 (정수형 캐스팅으로 용량 최소화)
-        try:
-            def safe_int(val):
-                try: return int(val)
-                except: return 0
+        # 2. 버퍼에 적재 (이벤트 루프 블로킹 방지)
+        trade_time = data.get('주식체결시간', '')
+        price = self._safe_int(data.get('price', 0))
+        rate = self._safe_float(data.get('rate', 0.0))
+        sell_vol = self._safe_int(data.get('매도체결량', 0))
+        sell_amt = self._safe_int(data.get('매도거래대금', 0))
+        buy_vol = self._safe_int(data.get('매수2체결량', 0))
+        buy_amt = self._safe_int(data.get('매수2거래대금', 0))
+        net_vol = self._safe_int(data.get('순매수체결량', 0))
+        net_amt = self._safe_int(data.get('순매수거래대금', 0))
+        sell_rem = self._safe_int(data.get('매도호가잔량', 0))
+        buy_rem = self._safe_int(data.get('매수호가잔량', 0))
+        net_rem = self._safe_int(data.get('전체순매수호가잔량', 0))
 
-            def safe_float(val):
-                try: return float(val)
-                except: return 0.0
-
-            trade_time = data.get('주식체결시간', '')
-            price = safe_int(data.get('price', 0))
-            rate = safe_float(data.get('rate', 0.0))
-            sell_vol = safe_int(data.get('매도체결량', 0))
-            sell_amt = safe_int(data.get('매도거래대금', 0))
-            buy_vol = safe_int(data.get('매수2체결량', 0))
-            buy_amt = safe_int(data.get('매수2거래대금', 0))
-            net_vol = safe_int(data.get('순매수체결량', 0))
-            net_amt = safe_int(data.get('순매수거래대금', 0))
-            sell_rem = safe_int(data.get('매도호가잔량', 0))
-            buy_rem = safe_int(data.get('매수호가잔량', 0))
-            net_rem = safe_int(data.get('전체순매수호가잔량', 0))
-
-            with self._get_connection() as conn:
-                conn.execute("""
-                    INSERT INTO pt_history (
-                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
-                        net_vol, net_amt, sell_rem, buy_rem, net_rem, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt, 
-                      net_vol, net_amt, sell_rem, buy_rem, net_rem, now))
-        except Exception as e:
-            self.logger.error(f"히스토리 DB 저장 실패: {e}")
+        row = (code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt,
+               net_vol, net_amt, sell_rem, buy_rem, net_rem, now)
+        with self._buffer_lock:
+            self._write_buffer.append(row)
 
         # 3. 클라이언트 브로드캐스트 (Dict 대신 Array 전송으로 네트워크 트래픽 80% 절감)
-        # 배열 순서: [종목코드, 체결시간, 현재가, 등락률, 대비, 부호, 매도체결, 매수체결, 순매수체결, 순매수대금, 매도호가잔량, 매수호가잔량]
         payload = [
             code,
             trade_time,
-            price, # safe_int로 정제된 정수값 사용
-            rate,  # safe_float로 정제된 소수값 사용
+            price,
+            rate,
             data.get('change', 0),
             data.get('sign', ''),
             sell_vol,
@@ -239,7 +250,7 @@ class ProgramTradingStreamService:
             sell_rem,
             buy_rem
         ]
-        
+
         json_payload = json.dumps(payload, ensure_ascii=False)
         for q in list(self._pt_queues):
             try:
@@ -252,6 +263,55 @@ class ProgramTradingStreamService:
                     pass
             except Exception:
                 pass
+
+    # --- 버퍼 플러시 ---
+    def _bulk_insert_to_db(self, batch: list):
+        """동기 벌크 인서트 — ThreadPoolExecutor에서 실행."""
+        with self._lock:
+            try:
+                self._conn.executemany("""
+                    INSERT INTO pt_history (
+                        code, trade_time, price, rate, sell_vol, sell_amt, buy_vol, buy_amt,
+                        net_vol, net_amt, sell_rem, buy_rem, net_rem, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, batch)
+                self._conn.commit()
+            except Exception as e:
+                self.logger.error(f"벌크 인서트 실패: {e}")
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+
+    async def _flush_write_buffer(self):
+        """버퍼를 꺼내 executor에서 벌크 인서트."""
+        with self._buffer_lock:
+            if not self._write_buffer:
+                return
+            batch = list(self._write_buffer)
+            self._write_buffer.clear()
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(self._executor, self._bulk_insert_to_db, batch)
+
+    def flush_write_buffer_sync(self):
+        """동기 플러시 — 테스트 또는 종료 시 잔여 데이터를 즉시 DB에 기록."""
+        with self._buffer_lock:
+            if not self._write_buffer:
+                return
+            batch = list(self._write_buffer)
+            self._write_buffer.clear()
+        self._bulk_insert_to_db(batch)
+
+    async def _flush_loop(self):
+        """주기적으로 버퍼를 플러시하는 백그라운드 태스크."""
+        try:
+            while True:
+                await asyncio.sleep(self.FLUSH_INTERVAL_SEC)
+                await self._flush_write_buffer()
+        except asyncio.CancelledError:
+            # 종료 시 잔여 데이터 플러시
+            await self._flush_write_buffer()
 
     # --- 클라이언트 큐 관리 ---
     def create_subscriber_queue(self) -> asyncio.Queue:
@@ -361,13 +421,29 @@ class ProgramTradingStreamService:
 
     # --- 생명주기 관리 ---
     def start_background_tasks(self):
-        """백그라운드 태스크 시작 (데이터 정리)."""
+        """백그라운드 태스크 시작 (데이터 정리 + 버퍼 플러시 루프)."""
         self._cleanup_old_data()
         self._cleanup_old_files()
-        self.logger.info("ProgramTradingStreamService: 초기화 완료 (SQLite 즉시 저장 모드)")
+        # 비동기 플러시 루프 시작 (async 컨텍스트에서 호출됨)
+        self._flush_task = asyncio.create_task(self._flush_loop())
+        self.logger.info("ProgramTradingStreamService: 초기화 완료 (버퍼 기반 일괄 저장 모드)")
 
     async def shutdown(self):
         """서비스 종료 처리."""
+        # 플러시 태스크 종료
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+
+        # 잔여 버퍼 동기 플러시
+        self.flush_write_buffer_sync()
+
+        # executor 종료
+        self._executor.shutdown(wait=False)
+
         if self._conn:
             try:
                 self._conn.close()
@@ -381,7 +457,7 @@ class ProgramTradingStreamService:
         status = {
             "snapshot": {"exists": False, "updated_at": None},
             "history": {"count": 0, "last_record": None, "hourly_counts": {}},
-            "memory": {"last_received_at": None}  # [추가] 메모리 수신 상태
+            "memory": {"last_received_at": None}
         }
         try:
             with self._get_connection() as conn:
@@ -394,9 +470,9 @@ class ProgramTradingStreamService:
 
                 # 2. History 확인 (오늘 기준)
                 today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-                
+
                 cursor = conn.execute(
-                    "SELECT COUNT(*), MAX(created_at) FROM pt_history WHERE created_at >= ?", 
+                    "SELECT COUNT(*), MAX(created_at) FROM pt_history WHERE created_at >= ?",
                     (today_start,)
                 )
                 cnt, last_ts = cursor.fetchone()
@@ -406,16 +482,16 @@ class ProgramTradingStreamService:
 
                 # 시간대별 건수
                 cursor = conn.execute("""
-                    SELECT strftime('%H', datetime(created_at, 'unixepoch', 'localtime')) as hour, count(*) 
-                    FROM pt_history 
-                    WHERE created_at >= ? 
-                    GROUP BY hour 
+                    SELECT strftime('%H', datetime(created_at, 'unixepoch', 'localtime')) as hour, count(*)
+                    FROM pt_history
+                    WHERE created_at >= ?
+                    GROUP BY hour
                     ORDER BY hour
                 """, (today_start,))
-                
+
                 for r in cursor.fetchall():
                     status["history"]["hourly_counts"][r[0]] = r[1]
-                    
+
             # 메모리 상태 추가
             if self.last_data_ts > 0:
                 status["memory"]["last_received_at"] = datetime.fromtimestamp(self.last_data_ts).strftime("%Y-%m-%d %H:%M:%S")
@@ -423,5 +499,5 @@ class ProgramTradingStreamService:
         except Exception as e:
             self.logger.error(f"DB 검사 중 오류: {e}")
             status["error"] = str(e)
-            
+
         return status
