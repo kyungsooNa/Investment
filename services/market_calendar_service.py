@@ -126,8 +126,10 @@ class MarketCalendarService:
                 # 영업일이면서 거래일이어야 개장일
                 is_open = (day_info["bzdy_yn"] == "Y" and day_info["tr_day_yn"] == "Y")
                 self._business_days_cache[date_str] = is_open
+            self._synced_months.add(target_month)
+        else:
+            self._logger.warning(f"휴장일 API 동기화 실패 ({target_month}): {holiday_data.msg1 if holiday_data else 'No response'}")
 
-        self._synced_months.add(target_month)
         self._pm.log_timer(f"MarketCalendarService._sync_calendar_if_needed({target_date_str})", t_start)
 
     async def is_business_day(self, date_str: str = None) -> bool:
