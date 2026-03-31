@@ -304,9 +304,9 @@ class StrategyScheduler:
                 if sig.qty <= 1:
                     sig.qty = cfg.order_qty
 
-            # 순차 실행: 매수마다 보유 수를 재확인하여 max_positions 초과 방지
+            # 순차 실행: DB 재조회 없이 메모리 카운터로 max_positions 초과 방지
+            current_count = current_holds_count
             for sig in target_signals:
-                current_count = len(self._virtual_trade_service.get_holds_by_strategy(name))
                 if current_count >= cfg.max_positions:
                     self._logger.info(
                         f"[Scheduler] {name}: 매수 중단 — 최대 포지션 도달 "
@@ -314,6 +314,7 @@ class StrategyScheduler:
                     )
                     break
                 await self._execute_signal(sig)
+                current_count += 1
 
         self._pm.log_timer(f"{name}.run_strategy", t_run)
         self._logger.info(f"[Scheduler] {name} 실행 완료")
