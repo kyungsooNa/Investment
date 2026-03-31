@@ -440,6 +440,7 @@ async def test_stock_repository_get_ohlcv_summary(repo):
     assert summary["count"] == 2
     assert summary["latest_date"] == "20250102"
 
+    repo._ohlcv_repo._read_conn = None  # persistent 연결 리셋 → 패치 경로 진입
     with patch("repositories.stock_ohlcv_repository.aiosqlite.connect", side_effect=Exception("DB Error")):
         err_summary = await repo.get_ohlcv_summary("005930")
     assert err_summary["count"] == 0
@@ -452,6 +453,7 @@ async def test_stock_repository_get_ohlcv_max_trading_days(repo):
     ])
     assert await repo.get_ohlcv_max_trading_days() == 2
 
+    repo._ohlcv_repo._read_conn = None  # persistent 연결 리셋 → 패치 경로 진입
     with patch("repositories.stock_ohlcv_repository.aiosqlite.connect", side_effect=Exception("DB Error")):
         assert await repo.get_ohlcv_max_trading_days() == 0
 
