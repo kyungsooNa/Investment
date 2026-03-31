@@ -229,9 +229,9 @@ def test_get_strategy_logger(tmp_path):
     assert file_handler is not None
     assert isinstance(file_handler.formatter, JsonFormatter)
 
-    # 파일명에 타임스탬프가 포함되므로 glob으로 검색
+    # 파일명에 타임스탬프와 인덱스(_1)가 포함되므로 glob으로 검색
     strategy_log_dir = log_dir / "strategies"
-    log_files = list(strategy_log_dir.glob(f"*_{strategy_name}.log.json"))
+    log_files = list(strategy_log_dir.glob(f"*_{strategy_name}_*.log.json"))
     assert len(log_files) == 1
     log_file_path = log_files[0]
     assert file_handler.baseFilename == str(log_file_path)
@@ -300,9 +300,9 @@ def test_get_performance_logger(tmp_path):
     # 포맷터는 기본 logging.Formatter여야 함 (JsonFormatter 아님)
     assert not isinstance(file_handler.formatter, JsonFormatter)
 
-    # 파일명 확인
+    # 파일명 확인 (인덱스 포함: *_perf_1.log 형식)
     perf_log_dir = log_dir / "performance"
-    log_files = list(perf_log_dir.glob("*_perf.log"))
+    log_files = list(perf_log_dir.glob("*_perf_*.log"))
     assert len(log_files) == 1
     log_file_path = log_files[0]
     assert file_handler.baseFilename == str(log_file_path)
@@ -344,8 +344,8 @@ def test_log_rotation(clean_logger_instance):
     msg = "A" * 50
     logger.info(msg)
     
-    # 파일이 하나만 있어야 함
-    log_files = list(common_log_dir.glob("*_operational.log*"))
+    # 파일이 하나만 있어야 함 (인덱스 포함: *_operational_1.log 형식)
+    log_files = list(common_log_dir.glob("*_operational_*.log"))
     assert len(log_files) == 1
     
     # 2. 두 번째 로그 기록 (누적 100바이트 초과 -> 회전 발생 예상)
@@ -454,21 +454,23 @@ def test_size_time_rotating_handler_backup_limit(tmp_path):
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
     
-    # 4번 기록 -> 4번 로테이션 (1->2->3->4)
-    # 예상 백업 파일: test_backup_3.log, test_backup_4.log (1, 2는 삭제됨)
+    # 4번 기록 -> 4번 로테이션 (_1 -> _2 -> _3 -> _4 -> _5)
+    # 예상: test_backup_3.log, test_backup_4.log (백업), test_backup_5.log (활성) → 총 3개 (_1, _2는 삭제됨)
     for i in range(4):
         logger.info(f"Log message {i} " * 5)
-        
+
     handler.close()
     logger.removeHandler(handler)
-    
-    # 백업 파일 개수 확인 (test_backup_*.log)
+
+    # 전체 인덱스 파일 개수 확인: 백업(backupCount개) + 활성(1개)
     files = list(tmp_path.glob("test_backup_*.log"))
-    assert len(files) == backup_count
-    
+    assert len(files) == backup_count + 1
+
     filenames = [f.name for f in files]
     assert "test_backup_3.log" in filenames
     assert "test_backup_4.log" in filenames
+    assert "test_backup_5.log" in filenames  # 활성 파일 (마지막 기록)
+    assert "test_backup_1.log" not in filenames
     assert "test_backup_2.log" not in filenames
 
 
