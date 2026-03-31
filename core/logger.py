@@ -30,50 +30,70 @@ def reset_log_timestamp_for_test():
 
 class SizeTimeRotatingFileHandler(RotatingFileHandler):
     """
-    파일 크기가 maxBytes를 초과하면 인덱스를 붙여 백업하는 핸들러.
-    예: app.log -> app_1.log, app_2.log ... 최신 백업이 가장 큰 숫자를 가집니다.
+    파일 크기가 maxBytes를 초과하면 인덱스를 붙여 새 파일로 교체하는 핸들러.
+    인덱스가 클수록 최신 파일입니다.
+    예: app_1.log (가장 오래됨) ... app_25.log (오래된 백업) -> app_26.log (현재 활성)
     """
+    def __init__(self, filename, mode='a', maxBytes=0, backupCount=0, encoding=None, delay=False):
+        # 확장자 처리 (예: .log.json)
+        if filename.endswith(".log.json"):
+            root, ext = filename[:-len(".log.json")], ".log.json"
+        else:
+            root, ext = os.path.splitext(filename)
+
+        self._log_root = root
+        self._log_ext = ext
+
+        # 기존 인덱스 파일 중 최대 인덱스 탐색
+        pattern = f"{glob.escape(root)}_[0-9]*{glob.escape(ext)}"
+        max_index = 0
+        for f in glob.glob(pattern):
+            try:
+                idx_str = f[:-len(ext)].split('_')[-1]
+                if idx_str.isdigit():
+                    max_index = max(max_index, int(idx_str))
+            except (ValueError, IndexError):
+                continue
+
+        # 초기 활성 파일은 max_index + 1 번 인덱스로 생성
+        initial_filename = f"{root}_{max_index + 1}{ext}"
+        super().__init__(initial_filename, mode=mode, maxBytes=maxBytes,
+                         backupCount=backupCount, encoding=encoding, delay=delay)
+
     def doRollover(self):
         if self.stream:
             self.stream.close()
             self.stream = None
-        
-        # 확장자 처리 (예: .log.json)
-        if self.baseFilename.endswith(".log.json"):
-            root, ext = self.baseFilename[:-len(".log.json")], ".log.json"
-        else:
-            root, ext = os.path.splitext(self.baseFilename)
 
-        # 1. 기존 백업 파일 목록을 찾고 최대 인덱스 결정
-        pattern_indexed = f"{glob.escape(root)}_[0-9]*{glob.escape(ext)}"
-        existing_backups = glob.glob(pattern_indexed)
-        
+        # 현재 존재하는 인덱스 파일 중 최대 인덱스 결정
+        pattern = f"{glob.escape(self._log_root)}_[0-9]*{glob.escape(self._log_ext)}"
+        existing = glob.glob(pattern)
+
         max_index = 0
-        for f in existing_backups:
+        for f in existing:
             try:
-                # 파일명에서 인덱스 부분 추출 (예: ..._1.log.json -> 1)
-                filename_no_ext = f[:-len(ext)]
-                index_str = filename_no_ext.split('_')[-1]
-                if index_str.isdigit():
-                    max_index = max(max_index, int(index_str))
+                idx_str = f[:-len(self._log_ext)].split('_')[-1]
+                if idx_str.isdigit():
+                    max_index = max(max_index, int(idx_str))
             except (ValueError, IndexError):
                 continue
 
-        # 2. 새 백업 파일명 생성 및 회전
-        dfn = f"{root}_{max_index + 1}{ext}"
-        self.rotate(self.baseFilename, dfn)
+        # baseFilename을 다음 인덱스 파일로 업데이트 (이것이 새 활성 파일이 됨)
+        next_filename = f"{self._log_root}_{max_index + 1}{self._log_ext}"
+        self.baseFilename = os.path.abspath(next_filename)
 
-        # 3. 백업 파일 개수 관리 (오래된 파일 삭제)
+        # 오래된 파일 삭제 (backupCount 초과 시)
         if self.backupCount > 0:
-            all_backups = glob.glob(pattern_indexed)
-            all_backups.sort(key=lambda f: int(f[:-len(ext)].split('_')[-1]) if f[:-len(ext)].split('_')[-1].isdigit() else -1)
-            if len(all_backups) > self.backupCount:
-                for f in all_backups[:len(all_backups) - self.backupCount]:
+            all_files = glob.glob(pattern)
+            all_files.sort(key=lambda f: int(f[:-len(self._log_ext)].split('_')[-1])
+                           if f[:-len(self._log_ext)].split('_')[-1].isdigit() else -1)
+            if len(all_files) > self.backupCount:
+                for f in all_files[:len(all_files) - self.backupCount]:
                     try:
                         os.remove(f)
                     except OSError:
                         pass
-        
+
         if not self.delay:
             self.stream = self._open()
 
@@ -108,13 +128,14 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
     - 콘솔 스트림 핸들러
     """
     logger = logging.getLogger(f"strategy.{strategy_name}")
-    
+
     if logger.handlers:
         # 이미 핸들러가 설정된 경우, 새 실행을 위해 기존 핸들러를 제거하고 다시 설정
         for handler in logger.handlers[:]:
             handler.close()
             logger.removeHandler(handler)
 
+    logger.setLevel(logging.DEBUG)
     logger.propagate = True
 
     strategy_log_dir = os.path.join(log_dir, "strategies")
