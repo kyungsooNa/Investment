@@ -253,16 +253,13 @@ class CacheWarmupTask(AfterMarketTask):
 
         watchlist_codes = await self._get_watchlist_codes()
         holdings_codes = await self._get_holdings_codes()
-        premium_codes = self._get_premium_stock_codes()
 
         codes.update(watchlist_codes)
         codes.update(holdings_codes)
-        codes.update(premium_codes)
 
         self._logger.info(
             f"CacheWarmupTask 대상 종목: watchlist {len(watchlist_codes)}개 "
             f"+ 보유 {len(holdings_codes)}개 "
-            f"+ 우량주 {len(premium_codes)}개 "
             f"= 합산(중복제거) {len(codes)}개"
         )
         return codes
@@ -285,7 +282,7 @@ class CacheWarmupTask(AfterMarketTask):
             if not (resp and resp.rt_cd == ErrorCode.SUCCESS.value and resp.data):
                 return []
             holdings = (
-                resp.data.get("output2", [])
+                resp.data.get("output1", [])
                 if isinstance(resp.data, dict)
                 else []
             )
@@ -297,17 +294,4 @@ class CacheWarmupTask(AfterMarketTask):
             return codes
         except Exception as e:
             self._logger.warning(f"CacheWarmupTask: 보유종목 조회 실패: {e}")
-            return []
-
-    def _get_premium_stock_codes(self) -> List[str]:
-        """data/premium_stocks.json에서 우량주(관심종목) 코드를 반환한다."""
-        try:
-            if not os.path.exists(_PREMIUM_STOCKS_PATH):
-                return []
-            with open(_PREMIUM_STOCKS_PATH, encoding="utf-8") as f:
-                data = json.load(f)
-            codes = data.get("kospi", []) + data.get("kosdaq", [])
-            return [c for c in codes if isinstance(c, str) and c]
-        except Exception as e:
-            self._logger.warning(f"CacheWarmupTask: 우량주 파일 읽기 실패: {e}")
             return []
