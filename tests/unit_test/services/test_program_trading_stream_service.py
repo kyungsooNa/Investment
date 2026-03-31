@@ -22,9 +22,12 @@ def manager(tmp_db_dir):
     with patch.object(ProgramTradingStreamService, '_get_base_dir', return_value=tmp_db_dir):
         mgr = ProgramTradingStreamService(logger=mock_logger)
     yield mgr
-    # cleanup: DB 연결 닫기
+    # cleanup: flush task 취소 및 DB 연결 닫기
+    if mgr._flush_task and not mgr._flush_task.done():
+        mgr._flush_task.cancel()
     if mgr._conn:
         mgr._conn.close()
+    mgr._executor.shutdown(wait=False)
 
 
 def _get_db_path(tmp_db_dir):
@@ -65,7 +68,7 @@ def test_init_db_failure():
 
 @pytest.mark.asyncio
 async def test_on_data_received_stores_and_broadcasts(manager):
-    """데이터 수신 시 메모리 + SQLite 저장 및 큐 브로드캐스트 테스트."""
+    """데이터 수신 시 메모리 저장 + 버퍼 적재 + 큐 브로드캐스트 테스트."""
     test_data = {"유가증권단축종목코드": "005930", "price": 100}
     queue = manager.create_subscriber_queue()
 
@@ -75,29 +78,21 @@ async def test_on_data_received_stores_and_broadcasts(manager):
     assert "005930" in manager._pt_history
     assert manager._pt_history["005930"][0] == test_data
 
-    # 2. SQLite 저장 확인
+    # 2. 버퍼에 적재 확인
+    assert len(manager._write_buffer) == 1
+
+    # 3. 동기 플러시 후 DB 저장 확인
+    manager.flush_write_buffer_sync()
     with manager._get_connection() as conn:
         cursor = conn.execute("SELECT COUNT(*) FROM pt_history WHERE code = '005930'")
         assert cursor.fetchone()[0] == 1
 
-    # 3. 큐 브로드캐스트 확인
+    # 4. 큐 브로드캐스트 확인
     assert queue.qsize() == 1
     item = await queue.get()
     item = json.loads(item)
-    # The payload is a list, not the original dict
     expected_payload = [
-        '005930',  # code
-        '',        # 주식체결시간
-        100,       # price
-        0.0,       # rate
-        0,         # change
-        '',        # sign
-        0,         # 매도체결량
-        0,         # 매수2체결량
-        0,         # 순매수체결량
-        0,         # 순매수거래대금
-        0,         # 매도호가잔량
-        0          # 매수호가잔량
+        '005930', '', 100, 0.0, 0, '', 0, 0, 0, 0, 0, 0
     ]
     assert item == expected_payload
 
@@ -117,21 +112,9 @@ async def test_on_data_received_queue_full_behavior(manager):
     item1 = await queue.get()
     item2 = await queue.get()
     assert item1 == "old_2"
-    # The payload is a list, not the original dict
     item2 = json.loads(item2)
     expected_payload = [
-        '005930',  # code
-        '',        # 주식체결시간
-        0,         # price (default)
-        0.0,       # rate
-        0,         # change
-        '',        # sign
-        0,         # 매도체결량
-        0,         # 매수2체결량
-        0,         # 순매수체결량
-        0,         # 순매수거래대금
-        0,         # 매도호가잔량
-        0          # 매수호가잔량
+        '005930', '', 0, 0.0, 0, '', 0, 0, 0, 0, 0, 0
     ]
     assert item2 == expected_payload
 
@@ -152,6 +135,41 @@ def test_on_data_received_queue_exception(manager):
     test_data = {"유가증권단축종목코드": "005930"}
     manager.on_data_received(test_data)
     assert queue in manager._pt_queues
+
+
+# --- 버퍼 플러시 ---
+
+def test_flush_write_buffer_sync(manager):
+    """동기 플러시가 버퍼를 비우고 DB에 저장하는지 확인."""
+    manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
+    manager.on_data_received({"유가증권단축종목코드": "000660", "price": 200})
+    assert len(manager._write_buffer) == 2
+
+    manager.flush_write_buffer_sync()
+    assert len(manager._write_buffer) == 0
+
+    with manager._get_connection() as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM pt_history")
+        assert cursor.fetchone()[0] == 2
+
+
+def test_flush_write_buffer_sync_empty(manager):
+    """빈 버퍼 플러시 시 에러 없이 통과."""
+    manager.flush_write_buffer_sync()  # 에러 없이 통과
+
+
+@pytest.mark.asyncio
+async def test_flush_write_buffer_async(manager):
+    """비동기 플러시가 executor를 통해 DB에 저장하는지 확인."""
+    manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
+    assert len(manager._write_buffer) == 1
+
+    await manager._flush_write_buffer()
+    assert len(manager._write_buffer) == 0
+
+    with manager._get_connection() as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM pt_history WHERE code = '005930'")
+        assert cursor.fetchone()[0] == 1
 
 
 # --- 구독 상태 관리 (SQLite 영속) ---
@@ -219,12 +237,13 @@ def test_load_pt_history_from_db(tmp_db_dir):
     """DB에서 금일 히스토리가 정상 로드되는지 확인."""
     mock_logger = MagicMock()
 
-    # 첫 번째 인스턴스: 데이터 삽입
+    # 첫 번째 인스턴스: 데이터 삽입 (버퍼 → 동기 플러시)
     with patch.object(ProgramTradingStreamService, '_get_base_dir', return_value=tmp_db_dir):
         mgr1 = ProgramTradingStreamService(logger=mock_logger)
         mgr1.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
         mgr1.on_data_received({"유가증권단축종목코드": "005930", "price": 101})
         mgr1.on_data_received({"유가증권단축종목코드": "000660", "price": 200})
+        mgr1.flush_write_buffer_sync()
         mgr1._conn.close()
 
     # 두 번째 인스턴스: 복원 확인
@@ -263,6 +282,7 @@ def test_load_pt_history_only_today(tmp_db_dir):
 def test_cleanup_old_data_no_old_data(manager):
     """삭제 대상이 없을 때 정상 동작."""
     manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
+    manager.flush_write_buffer_sync()
     manager._cleanup_old_data()
 
     with manager._get_connection() as conn:
@@ -363,10 +383,16 @@ def test_remove_subscriber_queue_not_found(manager):
 
 # --- 생명주기 ---
 
-def test_start_background_tasks(manager):
-    """백그라운드 태스크 시작 시 데이터 정리 실행 확인."""
+@pytest.mark.asyncio
+async def test_start_background_tasks(manager):
+    """백그라운드 태스크 시작 시 데이터 정리 실행 및 플러시 루프 시작 확인."""
     manager.start_background_tasks()
     manager.logger.info.assert_called()
+    # 플러시 루프 태스크가 생성되었는지 확인
+    assert manager._flush_task is not None
+    assert not manager._flush_task.done()
+    # cleanup
+    manager._flush_task.cancel()
 
 
 @pytest.mark.asyncio
@@ -382,6 +408,17 @@ async def test_shutdown_no_conn(manager):
     """DB 연결 없이 shutdown 호출."""
     manager._conn = None
     await manager.shutdown()  # 에러 없이 통과
+
+
+@pytest.mark.asyncio
+async def test_shutdown_flushes_remaining_buffer(manager):
+    """종료 시 잔여 버퍼를 플러시하는지 확인."""
+    manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
+    assert len(manager._write_buffer) == 1
+
+    await manager.shutdown()
+    # shutdown에서 flush_write_buffer_sync()를 호출했으므로 버퍼는 비어있어야 함
+    assert len(manager._write_buffer) == 0
 
 
 # --- get_history_data ---
@@ -403,10 +440,10 @@ def test_retention_days_is_7():
 def test_on_data_received_log_gap(manager):
     """데이터 수신 간격이 10초 이상일 때 로그 기록 확인."""
     manager.last_data_ts = time.time() - 15  # 15초 전
-    
+
     test_data = {"유가증권단축종목코드": "005930", "price": 100}
     manager.on_data_received(test_data)
-    
+
     # 로그 메시지 확인
     manager.logger.info.assert_called()
     found = False
@@ -420,19 +457,25 @@ def test_on_data_received_db_save_failure(manager):
     """DB 저장 실패 시에도 메모리 저장 및 큐 전송은 동작해야 함."""
     test_data = {"유가증권단축종목코드": "005930", "price": 100}
     queue = manager.create_subscriber_queue()
-    
-    # _get_connection이 예외를 던지도록 설정
-    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
-        manager.on_data_received(test_data)
-        
-    # 1. 에러 로그 확인
-    manager.logger.error.assert_called()
-    
-    # 2. 메모리 저장은 성공해야 함
+
+    manager.on_data_received(test_data)
+
+    # on_data_received는 버퍼에만 적재하므로 메모리/큐는 항상 성공
+    # 메모리 저장 확인
     assert "005930" in manager._pt_history
-    
-    # 3. 큐 전송은 성공해야 함
+
+    # 큐 전송 확인
     assert queue.qsize() == 1
+
+    # 벌크 인서트 실패 시에도 서비스가 크래시하지 않음
+    manager._conn.close()
+    manager._conn = None
+    # flush_write_buffer_sync는 _bulk_insert_to_db 내부에서 예외를 로그로 처리
+    manager._conn = MagicMock()
+    manager._conn.executemany = MagicMock(side_effect=Exception("DB Error"))
+    manager._conn.rollback = MagicMock()
+    manager.flush_write_buffer_sync()
+    manager.logger.error.assert_called()
 
 def test_load_snapshot_json_error(manager):
     """스냅샷 데이터 JSON 파싱 에러 처리."""
@@ -442,10 +485,10 @@ def test_load_snapshot_json_error(manager):
             "INSERT OR REPLACE INTO pt_snapshot (key, value, updated_at) VALUES (?, ?, ?)",
             ("pt_data", "{invalid_json}", time.time())
         )
-        
+
     # 2. 로드 실행
     result = manager.load_snapshot()
-    
+
     # 3. 검증: None 반환 및 에러 로그
     assert result is None
     manager.logger.error.assert_called()
@@ -457,12 +500,12 @@ def test_subscription_db_errors(manager):
         manager.add_subscribed_code("005930")
     assert "005930" in manager._pt_codes
     manager.logger.error.assert_called()
-    
+
     # Remove
     with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
         manager.remove_subscribed_code("005930")
     assert "005930" not in manager._pt_codes
-    
+
     # Clear
     manager.add_subscribed_code("005930")
     with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
@@ -484,10 +527,11 @@ def test_inspect_db_status(manager):
     # 1. 데이터 준비
     manager.save_snapshot({"test": "snapshot"})
     manager.on_data_received({"유가증권단축종목코드": "005930", "price": 100})
-    
+    manager.flush_write_buffer_sync()
+
     # 2. 실행
     status = manager.inspect_db_status()
-    
+
     # 3. 검증
     assert status["snapshot"]["exists"] is True
     assert status["snapshot"]["updated_at"] is not None
@@ -500,7 +544,7 @@ def test_inspect_db_status_exception(manager):
     """inspect_db_status 예외 처리 확인."""
     # DB 연결을 닫아서 예외 유발
     manager._conn.close()
-    
+
     status = manager.inspect_db_status()
-    
+
     assert "error" in status
