@@ -33,7 +33,7 @@ def mock_sqs():
         return_value=ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="OK",
-            data={"output2": [{"pdno": "005930"}, {"pdno": "000660"}]},
+            data={"output1": [{"pdno": "005930"}, {"pdno": "000660"}]},
         )
     )
     return svc
@@ -335,42 +335,11 @@ class TestGetHoldingsCodes:
         mock_sqs.handle_get_account_balance.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="OK",
-            data={"output2": [{"pdno": "005930"}, {"pdno": ""}, {"pdno": "  "}]},
+            data={"output1": [{"pdno": "005930"}, {"pdno": ""}, {"pdno": "  "}]},
         )
         codes = await task._get_holdings_codes()
         assert codes == ["005930"]
 
-
-# ---------------------------------------------------------------------------
-# _get_premium_stock_codes
-# ---------------------------------------------------------------------------
-
-class TestGetPremiumStockCodes:
-
-    def test_returns_kospi_and_kosdaq(self, task):
-        fake_data = json.dumps({"kospi": ["005930", "000660"], "kosdaq": ["035420"]})
-        with patch("builtins.open", mock_open(read_data=fake_data)), \
-             patch("os.path.exists", return_value=True):
-            codes = task._get_premium_stock_codes()
-        assert codes == ["005930", "000660", "035420"]
-
-    def test_returns_empty_if_file_missing(self, task):
-        with patch("os.path.exists", return_value=False):
-            codes = task._get_premium_stock_codes()
-        assert codes == []
-
-    def test_returns_empty_on_json_error(self, task):
-        with patch("builtins.open", mock_open(read_data="invalid json")), \
-             patch("os.path.exists", return_value=True):
-            codes = task._get_premium_stock_codes()
-        assert codes == []
-
-    def test_filters_non_string_entries(self, task):
-        fake_data = json.dumps({"kospi": ["005930", None, 123, ""], "kosdaq": []})
-        with patch("builtins.open", mock_open(read_data=fake_data)), \
-             patch("os.path.exists", return_value=True):
-            codes = task._get_premium_stock_codes()
-        assert codes == ["005930"]
 
 
 # ---------------------------------------------------------------------------
