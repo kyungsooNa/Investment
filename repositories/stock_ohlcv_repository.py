@@ -26,6 +26,7 @@ class StockOhlcvRepository:
         self._write_lock = None
         self._write_conn: Optional[aiosqlite.Connection] = None
         self._read_conn: Optional[aiosqlite.Connection] = None
+        self._read_conn_lock = asyncio.Lock()
 
         # OHLCV 전용 LFU 캐시 — price 캐시와 물리적으로 분리
         self._ohlcv_cache = _LFUCache(capacity=500)
@@ -102,11 +103,13 @@ class StockOhlcvRepository:
 
     @asynccontextmanager
     async def _get_read_connection(self):
-        """읽기 전용 연결 — 한 번만 열고 재사용 (WAL 모드에서 안전)."""
+        """읽기 전용 연결 — 한 번만 열고 재사용 (WAL 모드에서 안전). Double-checked locking으로 연결 누수 방지."""
         if self._read_conn is None:
-            conn = await aiosqlite.connect(self._db_path)
-            conn.row_factory = aiosqlite.Row
-            self._read_conn = conn
+            async with self._read_conn_lock:
+                if self._read_conn is None:
+                    conn = await aiosqlite.connect(self._db_path)
+                    conn.row_factory = aiosqlite.Row
+                    self._read_conn = conn
         yield self._read_conn
 
     # ── OHLCV 캐시/DB ──────────────────────────────────────────────────────────
