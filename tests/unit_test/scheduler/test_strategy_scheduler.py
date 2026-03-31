@@ -1,13 +1,13 @@
 # tests/unit_test/test_strategy_scheduler.py
 import unittest
 import asyncio
-import os
 import tempfile
 import shutil
 import json
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
 from common.types import TradeSignal, ErrorCode, ResCommonResponse
-from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SCHEDULER_STATE_FILE, SignalRecord
+from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SignalRecord
+from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from interfaces.live_strategy import LiveStrategy
 
 
@@ -34,15 +34,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
-        self.test_signal_file = os.path.join(self.test_dir, "test_signal_history.csv")
-        self.patcher = patch("scheduler.strategy_scheduler.SIGNAL_HISTORY_FILE", self.test_signal_file)
-        self.patcher.start()
-        self._scheduler = None  # tearDown에서 파일 핸들 해제용
+        self._scheduler = None  # tearDown에서 close() 호출용
 
     def tearDown(self):
-        self.patcher.stop()
-        # CSV 파일 핸들 keep-alive로 인해 Windows에서 파일이 열린 채 rmtree하면 PermissionError 발생.
-        # _make_scheduler로 생성된 scheduler가 있으면 close()로 핸들 해제.
         if hasattr(self, "_scheduler") and self._scheduler is not None:
             self._scheduler.close()
             self._scheduler = None
@@ -82,21 +76,21 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         mock_logger = MagicMock()
 
-        # CSV 파일 I/O를 차단하여 테스트 격리
-        with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]), \
-             patch.object(StrategyScheduler, '_open_csv_file'), \
-             patch.object(StrategyScheduler, '_open_csv_file_unsafe'):
-            scheduler = StrategyScheduler(
-                virtual_trade_service=vm,
-                order_execution_service=oes,
-                stock_query_service=sqs,
-                stock_code_repository=scm,
-                market_clock=tm,
-                market_calendar_service=mcs,
-                logger=mock_logger,
-                dry_run=dry_run,
-            )
-        # tearDown에서 파일 핸들을 닫을 수 있도록 마지막 생성된 scheduler를 저장
+        # SQLite I/O 없이 테스트 격리: mock store 주입
+        mock_store = MagicMock(spec=StrategySchedulerStore)
+        mock_store.load_signal_history.return_value = []
+
+        scheduler = StrategyScheduler(
+            virtual_trade_service=vm,
+            order_execution_service=oes,
+            stock_query_service=sqs,
+            stock_code_repository=scm,
+            market_clock=tm,
+            market_calendar_service=mcs,
+            logger=mock_logger,
+            dry_run=dry_run,
+            store=mock_store,
+        )
         self._scheduler = scheduler
         return scheduler, vm, oes, tm, mcs
 
@@ -635,99 +629,77 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler._running = True
         config.enabled = True
 
-        # Mock VM holds
         vm.get_holds.return_value = [{"code": "005930", "name": "삼성전자"}]
 
         # Save State
-        with patch("builtins.open", new_callable=MagicMock) as mock_open_func:
-            with patch("json.dump") as mock_json_dump:
-                scheduler._save_scheduler_state()
-                mock_open_func.assert_called_with(SCHEDULER_STATE_FILE, "w", encoding="utf-8")
-                mock_json_dump.assert_called()
-                args, _ = mock_json_dump.call_args
-                self.assertEqual(args[0]["enabled_strategies"], ["전략A"])
-                self.assertEqual(args[0]["current_positions"], [{"code": "005930", "name": "삼성전자"}])
+        scheduler._save_scheduler_state()
+        scheduler._store.save_state.assert_called_once()
+        saved_state = scheduler._store.save_state.call_args[0][0]
+        self.assertEqual(saved_state["enabled_strategies"], ["전략A"])
+        self.assertEqual(saved_state["current_positions"], [{"code": "005930", "name": "삼성전자"}])
 
         # Restore State
         scheduler._running = False
         config.enabled = False
 
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open", new_callable=MagicMock):
-                with patch("json.load", return_value={
-                    "running": True,
-                    "enabled_strategies": ["전략A"],
-                    "current_positions": [{"code": "005930", "name": "삼성전자"}]
-                }):
-                    with patch.object(scheduler, '_loop', new_callable=AsyncMock):  # loop 실행 방지
-                        await scheduler.restore_state()
-
-                        self.assertTrue(scheduler._running)
-                        self.assertTrue(config.enabled)
+        scheduler._store.load_state.return_value = {
+            "running": True,
+            "enabled_strategies": ["전략A"],
+            "current_positions": [{"code": "005930", "name": "삼성전자"}],
+        }
+        with patch.object(scheduler, '_loop', new_callable=AsyncMock):
+            await scheduler.restore_state()
+            self.assertTrue(scheduler._running)
+            self.assertTrue(config.enabled)
 
     async def test_restore_state_file_not_found(self):
-        """상태 파일이 없을 때 복원 시도 테스트."""
+        """저장된 상태가 없을 때 복원 시도 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        with patch("os.path.exists", return_value=False):
-            await scheduler.restore_state()
-            self.assertFalse(scheduler._running)
+        scheduler._store.load_state.return_value = None
+        await scheduler.restore_state()
+        self.assertFalse(scheduler._running)
 
-    async def test_restore_state_corrupted_file(self):
-        """상태 파일이 손상되었을 때 복원 시도 테스트."""
+    async def test_restore_state_no_state(self):
+        """저장된 상태가 없을 때(None 반환) 복원 시도 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data="{invalid_json")):
-                with patch("os.remove") as mock_remove:
-                    await scheduler.restore_state()
-                    
-                    scheduler._logger.warning.assert_called()
-                    mock_remove.assert_called_once_with(SCHEDULER_STATE_FILE)
-                    self.assertFalse(scheduler._running)
+        scheduler._store.load_state.return_value = None
+        await scheduler.restore_state()
+        self.assertFalse(scheduler._running)
 
-    async def test_restore_state_corrupted_file_oserror(self):
-        """상태 파일이 손상되어 삭제를 시도할 때 OSError 발생 시 처리 테스트."""
+    async def test_restore_state_exception(self):
+        """restore_state 중 예외 발생 시 처리 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data="{invalid_json")):
-                with patch("os.remove", side_effect=OSError("Access Denied")):
-                    await scheduler.restore_state()
-                    
-                    scheduler._logger.error.assert_called()
-                    self.assertFalse(scheduler._running)
+        scheduler._store.load_state.side_effect = Exception("DB Error")
+        await scheduler.restore_state()
+        self.assertFalse(scheduler._running)
 
     def test_save_state_exception(self):
         """상태 저장 중 예외 발생 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        with patch("builtins.open", side_effect=IOError("Disk full")):
-            scheduler._save_scheduler_state()
-            scheduler._logger.error.assert_called()
+        scheduler._store.save_state.side_effect = IOError("Disk full")
+        scheduler._save_scheduler_state()
+        scheduler._logger.error.assert_called()
 
     async def test_clear_saved_state(self):
         """저장된 상태 삭제 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        with patch("os.path.exists", return_value=True):
-            with patch("os.remove") as mock_remove:
-                scheduler.clear_saved_state()
-                mock_remove.assert_called_with(SCHEDULER_STATE_FILE)
+        scheduler.clear_saved_state()
+        scheduler._store.clear_state.assert_called_once()
 
     async def test_clear_saved_state_oserror(self):
-        """저장된 상태 삭제 중 예외(OSError) 발생 시 로깅 테스트."""
+        """저장된 상태 삭제 중 예외 발생 시 로깅 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        with patch("os.path.exists", return_value=True):
-            with patch("os.remove", side_effect=OSError("File in use")):
-                scheduler.clear_saved_state()
-                
-                scheduler._logger.error.assert_called()
+        scheduler._store.clear_state.side_effect = OSError("File in use")
+        scheduler.clear_saved_state()
+        scheduler._logger.error.assert_called()
 
     def test_state_file_thread_safety(self):
-        """멀티 스레드 환경에서 상태 저장/삭제 동시 접근 시 파일 락(Lock) 동작 확인."""
+        """멀티 스레드에서 save/clear 동시 호출 시 예외 없이 완료되는지 확인."""
         scheduler, _, _, _, _ = self._make_scheduler()
         scheduler.register(StrategySchedulerConfig(strategy=MockStrategy(name="전략A")))
-        
-        test_state_file = os.path.join(self.test_dir, "concurrency_state.json")
-        
+
         import concurrent.futures
-        
+
         def worker(action, count):
             for _ in range(count):
                 if action == "save":
@@ -735,72 +707,59 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                 elif action == "clear":
                     scheduler.clear_saved_state()
 
-        # 실제 파일 시스템에 I/O를 발생시키며 충돌(Lock 부재 시 발생)을 유도
-        with patch("scheduler.strategy_scheduler.SCHEDULER_STATE_FILE", test_state_file):
-            thread_count = 10
-            iterations = 100
+        thread_count = 10
+        iterations = 100
+        with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+            futures = [
+                executor.submit(worker, "save" if i % 2 == 0 else "clear", iterations)
+                for i in range(thread_count)
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
-                futures = []
-                for i in range(thread_count):
-                    # 저장과 삭제 작업을 스레드별로 섞어 동시 접근 유도
-                    action = "save" if i % 2 == 0 else "clear"
-                    futures.append(executor.submit(worker, action, iterations))
-                
-                # 스레드 작업 중 예외(JSONDecodeError, OSError 등)가 발생하면 여기서 throw 됨
-                for future in concurrent.futures.as_completed(futures):
-                    future.result()
-
-            # 에러 없이 완료되었으므로 테스트 통과
-            self.assertTrue(True)
+        self.assertTrue(True)
 
     async def test_state_file_async_concurrency(self):
-        """비동기 태스크와 동기 스레드가 혼재된 상황에서 상태 파일 락 동작 확인."""
+        """비동기/동기 혼재 상황에서 save/restore 동시 호출 시 예외 없이 완료되는지 확인."""
         scheduler, _, _, _, _ = self._make_scheduler()
         scheduler.register(StrategySchedulerConfig(strategy=MockStrategy(name="전략A")))
-        
-        test_state_file = os.path.join(self.test_dir, "async_concurrency_state.json")
-        
-        with patch("scheduler.strategy_scheduler.SCHEDULER_STATE_FILE", test_state_file):
-            with patch.object(scheduler, '_loop', new_callable=AsyncMock):
-                scheduler._save_scheduler_state()
-                
-                async def async_worker():
-                    for _ in range(50):
-                        await scheduler.restore_state()
-                        
-                def sync_worker():
-                    for _ in range(50):
-                        scheduler._save_scheduler_state()
-                
-                loop = asyncio.get_running_loop()
-                
-                tasks = [
-                    async_worker(),
-                    async_worker(),
-                    loop.run_in_executor(None, sync_worker),
-                    loop.run_in_executor(None, sync_worker)
-                ]
-                
-                # 동시 실행: 락이 없다면 파일이 깨져서 JSONDecodeError가 발생할 확률이 높음
-                await asyncio.gather(*tasks)
-                self.assertTrue(True)
+
+        scheduler._store.load_state.return_value = {
+            "running": True,
+            "enabled_strategies": ["전략A"],
+            "current_positions": [],
+            "strategy_configs": {},
+        }
+
+        with patch.object(scheduler, '_loop', new_callable=AsyncMock):
+            async def async_worker():
+                for _ in range(50):
+                    await scheduler.restore_state()
+
+            def sync_worker():
+                for _ in range(50):
+                    scheduler._save_scheduler_state()
+
+            loop = asyncio.get_running_loop()
+            async_task = asyncio.create_task(async_worker())
+            thread_future = loop.run_in_executor(None, sync_worker)
+
+            await asyncio.gather(async_task, thread_future)
+
+        self.assertTrue(True)
 
     def test_load_signal_history_real(self):
-        """CSV 파일에서 시그널 이력 로드 테스트 (mocking open)."""
-        # _make_scheduler는 _load_signal_history를 patch하지만 __init__ 동안만 유효하므로
-        # 생성된 객체에서는 원본 메서드를 호출할 수 있음.
+        """DB에서 시그널 이력 로드 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-
-        csv_content = "strategy_name,code,name,action,price,reason,timestamp,api_success\n" \
-                      "전략A,005930,삼성전자,BUY,70000,테스트,2023-01-01 10:00:00,True"
-
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data=csv_content)):
-                records = scheduler._load_signal_history()
-                self.assertEqual(len(records), 1)
-                self.assertEqual(records[0].code, "005930")
-                self.assertTrue(records[0].api_success)
+        scheduler._store.load_signal_history.return_value = [
+            {"strategy_name": "전략A", "code": "005930", "name": "삼성전자",
+             "action": "BUY", "price": 70000, "qty": 1, "return_rate": None,
+             "reason": "테스트", "timestamp": "2023-01-01 10:00:00", "api_success": True}
+        ]
+        records = scheduler._load_signal_history()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].code, "005930")
+        self.assertTrue(records[0].api_success)
 
     async def test_loop_market_closed_smart_wait(self):
         """장 마감 시 스마트 대기(다음 영업일 개장까지) 테스트."""
@@ -1067,28 +1026,13 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             mock_exec.assert_has_awaits(expected_calls, any_order=True)
 
     async def test_append_signal_csv_thread_execution(self):
-        """_append_signal_csv가 asyncio.to_thread를 사용하여 동기 메서드를 실행하는지 테스트."""
-        vm = MagicMock()
-        oes = MagicMock()
-        sqs = MagicMock()
-        scm = AsyncMock()
-        tm = MagicMock()
-        mcs = AsyncMock()
-
-        # 파일 로드 및 CSV 파일 열기 방지 (파일 핸들 keep-alive로 인한 Windows PermissionError 방지)
-        with patch.object(StrategyScheduler, '_load_signal_history', return_value=[]), \
-             patch.object(StrategyScheduler, '_open_csv_file'), \
-             patch.object(StrategyScheduler, '_open_csv_file_unsafe'):
-            scheduler = StrategyScheduler(vm, oes, sqs, scm, tm, mcs, dry_run=True)
-        self._scheduler = scheduler
-
+        """_append_signal_db가 asyncio.to_thread를 사용하여 동기 메서드를 실행하는지 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
         record = MagicMock()
 
         with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
-            await scheduler._append_signal_csv(record)
-
-            # asyncio.to_thread가 호출되었는지 확인
-            mock_to_thread.assert_awaited_once_with(scheduler._append_signal_csv_sync, record)
+            await scheduler._append_signal_db(record)
+            mock_to_thread.assert_awaited_once_with(scheduler._store.append_signal, record)
 
     async def test_run_strategy_sequential_execution_with_exception(self):
         """순차 매수 실행 중 예외 발생 시 전파되고 후속 매수가 중단되는지 테스트."""
@@ -1237,11 +1181,10 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
     def test_load_signal_history_exception(self):
         """시그널 히스토리 로드 중 예외 발생 시 처리 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open", side_effect=Exception("Read Error")):
-                records = scheduler._load_signal_history()
-                self.assertEqual(records, [])
-                scheduler._logger.error.assert_called()
+        scheduler._store.load_signal_history.side_effect = Exception("Read Error")
+        records = scheduler._load_signal_history()
+        self.assertEqual(records, [])
+        scheduler._logger.error.assert_called()
 
     async def test_restore_state_empty_enabled_names(self):
         """상태 파일에 활성 전략 목록이 비어있을 때 리턴 테스트."""
@@ -1259,22 +1202,12 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                     
                     self.assertFalse(scheduler._running)
 
-    def test_append_signal_csv_sync_new_file(self):
-        """새 파일 생성 시 헤더 작성 테스트."""
+    async def test_append_signal_db_records_signal(self):
+        """_append_signal_db가 store.append_signal을 호출하는지 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
         record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
-
-        # _csv_file을 None으로 설정하여 _open_csv_file 경로 진입 유도
-        scheduler._csv_file = None
-        with patch("os.path.exists", return_value=False): # 파일 없음
-            with patch("builtins.open", mock_open()) as mock_file:
-                scheduler._append_signal_csv_sync(record)
-
-                handle = mock_file()
-                # 헤더가 쓰였는지 확인 (write 호출 인자 확인)
-                writes = [call[0][0] for call in handle.write.call_args_list]
-                header_written = any("strategy_name" in w for w in writes)
-                self.assertTrue(header_written)
+        await scheduler._append_signal_db(record)
+        scheduler._store.append_signal.assert_called_once_with(record)
 
     async def test_execute_signal_api_failure_branches(self):
         """API 응답 실패 시 분기 처리 테스트 (Line 294 coverage)."""
@@ -1313,48 +1246,32 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertIn("응답 없음", args[0])
 
     def test_load_signal_history_branches(self):
-        """시그널 히스토리 로드 분기 테스트 (Line 403 coverage)."""
+        """시그널 히스토리 로드 분기 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        
-        # Case 1: 파일 없음 -> 빈 리스트 반환 (Line 403 True branch)
-        with patch("os.path.exists", return_value=False):
-            records = scheduler._load_signal_history()
-            self.assertEqual(records, [])
-            
-        # Case 2: 파일 있음 -> 데이터 로드 (Line 403 False branch)
-        csv_content = "strategy_name,code,name,action,price,reason,timestamp,api_success\n" \
-                      "S,001,Name,BUY,1000,Reason,2023-01-01,True"
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data=csv_content)):
-                records = scheduler._load_signal_history()
-                self.assertEqual(len(records), 1)
-                self.assertEqual(records[0].code, "001")
 
-    def test_append_signal_csv_sync_branches(self):
-        """CSV 저장 시 헤더 작성 분기 테스트 (Line 490~491 coverage)."""
+        # Case 1: 빈 이력 -> 빈 리스트 반환
+        scheduler._store.load_signal_history.return_value = []
+        records = scheduler._load_signal_history()
+        self.assertEqual(records, [])
+
+        # Case 2: 데이터 있음 -> 레코드 반환
+        scheduler._store.load_signal_history.return_value = [
+            {"strategy_name": "S", "code": "001", "name": "Name",
+             "action": "BUY", "price": 1000, "qty": 1, "return_rate": None,
+             "reason": "Reason", "timestamp": "2023-01-01", "api_success": True}
+        ]
+        records = scheduler._load_signal_history()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].code, "001")
+
+    async def test_append_signal_db_uses_to_thread(self):
+        """_append_signal_db가 asyncio.to_thread를 사용하여 store.append_signal을 호출하는지 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
         record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
 
-        # Case 1: _csv_file=None + 파일 없음 -> _open_csv_file 호출 -> 헤더 작성
-        scheduler._csv_file = None
-        with patch("os.path.exists", return_value=False):
-            with patch("builtins.open", mock_open()) as mock_file:
-                scheduler._append_signal_csv_sync(record)
-                handle = mock_file()
-                writes = [call[0][0] for call in handle.write.call_args_list]
-                # 헤더가 포함되어 있는지 확인
-                self.assertTrue(any("strategy_name" in w for w in writes))
-
-        # Case 2: _csv_file=None + 파일 있음 -> _open_csv_file 호출 -> 헤더 작성 안 함
-        scheduler._csv_file = None
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open", mock_open()) as mock_file:
-                scheduler._append_signal_csv_sync(record)
-
-                handle = mock_file()
-                writes = [call[0][0] for call in handle.write.call_args_list]
-                # 헤더가 포함되지 않아야 함
-                self.assertFalse(any("strategy_name" in w for w in writes))
+        with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+            await scheduler._append_signal_db(record)
+            mock_to_thread.assert_awaited_once_with(scheduler._store.append_signal, record)
 
     async def test_execute_signal_market_price_lookup_failure(self):
         """시장가 주문 시 현재가 조회 실패(응답은 성공이나 데이터 없음) 테스트."""
@@ -1418,24 +1335,20 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         vm.log_buy_async.assert_awaited_once_with("S", "005930", 1000, 10)
 
     def test_load_signal_history_max_limit(self):
-        """시그널 히스토리 로드 시 MAX_HISTORY 제한 테스트."""
+        """시그널 히스토리 로드 시 MAX_HISTORY 제한이 store에 전달되는지 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
-        scheduler.MAX_HISTORY = 5  # 테스트를 위해 제한 줄임
-        
-        # 10개의 레코드 생성
-        csv_lines = ["strategy_name,code,name,action,price,reason,timestamp,api_success"]
-        for i in range(10):
-            csv_lines.append(f"S,00{i},Name,BUY,1000,Reason,2023-01-01,True")
-        csv_content = "\n".join(csv_lines)
-        
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data=csv_content)):
-                records = scheduler._load_signal_history()
-                
-                self.assertEqual(len(records), 5)
-                # 마지막 5개만 남아야 하므로 코드는 005 ~ 009
-                self.assertEqual(records[0].code, "005")
-                self.assertEqual(records[-1].code, "009")
+        scheduler.MAX_HISTORY = 5
+
+        scheduler._store.load_signal_history.return_value = [
+            {"strategy_name": "S", "code": f"00{i}", "name": "Name",
+             "action": "BUY", "price": 1000, "qty": 1, "return_rate": None,
+             "reason": "Reason", "timestamp": "2023-01-01", "api_success": True}
+            for i in range(5)
+        ]
+
+        records = scheduler._load_signal_history()
+        scheduler._store.load_signal_history.assert_called_with(limit=5)
+        self.assertEqual(len(records), 5)
 
     async def test_execute_signal_history_truncation(self):
         """시그널 실행 후 히스토리 제한 유지 테스트."""
@@ -1457,21 +1370,17 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scheduler._signal_history[0].code, "002")
         self.assertEqual(scheduler._signal_history[1].code, "003")
 
-    def test_append_signal_csv_sync_exception(self):
-        """CSV 저장 중 예외 발생 시 로그 기록 테스트 (Line 490~491 coverage)."""
+    async def test_append_signal_db_exception_handling(self):
+        """store.append_signal 예외 발생 시 로그 기록 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
         record = SignalRecord("S", "001", "Name", "BUY", 1000, "Reason", "2023-01-01")
 
-        # _csv_file=None으로 설정하여 open() 경로로 진입하게 한 뒤 예외 발생 유도
-        scheduler._csv_file = None
-        with patch("builtins.open", side_effect=IOError("Disk full")):
-            scheduler._append_signal_csv_sync(record)
+        scheduler._store.append_signal.side_effect = IOError("Disk full")
+        await scheduler._append_signal_db(record)
 
-            # 에러 로그가 호출되었는지 확인
-            scheduler._logger.error.assert_called()
-            args, _ = scheduler._logger.error.call_args
-            self.assertIn("시그널 CSV 저장 실패", args[0])
-            self.assertIn("Disk full", args[0])
+        scheduler._logger.error.assert_called()
+        args, _ = scheduler._logger.error.call_args
+        self.assertIn("시그널 DB 저장 실패", args[0])
 
     async def test_loop_outer_exception_handling(self):
         """루프 자체(외부) 예외 발생 시 로그 기록 및 계속 실행 테스트."""
