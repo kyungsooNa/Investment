@@ -70,9 +70,17 @@ class MarketDataService:
         if self._stock_repo and not is_market_open:
             db_data = await self._stock_repo.get_latest_daily_snapshot(stock_code)
             if db_data:
-                db_data = self._wrap_snapshot_output(db_data)
-                self._stock_repo.set_current_price(stock_code, db_data)
-                return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(DB)", data=db_data)
+                # DB 데이터가 최근 거래일 기준인지 확인 (오래된 데이터 방지)
+                latest_trading_date = await self._mcs.get_latest_trading_date() if self._mcs else None
+                db_trade_date = db_data.get("_trade_date") or (db_data.get("output") or {}).get("stck_bsop_date")
+                if not latest_trading_date or db_trade_date != latest_trading_date:
+                    self._logger.debug(
+                        f"MarketDataService - {stock_code} DB 스냅샷 날짜({db_trade_date}) != 최근 거래일({latest_trading_date}), API 조회로 폴백"
+                    )
+                else:
+                    db_data = self._wrap_snapshot_output(db_data)
+                    self._stock_repo.set_current_price(stock_code, db_data)
+                    return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(DB)", data=db_data)
 
         if count_stats:
             self._logger.info(f"MarketDataService - {stock_code} 현재가 조회 요청")
