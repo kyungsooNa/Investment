@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import pytest
 
 # 실제 core.logger 경로에 맞게 수정
-from core.logger import Logger, get_strategy_logger, get_performance_logger, JsonFormatter, reset_log_timestamp_for_test, SizeTimeRotatingFileHandler
+from core.logger import Logger, get_strategy_logger, get_performance_logger, get_streaming_logger, StreamingEventLogger, JsonFormatter, reset_log_timestamp_for_test, SizeTimeRotatingFileHandler
 
 
 @pytest.fixture
@@ -437,19 +437,272 @@ def test_loggers_use_custom_handler(tmp_path):
     """Logger 및 get_strategy_logger가 SizeTimeRotatingFileHandler를 사용하는지 검증합니다."""
     reset_log_timestamp_for_test()
     log_dir = tmp_path / "logs"
-    
+
     # 1. Strategy Logger
     strat_logger = get_strategy_logger("test_strat", log_dir=str(log_dir))
     assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in strat_logger.handlers)
     for h in strat_logger.handlers:
         h.close()
-    
+
     # 2. Main Logger
     app_logger = Logger(log_dir=str(log_dir))
     assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in app_logger.operational_logger.handlers)
     assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in app_logger.debug_logger.handlers)
-    
+
     # 정리
     for logger in [app_logger.operational_logger, app_logger.debug_logger]:
         for h in logger.handlers:
             h.close()
+
+
+# ── StreamingEventLogger / get_streaming_logger 테스트 ─────────────────────────
+
+
+@pytest.fixture
+def streaming_logger_setup(tmp_path):
+    """get_streaming_logger()가 생성하는 로거와 로그 파일 경로를 준비하는 픽스처."""
+    reset_log_timestamp_for_test()
+
+    # 테스트 전: streaming_event 로거 핸들러 초기화 (다른 테스트 잔재 방지)
+    existing = logging.getLogger("streaming_event")
+    for h in existing.handlers[:]:
+        h.close()
+        existing.removeHandler(h)
+
+    log_dir = tmp_path / "logs"
+    streaming_logger = get_streaming_logger(log_dir=str(log_dir))
+
+    yield streaming_logger, log_dir / "streaming"
+
+    # 정리
+    inner = logging.getLogger("streaming_event")
+    for h in inner.handlers[:]:
+        h.close()
+        inner.removeHandler(h)
+
+
+def _read_json_lines(log_dir):
+    """logs/streaming/ 아래 .log.json 파일의 모든 행을 파싱하여 반환합니다."""
+    files = list(log_dir.glob("*.log.json"))
+    assert len(files) == 1, f"예상과 다른 로그 파일 수: {[f.name for f in files]}"
+    with open(files[0], encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def test_get_streaming_logger_creates_file(streaming_logger_setup):
+    """get_streaming_logger()가 logs/streaming/ 아래에 JSON 파일을 생성하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    assert isinstance(streaming_logger, StreamingEventLogger)
+    assert streaming_log_dir.is_dir()
+
+    inner = logging.getLogger("streaming_event")
+    assert not inner.propagate
+    assert len(inner.handlers) == 1
+    handler = inner.handlers[0]
+    assert isinstance(handler, SizeTimeRotatingFileHandler)
+    assert isinstance(handler.formatter, JsonFormatter)
+
+    # 파일은 첫 로그를 쓸 때 생성됩니다.
+    streaming_logger.log_connect()
+    handler.flush()
+
+    log_files = list(streaming_log_dir.glob("*_streaming_*.log.json"))
+    assert len(log_files) == 1
+
+
+def test_log_connect_writes_json(streaming_logger_setup):
+    """log_connect()가 action='connect' JSON 항목을 파일에 기록하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_connect()
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert len(lines) == 1
+    assert lines[0]["data"]["action"] == "connect"
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_disconnect_writes_reason(streaming_logger_setup):
+    """log_disconnect(reason=...)가 reason 필드를 포함하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_disconnect(reason="market_closed")
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert lines[0]["data"]["action"] == "disconnect"
+    assert lines[0]["data"]["reason"] == "market_closed"
+
+
+def test_log_subscribe_writes_categories_and_count(streaming_logger_setup):
+    """log_subscribe()가 code, categories, active_count를 올바르게 기록하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_subscribe(
+        code="005930",
+        categories={"portfolio": 1, "strategy_momentum": 2},
+        active_count=3,
+    )
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "subscribe"
+    assert d["code"] == "005930"
+    assert d["categories"] == {"portfolio": 1, "strategy_momentum": 2}
+    assert d["active_count"] == 3
+
+
+def test_log_unsubscribe_writes_code_and_count(streaming_logger_setup):
+    """log_unsubscribe()가 code, active_count를 올바르게 기록하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_unsubscribe(code="005930", active_count=2)
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "unsubscribe"
+    assert d["code"] == "005930"
+    assert d["active_count"] == 2
+
+
+def test_log_summary_writes_full_state(streaming_logger_setup):
+    """log_summary()가 active_count, active_codes, pending_by_priority를 기록하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_summary(
+        active_count=2,
+        active_codes=["005930", "000660"],
+        pending_by_priority={"HIGH": ["005930"], "MEDIUM": ["000660"], "LOW": []},
+    )
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "summary"
+    assert d["active_count"] == 2
+    assert d["active_codes"] == ["000660", "005930"]  # sorted
+    assert d["pending_by_priority"]["HIGH"] == ["005930"]
+
+
+def test_log_reconnect_writes_trigger_and_stats(streaming_logger_setup):
+    """log_reconnect()가 trigger, codes, success, total을 기록하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_reconnect(
+        trigger="receive_task_dead",
+        codes=["005930", "000660"],
+        success=2,
+        total=2,
+    )
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "reconnect"
+    assert d["trigger"] == "receive_task_dead"
+    assert d["codes"] == ["000660", "005930"]  # sorted
+    assert d["success"] == 2
+    assert d["total"] == 2
+
+
+def test_log_restore_writes_stats(streaming_logger_setup):
+    """log_restore()가 codes, success, total을 기록하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_restore(codes=["005930"], success=1, total=1)
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "restore"
+    assert d["codes"] == ["005930"]
+    assert d["success"] == 1
+    assert d["total"] == 1
+
+
+def test_log_pt_subscribe_and_unsubscribe(streaming_logger_setup):
+    """log_pt_subscribe / log_pt_unsubscribe가 H0STPGM0 이벤트를 기록하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_pt_subscribe(code="005930", reason="reconnect")
+    streaming_logger.log_pt_unsubscribe(code="005930", reason="reconnect_failed")
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert len(lines) == 2
+
+    assert lines[0]["data"]["action"] == "pt_subscribe"
+    assert lines[0]["data"]["code"] == "005930"
+    assert lines[0]["data"]["reason"] == "reconnect"
+
+    assert lines[1]["data"]["action"] == "pt_unsubscribe"
+    assert lines[1]["data"]["reason"] == "reconnect_failed"
+
+
+def test_log_price_subscribe_and_unsubscribe(streaming_logger_setup):
+    """log_price_subscribe / log_price_unsubscribe가 H0STCNT0 이벤트를 기록하는지 검증합니다."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_price_subscribe(code="000660", reason="restore")
+    streaming_logger.log_price_unsubscribe(code="000660", reason="restore_failed")
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert len(lines) == 2
+
+    assert lines[0]["data"]["action"] == "price_subscribe"
+    assert lines[0]["data"]["code"] == "000660"
+    assert lines[0]["data"]["reason"] == "restore"
+
+    assert lines[1]["data"]["action"] == "price_unsubscribe"
+    assert lines[1]["data"]["reason"] == "restore_failed"
+
+
+def test_get_streaming_logger_returns_same_file_on_second_call(tmp_path):
+    """같은 프로세스에서 get_streaming_logger()를 두 번 호출해도 파일이 하나만 생성되는지 검증합니다."""
+    reset_log_timestamp_for_test()
+
+    existing = logging.getLogger("streaming_event")
+    for h in existing.handlers[:]:
+        h.close()
+        existing.removeHandler(h)
+
+    log_dir = tmp_path / "logs"
+
+    logger1 = get_streaming_logger(log_dir=str(log_dir))
+    logger2 = get_streaming_logger(log_dir=str(log_dir))
+
+    # 파일은 첫 로그를 쓸 때 생성됩니다.
+    logger1.log_connect()
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    streaming_log_dir = log_dir / "streaming"
+    log_files = list(streaming_log_dir.glob("*_streaming_*.log.json"))
+    assert len(log_files) == 1  # 두 번 호출해도 파일은 한 개
+
+    for h in logging.getLogger("streaming_event").handlers[:]:
+        h.close()
+        logging.getLogger("streaming_event").removeHandler(h)

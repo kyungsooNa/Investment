@@ -15,7 +15,7 @@ from services.virtual_trade_service import VirtualTradeService
 from repositories.stock_code_repository import StockCodeRepository
 from services.indicator_service import IndicatorService
 from core.market_clock import MarketClock
-from core.logger import Logger, get_strategy_logger
+from core.logger import Logger, get_strategy_logger, get_streaming_logger
 from core.performance_profiler import PerformanceProfiler
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from scheduler.background_scheduler import BackgroundScheduler
@@ -82,6 +82,9 @@ class WebAppContext:
         # 프로그램매매 실시간 데이터 서비스
         self.realtime_data_service = ProgramTradingStreamService(self.logger)
         self.price_subscription_service: PriceSubscriptionService = None
+
+        # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
+        self.streaming_event_logger = get_streaming_logger()
         
         web_api.set_ctx(self)
 
@@ -213,12 +216,14 @@ class WebAppContext:
             logger=self.logger,
             market_clock=self.market_clock,
             market_data_service=self.market_data_service,
+            streaming_logger=self.streaming_event_logger,
         )
         # PriceSubscriptionService 초기화 (StreamingService 생성 이후)
         self.price_subscription_service = PriceSubscriptionService(
             streaming_service=self.streaming_service,
             stock_repo=self.stock_repository,
             logger=self.logger,
+            streaming_logger=self.streaming_event_logger,
         )
 
         # WebSocketWatchdogTask 초기화
@@ -229,6 +234,7 @@ class WebAppContext:
             performance_profiler=self.pm,
             notification_service=self.notification_service,
             logger=self.logger,
+            streaming_logger=self.streaming_event_logger,
         )
 
         self.daily_price_collector_task = DailyPriceCollectorTask(

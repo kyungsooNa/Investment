@@ -21,6 +21,7 @@ from common.types import ResCommonResponse, ErrorCode
 if TYPE_CHECKING:
     from brokers.broker_api_wrapper import BrokerAPIWrapper
     from services.market_data_service import MarketDataService
+    from core.logger import StreamingEventLogger
 
 
 class StreamingService:
@@ -35,11 +36,13 @@ class StreamingService:
         logger,
         market_clock,
         market_data_service: Optional["MarketDataService"] = None,
+        streaming_logger: Optional["StreamingEventLogger"] = None,
     ):
         self.broker = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
         self.market_data_service = market_data_service
+        self._streaming_logger = streaming_logger
         self._latest_prices: Dict[str, dict | str] = {}
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
@@ -55,11 +58,17 @@ class StreamingService:
         """
         if callback is not None:
             self._callback = callback
-        return await self.broker.connect_websocket(self._callback)
+        result = await self.broker.connect_websocket(self._callback)
+        if result and self._streaming_logger:
+            self._streaming_logger.log_connect()
+        return result
 
     async def disconnect_websocket(self):
         """WebSocket 연결 해제 (BrokerAPIWrapper 위임)."""
-        return await self.broker.disconnect_websocket()
+        result = await self.broker.disconnect_websocket()
+        if self._streaming_logger:
+            self._streaming_logger.log_disconnect()
+        return result
 
     # ── 구독 / 해지 ───────────────────────────────────────────────
 

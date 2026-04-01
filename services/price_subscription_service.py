@@ -21,11 +21,12 @@ from __future__ import annotations
 
 import logging
 from enum import IntEnum
-from typing import Dict, Set, List, TYPE_CHECKING
+from typing import Dict, Set, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.streaming_service import StreamingService
     from repositories.stock_repository import StockRepository
+    from core.logger import StreamingEventLogger
 
 
 class SubscriptionPriority(IntEnum):
@@ -55,10 +56,12 @@ class PriceSubscriptionService:
         streaming_service: "StreamingService",
         stock_repo: "StockRepository",
         logger=None,
+        streaming_logger: Optional["StreamingEventLogger"] = None,
     ):
         self._streaming = streaming_service
         self._stock_repo = stock_repo
         self._logger = logger or logging.getLogger(__name__)
+        self._streaming_logger = streaming_logger
 
         # code -> {category_key -> SubscriptionPriority}
         self._refs: Dict[str, Dict[str, SubscriptionPriority]] = {}
@@ -168,6 +171,15 @@ class PriceSubscriptionService:
                 f"(active={len(self._active_codes)}, requested={len(self._refs)}, max={self.MAX_SUBSCRIPTIONS})"
             )
 
+        # 변경이 있었을 때 현재 구독 상태 요약 기록
+        if (to_subscribe or to_unsubscribe) and self._streaming_logger:
+            status = self.get_status()
+            self._streaming_logger.log_summary(
+                active_count=status["active_count"],
+                active_codes=status["active_codes"],
+                pending_by_priority=status["pending_by_priority"],
+            )
+
     async def _do_subscribe(self, code: str) -> None:
         try:
             success = await self._streaming.subscribe_unified_price(code)
@@ -175,6 +187,13 @@ class PriceSubscriptionService:
                 self._active_codes.add(code)
                 self._stock_repo.mark_streaming(code)
                 self._logger.debug(f"PriceSubscriptionService: 구독 등록 {code}")
+                if self._streaming_logger:
+                    categories = self._refs.get(code, {})
+                    self._streaming_logger.log_subscribe(
+                        code=code,
+                        categories=categories,
+                        active_count=len(self._active_codes),
+                    )
         except Exception as e:
             self._logger.error(f"PriceSubscriptionService: 구독 실패 {code}: {e}")
 
@@ -184,5 +203,10 @@ class PriceSubscriptionService:
             self._active_codes.discard(code)
             self._stock_repo.unmark_streaming(code)
             self._logger.debug(f"PriceSubscriptionService: 구독 해지 {code}")
+            if self._streaming_logger:
+                self._streaming_logger.log_unsubscribe(
+                    code=code,
+                    active_count=len(self._active_codes),
+                )
         except Exception as e:
             self._logger.error(f"PriceSubscriptionService: 구독 해지 실패 {code}: {e}")
