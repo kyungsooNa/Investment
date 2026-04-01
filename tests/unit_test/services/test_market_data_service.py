@@ -372,7 +372,7 @@ async def test_get_current_price_cache_miss(trading_service_fixture, mock_deps):
 
 @pytest.mark.asyncio
 async def test_get_current_price_db_fallback_when_market_closed(trading_service_fixture, mock_deps):
-    """장 마감 + LRU miss → daily_prices DB 조회 → API 호출 없이 반환 및 LRU 적재"""
+    """장 마감 + LRU miss → DB 날짜 == 최근 거래일 → API 호출 없이 반환 및 LRU 적재"""
     broker = mock_deps.broker
     stock_repo = mock_deps.stock_repo
     service = trading_service_fixture
@@ -382,6 +382,7 @@ async def test_get_current_price_db_fallback_when_market_closed(trading_service_
     stock_repo.get_latest_daily_snapshot.return_value = db_snapshot
     service._mcs = AsyncMock()
     service._mcs.is_market_open_now.return_value = False  # 장 마감
+    service._mcs.get_latest_trading_date.return_value = "20260318"  # DB 날짜와 일치
 
     resp = await service.get_current_price("005930")
 
@@ -1426,3 +1427,78 @@ async def test_get_ohlcv_after_market_close_fetches_today_when_yesterday_is_late
     assert resp.data[-1]['close'] == 1020.0
     # DB의 600일치도 유지되어야 함
     assert len(resp.data) >= 600
+
+
+# ── get_current_price DB 날짜 검증 시나리오 ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_current_price_db_stale_date_falls_back_to_api(trading_service_fixture, mock_deps):
+    """장 마감 + DB 날짜 != 최근 거래일 → 오래된 데이터이므로 API 호출로 폴백"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    db_snapshot = {"output": {"stck_prpr": "70000"}, "_source": "daily_snapshot", "_trade_date": "20260317"}
+    stock_repo.get_latest_daily_snapshot.return_value = db_snapshot
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False
+    service._mcs.get_latest_trading_date.return_value = "20260318"  # DB(0317) != 최근 거래일(0318)
+
+    api_data = {"output": {"stck_prpr": "71000"}}
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
+
+    resp = await service.get_current_price("005930")
+
+    assert resp.rt_cd == "0"
+    from common.types import Exchange
+    broker.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
+    stock_repo.set_current_price.assert_called_once_with("005930", api_data)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_db_latest_trading_date_none_falls_back_to_api(trading_service_fixture, mock_deps):
+    """장 마감 + get_latest_trading_date() == None → 날짜 검증 불가 → API 호출"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    db_snapshot = {"output": {"stck_prpr": "70000"}, "_source": "daily_snapshot", "_trade_date": "20260318"}
+    stock_repo.get_latest_daily_snapshot.return_value = db_snapshot
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False
+    service._mcs.get_latest_trading_date.return_value = None  # 최근 거래일 조회 실패
+
+    api_data = {"output": {"stck_prpr": "71000"}}
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
+
+    resp = await service.get_current_price("005930")
+
+    assert resp.rt_cd == "0"
+    from common.types import Exchange
+    broker.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_no_mcs_falls_back_to_api(trading_service_fixture, mock_deps):
+    """_mcs 없이 장 마감 판정 + DB에 데이터 있어도 → 날짜 검증 불가 → API 호출"""
+    broker = mock_deps.broker
+    stock_repo = mock_deps.stock_repo
+    service = trading_service_fixture
+
+    stock_repo.get_current_price.return_value = None
+    db_snapshot = {"output": {"stck_prpr": "70000"}, "_source": "daily_snapshot", "_trade_date": "20260318"}
+    stock_repo.get_latest_daily_snapshot.return_value = db_snapshot
+    service._mcs = None
+    service._market_clock = MagicMock()
+    service._market_clock.is_market_operating_hours.return_value = False  # 장 마감
+
+    api_data = {"output": {"stck_prpr": "71000"}}
+    broker.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=api_data)
+
+    resp = await service.get_current_price("005930")
+
+    assert resp.rt_cd == "0"
+    from common.types import Exchange
+    broker.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
