@@ -237,11 +237,11 @@
         requests: () =>
             fetch('http://127.0.0.1:8001/debug/requests')
                 .then(r => r.json())
-                .then(d => { console.log('[요청 목록]'); console.table(d.data); return d; })
+                .then(d => { console.log('[현재 in-flight]'); console.table(d.data); console.log('[최근 완료 이력]'); console.table(d.recent); return d; })
                 .catch(() =>
                     fetch('/api/debug/requests')
                         .then(r => r.json())
-                        .then(d => { console.log('[요청 목록 (main)]'); console.table(d.data); return d; })
+                        .then(d => { console.log('[현재 in-flight (main)]'); console.table(d.data); console.log('[최근 완료]'); console.table(d.recent); return d; })
                 ),
         fg: () =>
             fetch('/api/background/status')

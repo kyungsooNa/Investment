@@ -4,7 +4,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from fastapi import FastAPI, Request, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -41,7 +41,10 @@ class _DebugHandler(BaseHTTPRequestHandler):
             key=lambda x: x["elapsed_sec"],
             reverse=True,
         )
-        body = json.dumps({"count": len(rows), "data": rows}, ensure_ascii=False).encode()
+        body = json.dumps(
+            {"count": len(rows), "data": rows, "recent": list(api_common._recent_completed)},
+            ensure_ascii=False,
+        ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -55,7 +58,7 @@ class _DebugHandler(BaseHTTPRequestHandler):
 
 def _start_debug_server():
     try:
-        server = HTTPServer(("127.0.0.1", _DEBUG_SERVER_PORT), _DebugHandler)
+        server = ThreadingHTTPServer(("127.0.0.1", _DEBUG_SERVER_PORT), _DebugHandler)
         t = threading.Thread(target=server.serve_forever, daemon=True, name="dbg-http")
         t.start()
         print(f"[DEBUG] 진단 서버 시작: http://127.0.0.1:{_DEBUG_SERVER_PORT}/debug/requests")
@@ -129,10 +132,17 @@ async def request_tracker_middleware(request: Request, call_next):
         "start": time.monotonic(),
         "query": str(request.url.query) or None,
     }
+    start = time.monotonic()
     try:
         return await call_next(request)
     finally:
+        elapsed = round(time.monotonic() - start, 2)
         api_common._active_requests.pop(req_id, None)
+        # 완료 이력 기록 (hang 직전 분석용)
+        rec = api_common._recent_completed
+        rec.append({"path": path, "elapsed_sec": elapsed, "at": round(start, 1)})
+        if len(rec) > api_common._RECENT_MAX:
+            del rec[0]
 
 
 # --- Foreground 우선순위 미들웨어 ---

@@ -12,6 +12,10 @@ _PRICE_CACHE = {}  # {code: (price, rate, timestamp)}
 # 서버 측 in-flight 요청 추적 (hang 진단용): request_id → {path, method, start, query}
 _active_requests: dict = {}
 
+# 최근 완료 요청 이력 (hang 직전 분석용): deque-like list, 최대 20건
+_recent_completed: list = []
+_RECENT_MAX = 20
+
 
 def set_ctx(ctx):
     global _ctx
