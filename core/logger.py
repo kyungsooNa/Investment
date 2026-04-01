@@ -120,6 +120,225 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(log_object, ensure_ascii=False, default=str)
 
 
+def get_streaming_logger(log_dir: str = "logs") -> "StreamingEventLogger":
+    """
+    실시간 스트리밍 전용 이벤트 로거를 생성하고 반환합니다.
+    경로: logs/streaming/{timestamp}_streaming.log.json
+
+    로그 항목 구조:
+      - action: "subscribe" | "unsubscribe" | "summary" |
+                "connect" | "disconnect" |
+                "reconnect" | "restore" |
+                "pt_subscribe"  | "pt_unsubscribe"  (프로그램매매 H0STPGM0)
+                "price_subscribe" | "price_unsubscribe" (현재 체결가 H0STCNT0)
+      + action별 세부 필드 (code, categories, reason, trigger, ...)
+    """
+    streaming_log_dir = os.path.join(log_dir, "streaming")
+    os.makedirs(streaming_log_dir, exist_ok=True)
+
+    logger_name = "streaming_event"
+    logger = logging.getLogger(logger_name)
+
+    if not logger.handlers:
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+
+        timestamp = get_log_timestamp()
+        log_file = os.path.join(streaming_log_dir, f"{timestamp}_streaming.log.json")
+        handler = SizeTimeRotatingFileHandler(
+            log_file,
+            mode="a",
+            encoding="utf-8",
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+        )
+        handler.setFormatter(JsonFormatter())
+        logger.addHandler(handler)
+
+    return StreamingEventLogger(logger)
+
+
+class StreamingEventLogger:
+    """
+    실시간 구독·연결 이벤트를 JSON으로 기록하는 전용 로거.
+
+    logs/streaming/{timestamp}_streaming.log.json 에 기록한다.
+    각 항목은 JsonFormatter를 통해 {"timestamp":..., "level":..., "data":{...}} 형태로 저장된다.
+
+    --- 로그 종류 ---
+    [통합 가격 구독 - PriceSubscriptionService (H0UNCNT0)]
+      log_subscribe   : 통합 현재가 구독 등록 (categories = 구독 요청자 목록)
+      log_unsubscribe : 통합 현재가 구독 해제
+      log_summary     : 현재 전체 구독 현황 스냅샷
+
+    [연결 이벤트 - StreamingService]
+      log_connect     : WebSocket 연결 성공
+      log_disconnect  : WebSocket 연결 해제
+
+    [워치독/복원 이벤트 - WebSocketWatchdogTask]
+      log_reconnect   : 강제 재연결 (trigger 포함)
+      log_restore     : 앱 시작 시 구독 상태 복원
+
+    [프로그램매매 구독 - WebSocketWatchdogTask (H0STPGM0)]
+      log_pt_subscribe   : 프로그램매매 구독 등록
+      log_pt_unsubscribe : 프로그램매매 구독 해제
+
+    [실시간 체결가 구독 - WebSocketWatchdogTask (H0STCNT0)]
+      log_price_subscribe   : 실시간 현재 체결가 구독 등록
+      log_price_unsubscribe : 실시간 현재 체결가 구독 해제
+    """
+
+    def __init__(self, logger: logging.Logger):
+        self._logger = logger
+
+    # ── PriceSubscriptionService 이벤트 (H0UNCNT0) ──────────────
+
+    def log_subscribe(self, code: str, categories: dict, active_count: int) -> None:
+        """통합 현재가 구독 등록.
+
+        Args:
+            code: 종목코드
+            categories: {category_key: priority_int} — 해당 종목을 요청한 카테고리 목록
+                        ex) {"portfolio": 1, "strategy_momentum": 2}
+            active_count: 구독 등록 후 총 활성 구독 수
+        """
+        self._logger.info({
+            "action": "subscribe",
+            "code": code,
+            "categories": {k: int(v) for k, v in categories.items()},
+            "active_count": active_count,
+        })
+
+    def log_unsubscribe(self, code: str, active_count: int) -> None:
+        """통합 현재가 구독 해제.
+
+        Args:
+            code: 종목코드
+            active_count: 구독 해제 후 총 활성 구독 수
+        """
+        self._logger.info({
+            "action": "unsubscribe",
+            "code": code,
+            "active_count": active_count,
+        })
+
+    def log_summary(
+        self,
+        active_count: int,
+        active_codes: list,
+        pending_by_priority: dict,
+    ) -> None:
+        """현재 구독 상태 전체 요약.
+
+        Args:
+            active_count: 현재 활성 구독 수
+            active_codes: 활성 구독 종목 목록
+            pending_by_priority: {"HIGH": [...], "MEDIUM": [...], "LOW": [...]}
+        """
+        self._logger.info({
+            "action": "summary",
+            "active_count": active_count,
+            "active_codes": sorted(active_codes),
+            "pending_by_priority": pending_by_priority,
+        })
+
+    # ── StreamingService 이벤트 ──────────────────────────────────
+
+    def log_connect(self) -> None:
+        """WebSocket 연결 성공."""
+        self._logger.info({"action": "connect"})
+
+    def log_disconnect(self, reason: str = "") -> None:
+        """WebSocket 연결 해제.
+
+        Args:
+            reason: 해제 이유 (e.g., "market_closed", "manual", "")
+        """
+        self._logger.info({"action": "disconnect", "reason": reason})
+
+    # ── WebSocketWatchdogTask 이벤트 ─────────────────────────────
+
+    def log_reconnect(
+        self,
+        trigger: str,
+        codes: list,
+        success: int,
+        total: int,
+    ) -> None:
+        """강제 재연결 완료.
+
+        Args:
+            trigger: 재연결 원인 ("receive_task_dead" | "data_gap_{N}s")
+            codes: 재구독 시도한 종목 목록
+            success: 성공한 종목 수
+            total: 전체 시도 종목 수
+        """
+        self._logger.info({
+            "action": "reconnect",
+            "trigger": trigger,
+            "codes": sorted(codes),
+            "success": success,
+            "total": total,
+        })
+
+    def log_restore(self, codes: list, success: int, total: int) -> None:
+        """앱 시작 시 구독 상태 복원 완료.
+
+        Args:
+            codes: 복원 시도한 종목 목록
+            success: 성공한 종목 수
+            total: 전체 시도 종목 수
+        """
+        self._logger.info({
+            "action": "restore",
+            "codes": sorted(codes),
+            "success": success,
+            "total": total,
+        })
+
+    # ── 프로그램매매 구독 이벤트 (H0STPGM0) ────────────────────
+
+    def log_pt_subscribe(self, code: str, reason: str = "") -> None:
+        """프로그램매매 실시간 구독 등록 (H0STPGM0).
+
+        Args:
+            code: 종목코드
+            reason: 구독 이유 (e.g., "initial", "reconnect", "restore", "user_request")
+        """
+        self._logger.info({"action": "pt_subscribe", "code": code, "reason": reason})
+
+    def log_pt_unsubscribe(self, code: str, reason: str = "") -> None:
+        """프로그램매매 실시간 구독 해제 (H0STPGM0).
+
+        Args:
+            code: 종목코드
+            reason: 해제 이유 (e.g., "failed", "user_request")
+        """
+        self._logger.info({"action": "pt_unsubscribe", "code": code, "reason": reason})
+
+    # ── 실시간 체결가 구독 이벤트 (H0STCNT0) ──────────────────
+
+    def log_price_subscribe(self, code: str, reason: str = "") -> None:
+        """실시간 현재 체결가 구독 등록 (H0STCNT0).
+
+        워치독이 프로그램매매 종목과 함께 체결가도 함께 구독하는 경우 사용.
+
+        Args:
+            code: 종목코드
+            reason: 구독 이유 (e.g., "initial", "reconnect", "restore")
+        """
+        self._logger.info({"action": "price_subscribe", "code": code, "reason": reason})
+
+    def log_price_unsubscribe(self, code: str, reason: str = "") -> None:
+        """실시간 현재 체결가 구독 해제 (H0STCNT0).
+
+        Args:
+            code: 종목코드
+            reason: 해제 이유 (e.g., "failed", "user_request")
+        """
+        self._logger.info({"action": "price_unsubscribe", "code": code, "reason": reason})
+
+
 def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None):
     """
     전략별 전용 로거를 생성하고 반환합니다.
