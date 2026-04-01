@@ -10,7 +10,7 @@ router = APIRouter()
 # 태스크별 실행 스케줄 유형
 # intraday: 장 중에만 의미있는 태스크 (장 마감 후 비활성)
 # after_market: 장 마감 후 실행되는 배치 태스크 (장 중 비활성)
-# realtime: 항상 동작해야 하는 실시간 태스크
+# always_on: 항상 동작해야 하는 실시간 태스크
 _SCHEDULE_TYPES = {
     "websocket_watchdog":  "intraday",
     "strategy_scheduler":  "intraday",
@@ -18,10 +18,11 @@ _SCHEDULE_TYPES = {
     "daily_price_collector": "after_market",
     "ohlcv_update":        "after_market",
     "전일기준주도주_생성":  "after_market",
+    "notification_queue_task":  "always_on",
 }
 
 _SCHEDULE_ORDER = {
-    "realtime": 0,
+    "always_on": 0,
     "intraday": 1,
     "after_market": 2,
     "unknown": 99,
@@ -77,8 +78,8 @@ def get_background_status():
                 schedule_type = "after_market"
             elif "intraday" in module_name:
                 schedule_type = "intraday"
-            elif "realtime" in module_name:
-                schedule_type = "realtime"
+            elif "always_on" in module_name:
+                schedule_type = "always_on"
 
         result.append({
             "name": name,

@@ -6,6 +6,10 @@
 #   여러 태스크가 동시에 API를 호출하지 않도록 실행 시점을 분산시킨다.
 #   키는 각 태스크의 task_name 프로퍼티 값과 일치해야 한다.
 #
+always_on_tasks:
+  notification_queue:
+    poll_interval_sec: 1.0   # 이벤트 처리 후 이벤트 루프 양보 시간(초). Telegram 레이트 리밋 시 늘릴 것.
+
 after_market_tasks:
   after_market_delay_sec:
     ranking_refresh: 10          # RankingTask — 장 마감 10분 후

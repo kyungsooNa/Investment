@@ -27,6 +27,7 @@ from task.background.after_market.daily_price_collector_task import DailyPriceCo
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
+from task.background.always_on.notification_queue_task import NotificationQueueTask
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -76,6 +77,7 @@ class WebAppContext:
         self.foreground_scheduler: ForegroundScheduler = None
         self._mcs: MarketCalendarService = None
         self.notification_service: NotificationService = None
+        self.notification_queue_task: NotificationQueueTask = None
         self.initialized = False
         self.pm: PerformanceProfiler = None
 
@@ -298,6 +300,13 @@ class WebAppContext:
             logger=self.logger,
         )
 
+        # NotificationQueueTask 초기화
+        self.notification_queue_task = NotificationQueueTask(
+            notification_service=self.notification_service,
+            poll_interval=config_dict.get("notification_queue_poll_interval", 1.0),
+            logger=self.logger,
+        )
+
         # BackgroundScheduler 초기화 및 태스크 등록
         self.background_scheduler = BackgroundScheduler(
             logger=self.logger,
@@ -315,6 +324,8 @@ class WebAppContext:
             self.background_scheduler.register(self.premium_watchlist_generator_task)
         if self.cache_warmup_task:
             self.background_scheduler.register(self.cache_warmup_task)
+        if self.notification_queue_task:
+            self.background_scheduler.register(self.notification_queue_task)
 
         # ForegroundScheduler 초기화
         self.foreground_scheduler = ForegroundScheduler(

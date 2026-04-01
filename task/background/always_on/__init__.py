@@ -1,1 +1,3 @@
-# 상시 동작 태스크 (향후 추가 예정: telegram_reporter_task, notification_task 등)
+from task.background.always_on.notification_queue_task import NotificationQueueTask
+
+__all__ = ["NotificationQueueTask"]

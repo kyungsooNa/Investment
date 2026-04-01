@@ -54,12 +54,14 @@ class NotificationService:
     """
 
     MAX_HISTORY = 200
+    MAX_EXTERNAL_QUEUE_SIZE = 500
 
     def __init__(self, market_clock: MarketClock):
         self._market_clock = market_clock
         self._history: List[NotificationEvent] = []
         self._subscriber_queues: List[asyncio.Queue] = []
         self._external_handlers: List[Callable[..., Coroutine[Any, Any, None]]] = []
+        self._external_handler_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_EXTERNAL_QUEUE_SIZE)
 
     # ── 이벤트 발행 ──
 
@@ -97,8 +99,15 @@ class NotificationService:
                 except Exception:
                     pass
 
-        for handler in self._external_handlers:
-            asyncio.create_task(handler(event))
+        if self._external_handlers:
+            try:
+                self._external_handler_queue.put_nowait(event)
+            except asyncio.QueueFull:
+                try:
+                    self._external_handler_queue.get_nowait()
+                    self._external_handler_queue.put_nowait(event)
+                except Exception:
+                    pass
 
         return event
 
@@ -129,3 +138,13 @@ class NotificationService:
         self, handler: Callable[..., Coroutine[Any, Any, None]]
     ):
         self._external_handlers.append(handler)
+
+    @property
+    def external_handler_queue(self) -> asyncio.Queue:
+        """외부 핸들러 전달 대기 큐 (NotificationQueueTask가 소비)."""
+        return self._external_handler_queue
+
+    @property
+    def external_handlers(self):
+        """등록된 외부 핸들러 목록 (방어적 복사)."""
+        return list(self._external_handlers)
