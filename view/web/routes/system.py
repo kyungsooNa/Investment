@@ -34,7 +34,10 @@ async def get_cache_status(expand: bool = True):
     """메모리 캐시 상태 및 적중률 통계 반환"""
     ctx = _get_ctx()
     latest_trading_date = await ctx._mcs.get_latest_trading_date() if ctx._mcs else None
-    stats = ctx.get_cache_stats(expand=expand, latest_trading_date=latest_trading_date) or {}
+    # get_cache_stats()는 CPU 집약적 작업(대량 JSON 직렬화)이므로 스레드 풀에서 실행해 이벤트 루프 블로킹을 방지
+    stats = await asyncio.to_thread(
+        ctx.get_cache_stats, expand=expand, latest_trading_date=latest_trading_date
+    ) or {}
 
     if "items" not in stats:
         stats["items"] = []

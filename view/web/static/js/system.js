@@ -159,7 +159,7 @@ async function updateCacheStatus() {
 }
 
 document.addEventListener('DOMContentLoaded', updateCacheStatus);
-setInterval(updateCacheStatus, 5000);
+setInterval(updateCacheStatus, 15000);  // 캐시 상태는 15초마다 갱신 (응답이 크므로 이벤트 루프 부하 분산)
 
 // ── 백그라운드 태스크 모니터링 ──────────────────────────────
 
@@ -378,7 +378,7 @@ async function updateBackgroundStatus() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', updateBackgroundStatus);
+document.addEventListener('DOMContentLoaded', () => setTimeout(updateBackgroundStatus, 1500));  // 캐시 폴링과 시차 분산
 setInterval(updateBackgroundStatus, 5000);
 
 // ── 실시간 현재가 구독 현황 ──────────────────────────────────
@@ -446,5 +446,5 @@ async function updateSubscriptionStatus() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', updateSubscriptionStatus);
+document.addEventListener('DOMContentLoaded', () => setTimeout(updateSubscriptionStatus, 3000));  // 다른 폴링과 시차 분산
 setInterval(updateSubscriptionStatus, 5000);
