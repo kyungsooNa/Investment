@@ -133,6 +133,14 @@ function renderStockChart(period) {
         o: d.open, h: d.high, l: d.low, c: d.close
     }));
     const volumes = slicedRaw.map((d, i) => ({ x: i, y: d.volume }));
+    const volumeColors = slicedRaw.map((d, i, arr) => {
+        if (i === 0) return 'rgba(200, 200, 200, 0.4)';
+        return d.volume > arr[i - 1].volume
+            ? 'rgba(255, 0, 0, 0.5)'
+            : d.volume < arr[i - 1].volume
+                ? 'rgba(0, 0, 255, 0.5)'
+                : 'rgba(200, 200, 200, 0.4)';
+    });
 
     // 지표 데이터 매핑 (인덱스 기준)
     const sliceIndicator = (data) => data.slice(startIndex).map((d, i) => ({ x: i, y: d.ma }));
@@ -247,7 +255,7 @@ function renderStockChart(period) {
                 { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
                 { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
                 { label: 'BB Middle', data: bbMiddle, type: 'line', borderColor: 'rgba(255, 215, 0, 0.8)', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y', fill: false, order: 3, hidden: true }, // [수정] MA20과 중복되므로 기본 숨김
-                { label: '거래량', data: volumes, type: 'bar', yAxisID: 'y1', backgroundColor: 'rgba(200, 200, 200, 0.2)', order: 4 }
+                { label: '거래량', data: volumes, type: 'bar', yAxisID: 'y1', backgroundColor: volumeColors, order: 4 }
             ]
         },
         options: {
