@@ -1,4 +1,6 @@
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, APIRouter
 from fastapi.staticfiles import StaticFiles
@@ -56,6 +58,28 @@ if "debugpy" in sys.modules:
             import debugpy
             debugpy.debug_this_thread()
         return await call_next(request)
+
+# --- 요청 추적 미들웨어 (hang 진단용) ---
+# /api/* 요청의 시작~완료를 api_common._active_requests에 기록한다.
+# /api/debug/requests 엔드포인트가 이 데이터를 읽어 in-flight 요청 목록을 반환한다.
+
+@app.middleware("http")
+async def request_tracker_middleware(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/api/") or path == "/api/debug/requests":
+        return await call_next(request)
+    req_id = uuid.uuid4().hex[:8]
+    api_common._active_requests[req_id] = {
+        "path": path,
+        "method": request.method,
+        "start": time.monotonic(),
+        "query": str(request.url.query) or None,
+    }
+    try:
+        return await call_next(request)
+    finally:
+        api_common._active_requests.pop(req_id, None)
+
 
 # --- Foreground 우선순위 미들웨어 ---
 # Broker API를 호출하는 라우트만 foreground로 래핑하여

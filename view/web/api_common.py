@@ -9,6 +9,9 @@ _ctx = None  # 전역 변수로 선언
 # API 호출 실패 시 대처를 위한 전역 가격 캐시 (메모리)
 _PRICE_CACHE = {}  # {code: (price, rate, timestamp)}
 
+# 서버 측 in-flight 요청 추적 (hang 진단용): request_id → {path, method, start, query}
+_active_requests: dict = {}
+
 
 def set_ctx(ctx):
     global _ctx

@@ -121,5 +121,117 @@
 <!-- 페이지별 추가 스크립트 -->
 {% endblock %}
 
+<!-- ── 서버 요청 진단 패널 (hang 디버깅용) ─────────────────────────────
+     - 모든 페이지에 항상 떠있음 (좌하단 고정)
+     - 2초마다 /api/debug/requests 폴링 → in-flight 요청 + FG 상태 표시
+     - 2초 이상 걸리는 요청이 생기면 자동으로 패널 열림 + 주황색 경고
+     - 콘솔 헬퍼: __debug.requests() / __debug.fg()
+─────────────────────────────────────────────────────────────────────── -->
+<div id="dbg-panel" style="
+    position:fixed; bottom:16px; left:16px; z-index:9000;
+    background:#1a1a2e; color:#ccc; border:1px solid #444;
+    border-radius:8px; font-size:0.78rem; font-family:monospace;
+    box-shadow:0 4px 16px rgba(0,0,0,0.5); min-width:160px; max-width:320px;
+    transition:border-color 0.3s;">
+    <div id="dbg-header" style="
+        padding:5px 10px; cursor:pointer; display:flex;
+        justify-content:space-between; align-items:center; gap:12px;
+        user-select:none;">
+        <span id="dbg-title" style="font-weight:bold;">🔍 요청 0</span>
+        <span id="dbg-toggle" style="color:#666; font-size:0.7rem;">▲</span>
+    </div>
+    <div id="dbg-body" style="display:none; padding:0 10px 8px; border-top:1px solid #333;">
+        <div id="dbg-fg" style="margin:5px 0 4px; font-size:0.75rem;"></div>
+        <div id="dbg-list" style="max-height:160px; overflow-y:auto;"></div>
+        <div style="margin-top:6px; color:#555; font-size:0.72rem; border-top:1px solid #2a2a3a; padding-top:4px;">
+            콘솔: <span style="color:#888;">__debug.requests()</span>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const panel  = document.getElementById('dbg-panel');
+    const header = document.getElementById('dbg-header');
+    const title  = document.getElementById('dbg-title');
+    const toggle = document.getElementById('dbg-toggle');
+    const body   = document.getElementById('dbg-body');
+    const fgEl   = document.getElementById('dbg-fg');
+    const list   = document.getElementById('dbg-list');
+
+    let expanded = false;
+
+    function setExpanded(v) {
+        expanded = v;
+        body.style.display = expanded ? 'block' : 'none';
+        toggle.textContent = expanded ? '▼' : '▲';
+    }
+    header.addEventListener('click', () => setExpanded(!expanded));
+
+    async function poll() {
+        try {
+            const r = await fetch('/api/debug/requests');
+            if (!r.ok) return;
+            const d = await r.json();
+            render(d);
+        } catch (_) {}
+    }
+
+    function render(d) {
+        const count   = d.count || 0;
+        const items   = d.data || [];
+        const fg      = d.foreground || {};
+        const hasLong = items.some(r => r.elapsed_sec >= 2);
+
+        // 타이틀
+        title.textContent = `🔍 요청 ${count}`;
+        title.style.color = hasLong ? '#ff9800' : '#ccc';
+        panel.style.borderColor = hasLong ? '#ff9800' : '#444';
+
+        // 2초 이상 요청 생기면 자동 열림
+        if (hasLong && !expanded) setExpanded(true);
+
+        // ForegroundScheduler 상태
+        if (fg.is_blocking_background) {
+            fgEl.innerHTML = `<span style="color:#ff9800;">⚠ FG 활성 — BG 중단 중 (${fg.active_count}개)</span>`;
+        } else {
+            fgEl.innerHTML = `<span style="color:#4caf50;">✓ FG 정상</span>`;
+        }
+
+        // 요청 목록
+        if (items.length === 0) {
+            list.innerHTML = '<div style="color:#555;">처리 중인 요청 없음</div>';
+        } else {
+            list.innerHTML = items.map(r => {
+                const color = r.elapsed_sec >= 3 ? '#ff6b6b'
+                            : r.elapsed_sec >= 2 ? '#ff9800'
+                            : '#666';
+                const qs = r.query ? `?${r.query}` : '';
+                return `<div style="color:${color}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:1px 0;"
+                             title="${r.method} ${r.path}${qs}">
+                    ${r.elapsed_sec}s ${r.path}${qs}
+                </div>`;
+            }).join('');
+        }
+    }
+
+    setInterval(poll, 2000);
+    poll();
+
+    // 콘솔 헬퍼 — frontend가 완전히 멈췄을 때 F12 콘솔에서 사용
+    // __debug.requests()  → in-flight 요청 목록 출력
+    // __debug.fg()        → ForegroundScheduler + 백그라운드 태스크 상태 출력
+    window.__debug = {
+        requests: () =>
+            fetch('/api/debug/requests')
+                .then(r => r.json())
+                .then(d => { console.log('[요청 목록]'); console.table(d.data); console.log('[FG]', d.foreground); return d; }),
+        fg: () =>
+            fetch('/api/background/status')
+                .then(r => r.json())
+                .then(d => { console.log('[ForegroundScheduler]', d.foreground); console.table(d.data); return d; }),
+    };
+})();
+</script>
+
 </body>
 </html>
