@@ -46,6 +46,8 @@ def test_init(manager):
     assert manager._history == []
     assert manager._subscriber_queues == []
     assert manager._external_handlers == []
+    assert manager.external_handler_queue is not None
+    assert manager.external_handler_queue.maxsize == NotificationService.MAX_EXTERNAL_QUEUE_SIZE
 
 @pytest.mark.asyncio
 async def test_emit_basic(manager):
@@ -96,51 +98,49 @@ async def test_emit_handles_full_queue(manager):
     assert data["message"] == "큐 Full 테스트"
 
 @pytest.mark.asyncio
-@pytest.mark.real_sleep
-async def test_emit_calls_external_handlers(manager):
-    """emit 시 등록된 외부 핸들러가 호출되는지 테스트합니다."""
-    handler1 = AsyncMock()
-    handler2 = AsyncMock()
-    
-    manager.register_external_handler(handler1)
-    manager.register_external_handler(handler2)
-    
-    event = await manager.emit(NotificationCategory.API, NotificationLevel.INFO, "응답", "정상")
-    
-    # 외부 핸들러가 백그라운드 태스크로 실행될 수 있으므로 충분히 대기 후 남은 태스크 회수
-    await asyncio.sleep(0.05)
-    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    if pending:
-        await asyncio.wait(pending, timeout=1.0)
+async def test_emit_enqueues_to_external_handler_queue(manager):
+    """emit 시 외부 핸들러가 등록되어 있으면 external_handler_queue에 이벤트가 적재된다.
+    핸들러는 즉시 호출되지 않고 NotificationQueueTask가 큐를 소비할 때 호출된다."""
+    handler = AsyncMock()
+    manager.register_external_handler(handler)
 
-    handler1.assert_awaited_once_with(event)
-    handler2.assert_awaited_once_with(event)
+    event = await manager.emit(NotificationCategory.API, NotificationLevel.INFO, "응답", "정상")
+
+    # 핸들러는 즉시 호출되지 않아야 함
+    handler.assert_not_awaited()
+    # 큐에 이벤트 1개가 적재되어야 함
+    assert manager.external_handler_queue.qsize() == 1
+    queued_event = manager.external_handler_queue.get_nowait()
+    assert queued_event.id == event.id
+
 
 @pytest.mark.asyncio
-@pytest.mark.real_sleep
-async def test_emit_handles_handler_exception(manager):
-    """외부 핸들러에서 예외 발생 시 처리하고 계속 진행하는지 테스트합니다."""
-    handler_ok = AsyncMock()
-    handler_fail = AsyncMock(side_effect=Exception("Handler failed"))
-    
-    manager.register_external_handler(handler_fail)
-    manager.register_external_handler(handler_ok)
-    
-    # 예외가 전파되지 않아야 함
-    try:
-        await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.CRITICAL, "장애", "DB 연결 실패")
-    except Exception:
-        pytest.fail("외부 핸들러의 예외가 처리되지 않았습니다.")
-        
-    # 백그라운드 태스크 실행 대기
-    await asyncio.sleep(0.05)
-    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    if pending:
-        await asyncio.wait(pending, timeout=1.0)
+async def test_emit_does_not_enqueue_when_no_external_handlers(manager):
+    """외부 핸들러가 없을 때 emit() 시 external_handler_queue에 아무것도 적재되지 않는다."""
+    await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.CRITICAL, "장애", "DB 연결 실패")
 
-    # 실패한 핸들러와 성공한 핸들러 모두 호출 시도되었는지 확인
-    handler_fail.assert_awaited_once()
-    handler_ok.assert_awaited_once()
+    assert manager.external_handler_queue.qsize() == 0
+
+
+@pytest.mark.asyncio
+async def test_emit_handles_full_external_handler_queue(manager):
+    """external_handler_queue가 가득 찼을 때 가장 오래된 이벤트를 drop하고 새 이벤트를 적재한다."""
+    handler = AsyncMock()
+    manager.register_external_handler(handler)
+
+    # maxsize=1 큐로 교체하여 오버플로우 유발
+    manager._external_handler_queue = asyncio.Queue(maxsize=1)
+
+    event1 = await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "first", "m")
+    assert manager.external_handler_queue.qsize() == 1
+
+    # 두 번째 emit → 첫 번째 이벤트 drop, 두 번째 이벤트 적재
+    event2 = await manager.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "second", "m")
+
+    assert manager.external_handler_queue.qsize() == 1
+    queued = manager.external_handler_queue.get_nowait()
+    assert queued.id == event2.id  # 오래된 event1은 drop됨
+    assert queued.id != event1.id
 
 @pytest.mark.asyncio
 async def test_emit_history_trimming(manager):
