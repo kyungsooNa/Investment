@@ -167,12 +167,19 @@
     }
     header.addEventListener('click', () => setExpanded(!expanded));
 
+    // 진단 서버(포트 8001, OS 스레드) 우선 → asyncio 루프가 완전히 블록돼도 응답 가능
+    // 실패 시 메인 서버(/api/debug/requests) 폴백
+    const DBG_URL  = 'http://127.0.0.1:8001/debug/requests';
+    const MAIN_URL = '/api/debug/requests';
+
     async function poll() {
         try {
-            const r = await fetch('/api/debug/requests');
-            if (!r.ok) return;
-            const d = await r.json();
-            render(d);
+            const r = await fetch(DBG_URL, { signal: AbortSignal.timeout(1500) });
+            if (r.ok) { render(await r.json()); return; }
+        } catch (_) {}
+        try {
+            const r = await fetch(MAIN_URL, { signal: AbortSignal.timeout(1500) });
+            if (r.ok) render(await r.json());
         } catch (_) {}
     }
 
@@ -217,14 +224,25 @@
     setInterval(poll, 2000);
     poll();
 
-    // 콘솔 헬퍼 — frontend가 완전히 멈췄을 때 F12 콘솔에서 사용
-    // __debug.requests()  → in-flight 요청 목록 출력
-    // __debug.fg()        → ForegroundScheduler + 백그라운드 태스크 상태 출력
+    // ── 콘솔 헬퍼 ──────────────────────────────────────────────────────────
+    // frontend가 완전히 멈췄을 때 F12 콘솔에서 직접 실행
+    //
+    // __debug.requests()
+    //   → 포트 8001 진단 서버에서 in-flight 요청 목록 출력 (asyncio 블록 시에도 동작)
+    //
+    // __debug.fg()
+    //   → 메인 서버에서 ForegroundScheduler + BG 태스크 상태 출력
+    //     (asyncio가 살아있을 때만 응답)
     window.__debug = {
         requests: () =>
-            fetch('/api/debug/requests')
+            fetch('http://127.0.0.1:8001/debug/requests')
                 .then(r => r.json())
-                .then(d => { console.log('[요청 목록]'); console.table(d.data); console.log('[FG]', d.foreground); return d; }),
+                .then(d => { console.log('[요청 목록]'); console.table(d.data); return d; })
+                .catch(() =>
+                    fetch('/api/debug/requests')
+                        .then(r => r.json())
+                        .then(d => { console.log('[요청 목록 (main)]'); console.table(d.data); return d; })
+                ),
         fg: () =>
             fetch('/api/background/status')
                 .then(r => r.json())
