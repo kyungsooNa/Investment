@@ -48,6 +48,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._state: TaskState = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._market_open: Optional[bool] = None  # 가장 최근 시장 개장 여부 (워치독 루프에서 갱신)
+        self._intentionally_disconnected: bool = False  # 장 마감으로 인한 의도적 연결 종료 여부
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
@@ -191,6 +192,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                     if self._streaming_service and self._streaming_service.broker.is_websocket_receive_alive():
                         self._logger.info("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
                         await self._streaming_service.disconnect_websocket()
+                        self._intentionally_disconnected = True
                     continue
 
                 # 조건 1: 수신 태스크가 죽었는지 확인
@@ -205,13 +207,18 @@ class WebSocketWatchdogTask(SchedulableTask):
 
                 reconnect_trigger = None
                 if not receive_alive:
-                    self._logger.warning(f"[워치독] WebSocket 수신 태스크가 종료됨. 재연결을 시도합니다.")
-                    reconnect_trigger = "receive_task_dead"
+                    if self._intentionally_disconnected:
+                        self._logger.info("[워치독] 장 시작 — 신규 WebSocket 연결을 수립합니다.")
+                        reconnect_trigger = "market_open"
+                    else:
+                        self._logger.warning("[워치독] WebSocket 수신 태스크가 종료됨. 재연결을 시도합니다.")
+                        reconnect_trigger = "receive_task_dead"
                 elif last_ts > 0 and data_gap > DATA_GAP_THRESHOLD:
                     self._logger.warning(f"[워치독] {data_gap:.0f}초간 데이터 미수신 (임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다.")
                     reconnect_trigger = f"data_gap_{data_gap:.0f}s"
 
                 if reconnect_trigger:
+                    self._intentionally_disconnected = False
                     await self.force_reconnect_program_trading(trigger=reconnect_trigger)
 
             except asyncio.CancelledError:

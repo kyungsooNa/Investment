@@ -20,6 +20,7 @@ StreamingService와의 역할 구분:
 from __future__ import annotations
 
 import logging
+import time
 from enum import IntEnum
 from typing import Dict, Set, List, Optional, TYPE_CHECKING
 
@@ -68,6 +69,10 @@ class PriceSubscriptionService:
 
         # 현재 실제로 WebSocket 구독 중인 종목 집합
         self._active_codes: Set[str] = set()
+
+        # summary 로그 스로틀 (동시 다발적 rebalance 호출로 인한 중복 발화 방지)
+        self._last_summary_time: float = 0.0
+        self._SUMMARY_THROTTLE_SEC: float = 2.0
 
     # ── Public API ─────────────────────────────────────────────────
 
@@ -171,14 +176,17 @@ class PriceSubscriptionService:
                 f"(active={len(self._active_codes)}, requested={len(self._refs)}, max={self.MAX_SUBSCRIPTIONS})"
             )
 
-        # 변경이 있었을 때 현재 구독 상태 요약 기록
+        # 변경이 있었을 때 현재 구독 상태 요약 기록 (2초 스로틀로 중복 발화 방지)
         if (to_subscribe or to_unsubscribe) and self._streaming_logger:
-            status = self.get_status()
-            self._streaming_logger.log_summary(
-                active_count=status["active_count"],
-                active_codes=status["active_codes"],
-                pending_by_priority=status["pending_by_priority"],
-            )
+            now = time.monotonic()
+            if now - self._last_summary_time >= self._SUMMARY_THROTTLE_SEC:
+                self._last_summary_time = now
+                status = self.get_status()
+                self._streaming_logger.log_summary(
+                    active_count=status["active_count"],
+                    active_codes=status["active_codes"],
+                    pending_by_priority=status["pending_by_priority"],
+                )
 
     async def _do_subscribe(self, code: str) -> None:
         try:
@@ -194,6 +202,11 @@ class PriceSubscriptionService:
                         categories=categories,
                         active_count=len(self._active_codes),
                     )
+            else:
+                self._logger.warning(
+                    f"PriceSubscriptionService: 구독 실패(False 반환) {code} "
+                    f"— WebSocket 미연결 또는 브로커 거부 가능성"
+                )
         except Exception as e:
             self._logger.error(f"PriceSubscriptionService: 구독 실패 {code}: {e}")
 
