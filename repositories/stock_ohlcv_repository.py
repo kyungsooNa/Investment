@@ -12,16 +12,22 @@ import logging
 import asyncio
 import aiosqlite
 from contextlib import asynccontextmanager
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 from repositories.cache import _LFUCache
+
+if TYPE_CHECKING:
+    from core.logger import CacheEventLogger
+
+_OHLCV_CACHE_CAPACITY = 500
 
 
 class StockOhlcvRepository:
     """OHLCV 일봉 데이터 전담 저장소 (LFU 인메모리 캐시 + SQLite)."""
 
-    def __init__(self, db_path: str = None, logger=None):
+    def __init__(self, db_path: str = None, logger=None, cache_logger: "CacheEventLogger | None" = None):
         self._logger = logger or logging.getLogger(__name__)
+        self._cache_logger = cache_logger
         self._db_path = db_path or os.path.join("data", "stocks.db")
         self._write_lock = None
         self._write_conn: Optional[aiosqlite.Connection] = None
@@ -29,10 +35,17 @@ class StockOhlcvRepository:
         self._read_conn_lock = asyncio.Lock()
 
         # OHLCV 전용 LFU 캐시 — price 캐시와 물리적으로 분리
-        self._ohlcv_cache = _LFUCache(capacity=500)
+        self._ohlcv_cache = _LFUCache(
+            capacity=_OHLCV_CACHE_CAPACITY,
+            on_evict=self._on_ohlcv_evicted,
+        )
 
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         self._init_db_sync()
+
+    def _on_ohlcv_evicted(self, code: str, freq: int, ohlcv_count: int) -> None:
+        if self._cache_logger:
+            self._cache_logger.log_ohlcv_evicted(code, freq, ohlcv_count, capacity=self._ohlcv_cache.capacity)
 
     def _init_db_sync(self):
         try:
@@ -126,15 +139,23 @@ class StockOhlcvRepository:
         # 1. LFU 캐시 확인 — historical_complete 플래그 기반
         cached = self._ohlcv_cache.get(code, count_stats=True, caller=caller, item_type="ohlcv")
         if cached and cached.get("historical_complete"):
+            ohlcv_today = cached.get("ohlcv_today")
             ohlcv = cached["ohlcv_historical"][:]
-            if cached.get("ohlcv_today"):
-                ohlcv = ohlcv + [cached["ohlcv_today"]]
+            if ohlcv_today:
+                ohlcv = ohlcv + [ohlcv_today]
+            if self._cache_logger:
+                self._cache_logger.log_ohlcv_hit(
+                    code, caller, len(ohlcv), has_today_candle=ohlcv_today is not None
+                )
             return {
                 "code": code,
                 "ohlcv": ohlcv,
                 "last_updated": cached["last_loaded"],
                 "historical_complete": True,
             }
+
+        if self._cache_logger:
+            self._cache_logger.log_ohlcv_miss(code, caller)
 
         # 2. DB에서 읽기
         try:
@@ -157,6 +178,9 @@ class StockOhlcvRepository:
                 "last_loaded": time.time(),
             }
             self._ohlcv_cache.put(code, entry)
+            latest_date = historical[-1].get("date") if historical else None
+            if self._cache_logger:
+                self._cache_logger.log_ohlcv_loaded(code, caller, len(historical), latest_date)
             return {
                 "code": code,
                 "ohlcv": historical[:],
@@ -177,6 +201,7 @@ class StockOhlcvRepository:
         if not cached:
             return
 
+        is_new_candle = cached.get("ohlcv_today") is not None
         target = cached.get("ohlcv_today")
         if target is None and cached.get("ohlcv_historical"):
             target = cached["ohlcv_historical"][-1]
@@ -184,6 +209,7 @@ class StockOhlcvRepository:
         if target is None:
             return
 
+        before_price = target.get("close")
         target["close"] = current_price
         if volume > 0:
             target["volume"] = volume
@@ -191,6 +217,13 @@ class StockOhlcvRepository:
             target["high"] = current_price
         if current_price < target.get("low", current_price):
             target["low"] = current_price
+
+        if self._cache_logger and before_price != current_price:
+            self._cache_logger.log_today_candle(
+                code, before_price, current_price,
+                target.get("high"), target.get("low"),
+                is_new_candle,
+            )
 
     async def upsert_ohlcv(self, records: List[Dict]):
         """여러 종목의 일봉(OHLCV) 데이터를 일괄 upsert 후 관련 캐시 무효화."""
@@ -212,6 +245,14 @@ class StockOhlcvRepository:
             # upsert 성공 후에만 캐시 무효화 — 다음 get_stock_data 시 신선한 DB 데이터 로드
             for code in codes_to_invalidate:
                 self._ohlcv_cache.delete(code)
+                if self._cache_logger:
+                    self._cache_logger.log_ohlcv_invalidated(code)
+            if self._cache_logger:
+                self._cache_logger.log_ohlcv_upsert(
+                    record_count=len(records),
+                    code_count=len(codes_to_invalidate),
+                    invalidated_codes=list(codes_to_invalidate),
+                )
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository OHLCV upsert 실패: {e}")
 

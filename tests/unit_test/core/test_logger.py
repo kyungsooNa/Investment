@@ -5,11 +5,20 @@ import logging
 import json
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
 # 실제 core.logger 경로에 맞게 수정
-from core.logger import Logger, get_strategy_logger, get_performance_logger, get_streaming_logger, StreamingEventLogger, JsonFormatter, reset_log_timestamp_for_test, SizeTimeRotatingFileHandler
+from core.logger import (
+    Logger, get_strategy_logger, get_performance_logger,
+    get_streaming_logger, StreamingEventLogger,
+    get_cache_event_logger, CacheEventLogger,
+    JsonFormatter, reset_log_timestamp_for_test, SizeTimeRotatingFileHandler,
+)
+from repositories.cache import _LRUCache, _LFUCache
+from repositories.stock_price_repository import StockPriceRepository
+from repositories.stock_ohlcv_repository import StockOhlcvRepository
 
 
 @pytest.fixture
@@ -706,3 +715,664 @@ def test_get_streaming_logger_returns_same_file_on_second_call(tmp_path):
     for h in logging.getLogger("streaming_event").handlers[:]:
         h.close()
         logging.getLogger("streaming_event").removeHandler(h)
+
+
+# ── CacheEventLogger / get_cache_event_logger 테스트 ──────────────────────────
+
+
+@pytest.fixture
+def cache_logger_setup(tmp_path):
+    """get_cache_event_logger()가 생성하는 로거와 로그 파일 경로를 준비하는 픽스처."""
+    reset_log_timestamp_for_test()
+
+    existing = logging.getLogger("cache_event")
+    for h in existing.handlers[:]:
+        h.close()
+        existing.removeHandler(h)
+
+    log_dir = tmp_path / "logs"
+    cache_logger = get_cache_event_logger(log_dir=str(log_dir))
+
+    yield cache_logger, log_dir / "cache"
+
+    inner = logging.getLogger("cache_event")
+    for h in inner.handlers[:]:
+        h.close()
+        inner.removeHandler(h)
+
+
+def _flush_cache_logger():
+    for h in logging.getLogger("cache_event").handlers:
+        h.flush()
+
+
+# _read_json_lines는 이미 위에 정의되어 있으므로 그대로 재사용 (log_dir만 다르게 전달)
+
+
+def test_get_cache_event_logger_creates_file(cache_logger_setup):
+    """get_cache_event_logger()가 logs/cache/ 아래에 JSON 파일을 생성하는지 검증합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    assert isinstance(cache_logger, CacheEventLogger)
+    assert cache_log_dir.is_dir()
+
+    inner = logging.getLogger("cache_event")
+    assert not inner.propagate
+    assert inner.level == logging.DEBUG  # 모든 레벨 기록
+    assert len(inner.handlers) == 1
+    handler = inner.handlers[0]
+    assert isinstance(handler, SizeTimeRotatingFileHandler)
+    assert isinstance(handler.formatter, JsonFormatter)
+
+    cache_logger.log_ohlcv_miss("005930", "test")
+    _flush_cache_logger()
+
+    log_files = list(cache_log_dir.glob("*_cache_*.log.json"))
+    assert len(log_files) == 1
+
+
+def test_get_cache_event_logger_returns_same_logger_on_second_call(tmp_path):
+    """같은 프로세스에서 두 번 호출해도 파일이 하나만 생성되는지 검증합니다."""
+    reset_log_timestamp_for_test()
+    existing = logging.getLogger("cache_event")
+    for h in existing.handlers[:]:
+        h.close()
+        existing.removeHandler(h)
+
+    log_dir = tmp_path / "logs"
+    logger1 = get_cache_event_logger(log_dir=str(log_dir))
+    logger2 = get_cache_event_logger(log_dir=str(log_dir))
+
+    logger1.log_ohlcv_miss("005930", "test")
+    _flush_cache_logger()
+
+    log_files = list((log_dir / "cache").glob("*_cache_*.log.json"))
+    assert len(log_files) == 1
+
+    for h in logging.getLogger("cache_event").handlers[:]:
+        h.close()
+        logging.getLogger("cache_event").removeHandler(h)
+
+
+# ── 현재가 캐시 이벤트 ─────────────────────────────────────────────────────────
+
+
+def test_log_price_set_new_entry(cache_logger_setup):
+    """log_price_set()이 신규 등록 시 is_new=True와 before/after price를 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_price_set("005930", "api", None, "75000", is_new=True)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "price_set"
+    assert d["code"] == "005930"
+    assert d["caller"] == "api"
+    assert d["before_price"] is None
+    assert d["after_price"] == "75000"
+    assert d["is_new"] is True
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_price_set_update(cache_logger_setup):
+    """log_price_set()이 기존 항목 갱신 시 is_new=False와 before/after를 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_price_set("005930", "api", "74000", "75000", is_new=False)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["before_price"] == "74000"
+    assert d["after_price"] == "75000"
+    assert d["is_new"] is False
+
+
+def test_log_price_hit_fields(cache_logger_setup):
+    """log_price_hit()이 caller, age_sec, is_streaming을 DEBUG로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_price_hit("005930", "strategy_service", 1.23, is_streaming=True)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "price_hit"
+    assert d["code"] == "005930"
+    assert d["caller"] == "strategy_service"
+    assert d["age_sec"] == 1.23
+    assert d["is_streaming"] is True
+    assert lines[0]["level"] == "DEBUG"
+
+
+def test_log_price_miss_not_found(cache_logger_setup):
+    """log_price_miss()가 reason='not_found'를 DEBUG로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_price_miss("000660", "market_data", "not_found")
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "price_miss"
+    assert d["code"] == "000660"
+    assert d["reason"] == "not_found"
+    assert lines[0]["level"] == "DEBUG"
+
+
+def test_log_price_miss_ttl_expired(cache_logger_setup):
+    """log_price_miss()가 reason='ttl_expired'를 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_price_miss("000660", "market_data", "ttl_expired")
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    assert lines[0]["data"]["reason"] == "ttl_expired"
+
+
+def test_log_price_update_tick_fields(cache_logger_setup):
+    """log_price_update_tick()이 before/after price와 volume을 DEBUG로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_price_update_tick("005930", "74000", "75000", volume=123456)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "price_update_tick"
+    assert d["before_price"] == "74000"
+    assert d["after_price"] == "75000"
+    assert d["volume"] == 123456
+    assert lines[0]["level"] == "DEBUG"
+
+
+def test_log_price_evicted_is_warning(cache_logger_setup):
+    """log_price_evicted()가 WARNING 레벨로 code와 capacity를 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_price_evicted("005930", capacity=3000)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "price_evicted"
+    assert d["code"] == "005930"
+    assert d["capacity"] == 3000
+    assert lines[0]["level"] == "WARNING"
+
+
+# ── 스트리밍 상태 이벤트 ──────────────────────────────────────────────────────
+
+
+def test_log_streaming_mark_and_unmark(cache_logger_setup):
+    """log_streaming_mark/unmark()가 streaming_count를 INFO로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_streaming_mark("005930", streaming_count=5)
+    cache_logger.log_streaming_unmark("005930", streaming_count=4)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    assert len(lines) == 2
+
+    mark = lines[0]["data"]
+    assert mark["action"] == "streaming_mark"
+    assert mark["code"] == "005930"
+    assert mark["streaming_count"] == 5
+    assert lines[0]["level"] == "INFO"
+
+    unmark = lines[1]["data"]
+    assert unmark["action"] == "streaming_unmark"
+    assert unmark["streaming_count"] == 4
+    assert lines[1]["level"] == "INFO"
+
+
+# ── OHLCV 캐시 이벤트 ─────────────────────────────────────────────────────────
+
+
+def test_log_ohlcv_loaded_fields(cache_logger_setup):
+    """log_ohlcv_loaded()가 caller, ohlcv_count, latest_date를 INFO로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_ohlcv_loaded("005930", "strategy", 600, "20250401")
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "ohlcv_loaded"
+    assert d["code"] == "005930"
+    assert d["caller"] == "strategy"
+    assert d["ohlcv_count"] == 600
+    assert d["latest_date"] == "20250401"
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_ohlcv_hit_fields(cache_logger_setup):
+    """log_ohlcv_hit()이 ohlcv_count, has_today_candle을 DEBUG로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_ohlcv_hit("005930", "backtest", ohlcv_count=601, has_today_candle=True)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "ohlcv_hit"
+    assert d["ohlcv_count"] == 601
+    assert d["has_today_candle"] is True
+    assert lines[0]["level"] == "DEBUG"
+
+
+def test_log_ohlcv_miss_fields(cache_logger_setup):
+    """log_ohlcv_miss()가 code, caller를 DEBUG로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_ohlcv_miss("000660", "momentum_strategy")
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "ohlcv_miss"
+    assert d["code"] == "000660"
+    assert d["caller"] == "momentum_strategy"
+    assert lines[0]["level"] == "DEBUG"
+
+
+def test_log_ohlcv_evicted_is_warning(cache_logger_setup):
+    """log_ohlcv_evicted()가 freq, ohlcv_count, capacity를 WARNING으로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_ohlcv_evicted("012345", freq=2, ohlcv_count=300, capacity=500)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "ohlcv_evicted"
+    assert d["code"] == "012345"
+    assert d["freq"] == 2
+    assert d["ohlcv_count"] == 300
+    assert d["capacity"] == 500
+    assert lines[0]["level"] == "WARNING"
+
+
+def test_log_ohlcv_invalidated(cache_logger_setup):
+    """log_ohlcv_invalidated()가 code를 INFO로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_ohlcv_invalidated("005930")
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "ohlcv_invalidated"
+    assert d["code"] == "005930"
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_ohlcv_upsert_fields(cache_logger_setup):
+    """log_ohlcv_upsert()가 record_count, code_count, sorted invalidated_codes를 INFO로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_ohlcv_upsert(
+        record_count=1200,
+        code_count=2,
+        invalidated_codes=["000660", "005930"],
+    )
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "ohlcv_upsert"
+    assert d["record_count"] == 1200
+    assert d["code_count"] == 2
+    assert d["invalidated_codes"] == ["000660", "005930"]  # sorted
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_today_candle_update(cache_logger_setup):
+    """log_today_candle()이 before/after price, high, low, is_new_candle을 DEBUG로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_today_candle("005930", 74000, 75000, high=75500, low=73000, is_new_candle=False)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "today_candle"
+    assert d["before_price"] == 74000
+    assert d["after_price"] == 75000
+    assert d["high"] == 75500
+    assert d["low"] == 73000
+    assert d["is_new_candle"] is False
+    assert lines[0]["level"] == "DEBUG"
+
+
+def test_log_today_candle_new(cache_logger_setup):
+    """log_today_candle()이 is_new_candle=True(ohlcv_today 신규 생성)를 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_today_candle("005930", None, 75000, high=75000, low=75000, is_new_candle=True)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["is_new_candle"] is True
+    assert d["before_price"] is None
+
+
+# ── 통합 통계 ─────────────────────────────────────────────────────────────────
+
+
+def test_log_stats_combined_hit_rate(cache_logger_setup):
+    """log_stats()가 price/ohlcv 통계와 combined hit_rate를 INFO로 기록합니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    price_stats = {"hits": 80, "misses": 20, "hit_rate": 80.0, "current_size": 100}
+    ohlcv_stats = {"hits": 60, "misses": 40, "hit_rate": 60.0, "current_size": 50}
+    cache_logger.log_stats(price_stats, ohlcv_stats)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "cache_stats"
+    assert d["price"]["hits"] == 80
+    assert d["ohlcv"]["hits"] == 60
+    assert d["combined"]["hits"] == 140
+    assert d["combined"]["misses"] == 60
+    assert d["combined"]["hit_rate"] == 70.0  # 140/(140+60)*100
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_stats_zero_requests(cache_logger_setup):
+    """요청이 0건일 때 hit_rate가 0.0으로 기록됩니다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    cache_logger.log_stats(
+        {"hits": 0, "misses": 0, "hit_rate": 0.0, "current_size": 0},
+        {"hits": 0, "misses": 0, "hit_rate": 0.0, "current_size": 0},
+    )
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    assert lines[0]["data"]["combined"]["hit_rate"] == 0.0
+
+
+# ── _LRUCache / _LFUCache eviction 콜백 연결 검증 ────────────────────────────
+
+
+def test_lru_cache_eviction_callback_fires():
+    """_LRUCache 용량 초과 시 on_evict 콜백이 제거된 key와 함께 호출됩니다."""
+    evicted = []
+    lru = _LRUCache(capacity=2, on_evict=lambda k: evicted.append(k))
+    lru.put("A", 1)
+    lru.put("B", 2)
+    lru.put("C", 3)  # A가 LRU이므로 evict
+
+    assert evicted == ["A"]
+
+
+def test_lru_cache_eviction_callback_none_does_not_raise():
+    """on_evict=None이어도 용량 초과 시 예외가 발생하지 않습니다."""
+    lru = _LRUCache(capacity=1)
+    lru.put("A", 1)
+    lru.put("B", 2)  # A evict, callback 없음 → 예외 없어야 함
+
+
+def test_lfu_cache_eviction_callback_fires_with_freq_and_ohlcv_count():
+    """_LFUCache 용량 초과 시 on_evict 콜백이 key, freq, ohlcv_count를 전달합니다."""
+    evicted = []
+    lfu = _LFUCache(capacity=2, on_evict=lambda k, f, c: evicted.append((k, f, c)))
+
+    lfu.put("A", {"ohlcv_historical": [1, 2, 3]})  # freq=0
+    lfu.put("B", {"ohlcv_historical": [1]})          # freq=0
+    lfu.get("A")                                      # A freq=1, B freq=0
+    lfu.put("C", {})                                  # B(freq=0) evicted
+
+    assert len(evicted) == 1
+    key, freq, ohlcv_count = evicted[0]
+    assert key == "B"
+    assert freq == 0
+    assert ohlcv_count == 1  # ohlcv_historical 길이
+
+
+def test_lfu_cache_eviction_callback_non_dict_value():
+    """캐시 값이 dict가 아닐 때 ohlcv_count=0으로 콜백이 호출됩니다."""
+    evicted = []
+    lfu = _LFUCache(capacity=1, on_evict=lambda k, f, c: evicted.append((k, f, c)))
+    lfu.put("A", "not_a_dict")
+    lfu.put("B", {})  # A evicted
+
+    assert evicted[0][2] == 0  # ohlcv_count=0
+
+
+def test_lfu_cache_eviction_callback_exception_does_not_propagate():
+    """on_evict 콜백이 예외를 던져도 put()이 정상 완료됩니다."""
+    def bad_callback(k, f, c):
+        raise RuntimeError("callback error")
+
+    lfu = _LFUCache(capacity=1, on_evict=bad_callback)
+    lfu.put("A", {})
+    lfu.put("B", {})  # eviction → callback 예외 → 무시 → put 완료
+    assert "B" in lfu._cache
+
+
+# ── 레포지토리 통합 — StockPriceRepository ───────────────────────────────────
+
+
+def test_stock_price_repo_logs_price_set_new():
+    """set_current_price() 호출 시 새 항목이면 log_price_set(is_new=True)가 호출됩니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    repo = StockPriceRepository(cache_logger=mock_cache_logger)
+
+    repo.set_current_price("005930", {"output": {"stck_prpr": "75000"}})
+
+    mock_cache_logger.log_price_set.assert_called_once()
+    _, kwargs = mock_cache_logger.log_price_set.call_args
+    # positional args 처리
+    args = mock_cache_logger.log_price_set.call_args[0]
+    assert args[0] == "005930"      # code
+    assert args[4] is True          # is_new
+
+
+def test_stock_price_repo_logs_price_set_update():
+    """set_current_price() 두 번째 호출 시 is_new=False로 기록됩니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    repo = StockPriceRepository(cache_logger=mock_cache_logger)
+
+    repo.set_current_price("005930", {"output": {"stck_prpr": "74000"}})
+    repo.set_current_price("005930", {"output": {"stck_prpr": "75000"}})
+
+    calls = mock_cache_logger.log_price_set.call_args_list
+    assert calls[0][0][4] is True   # 첫 호출: is_new=True
+    assert calls[1][0][4] is False  # 두 번째: is_new=False
+    assert calls[1][0][2] == "74000"  # before_price
+    assert calls[1][0][3] == "75000"  # after_price
+
+
+def test_stock_price_repo_logs_price_miss_not_found():
+    """get_current_price()가 캐시 미존재 시 log_price_miss(reason='not_found')를 호출합니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    repo = StockPriceRepository(cache_logger=mock_cache_logger)
+
+    result = repo.get_current_price("999999", caller="test")
+
+    assert result is None
+    mock_cache_logger.log_price_miss.assert_called_once_with("999999", "test", "not_found")
+
+
+def test_stock_price_repo_logs_price_miss_ttl_expired():
+    """get_current_price()가 TTL 만료 시 log_price_miss(reason='ttl_expired')를 호출합니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    repo = StockPriceRepository(cache_logger=mock_cache_logger)
+
+    repo.set_current_price("005930", {"output": {"stck_prpr": "75000"}})
+    # price_updated_at을 아주 오래 전으로 조작
+    cached = repo._price_cache.get("005930", count_stats=False)
+    cached["price_updated_at"] = time.time() - 9999
+
+    result = repo.get_current_price("005930", max_age_sec=3.0, caller="test")
+
+    assert result is None
+    mock_cache_logger.log_price_miss.assert_called_once_with("005930", "test", "ttl_expired")
+
+
+def test_stock_price_repo_logs_price_hit():
+    """get_current_price()가 캐시 히트 시 log_price_hit()을 호출합니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    repo = StockPriceRepository(cache_logger=mock_cache_logger)
+
+    repo.set_current_price("005930", {"output": {"stck_prpr": "75000"}})
+    result = repo.get_current_price("005930", caller="test")
+
+    assert result is not None
+    mock_cache_logger.log_price_hit.assert_called_once()
+    args = mock_cache_logger.log_price_hit.call_args[0]
+    assert args[0] == "005930"   # code
+    assert args[1] == "test"     # caller
+    assert args[3] is False      # is_streaming
+
+
+def test_stock_price_repo_logs_streaming_mark_unmark():
+    """mark_streaming/unmark_streaming이 streaming_count와 함께 로깅됩니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    repo = StockPriceRepository(cache_logger=mock_cache_logger)
+
+    repo.mark_streaming("005930")
+    repo.mark_streaming("000660")
+    repo.unmark_streaming("005930")
+
+    mark_calls = mock_cache_logger.log_streaming_mark.call_args_list
+    assert mark_calls[0][0] == ("005930", 1)
+    assert mark_calls[1][0] == ("000660", 2)
+
+    unmark_args = mock_cache_logger.log_streaming_unmark.call_args[0]
+    assert unmark_args[0] == "005930"
+    assert unmark_args[1] == 1  # 해제 후 1개 남음
+
+
+def test_stock_price_repo_logs_price_update_tick_only_on_change():
+    """update_current_price()가 가격 변동 시에만 log_price_update_tick()을 호출합니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    repo = StockPriceRepository(cache_logger=mock_cache_logger)
+
+    repo.set_current_price("005930", {"output": {"stck_prpr": "75000"}})
+    mock_cache_logger.reset_mock()
+
+    # 같은 가격 → 로그 없음
+    repo.update_current_price("005930", 75000)
+    mock_cache_logger.log_price_update_tick.assert_not_called()
+
+    # 다른 가격 → 로그 있음
+    repo.update_current_price("005930", 76000)
+    mock_cache_logger.log_price_update_tick.assert_called_once()
+    args = mock_cache_logger.log_price_update_tick.call_args[0]
+    assert args[1] == "75000"   # before
+    assert args[2] == "76000"   # after
+
+
+def test_stock_price_repo_eviction_logs_warning():
+    """LRU 용량 초과로 eviction 발생 시 log_price_evicted()가 호출됩니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    repo = StockPriceRepository(cache_logger=mock_cache_logger)
+    repo._price_cache.capacity = 2  # 테스트용 용량 축소
+
+    repo.set_current_price("A", {"output": {"stck_prpr": "1000"}})
+    repo.set_current_price("B", {"output": {"stck_prpr": "2000"}})
+    mock_cache_logger.reset_mock()
+    repo.set_current_price("C", {"output": {"stck_prpr": "3000"}})  # A evicted
+
+    mock_cache_logger.log_price_evicted.assert_called_once()
+    args = mock_cache_logger.log_price_evicted.call_args[0]
+    assert args[0] == "A"
+
+
+# ── 레포지토리 통합 — StockOhlcvRepository ───────────────────────────────────
+
+
+def test_stock_ohlcv_repo_logs_upsert_and_invalidation(tmp_path):
+    """upsert_ohlcv() 호출 시 log_ohlcv_upsert와 log_ohlcv_invalidated가 각 종목마다 호출됩니다."""
+    import asyncio
+
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    db_path = str(tmp_path / "test.db")
+    repo = StockOhlcvRepository(db_path=db_path, cache_logger=mock_cache_logger)
+
+    records = [
+        {"code": "005930", "date": "20250401", "open": 74000, "high": 75000, "low": 73000, "close": 74500, "volume": 100000},
+        {"code": "000660", "date": "20250401", "open": 90000, "high": 91000, "low": 89000, "close": 90500, "volume": 50000},
+    ]
+
+    async def run():
+        await repo.upsert_ohlcv(records)
+        await repo.close()
+
+    asyncio.run(run())
+
+    assert mock_cache_logger.log_ohlcv_invalidated.call_count == 2
+    invalidated_codes = {c[0][0] for c in mock_cache_logger.log_ohlcv_invalidated.call_args_list}
+    assert invalidated_codes == {"005930", "000660"}
+
+    mock_cache_logger.log_ohlcv_upsert.assert_called_once()
+    args = mock_cache_logger.log_ohlcv_upsert.call_args[1]
+    assert args["record_count"] == 2
+    assert args["code_count"] == 2
+
+
+async def test_stock_ohlcv_repo_logs_ohlcv_loaded_and_hit(tmp_path):
+    """get_stock_data() 최초 호출 시 log_ohlcv_loaded, 두 번째 호출 시 log_ohlcv_hit가 호출됩니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    db_path = str(tmp_path / "test.db")
+    repo = StockOhlcvRepository(db_path=db_path, cache_logger=mock_cache_logger)
+
+    records = [
+        {"code": "005930", "date": "20250401", "open": 74000, "high": 75000, "low": 73000, "close": 74500, "volume": 100000},
+        {"code": "005930", "date": "20250331", "open": 73000, "high": 74000, "low": 72000, "close": 73500, "volume": 90000},
+    ]
+    await repo.upsert_ohlcv(records)
+    mock_cache_logger.reset_mock()
+
+    # 첫 조회: DB miss → DB load → log_ohlcv_loaded
+    result = await repo.get_stock_data("005930", caller="test")
+    assert result is not None
+    mock_cache_logger.log_ohlcv_miss.assert_called_once_with("005930", "test")
+    mock_cache_logger.log_ohlcv_loaded.assert_called_once()
+    loaded_args = mock_cache_logger.log_ohlcv_loaded.call_args[0]
+    assert loaded_args[0] == "005930"   # code
+    assert loaded_args[2] == 2          # ohlcv_count (2일치)
+    assert loaded_args[3] == "20250401" # latest_date
+
+    mock_cache_logger.reset_mock()
+
+    # 두 번째 조회: 캐시 히트 → log_ohlcv_hit
+    result2 = await repo.get_stock_data("005930", caller="test")
+    assert result2 is not None
+    mock_cache_logger.log_ohlcv_hit.assert_called_once()
+    mock_cache_logger.log_ohlcv_loaded.assert_not_called()
+
+    await repo.close()
+
+
+async def test_stock_ohlcv_repo_logs_ohlcv_eviction(tmp_path):
+    """LFU 용량 초과 시 log_ohlcv_evicted()가 freq, ohlcv_count와 함께 호출됩니다."""
+    mock_cache_logger = MagicMock(spec=CacheEventLogger)
+    db_path = str(tmp_path / "test.db")
+    repo = StockOhlcvRepository(db_path=db_path, cache_logger=mock_cache_logger)
+    repo._ohlcv_cache.capacity = 1  # 용량을 1로 축소
+
+    for code in ["005930", "000660"]:
+        await repo.upsert_ohlcv([
+            {"code": code, "date": "20250401", "open": 1000, "high": 1100, "low": 900, "close": 1050, "volume": 1000}
+        ])
+
+    mock_cache_logger.reset_mock()
+
+    await repo.get_stock_data("005930", caller="test")  # 005930 캐시 로드
+    await repo.get_stock_data("000660", caller="test")  # 용량 초과 → 005930 evict
+
+    mock_cache_logger.log_ohlcv_evicted.assert_called_once()
+    call = mock_cache_logger.log_ohlcv_evicted.call_args
+    assert call[0][0] == "005930"            # evicted code
+    assert call[1]["capacity"] == 1          # capacity (keyword arg)
+
+    await repo.close()
