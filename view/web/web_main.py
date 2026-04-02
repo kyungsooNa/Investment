@@ -1,5 +1,10 @@
+import json
 import os
+import threading
+import time
+import uuid
 from contextlib import asynccontextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from fastapi import FastAPI, Request, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -8,6 +13,60 @@ from fastapi.templating import Jinja2Templates
 from view.web.web_app_initializer import WebAppContext
 import view.web.web_api as web_api
 import view.web.api_common as api_common
+
+# ── 진단 전용 HTTP 서버 (포트 8001, 별도 OS 스레드) ──────────────────────
+# asyncio 이벤트 루프가 완전히 블록되어도 응답 가능.
+# 브라우저/curl 어디서든 http://127.0.0.1:8001/debug/requests 로 확인.
+
+_DEBUG_SERVER_PORT = 8001
+
+
+class _DebugHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/debug/requests":
+            self.send_response(404)
+            self.end_headers()
+            return
+        now = time.monotonic()
+        rows = sorted(
+            [
+                {
+                    "path": r["path"],
+                    "method": r["method"],
+                    "elapsed_sec": round(now - r["start"], 1),
+                    "query": r["query"],
+                }
+                for r in api_common._active_requests.values()
+            ],
+            key=lambda x: x["elapsed_sec"],
+            reverse=True,
+        )
+        body = json.dumps(
+            {"count": len(rows), "data": rows, "recent": list(api_common._recent_completed)},
+            ensure_ascii=False,
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")  # 브라우저 콘솔 fetch 허용
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_):
+        pass  # 로그 억제
+
+
+def _start_debug_server():
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", _DEBUG_SERVER_PORT), _DebugHandler)
+        t = threading.Thread(target=server.serve_forever, daemon=True, name="dbg-http")
+        t.start()
+        print(f"[DEBUG] 진단 서버 시작: http://127.0.0.1:{_DEBUG_SERVER_PORT}/debug/requests")
+    except OSError as e:
+        print(f"[DEBUG] 진단 서버 시작 실패 (포트 {_DEBUG_SERVER_PORT} 사용 중?): {e}")
+
+
+_start_debug_server()
 
 # [추가] 서버 시작 시 초기화 로직
 @asynccontextmanager
@@ -56,6 +115,35 @@ if "debugpy" in sys.modules:
             import debugpy
             debugpy.debug_this_thread()
         return await call_next(request)
+
+# --- 요청 추적 미들웨어 (hang 진단용) ---
+# /api/* 요청의 시작~완료를 api_common._active_requests에 기록한다.
+# /api/debug/requests 엔드포인트가 이 데이터를 읽어 in-flight 요청 목록을 반환한다.
+
+@app.middleware("http")
+async def request_tracker_middleware(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/api/") or path == "/api/debug/requests":
+        return await call_next(request)
+    req_id = uuid.uuid4().hex[:8]
+    api_common._active_requests[req_id] = {
+        "path": path,
+        "method": request.method,
+        "start": time.monotonic(),
+        "query": str(request.url.query) or None,
+    }
+    start = time.monotonic()
+    try:
+        return await call_next(request)
+    finally:
+        elapsed = round(time.monotonic() - start, 2)
+        api_common._active_requests.pop(req_id, None)
+        # 완료 이력 기록 (hang 직전 분석용)
+        rec = api_common._recent_completed
+        rec.append({"path": path, "elapsed_sec": elapsed, "at": round(start, 1)})
+        if len(rec) > api_common._RECENT_MAX:
+            del rec[0]
+
 
 # --- Foreground 우선순위 미들웨어 ---
 # Broker API를 호출하는 라우트만 foreground로 래핑하여

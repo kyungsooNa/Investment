@@ -159,7 +159,7 @@ async function updateCacheStatus() {
 }
 
 document.addEventListener('DOMContentLoaded', updateCacheStatus);
-setInterval(updateCacheStatus, 5000);
+setInterval(updateCacheStatus, 15000);  // 캐시 상태는 15초마다 갱신 (응답이 크므로 이벤트 루프 부하 분산)
 
 // ── 백그라운드 태스크 모니터링 ──────────────────────────────
 
@@ -346,6 +346,17 @@ async function updateBackgroundStatus() {
         const result = await response.json();
         if (!result.success || !result.data) return;
 
+        // ForegroundScheduler 상태 표시 (백그라운드 태스크 중단 여부)
+        const fgEl = document.getElementById('foreground-status');
+        if (fgEl && result.foreground) {
+            const { is_blocking_background, active_count } = result.foreground;
+            if (is_blocking_background) {
+                fgEl.innerHTML = `<span style="background:orange;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.82em;font-weight:bold;">BG 중단 중</span> <span style="color:#888;font-size:0.85em;">포어그라운드 요청 ${active_count}개 처리 중</span>`;
+            } else {
+                fgEl.innerHTML = `<span style="background:var(--success-color,#4CAF50);color:#fff;padding:2px 8px;border-radius:10px;font-size:0.82em;">정상</span>`;
+            }
+        }
+
         const tbody = document.getElementById('background-tasks-body');
         if (!tbody) return;
 
@@ -378,7 +389,7 @@ async function updateBackgroundStatus() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', updateBackgroundStatus);
+document.addEventListener('DOMContentLoaded', () => setTimeout(updateBackgroundStatus, 1500));  // 캐시 폴링과 시차 분산
 setInterval(updateBackgroundStatus, 5000);
 
 // ── 실시간 현재가 구독 현황 ──────────────────────────────────
@@ -446,5 +457,5 @@ async function updateSubscriptionStatus() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', updateSubscriptionStatus);
+document.addEventListener('DOMContentLoaded', () => setTimeout(updateSubscriptionStatus, 3000));  // 다른 폴링과 시차 분산
 setInterval(updateSubscriptionStatus, 5000);

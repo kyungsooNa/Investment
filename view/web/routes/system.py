@@ -2,8 +2,10 @@
 시스템 상태 및 캐시 모니터링 API 엔드포인트.
 """
 import asyncio
+import time
 from fastapi import APIRouter, HTTPException
 from view.web.api_common import _get_ctx
+import view.web.api_common as api_common
 
 router = APIRouter()
 
@@ -34,7 +36,10 @@ async def get_cache_status(expand: bool = True):
     """메모리 캐시 상태 및 적중률 통계 반환"""
     ctx = _get_ctx()
     latest_trading_date = await ctx._mcs.get_latest_trading_date() if ctx._mcs else None
-    stats = ctx.get_cache_stats(expand=expand, latest_trading_date=latest_trading_date) or {}
+    # get_cache_stats()는 CPU 집약적 작업(대량 JSON 직렬화)이므로 스레드 풀에서 실행해 이벤트 루프 블로킹을 방지
+    stats = await asyncio.to_thread(
+        ctx.get_cache_stats, expand=expand, latest_trading_date=latest_trading_date
+    ) or {}
 
     if "items" not in stats:
         stats["items"] = []
@@ -53,24 +58,67 @@ async def get_cache_status(expand: bool = True):
     }
 
 
+@router.get("/debug/requests")
+def get_active_requests():
+    """현재 서버에서 처리 중인 in-flight 요청 목록 반환 (hang 진단용).
+
+    ForegroundScheduler가 백그라운드 태스크 중단을 기다리거나,
+    무거운 응답 직렬화로 이벤트 루프가 블로킹될 때 어떤 요청이 대기 중인지 확인한다.
+    이 엔드포인트 자체는 Foreground 미들웨어를 우회하므로 hang 상태에서도 응답한다.
+    """
+    try:
+        ctx = _get_ctx()
+        fg = getattr(ctx, "foreground_scheduler", None)
+    except Exception:
+        fg = None
+
+    now = time.monotonic()
+    active = [
+        {
+            "path": r["path"],
+            "method": r["method"],
+            "elapsed_sec": round(now - r["start"], 1),
+            "query": r["query"],
+        }
+        for r in api_common._active_requests.values()
+    ]
+    active.sort(key=lambda x: x["elapsed_sec"], reverse=True)
+    return {
+        "success": True,
+        "count": len(active),
+        "foreground": {
+            "active_count": fg.active_count if fg else 0,
+            "is_blocking_background": fg.is_active if fg else False,
+        },
+        "data": active,
+    }
+
+
 @router.get("/background/status")
 def get_background_status():
     """백그라운드 태스크 상태 및 진행률 반환"""
     ctx = _get_ctx()
+
+    fg = getattr(ctx, "foreground_scheduler", None)
+    foreground_info = {
+        "active_count": fg.active_count if fg else 0,
+        "is_blocking_background": fg.is_active if fg else False,
+    }
+
     if not ctx.background_scheduler:
-        return {"success": True, "data": []}
+        return {"success": True, "foreground": foreground_info, "data": []}
 
     result = []
     for item in ctx.background_scheduler.get_all_status():
         name = item["name"]
         task = ctx.background_scheduler.get_task(name)
         schedule_type = _SCHEDULE_TYPES.get(name, "unknown")
-        
+
         # --- 모듈(파일) 경로를 기반으로 스케줄 유형 동적 판별 ---
         schedule_type = "unknown"
         if task:
             module_name = task.__class__.__module__  # 예: "task.background.after_market.ranking_task"
-            
+
             # 특정 태스크명 우선 확인 (폴더 경로에 포함된 이름으로 인해 잘못 분류되는 것을 방지)
             if "strategy_scheduler" in module_name:
                 schedule_type = "intraday"
@@ -92,7 +140,7 @@ def get_background_status():
 
     # 스케줄 유형(실시간 -> 장중 -> 장마감) 순서로 정렬
     result.sort(key=lambda x: x["schedule_order"])
-    return {"success": True, "data": result}
+    return {"success": True, "foreground": foreground_info, "data": result}
 
 
 # ── 장 마감 후 태스크 강제 수집 엔드포인트 ─────────────────────────────
