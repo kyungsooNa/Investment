@@ -13,6 +13,8 @@
 
 - [ ] **[주문]** 호가 단위 오류 발생시 단위수정하여 재시도 필요.
 - [ ] **[현재가]** 현재가 조회해도 90일치 ohlcv data만 나옴. 현재가 조회시 2년(약 600개의 ohlcv)치 데이터가 cache에 올라가는걸 기대하나 90일치만 올라가있음.
+- [ ] **[daily_price_collertor, ohlcv_update]** 종가 조회는 증권사 API 대신 네이버 증권등 web page 크롤링이나 다른 python api를 통해 가지고 오도록 수정하여 성능 향상 검토. (장중 실시간 내용만 증권사 API를 통해 update 하도록 수정)
+- [ ] **[stock_repo]** cache ttl 종료시 cache 에서 빠지는지? 그 내용이 로깅되는지 확인
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[아키텍처]** UI 출력 로직 완전 격리: Service 계층 내부에 존재하는 콘솔 출력(`print`) 로직을 제거하고, View 계층에 위임.
