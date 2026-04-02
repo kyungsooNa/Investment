@@ -43,10 +43,12 @@ class StockPriceRepository:
             if not is_new and isinstance(cached, dict):
                 existing = cached.get("current_price_data")
                 if isinstance(existing, dict):
-                    before_price = existing.get("output", {}).get("stck_prpr") if "output" in existing else existing.get("stck_prpr")
+                    _out = existing.get("output", {})
+                    before_price = (_out.get("stck_prpr") if isinstance(_out, dict) else getattr(_out, "stck_prpr", None)) if "output" in existing else existing.get("stck_prpr")
             after_price = None
             if isinstance(price_data, dict):
-                after_price = price_data.get("output", {}).get("stck_prpr") if "output" in price_data else price_data.get("stck_prpr")
+                _out = price_data.get("output", {})
+                after_price = (_out.get("stck_prpr") if isinstance(_out, dict) else getattr(_out, "stck_prpr", None)) if "output" in price_data else price_data.get("stck_prpr")
             self._cache_logger.log_price_set(code, "api", before_price, after_price, is_new)
         if not cached:
             cached = {}
