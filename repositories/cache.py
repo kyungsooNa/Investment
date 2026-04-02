@@ -10,13 +10,14 @@ from typing import Optional, Any
 
 class _LRUCache:
     """내장 OrderedDict를 활용한 인메모리 LRU(Least Recently Used) 캐시"""
-    def __init__(self, capacity: int = 500):
+    def __init__(self, capacity: int = 500, on_evict=None):
         self.cache = collections.OrderedDict()
         self.capacity = capacity
         self.hits = 0
         self.misses = 0
         self.item_hits = collections.defaultdict(int)
         self.caller_stats = collections.defaultdict(lambda: {"hits": 0, "misses": 0, "keys": collections.defaultdict(int), "items": collections.defaultdict(int)})
+        self._on_evict = on_evict  # callable(evicted_key: str) | None
 
     def get(self, key, count_stats: bool = True, caller: str = "unknown", item_type: str = "unknown"):
         if count_stats:
@@ -42,6 +43,11 @@ class _LRUCache:
             removed_key, _ = self.cache.popitem(last=False)
             if removed_key in self.item_hits:
                 del self.item_hits[removed_key]
+            if self._on_evict:
+                try:
+                    self._on_evict(removed_key)
+                except Exception:
+                    pass
 
     def delete(self, key):
         if key in self.cache:
@@ -102,13 +108,14 @@ class _LFUCache:
     LFU(Least Frequently Used) 캐시 — OHLCV 데이터 전용.
     접근 빈도가 낮은 항목부터 evict하여 자주 분석되는 종목이 캐시에 오래 남음.
     """
-    def __init__(self, capacity: int = 500):
+    def __init__(self, capacity: int = 500, on_evict=None):
         self._cache: dict = {}                          # key → value
         self._freq: dict = collections.defaultdict(int) # key → access count
         self.capacity = capacity
         self.hits = 0
         self.misses = 0
         self.caller_stats = collections.defaultdict(lambda: {"hits": 0, "misses": 0, "keys": collections.defaultdict(int), "items": collections.defaultdict(int)})
+        self._on_evict = on_evict  # callable(evicted_key: str, freq: int, ohlcv_count: int) | None
 
     def get(self, key, count_stats: bool = True, caller: str = "unknown", item_type: str = "unknown") -> Optional[Any]:
         if key not in self._cache:
@@ -132,8 +139,16 @@ class _LFUCache:
             return
         if len(self._cache) >= self.capacity:
             lfu_key = min(self._freq, key=lambda k: self._freq[k])
+            lfu_freq = self._freq[lfu_key]
+            lfu_val = self._cache[lfu_key]
+            lfu_ohlcv_count = len(lfu_val.get("ohlcv_historical", [])) if isinstance(lfu_val, dict) else 0
             del self._cache[lfu_key]
             del self._freq[lfu_key]
+            if self._on_evict:
+                try:
+                    self._on_evict(lfu_key, lfu_freq, lfu_ohlcv_count)
+                except Exception:
+                    pass
         self._cache[key] = value
         self._freq[key] = 0
 

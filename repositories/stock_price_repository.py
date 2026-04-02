@@ -6,24 +6,48 @@
 """
 import time
 import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from repositories.cache import _LRUCache
+
+if TYPE_CHECKING:
+    from core.logger import CacheEventLogger
+
+_PRICE_CACHE_CAPACITY = 3000
 
 
 class StockPriceRepository:
     """현재가 캐시 및 WebSocket 스트리밍 TTL 관리 저장소."""
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, cache_logger: "CacheEventLogger | None" = None):
         self._logger = logger or logging.getLogger(__name__)
+        self._cache_logger = cache_logger
         # 전종목(~2300) + 여유분을 수용하는 현재가 전용 캐시
-        self._price_cache = _LRUCache(capacity=3000)
+        self._price_cache = _LRUCache(
+            capacity=_PRICE_CACHE_CAPACITY,
+            on_evict=self._on_price_evicted,
+        )
         # 현재 WebSocket으로 실시간 스트리밍 중인 종목 코드 집합
         self._streaming_codes: set = set()
+
+    def _on_price_evicted(self, code: str) -> None:
+        if self._cache_logger:
+            self._cache_logger.log_price_evicted(code, capacity=self._price_cache.capacity)
 
     def set_current_price(self, code: str, price_data: dict):
         """현재가 API 응답 전체 데이터를 캐시에 저장합니다."""
         cached = self._price_cache.get(code, count_stats=False, item_type="set_price")
+        is_new = cached is None
+        if self._cache_logger:
+            before_price = None
+            if not is_new and isinstance(cached, dict):
+                existing = cached.get("current_price_data")
+                if isinstance(existing, dict):
+                    before_price = existing.get("output", {}).get("stck_prpr") if "output" in existing else existing.get("stck_prpr")
+            after_price = None
+            if isinstance(price_data, dict):
+                after_price = price_data.get("output", {}).get("stck_prpr") if "output" in price_data else price_data.get("stck_prpr")
+            self._cache_logger.log_price_set(code, "api", before_price, after_price, is_new)
         if not cached:
             cached = {}
             self._price_cache.put(code, cached)
@@ -36,9 +60,18 @@ class StockPriceRepository:
         cached = self._price_cache.get(code, count_stats=count_stats,
                                        caller=caller, item_type="current_price")
         if cached and "current_price_data" in cached:
-            effective_max_age = float('inf') if code in self._streaming_codes else max_age_sec
-            if time.time() - cached.get("price_updated_at", 0) <= effective_max_age:
+            is_streaming = code in self._streaming_codes
+            effective_max_age = float('inf') if is_streaming else max_age_sec
+            age_sec = time.time() - cached.get("price_updated_at", 0)
+            if age_sec <= effective_max_age:
+                if self._cache_logger and count_stats:
+                    self._cache_logger.log_price_hit(code, caller, age_sec, is_streaming)
                 return cached["current_price_data"]
+            if self._cache_logger and count_stats:
+                self._cache_logger.log_price_miss(code, caller, "ttl_expired")
+            return None
+        if self._cache_logger and count_stats:
+            self._cache_logger.log_price_miss(code, caller, "not_found")
         return None
 
     def update_current_price(self, code: str, current_price: float, volume: int = 0):
@@ -52,12 +85,15 @@ class StockPriceRepository:
             cached["current_price_data"] = {"output": {}}
 
         output = cached["current_price_data"].get("output")
+        before_price = None
         if isinstance(output, dict):
+            before_price = output.get("stck_prpr")
             output["stck_prpr"] = str(int(current_price))
             if volume > 0:
                 output["acml_vol"] = str(volume)
         elif output is not None:
             try:
+                before_price = getattr(output, "stck_prpr", None)
                 setattr(output, "stck_prpr", str(int(current_price)))
                 if volume > 0:
                     setattr(output, "acml_vol", str(volume))
@@ -65,14 +101,22 @@ class StockPriceRepository:
                 pass
 
         cached["price_updated_at"] = time.time()
+        if self._cache_logger and before_price != str(int(current_price)):
+            self._cache_logger.log_price_update_tick(
+                code, before_price, str(int(current_price)), volume
+            )
 
     def mark_streaming(self, code: str) -> None:
         """해당 종목이 실시간 스트리밍 중임을 등록. TTL 우회 활성화."""
         self._streaming_codes.add(code)
+        if self._cache_logger:
+            self._cache_logger.log_streaming_mark(code, len(self._streaming_codes))
 
     def unmark_streaming(self, code: str) -> None:
         """실시간 스트리밍 종료. TTL 우회 해제."""
         self._streaming_codes.discard(code)
+        if self._cache_logger:
+            self._cache_logger.log_streaming_unmark(code, len(self._streaming_codes))
 
     def is_streaming(self, code: str) -> bool:
         """해당 종목이 현재 스트리밍 중인지 여부."""

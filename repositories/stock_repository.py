@@ -11,6 +11,7 @@ from typing import Optional, List, Dict, Any
 from repositories.cache import _LRUCache, _LFUCache  # 하위호환 re-export 용
 from repositories.stock_price_repository import StockPriceRepository
 from repositories.stock_ohlcv_repository import StockOhlcvRepository
+from core.logger import get_cache_event_logger
 
 
 class StockRepository:
@@ -18,8 +19,9 @@ class StockRepository:
 
     def __init__(self, db_path: str = None, logger=None):
         self._logger = logger or logging.getLogger(__name__)
-        self._price_repo = StockPriceRepository(logger=self._logger)
-        self._ohlcv_repo = StockOhlcvRepository(db_path=db_path, logger=self._logger)
+        self._cache_logger = get_cache_event_logger()
+        self._price_repo = StockPriceRepository(logger=self._logger, cache_logger=self._cache_logger)
+        self._ohlcv_repo = StockOhlcvRepository(db_path=db_path, logger=self._logger, cache_logger=self._cache_logger)
 
     # ── 하위호환 프로퍼티 (테스트 및 레거시 접근용) ─────────────────────────────
 
@@ -128,10 +130,12 @@ class StockRepository:
 
     # ── 통합 캐시 통계 ────────────────────────────────────────────────────────────
 
-    def get_cache_stats(self, expand: bool = False, latest_trading_date: str = None) -> dict:
+    def get_cache_stats(self, expand: bool = False, latest_trading_date: str = None, log_stats: bool = False) -> dict:
         """현재가 캐시 + OHLCV 캐시의 통합 통계를 반환합니다."""
         price_stats = self._price_repo.get_cache_stats(expand=expand)
         ohlcv_stats = self._ohlcv_repo.get_cache_stats(expand=expand, latest_trading_date=latest_trading_date)
+        if log_stats:
+            self._cache_logger.log_stats(price_stats, ohlcv_stats)
 
         total_hits = price_stats["hits"] + ohlcv_stats["hits"]
         total_misses = price_stats["misses"] + ohlcv_stats["misses"]
