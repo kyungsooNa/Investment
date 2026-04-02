@@ -1307,7 +1307,7 @@ def test_stock_ohlcv_repo_logs_upsert_and_invalidation(tmp_path):
         await repo.upsert_ohlcv(records)
         await repo.close()
 
-    asyncio.get_event_loop().run_until_complete(run())
+    asyncio.run(run())
 
     assert mock_cache_logger.log_ohlcv_invalidated.call_count == 2
     invalidated_codes = {c[0][0] for c in mock_cache_logger.log_ohlcv_invalidated.call_args_list}
