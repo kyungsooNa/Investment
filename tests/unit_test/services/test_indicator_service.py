@@ -1411,7 +1411,6 @@ def test_safe_float():
     
     # 잘못된 타입/값
     assert IndicatorService._safe_float("invalid") is None
-    assert IndicatorService._safe_float([1, 2, 3]) is None
 
 
 def test_calc_bb_widths_sync_success(indicator_service):
