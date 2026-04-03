@@ -279,14 +279,19 @@ def test_get_code_by_name_without_logger(test_db):
     # No logger to check, just ensuring no crash.
 
 
-def test_search_by_name(test_db):
+def test_search_by_name(tmp_path):
     """search_by_name 메서드의 검색, 대소문자, limit 기능 테스트"""
-    mapper = StockCodeRepository(db_path=test_db)
+    db_path = str(tmp_path / "custom_stock.db")
+    _create_test_db(db_path, {
+        '종목코드': ['005930', '000660', '028260'],
+        '종목명': ['삼성전자', 'SK하이닉스', '삼성물산'],
+    })
+    mapper = StockCodeRepository(db_path=db_path)
 
     # 1. 부분 일치 검색
-    results = mapper.search_by_name("삼성")
+    results = mapper.search_by_name("하이닉스")
     assert len(results) == 1
-    assert results[0] == {"code": "005930", "name": "삼성전자"}
+    assert results[0] == {"code": "000660", "name": "SK하이닉스"}
 
     # 2. 대소문자 구분 없이 검색 (sk -> SK하이닉스)
     results_lower = mapper.search_by_name("sk하이닉스")
@@ -298,14 +303,14 @@ def test_search_by_name(test_db):
     assert results_none == []
 
     # 4. 여러 결과 및 limit 테스트
-    # 'S'로 검색하면 '삼성전자', 'SK하이닉스' 2건이 나와야 함.
-    results_s = mapper.search_by_name("S")
+    # '삼성'으로 검색하면 '삼성전자', '삼성물산' 2건이 나와야 함.
+    results_s = mapper.search_by_name("삼성")
     assert len(results_s) == 2
     result_names = {r['name'] for r in results_s}
-    assert result_names == {'삼성전자', 'SK하이닉스'}
+    assert result_names == {'삼성전자', '삼성물산'}
 
     # limit=1로 제한
-    results_limit = mapper.search_by_name("S", limit=1)
+    results_limit = mapper.search_by_name("삼성", limit=1)
     assert len(results_limit) == 1
 
 
