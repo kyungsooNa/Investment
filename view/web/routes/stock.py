@@ -2,6 +2,7 @@
 종목 조회 관련 API 엔드포인트 (index.html).
 현재가, 차트(OHLCV), 기술 지표, 시장 상태, 환경 전환.
 """
+import asyncio
 import time
 from fastapi import APIRouter, HTTPException, Query
 from common.types import Exchange
@@ -82,6 +83,15 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
     result = _serialize_response(resp)
 
     ctx.pm.log_timer(f"get_stock_price({code})", t_start)
+
+    # 현재가 조회 후 OHLCV 2년치 백그라운드 프리로드 (캐시 miss 시에만 실제 API 호출)
+    async def _preload_ohlcv():
+        try:
+            await ctx.stock_query_service.get_ohlcv(code, caller="preload_on_price_query")
+        except Exception:
+            pass
+    asyncio.create_task(_preload_ohlcv())
+
     return result
 
 

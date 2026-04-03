@@ -137,22 +137,26 @@ class StockOhlcvRepository:
         반복 DB 재조회 loop를 방지합니다.
         """
         # 1. LFU 캐시 확인 — historical_complete 플래그 기반
+        # 캐시에 저장된 건수가 요청 ohlcv_limit 이상일 때만 히트 처리.
+        # 예) limit=90으로 90건 캐시 후 limit=600 요청이 오면 DB에서 600건 재로드.
         cached = self._ohlcv_cache.get(code, count_stats=True, caller=caller, item_type="ohlcv")
         if cached and cached.get("historical_complete"):
-            ohlcv_today = cached.get("ohlcv_today")
-            ohlcv = cached["ohlcv_historical"][:]
-            if ohlcv_today:
-                ohlcv = ohlcv + [ohlcv_today]
-            if self._cache_logger:
-                self._cache_logger.log_ohlcv_hit(
-                    code, caller, len(ohlcv), has_today_candle=ohlcv_today is not None
-                )
-            return {
-                "code": code,
-                "ohlcv": ohlcv,
-                "last_updated": cached["last_loaded"],
-                "historical_complete": True,
-            }
+            cached_count = len(cached.get("ohlcv_historical", []))
+            if cached_count >= ohlcv_limit:
+                ohlcv_today = cached.get("ohlcv_today")
+                ohlcv = cached["ohlcv_historical"][:]
+                if ohlcv_today:
+                    ohlcv = ohlcv + [ohlcv_today]
+                if self._cache_logger:
+                    self._cache_logger.log_ohlcv_hit(
+                        code, caller, len(ohlcv), has_today_candle=ohlcv_today is not None
+                    )
+                return {
+                    "code": code,
+                    "ohlcv": ohlcv,
+                    "last_updated": cached["last_loaded"],
+                    "historical_complete": True,
+                }
 
         if self._cache_logger:
             self._cache_logger.log_ohlcv_miss(code, caller)
