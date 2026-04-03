@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
+import numpy as np
 from services.indicator_service import IndicatorService
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
 from core.cache.cache_store import CacheStore
@@ -1387,3 +1388,132 @@ def test_to_dataframe_dataframe_passthrough(indicator_service):
     assert isinstance(result, pd.DataFrame)
     assert len(result) == 1
     assert result["close"].iloc[0] == 10000
+
+
+# ═══════════════════════════════════════════════════════
+# 동기 계산 메서드 및 기타 헬퍼 테스트 (Coverage 향상)
+# ═══════════════════════════════════════════════════════
+
+def test_safe_float():
+    """_safe_float 헬퍼 메서드 검증"""
+    # 정상 변환
+    assert IndicatorService._safe_float("100.5") == 100.5
+    assert IndicatorService._safe_float(100) == 100.0
+    
+    # None 및 NaN/Inf 처리
+    assert IndicatorService._safe_float(None) is None
+    assert IndicatorService._safe_float(pd.NA) is None
+    assert IndicatorService._safe_float(np.nan) is None
+    assert IndicatorService._safe_float(float('nan')) is None
+    assert IndicatorService._safe_float(np.inf) is None
+    assert IndicatorService._safe_float(float('inf')) is None
+    assert IndicatorService._safe_float(-np.inf) is None
+    
+    # 잘못된 타입/값
+    assert IndicatorService._safe_float("invalid") is None
+    assert IndicatorService._safe_float([1, 2, 3]) is None
+
+
+def test_calc_bb_widths_sync_success(indicator_service):
+    """calc_bb_widths_sync: 정상 데이터로 BB 폭 목록 동기 계산"""
+    service, _ = indicator_service
+    
+    # 25일치 데이터
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 100} for i in range(25)]
+    
+    widths = service.calc_bb_widths_sync(data, period=20, multiplier=2.0)
+    
+    # 처음 19개는 MA/STD 계산 불가로 upper/lower가 None이므로 제외됨 -> 6개 계산
+    assert isinstance(widths, list)
+    assert len(widths) == 6
+    assert all(isinstance(w, float) for w in widths)
+
+
+def test_calc_bb_widths_sync_empty_or_fail(indicator_service):
+    """calc_bb_widths_sync: 데이터 부족 및 계산 실패 시 빈 리스트 반환"""
+    service, _ = indicator_service
+    
+    # 데이터 부족 (20일 미만)
+    data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(10)]
+    widths = service.calc_bb_widths_sync(data, period=20, multiplier=2.0)
+    assert widths == []
+    
+    # 에러 발생 시뮬레이션
+    with patch.object(service, '_calculate_bollinger_bands_full', return_value=ResCommonResponse(rt_cd="999", msg1="Error", data=None)):
+        widths_error = service.calc_bb_widths_sync(data, period=20, multiplier=2.0)
+        assert widths_error == []
+
+
+def test_calc_bb_widths_sync_object_items(indicator_service):
+    """calc_bb_widths_sync: 반환 데이터가 딕셔너리가 아닌 객체(Object) 리스트일 경우 getattr 분기 검증"""
+    service, _ = indicator_service
+    
+    class MockBand:
+        def __init__(self, upper, lower):
+            self.upper = upper
+            self.lower = lower
+            
+    mock_data = [MockBand(12000.0, 8000.0), MockBand(None, None)]
+    
+    with patch.object(service, '_calculate_bollinger_bands_full', return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=mock_data)):
+        widths = service.calc_bb_widths_sync([], period=20, multiplier=2.0)
+        
+        assert len(widths) == 1
+        assert widths[0] == 4000.0
+
+
+def test_calc_rs_sync_success(indicator_service):
+    """calc_rs_sync: 정상 데이터로 RS 동기 계산"""
+    service, _ = indicator_service
+    
+    period_days = 63
+    # 70일치 데이터 생성
+    data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(70)]
+    
+    # 과거 종가(period_days 전) = 10000, 최근 종가 = 12000 -> (12000-10000)/10000 * 100 = 20%
+    data[-(period_days + 1)]["close"] = 10000
+    data[-1]["close"] = 12000
+    
+    rs_val = service.calc_rs_sync(data, period_days=period_days)
+    
+    assert isinstance(rs_val, float)
+    assert rs_val == 20.0
+
+
+def test_calc_rs_sync_insufficient_data(indicator_service):
+    """calc_rs_sync: 데이터 부족 시 0.0 반환"""
+    service, _ = indicator_service
+    
+    # 데이터 부족 (63일 필요하지만 30일치만 제공)
+    data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(30)]
+    
+    rs_val = service.calc_rs_sync(data, period_days=63)
+    assert rs_val == 0.0
+
+
+def test_calc_rs_sync_invalid_close(indicator_service):
+    """calc_rs_sync: 유효하지 않은 종가 (None, 0 이하, 문자열 등) 처리"""
+    service, _ = indicator_service
+    
+    # 70일치 데이터 (정상 기준)
+    data = [{"date": f"202501{i+1:02d}", "close": 10000} for i in range(70)]
+    
+    # 1. 과거 종가가 0인 경우
+    data[-64]["close"] = 0
+    rs_val = service.calc_rs_sync(data, period_days=63)
+    assert rs_val == 0.0
+    
+    # 2. 최근 종가가 숫자가 아닌 경우 ('invalid')
+    data[-64]["close"] = 10000
+    data[-1]["close"] = "invalid"
+    rs_val2 = service.calc_rs_sync(data, period_days=63)
+    assert rs_val2 == 0.0
+
+
+def test_calc_rs_sync_exception(indicator_service):
+    """calc_rs_sync: 리스트가 아닌 데이터(None 등) 주입 시 내부 예외(Exception) 발생 처리"""
+    service, _ = indicator_service
+    
+    # None 객체를 전달하여 len() 호출 시 TypeError 유도 -> 내부 try-except로 잡혀서 0.0 반환
+    rs_val = service.calc_rs_sync(None, period_days=63)
+    assert rs_val == 0.0
