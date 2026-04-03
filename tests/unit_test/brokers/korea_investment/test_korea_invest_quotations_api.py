@@ -1759,3 +1759,148 @@ async def test_check_holiday_success(mock_quotations):
     assert result.rt_cd == "0"
     assert result.data["output"][0]["bzdy_yn"] == "N"
     api.call_api.assert_called_once()
+
+
+# ── inquire_daily_itemchartprice 추가 테스트 ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_abnormal_api_response(mock_quotations):
+    """inquire_daily_itemchartprice: API 응답이 성공(rt_cd='0')이 아닌 비정상 케이스 테스트"""
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="API 내부 에러",
+        data=None
+    ))
+
+    result_common = await mock_quotations.inquire_daily_itemchartprice("005930", "20250101", fid_period_div_code="D")
+
+    assert result_common.rt_cd == ErrorCode.API_ERROR.value
+    assert result_common.data == []
+    assert "API 응답 비정상" in result_common.msg1
+    mock_quotations._logger.error.assert_called_once()
+
+
+# ── get_investor_trade_by_stock_daily_multi 테스트 ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_investor_trade_by_stock_daily_multi_success(mock_quotations):
+    """다중일 투자자 매매동향 정상 조회 테스트"""
+    api = mock_quotations
+    mock_data = {
+        "output2": [
+            {"stck_bsop_date": "20260305", "frgn_ntby_qty": "500"},
+            {"stck_bsop_date": "20260304", "frgn_ntby_qty": "100"},
+            {"stck_bsop_date": "20260303", "frgn_ntby_qty": "-50"},
+            {"stck_bsop_date": "20260302", "frgn_ntby_qty": "200"}
+        ]
+    }
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
+    ))
+
+    # days=2로 요청하여 최신 2일치만 잘라오는지 확인
+    result = await api.get_investor_trade_by_stock_daily_multi("005930", date="20260305", days=2)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 2
+    assert result.data[0]["stck_bsop_date"] == "20260305"
+    assert result.data[1]["stck_bsop_date"] == "20260304"
+    api.call_api.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_investor_trade_by_stock_daily_multi_empty(mock_quotations):
+    """다중일 투자자 매매동향 데이터가 비어있을 때 테스트"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output2": []}
+    ))
+
+    result = await api.get_investor_trade_by_stock_daily_multi("005930")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data == []
+    assert "데이터 없음" in result.msg1
+
+
+@pytest.mark.asyncio
+async def test_get_investor_trade_by_stock_daily_multi_parsing_error(mock_quotations):
+    """다중일 투자자 매매동향 응답 데이터가 dict가 아닐 때 파싱 에러 반환 테스트"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data="not_a_dict"
+    ))
+
+    result = await api.get_investor_trade_by_stock_daily_multi("005930")
+
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    assert result.data is None
+    api._logger.error.assert_called_once()
+
+
+# ── get_program_trade_by_stock_daily 테스트 ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_program_trade_by_stock_daily_success(mock_quotations):
+    """프로그램매매추이(일별) 정상 조회 테스트 (가장 최신일 1건 반환)"""
+    api = mock_quotations
+    mock_data = {
+        "output": [
+            {"stck_bsop_date": "20260305", "whol_smtn_ntby_qty": "1000"},
+            {"stck_bsop_date": "20260304", "whol_smtn_ntby_qty": "-500"}
+        ]
+    }
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=mock_data
+    ))
+
+    result = await api.get_program_trade_by_stock_daily("005930", date="20260305")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert isinstance(result.data, dict)
+    assert result.data["stck_bsop_date"] == "20260305"
+    assert result.data["whol_smtn_ntby_qty"] == "1000"
+    api.call_api.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_program_trade_by_stock_daily_empty(mock_quotations):
+    """프로그램매매추이 데이터가 비어있을 때 테스트"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": []}
+    ))
+
+    result = await api.get_program_trade_by_stock_daily("005930")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data is None
+    assert "데이터 없음" in result.msg1
+
+
+@pytest.mark.asyncio
+async def test_get_program_trade_by_stock_daily_api_error(mock_quotations):
+    """프로그램매매추이 API 호출 실패 에러 그대로 반환하는지 테스트"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="API Error", data=None
+    ))
+
+    result = await api.get_program_trade_by_stock_daily("005930")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+
+
+@pytest.mark.asyncio
+async def test_get_program_trade_by_stock_daily_parsing_error(mock_quotations):
+    """프로그램매매추이 응답 데이터가 dict가 아닐 때 파싱 에러 반환 테스트"""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data="not_a_dict_data"
+    ))
+
+    result = await api.get_program_trade_by_stock_daily("005930")
+
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    assert result.data is None
+    api._logger.error.assert_called_once()

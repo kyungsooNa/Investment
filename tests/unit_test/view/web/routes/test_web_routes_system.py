@@ -4,7 +4,9 @@ GET /api/cache/status, GET /api/background/status, GET /api/subscriptions/status
 """
 import asyncio
 import pytest
+import time
 from unittest.mock import MagicMock, AsyncMock
+from view.web import api_common
 
 
 def test_get_cache_status(web_client, mock_web_ctx):
@@ -70,6 +72,71 @@ def test_get_cache_status_expand_false(web_client, mock_web_ctx):
     call_kwargs = mock_web_ctx.get_cache_stats.call_args.kwargs
     assert call_kwargs["expand"] is False
     assert "latest_trading_date" in call_kwargs
+
+
+def test_get_cache_status_no_mcs(web_client, mock_web_ctx):
+    """ctx._mcs가 None인 경우 get_cache_stats 호출 시 latest_trading_date가 None으로 전달되는지 확인"""
+    mock_web_ctx._mcs = None
+    mock_web_ctx.get_cache_stats.return_value = {"items": []}
+
+    response = web_client.get("/api/cache/status")
+    
+    assert response.status_code == 200
+    call_kwargs = mock_web_ctx.get_cache_stats.call_args.kwargs
+    assert call_kwargs["latest_trading_date"] is None
+
+
+# ── GET /api/debug/requests ─────────────────────────────────────────────────
+
+def test_get_active_requests(web_client, mock_web_ctx):
+    """GET /api/debug/requests 엔드포인트 정상 작동 테스트"""
+    # 활성 요청 모의 데이터
+    mock_requests = {
+        "req1": {"path": "/api/test1", "method": "GET", "start": time.monotonic() - 2.5, "query": ""},
+        "req2": {"path": "/api/test2", "method": "POST", "start": time.monotonic() - 0.5, "query": "param=1"}
+    }
+    
+    mock_fg = MagicMock()
+    mock_fg.active_count = 1
+    mock_fg.is_active = True
+    mock_web_ctx.foreground_scheduler = mock_fg
+    
+    original_requests = getattr(api_common, "_active_requests", {})
+    api_common._active_requests = mock_requests
+    
+    try:
+        response = web_client.get("/api/debug/requests")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["count"] == 2
+        assert data["foreground"]["active_count"] == 1
+        assert data["foreground"]["is_blocking_background"] is True
+        assert len(data["data"]) == 2
+        # elapsed_sec로 정렬되므로 req1이 첫 번째여야 함
+        assert data["data"][0]["path"] == "/api/test1"
+    finally:
+        api_common._active_requests = original_requests
+
+def test_get_active_requests_no_ctx(web_client, monkeypatch):
+    """GET /api/debug/requests 엔드포인트 _get_ctx 예외 발생(hang 상태 시뮬레이션) 테스트"""
+    from view.web.routes import system
+    monkeypatch.setattr(system, "_get_ctx", MagicMock(side_effect=Exception("No ctx")))
+    
+    original_requests = getattr(api_common, "_active_requests", {})
+    api_common._active_requests = {}
+    
+    try:
+        response = web_client.get("/api/debug/requests")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["count"] == 0
+        assert data["foreground"]["active_count"] == 0
+        assert data["foreground"]["is_blocking_background"] is False
+    finally:
+        api_common._active_requests = original_requests
+
 
 # ── GET /api/background/status ──────────────────────────────────────────────
 
@@ -207,6 +274,53 @@ def test_get_background_status_calls_get_progress_via_interface(web_client, mock
     mock_task.get_progress.assert_called_once()
 
 
+def test_get_background_status_module_names(web_client, mock_web_ctx):
+    """태스크의 모듈 경로에 따라 올바른 schedule_type이 지정되는지 테스트"""
+    
+    class TaskAlwaysOn: pass
+    TaskAlwaysOn.__module__ = "task.background.always_on.notifier"
+    
+    class TaskAfterMarket: pass
+    TaskAfterMarket.__module__ = "task.background.after_market.ranking"
+
+    class TaskIntraday: pass
+    TaskIntraday.__module__ = "task.background.intraday.collector"
+
+    class TaskStrategyScheduler: pass
+    TaskStrategyScheduler.__module__ = "task.background.strategy_scheduler"
+
+    class TaskUnknown: pass
+    TaskUnknown.__module__ = "task.background.some_other.module"
+
+    tasks_map = {
+        "t1": TaskAlwaysOn(),
+        "t2": TaskAfterMarket(),
+        "t3": TaskIntraday(),
+        "t4": TaskStrategyScheduler(),
+        "t5": TaskUnknown(),
+    }
+    for t in tasks_map.values():
+        t.get_progress = MagicMock(return_value=None)
+
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": name, "state": "running", "priority": 1}
+        for name in tasks_map.keys()
+    ]
+    mock_web_ctx.background_scheduler.get_task.side_effect = lambda name: tasks_map.get(name)
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    
+    types = {item["name"]: item["schedule_type"] for item in data}
+    assert types["t1"] == "always_on"
+    assert types["t2"] == "after_market"
+    assert types["t3"] == "intraday"
+    assert types["t4"] == "intraday"
+    assert types["t5"] == "unknown"
+
+
 # ── POST /api/background/ranking/force-update ─────────────────────────
 
 @pytest.mark.asyncio
@@ -306,6 +420,38 @@ async def test_force_watchlist_update_running(web_client, mock_web_ctx):
 async def test_force_watchlist_update_not_init(web_client, mock_web_ctx):
     mock_web_ctx.premium_watchlist_generator_task = None
     response = web_client.post("/api/background/watchlist/force-update")
+    assert response.status_code == 503
+
+
+# ── POST /api/background/cache-warmup/force-update ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_force_cache_warmup_success(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+    mock_task.force_warmup = AsyncMock()
+    mock_web_ctx.cache_warmup_task = mock_task
+
+    response = web_client.post("/api/background/cache-warmup/force-update")
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    
+    await asyncio.sleep(0)
+    mock_task.force_warmup.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_force_cache_warmup_running(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.cache_warmup_task = mock_task
+
+    response = web_client.post("/api/background/cache-warmup/force-update")
+    assert response.status_code == 409
+
+@pytest.mark.asyncio
+async def test_force_cache_warmup_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.cache_warmup_task = None
+    response = web_client.post("/api/background/cache-warmup/force-update")
     assert response.status_code == 503
 
 
@@ -418,3 +564,28 @@ def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):
 
     data = response.json()["data"]
     assert data["LOW"][0]["active"] is False
+
+
+def test_get_subscription_status_no_streaming_service(web_client, mock_web_ctx):
+    """streaming_service가 None일 경우 received_at이 None으로 할당되는지 확인"""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 1,
+        "max_subscriptions": 35,
+        "active_codes": ["005930"],
+        "pending_count": 0,
+        "pending_by_priority": {
+            "HIGH":   ["005930"],
+            "MEDIUM": [],
+            "LOW":    [],
+        },
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.streaming_service = None  # streaming_service 없음 설정
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
+
+    response = web_client.get("/api/subscriptions/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["HIGH"][0]["received_at"] is None
