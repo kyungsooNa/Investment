@@ -263,3 +263,76 @@ def test_kosdaq_methods_missing_column(test_db, mock_logger):
 
     assert mapper.get_kosdaq_codes() == []
     assert mapper.is_kosdaq('005930') is False
+
+
+def test_get_name_by_code_without_logger(test_db):
+    """logger가 없을 때 존재하지 않는 코드를 조회해도 오류가 발생하지 않는지 테스트합니다."""
+    mapper = StockCodeRepository(db_path=test_db, logger=None)
+    assert mapper.get_name_by_code('999999') == ""
+    # No logger to check, just ensuring no crash.
+
+
+def test_get_code_by_name_without_logger(test_db):
+    """logger가 없을 때 존재하지 않는 이름을 조회해도 오류가 발생하지 않는지 테스트합니다."""
+    mapper = StockCodeRepository(db_path=test_db, logger=None)
+    assert mapper.get_code_by_name('없는회사') == ""
+    # No logger to check, just ensuring no crash.
+
+
+def test_search_by_name(tmp_path):
+    """search_by_name 메서드의 검색, 대소문자, limit 기능 테스트"""
+    db_path = str(tmp_path / "custom_stock.db")
+    _create_test_db(db_path, {
+        '종목코드': ['005930', '000660', '028260'],
+        '종목명': ['삼성전자', 'SK하이닉스', '삼성물산'],
+    })
+    mapper = StockCodeRepository(db_path=db_path)
+
+    # 1. 부분 일치 검색
+    results = mapper.search_by_name("하이닉스")
+    assert len(results) == 1
+    assert results[0] == {"code": "000660", "name": "SK하이닉스"}
+
+    # 2. 대소문자 구분 없이 검색 (sk -> SK하이닉스)
+    results_lower = mapper.search_by_name("sk하이닉스")
+    assert len(results_lower) == 1
+    assert results_lower[0]['name'] == 'SK하이닉스'
+
+    # 3. 결과 없는 검색
+    results_none = mapper.search_by_name("없는키워드")
+    assert results_none == []
+
+    # 4. 여러 결과 및 limit 테스트
+    # '삼성'으로 검색하면 '삼성전자', '삼성물산' 2건이 나와야 함.
+    results_s = mapper.search_by_name("삼성")
+    assert len(results_s) == 2
+    result_names = {r['name'] for r in results_s}
+    assert result_names == {'삼성전자', '삼성물산'}
+
+    # limit=1로 제한
+    results_limit = mapper.search_by_name("삼성", limit=1)
+    assert len(results_limit) == 1
+
+
+@patch('os.remove')
+@patch('repositories.stock_code_repository.save_stock_code_list')
+def test_load_data_remove_corrupted_db_fails(mock_save, mock_remove, mock_logger, tmp_path):
+    """손상된 DB 파일 삭제 실패 시에도 복구 로직이 계속 진행되는지 테스트합니다."""
+    db_path = str(tmp_path / "corrupted.db")
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE stocks (invalid_col TEXT)")
+    conn.commit()
+    conn.close()
+
+    remove_error = OSError("Permission denied")
+    mock_remove.side_effect = remove_error
+
+    mock_save.side_effect = lambda **kwargs: _create_test_db(db_path)
+
+    repo = StockCodeRepository(db_path=db_path, logger=mock_logger)
+
+    mock_remove.assert_called_once_with(db_path)
+    mock_logger.error.assert_called_with(f"❌ 손상된 DB 파일 삭제 실패 (파일 점유/권한 문제 등): {remove_error}")
+    mock_save.assert_called_once_with(force_update=True)
+    assert repo.get_name_by_code('005930') == '삼성전자'
