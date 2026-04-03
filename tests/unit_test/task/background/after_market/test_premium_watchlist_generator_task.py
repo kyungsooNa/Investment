@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from interfaces.schedulable_task import TaskPriority, TaskState
+from services.notification_service import NotificationCategory, NotificationLevel
 
 
 # --- Fixtures ---
@@ -61,6 +62,9 @@ class TestTaskProperties:
 
     def test_task_name(self, task):
         assert task.task_name == "전일기준주도주_생성"
+
+    def test_scheduler_label(self, task):
+        assert task._scheduler_label == "전일기준우량주생성"
 
     def test_priority(self, task):
         assert task.priority == TaskPriority.LOW
@@ -369,3 +373,91 @@ class TestRunGeneration:
 
         assert running_during == [True]
         assert task._progress["running"] is False  # 완료 후 False
+
+
+# --- 강제 생성(force_generate) 테스트 ---
+
+
+class TestForceGenerate:
+
+    async def test_force_generate_success(self, task, mock_mcs, mock_universe_service):
+        """정상적으로 최근 거래일을 가져와 생성을 강제 실행한다."""
+        await task.force_generate()
+        
+        mock_mcs.get_latest_trading_date.assert_awaited_once()
+        mock_universe_service.generate_premium_watchlist.assert_awaited_once_with(trading_date="20260320")
+
+    async def test_force_generate_stops_if_no_trading_date(self, task, mock_mcs, mock_universe_service):
+        """최근 거래일을 확인할 수 없으면 강제 생성을 중단한다."""
+        mock_mcs.get_latest_trading_date.return_value = None
+        
+        await task.force_generate()
+        
+        mock_universe_service.generate_premium_watchlist.assert_not_called()
+
+    async def test_force_generate_stops_if_no_mcs(self, task, mock_universe_service):
+        """mcs가 없으면 강제 생성을 중단한다."""
+        task._mcs = None
+        
+        await task.force_generate()
+        
+        mock_universe_service.generate_premium_watchlist.assert_not_called()
+
+
+# --- Notification 테스트 ---
+
+
+class TestNotification:
+
+    @pytest.fixture
+    def mock_ns(self):
+        ns = MagicMock()
+        ns.emit = AsyncMock()
+        return ns
+
+    @pytest.fixture
+    def task_with_ns(self, mock_universe_service, mock_mcs, mock_market_clock, mock_ns):
+        return PremiumWatchlistGeneratorTask(
+            universe_service=mock_universe_service,
+            market_calendar_service=mock_mcs,
+            market_clock=mock_market_clock,
+            logger=MagicMock(),
+            notification_service=mock_ns,
+        )
+
+    async def test_on_market_closed_skip_in_memory_emits_notification(self, task_with_ns, mock_ns):
+        task_with_ns._last_generated_date = "20260320"
+        await task_with_ns._on_market_closed("20260320")
+        mock_ns.emit.assert_awaited_once_with(
+            NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전일기준우량주 생성 스킵",
+            "20260320 이미 생성 완료된 상태입니다."
+        )
+
+    async def test_on_market_closed_skip_in_file_emits_notification(self, task_with_ns, mock_universe_service, mock_ns):
+        task_with_ns._last_generated_date = None
+        mock_universe_service.get_premium_stocks_meta = MagicMock(return_value={
+            "generated_date": "20260320",
+            "generated_at": "2026-03-20T16:05:00",
+        })
+        await task_with_ns._on_market_closed("20260320")
+        mock_ns.emit.assert_awaited_once_with(
+            NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전일기준우량주 생성 스킵",
+            "20260320 이미 생성 완료된 상태입니다."
+        )
+
+    async def test_run_generation_success_emits_notification(self, task_with_ns, mock_ns):
+        await task_with_ns._run_generation("20260320")
+        assert mock_ns.emit.await_count == 1
+        call_args = mock_ns.emit.await_args[0]
+        assert call_args[0] == NotificationCategory.BACKGROUND
+        assert call_args[1] == NotificationLevel.INFO
+        assert call_args[2] == "전일기준우량주 생성 완료"
+        assert "KOSPI 30개" in call_args[3]
+        assert "KOSDAQ 20개" in call_args[3]
+
+    async def test_run_generation_failure_emits_notification(self, task_with_ns, mock_universe_service, mock_ns):
+        mock_universe_service.generate_premium_watchlist.side_effect = RuntimeError("생성 실패 테스트")
+        await task_with_ns._run_generation("20260320")
+        mock_ns.emit.assert_awaited_once_with(
+            NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "전일기준우량주 생성 실패", "생성 실패 테스트"
+        )
