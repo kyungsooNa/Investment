@@ -1333,7 +1333,7 @@ async def test_stock_ohlcv_repo_logs_ohlcv_loaded_and_hit(tmp_path):
     mock_cache_logger.reset_mock()
 
     # 첫 조회: DB miss → DB load → log_ohlcv_loaded
-    result = await repo.get_stock_data("005930", caller="test")
+    result = await repo.get_stock_data("005930", ohlcv_limit=2, caller="test")
     assert result is not None
     mock_cache_logger.log_ohlcv_miss.assert_called_once_with("005930", "test")
     mock_cache_logger.log_ohlcv_loaded.assert_called_once()
@@ -1345,7 +1345,7 @@ async def test_stock_ohlcv_repo_logs_ohlcv_loaded_and_hit(tmp_path):
     mock_cache_logger.reset_mock()
 
     # 두 번째 조회: 캐시 히트 → log_ohlcv_hit
-    result2 = await repo.get_stock_data("005930", caller="test")
+    result2 = await repo.get_stock_data("005930", ohlcv_limit=2, caller="test")
     assert result2 is not None
     mock_cache_logger.log_ohlcv_hit.assert_called_once()
     mock_cache_logger.log_ohlcv_loaded.assert_not_called()
