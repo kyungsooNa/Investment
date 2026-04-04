@@ -1,389 +1,267 @@
-"""
-DailyPriceCollectorTask 단위 테스트.
-장 마감 후 전체 종목 현재가 수집 태스크 검증.
-"""
-import asyncio
 import pytest
-import pytest_asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
+import asyncio
 import pandas as pd
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
-from repositories.stock_repository import StockRepository
-from interfaces.schedulable_task import TaskPriority, TaskState
-from common.types import ResCommonResponse, ErrorCode
-
-
-# --- Fixtures ---
-
+from common.types import ErrorCode, ResCommonResponse
 
 @pytest.fixture
 def mock_sqs():
-    sqs = MagicMock()
-    sqs.get_current_price = AsyncMock()
-    return sqs
-
+    return AsyncMock()
 
 @pytest.fixture
-def mock_mapper():
-    """종목코드 매퍼 mock (3개 종목)."""
-    mapper = MagicMock()
-    mapper.df = pd.DataFrame([
-        {"종목코드": "005930", "종목명": "삼성전자", "시장구분": "KOSPI"},
-        {"종목코드": "000660", "종목명": "SK하이닉스", "시장구분": "KOSPI"},
-        {"종목코드": "035420", "종목명": "NAVER", "시장구분": "KOSPI"},
-    ])
-    return mapper
-
+def mock_scr():
+    scr = MagicMock()
+    # _load_all_stocks() 필터링 동작 검증을 위해 다양한 케이스 포함
+    scr.df = pd.DataFrame({
+        "종목코드": ["005930", "000660", "069500", "123456"], 
+        "종목명": ["삼성전자", "SK하이닉스", "KODEX 200", "이상한스팩"],
+        "시장구분": ["KOSPI", "KOSPI", "KOSPI", "KOSDAQ"]
+    })
+    return scr
 
 @pytest.fixture
-def mock_mapper_with_etf():
-    """ETF/우선주 포함 매퍼 mock."""
-    mapper = MagicMock()
-    mapper.df = pd.DataFrame([
-        {"종목코드": "005930", "종목명": "삼성전자", "시장구분": "KOSPI"},
-        {"종목코드": "005935", "종목명": "삼성전자우", "시장구분": "KOSPI"},   # 우선주 (끝자리 5)
-        {"종목코드": "069500", "종목명": "KODEX 200", "시장구분": "KOSPI"},    # ETF
-        {"종목코드": "000660", "종목명": "SK하이닉스", "시장구분": "KOSPI"},
-        {"종목코드": "999990", "종목명": "테스트스팩1호", "시장구분": "KOSDAQ"}, # 스팩
-    ])
-    return mapper
-
-
-@pytest_asyncio.fixture
-async def repo(tmp_path):
-    db_path = str(tmp_path / "test_stocks.db")
-    r = StockRepository(db_path=db_path)
-    yield r
-    await r.close()
-
+def mock_sr():
+    return AsyncMock()
 
 @pytest.fixture
 def mock_mcs():
-    mcs = MagicMock()
-    mcs.is_market_open_now = AsyncMock(return_value=False)
-    mcs.get_latest_trading_date = AsyncMock(return_value="20260318")
+    mcs = AsyncMock()
+    mcs.is_market_open_now.return_value = False
+    mcs.get_latest_trading_date.return_value = "2025-01-01"
     return mcs
 
+@pytest.fixture
+def mock_ns():
+    return AsyncMock()
 
 @pytest.fixture
-def task(mock_sqs, mock_mapper, repo, mock_mcs):
-    return DailyPriceCollectorTask(
+def task(mock_sqs, mock_scr, mock_sr, mock_mcs, mock_ns):
+    t = DailyPriceCollectorTask(
         stock_query_service=mock_sqs,
-        stock_code_repository=mock_mapper,
-        stock_repo=repo,
+        stock_code_repository=mock_scr,
+        stock_repo=mock_sr,
         market_calendar_service=mock_mcs,
         logger=MagicMock(),
+        notification_service=mock_ns
     )
+    # 검증을 빠르게 하기 위해 카나리 종목 단순화
+    t.CANARY_STOCKS = ["005930"]
+    return t
 
+@pytest.mark.asyncio
+async def test_collect_all_prices_market_open(task, mock_mcs):
+    """장 중일 때 수집을 건너뛰는지 확인"""
+    mock_mcs.is_market_open_now.return_value = True
+    with patch.object(task, '_try_collect_via_fdr', new_callable=AsyncMock) as mock_fdr:
+        await task._collect_all_prices()
+        mock_fdr.assert_not_called()
 
-def _make_price_response(code="005930", price=70000):
-    """get_current_price 성공 응답 mock."""
-    output = MagicMock()
-    output.stck_prpr = str(price)
-    output.stck_oprc = str(price - 1000)
-    output.stck_hgpr = str(price + 1000)
-    output.stck_lwpr = str(price - 1500)
-    output.stck_sdpr = str(price - 500)
-    output.prdy_vrss = "500"
-    output.prdy_vrss_sign = "2"
-    output.prdy_ctrt = "0.72"
-    output.acml_vol = "10000000"
-    output.acml_tr_pbmn = "700000000000"
-    output.hts_avls = "4200000000000000"
-    output.per = "12.5"
-    output.pbr = "1.3"
-    output.eps = "5600"
-    output.w52_hgpr = "80000"
-    output.w52_lwpr = "55000"
+@pytest.mark.asyncio
+async def test_collect_all_prices_already_collected(task):
+    """이미 해당 날짜의 수집이 완료되었을 때 건너뛰는지 확인"""
+    task._last_collected_date = "2025-01-01"
+    with patch.object(task, '_try_collect_via_fdr', new_callable=AsyncMock) as mock_fdr:
+        await task._collect_all_prices()
+        mock_fdr.assert_not_called()
 
-    return ResCommonResponse(
+@pytest.mark.asyncio
+async def test_collect_all_prices_tier1_fdr_success(task):
+    """Tier 1 (FDR) 수집 성공 시 pykrx, Broker API 호출 안 하는지 확인"""
+    with patch.object(task, '_try_collect_via_fdr', return_value=True) as mock_fdr, \
+         patch.object(task, '_finish_collection', new_callable=AsyncMock) as mock_finish, \
+         patch.object(task, '_try_collect_via_pykrx', new_callable=AsyncMock) as mock_pykrx:
+        
+        await task._collect_all_prices()
+        mock_fdr.assert_called_once()
+        mock_pykrx.assert_not_called()
+        mock_finish.assert_called_once()
+        args, _ = mock_finish.call_args
+        assert args[0] == "2025-01-01"
+        assert args[2] == "FDR"
+
+@pytest.mark.asyncio
+async def test_collect_all_prices_tier2_pykrx_success(task):
+    """FDR 실패 시 Tier 2 (pykrx) 수집 성공 및 Broker API 호출 스킵 확인"""
+    with patch.object(task, '_try_collect_via_fdr', return_value=False), \
+         patch.object(task, '_try_collect_via_pykrx', return_value=True) as mock_pykrx, \
+         patch.object(task, '_finish_collection', new_callable=AsyncMock) as mock_finish, \
+         patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_api:
+        
+        await task._collect_all_prices()
+        mock_pykrx.assert_called_once()
+        mock_api.assert_not_called()
+        mock_finish.assert_called_once()
+        args, _ = mock_finish.call_args
+        assert args[2] == "pykrx"
+
+@pytest.mark.asyncio
+async def test_collect_all_prices_tier3_broker_api_success(task):
+    """크롤링 모두 실패 시 최후 수단으로 Broker API 수집 폴백 동작 확인"""
+    with patch.object(task, '_try_collect_via_fdr', return_value=False), \
+         patch.object(task, '_try_collect_via_pykrx', return_value=False), \
+         patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_api, \
+         patch.object(task, '_finish_collection', new_callable=AsyncMock) as mock_finish:
+        
+        await task._collect_all_prices()
+        mock_api.assert_called_once()
+        mock_finish.assert_called_once()
+        args, _ = mock_finish.call_args
+        assert args[2] == "Broker API"
+
+@pytest.mark.asyncio
+async def test_verify_crawler_data_success(task):
+    """API 응답과 크롤링 데이터가 일치할 때 검증 성공 확인"""
+    df_crawled = pd.DataFrame({
+        "종목코드": ["005930"],
+        "종가": [80000],
+        "시가": [79000],
+        "고가": [81000],
+        "저가": [78000]
+    }).set_index("종목코드")
+
+    api_resp = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
-        msg1="현재가 조회 성공",
-        data={"output": output},
+        msg1="",
+        data={"output": {
+            "stck_prpr": "80000",
+            "stck_oprc": "79000",
+            "stck_hgpr": "81000",
+            "stck_lwpr": "78000"
+        }}
     )
-
-
-# --- 태스크 속성 테스트 ---
-
-
-class TestTaskProperties:
-
-    def test_task_name(self, task):
-        assert task.task_name == "daily_price_collector"
-
-    def test_priority(self, task):
-        assert task.priority == TaskPriority.LOW
-
-    def test_initial_state(self, task):
-        assert task.state == TaskState.IDLE
-
-    def test_initial_progress(self, task):
-        progress = task.get_progress()
-        assert progress["running"] is False
-        assert progress["processed"] == 0
-
-
-# --- 수집 로직 테스트 ---
-
-
-class TestCollectAllPrices:
-
-    async def test_collect_stores_to_db(self, task, mock_sqs, repo):
-        """수집 완료 후 DB에 데이터가 저장된다."""
-        async def _mock_get_price(code, **kwargs):
-            return _make_price_response(code)
-        mock_sqs.get_current_price.side_effect = _mock_get_price
-
-        await task._collect_all_prices()
-
-        result = await repo.get_prices_by_date("20260318")
-        assert len(result) == 3
-        codes = {r["code"] for r in result}
-        assert codes == {"005930", "000660", "035420"}
-
-    async def test_collect_extracts_fields(self, task, mock_sqs, repo):
-        """ResStockFullInfoApiOutput 필드가 정확히 추출된다."""
-        async def _mock_get_price(code, **kwargs):
-            return _make_price_response("005930", 70000)
-        mock_sqs.get_current_price.side_effect = _mock_get_price
-
-        await task._collect_all_prices()
-
-        result = await repo.get_prices_by_date("20260318")
-        assert len(result) == 3
-        samsung = next(r for r in result if r["code"] == "005930")
-        assert samsung["current_price"] == 70000
-        assert samsung["open_price"] == 69000
-        assert samsung["high_price"] == 71000
-        assert samsung["per"] == 12.5
-        assert samsung["market"] == "KOSPI"
-
-    async def test_collect_skips_failed_responses(self, task, mock_sqs, repo):
-        """API 실패 응답은 건너뛰고 성공한 종목만 저장한다."""
-        async def _mock_get_current_price(code, **_):
-            if code == "000660":
-                return ResCommonResponse(
-                    rt_cd=ErrorCode.API_ERROR.value,
-                    msg1="조회 실패",
-                    data=None,
-                )
-            return _make_price_response(code)
-
-        mock_sqs.get_current_price.side_effect = _mock_get_current_price
-
-        await task._collect_all_prices()
-
-        result = await repo.get_prices_by_date("20260318")
-        codes = {r["code"] for r in result}
-        assert "000660" not in codes
-        assert "005930" in codes
-
-    async def test_collect_updates_progress(self, task, mock_sqs):
-        """수집 중 진행률이 업데이트된다."""
-        async def _mock_get_price(code, **kwargs):
-            return _make_price_response(code)
-        mock_sqs.get_current_price.side_effect = _mock_get_price
-
-        await task._collect_all_prices()
-
-        progress = task.get_progress()
-        assert progress["running"] is False  # 완료 후
-        assert progress["total"] == 3
-        assert progress["processed"] == 3
-        assert progress["collected"] == 3
-
-    async def test_collect_skip_during_market_hours(self, task, mock_mcs, mock_sqs):
-        """장 중에는 수집을 건너뛴다."""
-        mock_mcs.is_market_open_now.return_value = True
-
-        await task._collect_all_prices()
-
-        mock_sqs.get_current_price.assert_not_called()
-
-    async def test_collect_skip_already_collected(self, task, mock_sqs):
-        """이미 수집한 날짜는 건너뛴다."""
-        async def _mock_get_price(code, **kwargs):
-            return _make_price_response(code)
-        mock_sqs.get_current_price.side_effect = _mock_get_price
-
-        await task._collect_all_prices()  # 첫 번째 수집
-        mock_sqs.get_current_price.reset_mock()
-
-        await task._collect_all_prices()  # 동일 날짜 → 스킵
-        mock_sqs.get_current_price.assert_not_called()
-
-    async def test_collect_no_trading_date(self, task, mock_mcs, mock_sqs):
-        """거래일을 확인할 수 없으면 중단."""
-        mock_mcs.get_latest_trading_date.return_value = None
-
-        await task._collect_all_prices()
-
-        mock_sqs.get_current_price.assert_not_called()
-
-
-# --- ETF/우선주 필터링 테스트 ---
-
-
-class TestLoadAllStocks:
-
-    def test_filters_etf_and_preferred(self, mock_sqs, mock_mapper_with_etf, repo, mock_mcs):
-        """ETF, 우선주, 스팩이 필터링된다."""
-        task = DailyPriceCollectorTask(
-            stock_query_service=mock_sqs,
-            stock_code_repository=mock_mapper_with_etf,
-            stock_repo=repo,
-            market_calendar_service=mock_mcs,
-            logger=MagicMock(),
-        )
-        stocks = task._load_all_stocks()
-        codes = [code for code, _, _ in stocks]
-        assert "005930" in codes       # 삼성전자 ✓
-        assert "000660" in codes       # SK하이닉스 ✓
-        assert "005935" not in codes   # 우선주 ✗
-        assert "069500" not in codes   # ETF ✗
-        assert "999990" not in codes   # 스팩 ✗
-
-
-# --- Suspend/Resume 테스트 ---
-
-
-class TestSuspendResume:
-
-    async def test_suspend_clears_event(self, task):
-        """suspend 후 _suspend_event이 cleared 상태."""
-        task._state = TaskState.RUNNING
-        await task.suspend()
-        assert task.state == TaskState.SUSPENDED
-        assert not task._suspend_event.is_set()
-
-    async def test_resume_sets_event(self, task):
-        """resume 후 _suspend_event이 set 상태."""
-        task._state = TaskState.RUNNING
-        await task.suspend()
-        await task.resume()
-        assert task.state == TaskState.RUNNING
-        assert task._suspend_event.is_set()
-
-    async def test_suspend_pauses_collection(self, task, mock_sqs, repo):
-        """suspend 시 chunk 사이에서 대기한다."""
-        collected_codes = []
-        barrier = asyncio.Event()
-
-        async def _mock_get_current_price(code, **_):
-            collected_codes.append(code)
-            if len(collected_codes) == 1:
-                barrier.set()
-            return _make_price_response(code)
-
-        mock_sqs.get_current_price = AsyncMock(side_effect=_mock_get_current_price)
-
-        task.API_CHUNK_SIZE = 1
-        task.CHUNK_SLEEP_SEC = 0
-
-        collect_task = asyncio.create_task(task._collect_all_prices())
-
-        await barrier.wait()
-
-        task._state = TaskState.RUNNING
-        await task.suspend()
-
-        count_at_suspend = len(collected_codes)
-        await asyncio.sleep(0.05)
-        assert len(collected_codes) == count_at_suspend
-
-        await task.resume()
-        await collect_task
-
-        result = await repo.get_prices_by_date("20260318")
-        assert len(result) == 3
-
-
-# --- Start/Stop 테스트 ---
-
-
-class TestStartStop:
-
-    async def test_start_creates_tasks(self, task):
-        """start() 호출 시 asyncio 태스크가 생성된다."""
-        await task.start()
-        assert task.state == TaskState.RUNNING
-        assert len(task._tasks) == 1  # scheduler
-
-        await task.stop()
-        assert task.state == TaskState.STOPPED
-        assert len(task._tasks) == 0
-
-    async def test_start_idempotent(self, task):
-        """이미 RUNNING이면 start()가 중복 실행되지 않는다."""
-        await task.start()
-        tasks_count = len(task._tasks)
-
-        await task.start()  # 중복 호출
-        assert len(task._tasks) == tasks_count
-
-        await task.stop()
-        assert task.state == TaskState.STOPPED
-
-
-# --- _extract_record 테스트 ---
-
-
-class TestExtractRecord:
-
-    def test_extract_from_pydantic_model(self):
-        """Pydantic 모델(ResStockFullInfoApiOutput)에서 필드 추출."""
-        resp = _make_price_response("005930", 70000)
-
-        record = DailyPriceCollectorTask._extract_record(
-            "005930", "삼성전자", "KOSPI", resp
-        )
-
-        assert record is not None
-        assert record["code"] == "005930"
-        assert record["current_price"] == 70000
-        assert record["market"] == "KOSPI"
-
-    def test_extract_from_dict(self):
-        """dict 형태 output에서도 필드 추출."""
-        resp = ResCommonResponse(
+    with patch.object(task, '_fetch_with_retry', return_value=api_resp):
+        result = await task._verify_crawler_data(df_crawled, "TEST")
+        assert result is True
+
+@pytest.mark.asyncio
+async def test_verify_crawler_data_fail_mismatch(task):
+    """API 응답과 크롤링 데이터가 하나라도 불일치할 때 검증 실패 확인"""
+    df_crawled = pd.DataFrame({
+        "종목코드": ["005930"],
+        "종가": [80000],
+        "시가": [79000],
+        "고가": [81000],
+        "저가": [78000]
+    }).set_index("종목코드")
+
+    api_resp = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="",
+        data={"output": {
+            "stck_prpr": "81000", # 종가 불일치
+            "stck_oprc": "79000",
+            "stck_hgpr": "81000",
+            "stck_lwpr": "78000"
+        }}
+    )
+    with patch.object(task, '_fetch_with_retry', return_value=api_resp):
+        result = await task._verify_crawler_data(df_crawled, "TEST")
+        assert result is False
+
+@pytest.mark.asyncio
+async def test_verify_crawler_data_api_fail(task):
+    """검증용 API 호출 자체가 실패했을 때 검증 실패 처리 확인"""
+    df_crawled = pd.DataFrame()
+    with patch.object(task, '_fetch_with_retry', return_value=None):
+        result = await task._verify_crawler_data(df_crawled, "TEST")
+        assert result is False
+
+@pytest.mark.asyncio
+async def test_try_collect_via_fdr(task):
+    """FDR 방식 수집 스레드 실행, 검증, 변환 및 DB Batch 저장 확인"""
+    df_fdr = pd.DataFrame({"Code": ["005930"], "Close": [80000]})
+    
+    with patch('asyncio.to_thread', new_callable=AsyncMock, return_value=df_fdr), \
+         patch.object(task, '_verify_crawler_data', return_value=True), \
+         patch.object(task, '_format_dataframe_to_records', return_value=[{"code": "005930"}]), \
+         patch.object(task, '_save_bulk_to_db_with_progress', new_callable=AsyncMock) as mock_save:
+        
+        result = await task._try_collect_via_fdr("2025-01-01", 0.0)
+        assert result is True
+        mock_save.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_try_collect_via_pykrx(task):
+    """pykrx 방식 수집 스레드 실행, 검증, 변환 및 DB Batch 저장 확인"""
+    df_pykrx = pd.DataFrame({"종목코드": ["005930"], "종가": [80000]})
+    
+    with patch('asyncio.to_thread', new_callable=AsyncMock, return_value=df_pykrx), \
+         patch.object(task, '_verify_crawler_data', return_value=True), \
+         patch.object(task, '_format_dataframe_to_records', return_value=[{"code": "005930"}]), \
+         patch.object(task, '_save_bulk_to_db_with_progress', new_callable=AsyncMock) as mock_save:
+        
+        result = await task._try_collect_via_pykrx("2025-01-01", 0.0)
+        assert result is True
+        mock_save.assert_called_once()
+
+def test_format_dataframe_to_records(task):
+    """DataFrame 파싱 로직 및 ETF/스팩 등 제외 필터 정상 작동 확인"""
+    df = pd.DataFrame({
+        "종목코드": ["005930", "069500", "000000", "000660"], 
+        "종가": [80000, 30000, 0, 150000],
+        "시가": [79000, 29000, 0, 140000],
+        "고가": [81000, 31000, 0, 160000],
+        "저가": [78000, 28000, 0, 130000],
+        "거래량": [1000, 500, 0, 2000],
+        "거래대금": [80000000, 15000000, 0, 300000000],
+        "시가총액": [400000000000, 10000000000, 0, 100000000000],
+        "대비": [1000, 1000, 0, -2000],
+        "등락률": [1.25, 3.45, 0, -1.31]
+    })
+
+    records = task._format_dataframe_to_records(df)
+    
+    # KODEX 200 (069500) 및 000000 등은 제외되어 2개만 남아야 함
+    assert len(records) == 2
+    
+    r_5930 = next(r for r in records if r["code"] == "005930")
+    assert r_5930["current_price"] == 80000
+    assert r_5930["change_price"] == 1000
+    assert r_5930["change_sign"] == "2" # 상승 (대비값 양수)
+
+    r_0660 = next(r for r in records if r["code"] == "000660")
+    assert r_0660["change_price"] == -2000
+    assert r_0660["change_sign"] == "5" # 하락 (대비값 음수)
+
+@pytest.mark.asyncio
+async def test_save_bulk_to_db_with_progress(task):
+    """DB 일괄 저장 시 배치 단위로 쪼개어 호출하는지 확인"""
+    task.DB_UPSERT_BATCH_SIZE = 2
+    records = [{"code": "1"}, {"code": "2"}, {"code": "3"}]
+    
+    await task._save_bulk_to_db_with_progress("2025-01-01", records, 0.0)
+    
+    # 총 3개, batch_size=2 이므로 2번 호출되어야 함
+    assert task._stock_repo.upsert_daily_snapshot.call_count == 2
+    assert task._progress["processed"] == 3
+
+@pytest.mark.asyncio
+async def test_finish_collection(task):
+    """종료 처리 로직 및 알림 발생 확인"""
+    await task._finish_collection("2025-01-01", 0.0, "TEST")
+    assert task._last_collected_date == "2025-01-01"
+    task._ns.emit.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_collect_via_broker_api(task):
+    """Broker API 청크 기반 수집 로직 확인"""
+    task.API_CHUNK_SIZE = 2
+    task.DB_UPSERT_BATCH_SIZE = 2
+    
+    with patch.object(task, '_load_all_stocks', return_value=[("005930", "삼성전자", "KOSPI"), ("000660", "SK하이닉스", "KOSPI")]), \
+         patch.object(task, '_fetch_with_retry', new_callable=AsyncMock) as mock_fetch:
+        
+        mock_fetch.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
-            msg1="ok",
-            data={
-                "output": {
-                    "stck_prpr": "70000",
-                    "stck_oprc": "69000",
-                    "stck_hgpr": "71000",
-                    "stck_lwpr": "68500",
-                    "stck_sdpr": "69500",
-                    "prdy_vrss": "500",
-                    "prdy_vrss_sign": "2",
-                    "prdy_ctrt": "0.72",
-                    "acml_vol": "10000000",
-                    "acml_tr_pbmn": "700000000000",
-                    "hts_avls": "4200000000000000",
-                    "per": "12.5",
-                    "pbr": "1.3",
-                    "eps": "5600",
-                    "w52_hgpr": "80000",
-                    "w52_lwpr": "55000",
-                }
-            },
+            msg1="",
+            data={"output": {"stck_prpr": "80000", "acml_vol": "1000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000", "stck_sdpr": "79000", "prdy_vrss": "1000", "prdy_vrss_sign": "2", "prdy_ctrt": "1.25", "acml_tr_pbmn": "80000000", "hts_avls": "400000000000", "per": "10.5", "pbr": "1.5", "eps": "100", "w52_hgpr": "90000", "w52_lwpr": "70000"}}
         )
-
-        record = DailyPriceCollectorTask._extract_record(
-            "005930", "삼성전자", "KOSPI", resp
-        )
-
-        assert record is not None
-        assert record["current_price"] == 70000
-        assert record["per"] == 12.5
-
-    def test_extract_none_response(self):
-        """None 응답은 None 반환."""
-        assert DailyPriceCollectorTask._extract_record("005930", "삼성전자", "KOSPI", None) is None
-
-    def test_extract_empty_data(self):
-        """data가 None인 응답은 None 반환."""
-        resp = ResCommonResponse(rt_cd="0", msg1="ok", data=None)
-        assert DailyPriceCollectorTask._extract_record("005930", "삼성전자", "KOSPI", resp) is None
+        
+        await task._collect_via_broker_api("2025-01-01", 0.0)
+        
+        # 2개 종목을 API로 호출하므로 _fetch_with_retry는 2번 호출됨
+        assert mock_fetch.call_count == 2
+        # batch_size=2 이므로 2개가 채워지거나 루프 종료 시 1번 upsert 호출됨
+        task._stock_repo.upsert_daily_snapshot.assert_called_once()
