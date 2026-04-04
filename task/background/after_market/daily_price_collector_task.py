@@ -7,8 +7,9 @@ import asyncio
 import logging
 import time
 import pandas as pd
-from typing import Dict, List, Optional, TYPE_CHECKING
+import FinanceDataReader as fdr
 
+from typing import Dict, List, Optional, TYPE_CHECKING
 from common.types import ErrorCode
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
@@ -154,14 +155,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
             if await self._try_collect_via_fdr(target_date, start_time):
                 await self._finish_collection(target_date, start_time, "FDR")
                 return
-
-            # [Tier 2] pykrx 일괄 수집 시도
-            self._logger.warning("FinanceDataReader 수집/검증 실패. pykrx Fallback 합니다.")
-            if await self._try_collect_via_pykrx(target_date, start_time):
-                await self._finish_collection(target_date, start_time, "pykrx")
-                return
-
-            # [Tier 3] 모두 실패 시 최후의 보루 증권사 API 청크 수집
+            
+            # [Tier 2] 모두 실패 시 최후의 보루 증권사 API 청크 수집
             self._logger.warning("크롤링 모두 실패. 증권사 API(Chunk) 수집으로 Fallback 합니다.")
             if self._ns:
                 await self._ns.emit(
@@ -248,74 +243,11 @@ class DailyPriceCollectorTask(AfterMarketTask):
         return True
     
     # ── 3. 수집 티어 구현 ─────────────────────────────────────────
-
-    async def _try_collect_via_pykrx(self, target_date: str, start_time: float) -> bool:
-        """[Tier 1] pykrx를 활용한 일괄 수집 (동기 함수이므로 백그라운드 스레드에서 실행)"""
-        self._progress["status"] = "pykrx 일괄 수집 중..."
-        
-        def _fetch_pykrx_sync():
-            import datetime
-            import logging
-
-            # target_dt = datetime.datetime.strptime(target_date, "%Y-%m-%d").date()
-            # if target_dt > datetime.date.today():
-            #     raise ValueError(f"미래 날짜({target_date})는 pykrx에서 조회할 수 없습니다.")
-
-            class SuppressPykrxLoggingFilter(logging.Filter):
-                def filter(self, record):
-                    # pykrx 내부의 잘못된 로깅 인자로 인한 TypeError 방지
-                    if record.funcName == 'wrapper' and 'pykrx' in record.pathname:
-                        return False
-                    return True
-
-            pykrx_filter = SuppressPykrxLoggingFilter()
-            logging.getLogger().addFilter(pykrx_filter)
-
-            try:
-                from pykrx import stock
-                # pykrx의 target_date 포맷은 'YYYYMMDD'
-                date_str = target_date.replace("-", "") 
-                
-                df_ohlcv = stock.get_market_ohlcv(date_str, market="ALL")
-                df_fund = stock.get_market_fundamental(date_str, market="ALL")
-                df_cap = stock.get_market_cap(date_str, market="ALL")
-                
-                if df_ohlcv.empty:
-                    raise ValueError("pykrx OHLCV 데이터가 비어있습니다.")
-                    
-                df_merged = pd.concat([df_ohlcv, df_fund, df_cap], axis=1)
-                # 인덱스(티커)를 '종목코드' 컬럼으로 변경
-                df_merged.reset_index(inplace=True)
-                df_merged.rename(columns={'티커': '종목코드'}, inplace=True)
-                return df_merged
-            finally:
-                logging.getLogger().removeFilter(pykrx_filter)
-
-        try:
-            df_pykrx = await asyncio.to_thread(_fetch_pykrx_sync)
-            
-            # 검증 (Sanity Check)
-            if not await self._verify_crawler_data(df_pykrx, "pykrx"):
-                return False
-                
-            formatted_records = self._format_dataframe_to_records(df_pykrx)
-            await self._save_bulk_to_db_with_progress(target_date, formatted_records, start_time)            
-            return True
-        except Exception as e:
-            self._logger.error(f"pykrx 수집 중 예외 발생: {e}")
-            return False
-
     async def _try_collect_via_fdr(self, target_date: str, start_time: float) -> bool:
         """[Tier 2] FinanceDataReader를 활용한 수집 (차선책)"""
         self._progress["status"] = "FinanceDataReader 일괄 수집 중..."
         
         def _fetch_fdr_sync():
-            # import datetime
-            # target_dt = datetime.datetime.strptime(target_date, "%Y-%m-%d").date()
-            # if target_dt > datetime.date.today():
-            #     raise ValueError(f"미래 날짜({target_date})는 FinanceDataReader로 조회할 수 없습니다.")
-
-            import FinanceDataReader as fdr
             # FDR은 당일 시세(OHLCV) 전체 리스트를 가져오는 기능을 지원
             df_fdr = fdr.StockListing('KRX')
             if df_fdr.empty:
@@ -339,7 +271,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
             return False
 
     async def _collect_via_broker_api(self, target_date: str, start_time: float) -> None:
-        """[Tier 3] 증권사 API 청크 기반 수집 로직 (약 10분 소요)"""
+        """[Tier 2] 증권사 API 청크 기반 수집 로직 (약 10분 소요)"""
         all_stocks = getattr(self, "_all_stocks_cache", None) or self._load_all_stocks()
         total = len(all_stocks)
         
@@ -417,105 +349,6 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 "전체 종목 현재가 수집 완료",
                 f"소스: {source} / 소요: {elapsed:.1f}초"
             )
-
-    # async def _collect_via_broker_api(self, start_time: float = 0.0) -> None:
-    #     """전체 종목 현재가+펀더멘털을 수집하여 StockRepository에 저장한다."""
-    #     t_start_total = self._pm.start_timer()
-    #     self._is_collecting = True
-
-    #     try:
-    #         # 1. 전체 종목 로드
-    #         all_stocks = self._load_all_stocks()
-    #         total = len(all_stocks)
-    #         self._progress["total"] = total
-    #         self._logger.info(f"현재가 수집: 전체 {total}개 종목 순회 시작")
-
-    #         # 2. 청크별 수집
-    #         collected_records: List[Dict] = []
-    #         db_upsert_buffer: List[Dict] = []
-    #         processed = 0
-
-    #         for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
-    #             # suspend 체크포인트
-    #             await self._suspend_event.wait()
-
-    #             # 병렬 API 호출
-    #             tasks = [
-    #                 self._fetch_with_retry(code)
-    #                 for code, _, _ in chunk
-    #             ]
-    #             responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-    #             # 결과 처리
-    #             batch_records = []
-    #             for (code, name, market), resp in zip(chunk, responses):
-    #                 if isinstance(resp, Exception):
-    #                     continue
-    #                 record = self._extract_record_for_broker_api(code, name, market, resp)
-    #                 if record:
-    #                     batch_records.append(record)
-
-    #             # 메모리 버퍼에 누적 후 임계치(DB_UPSERT_BATCH_SIZE) 도달 시 일괄 저장
-    #             if batch_records:
-    #                 db_upsert_buffer.extend(batch_records)
-    #                 collected_records.extend(batch_records)
-
-    #             if len(db_upsert_buffer) >= self.DB_UPSERT_BATCH_SIZE:
-    #                 await self._stock_repo.upsert_daily_snapshot(target_date, db_upsert_buffer)
-    #                 db_upsert_buffer.clear()
-
-    #             processed += len(chunk)
-    #             elapsed = time.time() - start_time
-    #             self._progress.update({
-    #                 "processed": processed,
-    #                 "collected": len(collected_records),
-    #                 "elapsed": round(elapsed, 1),
-    #             })
-
-    #             if processed % 50 == 0 or processed >= total:
-    #                 self._logger.info(
-    #                     f"현재가 수집 진행: {processed}/{total} "
-    #                     f"({processed / total * 100:.1f}%) "
-    #                     f"| 수집: {len(collected_records)} | 소요: {elapsed:.1f}s"
-    #                 )
-
-    #             # 전체 캐시 HIT면 sleep 불필요
-    #             all_cache_hit = all(
-    #                 getattr(r, '_cache_hit', False)
-    #                 for r in responses if not isinstance(r, Exception)
-    #             )
-    #             if not all_cache_hit:
-    #                 await asyncio.sleep(self.CHUNK_SLEEP_SEC)
-
-    #         # 루프 종료 후 버퍼에 남은 데이터 일괄 저장
-    #         if db_upsert_buffer:
-    #             await self._stock_repo.upsert_daily_snapshot(target_date, db_upsert_buffer)
-    #             db_upsert_buffer.clear()
-
-    #         # 3. 완료 처리
-    #         self._last_collected_date = target_date
-    #         elapsed = time.time() - start_time
-    #         self._logger.info(
-    #             f"전체 종목 현재가 수집 완료: {len(collected_records)}개 종목, "
-    #             f"소요: {elapsed:.1f}s"
-    #         )
-    #         self._pm.log_timer(
-    #             "DailyPriceCollectorTask._collect_all_prices",
-    #             t_start_total, threshold=10.0,
-    #         )
-    #         if self._ns:
-    #             await self._ns.emit(
-    #                 NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전체 종목 현재가 수집 완료",
-    #                 f"{len(collected_records)}개 종목 수집, 소요: {elapsed:.1f}초",
-    #             )
-
-    #     except Exception as e:
-    #         self._logger.error(f"현재가 수집 실패: {e}", exc_info=True)
-    #         if self._ns:
-    #             await self._ns.emit(NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "현재가 수집 실패", str(e))
-    #     finally:
-    #         self._is_collecting = False
-    #         self._progress["running"] = False
 
     # # ── 내부 헬퍼 ─────────────────────────────────────────
 

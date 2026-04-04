@@ -68,39 +68,23 @@ async def test_collect_all_prices_already_collected(task):
 
 @pytest.mark.asyncio
 async def test_collect_all_prices_tier1_fdr_success(task):
-    """Tier 1 (FDR) 수집 성공 시 pykrx, Broker API 호출 안 하는지 확인"""
+    """Tier 1 (FDR) 수집 성공 시 Broker API 호출 안 하는지 확인"""
     with patch.object(task, '_try_collect_via_fdr', return_value=True) as mock_fdr, \
          patch.object(task, '_finish_collection', new_callable=AsyncMock) as mock_finish, \
-         patch.object(task, '_try_collect_via_pykrx', new_callable=AsyncMock) as mock_pykrx:
+         patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_api:
         
         await task._collect_all_prices()
         mock_fdr.assert_called_once()
-        mock_pykrx.assert_not_called()
+        mock_api.assert_not_called()
         mock_finish.assert_called_once()
         args, _ = mock_finish.call_args
         assert args[0] == "2025-01-01"
         assert args[2] == "FDR"
 
 @pytest.mark.asyncio
-async def test_collect_all_prices_tier2_pykrx_success(task):
-    """FDR 실패 시 Tier 2 (pykrx) 수집 성공 및 Broker API 호출 스킵 확인"""
+async def test_collect_all_prices_tier2_broker_api_success(task):
+    """크롤링(FDR) 실패 시 최후 수단으로 Broker API 수집 폴백 동작 확인"""
     with patch.object(task, '_try_collect_via_fdr', return_value=False), \
-         patch.object(task, '_try_collect_via_pykrx', return_value=True) as mock_pykrx, \
-         patch.object(task, '_finish_collection', new_callable=AsyncMock) as mock_finish, \
-         patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_api:
-        
-        await task._collect_all_prices()
-        mock_pykrx.assert_called_once()
-        mock_api.assert_not_called()
-        mock_finish.assert_called_once()
-        args, _ = mock_finish.call_args
-        assert args[2] == "pykrx"
-
-@pytest.mark.asyncio
-async def test_collect_all_prices_tier3_broker_api_success(task):
-    """크롤링 모두 실패 시 최후 수단으로 Broker API 수집 폴백 동작 확인"""
-    with patch.object(task, '_try_collect_via_fdr', return_value=False), \
-         patch.object(task, '_try_collect_via_pykrx', return_value=False), \
          patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_api, \
          patch.object(task, '_finish_collection', new_callable=AsyncMock) as mock_finish:
         
@@ -195,21 +179,6 @@ async def test_try_collect_via_fdr(task):
         assert result is True
         mock_save.assert_called_once()
         assert task._progress["status"] == "FinanceDataReader 일괄 수집 중..."
-
-@pytest.mark.asyncio
-async def test_try_collect_via_pykrx(task):
-    """pykrx 방식 수집 스레드 실행, 검증, 변환 및 DB Batch 저장 확인"""
-    df_pykrx = pd.DataFrame({"종목코드": ["005930"], "종가": [80000]})
-    
-    with patch('asyncio.to_thread', new_callable=AsyncMock, return_value=df_pykrx), \
-         patch.object(task, '_verify_crawler_data', return_value=True), \
-         patch.object(task, '_format_dataframe_to_records', return_value=[{"code": "005930"}]), \
-         patch.object(task, '_save_bulk_to_db_with_progress', new_callable=AsyncMock) as mock_save:
-        
-        result = await task._try_collect_via_pykrx("2025-01-01", 0.0)
-        assert result is True
-        mock_save.assert_called_once()
-        assert task._progress["status"] == "pykrx 일괄 수집 중..."
 
 def test_format_dataframe_to_records(task):
     """DataFrame 파싱 로직 및 ETF/스팩 등 제외 필터 정상 작동 확인"""
