@@ -46,8 +46,8 @@ def task(mock_sqs, mock_scr, mock_sr, mock_mcs, mock_ns):
         logger=MagicMock(),
         notification_service=mock_ns
     )
-    # 검증을 빠르게 하기 위해 카나리 종목 단순화
-    t.CANARY_STOCKS = ["005930"]
+    # 다중 카나리 종목 검증 로직 테스트를 위해 2개 지정
+    t.CANARY_STOCKS = ["005930", "000660"]
     return t
 
 @pytest.mark.asyncio
@@ -109,51 +109,67 @@ async def test_collect_all_prices_caching_and_cleanup(task):
 
 @pytest.mark.asyncio
 async def test_verify_crawler_data_success(task):
-    """API 응답과 크롤링 데이터가 일치할 때 검증 성공 확인"""
+    """API 응답과 크롤링 데이터가 모두 일치할 때 검증 성공 확인"""
     df_crawled = pd.DataFrame({
-        "종목코드": ["005930"],
-        "종가": [80000],
-        "시가": [79000],
-        "고가": [81000],
-        "저가": [78000]
+        "종목코드": ["005930", "000660"],
+        "종가": [80000, 150000],
+        "시가": [79000, 140000],
+        "고가": [81000, 160000],
+        "저가": [78000, 130000]
     }).set_index("종목코드")
 
-    api_resp = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="",
-        data={"output": {
-            "stck_prpr": "80000",
-            "stck_oprc": "79000",
-            "stck_hgpr": "81000",
-            "stck_lwpr": "78000"
-        }}
-    )
-    with patch.object(task, '_fetch_with_retry', return_value=api_resp):
+    async def mock_fetch(code):
+        data = {
+            "005930": {"stck_prpr": "80000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"},
+            "000660": {"stck_prpr": "150000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"}
+        }
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="", data={"output": data[code]})
+
+    with patch.object(task, '_fetch_with_retry', side_effect=mock_fetch):
+        result = await task._verify_crawler_data(df_crawled, "TEST")
+        assert result is True
+
+@pytest.mark.asyncio
+async def test_verify_crawler_data_partial_mismatch_allowed(task):
+    """1개 종목 불일치 시에는 임계치(mismatch < 2)를 넘지 않아 검증을 통과하는지 확인"""
+    df_crawled = pd.DataFrame({
+        "종목코드": ["005930", "000660"],
+        "종가": [80000, 150000],
+        "시가": [79000, 140000],
+        "고가": [81000, 160000],
+        "저가": [78000, 130000]
+    }).set_index("종목코드")
+
+    async def mock_fetch(code):
+        data = {
+            "005930": {"stck_prpr": "80000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"},
+            "000660": {"stck_prpr": "151000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"} # 종가 다름
+        }
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="", data={"output": data[code]})
+
+    with patch.object(task, '_fetch_with_retry', side_effect=mock_fetch):
         result = await task._verify_crawler_data(df_crawled, "TEST")
         assert result is True
 
 @pytest.mark.asyncio
 async def test_verify_crawler_data_fail_mismatch(task):
-    """API 응답과 크롤링 데이터가 하나라도 불일치할 때 검증 실패 확인"""
+    """API 응답과 크롤링 데이터가 2개 이상 불일치할 때 검증 실패 확인"""
     df_crawled = pd.DataFrame({
-        "종목코드": ["005930"],
-        "종가": [80000],
-        "시가": [79000],
-        "고가": [81000],
-        "저가": [78000]
+        "종목코드": ["005930", "000660"],
+        "종가": [80000, 150000],
+        "시가": [79000, 140000],
+        "고가": [81000, 160000],
+        "저가": [78000, 130000]
     }).set_index("종목코드")
 
-    api_resp = ResCommonResponse(
-        rt_cd=ErrorCode.SUCCESS.value,
-        msg1="",
-        data={"output": {
-            "stck_prpr": "81000", # 종가 불일치
-            "stck_oprc": "79000",
-            "stck_hgpr": "81000",
-            "stck_lwpr": "78000"
-        }}
-    )
-    with patch.object(task, '_fetch_with_retry', return_value=api_resp):
+    async def mock_fetch(code):
+        data = {
+            "005930": {"stck_prpr": "81000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"}, # 다름
+            "000660": {"stck_prpr": "151000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"} # 다름
+        }
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="", data={"output": data[code]})
+
+    with patch.object(task, '_fetch_with_retry', side_effect=mock_fetch):
         result = await task._verify_crawler_data(df_crawled, "TEST")
         assert result is False
 

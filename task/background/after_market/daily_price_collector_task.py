@@ -43,7 +43,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
     API_CHUNK_SIZE = 8
     CHUNK_SLEEP_SEC = 1.1
     DB_UPSERT_BATCH_SIZE = 500
-    CANARY_STOCKS = ["005930", "000660"]
+    # 검증의 견고성을 위해 시장 대표성을 띄는 다수 종목(삼성전자, SK하이닉스, NAVER, 현대차, 셀트리온) 지정
+    CANARY_STOCKS = ["005930", "000660", "035420", "005380", "068270"]
 
     def __init__(
         self,
@@ -180,12 +181,15 @@ class DailyPriceCollectorTask(AfterMarketTask):
         """
         self._logger.info(f"[{source_name}] 데이터 정합성 검증(OHLC 4종) 시작...")
         
+        match_count = 0
+        mismatch_count = 0
+        
         for code in self.CANARY_STOCKS:
             # 1. 증권사 API에서 Source of Truth 호출
             api_resp = await self._fetch_with_retry(code)
             if not api_resp or api_resp.rt_cd != ErrorCode.SUCCESS.value:
-                self._logger.warning(f"검증용 API 호출 실패({code}). 검증을 건너뛰고 실패 처리합니다.")
-                return False
+                self._logger.debug(f"검증용 API 호출 실패({code}) - 스킵")
+                continue
                 
             # API 데이터 추출 (output 뎁스 고려)
             data = api_resp.data
@@ -208,7 +212,11 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 if code in df_crawled.index:
                     row = df_crawled.loc[code]
                 else:
-                    row = df_crawled[df_crawled['종목코드'] == code].iloc[0]
+                    matches = df_crawled[df_crawled['종목코드'] == code]
+                    if matches.empty:
+                        self._logger.debug(f"크롤링 데이터에 검증용 종목({code}) 없음 - 스킵")
+                        continue
+                    row = matches.iloc[0]
                     
                 # 크롤링 데이터 추출 헬퍼 (pykrx, FDR 호환)
                 def _get_crawled_val(cols):
@@ -222,9 +230,9 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 crawled_high = _get_crawled_val(['고가', 'High'])
                 crawled_low = _get_crawled_val(['저가', 'Low'])
                 
-            except (KeyError, IndexError):
-                self._logger.warning(f"크롤링 데이터에 검증용 종목({code})이 없거나 파싱할 수 없습니다.")
-                return False
+            except Exception as e:
+                self._logger.debug(f"크롤링 데이터 파싱 예외({code}): {e} - 스킵")
+                continue
 
             # 3. 시/고/저/종 4개 값 모두 대조 (단 하나라도 다르면 실패)
             if (api_close != crawled_close or 
@@ -233,13 +241,24 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 api_low != crawled_low):
                 
                 self._logger.warning(
-                    f"데이터 불일치 감지! ({code}) 거래소 업데이트 지연 또는 라이브러리 오류입니다.\n"
+                    f"데이터 불일치 감지! ({code})\n"
                     f" - API   : 시({api_open}) 고({api_high}) 저({api_low}) 종({api_close})\n"
                     f" - {source_name.ljust(6)}: 시({crawled_open}) 고({crawled_high}) 저({crawled_low}) 종({crawled_close})"
                 )
-                return False
+                mismatch_count += 1
+            else:
+                match_count += 1
 
-        self._logger.info(f"[{source_name}] 데이터 정합성 검증(시/고/저/종가) 완벽 통과!")
+        if match_count == 0:
+            self._logger.warning(f"[{source_name}] 검증 가능한 종목이 없어 실패 처리합니다.")
+            return False
+            
+        # 2개 이상 불일치 시에만 Fallback (단일 종목 거래 정지 등 예외 대응)
+        if mismatch_count >= 2:
+            self._logger.warning(f"[{source_name}] 데이터 불일치 종목 다수({mismatch_count}개) 발생. 검증 실패.")
+            return False
+
+        self._logger.info(f"[{source_name}] 데이터 정합성 검증 통과 (일치: {match_count}, 불일치: {mismatch_count})")
         return True
     
     # ── 3. 수집 티어 구현 ─────────────────────────────────────────
@@ -267,7 +286,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
             await self._save_bulk_to_db_with_progress(target_date, formatted_records, start_time)
             return True
         except Exception as e:
-            self._logger.error(f"FDR 수집 중 예외 발생: {e}")
+            self._logger.warning(f"FDR 수집 중 예외 발생 (Fallback 시도): {e}")
             return False
 
     async def _collect_via_broker_api(self, target_date: str, start_time: float) -> None:
@@ -296,7 +315,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
             for (code, name, market), resp in zip(chunk, responses):
                 if isinstance(resp, Exception):
                     continue
-                record = self._extract_record_for_broker_api(code, name, market, resp)
+                record = self._extract_broker_api_record(code, name, market, resp)
                 if record:
                     batch_records.append(record)
 
@@ -377,7 +396,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         return None
 
     @staticmethod
-    def _extract_record_for_broker_api(
+    def _extract_broker_api_record(
         code: str, name: str, market: str, resp
     ) -> Optional[Dict]:
         """API 응답에서 DB 저장용 레코드를 추출한다."""
@@ -469,7 +488,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
     def _format_dataframe_to_records(self, df: pd.DataFrame) -> List[Dict]:
         """
         pykrx 또는 FinanceDataReader에서 수집한 DataFrame을
-        기존 _extract_record_for_broker_api와 동일한 형태의 DB 레코드 딕셔너리 리스트로 변환한다.
+        기존 _extract_broker_api_record와 동일한 형태의 DB 레코드 딕셔너리 리스트로 변환한다.
         """
         records = []
         if df is None or df.empty:
@@ -552,10 +571,10 @@ class DailyPriceCollectorTask(AfterMarketTask):
                     "per": per,
                     "pbr": pbr,
                     "eps": eps,
-                    # 일괄 수집 데이터에서는 52주 신고/신저가를 즉각 구하기 어려우므로 0 처리
-                    # (DB Upsert 로직에서 0이면 기존 값을 유지하도록 구현되어 있다면 가장 이상적입니다)
-                    "w52_high": 0,
-                    "w52_low": 0,
+                    # 일괄 수집 데이터에서는 52주 신고/신저가를 즉각 구하기 어려우므로 None 처리
+                    # (DB Upsert 로직에서 NULL(None)이면 기존 값을 유지하도록 설계됨)
+                    "w52_high": None,
+                    "w52_low": None,
                     "market": meta["market"],
                 }
                 records.append(record)
