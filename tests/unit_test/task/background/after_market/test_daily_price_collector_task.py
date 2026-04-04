@@ -111,6 +111,19 @@ async def test_collect_all_prices_tier3_broker_api_success(task):
         assert args[2] == "Broker API"
 
 @pytest.mark.asyncio
+async def test_collect_all_prices_caching_and_cleanup(task):
+    """_load_all_stocks 호출 캐싱 및 파이프라인 종료 후 캐시 초기화 검증"""
+    with patch.object(task, '_load_all_stocks', return_value=[("005930", "삼성전자", "KOSPI")]) as mock_load, \
+         patch.object(task, '_try_collect_via_fdr', return_value=True), \
+         patch.object(task, '_finish_collection', new_callable=AsyncMock):
+        
+        assert getattr(task, "_all_stocks_cache", None) is None
+        await task._collect_all_prices()
+        
+        mock_load.assert_called_once()
+        assert task._all_stocks_cache is None
+
+@pytest.mark.asyncio
 async def test_verify_crawler_data_success(task):
     """API 응답과 크롤링 데이터가 일치할 때 검증 성공 확인"""
     df_crawled = pd.DataFrame({
@@ -181,6 +194,7 @@ async def test_try_collect_via_fdr(task):
         result = await task._try_collect_via_fdr("2025-01-01", 0.0)
         assert result is True
         mock_save.assert_called_once()
+        assert task._progress["status"] == "FinanceDataReader 일괄 수집 중..."
 
 @pytest.mark.asyncio
 async def test_try_collect_via_pykrx(task):
@@ -195,6 +209,7 @@ async def test_try_collect_via_pykrx(task):
         result = await task._try_collect_via_pykrx("2025-01-01", 0.0)
         assert result is True
         mock_save.assert_called_once()
+        assert task._progress["status"] == "pykrx 일괄 수집 중..."
 
 def test_format_dataframe_to_records(task):
     """DataFrame 파싱 로직 및 ETF/스팩 등 제외 필터 정상 작동 확인"""
@@ -236,6 +251,7 @@ async def test_save_bulk_to_db_with_progress(task):
     # 총 3개, batch_size=2 이므로 2번 호출되어야 함
     assert task._stock_repo.upsert_daily_snapshot.call_count == 2
     assert task._progress["processed"] == 3
+    assert task._progress["status"] == "DB 저장 중..."
 
 @pytest.mark.asyncio
 async def test_finish_collection(task):
@@ -265,3 +281,4 @@ async def test_collect_via_broker_api(task):
         assert mock_fetch.call_count == 2
         # batch_size=2 이므로 2개가 채워지거나 루프 종료 시 1번 upsert 호출됨
         task._stock_repo.upsert_daily_snapshot.assert_called_once()
+        assert task._progress["status"] == "증권사 API 수집 중 (Fallback)..."
