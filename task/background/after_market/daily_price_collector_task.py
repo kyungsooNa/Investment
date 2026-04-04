@@ -77,7 +77,9 @@ class DailyPriceCollectorTask(AfterMarketTask):
             "total": 0,
             "collected": 0,
             "elapsed": 0.0,
+            "status": "",
         }
+        self._all_stocks_cache = None
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
@@ -144,6 +146,9 @@ class DailyPriceCollectorTask(AfterMarketTask):
         self._is_collecting = True
         start_time = time.time()
         
+        # 반복 조회를 피하기 위해 한 번 로드 후 캐싱
+        self._all_stocks_cache = self._load_all_stocks()
+        
         try:            
             # [Tier 1] pykrx 실패/검증 실패 시 FinanceDataReader 시도
             if await self._try_collect_via_fdr(target_date, start_time):
@@ -170,6 +175,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
             self._logger.error(f"전체 수집 파이프라인 실패: {e}", exc_info=True)
         finally:
             self._is_collecting = False
+            self._all_stocks_cache = None
     
     # ── 2. 데이터 검증 (Sanity Check) ─────────────────────────────
 
@@ -245,6 +251,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
     async def _try_collect_via_pykrx(self, target_date: str, start_time: float) -> bool:
         """[Tier 1] pykrx를 활용한 일괄 수집 (동기 함수이므로 백그라운드 스레드에서 실행)"""
+        self._progress["status"] = "pykrx 일괄 수집 중..."
+        
         def _fetch_pykrx_sync():
             import datetime
             import logging
@@ -299,6 +307,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
     async def _try_collect_via_fdr(self, target_date: str, start_time: float) -> bool:
         """[Tier 2] FinanceDataReader를 활용한 수집 (차선책)"""
+        self._progress["status"] = "FinanceDataReader 일괄 수집 중..."
+        
         def _fetch_fdr_sync():
             # import datetime
             # target_dt = datetime.datetime.strptime(target_date, "%Y-%m-%d").date()
@@ -330,7 +340,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
     async def _collect_via_broker_api(self, target_date: str, start_time: float) -> None:
         """[Tier 3] 증권사 API 청크 기반 수집 로직 (약 10분 소요)"""
-        all_stocks = self._load_all_stocks()
+        all_stocks = getattr(self, "_all_stocks_cache", None) or self._load_all_stocks()
         total = len(all_stocks)
         
         # 메인 오케스트레이터에서 넘겨받은 progress 정보를 API 수집 모드에 맞게 갱신
@@ -635,7 +645,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         # 1. DB 기준 종목 메타데이터 (이름, 시장구분) 맵핑용 테이블 생성
         # pykrx의 경우 종목명이나 시장구분 컬럼이 누락되어 있을 수 있으므로 자체 DB 기준으로 매핑합니다.
         # 또한, 이 딕셔너리에 없는 종목(ETF, 스팩, 우선주 등)은 자연스럽게 필터링됩니다.
-        all_stocks = self._load_all_stocks()
+        all_stocks = getattr(self, "_all_stocks_cache", None) or self._load_all_stocks()
         stock_meta = {
             code: {"name": name, "market": market} 
             for code, name, market in all_stocks
