@@ -156,15 +156,19 @@ class TestSkipWhenAlreadyCurrent:
     async def test_all_stocks_skipped_updates_progress(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """전체 종목이 스킵되면 progress.skipped == total, updated == 0."""
+        """전체 종목이 스킵(백필 불필요)되면 API Fallback이 호출되지 않는다."""
+        # DB에 모든 종목이 600일치 데이터를 가지고 있고, 최신 날짜로 갱신된 상태
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        await task._collect_all_ohlcv()
+        # FDR 일괄 수집 부분 모킹 (테스트 속도 향상 및 외부 네트워크 격리)
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True):
+            await task._collect_all_ohlcv()
 
         p = task.get_progress()
-        assert p["skipped"] == 3
+        
+        # 새로운 3-Tier 구조에서는 'skipped'를 개별 카운트하지 않고 조기 종료함
         assert p["updated"] == 0
         mock_sqs.get_ohlcv.assert_not_called()
 
@@ -401,12 +405,16 @@ class TestCollectGuards:
 
         assert task._is_collecting is False
 
-    async def test_is_collecting_reset_on_exception(self, task, mock_mcs):
+    async def test_is_collecting_reset_on_exception(self, task, mock_mcs, mock_stock_repo):
         """수집 도중 예외가 발생해도 _is_collecting이 False로 리셋된다."""
-        mock_mcs.get_latest_trading_date = AsyncMock(side_effect=RuntimeError("DB 오류"))
+        # 거래일 조회는 정상 통과시키고, try 블록 내부의 저장소 조회 시 예외 발생 유도
+        mock_stock_repo.get_ohlcv_summary.side_effect = RuntimeError("DB 오류")
 
-        await task._collect_all_ohlcv()
+        # FDR 일괄 수집 모킹
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True):
+            await task._collect_all_ohlcv()
 
+        # 내부 예외가 캐치되고 finally 블록이 실행되어 False로 리셋되었는지 확인
         assert task._is_collecting is False
 
 
