@@ -599,8 +599,7 @@ class WebAppContext:
                     else:
                         item['price'] = price_data
 
-            # [변경] 매니저에게 데이터 처리 위임
-            self.realtime_data_service.on_data_received(item)
+            # [수정] StreamingService의 중앙 디스패처를 통해 메시지 처리 (이미 위에서 호출됨)
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""

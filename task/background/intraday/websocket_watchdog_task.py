@@ -21,12 +21,11 @@ if TYPE_CHECKING:
     from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
     from core.logger import StreamingEventLogger
 
-# 재구독 시 패킷 간 딜레이 (초) — 증권사 Rate Limit 방지
-SUBSCRIBE_DELAY_SEC = 0.2
-
-
 class WebSocketWatchdogTask(SchedulableTask):
     """프로그램매매 WebSocket 연결을 감시·복원하는 백그라운드 태스크."""
+
+    # 재구독 시 패킷 간 딜레이 (초) — 증권사 Rate Limit 방지
+    SUBSCRIBE_DELAY_SEC = 0.2
 
     def __init__(
         self,
@@ -255,7 +254,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if self._streaming_stock_repo:
                     await self._streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
                 pt_success += 1
-                await asyncio.sleep(SUBSCRIBE_DELAY_SEC)
+                await asyncio.sleep(self.SUBSCRIBE_DELAY_SEC)
             except Exception as e:
                 self._logger.error(f"[워치독] PT 복원 중 오류 ({code}): {e}")
                 pt_failed.append(code)

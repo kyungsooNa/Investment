@@ -102,11 +102,6 @@ class ProgramTradingRepo:
                     pass
 
                 conn.execute("""
-                    CREATE TABLE IF NOT EXISTS pt_subscriptions (
-                        code TEXT PRIMARY KEY
-                    )
-                """)
-                conn.execute("""
                     CREATE TABLE IF NOT EXISTS pt_snapshot (
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL,

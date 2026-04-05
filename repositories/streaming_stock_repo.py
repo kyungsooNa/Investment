@@ -23,10 +23,7 @@ import logging
 import sqlite3
 import threading
 from enum import Enum
-from typing import Dict, Optional, Set, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
+from typing import Dict, Optional, Set
 
 
 class StreamingType(str, Enum):

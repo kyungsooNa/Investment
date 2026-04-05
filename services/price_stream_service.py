@@ -18,10 +18,9 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import Dict, Optional
 
-if TYPE_CHECKING:
-    from repositories.stock_repository import StockRepository
+from repositories.stock_repository import StockRepository
 
 
 class PriceStreamService:
