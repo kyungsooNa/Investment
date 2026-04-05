@@ -172,12 +172,16 @@ class OhlcvUpdateTask(AfterMarketTask):
 
         try:
             self._logger.info(f"전체 종목 OHLCV 수집 파이프라인 시작 (기준일: {target_date})")
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ★ 리팩토링: 로드된 all_stocks에서 종목코드 set만 추출하여 전달
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            valid_codes_set = {code for code, _, _ in all_stocks}
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # [Tier 1] 매일 수행되는 '당일 캔들' 일괄 업데이트 (FDR)
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             self._progress["status"] = "당일 캔들 일괄 수집 중 (FDR)..."
-            today_updated = await self._try_daily_bulk_via_fdr(target_date, start_time)
+            today_updated = await self._try_daily_bulk_via_fdr(target_date, start_time, valid_codes_set)
             
             if today_updated:
                 self._logger.info("당일 기준 OHLCV 일괄 업데이트(FDR) 완료.")
@@ -231,7 +235,7 @@ class OhlcvUpdateTask(AfterMarketTask):
 
     # ── 2. 수집 티어 구현 ─────────────────────────────────────────
 
-    async def _try_daily_bulk_via_fdr(self, target_date: str, start_time: float) -> bool:
+    async def _try_daily_bulk_via_fdr(self, target_date: str, start_time: float, valid_codes: set) -> bool:
         """[Tier 1] FDR을 이용해 전 종목의 '당일' 캔들 1개를 일괄 수집 후 저장한다."""
         def _fetch_sync():
             df = fdr.StockListing('KRX')
@@ -248,7 +252,7 @@ class OhlcvUpdateTask(AfterMarketTask):
             if not await self._verify_crawler_data(df_fdr, "FDR Daily Bulk"):
                 return False
 
-            records = self._format_fdr_listing_to_ohlcv_records(df_fdr, target_date)
+            records = self._format_fdr_listing_to_ohlcv_records(df_fdr, target_date, valid_codes)
             if not records: return False
 
             await self._save_bulk_to_db_with_progress(records, start_time)
@@ -386,11 +390,9 @@ class OhlcvUpdateTask(AfterMarketTask):
             })
             await asyncio.sleep(0.01)
 
-    def _format_fdr_listing_to_ohlcv_records(self, df: pd.DataFrame, target_date: str) -> List[Dict]:
+    def _format_fdr_listing_to_ohlcv_records(self, df: pd.DataFrame, target_date: str, valid_codes: set) -> List[Dict]:
         """FDR StockListing 당일 데이터를 DB OHLCV 레코드 포맷으로 변환"""
         records = []
-        # 필터링을 위해 마스터 목록 로드
-        valid_codes = {code for code, _, _ in self._load_all_stocks()}
 
         for _, row in df.iterrows():
             code = str(row.get('Code', '')).zfill(6)
