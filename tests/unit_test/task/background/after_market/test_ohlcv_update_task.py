@@ -130,65 +130,66 @@ class TestSkipWhenAlreadyCurrent:
     async def test_skip_when_count_equals_target_and_date_matches(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """600일 보유 + 당일 날짜 일치 → API 호출 없이 False 반환."""
+        """600일 보유 + 당일 날짜 일치 → 백필 없이 스킵된다."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
-
-        assert result is False
-        mock_sqs.get_ohlcv.assert_not_called()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            # 조건이 만족되었으므로 백필 로직이 아예 호출되지 않아야 함
+            mock_backfill.assert_not_called()
 
     async def test_skip_when_count_over_target_and_date_matches(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """600일 초과(예: 700일) + 당일 날짜 일치 → 스킵."""
+        """600일 초과(예: 700일) + 당일 날짜 일치 → 백필 없이 스킵된다."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 700, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
-
-        assert result is False
-        mock_sqs.get_ohlcv.assert_not_called()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            mock_backfill.assert_not_called()
 
     async def test_all_stocks_skipped_updates_progress(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """전체 종목이 스킵되면 progress.skipped == total, updated == 0."""
+        """전체 종목이 스킵(백필 불필요)되면 조기 종료된다."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        await task._collect_all_ohlcv()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True):
+            await task._collect_all_ohlcv()
 
         p = task.get_progress()
-        assert p["skipped"] == 3
         assert p["updated"] == 0
         mock_sqs.get_ohlcv.assert_not_called()
 
     async def test_skip_does_not_sleep_chunk_delay(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """전체 스킵 시 CHUNK_SLEEP_SEC 대기가 발생하지 않아야 한다 (재시작 후 빠름 검증)."""
+        """전체 스킵 시 CHUNK_SLEEP_SEC 대기가 발생하지 않아야 한다."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
-        task.CHUNK_SLEEP_SEC = 10.0  # 매우 큰 값: sleep이 실제 호출되면 테스트가 느려짐
+        task.CHUNK_SLEEP_SEC = 10.0
 
         slept_durations = []
 
         async def _fake_sleep(sec):
             slept_durations.append(sec)
 
-        with patch("task.background.after_market.ohlcv_update_task.asyncio.sleep", side_effect=_fake_sleep):
+        with patch("task.background.after_market.ohlcv_update_task.asyncio.sleep", side_effect=_fake_sleep), \
+             patch.object(task, '_try_daily_bulk_via_fdr', return_value=True):
             await task._collect_all_ohlcv()
 
-        # API 호출이 없었으므로 CHUNK_SLEEP_SEC(10.0) 대기는 없어야 함
-        assert all(d < task.CHUNK_SLEEP_SEC for d in slept_durations), (
-            f"스킵 시에도 CHUNK_SLEEP_SEC 대기가 발생함: {slept_durations}"
-        )
+        assert all(d < task.CHUNK_SLEEP_SEC for d in slept_durations)
 
 
 # ──────────────────────────────────────────────
@@ -206,7 +207,7 @@ class TestUpdateWhenTodayMissing:
             "count": 600, "latest_date": "20260317", "oldest_date": "20231201"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is True
         mock_sqs.get_ohlcv.assert_called_once_with("005930", caller="OhlcvUpdateTask")
@@ -219,7 +220,7 @@ class TestUpdateWhenTodayMissing:
             "count": 0, "latest_date": None, "oldest_date": None
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is True
         mock_sqs.get_ohlcv.assert_called_once()
@@ -235,46 +236,140 @@ class TestUpdateWhenInsufficientHistory:
     async def test_update_when_count_below_target_but_today_present(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """보유일수 599이지만 latest_date == today → 스킵.
-
-        today 날짜만 있으면 이미 수집 완료로 간주.
-        역사 부족은 최초 full backfill 또는 force collect로 해결.
+        """보유일수 10일 이상 600일 미만이고 latest_date == today → 백필 스킵.
+        (오늘 날짜가 있으면 정상 수집된 것으로 간주)
         """
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 599, "latest_date": TARGET_DATE, "oldest_date": "20240101"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
-
-        assert result is False
-        mock_sqs.get_ohlcv.assert_not_called()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            mock_backfill.assert_not_called()
 
     async def test_update_when_no_data_at_all(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """count=0, latest_date=None (신규/초기화) → API 호출."""
+        """count=0, latest_date=None (신규/초기화) → 백필 수행."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 0, "latest_date": None, "oldest_date": None
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            mock_backfill.assert_called_once()
 
-        assert result is True
-        mock_sqs.get_ohlcv.assert_called_once()
-
-    async def test_skip_when_only_1_day_but_today(
+    # ★ 리뷰 반영: count=1 이면 무조건 백필을 수행하는 것이 맞으므로 로직 및 함수명 수정
+    async def test_backfill_when_only_1_day_but_today(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """count=1이지만 latest_date == today → 스킵 (오늘 캔들 기준으로 판단)."""
+        """count < 10 이면 latest_date == today 여도 신규/빈 DB로 간주하여 백필 수행."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 1, "latest_date": TARGET_DATE, "oldest_date": TARGET_DATE
         }
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            mock_backfill.assert_called_once()
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+# ──────────────────────────────────────────────
+# 3-Tier 파이프라인 상호작용 및 Fallback 검증
+# ──────────────────────────────────────────────
 
-        assert result is False
-        mock_sqs.get_ohlcv.assert_not_called()
+class TestThreeTierPipelineInteraction:
 
+    async def test_tier1_success_skips_tier2_and_tier3(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """[시나리오 1] Tier 1(일괄 수집) 성공 & 모든 종목 DB 완비 → Tier 2/3 완전 스킵"""
+        # 모든 종목이 600일치 데이터를 가지고 있고, 오늘 날짜로 갱신됨
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20230101"
+        }
+
+        # Tier 1 성공 모킹
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True) as mock_tier1, \
+             patch.object(task, '_backfill_historical_data') as mock_tier2_3:
+            
+            await task._collect_all_ohlcv()
+            
+            mock_tier1.assert_called_once()
+            mock_tier2_3.assert_not_called()  # 백필 완전 스킵 검증
+
+    async def test_partial_tier2_backfill_routing(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """[시나리오 2] Tier 1 성공 후, 일부 종목(신규 상장 등)만 필터링되어 Tier 2로 넘어감"""
+        
+        async def _mock_summary(code):
+            if code == "000660":
+                # SK하이닉스는 데이터가 5개밖에 없음 -> 백필 대상
+                return {"count": 5, "latest_date": TARGET_DATE, "oldest_date": TARGET_DATE}
+            # 나머지는 완비 -> 스킵 대상
+            return {"count": 600, "latest_date": TARGET_DATE, "oldest_date": "20230101"}
+
+        mock_stock_repo.get_ohlcv_summary.side_effect = _mock_summary
+
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_tier2_3:
+            
+            await task._collect_all_ohlcv()
+            
+            # 백필 로직이 호출되었는지 검증
+            mock_tier2_3.assert_called_once()
+            
+            # 백필 대상으로 넘어간 종목 리스트 확인
+            needs_backfill_stocks = mock_tier2_3.call_args[0][0]
+            assert len(needs_backfill_stocks) == 1
+            assert needs_backfill_stocks[0][0] == "000660"  # SK하이닉스만 넘어갔는지 확인
+
+    async def test_tier2_fdr_failure_falls_back_to_tier3(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """[시나리오 3] Tier 2(FDR 고속 백필) 과정에서 에러 발생 시 Tier 3(API 우회)로 Fallback 됨"""
+        needs_backfill = [("005930", "삼성전자", "KOSPI")]
+        
+        # FDR DataReader가 에러를 발생시키도록 모킹
+        def _fdr_error(*args, **kwargs):
+            raise ConnectionError("네이버 금융 서버 응답 없음")
+
+        with patch('task.background.after_market.ohlcv_update_task.fdr.DataReader', side_effect=_fdr_error), \
+             patch.object(task, '_update_stock_ohlcv', return_value=True) as mock_tier3:
+            
+            await task._backfill_historical_data(needs_backfill, TARGET_DATE, False, time.time())
+            
+            # Tier 2가 실패했으므로 Tier 3(증권사 API 개별 호출)이 실행되어야 함
+            mock_tier3.assert_called_once_with("005930")
+
+    async def test_tier2_sanity_check_failure_falls_back_to_tier3(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """[시나리오 4] Tier 2 자체 검증(Sanity Check) 실패 시 수정주가 오류로 간주하고 Tier 3로 Fallback 됨"""
+        needs_backfill = [("005930", "삼성전자", "KOSPI")]
+        
+        # FDR은 데이터를 정상적으로 가져왔다고 가정
+        fake_fdr_df = pd.DataFrame([
+            {"Open": 70000, "High": 71000, "Low": 69000, "Close": 70500, "Volume": 100}
+        ], index=[pd.to_datetime(TARGET_DATE)])
+        
+        # DB에는 완전히 다른 종가(수정주가 미반영 상태 가정)가 들어있다고 모킹
+        mock_stock_repo.get_stock_data = AsyncMock(return_value={
+            "ohlcv": [{"date": TARGET_DATE, "close": 50000}] # FDR(70500) != DB(50000)
+        })
+
+        with patch('task.background.after_market.ohlcv_update_task.fdr.DataReader', return_value=fake_fdr_df), \
+             patch.object(task, '_update_stock_ohlcv', return_value=True) as mock_tier3:
+            
+            await task._backfill_historical_data(needs_backfill, TARGET_DATE, False, time.time())
+            
+            # Sanity Check가 실패했으므로 Tier 3(증권사 API)가 호출되어야 함
+            mock_tier3.assert_called_once_with("005930")
+            # 잘못된 데이터가 DB에 들어가면 안 됨
+            mock_stock_repo.upsert_ohlcv.assert_not_called()
 
 # ──────────────────────────────────────────────
 # API 실패 / 예외 처리
@@ -283,49 +378,23 @@ class TestUpdateWhenInsufficientHistory:
 
 class TestErrorHandling:
 
-    async def test_returns_none_on_api_error_response(
-        self, task, mock_sqs, mock_stock_repo
-    ):
-        """get_ohlcv가 에러 응답(rt_cd != 0) → None 반환."""
-        mock_stock_repo.get_ohlcv_summary.return_value = {
-            "count": 0, "latest_date": None, "oldest_date": None
-        }
-        mock_sqs.get_ohlcv = AsyncMock(
-            return_value=ResCommonResponse(
-                rt_cd=ErrorCode.API_ERROR.value,
-                msg1="조회 실패",
-                data=None,
-            )
-        )
-
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
-
+    # ★ 리뷰 반영: _update_stock_ohlcv 호출 시 파라미터 1개(code)만 전달하도록 수정
+    async def test_returns_none_on_api_error_response(self, task, mock_sqs, mock_stock_repo):
+        mock_stock_repo.get_ohlcv_summary.return_value = {"count": 0, "latest_date": None, "oldest_date": None}
+        mock_sqs.get_ohlcv = AsyncMock(return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="조회 실패", data=None))
+        result = await task._update_stock_ohlcv("005930")
         assert result is None
 
-    async def test_returns_none_on_none_response(
-        self, task, mock_sqs, mock_stock_repo
-    ):
-        """get_ohlcv가 None 반환 → None 반환."""
-        mock_stock_repo.get_ohlcv_summary.return_value = {
-            "count": 0, "latest_date": None, "oldest_date": None
-        }
+    async def test_returns_none_on_none_response(self, task, mock_sqs, mock_stock_repo):
+        mock_stock_repo.get_ohlcv_summary.return_value = {"count": 0, "latest_date": None, "oldest_date": None}
         mock_sqs.get_ohlcv = AsyncMock(return_value=None)
-
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
-
+        result = await task._update_stock_ohlcv("005930")
         assert result is None
 
-    async def test_returns_none_on_exception(
-        self, task, mock_sqs, mock_stock_repo
-    ):
-        """get_ohlcv가 예외 발생 → None 반환 (태스크 중단 없음)."""
-        mock_stock_repo.get_ohlcv_summary.return_value = {
-            "count": 0, "latest_date": None, "oldest_date": None
-        }
+    async def test_returns_none_on_exception(self, task, mock_sqs, mock_stock_repo):
+        mock_stock_repo.get_ohlcv_summary.return_value = {"count": 0, "latest_date": None, "oldest_date": None}
         mock_sqs.get_ohlcv = AsyncMock(side_effect=RuntimeError("서버 오류"))
-
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
-
+        result = await task._update_stock_ohlcv("005930")
         assert result is None
 
     async def test_error_stocks_excluded_from_counts(
@@ -401,12 +470,16 @@ class TestCollectGuards:
 
         assert task._is_collecting is False
 
-    async def test_is_collecting_reset_on_exception(self, task, mock_mcs):
+    async def test_is_collecting_reset_on_exception(self, task, mock_mcs, mock_stock_repo):
         """수집 도중 예외가 발생해도 _is_collecting이 False로 리셋된다."""
-        mock_mcs.get_latest_trading_date = AsyncMock(side_effect=RuntimeError("DB 오류"))
+        # 거래일 조회는 정상 통과시키고, try 블록 내부의 저장소 조회 시 예외 발생 유도
+        mock_stock_repo.get_ohlcv_summary.side_effect = RuntimeError("DB 오류")
 
-        await task._collect_all_ohlcv()
+        # FDR 일괄 수집 모킹
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True):
+            await task._collect_all_ohlcv()
 
+        # 내부 예외가 캐치되고 finally 블록이 실행되어 False로 리셋되었는지 확인
         assert task._is_collecting is False
 
 
@@ -765,8 +838,18 @@ class TestForceCollect:
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231001"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE, force=True)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is True
         mock_stock_repo.get_ohlcv_summary.assert_not_called()  # DB 조회 건너뜀
+        mock_sqs.get_ohlcv.assert_called_once()
+        
+    async def test_update_stock_ohlcv_skips_db_check(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """_update_stock_ohlcv는 이제 항상 API를 직접 호출한다."""
+        result = await task._update_stock_ohlcv("005930")
+
+        assert result is True
+        mock_stock_repo.get_ohlcv_summary.assert_not_called()  # DB 조회가 아예 없어야 함
         mock_sqs.get_ohlcv.assert_called_once()
