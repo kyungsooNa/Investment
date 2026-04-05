@@ -135,7 +135,7 @@ class TestSkipWhenAlreadyCurrent:
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is False
         mock_sqs.get_ohlcv.assert_not_called()
@@ -148,7 +148,7 @@ class TestSkipWhenAlreadyCurrent:
             "count": 700, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is False
         mock_sqs.get_ohlcv.assert_not_called()
@@ -210,7 +210,7 @@ class TestUpdateWhenTodayMissing:
             "count": 600, "latest_date": "20260317", "oldest_date": "20231201"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is True
         mock_sqs.get_ohlcv.assert_called_once_with("005930", caller="OhlcvUpdateTask")
@@ -223,7 +223,7 @@ class TestUpdateWhenTodayMissing:
             "count": 0, "latest_date": None, "oldest_date": None
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is True
         mock_sqs.get_ohlcv.assert_called_once()
@@ -248,7 +248,7 @@ class TestUpdateWhenInsufficientHistory:
             "count": 599, "latest_date": TARGET_DATE, "oldest_date": "20240101"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is False
         mock_sqs.get_ohlcv.assert_not_called()
@@ -261,7 +261,7 @@ class TestUpdateWhenInsufficientHistory:
             "count": 0, "latest_date": None, "oldest_date": None
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is True
         mock_sqs.get_ohlcv.assert_called_once()
@@ -274,7 +274,7 @@ class TestUpdateWhenInsufficientHistory:
             "count": 1, "latest_date": TARGET_DATE, "oldest_date": TARGET_DATE
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is False
         mock_sqs.get_ohlcv.assert_not_called()
@@ -302,7 +302,7 @@ class TestErrorHandling:
             )
         )
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is None
 
@@ -315,7 +315,7 @@ class TestErrorHandling:
         }
         mock_sqs.get_ohlcv = AsyncMock(return_value=None)
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is None
 
@@ -328,7 +328,7 @@ class TestErrorHandling:
         }
         mock_sqs.get_ohlcv = AsyncMock(side_effect=RuntimeError("서버 오류"))
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is None
 
@@ -773,7 +773,7 @@ class TestForceCollect:
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231001"
         }
 
-        result = await task._update_stock_ohlcv("005930", TARGET_DATE, force=True)
+        result = await task._update_stock_ohlcv("005930")
 
         assert result is True
         mock_stock_repo.get_ohlcv_summary.assert_not_called()  # DB 조회 건너뜀
