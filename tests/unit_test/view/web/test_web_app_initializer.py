@@ -254,10 +254,13 @@ def test_web_realtime_callback(mock_deps):
     ctx._web_realtime_callback(data_pt)
 
     ctx.streaming_service.get_cached_realtime_price.assert_called_with("005930")
-    # 데이터가 주입되었는지 확인
-    received_data = ctx.realtime_data_service.on_data_received.call_args[0][0]
-    assert received_data["price"] == "70000"
-    assert received_data["rate"] == "0.1"
+    # dispatch 전에 가격이 주입되어 data_pt['data']에 반영됨
+    assert data_pt['data']['price'] == "70000"
+    assert data_pt['data']['rate'] == "0.1"
+    # dispatch_realtime_message가 가격 주입된 data로 호출됨
+    ctx.streaming_service.dispatch_realtime_message.assert_called_with(data_pt)
+    # on_data_received는 StreamingService 옵저버 패턴을 통해 호출되므로 직접 호출 안 됨
+    ctx.realtime_data_service.on_data_received.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_stop_all_program_trading(mock_deps):

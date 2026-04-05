@@ -48,8 +48,9 @@ def test_init_creates_db(manager, tmp_db_dir):
     conn.close()
 
     assert 'pt_history' in tables
-    assert 'pt_subscriptions' in tables
     assert 'pt_snapshot' in tables
+    # pt_subscriptions는 StreamingStockRepo가 SSOT로 관리 — ProgramTradingRepo에서 생성하지 않음
+    assert 'pt_subscriptions' not in tables
 
 
 def test_init_db_failure():

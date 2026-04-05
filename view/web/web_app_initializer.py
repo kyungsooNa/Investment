@@ -581,12 +581,10 @@ class WebAppContext:
     # --- 프로그램매매 실시간 스트리밍 ---
 
     def _web_realtime_callback(self, data):
-        """웹소켓 실시간 콜백: 기존 핸들러 + 웹 SSE 전달."""
-        if self.streaming_service:
-            self.streaming_service.dispatch_realtime_message(data)
+        """웹소켓 실시간 콜백: 가격 주입 후 StreamingService 중앙 디스패처에 전달."""
         if data.get('type') == 'realtime_program_trading':
             item = data.get('data', {})
-            # [추가] 현재가 정보 주입
+            # 현재가 정보 주입 — dispatch 전에 수행해야 핸들러가 가격 정보를 수신
             if self.streaming_service:
                 code = item.get('유가증권단축종목코드')
                 price_data = self.streaming_service.get_cached_realtime_price(code)
@@ -599,7 +597,8 @@ class WebAppContext:
                     else:
                         item['price'] = price_data
 
-            # [수정] StreamingService의 중앙 디스패처를 통해 메시지 처리 (이미 위에서 호출됨)
+        if self.streaming_service:
+            self.streaming_service.dispatch_realtime_message(data)
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""
