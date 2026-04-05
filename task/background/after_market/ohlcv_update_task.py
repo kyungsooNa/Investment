@@ -209,6 +209,13 @@ class OhlcvUpdateTask(AfterMarketTask):
                 await self._finish_collection(target_date, start_time, t_start_total, "FDR Daily Bulk")
                 return
 
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ★ 리팩토링: 백필 진입 전 초기 진행률 및 스킵 수량 세팅
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            skipped_count = len(all_stocks) - len(needs_backfill_stocks)
+            self._progress["processed"] = skipped_count
+            self._progress["skipped"] = skipped_count
+
             self._logger.info(f"과거 데이터 보완이 필요한 종목: {len(needs_backfill_stocks)}개")
             await self._backfill_historical_data(needs_backfill_stocks, target_date, force, start_time)
             
@@ -320,15 +327,17 @@ class OhlcvUpdateTask(AfterMarketTask):
             results = await asyncio.gather(*tasks)
 
             # 2. 결과 집계 및 진행률 업데이트
-            processed += len(chunk)
+            chunk_size = len(chunk)
+            processed += chunk_size  # 로컬(백필) 진행 카운트
             updated += sum(1 for r in results if r)
             elapsed = time.time() - start_time  # 변수로 할당
             
             # Tier 1에서 이미 처리되거나 스킵된 종목 수 + Tier 2/3에서 현재까지 백필된 종목 수 합산
+            # ★ 리팩토링: 전역 progress 직관적 업데이트
+            self._progress["processed"] += chunk_size
             self._progress.update({
-                "processed": self._progress["total"] - total + processed,
                 "updated": updated,
-                "elapsed": round(elapsed, 1) # progress dict에는 float 값으로 유지
+                "elapsed": round(elapsed, 1)
             })
 
             # 로그 출력 (f-string 포맷팅으로 완벽 통일)
