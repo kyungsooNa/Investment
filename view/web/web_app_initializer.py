@@ -43,6 +43,7 @@ from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
 from services.price_subscription_service import PriceSubscriptionService
+from services.price_stream_service import PriceStreamService
 from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
@@ -85,6 +86,7 @@ class WebAppContext:
         # 프로그램매매 실시간 데이터 서비스
         self.realtime_data_service = ProgramTradingStreamService(self.logger)
         self.price_subscription_service: PriceSubscriptionService = None
+        self.price_stream_service: PriceStreamService = None
         self.streaming_stock_repo: StreamingStockRepo = None
 
         # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
@@ -222,6 +224,13 @@ class WebAppContext:
             market_data_service=self.market_data_service,
             streaming_logger=self.streaming_event_logger,
         )
+        # PriceStreamService 초기화 — 체결가 틱 캐시 + StockRepository 업데이트 전담
+        self.price_stream_service = PriceStreamService(
+            stock_repo=self.stock_repository,
+            logger=self.logger,
+        )
+        self.streaming_service.set_price_stream_service(self.price_stream_service)
+
         # StreamingStockRepo 초기화 (구독 상태 중앙 저장소)
         self.streaming_stock_repo = StreamingStockRepo(logger=self.logger)
         self.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")

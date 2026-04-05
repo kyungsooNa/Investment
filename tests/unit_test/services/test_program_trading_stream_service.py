@@ -494,21 +494,24 @@ def test_load_snapshot_json_error(manager):
     manager.logger.error.assert_called()
 
 def test_subscription_db_errors(manager):
-    """구독 관리 시 DB 에러 발생해도 메모리에는 반영되는지 확인."""
+    """구독 관리 시 DB 에러 발생해도 메모리에는 반영되는지 확인.
+
+    SQLite 로직이 ProgramTradingRepo로 이동했으므로 _repo._get_connection을 패치.
+    """
     # Add
-    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
+    with patch.object(manager._repo, '_get_connection', side_effect=Exception("DB Error")):
         manager.add_subscribed_code("005930")
     assert "005930" in manager._pt_codes
     manager.logger.error.assert_called()
 
     # Remove
-    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
+    with patch.object(manager._repo, '_get_connection', side_effect=Exception("DB Error")):
         manager.remove_subscribed_code("005930")
     assert "005930" not in manager._pt_codes
 
     # Clear
     manager.add_subscribed_code("005930")
-    with patch.object(manager, '_get_connection', side_effect=Exception("DB Error")):
+    with patch.object(manager._repo, '_get_connection', side_effect=Exception("DB Error")):
         manager.clear_subscribed_codes()
     assert len(manager._pt_codes) == 0
 

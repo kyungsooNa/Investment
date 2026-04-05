@@ -21,6 +21,7 @@ from common.types import ResCommonResponse, ErrorCode
 if TYPE_CHECKING:
     from brokers.broker_api_wrapper import BrokerAPIWrapper
     from services.market_data_service import MarketDataService
+    from services.price_stream_service import PriceStreamService
     from core.logger import StreamingEventLogger
 
 
@@ -37,16 +38,24 @@ class StreamingService:
         market_clock,
         market_data_service: Optional["MarketDataService"] = None,
         streaming_logger: Optional["StreamingEventLogger"] = None,
+        price_stream_service: Optional["PriceStreamService"] = None,
     ):
         self.broker = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
         self.market_data_service = market_data_service
         self._streaming_logger = streaming_logger
+        self._price_stream_service = price_stream_service
         self._latest_prices: Dict[str, dict | str] = {}
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
         self._callback = None  # 재연결 시 콜백 유실 방지용 저장
+
+    # ── 의존성 주입 ───────────────────────────────────────────────
+
+    def set_price_stream_service(self, svc: "PriceStreamService") -> None:
+        """PriceStreamService를 사후 주입한다 (선택적 — 없으면 기존 동작 유지)."""
+        self._price_stream_service = svc
 
     # ── 연결 수명주기 ──────────────────────────────────────────────
 
@@ -157,7 +166,11 @@ class StreamingService:
             stock_code = realtime_data.get('유가증권단축종목코드')
             current_price = realtime_data.get('주식현재가')
 
-            if stock_code and current_price:
+            if self._price_stream_service:
+                # PriceStreamService에 위임: 캐시 갱신 + StockRepository 업데이트
+                self._price_stream_service.on_price_tick(realtime_data)
+            elif stock_code and current_price:
+                # PriceStreamService 미설정 시 기존 동작 유지 (하위 호환)
                 self._latest_prices[stock_code] = {
                     "price": current_price,
                     "change": realtime_data.get('전일대비', '0'),
@@ -238,6 +251,8 @@ class StreamingService:
 
     def get_cached_realtime_price(self, code: str) -> Optional[Dict | str]:
         """메모리 캐시에서 실시간 최신가 정보를 반환한다."""
+        if self._price_stream_service:
+            return self._price_stream_service.get_cached_price(code)
         return self._latest_prices.get(code)
 
     # ── REST 조회 ─────────────────────────────────────────────────
