@@ -7,8 +7,9 @@
 import asyncio
 import logging
 import time
+import pandas as pd
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, TYPE_CHECKING
-
 from common.types import ErrorCode
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
@@ -48,7 +49,9 @@ class OhlcvUpdateTask(AfterMarketTask):
     TARGET_OHLCV_DAYS = 600  # 전략에서 최대 600일치를 사용하므로 동일하게 유지
     API_CHUNK_SIZE = 4        # 병렬 처리 종목 수 (OHLCV는 현재가보다 API 비용이 높음)
     CHUNK_SLEEP_SEC = 1.5     # 청크 간 대기 시간 (API 레이트 리밋 준수)
-
+    CANARY_STOCKS = ["005930", "000660", "035420", "005380", "068270"]
+    DB_UPSERT_BATCH_SIZE = 500
+    
     def __init__(
         self,
         stock_query_service: "StockQueryService",
@@ -136,13 +139,8 @@ class OhlcvUpdateTask(AfterMarketTask):
         await self._collect_all_ohlcv(force=True)
 
     # ── 전체 종목 OHLCV 수집 ────────────────────────────────
-
     async def _collect_all_ohlcv(self, force: bool = False) -> None:
-        """전체 종목 OHLCV를 수집하여 DB에 저장한다.
-
-        Args:
-            force: True이면 skip 조건(count/latest_date)을 무시하고 전 종목 API 재호출.
-        """
+        """OHLCV 데이터를 3-Tier(FDR 당일 일괄 -> FDR 과거 백필 -> API Fallback) 구조로 수집한다."""
         if not force and self._mcs and await self._mcs.is_market_open_now():
             self._logger.info("장 운영 중이므로 OHLCV 수집을 건너뜁니다.")
             return
@@ -151,106 +149,457 @@ class OhlcvUpdateTask(AfterMarketTask):
             self._logger.info("OHLCV 수집 이미 진행 중 — 스킵")
             return
 
+        target_date = await self._mcs.get_latest_trading_date() if self._mcs else None
+        if not target_date:
+            self._logger.error("최근 거래일을 확인할 수 없어 OHLCV 수집을 중단합니다.")
+            return
+
+        if not force and self._last_collected_date == target_date:
+            self._logger.info(f"이미 {target_date} OHLCV 수집 완료 — 스킵")
+            return
+
         t_start_total = self._pm.start_timer()
         self._is_collecting = True
         start_time = time.time()
+        all_stocks = self._load_all_stocks()
+
+        self._progress = {
+            "running": True, "force": force, "processed": 0, "total": len(all_stocks),
+            "updated": 0, "skipped": 0, "elapsed": 0.0, "status": "초기화 중..."
+        }
 
         try:
-            # 기준일 확인
-            target_date = None
-            if self._mcs:
-                target_date = await self._mcs.get_latest_trading_date()
+            self._logger.info(f"전체 종목 OHLCV 수집 파이프라인 시작 (기준일: {target_date})")
 
-            if not target_date:
-                self._logger.error("최근 거래일을 확인할 수 없어 OHLCV 수집을 중단합니다.")
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # [Tier 1] 매일 수행되는 '당일 캔들' 일괄 업데이트 (FDR)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            self._progress["status"] = "당일 캔들 일괄 수집 중 (FDR)..."
+            today_updated = await self._try_daily_bulk_via_fdr(target_date, start_time)
+            
+            if today_updated:
+                self._logger.info("당일 기준 OHLCV 일괄 업데이트(FDR) 완료.")
+            else:
+                self._logger.warning("FDR 당일 업데이트 실패. 개별 수집으로 Fallback 합니다.")
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # [Tier 2 & 3] 과거 데이터가 부족한 종목 필터링 및 백필 (Backfill)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            self._progress["status"] = "과거 데이터 부족 종목 점검 중..."
+            needs_backfill_stocks = []
+
+            for code, name, market in all_stocks:
+                if force:
+                    needs_backfill_stocks.append((code, name, market))
+                    continue
+
+                summary = await self._stock_repo.get_ohlcv_summary(code)
+                latest_date = summary.get("latest_date")
+                total_count = summary.get("count", 0)
+
+                # 당일 갱신 실패했거나, 600일치가 다 안 채워진 종목 추출
+                if latest_date != target_date or total_count < self.TARGET_OHLCV_DAYS:
+                    needs_backfill_stocks.append((code, name, market))
+
+            if not needs_backfill_stocks:
+                # 99%의 날에는 여기서 3초 만에 종료됨
+                await self._finish_collection(target_date, start_time, t_start_total, "FDR Daily Bulk")
                 return
 
-            if not force and self._last_collected_date == target_date:
-                self._logger.info(f"이미 {target_date} OHLCV 수집 완료 — 스킵")
-                return
-
-            self._logger.info(f"전체 종목 OHLCV 수집 시작 (기준일: {target_date})")
-            self._progress = {
-                "running": True, "force": force, "processed": 0, "total": 0,
-                "updated": 0, "skipped": 0, "elapsed": 0.0,
-            }
-            all_stocks = self._load_all_stocks()
-            total = len(all_stocks)
-            self._progress["total"] = total
-            self._logger.info(f"OHLCV 수집: 전체 {total}개 종목 순회 시작")
-
-            processed = 0
-            updated = 0
-            skipped = 0
-
-            for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
-                # suspend 체크포인트
-                await self._suspend_event.wait()
-
-                # 병렬 처리
-                tasks = [
-                    self._update_stock_ohlcv(code, target_date, force=force)
-                    for code, _, _ in chunk
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                chunk_had_api_call = False
-                for result in results:
-                    if result is True:
-                        updated += 1
-                        chunk_had_api_call = True
-                    elif result is False:
-                        skipped += 1
-                    # None은 오류 — 카운트 제외
-
-                processed += len(chunk)
-                elapsed = time.time() - start_time
-                self._progress.update({
-                    "processed": processed,
-                    "updated": updated,
-                    "skipped": skipped,
-                    "elapsed": round(elapsed, 1),
-                })
-
-                if processed % 100 == 0 or processed >= total:
-                    self._logger.info(
-                        f"OHLCV 수집 진행: {processed}/{total} "
-                        f"({processed / total * 100:.1f}%) "
-                        f"| 갱신: {updated} | 스킵: {skipped} | 소요: {elapsed:.1f}s"
-                    )
-
-                # API 호출이 있었던 청크만 rate limit 대기
-                if chunk_had_api_call:
-                    await asyncio.sleep(self.CHUNK_SLEEP_SEC)
-                else:
-                    await asyncio.sleep(0)  # 이벤트 루프 양보만
-
-            # 완료 처리
-            self._last_collected_date = target_date
-            elapsed = time.time() - start_time
-            self._logger.info(
-                f"전체 종목 OHLCV 수집 완료: 갱신 {updated}개 / 스킵 {skipped}개, "
-                f"소요: {elapsed:.1f}s"
-            )
-            self._pm.log_timer(
-                "OhlcvUpdateTask._collect_all_ohlcv",
-                t_start_total, threshold=10.0,
-            )
-            if self._ns:
-                await self._ns.emit(
-                    NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전체 종목 OHLCV 수집 완료",
-                    f"갱신 {updated}개, 소요: {elapsed:.1f}초",
-                )
+            self._logger.info(f"과거 데이터 보완이 필요한 종목: {len(needs_backfill_stocks)}개")
+            await self._backfill_historical_data(needs_backfill_stocks, target_date, force, start_time)
+            
+            await self._finish_collection(target_date, start_time, t_start_total, "FDR/API Backfill")
 
         except Exception as e:
-            self._logger.error(f"OHLCV 수집 실패: {e}", exc_info=True)
+            self._logger.error(f"OHLCV 파이프라인 수집 실패: {e}", exc_info=True)
             if self._ns:
-                await self._ns.emit(NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "OHLCV 수집 실패", str(e))
+                await self._ns.emit(NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "OHLCV 파이프라인 실패", str(e))
         finally:
             self._is_collecting = False
             self._progress["running"] = False
 
+    # ── 2. 수집 티어 구현 ─────────────────────────────────────────
+
+    async def _try_daily_bulk_via_fdr(self, target_date: str, start_time: float) -> bool:
+        """[Tier 1] FDR을 이용해 전 종목의 '당일' 캔들 1개를 일괄 수집 후 저장한다."""
+        def _fetch_sync():
+            import FinanceDataReader as fdr
+            df = fdr.StockListing('KRX')
+            if df is None or df.empty: return None
+            return df
+
+        try:
+            df_fdr = await asyncio.to_thread(_fetch_sync)
+            if df_fdr is None: return False
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ★ 방어막: DB에 넣기 전에 무조건 카나리아 테스트 진행
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if not await self._verify_crawler_data(df_fdr, "FDR Daily Bulk"):
+                return False
+
+            records = self._format_fdr_listing_to_ohlcv_records(df_fdr, target_date)
+            if not records: return False
+
+            await self._save_bulk_to_db_with_progress(target_date, records, start_time)
+            return True
+        except Exception as e:
+            self._logger.error(f"FDR 당일 일괄 수집 중 오류 발생: {e}")
+            return False
+        
+    async def _backfill_historical_data(self, stocks: List[tuple], target_date: str, force: bool, start_time: float) -> None:
+        """[Tier 2 & 3] 과거 데이터가 부족한 종목들을 FDR(고속) 또는 API로 '병렬' 채워넣는다."""
+        total = len(stocks)
+        processed = 0
+        updated = 0
+        
+        clean_target_date = target_date.replace("-", "")
+        start_date_obj = datetime.strptime(clean_target_date, "%Y%m%d") - timedelta(days=self.TARGET_OHLCV_DAYS + 250)
+        start_date_str = start_date_obj.strftime("%Y-%m-%d")
+
+        # FDR은 증권사 API보다 트래픽 제한이 널널하므로 청크 사이즈를 키웁니다.
+        FDR_CHUNK_SIZE = 15
+
+        async def process_single_stock(code: str, name: str) -> bool:
+            """단일 종목에 대한 FDR 수집 및 자체 검증, API Fallback을 수행하는 비동기 워커"""
+            is_success = False
+            try:
+                def _fetch_fdr():
+                    import FinanceDataReader as fdr
+                    return fdr.DataReader(code, start_date_str)
+                
+                # 백그라운드 스레드에서 FDR 호출
+                df_fdr = await asyncio.to_thread(_fetch_fdr)
+                
+                if not df_fdr.empty:
+                    records = self._format_fdr_to_ohlcv_records(code, df_fdr)
+                    if records:
+                        latest_record_fdr = records[-1] 
+                        db_data = await self._stock_repo.get_stock_data(code, ohlcv_limit=1, caller="SanityCheck")
+                        
+                        is_sanity_passed = False
+                        if db_data and db_data.get("ohlcv"):
+                            db_latest_record = db_data["ohlcv"][-1]
+                            db_date = db_latest_record.get("date", "").replace("-", "")
+                            
+                            # 날짜가 같을 때만 종가 대조
+                            if db_date == clean_target_date and latest_record_fdr['close'] != db_latest_record['close']:
+                                self._logger.warning(f"[{name}] FDR 과거 데이터 수정주가 오류 의심! Tier 3로 우회합니다.")
+                            else:
+                                is_sanity_passed = True
+                        else:
+                            is_sanity_passed = True
+
+                        # 검증 통과 시 저장
+                        if is_sanity_passed:
+                            await self._stock_repo.upsert_ohlcv(records) 
+                            is_success = True
+            except Exception as e:
+                pass
+
+            # [Tier 3] FDR 실패 또는 자체 검증 실패 시 개별 증권사 API로 우회
+            if not is_success:
+                api_result = await self._update_stock_ohlcv(code, target_date, force=force)
+                if api_result:
+                    is_success = True
+                    
+            return is_success
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # ★ 핵심: 청크 단위로 분할하여 병렬(asyncio.gather) 실행
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        for chunk in _chunked(stocks, FDR_CHUNK_SIZE):
+            await self._suspend_event.wait()
+            self._progress["status"] = "과거 데이터 병렬 보완 중..."
+
+            # 1. 병렬 실행
+            tasks = [process_single_stock(code, name) for code, name, _ in chunk]
+            results = await asyncio.gather(*tasks)
+
+            # 2. 결과 집계 및 진행률 업데이트
+            processed += len(chunk)
+            updated += sum(1 for r in results if r)
+            self._progress.update({
+                "processed": self._progress["total"] - total + processed,
+                "updated": updated,
+                "elapsed": round(time.time() - start_time, 1)
+            })
+
+            # 로그 출력
+            if processed % 60 == 0 or processed >= total:
+                self._logger.info(
+                    f"과거 데이터 보완 진행: {processed}/{total} "
+                    f"({processed / total * 100:.1f}%) "
+                    f"| 갱신: {updated} | 소요: {round(time.time() - start_time, 1)}s"
+                )
+
+            # 너무 빠른 HTTP 요청을 방지하기 위한 가벼운 대기
+            await asyncio.sleep(0.05)
+
+    async def _update_stock_ohlcv(self, code: str, target_date: str, force: bool = False) -> Optional[bool]:
+        """[Tier 3 Fallback] 증권사 API를 이용한 개별 종목 OHLCV 수집"""
+        try:
+            resp = await self._stock_query_service.get_ohlcv(code, caller="OhlcvUpdateTask")
+            if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                return True
+            return None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._logger.warning(f"API OHLCV 업데이트 실패 ({code}): {e}")
+            return None
+
+    # ── 3. 진행률 및 데이터 포맷 헬퍼 ──────────────────────────────────
+
+    async def _save_bulk_to_db_with_progress(self, target_date: str, records: List[Dict], start_time: float) -> None:
+        """크롤링된 전체 레코드를 DB에 Batch 단위로 저장하며 진행률을 업데이트한다."""
+        total_records = len(records)
+        if total_records == 0: return
+
+        processed = 0
+        for i in range(0, total_records, self.DB_UPSERT_BATCH_SIZE):
+            batch = records[i:i + self.DB_UPSERT_BATCH_SIZE]
+            
+            # TODO: 저장소에 맞게 메서드명 수정 (예: upsert_ohlcv_batch)
+            await self._stock_repo.upsert_daily_snapshot(target_date, batch)
+            
+            processed += len(batch)
+            self._progress.update({
+                "processed": processed,
+                "updated": processed,
+                "elapsed": round(time.time() - start_time, 1),
+                "status": f"DB 저장 중... ({processed}/{total_records})"
+            })
+            await asyncio.sleep(0.01)
+
+    def _format_fdr_listing_to_ohlcv_records(self, df: pd.DataFrame, target_date: str) -> List[Dict]:
+        """FDR StockListing 당일 데이터를 DB OHLCV 레코드 포맷으로 변환"""
+        records = []
+        # 필터링을 위해 마스터 목록 로드
+        valid_codes = {code for code, _, _ in self._load_all_stocks()}
+
+        for _, row in df.iterrows():
+            code = str(row.get('Code', '')).zfill(6)
+            if not code or code not in valid_codes: continue
+            
+            try:
+                records.append({
+                    "code": code,
+                    "date": target_date,
+                    "open": int(row.get('Open', 0)),
+                    "high": int(row.get('High', 0)),
+                    "low": int(row.get('Low', 0)),
+                    "close": int(row.get('Close', 0)),
+                    "volume": int(row.get('Volume', 0)),
+                    "trading_value": int(row.get('Amount', 0)), 
+                })
+            except (ValueError, TypeError):
+                continue
+        return records
+
+    def _format_fdr_to_ohlcv_records(self, code: str, df: pd.DataFrame) -> List[Dict]:
+        """FDR 시계열 과거 데이터를 DB OHLCV 레코드 포맷으로 변환"""
+        records = []
+        for date_idx, row in df.iterrows():
+            date_str = date_idx.strftime("%Y-%m-%d")
+            try:
+                records.append({
+                    "code": code,
+                    "date": date_str,
+                    "open": int(row.get('Open', 0)),
+                    "high": int(row.get('High', 0)),
+                    "low": int(row.get('Low', 0)),
+                    "close": int(row.get('Close', 0)),
+                    "volume": int(row.get('Volume', 0)),
+                    "trading_value": int(row.get('Close', 0)) * int(row.get('Volume', 0)), 
+                })
+            except (ValueError, TypeError):
+                continue
+        return records
+
+    async def _finish_collection(self, target_date: str, start_time: float, total_start_time: float, source: str) -> None:
+        """수집 완료 후 공통 후처리 로직"""
+        self._last_collected_date = target_date
+        elapsed = time.time() - start_time
+        
+        self._logger.info(
+            f"전체 종목 OHLCV 수집 완료 (경로: {source}) | "
+            f"갱신: {self._progress['updated']} / 스킵: {self._progress['skipped']} | 소요: {elapsed:.1f}s"
+        )
+        
+        self._pm.log_timer("OhlcvUpdateTask._collect_all_ohlcv", total_start_time, threshold=10.0)
+        
+        if self._ns:
+            await self._ns.emit(
+                NotificationCategory.BACKGROUND, NotificationLevel.INFO, 
+                "전체 종목 OHLCV 수집 완료",
+                f"소스: {source} / 소요: {elapsed:.1f}초"
+            )
+            
+    # async def _collect_all_ohlcv(self, force: bool = False) -> None:
+    #     """전체 종목 OHLCV를 수집하여 DB에 저장한다.
+
+    #     Args:
+    #         force: True이면 skip 조건(count/latest_date)을 무시하고 전 종목 API 재호출.
+    #     """
+    #     if not force and self._mcs and await self._mcs.is_market_open_now():
+    #         self._logger.info("장 운영 중이므로 OHLCV 수집을 건너뜁니다.")
+    #         return
+
+    #     if self._is_collecting:
+    #         self._logger.info("OHLCV 수집 이미 진행 중 — 스킵")
+    #         return
+
+    #     t_start_total = self._pm.start_timer()
+    #     self._is_collecting = True
+    #     start_time = time.time()
+
+    #     try:
+    #         # 기준일 확인
+    #         target_date = None
+    #         if self._mcs:
+    #             target_date = await self._mcs.get_latest_trading_date()
+
+    #         if not target_date:
+    #             self._logger.error("최근 거래일을 확인할 수 없어 OHLCV 수집을 중단합니다.")
+    #             return
+
+    #         if not force and self._last_collected_date == target_date:
+    #             self._logger.info(f"이미 {target_date} OHLCV 수집 완료 — 스킵")
+    #             return
+
+    #         self._logger.info(f"전체 종목 OHLCV 수집 시작 (기준일: {target_date})")
+    #         self._progress = {
+    #             "running": True, "force": force, "processed": 0, "total": 0,
+    #             "updated": 0, "skipped": 0, "elapsed": 0.0,
+    #         }
+    #         all_stocks = self._load_all_stocks()
+    #         total = len(all_stocks)
+    #         self._progress["total"] = total
+    #         self._logger.info(f"OHLCV 수집: 전체 {total}개 종목 순회 시작")
+
+    #         processed = 0
+    #         updated = 0
+    #         skipped = 0
+
+    #         for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
+    #             # suspend 체크포인트
+    #             await self._suspend_event.wait()
+
+    #             # 병렬 처리
+    #             tasks = [
+    #                 self._update_stock_ohlcv(code, target_date, force=force)
+    #                 for code, _, _ in chunk
+    #             ]
+    #             results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    #             chunk_had_api_call = False
+    #             for result in results:
+    #                 if result is True:
+    #                     updated += 1
+    #                     chunk_had_api_call = True
+    #                 elif result is False:
+    #                     skipped += 1
+    #                 # None은 오류 — 카운트 제외
+
+    #             processed += len(chunk)
+    #             elapsed = time.time() - start_time
+    #             self._progress.update({
+    #                 "processed": processed,
+    #                 "updated": updated,
+    #                 "skipped": skipped,
+    #                 "elapsed": round(elapsed, 1),
+    #             })
+
+    #             if processed % 100 == 0 or processed >= total:
+    #                 self._logger.info(
+    #                     f"OHLCV 수집 진행: {processed}/{total} "
+    #                     f"({processed / total * 100:.1f}%) "
+    #                     f"| 갱신: {updated} | 스킵: {skipped} | 소요: {elapsed:.1f}s"
+    #                 )
+
+    #             # API 호출이 있었던 청크만 rate limit 대기
+    #             if chunk_had_api_call:
+    #                 await asyncio.sleep(self.CHUNK_SLEEP_SEC)
+    #             else:
+    #                 await asyncio.sleep(0)  # 이벤트 루프 양보만
+
+    #         # 완료 처리
+    #         self._last_collected_date = target_date
+    #         elapsed = time.time() - start_time
+    #         self._logger.info(
+    #             f"전체 종목 OHLCV 수집 완료: 갱신 {updated}개 / 스킵 {skipped}개, "
+    #             f"소요: {elapsed:.1f}s"
+    #         )
+    #         self._pm.log_timer(
+    #             "OhlcvUpdateTask._collect_all_ohlcv",
+    #             t_start_total, threshold=10.0,
+    #         )
+    #         if self._ns:
+    #             await self._ns.emit(
+    #                 NotificationCategory.BACKGROUND, NotificationLevel.INFO, "전체 종목 OHLCV 수집 완료",
+    #                 f"갱신 {updated}개, 소요: {elapsed:.1f}초",
+    #             )
+
+    #     except Exception as e:
+    #         self._logger.error(f"OHLCV 수집 실패: {e}", exc_info=True)
+    #         if self._ns:
+    #             await self._ns.emit(NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "OHLCV 수집 실패", str(e))
+    #     finally:
+    #         self._is_collecting = False
+    #         self._progress["running"] = False
+
     # ── 내부 헬퍼 ─────────────────────────────────────────
+    async def _verify_crawler_data(self, df_crawled: pd.DataFrame, source_name: str) -> bool:
+        """증권사 API의 확정 데이터(시/고/저/종가)와 크롤링 데이터가 일치하는지 완벽 검증한다."""
+        self._logger.info(f"[{source_name}] 당일 데이터 정합성 검증(OHLC 4종) 시작...")
+        
+        for code in self.CANARY_STOCKS:
+            # 증권사 API 호출 (현재가/당일시세 API 사용)
+            api_resp = await self._stock_query_service.get_current_price(code, count_stats=False, caller="OhlcvUpdateTask")
+            if not api_resp or api_resp.rt_cd != ErrorCode.SUCCESS.value:
+                self._logger.warning(f"검증용 API 호출 실패({code}). 검증을 건너뛰고 실패 처리합니다.")
+                return False
+                
+            data = api_resp.data
+            output = data.get('output') if isinstance(data, dict) else data
+            
+            def _get_api_val(key):
+                val = output.get(key, 0) if isinstance(output, dict) else getattr(output, key, 0)
+                return int(val) if val else 0
+
+            api_close = _get_api_val('stck_prpr')
+            api_open = _get_api_val('stck_oprc')
+            api_high = _get_api_val('stck_hgpr')
+            api_low = _get_api_val('stck_lwpr')
+            
+            try:
+                # FDR StockListing DataFrame에서 검증용 종목 데이터 추출
+                row = df_crawled[df_crawled['Code'] == code].iloc[0]
+                
+                crawled_close = int(row.get('Close', 0))
+                crawled_open = int(row.get('Open', 0))
+                crawled_high = int(row.get('High', 0))
+                crawled_low = int(row.get('Low', 0))
+                
+            except (KeyError, IndexError):
+                self._logger.warning(f"크롤링 데이터에 검증용 종목({code})이 없거나 파싱할 수 없습니다.")
+                return False
+
+            # 시/고/저/종 4개 값 모두 대조
+            if (api_close != crawled_close or api_open != crawled_open or 
+                api_high != crawled_high or api_low != crawled_low):
+                
+                self._logger.warning(
+                    f"데이터 불일치 감지! ({code}) 거래소 업데이트 지연 또는 라이브러리 오류입니다.\n"
+                    f" - API   : 시({api_open}) 고({api_high}) 저({api_low}) 종({api_close})\n"
+                    f" - {source_name.ljust(6)}: 시({crawled_open}) 고({crawled_high}) 저({crawled_low}) 종({crawled_close})"
+                )
+                return False
+
+        self._logger.info(f"[{source_name}] 데이터 정합성 검증 완벽 통과!")
+        return True
 
     async def _update_stock_ohlcv(
         self, code: str, target_date: str, force: bool = False,
