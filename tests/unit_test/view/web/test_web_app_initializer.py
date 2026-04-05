@@ -148,37 +148,42 @@ def test_initialize_scheduler(mock_deps):
 
 @pytest.mark.asyncio
 async def test_program_trading_subscription(mock_deps):
-    """프로그램 매매 구독/해지 로직 검증"""
+    """프로그램 매매 구독/해지 로직 검증 — streaming_stock_repo SSOT 기반"""
+    from repositories.streaming_stock_repo import StreamingType
     ctx = WebAppContext(None)
-    
-    # RealtimeDataService Mock 인스턴스 설정
-    mock_rdm_instance = ctx.realtime_data_service
-    mock_rdm_instance.is_subscribed.return_value = False
 
     ctx.pm = MagicMock()
     ctx.pm.start_timer.return_value = 0.0
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
-    ctx.streaming_service.subscribe_program_trading = AsyncMock()
-    ctx.streaming_service.subscribe_realtime_price = AsyncMock()
+    ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
+    ctx.streaming_service.subscribe_realtime_price = AsyncMock(return_value=True)
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
     ctx.streaming_service.unsubscribe_realtime_price = AsyncMock()
+
+    # streaming_stock_repo mock
+    ctx.streaming_stock_repo = MagicMock()
+    ctx.streaming_stock_repo.get_desired = MagicMock(return_value=set())
+    ctx.streaming_stock_repo.mark_desired = AsyncMock()
+    ctx.streaming_stock_repo.unmark_desired = AsyncMock()
+    ctx.streaming_stock_repo.mark_active = AsyncMock()
+    ctx.streaming_stock_repo.mark_inactive = AsyncMock()
 
     # 1. 구독 시작
     await ctx.start_program_trading("005930")
     ctx.streaming_service.connect_websocket.assert_awaited_once()
     ctx.streaming_service.subscribe_program_trading.assert_awaited_with("005930")
-    mock_rdm_instance.add_subscribed_code.assert_called_with("005930")
+    ctx.streaming_stock_repo.mark_desired.assert_called_with("005930", StreamingType.PROGRAM_TRADING)
 
     # 2. 중복 구독 시도 (API 호출 없어야 함)
-    mock_rdm_instance.is_subscribed.return_value = True
+    ctx.streaming_stock_repo.get_desired.return_value = {"005930"}
     await ctx.start_program_trading("005930")
     assert ctx.streaming_service.subscribe_program_trading.call_count == 1
 
     # 3. 구독 해지
     await ctx.stop_program_trading("005930")
     ctx.streaming_service.unsubscribe_program_trading.assert_awaited_with("005930")
-    mock_rdm_instance.remove_subscribed_code.assert_called_with("005930")
+    ctx.streaming_stock_repo.unmark_desired.assert_called_with("005930", StreamingType.PROGRAM_TRADING)
 
 @pytest.mark.asyncio
 async def test_market_clock_methods(mock_deps):
@@ -256,20 +261,24 @@ def test_web_realtime_callback(mock_deps):
 
 @pytest.mark.asyncio
 async def test_stop_all_program_trading(mock_deps):
-    """모든 프로그램 매매 구독 해지 테스트"""
+    """모든 프로그램 매매 구독 해지 테스트 — streaming_stock_repo SSOT 기반"""
+    from repositories.streaming_stock_repo import StreamingType
     ctx = WebAppContext(None)
-    ctx.realtime_data_service = MagicMock()
-    ctx.realtime_data_service.get_subscribed_codes.return_value = ["005930", "000660"]
-    
+
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
     ctx.streaming_service.unsubscribe_realtime_price = AsyncMock()
+
+    ctx.streaming_stock_repo = MagicMock()
+    ctx.streaming_stock_repo.get_desired = MagicMock(return_value={"005930", "000660"})
+    ctx.streaming_stock_repo.unmark_desired = AsyncMock()
+    ctx.streaming_stock_repo.mark_inactive = AsyncMock()
 
     await ctx.stop_all_program_trading()
 
     assert ctx.streaming_service.unsubscribe_program_trading.call_count == 2
     assert ctx.streaming_service.unsubscribe_realtime_price.call_count == 2
-    ctx.realtime_data_service.clear_subscribed_codes.assert_called_once()
+    assert ctx.streaming_stock_repo.unmark_desired.call_count == 2
 
 @pytest.mark.asyncio
 async def test_initialize_services_with_pydantic_config_object(mock_deps):
