@@ -279,6 +279,101 @@ class TestUpdateWhenInsufficientHistory:
 
 
 # ──────────────────────────────────────────────
+# 3-Tier 파이프라인 상호작용 및 Fallback 검증
+# ──────────────────────────────────────────────
+
+class TestThreeTierPipelineInteraction:
+
+    async def test_tier1_success_skips_tier2_and_tier3(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """[시나리오 1] Tier 1(일괄 수집) 성공 & 모든 종목 DB 완비 → Tier 2/3 완전 스킵"""
+        # 모든 종목이 600일치 데이터를 가지고 있고, 오늘 날짜로 갱신됨
+        mock_stock_repo.get_ohlcv_summary.return_value = {
+            "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20230101"
+        }
+
+        # Tier 1 성공 모킹
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True) as mock_tier1, \
+             patch.object(task, '_backfill_historical_data') as mock_tier2_3:
+            
+            await task._collect_all_ohlcv()
+            
+            mock_tier1.assert_called_once()
+            mock_tier2_3.assert_not_called()  # 백필 완전 스킵 검증
+
+    async def test_partial_tier2_backfill_routing(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """[시나리오 2] Tier 1 성공 후, 일부 종목(신규 상장 등)만 필터링되어 Tier 2로 넘어감"""
+        
+        async def _mock_summary(code):
+            if code == "000660":
+                # SK하이닉스는 데이터가 5개밖에 없음 -> 백필 대상
+                return {"count": 5, "latest_date": TARGET_DATE, "oldest_date": TARGET_DATE}
+            # 나머지는 완비 -> 스킵 대상
+            return {"count": 600, "latest_date": TARGET_DATE, "oldest_date": "20230101"}
+
+        mock_stock_repo.get_ohlcv_summary.side_effect = _mock_summary
+
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_tier2_3:
+            
+            await task._collect_all_ohlcv()
+            
+            # 백필 로직이 호출되었는지 검증
+            mock_tier2_3.assert_called_once()
+            
+            # 백필 대상으로 넘어간 종목 리스트 확인
+            needs_backfill_stocks = mock_tier2_3.call_args[0][0]
+            assert len(needs_backfill_stocks) == 1
+            assert needs_backfill_stocks[0][0] == "000660"  # SK하이닉스만 넘어갔는지 확인
+
+    async def test_tier2_fdr_failure_falls_back_to_tier3(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """[시나리오 3] Tier 2(FDR 고속 백필) 과정에서 에러 발생 시 Tier 3(API 우회)로 Fallback 됨"""
+        needs_backfill = [("005930", "삼성전자", "KOSPI")]
+        
+        # FDR DataReader가 에러를 발생시키도록 모킹
+        def _fdr_error(*args, **kwargs):
+            raise ConnectionError("네이버 금융 서버 응답 없음")
+
+        with patch('task.background.after_market.ohlcv_update_task.fdr.DataReader', side_effect=_fdr_error), \
+             patch.object(task, '_update_stock_ohlcv', return_value=True) as mock_tier3:
+            
+            await task._backfill_historical_data(needs_backfill, TARGET_DATE, False, time.time())
+            
+            # Tier 2가 실패했으므로 Tier 3(증권사 API 개별 호출)이 실행되어야 함
+            mock_tier3.assert_called_once_with("005930")
+
+    async def test_tier2_sanity_check_failure_falls_back_to_tier3(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """[시나리오 4] Tier 2 자체 검증(Sanity Check) 실패 시 수정주가 오류로 간주하고 Tier 3로 Fallback 됨"""
+        needs_backfill = [("005930", "삼성전자", "KOSPI")]
+        
+        # FDR은 데이터를 정상적으로 가져왔다고 가정
+        fake_fdr_df = pd.DataFrame([
+            {"Open": 70000, "High": 71000, "Low": 69000, "Close": 70500, "Volume": 100}
+        ], index=[pd.to_datetime(TARGET_DATE)])
+        
+        # DB에는 완전히 다른 종가(수정주가 미반영 상태 가정)가 들어있다고 모킹
+        mock_stock_repo.get_stock_data = AsyncMock(return_value={
+            "ohlcv": [{"date": TARGET_DATE, "close": 50000}] # FDR(70500) != DB(50000)
+        })
+
+        with patch('task.background.after_market.ohlcv_update_task.fdr.DataReader', return_value=fake_fdr_df), \
+             patch.object(task, '_update_stock_ohlcv', return_value=True) as mock_tier3:
+            
+            await task._backfill_historical_data(needs_backfill, TARGET_DATE, False, time.time())
+            
+            # Sanity Check가 실패했으므로 Tier 3(증권사 API)가 호출되어야 함
+            mock_tier3.assert_called_once_with("005930")
+            # 잘못된 데이터가 DB에 들어가면 안 됨
+            mock_stock_repo.upsert_ohlcv.assert_not_called()
+
+# ──────────────────────────────────────────────
 # API 실패 / 예외 처리
 # ──────────────────────────────────────────────
 
