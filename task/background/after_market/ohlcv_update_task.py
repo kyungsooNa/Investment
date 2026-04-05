@@ -197,8 +197,9 @@ class OhlcvUpdateTask(AfterMarketTask):
                 latest_date = summary.get("latest_date")
                 total_count = summary.get("count", 0)
 
-                # 당일 갱신 실패했거나, 600일치가 다 안 채워진 종목 추출
-                if latest_date != target_date or total_count < self.TARGET_OHLCV_DAYS:
+                # 당일 갱신에 실패했거나, DB가 거의 비어있는 경우(최초 실행 시)에만 백필
+                # (주의: 600으로 두면 상장한지 2년 안된 종목들은 평생 백필을 돕니다)
+                if latest_date != target_date or total_count < 10:
                     needs_backfill_stocks.append((code, name, market))
 
             if not needs_backfill_stocks:
@@ -254,8 +255,9 @@ class OhlcvUpdateTask(AfterMarketTask):
         processed = 0
         updated = 0
         
+        # [수정 후] 600 '영업일'을 확보하려면 캘린더 일수는 주말/공휴일 포함 약 1.5배~2배가 필요합니다.
         clean_target_date = target_date.replace("-", "")
-        start_date_obj = datetime.strptime(clean_target_date, "%Y%m%d") - timedelta(days=self.TARGET_OHLCV_DAYS + 250)
+        start_date_obj = datetime.strptime(clean_target_date, "%Y%m%d") - timedelta(days=self.TARGET_OHLCV_DAYS * 2)
         start_date_str = start_date_obj.strftime("%Y-%m-%d")
 
         # FDR은 증권사 API보다 트래픽 제한이 널널하므로 청크 사이즈를 키웁니다.
@@ -361,8 +363,7 @@ class OhlcvUpdateTask(AfterMarketTask):
         for i in range(0, total_records, self.DB_UPSERT_BATCH_SIZE):
             batch = records[i:i + self.DB_UPSERT_BATCH_SIZE]
             
-            # TODO: 저장소에 맞게 메서드명 수정 (예: upsert_ohlcv_batch)
-            await self._stock_repo.upsert_daily_snapshot(target_date, batch)
+            await self._stock_repo.upsert_ohlcv(target_date, batch)
             
             processed += len(batch)
             self._progress.update({
@@ -402,7 +403,8 @@ class OhlcvUpdateTask(AfterMarketTask):
         """FDR 시계열 과거 데이터를 DB OHLCV 레코드 포맷으로 변환"""
         records = []
         for date_idx, row in df.iterrows():
-            date_str = date_idx.strftime("%Y-%m-%d")
+            # [수정 후] target_date(YYYYMMDD)와 DB Primary Key 포맷을 완벽하게 통일
+            date_str = date_idx.strftime("%Y%m%d")
             try:
                 records.append({
                     "code": code,
