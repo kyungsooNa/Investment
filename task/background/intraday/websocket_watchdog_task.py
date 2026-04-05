@@ -17,14 +17,15 @@ if TYPE_CHECKING:
     from services.streaming_service import StreamingService
     from services.program_trading_stream_service import ProgramTradingStreamService
     from services.market_calendar_service import MarketCalendarService
+    from services.price_subscription_service import PriceSubscriptionService
+    from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
     from core.logger import StreamingEventLogger
-
-# 재구독 시 패킷 간 딜레이 (초) — 증권사 Rate Limit 방지
-SUBSCRIBE_DELAY_SEC = 0.2
-
 
 class WebSocketWatchdogTask(SchedulableTask):
     """프로그램매매 WebSocket 연결을 감시·복원하는 백그라운드 태스크."""
+
+    # 재구독 시 패킷 간 딜레이 (초) — 증권사 Rate Limit 방지
+    SUBSCRIBE_DELAY_SEC = 0.2
 
     def __init__(
         self,
@@ -35,6 +36,8 @@ class WebSocketWatchdogTask(SchedulableTask):
         notification_service: Optional[NotificationService] = None,
         logger=None,
         streaming_logger: Optional["StreamingEventLogger"] = None,
+        streaming_stock_repo: Optional["StreamingStockRepo"] = None,
+        price_subscription_service: Optional["PriceSubscriptionService"] = None,
     ):
         self._streaming_service = streaming_service
         self._realtime_data_service = realtime_data_service
@@ -43,6 +46,8 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._ns = notification_service
         self._logger = logger or logging.getLogger(__name__)
         self._streaming_logger = streaming_logger
+        self._streaming_stock_repo = streaming_stock_repo
+        self._price_subscription_service = price_subscription_service
 
         # SchedulableTask 상태
         self._state: TaskState = TaskState.IDLE
@@ -74,13 +79,10 @@ class WebSocketWatchdogTask(SchedulableTask):
         if self._realtime_data_service:
             self._realtime_data_service.start_background_tasks()
 
-        # 2. 이전 구독 상태 자동 복원
-        if self._realtime_data_service:
-            saved_codes = self._realtime_data_service.get_subscribed_codes()
-            if saved_codes:
-                self._tasks.append(
-                    asyncio.create_task(self._restore_program_trading(saved_codes))
-                )
+        # 2. 이전 구독 상태 자동 복원 (PT + H0UNCNT0 통합 복원)
+        self._tasks.append(
+            asyncio.create_task(self._restore_all_subscriptions())
+        )
 
         # 3. 프로그램매매 연결 상태 워치독
         self._tasks.append(
@@ -123,48 +125,6 @@ class WebSocketWatchdogTask(SchedulableTask):
 
     # ── 프로그램매매 워치독 / 복원 / 재연결 ──────────────────────
 
-    async def _restore_program_trading(self, codes: list) -> None:
-        """앱 시작 시 이전 구독 상태를 자동 복원 (백그라운드)."""
-        self._logger.info(f"프로그램매매 구독 복원 시작: {codes}")
-        success_count = 0
-        failed_codes = []
-        for code in codes:
-            try:
-                # StreamingService가 내부에 콜백을 저장하므로 인자 없이 호출
-                connected = await self._streaming_service.connect_websocket()
-                if not connected:
-                    self._logger.warning(f"프로그램매매 복원 실패 (WebSocket 연결 불가): {code}")
-                    failed_codes.append(code)
-                    continue
-                await self._streaming_service.subscribe_program_trading(code)
-                if self._streaming_logger:
-                    self._streaming_logger.log_pt_subscribe(code, reason="restore")
-                await self._streaming_service.subscribe_realtime_price(code)
-                if self._streaming_logger:
-                    self._streaming_logger.log_price_subscribe(code, reason="restore")
-                success_count += 1
-                # 증권사 Rate Limit 방지: 패킷 간 딜레이
-                await asyncio.sleep(SUBSCRIBE_DELAY_SEC)
-            except Exception as e:
-                self._logger.error(f"프로그램매매 복원 중 오류 ({code}): {e}")
-                failed_codes.append(code)
-
-        if failed_codes:
-            self._logger.warning(f"복원에 실패한 구독 종목을 상태에서 제거합니다: {failed_codes}")
-            for code in failed_codes:
-                self._realtime_data_service.remove_subscribed_code(code)
-                if self._streaming_logger:
-                    self._streaming_logger.log_pt_unsubscribe(code, reason="restore_failed")
-                    self._streaming_logger.log_price_unsubscribe(code, reason="restore_failed")
-
-        if self._streaming_logger:
-            self._streaming_logger.log_restore(
-                codes=codes,
-                success=success_count,
-                total=len(codes),
-            )
-        self._logger.info(f"프로그램매매 구독 복원 완료: {success_count}/{len(codes)}개 종목")
-
     async def _program_trading_watchdog(self) -> None:
         """프로그램매매 WebSocket 연결 상태를 주기적으로 감시하고, 데이터 수신이 끊기면 재연결."""
         WATCHDOG_INTERVAL = 60   # 감시 주기 (초)
@@ -181,7 +141,11 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if not self._realtime_data_service:
                     continue
 
-                codes = self._realtime_data_service.get_subscribed_codes()
+                # PT 구독 종목 확인 — StreamingStockRepo가 SSOT
+                if not self._streaming_stock_repo:
+                    continue
+                from repositories.streaming_stock_repo import StreamingType
+                codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING))
                 if not codes:
                     continue  # 구독 중인 종목 없으면 스킵
 
@@ -219,7 +183,7 @@ class WebSocketWatchdogTask(SchedulableTask):
 
                 if reconnect_trigger:
                     self._intentionally_disconnected = False
-                    await self.force_reconnect_program_trading(trigger=reconnect_trigger)
+                    await self.force_reconnect(trigger=reconnect_trigger)
 
             except asyncio.CancelledError:
                 break
@@ -232,9 +196,9 @@ class WebSocketWatchdogTask(SchedulableTask):
         Watchdog 태스크는 배치 진행률이 없으므로 연결 상태 정보를 반환한다.
         """
         subscribed = 0
-        if self._realtime_data_service:
-            codes = self._realtime_data_service.get_subscribed_codes()
-            subscribed = len(codes) if codes else 0
+        if self._streaming_stock_repo:
+            from repositories.streaming_stock_repo import StreamingType
+            subscribed = len(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING))
 
         last_ts = 0.0
         data_gap = None
@@ -250,64 +214,123 @@ class WebSocketWatchdogTask(SchedulableTask):
             "market_open": self._market_open,
         }
 
-    async def force_reconnect_program_trading(self, trigger: str = "manual") -> None:
-        """WebSocket 연결을 강제로 끊고 재연결 + 재구독.
+    async def _restore_all_subscriptions(self) -> None:
+        """
+        앱 시작 또는 재연결 직후 모든 구독(PT + H0UNCNT0)을 복원한다.
+
+        핵심 순서:
+          1. PT active 상태 초기화 (브로커 연결 리셋 → 내부 상태도 리셋)
+          2. PT + H0STCNT0 재구독
+          3. H0UNCNT0 active 상태 초기화 후 _rebalance()로 재구독
+             (단순 _rebalance() 호출만 하면 _active_codes에 이전 상태가 남아
+              "이미 구독됨"으로 판단해 브로커에 subscribe를 보내지 않는 버그 방지)
+        """
+        from repositories.streaming_stock_repo import StreamingType
+
+        # ── 1. PT active 상태 초기화 ──────────────────────────────
+        if self._streaming_stock_repo:
+            await self._streaming_stock_repo.clear_active(StreamingType.PROGRAM_TRADING)
+
+        # ── 2. PT + H0STCNT0 복원 ─────────────────────────────────
+        pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self._streaming_stock_repo else []
+
+        pt_success = 0
+        pt_failed = []
+        if pt_codes:
+            self._logger.info(f"[워치독] PT 구독 복원 시작: {pt_codes}")
+        for code in pt_codes:
+            try:
+                connected = await self._streaming_service.connect_websocket()
+                if not connected:
+                    self._logger.warning(f"[워치독] PT 재연결 실패: {code}")
+                    pt_failed.append(code)
+                    continue
+                await self._streaming_service.subscribe_program_trading(code)
+                if self._streaming_logger:
+                    self._streaming_logger.log_pt_subscribe(code, reason="restore")
+                await self._streaming_service.subscribe_realtime_price(code)
+                if self._streaming_logger:
+                    self._streaming_logger.log_price_subscribe(code, reason="restore")
+                if self._streaming_stock_repo:
+                    await self._streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
+                pt_success += 1
+                await asyncio.sleep(self.SUBSCRIBE_DELAY_SEC)
+            except Exception as e:
+                self._logger.error(f"[워치독] PT 복원 중 오류 ({code}): {e}")
+                pt_failed.append(code)
+
+        if pt_failed:
+            self._logger.warning(f"[워치독] PT 복원 실패 종목 상태에서 제거: {pt_failed}")
+            for code in pt_failed:
+                if self._streaming_stock_repo:
+                    await self._streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
+                if self._streaming_logger:
+                    self._streaming_logger.log_pt_unsubscribe(code, reason="restore_failed")
+                    self._streaming_logger.log_price_unsubscribe(code, reason="restore_failed")
+
+        if pt_codes:
+            self._logger.info(f"[워치독] PT 구독 복원 완료: {pt_success}/{len(pt_codes)}개")
+
+        # ── 3. H0UNCNT0 복원 (핵심 버그 수정) ────────────────────
+        if self._price_subscription_service:
+            self._price_subscription_service.clear_active_state()
+            if self._streaming_stock_repo:
+                await self._streaming_stock_repo.clear_active(StreamingType.UNIFIED_PRICE)
+            desired_count = len(self._price_subscription_service._refs)
+            if desired_count > 0:
+                self._logger.info(f"[복원] H0UNCNT0 구독 복원 시작: {desired_count}개 종목")
+                await self._price_subscription_service._rebalance()
+                self._logger.info(
+                    f"[복원] H0UNCNT0 구독 복원 완료: "
+                    f"{len(self._price_subscription_service._active_codes)}개 활성"
+                )
+
+        if self._streaming_logger:
+            self._streaming_logger.log_restore(
+                codes=pt_codes,
+                success=pt_success,
+                total=len(pt_codes),
+            )
+
+    async def force_reconnect(self, trigger: str = "manual") -> None:
+        """WebSocket 연결을 강제로 끊고 모든 구독(PT + H0UNCNT0)을 재연결한다.
 
         Args:
-            trigger: 재연결 원인 ("receive_task_dead" | "data_gap_{N}s" | "manual")
+            trigger: 재연결 원인 ("receive_task_dead" | "data_gap_{N}s" | "market_open" | "manual")
         """
-        if not self._realtime_data_service:
-            return
+        from repositories.streaming_stock_repo import StreamingType
 
-        codes = self._realtime_data_service.get_subscribed_codes()
-        if not codes:
+        pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self._streaming_stock_repo else []
+
+        has_price_subs = bool(
+            self._price_subscription_service and self._price_subscription_service._refs
+        )
+        if not pt_codes and not has_price_subs:
             return
 
         t_start = self.pm.start_timer()
-        self._logger.info(f"[워치독] 강제 재연결 시작 (구독 종목: {codes})")
+        self._logger.info(f"[워치독] 강제 재연결 시작 (trigger={trigger}, PT 종목: {pt_codes})")
+
         try:
-            # 1. 기존 WebSocket 연결 강제 종료
             await self._streaming_service.disconnect_websocket()
         except Exception as e:
             self._logger.warning(f"[워치독] 기존 연결 종료 중 오류 (무시): {e}")
 
-        # 2. 새 연결 + 재구독 (StreamingService가 내부에 콜백을 저장하므로 인자 없이 호출)
-        success_count = 0
-        failed_codes = []
-        for code in codes:
-            try:
-                connected = await self._streaming_service.connect_websocket()
-                if not connected:
-                    self._logger.warning(f"[워치독] 재연결 실패: {code}")
-                    failed_codes.append(code)
-                    continue
-                await self._streaming_service.subscribe_program_trading(code)
-                if self._streaming_logger:
-                    self._streaming_logger.log_pt_subscribe(code, reason="reconnect")
-                await self._streaming_service.subscribe_realtime_price(code)
-                if self._streaming_logger:
-                    self._streaming_logger.log_price_subscribe(code, reason="reconnect")
-                success_count += 1
-                # 증권사 Rate Limit 방지: 패킷 간 딜레이
-                await asyncio.sleep(SUBSCRIBE_DELAY_SEC)
-            except Exception as e:
-                self._logger.error(f"[워치독] 재구독 중 오류 ({code}): {e}")
-                failed_codes.append(code)
-
-        if failed_codes:
-            self._logger.warning(f"[워치독] 재구독에 실패한 종목을 상태에서 제거합니다: {failed_codes}")
-            for code in failed_codes:
-                self._realtime_data_service.remove_subscribed_code(code)
-                if self._streaming_logger:
-                    self._streaming_logger.log_pt_unsubscribe(code, reason="reconnect_failed")
-                    self._streaming_logger.log_price_unsubscribe(code, reason="reconnect_failed")
+        await self._restore_all_subscriptions()
 
         if self._streaming_logger:
+            from repositories.streaming_stock_repo import StreamingType
+            active_pt = len(self._streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)) \
+                if self._streaming_stock_repo else 0
             self._streaming_logger.log_reconnect(
                 trigger=trigger,
-                codes=codes,
-                success=success_count,
-                total=len(codes),
+                codes=pt_codes,
+                success=active_pt,
+                total=len(pt_codes),
             )
-        self.pm.log_timer(f"WebSocketWatchdogTask.force_reconnect_program_trading({success_count}/{len(codes)})", t_start)
-        self._logger.info(f"[워치독] 강제 재연결 완료: {success_count}/{len(codes)}개 종목")
+        self.pm.log_timer(f"WebSocketWatchdogTask.force_reconnect({trigger})", t_start)
+        self._logger.info(f"[워치독] 강제 재연결 완료 (trigger={trigger})")
+
+    async def force_reconnect_program_trading(self, trigger: str = "manual") -> None:
+        """하위호환 alias — force_reconnect()로 위임한다."""
+        await self.force_reconnect(trigger=trigger)

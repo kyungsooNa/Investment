@@ -43,6 +43,8 @@ from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
 from services.price_subscription_service import PriceSubscriptionService
+from services.price_stream_service import PriceStreamService
+from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
@@ -84,6 +86,8 @@ class WebAppContext:
         # 프로그램매매 실시간 데이터 서비스
         self.realtime_data_service = ProgramTradingStreamService(self.logger)
         self.price_subscription_service: PriceSubscriptionService = None
+        self.price_stream_service: PriceStreamService = None
+        self.streaming_stock_repo: StreamingStockRepo = None
 
         # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
         self.streaming_event_logger = get_streaming_logger()
@@ -220,12 +224,24 @@ class WebAppContext:
             market_data_service=self.market_data_service,
             streaming_logger=self.streaming_event_logger,
         )
+        # PriceStreamService 초기화 — 체결가 틱 캐시 + StockRepository 업데이트 전담
+        self.price_stream_service = PriceStreamService(
+            stock_repo=self.stock_repository,
+            logger=self.logger,
+        )
+        self.streaming_service.set_price_stream_service(self.price_stream_service)
+
+        # StreamingStockRepo 초기화 (구독 상태 중앙 저장소)
+        self.streaming_stock_repo = StreamingStockRepo(logger=self.logger)
+        self.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
+
         # PriceSubscriptionService 초기화 (StreamingService 생성 이후)
         self.price_subscription_service = PriceSubscriptionService(
             streaming_service=self.streaming_service,
             stock_repo=self.stock_repository,
             logger=self.logger,
             streaming_logger=self.streaming_event_logger,
+            streaming_stock_repo=self.streaming_stock_repo,
         )
 
         # WebSocketWatchdogTask 초기화
@@ -237,6 +253,8 @@ class WebAppContext:
             notification_service=self.notification_service,
             logger=self.logger,
             streaming_logger=self.streaming_event_logger,
+            streaming_stock_repo=self.streaming_stock_repo,
+            price_subscription_service=self.price_subscription_service,
         )
 
         self.daily_price_collector_task = DailyPriceCollectorTask(
@@ -563,12 +581,10 @@ class WebAppContext:
     # --- 프로그램매매 실시간 스트리밍 ---
 
     def _web_realtime_callback(self, data):
-        """웹소켓 실시간 콜백: 기존 핸들러 + 웹 SSE 전달."""
-        if self.streaming_service:
-            self.streaming_service.dispatch_realtime_message(data)
+        """웹소켓 실시간 콜백: 가격 주입 후 StreamingService 중앙 디스패처에 전달."""
         if data.get('type') == 'realtime_program_trading':
             item = data.get('data', {})
-            # [추가] 현재가 정보 주입
+            # 현재가 정보 주입 — dispatch 전에 수행해야 핸들러가 가격 정보를 수신
             if self.streaming_service:
                 code = item.get('유가증권단축종목코드')
                 price_data = self.streaming_service.get_cached_realtime_price(code)
@@ -581,24 +597,26 @@ class WebAppContext:
                     else:
                         item['price'] = price_data
 
-            # [변경] 매니저에게 데이터 처리 위임
-            self.realtime_data_service.on_data_received(item)
+        if self.streaming_service:
+            self.streaming_service.dispatch_realtime_message(data)
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""
-        # [변경] 매니저를 통해 구독 상태 확인
-        if self.realtime_data_service.is_subscribed(code):
-            # [추가] 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
+        pt_desired = (
+            self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)
+            if self.streaming_stock_repo else set()
+        )
+        if code in pt_desired:
+            # 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
             if (self.broker
                     and not self.broker.is_websocket_receive_alive()):
                 self.logger.warning(f"[프로그램매매] {code} 구독 상태이나 수신 태스크 종료됨. 재연결 시도.")
                 await self.websocket_watchdog_task.force_reconnect_program_trading()
 
-                # 재연결 과정에서 실패하여 구독 목록에서 제거되었는지 확인
-                if not self.realtime_data_service.is_subscribed(code):
-                    self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
-                else:
+                # 재연결 후에도 desired에 있으면 성공으로 간주
+                if self.streaming_stock_repo and code in self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING):
                     return True
+                self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
             else:
                 return True
 
@@ -619,7 +637,9 @@ class WebAppContext:
             self.pm.log_timer(f"subscribe_realtime_price({code})", t_sub_price)
 
             if sub_pt_success and sub_price_success:
-                self.realtime_data_service.add_subscribed_code(code)
+                if self.streaming_stock_repo:
+                    await self.streaming_stock_repo.mark_desired(code, StreamingType.PROGRAM_TRADING)
+                    await self.streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
                 return True
             else:
@@ -637,14 +657,18 @@ class WebAppContext:
 
     async def stop_program_trading(self, code: str):
         """특정 종목 프로그램매매 구독 해지."""
-        if self.realtime_data_service.is_subscribed(code):
+        if self.streaming_stock_repo and code in self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING):
             await self.streaming_service.unsubscribe_program_trading(code)
             await self.streaming_service.unsubscribe_realtime_price(code)
-            self.realtime_data_service.remove_subscribed_code(code)
+            await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
+            await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
-        for code in self.realtime_data_service.get_subscribed_codes():
+        codes = sorted(self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self.streaming_stock_repo else []
+        for code in codes:
             await self.streaming_service.unsubscribe_program_trading(code)
             await self.streaming_service.unsubscribe_realtime_price(code)
-        self.realtime_data_service.clear_subscribed_codes()
+            if self.streaming_stock_repo:
+                await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
+                await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)
