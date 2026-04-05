@@ -98,7 +98,7 @@ async def test_subscribe_unsubscribe_realtime_price(streaming_service, mock_brok
 async def test_handle_program_trading_stream(streaming_service, mock_broker, mock_market_clock):
     """고수준 스트림 핸들러: 프로그램매매 스트리밍 처리 (duration 0으로 빠르게 통과)"""
     await streaming_service.handle_program_trading_stream("005930", duration=0)
-    
+
     mock_broker.connect_websocket.assert_awaited_once()
     mock_broker.subscribe_program_trading.assert_awaited_once_with("005930")
     mock_market_clock.async_sleep.assert_awaited_once_with(0)
@@ -114,11 +114,11 @@ async def test_handle_realtime_stream(streaming_service, mock_broker, mock_marke
         fields=["price", "quote"],
         duration=0
     )
-    
+
     mock_broker.connect_websocket.assert_awaited_once()
     assert mock_broker.subscribe_realtime_price.await_count == 2
     assert mock_broker.subscribe_realtime_quote.await_count == 2
-    
+
     assert mock_broker.unsubscribe_realtime_price.await_count == 2
     assert mock_broker.unsubscribe_realtime_quote.await_count == 2
     mock_broker.disconnect_websocket.assert_awaited_once()
@@ -127,19 +127,117 @@ async def test_handle_realtime_stream(streaming_service, mock_broker, mock_marke
 async def test_handle_realtime_stream_exception(streaming_service, mock_broker):
     """실시간 스트림 핸들러 수행 중 오류 발생 시 정상적인 리소스 정리(finally) 테스트"""
     mock_broker.subscribe_realtime_price.side_effect = Exception("Test Error")
-    
+
     await streaming_service.handle_realtime_stream(
         stock_codes=["005930"],
         fields=["price"],
         duration=0
     )
-    
+
     streaming_service.logger.exception.assert_called_once()
     mock_broker.unsubscribe_realtime_price.assert_awaited_once_with("005930")
     mock_broker.disconnect_websocket.assert_awaited_once()
 
-def test_dispatch_realtime_message_realtime_price(streaming_service, mock_market_data_service):
-    """메시지 디스패치: 실시간 체결가 수신 시 메모리 캐시 갱신 및 로깅 확인"""
+# ── Observer 패턴 테스트 ──────────────────────────────────────────
+
+def test_register_handler_called_with_inner_data(streaming_service):
+    """register_handler: 등록 핸들러가 inner data dict으로 호출되는지 확인"""
+    handler = MagicMock()
+    streaming_service.register_handler('realtime_price', handler)
+
+    inner = {
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '70000',
+        '전일대비': '1000',
+        '전일대비율': '1.45',
+        '전일대비부호': '2',
+        '누적거래량': '1000000',
+        '주식체결시간': '100000',
+    }
+    streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+
+    handler.assert_called_once_with(inner)
+
+
+def test_register_multiple_handlers_all_called(streaming_service):
+    """register_handler: 동일 타입에 복수 핸들러 등록 시 모두 호출됨"""
+    h1 = MagicMock()
+    h2 = MagicMock()
+    streaming_service.register_handler('realtime_price', h1)
+    streaming_service.register_handler('realtime_price', h2)
+
+    inner = {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+
+    h1.assert_called_once_with(inner)
+    h2.assert_called_once_with(inner)
+
+
+def test_handler_exception_does_not_affect_other_handlers(streaming_service):
+    """handler 격리: 첫 번째 핸들러 예외가 두 번째 핸들러 호출을 막지 않는다"""
+    failing_handler = MagicMock(side_effect=RuntimeError("handler crash"))
+    good_handler = MagicMock()
+
+    streaming_service.register_handler('realtime_price', failing_handler)
+    streaming_service.register_handler('realtime_price', good_handler)
+
+    inner = {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+
+    failing_handler.assert_called_once()
+    good_handler.assert_called_once_with(inner)
+    streaming_service.logger.error.assert_called_once()
+
+
+def test_set_price_stream_service_registers_handler(streaming_service):
+    """set_price_stream_service: on_price_tick이 realtime_price 핸들러로 등록됨"""
+    mock_svc = MagicMock()
+    streaming_service.set_price_stream_service(mock_svc)
+
+    inner = {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+
+    mock_svc.on_price_tick.assert_called_once_with(inner)
+
+
+def test_set_price_stream_service_replaces_previous_handler(streaming_service):
+    """set_price_stream_service: 재호출 시 이전 핸들러가 제거되고 새 핸들러로 교체됨"""
+    old_svc = MagicMock()
+    new_svc = MagicMock()
+
+    streaming_service.set_price_stream_service(old_svc)
+    streaming_service.set_price_stream_service(new_svc)
+
+    inner = {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+
+    old_svc.on_price_tick.assert_not_called()
+    new_svc.on_price_tick.assert_called_once_with(inner)
+
+
+def test_get_cached_realtime_price_delegates_to_price_stream_service(streaming_service):
+    """get_cached_realtime_price: PriceStreamService 설정 시 위임하여 반환"""
+    mock_svc = MagicMock()
+    mock_svc.get_cached_price.return_value = {"price": "70000"}
+    streaming_service.set_price_stream_service(mock_svc)
+
+    result = streaming_service.get_cached_realtime_price("005930")
+
+    mock_svc.get_cached_price.assert_called_once_with("005930")
+    assert result == {"price": "70000"}
+
+
+def test_get_cached_realtime_price_returns_none_without_service(streaming_service):
+    """get_cached_realtime_price: PriceStreamService 미설정 시 None 반환"""
+    result = streaming_service.get_cached_realtime_price("005930")
+    assert result is None
+
+
+def test_dispatch_realtime_message_realtime_price_console_log(streaming_service):
+    """dispatch_realtime_message: realtime_price 수신 시 콘솔 디버그 로그 출력"""
+    # 스로틀 우회를 위해 마지막 출력 시각을 과거로 설정
+    streaming_service._last_console_print_time = 0.0
+
     data = {
         'type': 'realtime_price',
         'data': {
@@ -149,27 +247,20 @@ def test_dispatch_realtime_message_realtime_price(streaming_service, mock_market
             '전일대비율': '1.45',
             '전일대비부호': '2',
             '누적거래량': '1000000',
-            '주식체결시간': '100000'
+            '주식체결시간': '100000',
         }
     }
-
     streaming_service.dispatch_realtime_message(data)
-
-    cached = streaming_service.get_cached_realtime_price("005930")
-    assert cached is not None
-    assert cached["price"] == "70000"
-    assert cached["change"] == "1000"
-    assert "received_at" in cached
-    assert isinstance(cached["received_at"], float)
-
-    mock_market_data_service._stock_repo.update_realtime_data.assert_called_once_with("005930", 70000.0, 1000000)
 
     debug_calls_str = str(streaming_service.logger.debug.call_args_list)
     assert "[실시간 체결 - 100000]" in debug_calls_str
     assert "현재가 70000원" in debug_calls_str
 
+
 def test_dispatch_realtime_message_realtime_quote(streaming_service):
     """메시지 디스패치: 실시간 호가 수신 시 로깅 확인"""
+    streaming_service._last_console_print_time = 0.0
+
     data = {
         'type': 'realtime_quote',
         'data': {
@@ -192,7 +283,7 @@ def test_dispatch_realtime_message_unknown_type(streaming_service):
         'tr_id': 'UNKNOWN',
         'data': {}
     }
-    
+
     streaming_service.dispatch_realtime_message(data)
     assert streaming_service.logger.debug.call_count == 2
 
@@ -201,7 +292,7 @@ async def test_handle_get_program_trading_history_success(streaming_service, moc
     """REST 조회: 프로그램매매 히스토리 정상 조회"""
     expected_resp = ResCommonResponse(rt_cd="0", msg1="정상", data=[])
     mock_broker.get_program_trade_by_stock_daily.return_value = expected_resp
-    
+
     res = await streaming_service.handle_get_program_trading_history("005930")
     assert res == expected_resp
     mock_broker.get_program_trade_by_stock_daily.assert_awaited_once_with("005930")
@@ -210,7 +301,7 @@ async def test_handle_get_program_trading_history_success(streaming_service, moc
 async def test_handle_get_program_trading_history_exception(streaming_service, mock_broker):
     """REST 조회: 프로그램매매 히스토리 조회 시 예외 발생 방어"""
     mock_broker.get_program_trade_by_stock_daily.side_effect = Exception("API 에러")
-    
+
     res = await streaming_service.handle_get_program_trading_history("005930")
     assert res.rt_cd == ErrorCode.API_ERROR.value
     streaming_service.logger.error.assert_called_once()
