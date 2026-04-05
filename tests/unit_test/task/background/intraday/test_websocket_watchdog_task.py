@@ -121,7 +121,7 @@ async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
     svc._realtime_data_service.last_data_ts = time.time() - 310  # 임계값 300초 초과
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = True  # Zombie 상태
 
-    svc.force_reconnect_program_trading = AsyncMock()
+    svc.force_reconnect = AsyncMock()
 
     async def sleep_side_effect(seconds):
         if sleep_side_effect.counter == 0:
@@ -136,7 +136,7 @@ async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
         except asyncio.CancelledError:
             pass
 
-    svc.force_reconnect_program_trading.assert_called_once()
+    svc.force_reconnect.assert_called_once()
     args, _ = svc._logger.warning.call_args
     assert "데이터 미수신" in args[0]
     assert "재연결을 시도합니다" in args[0]
@@ -182,7 +182,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
     assert svc._streaming_service.connect_websocket.call_count == 2
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
     assert svc._streaming_service.subscribe_realtime_price.call_count == 2
-    svc._logger.info.assert_any_call("[워치독] 강제 재연결 완료: 2/2개 종목")
+    svc._logger.info.assert_any_call("[워치독] 강제 재연결 완료 (trigger=manual)")
 
 
 @pytest.mark.asyncio
@@ -307,8 +307,8 @@ async def test_force_reconnect_program_trading_errors(watchdog_task, mock_deps):
         await svc.force_reconnect_program_trading()
 
     svc._logger.warning.assert_any_call("[워치독] 기존 연결 종료 중 오류 (무시): Disconnect Error")
-    svc._logger.warning.assert_any_call("[워치독] 재연결 실패: 005930")
-    svc._logger.error.assert_called_with("[워치독] 재구독 중 오류 (000660): Subscription Failed")
+    svc._logger.warning.assert_any_call("[복원] PT 복원 실패 종목 상태에서 제거: ['005930', '000660']")
+    svc._logger.error.assert_called_with("[복원] PT 복원 중 오류 (000660): Subscription Failed")
     svc._realtime_data_service.remove_subscribed_code.assert_any_call("005930")
     svc._realtime_data_service.remove_subscribed_code.assert_any_call("000660")
 

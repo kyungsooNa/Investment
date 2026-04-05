@@ -27,6 +27,7 @@ from typing import Dict, Set, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from services.streaming_service import StreamingService
     from repositories.stock_repository import StockRepository
+    from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
     from core.logger import StreamingEventLogger
 
 
@@ -58,11 +59,13 @@ class PriceSubscriptionService:
         stock_repo: "StockRepository",
         logger=None,
         streaming_logger: Optional["StreamingEventLogger"] = None,
+        streaming_stock_repo: Optional["StreamingStockRepo"] = None,
     ):
         self._streaming = streaming_service
         self._stock_repo = stock_repo
         self._logger = logger or logging.getLogger(__name__)
         self._streaming_logger = streaming_logger
+        self._streaming_stock_repo = streaming_stock_repo
 
         # code -> {category_key -> SubscriptionPriority}
         self._refs: Dict[str, Dict[str, SubscriptionPriority]] = {}
@@ -76,11 +79,24 @@ class PriceSubscriptionService:
 
     # ── Public API ─────────────────────────────────────────────────
 
+    def clear_active_state(self) -> None:
+        """
+        재연결 시 워치독이 호출 — 브로커 연결이 리셋되었으므로 내부 활성 집합을 비운다.
+        이후 _rebalance()를 호출하면 _refs(desired)에 있는 모든 종목이 신규 구독된다.
+        streaming_stock_repo의 active 초기화는 워치독(_restore_all_subscriptions)에서 별도 처리.
+        """
+        count = len(self._active_codes)
+        self._active_codes.clear()
+        self._logger.debug(f"PriceSubscriptionService: active 상태 초기화 {count}개 클리어")
+
     async def add_subscription(
         self, code: str, priority: SubscriptionPriority, category_key: str
     ) -> None:
         """특정 카테고리에서 종목 구독을 요청합니다."""
         self._refs.setdefault(code, {})[category_key] = priority
+        if self._streaming_stock_repo:
+            from repositories.streaming_stock_repo import StreamingType
+            await self._streaming_stock_repo.mark_desired(code, StreamingType.UNIFIED_PRICE)
         await self._rebalance()
 
     async def remove_subscription(self, code: str, category_key: str) -> None:
@@ -89,6 +105,9 @@ class PriceSubscriptionService:
             self._refs[code].pop(category_key, None)
             if not self._refs[code]:
                 del self._refs[code]
+                if self._streaming_stock_repo:
+                    from repositories.streaming_stock_repo import StreamingType
+                    await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
         await self._rebalance()
 
     async def remove_category(self, category_key: str) -> None:
@@ -98,6 +117,9 @@ class PriceSubscriptionService:
             self._refs[code].pop(category_key, None)
             if not self._refs[code]:
                 del self._refs[code]
+                if self._streaming_stock_repo:
+                    from repositories.streaming_stock_repo import StreamingType
+                    await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
         await self._rebalance()
 
     async def sync_subscriptions(
@@ -113,13 +135,24 @@ class PriceSubscriptionService:
         old_codes = {c for c, cats in self._refs.items() if category_key in cats}
         new_codes = set(codes)
 
-        for code in old_codes - new_codes:
+        removed_codes = old_codes - new_codes
+        added_codes = new_codes - old_codes
+
+        for code in removed_codes:
             self._refs[code].pop(category_key, None)
             if not self._refs[code]:
                 del self._refs[code]
 
         for code in new_codes:
             self._refs.setdefault(code, {})[category_key] = priority
+
+        if self._streaming_stock_repo:
+            from repositories.streaming_stock_repo import StreamingType
+            for code in removed_codes:
+                if code not in self._refs:
+                    await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
+            for code in added_codes:
+                await self._streaming_stock_repo.mark_desired(code, StreamingType.UNIFIED_PRICE)
 
         await self._rebalance()
 
@@ -194,6 +227,9 @@ class PriceSubscriptionService:
             if success:
                 self._active_codes.add(code)
                 self._stock_repo.mark_streaming(code)
+                if self._streaming_stock_repo:
+                    from repositories.streaming_stock_repo import StreamingType
+                    await self._streaming_stock_repo.mark_active(code, StreamingType.UNIFIED_PRICE)
                 self._logger.debug(f"PriceSubscriptionService: 구독 등록 {code}")
                 if self._streaming_logger:
                     categories = self._refs.get(code, {})
@@ -215,6 +251,9 @@ class PriceSubscriptionService:
             await self._streaming.unsubscribe_unified_price(code)
             self._active_codes.discard(code)
             self._stock_repo.unmark_streaming(code)
+            if self._streaming_stock_repo:
+                from repositories.streaming_stock_repo import StreamingType
+                await self._streaming_stock_repo.mark_inactive(code, StreamingType.UNIFIED_PRICE)
             self._logger.debug(f"PriceSubscriptionService: 구독 해지 {code}")
             if self._streaming_logger:
                 self._streaming_logger.log_unsubscribe(

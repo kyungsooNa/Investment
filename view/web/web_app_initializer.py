@@ -43,6 +43,7 @@ from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
 from services.price_subscription_service import PriceSubscriptionService
+from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
@@ -84,6 +85,7 @@ class WebAppContext:
         # 프로그램매매 실시간 데이터 서비스
         self.realtime_data_service = ProgramTradingStreamService(self.logger)
         self.price_subscription_service: PriceSubscriptionService = None
+        self.streaming_stock_repo: StreamingStockRepo = None
 
         # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
         self.streaming_event_logger = get_streaming_logger()
@@ -220,12 +222,17 @@ class WebAppContext:
             market_data_service=self.market_data_service,
             streaming_logger=self.streaming_event_logger,
         )
+        # StreamingStockRepo 초기화 (구독 상태 중앙 저장소)
+        self.streaming_stock_repo = StreamingStockRepo(logger=self.logger)
+        self.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
+
         # PriceSubscriptionService 초기화 (StreamingService 생성 이후)
         self.price_subscription_service = PriceSubscriptionService(
             streaming_service=self.streaming_service,
             stock_repo=self.stock_repository,
             logger=self.logger,
             streaming_logger=self.streaming_event_logger,
+            streaming_stock_repo=self.streaming_stock_repo,
         )
 
         # WebSocketWatchdogTask 초기화
@@ -237,6 +244,8 @@ class WebAppContext:
             notification_service=self.notification_service,
             logger=self.logger,
             streaming_logger=self.streaming_event_logger,
+            streaming_stock_repo=self.streaming_stock_repo,
+            price_subscription_service=self.price_subscription_service,
         )
 
         self.daily_price_collector_task = DailyPriceCollectorTask(
@@ -620,6 +629,9 @@ class WebAppContext:
 
             if sub_pt_success and sub_price_success:
                 self.realtime_data_service.add_subscribed_code(code)
+                if self.streaming_stock_repo:
+                    await self.streaming_stock_repo.mark_desired(code, StreamingType.PROGRAM_TRADING)
+                    await self.streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
                 return True
             else:
@@ -641,10 +653,16 @@ class WebAppContext:
             await self.streaming_service.unsubscribe_program_trading(code)
             await self.streaming_service.unsubscribe_realtime_price(code)
             self.realtime_data_service.remove_subscribed_code(code)
+            if self.streaming_stock_repo:
+                await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
+                await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
         for code in self.realtime_data_service.get_subscribed_codes():
             await self.streaming_service.unsubscribe_program_trading(code)
             await self.streaming_service.unsubscribe_realtime_price(code)
+            if self.streaming_stock_repo:
+                await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
+                await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)
         self.realtime_data_service.clear_subscribed_codes()
