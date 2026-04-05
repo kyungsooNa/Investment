@@ -83,19 +83,12 @@ class ProgramTradingStreamService:
     def _lock(self):
         return self._repo._lock
 
-    @property
-    def _pt_codes(self):
-        return self._repo._pt_codes
-
     # ── 내부 메서드 포워딩 ───────────────────────────────────────────
 
     @contextmanager
     def _get_connection(self):
         with self._repo._get_connection() as conn:
             yield conn
-
-    def _load_subscribed_codes(self):
-        self._repo._load_subscribed_codes()
 
     def _load_pt_history(self):
         self._pt_history = self._repo.load_today_history()
@@ -202,23 +195,6 @@ class ProgramTradingStreamService:
     def get_history_data(self):
         """현재 메모리에 있는 히스토리 데이터 반환."""
         return self._pt_history
-
-    # ── 구독 상태 관리 (repo 위임) ────────────────────────────────────
-
-    def add_subscribed_code(self, code: str):
-        self._repo.add_subscribed_code(code)
-
-    def remove_subscribed_code(self, code: str):
-        self._repo.remove_subscribed_code(code)
-
-    def clear_subscribed_codes(self):
-        self._repo.clear_subscribed_codes()
-
-    def is_subscribed(self, code: str) -> bool:
-        return self._repo.is_subscribed(code)
-
-    def get_subscribed_codes(self) -> list:
-        return self._repo.get_subscribed_codes()
 
     # ── 스냅샷 저장/로드 (repo 위임) ─────────────────────────────────
 

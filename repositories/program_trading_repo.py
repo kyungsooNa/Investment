@@ -6,9 +6,12 @@
   - SQLite DB 초기화 (pt_history, pt_subscriptions, pt_snapshot 테이블)
   - 수신 데이터 버퍼 관리 및 주기적 일괄 저장 (ThreadPoolExecutor + asyncio.Task)
   - 금일 히스토리 메모리 복원 (앱 시작 시)
-  - 구독 상태 영속화 (pt_subscriptions)
   - 스냅샷 저장/조회 (pt_snapshot)
   - 오래된 데이터 정리
+
+구독 상태(pt_subscriptions) 영속화:
+  StreamingStockRepo가 단일 진실 공급원(SSOT)으로 pt_subscriptions 테이블을 직접 관리한다.
+  ProgramTradingRepo는 테이블 생성만 담당하며 구독 상태 읽기/쓰기는 수행하지 않는다.
 
 동시성:
   - 메인 스레드(WebSocket 콜백): 버퍼 적재 (_buffer_lock)
@@ -54,11 +57,8 @@ class ProgramTradingRepo:
         self._flush_task: Optional[asyncio.Task] = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pt_db")
 
-        self._pt_codes: set = set()
-
         os.makedirs(self._base_dir, exist_ok=True)
         self._init_db()
-        self._load_subscribed_codes()
 
     # ── DB 초기화 ────────────────────────────────────────────────────
 
@@ -173,18 +173,6 @@ class ProgramTradingRepo:
             self._logger.error(f"히스토리 로드 중 오류: {e}")
         return result
 
-    def _load_subscribed_codes(self):
-        """DB에서 구독 상태를 복원."""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.execute("SELECT code FROM pt_subscriptions")
-                codes = [row[0] for row in cursor.fetchall()]
-                self._pt_codes = set(codes)
-            if self._pt_codes:
-                self._logger.info(f"구독 상태 복원: {sorted(self._pt_codes)}")
-        except Exception as e:
-            self._logger.error(f"구독 상태 로드 실패: {e}")
-
     # ── 버퍼 관리 ────────────────────────────────────────────────────
 
     @staticmethod
@@ -269,40 +257,6 @@ class ProgramTradingRepo:
                 await self._flush_write_buffer()
         except asyncio.CancelledError:
             await self._flush_write_buffer()
-
-    # ── 구독 상태 관리 (SQLite 영속) ─────────────────────────────────
-
-    def add_subscribed_code(self, code: str):
-        self._pt_codes.add(code)
-        try:
-            with self._get_connection() as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO pt_subscriptions (code) VALUES (?)", (code,)
-                )
-        except Exception as e:
-            self._logger.error(f"구독 상태 저장 실패: {e}")
-
-    def remove_subscribed_code(self, code: str):
-        self._pt_codes.discard(code)
-        try:
-            with self._get_connection() as conn:
-                conn.execute("DELETE FROM pt_subscriptions WHERE code = ?", (code,))
-        except Exception as e:
-            self._logger.error(f"구독 상태 삭제 실패: {e}")
-
-    def clear_subscribed_codes(self):
-        self._pt_codes.clear()
-        try:
-            with self._get_connection() as conn:
-                conn.execute("DELETE FROM pt_subscriptions")
-        except Exception as e:
-            self._logger.error(f"구독 상태 전체 삭제 실패: {e}")
-
-    def is_subscribed(self, code: str) -> bool:
-        return code in self._pt_codes
-
-    def get_subscribed_codes(self) -> list:
-        return sorted(list(self._pt_codes))
 
     # ── 스냅샷 저장/조회 ─────────────────────────────────────────────
 

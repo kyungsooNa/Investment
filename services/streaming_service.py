@@ -51,7 +51,6 @@ class StreamingService:
         self.market_data_service = market_data_service
         self._streaming_logger = streaming_logger
         self._price_stream_service: Optional["PriceStreamService"] = None
-        self._latest_prices: Dict[str, dict | str] = {}
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
         self._callback = None  # 재연결 시 콜백 유실 방지용 저장
@@ -268,11 +267,14 @@ class StreamingService:
                 f"처리되지 않은 실시간 메시지: {data.get('tr_id')} - {data}"
             )
 
-    def get_cached_realtime_price(self, code: str) -> Optional[Dict | str]:
-        """메모리 캐시에서 실시간 최신가 정보를 반환한다."""
+    def get_cached_realtime_price(self, code: str) -> Optional[Dict]:
+        """메모리 캐시에서 실시간 최신가 정보를 반환한다.
+
+        PriceStreamService가 주입되지 않은 경우 None을 반환한다.
+        """
         if self._price_stream_service:
             return self._price_stream_service.get_cached_price(code)
-        return self._latest_prices.get(code)
+        return None
 
     # ── REST 조회 ─────────────────────────────────────────────────
 
