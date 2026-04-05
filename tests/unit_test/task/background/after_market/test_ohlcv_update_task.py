@@ -263,20 +263,18 @@ class TestUpdateWhenInsufficientHistory:
             
             mock_backfill.assert_called_once()
 
-    async def test_skip_when_only_1_day_but_today(
+    # ★ 리뷰 반영: count=1 이면 무조건 백필을 수행하는 것이 맞으므로 로직 및 함수명 수정
+    async def test_backfill_when_only_1_day_but_today(
         self, task, mock_sqs, mock_stock_repo
     ):
         """count < 10 이면 latest_date == today 여도 신규/빈 DB로 간주하여 백필 수행."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 1, "latest_date": TARGET_DATE, "oldest_date": TARGET_DATE
         }
-
         with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
              patch.object(task, '_backfill_historical_data') as mock_backfill:
             await task._collect_all_ohlcv()
-            
             mock_backfill.assert_called_once()
-
 
 # ──────────────────────────────────────────────
 # 3-Tier 파이프라인 상호작용 및 Fallback 검증
@@ -380,49 +378,23 @@ class TestThreeTierPipelineInteraction:
 
 class TestErrorHandling:
 
-    async def test_returns_none_on_api_error_response(
-        self, task, mock_sqs, mock_stock_repo
-    ):
-        """get_ohlcv가 에러 응답(rt_cd != 0) → None 반환."""
-        mock_stock_repo.get_ohlcv_summary.return_value = {
-            "count": 0, "latest_date": None, "oldest_date": None
-        }
-        mock_sqs.get_ohlcv = AsyncMock(
-            return_value=ResCommonResponse(
-                rt_cd=ErrorCode.API_ERROR.value,
-                msg1="조회 실패",
-                data=None,
-            )
-        )
-
+    # ★ 리뷰 반영: _update_stock_ohlcv 호출 시 파라미터 1개(code)만 전달하도록 수정
+    async def test_returns_none_on_api_error_response(self, task, mock_sqs, mock_stock_repo):
+        mock_stock_repo.get_ohlcv_summary.return_value = {"count": 0, "latest_date": None, "oldest_date": None}
+        mock_sqs.get_ohlcv = AsyncMock(return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="조회 실패", data=None))
         result = await task._update_stock_ohlcv("005930")
-
         assert result is None
 
-    async def test_returns_none_on_none_response(
-        self, task, mock_sqs, mock_stock_repo
-    ):
-        """get_ohlcv가 None 반환 → None 반환."""
-        mock_stock_repo.get_ohlcv_summary.return_value = {
-            "count": 0, "latest_date": None, "oldest_date": None
-        }
+    async def test_returns_none_on_none_response(self, task, mock_sqs, mock_stock_repo):
+        mock_stock_repo.get_ohlcv_summary.return_value = {"count": 0, "latest_date": None, "oldest_date": None}
         mock_sqs.get_ohlcv = AsyncMock(return_value=None)
-
         result = await task._update_stock_ohlcv("005930")
-
         assert result is None
 
-    async def test_returns_none_on_exception(
-        self, task, mock_sqs, mock_stock_repo
-    ):
-        """get_ohlcv가 예외 발생 → None 반환 (태스크 중단 없음)."""
-        mock_stock_repo.get_ohlcv_summary.return_value = {
-            "count": 0, "latest_date": None, "oldest_date": None
-        }
+    async def test_returns_none_on_exception(self, task, mock_sqs, mock_stock_repo):
+        mock_stock_repo.get_ohlcv_summary.return_value = {"count": 0, "latest_date": None, "oldest_date": None}
         mock_sqs.get_ohlcv = AsyncMock(side_effect=RuntimeError("서버 오류"))
-
         result = await task._update_stock_ohlcv("005930")
-
         assert result is None
 
     async def test_error_stocks_excluded_from_counts(
@@ -870,4 +842,14 @@ class TestForceCollect:
 
         assert result is True
         mock_stock_repo.get_ohlcv_summary.assert_not_called()  # DB 조회 건너뜀
+        mock_sqs.get_ohlcv.assert_called_once()
+        
+    async def test_update_stock_ohlcv_skips_db_check(
+        self, task, mock_sqs, mock_stock_repo
+    ):
+        """_update_stock_ohlcv는 이제 항상 API를 직접 호출한다."""
+        result = await task._update_stock_ohlcv("005930")
+
+        assert result is True
+        mock_stock_repo.get_ohlcv_summary.assert_not_called()  # DB 조회가 아예 없어야 함
         mock_sqs.get_ohlcv.assert_called_once()

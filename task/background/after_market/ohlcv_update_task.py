@@ -309,7 +309,8 @@ class OhlcvUpdateTask(AfterMarketTask):
                             await self._stock_repo.upsert_ohlcv(records) 
                             is_success = True
             except Exception as e:
-                self._logger.debug(f"[{name}] FDR 과거 데이터 수집 예외 발생: {e}")
+                # ★ 리뷰 반영: Fallback 발생 사실을 명확히 인지할 수 있도록 info 레벨로 상향
+                self._logger.info(f"[{name}] FDR 과거 데이터 수집 실패, 증권사 API로 Fallback: {e}")
 
             # [Tier 3] FDR 실패 또는 자체 검증 실패 시 개별 증권사 API로 우회
             if not is_success:
@@ -516,24 +517,23 @@ class OhlcvUpdateTask(AfterMarketTask):
 
 
     def _load_all_stocks(self) -> List[tuple]:
-        """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외)."""
-        all_stocks = []
-        for _, row in self.stock_code_repository.df.iterrows():
-            code = row.get("종목코드", "")
-            name = row.get("종목명", "")
-            market = row.get("시장구분", "")
+        """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외).
 
-            if not code:
-                continue
-            if any(name.startswith(p) for p in _ETF_PREFIXES):
-                continue
-            if code[-1] != '0':
-                continue
-            if "스팩" in name:
-                continue
-            if market in ("KOSPI", "KOSDAQ"):
-                all_stocks.append((code, name, market))
-        return all_stocks
+        ★ 리뷰 반영: iterrows() 동기 순회 대신 벡터화 마스킹을 사용하여 수십 배 빠르게 필터링한다.
+        """
+        df = self.stock_code_repository.df
+        codes = df["종목코드"].astype(str)
+        names = df["종목명"].astype(str)
+
+        mask = (
+            codes.ne("")
+            & df["시장구분"].isin(("KOSPI", "KOSDAQ"))
+            & (codes.str[-1] == "0")
+            & ~names.str.startswith(_ETF_PREFIXES)
+            & ~names.str.contains("스팩", na=False)
+        )
+        filtered = df[mask]
+        return list(zip(filtered["종목코드"], filtered["종목명"], filtered["시장구분"]))
 
     def get_progress(self) -> Dict:
         """수집 진행률 반환."""
