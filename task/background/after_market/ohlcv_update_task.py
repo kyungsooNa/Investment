@@ -48,9 +48,9 @@ class OhlcvUpdateTask(AfterMarketTask):
       중복된 날짜는 자동으로 INSERT OR REPLACE 처리된다.
     """
 
-    TARGET_OHLCV_DAYS = 600  # 전략에서 최대 600일치를 사용하므로 동일하게 유지
-    API_CHUNK_SIZE = 4        # 병렬 처리 종목 수 (OHLCV는 현재가보다 API 비용이 높음)
-    CHUNK_SLEEP_SEC = 1.5     # 청크 간 대기 시간 (API 레이트 리밋 준수)
+    TARGET_OHLCV_DAYS = 600   # 전략에서 최대 600일치를 사용하므로 동일하게 유지
+    API_CHUNK_SIZE = 4        # [Tier 3] 증권사 API Fallback 병렬 처리 시 사용
+    CHUNK_SLEEP_SEC = 1.5     # [Tier 3] 증권사 API Fallback 레이트 리밋 대기 시간
     CANARY_STOCKS = ["005930", "000660", "035420", "005380", "068270"]
     DB_UPSERT_BATCH_SIZE = 500
     
@@ -322,18 +322,20 @@ class OhlcvUpdateTask(AfterMarketTask):
             # 2. 결과 집계 및 진행률 업데이트
             processed += len(chunk)
             updated += sum(1 for r in results if r)
+            elapsed = time.time() - start_time  # 변수로 할당
+
             self._progress.update({
                 "processed": self._progress["total"] - total + processed,
                 "updated": updated,
-                "elapsed": round(time.time() - start_time, 1)
+                "elapsed": round(elapsed, 1) # progress dict에는 float 값으로 유지
             })
 
-            # 로그 출력
+            # 로그 출력 (f-string 포맷팅으로 완벽 통일)
             if processed % 60 == 0 or processed >= total:
                 self._logger.info(
                     f"과거 데이터 보완 진행: {processed}/{total} "
                     f"({processed / total * 100:.1f}%) "
-                    f"| 갱신: {updated} | 소요: {round(time.time() - start_time, 1)}s"
+                    f"| 갱신: {updated} | 소요: {elapsed:.1f}s"
                 )
 
             # 너무 빠른 HTTP 요청을 방지하기 위한 가벼운 대기
@@ -414,6 +416,7 @@ class OhlcvUpdateTask(AfterMarketTask):
                     "low": int(row.get('Low', 0)),
                     "close": int(row.get('Close', 0)),
                     "volume": int(row.get('Volume', 0)),
+                    # FDR 과거 데이터에는 'Amount' 필드가 없어 종가 * 거래량으로 근사치 추정
                     "trading_value": int(row.get('Close', 0)) * int(row.get('Volume', 0)), 
                 })
             except (ValueError, TypeError):
