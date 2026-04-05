@@ -130,69 +130,66 @@ class TestSkipWhenAlreadyCurrent:
     async def test_skip_when_count_equals_target_and_date_matches(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """600일 보유 + 당일 날짜 일치 → API 호출 없이 False 반환."""
+        """600일 보유 + 당일 날짜 일치 → 백필 없이 스킵된다."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        result = await task._update_stock_ohlcv("005930")
-
-        assert result is False
-        mock_sqs.get_ohlcv.assert_not_called()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            # 조건이 만족되었으므로 백필 로직이 아예 호출되지 않아야 함
+            mock_backfill.assert_not_called()
 
     async def test_skip_when_count_over_target_and_date_matches(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """600일 초과(예: 700일) + 당일 날짜 일치 → 스킵."""
+        """600일 초과(예: 700일) + 당일 날짜 일치 → 백필 없이 스킵된다."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 700, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        result = await task._update_stock_ohlcv("005930")
-
-        assert result is False
-        mock_sqs.get_ohlcv.assert_not_called()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            mock_backfill.assert_not_called()
 
     async def test_all_stocks_skipped_updates_progress(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """전체 종목이 스킵(백필 불필요)되면 API Fallback이 호출되지 않는다."""
-        # DB에 모든 종목이 600일치 데이터를 가지고 있고, 최신 날짜로 갱신된 상태
+        """전체 종목이 스킵(백필 불필요)되면 조기 종료된다."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
 
-        # FDR 일괄 수집 부분 모킹 (테스트 속도 향상 및 외부 네트워크 격리)
         with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True):
             await task._collect_all_ohlcv()
 
         p = task.get_progress()
-        
-        # 새로운 3-Tier 구조에서는 'skipped'를 개별 카운트하지 않고 조기 종료함
         assert p["updated"] == 0
         mock_sqs.get_ohlcv.assert_not_called()
 
     async def test_skip_does_not_sleep_chunk_delay(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """전체 스킵 시 CHUNK_SLEEP_SEC 대기가 발생하지 않아야 한다 (재시작 후 빠름 검증)."""
+        """전체 스킵 시 CHUNK_SLEEP_SEC 대기가 발생하지 않아야 한다."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231201"
         }
-        task.CHUNK_SLEEP_SEC = 10.0  # 매우 큰 값: sleep이 실제 호출되면 테스트가 느려짐
+        task.CHUNK_SLEEP_SEC = 10.0
 
         slept_durations = []
 
         async def _fake_sleep(sec):
             slept_durations.append(sec)
 
-        with patch("task.background.after_market.ohlcv_update_task.asyncio.sleep", side_effect=_fake_sleep):
+        with patch("task.background.after_market.ohlcv_update_task.asyncio.sleep", side_effect=_fake_sleep), \
+             patch.object(task, '_try_daily_bulk_via_fdr', return_value=True):
             await task._collect_all_ohlcv()
 
-        # API 호출이 없었으므로 CHUNK_SLEEP_SEC(10.0) 대기는 없어야 함
-        assert all(d < task.CHUNK_SLEEP_SEC for d in slept_durations), (
-            f"스킵 시에도 CHUNK_SLEEP_SEC 대기가 발생함: {slept_durations}"
-        )
+        assert all(d < task.CHUNK_SLEEP_SEC for d in slept_durations)
 
 
 # ──────────────────────────────────────────────
@@ -239,45 +236,46 @@ class TestUpdateWhenInsufficientHistory:
     async def test_update_when_count_below_target_but_today_present(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """보유일수 599이지만 latest_date == today → 스킵.
-
-        today 날짜만 있으면 이미 수집 완료로 간주.
-        역사 부족은 최초 full backfill 또는 force collect로 해결.
+        """보유일수 10일 이상 600일 미만이고 latest_date == today → 백필 스킵.
+        (오늘 날짜가 있으면 정상 수집된 것으로 간주)
         """
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 599, "latest_date": TARGET_DATE, "oldest_date": "20240101"
         }
 
-        result = await task._update_stock_ohlcv("005930")
-
-        assert result is False
-        mock_sqs.get_ohlcv.assert_not_called()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            mock_backfill.assert_not_called()
 
     async def test_update_when_no_data_at_all(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """count=0, latest_date=None (신규/초기화) → API 호출."""
+        """count=0, latest_date=None (신규/초기화) → 백필 수행."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 0, "latest_date": None, "oldest_date": None
         }
 
-        result = await task._update_stock_ohlcv("005930")
-
-        assert result is True
-        mock_sqs.get_ohlcv.assert_called_once()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            mock_backfill.assert_called_once()
 
     async def test_skip_when_only_1_day_but_today(
         self, task, mock_sqs, mock_stock_repo
     ):
-        """count=1이지만 latest_date == today → 스킵 (오늘 캔들 기준으로 판단)."""
+        """count < 10 이면 latest_date == today 여도 신규/빈 DB로 간주하여 백필 수행."""
         mock_stock_repo.get_ohlcv_summary.return_value = {
             "count": 1, "latest_date": TARGET_DATE, "oldest_date": TARGET_DATE
         }
 
-        result = await task._update_stock_ohlcv("005930")
-
-        assert result is False
-        mock_sqs.get_ohlcv.assert_not_called()
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=True), \
+             patch.object(task, '_backfill_historical_data') as mock_backfill:
+            await task._collect_all_ohlcv()
+            
+            mock_backfill.assert_called_once()
 
 
 # ──────────────────────────────────────────────
