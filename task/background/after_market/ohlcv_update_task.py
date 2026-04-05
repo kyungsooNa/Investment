@@ -493,44 +493,6 @@ class OhlcvUpdateTask(AfterMarketTask):
         self._logger.info(f"[{source_name}] 데이터 정합성 검증 완벽 통과!")
         return True
 
-    async def _update_stock_ohlcv(
-        self, code: str, target_date: str, force: bool = False,
-    ) -> Optional[bool]:
-        """단일 종목 OHLCV를 필요 시에만 API 호출하여 업데이트한다.
-
-        DB 상태를 먼저 조회하여:
-        - 당일 데이터가 이미 존재하면 → 스킵 (False)
-          (역사 데이터는 최초 실행 시 full backfill로 채워지며, 이후에는 force collect로 복구)
-        - 당일 데이터 없으면 → get_ohlcv() 호출 후 DB 저장 (True)
-
-        Args:
-            force: True이면 skip 조건을 무시하고 무조건 API 호출.
-
-        Returns:
-            True  - API 호출 후 갱신 성공
-            False - 이미 최신 상태여서 스킵
-            None  - 오류 발생
-        """
-        try:
-            if not force:
-                summary = await self._stock_repo.get_ohlcv_summary(code)
-                latest_date = summary["latest_date"]
-
-                # 당일 캔들이 이미 존재하면 API 불필요
-                if latest_date == target_date:
-                    return False
-
-            # get_ohlcv: DB에 없는 구간은 자동으로 API 조회 후 StockRepository에 upsert
-            resp = await self._stock_query_service.get_ohlcv(code, caller="OhlcvUpdateTask")
-            if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
-                return True
-            return None
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            self._logger.warning(f"OHLCV 업데이트 실패 ({code}): {e}")
-            return None
 
     def _load_all_stocks(self) -> List[tuple]:
         """StockCodeRepository에서 KOSPI/KOSDAQ 전체 종목 로드 (ETF/우선주 제외)."""
