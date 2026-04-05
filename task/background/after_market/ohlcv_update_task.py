@@ -244,7 +244,7 @@ class OhlcvUpdateTask(AfterMarketTask):
             records = self._format_fdr_listing_to_ohlcv_records(df_fdr, target_date)
             if not records: return False
 
-            await self._save_bulk_to_db_with_progress(target_date, records, start_time)
+            await self._save_bulk_to_db_with_progress(records, start_time)
             return True
         except Exception as e:
             self._logger.error(f"FDR 당일 일괄 수집 중 오류 발생: {e}")
@@ -302,7 +302,7 @@ class OhlcvUpdateTask(AfterMarketTask):
 
             # [Tier 3] FDR 실패 또는 자체 검증 실패 시 개별 증권사 API로 우회
             if not is_success:
-                api_result = await self._update_stock_ohlcv(code, target_date, force=force)
+                api_result = await self._update_stock_ohlcv(code)
                 if api_result:
                     is_success = True
                     
@@ -323,7 +323,8 @@ class OhlcvUpdateTask(AfterMarketTask):
             processed += len(chunk)
             updated += sum(1 for r in results if r)
             elapsed = time.time() - start_time  # 변수로 할당
-
+            
+            # Tier 1에서 이미 처리되거나 스킵된 종목 수 + Tier 2/3에서 현재까지 백필된 종목 수 합산
             self._progress.update({
                 "processed": self._progress["total"] - total + processed,
                 "updated": updated,
@@ -341,7 +342,7 @@ class OhlcvUpdateTask(AfterMarketTask):
             # 너무 빠른 HTTP 요청을 방지하기 위한 가벼운 대기
             await asyncio.sleep(0.05)
 
-    async def _update_stock_ohlcv(self, code: str, target_date: str, force: bool = False) -> Optional[bool]:
+    async def _update_stock_ohlcv(self, code: str) -> Optional[bool]:
         """[Tier 3 Fallback] 증권사 API를 이용한 개별 종목 OHLCV 수집"""
         try:
             resp = await self._stock_query_service.get_ohlcv(code, caller="OhlcvUpdateTask")
@@ -356,7 +357,7 @@ class OhlcvUpdateTask(AfterMarketTask):
 
     # ── 3. 진행률 및 데이터 포맷 헬퍼 ──────────────────────────────────
 
-    async def _save_bulk_to_db_with_progress(self, target_date: str, records: List[Dict], start_time: float) -> None:
+    async def _save_bulk_to_db_with_progress(self, records: List[Dict], start_time: float) -> None:
         """크롤링된 전체 레코드를 DB에 Batch 단위로 저장하며 진행률을 업데이트한다."""
         total_records = len(records)
         if total_records == 0: return
@@ -387,15 +388,24 @@ class OhlcvUpdateTask(AfterMarketTask):
             if not code or code not in valid_codes: continue
             
             try:
+                close_val = int(row.get('Close', 0))
+                volume_val = int(row.get('Volume', 0))
+                
+                # 'Amount'(거래대금) 필드가 없거나 NaN일 경우 종가*거래량으로 안전하게 근사 계산
+                amt_val = row.get('Amount', 0)
+                if pd.isna(amt_val) or amt_val == 0:
+                    trading_value = close_val * volume_val
+                else:
+                    trading_value = int(amt_val)
                 records.append({
                     "code": code,
                     "date": target_date,
                     "open": int(row.get('Open', 0)),
                     "high": int(row.get('High', 0)),
                     "low": int(row.get('Low', 0)),
-                    "close": int(row.get('Close', 0)),
-                    "volume": int(row.get('Volume', 0)),
-                    "trading_value": int(row.get('Amount', 0)), 
+                    "close": close_val,
+                    "volume": volume_val,
+                    "trading_value": trading_value,
                 })
             except (ValueError, TypeError):
                 continue
