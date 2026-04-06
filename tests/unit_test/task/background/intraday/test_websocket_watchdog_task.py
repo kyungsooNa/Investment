@@ -5,13 +5,27 @@ WebSocketWatchdogTask 단위 테스트.
 import asyncio
 import time
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch, ANY
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from services.market_calendar_service import MarketCalendarService
 from interfaces.schedulable_task import TaskState
+from repositories.streaming_stock_repo import StreamingType
 
 
 # ── 공통 픽스처 ──────────────────────────────────────────────────────────────
+
+def make_sleep_side_effect(cancel_after_calls=1):
+    """
+    지정된 횟수만큼은 정상적으로 반환하고, 그 이후에는 CancelledError를 발생시켜
+    무한 루프를 빠져나오게 하는 asyncio.sleep 모킹용 side_effect 생성 헬퍼.
+    """
+    async def side_effect(*args, **kwargs):
+        if side_effect.counter < cancel_after_calls:
+            side_effect.counter += 1
+            return
+        raise asyncio.CancelledError
+    side_effect.counter = 0
+    return side_effect
 
 def _make_streaming_stock_repo(pt_desired=None):
     """StreamingStockRepo mock 생성 헬퍼."""
@@ -61,6 +75,31 @@ def watchdog_task(mock_deps):
         logger=logger,
         streaming_stock_repo=streaming_stock_repo,
     )
+
+
+@pytest.fixture
+def mock_price_subscription_service():
+    svc = MagicMock()
+    svc.clear_active_state = MagicMock()
+    svc._rebalance = AsyncMock()
+    svc._refs = {"005930": 1, "000660": 1}
+    svc._active_codes = {"005930", "000660"}
+    return svc
+
+
+@pytest.fixture
+def mock_streaming_logger():
+    logger = MagicMock()
+    logger.log_watchdog_check = MagicMock()
+    logger.log_subscription_recovery_start = MagicMock()
+    logger.log_pt_subscribe = MagicMock()
+    logger.log_price_subscribe = MagicMock()
+    logger.log_pt_unsubscribe = MagicMock()
+    logger.log_price_unsubscribe = MagicMock()
+    logger.log_subscription_recovery_done = MagicMock()
+    logger.log_restore = MagicMock()
+    logger.log_reconnect = MagicMock()
+    return logger
 
 
 # ── _restore_all_subscriptions 테스트 ────────────────────────────────────────
@@ -120,14 +159,7 @@ async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
     svc._streaming_service.disconnect_websocket = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -148,14 +180,7 @@ async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
 
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -178,14 +203,7 @@ async def test_program_trading_watchdog_no_reconnect_when_never_received(watchdo
 
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -201,14 +219,7 @@ async def test_program_trading_watchdog_skips_when_no_repo(watchdog_task):
     svc._streaming_stock_repo = None
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -415,14 +426,7 @@ async def test_program_trading_watchdog_sets_market_open_false(watchdog_task):
     svc._streaming_stock_repo.get_desired.return_value = {"005930"}
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -441,17 +445,179 @@ async def test_program_trading_watchdog_sets_market_open_true(watchdog_task):
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
             pass
 
     assert svc._market_open is True
+
+
+# ── 추가 Coverage 확보용 테스트 ──────────────────────────────────────────────
+
+def test_init_without_performance_profiler():
+    """performance_profiler가 없을 때 기본 활성화 안 된 프로파일러 생성"""
+    task = WebSocketWatchdogTask()
+    assert task.pm is not None
+    assert task.pm.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_restore_all_subscriptions_with_price_service(watchdog_task, mock_price_subscription_service, mock_streaming_logger):
+    """H0UNCNT0(PriceSubscriptionService) 복원 로직이 정상 동작하는지 검증."""
+    watchdog_task._price_subscription_service = mock_price_subscription_service
+    watchdog_task._streaming_logger = mock_streaming_logger
+    watchdog_task._streaming_stock_repo.get_desired.return_value = set()  # PT 구독 없음
+
+    await watchdog_task._restore_all_subscriptions()
+
+    mock_price_subscription_service.clear_active_state.assert_called_once()
+    watchdog_task._streaming_stock_repo.clear_active.assert_awaited_with(StreamingType.UNIFIED_PRICE)
+    mock_price_subscription_service._rebalance.assert_awaited_once()
+    
+    # PT가 없으므로 PT 관련 로그는 안 찍힘
+    mock_streaming_logger.log_restore.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_receive_task_dead(watchdog_task):
+    """수신 태스크가 죽었을 때(receive_alive=False) 재연결을 시도하는지 검증."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
+    svc._intentionally_disconnected = False
+
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect.assert_called_once_with(trigger="receive_task_dead")
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_market_open_reconnect(watchdog_task):
+    """장 시작으로 인해 신규 재연결을 수립하는지 검증."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
+    svc._intentionally_disconnected = True  # 장 마감으로 끊었던 상태
+
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect.assert_called_once_with(trigger="market_open")
+    assert svc._intentionally_disconnected is False
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_no_realtime_service(watchdog_task):
+    """_realtime_data_service가 None일 때 워치독 루프가 스킵되는지 검증."""
+    svc = watchdog_task
+    svc._realtime_data_service = None
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_no_desired_codes(watchdog_task):
+    """PT 구독 종목이 없을 때 워치독 루프가 스킵되는지 검증."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.return_value = set()
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_with_price_subs(watchdog_task, mock_price_subscription_service):
+    """PT 종목이 없어도 Price Subscription이 있으면 강제 재연결을 수행하는지 검증."""
+    svc = watchdog_task
+    svc._streaming_stock_repo.get_desired.return_value = set()
+    svc._price_subscription_service = mock_price_subscription_service
+    
+    svc._restore_all_subscriptions = AsyncMock()
+
+    await svc.force_reconnect(trigger="manual")
+
+    svc._streaming_service.disconnect_websocket.assert_awaited_once()
+    svc._restore_all_subscriptions.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_returns_when_no_subs(watchdog_task):
+    """구독 종목이 아예 없을 때 강제 재연결이 조기 리턴되는지 검증."""
+    svc = watchdog_task
+    svc._streaming_stock_repo.get_desired.return_value = set()
+    svc._price_subscription_service = None
+    
+    svc._restore_all_subscriptions = AsyncMock()
+
+    await svc.force_reconnect(trigger="manual")
+
+    svc._streaming_service.disconnect_websocket.assert_not_called()
+    svc._restore_all_subscriptions.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_streaming_logger_calls_on_restore_and_reconnect(watchdog_task, mock_streaming_logger):
+    """복원 및 재연결 과정에서 streaming_logger 메서드들이 제대로 호출되는지 검증."""
+    svc = watchdog_task
+    svc._streaming_logger = mock_streaming_logger
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
+        await svc.force_reconnect(trigger="test_trigger")
+
+    mock_streaming_logger.log_reconnect.assert_called_once()
+    mock_streaming_logger.log_subscription_recovery_start.assert_called_once()
+    mock_streaming_logger.log_pt_subscribe.assert_called_once()
+    mock_streaming_logger.log_price_subscribe.assert_called_once()
+    mock_streaming_logger.log_subscription_recovery_done.assert_called_once()
+    mock_streaming_logger.log_restore.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_watchdog_log(watchdog_task, mock_streaming_logger):
+    """워치독 주기적 실행 시 log_watchdog_check가 호출되는지 확인."""
+    svc = watchdog_task
+    svc._streaming_logger = mock_streaming_logger
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._realtime_data_service.last_data_ts = time.time() - 100
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    mock_streaming_logger.log_watchdog_check.assert_called_once()
