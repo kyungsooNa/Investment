@@ -158,6 +158,7 @@ class KoreaInvestWebSocketAPI:
     async def _receive_messages(self):
         """웹소켓 메시지 수신 및 자동 재연결 루프."""
         retry_count = 0
+        appkey_collision_count = 0   # appkey 충돌 연속 횟수
         max_retries = 30     # 최대 재시도 횟수 (약 30분간 시도)
         base_delay = 3       # 기본 대기 시간 (초)
         max_delay = 60       # 최대 대기 시간 (초)
@@ -177,12 +178,15 @@ class KoreaInvestWebSocketAPI:
                     self._auto_reconnect = False
                     break
 
-                if self._appkey_collision:
-                    # 서버가 appkey 중복 사용 거부 → 서버 측 연결이 해제될 때까지 충분히 대기
-                    delay = 30
+                was_appkey_collision = self._appkey_collision
+                if was_appkey_collision:
+                    # 서버가 appkey 중복 사용 거부 → 충돌 횟수에 따라 대기 시간 누적 증가
+                    appkey_collision_count += 1
+                    delay = min(max_delay, 30 * appkey_collision_count)
                     self._appkey_collision = False
                     self._logger.warning(f"appkey 중복으로 인한 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
                 else:
+                    appkey_collision_count = 0
                     delay = min(max_delay, base_delay * (2 ** retry_count))
                     self._logger.info(f"웹소켓 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
                 await asyncio.sleep(delay)
@@ -191,7 +195,9 @@ class KoreaInvestWebSocketAPI:
 
                 if await self._establish_connection():
                     self._logger.info("웹소켓 재연결 성공. 기존 구독 항목을 복구합니다.")
-                    retry_count = 0  # 연결 성공 시 재시도 카운트 초기화
+                    if not was_appkey_collision:
+                        # appkey 충돌이 아닌 일반 재연결 성공 시에만 카운트 초기화
+                        retry_count = 0
                     try:
                         await self._resubscribe_all()
                     except Exception as e:
