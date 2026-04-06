@@ -358,15 +358,17 @@ def test_extract_broker_api_record_edge_cases(task):
     resp_empty = ResCommonResponse(rt_cd="0", msg1="", data={})
     assert task._extract_broker_api_record("005930", "삼성", "KOSPI", resp_empty) is None
     
-    # 3. 숫자로 변환 불가능한 값(문자열)이 섞여 있는 경우 예외 없이 기본값(0) 반환
+    # 3. 숫자로 변환 불가능한 값(문자열) 및 Inf/NaN 등이 섞여 있는 경우 예외 없이 기본값(0) 반환
     resp_bad_types = ResCommonResponse(rt_cd="0", msg1="", data={
-        "output": {"stck_prpr": "ABC", "acml_vol": "N/A", "per": "Inf"}
+        "output": {"stck_prpr": "ABC", "acml_vol": "N/A", "per": "Inf", "pbr": "NaN", "eps": "invalid"}
     })
     rec = task._extract_broker_api_record("005930", "삼성", "KOSPI", resp_bad_types)
     assert rec is not None
     assert rec["current_price"] == 0
     assert rec["volume"] == 0
     assert rec["per"] == 0.0
+    assert rec["pbr"] == 0.0
+    assert rec["eps"] == 0.0
 
 @pytest.mark.asyncio
 async def test_verify_crawler_data_missing_stock_in_crawled(task):
