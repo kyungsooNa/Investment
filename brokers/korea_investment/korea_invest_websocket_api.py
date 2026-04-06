@@ -161,7 +161,8 @@ class KoreaInvestWebSocketAPI:
         appkey_collision_count = 0   # appkey 충돌 연속 횟수
         max_retries = 30     # 최대 재시도 횟수 (약 30분간 시도)
         base_delay = 3       # 기본 대기 시간 (초)
-        max_delay = 60       # 최대 대기 시간 (초)
+        max_delay = 60       # 일반 재연결 최대 대기 시간 (초)
+        max_appkey_collision_delay = 120  # appkey 충돌 시 최대 대기 시간 (초) — 서버 세션 해제에 최대 90초 소요
         DATA_TIMEOUT = 60.0  # [추가] 데이터 수신 타임아웃 (초)
 
         while self._auto_reconnect:
@@ -181,8 +182,9 @@ class KoreaInvestWebSocketAPI:
                 was_appkey_collision = self._appkey_collision
                 if was_appkey_collision:
                     # 서버가 appkey 중복 사용 거부 → 충돌 횟수에 따라 대기 시간 누적 증가
+                    # 서버 세션 해제에 최대 90초 소요될 수 있으므로 첫 시도부터 60초 이상 대기
                     appkey_collision_count += 1
-                    delay = min(max_delay, 30 * appkey_collision_count)
+                    delay = min(max_appkey_collision_delay, 60 * appkey_collision_count)
                     self._appkey_collision = False
                     self._logger.warning(f"appkey 중복으로 인한 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
                 else:
@@ -223,6 +225,12 @@ class KoreaInvestWebSocketAPI:
                 if self._auto_reconnect:
                     self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.", exc_info=True)
                 self._is_connected = False
+                # 서버가 세션을 빨리 해제할 수 있도록 close frame 전송 시도
+                if self.ws:
+                    try:
+                        await self.ws.close()
+                    except Exception:
+                        pass
                 self.ws = None
                 self.approval_key = None  # 재연결 시 새로운 접속키 발급 강제
 
@@ -570,10 +578,14 @@ class KoreaInvestWebSocketAPI:
 
     async def _resubscribe_all(self):
         """재연결 시 기존 구독 항목들을 다시 구독 요청합니다."""
-        for tr_id, tr_key in list(self._subscribed_items):
+        items = list(self._subscribed_items)
+        for i, (tr_id, tr_key) in enumerate(items):
             self._logger.info(f"구독 복구 요청: TR_ID={tr_id}, KEY={tr_key}")
             # send_realtime_request 내부에서 _subscribed_items에 다시 추가하므로 중복 방지 로직 필요 없음 (Set이므로)
             await self.send_realtime_request(tr_id, tr_key, tr_type="1")
+            # 서버 부하 분산을 위해 구독 요청 사이에 짧은 딜레이 삽입
+            if i < len(items) - 1:
+                await asyncio.sleep(0.1)
 
     def is_receive_alive(self) -> bool:
         """수신 태스크가 살아있는지 확인 (외부 워치독용)."""
