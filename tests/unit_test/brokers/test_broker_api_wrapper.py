@@ -394,7 +394,7 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
                                market_calendar_service=mock_mcs)
 
     # Assert
-    mock_client.assert_called_once_with(mock_env, mock_logger, mock_market_clock, mock_mcs)
+    mock_client.assert_called_once_with(mock_env, mock_logger, mock_market_clock, mock_mcs, streaming_logger=None)
     mock_stock_mapper.assert_called_once_with(logger=mock_logger)
     assert wrapper._broker == "korea_investment"
     assert isinstance(wrapper._client, ClientWithCache)  # ✅ wrapping 여부 확인
