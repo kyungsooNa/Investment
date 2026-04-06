@@ -14,6 +14,19 @@ from repositories.streaming_stock_repo import StreamingType
 
 # ── 공통 픽스처 ──────────────────────────────────────────────────────────────
 
+def make_sleep_side_effect(cancel_after_calls=1):
+    """
+    지정된 횟수만큼은 정상적으로 반환하고, 그 이후에는 CancelledError를 발생시켜
+    무한 루프를 빠져나오게 하는 asyncio.sleep 모킹용 side_effect 생성 헬퍼.
+    """
+    async def side_effect(*args, **kwargs):
+        if side_effect.counter < cancel_after_calls:
+            side_effect.counter += 1
+            return
+        raise asyncio.CancelledError
+    side_effect.counter = 0
+    return side_effect
+
 def _make_streaming_stock_repo(pt_desired=None):
     """StreamingStockRepo mock 생성 헬퍼."""
     repo = MagicMock()
@@ -146,14 +159,7 @@ async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
     svc._streaming_service.disconnect_websocket = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -174,14 +180,7 @@ async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
 
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -204,14 +203,7 @@ async def test_program_trading_watchdog_no_reconnect_when_never_received(watchdo
 
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -227,14 +219,7 @@ async def test_program_trading_watchdog_skips_when_no_repo(watchdog_task):
     svc._streaming_stock_repo = None
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -441,14 +426,7 @@ async def test_program_trading_watchdog_sets_market_open_false(watchdog_task):
     svc._streaming_stock_repo.get_desired.return_value = {"005930"}
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -467,14 +445,7 @@ async def test_program_trading_watchdog_sets_market_open_true(watchdog_task):
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -520,14 +491,7 @@ async def test_program_trading_watchdog_receive_task_dead(watchdog_task):
 
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -547,14 +511,7 @@ async def test_program_trading_watchdog_market_open_reconnect(watchdog_task):
 
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -571,14 +528,7 @@ async def test_program_trading_watchdog_no_realtime_service(watchdog_task):
     svc._realtime_data_service = None
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -595,14 +545,7 @@ async def test_program_trading_watchdog_no_desired_codes(watchdog_task):
     svc._streaming_stock_repo.get_desired.return_value = set()
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
@@ -671,14 +614,7 @@ async def test_program_trading_watchdog_watchdog_log(watchdog_task, mock_streami
 
     svc.force_reconnect = AsyncMock()
 
-    async def sleep_side_effect(seconds):
-        if sleep_side_effect.counter == 0:
-            sleep_side_effect.counter += 1
-            return
-        raise asyncio.CancelledError
-    sleep_side_effect.counter = 0
-
-    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=sleep_side_effect):
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
             await svc._program_trading_watchdog()
         except asyncio.CancelledError:
