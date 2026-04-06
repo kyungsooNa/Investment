@@ -1,5 +1,9 @@
 # CLAUDE.md — Investment Project Context
 
+## 파일 읽기 규칙
+파일을 **탐색·분석** 목적으로 읽을 때는 `mcp__plugin_context-mode_context-mode__ctx_execute` (shell/python) 도구를 사용한다.
+`Read` 도구는 **Edit를 위해 파일 내용을 컨텍스트에 올려야 할 때만** 사용한다.
+
 ## 프로젝트 개요
 한국투자증권 Open API 기반 **주식 자동매매 시스템** (Python 3.10+, Anaconda `py310` 환경).
 CLI(asyncio 터미널) + Web(FastAPI + Jinja2) 두 모드 지원. 모의/실전 투자 환경 전환 가능.

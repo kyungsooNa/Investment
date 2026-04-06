@@ -25,6 +25,7 @@ def mock_deps():
         ("ranking_task", patch("view.web.web_app_initializer.RankingTask", autospec=True)),
         ("watchdog_task", patch("view.web.web_app_initializer.WebSocketWatchdogTask", autospec=True)),
         ("premium_watchlist_task", patch("view.web.web_app_initializer.PremiumWatchlistGeneratorTask", autospec=True)),
+        ("log_cleanup_task", patch("view.web.web_app_initializer.LogCleanupTask", autospec=True)),
         ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
         ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
         ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
@@ -44,6 +45,7 @@ def mock_deps():
             "market_close_time": "15:40",
             "market_timezone": "Asia/Seoul"
         }
+        mocks["logger"].return_value.log_dir = "logs"
         yield mocks
 
 def test_initialization(mock_deps):

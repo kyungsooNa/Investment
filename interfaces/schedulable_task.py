@@ -6,10 +6,11 @@ from typing import Dict
 
 class TaskPriority(IntEnum):
     """태스크 우선순위. 낮은 숫자 = 높은 우선순위."""
-    CRITICAL = 0    # 매수/매도 주문
-    HIGH = 10       # User-initiated queries
-    NORMAL = 50     # Strategy scheduler
-    LOW = 100       # Background batch jobs
+    CRITICAL = 0      # 매수/매도 주문
+    HIGH = 10         # User-initiated queries
+    NORMAL = 50       # Strategy scheduler
+    LOW = 100         # Background batch jobs
+    MAINTENANCE = 200 # 유지보수 작업 (로그 정리 등)
 
 
 class TaskState(str, Enum):
