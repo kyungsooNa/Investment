@@ -534,23 +534,31 @@ class IndicatorService:
             # (Pandas float64 자동 캐스팅 방지를 위해 object 명시적 캐스팅 적용)
             df = df.astype(object).where(pd.notnull(df), None)
 
-            # 4. 결과 포맷팅 (Pandas to_dict 활용 - 파이썬 반복문 0번)
+            # 4. 결과 포맷팅 (itertuples 활용 최적화)
             indicators = {}
             
             # MA 추출
             for p in [5, 10, 20, 60, 120]:
                 ma_key = f'ma{p}'
-                indicators[ma_key] = df[['date', 'close', ma_key]].rename(
-                    columns={ma_key: 'ma'}
-                ).to_dict('records')
+                indicators[ma_key] = [
+                    {"date": str(r.date), "close": r.close, "ma": getattr(r, ma_key)}
+                    for r in df.itertuples(index=False)
+                ]
 
-            # BB 추출 (이름 매핑 및 code 컬럼 동적 추가)
-            indicators["bb"] = df[['date', 'close', 'bb_middle', 'bb_upper', 'bb_lower']].rename(
-                columns={'bb_middle': 'middle', 'bb_upper': 'upper', 'bb_lower': 'lower'}
-            ).assign(code=stock_code)[['code', 'date', 'close', 'middle', 'upper', 'lower']].to_dict('records')
+            # BB 추출
+            indicators["bb"] = [
+                {
+                    "code": stock_code, "date": str(r.date), "close": r.close,
+                    "middle": r.bb_middle, "upper": r.bb_upper, "lower": r.bb_lower
+                }
+                for r in df.itertuples(index=False)
+            ]
 
             # RS 추출
-            indicators["rs"] = df[['date', 'rs']].to_dict('records')
+            indicators["rs"] = [
+                {"date": str(r.date), "rs": r.rs}
+                for r in df.itertuples(index=False)
+            ]
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=indicators)
 
