@@ -434,6 +434,7 @@ class WebAppContext:
             dry_run=False,
             notification_service=self.notification_service,
             performance_profiler=self.pm,
+            price_subscription_service=self.price_subscription_service,
         )
 
         # 거래량 돌파 전략 등록
