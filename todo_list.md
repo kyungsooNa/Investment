@@ -11,9 +11,58 @@
 
 - [ ] **[프로그램매매]** 이전 구독종목 복구 중... 이 너무 오래걸림. 현재 모든 tick 단위가 db에 저장되고 있는데, ui에서는 1분이 최소 단위임으로, 보여지는건 최신의 data를 보여주되 db저장은 1분 단위로 마지막 tick 정보만 저장하도록 수정. 이렇게하면 memory에 다 올려도 부담 없을것으로 예상됨. 종목당 (KRX 09시~15시30분 => 390분(개), NTX 포함해도 08시~20시 => 720분(개))
 
-- [ ] **[주문]** 호가 단위 오류 발생시 단위수정하여 재시도 필요.
-
-
+- [ ] **[RetryQueue]** 토큰 재발급 실패시 1분의 대기가 필요하나 Retry Queue에서 수초내 재시도를 하여 지속적으로 cpu를 잡아먹고있는 문제가 있음. api별로 재시도 지연 time을 가지고 간다던지 하는 개선책이 필요함.
+2026-04-06 23:21:26,294 - WARNING - korea_invest_token_provider.py:76 - 토큰 파일(config/token_paper.json)을 찾을 수 없거나 형식이 잘못되었습니다. 새 토큰 발급을 시도합니다.
+2026-04-06 23:21:26,296 - INFO - korea_invest_token_provider.py:47 - 새로운 액세스 토큰을 발급합니다.
+2026-04-06 23:21:26,955 - INFO - _client.py:1740 - HTTP Request: POST https://openapivts.koreainvestment.com:29443/oauth2/tokenP "HTTP/1.1 403 Forbidden"
+2026-04-06 23:21:26,960 - ERROR - korea_invest_api_base.py:155 - HTTP 오류 발생 (httpx): 403 - {"error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)","error_code":"EGW00133"}
+Traceback (most recent call last):
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_api_base.py", line 87, in call_api
+    response = await self._execute_request(method, url, params, data)
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_api_base.py", line 216, in _execute_request
+    response = await make_request()
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_api_base.py", line 185, in make_request
+    access_token = await self._env.get_access_token()
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_env.py", line 141, in get_access_token
+    return await self._token_provider.get_access_token(
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_token_provider.py", line 48, in get_access_token
+    await self._issue_new_token(base_url, app_key, app_secret) # 필요한 정보 전달
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_token_provider.py", line 123, in _issue_new_token
+    response.raise_for_status()
+  File "C:\Users\Kyungsoo\anaconda3\envs\py310\lib\site-packages\httpx\_models.py", line 829, in raise_for_status
+    raise HTTPStatusError(message, request=request, response=self)
+httpx.HTTPStatusError: Client error '403 Forbidden' for url 'https://openapivts.koreainvestment.com:29443/oauth2/tokenP'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403
+2026-04-06 23:21:26,962 - INFO - korea_invest_api_base.py:123 - 예외 발생, 재시도: 2/3, 지연 1초
+2026-04-06 23:21:26,963 - INFO - market_clock.py:104 - 1.00초 동안 대기합니다 (비동기).
+2026-04-06 23:21:27,976 - DEBUG - korea_invest_api_base.py:85 - API 호출 시도 3/3 - GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-balance
+2026-04-06 23:21:27,978 - WARNING - korea_invest_token_provider.py:76 - 토큰 파일(config/token_paper.json)을 찾을 수 없거나 형식이 잘못되었습니다. 새 토큰 발급을 시도합니다.
+2026-04-06 23:21:27,980 - INFO - korea_invest_token_provider.py:47 - 새로운 액세스 토큰을 발급합니다.
+2026-04-06 23:21:28,825 - INFO - korea_invest_token_provider.py:149 - 🔁 refresh_token() 호출됨 - 강제 토큰 재발급 시작
+2026-04-06 23:21:28,826 - DEBUG - korea_invest_token_provider.py:153 - ✅ refresh_token 기존 토큰: (None)
+2026-04-06 23:21:28,829 - INFO - korea_invest_token_provider.py:142 - 저장된 토큰이 무효화되었습니다.
+2026-04-06 23:21:29,575 - INFO - korea_invest_token_provider.py:149 - 🔁 refresh_token() 호출됨 - 강제 토큰 재발급 시작
+2026-04-06 23:21:29,576 - DEBUG - korea_invest_token_provider.py:153 - ✅ refresh_token 기존 토큰: (None)
+2026-04-06 23:21:29,579 - INFO - korea_invest_token_provider.py:142 - 저장된 토큰이 무효화되었습니다.
+2026-04-06 23:21:30,327 - INFO - _client.py:1740 - HTTP Request: POST https://openapivts.koreainvestment.com:29443/oauth2/tokenP "HTTP/1.1 403 Forbidden"
+2026-04-06 23:21:30,341 - DEBUG - cache_wrapper.py:70 - 🔓 _skip_cache=True → 캐시 우회: inquire_daily_itemchartprice
+2026-04-06 23:21:30,345 - ERROR - korea_invest_api_base.py:155 - HTTP 오류 발생 (httpx): 403 - {"error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)","error_code":"EGW00133"}
+Traceback (most recent call last):
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_api_base.py", line 87, in call_api
+    response = await self._execute_request(method, url, params, data)
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_api_base.py", line 216, in _execute_request
+    response = await make_request()
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_api_base.py", line 185, in make_request
+    access_token = await self._env.get_access_token()
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_env.py", line 141, in get_access_token
+    return await self._token_provider.get_access_token(
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_token_provider.py", line 48, in get_access_token
+    await self._issue_new_token(base_url, app_key, app_secret) # 필요한 정보 전달
+  File "C:\Users\Kyungsoo\Documents\Code\Investment\brokers\korea_investment\korea_invest_token_provider.py", line 123, in _issue_new_token
+    response.raise_for_status()
+  File "C:\Users\Kyungsoo\anaconda3\envs\py310\lib\site-packages\httpx\_models.py", line 829, in raise_for_status
+    raise HTTPStatusError(message, request=request, response=self)
+    
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[아키텍처]** UI 출력 로직 완전 격리: Service 계층 내부에 존재하는 콘솔 출력(`print`) 로직을 제거하고, View 계층에 위임.
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).

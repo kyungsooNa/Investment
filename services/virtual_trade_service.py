@@ -137,6 +137,8 @@ class VirtualTradeService:
     def get_solds(self): return self._repo.get_solds()
     def get_holds_by_strategy(self, strategy_name: str): return self._repo.get_holds_by_strategy(strategy_name)
     def is_holding(self, strategy_name: str, code: str): return self._repo.is_holding(strategy_name, code)
+    def log_order_failure(self, *args, **kwargs): return self._repo.log_order_failure(*args, **kwargs)
+    async def log_order_failure_async(self, *args, **kwargs): return await self._repo.log_order_failure_async(*args, **kwargs)
     def fix_sell_price(self, *args, **kwargs): return self._repo.fix_sell_price(*args, **kwargs)
     def backfill_snapshots(self): return self._repo.backfill_snapshots()
     def save_daily_snapshot(self, strategy_returns: dict): return self._repo.save_daily_snapshot(strategy_returns)
