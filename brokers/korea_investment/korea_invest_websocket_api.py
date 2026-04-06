@@ -1,5 +1,5 @@
 # api/korea_invest_websocket_api.py
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import websockets  # pip install websockets
 import json
 try:
@@ -24,6 +24,9 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Korea
 from core.market_clock import MarketClock
 from services.market_calendar_service import MarketCalendarService
 
+if TYPE_CHECKING:
+    from core.logger import StreamingEventLogger
+
 
 class KoreaInvestWebSocketAPI:
     """
@@ -32,11 +35,13 @@ class KoreaInvestWebSocketAPI:
     """
 
     def __init__(self, env: KoreaInvestApiEnv, logger=None, market_clock: MarketClock = None,
-                 market_calendar_service: Optional[MarketCalendarService] = None):
+                 market_calendar_service: Optional[MarketCalendarService] = None,
+                 streaming_logger: Optional["StreamingEventLogger"] = None):
         self._env = env
         self._market_clock = market_clock
         self._mcs = market_calendar_service
         self._logger = logger if logger else logging.getLogger(__name__)
+        self._streaming_logger = streaming_logger  # 구조화 이벤트 로거 (선택적)
         # self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)
         # config에서 웹소켓 및 REST API 정보 가져오기
         # self._websocket_url = self._config['websocket_url']
@@ -187,6 +192,12 @@ class KoreaInvestWebSocketAPI:
                     delay = min(max_appkey_collision_delay, 60 * appkey_collision_count)
                     self._appkey_collision = False
                     self._logger.warning(f"appkey 중복으로 인한 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
+                    if self._streaming_logger:
+                        self._streaming_logger.log_appkey_collision(
+                            retry_count=retry_count + 1,
+                            delay_sec=delay,
+                            max_retries=max_retries,
+                        )
                 else:
                     appkey_collision_count = 0
                     delay = min(max_delay, base_delay * (2 ** retry_count))
@@ -194,6 +205,13 @@ class KoreaInvestWebSocketAPI:
                 await asyncio.sleep(delay)
 
                 retry_count += 1
+
+                if self._streaming_logger:
+                    self._streaming_logger.log_reconnect_attempt(
+                        attempt_num=retry_count,
+                        max_attempts=max_retries,
+                        was_collision=was_appkey_collision,
+                    )
 
                 if await self._establish_connection():
                     self._logger.info("웹소켓 재연결 성공. 기존 구독 항목을 복구합니다.")
@@ -224,6 +242,11 @@ class KoreaInvestWebSocketAPI:
             except Exception as e:
                 if self._auto_reconnect:
                     self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.", exc_info=True)
+                if self._streaming_logger:
+                    self._streaming_logger.log_connection_lost(
+                        reason=str(e),
+                        retry_count=retry_count,
+                    )
                 self._is_connected = False
                 # 서버가 세션을 빨리 해제할 수 있도록 close frame 전송 시도
                 if self.ws:

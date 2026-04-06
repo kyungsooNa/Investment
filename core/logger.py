@@ -338,6 +338,114 @@ class StreamingEventLogger:
         """
         self._logger.info({"action": "price_unsubscribe", "code": code, "reason": reason})
 
+    # ── WebSocket 연결 이벤트 (KoreaInvestWebSocketAPI) ────────────
+
+    def log_connection_lost(self, reason: str, retry_count: int = 0) -> None:
+        """예상치 못한 WebSocket 연결 끊김.
+
+        Args:
+            reason: 끊김 원인 (e.g., "no close frame", "timeout", "ConnectionClosedError")
+            retry_count: 현재까지의 재시도 횟수
+        """
+        self._logger.warning({
+            "action": "connection_lost",
+            "reason": reason,
+            "retry_count": retry_count,
+        })
+
+    def log_appkey_collision(self, retry_count: int, delay_sec: float, max_retries: int) -> None:
+        """서버의 'ALREADY IN USE appkey' 거부 이벤트.
+
+        서버가 이전 세션을 아직 보유 중이어서 동일 appkey 재사용을 거부할 때 기록.
+
+        Args:
+            retry_count: 현재 시도 번호 (1-based)
+            delay_sec: 다음 재연결까지 대기 시간 (초)
+            max_retries: 최대 재시도 횟수
+        """
+        self._logger.warning({
+            "action": "appkey_collision",
+            "retry_count": retry_count,
+            "delay_sec": delay_sec,
+            "max_retries": max_retries,
+        })
+
+    def log_reconnect_attempt(self, attempt_num: int, max_attempts: int, was_collision: bool = False) -> None:
+        """WebSocket 재연결 시도 시작.
+
+        Args:
+            attempt_num: 현재 시도 번호 (1-based)
+            max_attempts: 최대 시도 횟수
+            was_collision: True이면 appkey 충돌로 인한 재연결
+        """
+        self._logger.info({
+            "action": "reconnect_attempt",
+            "attempt_num": attempt_num,
+            "max_attempts": max_attempts,
+            "was_collision": was_collision,
+        })
+
+    # ── WebSocketWatchdogTask 이벤트 (확장) ─────────────────────────
+
+    def log_watchdog_check(
+        self,
+        receive_alive: bool,
+        data_gap_sec: float,
+        market_open: bool,
+        subscribed_count: int,
+    ) -> None:
+        """워치독 주기 체크 결과 스냅샷.
+
+        Args:
+            receive_alive: WebSocket 수신 태스크 생존 여부
+            data_gap_sec: 마지막 데이터 수신 이후 경과 시간 (초). 미수신 시 0.0
+            market_open: 현재 장 운영 중 여부
+            subscribed_count: PT desired 구독 종목 수
+        """
+        self._logger.debug({
+            "action": "watchdog_check",
+            "receive_alive": receive_alive,
+            "data_gap_sec": round(data_gap_sec, 1),
+            "market_open": market_open,
+            "subscribed_count": subscribed_count,
+        })
+
+    def log_subscription_recovery_start(self, total: int, codes: list) -> None:
+        """구독 복구 시작.
+
+        Args:
+            total: 복구 시도 종목 수
+            codes: 복구 대상 종목 목록
+        """
+        self._logger.info({
+            "action": "subscription_recovery_start",
+            "total": total,
+            "codes": sorted(codes),
+        })
+
+    def log_subscription_recovery_done(
+        self,
+        success: int,
+        total: int,
+        failed_codes: list,
+        elapsed_ms: float,
+    ) -> None:
+        """구독 복구 완료.
+
+        Args:
+            success: 복구 성공 종목 수
+            total: 전체 시도 종목 수
+            failed_codes: 복구 실패 종목 목록
+            elapsed_ms: 복구 소요 시간 (밀리초)
+        """
+        self._logger.info({
+            "action": "subscription_recovery_done",
+            "success": success,
+            "total": total,
+            "failed_codes": sorted(failed_codes),
+            "elapsed_ms": round(elapsed_ms, 1),
+        })
+
 
 def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
     """
