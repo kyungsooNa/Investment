@@ -155,7 +155,7 @@ def test_start_debug_server_oserror(mock_server, capsys):
     captured = capsys.readouterr()
     assert "진단 서버 시작 실패" in captured.out
 
-def test_request_tracker_middleware():
+def test_request_tracker_middleware(mock_web_app_context_cls):
     """요청 추적 미들웨어의 활성 요청 등록 및 완료 이력 저장 테스트"""
     api_common._recent_completed.clear()
     with TestClient(app) as client:
@@ -186,7 +186,7 @@ def test_needs_foreground():
     assert _needs_foreground("/api/stock/search") is False
     assert _needs_foreground("/api/system") is False
 
-def test_foreground_priority_middleware():
+def test_foreground_priority_middleware(mock_web_app_context_cls):
     """Foreground 우선순위 미들웨어 동작(context 진입) 확인"""
     mock_ctx = MagicMock()
     mock_fg = MagicMock()
@@ -197,7 +197,7 @@ def test_foreground_priority_middleware():
             client.get("/api/stock/123")
             mock_fg.context.assert_called()
 
-def test_all_page_routers():
+def test_all_page_routers(mock_web_app_context_cls):
     """모든 페이지 라우터들이 200 정상 응답을 하는지 테스트"""
     mock_ctx = MagicMock()
     mock_ctx.full_config = {
@@ -214,7 +214,7 @@ def test_all_page_routers():
                 assert response.status_code == 200
                 assert "Investment Login" not in response.text
 
-def test_logout():
+def test_logout(mock_web_app_context_cls):
     """로그아웃 시 리다이렉트와 쿠키 삭제 처리 테스트"""
     with TestClient(app) as client:
         response = client.get("/logout", follow_redirects=False)
