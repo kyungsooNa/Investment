@@ -181,6 +181,7 @@ const PRIORITY_LABEL = {
     10:  'HIGH',
     50:  'NORMAL',
     100: 'LOW',
+    200: 'MAINTANCE',
 };
 
 function renderProgressCell(progress, taskName) {

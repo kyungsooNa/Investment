@@ -27,6 +27,7 @@ from task.background.after_market.daily_price_collector_task import DailyPriceCo
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
+from task.background.after_market.log_cleanup_task import LogCleanupTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
@@ -74,6 +75,7 @@ class WebAppContext:
         self.ohlcv_update_task: OhlcvUpdateTask = None
         self.premium_watchlist_generator_task: PremiumWatchlistGeneratorTask = None
         self.cache_warmup_task: CacheWarmupTask = None
+        self.log_cleanup_task: LogCleanupTask = None
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
@@ -319,6 +321,14 @@ class WebAppContext:
             logger=self.logger,
         )
 
+        self.log_cleanup_task = LogCleanupTask(
+            log_dir=self.logger.log_dir,
+            days=30,
+            market_calendar_service=self._mcs,
+            market_clock=self.market_clock,
+            logger=self.logger,
+        )
+
         # NotificationQueueTask 초기화
         self.notification_queue_task = NotificationQueueTask(
             notification_service=self.notification_service,
@@ -343,6 +353,8 @@ class WebAppContext:
             self.background_scheduler.register(self.premium_watchlist_generator_task)
         if self.cache_warmup_task:
             self.background_scheduler.register(self.cache_warmup_task)
+        if self.log_cleanup_task:
+            self.background_scheduler.register(self.log_cleanup_task)
         if self.notification_queue_task:
             self.background_scheduler.register(self.notification_queue_task)
 
