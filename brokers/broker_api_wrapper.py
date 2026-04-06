@@ -2,11 +2,14 @@
 
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from repositories.stock_code_repository import StockCodeRepository
-from typing import Any, List
+from typing import Any, List, Optional, TYPE_CHECKING
 from common.types import ResCommonResponse, Exchange
 from core.cache.cache_wrapper import cache_wrap_client
 from core.retry_queue.api_request_queue import ApiRequestQueue
 from core.retry_queue.client_with_retry_queue import retry_queue_wrap_client
+
+if TYPE_CHECKING:
+    from core.logger import StreamingEventLogger
 
 
 class BrokerAPIWrapper:
@@ -16,7 +19,8 @@ class BrokerAPIWrapper:
     """
 
     def __init__(self, broker: str = "korea_investment", env=None, logger=None, market_clock=None,
-                 cache_config=None, market_calendar_service=None):
+                 cache_config=None, market_calendar_service=None,
+                 streaming_logger: Optional["StreamingEventLogger"] = None):
         self._broker = broker
         self._logger = logger
         self._client = None
@@ -28,8 +32,10 @@ class BrokerAPIWrapper:
             if env is None:
                 raise ValueError("KoreaInvest API를 사용하려면 env 인스턴스가 필요합니다.")
 
-
-            self._client = KoreaInvestApiClient(env, logger, market_clock, market_calendar_service)
+            self._client = KoreaInvestApiClient(
+                env, logger, market_clock, market_calendar_service,
+                streaming_logger=streaming_logger,
+            )
             # RetryQueue는 Cache 안쪽에 위치: 캐시 히트 시 Queue를 거치지 않고,
             # 캐시 miss 후 실제 API 호출 실패 시에만 KoreaInvestApiClient를 직접 재시도
             self._retry_queue = ApiRequestQueue(logger=logger)

@@ -20,6 +20,7 @@ from core.market_clock import MarketClock
 from core.performance_profiler import PerformanceProfiler
 
 from scheduler.strategy_scheduler_store import StrategySchedulerStore, SCHEDULER_DB_FILE
+from services.price_subscription_service import SubscriptionPriority
 
 
 @dataclass
@@ -74,6 +75,7 @@ class StrategyScheduler:
         notification_service: Optional[NotificationService] = None,
         performance_profiler: Optional[PerformanceProfiler] = None,
         store: Optional[StrategySchedulerStore] = None,
+        price_subscription_service=None,
     ):
         self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
@@ -87,6 +89,7 @@ class StrategyScheduler:
         self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
 
         self._store = store or StrategySchedulerStore(db_path=SCHEDULER_DB_FILE, logger=self._logger)
+        self._price_sub_svc = price_subscription_service
 
         self._strategies: List[StrategySchedulerConfig] = []
         self._running = False
@@ -346,12 +349,17 @@ class StrategyScheduler:
         if not signal.name or signal.name == signal.code:
             signal.name = self.stock_code_repository.get_name_by_code(signal.code) or signal.code
 
-        # CSV 기록 (항상)
+        # CSV 기록 (항상) + 스트리밍 구독 동기화
         return_rate = None
+        category_key = f"scheduler_{signal.strategy_name}"
         if signal.action == "BUY":
             await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+            if self._price_sub_svc:
+                await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key)
         elif signal.action == "SELL":
             return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+            if self._price_sub_svc:
+                await self._price_sub_svc.remove_subscription(signal.code, category_key)
 
         api_success = True
 
@@ -488,6 +496,10 @@ class StrategyScheduler:
 
                 cfg.enabled = False
                 self._logger.info(f"[Scheduler] 전략 비활성화: {name}")
+
+                if self._price_sub_svc:
+                    await self._price_sub_svc.remove_category(f"scheduler_{name}")
+
                 return True
         return False
 
@@ -620,6 +632,26 @@ class StrategyScheduler:
                 self._running = True
                 self._task = asyncio.create_task(self._loop())
                 self._logger.info(f"[Scheduler] 이전 상태 복원 — 자동 시작: {restored}")
+
+            # 복원된 전략의 가상 보유 종목을 스트리밍 구독에 재등록
+            if self._price_sub_svc and restored:
+                for cfg in self._strategies:
+                    if cfg.strategy.name not in restored:
+                        continue
+                    name = cfg.strategy.name
+                    holdings = self._virtual_trade_service.get_holds_by_strategy(name)
+                    for hold in holdings:
+                        code = hold.get("code")
+                        if code:
+                            await self._price_sub_svc.add_subscription(
+                                code, SubscriptionPriority.HIGH, f"scheduler_{name}"
+                            )
+                    if holdings:
+                        self._logger.info(
+                            f"[Scheduler] '{name}' 보유 종목 스트리밍 구독 복원: "
+                            f"{[h.get('code') for h in holdings]}"
+                        )
+
         except Exception as e:
             self._logger.error(f"[Scheduler] 상태 복원 실패: {e}")
 

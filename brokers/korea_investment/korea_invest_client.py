@@ -1,5 +1,5 @@
 # brokers/korea_investment/korea_invest_client.py
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
@@ -18,6 +18,9 @@ from typing import Any
 from common.types import ResCommonResponse, Exchange
 from services.market_calendar_service import MarketCalendarService
 
+if TYPE_CHECKING:
+    from core.logger import StreamingEventLogger
+
 
 class KoreaInvestApiClient:
     """
@@ -26,7 +29,8 @@ class KoreaInvestApiClient:
     """
 
     def __init__(self, env: KoreaInvestApiEnv, logger=None, market_clock=None,
-                 market_calendar_service: Optional[MarketCalendarService] = None):
+                 market_calendar_service: Optional[MarketCalendarService] = None,
+                 streaming_logger: Optional["StreamingEventLogger"] = None):
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
         self.market_clock = market_clock
@@ -73,7 +77,12 @@ class KoreaInvestApiClient:
             url_provider=url_provider,
             trid_provider=trid_provider,
         )
-        self._websocketAPI = KoreaInvestWebSocketAPI(self._env, self._logger, market_clock=self.market_clock, market_calendar_service=self._mcs)
+        self._websocketAPI = KoreaInvestWebSocketAPI(
+            self._env, self._logger,
+            market_clock=self.market_clock,
+            market_calendar_service=self._mcs,
+            streaming_logger=streaming_logger,
+        )
 
     # --- Account API delegation ---
     async def get_account_balance(self, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:

@@ -155,7 +155,8 @@ class WebAppContext:
 
         self.broker = BrokerAPIWrapper(
             env=self.env, logger=self.logger, market_clock=self.market_clock,
-            market_calendar_service=self._mcs
+            market_calendar_service=self._mcs,
+            streaming_logger=self.streaming_event_logger,
         )
 
         # [수정] MarketCalendarService에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
@@ -434,6 +435,7 @@ class WebAppContext:
             dry_run=False,
             notification_service=self.notification_service,
             performance_profiler=self.pm,
+            price_subscription_service=self.price_subscription_service,
         )
 
         # 거래량 돌파 전략 등록

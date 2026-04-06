@@ -169,6 +169,17 @@ class WebSocketWatchdogTask(SchedulableTask):
                 last_ts = self._realtime_data_service.last_data_ts
                 data_gap = (time.time() - last_ts) if last_ts > 0 else 0.0
 
+                from repositories.streaming_stock_repo import StreamingType as _ST
+                subscribed_count = len(self._streaming_stock_repo.get_desired(_ST.PROGRAM_TRADING)) \
+                    if self._streaming_stock_repo else 0
+                if self._streaming_logger:
+                    self._streaming_logger.log_watchdog_check(
+                        receive_alive=receive_alive,
+                        data_gap_sec=data_gap,
+                        market_open=market_is_open,
+                        subscribed_count=subscribed_count,
+                    )
+
                 reconnect_trigger = None
                 if not receive_alive:
                     if self._intentionally_disconnected:
@@ -234,10 +245,18 @@ class WebSocketWatchdogTask(SchedulableTask):
         # ── 2. PT + H0STCNT0 복원 ─────────────────────────────────
         pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self._streaming_stock_repo else []
 
+        import time as _time
+        _recovery_start = _time.monotonic()
+
         pt_success = 0
         pt_failed = []
         if pt_codes:
             self._logger.info(f"[워치독] PT 구독 복원 시작: {pt_codes}")
+            if self._streaming_logger:
+                self._streaming_logger.log_subscription_recovery_start(
+                    total=len(pt_codes),
+                    codes=pt_codes,
+                )
         for code in pt_codes:
             try:
                 connected = await self._streaming_service.connect_websocket()
@@ -270,6 +289,13 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         if pt_codes:
             self._logger.info(f"[워치독] PT 구독 복원 완료: {pt_success}/{len(pt_codes)}개")
+            if self._streaming_logger:
+                self._streaming_logger.log_subscription_recovery_done(
+                    success=pt_success,
+                    total=len(pt_codes),
+                    failed_codes=pt_failed,
+                    elapsed_ms=(_time.monotonic() - _recovery_start) * 1000,
+                )
 
         # ── 3. H0UNCNT0 복원 (핵심 버그 수정) ────────────────────
         if self._price_subscription_service:

@@ -1,5 +1,5 @@
 # api/korea_invest_websocket_api.py
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import websockets  # pip install websockets
 import json
 try:
@@ -24,6 +24,9 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # Korea
 from core.market_clock import MarketClock
 from services.market_calendar_service import MarketCalendarService
 
+if TYPE_CHECKING:
+    from core.logger import StreamingEventLogger
+
 
 class KoreaInvestWebSocketAPI:
     """
@@ -32,11 +35,13 @@ class KoreaInvestWebSocketAPI:
     """
 
     def __init__(self, env: KoreaInvestApiEnv, logger=None, market_clock: MarketClock = None,
-                 market_calendar_service: Optional[MarketCalendarService] = None):
+                 market_calendar_service: Optional[MarketCalendarService] = None,
+                 streaming_logger: Optional["StreamingEventLogger"] = None):
         self._env = env
         self._market_clock = market_clock
         self._mcs = market_calendar_service
         self._logger = logger if logger else logging.getLogger(__name__)
+        self._streaming_logger = streaming_logger  # 구조화 이벤트 로거 (선택적)
         # self._config = self._env.get_full_config()  # 환경 설정 전체를 가져옴 (tr_ids 포함)
         # config에서 웹소켓 및 REST API 정보 가져오기
         # self._websocket_url = self._config['websocket_url']
@@ -64,6 +69,9 @@ class KoreaInvestWebSocketAPI:
 
         # 재연결 시 복구를 위한 구독 목록 저장소 set((tr_id, tr_key))
         self._subscribed_items = set()
+
+        # 서버가 appkey 중복 사용을 거부한 경우 True → 다음 재연결 시 긴 대기 적용
+        self._appkey_collision = False
 
     def _aes_cbc_base64_dec(self, key, iv, cipher_text):
         """
@@ -155,9 +163,11 @@ class KoreaInvestWebSocketAPI:
     async def _receive_messages(self):
         """웹소켓 메시지 수신 및 자동 재연결 루프."""
         retry_count = 0
+        appkey_collision_count = 0   # appkey 충돌 연속 횟수
         max_retries = 30     # 최대 재시도 횟수 (약 30분간 시도)
         base_delay = 3       # 기본 대기 시간 (초)
-        max_delay = 60       # 최대 대기 시간 (초)
+        max_delay = 60       # 일반 재연결 최대 대기 시간 (초)
+        max_appkey_collision_delay = 120  # appkey 충돌 시 최대 대기 시간 (초) — 서버 세션 해제에 최대 90초 소요
         DATA_TIMEOUT = 60.0  # [추가] 데이터 수신 타임아웃 (초)
 
         while self._auto_reconnect:
@@ -174,15 +184,40 @@ class KoreaInvestWebSocketAPI:
                     self._auto_reconnect = False
                     break
 
-                delay = min(max_delay, base_delay * (2 ** retry_count))
-                self._logger.info(f"웹소켓 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
+                was_appkey_collision = self._appkey_collision
+                if was_appkey_collision:
+                    # 서버가 appkey 중복 사용 거부 → 충돌 횟수에 따라 대기 시간 누적 증가
+                    # 서버 세션 해제에 최대 90초 소요될 수 있으므로 첫 시도부터 60초 이상 대기
+                    appkey_collision_count += 1
+                    delay = min(max_appkey_collision_delay, 60 * appkey_collision_count)
+                    self._appkey_collision = False
+                    self._logger.warning(f"appkey 중복으로 인한 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
+                    if self._streaming_logger:
+                        self._streaming_logger.log_appkey_collision(
+                            retry_count=retry_count + 1,
+                            delay_sec=delay,
+                            max_retries=max_retries,
+                        )
+                else:
+                    appkey_collision_count = 0
+                    delay = min(max_delay, base_delay * (2 ** retry_count))
+                    self._logger.info(f"웹소켓 재연결 대기 중 ({delay}초)... (시도 {retry_count + 1}/{max_retries})")
                 await asyncio.sleep(delay)
-                
+
                 retry_count += 1
-                
+
+                if self._streaming_logger:
+                    self._streaming_logger.log_reconnect_attempt(
+                        attempt_num=retry_count,
+                        max_attempts=max_retries,
+                        was_collision=was_appkey_collision,
+                    )
+
                 if await self._establish_connection():
                     self._logger.info("웹소켓 재연결 성공. 기존 구독 항목을 복구합니다.")
-                    retry_count = 0  # 연결 성공 시 재시도 카운트 초기화
+                    if not was_appkey_collision:
+                        # appkey 충돌이 아닌 일반 재연결 성공 시에만 카운트 초기화
+                        retry_count = 0
                     try:
                         await self._resubscribe_all()
                     except Exception as e:
@@ -207,7 +242,18 @@ class KoreaInvestWebSocketAPI:
             except Exception as e:
                 if self._auto_reconnect:
                     self._logger.warning(f"웹소켓 연결 끊김 ({e}). 재연결을 시도합니다.", exc_info=True)
+                if self._streaming_logger:
+                    self._streaming_logger.log_connection_lost(
+                        reason=str(e),
+                        retry_count=retry_count,
+                    )
                 self._is_connected = False
+                # 서버가 세션을 빨리 해제할 수 있도록 close frame 전송 시도
+                if self.ws:
+                    try:
+                        await self.ws.close()
+                    except Exception:
+                        pass
                 self.ws = None
                 self.approval_key = None  # 재연결 시 새로운 접속키 발급 강제
 
@@ -324,10 +370,14 @@ class KoreaInvestWebSocketAPI:
                         self._aes_iv = json_object["body"]["output"].get("iv")
                         self._logger.info(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
                 else:
+                    msg1 = json_object.get("body", {}).get("msg1", "")
                     self._logger.error(
-                        f"실시간 요청 응답 오류: TR_KEY={header.get('tr_key')}, RT_CD={json_object.get('body', {}).get('rt_cd')}, MSG={json_object.get('body', {}).get('msg1')}")
-                    if json_object.get("body", {}).get("msg1") == 'ALREADY IN SUBSCRIBE':
+                        f"실시간 요청 응답 오류: TR_KEY={header.get('tr_key')}, RT_CD={json_object.get('body', {}).get('rt_cd')}, MSG={msg1}")
+                    if msg1 == 'ALREADY IN SUBSCRIBE':
                         self._logger.warning("이미 구독 중인 종목입니다.")
+                    elif 'ALREADY IN USE' in msg1:
+                        self._logger.warning("서버가 appkey 중복 사용을 거부했습니다. 재연결 시 대기 시간을 늘립니다.")
+                        self._appkey_collision = True
             except json.JSONDecodeError:
                 self._logger.exception(f"제어 메시지 JSON 디코딩 실패: {message}")
             except Exception as e:
@@ -551,10 +601,14 @@ class KoreaInvestWebSocketAPI:
 
     async def _resubscribe_all(self):
         """재연결 시 기존 구독 항목들을 다시 구독 요청합니다."""
-        for tr_id, tr_key in list(self._subscribed_items):
+        items = list(self._subscribed_items)
+        for i, (tr_id, tr_key) in enumerate(items):
             self._logger.info(f"구독 복구 요청: TR_ID={tr_id}, KEY={tr_key}")
             # send_realtime_request 내부에서 _subscribed_items에 다시 추가하므로 중복 방지 로직 필요 없음 (Set이므로)
             await self.send_realtime_request(tr_id, tr_key, tr_type="1")
+            # 서버 부하 분산을 위해 구독 요청 사이에 짧은 딜레이 삽입
+            if i < len(items) - 1:
+                await asyncio.sleep(0.1)
 
     def is_receive_alive(self) -> bool:
         """수신 태스크가 살아있는지 확인 (외부 워치독용)."""
