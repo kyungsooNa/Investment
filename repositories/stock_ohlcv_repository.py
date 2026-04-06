@@ -165,8 +165,10 @@ class StockOhlcvRepository:
         try:
             async with self._get_read_connection() as conn:
                 async with conn.execute(
+                    "SELECT * FROM ("
                     "SELECT date, open, high, low, close, volume FROM ohlcv "
-                    "WHERE code = ? ORDER BY date DESC LIMIT ?",
+                    "WHERE code = ? ORDER BY date DESC LIMIT ?"
+                    ") ORDER BY date ASC",
                     (code, ohlcv_limit)
                 ) as cursor:
                     ohlcv_rows = await cursor.fetchall()
@@ -174,7 +176,7 @@ class StockOhlcvRepository:
             if not ohlcv_rows:
                 return None
 
-            historical = [dict(r) for r in reversed(ohlcv_rows)]
+            historical = [dict(r) for r in ohlcv_rows]
             entry = {
                 "ohlcv_historical": historical,
                 "ohlcv_today": None,
