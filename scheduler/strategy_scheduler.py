@@ -3,6 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+try:
+    import orjson as _orjson
+    def _dumps(obj) -> str: return _orjson.dumps(obj).decode('utf-8')
+except ImportError:
+    _orjson = None
+    def _dumps(obj) -> str: return json.dumps(obj, ensure_ascii=False)
+
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -699,7 +706,7 @@ class StrategyScheduler:
 
     async def _notify_subscribers(self, record: SignalRecord):
         """새 시그널을 모든 SSE 구독자에게 전파."""
-        json_data = json.dumps({
+        json_data = _dumps({
             "strategy_name": record.strategy_name,
             "code": record.code,
             "name": record.name,
@@ -709,7 +716,7 @@ class StrategyScheduler:
             "reason": record.reason,
             "timestamp": record.timestamp,
             "api_success": record.api_success,
-        }, ensure_ascii=False)
+        })
         for queue in list(self._subscriber_queues):
             try:
                 queue.put_nowait(json_data)
