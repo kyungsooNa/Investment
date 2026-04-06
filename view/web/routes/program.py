@@ -9,6 +9,7 @@ from view.web.api_common import (
     _get_ctx, _serialize_response,
     ProgramTradingRequest, ProgramTradingUnsubscribeRequest, ProgramTradingDataModel,
 )
+from repositories.streaming_stock_repo import StreamingType
 
 router = APIRouter()
 
@@ -24,7 +25,8 @@ async def subscribe_program_trading(req: ProgramTradingRequest):
         mapper = getattr(ctx, 'stock_code_repository', None)
         stock_name = mapper.get_name_by_code(req.code) if mapper else ''
         # [변경] 매니저 사용
-        return {"success": True, "code": req.code, "stock_name": stock_name, "codes": ctx.realtime_data_service.get_subscribed_codes()}
+        codes = sorted(ctx.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if ctx.streaming_stock_repo else []
+        return {"success": True, "code": req.code, "stock_name": stock_name, "codes": codes}
 
 
 @router.get("/program-trading/history/{code}")
@@ -52,14 +54,15 @@ async def unsubscribe_program_trading(req: ProgramTradingUnsubscribeRequest = No
     else:
         await ctx.stop_all_program_trading()
     # [변경] 매니저 사용
-    return {"success": True, "codes": ctx.realtime_data_service.get_subscribed_codes()}
+    codes = sorted(ctx.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if ctx.streaming_stock_repo else []
+    return {"success": True, "codes": codes}
 
 
 @router.get("/program-trading/status")
 async def get_program_trading_status():
     """프로그램매매 구독 상태 확인 (시장 개장 여부 포함)."""
     ctx = _get_ctx()
-    codes = ctx.realtime_data_service.get_subscribed_codes()
+    codes = sorted(ctx.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if ctx.streaming_stock_repo else []
     is_market_open = await ctx.is_market_open_now()
     return {
         "subscribed": len(codes) > 0,
