@@ -37,7 +37,7 @@ def test_init_creates_directory_and_file(temp_journal):
     assert os.path.exists(os.path.dirname(temp_journal))
     assert os.path.exists(temp_journal)
     df = pd.read_csv(temp_journal)
-    expected_cols = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
+    expected_cols = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status", "reason"]
     assert list(df.columns) == expected_cols
 
 def test_log_buy_success(virutal_trade_repository):

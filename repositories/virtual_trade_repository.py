@@ -14,7 +14,7 @@ from core.market_clock import MarketClock
 from utils.transaction_cost_utils import TransactionCostUtils
 logger = logging.getLogger(__name__)
 
-COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status"]
+COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status", "reason"]
 SNAPSHOT_FILENAME = "portfolio_snapshots.json"
 
 
@@ -58,6 +58,9 @@ class VirtualTradeRepository:
         # 기존 파일 호환성: qty 컬럼이 없으면 기본값 1로 채움
         if 'qty' not in df.columns:
             df['qty'] = 1
+        # 기존 파일 호환성: reason 컬럼이 없으면 빈 문자열로 채움
+        if 'reason' not in df.columns:
+            df['reason'] = ''
         return df
 
     def _write(self, df: pd.DataFrame):
@@ -87,9 +90,10 @@ class VirtualTradeRepository:
                 "sell_date": [np.nan],
                 "sell_price": [np.nan],
                 "return_rate": [0.0],
-                "status": ["HOLD"]
+                "status": ["HOLD"],
+                "reason": [""],
             })
-            new_row = new_row[existing_cols]
+            new_row = new_row[[c for c in existing_cols if c in new_row.columns]]
             new_row.to_csv(self.filename, mode='a', header=False, index=False, encoding='utf-8')
             logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
@@ -141,6 +145,36 @@ class VirtualTradeRepository:
     async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1) -> float | None:
         """log_sell_by_strategy의 비동기 래퍼 (스레드 실행). 성공 시 수익률 반환."""
         return await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty)
+
+    def log_order_failure(self, action: str, code: str, price, qty: int, reason: str, strategy_name: str = ""):
+        """주문 최종 실패 시 CSV에 FAILED 상태로 기록."""
+        with self._lock:
+            fail_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
+            strategy_label = strategy_name if strategy_name else f"{action}실패"
+            try:
+                existing_cols = pd.read_csv(self.filename, nrows=0, encoding='utf-8').columns.tolist()
+            except Exception:
+                existing_cols = COLUMNS
+
+            row_data = {
+                "strategy": [strategy_label],
+                "code": [code],
+                "buy_date": [fail_date],
+                "buy_price": [price],
+                "qty": [qty],
+                "sell_date": [np.nan],
+                "sell_price": [np.nan],
+                "return_rate": [0.0],
+                "status": ["FAILED"],
+                "reason": [reason],
+            }
+            new_row = pd.DataFrame({k: row_data[k] for k in existing_cols if k in row_data})
+            new_row.to_csv(self.filename, mode='a', header=False, index=False, encoding='utf-8')
+            logger.warning(f"[가상매매] {action} 주문 실패 기록: {code} @ {price}원 x {qty}주 — {reason}")
+
+    async def log_order_failure_async(self, action: str, code: str, price, qty: int, reason: str, strategy_name: str = ""):
+        """log_order_failure의 비동기 래퍼 (스레드 실행)."""
+        await asyncio.to_thread(self.log_order_failure, action, code, price, qty, reason, strategy_name)
 
     # ---- 조회 ----
 

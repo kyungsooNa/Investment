@@ -23,7 +23,8 @@ class OrderExecutionService:
                  performance_profiler: Optional[PerformanceProfiler] = None,
                  notification_service: Optional[NotificationService] = None,
                  market_calendar_service: Optional[MarketCalendarService] = None,
-                 price_subscription_service=None):
+                 price_subscription_service=None,
+                 virtual_trade_service=None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -31,6 +32,7 @@ class OrderExecutionService:
         self._notification_service = notification_service
         self.market_calendar_service = market_calendar_service
         self._price_sub_svc = price_subscription_service
+        self._virtual_trade_service = virtual_trade_service
 
     async def _retry_order(self, order_fn, stock_code, price, qty) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도."""
@@ -96,6 +98,8 @@ class OrderExecutionService:
             msg1 = buy_order_result.msg1 if buy_order_result else '응답 없음'
             self.logger.error(
                 f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
+            if self._virtual_trade_service:
+                await self._virtual_trade_service.log_order_failure_async("BUY", stock_code, price, qty, msg1)
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매수 주문 실패",
                                     f"{stock_code} - {msg1}",
@@ -132,6 +136,8 @@ class OrderExecutionService:
             msg1 = sell_order_result.msg1 if sell_order_result else '응답 없음'
             self.logger.error(
                 f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
+            if self._virtual_trade_service:
+                await self._virtual_trade_service.log_order_failure_async("SELL", stock_code, price, qty, msg1)
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매도 주문 실패",
                                     f"{stock_code} - {msg1}",

@@ -12,6 +12,7 @@ from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHea
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 from brokers.korea_investment.korea_invest_url_keys import EndpointKey
 from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
+from utils.korea_invest_price_utils import adjust_price
 from typing import Optional
 from common.types import ResCommonResponse, ErrorCode, Exchange
 
@@ -80,6 +81,12 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
         tr_id = self._trid_provider.trading_order_cash(is_buy)  # 모드에 따라 자동
 
         order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
+
+        if order_dvsn == '00':  # 지정가일 때만 호가단위 보정
+            adjusted = adjust_price(int(order_price))
+            if adjusted != int(order_price):
+                self._logger.info(f"호가단위 보정: {order_price} → {adjusted}")
+            order_price = adjusted
 
         # NXT 거래소에서 시장가 주문은 지원하지 않음
         if exchange == Exchange.NXT and order_dvsn == '01':
