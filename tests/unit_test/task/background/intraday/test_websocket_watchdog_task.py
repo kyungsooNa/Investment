@@ -64,6 +64,31 @@ def watchdog_task(mock_deps):
     )
 
 
+@pytest.fixture
+def mock_price_subscription_service():
+    svc = MagicMock()
+    svc.clear_active_state = MagicMock()
+    svc._rebalance = AsyncMock()
+    svc._refs = {"005930": 1, "000660": 1}
+    svc._active_codes = {"005930", "000660"}
+    return svc
+
+
+@pytest.fixture
+def mock_streaming_logger():
+    logger = MagicMock()
+    logger.log_watchdog_check = MagicMock()
+    logger.log_subscription_recovery_start = MagicMock()
+    logger.log_pt_subscribe = MagicMock()
+    logger.log_price_subscribe = MagicMock()
+    logger.log_pt_unsubscribe = MagicMock()
+    logger.log_price_unsubscribe = MagicMock()
+    logger.log_subscription_recovery_done = MagicMock()
+    logger.log_restore = MagicMock()
+    logger.log_reconnect = MagicMock()
+    return logger
+
+
 # ── _restore_all_subscriptions 테스트 ────────────────────────────────────────
 
 @pytest.mark.asyncio
