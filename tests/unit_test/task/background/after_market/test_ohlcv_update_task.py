@@ -926,8 +926,8 @@ class TestNotificationAndProgressEdgeCases:
         ns.emit = AsyncMock()
         task._ns = ns
         
-        # 의도적으로 에러 유발
-        with patch.object(task, '_load_all_stocks', side_effect=Exception("Load Error")):
+        # 의도적으로 에러 유발 (try-except 블록 내부에서 호출되는 메서드를 패치)
+        with patch.object(task, '_try_daily_bulk_via_fdr', side_effect=Exception("FDR Error")):
             await task._collect_all_ohlcv()
             
         ns.emit.assert_called_once()
@@ -944,6 +944,10 @@ class TestNotificationAndProgressEdgeCases:
 
     async def test_verify_crawler_data_missing_canary_stock(self, task, mock_sqs):
         """크롤링 데이터에 카나리 종목이 존재하지 않아 KeyError/IndexError가 발생하는 경우 검증 실패 처리 확인"""
+        # await 호출 시 TypeError 방지를 위해 get_current_price를 AsyncMock으로 설정
+        mock_sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {}})
+        )
         # 카나리 종목이 없는 크롤링 데이터
         df_crawled = pd.DataFrame({"Code": ["999999"], "Close": [1000]})
         result = await task._verify_crawler_data(df_crawled, "TEST")
