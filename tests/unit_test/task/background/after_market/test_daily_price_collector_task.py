@@ -3,6 +3,7 @@ import asyncio
 import pandas as pd
 from unittest.mock import MagicMock, AsyncMock, patch
 
+from interfaces.schedulable_task import TaskState
 from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
 from common.types import ErrorCode, ResCommonResponse
 
@@ -267,3 +268,144 @@ async def test_collect_via_broker_api(task):
         # batch_size=2 이므로 2개가 채워지거나 루프 종료 시 1번 upsert 호출됨
         task._stock_repo.upsert_daily_snapshot.assert_called_once()
         assert task._progress["status"] == "증권사 API 수집 중 (Fallback)..."
+
+# ── 추가된 Coverage 보완용 테스트 케이스 ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_task_state_management(task):
+    """start, suspend, resume 등 SchedulableTask 인터페이스 상태 관리 확인"""
+    # start
+    await task.start()
+    assert task._state == TaskState.RUNNING
+    assert task._suspend_event.is_set()
+
+    # suspend
+    await task.suspend()
+    assert task._state == TaskState.SUSPENDED
+    assert not task._suspend_event.is_set()
+
+    # resume
+    await task.resume()
+    assert task._state == TaskState.RUNNING
+    assert task._suspend_event.is_set()
+
+@pytest.mark.asyncio
+async def test_on_market_closed_trigger(task):
+    """장 마감 콜백 발생 시 이미 수집된 날짜가 아니면 파이프라인 트리거 확인"""
+    task._last_collected_date = "2024-12-31"
+    with patch.object(task, '_collect_all_prices', new_callable=AsyncMock) as mock_collect:
+        await task._on_market_closed("2025-01-01")
+        mock_collect.assert_called_once()
+        
+        # 이미 수집된 날짜면 스킵
+        task._last_collected_date = "2025-01-01"
+        mock_collect.reset_mock()
+        await task._on_market_closed("2025-01-01")
+        mock_collect.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_force_collect(task):
+    """강제 수집 호출 시 force=True 파라미터 전달 확인"""
+    with patch.object(task, '_collect_all_prices', new_callable=AsyncMock) as mock_collect:
+        await task.force_collect()
+        mock_collect.assert_called_once_with(force=True)
+
+@pytest.mark.asyncio
+async def test_collect_all_prices_no_trading_date(task, mock_mcs):
+    """최근 거래일 정보를 가져올 수 없으면 즉시 종료하는지 확인"""
+    mock_mcs.is_market_open_now.return_value = False
+    mock_mcs.get_latest_trading_date.return_value = None
+    
+    await task._collect_all_prices()
+    assert task._is_collecting is False
+
+@pytest.mark.asyncio
+async def test_collect_all_prices_exception_handling(task, mock_mcs):
+    """파이프라인 실행 중 예외 발생 시 finally 블록에서 상태가 잘 초기화되는지 확인"""
+    with patch.object(task, '_try_collect_via_fdr', side_effect=Exception("Unexpected Error")):
+        await task._collect_all_prices()
+        # is_collecting 플래그 및 캐시가 초기화되어야 함
+        assert task._is_collecting is False
+        assert getattr(task, "_all_stocks_cache", None) is None
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_logic(task):
+    """_fetch_with_retry: 실패 후 재시도 성공, 재시도 초과 실패 등 검증"""
+    fail_resp = ResCommonResponse(rt_cd="1", msg1="Fail", data=None)
+    success_resp = ResCommonResponse(rt_cd="0", msg1="OK", data={})
+    
+    # 시나리오 1: 1번 실패, 1번 Exception, 3번째에 성공
+    task._stock_query_service.get_current_price.side_effect = [fail_resp, Exception("NetErr"), success_resp]
+    with patch('asyncio.sleep', new_callable=AsyncMock):  # 딜레이 스킵
+        res1 = await task._fetch_with_retry("005930")
+        assert res1 == success_resp
+        assert task._stock_query_service.get_current_price.call_count == 3
+        
+    # 시나리오 2: 전부 실패
+    task._stock_query_service.get_current_price.reset_mock()
+    task._stock_query_service.get_current_price.side_effect = [fail_resp, fail_resp, fail_resp]
+    with patch('asyncio.sleep', new_callable=AsyncMock):
+        res2 = await task._fetch_with_retry("005930")
+        assert res2 is None
+        assert task._stock_query_service.get_current_price.call_count == 3
+
+def test_extract_broker_api_record_edge_cases(task):
+    """API 응답 파싱 엣지 케이스 (None, 누락된 데이터, 형변환 오류 등)"""
+    # 1. 응답이 없는 경우
+    assert task._extract_broker_api_record("005930", "삼성", "KOSPI", None) is None
+    
+    # 2. data/output이 빈 경우
+    resp_empty = ResCommonResponse(rt_cd="0", msg1="", data={})
+    assert task._extract_broker_api_record("005930", "삼성", "KOSPI", resp_empty) is None
+    
+    # 3. 숫자로 변환 불가능한 값(문자열) 및 Inf/NaN 등이 섞여 있는 경우 예외 없이 기본값(0) 반환
+    resp_bad_types = ResCommonResponse(rt_cd="0", msg1="", data={
+        "output": {"stck_prpr": "ABC", "acml_vol": "N/A", "per": "Inf", "pbr": "NaN", "eps": "invalid"}
+    })
+    rec = task._extract_broker_api_record("005930", "삼성", "KOSPI", resp_bad_types)
+    assert rec is not None
+    assert rec["current_price"] == 0
+    assert rec["volume"] == 0
+    assert rec["per"] == 0.0
+    assert rec["pbr"] == 0.0
+    assert rec["eps"] == 0.0
+
+@pytest.mark.asyncio
+async def test_verify_crawler_data_missing_stock_in_crawled(task):
+    """크롤링 데이터 안에 검증용 종목이 누락된 경우 스킵하고 나머지로 판별하는지 검증"""
+    # 005930 누락, 000660만 존재
+    df_crawled = pd.DataFrame({
+        "종목코드": ["000660"], "종가": [150000], "시가": [140000], "고가": [160000], "저가": [130000]
+    }).set_index("종목코드")
+
+    async def mock_fetch(code):
+        if code == "000660":
+            data = {"stck_prpr": "150000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"}
+            return ResCommonResponse(rt_cd="0", msg1="", data={"output": data})
+        return ResCommonResponse(rt_cd="1", msg1="Fail", data=None) # 005930 실패
+
+    with patch.object(task, '_fetch_with_retry', side_effect=mock_fetch):
+        result = await task._verify_crawler_data(df_crawled, "TEST")
+        assert result is True # 005930은 스킵되고, 000660 1건 일치하므로 통과
+
+@pytest.mark.asyncio
+async def test_try_collect_via_fdr_empty_or_exception(task):
+    """FDR 수집 결과가 비어있거나 스레드 내에서 예외가 발생할 경우 False 반환 검증"""
+    with patch('asyncio.to_thread', new_callable=AsyncMock, return_value=pd.DataFrame()):
+        assert await task._try_collect_via_fdr("2025-01-01", 0.0) is False
+        
+    with patch('asyncio.to_thread', new_callable=AsyncMock, side_effect=Exception("FDR Error")):
+        assert await task._try_collect_via_fdr("2025-01-01", 0.0) is False
+
+def test_format_dataframe_to_records_empty_and_error(task):
+    """_format_dataframe_to_records의 빈 DF, 필수 컬럼 누락 시 예외처리 스킵 확인"""
+    # 1. 빈 DF
+    assert task._format_dataframe_to_records(pd.DataFrame()) == []
+    assert task._format_dataframe_to_records(None) == []
+    
+    # 2. 필수 값 매핑 실패 시 (에러 발생 행 무시)
+    df_bad = pd.DataFrame({
+        "종목코드": ["005930"], 
+        "종가": ["invalid_str"] # int 변환 시 예외 발생 유도
+    })
+    assert task._format_dataframe_to_records(df_bad) == []

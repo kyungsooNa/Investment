@@ -421,7 +421,11 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
             def _safe_float(val, default=0.0):
                 try:
-                    return float(val) if val else default
+                    f_val = float(val) if val else default
+                    # NaN(f_val != f_val) 및 무한대(Inf) 값 방어
+                    if f_val != f_val or f_val == float('inf') or f_val == float('-inf'):
+                        return default
+                    return f_val
                 except (ValueError, TypeError):
                     return default
 

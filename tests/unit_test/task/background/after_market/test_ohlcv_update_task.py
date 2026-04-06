@@ -15,6 +15,7 @@ import pandas as pd
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from interfaces.schedulable_task import TaskPriority, TaskState
 from common.types import ResCommonResponse, ErrorCode
+from services.notification_service import NotificationCategory, NotificationLevel
 
 
 # ──────────────────────────────────────────────
@@ -853,3 +854,101 @@ class TestForceCollect:
         assert result is True
         mock_stock_repo.get_ohlcv_summary.assert_not_called()  # DB 조회가 아예 없어야 함
         mock_sqs.get_ohlcv.assert_called_once()
+
+
+# ──────────────────────────────────────────────
+# 추가된 Coverage 보완용 테스트 케이스
+# ──────────────────────────────────────────────
+
+class TestFormatRecordsEdgeCases:
+    def test_format_fdr_listing_to_ohlcv_records_amount_fallback(self, task):
+        """Amount(거래대금)가 NaN이거나 0일 때 종가*거래량으로 대체되는지 확인"""
+        df = pd.DataFrame([
+            {"Code": "005930", "Close": 70000, "Open": 69000, "High": 71000, "Low": 68000, "Volume": 100, "Amount": pd.NA},
+            {"Code": "000660", "Close": 150000, "Open": 140000, "High": 160000, "Low": 130000, "Volume": 200, "Amount": 0}
+        ])
+        valid_codes = {"005930", "000660"}
+        records = task._format_fdr_listing_to_ohlcv_records(df, "20260318", valid_codes)
+        assert len(records) == 2
+        assert records[0]["trading_value"] == 70000 * 100
+        assert records[1]["trading_value"] == 150000 * 200
+
+    def test_format_fdr_listing_to_ohlcv_records_invalid_type(self, task):
+        """숫자 변환 불가능한 값이 섞여 있을 때 스킵(예외처리)되는지 확인"""
+        df = pd.DataFrame([
+            {"Code": "005930", "Close": "invalid", "Volume": 100},
+            {"Code": "000660", "Close": 150000, "Volume": 200, "Amount": 30000000}
+        ])
+        records = task._format_fdr_listing_to_ohlcv_records(df, "20260318", {"005930", "000660"})
+        assert len(records) == 1
+        assert records[0]["code"] == "000660"
+
+    def test_format_fdr_to_ohlcv_records_invalid_type(self, task):
+        """과거 데이터(시계열) 포맷팅 중 형변환 에러 시 해당 행 스킵 확인"""
+        df = pd.DataFrame([
+            {"Open": 100, "High": 110, "Low": 90, "Close": "bad_data", "Volume": 10},
+            {"Open": 100, "High": 110, "Low": 90, "Close": 105, "Volume": 10}
+        ], index=[pd.to_datetime("20260317"), pd.to_datetime("20260318")])
+        records = task._format_fdr_to_ohlcv_records("005930", df)
+        assert len(records) == 1
+        assert records[0]["date"] == "20260318"
+
+class TestTryDailyBulkViaFDR:
+    async def test_returns_false_on_empty_df(self, task):
+        """DataFrame이 비어있을 때 False를 리턴하는지 확인"""
+        with patch('asyncio.to_thread', new_callable=AsyncMock, return_value=pd.DataFrame()):
+            assert await task._try_daily_bulk_via_fdr(TARGET_DATE, time.time(), {"005930"}) is False
+            
+    async def test_returns_false_on_verify_fail(self, task):
+        """_verify_crawler_data 정합성 검증 실패 시 False 리턴 확인"""
+        df = pd.DataFrame([{"Code": "005930", "Close": 70000}])
+        with patch('asyncio.to_thread', new_callable=AsyncMock, return_value=df), \
+             patch.object(task, '_verify_crawler_data', return_value=False):
+            assert await task._try_daily_bulk_via_fdr(TARGET_DATE, time.time(), {"005930"}) is False
+
+    async def test_returns_false_on_empty_records(self, task):
+        """DF에서 추출한 record가 비어있을 때 False 리턴 확인"""
+        df = pd.DataFrame([{"Code": "005930", "Close": 70000}])
+        with patch('asyncio.to_thread', new_callable=AsyncMock, return_value=df), \
+             patch.object(task, '_verify_crawler_data', return_value=True), \
+             patch.object(task, '_format_fdr_listing_to_ohlcv_records', return_value=[]):
+            assert await task._try_daily_bulk_via_fdr(TARGET_DATE, time.time(), {"005930"}) is False
+            
+    async def test_returns_false_on_exception(self, task):
+        """스레드 내부 등에서 예외 발생 시 False 반환 및 로깅 확인"""
+        with patch('asyncio.to_thread', new_callable=AsyncMock, side_effect=Exception("FDR Error")):
+            assert await task._try_daily_bulk_via_fdr(TARGET_DATE, time.time(), {"005930"}) is False
+
+class TestNotificationAndProgressEdgeCases:
+    async def test_exception_emits_notification(self, task, mock_mcs, mock_sqs):
+        """전체 수집 파이프라인 수행 중 예외 발생 시 Notification이 에러 레벨로 전송되는지 검증"""
+        ns = MagicMock()
+        ns.emit = AsyncMock()
+        task._ns = ns
+        
+        # 의도적으로 에러 유발 (try-except 블록 내부에서 호출되는 메서드를 패치)
+        with patch.object(task, '_try_daily_bulk_via_fdr', side_effect=Exception("FDR Error")):
+            await task._collect_all_ohlcv()
+            
+        ns.emit.assert_called_once()
+        args = ns.emit.call_args[0]
+        assert args[0] == NotificationCategory.BACKGROUND
+        assert args[1] == NotificationLevel.ERROR
+        assert "OHLCV 파이프라인 실패" in args[2]
+
+    async def test_save_bulk_to_db_with_progress_empty(self, task):
+        """빈 records가 전달되었을 때 바로 리턴하는지 확인"""
+        initial_updated = task._progress.get("updated", 0)
+        await task._save_bulk_to_db_with_progress([], time.time())
+        assert task._progress.get("updated", 0) == initial_updated # 진행률 변경 없음
+
+    async def test_verify_crawler_data_missing_canary_stock(self, task, mock_sqs):
+        """크롤링 데이터에 카나리 종목이 존재하지 않아 KeyError/IndexError가 발생하는 경우 검증 실패 처리 확인"""
+        # await 호출 시 TypeError 방지를 위해 get_current_price를 AsyncMock으로 설정
+        mock_sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {}})
+        )
+        # 카나리 종목이 없는 크롤링 데이터
+        df_crawled = pd.DataFrame({"Code": ["999999"], "Close": [1000]})
+        result = await task._verify_crawler_data(df_crawled, "TEST")
+        assert result is False
