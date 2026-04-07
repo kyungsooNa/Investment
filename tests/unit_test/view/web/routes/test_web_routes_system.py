@@ -474,8 +474,9 @@ def test_get_subscription_status_basic(web_client, mock_web_ctx):
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
         "active_count": 2,
-        "max_subscriptions": 35,
-        "active_codes": ["005930", "035720"],
+        "max_subscriptions": 40,  # 기존 35에서 40으로 업데이트됨
+        "active_codes_price": ["005930"], # 호가/체결 분리
+        "active_codes_pt": ["035720"],    # PT 분리
         "pending_count": 2,
         "pending_by_priority": {
             "HIGH":   ["005930"],
@@ -495,23 +496,28 @@ def test_get_subscription_status_basic(web_client, mock_web_ctx):
 
     assert response.status_code == 200
     data = response.json()["data"]
+    
     assert data["active_count"] == 2
-    assert data["max_subscriptions"] == 35
+    assert data["max_subscriptions"] == 40
     assert data["pending_count"] == 2
+    assert "005930" in data["active_codes_price"]
+    assert "035720" in data["active_codes_pt"]
 
-    high = data["HIGH"]
+    # 구조 변경에 맞춰 pending_by_priority 하위 탐색으로 수정
+    priorities = data["pending_by_priority"]
+    high = priorities["HIGH"]
     assert len(high) == 1
     assert high[0]["code"] == "005930"
     assert high[0]["name"] == "삼성전자"
     assert high[0]["active"] is True
     assert high[0]["received_at"] is None
 
-    medium = data["MEDIUM"]
+    medium = priorities["MEDIUM"]
     assert medium[0]["code"] == "035720"
     assert medium[0]["name"] == "카카오"
     assert medium[0]["active"] is True
 
-    assert data["LOW"] == []
+    assert priorities["LOW"] == []
 
 
 def test_get_subscription_status_received_at_populated(web_client, mock_web_ctx):
@@ -519,8 +525,9 @@ def test_get_subscription_status_received_at_populated(web_client, mock_web_ctx)
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
         "active_count": 1,
-        "max_subscriptions": 35,
-        "active_codes": ["005930"],
+        "max_subscriptions": 40,
+        "active_codes_price": ["005930"],
+        "active_codes_pt": [],
         "pending_count": 1,
         "pending_by_priority": {
             "HIGH":   ["005930"],
@@ -539,16 +546,17 @@ def test_get_subscription_status_received_at_populated(web_client, mock_web_ctx)
     response = web_client.get("/api/subscriptions/status")
 
     data = response.json()["data"]
-    assert data["HIGH"][0]["received_at"] == 1700000000.0
+    assert data["pending_by_priority"]["HIGH"][0]["received_at"] == 1700000000.0
 
 
 def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):
-    """active_codes에 없는 종목은 active=False로 반환된다."""
+    """active 상태가 아닌 종목은 active=False로 반환된다."""
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
         "active_count": 0,
-        "max_subscriptions": 35,
-        "active_codes": [],
+        "max_subscriptions": 40,
+        "active_codes_price": [],
+        "active_codes_pt": [],
         "pending_count": 1,
         "pending_by_priority": {
             "HIGH":   [],
@@ -563,7 +571,7 @@ def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):
     response = web_client.get("/api/subscriptions/status")
 
     data = response.json()["data"]
-    assert data["LOW"][0]["active"] is False
+    assert data["pending_by_priority"]["LOW"][0]["active"] is False
 
 
 def test_get_subscription_status_no_streaming_service(web_client, mock_web_ctx):
@@ -571,8 +579,9 @@ def test_get_subscription_status_no_streaming_service(web_client, mock_web_ctx):
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
         "active_count": 1,
-        "max_subscriptions": 35,
-        "active_codes": ["005930"],
+        "max_subscriptions": 40,
+        "active_codes_price": ["005930"],
+        "active_codes_pt": [],
         "pending_count": 0,
         "pending_by_priority": {
             "HIGH":   ["005930"],
@@ -588,4 +597,4 @@ def test_get_subscription_status_no_streaming_service(web_client, mock_web_ctx):
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["HIGH"][0]["received_at"] is None
+    assert data["pending_by_priority"]["HIGH"][0]["received_at"] is None

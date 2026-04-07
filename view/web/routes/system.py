@@ -187,9 +187,9 @@ def get_subscription_status():
 
     status = svc.get_status()
 
-    # 우선순위별 종목 목록 (active 여부 + 이름 + 마지막 수신 시각 부가)
+    # 수정 포인트: active_codes_price와 active_codes_pt를 병합하여 active_set 구성
     streaming_svc = getattr(ctx, "streaming_service", None)
-    active_set = set(status.get("active_codes", []))
+    active_set = set(status.get("active_codes_price", [])) | set(status.get("active_codes_pt", []))
 
     def _enrich(codes: list) -> list:
         result = []
@@ -202,23 +202,26 @@ def get_subscription_status():
             result.append({
                 "code": code,
                 "name": name,
-                "active": code in active_set,
+                "active": code in active_set, # 병합된 active_set을 통해 활성화 여부 확인
                 "received_at": received_at,
             })
         return result
 
-    by_priority = status.get("pending_by_priority", {})
+    # API 반환 데이터 구성
     return {
         "success": True,
         "data": {
-            "active_count": status["active_count"],
-            "max_subscriptions": status["max_subscriptions"],
-            "pending_count": status["pending_count"],
-            "CRITICAL": _enrich(by_priority.get("CRITICAL", [])),
-            "HIGH":   _enrich(by_priority.get("HIGH", [])),
-            "MEDIUM": _enrich(by_priority.get("MEDIUM", [])),
-            "LOW":    _enrich(by_priority.get("LOW", [])),
-        },
+            "active_count": status.get("active_count", 0),
+            "max_subscriptions": status.get("max_subscriptions", 40),
+            "active_codes_price": status.get("active_codes_price", []),
+            "active_codes_pt": status.get("active_codes_pt", []),
+            "pending_count": status.get("pending_count", 0),
+            "pending_by_priority": {
+                "HIGH": _enrich(status.get("pending_by_priority", {}).get("HIGH", [])),
+                "MEDIUM": _enrich(status.get("pending_by_priority", {}).get("MEDIUM", [])),
+                "LOW": _enrich(status.get("pending_by_priority", {}).get("LOW", [])),
+            }
+        }
     }
 
 
