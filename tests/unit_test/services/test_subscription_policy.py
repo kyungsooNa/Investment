@@ -210,14 +210,23 @@ async def test_do_subscribe_success_and_fail(policy, mock_streaming, mock_stock_
     await policy._do_subscribe("B", StreamingType.PROGRAM_TRADING)
     mock_streaming_logger.log_add_subscription_rejection.assert_called()
 
-@pytest.mark.asyncio
-async def test_do_subscribe_market_closed(policy, mock_market_calendar, mock_streaming, mock_streaming_logger):
-    """장 외 시간일 때 구독 요청이 보류되는지 검증"""
+async def test_do_subscribe_market_closed(svc, mock_streaming, mock_streaming_logger, mock_market_calendar):
+    """장 외 시간에는 구독 요청이 보류되어야 한다."""
+    # 장이 닫힌 상태로 모킹
     mock_market_calendar.is_market_open_now.return_value = False
-    await policy._do_subscribe("A", StreamingType.UNIFIED_PRICE)
-    
+
+    # 내부 메서드 직접 호출 (또는 add_subscription을 통한 간접 호출)
+    from repositories.streaming_stock_repo import StreamingType
+    await svc._do_subscribe("A", StreamingType.UNIFIED_PRICE)
+
+    # streaming_service에는 구독 요청이 가지 않아야 함
     mock_streaming.subscribe_unified_price.assert_not_called()
-    mock_streaming_logger.log_subscribe_pending.assert_called_with("SubscriptionPolicy: 장 외 시간 — 구독 보류 A")
+    
+    # logger에는 보류 로그가 남아야 함 (키워드 인자 사용)
+    mock_streaming_logger.log_subscribe_pending.assert_called_once_with(
+        code="A", 
+        message="SubscriptionPolicy: 장 외 시간 — 구독 보류"
+    )
 
 @pytest.mark.asyncio
 async def test_do_subscribe_exception(policy, mock_streaming, mock_streaming_logger):

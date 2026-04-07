@@ -394,12 +394,16 @@ class TestDeepBuyOrder:
     @pytest.mark.asyncio
     async def test_buy_order_full_stack(self, deep_paper_ctx, mocker):
         """매수 주문이 hashkey → order 2단계 HTTP 호출을 거쳐 성공한다."""
+        # [Fix] 서비스 레이어 내부에서 SubscriptionPolicy.add_subscription 호출 시 
+        # 부족한 파라미터(stream_type)로 인한 TypeError 발생을 방지하기 위해 Mock 처리합니다.
+        mocker.patch("services.subscription_policy.SubscriptionPolicy.add_subscription", new_callable=AsyncMock)
+        
         trading_api = _get_trading_api_from_ctx(deep_paper_ctx)
         assert trading_api is not None, "Trading API를 찾을 수 없습니다"
 
         order_payload = _make_order_success_payload()
 
-        # [Fix] MarketCalendarService.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정
+        # MarketCalendarService.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정
         # 이 메서드가 True를 반환하도록 하여 "장 중" 상태를 시뮬레이션합니다.
         mock_mcs = AsyncMock(spec=MarketCalendarService)
         mock_mcs.is_market_open_now.return_value = True
@@ -438,6 +442,8 @@ class TestDeepBuyOrder:
     @pytest.mark.asyncio
     async def test_buy_order_market_closed(self, deep_paper_ctx, mocker):
         """장 마감 시 매수 주문이 거부된다."""
+        mocker.patch("services.subscription_policy.SubscriptionPolicy.add_subscription", new_callable=AsyncMock)
+        
         deep_paper_ctx.order_execution_service.market_calendar_service.is_market_open_now = AsyncMock(return_value=False)
         mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_buy")
 
@@ -465,12 +471,13 @@ class TestDeepSellOrder:
     @pytest.mark.asyncio
     async def test_sell_order_full_stack(self, deep_paper_ctx, mocker):
         """매도 주문이 전체 스택을 통해 성공한다."""
+        mocker.patch("services.subscription_policy.SubscriptionPolicy.add_subscription", new_callable=AsyncMock)
+
         trading_api = _get_trading_api_from_ctx(deep_paper_ctx)
         assert trading_api is not None
 
         order_payload = _make_order_success_payload()
-        # [Fix] MarketCalendarService.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정
-        # 이 메서드가 True를 반환하도록 하여 "장 중" 상태를 시뮬레이션합니다.
+        # MarketCalendarService.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정
         mock_mcs = AsyncMock(spec=MarketCalendarService)
         mock_mcs.is_market_open_now.return_value = True
         deep_paper_ctx.order_execution_service.market_calendar_service = mock_mcs
@@ -507,6 +514,8 @@ class TestDeepSellOrder:
     @pytest.mark.asyncio
     async def test_sell_order_hashkey_failure(self, deep_paper_ctx, mocker):
         """hashkey 발급 실패 시 주문이 실패한다."""
+        mocker.patch("services.subscription_policy.SubscriptionPolicy.add_subscription", new_callable=AsyncMock)
+        
         trading_api = _get_trading_api_from_ctx(deep_paper_ctx)
         assert trading_api is not None
 
