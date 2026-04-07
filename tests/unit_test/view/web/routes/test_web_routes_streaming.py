@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 from view.web.routes.streaming import router, stream_stock_price
 from services.price_subscription_service import SubscriptionPriority
+from repositories.streaming_stock_repo import StreamingType
 
 @pytest.fixture
 def app():
@@ -42,15 +43,26 @@ def test_subscribe_stock_service_not_initialized(mock_get_ctx, client):
 @patch("view.web.routes.streaming._get_ctx")
 def test_subscribe_stock_success(mock_get_ctx, client, mock_ctx):
     """구독 요청 성공 테스트"""
-    mock_get_ctx.return_value = mock_ctx
+    mock_get_ctx.value = mock_ctx
 
     response = client.post("/streaming/subscribe", json={"code": "005930", "reason": "ui_view"})
     
     assert response.status_code == 200
-    assert response.json() == {"success": True, "code": "005930", "category": "ui_ui_view"}
     
+    # 1. 기대하는 JSON 응답에 'message' 필드 추가
+    assert response.json() == {
+        "success": True, 
+        "code": "005930", 
+        "category": "ui_ui_view",
+        "message": "005930 종목이 실시간 가격 구독 대상에 추가되었습니다."
+    }
+    
+    # 2. add_subscription 호출 인자에 StreamingType.UNIFIED_PRICE 추가
     mock_ctx.price_subscription_service.add_subscription.assert_awaited_once_with(
-        "005930", SubscriptionPriority.LOW, "ui_ui_view"
+        "005930", 
+        SubscriptionPriority.LOW, 
+        "ui_ui_view", 
+        StreamingType.UNIFIED_PRICE
     )
 
 @patch("view.web.routes.streaming._get_ctx")
