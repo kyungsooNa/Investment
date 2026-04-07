@@ -59,15 +59,20 @@ function renderBalanceTable() {
 
     let html = `
         <div class="card">
-        <div class="balance-summary">
-            <p>
-                <strong>계좌번호:</strong> ${accInfo.number}
-                <span class="badge ${badgeClass}" style="margin-left:5px; font-size:0.8em;">${accInfo.type}</span>
-                <span class="badge ${exchBadgeClass}" style="margin-left:5px; font-size:0.8em;">${exchLabel}</span>
-            </p>
-            <p><strong>총 평가금액:</strong> ${parseInt(summary.tot_evlu_amt || 0).toLocaleString()}원</p>
-            <p><strong>예수금:</strong> ${parseInt(summary.dnca_tot_amt || 0).toLocaleString()}원</p>
-            <p><strong>평가손익:</strong> ${parseInt(summary.evlu_pfls_smtl_amt || 0).toLocaleString()}원</p>
+        <div class="balance-summary" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <p>
+                    <strong>계좌번호:</strong> ${accInfo.number}
+                    <span class="badge ${badgeClass}" style="margin-left:5px; font-size:0.8em;">${accInfo.type}</span>
+                    <span class="badge ${exchBadgeClass}" style="margin-left:5px; font-size:0.8em;">${exchLabel}</span>
+                </p>
+                <p><strong>총 평가금액:</strong> ${parseInt(summary.tot_evlu_amt || 0).toLocaleString()}원</p>
+                <p><strong>예수금:</strong> ${parseInt(summary.dnca_tot_amt || 0).toLocaleString()}원</p>
+                <p><strong>평가손익:</strong> ${parseInt(summary.evlu_pfls_smtl_amt || 0).toLocaleString()}원</p>
+            </div>
+            <div>
+                <button id="sell-all-btn" class="btn btn-sell" onclick="sellAllStocks()">전체 일괄매도</button>
+            </div>
         </div>
         <table class="data-table">
             <thead>
@@ -166,6 +171,40 @@ async function loadBalance(exchange) {
             div.innerHTML = `<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>`;
         } else {
             div.innerHTML = `<p class="error">오류: ${e}</p>`;
+        }
+    }
+}
+
+async function sellAllStocks() {
+    if (!confirm("정말 모든 보유 주식을 시장가로 일괄 매도하시겠습니까?")) {
+        return;
+    }
+
+    const btn = document.getElementById('sell-all-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "매도 진행 중...";
+    }
+
+    try {
+        const res = await fetch('/api/balance/sell_all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const json = await res.json();
+        if (res.ok) {
+            alert(json.message || "일괄 매도가 완료되었습니다.");
+            loadBalance(); // 매도 후 잔고 테이블 새로고침
+        } else {
+            alert("오류 발생: " + (json.detail || "알 수 없는 오류"));
+        }
+    } catch (e) {
+        alert("요청 중 오류가 발생했습니다: " + e);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = "전체 일괄매도";
         }
     }
 }

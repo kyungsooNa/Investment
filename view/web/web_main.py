@@ -50,7 +50,10 @@ class _DebugHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")  # 브라우저 콘솔 fetch 허용
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass  # 클라이언트가 응답을 받기 전에 연결을 끊은 경우 무시
 
     def log_message(self, *_):
         pass  # 로그 억제

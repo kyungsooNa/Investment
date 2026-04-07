@@ -1,7 +1,7 @@
 """
 계좌 잔고 관련 API 엔드포인트 (balance.html).
 """
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from common.types import Exchange
 from view.web.api_common import _get_ctx, _serialize_response
 
@@ -68,3 +68,15 @@ async def get_balance(exchange: str = Query("KRX")):
 
     ctx.pm.log_timer("get_balance", t_start)
     return result
+
+@router.post("/balance/sell_all")
+async def sell_all_stocks():
+    """모든 보유 주식을 매도한다."""
+    ctx = _get_ctx()
+    try:
+        results = await ctx.order_execution_service.sell_all_stocks()
+        # 성공 및 실패 결과에 대한 상세 정보 반환
+        return {"message": "모든 주식에 대한 매도 주문이 시작되었습니다.", "results": results}
+    except Exception as e:
+        # 오류 발생 시 더 구체적인 오류 메시지 제공
+        raise HTTPException(status_code=500, detail=f"일괄 매도 중 오류 발생: {str(e)}")

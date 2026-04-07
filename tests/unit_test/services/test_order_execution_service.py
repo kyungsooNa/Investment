@@ -501,3 +501,73 @@ async def test_retry_order_integrates_with_handle_place_sell_order(handler, mock
     result = await handler.handle_place_sell_order("005930", 60000, 5)
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert mock_broker_api_wrapper.place_stock_order.await_count == 2
+
+
+# --- sell_all_stocks 테스트 ---
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_market_closed(handler, mock_market_calendar_service, mock_logger):
+    """sell_all_stocks 시장 마감 시 일괄 매도 실패 테스트."""
+    mock_market_calendar_service.is_market_open_now.return_value = False
+    result = await handler.sell_all_stocks()
+    assert result.rt_cd == ErrorCode.MARKET_CLOSED.value
+    mock_logger.warning.assert_called_once_with("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_balance_failed(handler, mock_broker_api_wrapper, mock_logger):
+    """sell_all_stocks 잔고 조회 실패 시나리오 테스트."""
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="1", msg1="잔고 조회 에러", data=None
+    )
+    result = await handler.sell_all_stocks()
+    assert "error" in result
+    assert "잔고 조회에 실패했습니다: 잔고 조회 에러" in result["error"]
+    mock_logger.error.assert_called_with("잔고 조회 실패: 잔고 조회 에러")
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_no_holdings(handler, mock_broker_api_wrapper, mock_logger):
+    """sell_all_stocks 보유 주식이 없을 때의 테스트."""
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output1": []}
+    )
+    result = await handler.sell_all_stocks()
+    assert result.get("message") == "보유 중인 주식이 없습니다."
+    assert result.get("results") == []
+    mock_logger.info.assert_any_call("매도할 보유 주식이 없습니다.")
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_success(handler, mock_broker_api_wrapper, mock_logger):
+    """sell_all_stocks 일괄 매도 성공 및 부분 실패 시나리오 테스트."""
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={
+            "output1": [
+                {"pdno": "005930", "hldg_qty": "10"},
+                {"pdno": "000660", "hldg_qty": "5"},
+                {"pdno": "035420", "hldg_qty": "0"}  # 수량 0이므로 매도 대상에서 제외되어야 함
+            ]
+        }
+    )
+    # 삼성전자는 성공, SK하이닉스는 API 실패 반환을 시뮬레이션
+    mock_broker_api_wrapper.place_stock_order.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="매도 성공", data=None),
+        ResCommonResponse(rt_cd="1", msg1="매도 실패", data=None)
+    ]
+
+    result = await handler.sell_all_stocks()
+
+    assert result.get("message") == "일괄 매도가 완료되었습니다."
+    assert len(result.get("results")) == 2
+
+    res1 = result["results"][0]
+    assert res1["stock_code"] == "005930"
+    assert res1["success"] is True
+
+    res2 = result["results"][1]
+    assert res2["stock_code"] == "000660"
+    assert res2["success"] is False
+    assert res2["message"] == "매도 실패"
+
+    from common.types import Exchange
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 2
+    mock_broker_api_wrapper.place_stock_order.assert_any_await("005930", 0, 10, is_buy=False, exchange=Exchange.KRX)
+    mock_broker_api_wrapper.place_stock_order.assert_any_await("000660", 0, 5, is_buy=False, exchange=Exchange.KRX)
