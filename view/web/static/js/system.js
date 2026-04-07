@@ -467,10 +467,9 @@ async function updateSubscriptionStatus() {
         // 각 우선순위별 탭에 종목 개수 업데이트
         if (d.pending_by_priority) {
             document.querySelectorAll('.sub-tab-btn').forEach(btn => {
-                const priorityMatch = btn.getAttribute('onclick').match(/'([^']+)'/);
+                const priority = btn.getAttribute('data-priority');
                 const countSpan = btn.querySelector('.tab-count');
-                if (priorityMatch && countSpan) {
-                    const priority = priorityMatch[1];
+                if (priority && countSpan) {
                     const count = d.pending_by_priority[priority] ? d.pending_by_priority[priority].length : 0;
                     countSpan.textContent = `(${count})`;
                 }
