@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 import time
 from unittest.mock import MagicMock
@@ -96,3 +97,99 @@ def test_on_price_tick_repo_exception(price_stream_service, mock_stock_repo, moc
 
     mock_logger.warning.assert_called_once()
     assert "StockRepository 실시간 틱 캐시 갱신 실패: DB Connection Error" in mock_logger.warning.call_args[0][0]
+
+
+# ── SSE 큐 관리 ──────────────────────────────────────────────────────────────
+
+def test_init_sse_queues(mock_stock_repo, mock_logger):
+    """_sse_queues 초기값이 빈 dict인지 검증"""
+    service = PriceStreamService(stock_repo=mock_stock_repo, logger=mock_logger)
+    assert service._sse_queues == {}
+
+
+def test_create_subscriber_queue(price_stream_service):
+    """큐 생성 후 해당 종목코드로 등록되는지 검증"""
+    q = price_stream_service.create_subscriber_queue('005930')
+    assert isinstance(q, asyncio.Queue)
+    assert q in price_stream_service._sse_queues['005930']
+
+
+def test_create_subscriber_queue_multiple(price_stream_service):
+    """동일 종목에 복수의 큐 등록 가능한지 검증"""
+    q1 = price_stream_service.create_subscriber_queue('005930')
+    q2 = price_stream_service.create_subscriber_queue('005930')
+    assert len(price_stream_service._sse_queues['005930']) == 2
+    assert q1 in price_stream_service._sse_queues['005930']
+    assert q2 in price_stream_service._sse_queues['005930']
+
+
+def test_remove_subscriber_queue_cleans_up_empty_key(price_stream_service):
+    """마지막 큐 제거 시 종목코드 항목이 삭제되는지 검증"""
+    q = price_stream_service.create_subscriber_queue('005930')
+    price_stream_service.remove_subscriber_queue('005930', q)
+    assert '005930' not in price_stream_service._sse_queues
+
+
+def test_remove_subscriber_queue_keeps_remaining(price_stream_service):
+    """복수 큐 중 하나만 제거해도 나머지가 유지되는지 검증"""
+    q1 = price_stream_service.create_subscriber_queue('005930')
+    q2 = price_stream_service.create_subscriber_queue('005930')
+    price_stream_service.remove_subscriber_queue('005930', q1)
+    assert price_stream_service._sse_queues['005930'] == [q2]
+
+
+def test_remove_subscriber_queue_nonexistent_no_error(price_stream_service):
+    """등록되지 않은 큐 제거 시 예외 없이 무시되는지 검증"""
+    q = asyncio.Queue()
+    price_stream_service.remove_subscriber_queue('005930', q)  # should not raise
+
+
+# ── SSE 브로드캐스트 ──────────────────────────────────────────────────────────
+
+def test_on_price_tick_broadcasts_to_sse_queue(price_stream_service):
+    """정상 틱 수신 시 SSE 큐에 데이터가 전달되는지 검증"""
+    q = price_stream_service.create_subscriber_queue('005930')
+    data = {
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '75000',
+        '누적거래량': '1500000',
+    }
+    price_stream_service.on_price_tick(data)
+
+    assert not q.empty()
+    tick = q.get_nowait()
+    assert tick == {"code": "005930", "price": 75000.0, "volume": 1500000}
+
+
+def test_on_price_tick_ignores_queue_full(price_stream_service):
+    """SSE 큐가 가득 찼을 때 QueueFull 예외가 전파되지 않는지 검증"""
+    q = asyncio.Queue(maxsize=1)
+    q.put_nowait({"dummy": True})
+    price_stream_service._sse_queues['005930'] = [q]
+
+    data = {'유가증권단축종목코드': '005930', '주식현재가': '75000'}
+    price_stream_service.on_price_tick(data)  # should not raise
+
+
+def test_on_price_tick_no_sse_subscriber(price_stream_service):
+    """SSE 구독자가 없는 종목 틱 수신 시 오류 없이 정상 처리되는지 검증"""
+    data = {'유가증권단축종목코드': '005930', '주식현재가': '75000'}
+    price_stream_service.on_price_tick(data)
+    assert price_stream_service._sse_queues == {}
+
+
+def test_on_price_tick_broadcasts_even_if_repo_fails(price_stream_service, mock_stock_repo):
+    """레포지토리 업데이트 실패 후에도 SSE 큐 브로드캐스트가 수행되는지 검증"""
+    mock_stock_repo.update_realtime_data.side_effect = Exception("DB Error")
+    q = price_stream_service.create_subscriber_queue('005930')
+    data = {
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '75000',
+        '누적거래량': '1000',
+    }
+    price_stream_service.on_price_tick(data)
+
+    assert not q.empty()
+    tick = q.get_nowait()
+    assert tick["price"] == 75000.0
+    assert tick["volume"] == 1000

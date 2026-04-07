@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from services.streaming_service import StreamingService
     from repositories.stock_repository import StockRepository
     from core.logger import StreamingEventLogger
+    from services.market_calendar_service import MarketCalendarService
 
 
 class SubscriptionPriority(IntEnum):
@@ -61,12 +62,14 @@ class SubscriptionPolicy:
         logger=None,
         streaming_logger: Optional["StreamingEventLogger"] = None,
         streaming_stock_repo: Optional["StreamingStockRepo"] = None,
+        market_calendar: Optional["MarketCalendarService"] = None,
     ):
         self._streaming = streaming_service
         self._stock_repo = stock_repo
         self._logger = logger or logging.getLogger(__name__)
         self._streaming_logger = streaming_logger
         self._streaming_stock_repo = streaming_stock_repo
+        self._market_calendar = market_calendar
 
         # code -> {category_key -> SubscriptionPriority}
         self._refs: Dict[str, Dict[str, SubscriptionPriority]] = {}
@@ -219,6 +222,9 @@ class SubscriptionPolicy:
                 )
 
     async def _do_subscribe(self, code: str) -> None:
+        if self._market_calendar and not await self._market_calendar.is_market_open_now():
+            self._logger.debug(f"SubscriptionPolicy: 장 외 시간 — 구독 보류 {code}")
+            return
         try:
             success = await self._streaming.subscribe_unified_price(code)
             if success:

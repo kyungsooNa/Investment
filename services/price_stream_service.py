@@ -16,9 +16,10 @@ StreamingService와의 역할 구분:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from repositories.stock_repository import StockRepository
 
@@ -34,6 +35,7 @@ class PriceStreamService:
         self._stock_repo = stock_repo
         self._logger = logger or logging.getLogger(__name__)
         self._latest_prices: Dict[str, dict] = {}
+        self._sse_queues: Dict[str, List[asyncio.Queue]] = {}  # code → SSE 구독 큐 목록
 
     def on_price_tick(self, realtime_data: dict) -> None:
         """
@@ -63,6 +65,28 @@ class PriceStreamService:
         except Exception as e:
             self._logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
 
+        if stock_code in self._sse_queues:
+            tick = {"code": stock_code, "price": float(current_price), "volume": vol_int}
+            for q in self._sse_queues[stock_code]:
+                try:
+                    q.put_nowait(tick)
+                except asyncio.QueueFull:
+                    pass
+
     def get_cached_price(self, code: str) -> Optional[dict]:
         """메모리 캐시에서 최신가 정보를 반환한다."""
         return self._latest_prices.get(code)
+
+    def create_subscriber_queue(self, code: str) -> asyncio.Queue:
+        """SSE 클라이언트용 큐를 생성하고 등록한다."""
+        queue: asyncio.Queue = asyncio.Queue()
+        self._sse_queues.setdefault(code, []).append(queue)
+        return queue
+
+    def remove_subscriber_queue(self, code: str, queue: asyncio.Queue) -> None:
+        """SSE 클라이언트 큐를 제거한다. 구독자가 없으면 항목 삭제."""
+        queues = self._sse_queues.get(code, [])
+        if queue in queues:
+            queues.remove(queue)
+        if not queues:
+            self._sse_queues.pop(code, None)

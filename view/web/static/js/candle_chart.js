@@ -11,6 +11,9 @@ let g_chartRawData = null;
 let g_chartIndicators = null;
 let g_chartCode = null;
 
+// 실시간 현재가 SSE 연결 객체
+let priceEventSource = null;
+
 async function loadAndRenderStockChart(code) {
     const chartCard = document.getElementById('stock-chart-card');
     if (!chartCard) return;
@@ -97,6 +100,8 @@ async function loadAndRenderStockChart(code) {
 
         // [성능 측정] API fetch + 차트 렌더링 시간 로깅
         console.log(`[Perf] 차트 데이터 조회(${code}): ${(tFetch - t0).toFixed(1)}ms | 렌더링: ${(tRender - tFetch).toFixed(1)}ms | 합계: ${(tRender - t0).toFixed(1)}ms`);
+
+        subscribeRealtimePrice(code);
 
     } catch (e) {
         console.error("Chart rendering failed:", e);
@@ -326,3 +331,57 @@ function renderStockChart(period) {
     const tRenderEnd = performance.now();
     console.log(`[Perf] 차트 렌더링(${period}, ${slicedRaw.length}건): 데이터 가공 ${(tChartStart - tRenderStart).toFixed(1)}ms | Chart.js 생성 ${(tRenderEnd - tChartStart).toFixed(1)}ms | 합계 ${(tRenderEnd - tRenderStart).toFixed(1)}ms`);
 }
+
+function subscribeRealtimePrice(code) {
+    if (priceEventSource) {
+        priceEventSource.close();
+        priceEventSource = null;
+    }
+
+    priceEventSource = new EventSource(`/api/streaming/price/${code}`);
+
+    priceEventSource.onmessage = function (event) {
+        if (!stockChartInstance || !g_chartRawData || g_chartRawData.length === 0) return;
+
+        const tick = JSON.parse(event.data);
+        const lastRawIdx = g_chartRawData.length - 1;
+        const raw = g_chartRawData[lastRawIdx];
+
+        // g_chartRawData 갱신 (누적거래량은 대체)
+        raw.close = tick.price;
+        if (tick.price > raw.high) raw.high = tick.price;
+        if (tick.price < raw.low)  raw.low  = tick.price;
+        raw.volume = tick.volume;
+
+        // 현재 차트에 표시된 슬라이스의 마지막 인덱스 (기간 변경과 무관)
+        const candleData = stockChartInstance.data.datasets[0].data;
+        const lastChartIdx = candleData.length - 1;
+
+        if (lastChartIdx >= 0 && candleData[lastChartIdx]) {
+            candleData[lastChartIdx].c = raw.close;
+            candleData[lastChartIdx].h = raw.high;
+            candleData[lastChartIdx].l = raw.low;
+        }
+
+        // 거래량 데이터셋은 label로 탐색 (인덱스 하드코딩 불필요)
+        const volDataset = stockChartInstance.data.datasets.find(d => d.label === '거래량');
+        if (volDataset && volDataset.data[lastChartIdx]) {
+            volDataset.data[lastChartIdx].y = raw.volume;
+        }
+
+        stockChartInstance.update('none');
+    };
+
+    priceEventSource.onerror = function () {
+        // EventSource 스펙상 브라우저가 자동 재연결 처리
+    };
+}
+
+function unsubscribeRealtimePrice() {
+    if (priceEventSource) {
+        priceEventSource.close();
+        priceEventSource = null;
+    }
+}
+
+window.addEventListener('beforeunload', unsubscribeRealtimePrice);
