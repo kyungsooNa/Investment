@@ -245,6 +245,7 @@ class WebAppContext:
             logger=self.logger,
             streaming_logger=self.streaming_event_logger,
             streaming_stock_repo=self.streaming_stock_repo,
+            market_calendar=self._mcs,
         )
 
         # WebSocketWatchdogTask 초기화
