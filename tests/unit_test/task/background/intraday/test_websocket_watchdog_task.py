@@ -5,7 +5,7 @@ WebSocketWatchdogTask 단위 테스트.
 import asyncio
 import time
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch, ANY
+from unittest.mock import MagicMock, AsyncMock, patch, ANY, call  # <- call 추가
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from services.market_calendar_service import MarketCalendarService
 from interfaces.schedulable_task import TaskState
@@ -696,3 +696,37 @@ async def test_restore_accounts_for_pt_slots_before_rebalance(watchdog_task, moc
     # 3. [핵심] rebalance 호출 시점에 이미 PT 슬롯이 점유되어 있어야 함
     # (PriceSubscriptionService 내부에서 _calculate_used_slots 호출 시 StreamingStockRepo를 참조하므로)
     assert svc._streaming_stock_repo.clear_active.call_count >= 2 # PT 초기화 + Price 초기화
+
+@pytest.mark.asyncio
+async def test_restore_sequence_accounts_for_pt_slots(watchdog_task, mock_price_subscription_service):
+    """
+    PT 복원(mark_active)이 완료된 후 Price 서비스의 _rebalance가 호출되는지 순서 검증.
+    이 순서가 보장되어야 _rebalance 내에서 PT가 점유한 슬롯을 제외하고 계산할 수 있음.
+    """
+    svc = watchdog_task
+    svc._price_subscription_service = mock_price_subscription_service
+    
+    # 1. PT 종목 1개 설정
+    pt_codes = ["005930"]
+    svc._streaming_stock_repo.get_desired.return_value = set(pt_codes)
+    
+    # 2. 호출 순서 추적을 위해 상위 Mock 생성
+    # (주의: 실제 객체의 메서드를 Mock으로 교체하여 추적)
+    with patch.object(svc._streaming_stock_repo, 'mark_active', new_callable=AsyncMock) as mock_mark, \
+         patch.object(mock_price_subscription_service, '_rebalance', new_callable=AsyncMock) as mock_rebal, \
+         patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
+        
+        # 순서 기록용 매니저
+        manager = MagicMock()
+        manager.attach_mock(mock_mark, 'mark_active')
+        manager.attach_mock(mock_rebal, 'rebalance')
+
+        await svc._restore_all_subscriptions()
+
+        # 3. 검증: PT 마킹이 먼저 발생하고, 그 다음 rebalance가 호출되어야 함
+        expected_calls = [
+            call.mark_active("005930", StreamingType.PROGRAM_TRADING),
+            call.rebalance()
+        ]
+        manager.assert_has_calls(expected_calls, any_order=False)
+    
