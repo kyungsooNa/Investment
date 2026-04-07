@@ -76,12 +76,12 @@ async def stream_program_trading(request: Request):
     """SSE 스트리밍: 프로그램매매 실시간 데이터를 브라우저에 전달 (Array 배열 전송 최적화 적용)."""
     ctx = _get_ctx()
     # 매니저를 통해 큐 생성 및 등록
-    queue = ctx.realtime_data_service.create_subscriber_queue()
+    queue = ctx.program_trading_stream_service.create_subscriber_queue()
 
     async def event_generator():
         try:
             # 1. 저장된 과거 데이터 먼저 전송 (Replay)
-            history = ctx.realtime_data_service.get_history_data()
+            history = ctx.program_trading_stream_service.get_history_data()
             for code, items in list(history.items()):
                 for item in list(items):
                     # 과거 데이터도 클라이언트가 해석할 수 있도록 Array로 변환하여 전송
@@ -103,7 +103,7 @@ async def stream_program_trading(request: Request):
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.0001)
 
-            # 2. 실시간 데이터 전송 (realtime_data_service에서 JSON 직렬화 후 큐에 삽입됨)
+            # 2. 실시간 데이터 전송 (program_trading_stream_service에서 JSON 직렬화 후 큐에 삽입됨)
             while True:
                 try:
                     data = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -118,7 +118,7 @@ async def stream_program_trading(request: Request):
             pass
         finally:
             # 연결 종료 시 매니저를 통해 큐 제거
-            ctx.realtime_data_service.remove_subscriber_queue(queue)
+            ctx.program_trading_stream_service.remove_subscriber_queue(queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -130,7 +130,7 @@ async def save_pt_data(data: ProgramTradingDataModel):
         # [변경] 매니저를 통해 스냅샷 저장
         ctx = _get_ctx()
         t_start = ctx.pm.start_timer()
-        ctx.realtime_data_service.save_snapshot(data.model_dump())
+        ctx.program_trading_stream_service.save_snapshot(data.model_dump())
         ctx.pm.log_timer("save_pt_data", t_start)
         return {"success": True}
     except Exception as e:
@@ -144,7 +144,7 @@ async def load_pt_data():
     # [변경] 매니저를 통해 스냅샷 로드
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
-    data = ctx.realtime_data_service.load_snapshot()
+    data = ctx.program_trading_stream_service.load_snapshot()
     ctx.pm.log_timer("load_pt_data", t_start)
 
     if data is None:
@@ -156,7 +156,7 @@ async def load_pt_data():
 async def get_db_status():
     """DB 내부 상태(스냅샷 시간, 히스토리 건수 등) 조회."""
     ctx = _get_ctx()
-    return ctx.realtime_data_service.inspect_db_status()
+    return ctx.program_trading_stream_service.inspect_db_status()
 
 
 @router.websocket("/ws/echo")

@@ -27,7 +27,7 @@ def mock_ctx():
         ctx.streaming_service.unsubscribe_realtime_price = AsyncMock()
         ctx.broker = MagicMock()
         ctx.broker.is_websocket_receive_alive = MagicMock(return_value=True)
-        ctx.realtime_data_service = MockRDM.return_value
+        ctx.program_trading_stream_service = MockRDM.return_value
 
         # WebSocketWatchdogTask mock
         ctx.websocket_watchdog_task = MagicMock()

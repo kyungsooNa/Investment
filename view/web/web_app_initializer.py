@@ -86,7 +86,7 @@ class WebAppContext:
         self.pm: PerformanceProfiler = None
 
         # 프로그램매매 실시간 데이터 서비스
-        self.realtime_data_service = ProgramTradingStreamService(self.logger)
+        self.program_trading_stream_service = ProgramTradingStreamService(self.logger)
         self.price_subscription_service: PriceSubscriptionService = None
         self.price_stream_service: PriceStreamService = None
         self.streaming_stock_repo: StreamingStockRepo = None
@@ -251,7 +251,7 @@ class WebAppContext:
         # WebSocketWatchdogTask 초기화
         self.websocket_watchdog_task = WebSocketWatchdogTask(
             streaming_service=self.streaming_service,
-            realtime_data_service=self.realtime_data_service,
+            program_trading_stream_service=self.program_trading_stream_service,
             market_calendar_service=self._mcs,
             performance_profiler=self.pm,
             notification_service=self.notification_service,

@@ -237,13 +237,13 @@ def test_web_realtime_callback(mock_deps):
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.dispatch_realtime_message = MagicMock()
     ctx.streaming_service.get_cached_realtime_price = MagicMock(return_value=None)
-    ctx.realtime_data_service = MagicMock()
+    ctx.program_trading_stream_service = MagicMock()
 
     # 1. 일반 데이터 (program trading 아님)
     data_normal = {"type": "realtime_price", "data": {}}
     ctx._web_realtime_callback(data_normal)
     ctx.streaming_service.dispatch_realtime_message.assert_called_with(data_normal)
-    ctx.realtime_data_service.on_data_received.assert_not_called()
+    ctx.program_trading_stream_service.on_data_received.assert_not_called()
 
     # 2. 프로그램 매매 데이터 (가격 정보 주입 - dict 형태)
     mock_price_data = {"price": "70000", "change": "100", "rate": "0.1", "sign": "2"}
@@ -262,7 +262,7 @@ def test_web_realtime_callback(mock_deps):
     # dispatch_realtime_message가 가격 주입된 data로 호출됨
     ctx.streaming_service.dispatch_realtime_message.assert_called_with(data_pt)
     # on_data_received는 StreamingService 옵저버 패턴을 통해 호출되므로 직접 호출 안 됨
-    ctx.realtime_data_service.on_data_received.assert_not_called()
+    ctx.program_trading_stream_service.on_data_received.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_stop_all_program_trading(mock_deps):
