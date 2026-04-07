@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 
 class SubscriptionPriority(IntEnum):
+    CRITICAL = 0  # 프로그램 매매 (절대 밀어내기 불가)
     HIGH = 1      # Portfolio (보유 종목)
     MEDIUM = 2    # Strategy watchlist / premium stocks
     LOW = 3       # UI page view / watchlist page
@@ -53,7 +54,7 @@ class SubscriptionPolicy:
       - 우선순위가 동일하면 종목코드 오름차순으로 결정적(deterministic) 선택
     """
 
-    MAX_SUBSCRIPTIONS = 35
+    MAX_WS_SLOTS = 40  # KIS 웹소켓 최대 구독 한도
 
     def __init__(
         self,
@@ -71,11 +72,12 @@ class SubscriptionPolicy:
         self._streaming_stock_repo = streaming_stock_repo
         self._market_calendar = market_calendar
 
-        # code -> {category_key -> SubscriptionPriority}
-        self._refs: Dict[str, Dict[str, SubscriptionPriority]] = {}
+        # code -> { category_key -> { 'priority': Priority, 'type': StreamingType } }
+        self._refs: Dict[str, Dict[str, dict]] = {}
 
         # 현재 실제로 WebSocket 구독 중인 종목 집합
-        self._active_codes: Set[str] = set()
+        self._active_codes_price: Set[str] = set()
+        self._active_codes_pt: Set[str] = set()
 
         # summary 로그 스로틀 (동시 다발적 rebalance 호출로 인한 중복 발화 방지)
         self._last_summary_time: float = 0.0
@@ -89,18 +91,38 @@ class SubscriptionPolicy:
         이후 _rebalance()를 호출하면 _refs(desired)에 있는 모든 종목이 신규 구독된다.
         streaming_stock_repo의 active 초기화는 워치독(_restore_all_subscriptions)에서 별도 처리.
         """
-        count = len(self._active_codes)
-        self._active_codes.clear()
-        self._logger.debug(f"SubscriptionPolicy: active 상태 초기화 {count}개 클리어")
+        count_price = len(self._active_codes_price)
+        count_pt = len(self._active_codes_pt)
+        self._active_codes_price.clear()
+        self._active_codes_pt.clear()
+        self._streaming_logger.log_clear_active_state(f"SubscriptionPolicy: active 상태 초기화 {count_price}개 클리어")
+        self._streaming_logger.log_clear_active_state(f"SubscriptionPolicy: active 상태 초기화 {count_pt}개 클리어")
 
     async def add_subscription(
-        self, code: str, priority: SubscriptionPriority, category_key: str
-    ) -> None:
-        """특정 카테고리에서 종목 구독을 요청합니다."""
-        self._refs.setdefault(code, {})[category_key] = priority
-        if self._streaming_stock_repo:
-            await self._streaming_stock_repo.mark_desired(code, StreamingType.UNIFIED_PRICE)
+        self, code: str, priority: SubscriptionPriority, 
+        category_key: str, stream_type: StreamingType
+    ) -> bool:
+        """
+        구독을 요청합니다. 
+        단, CRITICAL(프로그램 매매) 요청 시 슬롯이 부족하면 밀어내지 않고 False(거절)를 반환합니다.
+        """
+        # 1. 시뮬레이션: 이 요청을 수용했을 때 총 슬롯 계산 (PT = 2, Price = 1)
+        required_slots = 2 if stream_type == StreamingType.PROGRAM_TRADING else 1
+        current_used_slots = self._calculate_used_slots()
+        
+        if priority == SubscriptionPriority.CRITICAL and (current_used_slots + required_slots > self.MAX_WS_SLOTS):
+            self._streaming_logger.log_add_subscription_rejection(f"웹소켓 한도 초과: {code} 프로그램 매매 구독 거절")
+            return False # 거절 (Rejection)
+
+        # 2. 등록
+        self._refs.setdefault(code, {})[category_key] = {
+            "priority": priority,
+            "type": stream_type
+        }
+        
+        # 3. 재조정 (Rebalance)
         await self._rebalance()
+        return True
 
     async def remove_subscription(self, code: str, category_key: str) -> None:
         """특정 카테고리에서 종목 구독을 해제합니다."""
@@ -158,7 +180,7 @@ class SubscriptionPolicy:
 
     def is_streaming(self, code: str) -> bool:
         """해당 종목이 현재 실시간 구독 중인지 여부."""
-        return code in self._active_codes
+        return code in self._active_codes_price or code in self._active_codes_pt
 
     def get_status(self) -> dict:
         """현재 구독 현황을 반환합니다 (모니터링/API 용)."""
@@ -168,9 +190,10 @@ class SubscriptionPolicy:
             pending_by_priority.setdefault(best, []).append(code)
 
         return {
-            "active_count": len(self._active_codes),
+            "active_count": len(self._active_codes_price) + len(self._active_codes_pt),
             "max_subscriptions": self.MAX_SUBSCRIPTIONS,
-            "active_codes": sorted(self._active_codes),
+            "active_codes_price": sorted(self._active_codes_price),
+            "active_codes_pt": sorted(self._active_codes_pt),
             "pending_count": len(self._refs),
             "pending_by_priority": {
                 "HIGH": sorted(pending_by_priority.get(int(SubscriptionPriority.HIGH), [])),
@@ -183,56 +206,100 @@ class SubscriptionPolicy:
 
     async def _rebalance(self) -> None:
         """
-        요청된 구독 목록을 우선순위로 정렬하여 MAX_SUBSCRIPTIONS개 이내로 유지.
-        변경이 필요한 종목만 구독/해지 처리.
+        요청된 구독 목록을 우선순위로 정렬하여 MAX_WS_SLOTS 한도 내에서 최적 분배.
+        변경이 필요한 종목만 구독/해지 처리하며, 변동 사항을 로깅함.
         """
         def _best_priority(code: str) -> int:
-            return min(int(p) for p in self._refs[code].values())
+            return min(int(req["priority"]) for req in self._refs[code].values())
 
-        ranked = sorted(self._refs.keys(), key=lambda c: (_best_priority(c), c))
-        desired: Set[str] = set(ranked[: self.MAX_SUBSCRIPTIONS])
+        # 1. 우선순위 높은 순으로 정렬
+        ranked_codes = sorted(self._refs.keys(), key=lambda c: (_best_priority(c), c))
+        
+        desired_price: Set[str] = set()
+        desired_pt: Set[str] = set()
+        
+        available_slots = self.MAX_WS_SLOTS
 
-        to_unsubscribe = self._active_codes - desired
-        to_subscribe = desired - self._active_codes
+        # 2. 슬롯 할당 (Greedy)
+        for code in ranked_codes:
+            requests = self._refs[code].values()
+            is_pt = any(req["type"] == StreamingType.PROGRAM_TRADING for req in requests)
+            is_price = any(req["type"] == StreamingType.UNIFIED_PRICE for req in requests)
+            
+            slots_needed = 0
+            if is_pt: slots_needed += 2
+            if is_price: slots_needed += 1
+            
+            if available_slots >= slots_needed:
+                if is_pt: desired_pt.add(code)
+                if is_price: desired_price.add(code)
+                available_slots -= slots_needed
+            else:
+                # 슬롯 부족 시: Price만이라도 가능한지 확인
+                if is_price and not is_pt and available_slots >= 1:
+                    desired_price.add(code)
+                    available_slots -= 1
+                else:
+                    break
 
-        for code in to_unsubscribe:
-            await self._do_unsubscribe(code)
+        # 3. 변경 대상 추출 (타입별 분리)
+        to_unsubscribe_price = self._active_codes_price - desired_price
+        to_subscribe_price = desired_price - self._active_codes_price
+        
+        to_unsubscribe_pt = self._active_codes_pt - desired_pt
+        to_subscribe_pt = desired_pt - self._active_codes_pt
 
-        for code in to_subscribe:
-            await self._do_subscribe(code)
+        # 4. 실제 구독/해지 수행
+        for code in to_unsubscribe_price:
+            await self._do_unsubscribe(code, StreamingType.UNIFIED_PRICE)
+        for code in to_unsubscribe_pt:
+            await self._do_unsubscribe(code, StreamingType.PROGRAM_TRADING)
+            
+        for code in to_subscribe_price:
+            await self._do_subscribe(code, StreamingType.UNIFIED_PRICE)
+        for code in to_subscribe_pt:
+            await self._do_subscribe(code, StreamingType.PROGRAM_TRADING)
 
-        # MAX 초과로 탈락된 종목이 있으면 경고 로그
-        dropped = len(self._refs) - len(desired)
+        # 5. [기존 로직 복원] 한도 초과(Dropped) 경고 로그
+        total_requested = len(self._refs)
+        total_fulfilled = len(desired_price | desired_pt)
+        dropped = total_requested - total_fulfilled
+
         if dropped > 0:
-            self._logger.warning(
-                f"SubscriptionPolicy: 구독 한도 초과 — {dropped}개 종목이 대기 상태 "
-                f"(active={len(self._active_codes)}, requested={len(self._refs)}, max={self.MAX_SUBSCRIPTIONS})"
+            self._streaming_logger.log_add_subscription_rejection(
+                f"SubscriptionPolicy: 웹소켓 구독 한도 초과 — {dropped}개 종목이 대기 상태 "
+                f"(active_pt={len(self._active_codes_pt)}, active_price={len(self._active_codes_price)}, "
+                f"requested={total_requested}, max_slots={self.MAX_WS_SLOTS})"
             )
 
-        # 변경이 있었을 때 현재 구독 상태 요약 기록 (2초 스로틀로 중복 발화 방지)
-        if (to_subscribe or to_unsubscribe) and self._streaming_logger:
+        # 6. [기존 로직 복원] 2초 스로틀 기반 상태 요약 기록
+        changed = bool(to_subscribe_price or to_unsubscribe_price or to_subscribe_pt or to_unsubscribe_pt)
+        
+        if changed and self._streaming_logger:
             now = time.monotonic()
             if now - self._last_summary_time >= self._SUMMARY_THROTTLE_SEC:
                 self._last_summary_time = now
-                status = self.get_status()
+                status = self.get_status() # 통합된 정보에 맞게 내부 구현 필요
                 self._streaming_logger.log_summary(
-                    active_count=status["active_count"],
-                    active_codes=status["active_codes"],
-                    pending_by_priority=status["pending_by_priority"],
+                    active_count=status.get("active_count", 0),
+                    active_codes=status.get("active_codes", []),
+                    pending_by_priority=status.get("pending_by_priority", {}),
                 )
 
-    async def _do_subscribe(self, code: str) -> None:
+    async def _do_subscribe(self, code: str, stream_type: StreamingType) -> None:
         if self._market_calendar and not await self._market_calendar.is_market_open_now():
-            self._logger.debug(f"SubscriptionPolicy: 장 외 시간 — 구독 보류 {code}")
+            self._streaming_logger.log_subscribe_pending(f"SubscriptionPolicy: 장 외 시간 — 구독 보류 {code}")
             return
         try:
-            success = await self._streaming.subscribe_unified_price(code)
+            if stream_type == StreamingType.UNIFIED_PRICE:
+                success = await self._streaming.subscribe_unified_price(code)
+            elif stream_type == StreamingType.PROGRAM_TRADING:
+                success = await self._streaming.subscribe_program_trading(code)
             if success:
                 self._active_codes.add(code)
                 self._stock_repo.mark_streaming(code)
                 if self._streaming_stock_repo:
                     await self._streaming_stock_repo.mark_active(code, StreamingType.UNIFIED_PRICE)
-                self._logger.debug(f"SubscriptionPolicy: 구독 등록 {code}")
                 if self._streaming_logger:
                     categories = self._refs.get(code, {})
                     self._streaming_logger.log_subscribe(
@@ -241,28 +308,33 @@ class SubscriptionPolicy:
                         active_count=len(self._active_codes),
                     )
             else:
-                self._logger.warning(
+                self._streaming_logger.log_add_subscription_rejection(
                     f"SubscriptionPolicy: 구독 실패(False 반환) {code} "
                     f"— WebSocket 미연결 또는 브로커 거부 가능성"
                 )
         except Exception as e:
-            self._logger.error(f"SubscriptionPolicy: 구독 실패 {code}: {e}")
+            self._streaming_logger.log_subscribe_failure(f"SubscriptionPolicy: 구독 실패 {code}: {e}")
 
-    async def _do_unsubscribe(self, code: str) -> None:
+    async def _do_unsubscribe(self, code: str, stream_type: StreamingType) -> None:
         try:
-            await self._streaming.unsubscribe_unified_price(code)
-            self._active_codes.discard(code)
+            if stream_type == StreamingType.UNIFIED_PRICE:
+                await self._streaming.unsubscribe_unified_price(code)
+            elif stream_type == StreamingType.PROGRAM_TRADING:
+                await self._streaming.unsubscribe_program_trading(code)
+            if stream_type == StreamingType.UNIFIED_PRICE:
+                self._active_codes_price.discard(code)
+            elif stream_type == StreamingType.PROGRAM_TRADING:
+                self._active_codes_pt.discard(code)
             self._stock_repo.unmark_streaming(code)
             if self._streaming_stock_repo:
                 await self._streaming_stock_repo.mark_inactive(code, StreamingType.UNIFIED_PRICE)
-            self._logger.debug(f"SubscriptionPolicy: 구독 해지 {code}")
             if self._streaming_logger:
                 self._streaming_logger.log_unsubscribe(
                     code=code,
                     active_count=len(self._active_codes),
                 )
         except Exception as e:
-            self._logger.error(f"SubscriptionPolicy: 구독 해지 실패 {code}: {e}")
+            self._streaming_logger.log_unsubscribe_failure(f"SubscriptionPolicy: 구독 해지 실패 {code}: {e}")
 
 
 # Backward-compatibility alias

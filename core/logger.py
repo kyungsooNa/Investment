@@ -385,6 +385,45 @@ class StreamingEventLogger:
             "was_collision": was_collision,
         })
 
+    def log_reconnect_success(self, attempt_num: int, max_attempts: int) -> None:
+        """WebSocket 재연결 성공.
+
+        Args:
+            attempt_num: 현재 시도 번호 (1-based)
+            max_attempts: 최대 시도 횟수
+        """
+        self._logger.info({
+            "action": "reconnect_success",
+            "attempt_num": attempt_num,
+            "max_attempts": max_attempts,
+        })
+
+    def log_unsubscribe_failure(self, code: str, reason: str) -> None:
+        """구독 해지 실패 이벤트.
+
+        Args:
+            code: 종목코드
+            reason: 실패 이유 (예: "WebSocket 미연결", "브로커 거부", "예외 발생 {e}")
+        """
+        self._logger.error({
+            "action": "unsubscribe_failure",
+            "code": code,
+            "reason": reason,
+        })
+
+    def log_subscribe_failure(self, code: str, reason: str) -> None:
+        """구독 등록 실패 이벤트.
+
+        Args:
+            code: 종목코드
+            reason: 실패 이유 (예: "WebSocket 미연결", "브로커 거부", "예외 발생 {e}")
+        """
+        self._logger.error({
+            "action": "subscribe_failure",
+            "code": code,
+            "reason": reason,
+        })
+
     # ── WebSocketWatchdogTask 이벤트 (확장) ─────────────────────────
 
     def log_watchdog_check(
@@ -446,6 +485,37 @@ class StreamingEventLogger:
             "elapsed_ms": round(elapsed_ms, 1),
         })
 
+    def log_clear_active_state(self, message: str) -> None:
+        """active 상태 초기화 이벤트.
+
+        Args:
+            message: 로그 메시지 (예: "SubscriptionPolicy: active 상태 초기화 10개 클리어")
+        """
+        self._logger.info({"action": "clear_active_state", "message": message})
+
+    def log_add_subscription_rejection(self, message: str) -> None:
+        """구독 추가 거절 이벤트.
+
+        Args:
+            message: 로그 메시지 (예: "웹소켓 한도 초과: 005930 프로그램 매매 구독 거절")
+        """
+        self._logger.warning({"action": "add_subscription_rejection", "message": message})
+
+    def log_subscribe_pending(self, message: str) -> None:
+        """구독 보류 이벤트.
+
+        Args:
+            message: 로그 메시지 (예: "장 외 시간 — 구독 보류 005930")
+        """
+        self._logger.info({"action": "subscribe_pending", "message": message})
+
+    def log_subscribe_failure(self, message: str) -> None:
+        """구독 실패 이벤트.
+
+        Args:
+            message: 로그 메시지 (예: "SubscriptionPolicy: 구독 실패 005930: {e}")
+        """
+        self._logger.error({"action": "subscribe_failure", "message": message})
 
 def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
     """
