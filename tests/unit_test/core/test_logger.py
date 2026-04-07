@@ -1376,3 +1376,51 @@ async def test_stock_ohlcv_repo_logs_ohlcv_eviction(tmp_path):
     assert call[1]["capacity"] == 1          # capacity (keyword arg)
 
     await repo.close()
+
+def test_log_subscription_policy_extended_events(streaming_logger_setup):
+    """
+    SubscriptionPolicy 확장에 따라 새롭게 추가된 로깅 메서드들이 
+    정상적으로 JSON 파일에 기록되는지 검증합니다.
+    """
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    # 1. 새로 추가된 로깅 메서드들 호출
+    streaming_logger.log_clear_active_state("active clear msg")
+    streaming_logger.log_dropped_subscriptions("dropped subscriptions msg")
+    streaming_logger.log_add_subscription_rejection(code="005930", message="rejection msg")
+    streaming_logger.log_subscribe_pending(code="005930", message="pending msg")
+    streaming_logger.log_subscribe_failure(code="005930", message="subscribe error msg")
+    streaming_logger.log_unsubscribe_failure(code="005930", message="unsubscribe error msg")
+
+    # 2. 파일 쓰기 강제 (Flush)
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    # 3. 로그 파일 내용 검증
+    lines = _read_json_lines(streaming_log_dir)
+    assert len(lines) == 6
+
+    # 첫 번째 로그: log_clear_active_state
+    # (주의: logger.py에 정의하신 실제 'action' 키 값에 맞게 "clear_active_state" 등을 수정해주세요)
+    assert lines[0]["data"]["message"] == "active clear msg"
+    # assert lines[0]["data"]["action"] == "clear_active_state" 
+
+    # 두 번째 로그: log_dropped_subscriptions
+    assert lines[1]["level"] == "WARNING"
+    assert lines[1]["data"]["message"] == "dropped subscriptions msg"
+
+    # 세 번째 로그: log_add_subscription_rejection
+    assert lines[2]["level"] == "WARNING"  # 거절 로그는 보통 WARNING으로 처리한다고 가정
+    assert lines[2]["data"]["message"] == "rejection msg"
+
+    # 네 번째 로그: log_subscribe_pending
+    assert lines[3]["level"] == "INFO"
+    assert lines[3]["data"]["message"] == "pending msg"
+
+    # 다섯 번째 로그: log_subscribe_failure
+    assert lines[4]["level"] == "ERROR"    # 실패 로그는 ERROR 처리 가정
+    assert lines[4]["data"]["message"] == "subscribe error msg"
+
+    # 여섯 번째 로그: log_unsubscribe_failure
+    assert lines[5]["level"] == "ERROR"
+    assert lines[5]["data"]["message"] == "unsubscribe error msg"

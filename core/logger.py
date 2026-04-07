@@ -398,30 +398,30 @@ class StreamingEventLogger:
             "max_attempts": max_attempts,
         })
 
-    def log_unsubscribe_failure(self, code: str, reason: str) -> None:
+    def log_unsubscribe_failure(self, code: str, message: str) -> None:
         """구독 해지 실패 이벤트.
 
         Args:
             code: 종목코드
-            reason: 실패 이유 (예: "WebSocket 미연결", "브로커 거부", "예외 발생 {e}")
+            message: 실패 메시지 (예: "WebSocket 미연결", "브로커 거부", "예외 발생 {e}")
         """
         self._logger.error({
             "action": "unsubscribe_failure",
             "code": code,
-            "reason": reason,
+            "message": message,
         })
 
-    def log_subscribe_failure(self, code: str, reason: str) -> None:
+    def log_subscribe_failure(self, code: str, message: str) -> None:
         """구독 등록 실패 이벤트.
 
         Args:
             code: 종목코드
-            reason: 실패 이유 (예: "WebSocket 미연결", "브로커 거부", "예외 발생 {e}")
+            message: 실패 메시지 (예: "WebSocket 미연결", "브로커 거부", "예외 발생 {e}")
         """
         self._logger.error({
             "action": "subscribe_failure",
             "code": code,
-            "reason": reason,
+            "message": message,
         })
 
     # ── WebSocketWatchdogTask 이벤트 (확장) ─────────────────────────
@@ -493,29 +493,31 @@ class StreamingEventLogger:
         """
         self._logger.info({"action": "clear_active_state", "message": message})
 
-    def log_add_subscription_rejection(self, message: str) -> None:
+    def log_add_subscription_rejection(self, code: str, message: str) -> None:
         """구독 추가 거절 이벤트.
 
         Args:
+            code: 종목코드
             message: 로그 메시지 (예: "웹소켓 한도 초과: 005930 프로그램 매매 구독 거절")
         """
-        self._logger.warning({"action": "add_subscription_rejection", "message": message})
+        self._logger.warning({"action": "add_subscription_rejection", "code": code, "message": message})
+    
+    def log_dropped_subscriptions(self, message: str) -> None:
+        """구독 한도 초과로 대기 상태에 놓인 종목 이벤트.
 
-    def log_subscribe_pending(self, message: str) -> None:
+        Args:
+            message: 로그 메시지 (예: "SubscriptionPolicy: 웹소켓 구독 한도 초과 — 5개 종목이 대기 상태 (active_pt=100, active_price=50, requested=160, max_slots=150)")
+        """
+        self._logger.warning({"action": "dropped_subscriptions", "message": message})
+
+    def log_subscribe_pending(self, code: str, message: str) -> None:
         """구독 보류 이벤트.
 
         Args:
+            code: 종목코드
             message: 로그 메시지 (예: "장 외 시간 — 구독 보류 005930")
         """
-        self._logger.info({"action": "subscribe_pending", "message": message})
-
-    def log_subscribe_failure(self, message: str) -> None:
-        """구독 실패 이벤트.
-
-        Args:
-            message: 로그 메시지 (예: "SubscriptionPolicy: 구독 실패 005930: {e}")
-        """
-        self._logger.error({"action": "subscribe_failure", "message": message})
+        self._logger.info({"action": "subscribe_pending", "code": code, "message": message})
 
 def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
     """
