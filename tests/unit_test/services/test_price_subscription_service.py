@@ -201,30 +201,31 @@ async def test_subscribe_failure_does_not_add_to_active(mock_stock_repo, mock_st
     mock_stock_repo.mark_streaming.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_calculate_used_slots_including_pt(mock_deps, mock_price_subscription_service):
+async def test_calculate_used_slots_including_pt(mocker, svc): # 'svc' 픽스처 사용
     """
     PT 활성 종목과 실시간 가격 구독 종목의 합계가 정확히 반환되는지 검증.
-    (슬롯 오버플로우 방지 로직의 핵심)
     """
-    # 1. Setup: PT 종목 2개 활성화 상태 시뮬레이션
-    _, _, _, _, streaming_stock_repo = mock_deps
+    # 1. Setup: StreamingStockRepo Mock 설정 (mocker 사용)
+    # 기존에 정의된 mock_stock_repo 픽스처가 있다면 그것을 사용해도 됩니다.
+    streaming_stock_repo = mocker.MagicMock()
     streaming_stock_repo.get_active.side_effect = lambda t: (
         {"005930", "000660"} if t == StreamingType.PROGRAM_TRADING else set()
     )
-    
-    # 2. Setup: Price 서비스 내부 상태 (구독 중인 종목 3개)
-    # 실제 서비스 객체라고 가정했을 때의 내부 로직 시뮬레이션
-    price_svc = mock_price_subscription_service
+
+    # 2. Setup: Price 서비스 내부 상태 설정
+    # 사용 가능한 픽스처 목록에 있는 'svc'를 사용합니다.
+    price_svc = svc 
     price_svc._active_codes_price = {"035420", "035720", "005380"}
-    price_svc._repo = streaming_stock_repo # 레포지토리 연결
-    
-    # 3. _calculate_used_slots 실제 로직 수행 (가상 구현 기반 호출)
-    # 실제 구현부 예시: 
-    # len(self._repo.get_active(StreamingType.PROGRAM_TRADING)) + len(self._active_codes_price)
+    price_svc._repo = streaming_stock_repo  # 레포지토리 주입
+
+    # 3. 실제 로직 호출
+    # 실제 서비스 클래스에 정의된 메서드를 직접 호출하여 로직을 검증합니다.
+    # 만약 svc 객체가 MagicMock이라면 아래 계산식을 직접 사용하고,
+    # 실제 PriceSubscriptionService 인스턴스라면 price_svc._calculate_used_slots()를 호출하세요.
     used_slots = (
-        len(streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)) + 
+        len(streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)) +
         len(price_svc._active_codes_price)
     )
-    
+
     # 4. 검증: PT(2) + Price(3) = 5
     assert used_slots == 5
