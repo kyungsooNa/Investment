@@ -75,13 +75,16 @@ async def stream_stock_price(code: str, request: Request):
     async def event_generator():
         try:
             while True:
-                try:
-                    tick = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield f"data: {json.dumps(tick)}\n\n"
-                except asyncio.TimeoutError:
+                get_task = asyncio.ensure_future(queue.get())
+                _, pending = await asyncio.wait({get_task}, timeout=15)
+                if pending:
+                    get_task.cancel()
                     if await request.is_disconnected():
                         break
                     yield ": keepalive\n\n"
+                else:
+                    tick = get_task.result()
+                    yield f"data: {json.dumps(tick)}\n\n"
         except asyncio.CancelledError:
             pass
         finally:
