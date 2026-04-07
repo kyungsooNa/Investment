@@ -17,6 +17,7 @@
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
 - [ ] **[BackgroundService]** naver_finance_scraper.py 도 background task로 전환.
 - log data, db data의 오래된 data를 정리하는 background task도 생성.
+- [ ] **[Task]** - Task들의 State가 Running중에 장마감을 기다리거나, 장열리기를 기다리며 sleep에 들어가고 있는데, 이때는 상태가 idle로 표기되는게 가독성이 높아질 것 같음.
 
 ## Ⅱ. ⚡ 성능 최적화 및 인프라 전환 (Performance & Infra)
 시스템의 반응 속도를 높이고, 장기적인 운영 안정성을 확보하기 위한 데이터베이스 및 인프라 작업입니다.

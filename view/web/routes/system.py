@@ -217,6 +217,7 @@ def get_subscription_status():
             "active_codes_pt": status.get("active_codes_pt", []),
             "pending_count": status.get("pending_count", 0),
             "pending_by_priority": {
+                "CRITICAL": _enrich(status.get("pending_by_priority", {}).get("CRITICAL", [])),
                 "HIGH": _enrich(status.get("pending_by_priority", {}).get("HIGH", [])),
                 "MEDIUM": _enrich(status.get("pending_by_priority", {}).get("MEDIUM", [])),
                 "LOW": _enrich(status.get("pending_by_priority", {}).get("LOW", [])),

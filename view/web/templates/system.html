@@ -29,13 +29,14 @@
         <div class="card" style="padding: 20px 12px;">
             <h3 style="margin-top: 0; margin-bottom: 16px;">📡 실시간 현재가 구독 현황</h3>
             <p style="font-size: 1.05rem; margin: 0 0 12px;">
-                활성 구독: <strong id="sub-active-count">-</strong> / <span id="sub-max">35</span>
+                활성 구독: <strong id="sub-active-count">-</strong> / <span id="sub-max">-</span>
                 &nbsp;|&nbsp; 요청 종목: <span id="sub-pending-count">-</span>
             </p>
             <div id="sub-priority-tabs" style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
-                <button class="btn btn-sm sub-tab-btn active" onclick="selectSubTab(this, 'HIGH')"   style="background:var(--danger-color,#f44336);  color:#fff;">HIGH</button>
-                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'MEDIUM')" style="background:var(--primary-color,#2196F3); color:#fff;">MEDIUM</button>
-                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'LOW')"    style="background:#888; color:#fff;">LOW</button>
+                <button class="btn btn-sm sub-tab-btn active" data-priority="CRITICAL" onclick="selectSubTab(this, 'CRITICAL')" style="background:var(--critical-color,#b71c1c); color:#fff;">CRITICAL <span class="tab-count"></span></button>
+                <button class="btn btn-sm sub-tab-btn"        data-priority="HIGH"     onclick="selectSubTab(this, 'HIGH')"   style="background:var(--danger-color,#f44336); color:#fff;">HIGH <span class="tab-count"></span></button>
+                <button class="btn btn-sm sub-tab-btn"        data-priority="MEDIUM"   onclick="selectSubTab(this, 'MEDIUM')" style="background:var(--primary-color,#2196F3); color:#fff;">MEDIUM <span class="tab-count"></span></button>
+                <button class="btn btn-sm sub-tab-btn"        data-priority="LOW"      onclick="selectSubTab(this, 'LOW')"    style="background:#888; color:#fff;">LOW <span class="tab-count"></span></button>
             </div>
             <div class="table-container">
                 <table class="data-table">
