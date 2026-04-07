@@ -200,6 +200,7 @@ class SubscriptionPolicy:
             "active_codes_pt": sorted(self._active_codes_pt),
             "pending_count": len(self._refs),
             "pending_by_priority": {
+                "CRITICAL": sorted(pending_by_priority.get(int(SubscriptionPriority.CRITICAL), [])),
                 "HIGH": sorted(pending_by_priority.get(int(SubscriptionPriority.HIGH), [])),
                 "MEDIUM": sorted(pending_by_priority.get(int(SubscriptionPriority.MEDIUM), [])),
                 "LOW": sorted(pending_by_priority.get(int(SubscriptionPriority.LOW), [])),

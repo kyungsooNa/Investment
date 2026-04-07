@@ -33,7 +33,8 @@
                 &nbsp;|&nbsp; 요청 종목: <span id="sub-pending-count">-</span>
             </p>
             <div id="sub-priority-tabs" style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
-                <button class="btn btn-sm sub-tab-btn active" onclick="selectSubTab(this, 'HIGH')"   style="background:var(--danger-color,#f44336);  color:#fff;">HIGH</button>
+                <button class="btn btn-sm sub-tab-btn active" onclick="selectSubTab(this, 'CRITICAL')" style="background:var(--danger-color,#080808);  color:#fff;">CRITICAL</button>
+                <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'HIGH')"   style="background:var(--danger-color,#f44336);  color:#fff;">HIGH</button>
                 <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'MEDIUM')" style="background:var(--primary-color,#2196F3); color:#fff;">MEDIUM</button>
                 <button class="btn btn-sm sub-tab-btn"        onclick="selectSubTab(this, 'LOW')"    style="background:#888; color:#fff;">LOW</button>
             </div>
