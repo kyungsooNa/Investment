@@ -2,7 +2,11 @@
 실시간 현재가 구독 관리 API 엔드포인트.
 PriceSubscriptionService를 통해 UI에서 구독 요청/해지/현황 조회.
 """
-from fastapi import APIRouter, HTTPException
+import asyncio
+import json
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from view.web.api_common import _get_ctx
 from services.price_subscription_service import SubscriptionPriority
@@ -50,3 +54,39 @@ def get_streaming_status():
         return {"success": True, "data": {"active_count": 0, "active_codes": []}}
 
     return {"success": True, "data": svc.get_status()}
+
+
+@router.get("/streaming/price/{code}")
+async def stream_stock_price(code: str, request: Request):
+    """SSE: 특정 종목 실시간 체결가를 브라우저로 스트리밍."""
+    ctx = _get_ctx()
+    stream_svc = getattr(ctx, "price_stream_service", None)
+    sub_svc = getattr(ctx, "price_subscription_service", None)
+
+    if not stream_svc:
+        raise HTTPException(status_code=503, detail="PriceStreamService가 초기화되지 않았습니다")
+
+    queue = stream_svc.create_subscriber_queue(code)
+    category = f"sse_ui_{id(queue)}"
+
+    if sub_svc:
+        await sub_svc.add_subscription(code, SubscriptionPriority.LOW, category)
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    tick = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {json.dumps(tick)}\n\n"
+                except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        break
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            stream_svc.remove_subscriber_queue(code, queue)
+            if sub_svc:
+                await sub_svc.remove_subscription(code, category)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
