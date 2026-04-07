@@ -126,9 +126,13 @@ class WebSocketWatchdogTask(SchedulableTask):
     # ── 프로그램매매 워치독 / 복원 / 재연결 ──────────────────────
 
     async def _program_trading_watchdog(self) -> None:
-        """프로그램매매 WebSocket 연결 상태를 주기적으로 감시하고, 데이터 수신이 끊기면 재연결."""
+        """WebSocket 연결 상태를 주기적으로 감시하고, 데이터 수신이 끊기면 재연결.
+
+        PT와 실시간 체결가(H0UNCNT0) 구독 여부를 모두 확인하여,
+        둘 중 하나라도 활성 구독이 있으면 감시를 수행한다.
+        """
         WATCHDOG_INTERVAL = 60   # 감시 주기 (초)
-        DATA_GAP_THRESHOLD = 300  # 데이터 미수신 허용 최대 시간 (초) — 소외주 오탐 방지를 위해 120→300
+        DATA_GAP_THRESHOLD = 300  # PT 데이터 미수신 허용 최대 시간 (초)
 
         while True:
             try:
@@ -138,16 +142,19 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if self._state == TaskState.SUSPENDED:
                     continue
 
-                if not self._realtime_data_service:
-                    continue
-
                 # PT 구독 종목 확인 — StreamingStockRepo가 SSOT
-                if not self._streaming_stock_repo:
-                    continue
                 from repositories.streaming_stock_repo import StreamingType
-                codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING))
-                if not codes:
-                    continue  # 구독 중인 종목 없으면 스킵
+                pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) \
+                    if self._streaming_stock_repo else []
+
+                # 실시간 체결가(H0UNCNT0) 구독 여부 확인
+                has_price_subs = bool(
+                    self._price_subscription_service and self._price_subscription_service._refs
+                )
+
+                # PT 구독도 없고 실시간 체결가 구독도 없으면 감시 불필요
+                if not pt_codes and not has_price_subs:
+                    continue
 
                 market_is_open = bool(self.mcs and await self.mcs.is_market_open_now())
                 self._market_open = market_is_open
@@ -159,37 +166,38 @@ class WebSocketWatchdogTask(SchedulableTask):
                         self._intentionally_disconnected = True
                     continue
 
-                # 조건 1: 수신 태스크가 죽었는지 확인
+                # 조건 1: 수신 태스크가 죽었는지 확인 (PT/체결가 공통)
                 receive_alive = (
                     self._streaming_service is not None
                     and self._streaming_service.broker.is_websocket_receive_alive()
                 )
 
-                # 조건 2: 데이터 수신 갭 확인 (한 번이라도 데이터를 받은 적이 있을 때만)
-                last_ts = self._realtime_data_service.last_data_ts
-                data_gap = (time.time() - last_ts) if last_ts > 0 else 0.0
+                # 조건 2: PT 데이터 수신 갭 확인 (PT 종목이 있을 때만 — last_data_ts가 PT 기준)
+                data_gap = 0.0
+                if pt_codes and self._realtime_data_service:
+                    last_ts = self._realtime_data_service.last_data_ts
+                    data_gap = (time.time() - last_ts) if last_ts > 0 else 0.0
 
-                from repositories.streaming_stock_repo import StreamingType as _ST
-                subscribed_count = len(self._streaming_stock_repo.get_desired(_ST.PROGRAM_TRADING)) \
-                    if self._streaming_stock_repo else 0
                 if self._streaming_logger:
                     self._streaming_logger.log_watchdog_check(
                         receive_alive=receive_alive,
                         data_gap_sec=data_gap,
                         market_open=market_is_open,
-                        subscribed_count=subscribed_count,
+                        subscribed_count=len(pt_codes),
                     )
 
                 reconnect_trigger = None
                 if not receive_alive:
+                    # 연결이 죽었으면 PT/체결가 구분 없이 재연결
                     if self._intentionally_disconnected:
                         self._logger.info("[워치독] 장 시작 — 신규 WebSocket 연결을 수립합니다.")
                         reconnect_trigger = "market_open"
                     else:
                         self._logger.warning("[워치독] WebSocket 수신 태스크가 종료됨. 재연결을 시도합니다.")
                         reconnect_trigger = "receive_task_dead"
-                elif last_ts > 0 and data_gap > DATA_GAP_THRESHOLD:
-                    self._logger.warning(f"[워치독] {data_gap:.0f}초간 데이터 미수신 (임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다.")
+                elif pt_codes and data_gap > DATA_GAP_THRESHOLD:
+                    # 수신 태스크는 살아있지만 PT 데이터가 임계값 이상 안 오는 경우
+                    self._logger.warning(f"[워치독] {data_gap:.0f}초간 PT 데이터 미수신 (임계값: {DATA_GAP_THRESHOLD}초). 재연결을 시도합니다.")
                     reconnect_trigger = f"data_gap_{data_gap:.0f}s"
 
                 if reconnect_trigger:

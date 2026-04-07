@@ -171,7 +171,7 @@ async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
 
 @pytest.mark.asyncio
 async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
-    """_program_trading_watchdog: 데이터 미수신 감지 및 재연결 시도 검증."""
+    """_program_trading_watchdog: PT 데이터 미수신 감지 및 재연결 시도 검증."""
     svc = watchdog_task
     svc.mcs.is_market_open_now.return_value = True
     svc._streaming_stock_repo.get_desired.return_value = {"005930"}
@@ -188,7 +188,7 @@ async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
 
     svc.force_reconnect.assert_called_once()
     args, _ = svc._logger.warning.call_args
-    assert "데이터 미수신" in args[0]
+    assert "PT 데이터 미수신" in args[0]
     assert "재연결을 시도합니다" in args[0]
 
 
@@ -523,9 +523,10 @@ async def test_program_trading_watchdog_market_open_reconnect(watchdog_task):
 
 @pytest.mark.asyncio
 async def test_program_trading_watchdog_no_realtime_service(watchdog_task):
-    """_realtime_data_service가 None일 때 워치독 루프가 스킵되는지 검증."""
+    """_realtime_data_service가 None이어도 구독이 없으면 워치독 루프가 스킵되는지 검증."""
     svc = watchdog_task
     svc._realtime_data_service = None
+    # get_desired 기본값이 set()이므로 pt_codes=[], has_price_subs=False → 스킵
     svc.force_reconnect = AsyncMock()
 
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
@@ -539,10 +540,11 @@ async def test_program_trading_watchdog_no_realtime_service(watchdog_task):
 
 @pytest.mark.asyncio
 async def test_program_trading_watchdog_no_desired_codes(watchdog_task):
-    """PT 구독 종목이 없을 때 워치독 루프가 스킵되는지 검증."""
+    """PT 구독도 없고 체결가 구독도 없을 때 워치독 루프가 스킵되는지 검증."""
     svc = watchdog_task
     svc.mcs.is_market_open_now.return_value = True
     svc._streaming_stock_repo.get_desired.return_value = set()
+    svc._price_subscription_service = None
     svc.force_reconnect = AsyncMock()
 
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
@@ -551,6 +553,50 @@ async def test_program_trading_watchdog_no_desired_codes(watchdog_task):
         except asyncio.CancelledError:
             pass
 
+    svc.force_reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_price_only_subscription_proceeds(watchdog_task, mock_price_subscription_service):
+    """PT 구독이 없어도 실시간 체결가 구독이 있으면 워치독이 receive_alive를 감시한다."""
+    svc = watchdog_task
+    svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
+    svc._price_subscription_service = mock_price_subscription_service  # 체결가 구독 있음
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
+    svc._intentionally_disconnected = False
+
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    # PT 없이 체결가만 있어도 receive_task_dead로 재연결해야 함
+    svc.force_reconnect.assert_called_once_with(trigger="receive_task_dead")
+
+
+@pytest.mark.asyncio
+async def test_program_trading_watchdog_price_only_no_data_gap_check(watchdog_task, mock_price_subscription_service):
+    """PT 구독 없이 체결가만 구독 중일 때 data_gap 기반 재연결은 하지 않는다."""
+    svc = watchdog_task
+    svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
+    svc._price_subscription_service = mock_price_subscription_service  # 체결가 구독 있음
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True  # 연결 살아있음
+    svc._realtime_data_service.last_data_ts = time.time() - 310  # PT 타임스탬프가 오래됐어도
+
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._program_trading_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    # PT 종목이 없으므로 data_gap 체크 안 함 → 재연결 없음
     svc.force_reconnect.assert_not_called()
 
 
