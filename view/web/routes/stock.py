@@ -6,6 +6,7 @@ import asyncio
 import time
 from fastapi import APIRouter, HTTPException, Query
 from common.types import Exchange
+from services.price_subscription_service import SubscriptionPriority
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
 import view.web.api_common as api_common
 
@@ -83,6 +84,12 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
     result = _serialize_response(resp)
 
     ctx.pm.log_timer(f"get_stock_price({code})", t_start)
+
+    # 현재가 조회 시 실시간 구독 등록 (LOW 우선순위)
+    if ctx.price_subscription_service:
+        asyncio.create_task(
+            ctx.price_subscription_service.add_subscription(code, SubscriptionPriority.LOW, "web_price_query")
+        )
 
     # 현재가 조회 후 OHLCV 2년치 백그라운드 프리로드 (캐시 miss 시에만 실제 API 호출)
     async def _preload_ohlcv():
