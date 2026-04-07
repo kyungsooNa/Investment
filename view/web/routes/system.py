@@ -214,6 +214,7 @@ def get_subscription_status():
             "active_count": status["active_count"],
             "max_subscriptions": status["max_subscriptions"],
             "pending_count": status["pending_count"],
+            "CRITICAL": _enrich(by_priority.get("CRITICAL", [])),
             "HIGH":   _enrich(by_priority.get("HIGH", [])),
             "MEDIUM": _enrich(by_priority.get("MEDIUM", [])),
             "LOW":    _enrich(by_priority.get("LOW", [])),

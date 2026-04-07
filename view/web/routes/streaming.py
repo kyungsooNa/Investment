@@ -8,6 +8,7 @@ import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from repositories.streaming_stock_repo import StreamingType
 from view.web.api_common import _get_ctx
 from services.price_subscription_service import SubscriptionPriority
 
@@ -28,8 +29,8 @@ async def subscribe_stock(req: SubscribeRequest):
         raise HTTPException(status_code=503, detail="PriceSubscriptionService가 초기화되지 않았습니다")
 
     category_key = f"ui_{req.reason}"
-    await svc.add_subscription(req.code, SubscriptionPriority.LOW, category_key)
-    return {"success": True, "code": req.code, "category": category_key}
+    await svc.add_subscription(req.code, SubscriptionPriority.LOW, category_key, StreamingType.UNIFIED_PRICE)
+    return {"success": True, "code": req.code, "category": category_key, "message": f"{req.code} 종목이 실시간 가격 구독 대상에 추가되었습니다."}
 
 
 @router.post("/streaming/unsubscribe")
@@ -68,9 +69,8 @@ async def stream_stock_price(code: str, request: Request):
 
     queue = stream_svc.create_subscriber_queue(code)
     category = f"sse_ui_{id(queue)}"
-
     if sub_svc:
-        await sub_svc.add_subscription(code, SubscriptionPriority.LOW, category)
+        await sub_svc.add_subscription(code, SubscriptionPriority.LOW, category, StreamingType.UNIFIED_PRICE)
 
     async def event_generator():
         try:

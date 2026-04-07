@@ -9,7 +9,7 @@ async def test_subscribe_program_trading(web_client, mock_web_ctx):
     
     # RealtimeDataService Mock 설정
     mock_rdm = MagicMock()
-    mock_web_ctx.realtime_data_service = mock_rdm
+    mock_web_ctx.program_trading_stream_service = mock_rdm
 
     # 구독 성공 Mocking
     mock_web_ctx.start_program_trading = AsyncMock(return_value=True)
@@ -28,7 +28,7 @@ def test_save_pt_data(web_client, mock_web_ctx):
     
     # RealtimeDataService Mock 설정
     mock_rdm = MagicMock()
-    mock_web_ctx.realtime_data_service = mock_rdm
+    mock_web_ctx.program_trading_stream_service = mock_rdm
     
     data = {
         "chartData": {"005930": {"valueData": []}},
@@ -54,7 +54,7 @@ def test_load_pt_data_success(web_client, mock_web_ctx):
     
     # RealtimeDataService Mock 설정
     mock_rdm = MagicMock()
-    mock_web_ctx.realtime_data_service = mock_rdm
+    mock_web_ctx.program_trading_stream_service = mock_rdm
     mock_rdm.load_snapshot.return_value = mock_data
     
     response = web_client.get("/api/program-trading/load-data")
@@ -69,7 +69,7 @@ def test_load_pt_data_file_not_found(web_client, mock_web_ctx):
     
     # RealtimeDataService Mock 설정
     mock_rdm = MagicMock()
-    mock_web_ctx.realtime_data_service = mock_rdm
+    mock_web_ctx.program_trading_stream_service = mock_rdm
     mock_rdm.load_snapshot.return_value = None
     
     response = web_client.get("/api/program-trading/load-data")
@@ -113,7 +113,7 @@ async def test_stream_program_trading_logic(mock_web_ctx):
 
     # 3. RealtimeDataService 및 Queue Mocking
     mock_rdm = MagicMock()
-    mock_web_ctx.realtime_data_service = mock_rdm
+    mock_web_ctx.program_trading_stream_service = mock_rdm
     
     # 실제 asyncio.Queue 사용 (테스트 제어용)
     test_queue = asyncio.Queue()
@@ -253,7 +253,7 @@ async def test_stream_program_trading_keepalive(mock_web_ctx):
 
     # RealtimeDataService Mock
     mock_rdm = MagicMock()
-    mock_web_ctx.realtime_data_service = mock_rdm
+    mock_web_ctx.program_trading_stream_service = mock_rdm
     
     test_queue = asyncio.Queue()
     mock_rdm.create_subscriber_queue.return_value = test_queue
@@ -289,7 +289,7 @@ async def test_save_pt_data_exception(web_client, mock_web_ctx):
     
     # RealtimeDataService Mock 설정
     mock_rdm = MagicMock()
-    mock_web_ctx.realtime_data_service = mock_rdm
+    mock_web_ctx.program_trading_stream_service = mock_rdm
     
     # 예외 발생 설정
     mock_rdm.save_snapshot.side_effect = Exception("Disk full")
@@ -321,7 +321,7 @@ async def test_stream_program_trading_cancellation(mock_web_ctx):
 
     # RealtimeDataService Mock
     mock_rdm = MagicMock()
-    mock_web_ctx.realtime_data_service = mock_rdm
+    mock_web_ctx.program_trading_stream_service = mock_rdm
     
     # Mock Queue that raises CancelledError on get()
     mock_queue = MagicMock()
