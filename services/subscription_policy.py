@@ -362,6 +362,12 @@ class SubscriptionPolicy:
             if self._streaming_logger:
                 self._streaming_logger.log_unsubscribe_failure(code=code, reason=str(e))
 
+    def _calculate_used_slots(self) -> int:
+        """
+        현재 사용 중인 웹소켓 슬롯 개수를 계산합니다.
+        (일반 호가/체결(Price) = 1슬롯, 프로그램 매매(PT) = 2슬롯)
+        """
+        return len(self._active_codes_price) + (len(self._active_codes_pt) * 2)
 
 # Backward-compatibility alias
 PriceSubscriptionService = SubscriptionPolicy
