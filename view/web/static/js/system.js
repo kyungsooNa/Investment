@@ -421,7 +421,7 @@ function renderSubTable() {
     const tbody = document.getElementById('sub-table-body');
     if (!tbody || !_subData) return;
 
-    const rows = _subData[_subTab] || [];
+    const rows = _subData.pending_by_priority ? _subData.pending_by_priority[_subTab] || [] : [];
     if (rows.length === 0) {
         tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
         return;
@@ -463,6 +463,19 @@ async function updateSubscriptionStatus() {
         if (activeEl) activeEl.textContent = d.active_count;
         if (maxEl)    maxEl.textContent    = d.max_subscriptions;
         if (pendEl)   pendEl.textContent   = d.pending_count;
+
+        // 각 우선순위별 탭에 종목 개수 업데이트
+        if (d.pending_by_priority) {
+            document.querySelectorAll('.sub-tab-btn').forEach(btn => {
+                const priorityMatch = btn.getAttribute('onclick').match(/'([^']+)'/);
+                const countSpan = btn.querySelector('.tab-count');
+                if (priorityMatch && countSpan) {
+                    const priority = priorityMatch[1];
+                    const count = d.pending_by_priority[priority] ? d.pending_by_priority[priority].length : 0;
+                    countSpan.textContent = `(${count})`;
+                }
+            });
+        }
 
         renderSubTable();
     } catch (e) {
