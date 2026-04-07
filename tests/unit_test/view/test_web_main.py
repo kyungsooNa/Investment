@@ -189,7 +189,7 @@ def test_needs_foreground():
 def test_foreground_priority_middleware(mock_web_app_context_cls):
     """Foreground 우선순위 미들웨어 동작(context 진입) 확인"""
     mock_ctx = MagicMock()
-    mock_fg = AsyncMock()
+    mock_fg = MagicMock()
     
     mock_context_manager = AsyncMock()
     mock_context_manager.__aenter__.return_value = None
