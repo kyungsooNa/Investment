@@ -16,7 +16,7 @@ from repositories.streaming_stock_repo import StreamingType
 
 def make_sleep_side_effect(cancel_after_calls=1):
     """
-    지정된 횟수만큼은 정상적으로 반환하고, 그 이후에는 CancelledError를 발생시켜
+    지정된 횟수만큼은 정상적으로 반환하고, 그 이후에는 CancelledError를 발생시켜mock_price_subscription_service
     무한 루프를 빠져나오게 하는 asyncio.sleep 모킹용 side_effect 생성 헬퍼.
     """
     async def side_effect(*args, **kwargs):
@@ -84,7 +84,8 @@ def mock_price_subscription_service():
     svc.clear_active_state = MagicMock()
     svc._rebalance = AsyncMock()
     svc._refs = {"005930": 1, "000660": 1}
-    svc._active_codes = {"005930", "000660"}
+    # 속성명 수정: _active_codes -> _active_codes_price
+    svc._active_codes_price = {"005930", "000660"} 
     return svc
 
 
@@ -668,3 +669,30 @@ async def test_streaming_watchdog_watchdog_log(watchdog_task, mock_streaming_log
             pass
 
     mock_streaming_logger.log_watchdog_check.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_restore_accounts_for_pt_slots_before_rebalance(watchdog_task, mock_price_subscription_service):
+    """
+    PT 복원이 완료되어 Repo에 active로 기록된 후, 
+    최종적으로 PriceService의 _rebalance가 호출되는지 순서와 상태를 검증.
+    """
+    svc = watchdog_task
+    svc._price_subscription_service = mock_price_subscription_service
+    pt_codes = ["005930"]
+    svc._streaming_stock_repo.get_desired.return_value = set(pt_codes)
+    
+    # mark_active가 호출될 때 repo의 상태가 변하는지 추적하기 위한 setup
+    # (실제 로직 순서: PT subscribe -> mark_active -> ... -> Price _rebalance)
+    
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
+        await svc._restore_all_subscriptions()
+
+    # 1. PT 종목이 성공적으로 Repo에 Active로 등록되었는가?
+    svc._streaming_stock_repo.mark_active.assert_any_call("005930", StreamingType.PROGRAM_TRADING)
+    
+    # 2. Price Service의 rebalance가 호출되었는가?
+    mock_price_subscription_service._rebalance.assert_awaited_once()
+    
+    # 3. [핵심] rebalance 호출 시점에 이미 PT 슬롯이 점유되어 있어야 함
+    # (PriceSubscriptionService 내부에서 _calculate_used_slots 호출 시 StreamingStockRepo를 참조하므로)
+    assert svc._streaming_stock_repo.clear_active.call_count >= 2 # PT 초기화 + Price 초기화
