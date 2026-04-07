@@ -5,7 +5,7 @@ import json
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch, AsyncMock, MagicMock
-from brokers.korea_investment.korea_invest_token_provider import TokenProvider
+from brokers.korea_investment.korea_invest_token_provider import TokenProvider, TokenRateLimitError
 import pytz  # pytz 임포트
 import shutil # shutil 임포트
 import tempfile # tempfile 모듈 임포트
@@ -312,6 +312,38 @@ async def test_get_token_no_file_new_issued_isolated(tmp_path):  # 이제 self �
             token_data = json.load(f)
             assert token_data['access_token'] == 'token_no_file_new_issued'
             assert token_data['base_url'] == mock_config['url']
+
+
+@pytest.mark.asyncio
+async def test_issue_new_token_egw00133_raises_token_rate_limit_error(tmp_path):
+    """
+    _issue_new_token: 토큰 발급 시 EGW00133 (1분 Rate Limit) 403 응답을 받으면
+    TokenRateLimitError 가 발생하고 delay=65 초가 설정되어 있는지 검증.
+    """
+    token_file = tmp_path / "token_rate_limit.json"
+    token_provider = TokenProvider(token_file_path=str(token_file))
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 403
+    mock_response.json = MagicMock(return_value={
+        "error_code": "EGW00133",
+        "error_description": "접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)"
+    })
+    mock_response.raise_for_status = MagicMock(return_value=None)
+
+    with patch("httpx.AsyncClient") as MockAsyncClient:
+        MockAsyncClient.return_value.__aenter__.return_value.post.return_value = mock_response
+
+        with pytest.raises(TokenRateLimitError) as exc_info:
+            await token_provider._issue_new_token(
+                base_url="https://test-api.koreainvestment.com:9443",
+                app_key="key",
+                app_secret="secret"
+            )
+
+        assert exc_info.value.delay >= 60.0  # 최소 60초 대기
+        # raise_for_status 는 호출되지 않아야 함 (EGW00133은 먼저 처리)
+        mock_response.raise_for_status.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ import asyncio  # 비동기 처리를 위해 추가
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenProvider를 import
+from brokers.korea_investment.korea_invest_token_provider import TokenRateLimitError
 from common.types import ErrorCode, ResCommonResponse
 from typing import Union, Optional
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, \
@@ -98,6 +99,14 @@ class KoreaInvestApiBase:
                     msg1="정상",
                     data=result_data
                 )
+
+            except TokenRateLimitError as e:
+                # EGW00133: 토큰 발급 1분 Rate Limit → 충분한 대기 후 재시도
+                self._logger.warning(
+                    f"토큰 발급 Rate Limit - {e.delay}초 대기 후 재시도 ({attempt}/{retry_count})"
+                )
+                await self.market_clock.async_sleep(e.delay)
+                continue
 
             except ApiRetryError as e:
                 # 지수 백오프 적용: 기본 delay * 2^(attempt-1)

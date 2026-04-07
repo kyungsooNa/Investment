@@ -7,6 +7,16 @@ import pytz # pytz 임포트
 from typing import Optional
 
 
+class TokenRateLimitError(Exception):
+    """
+    EGW00133: 토큰 발급 Rate Limit (1분당 1회 제한).
+    api_base.py 에서 이 예외를 받아 60초 대기 후 재시도합니다.
+    """
+    def __init__(self, message: str = "토큰 발급 Rate Limit (EGW00133) - 1분 후 재시도", delay: float = 65.0):
+        super().__init__(message)
+        self.delay = delay
+
+
 class TokenProvider:
     """
     한국투자증권 API의 액세스 토큰 관리를 전담하는 클래스.
@@ -120,6 +130,20 @@ class TokenProvider:
             }
             response = await client.post(url, json=body, headers=headers)
             # response = await client.post(url, json=body)
+
+            # EGW00133: 토큰 발급 1분 Rate Limit → 즉시 재시도하면 또 실패하므로 전용 예외로 변환
+            if response.status_code == 403:
+                try:
+                    err_body = response.json()
+                except Exception:
+                    err_body = {}
+                if err_body.get("error_code") == "EGW00133":
+                    self._logger.warning(
+                        f"토큰 발급 Rate Limit (EGW00133) 감지 - 65초 후 재시도 필요. "
+                        f"msg: {err_body.get('error_description', '')}"
+                    )
+                    raise TokenRateLimitError()
+
             response.raise_for_status()
             res_data = response.json()
 
