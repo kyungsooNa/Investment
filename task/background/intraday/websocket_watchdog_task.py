@@ -30,7 +30,7 @@ class WebSocketWatchdogTask(SchedulableTask):
     def __init__(
         self,
         streaming_service: Optional["StreamingService"] = None,
-        realtime_data_service: Optional["ProgramTradingStreamService"] = None,
+        program_trading_stream_service: Optional["ProgramTradingStreamService"] = None,
         market_calendar_service: Optional["MarketCalendarService"] = None,
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
@@ -40,7 +40,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         price_subscription_service: Optional["PriceSubscriptionService"] = None,
     ):
         self._streaming_service = streaming_service
-        self._realtime_data_service = realtime_data_service
+        self._program_trading_stream_service = program_trading_stream_service
         self.mcs = market_calendar_service
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._ns = notification_service
@@ -76,8 +76,8 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._state = TaskState.RUNNING
 
         # 1. 실시간 데이터 매니저 백그라운드 태스크 (데이터 정리 등)
-        if self._realtime_data_service:
-            self._realtime_data_service.start_background_tasks()
+        if self._program_trading_stream_service:
+            self._program_trading_stream_service.start_background_tasks()
 
         # 2. 이전 구독 상태 자동 복원 (PT + H0UNCNT0 통합 복원)
         self._tasks.append(
@@ -86,7 +86,7 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         # 3. 프로그램매매 연결 상태 워치독
         self._tasks.append(
-            asyncio.create_task(self._program_trading_watchdog())
+            asyncio.create_task(self._streaming_watchdog())
         )
 
         if self._streaming_logger:
@@ -107,8 +107,8 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._tasks.clear()
 
         # 실시간 데이터 매니저 종료
-        if self._realtime_data_service:
-            await self._realtime_data_service.shutdown()
+        if self._program_trading_stream_service:
+            await self._program_trading_stream_service.shutdown()
 
         self._state = TaskState.STOPPED
         if self._streaming_logger:
@@ -130,7 +130,7 @@ class WebSocketWatchdogTask(SchedulableTask):
 
     # ── 프로그램매매 워치독 / 복원 / 재연결 ──────────────────────
 
-    async def _program_trading_watchdog(self) -> None:
+    async def _streaming_watchdog(self) -> None:
         """WebSocket 연결 상태를 주기적으로 감시하고, 데이터 수신이 끊기면 재연결.
 
         PT와 실시간 체결가(H0UNCNT0) 구독 여부를 모두 확인하여,
@@ -180,8 +180,8 @@ class WebSocketWatchdogTask(SchedulableTask):
 
                 # 조건 2: PT 데이터 수신 갭 확인 (PT 종목이 있을 때만 — last_data_ts가 PT 기준)
                 data_gap = 0.0
-                if pt_codes and self._realtime_data_service:
-                    last_ts = self._realtime_data_service.last_data_ts
+                if pt_codes and self._program_trading_stream_service:
+                    last_ts = self._program_trading_stream_service.last_data_ts
                     data_gap = (time.time() - last_ts) if last_ts > 0 else 0.0
 
                 if self._streaming_logger:
@@ -231,8 +231,8 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         last_ts = 0.0
         data_gap = None
-        if self._realtime_data_service:
-            last_ts = getattr(self._realtime_data_service, "last_data_ts", 0.0)
+        if self._program_trading_stream_service:
+            last_ts = getattr(self._program_trading_stream_service, "last_data_ts", 0.0)
             if last_ts > 0:
                 data_gap = round(time.time() - last_ts, 1)
 
