@@ -328,7 +328,8 @@ class WebSocketWatchdogTask(SchedulableTask):
                 await self._price_subscription_service._rebalance()
                 if self._streaming_logger:
                     self._streaming_logger.log_price_restore_done(
-                        len(self._price_subscription_service._active_codes)
+                        len(self._price_subscription_service._active_codes_price),
+                        desired_count,
                     )
 
         if self._streaming_logger:
