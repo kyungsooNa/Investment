@@ -1424,3 +1424,256 @@ def test_log_subscription_policy_extended_events(streaming_logger_setup):
     # 여섯 번째 로그: log_unsubscribe_failure
     assert lines[5]["level"] == "ERROR"
     assert lines[5]["data"]["message"] == "unsubscribe error msg"
+
+
+# ── WebSocketWatchdogTask 라이프사이클 이벤트 TC ─────────────────────────────
+
+def test_log_watchdog_start(streaming_logger_setup):
+    """log_watchdog_start()가 action='watchdog_start'와 task_count를 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_watchdog_start(task_count=2)
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert len(lines) == 1
+    d = lines[0]["data"]
+    assert d["action"] == "watchdog_start"
+    assert d["task_count"] == 2
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_watchdog_stop_lifecycle(streaming_logger_setup):
+    """log_watchdog_stop_start()와 log_watchdog_stop_done()이 순서대로 기록되는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_watchdog_stop_start(task_count=3)
+    streaming_logger.log_watchdog_stop_done()
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert len(lines) == 2
+    assert lines[0]["data"]["action"] == "watchdog_stop_start"
+    assert lines[0]["data"]["task_count"] == 3
+    assert lines[1]["data"]["action"] == "watchdog_stop_done"
+
+
+def test_log_watchdog_suspend_and_resume(streaming_logger_setup):
+    """log_watchdog_suspend()와 log_watchdog_resume()이 INFO 레벨로 기록되는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_watchdog_suspend()
+    streaming_logger.log_watchdog_resume()
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert lines[0]["data"]["action"] == "watchdog_suspend"
+    assert lines[0]["level"] == "INFO"
+    assert lines[1]["data"]["action"] == "watchdog_resume"
+    assert lines[1]["level"] == "INFO"
+
+
+# ── WebSocketWatchdogTask 감시 루프 이벤트 TC ────────────────────────────────
+
+def test_log_market_closed_disconnect(streaming_logger_setup):
+    """log_market_closed_disconnect()가 action='market_closed_disconnect'로 기록되는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_market_closed_disconnect()
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert lines[0]["data"]["action"] == "market_closed_disconnect"
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_market_open_connect(streaming_logger_setup):
+    """log_market_open_connect()가 action='market_open_connect'로 기록되는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_market_open_connect()
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert lines[0]["data"]["action"] == "market_open_connect"
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_receive_task_dead(streaming_logger_setup):
+    """log_receive_task_dead()가 WARNING 레벨로 기록되는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_receive_task_dead()
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert lines[0]["data"]["action"] == "receive_task_dead"
+    assert lines[0]["level"] == "WARNING"
+
+
+def test_log_pt_data_gap(streaming_logger_setup):
+    """log_pt_data_gap()이 data_gap_sec과 threshold_sec을 WARNING으로 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_pt_data_gap(data_gap_sec=310.7, threshold_sec=300)
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "pt_data_gap"
+    assert d["data_gap_sec"] == 310.7
+    assert d["threshold_sec"] == 300
+    assert lines[0]["level"] == "WARNING"
+
+
+def test_log_watchdog_error(streaming_logger_setup):
+    """log_watchdog_error()가 ERROR 레벨로 message를 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_watchdog_error("connection reset by peer")
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "watchdog_error"
+    assert d["message"] == "connection reset by peer"
+    assert lines[0]["level"] == "ERROR"
+
+
+# ── WebSocketWatchdogTask 복원 이벤트 TC ─────────────────────────────────────
+
+def test_log_pt_restore_connect_failed(streaming_logger_setup):
+    """log_pt_restore_connect_failed()가 WARNING으로 code를 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_pt_restore_connect_failed("005930")
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "pt_restore_connect_failed"
+    assert d["code"] == "005930"
+    assert lines[0]["level"] == "WARNING"
+
+
+def test_log_pt_restore_error(streaming_logger_setup):
+    """log_pt_restore_error()가 ERROR 레벨로 code와 error를 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_pt_restore_error("000660", "timeout")
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "pt_restore_error"
+    assert d["code"] == "000660"
+    assert d["error"] == "timeout"
+    assert lines[0]["level"] == "ERROR"
+
+
+def test_log_pt_restore_failed_removed(streaming_logger_setup):
+    """log_pt_restore_failed_removed()가 codes를 정렬하여 WARNING으로 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_pt_restore_failed_removed(["000660", "005930"])
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "pt_restore_failed_removed"
+    assert d["codes"] == ["000660", "005930"]
+    assert lines[0]["level"] == "WARNING"
+
+
+def test_log_price_restore_start_and_done(streaming_logger_setup):
+    """log_price_restore_start()와 log_price_restore_done()이 순서대로 기록되는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_price_restore_start(desired_count=5)
+    streaming_logger.log_price_restore_done(active_count=4)
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    assert len(lines) == 2
+    assert lines[0]["data"]["action"] == "price_restore_start"
+    assert lines[0]["data"]["desired_count"] == 5
+    assert lines[1]["data"]["action"] == "price_restore_done"
+    assert lines[1]["data"]["active_count"] == 4
+
+
+# ── WebSocketWatchdogTask 강제 재연결 이벤트 TC ──────────────────────────────
+
+def test_log_force_reconnect_start(streaming_logger_setup):
+    """log_force_reconnect_start()가 trigger와 정렬된 pt_codes를 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_force_reconnect_start(
+        trigger="receive_task_dead",
+        pt_codes=["000660", "005930"],
+    )
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "force_reconnect_start"
+    assert d["trigger"] == "receive_task_dead"
+    assert d["pt_codes"] == ["000660", "005930"]
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_force_reconnect_disconnect_error(streaming_logger_setup):
+    """log_force_reconnect_disconnect_error()가 WARNING으로 error를 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_force_reconnect_disconnect_error("Disconnect Error")
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "force_reconnect_disconnect_error"
+    assert d["error"] == "Disconnect Error"
+    assert lines[0]["level"] == "WARNING"
+
+
+def test_log_force_reconnect_done(streaming_logger_setup):
+    """log_force_reconnect_done()이 trigger를 INFO로 기록하는지 검증."""
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_force_reconnect_done("manual")
+
+    for h in logging.getLogger("streaming_event").handlers:
+        h.flush()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "force_reconnect_done"
+    assert d["trigger"] == "manual"
+    assert lines[0]["level"] == "INFO"

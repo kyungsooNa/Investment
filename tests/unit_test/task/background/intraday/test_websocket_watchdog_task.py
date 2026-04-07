@@ -66,7 +66,7 @@ def mock_deps():
 
 
 @pytest.fixture
-def watchdog_task(mock_deps):
+def watchdog_task(mock_deps, mock_streaming_logger):
     streaming_service, realtime_data_service, market_calendar_service, logger, streaming_stock_repo = mock_deps
     return WebSocketWatchdogTask(
         streaming_service=streaming_service,
@@ -74,6 +74,7 @@ def watchdog_task(mock_deps):
         market_calendar_service=market_calendar_service,
         logger=logger,
         streaming_stock_repo=streaming_stock_repo,
+        streaming_logger=mock_streaming_logger,
     )
 
 
@@ -117,7 +118,7 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
     assert svc._streaming_service.connect_websocket.call_count == 2
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
     assert svc._streaming_service.subscribe_realtime_price.call_count == 2
-    svc._logger.info.assert_any_call("[워치독] PT 구독 복원 완료: 2/2개")
+    svc._streaming_logger.log_subscription_recovery_done.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -140,12 +141,12 @@ async def test_restore_program_trading_partial_failure(watchdog_task, mock_deps)
 
     assert svc._streaming_service.connect_websocket.await_count == 3
 
-    # connect 실패한 종목은 warn 로그 + unmark_desired 호출 확인
+    # connect 실패한 종목은 streaming_logger + unmark_desired 호출 확인
     from repositories.streaming_stock_repo import StreamingType
     unmark_calls = {call.args[0] for call in svc._streaming_stock_repo.unmark_desired.call_args_list}
     assert len(unmark_calls) == 1  # connect 실패 1종목
     failed_code = next(iter(unmark_calls))
-    svc._logger.warning.assert_any_call(f"[워치독] PT 재연결 실패: {failed_code}")
+    svc._streaming_logger.log_pt_restore_connect_failed.assert_called_once_with(failed_code)
 
 
 # ── _program_trading_watchdog 테스트 ─────────────────────────────────────────
@@ -166,7 +167,7 @@ async def test_program_trading_watchdog_market_closed(watchdog_task, mock_deps):
             pass
 
     svc._streaming_service.disconnect_websocket.assert_awaited_once()
-    svc._logger.info.assert_any_call("[워치독] 장 마감 시간이므로 웹소켓 연결을 종료합니다.")
+    svc._streaming_logger.log_market_closed_disconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -187,9 +188,9 @@ async def test_program_trading_watchdog_data_gap(watchdog_task, mock_deps):
             pass
 
     svc.force_reconnect.assert_called_once()
-    args, _ = svc._logger.warning.call_args
-    assert "PT 데이터 미수신" in args[0]
-    assert "재연결을 시도합니다" in args[0]
+    svc._streaming_logger.log_pt_data_gap.assert_called_once()
+    data_gap_arg = svc._streaming_logger.log_pt_data_gap.call_args[0][0]
+    assert data_gap_arg > 300
 
 
 @pytest.mark.asyncio
@@ -243,7 +244,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
     assert svc._streaming_service.connect_websocket.call_count == 2
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
     assert svc._streaming_service.subscribe_realtime_price.call_count == 2
-    svc._logger.info.assert_any_call("[워치독] 강제 재연결 완료 (trigger=manual)")
+    svc._streaming_logger.log_force_reconnect_done.assert_called_once_with("manual")
 
 
 @pytest.mark.asyncio
@@ -356,8 +357,8 @@ async def test_force_reconnect_program_trading_errors(watchdog_task, mock_deps):
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
         await svc.force_reconnect_program_trading()
 
-    svc._logger.warning.assert_any_call("[워치독] 기존 연결 종료 중 오류 (무시): Disconnect Error")
-    svc._logger.warning.assert_any_call("[워치독] PT 재연결 실패: 005930")
+    svc._streaming_logger.log_force_reconnect_disconnect_error.assert_called_once_with("Disconnect Error")
+    svc._streaming_logger.log_pt_restore_connect_failed.assert_called_once_with("005930")
     # 실패 종목이 unmark_desired 호출되어야 함
     svc._streaming_stock_repo.unmark_desired.assert_called_once()
     assert svc._streaming_stock_repo.unmark_desired.call_args.args[0] == "005930"

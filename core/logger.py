@@ -510,6 +510,145 @@ class StreamingEventLogger:
         """
         self._logger.warning({"action": "dropped_subscriptions", "message": message})
 
+    # ── WebSocketWatchdogTask 라이프사이클 이벤트 ──────────────────
+
+    def log_watchdog_start(self, task_count: int) -> None:
+        """워치독 태스크 시작.
+
+        Args:
+            task_count: 생성된 내부 asyncio 태스크 수
+        """
+        self._logger.info({"action": "watchdog_start", "task_count": task_count})
+
+    def log_watchdog_stop_start(self, task_count: int) -> None:
+        """워치독 태스크 종료 시작.
+
+        Args:
+            task_count: 취소할 내부 asyncio 태스크 수
+        """
+        self._logger.info({"action": "watchdog_stop_start", "task_count": task_count})
+
+    def log_watchdog_stop_done(self) -> None:
+        """워치독 태스크 종료 완료."""
+        self._logger.info({"action": "watchdog_stop_done"})
+
+    def log_watchdog_suspend(self) -> None:
+        """워치독 태스크 일시 중지."""
+        self._logger.info({"action": "watchdog_suspend"})
+
+    def log_watchdog_resume(self) -> None:
+        """워치독 태스크 재개."""
+        self._logger.info({"action": "watchdog_resume"})
+
+    # ── WebSocketWatchdogTask 감시 루프 이벤트 ────────────────────
+
+    def log_market_closed_disconnect(self) -> None:
+        """장 마감 감지 → WebSocket 연결 종료."""
+        self._logger.info({"action": "market_closed_disconnect"})
+
+    def log_market_open_connect(self) -> None:
+        """장 시작 감지 → 신규 WebSocket 연결 수립 예정."""
+        self._logger.info({"action": "market_open_connect"})
+
+    def log_receive_task_dead(self) -> None:
+        """WebSocket 수신 태스크 종료 감지 (비의도적)."""
+        self._logger.warning({"action": "receive_task_dead"})
+
+    def log_pt_data_gap(self, data_gap_sec: float, threshold_sec: int) -> None:
+        """PT 데이터 수신 갭이 임계값을 초과함.
+
+        Args:
+            data_gap_sec: 마지막 PT 데이터 수신 이후 경과 시간 (초)
+            threshold_sec: 재연결을 트리거하는 임계값 (초)
+        """
+        self._logger.warning({
+            "action": "pt_data_gap",
+            "data_gap_sec": round(data_gap_sec, 1),
+            "threshold_sec": threshold_sec,
+        })
+
+    def log_watchdog_error(self, message: str) -> None:
+        """워치독 루프 내 예외 발생.
+
+        Args:
+            message: 예외 메시지
+        """
+        self._logger.error({"action": "watchdog_error", "message": message})
+
+    # ── WebSocketWatchdogTask 복원 이벤트 ────────────────────────
+
+    def log_pt_restore_connect_failed(self, code: str) -> None:
+        """복원 중 특정 PT 종목의 WebSocket 연결 실패.
+
+        Args:
+            code: 연결 실패한 종목코드
+        """
+        self._logger.warning({"action": "pt_restore_connect_failed", "code": code})
+
+    def log_pt_restore_error(self, code: str, error: str) -> None:
+        """복원 중 특정 PT 종목에서 예외 발생.
+
+        Args:
+            code: 오류가 발생한 종목코드
+            error: 예외 메시지
+        """
+        self._logger.error({"action": "pt_restore_error", "code": code, "error": error})
+
+    def log_pt_restore_failed_removed(self, codes: list) -> None:
+        """복원 실패한 PT 종목들을 desired 상태에서 제거.
+
+        Args:
+            codes: 제거 대상 종목코드 목록
+        """
+        self._logger.warning({"action": "pt_restore_failed_removed", "codes": sorted(codes)})
+
+    def log_price_restore_start(self, desired_count: int) -> None:
+        """H0UNCNT0(실시간 체결가) 구독 복원 시작.
+
+        Args:
+            desired_count: 복원 대상 종목 수
+        """
+        self._logger.info({"action": "price_restore_start", "desired_count": desired_count})
+
+    def log_price_restore_done(self, active_count: int) -> None:
+        """H0UNCNT0(실시간 체결가) 구독 복원 완료.
+
+        Args:
+            active_count: 복원 후 활성 구독 수
+        """
+        self._logger.info({"action": "price_restore_done", "active_count": active_count})
+
+    # ── WebSocketWatchdogTask 강제 재연결 이벤트 ─────────────────
+
+    def log_force_reconnect_start(self, trigger: str, pt_codes: list) -> None:
+        """강제 재연결 시작.
+
+        Args:
+            trigger: 재연결 원인
+            pt_codes: 재구독 대상 PT 종목 목록
+        """
+        self._logger.info({
+            "action": "force_reconnect_start",
+            "trigger": trigger,
+            "pt_codes": sorted(pt_codes),
+        })
+
+    def log_force_reconnect_disconnect_error(self, error: str) -> None:
+        """강제 재연결 전 기존 연결 종료 중 오류 (무시하고 계속).
+
+        Args:
+            error: 예외 메시지
+        """
+        self._logger.warning({"action": "force_reconnect_disconnect_error", "error": error})
+
+    def log_force_reconnect_done(self, trigger: str) -> None:
+        """강제 재연결 완료.
+
+        Args:
+            trigger: 재연결 원인
+        """
+        self._logger.info({"action": "force_reconnect_done", "trigger": trigger})
+
     def log_subscribe_pending(self, code: str, message: str) -> None:
         """구독 보류 이벤트.
 
