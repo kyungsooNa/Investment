@@ -171,12 +171,9 @@ function renderStockChart(period) {
     const highPct = ((highestPrice - currentPrice) / currentPrice * 100).toFixed(1);
     const lowPct  = ((lowestPrice  - currentPrice) / currentPrice * 100).toFixed(1);
 
-    // [최적화 3] 고가/저가 마커 플러그인 — 픽셀값 캐싱으로 매 프레임 재연산 방지
-    const highSign = highPct > 0 ? '+' : '';
-    const lowSign  = lowPct  > 0 ? '+' : '';
-    const highLabel = `${highestPrice.toLocaleString()} (${labels[highIdx]}) ${highSign}${highPct}%`;
-    const lowLabel  = `${lowestPrice.toLocaleString()} (${labels[lowIdx]}) ${lowSign}${lowPct}%`;
-    let _cachedHighX = null, _cachedHighY = null, _cachedLowX = null, _cachedLowY = null;
+    // [최적화 3] 고가/저가 레이블 문자열을 플러그인 외부에서 1회 생성
+    const highLabel = `${highestPrice.toLocaleString()} (${labels[highIdx]}) ${highPct > 0 ? '+' : ''}${highPct}%`;
+    const lowLabel  = `${lowestPrice.toLocaleString()} (${labels[lowIdx]}) ${lowPct > 0 ? '+' : ''}${lowPct}%`;
 
     const highLowPlugin = {
         id: 'highLowMarker',
@@ -185,26 +182,28 @@ function renderStockChart(period) {
             const meta = chart.getDatasetMeta(0);
             if (!meta || !meta.data) return;
 
-            // Y축 범위 변경 시에만 픽셀 재계산 (캐시 활용)
-            const newHighY = y.getPixelForValue(highestPrice);
-            const newLowY  = y.getPixelForValue(lowestPrice);
-            const highBar  = meta.data[highIdx];
-            const lowBar   = meta.data[lowIdx];
-            if (highBar) { _cachedHighX = highBar.x; _cachedHighY = newHighY; }
-            if (lowBar)  { _cachedLowX  = lowBar.x;  _cachedLowY  = newLowY; }
+            const highBar = meta.data[highIdx];
+            const lowBar  = meta.data[lowIdx];
+            if (!highBar && !lowBar) return;
 
+            // save/restore 1쌍 + font/textAlign 1회 설정으로 중복 제거
             c.save();
             c.font = 'bold 11px sans-serif';
             c.textAlign = 'center';
-            if (_cachedHighX !== null) {
+
+            if (highBar) {
+                const hx = highBar.x;
+                const hy = y.getPixelForValue(highestPrice);
                 c.fillStyle = '#ff4444';
-                c.fillText(highLabel, _cachedHighX, _cachedHighY - 20);
-                c.fillText('↓', _cachedHighX, _cachedHighY - 8);
+                c.fillText(highLabel, hx, hy - 20);
+                c.fillText('↓', hx, hy - 8);
             }
-            if (_cachedLowX !== null) {
+            if (lowBar) {
+                const lx = lowBar.x;
+                const ly = y.getPixelForValue(lowestPrice);
                 c.fillStyle = '#4488ff';
-                c.fillText('↑', _cachedLowX, _cachedLowY + 14);
-                c.fillText(lowLabel, _cachedLowX, _cachedLowY + 26);
+                c.fillText('↑', lx, ly + 14);
+                c.fillText(lowLabel, lx, ly + 26);
             }
             c.restore();
         }
