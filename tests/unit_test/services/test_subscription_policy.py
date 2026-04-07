@@ -210,14 +210,14 @@ async def test_do_subscribe_success_and_fail(policy, mock_streaming, mock_stock_
     await policy._do_subscribe("B", StreamingType.PROGRAM_TRADING)
     mock_streaming_logger.log_add_subscription_rejection.assert_called()
 
-async def test_do_subscribe_market_closed(svc, mock_streaming, mock_streaming_logger, mock_market_calendar):
+async def test_do_subscribe_market_closed(policy, mock_streaming, mock_streaming_logger, mock_market_calendar):
     """장 외 시간에는 구독 요청이 보류되어야 한다."""
     # 장이 닫힌 상태로 모킹
     mock_market_calendar.is_market_open_now.return_value = False
 
     # 내부 메서드 직접 호출 (또는 add_subscription을 통한 간접 호출)
     from repositories.streaming_stock_repo import StreamingType
-    await svc._do_subscribe("A", StreamingType.UNIFIED_PRICE)
+    await policy._do_subscribe("A", StreamingType.UNIFIED_PRICE)
 
     # streaming_service에는 구독 요청이 가지 않아야 함
     mock_streaming.subscribe_unified_price.assert_not_called()
