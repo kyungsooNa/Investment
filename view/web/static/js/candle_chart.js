@@ -83,6 +83,10 @@ async function loadAndRenderStockChart(code) {
         // 전역 변수에 데이터 저장
         g_chartRawData = json.data.ohlcv;
         g_chartIndicators = json.data.indicators || {};
+
+        // [최적화 2] API 수신 직후 날짜 포맷팅 1회 사전 처리
+        const formatYYYYMMDD = (str) => str.substring(0, 4) + '-' + str.substring(4, 6) + '-' + str.substring(6, 8);
+        g_chartRawData.forEach(d => { d.formattedDate = formatYYYYMMDD(d.date); });
         g_chartCode = code;
 
         chartCard.style.display = 'block';
@@ -123,87 +127,85 @@ function renderStockChart(period) {
     const startIndex = Math.max(0, g_chartRawData.length - sliceCount);
     const slicedRaw = g_chartRawData.slice(startIndex);
 
-    // 날짜 포맷팅 (YYYY-MM-DD)
-    const formatDate = (str) => str.substring(0, 4) + '-' + str.substring(4, 6) + '-' + str.substring(6, 8);
-    const labels = slicedRaw.map(d => formatDate(d.date));
+    // [최적화 1] 다중 .map()/.forEach() → 단일 for 루프 통합 (GC 부하 감소)
+    const len = slicedRaw.length;
+    const labels = new Array(len);
+    const candles = new Array(len);
+    const volumes = new Array(len);
+    const volumeColors = new Array(len);
+    const ma5 = new Array(len), ma10 = new Array(len), ma20 = new Array(len);
+    const ma60 = new Array(len), ma120 = new Array(len);
+    const bbUpper = new Array(len), bbMiddle = new Array(len), bbLower = new Array(len);
 
-    // 2. 데이터 매핑 (중요: x값은 0부터 시작하는 인덱스 사용)
-    const candles = slicedRaw.map((d, i) => ({
-        x: i, // Index 사용 (차트 깨짐 방지)
-        o: d.open, h: d.high, l: d.low, c: d.close
-    }));
-    const volumes = slicedRaw.map((d, i) => ({ x: i, y: d.volume }));
-    const volumeColors = slicedRaw.map((d, i, arr) => {
-        if (i === 0) return 'rgba(200, 200, 200, 0.4)';
-        return d.volume > arr[i - 1].volume
-            ? 'rgba(255, 0, 0, 0.5)'
-            : d.volume < arr[i - 1].volume
-                ? 'rgba(0, 0, 255, 0.5)'
-                : 'rgba(200, 200, 200, 0.4)';
-    });
-
-    // 지표 데이터 매핑 (인덱스 기준)
-    const sliceIndicator = (data) => data.slice(startIndex).map((d, i) => ({ x: i, y: d.ma }));
-    const ma5 = sliceIndicator(g_chartIndicators.ma5);
-    const ma10 = sliceIndicator(g_chartIndicators.ma10); // [추가]
-    const ma20 = sliceIndicator(g_chartIndicators.ma20);
-    const ma60 = sliceIndicator(g_chartIndicators.ma60);
-    const ma120 = sliceIndicator(g_chartIndicators.ma120); // [추가]
-
-    const bbUpper = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.upper }));
-    const bbMiddle = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.middle }));
-    const bbLower = g_chartIndicators.bb.slice(startIndex).map((d, i) => ({ x: i, y: d.lower }));
-
-    // 3. 고가/저가 캔들 인덱스 및 등락률 계산
-    const currentPrice = slicedRaw[slicedRaw.length - 1].close;
+    const currentPrice = slicedRaw[len - 1].close;
     let highestPrice = -Infinity, lowestPrice = Infinity;
     let highIdx = 0, lowIdx = 0;
-    slicedRaw.forEach((d, i) => {
-        if (d.high > highestPrice) { highestPrice = d.high; highIdx = i; }
-        if (d.low < lowestPrice) { lowestPrice = d.low; lowIdx = i; }
-    });
-    const highPct = ((highestPrice - currentPrice) / currentPrice * 100).toFixed(1);
-    const lowPct = ((lowestPrice - currentPrice) / currentPrice * 100).toFixed(1);
 
-    // 고가/저가 마커 플러그인 (해당 캔들 위/아래에만 표기)
+    for (let i = 0; i < len; i++) {
+        const d = slicedRaw[i];
+        const prevVol = i === 0 ? d.volume : slicedRaw[i - 1].volume;
+
+        labels[i] = d.formattedDate;
+        candles[i] = { x: i, o: d.open, h: d.high, l: d.low, c: d.close };
+        volumes[i] = { x: i, y: d.volume };
+        volumeColors[i] = i === 0 || d.volume === prevVol ? 'rgba(200, 200, 200, 0.4)'
+            : d.volume > prevVol ? 'rgba(255, 0, 0, 0.5)' : 'rgba(0, 0, 255, 0.5)';
+
+        if (d.high > highestPrice) { highestPrice = d.high; highIdx = i; }
+        if (d.low < lowestPrice)   { lowestPrice  = d.low;  lowIdx  = i; }
+
+        const rawIdx = startIndex + i;
+        const ind = g_chartIndicators;
+        if (ind.ma5[rawIdx])   ma5[i]   = { x: i, y: ind.ma5[rawIdx].ma };
+        if (ind.ma10[rawIdx])  ma10[i]  = { x: i, y: ind.ma10[rawIdx].ma };
+        if (ind.ma20[rawIdx])  ma20[i]  = { x: i, y: ind.ma20[rawIdx].ma };
+        if (ind.ma60[rawIdx])  ma60[i]  = { x: i, y: ind.ma60[rawIdx].ma };
+        if (ind.ma120[rawIdx]) ma120[i] = { x: i, y: ind.ma120[rawIdx].ma };
+        if (ind.bb[rawIdx]) {
+            bbUpper[i]  = { x: i, y: ind.bb[rawIdx].upper };
+            bbMiddle[i] = { x: i, y: ind.bb[rawIdx].middle };
+            bbLower[i]  = { x: i, y: ind.bb[rawIdx].lower };
+        }
+    }
+
+    const highPct = ((highestPrice - currentPrice) / currentPrice * 100).toFixed(1);
+    const lowPct  = ((lowestPrice  - currentPrice) / currentPrice * 100).toFixed(1);
+
+    // [최적화 3] 고가/저가 레이블 문자열을 플러그인 외부에서 1회 생성
+    const highLabel = `${highestPrice.toLocaleString()} (${labels[highIdx]}) ${highPct > 0 ? '+' : ''}${highPct}%`;
+    const lowLabel  = `${lowestPrice.toLocaleString()} (${labels[lowIdx]}) ${lowPct > 0 ? '+' : ''}${lowPct}%`;
+
     const highLowPlugin = {
         id: 'highLowMarker',
         afterDatasetsDraw(chart) {
             const { ctx: c, scales: { y } } = chart;
-            const meta = chart.getDatasetMeta(0); // 캔들스틱 데이터셋
+            const meta = chart.getDatasetMeta(0);
             if (!meta || !meta.data) return;
 
-            // 고가 표기: 가격 (날짜) 등락률 → ↓
             const highBar = meta.data[highIdx];
+            const lowBar  = meta.data[lowIdx];
+            if (!highBar && !lowBar) return;
+
+            // save/restore 1쌍 + font/textAlign 1회 설정으로 중복 제거
+            c.save();
+            c.font = 'bold 11px sans-serif';
+            c.textAlign = 'center';
+
             if (highBar) {
                 const hx = highBar.x;
                 const hy = y.getPixelForValue(highestPrice);
-                const highDate = labels[highIdx];
-                const highSign = highPct > 0 ? '+' : '';
-                c.save();
-                c.font = 'bold 11px sans-serif';
-                c.textAlign = 'center';
                 c.fillStyle = '#ff4444';
-                c.fillText(`${highestPrice.toLocaleString()} (${highDate}) ${highSign}${highPct}%`, hx, hy - 20);
+                c.fillText(highLabel, hx, hy - 20);
                 c.fillText('↓', hx, hy - 8);
-                c.restore();
             }
-
-            // 저가 표기: ↑ → 가격 (날짜) 등락률
-            const lowBar = meta.data[lowIdx];
             if (lowBar) {
                 const lx = lowBar.x;
                 const ly = y.getPixelForValue(lowestPrice);
-                const lowDate = labels[lowIdx];
-                const lowSign = lowPct > 0 ? '+' : '';
-                c.save();
-                c.font = 'bold 11px sans-serif';
-                c.textAlign = 'center';
                 c.fillStyle = '#4488ff';
                 c.fillText('↑', lx, ly + 14);
-                c.fillText(`${lowestPrice.toLocaleString()} (${lowDate}) ${lowSign}${lowPct}%`, lx, ly + 26);
-                c.restore();
+                c.fillText(lowLabel, lx, ly + 26);
             }
+            c.restore();
         }
     };
 
@@ -260,8 +262,11 @@ function renderStockChart(period) {
         },
         options: {
             animation: false, // [최적화] 애니메이션 비활성화로 즉시 렌더링
-            responsive: true, 
+            responsive: true,
             maintainAspectRatio: false,
+            elements: {
+                line: { tension: 0, borderJoinStyle: 'round' } // [최적화 4] 베지어 곡선 비활성화 → MA 선 렌더링 속도 향상
+            },
             interaction: { mode: 'index', intersect: false },
             parsing: false, // [최적화] 데이터 파싱 비활성화 (이미 포맷에 맞춤)
             normalized: true, // [최적화] 데이터가 이미 정렬되어 있음을 명시
