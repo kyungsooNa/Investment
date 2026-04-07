@@ -198,8 +198,8 @@ def test_foreground_priority_middleware(mock_web_app_context_cls):
     
     mock_ctx.foreground_scheduler = mock_fg
     
-    with patch("view.web.web_main.api_common._ctx", mock_ctx):
-        with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(app, raise_server_exceptions=False) as client:
+        with patch("view.web.api_common._ctx", mock_ctx):
             client.get("/api/stock/123")
             mock_fg.context.assert_called()
 
