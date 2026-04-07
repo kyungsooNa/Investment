@@ -90,3 +90,29 @@ async def test_get_balance_full_config_exception(web_client, mock_web_ctx):
     response = web_client.get("/api/balance")
     assert response.status_code == 200
     assert response.json()["account_info"]["number"] == "번호없음"
+
+
+@pytest.mark.asyncio
+async def test_post_balance_sell_all_success(web_client, mock_web_ctx):
+    """POST /api/balance/sell_all 성공 테스트"""
+    mock_results = {"message": "일괄 매도가 완료되었습니다.", "results": [{"stock_code": "005930", "success": True}]}
+    mock_web_ctx.order_execution_service.sell_all_stocks.return_value = mock_results
+
+    response = web_client.post("/api/balance/sell_all")
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["message"] == "모든 주식에 대한 매도 주문이 시작되었습니다."
+    assert json_resp["results"] == mock_results
+    mock_web_ctx.order_execution_service.sell_all_stocks.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_post_balance_sell_all_exception(web_client, mock_web_ctx):
+    """POST /api/balance/sell_all 예외 발생 500 응답 테스트"""
+    mock_web_ctx.order_execution_service.sell_all_stocks.side_effect = Exception("주문 API 서버 연결 실패")
+
+    response = web_client.post("/api/balance/sell_all")
+    assert response.status_code == 500
+    json_resp = response.json()
+    assert "일괄 매도 중 오류 발생" in json_resp["detail"]
+    assert "주문 API 서버 연결 실패" in json_resp["detail"]
