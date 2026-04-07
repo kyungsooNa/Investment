@@ -34,6 +34,14 @@ function renderCacheSummary(type, stats, capacity) {
         rateEl.textContent = rate.toFixed(2);
         rateEl.style.color = rate >= 90 ? 'var(--success-color,#4CAF50)' : rate >= 50 ? 'orange' : 'var(--danger-color,#f44336)';
     }
+    if (type === 'price') {
+        const streamEl = document.getElementById('price-cache-streaming');
+        if (streamEl) {
+            const cnt = stats.streaming_count ?? 0;
+            streamEl.textContent = cnt;
+            streamEl.style.color = cnt > 0 ? 'var(--success-color,#4CAF50)' : '#888';
+        }
+    }
 }
 
 function renderCallersSection(innerId, callers) {
@@ -95,12 +103,16 @@ function renderPriceCacheDetails(stats) {
     if (!tbody || !stats.items) return;
     tbody.innerHTML = stats.items.map(item => {
         const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : (item.code || '-');
+        const streamBadge = item.is_streaming
+            ? `<span style="background:var(--success-color,#4CAF50);color:#fff;padding:1px 7px;border-radius:8px;font-size:0.82em;font-weight:bold;">실시간</span>`
+            : `<span style="color:#bbb;font-size:0.82em;">-</span>`;
         return `<tr>
             <td style="font-weight:bold;color:var(--accent);">
                 <a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a>
             </td>
             <td>${(item.hit_count || 0).toLocaleString()}</td>
             <td>${item.has_current_price ? 'O' : 'X'}</td>
+            <td>${streamBadge}</td>
             <td>${formatTimestamp(item.price_updated_at || item.last_updated)}</td>
         </tr>`;
     }).join('');

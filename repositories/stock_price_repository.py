@@ -126,4 +126,9 @@ class StockPriceRepository:
 
     def get_cache_stats(self, expand: bool = False) -> dict:
         """현재가 캐시 통계를 반환합니다."""
-        return self._price_cache.get_stats(expand=expand)
+        stats = self._price_cache.get_stats(expand=expand)
+        stats["streaming_count"] = len(self._streaming_codes)
+        if expand and "items" in stats:
+            for item in stats["items"]:
+                item["is_streaming"] = item.get("code") in self._streaming_codes
+        return stats

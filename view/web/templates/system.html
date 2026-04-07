@@ -62,6 +62,7 @@
                 <span>실패: <strong id="price-cache-misses" style="color: var(--danger-color, #f44336);">0</strong></span>
                 <span>적중률: <strong id="price-cache-rate" style="font-size: 1.2rem;">0.00</strong><strong>%</strong></span>
                 <span>사용 종목: <strong id="price-cache-size">0 / 3000</strong></span>
+                <span>실시간 스트리밍: <strong id="price-cache-streaming" style="color: var(--success-color, #4CAF50);">0</strong>종목</span>
             </div>
             <button id="toggle-price-details-btn" class="btn" onclick="toggleCacheDetails('price')">상세 정보 보기 ▼</button>
             <div id="price-cache-details" style="display: none; margin-top: 16px;">
@@ -73,6 +74,7 @@
                                 <th>종목명(코드)</th>
                                 <th>적중 수</th>
                                 <th>현재가 캐시</th>
+                                <th>스트리밍</th>
                                 <th>최근 갱신</th>
                             </tr>
                         </thead>
@@ -117,5 +119,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/system.js?v=12"></script>
+<script src="/static/js/system.js?v=13"></script>
 {% endblock %}
