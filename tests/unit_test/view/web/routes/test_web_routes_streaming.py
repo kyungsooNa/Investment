@@ -43,8 +43,8 @@ def test_subscribe_stock_service_not_initialized(mock_get_ctx, client):
 @patch("view.web.routes.streaming._get_ctx")
 def test_subscribe_stock_success(mock_get_ctx, client, mock_ctx):
     """구독 요청 성공 테스트"""
-    mock_get_ctx.value = mock_ctx
-
+    mock_get_ctx.return_value = mock_ctx
+    
     response = client.post("/streaming/subscribe", json={"code": "005930", "reason": "ui_view"})
     
     assert response.status_code == 200
