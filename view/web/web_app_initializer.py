@@ -13,6 +13,8 @@ from services.order_execution_service import OrderExecutionService
 from repositories.virtual_trade_repository import VirtualTradeRepository
 from services.virtual_trade_service import VirtualTradeService
 from repositories.stock_code_repository import StockCodeRepository
+from repositories.favorite_repository import FavoriteRepository
+from services.favorite_service import FavoriteService
 from services.indicator_service import IndicatorService
 from core.market_clock import MarketClock
 from core.logger import Logger, get_strategy_logger, get_streaming_logger
@@ -67,6 +69,11 @@ class WebAppContext:
         self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, market_clock=self.market_clock)
         self.virtual_trade_service.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
         self.stock_code_repository = StockCodeRepository(logger=self.logger)
+        self.favorite_repo = FavoriteRepository()
+        self.favorite_service = FavoriteService(
+            repository=self.favorite_repo,
+            stock_code_repository=self.stock_code_repository,
+        )
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
@@ -219,6 +226,8 @@ class WebAppContext:
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
+        # FavoriteService에 StockQueryService 주입 (현재가 조회용)
+        self.favorite_service.stock_query_service = self.stock_query_service
         # StreamingService 초기화
         self.streaming_service = StreamingService(
             broker_api_wrapper=self.broker,

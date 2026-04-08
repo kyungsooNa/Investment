@@ -307,7 +307,11 @@ async function searchStock(codeOverride, exchangeOverride) {
         resultDiv.innerHTML = styles + `
             <div class="card stock-info-box">
                 ${exchangeButtons}
-                <h3 class="stock-title">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <h3 class="stock-title" style="margin:0;">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
+                    <button id="fav-toggle-btn" class="btn btn-sm" onclick="toggleFavorite('${data.code}')"
+                            style="font-size:0.85rem; padding:4px 10px;">☆ 관심종목</button>
+                </div>
                 <p class="price ${changeClass}">${fnum(data.price, '원')}</p>
                 <p class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
 
@@ -380,6 +384,9 @@ async function searchStock(codeOverride, exchangeOverride) {
             loadAndRenderStockChart(code);
         }
 
+        // 관심종목 버튼 초기 상태 설정
+        _updateFavBtn(code);
+
     } catch (e) {
         console.error("Error in searchStock:", e);
         if (e.name === 'AbortError') {
@@ -388,5 +395,46 @@ async function searchStock(codeOverride, exchangeOverride) {
             resultDiv.innerHTML = `<p class="error">오류 발생: ${e.message}</p>`;
         }
         if(chartCard) chartCard.style.display = 'none';
+    }
+}
+
+/* ── 관심종목 토글 버튼 ── */
+async function _updateFavBtn(code) {
+    const btn = document.getElementById('fav-toggle-btn');
+    if (!btn) return;
+    try {
+        const resp = await fetch(`/api/favorite/${code}/status`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        _setFavBtnState(btn, data.is_favorite);
+    } catch (_) {}
+}
+
+function _setFavBtnState(btn, isFav) {
+    if (isFav) {
+        btn.textContent = '★ 관심종목 해제';
+        btn.style.background = 'var(--accent)';
+        btn.style.color = '#fff';
+    } else {
+        btn.textContent = '☆ 관심종목 추가';
+        btn.style.background = '';
+        btn.style.color = '';
+    }
+}
+
+async function toggleFavorite(code) {
+    const btn = document.getElementById('fav-toggle-btn');
+    if (!btn) return;
+    const isFav = btn.textContent.includes('해제');
+    try {
+        const method = isFav ? 'DELETE' : 'POST';
+        const resp = await fetch(`/api/favorite/${code}`, { method });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        _setFavBtnState(btn, !isFav);
+        if (typeof showToast === 'function') {
+            showToast(isFav ? '관심종목에서 해제되었습니다.' : '관심종목에 추가되었습니다.', 'success');
+        }
+    } catch (e) {
+        if (typeof showToast === 'function') showToast(`오류: ${e.message}`, 'error');
     }
 }
