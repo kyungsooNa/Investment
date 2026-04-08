@@ -278,6 +278,10 @@ async def program(request: Request):
 async def system(request: Request):
     return await render_page(request, "system.html", "system")
 
+@page_router.get("/favorite")
+async def favorite(request: Request):
+    return await render_page(request, "favorite.html", "favorite")
+
 # 5. 로그아웃
 @page_router.get("/logout")
 async def logout():

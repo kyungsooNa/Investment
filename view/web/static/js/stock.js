@@ -293,6 +293,27 @@ async function searchStock(codeOverride, exchangeOverride) {
                  .stock-info-box .detail-group p strong { color: var(--text-secondary); }
                  .stock-info-box .price.text-red { color: #e94560; }
                  .stock-info-box .price.text-blue { color: #1e90ff; }
+                 .fav-star-btn {
+                     position: absolute;
+                     top: 16px;
+                     right: 16px;
+                     background: var(--bg-primary, #f5f5f5);
+                     border: 1px solid var(--border, #ccc);
+                     border-radius: 8px;
+                     width: 38px;
+                     height: 38px;
+                     display: flex;
+                     align-items: center;
+                     justify-content: center;
+                     font-size: 1.5rem;
+                     cursor: pointer;
+                     padding: 0;
+                     color: #aaa;
+                     transition: all 0.2s;
+                     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                 }
+                 .fav-star-btn:hover { transform: scale(1.05); background: var(--bg-card, #e8e8e8); }
+                 .fav-star-btn.active { color: #ffc107; border-color: #ffc107; }
             </style>
         `;
 
@@ -305,9 +326,12 @@ async function searchStock(codeOverride, exchangeOverride) {
         `;
 
         resultDiv.innerHTML = styles + `
-            <div class="card stock-info-box">
+            <div class="card stock-info-box" style="position: relative;">
+                <button id="fav-toggle-btn" class="fav-star-btn" onclick="toggleFavorite('${data.code}')" title="관심종목">☆</button>
                 ${exchangeButtons}
-                <h3 class="stock-title">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <h3 class="stock-title" style="margin:0;">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
+                </div>
                 <p class="price ${changeClass}">${fnum(data.price, '원')}</p>
                 <p class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
 
@@ -380,6 +404,9 @@ async function searchStock(codeOverride, exchangeOverride) {
             loadAndRenderStockChart(code);
         }
 
+        // 관심종목 버튼 초기 상태 설정
+        _updateFavBtn(code);
+
     } catch (e) {
         console.error("Error in searchStock:", e);
         if (e.name === 'AbortError') {
@@ -388,5 +415,46 @@ async function searchStock(codeOverride, exchangeOverride) {
             resultDiv.innerHTML = `<p class="error">오류 발생: ${e.message}</p>`;
         }
         if(chartCard) chartCard.style.display = 'none';
+    }
+}
+
+/* ── 관심종목 토글 버튼 ── */
+async function _updateFavBtn(code) {
+    const btn = document.getElementById('fav-toggle-btn');
+    if (!btn) return;
+    try {
+        const resp = await fetch(`/api/favorite/${code}/status`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        _setFavBtnState(btn, data.is_favorite);
+    } catch (_) {}
+}
+
+function _setFavBtnState(btn, isFav) {
+    if (isFav) {
+        btn.textContent = '★';
+        btn.classList.add('active');
+        btn.title = '관심종목 해제';
+    } else {
+        btn.textContent = '☆';
+        btn.classList.remove('active');
+        btn.title = '관심종목 추가';
+    }
+}
+
+async function toggleFavorite(code) {
+    const btn = document.getElementById('fav-toggle-btn');
+    if (!btn) return;
+    const isFav = btn.classList.contains('active');
+    try {
+        const method = isFav ? 'DELETE' : 'POST';
+        const resp = await fetch(`/api/favorite/${code}`, { method });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        _setFavBtnState(btn, !isFav);
+        if (typeof showToast === 'function') {
+            showToast(isFav ? '관심종목에서 해제되었습니다.' : '관심종목에 추가되었습니다.', 'success');
+        }
+    } catch (e) {
+        if (typeof showToast === 'function') showToast(`오류: ${e.message}`, 'error');
     }
 }

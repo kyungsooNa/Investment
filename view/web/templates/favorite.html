@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div id="section-favorite" class="section">
+    <div class="card">
+        <h2>즐겨찾기</h2>
+
+        <!-- 종목 검색 및 추가 영역 -->
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;">
+            <div style="position: relative; flex: 1; min-width: 200px;">
+                <input type="text" id="fav-search-input"
+                       placeholder="예: 005930 / 삼성전자 / ㅅㅅㅈㅈ"
+                       autocomplete="off"
+                       style="width: 100%; box-sizing: border-box;"
+                       onkeydown="if(event.key==='Enter') addFavoriteFromInput()">
+                <div id="fav-autocomplete-list" class="autocomplete-list" style="display:none;"></div>
+            </div>
+            <button class="btn" onclick="addFavoriteFromInput()">★ 추가</button>
+            <button class="btn" onclick="loadFavoriteList()" style="margin-left:4px;">새로고침</button>
+        </div>
+    </div>
+
+    <!-- 관심종목 목록 테이블 -->
+    <div class="card">
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>종목코드</th>
+                        <th>종목명</th>
+                        <th>현재가</th>
+                        <th>등락률</th>
+                        <th>액션</th>
+                    </tr>
+                </thead>
+                <tbody id="favorite-list-body">
+                    <tr id="fav-loading-row">
+                        <td colspan="5" style="text-align:center; color: var(--text-secondary);">로딩 중...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/stock.js?v=1"></script>
+<script src="/static/js/favorite.js?v=1"></script>
+{% endblock %}
