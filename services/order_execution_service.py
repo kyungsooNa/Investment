@@ -4,6 +4,7 @@ from typing import Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
+from repositories.streaming_stock_repo import StreamingType
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 from services.market_calendar_service import MarketCalendarService
 from services.price_subscription_service import SubscriptionPriority
@@ -87,7 +88,7 @@ class OrderExecutionService:
                 f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
             if self._price_sub_svc:
                 asyncio.create_task(self._price_sub_svc.add_subscription(
-                    stock_code, SubscriptionPriority.HIGH, "portfolio"
+                    stock_code, SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE
                 ))
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매수 주문 성공",

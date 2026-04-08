@@ -6,6 +6,7 @@ import asyncio
 import time
 from fastapi import APIRouter, HTTPException, Query
 from common.types import Exchange
+from repositories.streaming_stock_repo import StreamingType
 from services.price_subscription_service import SubscriptionPriority
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
 import view.web.api_common as api_common
@@ -89,7 +90,7 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
     if ctx.price_subscription_service:
         async def _add_subscription_background(c: str):
             try:
-                await ctx.price_subscription_service.add_subscription(c, SubscriptionPriority.LOW, "web_price_query")
+                await ctx.price_subscription_service.add_subscription(c, SubscriptionPriority.LOW, "web_price_query", StreamingType.UNIFIED_PRICE)
             except Exception as e:
                 ctx.logger.error(f"[stock] 실시간 구독 등록 실패 ({c}): {e}")
         asyncio.create_task(_add_subscription_background(code))

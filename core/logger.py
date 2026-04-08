@@ -205,7 +205,7 @@ class StreamingEventLogger:
         self._logger.info({
             "action": "subscribe",
             "code": code,
-            "categories": {k: int(v) for k, v in categories.items()},
+            "categories": categories,
             "active_count": active_count,
         })
 

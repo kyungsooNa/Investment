@@ -197,13 +197,16 @@ def get_subscription_status():
             name = ctx.stock_code_repository.get_name_by_code(code) or code
             price_info = streaming_svc.get_cached_realtime_price(code) if streaming_svc else None
             received_at = None
+            price = None
             if isinstance(price_info, dict):
                 received_at = price_info.get("received_at")
+                price = price_info.get("price")
             result.append({
                 "code": code,
                 "name": name,
                 "active": code in active_set, # 병합된 active_set을 통해 활성화 여부 확인
                 "received_at": received_at,
+                "price": price,
             })
         return result
 

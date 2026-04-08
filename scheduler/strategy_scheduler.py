@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+
+from repositories.streaming_stock_repo import StreamingType
 try:
     import orjson as _orjson
     def _dumps(obj) -> str: return _orjson.dumps(obj).decode('utf-8')
@@ -362,7 +364,7 @@ class StrategyScheduler:
         if signal.action == "BUY":
             await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
             if self._price_sub_svc:
-                await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key)
+                await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
         elif signal.action == "SELL":
             return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
             if self._price_sub_svc:
@@ -651,7 +653,7 @@ class StrategyScheduler:
                         code = hold.get("code")
                         if code:
                             await self._price_sub_svc.add_subscription(
-                                code, SubscriptionPriority.HIGH, f"scheduler_{name}"
+                                code, SubscriptionPriority.HIGH, f"scheduler_{name}", StreamingType.UNIFIED_PRICE
                             )
                     if holdings:
                         self._logger.info(

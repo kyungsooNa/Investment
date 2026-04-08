@@ -45,7 +45,7 @@ class SubscriptionPolicy:
     우선순위 기반 실시간 현재가 구독 관리 서비스.
 
     참조 카운팅:
-      - add_subscription(code, priority, category_key): 카운트 0→1이면 실제 구독
+      - add_subscription(code, priority, category_key, stream_type): 카운트 0→1이면 실제 구독
       - remove_subscription(code, category_key): 카운트 1→0이면 실제 구독 해지
       - sync_subscriptions(codes, category_key, priority): 카테고리 전체 원자적 교체
 
@@ -100,7 +100,7 @@ class SubscriptionPolicy:
 
     async def add_subscription(
         self, code: str, priority: SubscriptionPriority, 
-        category_key: str, stream_type: StreamingType
+        category_key: str, stream_type: StreamingType = StreamingType.UNIFIED_PRICE
     ) -> bool:
         """
         구독을 요청합니다. 
@@ -318,10 +318,12 @@ class SubscriptionPolicy:
                     await self._streaming_stock_repo.mark_active(code, stream_type)
                 if self._streaming_logger:
                     categories = self._refs.get(code, {})
+                    # 로거 호환성을 위해 과거 구조(value가 int인 형태)로 파싱하여 전달
+                    logger_categories = {k: int(v["priority"]) for k, v in categories.items()}
                     total_active_count = len(self._active_codes_price) + len(self._active_codes_pt)
                     self._streaming_logger.log_subscribe(
                         code=code,
-                        categories=categories,
+                        categories=logger_categories,
                         active_count=total_active_count,
                     )
             else:

@@ -323,13 +323,18 @@ class WebSocketWatchdogTask(SchedulableTask):
                 await self._streaming_stock_repo.clear_active(StreamingType.UNIFIED_PRICE)
             desired_count = len(self._price_subscription_service._refs)
             if desired_count > 0:
+                # PT 구독이 없어도 WebSocket 연결 보장 (미연결 시 _rebalance() 실패 방지)
+                if self._streaming_service:
+                    connected = await self._streaming_service.connect_websocket()
+                    if not connected:
+                        if self._streaming_logger:
+                            self._streaming_logger.log_pt_restore_connect_failed("H0UNCNT0")
                 if self._streaming_logger:
                     self._streaming_logger.log_price_restore_start(desired_count)
                 await self._price_subscription_service._rebalance()
                 if self._streaming_logger:
                     self._streaming_logger.log_price_restore_done(
-                        len(self._price_subscription_service._active_codes_price),
-                        desired_count,
+                        len(self._price_subscription_service._active_codes_price)
                     )
 
         if self._streaming_logger:
