@@ -21,23 +21,25 @@
     </div>
 
     <!-- 관심종목 목록 테이블 -->
-    <div class="table-container">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>종목코드</th>
-                    <th>종목명</th>
-                    <th>현재가</th>
-                    <th>등락률</th>
-                    <th>액션</th>
-                </tr>
-            </thead>
-            <tbody id="favorite-list-body">
-                <tr id="fav-loading-row">
-                    <td colspan="5" style="text-align:center; color: var(--text-secondary);">로딩 중...</td>
-                </tr>
-            </tbody>
-        </table>
+    <div class="card">
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>종목코드</th>
+                        <th>종목명</th>
+                        <th>현재가</th>
+                        <th>등락률</th>
+                        <th>액션</th>
+                    </tr>
+                </thead>
+                <tbody id="favorite-list-body">
+                    <tr id="fav-loading-row">
+                        <td colspan="5" style="text-align:center; color: var(--text-secondary);">로딩 중...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 {% endblock %}

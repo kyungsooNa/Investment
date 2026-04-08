@@ -293,6 +293,21 @@ async function searchStock(codeOverride, exchangeOverride) {
                  .stock-info-box .detail-group p strong { color: var(--text-secondary); }
                  .stock-info-box .price.text-red { color: #e94560; }
                  .stock-info-box .price.text-blue { color: #1e90ff; }
+                 .fav-star-btn {
+                     position: absolute;
+                     top: 16px;
+                     right: 16px;
+                     background: transparent;
+                     border: none;
+                     font-size: 1.8rem;
+                     cursor: pointer;
+                     padding: 0;
+                     color: #ccc;
+                     transition: transform 0.2s, color 0.2s;
+                     line-height: 1;
+                 }
+                 .fav-star-btn:hover { transform: scale(1.15); }
+                 .fav-star-btn.active { color: #ffc107; }
             </style>
         `;
 
@@ -305,12 +320,11 @@ async function searchStock(codeOverride, exchangeOverride) {
         `;
 
         resultDiv.innerHTML = styles + `
-            <div class="card stock-info-box">
+            <div class="card stock-info-box" style="position: relative;">
+                <button id="fav-toggle-btn" class="fav-star-btn" onclick="toggleFavorite('${data.code}')" title="관심종목">☆</button>
                 ${exchangeButtons}
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                     <h3 class="stock-title" style="margin:0;">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
-                    <button id="fav-toggle-btn" class="btn btn-sm" onclick="toggleFavorite('${data.code}')"
-                            style="font-size:0.85rem; padding:4px 10px;">☆ 관심종목</button>
                 </div>
                 <p class="price ${changeClass}">${fnum(data.price, '원')}</p>
                 <p class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
@@ -412,20 +426,20 @@ async function _updateFavBtn(code) {
 
 function _setFavBtnState(btn, isFav) {
     if (isFav) {
-        btn.textContent = '★ 관심종목 해제';
-        btn.style.background = 'var(--accent)';
-        btn.style.color = '#fff';
+        btn.textContent = '★';
+        btn.classList.add('active');
+        btn.title = '관심종목 해제';
     } else {
-        btn.textContent = '☆ 관심종목 추가';
-        btn.style.background = '';
-        btn.style.color = '';
+        btn.textContent = '☆';
+        btn.classList.remove('active');
+        btn.title = '관심종목 추가';
     }
 }
 
 async function toggleFavorite(code) {
     const btn = document.getElementById('fav-toggle-btn');
     if (!btn) return;
-    const isFav = btn.textContent.includes('해제');
+    const isFav = btn.classList.contains('active');
     try {
         const method = isFav ? 'DELETE' : 'POST';
         const resp = await fetch(`/api/favorite/${code}`, { method });
