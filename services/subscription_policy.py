@@ -318,10 +318,12 @@ class SubscriptionPolicy:
                     await self._streaming_stock_repo.mark_active(code, stream_type)
                 if self._streaming_logger:
                     categories = self._refs.get(code, {})
+                    # 로거 호환성을 위해 과거 구조(value가 int인 형태)로 파싱하여 전달
+                    logger_categories = {k: int(v["priority"]) for k, v in categories.items()}
                     total_active_count = len(self._active_codes_price) + len(self._active_codes_pt)
                     self._streaming_logger.log_subscribe(
                         code=code,
-                        categories=categories,
+                        categories=logger_categories,
                         active_count=total_active_count,
                     )
             else:
