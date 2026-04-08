@@ -29,17 +29,17 @@ class FavoriteService:
         self.stock_query_service = stock_query_service
         self.stock_repository = stock_repository
 
-    def get_all(self) -> list:
-        return self.repository.get_all()
+    async def get_all(self) -> list:
+        return await self.repository.get_all()
 
-    def add(self, code: str) -> bool:
-        return self.repository.add(code)
+    async def add(self, code: str) -> bool:
+        return await self.repository.add(code)
 
-    def remove(self, code: str) -> bool:
-        return self.repository.remove(code)
+    async def remove(self, code: str) -> bool:
+        return await self.repository.remove(code)
 
-    def is_favorite(self, code: str) -> bool:
-        return self.repository.is_favorite(code)
+    async def is_favorite(self, code: str) -> bool:
+        return await self.repository.is_favorite(code)
 
     async def get_with_details(self) -> list:
         """관심종목 목록에 종목명·현재가·등락률을 포함하여 반환.
@@ -49,7 +49,7 @@ class FavoriteService:
         3단계: 개별 current_price API 호출 (5초 timeout, 실전/모의 공통)
         stock_query_service 없으면 종목명만 반환 (graceful degradation).
         """
-        codes = self.repository.get_all()
+        codes = await self.repository.get_all()
         if not codes:
             return []
 

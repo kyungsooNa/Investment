@@ -1,40 +1,54 @@
 {% extends "base.html" %}
 
 {% block content %}
+    <style>
+        .menu-card {
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+        }
+        .menu-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+            border-color: var(--accent, #4a90e2);
+        }
+    </style>
     <div class="section">
         <div class="card" style="text-align: center; padding: 48px 24px;">
             <h2 style="margin-bottom: 12px;">Investment</h2>
             <p style="color: var(--text-secondary); margin-bottom: 32px;">한국투자증권 Open API 기반 주식 자동매매 시스템</p>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; max-width: 800px; margin: 0 auto;">
-                <a href="/stock" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                <a href="/stock" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">📈</div>
                     <div style="font-weight: 600;">현재가 조회</div>
                 </a>
-                <a href="/balance" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                <a href="/favorite" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">⭐</div>
+                    <div style="font-weight: 600;">즐겨찾기</div>
+                </a>
+                <a href="/balance" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">💰</div>
                     <div style="font-weight: 600;">계좌 잔고</div>
                 </a>
-                <a href="/order" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                <a href="/order" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">🛒</div>
                     <div style="font-weight: 600;">매수/매도</div>
                 </a>
-                <a href="/ranking" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                <a href="/ranking" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">🏆</div>
                     <div style="font-weight: 600;">랭킹</div>
                 </a>
-                <a href="/virtual" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                <a href="/virtual" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">📊</div>
                     <div style="font-weight: 600;">모의투자 기록</div>
                 </a>
-                <a href="/scheduler" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                <a href="/scheduler" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">⏰</div>
                     <div style="font-weight: 600;">전략 스케줄러</div>
                 </a>
-                <a href="/program" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                <a href="/program" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">🖥️</div>
                     <div style="font-weight: 600;">프로그램매매</div>
                 </a>
-                <a href="/system" class="card" style="text-decoration: none; padding: 20px; text-align: center;">
+                <a href="/system" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">⚙️</div>
                     <div style="font-weight: 600;">시스템 상태</div>
                 </a>

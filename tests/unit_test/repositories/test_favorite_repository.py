@@ -1,74 +1,82 @@
 """
 FavoriteRepository 단위 테스트.
 """
-import json
 import pytest
+import aiosqlite
 from repositories.favorite_repository import FavoriteRepository
 
 
 @pytest.fixture
-def repo(tmp_path):
-    """임시 경로를 사용하는 FavoriteRepository 픽스처."""
-    r = FavoriteRepository.__new__(FavoriteRepository)
-    import threading
-    r._lock = threading.Lock()
-    r.FILE_PATH = tmp_path / "favorites.json"
-    r._ensure_file()
-    return r
+async def repo(tmp_path):
+    return FavoriteRepository(db_path=tmp_path / "favorites.db")
 
 
-def test_initial_empty(repo):
-    assert repo.get_all() == []
+async def test_initial_empty(repo):
+    assert await repo.get_all() == []
 
 
-def test_add_new(repo):
-    result = repo.add("005930")
+async def test_add_new(repo):
+    result = await repo.add("005930")
     assert result is True
-    assert repo.get_all() == ["005930"]
+    assert await repo.get_all() == ["005930"]
 
 
-def test_add_duplicate(repo):
-    repo.add("005930")
-    result = repo.add("005930")
+async def test_add_duplicate(repo):
+    await repo.add("005930")
+    result = await repo.add("005930")
     assert result is False
-    assert repo.get_all().count("005930") == 1
+    assert (await repo.get_all()).count("005930") == 1
 
 
-def test_add_multiple_preserves_order(repo):
-    repo.add("005930")
-    repo.add("000660")
-    repo.add("035720")
-    assert repo.get_all() == ["005930", "000660", "035720"]
+async def test_add_multiple_preserves_order(repo):
+    await repo.add("005930")
+    await repo.add("000660")
+    await repo.add("035720")
+    assert await repo.get_all() == ["005930", "000660", "035720"]
 
 
-def test_remove_existing(repo):
-    repo.add("005930")
-    result = repo.remove("005930")
+async def test_remove_existing(repo):
+    await repo.add("005930")
+    result = await repo.remove("005930")
     assert result is True
-    assert repo.get_all() == []
+    assert await repo.get_all() == []
 
 
-def test_remove_nonexistent(repo):
-    result = repo.remove("999999")
+async def test_remove_nonexistent(repo):
+    result = await repo.remove("999999")
     assert result is False
 
 
-def test_is_favorite_true(repo):
-    repo.add("005930")
-    assert repo.is_favorite("005930") is True
+async def test_is_favorite_true(repo):
+    await repo.add("005930")
+    assert await repo.is_favorite("005930") is True
 
 
-def test_is_favorite_false(repo):
-    assert repo.is_favorite("005930") is False
+async def test_is_favorite_false(repo):
+    assert await repo.is_favorite("005930") is False
 
 
-def test_persists_to_file(repo, tmp_path):
-    repo.add("005930")
-    raw = json.loads((tmp_path / "favorites.json").read_text(encoding="utf-8"))
-    assert "005930" in raw["favorites"]
-    assert "updated_at" in raw
+async def test_persists_to_db(repo, tmp_path):
+    await repo.add("005930")
+    db_path = tmp_path / "favorites.db"
+    assert db_path.exists()
+    async with aiosqlite.connect(db_path) as conn:
+        async with conn.execute("SELECT code FROM favorites") as cur:
+            rows = await cur.fetchall()
+    assert ("005930",) in rows
 
 
-def test_corrupt_file_returns_empty(repo, tmp_path):
-    (tmp_path / "favorites.json").write_text("not json", encoding="utf-8")
-    assert repo.get_all() == []
+async def test_idempotent_add(repo):
+    """동일 코드 여러 번 추가해도 중복 없음 (멱등성)."""
+    for _ in range(3):
+        await repo.add("005930")
+    assert await repo.get_all() == ["005930"]
+
+
+async def test_add_and_remove_cycle(repo):
+    """추가 → 제거 → 재추가 정상 동작."""
+    await repo.add("005930")
+    await repo.remove("005930")
+    result = await repo.add("005930")
+    assert result is True
+    assert await repo.get_all() == ["005930"]
