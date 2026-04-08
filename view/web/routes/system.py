@@ -199,11 +199,13 @@ def get_subscription_status():
             received_at = None
             if isinstance(price_info, dict):
                 received_at = price_info.get("received_at")
+                price = price_info.get("price")
             result.append({
                 "code": code,
                 "name": name,
                 "active": code in active_set, # 병합된 active_set을 통해 활성화 여부 확인
                 "received_at": received_at,
+                "price": price,
             })
         return result
 
