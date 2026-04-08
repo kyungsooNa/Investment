@@ -44,7 +44,26 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+    var ALL_STOCKS = (function() {
+        try {
+            var cached = localStorage.getItem('all_stocks_v2');
+            if (cached) return JSON.parse(cached);
+        } catch(e) {}
+        return null;
+    })();
+
+    if (!ALL_STOCKS) {
+        fetch('/api/stocks/list')
+            .then(function(r) { return r.json(); })
+            .then(function(json) {
+                ALL_STOCKS = json.stocks || [];
+                try { localStorage.setItem('all_stocks_v2', JSON.stringify(ALL_STOCKS)); } catch(e) {}
+                document.dispatchEvent(new CustomEvent('all-stocks-ready', { detail: ALL_STOCKS }));
+            })
+            .catch(function() { ALL_STOCKS = []; });
+    }
+</script>
 <script src="/static/js/autocomplete.js?v=1"></script>
-<script src="/static/js/stock.js?v=7"></script>
 <script src="/static/js/favorite.js?v=2"></script>
 {% endblock %}
