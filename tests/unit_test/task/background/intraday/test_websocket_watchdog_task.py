@@ -705,17 +705,17 @@ async def test_restore_sequence_accounts_for_pt_slots(watchdog_task, mock_price_
     """
     svc = watchdog_task
     svc._price_subscription_service = mock_price_subscription_service
-    
+
     # 1. PT 종목 1개 설정
     pt_codes = ["005930"]
     svc._streaming_stock_repo.get_desired.return_value = set(pt_codes)
-    
+
     # 2. 호출 순서 추적을 위해 상위 Mock 생성
     # (주의: 실제 객체의 메서드를 Mock으로 교체하여 추적)
     with patch.object(svc._streaming_stock_repo, 'mark_active', new_callable=AsyncMock) as mock_mark, \
          patch.object(mock_price_subscription_service, '_rebalance', new_callable=AsyncMock) as mock_rebal, \
          patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
-        
+
         # 순서 기록용 매니저
         manager = MagicMock()
         manager.attach_mock(mock_mark, 'mark_active')
@@ -729,4 +729,83 @@ async def test_restore_sequence_accounts_for_pt_slots(watchdog_task, mock_price_
             call.rebalance()
         ]
         manager.assert_has_calls(expected_calls, any_order=False)
+
+
+# ── Bug Fix: Price-only 구독 시 connect_websocket 누락 버그 수정 검증 ──────────
+
+@pytest.mark.asyncio
+async def test_restore_price_only_calls_connect_websocket(watchdog_task, mock_price_subscription_service, mock_streaming_logger):
+    """[Bug Fix] PT 구독 없이 H0UNCNT0만 있을 때 _rebalance() 전에 connect_websocket()이 호출된다.
+
+    이전에는 PT 루프에서만 connect_websocket()을 호출했기 때문에
+    PT 종목이 없을 경우 WebSocket 미연결 상태로 _rebalance()가 실행되어 구독 실패했음.
+    """
+    svc = watchdog_task
+    svc._price_subscription_service = mock_price_subscription_service
+    svc._streaming_logger = mock_streaming_logger
+    svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
+
+    call_order = []
+    svc._streaming_service.connect_websocket = AsyncMock(
+        side_effect=lambda **_: call_order.append("connect") or True
+    )
+    mock_price_subscription_service._rebalance = AsyncMock(
+        side_effect=lambda: call_order.append("rebalance")
+    )
+
+    await svc._restore_all_subscriptions()
+
+    assert "connect" in call_order
+    assert "rebalance" in call_order
+    assert call_order.index("connect") < call_order.index("rebalance")
+
+
+@pytest.mark.asyncio
+async def test_restore_price_only_connect_failed_logs_failure(watchdog_task, mock_price_subscription_service, mock_streaming_logger):
+    """[Bug Fix] H0UNCNT0 복원 시 connect_websocket()이 False를 반환하면 실패 로그를 남긴다."""
+    svc = watchdog_task
+    svc._price_subscription_service = mock_price_subscription_service
+    svc._streaming_logger = mock_streaming_logger
+    svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
+    svc._streaming_service.connect_websocket = AsyncMock(return_value=False)
+
+    await svc._restore_all_subscriptions()
+
+    mock_streaming_logger.log_pt_restore_connect_failed.assert_called_once_with("H0UNCNT0")
+
+
+@pytest.mark.asyncio
+async def test_restore_price_done_log_called_with_single_arg(watchdog_task, mock_price_subscription_service, mock_streaming_logger):
+    """[Bug Fix] log_price_restore_done()이 인자 1개(active_count)만 받아야 한다.
+
+    이전에는 log_price_restore_done(active_count, desired_count)로 인자 2개를 전달해
+    'takes 2 positional arguments but 3 were given' 오류가 발생했음.
+    """
+    svc = watchdog_task
+    svc._price_subscription_service = mock_price_subscription_service
+    svc._streaming_logger = mock_streaming_logger
+    svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
+
+    await svc._restore_all_subscriptions()
+
+    mock_streaming_logger.log_price_restore_done.assert_called_once()
+    args, kwargs = mock_streaming_logger.log_price_restore_done.call_args
+    # 인자가 정확히 1개여야 함 (active_count만)
+    assert len(args) == 1
+    assert len(kwargs) == 0
+
+
+@pytest.mark.asyncio
+async def test_restore_price_done_log_reflects_active_count(watchdog_task, mock_price_subscription_service, mock_streaming_logger):
+    """log_price_restore_done()에 전달되는 값이 _active_codes_price의 실제 크기와 일치한다."""
+    svc = watchdog_task
+    svc._price_subscription_service = mock_price_subscription_service
+    svc._streaming_logger = mock_streaming_logger
+    svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
+    mock_price_subscription_service._active_codes_price = {"005930", "000660"}
+
+    await svc._restore_all_subscriptions()
+
+    args, _ = mock_streaming_logger.log_price_restore_done.call_args
+    assert args[0] == 2  # _active_codes_price 크기와 동일
     
