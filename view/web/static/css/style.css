@@ -135,7 +135,7 @@ input:focus, select:focus {
 }
 
 /* 종목 자동완성 드롭다운 */
-#stock-autocomplete-list {
+.autocomplete-list {
     display: none;
     position: absolute;
     top: 100%;
@@ -153,15 +153,15 @@ input:focus, select:focus {
     z-index: 100;
 }
 
-#stock-autocomplete-list li {
+.autocomplete-list li {
     padding: 8px 12px;
     cursor: pointer;
     font-size: 0.9rem;
     color: var(--text-primary);
 }
 
-#stock-autocomplete-list li:hover,
-#stock-autocomplete-list li.active {
+.autocomplete-list li:hover,
+.autocomplete-list li.active {
     background: var(--accent);
     color: #fff;
 }

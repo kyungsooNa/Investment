@@ -13,9 +13,9 @@
             <h2>종목 현재가 조회</h2>
             <div class="form-row" style="position: relative;">
                 <label>종목코드/종목명</label>
-                <input type="text" id="stock-code-input" placeholder="예: 005930 / 삼성전자 / ㅅㅅㅈㅈ" autocomplete="off" onkeydown="if(event.key==='Enter') searchStock()">
+                <input type="text" id="stock-code-input" placeholder="예: 005930 / 삼성전자 / ㅅㅅㅈㅈ / 삼성ㅈㅈ" autocomplete="off">
                 <button class="btn" onclick="searchStock()">조회</button>
-                <ul id="stock-autocomplete-list"></ul>
+                <ul id="stock-autocomplete-list" class="autocomplete-list"></ul>
             </div>
         </div>
         <div id="stock-result"></div>
@@ -51,7 +51,8 @@
             .catch(function() { ALL_STOCKS = []; });
     }
 </script>
-<script src="/static/js/stock.js?v=6"></script>
+<script src="/static/js/autocomplete.js?v=1"></script>
+<script src="/static/js/stock.js?v=7"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const urlParams = new URLSearchParams(window.location.search);

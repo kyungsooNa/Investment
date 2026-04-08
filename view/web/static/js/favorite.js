@@ -1,86 +1,18 @@
 /* view/web/static/js/favorite.js — 관심종목 페이지 동적 이벤트 관리 */
 
-/* ── 자동완성 (stock.js의 _stocks 데이터 재사용) ── */
-(function () {
-    let _favStocks = [];
-    let _activeIndex = -1;
-
-    function _setupStocks(raw) {
-        _favStocks = raw || [];
-        for (let i = 0; i < _favStocks.length; i++) {
-            if (!_favStocks[i].ch && typeof _getChosung === 'function') {
-                _favStocks[i].ch = _getChosung(_favStocks[i].n);
-            }
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', function () {
+/* ── 종목명 자동완성 (autocomplete.js 모듈 사용) ── */
+StockAutocomplete({
+    inputId: 'fav-search-input',
+    listId: 'fav-autocomplete-list',
+    onSelect: function(code, name) {
         const input = document.getElementById('fav-search-input');
-        const list = document.getElementById('fav-autocomplete-list');
-        if (!input || !list) return;
-
-        if (typeof ALL_STOCKS !== 'undefined' && ALL_STOCKS) _setupStocks(ALL_STOCKS);
-        document.addEventListener('all-stocks-ready', function (e) { _setupStocks(e.detail); });
-
-        input.addEventListener('input', function () {
-            const q = input.value.trim();
-            _activeIndex = -1;
-            if (!q) { list.innerHTML = ''; list.style.display = 'none'; return; }
-
-            const results = [];
-            const isDigit = /^\d+$/.test(q);
-            const isCho = typeof _isChosung === 'function' ? _isChosung(q) : false;
-            const qLower = q.toLowerCase();
-
-            for (let i = 0; i < _favStocks.length && results.length < 20; i++) {
-                const s = _favStocks[i];
-                if (isDigit) {
-                    if (s.c.startsWith(q)) results.push(s);
-                } else if (isCho) {
-                    if (s.ch && s.ch.startsWith(q)) results.push(s);
-                } else {
-                    if (s.n.toLowerCase().includes(qLower)) results.push(s);
-                }
-            }
-
-            if (!results.length) { list.innerHTML = ''; list.style.display = 'none'; return; }
-
-            list.innerHTML = results.map(s =>
-                `<div class="autocomplete-item" data-code="${s.c}" data-name="${s.n}">${s.n} (${s.c})</div>`
-            ).join('');
-            list.style.display = 'block';
-
-            list.querySelectorAll('.autocomplete-item').forEach(item => {
-                item.addEventListener('click', function () {
-                    input.value = `${this.dataset.name} (${this.dataset.code})`;
-                    input.dataset.selectedCode = this.dataset.code;
-                    list.innerHTML = '';
-                    list.style.display = 'none';
-                });
-            });
-        });
-
-        input.addEventListener('keydown', function (e) {
-            const items = list.querySelectorAll('.autocomplete-item');
-            if (e.key === 'ArrowDown') { _activeIndex = Math.min(_activeIndex + 1, items.length - 1); }
-            else if (e.key === 'ArrowUp') { _activeIndex = Math.max(_activeIndex - 1, 0); }
-            else { return; }
-            items.forEach((el, i) => el.classList.toggle('active', i === _activeIndex));
-            if (items[_activeIndex]) {
-                input.value = `${items[_activeIndex].dataset.name} (${items[_activeIndex].dataset.code})`;
-                input.dataset.selectedCode = items[_activeIndex].dataset.code;
-            }
-            e.preventDefault();
-        });
-
-        document.addEventListener('click', function (e) {
-            if (!input.contains(e.target) && !list.contains(e.target)) {
-                list.innerHTML = '';
-                list.style.display = 'none';
-            }
-        });
-    });
-})();
+        if (input) {
+            input.value = name + ' (' + code + ')';
+            input.dataset.selectedCode = code;
+        }
+    },
+    onConfirm: function() { addFavoriteFromInput(); }
+});
 
 /* ── 목록 로드 ── */
 async function loadFavoriteList() {

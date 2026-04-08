@@ -9,11 +9,10 @@
         <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;">
             <div style="position: relative; flex: 1; min-width: 200px;">
                 <input type="text" id="fav-search-input"
-                       placeholder="예: 005930 / 삼성전자 / ㅅㅅㅈㅈ"
+                       placeholder="예: 005930 / 삼성전자 / ㅅㅅㅈㅈ / 삼성ㅈㅈ"
                        autocomplete="off"
-                       style="width: 100%; box-sizing: border-box;"
-                       onkeydown="if(event.key==='Enter') addFavoriteFromInput()">
-                <div id="fav-autocomplete-list" class="autocomplete-list" style="display:none;"></div>
+                       style="width: 100%; box-sizing: border-box;">
+                <ul id="fav-autocomplete-list" class="autocomplete-list" style="display:none;"></ul>
             </div>
             <button class="btn" onclick="addFavoriteFromInput()">★ 추가</button>
             <button class="btn" onclick="loadFavoriteList()" style="margin-left:4px;">새로고침</button>
@@ -45,6 +44,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/stock.js?v=1"></script>
-<script src="/static/js/favorite.js?v=1"></script>
+<script src="/static/js/autocomplete.js?v=1"></script>
+<script src="/static/js/stock.js?v=7"></script>
+<script src="/static/js/favorite.js?v=2"></script>
 {% endblock %}
