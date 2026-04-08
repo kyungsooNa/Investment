@@ -226,8 +226,9 @@ class WebAppContext:
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
-        # FavoriteService에 StockQueryService 주입 (현재가 조회용)
+        # FavoriteService에 StockQueryService, StockRepository 주입 (현재가 조회용)
         self.favorite_service.stock_query_service = self.stock_query_service
+        self.favorite_service.stock_repository = self.stock_repository
         # StreamingService 초기화
         self.streaming_service = StreamingService(
             broker_api_wrapper=self.broker,
