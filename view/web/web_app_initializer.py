@@ -390,7 +390,7 @@ class WebAppContext:
                     code = item.get("pdno", "").strip()
                     if code:
                         await self.price_subscription_service.add_subscription(
-                            code, SubscriptionPriority.HIGH, "portfolio"
+                            code, SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE
                         )
         except Exception as e:
             self.logger.warning(f"보유 종목 구독 초기화 실패: {e}")
