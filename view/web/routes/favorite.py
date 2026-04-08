@@ -34,23 +34,23 @@ async def get_favorite_list():
 
 
 @router.post("/{code}")
-def add_favorite(code: str):
+async def add_favorite(code: str):
     """관심종목 추가."""
     ctx = _get_ctx()
-    added = ctx.favorite_service.add(code)
+    added = await ctx.favorite_service.add(code)
     return {"success": True, "added": added, "code": code}
 
 
 @router.delete("/{code}")
-def remove_favorite(code: str):
+async def remove_favorite(code: str):
     """관심종목 제거."""
     ctx = _get_ctx()
-    removed = ctx.favorite_service.remove(code)
+    removed = await ctx.favorite_service.remove(code)
     return {"success": True, "removed": removed, "code": code}
 
 
 @router.get("/{code}/status")
-def get_favorite_status(code: str):
+async def get_favorite_status(code: str):
     """특정 종목의 관심종목 등록 여부 확인 (stock.js 버튼 초기 상태용)."""
     ctx = _get_ctx()
-    return {"code": code, "is_favorite": ctx.favorite_service.is_favorite(code)}
+    return {"code": code, "is_favorite": await ctx.favorite_service.is_favorite(code)}

@@ -1,65 +1,63 @@
 """
-관심종목 저장소 - JSON 파일 기반 (data/favorites.json).
+관심종목 저장소 - SQLite 기반 (data/favorites.db).
 """
-import json
-import threading
-from datetime import datetime
+import aiosqlite
 from pathlib import Path
+
+_CREATE_TABLE = """
+CREATE TABLE IF NOT EXISTS favorites (
+    code     TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+)
+"""
 
 
 class FavoriteRepository:
-    FILE_PATH = Path("data/favorites.json")
+    DB_PATH = Path("data/favorites.db")
 
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._ensure_file()
+    def __init__(self, db_path: Path | None = None):
+        self._db_path = db_path or self.DB_PATH
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _ensure_file(self) -> None:
-        self.FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if not self.FILE_PATH.exists():
-            self._save([])
+    async def _setup(self, conn: aiosqlite.Connection) -> None:
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute(_CREATE_TABLE)
+        await conn.commit()
 
-    def _load(self) -> list:
-        try:
-            with open(self.FILE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data.get("favorites", [])
-        except (json.JSONDecodeError, OSError):
-            return []
+    async def get_all(self) -> list[str]:
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._setup(conn)
+            async with conn.execute(
+                "SELECT code FROM favorites ORDER BY created_at ASC, rowid ASC"
+            ) as cur:
+                rows = await cur.fetchall()
+        return [row[0] for row in rows]
 
-    def _save(self, codes: list) -> None:
-        with open(self.FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(
-                {"favorites": codes, "updated_at": datetime.now().isoformat()},
-                f,
-                ensure_ascii=False,
-                indent=2,
+    async def add(self, code: str) -> bool:
+        """종목 추가. 이미 존재하면 False 반환 (멱등성 보장)."""
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._setup(conn)
+            cur = await conn.execute(
+                "INSERT OR IGNORE INTO favorites (code) VALUES (?)", (code,)
             )
+            await conn.commit()
+            return cur.rowcount > 0
 
-    def get_all(self) -> list:
-        with self._lock:
-            return list(self._load())
-
-    def add(self, code: str) -> bool:
-        """종목 추가. 이미 존재하면 False 반환."""
-        with self._lock:
-            codes = self._load()
-            if code in codes:
-                return False
-            codes.append(code)
-            self._save(codes)
-            return True
-
-    def remove(self, code: str) -> bool:
+    async def remove(self, code: str) -> bool:
         """종목 제거. 없으면 False 반환."""
-        with self._lock:
-            codes = self._load()
-            if code not in codes:
-                return False
-            codes.remove(code)
-            self._save(codes)
-            return True
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._setup(conn)
+            cur = await conn.execute(
+                "DELETE FROM favorites WHERE code = ?", (code,)
+            )
+            await conn.commit()
+            return cur.rowcount > 0
 
-    def is_favorite(self, code: str) -> bool:
-        with self._lock:
-            return code in self._load()
+    async def is_favorite(self, code: str) -> bool:
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._setup(conn)
+            async with conn.execute(
+                "SELECT 1 FROM favorites WHERE code = ? LIMIT 1", (code,)
+            ) as cur:
+                row = await cur.fetchone()
+        return row is not None
