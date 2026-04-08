@@ -408,7 +408,7 @@ setInterval(updateBackgroundStatus, 5000);
 // ── 실시간 현재가 구독 현황 ──────────────────────────────────
 
 let _subData = null;
-let _subTab = 'HIGH';
+let _subTab = 'CRITICAL';
 
 function selectSubTab(btn, priority) {
     _subTab = priority;
