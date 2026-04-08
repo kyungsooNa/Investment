@@ -122,12 +122,25 @@ class AfterMarketTask(SchedulableTask, ABC):
 
     async def _after_market_scheduler(self) -> None:
         """장 마감 후 자동으로 작업을 스케줄링하는 루프."""
+        # 루프 진입 = 대기 구간 시작 → IDLE
+        if self._state not in (TaskState.SUSPENDED, TaskState.STOPPED):
+            self._state = TaskState.IDLE
+
+        async def _on_closed_with_state(date: str) -> None:
+            if self._state not in (TaskState.SUSPENDED, TaskState.STOPPED):
+                self._state = TaskState.RUNNING
+            try:
+                await self._on_market_closed(date)
+            finally:
+                if self._state == TaskState.RUNNING:
+                    self._state = TaskState.IDLE  # 작업 완료 → 대기 복귀
+
         delay_sec = _load_after_market_delays().get(self.task_name, 0)
         await run_after_market_loop(
             mcs=self._mcs,
             market_clock=self._market_clock,
             logger=self._logger,
-            on_market_closed=self._on_market_closed,
+            on_market_closed=_on_closed_with_state,
             label=self._scheduler_label,
             delay_sec=delay_sec,
         )

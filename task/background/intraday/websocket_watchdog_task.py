@@ -73,7 +73,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         """WebSocket 워치독 + 구독 복원 태스크를 시작한다."""
         if self._state == TaskState.RUNNING:
             return
-        self._state = TaskState.RUNNING
+        self._state = TaskState.IDLE  # 워치독 루프가 장 중 여부 확인 후 RUNNING으로 전환
 
         # 1. 실시간 데이터 매니저 백그라운드 태스크 (데이터 정리 등)
         if self._program_trading_stream_service:
@@ -163,6 +163,13 @@ class WebSocketWatchdogTask(SchedulableTask):
 
                 market_is_open = bool(self.mcs and await self.mcs.is_market_open_now())
                 self._market_open = market_is_open
+
+                # 장 개폐에 따른 state 전환 (SUSPENDED/STOPPED는 건드리지 않음)
+                if market_is_open and self._state == TaskState.IDLE:
+                    self._state = TaskState.RUNNING
+                elif not market_is_open and self._state == TaskState.RUNNING:
+                    self._state = TaskState.IDLE
+
                 if not market_is_open:
                     # 장 마감 시간이면 연결을 명시적으로 종료하여 리소스 정리
                     if self._streaming_service and self._streaming_service.broker.is_websocket_receive_alive():

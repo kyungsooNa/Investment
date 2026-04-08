@@ -25,6 +25,7 @@ class BackgroundScheduler:
         self._logger = logger or logging.getLogger(__name__)
         self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._tasks: Dict[str, SchedulableTask] = {}  # name -> task
+        self._started_tasks: set = set()  # start()가 호출된 태스크 이름 집합
 
     def register(self, task: SchedulableTask) -> None:
         """SchedulableTask를 등록한다."""
