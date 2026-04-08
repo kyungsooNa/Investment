@@ -297,17 +297,23 @@ async function searchStock(codeOverride, exchangeOverride) {
                      position: absolute;
                      top: 16px;
                      right: 16px;
-                     background: transparent;
-                     border: none;
-                     font-size: 1.8rem;
+                     background: var(--bg-primary, #f5f5f5);
+                     border: 1px solid var(--border, #ccc);
+                     border-radius: 8px;
+                     width: 38px;
+                     height: 38px;
+                     display: flex;
+                     align-items: center;
+                     justify-content: center;
+                     font-size: 1.5rem;
                      cursor: pointer;
                      padding: 0;
-                     color: #ccc;
-                     transition: transform 0.2s, color 0.2s;
-                     line-height: 1;
+                     color: #aaa;
+                     transition: all 0.2s;
+                     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
                  }
-                 .fav-star-btn:hover { transform: scale(1.15); }
-                 .fav-star-btn.active { color: #ffc107; }
+                 .fav-star-btn:hover { transform: scale(1.05); background: var(--bg-card, #e8e8e8); }
+                 .fav-star-btn.active { color: #ffc107; border-color: #ffc107; }
             </style>
         `;
 

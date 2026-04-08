@@ -81,9 +81,9 @@ async def test_get_with_details_no_query_service(service, mock_repo, mock_stock_
 async def test_get_with_details_with_price(mock_repo, mock_stock_code_repo):
     mock_repo.get_all.return_value = ["005930"]
     mock_query = AsyncMock()
-    mock_query.get_multi_price.return_value = ResCommonResponse(
+    mock_query.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK",
-        data=[{"stck_shrn_iscd": "005930", "stck_prpr": "75000", "prdy_ctrt": "1.5"}],
+        data={"output": {"stck_shrn_iscd": "005930", "stck_prpr": "75000", "prdy_ctrt": "1.5"}},
     )
     svc = FavoriteService(
         repository=mock_repo,
@@ -100,7 +100,7 @@ async def test_get_with_details_price_api_failure(mock_repo, mock_stock_code_rep
     """stock_query_service 예외 발생 시 price=None으로 graceful degradation."""
     mock_repo.get_all.return_value = ["005930"]
     mock_query = AsyncMock()
-    mock_query.get_multi_price.side_effect = Exception("API error")
+    mock_query.get_current_price.side_effect = Exception("API error")
     svc = FavoriteService(
         repository=mock_repo,
         stock_code_repository=mock_stock_code_repo,
