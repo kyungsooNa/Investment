@@ -197,6 +197,7 @@ def get_subscription_status():
             name = ctx.stock_code_repository.get_name_by_code(code) or code
             price_info = streaming_svc.get_cached_realtime_price(code) if streaming_svc else None
             received_at = None
+            price = None
             if isinstance(price_info, dict):
                 received_at = price_info.get("received_at")
                 price = price_info.get("price")

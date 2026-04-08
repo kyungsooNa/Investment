@@ -6,6 +6,7 @@ import asyncio
 import time
 from fastapi import APIRouter, HTTPException, Query
 from common.types import Exchange
+from repositories.streaming_stock_repo import StreamingType
 from services.price_subscription_service import SubscriptionPriority
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
 import view.web.api_common as api_common
