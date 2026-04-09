@@ -2,9 +2,14 @@
 계좌 잔고 관련 테스트 (balance.html).
 """
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from common.types import ResCommonResponse
 
+@pytest.fixture(autouse=True)
+def mock_after_market_start():
+    """백그라운드 태스크가 생성되어 테스트 종료 시 GeneratorExit 예외가 발생하는 것을 방지"""
+    with patch("task.background.after_market.after_market_task_base.AfterMarketTask.start", new_callable=AsyncMock):
+        yield
 
 @pytest.mark.asyncio
 async def test_get_balance(web_client, mock_web_ctx):

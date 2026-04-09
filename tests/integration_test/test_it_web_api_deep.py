@@ -11,6 +11,7 @@ httpx 네트워크 호출만 mock한다.
     → TradingService → BrokerAPIWrapper → KoreaInvestApiClient
       → KoreaInvestApiBase._execute_request → [MOCK: _async_session.get/post]
 """
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from services.market_calendar_service import MarketCalendarService
@@ -23,6 +24,14 @@ from tests.integration_test.conftest import (
     make_http_response,
 )
 
+@pytest.fixture(autouse=True)
+async def flush_event_loop():
+    """
+    aiosqlite 워커 스레드가 테스트 종료 후 call_soon_threadsafe를 호출할 때
+    이벤트 루프가 닫혀 발생하는 PytestUnhandledThreadExceptionWarning 방지.
+    """
+    yield
+    await asyncio.sleep(0.1)
 
 # ============================================================================
 # 테스트 데이터 팩토리
