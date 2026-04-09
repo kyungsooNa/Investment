@@ -28,9 +28,10 @@
 
 {% block scripts %}
 <script src="/static/js/balance.js?v=2"></script>
+{% if initial_data %}
+<script id="page-initial-data" type="application/json">{{ initial_data | tojson | safe }}</script>
+{% endif %}
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        loadBalance();
-    });
+    loadBalance();
 </script>
 {% endblock %}

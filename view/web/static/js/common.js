@@ -90,19 +90,108 @@ async function withLoading(btn, targetEl, message, asyncFn) {
 }
 
 // ==========================================
-// 페이지 전환 로딩 오버레이
+// Pjax 비동기 라우팅
 // ==========================================
+
+// 이미 로드된 외부 스크립트 src URL 추적 (중복 로드 방지)
+const _loadedScripts = new Set(
+    Array.from(document.querySelectorAll('script[src]')).map(s => s.src)
+);
+
+// Chart.js 인스턴스 전역 레지스트리 — 페이지 전환 전 .destroy() 호출
+window.currentCharts = window.currentCharts || [];
+
+function loadScript(src) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+}
+
+async function executePageScripts(container) {
+    const scripts = Array.from(container.querySelectorAll('script'));
+    for (const oldScript of scripts) {
+        if (oldScript.src) {
+            const normalizedSrc = new URL(oldScript.src, location.href).href;
+            if (!_loadedScripts.has(normalizedSrc)) {
+                _loadedScripts.add(normalizedSrc);
+                try { await loadScript(oldScript.src); } catch (e) { console.error('Script load failed:', oldScript.src, e); }
+            }
+            // 이미 로드된 src 스크립트는 skip (중복 실행 방지)
+        } else if (oldScript.textContent.trim()) {
+            try { new Function(oldScript.textContent)(); } catch (e) { console.error('Inline script error:', e); }
+        }
+    }
+}
+
+function updateNavActive(pathname) {
+    document.querySelectorAll('nav.nav a').forEach(a => {
+        const href = a.getAttribute('href');
+        a.classList.toggle('active', href === pathname || (pathname === '/' && href === '/'));
+    });
+}
+
+async function navigatePjax(href) {
+    const overlay = document.getElementById('page-loading-overlay');
+    if (overlay) overlay.classList.add('active');
+
+    // 페이지 이탈 전 Chart.js 인스턴스 정리
+    if (window.currentCharts && window.currentCharts.length > 0) {
+        window.currentCharts.forEach(chart => { try { chart.destroy(); } catch (_) {} });
+        window.currentCharts = [];
+    }
+
+    try {
+        const response = await fetchWithTimeout(href, {}, 15000);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const html = await response.text();
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const newMain = doc.querySelector('#page-main');
+        if (!newMain) throw new Error('page-main not found');
+
+        const pageMain = document.querySelector('#page-main');
+        pageMain.innerHTML = newMain.innerHTML;
+
+        await executePageScripts(pageMain);
+
+        const targetPath = new URL(href, location.href).pathname;
+        window.history.pushState({path: href}, '', href);
+        updateNavActive(targetPath);
+
+        // 페이지별 외부 JS의 초기화 함수 트리거 (DOMContentLoaded 대체)
+        document.dispatchEvent(new CustomEvent('pjax:ready', { detail: { path: targetPath } }));
+
+    } catch (error) {
+        console.error('Pjax 전환 실패, 일반 이동:', error);
+        window.location.href = href;
+    } finally {
+        if (overlay) overlay.classList.remove('active');
+    }
+}
+
+// 네비게이션 클릭 가로채기
 document.addEventListener('click', (e) => {
     const link = e.target.closest('nav.nav a');
     if (!link) return;
     const href = link.getAttribute('href');
-    if (!href || href === '#' || href === window.location.pathname) return;
+    if (!href || href === '#') return;
+    if (new URL(href, location.href).pathname === location.pathname) return;
 
-    const overlay = document.getElementById('page-loading-overlay');
-    if (overlay) overlay.classList.add('active');
+    e.preventDefault();
+    navigatePjax(href);
 });
 
-// bfcache 복원 시 오버레이 해제
+// 뒤로가기/앞으로가기도 Pjax로 처리
+window.addEventListener('popstate', () => {
+    navigatePjax(location.pathname);
+});
+
+// bfcache 복원 시 오버레이 해제 (폴백)
 window.addEventListener('pageshow', () => {
     const overlay = document.getElementById('page-loading-overlay');
     if (overlay) overlay.classList.remove('active');

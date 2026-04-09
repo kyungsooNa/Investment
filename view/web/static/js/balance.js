@@ -149,6 +149,26 @@ function _showBalanceSkeleton() {
 async function loadBalance(exchange) {
     const exch = exchange || currentBalanceExchange || 'KRX';
     currentBalanceExchange = exch;
+
+    // 서버 하이드레이션 데이터 확인 (초기 fetch 워터폴 제거)
+    if (!exchange) {
+        const dataScript = document.getElementById('page-initial-data');
+        if (dataScript) {
+            try {
+                const json = JSON.parse(dataScript.textContent);
+                dataScript.remove(); // 1회 소비 후 삭제 (상태 오염 방지)
+                if (json && json.rt_cd === "0") {
+                    balanceSummaryCache = (json.data?.output2?.length > 0) ? json.data.output2[0] : {};
+                    balanceStocksCache = json.data?.output1 || [];
+                    balanceAccInfoCache = json.account_info || { number: '-', type: '-' };
+                    balanceSortState = { key: null, dir: 'asc' };
+                    renderBalanceTable();
+                    return;
+                }
+            } catch (_) { /* 파싱 실패 시 일반 fetch로 폴백 */ }
+        }
+    }
+
     _showBalanceSkeleton();
     try {
         const res = await fetchWithTimeout(`/api/balance?exchange=${exch}`);

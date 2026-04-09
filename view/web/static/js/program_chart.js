@@ -242,6 +242,8 @@ window.initProgramChart = function(timeUnit) {
             }
         }
     });
+    window.currentCharts = window.currentCharts || [];
+    window.currentCharts.push(ptChart);
 };
 
 /**
@@ -330,6 +332,7 @@ window.setPtChartTimeUnit = function(minutes) {
  */
 window.destroyProgramChart = function() {
     if (ptChart) {
+        if (window.currentCharts) window.currentCharts = window.currentCharts.filter(c => c !== ptChart);
         ptChart.destroy();
         ptChart = null;
     }

@@ -94,6 +94,8 @@ async function initVirtualChart() {
             }
         }
     });
+    window.currentCharts = window.currentCharts || [];
+    window.currentCharts.push(yieldChart);
 }
 
 /**
@@ -329,3 +331,13 @@ window.invalidateVirtualChartCache = function() {
 }
 
 document.addEventListener('DOMContentLoaded', initVirtualChart);
+
+/* ── Pjax 재방문 시 차트 재초기화 ── */
+document.addEventListener('pjax:ready', async (e) => {
+    if (e.detail?.path !== '/virtual') return;
+    // Pjax 클린업에서 destroy된 인스턴스 → null 리셋 후 재초기화
+    yieldChart = null;
+    chartInitPromise = null;
+    cachedAllChartData = null;
+    await initVirtualChart();
+});

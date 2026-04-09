@@ -56,6 +56,21 @@ StockAutocomplete({
     onConfirm: function() { searchStock(); }
 });
 
+/* ── Pjax 재방문 시 자동완성 재초기화 ── */
+document.addEventListener('pjax:ready', (e) => {
+    if (e.detail?.path !== '/stock') return;
+    StockAutocomplete({
+        inputId: 'stock-code-input',
+        listId: 'stock-autocomplete-list',
+        onSelect: function(code) {
+            const input = document.getElementById('stock-code-input');
+            if (input) input.value = code;
+            searchStock(code);
+        },
+        onConfirm: function() { searchStock(); }
+    });
+});
+
 /**
  * 입력값을 종목코드로 변환. 6자리 숫자면 그대로, 아니면 ALL_STOCKS에서 탐색.
  * 반환: { code, error } — code가 있으면 성공, error가 있으면 실패 메시지.

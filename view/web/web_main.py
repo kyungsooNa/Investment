@@ -248,7 +248,29 @@ async def stock(request: Request):
 
 @page_router.get("/balance")
 async def balance(request: Request):
-    return await render_page(request, "balance.html", "balance")
+    initial_data = None
+    try:
+        from common.types import Exchange
+        from view.web.api_common import _serialize_response
+        ctx = web_api._get_ctx()
+        resp = await ctx.stock_query_service.handle_get_account_balance(exchange=Exchange.KRX)
+        result = _serialize_response(resp)
+        # account_info 추가 (API 엔드포인트와 동일 로직)
+        env = getattr(ctx, 'env', None) or getattr(getattr(ctx, 'broker', None), 'env', None)
+        if env:
+            config = getattr(env, 'active_config', None) or {}
+            acc_no = (config.get("stock_account_number") or config.get("CANO") or
+                      getattr(env, 'stock_account_number', None) or "번호없음")
+            result['account_info'] = {
+                "number": acc_no,
+                "type": "모의투자" if getattr(env, 'is_paper_trading', False) else "실전투자",
+                "exchange": "KRX",
+            }
+        initial_data = result
+    except Exception:
+        pass
+    extra = {"initial_data": initial_data} if initial_data else None
+    return await render_page(request, "balance.html", "balance", extra_context=extra)
 
 @page_router.get("/order")
 async def order(request: Request):
