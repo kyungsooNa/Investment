@@ -84,7 +84,14 @@ class StockPriceRepository:
             self._price_cache.put(code, cached)
 
         if "current_price_data" not in cached:
-            cached["current_price_data"] = {"output": {}}
+            # 틱만 수신된 경우 최소 구조로 캐시 생성 (_source="tick" 마킹)
+            # stock_query_service는 _source 필드로 불완전 캐시를 식별할 수 있음
+            cached["current_price_data"] = {
+                "output": {"stck_prpr": str(int(current_price)), "acml_vol": str(volume)},
+                "_source": "tick",
+            }
+            cached["price_updated_at"] = time.time()
+            return
 
         output = cached["current_price_data"].get("output")
         before_price = None

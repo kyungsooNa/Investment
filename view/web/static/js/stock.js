@@ -3,6 +3,34 @@
 let _currentExchange = 'KRX';
 let _currentStockCode = null;
 
+// SSE 실시간 틱 수신 → 가격·전일대비·당일시세(고가·저가) UI 업데이트
+document.addEventListener('stock-price-tick', function (e) {
+    const tick = e.detail;
+    const priceEl    = document.getElementById('rt-price');
+    const changeEl   = document.getElementById('rt-change-rate');
+    const highEl     = document.getElementById('rt-high');
+    const lowEl      = document.getElementById('rt-low');
+    if (!priceEl) return;  // 종목 조회 화면이 아닐 때는 무시
+
+    const fmt = (n) => {
+        const v = parseFloat(String(n).replace(/,/g, ''));
+        return isNaN(v) ? String(n) : v.toLocaleString();
+    };
+
+    const sign    = tick.sign || '3';
+    const isUp    = sign === '1' || sign === '2';
+    const isDown  = sign === '4' || sign === '5';
+    const prefix  = isUp ? '+' : (isDown ? '-' : '');
+    const changeAbs = Math.abs(parseFloat(tick.change) || 0);
+    const rateAbs   = Math.abs(parseFloat(tick.rate)   || 0);
+
+    priceEl.textContent = fmt(tick.price) + '원';
+    priceEl.className   = 'price ' + (isUp ? 'text-red' : isDown ? 'text-blue' : '');
+    if (changeEl) changeEl.textContent = `전일대비: ${prefix}${fmt(changeAbs)} (${isUp ? '+' : isDown ? '-' : ''}${rateAbs.toFixed(2)}%)`;
+    if (highEl && tick.high > 0) highEl.textContent = fmt(tick.high);
+    if (lowEl  && tick.low  > 0) lowEl.textContent  = fmt(tick.low);
+});
+
 function changeExchange(exchange, btn) {
     if (_currentExchange === exchange) return;
     _currentExchange = exchange;
@@ -209,8 +237,8 @@ async function searchStock(codeOverride, exchangeOverride) {
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                     <h3 class="stock-title" style="margin:0;">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
                 </div>
-                <p class="price ${changeClass}">${fnum(data.price, '원')}</p>
-                <p class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
+                <p id="rt-price" class="price ${changeClass}">${fnum(data.price, '원')}</p>
+                <p id="rt-change-rate" class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
 
                 <div id="chart-placeholder" style="margin: 16px 0;"></div>
 
@@ -223,8 +251,8 @@ async function searchStock(codeOverride, exchangeOverride) {
                     <div class="detail-group">
                         <h4>📊 당일 시세</h4>
                         <p><strong>시가:</strong> <span>${fnum(data.open)}</span></p>
-                        <p><strong>고가:</strong> <span>${fnum(data.high)}</span></p>
-                        <p><strong>저가:</strong> <span>${fnum(data.low)}</span></p>
+                        <p><strong>고가:</strong> <span id="rt-high">${fnum(data.high)}</span></p>
+                        <p><strong>저가:</strong> <span id="rt-low">${fnum(data.low)}</span></p>
                         <p><strong>기준가:</strong> <span>${fnum(data.prev_close)}</span></p>
                     </div>
                     <div class="detail-group">

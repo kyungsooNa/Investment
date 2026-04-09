@@ -341,16 +341,21 @@ function subscribeRealtimePrice(code) {
     priceEventSource = new EventSource(`/api/streaming/price/${code}`);
 
     priceEventSource.onmessage = function (event) {
+        const tick = JSON.parse(event.data);
+
+        // stock.js UI(가격·전일대비·당일시세) 업데이트
+        document.dispatchEvent(new CustomEvent('stock-price-tick', { detail: tick }));
+
         if (!stockChartInstance || !g_chartRawData || g_chartRawData.length === 0) return;
 
-        const tick = JSON.parse(event.data);
         const lastRawIdx = g_chartRawData.length - 1;
         const raw = g_chartRawData[lastRawIdx];
 
-        // g_chartRawData 갱신 (누적거래량은 대체)
+        // g_chartRawData 갱신
         raw.close = tick.price;
-        if (tick.price > raw.high) raw.high = tick.price;
-        if (tick.price < raw.low)  raw.low  = tick.price;
+        if (!raw.open && tick.open > 0) raw.open = tick.open;  // 시가 초기화 (최초 1회)
+        if (tick.high > 0) raw.high = tick.high;               // 누적 최고가 직접 적용
+        if (tick.low  > 0) raw.low  = tick.low;                // 누적 최저가 직접 적용
         raw.volume = tick.volume;
 
         // 현재 차트에 표시된 슬라이스의 마지막 인덱스 (기간 변경과 무관)
@@ -358,6 +363,7 @@ function subscribeRealtimePrice(code) {
         const lastChartIdx = candleData.length - 1;
 
         if (lastChartIdx >= 0 && candleData[lastChartIdx]) {
+            candleData[lastChartIdx].o = raw.open;
             candleData[lastChartIdx].c = raw.close;
             candleData[lastChartIdx].h = raw.high;
             candleData[lastChartIdx].l = raw.low;
