@@ -80,3 +80,12 @@ async def test_add_and_remove_cycle(repo):
     result = await repo.add("005930")
     assert result is True
     assert await repo.get_all() == ["005930"]
+
+
+def test_init_with_default_db_path(monkeypatch, tmp_path):
+    """db_path를 지정하지 않았을 때 기본 DB_PATH를 사용하는지 검증 (Coverage 100% 달성용)."""
+    default_path = tmp_path / "default_data" / "favorites.db"
+    monkeypatch.setattr(FavoriteRepository, "DB_PATH", default_path)
+    repo = FavoriteRepository()
+    assert repo._db_path == default_path
+    assert default_path.parent.exists()
