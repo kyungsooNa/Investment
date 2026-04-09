@@ -38,7 +38,8 @@ class KoreaInvestApiClient:
 
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         limits = httpx.Limits(max_keepalive_connections=50, max_connections=100, keepalive_expiry=30.0)
-        shared_client = httpx.AsyncClient(verify=ssl_context, limits=limits)
+        timeout = httpx.Timeout(10.0, connect=5.0)  # connect 5s, read/write/pool 10s
+        shared_client = httpx.AsyncClient(verify=ssl_context, limits=limits, timeout=timeout)
 
         header_provider = build_header_provider_from_env(env)  # UA만 갖고 생성
         url_provider = KoreaInvestUrlProvider.from_env_and_kis_config(env=env)
