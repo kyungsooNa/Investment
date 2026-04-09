@@ -66,7 +66,23 @@ class PriceStreamService:
             self._logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
 
         if stock_code in self._sse_queues:
-            tick = {"code": stock_code, "price": float(current_price), "volume": vol_int}
+            def _sf(val: str, default: float = 0.0) -> float:
+                try:
+                    return float(val) if val and val != 'N/A' else default
+                except (ValueError, TypeError):
+                    return default
+
+            tick = {
+                "code": stock_code,
+                "price": float(current_price),
+                "volume": vol_int,
+                "change": realtime_data.get('전일대비', '0'),
+                "rate": realtime_data.get('전일대비율', '0.00'),
+                "sign": realtime_data.get('전일대비부호', '3'),
+                "open": _sf(realtime_data.get('주식시가')),
+                "high": _sf(realtime_data.get('주식최고가')),
+                "low": _sf(realtime_data.get('주식최저가')),
+            }
             for q in self._sse_queues[stock_code]:
                 try:
                     q.put_nowait(tick)
