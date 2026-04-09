@@ -15,7 +15,7 @@ StreamingService와의 역할 구분:
 우선순위 카테고리:
   - HIGH   : 보유 종목 (Portfolio) — category_key: "portfolio"
   - MEDIUM : 전략 감시 종목 (Strategy watchlist, premium stocks) — category_key: "strategy_*"
-  - LOW    : 웹 UI 조회 종목 — category_key: "ui_*"
+  - LOW    : 관심종목은 "favorite", 웹 UI 조회 종목 — category_key: "ui_*"
 """
 from __future__ import annotations
 
