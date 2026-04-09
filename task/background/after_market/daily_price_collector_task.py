@@ -487,7 +487,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
     async def force_collect(self) -> None:
         """강제 수집: skip 조건을 무시하고 전 종목 현재가를 API 재호출한다."""
         self._logger.info("DailyPriceCollectorTask 강제 수집 요청")
-        await self._collect_all_prices(force=True)
+        async with self._running_state():
+            await self._collect_all_prices(force=True)
 
     def _format_dataframe_to_records(self, df: pd.DataFrame) -> List[Dict]:
         """

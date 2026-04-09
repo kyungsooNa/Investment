@@ -25,6 +25,7 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 import yaml
@@ -81,6 +82,7 @@ class AfterMarketTask(SchedulableTask, ABC):
         self._logger = logger or logging.getLogger(self.__class__.__module__)
         self._state: TaskState = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
+        self._running_depth: int = 0  # 중첩 _running_state() 호출 횟수
 
     # ── SchedulableTask 공통 구현 ────────────────────────────────
 
@@ -115,6 +117,27 @@ class AfterMarketTask(SchedulableTask, ABC):
 
     # ── 장마감 후 스케줄러 ────────────────────────────────────────
 
+    @asynccontextmanager
+    async def _running_state(self):
+        """작업 실행 구간을 RUNNING으로 표시하는 컨텍스트 매니저.
+
+        중첩 호출을 지원한다 (_running_depth 카운터). 가장 바깥 컨텍스트가
+        종료될 때만 IDLE로 복귀하므로, force 메서드와 스케줄러 콜백이
+        중첩되어도 상태가 조기에 IDLE로 바뀌지 않는다.
+        SUSPENDED / STOPPED 상태는 덮어쓰지 않는다.
+        """
+        entered = self._state not in (TaskState.SUSPENDED, TaskState.STOPPED)
+        if entered:
+            self._running_depth += 1
+            self._state = TaskState.RUNNING
+        try:
+            yield
+        finally:
+            if entered:
+                self._running_depth -= 1
+                if self._running_depth == 0 and self._state == TaskState.RUNNING:
+                    self._state = TaskState.IDLE
+
     @property
     @abstractmethod
     def _scheduler_label(self) -> str:
@@ -127,13 +150,8 @@ class AfterMarketTask(SchedulableTask, ABC):
             self._state = TaskState.IDLE
 
         async def _on_closed_with_state(date: str) -> None:
-            if self._state not in (TaskState.SUSPENDED, TaskState.STOPPED):
-                self._state = TaskState.RUNNING
-            try:
+            async with self._running_state():
                 await self._on_market_closed(date)
-            finally:
-                if self._state == TaskState.RUNNING:
-                    self._state = TaskState.IDLE  # 작업 완료 → 대기 복귀
 
         delay_sec = _load_after_market_delays().get(self.task_name, 0)
         await run_after_market_loop(

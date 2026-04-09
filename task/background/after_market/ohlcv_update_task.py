@@ -138,7 +138,8 @@ class OhlcvUpdateTask(AfterMarketTask):
         - 중간 날짜 누락 등 데이터 정합성이 의심될 때 사용
         """
         self._logger.info("OhlcvUpdateTask 강제 수집 요청")
-        await self._collect_all_ohlcv(force=True)
+        async with self._running_state():
+            await self._collect_all_ohlcv(force=True)
 
     # ── 전체 종목 OHLCV 수집 ────────────────────────────────
     async def _collect_all_ohlcv(self, force: bool = False) -> None:

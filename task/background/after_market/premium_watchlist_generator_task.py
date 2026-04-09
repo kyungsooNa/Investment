@@ -147,10 +147,11 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
     async def force_generate(self) -> None:
         """강제 생성: skip 조건을 무시하고 전일 기준 우량주를 재생성한다."""
         self._logger.info("PremiumWatchlistGeneratorTask 강제 생성 요청")
-        target_date = None
-        if self._mcs:
-            target_date = await self._mcs.get_latest_trading_date()
-        if not target_date:
-            self._logger.error("최근 거래일을 확인할 수 없어 강제 생성을 중단합니다.")
-            return
-        await self._run_generation(target_date)
+        async with self._running_state():
+            target_date = None
+            if self._mcs:
+                target_date = await self._mcs.get_latest_trading_date()
+            if not target_date:
+                self._logger.error("최근 거래일을 확인할 수 없어 강제 생성을 중단합니다.")
+                return
+            await self._run_generation(target_date)

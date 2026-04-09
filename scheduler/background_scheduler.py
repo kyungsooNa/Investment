@@ -47,9 +47,10 @@ class BackgroundScheduler:
         t_start = self._pm.start_timer()
         self._logger.info(f"[BackgroundScheduler] 전체 시작: {len(self._tasks)}개 태스크")
         for name, task in self._tasks.items():
-            if task.state in (TaskState.IDLE, TaskState.STOPPED):
+            if name not in self._started_tasks:  # 아직 시작되지 않은 태스크만
                 try:
                     await task.start()
+                    self._started_tasks.add(name)
                     self._logger.info(f"[BackgroundScheduler] '{name}' 시작 완료")
                 except Exception as e:
                     self._logger.error(f"[BackgroundScheduler] '{name}' 시작 실패: {e}", exc_info=True)
@@ -60,12 +61,13 @@ class BackgroundScheduler:
         t_start = self._pm.start_timer()
         self._logger.info(f"[BackgroundScheduler] 전체 종료: {len(self._tasks)}개 태스크")
         for name, task in self._tasks.items():
-            if task.state not in (TaskState.IDLE, TaskState.STOPPED):
+            if name in self._started_tasks and task.state != TaskState.STOPPED:
                 try:
                     await task.stop()
                     self._logger.info(f"[BackgroundScheduler] '{name}' 종료 완료")
                 except Exception as e:
                     self._logger.error(f"[BackgroundScheduler] '{name}' 종료 실패: {e}", exc_info=True)
+        self._started_tasks.clear()
         self._pm.log_timer("BackgroundScheduler.shutdown", t_start)
 
     async def suspend_all(self) -> None:
