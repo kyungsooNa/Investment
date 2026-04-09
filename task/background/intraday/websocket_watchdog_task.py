@@ -247,7 +247,7 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         return {
             "running": self._state == TaskState.RUNNING,
-            "subscribed_codes": subscribed_pt,
+            "subscribed_codes": subscribed_pt + subscribed_price,
             "subscribed_pt_codes": subscribed_pt,
             "subscribed_price_codes": subscribed_price,
             "data_gap_sec": data_gap,

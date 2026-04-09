@@ -403,7 +403,7 @@ def test_get_progress_with_subscriptions(watchdog_task):
 
     p = watchdog_task.get_progress()
 
-    assert p["subscribed_codes"] == 2
+    assert p["subscribed_codes"] == 3
     assert p["subscribed_pt_codes"] == 2
     assert p["subscribed_price_codes"] == 1
 

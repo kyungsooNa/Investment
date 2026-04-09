@@ -210,7 +210,7 @@ function renderProgressCell(progress, taskName) {
         } else {
             marketBadge = '<span style="background:#888; color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">장 마감</span>';
         }
-        const subPt = progress.subscribed_pt_codes ?? progress.subscribed_codes ?? 0;
+        const subPt = progress.subscribed_pt_codes ?? 0;
         const subPrice = progress.subscribed_price_codes ?? 0;
         const gap = (progress.data_gap_sec !== null && progress.data_gap_sec !== undefined)
             ? ` · 갭 ${progress.data_gap_sec}s` : '';
