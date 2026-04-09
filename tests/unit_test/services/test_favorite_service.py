@@ -4,8 +4,14 @@ FavoriteService 단위 테스트.
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from common.types import ResCommonResponse
-from services.favorite_service import FavoriteService
+from services.favorite_service import FavoriteService, _extract_price_rate
 
+
+class DummyOutput:
+    """_extract_price_rate 테스트용 더미 클래스"""
+    def __init__(self, stck_prpr, prdy_ctrt):
+        self.stck_prpr = stck_prpr
+        self.prdy_ctrt = prdy_ctrt
 
 @pytest.fixture
 def mock_repo():
@@ -14,6 +20,14 @@ def mock_repo():
     repo.add = AsyncMock(return_value=True)
     repo.remove = AsyncMock(return_value=True)
     repo.is_favorite = AsyncMock(return_value=False)
+    return repo
+
+
+@pytest.fixture
+def mock_stock_repo():
+    repo = MagicMock()
+    repo.get_current_price.return_value = None
+    repo.get_latest_daily_snapshot = AsyncMock(return_value=None)
     return repo
 
 
@@ -105,3 +119,94 @@ async def test_get_with_details_price_api_failure(mock_repo, mock_stock_code_rep
     result = await svc.get_with_details()
     assert len(result) == 1
     assert result[0]["price"] is None
+
+
+def test_extract_price_rate_dict_nested():
+    data = {"output": {"stck_prpr": "1000", "prdy_ctrt": "1.0"}}
+    assert _extract_price_rate(data) == ("1000", "1.0")
+
+
+def test_extract_price_rate_dict_flat():
+    data = {"stck_prpr": "2000", "prdy_ctrt": "2.0"}
+    assert _extract_price_rate(data) == ("2000", "2.0")
+
+
+def test_extract_price_rate_dict_output_is_dataclass():
+    data = {"output": DummyOutput("3000", "3.0")}
+    assert _extract_price_rate(data) == ("3000", "3.0")
+
+
+def test_extract_price_rate_dataclass():
+    data = DummyOutput("4000", "4.0")
+    assert _extract_price_rate(data) == ("4000", "4.0")
+
+
+async def test_get_with_details_step1_memory_cache_hit(mock_repo, mock_stock_code_repo, mock_stock_repo):
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.return_value = {"output": {"stck_prpr": "70000", "prdy_ctrt": "2.5"}}
+    
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+    )
+    result = await svc.get_with_details()
+    
+    assert len(result) == 1
+    assert result[0]["price"] == "70000"
+    assert result[0]["rate"] == "2.5"
+    mock_stock_repo.get_current_price.assert_called_once_with("005930", max_age_sec=float("inf"), count_stats=False)
+    mock_stock_repo.get_latest_daily_snapshot.assert_not_called()
+
+
+async def test_get_with_details_step2_db_snapshot_hit(mock_repo, mock_stock_code_repo, mock_stock_repo):
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.return_value = None
+    mock_stock_repo.get_latest_daily_snapshot.return_value = {"stck_prpr": "71000", "prdy_ctrt": "1.2"}
+    
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+    )
+    result = await svc.get_with_details()
+    
+    assert len(result) == 1
+    assert result[0]["price"] == "71000"
+    assert result[0]["rate"] == "1.2"
+    mock_stock_repo.get_latest_daily_snapshot.assert_called_once_with("005930")
+
+
+async def test_get_with_details_step2_exception(mock_repo, mock_stock_code_repo, mock_stock_repo):
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.return_value = None
+    mock_stock_repo.get_latest_daily_snapshot.side_effect = Exception("DB Error")
+    
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+    )
+    result = await svc.get_with_details()
+    
+    assert len(result) == 1
+    assert result[0]["price"] is None
+    assert result[0]["rate"] is None
+
+
+async def test_get_with_details_step3_api_rt_cd_not_0(mock_repo, mock_stock_code_repo):
+    mock_repo.get_all.return_value = ["005930"]
+    mock_query = AsyncMock()
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="1", msg1="Error", data=None
+    )
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+    )
+    result = await svc.get_with_details()
+    
+    assert len(result) == 1
+    assert result[0]["price"] is None
+    assert result[0]["rate"] is None
