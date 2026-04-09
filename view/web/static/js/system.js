@@ -218,11 +218,32 @@ function renderProgressCell(progress, taskName) {
 
     // ── 전략 스케줄러: 활성 전략 수 표시 ──
     if (taskName === 'strategy_scheduler') {
-        const active = progress.active_strategies ?? 0;
-        const total = progress.total_strategies ?? 0;
+        const strategies = progress.strategies || [];
+        
+        let active = progress.active_strategies ?? 0;
+        let total = progress.total_strategies ?? 0;
+        
+        // strategies 데이터가 있으면 이를 기반으로 정확히 카운트
+        if (strategies.length > 0) {
+            total = strategies.length;
+            active = strategies.filter(s => s.enabled).length;
+        }
+
         if (total === 0) return '<span style="color:#888; font-size:0.88em;">전략 없음</span>';
+        
         const color = active > 0 ? 'var(--success-color,#4CAF50)' : '#888';
-        return `<span style="font-size:0.88em; color:${color}; font-weight:bold;">활성 ${active} / ${total} 전략</span>`;
+        let html = `<span style="font-size:0.88em; color:${color}; font-weight:bold;">활성 ${active} / ${total} 전략</span>`;
+        
+        // IDLE, RUNNING 상태 관계없이 활성화(enabled=true)된 전략의 이름을 뱃지로 렌더링
+        if (active > 0 && strategies.length > 0) {
+            const activeNames = strategies.filter(s => s.enabled).map(s => s.name);
+            const badgeHtml = activeNames.map(name => 
+                `<span style="display:inline-block; background:var(--bg-color,#f0f0f0); border:1px solid #ccc; padding:2px 6px; border-radius:6px; font-size:0.82em; margin-right:4px; margin-top:4px; color:var(--text-color,#333); white-space:nowrap;">${name}</span>`
+            ).join('');
+            html += `<div style="margin-top:4px; display:flex; flex-wrap:wrap;">${badgeHtml}</div>`;
+        }
+        
+        return html;
     }
 
     // ── 전일 기준 우량주 생성 ──

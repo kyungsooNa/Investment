@@ -76,6 +76,8 @@ class StrategySchedulerTaskAdapter(SchedulableTask):
         """
         active_strategies = 0
         total_strategies = 0
+        strategies = []  # 리스트 초기화 추가
+        
         try:
             status = self._scheduler.get_status()
             strategies = status.get("strategies", [])
