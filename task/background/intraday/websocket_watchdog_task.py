@@ -231,10 +231,12 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         Watchdog 태스크는 배치 진행률이 없으므로 연결 상태 정보를 반환한다.
         """
-        subscribed = 0
+        subscribed_pt = 0
+        subscribed_price = 0
         if self._streaming_stock_repo:
             from repositories.streaming_stock_repo import StreamingType
-            subscribed = len(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING))
+            subscribed_pt = len(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING))
+            subscribed_price = len(self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE))
 
         last_ts = 0.0
         data_gap = None
@@ -245,7 +247,9 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         return {
             "running": self._state == TaskState.RUNNING,
-            "subscribed_codes": subscribed,
+            "subscribed_codes": subscribed_pt + subscribed_price,
+            "subscribed_pt_codes": subscribed_pt,
+            "subscribed_price_codes": subscribed_price,
             "data_gap_sec": data_gap,
             "market_open": self._market_open,
         }

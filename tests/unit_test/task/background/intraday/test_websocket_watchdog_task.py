@@ -384,17 +384,28 @@ def test_get_progress_initial_state(watchdog_task):
 
     assert p["running"] is False
     assert p["subscribed_codes"] == 0
+    assert p["subscribed_pt_codes"] == 0
+    assert p["subscribed_price_codes"] == 0
     assert p["data_gap_sec"] is None
     assert p["market_open"] is None
 
 
 def test_get_progress_with_subscriptions(watchdog_task):
-    """구독 종목이 있으면 subscribed_codes에 개수가 반영된다."""
-    watchdog_task._streaming_stock_repo.get_desired.return_value = {"005930", "000660"}
+    """구독 종목이 있으면 각 타입별로 개수가 반영된다."""
+    def mock_get_desired(stream_type):
+        if stream_type == StreamingType.PROGRAM_TRADING:
+            return {"005930", "000660"}
+        if stream_type == StreamingType.UNIFIED_PRICE:
+            return {"035720"}
+        return set()
+        
+    watchdog_task._streaming_stock_repo.get_desired.side_effect = mock_get_desired
 
     p = watchdog_task.get_progress()
 
-    assert p["subscribed_codes"] == 2
+    assert p["subscribed_codes"] == 3
+    assert p["subscribed_pt_codes"] == 2
+    assert p["subscribed_price_codes"] == 1
 
 
 def test_get_progress_data_gap_calculated(watchdog_task):

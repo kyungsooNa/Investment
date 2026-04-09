@@ -210,10 +210,11 @@ function renderProgressCell(progress, taskName) {
         } else {
             marketBadge = '<span style="background:#888; color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">장 마감</span>';
         }
-        const sub = progress.subscribed_codes ?? 0;
+        const subPt = progress.subscribed_pt_codes ?? 0;
+        const subPrice = progress.subscribed_price_codes ?? 0;
         const gap = (progress.data_gap_sec !== null && progress.data_gap_sec !== undefined)
             ? ` · 갭 ${progress.data_gap_sec}s` : '';
-        return `${marketBadge} <span style="font-size:0.85em; color:#888;">구독 ${sub}종목${gap}</span>`;
+        return `${marketBadge} <span style="font-size:0.85em; color:#888;">구독 PT ${subPt} · Price ${subPrice}종목${gap}</span>`;
     }
 
     // ── 전략 스케줄러: 활성 전략 수 표시 ──
@@ -483,9 +484,13 @@ async function updateSubscriptionStatus() {
         _subData = d;
 
         const activeEl = document.getElementById('sub-active-count');
+        const activePtEl = document.getElementById('sub-active-pt-count');
+        const activePriceEl = document.getElementById('sub-active-price-count');
         const maxEl    = document.getElementById('sub-max');
         const pendEl   = document.getElementById('sub-pending-count');
         if (activeEl) activeEl.textContent = d.active_count;
+        if (activePtEl) activePtEl.textContent = d.active_codes_pt ? d.active_codes_pt.length : 0;
+        if (activePriceEl) activePriceEl.textContent = d.active_codes_price ? d.active_codes_price.length : 0;
         if (maxEl)    maxEl.textContent    = d.max_subscriptions;
         if (pendEl)   pendEl.textContent   = d.pending_count;
 
