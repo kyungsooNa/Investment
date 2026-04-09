@@ -418,7 +418,10 @@ class TestErrorHandling:
         }
         mock_sqs.get_ohlcv = AsyncMock(side_effect=_side_effect)
 
-        await task._collect_all_ohlcv()
+        # 👇 수정: FDR 로직 우회
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=False), \
+             patch('task.background.after_market.ohlcv_update_task.fdr.DataReader', side_effect=Exception("FDR 우회")):
+            await task._collect_all_ohlcv()
 
         p = task.get_progress()
         assert p["updated"] == 2   # 005930, 035420
@@ -720,21 +723,25 @@ class TestSuspendResume:
         task.API_CHUNK_SIZE = 1
         task.CHUNK_SLEEP_SEC = 0
 
-        collect_coro = asyncio.create_task(task._collect_all_ohlcv())
+        # 👇 수정: Tier 1과 Tier 2를 강제 실패시켜 Tier 3(mock_sqs)가 호출되도록 유도
+        with patch.object(task, '_try_daily_bulk_via_fdr', return_value=False), \
+             patch('task.background.after_market.ohlcv_update_task.fdr.DataReader', side_effect=Exception("FDR 우회")):
+             
+            collect_coro = asyncio.create_task(task._collect_all_ohlcv())
 
-        await barrier.wait()
+            await barrier.wait()
 
-        task._state = TaskState.RUNNING
-        await task.suspend()
+            task._state = TaskState.RUNNING
+            await task.suspend()
 
-        count_before = len(collected)
-        await asyncio.sleep(0.05)
-        assert len(collected) == count_before  # 중단됨
+            count_before = len(collected)
+            await asyncio.sleep(0.05)
+            assert len(collected) == count_before  # 중단됨
 
-        await task.resume()
-        await collect_coro
+            await task.resume()
+            await collect_coro
 
-        assert len(collected) == 3  # 재개 후 전체 완료
+            assert len(collected) == 3  # 재개 후 전체 완료
 
 
 # ──────────────────────────────────────────────
