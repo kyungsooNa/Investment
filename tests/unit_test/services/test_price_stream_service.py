@@ -158,7 +158,17 @@ def test_on_price_tick_broadcasts_to_sse_queue(price_stream_service):
 
     assert not q.empty()
     tick = q.get_nowait()
-    assert tick == {"code": "005930", "price": 75000.0, "volume": 1500000}
+    assert tick == {
+        "code": "005930",
+        "price": 75000.0,
+        "volume": 1500000,
+        "change": "0",
+        "rate": "0.00",
+        "sign": "3",
+        "open": 0.0,
+        "high": 0.0,
+        "low": 0.0,
+    }
 
 
 def test_on_price_tick_ignores_queue_full(price_stream_service):
