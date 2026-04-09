@@ -46,7 +46,13 @@ class BackgroundScheduler:
         t_start = self._pm.start_timer()
         self._logger.info(f"[BackgroundScheduler] 전체 시작: {len(self._tasks)}개 태스크")
         for name, task in self._tasks.items():
-            if task.state != TaskState.RUNNING:
+            if task.state == TaskState.SUSPENDED:
+                try:
+                    await task.resume()
+                    self._logger.info(f"[BackgroundScheduler] '{name}' 재개 완료")
+                except Exception as e:
+                    self._logger.error(f"[BackgroundScheduler] '{name}' 재개 실패: {e}", exc_info=True)
+            elif task.state != TaskState.RUNNING:
                 try:
                     await task.start()
                     self._logger.info(f"[BackgroundScheduler] '{name}' 시작 완료")
