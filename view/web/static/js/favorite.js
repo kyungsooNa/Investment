@@ -109,3 +109,18 @@ window.addEventListener('beforeunload', function () {
 
 /* ── 초기 로드 ── */
 document.addEventListener('DOMContentLoaded', loadFavoriteList);
+
+/* ── Pjax 재방문 시 재초기화 ── */
+document.addEventListener('pjax:ready', (e) => {
+    if (e.detail?.path !== '/favorite') return;
+    StockAutocomplete({
+        inputId: 'fav-search-input',
+        listId: 'fav-autocomplete-list',
+        onSelect: function(code, name) {
+            const input = document.getElementById('fav-search-input');
+            if (input) { input.value = name + ' (' + code + ')'; input.dataset.selectedCode = code; }
+        },
+        onConfirm: function() { addFavoriteFromInput(); }
+    });
+    loadFavoriteList();
+});

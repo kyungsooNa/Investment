@@ -81,7 +81,7 @@ function StockAutocomplete({ inputId, listId, onSelect, onConfirm }) {
         return results;
     }
 
-    document.addEventListener('DOMContentLoaded', function () {
+    function _initDom() {
         const input = document.getElementById(inputId);
         const list = document.getElementById(listId);
         if (!input || !list) return;
@@ -153,5 +153,10 @@ function StockAutocomplete({ inputId, listId, onSelect, onConfirm }) {
         document.addEventListener('click', function (e) {
             if (!input.contains(e.target) && !list.contains(e.target)) _close();
         });
-    });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _initDom);
+    } else {
+        _initDom(); // Pjax 컨텍스트: DOM 이미 준비됨 → 즉시 실행
+    }
 }

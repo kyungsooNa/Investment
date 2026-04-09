@@ -1,3 +1,5 @@
+import json
+import re
 import pytest
 import time
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -226,3 +228,176 @@ def test_logout(mock_web_app_context_cls):
         response = client.get("/logout", follow_redirects=False)
         assert response.status_code == 307
         assert "access_token" in response.headers.get("set-cookie", "")
+
+
+# --- /balance 페이지 테스트 ---
+
+_INITIAL_DATA_RE = re.compile(
+    r'<script id="page-initial-data" type="application/json">(.*?)</script>',
+    re.DOTALL,
+)
+
+
+def _parse_initial_data(html: str) -> dict | None:
+    """balance.html의 page-initial-data 스크립트 태그에서 JSON을 파싱해 반환."""
+    m = _INITIAL_DATA_RE.search(html)
+    return json.loads(m.group(1)) if m else None
+
+
+def _make_balance_ctx(is_paper_trading=True, acc_no_field="stock_account_number", acc_no_value="12345678"):
+    """balance 테스트용 mock ctx 헬퍼."""
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {"use_login": True, "auth": {"secret_key": "tok"}}
+    mock_ctx.stock_query_service.handle_get_account_balance = AsyncMock(return_value=MagicMock())
+
+    mock_env = MagicMock()
+    mock_env.is_paper_trading = is_paper_trading
+    config = {}
+    if acc_no_value is not None:
+        config[acc_no_field] = acc_no_value
+    mock_env.active_config = config
+    mock_env.stock_account_number = None
+    mock_ctx.env = mock_env
+    return mock_ctx, mock_env
+
+
+def test_balance_paper_trading_with_account_number(mock_web_app_context_cls):
+    """모의투자 환경, stock_account_number로 계좌번호 조회 테스트"""
+    mock_ctx, _ = _make_balance_ctx(is_paper_trading=True, acc_no_field="stock_account_number", acc_no_value="99887766")
+    fake_result = {"output": []}
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
+         patch("view.web.api_common._serialize_response", return_value=fake_result):
+        with TestClient(app) as client:
+            client.cookies.set("access_token", "tok")
+            response = client.get("/balance")
+
+    assert response.status_code == 200
+    data = _parse_initial_data(response.text)
+    assert data is not None
+    assert data["account_info"]["number"] == "99887766"
+    assert data["account_info"]["type"] == "모의투자"
+    assert data["account_info"]["exchange"] == "KRX"
+
+
+def test_balance_real_trading_with_cano(mock_web_app_context_cls):
+    """실전투자 환경, CANO로 계좌번호 조회 테스트"""
+    mock_ctx, _ = _make_balance_ctx(is_paper_trading=False, acc_no_field="CANO", acc_no_value="55443322")
+    fake_result = {"output": []}
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
+         patch("view.web.api_common._serialize_response", return_value=fake_result):
+        with TestClient(app) as client:
+            client.cookies.set("access_token", "tok")
+            response = client.get("/balance")
+
+    assert response.status_code == 200
+    data = _parse_initial_data(response.text)
+    assert data is not None
+    assert data["account_info"]["number"] == "55443322"
+    assert data["account_info"]["type"] == "실전투자"
+
+
+def test_balance_acc_no_from_env_attribute(mock_web_app_context_cls):
+    """active_config에 없고 env.stock_account_number로 계좌번호 fallback 테스트"""
+    mock_ctx, mock_env = _make_balance_ctx(acc_no_value=None)
+    mock_env.stock_account_number = "11112222"
+    fake_result = {"output": []}
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
+         patch("view.web.api_common._serialize_response", return_value=fake_result):
+        with TestClient(app) as client:
+            client.cookies.set("access_token", "tok")
+            response = client.get("/balance")
+
+    assert response.status_code == 200
+    data = _parse_initial_data(response.text)
+    assert data is not None
+    assert data["account_info"]["number"] == "11112222"
+
+
+def test_balance_acc_no_fallback_to_default(mock_web_app_context_cls):
+    """계좌번호 모든 소스가 None일 때 '번호없음' fallback 테스트"""
+    mock_ctx, mock_env = _make_balance_ctx(acc_no_value=None)
+    mock_env.stock_account_number = None
+    fake_result = {"output": []}
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
+         patch("view.web.api_common._serialize_response", return_value=fake_result):
+        with TestClient(app) as client:
+            client.cookies.set("access_token", "tok")
+            response = client.get("/balance")
+
+    assert response.status_code == 200
+    data = _parse_initial_data(response.text)
+    assert data is not None
+    assert data["account_info"]["number"] == "번호없음"
+
+
+def test_balance_env_via_broker(mock_web_app_context_cls):
+    """ctx.env가 None이고 ctx.broker.env로 env 조회 fallback 테스트"""
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {"use_login": True, "auth": {"secret_key": "tok"}}
+    mock_ctx.stock_query_service.handle_get_account_balance = AsyncMock(return_value=MagicMock())
+    mock_ctx.env = None  # env 없음
+
+    mock_broker_env = MagicMock()
+    mock_broker_env.is_paper_trading = True
+    mock_broker_env.active_config = {"stock_account_number": "77665544"}
+    mock_broker_env.stock_account_number = None
+    mock_ctx.broker.env = mock_broker_env
+
+    fake_result = {"output": []}
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
+         patch("view.web.api_common._serialize_response", return_value=fake_result):
+        with TestClient(app) as client:
+            client.cookies.set("access_token", "tok")
+            response = client.get("/balance")
+
+    assert response.status_code == 200
+    data = _parse_initial_data(response.text)
+    assert data is not None
+    assert data["account_info"]["number"] == "77665544"
+
+
+def test_balance_no_env_no_account_info(mock_web_app_context_cls):
+    """ctx.env 와 ctx.broker.env 모두 None → account_info 없이 페이지 정상 렌더 테스트"""
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {"use_login": True, "auth": {"secret_key": "tok"}}
+    mock_ctx.stock_query_service.handle_get_account_balance = AsyncMock(return_value=MagicMock())
+    mock_ctx.env = None
+    mock_ctx.broker = None
+
+    fake_result = {"output": []}
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
+         patch("view.web.api_common._serialize_response", return_value=fake_result):
+        with TestClient(app) as client:
+            client.cookies.set("access_token", "tok")
+            response = client.get("/balance")
+
+    assert response.status_code == 200
+    assert "Investment Login" not in response.text
+    data = _parse_initial_data(response.text)
+    assert data is not None
+    assert "account_info" not in data
+
+
+def test_balance_exception_fallback_renders_page(mock_web_app_context_cls):
+    """잔고 API 예외 발생 시 initial_data=None으로 페이지 정상 렌더 테스트"""
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {"use_login": True, "auth": {"secret_key": "tok"}}
+    mock_ctx.stock_query_service.handle_get_account_balance = AsyncMock(
+        side_effect=RuntimeError("API 오류")
+    )
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx):
+        with TestClient(app) as client:
+            client.cookies.set("access_token", "tok")
+            response = client.get("/balance")
+
+    assert response.status_code == 200
+    assert "Investment Login" not in response.text
+    # 예외 발생 시 initial_data 스크립트 태그가 렌더링되지 않아야 함
+    assert _parse_initial_data(response.text) is None

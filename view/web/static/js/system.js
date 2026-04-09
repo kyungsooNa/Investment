@@ -509,3 +509,11 @@ async function updateSubscriptionStatus() {
 
 document.addEventListener('DOMContentLoaded', () => setTimeout(updateSubscriptionStatus, 3000));  // 다른 폴링과 시차 분산
 setInterval(updateSubscriptionStatus, 5000);
+
+/* ── Pjax 재방문 시 상태 즉시 갱신 ── */
+document.addEventListener('pjax:ready', (e) => {
+    if (e.detail?.path !== '/system') return;
+    updateCacheStatus();
+    setTimeout(updateBackgroundStatus, 1500);
+    setTimeout(updateSubscriptionStatus, 3000);
+});

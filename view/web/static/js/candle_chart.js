@@ -327,6 +327,10 @@ function renderStockChart(period) {
     console.log("ohlcv last date:", g_chartRawData[last].date, "close:", g_chartRawData[last].close)
     console.log("ma5 last date:", g_chartIndicators.ma5[last]?.date, "ma:", g_chartIndicators.ma5[last]?.ma)
 
+    window.currentCharts = window.currentCharts || [];
+    window.currentCharts = window.currentCharts.filter(c => c !== stockChartInstance);
+    window.currentCharts.push(stockChartInstance);
+
     // [성능 측정] 데이터 가공 + Chart.js 생성 시간 로깅
     const tRenderEnd = performance.now();
     console.log(`[Perf] 차트 렌더링(${period}, ${slicedRaw.length}건): 데이터 가공 ${(tChartStart - tRenderStart).toFixed(1)}ms | Chart.js 생성 ${(tRenderEnd - tChartStart).toFixed(1)}ms | 합계 ${(tRenderEnd - tRenderStart).toFixed(1)}ms`);

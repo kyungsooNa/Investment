@@ -19,13 +19,19 @@ let currentVirtualHoldData = [];
 let currentVirtualSoldData = [];
 
 // 모의투자 데이터 자동 갱신 (5분마다)
-document.addEventListener('DOMContentLoaded', () => {
-    setInterval(() => {
+let _virtualRefreshInterval = null;
+function _startVirtualRefresh() {
+    if (_virtualRefreshInterval) clearInterval(_virtualRefreshInterval);
+    _virtualRefreshInterval = setInterval(() => {
         const virtualSection = document.getElementById('section-virtual');
         if (virtualSection && virtualSection.classList.contains('active')) {
             loadVirtualHistory();
         }
     }, 300000);
+}
+document.addEventListener('DOMContentLoaded', _startVirtualRefresh);
+document.addEventListener('pjax:ready', (e) => {
+    if (e.detail?.path === '/virtual') _startVirtualRefresh();
 });
 
 function _showVirtualSkeleton() {
