@@ -84,7 +84,10 @@ class StockPriceRepository:
             self._price_cache.put(code, cached)
 
         if "current_price_data" not in cached:
-            cached["current_price_data"] = {"output": {}}
+            # 기존 API 데이터 없이 틱만으로 불완전한 캐시를 만들지 않음
+            # (plain dict output이 stock_query_service에서 ResStockFullInfoApiOutput 타입 오류 유발)
+            cached["price_updated_at"] = time.time()
+            return
 
         output = cached["current_price_data"].get("output")
         before_price = None
