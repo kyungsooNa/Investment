@@ -94,8 +94,9 @@ def get_active_requests():
     }
 
 
+# 1. 동기(def) 함수를 비동기(async def) 함수로 변경하여 이벤트 루프 데드락 방지
 @router.get("/background/status")
-def get_background_status():
+async def get_background_status(): 
     """백그라운드 태스크 상태 및 진행률 반환"""
     ctx = _get_ctx()
 
@@ -112,14 +113,10 @@ def get_background_status():
     for item in ctx.background_scheduler.get_all_status():
         name = item["name"]
         task = ctx.background_scheduler.get_task(name)
-        schedule_type = _SCHEDULE_TYPES.get(name, "unknown")
-
-        # --- 모듈(파일) 경로를 기반으로 스케줄 유형 동적 판별 ---
+        
         schedule_type = "unknown"
         if task:
-            module_name = task.__class__.__module__  # 예: "task.background.after_market.ranking_task"
-
-            # 특정 태스크명 우선 확인 (폴더 경로에 포함된 이름으로 인해 잘못 분류되는 것을 방지)
+            module_name = task.__class__.__module__
             if "strategy_scheduler" in module_name:
                 schedule_type = "intraday"
             elif "after_market" in module_name:
@@ -129,13 +126,30 @@ def get_background_status():
             elif "always_on" in module_name:
                 schedule_type = "always_on"
 
+        # 2. Enum 객체 안전성 보장 (명시적 문자열 변환)
+        raw_state = item.get("state")
+        state_str = raw_state.value if hasattr(raw_state, "value") else str(raw_state)
+
+        # 3. IDLE 상태일 경우 방어 로직: get_progress() 호출 생략
+        progress = None
+        if task:
+            # 👇 전략 스케줄러는 IDLE 상태에서도 활성 전략 목록을 반환해야 하므로 예외 처리
+            if state_str == "idle" and name != "strategy_scheduler":
+                # 아직 시작되지 않은 태스크의 get_progress() 호출을 막아 블로킹을 방지
+                progress = {"running": False, "status": "Waiting to start"}
+            else:
+                try:
+                    progress = task.get_progress()
+                except Exception as e:
+                    progress = {"running": False, "error": str(e)}
+
         result.append({
             "name": name,
-            "state": item["state"],
-            "priority": item["priority"],
+            "state": state_str,
+            "priority": item.get("priority"),
             "schedule_type": schedule_type,
             "schedule_order": _SCHEDULE_ORDER.get(schedule_type, 99),
-            "progress": task.get_progress() if task else None,
+            "progress": progress,
         })
 
     # 스케줄 유형(실시간 -> 장중 -> 장마감) 순서로 정렬

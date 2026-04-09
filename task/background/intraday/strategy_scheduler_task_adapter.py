@@ -3,10 +3,13 @@
 StrategyScheduler를 SchedulableTask 인터페이스로 래핑하는 어댑터.
 기존 StrategyScheduler 코드를 변경하지 않고 BackgroundScheduler에 등록할 수 있게 한다.
 """
-from typing import Dict
+from typing import Dict, Optional, TYPE_CHECKING
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from scheduler.strategy_scheduler import StrategyScheduler
+
+if TYPE_CHECKING:
+    from core.market_clock import MarketClock
 
 
 class StrategySchedulerTaskAdapter(SchedulableTask):
@@ -16,8 +19,9 @@ class StrategySchedulerTaskAdapter(SchedulableTask):
     전략에서 발생하는 매수/매도 주문은 foreground 우선순위로 실행된다.
     """
 
-    def __init__(self, scheduler: StrategyScheduler):
+    def __init__(self, scheduler: StrategyScheduler, market_clock: Optional["MarketClock"] = None):
         self._scheduler = scheduler
+        self._market_clock = market_clock
         self._state: TaskState = TaskState.IDLE
 
     @property
@@ -30,6 +34,11 @@ class StrategySchedulerTaskAdapter(SchedulableTask):
 
     @property
     def state(self) -> TaskState:
+        """장 외 시간에는 IDLE로 표시."""
+        if self._state == TaskState.RUNNING and self._market_clock:
+            secs = self._market_clock.get_sleep_seconds_until_market_close()
+            if isinstance(secs, (int, float)) and (secs > 3600 or secs <= 0):
+                return TaskState.IDLE
         return self._state
 
     async def start(self) -> None:
@@ -67,6 +76,8 @@ class StrategySchedulerTaskAdapter(SchedulableTask):
         """
         active_strategies = 0
         total_strategies = 0
+        strategies = []  # 리스트 초기화 추가
+        
         try:
             status = self._scheduler.get_status()
             strategies = status.get("strategies", [])

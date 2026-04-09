@@ -583,7 +583,7 @@ class WebAppContext:
 
         # StrategyScheduler를 BackgroundScheduler에 어댑터로 등록
         if self.background_scheduler and self.scheduler:
-            adapter = StrategySchedulerTaskAdapter(self.scheduler)
+            adapter = StrategySchedulerTaskAdapter(self.scheduler, market_clock=self.market_clock)
             self.background_scheduler.register(adapter)
 
     def start_background_tasks(self):

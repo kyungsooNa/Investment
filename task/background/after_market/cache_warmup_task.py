@@ -133,13 +133,14 @@ class CacheWarmupTask(AfterMarketTask):
     async def force_warmup(self) -> None:
         """skip 조건을 무시하고 즉시 캐시 웜업을 실행한다."""
         self._logger.info("CacheWarmupTask 강제 웜업 요청")
-        target_date = None
-        if self._mcs:
-            target_date = await self._mcs.get_latest_trading_date()
-        if not target_date:
-            self._logger.error("최근 거래일을 확인할 수 없어 강제 웜업을 중단합니다.")
-            return
-        await self._run_warmup(target_date)
+        async with self._running_state():
+            target_date = None
+            if self._mcs:
+                target_date = await self._mcs.get_latest_trading_date()
+            if not target_date:
+                self._logger.error("최근 거래일을 확인할 수 없어 강제 웜업을 중단합니다.")
+                return
+            await self._run_warmup(target_date)
 
     # ── 핵심 웜업 로직 ────────────────────────────────────────────
 

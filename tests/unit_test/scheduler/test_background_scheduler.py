@@ -51,16 +51,20 @@ def test_unregister(scheduler):
 async def test_start_all(scheduler):
     t1 = _make_mock_task("t1", TaskState.IDLE)
     t2 = _make_mock_task("t2", TaskState.STOPPED)
-    t3 = _make_mock_task("t3", TaskState.RUNNING)  # 이미 실행 중 → 스킵
+    t3 = _make_mock_task("t3", TaskState.RUNNING)    # 이미 실행 중 → 스킵
+    t4 = _make_mock_task("t4", TaskState.SUSPENDED)  # 일시정지 → resume() 호출
     scheduler.register(t1)
     scheduler.register(t2)
     scheduler.register(t3)
+    scheduler.register(t4)
 
     await scheduler.start_all()
 
     t1.start.assert_awaited_once()
     t2.start.assert_awaited_once()
     t3.start.assert_not_awaited()
+    t4.resume.assert_awaited_once()   # SUSPENDED → resume()
+    t4.start.assert_not_awaited()     # start()는 호출 안 됨
 
 
 @pytest.mark.asyncio
