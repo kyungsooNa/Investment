@@ -32,7 +32,8 @@ def mock_market_clock():
 def task(mock_mcs, mock_market_clock):
     return LogCleanupTask(
         log_dir="logs",
-        days=30,
+        delete_days=30,
+        compress_days=7,
         market_calendar_service=mock_mcs,
         market_clock=mock_market_clock,
         logger=MagicMock(),
@@ -176,6 +177,22 @@ class TestCleanup:
         assert mock_remove.call_count == 2
         assert task._last_cleaned_date == "20260320"
 
+    def test_compresses_old_log_files(self, task):
+        """mtime < compress_cutoff 인 파일은 gzip으로 압축된다."""
+        old_mtime = time.time() - (10 * 86400)  # 10일 전 (압축 대상)
+
+        walk_result = [("logs", [], ["old.log"])]
+
+        with patch("os.walk", return_value=walk_result), \
+             patch("os.path.getmtime", return_value=old_mtime), \
+             patch("builtins.open"), \
+             patch("gzip.open"), \
+             patch("shutil.copyfileobj"), \
+             patch("os.remove") as mock_remove:
+            task._cleanup("20260320")
+
+        mock_remove.assert_called_once()
+
     def test_skips_recent_files(self, task):
         """mtime >= cutoff 인 파일은 삭제하지 않는다."""
         recent_mtime = time.time() - (5 * 86400)  # 5일 전
@@ -238,7 +255,8 @@ class TestCleanup:
         """days 파라미터가 cutoff 계산에 정확히 반영된다."""
         task_7days = LogCleanupTask(
             log_dir="logs",
-            days=7,
+            delete_days=7,
+            compress_days=3,
             market_calendar_service=mock_mcs,
             market_clock=mock_market_clock,
             logger=MagicMock(),
@@ -258,7 +276,8 @@ class TestCleanup:
         """log_dir 파라미터가 os.walk에 그대로 전달된다."""
         custom_task = LogCleanupTask(
             log_dir="custom/logs",
-            days=30,
+            delete_days=30,
+            compress_days=7,
             market_calendar_service=mock_mcs,
             market_clock=mock_market_clock,
             logger=MagicMock(),

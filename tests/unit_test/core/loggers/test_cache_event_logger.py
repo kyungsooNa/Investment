@@ -177,15 +177,17 @@ def test_log_price_miss_ttl_expired(cache_logger_setup):
 def test_log_price_update_tick_fields(cache_logger_setup):
     cache_logger, cache_log_dir = cache_logger_setup
 
-    cache_logger.log_price_update_tick("005930", "74000", "75000", volume=123456)
+    # 샘플링 테스트 (100번에 한 번 기록되도록 _tick_count 조정)
+    cache_logger._tick_count = 99
+    cache_logger.log_price_update_tick("005930", "74000", "75000", 123456)
     _flush_cache_logger()
 
     lines = _read_json_lines(cache_log_dir)
     d = lines[0]["data"]
-    assert d["action"] == "price_update_tick"
-    assert d["before_price"] == "74000"
-    assert d["after_price"] == "75000"
-    assert d["volume"] == 123456
+    assert d["a"] == "put"
+    assert d["bp"] == "74000"
+    assert d["ap"] == "75000"
+    assert d["v"] == 123456
     assert lines[0]["level"] == "DEBUG"
 
 

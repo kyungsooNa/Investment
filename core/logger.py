@@ -7,6 +7,7 @@ from logging.handlers import QueueHandler, QueueListener
 from core.loggers.log_config import (
     LOG_MAX_BYTES,
     LOG_BACKUP_COUNT,
+    LOG_LEVEL,
     get_log_timestamp,
     reset_log_timestamp_for_test
 )
@@ -61,7 +62,7 @@ def get_streaming_logger(log_dir: str = "logs") -> "StreamingEventLogger":
     logger = logging.getLogger(logger_name)
 
     if not logger.handlers:
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(LOG_LEVEL)
         logger.propagate = False
 
         timestamp = get_log_timestamp()
@@ -94,7 +95,7 @@ def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
     logger = logging.getLogger(logger_name)
 
     if not logger.handlers:
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(LOG_LEVEL)
         logger.propagate = False
 
         timestamp = get_log_timestamp()
@@ -125,7 +126,7 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
             handler.close()
             logger.removeHandler(handler)
 
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(LOG_LEVEL)
     logger.propagate = True
 
     strategy_log_dir = os.path.join(log_dir, "strategies")

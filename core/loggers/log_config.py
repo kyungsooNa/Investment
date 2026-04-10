@@ -1,9 +1,17 @@
 import os
+import logging
 from datetime import datetime
 
+# --- 환경 변수 설정 ---
+# OS 환경변수에서 APP_ENV 읽기 (기본값 dev)
+APP_ENV = os.getenv("APP_ENV", "dev")
+
 # --- Log Rotation Constants ---
+LOG_LEVEL = logging.INFO if APP_ENV == "prod" else logging.DEBUG
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 10MB
-LOG_BACKUP_COUNT = 30
+LOG_BACKUP_COUNT = 30 if APP_ENV == "prod" else 50
+LOG_COMPRESS_DAYS = 3 if APP_ENV == "prod" else 2
+LOG_DELETE_DAYS = 30 if APP_ENV == "prod" else 50
 
 # --- Timestamp Singleton ---
 _log_timestamp = None

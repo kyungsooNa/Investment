@@ -337,7 +337,8 @@ class WebAppContext:
 
         self.log_cleanup_task = LogCleanupTask(
             log_dir=self.logger.log_dir,
-            days=30,
+            delete_days=30,
+            compress_days=7,
             market_calendar_service=self._mcs,
             market_clock=self.market_clock,
             logger=self.logger,
