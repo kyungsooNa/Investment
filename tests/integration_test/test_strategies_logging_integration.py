@@ -4,6 +4,7 @@ import importlib
 import logging
 import os
 from unittest.mock import MagicMock, patch
+import core.logger
 from core.logger import get_strategy_logger as real_get_strategy_logger
 
 # 테스트할 전략 목록 (모듈 경로, 클래스명, 예상되는 로그 서브 디렉토리)
@@ -18,15 +19,22 @@ STRATEGIES_TO_TEST = [
 
 @pytest.fixture(autouse=True)
 def cleanup_logging():
-    """테스트 후 로거 핸들러를 정리하여 파일 잠금을 해제합니다."""
-    yield
-    # 'strategy.'로 시작하는 모든 로거의 핸들러를 닫고 제거
-    for name in list(logging.root.manager.loggerDict.keys()):
-        if name.startswith("strategy."):
-            logger = logging.getLogger(name)
-            for h in logger.handlers[:]:
+    """테스트 전/후 로거 핸들러를 정리하여 파일 잠금을 해제하고 상태를 초기화합니다."""
+    def clean():
+        for name in list(logging.root.manager.loggerDict.keys()):
+            if name.startswith("strategy."):
+                logger = logging.getLogger(name)
+                for h in logger.handlers[:]:
+                    h.close()
+                    logger.removeHandler(h)
+        for listener in core.logger._active_listeners[:]:
+            listener.stop()
+            for h in listener.handlers:
                 h.close()
-                logger.removeHandler(h)
+        core.logger._active_listeners.clear()
+    clean()
+    yield
+    clean()
 
 @pytest.mark.parametrize("module_path, class_name, expected_subdir", STRATEGIES_TO_TEST)
 def test_strategy_creates_log_file_integration(tmp_path, module_path, class_name, expected_subdir):
@@ -81,9 +89,10 @@ def test_strategy_creates_log_file_integration(tmp_path, module_path, class_name
             strategy_logger.info({"message": test_message})
             strategy_logger.info(test_message)
             # 버퍼의 내용을 디스크에 즉시 기록하도록 플러시 및 닫기
-            for handler in strategy_logger.handlers[:]:
-                handler.flush()
-                handler.close()
+            for listener in core.logger._active_listeners:
+                listener.queue.join()
+                for handler in listener.handlers:
+                    handler.flush()
 
     # 4. 로그 파일 생성 확인
     # 예상 경로: tmp_path/strategies/{subdir}/...
