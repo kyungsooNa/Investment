@@ -19,10 +19,18 @@ from core.loggers.app_logger import Logger
 
 _active_listeners = []
 
+class _DictPreservingQueueHandler(QueueHandler):
+    def prepare(self, record):
+        original_msg = record.msg
+        record = super().prepare(record)
+        if isinstance(original_msg, dict):
+            record.msg = original_msg
+        return record
+
 def setup_async_logger(logger: logging.Logger, file_handler: logging.Handler):
     """파일 I/O를 백그라운드 스레드로 위임하는 비동기 큐 세팅"""
     log_queue = queue.Queue(-1)
-    queue_handler = QueueHandler(log_queue)
+    queue_handler = _DictPreservingQueueHandler(log_queue)
     logger.addHandler(queue_handler)
 
     listener = QueueListener(log_queue, file_handler, respect_handler_level=True)

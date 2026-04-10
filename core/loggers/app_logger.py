@@ -9,6 +9,14 @@ from core.loggers.log_config import get_log_timestamp, LOG_MAX_BYTES, LOG_BACKUP
 from core.loggers.size_time_rotating_file_handler import SizeTimeRotatingFileHandler
 from core.loggers.strategy_info_filter import StrategyInfoFilter
 
+class _DictPreservingQueueHandler(QueueHandler):
+    def prepare(self, record):
+        original_msg = record.msg
+        record = super().prepare(record)
+        if isinstance(original_msg, dict):
+            record.msg = original_msg
+        return record
+
 class Logger:
     """
     애플리케이션의 로깅을 관리하는 클래스입니다.
@@ -102,7 +110,7 @@ class Logger:
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'))
         
         log_queue = queue.Queue(-1)
-        queue_handler = QueueHandler(log_queue)
+        queue_handler = _DictPreservingQueueHandler(log_queue)
         logger.addHandler(queue_handler)
 
         listener = QueueListener(log_queue, file_handler, respect_handler_level=True)
