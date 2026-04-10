@@ -164,12 +164,14 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
 
         for hold in holdings:
             code = str(hold.get("code", ""))
-            buy_price = hold.get("buy_price", 0)
+            buy_price_raw = hold.get("buy_price", 0)
             stock_name = hold.get("name", code)
-            log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
 
-            if not code or not buy_price:
+            if not code or not buy_price_raw:
                 continue
+
+            buy_price = float(buy_price_raw)
+            log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
 
             try:
                 price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
@@ -193,8 +195,8 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                 should_sell = False
 
                 # 손익률과 고점 대비 하락률을 먼저 계산
-                pnl_pct = ((current - buy_price) / buy_price) * 100
-                drop_from_high = ((current - high_price) / high_price) * 100
+                pnl_pct = float(((current - buy_price) / buy_price) * 100)
+                drop_from_high = float(((current - high_price) / high_price) * 100)
 
                 # 익절 조건: 당일 고가 대비 설정된 비율(-8%) 이상 하락 시 (Trailing Stop)
                 if drop_from_high <= -self._cfg.trailing_stop_pct:

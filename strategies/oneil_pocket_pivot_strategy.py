@@ -433,15 +433,17 @@ class OneilPocketPivotStrategy(LiveStrategy):
         state_dirty = False
         for hold in holdings:
             code = hold.get("code")
-            buy_price = hold.get("buy_price")
-            if not code or not buy_price:
+            buy_price_raw = hold.get("buy_price")
+            if not code or not buy_price_raw:
                 continue
+
+            buy_price = float(buy_price_raw)
 
             state = self._position_state.get(code)
             if not state:
                 state = PPPositionState(
-                    entry_type="PP", entry_price=buy_price,
-                    entry_date="", peak_price=buy_price,
+                    entry_type="PP", entry_price=int(buy_price),
+                    entry_date="", peak_price=int(buy_price),
                     supporting_ma="20", gap_day_low=0,
                 )
                 self._position_state[code] = state
@@ -467,7 +469,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 state.peak_price = current
                 state_dirty = True
 
-            pnl = (current - buy_price) / buy_price * 100
+            pnl = float((current - buy_price) / buy_price * 100)
             today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
 
             # 수익 안착 추적 (+5% 돌파 시 1회만 기록)
@@ -500,7 +502,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
             # 🌟 우선순위 3: 부분 익절 (직전 익절가 대비 +15% 시 반복 실행)
             if not reason:
-                ref_price = state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price
+                ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
                 partial_signal = self._check_partial_profit(code, state, current, ref_price, hold)
                 if partial_signal:
                     signals.append(partial_signal)
@@ -536,7 +538,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         # 고점 대비 폭락
         if state.peak_price > 0:
-            drop = (current - state.peak_price) / state.peak_price * 100
+            drop = float((current - state.peak_price) / state.peak_price * 100)
             if drop <= self._cfg.hard_stop_from_peak_pct:
                 return f"하드스탑(고점대비 {drop:.1f}%)"
 
@@ -570,7 +572,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         self, code: str, state: PPPositionState, current: int, buy_price: int, hold: dict
     ) -> Optional[TradeSignal]:
         """부분 익절: +15% 시 50% 매도. 잔고 1주면 전량."""
-        pnl = (current - buy_price) / buy_price * 100
+        pnl = float((current - buy_price) / buy_price * 100)
         if pnl < self._cfg.partial_profit_trigger_pct:
             return None
 

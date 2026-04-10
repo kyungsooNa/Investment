@@ -297,13 +297,15 @@ class HighTightFlagStrategy(LiveStrategy):
         state_dirty = False
         for hold in holdings:
             code = hold.get("code")
-            buy_price = hold.get("buy_price")
-            if not code or not buy_price:
+            buy_price_raw = hold.get("buy_price")
+            if not code or not buy_price_raw:
                 continue
+
+            buy_price = float(buy_price_raw)
 
             state = self._position_state.get(code)
             if not state:
-                state = HTFPositionState(buy_price, "", buy_price, buy_price)
+                state = HTFPositionState(int(buy_price), "", int(buy_price), int(buy_price))
                 self._position_state[code] = state
 
             resp = await self._sqs.get_current_price(code, caller=self.name)
@@ -327,7 +329,7 @@ class HighTightFlagStrategy(LiveStrategy):
                 state.peak_price = current
                 state_dirty = True
 
-            pnl = (current - buy_price) / buy_price * 100
+            pnl = float((current - buy_price) / buy_price * 100)
             reason = ""
 
             # 1. 칼손절

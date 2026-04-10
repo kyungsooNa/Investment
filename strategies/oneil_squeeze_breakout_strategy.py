@@ -281,12 +281,14 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         for hold in holdings:
             code = hold.get("code")
-            buy_price = hold.get("buy_price")
-            if not code or not buy_price: continue
+            buy_price_raw = hold.get("buy_price")
+            if not code or not buy_price_raw: continue
+
+            buy_price = float(buy_price_raw)
 
             state = self._position_state.get(code)
             if not state:
-                state = OSBPositionState(buy_price, "", buy_price, buy_price)
+                state = OSBPositionState(int(buy_price), "", int(buy_price), int(buy_price))
                 self._position_state[code] = state
 
             resp = await self._sqs.get_current_price(code, caller=self.name)
@@ -309,7 +311,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 state.peak_price = current
                 state_dirty = True
 
-            pnl = (current - buy_price) / buy_price * 100
+            pnl = float((current - buy_price) / buy_price * 100)
             reason = ""
 
             # 1. 손절
@@ -317,7 +319,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 reason = f"손절({pnl:.1f}%)"
             # 2. 트레일링 스탑
             elif state.peak_price > 0:
-                drop = (current - state.peak_price) / state.peak_price * 100
+                drop = float((current - state.peak_price) / state.peak_price * 100)
                 if drop <= -self._cfg.trailing_stop_pct:
                     reason = f"트레일링스탑({drop:.1f}%)"
 
@@ -379,14 +381,14 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return False
             
         # 2. 횡보 또는 하락 조건 확인 (현재가가 박스권 상단 이상으로 치고 나가지 못했는가?)
-        pnl_pct = (current_price - state.entry_price) / state.entry_price * 100
+        pnl_pct = float((current_price - state.entry_price) / state.entry_price * 100)
         
         # 🌟 버그 수정: abs() 제거. 2% 이상 '상승'한 게 아니라면 다 잘라버림 (하락 포함)
         if pnl_pct > self._cfg.time_stop_box_range_pct:
             return False
             
         # 3. '찍고 내려온 놈' 제외 (최고가가 진입가 대비 크게 오르지 않았어야 함)
-        peak_pnl_pct = (state.peak_price - state.entry_price) / state.entry_price * 100
+        peak_pnl_pct = float((state.peak_price - state.entry_price) / state.entry_price * 100)
         if peak_pnl_pct > (self._cfg.time_stop_box_range_pct * 2.5):
             return False
 
