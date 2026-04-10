@@ -138,6 +138,9 @@ async function navigatePjax(href) {
     const overlay = document.getElementById('page-loading-overlay');
     if (overlay) overlay.classList.add('active');
 
+    // 페이지 이탈 전 SSE 정리 (장중 zombie 연결 방지)
+    if (typeof unsubscribeRealtimePrice === 'function') { try { unsubscribeRealtimePrice(); } catch (_) {} }
+
     // 페이지 이탈 전 Chart.js 인스턴스 정리
     if (window.currentCharts && window.currentCharts.length > 0) {
         window.currentCharts.forEach(chart => { try { chart.destroy(); } catch (_) {} });

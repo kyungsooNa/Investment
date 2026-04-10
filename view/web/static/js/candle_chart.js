@@ -235,7 +235,9 @@ function renderStockChart(period) {
 
     // 4. 차트 그리기
     const ctx = document.getElementById('stockChart').getContext('2d');
-    if (stockChartInstance) stockChartInstance.destroy();
+    const _prevChart = stockChartInstance;
+    if (_prevChart) { try { _prevChart.destroy(); } catch (_) {} }
+    stockChartInstance = null;
 
     const tChartStart = performance.now();
     stockChartInstance = new Chart(ctx, {
@@ -328,7 +330,7 @@ function renderStockChart(period) {
     console.log("ma5 last date:", g_chartIndicators.ma5[last]?.date, "ma:", g_chartIndicators.ma5[last]?.ma)
 
     window.currentCharts = window.currentCharts || [];
-    window.currentCharts = window.currentCharts.filter(c => c !== stockChartInstance);
+    window.currentCharts = window.currentCharts.filter(c => c !== _prevChart);
     window.currentCharts.push(stockChartInstance);
 
     // [성능 측정] 데이터 가공 + Chart.js 생성 시간 로깅
