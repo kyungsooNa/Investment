@@ -143,7 +143,7 @@ class WebAppContext:
             self.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
             
             # [추가] Telegram Reporter 초기화 (RankingTask 주입용)
-            self.telegram_reporter = TelegramReporter(bot_token=telegram_report_bot_token, chat_id=telegram_chat_id)
+            self.telegram_reporter = TelegramReporter(report_bot_token=telegram_report_bot_token, chat_id=telegram_chat_id)
             self.logger.info("텔레그램 리포터가 초기화되었습니다.")
         else:
             self.logger.info("텔레그램 설정이 누락되어 알림 핸들러를 등록하지 않습니다.")

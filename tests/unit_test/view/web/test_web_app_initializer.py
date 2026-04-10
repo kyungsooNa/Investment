@@ -362,7 +362,7 @@ def test_load_config_and_env_with_telegram(mock_deps):
         strategy_bot_token="TEST_STRATEGY_TOKEN",
         chat_id="TEST_CHAT_ID"
     )  # Notifier
-    mock_deps["tr"].assert_called_once_with(bot_token="TEST_REPORT_TOKEN", chat_id="TEST_CHAT_ID") # Reporter
+    mock_deps["tr"].assert_called_once_with(report_bot_token="TEST_REPORT_TOKEN", chat_id="TEST_CHAT_ID") # Reporter
     assert ctx.telegram_reporter is not None
 
 @pytest.mark.asyncio

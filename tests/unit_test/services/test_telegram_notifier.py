@@ -25,6 +25,45 @@ def sample_event():
         metadata={}
     )
 
+@pytest.fixture
+def background_event():
+    """백그라운드 카테고리용 알림 이벤트 픽스처"""
+    return NotificationEvent(
+        id="test_id_456",
+        timestamp="2026-03-11T10:05:00",
+        category=NotificationCategory.BACKGROUND,
+        level=NotificationLevel.INFO,
+        title="백그라운드 작업 완료",
+        message="데이터 수집이 완료되었습니다.",
+        metadata={}
+    )
+
+@pytest.fixture
+def system_event():
+    """시스템 카테고리용 알림 이벤트 픽스처"""
+    return NotificationEvent(
+        id="test_id_789",
+        timestamp="2026-03-11T10:10:00",
+        category=NotificationCategory.SYSTEM,
+        level=NotificationLevel.ERROR,
+        title="시스템 오류",
+        message="데이터베이스 연결 실패",
+        metadata={}
+    )
+
+@pytest.fixture
+def api_event():
+    """API 카테고리용 알림 이벤트 픽스처"""
+    return NotificationEvent(
+        id="test_id_999",
+        timestamp="2026-03-11T10:15:00",
+        category=NotificationCategory.API,
+        level=NotificationLevel.WARNING,
+        title="API 응답 지연",
+        message="API 호출이 지연되고 있습니다.",
+        metadata={}
+    )
+
 def test_init(telegram_notifier):
     """초기화 및 API URL 생성 테스트"""
     assert telegram_notifier.strategy_bot_token == "test_strategy_bot_token"
@@ -63,6 +102,52 @@ async def test_handle_event_success(telegram_notifier, sample_event):
         assert "🚨" in text
         assert "[STRATEGY] 매수 시그널" in text
         assert "삼성전자 72,000원 매수 체결" in text
+
+@pytest.mark.asyncio
+async def test_handle_event_backlog_bot(telegram_notifier, background_event):
+    """BACKGROUND 카테고리 이벤트가 backlog_bot_token API URL로 전송되는지 테스트"""
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        # 백그라운드 이벤트 처리 실행
+        await telegram_notifier.handle_event(background_event)
+
+        mock_post.assert_called_once()
+        
+        # 호출될 때 전달된 URL 검증 (backlog_api_url이어야 함)
+        call_args, call_kwargs = mock_post.call_args
+        assert call_args[0] == telegram_notifier.backlog_api_url
+        
+        payload = call_kwargs.get("json")
+        assert payload is not None
+        assert payload["chat_id"] == "test_chat_id"
+        assert "[BACKGROUND] 백그라운드 작업 완료" in payload["text"]
+        assert "데이터 수집이 완료되었습니다." in payload["text"]
+
+@pytest.mark.asyncio
+async def test_handle_event_system_bot(telegram_notifier, system_event):
+    """SYSTEM 카테고리 이벤트가 backlog_bot_token API URL로 전송되는지 테스트"""
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        # 시스템 이벤트 처리 실행
+        await telegram_notifier.handle_event(system_event)
+
+        mock_post.assert_called_once()
+        
+        # 호출될 때 전달된 URL 검증 (backlog_api_url이어야 함)
+        call_args, call_kwargs = mock_post.call_args
+        assert call_args[0] == telegram_notifier.backlog_api_url
+        
+        payload = call_kwargs.get("json")
+        assert payload is not None
+        assert payload["chat_id"] == "test_chat_id"
+        assert "[SYSTEM] 시스템 오류" in payload["text"]
+        assert "데이터베이스 연결 실패" in payload["text"]
 
 @pytest.mark.asyncio
 async def test_handle_event_api_error(telegram_notifier, sample_event, caplog):
@@ -104,22 +189,13 @@ def filter_notifier():
     return notifier
 
 @pytest.mark.asyncio
-async def test_handle_event_filtered_out(filter_notifier):
-    """허용되지 않은 카테고리(SYSTEM) 이벤트가 들어왔을 때 API 호출을 하지 않는지 테스트"""
-    system_event = NotificationEvent(
-        id="test_id_999",
-        timestamp="2026-03-11T10:00:00",
-        category=NotificationCategory.SYSTEM,  # STRATEGY가 아님
-        level=NotificationLevel.INFO,
-        title="시스템 시작",
-        message="시스템이 성공적으로 시작되었습니다.",
-    )
-
+async def test_handle_event_filtered_out(filter_notifier, api_event):
+    """허용되지 않은 카테고리(API) 이벤트가 들어왔을 때 API 호출을 하지 않는지 테스트"""
     with patch("aiohttp.ClientSession.post") as mock_post:
         # 이벤트 처리 실행
-        await filter_notifier.handle_event(system_event)
+        await filter_notifier.handle_event(api_event)
 
-        # SYSTEM 카테고리는 무시되어야 하므로 post 메서드가 단 한 번도 호출되지 않아야 함
+        # API 카테고리는 무시되어야 하므로 post 메서드가 단 한 번도 호출되지 않아야 함
         mock_post.assert_not_called()
 
 @pytest.mark.asyncio
@@ -171,7 +247,7 @@ async def test_handle_event_return_rate_zero(telegram_notifier):
 
 @pytest.fixture
 def telegram_reporter():
-    return TelegramReporter(bot_report_token="test_token", chat_id="test_chat_id")
+    return TelegramReporter(report_bot_token="test_token", chat_id="test_chat_id")
 
 @pytest.mark.asyncio
 async def test_reporter_send_message(telegram_reporter):

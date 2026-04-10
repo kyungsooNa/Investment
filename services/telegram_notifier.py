@@ -85,10 +85,10 @@ class TelegramNotifier:
 class TelegramReporter:
     """텔레그램으로 정형화된 리포트(랭킹 등)를 전송하는 클래스입니다."""
 
-    def __init__(self, bot_token: str, chat_id: str):
-        self.bot_token = bot_token
+    def __init__(self, report_bot_token: str, chat_id: str):
+        self.report_bot_token = report_bot_token
         self.chat_id = chat_id
-        self.api_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        self.api_url = f"https://api.telegram.org/bot{self.report_bot_token}/sendMessage"
 
     async def _send_message(self, text: str) -> bool:
         """텔레그램으로 메시지를 비동기적으로 전송하는 헬퍼 메서드입니다."""
