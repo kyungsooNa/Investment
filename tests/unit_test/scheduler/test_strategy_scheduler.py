@@ -1716,6 +1716,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler.register(config)
         
         scheduler._force_exit_done = set() 
+        scheduler._running = True
         
         with patch.object(scheduler, '_run_strategy', side_effect=Exception("Liquidate Error")):
             try:
