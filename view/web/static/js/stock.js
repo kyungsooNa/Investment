@@ -69,6 +69,22 @@ document.addEventListener('pjax:ready', (e) => {
         },
         onConfirm: function() { searchStock(); }
     });
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        if (code) {
+            searchStock(code);
+        }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (window.location.pathname !== '/stock') return;
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (code) {
+        searchStock(code);
+    }
 });
 
 /**
