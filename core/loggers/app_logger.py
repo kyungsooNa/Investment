@@ -155,3 +155,5 @@ class Logger:
     def close(self):
         for listener in self._listeners:
             listener.stop()
+            for handler in listener.handlers:
+                handler.close()
