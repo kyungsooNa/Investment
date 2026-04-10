@@ -6,6 +6,7 @@ from core.logger import (
     Logger,
     get_strategy_logger,
     get_performance_logger,
+    _active_listeners
 )
 from core.loggers.log_config import reset_log_timestamp_for_test
 from core.loggers.json_formatter import JsonFormatter
@@ -25,7 +26,14 @@ def test_get_strategy_logger(tmp_path):
     assert logger.propagate
     assert len(logger.handlers) == 1
 
-    file_handler = next((h for h in logger.handlers if isinstance(h, logging.FileHandler)), None)
+    file_handler = None
+    for listener in _active_listeners:
+        for h in listener.handlers:
+            if isinstance(h, logging.FileHandler):
+                file_handler = h
+                break
+        if file_handler: break
+        
     assert file_handler is not None
     assert isinstance(file_handler.formatter, JsonFormatter)
 
@@ -41,8 +49,12 @@ def test_get_strategy_logger(tmp_path):
     logger.info(dict_message)
     logger.warning(str_message)
 
-    for handler in logger.handlers[:]:
-        handler.close()
+    for listener in _active_listeners:
+        listener.queue.join()
+        listener.stop()
+        for h in listener.handlers:
+            h.close()
+    _active_listeners.clear()
 
     assert log_file_path.exists()
     with open(log_file_path, 'r', encoding='utf-8') as f:
@@ -81,7 +93,14 @@ def test_get_performance_logger(tmp_path):
     assert not logger.propagate
     assert len(logger.handlers) == 1
 
-    file_handler = next((h for h in logger.handlers if isinstance(h, SizeTimeRotatingFileHandler)), None)
+    file_handler = None
+    for listener in _active_listeners:
+        for h in listener.handlers:
+            if isinstance(h, SizeTimeRotatingFileHandler):
+                file_handler = h
+                break
+        if file_handler: break
+        
     assert file_handler is not None
     assert not isinstance(file_handler.formatter, JsonFormatter)
 
@@ -94,8 +113,12 @@ def test_get_performance_logger(tmp_path):
     msg = "Performance test message"
     logger.info(msg)
 
-    for handler in logger.handlers[:]:
-        handler.close()
+    for listener in _active_listeners:
+        listener.queue.join()
+        listener.stop()
+        for h in listener.handlers:
+            h.close()
+    _active_listeners.clear()
 
     assert log_file_path.exists()
     content = log_file_path.read_text(encoding='utf-8')
@@ -112,14 +135,14 @@ def test_loggers_use_custom_handler(tmp_path):
     log_dir = tmp_path / "logs"
 
     strat_logger = get_strategy_logger("test_strat", log_dir=str(log_dir))
-    assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in strat_logger.handlers)
-    for h in strat_logger.handlers:
-        h.close()
+    assert any(isinstance(h, SizeTimeRotatingFileHandler) for l in _active_listeners for h in l.handlers)
+    for listener in _active_listeners:
+        listener.stop()
+        for h in listener.handlers:
+            h.close()
+    _active_listeners.clear()
 
     app_logger = Logger(log_dir=str(log_dir))
-    assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in app_logger.operational_logger.handlers)
-    assert any(isinstance(h, SizeTimeRotatingFileHandler) for h in app_logger.debug_logger.handlers)
+    assert any(isinstance(h, SizeTimeRotatingFileHandler) for l in app_logger._listeners for h in l.handlers)
 
-    for logger in [app_logger.operational_logger, app_logger.debug_logger]:
-        for h in logger.handlers:
-            h.close()
+    app_logger.close()

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.logger import get_cache_event_logger
+import core.logger
 from core.loggers.cache_event_logger import CacheEventLogger
 from core.loggers.log_config import reset_log_timestamp_for_test
 from core.loggers.size_time_rotating_file_handler import SizeTimeRotatingFileHandler
@@ -32,11 +33,17 @@ def cache_logger_setup(tmp_path):
     for h in inner.handlers[:]:
         h.close()
         inner.removeHandler(h)
+        
+    for listener in core.logger._active_listeners[:]:
+        listener.stop()
+    core.logger._active_listeners.clear()
 
 
 def _flush_cache_logger():
-    for h in logging.getLogger("cache_event").handlers:
-        h.flush()
+    for listener in core.logger._active_listeners:
+        listener.queue.join()
+        for h in listener.handlers:
+            h.flush()
 
 
 def _read_json_lines(log_dir):
@@ -56,7 +63,15 @@ def test_get_cache_event_logger_creates_file(cache_logger_setup):
     assert not inner.propagate
     assert inner.level == logging.DEBUG
     assert len(inner.handlers) == 1
-    handler = inner.handlers[0]
+    
+    handler = None
+    for listener in core.logger._active_listeners:
+        for h in listener.handlers:
+            if isinstance(h, SizeTimeRotatingFileHandler):
+                handler = h
+                break
+        if handler: break
+                
     assert isinstance(handler, SizeTimeRotatingFileHandler)
     assert isinstance(handler.formatter, JsonFormatter)
 

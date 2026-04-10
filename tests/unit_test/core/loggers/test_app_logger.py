@@ -23,6 +23,7 @@ def clean_logger_instance(tmp_path):
 
     yield logger_instance, log_dir.joinpath("common")
 
+    logger_instance.close()
     for handler in logging.getLogger('operational_logger').handlers:
         handler.close()
         logging.getLogger('operational_logger').removeHandler(handler)
@@ -40,6 +41,7 @@ def test_logger_creates_log_files(clean_logger_instance):
     logger.warning("warning message")
     logger.error("error message")
     logger.critical("critical message")
+    logger.flush()
 
     log_files = list(common_log_dir.glob("*.log"))
     assert len(log_files) == 2
@@ -67,6 +69,7 @@ def test_logger_error_with_exc_info(clean_logger_instance):
         raise ValueError("Something went wrong")
     except ValueError as e:
         logger.error(message, exc_info=True)
+    logger.flush()
 
     log_files = list(common_log_dir.glob("*.log"))
     assert len(log_files) == 2
@@ -84,6 +87,7 @@ def test_logger_critical_with_exc_info(clean_logger_instance):
         raise RuntimeError("Critical error occurred")
     except RuntimeError as e:
         logger.critical(message, exc_info=True)
+    logger.flush()
 
     log_files = list(common_log_dir.glob("*.log"))
     assert len(log_files) == 2
@@ -108,6 +112,7 @@ def test_logger_creates_log_dir_if_not_exists(tmp_path):
     assert (non_existent_log_dir / "common").is_dir()
     assert (non_existent_log_dir / "strategies").is_dir()
 
+    logger.close()
     for handler in logging.getLogger('operational_logger').handlers:
         handler.close()
         logging.getLogger('operational_logger').removeHandler(handler)
@@ -152,7 +157,8 @@ def test_log_cleanup(tmp_path):
     logging.root.handlers = []
     
     try:
-        Logger(log_dir=str(log_dir))
+        logger = Logger(log_dir=str(log_dir))
+        logger.close()
         
         assert not old_log.exists(), "30일 지난 .log 파일은 삭제되어야 합니다."
         assert not old_json.exists(), "30일 지난 .json 파일은 삭제되어야 합니다."
@@ -175,6 +181,7 @@ def test_logger_exception_method(clean_logger_instance):
         raise ValueError("Exception method test")
     except ValueError:
         logger.exception(message)
+    logger.flush()
 
     log_files = list(common_log_dir.glob("*.log"))
     for f in log_files:

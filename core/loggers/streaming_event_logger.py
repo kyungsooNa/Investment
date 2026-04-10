@@ -44,6 +44,8 @@ class StreamingEventLogger:
                         ex) {"portfolio": 1, "strategy_momentum": 2}
             active_count: 구독 등록 후 총 활성 구독 수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "subscribe",
             "code": code,
@@ -58,6 +60,8 @@ class StreamingEventLogger:
             code: 종목코드
             active_count: 구독 해제 후 총 활성 구독 수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "unsubscribe",
             "code": code,
@@ -77,6 +81,8 @@ class StreamingEventLogger:
             active_codes: 활성 구독 종목 목록
             pending_by_priority: {"HIGH": [...], "MEDIUM": [...], "LOW": [...]}
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "summary",
             "active_count": active_count,
@@ -88,6 +94,8 @@ class StreamingEventLogger:
 
     def log_connect(self) -> None:
         """WebSocket 연결 성공."""
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "connect"})
 
     def log_disconnect(self, reason: str = "") -> None:
@@ -96,6 +104,8 @@ class StreamingEventLogger:
         Args:
             reason: 해제 이유 (e.g., "market_closed", "manual", "")
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "disconnect", "reason": reason})
 
     # ── WebSocketWatchdogTask 이벤트 ─────────────────────────────
@@ -115,6 +125,8 @@ class StreamingEventLogger:
             success: 성공한 종목 수
             total: 전체 시도 종목 수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "reconnect",
             "trigger": trigger,
@@ -131,6 +143,8 @@ class StreamingEventLogger:
             success: 성공한 종목 수
             total: 전체 시도 종목 수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "restore",
             "codes": sorted(codes),
@@ -147,6 +161,8 @@ class StreamingEventLogger:
             code: 종목코드
             reason: 구독 이유 (e.g., "initial", "reconnect", "restore", "user_request")
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "pt_subscribe", "code": code, "reason": reason})
 
     def log_pt_unsubscribe(self, code: str, reason: str = "") -> None:
@@ -156,6 +172,8 @@ class StreamingEventLogger:
             code: 종목코드
             reason: 해제 이유 (e.g., "failed", "user_request")
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "pt_unsubscribe", "code": code, "reason": reason})
 
     # ── 실시간 체결가 구독 이벤트 (H0STCNT0) ──────────────────
@@ -169,6 +187,8 @@ class StreamingEventLogger:
             code: 종목코드
             reason: 구독 이유 (e.g., "initial", "reconnect", "restore")
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "price_subscribe", "code": code, "reason": reason})
 
     def log_price_unsubscribe(self, code: str, reason: str = "") -> None:
@@ -178,6 +198,8 @@ class StreamingEventLogger:
             code: 종목코드
             reason: 해제 이유 (e.g., "failed", "user_request")
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "price_unsubscribe", "code": code, "reason": reason})
 
     # ── WebSocket 연결 이벤트 (KoreaInvestWebSocketAPI) ────────────
@@ -189,6 +211,8 @@ class StreamingEventLogger:
             reason: 끊김 원인 (e.g., "no close frame", "timeout", "ConnectionClosedError")
             retry_count: 현재까지의 조기 재시도 횟수
         """
+        if not self._logger.isEnabledFor(logging.WARNING):
+            return
         self._logger.warning({
             "action": "connection_lost",
             "reason": reason,
@@ -205,6 +229,8 @@ class StreamingEventLogger:
             delay_sec: 다음 재연결까지 대기 시간 (초)
             max_retries: 최대 재시도 횟수
         """
+        if not self._logger.isEnabledFor(logging.WARNING):
+            return
         self._logger.warning({
             "action": "appkey_collision",
             "retry_count": retry_count,
@@ -220,6 +246,8 @@ class StreamingEventLogger:
             max_attempts: 최대 시도 횟수
             was_collision: True이면 appkey 충돌로 인한 재연결
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "reconnect_attempt",
             "attempt_num": attempt_num,
@@ -234,6 +262,8 @@ class StreamingEventLogger:
             attempt_num: 현재 시도 번호 (1-based)
             max_attempts: 최대 시도 횟수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "reconnect_success",
             "attempt_num": attempt_num,
@@ -247,6 +277,8 @@ class StreamingEventLogger:
             code: 종목코드
             message: 실패 메시지 (예: "WebSocket 미연결", "브로커 거부", "예외 발생 {e}")
         """
+        if not self._logger.isEnabledFor(logging.ERROR):
+            return
         self._logger.error({
             "action": "unsubscribe_failure",
             "code": code,
@@ -260,6 +292,8 @@ class StreamingEventLogger:
             code: 종목코드
             message: 실패 메시지 (예: "WebSocket 미연결", "브로커 거부", "예외 발생 {e}")
         """
+        if not self._logger.isEnabledFor(logging.ERROR):
+            return
         self._logger.error({
             "action": "subscribe_failure",
             "code": code,
@@ -283,6 +317,8 @@ class StreamingEventLogger:
             market_open: 현재 장 운영 중 여부
             subscribed_count: PT desired 구독 종목 수
         """
+        if not self._logger.isEnabledFor(logging.DEBUG):
+            return
         self._logger.debug({
             "action": "watchdog_check",
             "receive_alive": receive_alive,
@@ -298,6 +334,8 @@ class StreamingEventLogger:
             total: 복구 시도 종목 수
             codes: 복구 대상 종목 목록
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "subscription_recovery_start",
             "total": total,
@@ -319,6 +357,8 @@ class StreamingEventLogger:
             failed_codes: 복구 실패 종목 목록
             elapsed_ms: 복구 소요 시간 (밀리초)
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "subscription_recovery_done",
             "success": success,
@@ -415,6 +455,8 @@ class StreamingEventLogger:
         Args:
             message: 예외 메시지
         """
+        if not self._logger.isEnabledFor(logging.ERROR):
+            return
         self._logger.error({"action": "watchdog_error", "message": message})
 
     # ── WebSocketWatchdogTask 복원 이벤트 ────────────────────────
@@ -425,6 +467,8 @@ class StreamingEventLogger:
         Args:
             code: 연결 실패한 종목코드
         """
+        if not self._logger.isEnabledFor(logging.WARNING):
+            return
         self._logger.warning({"action": "pt_restore_connect_failed", "code": code})
 
     def log_pt_restore_error(self, code: str, error: str) -> None:
@@ -434,6 +478,8 @@ class StreamingEventLogger:
             code: 오류가 발생한 종목코드
             error: 예외 메시지
         """
+        if not self._logger.isEnabledFor(logging.ERROR):
+            return
         self._logger.error({"action": "pt_restore_error", "code": code, "error": error})
 
     def log_pt_restore_failed_removed(self, codes: list) -> None:
@@ -442,6 +488,8 @@ class StreamingEventLogger:
         Args:
             codes: 제거 대상 종목코드 목록
         """
+        if not self._logger.isEnabledFor(logging.WARNING):
+            return
         self._logger.warning({"action": "pt_restore_failed_removed", "codes": sorted(codes)})
 
     def log_price_restore_start(self, desired_count: int) -> None:
@@ -450,6 +498,8 @@ class StreamingEventLogger:
         Args:
             desired_count: 복원 대상 종목 수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "price_restore_start", "desired_count": desired_count})
 
     def log_price_restore_done(self, active_count: int) -> None:
@@ -458,6 +508,8 @@ class StreamingEventLogger:
         Args:
             active_count: 복원 후 활성 구독 수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "price_restore_done", "active_count": active_count})
 
     # ── WebSocketWatchdogTask 강제 재연결 이벤트 ─────────────────
@@ -469,6 +521,8 @@ class StreamingEventLogger:
             trigger: 재연결 원인
             pt_codes: 재구독 대상 PT 종목 목록
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "force_reconnect_start",
             "trigger": trigger,
@@ -481,6 +535,8 @@ class StreamingEventLogger:
         Args:
             error: 예외 메시지
         """
+        if not self._logger.isEnabledFor(logging.WARNING):
+            return
         self._logger.warning({"action": "force_reconnect_disconnect_error", "error": error})
 
     def log_force_reconnect_done(self, trigger: str) -> None:
@@ -489,6 +545,8 @@ class StreamingEventLogger:
         Args:
             trigger: 재연결 원인
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "force_reconnect_done", "trigger": trigger})
 
     def log_subscribe_pending(self, code: str, message: str) -> None:
@@ -498,4 +556,6 @@ class StreamingEventLogger:
             code: 종목코드
             message: 로그 메시지 (예: "장 외 시간 — 구독 보류 005930")
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({"action": "subscribe_pending", "code": code, "message": message})

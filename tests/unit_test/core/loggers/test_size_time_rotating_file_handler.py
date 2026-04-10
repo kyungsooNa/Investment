@@ -13,6 +13,7 @@ def clean_logger_instance(tmp_path):
         logging.root.removeHandler(handler)
     logger_instance = Logger(log_dir=str(log_dir))
     yield logger_instance, log_dir.joinpath("common")
+    logger_instance.close()
     for handler in logging.getLogger('operational_logger').handlers:
         handler.close()
         logging.getLogger('operational_logger').removeHandler(handler)
@@ -28,17 +29,27 @@ def test_log_rotation(clean_logger_instance):
     """
     logger, common_log_dir = clean_logger_instance
     
-    handler = next(h for h in logger.operational_logger.handlers if isinstance(h, SizeTimeRotatingFileHandler))
+    # 리스너에서 SizeTimeRotatingFileHandler 추출
+    handler = None
+    for listener in logger._listeners:
+        for h in listener.handlers:
+            if isinstance(h, SizeTimeRotatingFileHandler):
+                handler = h
+                break
+        if handler:
+            break
     
     handler.maxBytes = 200
 
     msg = "A" * 50
     logger.info(msg)
+    logger.flush()
     
     log_files = list(common_log_dir.glob("*_operational_*.log"))
     assert len(log_files) == 1
     
     logger.info(msg)
+    logger.flush()
     
     log_files = list(common_log_dir.glob("*_operational_*.log"))
     assert len(log_files) >= 1

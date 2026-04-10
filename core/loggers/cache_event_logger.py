@@ -54,6 +54,8 @@ class CacheEventLogger:
             after_price: 갱신 후 stck_prpr
             is_new: True이면 캐시에 처음 등록 (신규 종목)
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "price_set",
             "code": code,
@@ -78,6 +80,8 @@ class CacheEventLogger:
             after_price: 갱신 후 stck_prpr
             volume: 누적 거래량
         """
+        if not self._logger.isEnabledFor(logging.DEBUG):
+            return
         self._logger.debug({
             "action": "price_update_tick",
             "code": code,
@@ -101,6 +105,8 @@ class CacheEventLogger:
             age_sec: 캐시 데이터 경과 시간 (초)
             is_streaming: 실시간 스트리밍 중 여부 (TTL 무제한)
         """
+        if not self._logger.isEnabledFor(logging.DEBUG):
+            return
         self._logger.debug({
             "action": "price_hit",
             "code": code,
@@ -117,6 +123,8 @@ class CacheEventLogger:
             caller: 호출 출처
             reason: "not_found" | "ttl_expired"
         """
+        if not self._logger.isEnabledFor(logging.DEBUG):
+            return
         self._logger.debug({
             "action": "price_miss",
             "code": code,
@@ -131,6 +139,8 @@ class CacheEventLogger:
             code: 제거된 종목코드
             capacity: 캐시 최대 용량
         """
+        if not self._logger.isEnabledFor(logging.WARNING):
+            return
         self._logger.warning({
             "action": "price_evicted",
             "code": code,
@@ -146,6 +156,8 @@ class CacheEventLogger:
             code: 종목코드
             streaming_count: 등록 후 총 스트리밍 종목 수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "streaming_mark",
             "code": code,
@@ -159,6 +171,8 @@ class CacheEventLogger:
             code: 종목코드
             streaming_count: 해제 후 총 스트리밍 종목 수
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "streaming_unmark",
             "code": code,
@@ -182,6 +196,8 @@ class CacheEventLogger:
             ohlcv_count: 적재된 OHLCV 일수
             latest_date: 가장 최근 OHLCV 날짜 (데이터 신선도 확인)
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "ohlcv_loaded",
             "code": code,
@@ -205,6 +221,8 @@ class CacheEventLogger:
             ohlcv_count: 캐시에 있는 총 OHLCV 일수 (historical + today 포함)
             has_today_candle: 당일 캔들 존재 여부
         """
+        if not self._logger.isEnabledFor(logging.DEBUG):
+            return
         self._logger.debug({
             "action": "ohlcv_hit",
             "code": code,
@@ -220,6 +238,8 @@ class CacheEventLogger:
             code: 종목코드
             caller: 호출 출처
         """
+        if not self._logger.isEnabledFor(logging.DEBUG):
+            return
         self._logger.debug({
             "action": "ohlcv_miss",
             "code": code,
@@ -235,6 +255,8 @@ class CacheEventLogger:
             ohlcv_count: 제거된 종목의 OHLCV 일수
             capacity: 캐시 최대 용량
         """
+        if not self._logger.isEnabledFor(logging.WARNING):
+            return
         self._logger.warning({
             "action": "ohlcv_evicted",
             "code": code,
@@ -249,6 +271,8 @@ class CacheEventLogger:
         Args:
             code: 무효화된 종목코드
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "ohlcv_invalidated",
             "code": code,
@@ -267,6 +291,8 @@ class CacheEventLogger:
             code_count: 영향 받은 고유 종목 수
             invalidated_codes: 캐시 무효화된 종목코드 목록
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         self._logger.info({
             "action": "ohlcv_upsert",
             "record_count": record_count,
@@ -293,6 +319,8 @@ class CacheEventLogger:
             low: 갱신 후 저가
             is_new_candle: True이면 ohlcv_today 신규 생성 (기존 historical[-1] 갱신이 아님)
         """
+        if not self._logger.isEnabledFor(logging.DEBUG):
+            return
         self._logger.debug({
             "action": "today_candle",
             "code": code,
@@ -312,6 +340,8 @@ class CacheEventLogger:
             price_stats: StockPriceRepository.get_cache_stats() 결과
             ohlcv_stats: StockOhlcvRepository.get_cache_stats() 결과
         """
+        if not self._logger.isEnabledFor(logging.INFO):
+            return
         total_hits = price_stats.get("hits", 0) + ohlcv_stats.get("hits", 0)
         total_misses = price_stats.get("misses", 0) + ohlcv_stats.get("misses", 0)
         total = total_hits + total_misses

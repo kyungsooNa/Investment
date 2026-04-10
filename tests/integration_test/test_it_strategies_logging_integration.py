@@ -4,6 +4,7 @@ import importlib
 import logging
 import os
 from unittest.mock import MagicMock, patch
+import core.logger
 from core.logger import get_strategy_logger as real_get_strategy_logger
 
 # 테스트할 전략 목록 (모듈 경로, 클래스명, 예상되는 로그 서브 디렉토리)
@@ -26,6 +27,11 @@ def cleanup_logging():
                 for h in logger.handlers[:]:
                     h.close()
                     logger.removeHandler(h)
+        for listener in core.logger._active_listeners[:]:
+            listener.stop()
+            for h in listener.handlers:
+                h.close()
+        core.logger._active_listeners.clear()
     clean()
     yield
     clean()
@@ -83,9 +89,10 @@ def test_strategy_creates_log_file_integration(tmp_path, module_path, class_name
             strategy_logger.info({"message": test_message})
             strategy_logger.info(test_message)
             # 버퍼에 남아있는 로그를 디스크(파일)에 즉시 기록하도록 핸들러를 플러시하고 닫습니다.
-            for handler in strategy_logger.handlers[:]:
-                handler.flush()
-                handler.close()
+            for listener in core.logger._active_listeners:
+                listener.queue.join()
+                for handler in listener.handlers:
+                    handler.flush()
 
     # 4. 로그 파일 생성 확인
     # 예상 경로: tmp_path/strategies/{subdir}/...
