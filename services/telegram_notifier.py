@@ -9,17 +9,28 @@ logger = logging.getLogger(__name__)
 class TelegramNotifier:
     """Telegram 알림을 비동기적으로 전송하는 핸들러 클래스입니다."""
 
-    def __init__(self, bot_token: str, chat_id: str):
-        self.bot_token = bot_token
+    def __init__(self, strategy_bot_token: str, backlog_bot_token: str, chat_id: str):
+        self.strategy_bot_token = strategy_bot_token
+        self.backlog_bot_token = backlog_bot_token
         self.chat_id = chat_id
-        self.api_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        # 허용할 카테고리 목록 설정 (기본값: STRATEGY, BACKGROUND)
-        self.allowed_categories = [NotificationCategory.STRATEGY, NotificationCategory.BACKGROUND]
+        self.strategy_api_url = f"https://api.telegram.org/bot{self.strategy_bot_token}/sendMessage"
+        self.backlog_api_url = f"https://api.telegram.org/bot{self.backlog_bot_token}/sendMessage"
+        # 허용할 카테고리 목록 설정 (기본값: STRATEGY, BACKGROUND, SYSTEM)
+        self.allowed_categories = [NotificationCategory.STRATEGY, NotificationCategory.BACKGROUND, NotificationCategory.SYSTEM]
 
     async def handle_event(self, event: NotificationEvent) -> None:
         """NotificationService에서 호출할 비동기 콜백 메서드입니다."""
         # ★ 필터링 로직: 허용된 카테고리가 설정되어 있고, 현재 이벤트 카테고리가 거기에 없으면 무시
         if self.allowed_categories is not None and event.category not in self.allowed_categories:
+            return
+        
+        api_url = None
+        if event.category == NotificationCategory.STRATEGY:
+            api_url = self.strategy_api_url
+        elif event.category == NotificationCategory.BACKGROUND or \
+            event.category == NotificationCategory.SYSTEM:
+            api_url = self.backlog_api_url
+        else:
             return
         
         # 특정 레벨(예: info, warning, error, critical)에 따라 이모지나 포맷을 다르게 할 수 있습니다.
@@ -63,7 +74,7 @@ class TelegramNotifier:
         # 비동기 HTTP 요청으로 Telegram API 호출
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(self.api_url, json=payload) as response:
+                async with session.post(api_url, json=payload) as response:
                     if response.status != 200:
                         response_text = await response.text()
                         logger.error(f"Telegram 알림 전송 실패: {response.status} - {response_text}")
