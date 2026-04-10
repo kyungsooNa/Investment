@@ -229,9 +229,9 @@ class FirstPullbackStrategy(LiveStrategy):
 
         # 상세 근거 계산
         recent_vols = [r.get("volume", 0) for r in ohlcv[-self._cfg.volume_dryup_days:]]
-        avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 0
-        vol_dryup_pct = (avg_vol / surge_volume * 100) if surge_volume > 0 else 0.0
-        pullback_pct = (today_low - ma_20d) / ma_20d * 100 if ma_20d > 0 else 0.0
+        avg_vol = float(sum(recent_vols) / len(recent_vols)) if recent_vols else 0.0
+        vol_dryup_pct = float((avg_vol / surge_volume * 100)) if surge_volume > 0 else 0.0
+        pullback_pct = float((today_low - ma_20d) / ma_20d * 100) if ma_20d > 0 else 0.0
 
         reason_msg = (
             f"첫눌림목(20MA {ma_20d:,.0f} 지지({pullback_pct:+.1f}%), "
@@ -354,16 +354,18 @@ class FirstPullbackStrategy(LiveStrategy):
         state_dirty = False
         for hold in holdings:
             code = hold.get("code")
-            buy_price = hold.get("buy_price")
-            if not code or not buy_price:
+            buy_price_raw = hold.get("buy_price")
+            if not code or not buy_price_raw:
                 continue
+
+            buy_price = float(buy_price_raw)  # numpy.float64 타입 제거 (순수 float 형변환)
 
             state = self._position_state.get(code)
             if not state:
                 state = FPPositionState(
-                    entry_price=buy_price,
+                    entry_price=int(buy_price),
                     entry_date="",
-                    peak_price=buy_price,
+                    peak_price=int(buy_price),
                     surge_day_high=0,
                 )
                 self._position_state[code] = state
@@ -395,20 +397,20 @@ class FirstPullbackStrategy(LiveStrategy):
             ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
             closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
 
-            pnl = (current - buy_price) / buy_price * 100
+            pnl = float((current - buy_price) / buy_price * 100)
             reason = ""
 
             # 🚨 손절: 20MA -2% 이탈 → 잔량 전체 매도
             if len(closes) >= self._cfg.ma_period:
-                ma_20d = sum(closes[-self._cfg.ma_period:]) / self._cfg.ma_period
+                ma_20d = float(sum(closes[-self._cfg.ma_period:]) / self._cfg.ma_period)
                 threshold = ma_20d * (1 + self._cfg.stop_loss_below_ma_pct / 100)
                 if current < threshold:
                     reason = f"손절(20MA {ma_20d:,.0f} 하향이탈 {pnl:.1f}%)"
 
             # 🌟 부분 익절: 직전 익절가(또는 진입가) 대비 +10% 도달 시 반복 실행
             if not reason:
-                ref_price = state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price
-                pnl_from_ref = (current - ref_price) / ref_price * 100
+                ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
+                pnl_from_ref = float((current - ref_price) / ref_price * 100)
                 if pnl_from_ref >= self._cfg.take_profit_lower_pct:
                     holding_qty = int(hold.get("qty", 1))
                     sell_qty = max(1, int(holding_qty * self._cfg.partial_sell_ratio))
