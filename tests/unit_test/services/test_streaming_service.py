@@ -365,16 +365,20 @@ def test_dispatch_realtime_message_throttling(streaming_service):
     # time.monotonic()가 고정값을 반환하도록 패치
     with patch('time.monotonic', return_value=100.0):
         streaming_service.dispatch_realtime_message(data)
-        assert streaming_service.logger.debug.call_count == 1
+        # 1. "실시간 데이터 수신..." (무조건 출력)
+        # 2. "[실시간 체결..." (스로틀 통과)
+        assert streaming_service.logger.debug.call_count == 2
         
-        # 동일 시간에 재호출 -> 스로틀링 작동 (로깅 호출 횟수 안 늘어남)
+        # 동일 시간에 재호출 -> 체결 로그 스로틀링 작동 (무조건 출력 로그 1회만 증가)
         streaming_service.dispatch_realtime_message(data)
-        assert streaming_service.logger.debug.call_count == 1
+        assert streaming_service.logger.debug.call_count == 3
 
     # 제한 시간(0.5초)이 지난 후 호출 -> 로깅 다시 작동
     with patch('time.monotonic', return_value=101.0):
         streaming_service.dispatch_realtime_message(data)
-        assert streaming_service.logger.debug.call_count == 2
+        # 3. "실시간 데이터 수신..." (무조건 출력)
+        # 4. "[실시간 체결..." (스로틀 통과)
+        assert streaming_service.logger.debug.call_count == 5
 
 @pytest.mark.asyncio
 async def test_handle_get_program_trading_history_success(streaming_service, mock_broker):
