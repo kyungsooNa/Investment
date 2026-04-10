@@ -626,3 +626,121 @@ async def test_stock_ohlcv_repo_logs_ohlcv_eviction(tmp_path):
     assert call[1]["capacity"] == 1
 
     await repo.close()
+
+
+# ── sampling / level-guard 분기 커버리지 ────────────────────────────
+
+def test_log_price_update_tick_skips_non_100th(cache_logger_setup):
+    """_tick_count % 100 != 0 이면 로그를 기록하지 않아야 한다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    # 기본 상태(tick_count=0)에서 99번 호출 → 모두 skip
+    for _ in range(99):
+        cache_logger.log_price_update_tick("005930", "74000", "75000", 100)
+    _flush_cache_logger()
+
+    log_files = list(cache_log_dir.glob("*.log.json"))
+    if log_files:
+        with open(log_files[0], encoding="utf-8") as f:
+            lines = [l for l in f if l.strip()]
+        assert len(lines) == 0
+    # 파일 자체가 없어도 통과 (아무것도 기록 안 됨)
+
+
+def test_log_price_update_tick_debug_disabled_skips(cache_logger_setup):
+    """100번째 틱이지만 DEBUG 레벨이 꺼져 있으면 기록하지 않는다."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    inner = logging.getLogger("cache_event")
+    inner.setLevel(logging.INFO)  # DEBUG 비활성화
+
+    cache_logger._tick_count = 99
+    cache_logger.log_price_update_tick("005930", "74000", "75000", 100)
+    _flush_cache_logger()
+
+    log_files = list(cache_log_dir.glob("*.log.json"))
+    if log_files:
+        with open(log_files[0], encoding="utf-8") as f:
+            lines = [l for l in f if l.strip()]
+        assert len(lines) == 0
+
+
+def test_debug_methods_skip_when_logger_level_is_info(cache_logger_setup):
+    """INFO 레벨 로거에서 DEBUG 메서드들은 isEnabledFor guard로 모두 skip."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    inner = logging.getLogger("cache_event")
+    inner.setLevel(logging.INFO)
+
+    cache_logger.log_price_hit("005930", "test", 1.0, is_streaming=False)
+    cache_logger.log_price_miss("005930", "test", "not_found")
+    cache_logger.log_ohlcv_hit("005930", "test", ohlcv_count=10, has_today_candle=False)
+    cache_logger.log_ohlcv_miss("005930", "test")
+    cache_logger.log_today_candle("005930", 74000, 75000, high=75000, low=74000, is_new_candle=False)
+    _flush_cache_logger()
+
+    log_files = list(cache_log_dir.glob("*.log.json"))
+    if log_files:
+        with open(log_files[0], encoding="utf-8") as f:
+            lines = [l for l in f if l.strip()]
+        assert len(lines) == 0
+
+
+def test_info_methods_skip_when_logger_level_is_warning(cache_logger_setup):
+    """WARNING 레벨 로거에서 INFO 메서드들은 isEnabledFor guard로 모두 skip."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    inner = logging.getLogger("cache_event")
+    inner.setLevel(logging.WARNING)
+
+    cache_logger.log_price_set("005930", "api", None, "75000", is_new=True)
+    cache_logger.log_streaming_mark("005930", streaming_count=1)
+    cache_logger.log_streaming_unmark("005930", streaming_count=0)
+    cache_logger.log_ohlcv_loaded("005930", "test", 10, "20250401")
+    cache_logger.log_ohlcv_invalidated("005930")
+    cache_logger.log_ohlcv_upsert(record_count=1, code_count=1, invalidated_codes=["005930"])
+    cache_logger.log_stats(
+        {"hits": 1, "misses": 0, "hit_rate": 100.0, "current_size": 1},
+        {"hits": 0, "misses": 1, "hit_rate": 0.0, "current_size": 0},
+    )
+    _flush_cache_logger()
+
+    log_files = list(cache_log_dir.glob("*.log.json"))
+    if log_files:
+        with open(log_files[0], encoding="utf-8") as f:
+            lines = [l for l in f if l.strip()]
+        assert len(lines) == 0
+
+
+def test_warning_methods_skip_when_logger_level_is_error(cache_logger_setup):
+    """ERROR 레벨 로거에서 WARNING 메서드들은 isEnabledFor guard로 skip."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    inner = logging.getLogger("cache_event")
+    inner.setLevel(logging.ERROR)
+
+    cache_logger.log_price_evicted("005930", capacity=3000)
+    cache_logger.log_ohlcv_evicted("005930", freq=1, ohlcv_count=100, capacity=500)
+    _flush_cache_logger()
+
+    log_files = list(cache_log_dir.glob("*.log.json"))
+    if log_files:
+        with open(log_files[0], encoding="utf-8") as f:
+            lines = [l for l in f if l.strip()]
+        assert len(lines) == 0
+
+
+def test_log_price_update_tick_100th_writes_when_debug_enabled(cache_logger_setup):
+    """100번째 틱 + DEBUG 활성 → 기록됨 (기존 test_log_price_update_tick_fields 보완)."""
+    cache_logger, cache_log_dir = cache_logger_setup
+
+    inner = logging.getLogger("cache_event")
+    assert inner.isEnabledFor(logging.DEBUG)  # fixture는 DEBUG
+
+    cache_logger._tick_count = 199
+    cache_logger.log_price_update_tick("000660", "90000", "91000", 50000)
+    _flush_cache_logger()
+
+    lines = _read_json_lines(cache_log_dir)
+    assert lines[0]["data"]["c"] == "000660"
+    assert lines[0]["data"]["ap"] == "91000"

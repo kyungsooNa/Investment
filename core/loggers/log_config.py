@@ -11,7 +11,7 @@ LOG_LEVEL = logging.INFO if APP_ENV == "prod" else logging.DEBUG
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 10MB
 LOG_BACKUP_COUNT = 30 if APP_ENV == "prod" else 50
 LOG_COMPRESS_DAYS = 3 if APP_ENV == "prod" else 2
-LOG_DELETE_DAYS = 30 if APP_ENV == "prod" else 50
+LOG_DELETE_DAYS = 7 if APP_ENV == "prod" else 30
 
 # --- Timestamp Singleton ---
 _log_timestamp = None
