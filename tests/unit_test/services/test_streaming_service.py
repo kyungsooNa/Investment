@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from services.streaming_service import StreamingService
 from common.types import ResCommonResponse, ErrorCode
 
@@ -14,6 +14,8 @@ def mock_broker():
     broker.unsubscribe_realtime_price = AsyncMock()
     broker.subscribe_realtime_quote = AsyncMock()
     broker.unsubscribe_realtime_quote = AsyncMock()
+    broker.subscribe_unified_price = AsyncMock()
+    broker.unsubscribe_unified_price = AsyncMock()
     broker.get_program_trade_by_stock_daily = AsyncMock()
     return broker
 
@@ -42,6 +44,19 @@ def streaming_service(mock_broker, mock_logger, mock_market_clock, mock_market_d
         market_clock=mock_market_clock,
         market_data_service=mock_market_data_service
     )
+
+def test_init_with_price_stream_service(mock_broker, mock_logger, mock_market_clock, mock_market_data_service):
+    """초기화 시 price_stream_service를 전달하면 자동으로 핸들러가 등록되는지 테스트"""
+    mock_price_stream = MagicMock()
+    service = StreamingService(
+        broker_api_wrapper=mock_broker,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_data_service=mock_market_data_service,
+        price_stream_service=mock_price_stream
+    )
+    assert service._price_stream_service == mock_price_stream
+    assert mock_price_stream.on_price_tick in service._handlers.get('realtime_price', [])
 
 @pytest.mark.asyncio
 async def test_connect_disconnect_websocket(streaming_service, mock_broker):
@@ -95,6 +110,15 @@ async def test_subscribe_unsubscribe_realtime_price(streaming_service, mock_brok
     mock_broker.unsubscribe_realtime_price.assert_awaited_once_with("005930")
 
 @pytest.mark.asyncio
+async def test_subscribe_unsubscribe_unified_price(streaming_service, mock_broker):
+    """통합 체결가 구독 및 해지 위임 테스트"""
+    await streaming_service.subscribe_unified_price("005930")
+    mock_broker.subscribe_unified_price.assert_awaited_once_with("005930")
+
+    await streaming_service.unsubscribe_unified_price("005930")
+    mock_broker.unsubscribe_unified_price.assert_awaited_once_with("005930")
+
+@pytest.mark.asyncio
 async def test_handle_program_trading_stream(streaming_service, mock_broker, mock_market_clock):
     """고수준 스트림 핸들러: 프로그램매매 스트리밍 처리 (duration 0으로 빠르게 통과)"""
     await streaming_service.handle_program_trading_stream("005930", duration=0)
@@ -102,6 +126,18 @@ async def test_handle_program_trading_stream(streaming_service, mock_broker, moc
     mock_broker.connect_websocket.assert_awaited_once()
     mock_broker.subscribe_program_trading.assert_awaited_once_with("005930")
     mock_market_clock.async_sleep.assert_awaited_once_with(0)
+    mock_broker.unsubscribe_program_trading.assert_awaited_once_with("005930")
+    mock_broker.disconnect_websocket.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_handle_program_trading_stream_exception(streaming_service, mock_broker, mock_market_clock):
+    """프로그램매매 스트리밍 중 예외 발생 시 finally 블록이 동작하는지 검증"""
+    mock_market_clock.async_sleep.side_effect = Exception("Sleep Error")
+
+    with pytest.raises(Exception, match="Sleep Error"):
+        await streaming_service.handle_program_trading_stream("005930", duration=10)
+
+    mock_broker.connect_websocket.assert_awaited_once()
     mock_broker.unsubscribe_program_trading.assert_awaited_once_with("005930")
     mock_broker.disconnect_websocket.assert_awaited_once()
 
@@ -137,6 +173,20 @@ async def test_handle_realtime_stream_exception(streaming_service, mock_broker):
     streaming_service.logger.exception.assert_called_once()
     mock_broker.unsubscribe_realtime_price.assert_awaited_once_with("005930")
     mock_broker.disconnect_websocket.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_handle_realtime_stream_only_quote(streaming_service, mock_broker):
+    """고수준 스트림 핸들러: price 필드 없이 quote만 구독하는 경우"""
+    await streaming_service.handle_realtime_stream(
+        stock_codes=["005930"],
+        fields=["quote"],
+        duration=0
+    )
+
+    mock_broker.subscribe_realtime_price.assert_not_awaited()
+    mock_broker.subscribe_realtime_quote.assert_awaited_once_with("005930")
+    mock_broker.unsubscribe_realtime_price.assert_not_awaited()
+    mock_broker.unsubscribe_realtime_quote.assert_awaited_once_with("005930")
 
 # ── Observer 패턴 테스트 ──────────────────────────────────────────
 
@@ -276,6 +326,24 @@ def test_dispatch_realtime_message_realtime_quote(streaming_service):
     assert "[실시간 호가 - 100000]" in debug_calls_str
     assert "매도1호가: 70100" in debug_calls_str
 
+def test_dispatch_realtime_message_program_trading(streaming_service):
+    """메시지 디스패치: 프로그램매매 실시간 데이터 로깅 확인"""
+    streaming_service._last_console_print_time = 0.0
+
+    data = {
+        'type': 'realtime_program_trading',
+        'data': {
+            '주식체결시간': '100000',
+            '순매수거래대금': '5000'
+        }
+    }
+
+    streaming_service.dispatch_realtime_message(data)
+    
+    debug_calls_str = str(streaming_service.logger.debug.call_args_list)
+    assert "[프로그램매매 - 100000]" in debug_calls_str
+    assert "순매수거래대금: 5000" in debug_calls_str
+
 def test_dispatch_realtime_message_unknown_type(streaming_service):
     """메시지 디스패치: 알 수 없는 타입의 메시지 수신 시 로깅 처리"""
     data = {
@@ -286,6 +354,31 @@ def test_dispatch_realtime_message_unknown_type(streaming_service):
 
     streaming_service.dispatch_realtime_message(data)
     assert streaming_service.logger.debug.call_count == 2
+
+def test_dispatch_realtime_message_throttling(streaming_service):
+    """스로틀링 로직: 제한 시간 내 연달아 호출 시 첫 번째만 로깅됨을 검증"""
+    data = {
+        'type': 'realtime_price',
+        'data': {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    }
+    
+    # time.monotonic()가 고정값을 반환하도록 패치
+    with patch('time.monotonic', return_value=100.0):
+        streaming_service.dispatch_realtime_message(data)
+        # 1. "실시간 데이터 수신..." (무조건 출력)
+        # 2. "[실시간 체결..." (스로틀 통과)
+        assert streaming_service.logger.debug.call_count == 2
+        
+        # 동일 시간에 재호출 -> 체결 로그 스로틀링 작동 (무조건 출력 로그 1회만 증가)
+        streaming_service.dispatch_realtime_message(data)
+        assert streaming_service.logger.debug.call_count == 3
+
+    # 제한 시간(0.5초)이 지난 후 호출 -> 로깅 다시 작동
+    with patch('time.monotonic', return_value=101.0):
+        streaming_service.dispatch_realtime_message(data)
+        # 3. "실시간 데이터 수신..." (무조건 출력)
+        # 4. "[실시간 체결..." (스로틀 통과)
+        assert streaming_service.logger.debug.call_count == 5
 
 @pytest.mark.asyncio
 async def test_handle_get_program_trading_history_success(streaming_service, mock_broker):

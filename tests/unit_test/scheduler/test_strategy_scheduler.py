@@ -9,6 +9,7 @@ from common.types import TradeSignal, ErrorCode, ResCommonResponse
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SignalRecord
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from interfaces.live_strategy import LiveStrategy
+from services.notification_service import NotificationCategory, NotificationLevel
 
 
 class MockStrategy(LiveStrategy):
@@ -1571,6 +1572,159 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(q1.empty())
         self.assertFalse(q2.empty())
 
+    # ── NotificationService / PriceSubscriptionService 연동 테스트 ──
+
+    async def test_start_calls_notification_service(self):
+        """start() 호출 시 NotificationService가 설정되어 있다면 알림을 전송하는지 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        mock_notifier = AsyncMock()
+        scheduler._notification_service = mock_notifier
+        scheduler.register(StrategySchedulerConfig(strategy=MockStrategy(name="전략A")))
+        
+        await scheduler.start()
+        
+        mock_notifier.emit.assert_awaited_once()
+        args, kwargs = mock_notifier.emit.call_args
+        self.assertEqual(args[0], NotificationCategory.SYSTEM)
+        self.assertEqual(args[2], "스케줄러 시작")
+        
+        await scheduler.stop()
+
+    async def test_stop_calls_notification_service(self):
+        """stop() 호출 시 NotificationService가 설정되어 있다면 알림을 전송하는지 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        mock_notifier = AsyncMock()
+        scheduler._notification_service = mock_notifier
+        
+        await scheduler.start()
+        mock_notifier.emit.reset_mock()
+        
+        await scheduler.stop()
+        mock_notifier.emit.assert_awaited_once()
+        args, kwargs = mock_notifier.emit.call_args
+        self.assertEqual(args[0], NotificationCategory.SYSTEM)
+        self.assertEqual(args[2], "스케줄러 정지")
+
+    async def test_execute_signal_notification_success(self):
+        """_execute_signal() API 주문 성공 시 알림 전송 테스트."""
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        mock_notifier = AsyncMock()
+        scheduler._notification_service = mock_notifier
+        
+        signal = TradeSignal(code="005930", name="삼성전자", action="BUY", price=70000, qty=1, reason="Test", strategy_name="S1")
+        await scheduler._execute_signal(signal)
+        
+        mock_notifier.emit.assert_awaited_once()
+        args, kwargs = mock_notifier.emit.call_args
+        self.assertEqual(args[0], NotificationCategory.STRATEGY)
+        self.assertEqual(args[1], NotificationLevel.CRITICAL)
+        self.assertTrue("성공" in args[2])
+
+    async def test_execute_signal_notification_failure(self):
+        """_execute_signal() API 주문 실패 시 알림 전송 테스트."""
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.handle_place_buy_order.return_value = ResCommonResponse(rt_cd="1", msg1="잔고 부족")
+        
+        mock_notifier = AsyncMock()
+        scheduler._notification_service = mock_notifier
+        
+        signal = TradeSignal(code="005930", name="삼성전자", action="BUY", price=70000, qty=1, reason="Test", strategy_name="S1")
+        await scheduler._execute_signal(signal)
+        
+        mock_notifier.emit.assert_awaited_once()
+        args, kwargs = mock_notifier.emit.call_args
+        self.assertEqual(args[0], NotificationCategory.STRATEGY)
+        self.assertEqual(args[1], NotificationLevel.ERROR)
+        self.assertTrue("실패" in args[2])
+
+    async def test_execute_signal_price_subscription(self):
+        """_execute_signal() 매수/매도 시 PriceSubscriptionService 구독/해지 호출 테스트."""
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        mock_price_sub = AsyncMock()
+        scheduler._price_sub_svc = mock_price_sub
+        
+        # BUY 시 구독 추가
+        buy_sig = TradeSignal(code="005930", name="삼성전자", action="BUY", price=70000, qty=1, reason="Test", strategy_name="S1")
+        await scheduler._execute_signal(buy_sig)
+        # 비동기 Task로 실행되므로 약간 대기
+        await asyncio.sleep(0.01)
+        mock_price_sub.add_subscription.assert_awaited_once()
+        
+        # SELL 시 구독 해지
+        sell_sig = TradeSignal(code="005930", name="삼성전자", action="SELL", price=70000, qty=1, reason="Test", strategy_name="S1")
+        await scheduler._execute_signal(sell_sig)
+        await asyncio.sleep(0.01)
+        mock_price_sub.remove_subscription.assert_awaited_once()
+
+    async def test_execute_signal_invalid_exchange_fallback(self):
+        """_execute_signal()에서 유효하지 않은 exchange 값이 올 때 KRX로 폴백하는지 테스트."""
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        
+        signal = TradeSignal(code="005930", name="삼성전자", action="BUY", price=70000, qty=1, reason="Test", strategy_name="S1", exchange="INVALID")
+        await scheduler._execute_signal(signal)
+        
+        from common.types import Exchange
+        oes.handle_place_buy_order.assert_called_once_with("005930", 70000, 1, exchange=Exchange.KRX)
+
+    async def test_restore_state_with_price_subscription(self):
+        """restore_state()에서 보유 종목에 대해 실시간 가격 구독 복원 테스트."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        mock_price_sub = AsyncMock()
+        scheduler._price_sub_svc = mock_price_sub
+        
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy)
+        scheduler.register(config)
+        
+        scheduler._store.load_state.return_value = {
+            "running": True,
+            "enabled_strategies": ["전략A"],
+            "current_positions": [],
+        }
+        vm.get_holds_by_strategy.return_value = [{"code": "005930"}]
+        
+        with patch.object(scheduler, '_loop', new_callable=AsyncMock):
+            await scheduler.restore_state()
+            
+            mock_price_sub.add_subscription.assert_awaited_once()
+            args, kwargs = mock_price_sub.add_subscription.call_args
+            self.assertEqual(args[0], "005930")
+
+    async def test_stop_strategy_removes_price_subscription_category(self):
+        """stop_strategy() 시 PriceSubscriptionService 카테고리 제거 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        mock_price_sub = AsyncMock()
+        scheduler._price_sub_svc = mock_price_sub
+        
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy)
+        scheduler.register(config)
+        
+        await scheduler.stop_strategy("전략A")
+        
+        mock_price_sub.remove_category.assert_awaited_once_with("scheduler_전략A")
+
+    async def test_loop_force_exit_exception(self):
+        """루프 중 장 마감 직후 강제 청산 시 예외가 발생해도 루프가 죽지 않는지 테스트."""
+        scheduler, vm, _, tm, mcs = self._make_scheduler()
+        
+        mcs.is_market_open_now.return_value = False
+        mcs.wait_until_next_open.side_effect = asyncio.CancelledError() # 루프 탈출용
+        
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True, enabled=True)
+        scheduler.register(config)
+        
+        scheduler._force_exit_done = set() 
+        scheduler._running = True
+        
+        with patch.object(scheduler, '_run_strategy', side_effect=Exception("Liquidate Error")):
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+            
+            scheduler._logger.error.assert_called()
 
 if __name__ == "__main__":
     unittest.main()
