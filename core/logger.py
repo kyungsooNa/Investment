@@ -16,27 +16,30 @@ from core.loggers.streaming_event_logger import StreamingEventLogger
 from core.loggers.cache_event_logger import CacheEventLogger
 from core.loggers.strategy_info_filter import StrategyInfoFilter
 from core.loggers.app_logger import Logger
+from core.loggers.async_handler import DictPreservingQueueHandler
 
 _active_listeners = []
-
-class _DictPreservingQueueHandler(QueueHandler):
-    def prepare(self, record):
-        original_msg = record.msg
-        record = super().prepare(record)
-        if isinstance(original_msg, dict):
-            record.msg = original_msg
-        return record
 
 def setup_async_logger(logger: logging.Logger, file_handler: logging.Handler):
     """파일 I/O를 백그라운드 스레드로 위임하는 비동기 큐 세팅"""
     log_queue = queue.Queue(-1)
-    queue_handler = _DictPreservingQueueHandler(log_queue)
+    queue_handler = DictPreservingQueueHandler(log_queue)
     logger.addHandler(queue_handler)
 
     listener = QueueListener(log_queue, file_handler, respect_handler_level=True)
     listener.start()
     _active_listeners.append(listener)
     return listener
+
+def shutdown_logging():
+    """등록된 모든 비동기 로거의 큐 처리를 완료하고 리스너와 핸들러를 안전하게 종료합니다."""
+    for listener in _active_listeners:
+        listener.queue.join()
+        listener.stop()
+        for h in listener.handlers:
+            h.flush()
+            h.close()
+    _active_listeners.clear()
 
 def get_streaming_logger(log_dir: str = "logs") -> "StreamingEventLogger":
     """

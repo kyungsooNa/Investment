@@ -8,14 +8,7 @@ from logging.handlers import QueueHandler, QueueListener
 from core.loggers.log_config import get_log_timestamp, LOG_MAX_BYTES, LOG_BACKUP_COUNT
 from core.loggers.size_time_rotating_file_handler import SizeTimeRotatingFileHandler
 from core.loggers.strategy_info_filter import StrategyInfoFilter
-
-class _DictPreservingQueueHandler(QueueHandler):
-    def prepare(self, record):
-        original_msg = record.msg
-        record = super().prepare(record)
-        if isinstance(original_msg, dict):
-            record.msg = original_msg
-        return record
+from core.loggers.async_handler import DictPreservingQueueHandler
 
 class Logger:
     """
@@ -110,7 +103,7 @@ class Logger:
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'))
         
         log_queue = queue.Queue(-1)
-        queue_handler = _DictPreservingQueueHandler(log_queue)
+        queue_handler = DictPreservingQueueHandler(log_queue)
         logger.addHandler(queue_handler)
 
         listener = QueueListener(log_queue, file_handler, respect_handler_level=True)

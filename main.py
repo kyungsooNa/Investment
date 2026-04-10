@@ -2,7 +2,7 @@
 import faulthandler
 import os
 from datetime import datetime
-from core.logger import Logger, get_log_timestamp  # 타임스탬프 함수 임포트
+from core.logger import Logger, get_log_timestamp, shutdown_logging  # 타임스탬프 함수 임포트
 from config.config_loader import load_configs
 
 def enable_crash_dump(log_dir="logs/common"):
@@ -56,4 +56,6 @@ if __name__ == "__main__":
     except Exception as e:
         logger.exception("애플리케이션 예기치 못한 종료")
     finally:
+        logger.close()
+        shutdown_logging()
         dump_file.close()
