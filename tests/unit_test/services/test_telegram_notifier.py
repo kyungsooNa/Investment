@@ -6,7 +6,11 @@ from services.notification_service import NotificationEvent, NotificationCategor
 @pytest.fixture
 def telegram_notifier():
     """TelegramNotifier 인스턴스 픽스처"""
-    return TelegramNotifier(bot_token="test_bot_token", chat_id="test_chat_id")
+    return TelegramNotifier(
+        strategy_bot_token="test_strategy_bot_token", 
+        backlog_bot_token="test_backlog_bot_token", 
+        chat_id="test_chat_id"
+    )
 
 @pytest.fixture
 def sample_event():
@@ -23,9 +27,11 @@ def sample_event():
 
 def test_init(telegram_notifier):
     """초기화 및 API URL 생성 테스트"""
-    assert telegram_notifier.bot_token == "test_bot_token"
+    assert telegram_notifier.strategy_bot_token == "test_strategy_bot_token"
+    assert telegram_notifier.backlog_bot_token == "test_backlog_bot_token"
     assert telegram_notifier.chat_id == "test_chat_id"
-    assert telegram_notifier.api_url == "https://api.telegram.org/bottest_bot_token/sendMessage"
+    assert telegram_notifier.strategy_api_url == "https://api.telegram.org/bottest_strategy_bot_token/sendMessage"
+    assert telegram_notifier.backlog_api_url == "https://api.telegram.org/bottest_backlog_bot_token/sendMessage"
 
 @pytest.mark.asyncio
 async def test_handle_event_success(telegram_notifier, sample_event):
@@ -45,7 +51,7 @@ async def test_handle_event_success(telegram_notifier, sample_event):
         
         # 호출될 때 전달된 인자(URL과 payload) 검증
         call_args, call_kwargs = mock_post.call_args
-        assert call_args[0] == telegram_notifier.api_url
+        assert call_args[0] == telegram_notifier.strategy_api_url
         
         payload = call_kwargs.get("json")
         assert payload is not None
@@ -89,10 +95,13 @@ async def test_handle_event_exception(telegram_notifier, sample_event, caplog):
 @pytest.fixture
 def filter_notifier():
     """STRATEGY 카테고리만 허용하는 TelegramNotifier 인스턴스 픽스처"""
-    return TelegramNotifier(
-        bot_token="test_bot_token", 
+    notifier = TelegramNotifier(
+        strategy_bot_token="test_strategy_bot_token",
+        backlog_bot_token="test_backlog_bot_token",
         chat_id="test_chat_id"
     )
+    notifier.allowed_categories = [NotificationCategory.STRATEGY]
+    return notifier
 
 @pytest.mark.asyncio
 async def test_handle_event_filtered_out(filter_notifier):
@@ -162,7 +171,7 @@ async def test_handle_event_return_rate_zero(telegram_notifier):
 
 @pytest.fixture
 def telegram_reporter():
-    return TelegramReporter(bot_token="test_token", chat_id="test_chat_id")
+    return TelegramReporter(bot_report_token="test_token", chat_id="test_chat_id")
 
 @pytest.mark.asyncio
 async def test_reporter_send_message(telegram_reporter):
