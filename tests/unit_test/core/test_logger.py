@@ -51,8 +51,10 @@ def test_get_strategy_logger(tmp_path):
 
     for listener in _active_listeners:
         listener.queue.join()
+        listener.stop()
         for h in listener.handlers:
             h.close()
+    _active_listeners.clear()
 
     assert log_file_path.exists()
     with open(log_file_path, 'r', encoding='utf-8') as f:
@@ -113,8 +115,10 @@ def test_get_performance_logger(tmp_path):
 
     for listener in _active_listeners:
         listener.queue.join()
+        listener.stop()
         for h in listener.handlers:
             h.close()
+    _active_listeners.clear()
 
     assert log_file_path.exists()
     content = log_file_path.read_text(encoding='utf-8')
@@ -133,6 +137,7 @@ def test_loggers_use_custom_handler(tmp_path):
     strat_logger = get_strategy_logger("test_strat", log_dir=str(log_dir))
     assert any(isinstance(h, SizeTimeRotatingFileHandler) for l in _active_listeners for h in l.handlers)
     for listener in _active_listeners:
+        listener.stop()
         for h in listener.handlers:
             h.close()
     _active_listeners.clear()
