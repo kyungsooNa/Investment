@@ -346,7 +346,9 @@ def test_load_config_and_env_with_telegram(mock_deps):
         "market_open_time": "09:00",
         "market_close_time": "15:40",
         "market_timezone": "Asia/Seoul",
-        "telegram_bot_token": "TEST_TOKEN",
+        "telegram_backlog_bot_token": "TEST_BACKLOG_TOKEN",
+        "telegram_strategy_bot_token": "TEST_STRATEGY_TOKEN",
+        "telegram_report_bot_token": "TEST_REPORT_TOKEN",
         "telegram_chat_id": "TEST_CHAT_ID"
     }
     ctx = WebAppContext(None)
@@ -355,8 +357,12 @@ def test_load_config_and_env_with_telegram(mock_deps):
     ctx.load_config_and_env()
 
     # Assert
-    mock_deps["tn"].assert_called_once()  # Notifier
-    mock_deps["tr"].assert_called_once_with(bot_token="TEST_TOKEN", chat_id="TEST_CHAT_ID") # Reporter
+    mock_deps["tn"].assert_called_once_with(
+        backlog_bot_token="TEST_BACKLOG_TOKEN",
+        strategy_bot_token="TEST_STRATEGY_TOKEN",
+        chat_id="TEST_CHAT_ID"
+    )  # Notifier
+    mock_deps["tr"].assert_called_once_with(report_bot_token="TEST_REPORT_TOKEN", chat_id="TEST_CHAT_ID") # Reporter
     assert ctx.telegram_reporter is not None
 
 @pytest.mark.asyncio

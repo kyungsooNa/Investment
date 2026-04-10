@@ -125,14 +125,17 @@ class WebAppContext:
         self.notification_service = NotificationService(self.market_clock)
         # ---------------------------------------------------------
         # [추가] Telegram Notifier 초기화 및 핸들러 등록
-        telegram_token = config_dict.get("telegram_bot_token")
+        telegram_backlog_bot_token = config_dict.get("telegram_backlog_bot_token")
+        telegram_strategy_bot_token = config_dict.get("telegram_strategy_bot_token")
+        telegram_report_bot_token = config_dict.get("telegram_report_bot_token")
         telegram_chat_id = config_dict.get("telegram_chat_id")
         
-        if telegram_token and telegram_chat_id:
+        if telegram_backlog_bot_token and telegram_strategy_bot_token and telegram_report_bot_token and telegram_chat_id:
             # WebAppContext 인스턴스 변수로 유지하여 생명주기 관리
             self.telegram_notifier = TelegramNotifier(
-                bot_token=telegram_token, 
-                chat_id=telegram_chat_id,
+                backlog_bot_token=telegram_backlog_bot_token,
+                strategy_bot_token=telegram_strategy_bot_token,
+                chat_id=telegram_chat_id
             )
             self.notification_service.register_external_handler(
                 self.telegram_notifier.handle_event
@@ -140,7 +143,7 @@ class WebAppContext:
             self.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
             
             # [추가] Telegram Reporter 초기화 (RankingTask 주입용)
-            self.telegram_reporter = TelegramReporter(bot_token=telegram_token, chat_id=telegram_chat_id)
+            self.telegram_reporter = TelegramReporter(report_bot_token=telegram_report_bot_token, chat_id=telegram_chat_id)
             self.logger.info("텔레그램 리포터가 초기화되었습니다.")
         else:
             self.logger.info("텔레그램 설정이 누락되어 알림 핸들러를 등록하지 않습니다.")
