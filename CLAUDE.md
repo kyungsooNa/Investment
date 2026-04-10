@@ -1,5 +1,7 @@
 # CLAUDE.md — Investment Project Context
 
+> **작업 전 필수**: 모든 작업 시작 전 [SKILL.md](SKILL.md) 를 확인하고 규칙을 준수한다.
+
 ## 파일 읽기 규칙
 파일을 **탐색·분석** 목적으로 읽을 때는 `mcp__plugin_context-mode_context-mode__ctx_execute` (shell/python) 도구를 사용한다.
 `Read` 도구는 **Edit를 위해 파일 내용을 컨텍스트에 올려야 할 때만** 사용한다.
