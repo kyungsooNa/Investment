@@ -491,3 +491,143 @@ def test_log_force_reconnect_done(streaming_logger_setup):
     assert d["action"] == "force_reconnect_done"
     assert d["trigger"] == "manual"
     assert lines[0]["level"] == "INFO"
+
+
+def test_log_connection_lost(streaming_logger_setup):
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_connection_lost(reason="no close frame", retry_count=2)
+
+    _flush_streaming_logger()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "connection_lost"
+    assert d["reason"] == "no close frame"
+    assert d["retry_count"] == 2
+    assert lines[0]["level"] == "WARNING"
+
+
+def test_log_appkey_collision(streaming_logger_setup):
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_appkey_collision(retry_count=1, delay_sec=5.0, max_retries=3)
+
+    _flush_streaming_logger()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "appkey_collision"
+    assert d["retry_count"] == 1
+    assert d["delay_sec"] == 5.0
+    assert d["max_retries"] == 3
+    assert lines[0]["level"] == "WARNING"
+
+
+def test_log_reconnect_attempt(streaming_logger_setup):
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_reconnect_attempt(attempt_num=2, max_attempts=5, was_collision=True)
+
+    _flush_streaming_logger()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "reconnect_attempt"
+    assert d["attempt_num"] == 2
+    assert d["max_attempts"] == 5
+    assert d["was_collision"] is True
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_reconnect_success(streaming_logger_setup):
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_reconnect_success(attempt_num=3, max_attempts=5)
+
+    _flush_streaming_logger()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "reconnect_success"
+    assert d["attempt_num"] == 3
+    assert d["max_attempts"] == 5
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_watchdog_check(tmp_path):
+    reset_log_timestamp_for_test()
+
+    existing = logging.getLogger("streaming_event")
+    for h in existing.handlers[:]:
+        h.close()
+        existing.removeHandler(h)
+
+    log_dir = tmp_path / "logs"
+    streaming_logger = get_streaming_logger(log_dir=str(log_dir))
+
+    inner = logging.getLogger("streaming_event")
+    inner.setLevel(logging.DEBUG)
+
+    streaming_logger.log_watchdog_check(
+        receive_alive=True,
+        data_gap_sec=12.345,
+        market_open=True,
+        subscribed_count=5,
+    )
+
+    _flush_streaming_logger()
+
+    streaming_log_dir = log_dir / "streaming"
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "watchdog_check"
+    assert d["receive_alive"] is True
+    assert d["data_gap_sec"] == 12.3
+    assert d["market_open"] is True
+    assert d["subscribed_count"] == 5
+    assert lines[0]["level"] == "DEBUG"
+
+    for h in logging.getLogger("streaming_event").handlers[:]:
+        h.close()
+        logging.getLogger("streaming_event").removeHandler(h)
+    for listener in core.logger._active_listeners[:]:
+        listener.stop()
+    core.logger._active_listeners.clear()
+
+
+def test_log_subscription_recovery_start(streaming_logger_setup):
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_subscription_recovery_start(total=3, codes=["005930", "000660", "035720"])
+
+    _flush_streaming_logger()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "subscription_recovery_start"
+    assert d["total"] == 3
+    assert d["codes"] == ["000660", "005930", "035720"]
+    assert lines[0]["level"] == "INFO"
+
+
+def test_log_subscription_recovery_done(streaming_logger_setup):
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    streaming_logger.log_subscription_recovery_done(
+        success=2,
+        total=3,
+        failed_codes=["035720"],
+        elapsed_ms=123.456,
+    )
+
+    _flush_streaming_logger()
+
+    lines = _read_json_lines(streaming_log_dir)
+    d = lines[0]["data"]
+    assert d["action"] == "subscription_recovery_done"
+    assert d["success"] == 2
+    assert d["total"] == 3
+    assert d["failed_codes"] == ["035720"]
+    assert d["elapsed_ms"] == 123.5
+    assert lines[0]["level"] == "INFO"

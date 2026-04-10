@@ -34,6 +34,7 @@ class CacheEventLogger:
 
     def __init__(self, logger: logging.Logger):
         self._logger = logger
+        self._tick_count = 0
 
     # ── 현재가 캐시 이벤트 ───────────────────────────────────────────
 
@@ -80,14 +81,20 @@ class CacheEventLogger:
             after_price: 갱신 후 stck_prpr
             volume: 누적 거래량
         """
+        self._tick_count += 1
+        
+        # 샘플링: 100번에 1번만 기록 (1%만 로깅)
+        if self._tick_count % 100 != 0:
+            return
+            
         if not self._logger.isEnabledFor(logging.DEBUG):
             return
         self._logger.debug({
-            "action": "price_update_tick",
-            "code": code,
-            "before_price": before_price,
-            "after_price": after_price,
-            "volume": volume,
+            "a": "put",
+            "c": code,
+            "bp": before_price,
+            "ap": after_price,
+            "v": volume,
         })
 
     def log_price_hit(

@@ -5,7 +5,7 @@ import http.client
 import queue
 from logging.handlers import QueueHandler, QueueListener
 
-from core.loggers.log_config import get_log_timestamp, LOG_MAX_BYTES, LOG_BACKUP_COUNT
+from core.loggers.log_config import get_log_timestamp, LOG_MAX_BYTES, LOG_BACKUP_COUNT, LOG_LEVEL
 from core.loggers.size_time_rotating_file_handler import SizeTimeRotatingFileHandler
 from core.loggers.strategy_info_filter import StrategyInfoFilter
 from core.loggers.async_handler import DictPreservingQueueHandler
@@ -43,7 +43,7 @@ class Logger:
 
         # 로거 인스턴스 생성
         self.operational_logger = self._setup_logger('operational_logger', self.operational_log_path, logging.INFO)
-        self.debug_logger = self._setup_logger('debug_logger', self.debug_log_path, logging.DEBUG)
+        self.debug_logger = self._setup_logger('debug_logger', self.debug_log_path, LOG_LEVEL)
 
         # 전략 로그 필터 생성 (debug.log 용량 관리용)
         strategy_filter = StrategyInfoFilter()
@@ -54,7 +54,7 @@ class Logger:
 
         # 루트 로거에 통합 로그 핸들러 연결 (전략 로거 등 전파된 로그 수집)
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.DEBUG)
+        root_logger.setLevel(LOG_LEVEL)
         for h in self.debug_logger.handlers:
             h.addFilter(strategy_filter)  # 전략 로그는 INFO 이상만 debug.log에 기록
             root_logger.addHandler(h)
