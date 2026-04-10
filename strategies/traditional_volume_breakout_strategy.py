@@ -220,12 +220,14 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
 
         for hold in holdings:
             code = str(hold.get("code", ""))
-            buy_price = hold.get("buy_price", 0)
+            buy_price_raw = hold.get("buy_price", 0)
             stock_name = hold.get("name", code)
-            log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
             
-            if not code or not buy_price:
+            if not code or not buy_price_raw:
                 continue
+
+            buy_price = float(buy_price_raw)
+            log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
 
             try:
                 price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
@@ -243,7 +245,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                 state = self._position_state.get(code)
                 if not state:
                     self._logger.warning({"event": "missing_position_state", **log_data})
-                    state = PositionState(breakout_level=buy_price, peak_price=buy_price)
+                    state = PositionState(breakout_level=int(buy_price), peak_price=int(buy_price))
                     self._position_state[code] = state
                 
                 log_data["position_state"] = asdict(state)
@@ -256,7 +258,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
 
                 reason = ""
                 should_sell = False
-                pnl_pct = ((current - buy_price) / buy_price) * 100
+                pnl_pct = float(((current - buy_price) / buy_price) * 100)
                 log_data["pnl_pct"] = round(pnl_pct, 2)
 
                 # 1) 손절
@@ -271,7 +273,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
 
                 # 3) 트레일링 스탑
                 if not should_sell and state.peak_price > 0:
-                    drop_from_peak = ((current - state.peak_price) / state.peak_price) * 100
+                    drop_from_peak = float(((current - state.peak_price) / state.peak_price) * 100)
                     log_data["drop_from_peak_pct"] = round(drop_from_peak, 2)
                     if drop_from_peak <= -self._cfg.trailing_stop_pct:
                         reason = (

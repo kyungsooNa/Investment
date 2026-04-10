@@ -179,12 +179,14 @@ class ProgramBuyFollowStrategy(LiveStrategy):
 
         for hold in holdings:
             code = str(hold.get("code", ""))
-            buy_price = hold.get("buy_price", 0)
+            buy_price_raw = hold.get("buy_price", 0)
             stock_name = hold.get("name", code)
-            log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
 
-            if not code or not buy_price:
+            if not code or not buy_price_raw:
                 continue
+
+            buy_price = float(buy_price_raw)
+            log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
 
             try:
                 full_resp = await self._sqs.get_current_price(code, caller=self.name)
@@ -208,8 +210,8 @@ class ProgramBuyFollowStrategy(LiveStrategy):
                 if current <= 0 or high <= 0:
                     continue
 
-                pnl_pct = ((current - buy_price) / buy_price) * 100
-                drop_from_high = ((current - high) / high) * 100
+                pnl_pct = float(((current - buy_price) / buy_price) * 100)
+                drop_from_high = float(((current - high) / high) * 100)
                 log_data.update({"pnl_pct": round(pnl_pct, 2), "drop_from_high_pct": round(drop_from_high, 2)})
 
                 reason = ""
