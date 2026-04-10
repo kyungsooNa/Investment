@@ -17,47 +17,37 @@ class SizeTimeRotatingFileHandler(RotatingFileHandler):
 
         self._log_root = root
         self._log_ext = ext
+        self._current_index = self._find_max_index()
 
-        # 기존 인덱스 파일 중 최대 인덱스 탐색
-        pattern = f"{glob.escape(root)}_[0-9]*{glob.escape(ext)}"
-        max_index = 0
-        for f in glob.glob(pattern):
-            try:
-                idx_str = f[:-len(ext)].split('_')[-1]
-                if idx_str.isdigit():
-                    max_index = max(max_index, int(idx_str))
-            except (ValueError, IndexError):
-                continue
-
-        # 초기 활성 파일은 max_index + 1 번 인덱스로 생성
-        initial_filename = f"{root}_{max_index + 1}{ext}"
+        initial_filename = f"{self._log_root}_{self._current_index + 1}{self._log_ext}"
         super().__init__(initial_filename, mode=mode, maxBytes=maxBytes,
                          backupCount=backupCount, encoding=encoding, delay=delay)
 
-    def doRollover(self):
-        if self.stream:
-            self.stream.close()
-            self.stream = None
-
-        # 현재 존재하는 인덱스 파일 중 최대 인덱스 결정
+    def _find_max_index(self):
         pattern = f"{glob.escape(self._log_root)}_[0-9]*{glob.escape(self._log_ext)}"
-        existing = glob.glob(pattern)
-
         max_index = 0
-        for f in existing:
+        for f in glob.glob(pattern):
             try:
                 idx_str = f[:-len(self._log_ext)].split('_')[-1]
                 if idx_str.isdigit():
                     max_index = max(max_index, int(idx_str))
             except (ValueError, IndexError):
                 continue
+        return max_index
 
-        # baseFilename을 다음 인덱스 파일로 업데이트 (이것이 새 활성 파일이 됨)
-        next_filename = f"{self._log_root}_{max_index + 1}{self._log_ext}"
+    def doRollover(self):
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+        # glob 스캔 제거: 메모리 인덱스만 +1 증가
+        self._current_index += 1
+        next_filename = f"{self._log_root}_{self._current_index + 1}{self._log_ext}"
         self.baseFilename = os.path.abspath(next_filename)
 
         # 오래된 파일 삭제 (backupCount 초과 시)
         if self.backupCount > 0:
+            pattern = f"{glob.escape(self._log_root)}_[0-9]*{glob.escape(self._log_ext)}"
             all_files = glob.glob(pattern)
             all_files.sort(key=lambda f: int(f[:-len(self._log_ext)].split('_')[-1])
                            if f[:-len(self._log_ext)].split('_')[-1].isdigit() else -1)

@@ -5,6 +5,7 @@ import pytest
 
 from core.loggers.streaming_event_logger import StreamingEventLogger
 from core.logger import get_streaming_logger
+import core.logger
 from core.loggers.log_config import reset_log_timestamp_for_test
 from core.loggers.size_time_rotating_file_handler import SizeTimeRotatingFileHandler
 from core.loggers.json_formatter import JsonFormatter
@@ -27,6 +28,11 @@ def streaming_logger_setup(tmp_path):
     for h in inner.handlers[:]:
         h.close()
         inner.removeHandler(h)
+    
+    # 리스너 정리
+    for listener in core.logger._active_listeners[:]:
+        listener.stop()
+    core.logger._active_listeners.clear()
 
 
 def _read_json_lines(log_dir):
@@ -35,6 +41,11 @@ def _read_json_lines(log_dir):
     with open(files[0], encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
 
+def _flush_streaming_logger():
+    for listener in core.logger._active_listeners:
+        listener.queue.join()
+        for h in listener.handlers:
+            h.flush()
 
 def test_get_streaming_logger_creates_file(streaming_logger_setup):
     streaming_logger, streaming_log_dir = streaming_logger_setup
@@ -45,12 +56,20 @@ def test_get_streaming_logger_creates_file(streaming_logger_setup):
     inner = logging.getLogger("streaming_event")
     assert not inner.propagate
     assert len(inner.handlers) == 1
-    handler = inner.handlers[0]
+    
+    handler = None
+    for listener in core.logger._active_listeners:
+        for h in listener.handlers:
+            if isinstance(h, SizeTimeRotatingFileHandler):
+                handler = h
+                break
+        if handler: break
+                
     assert isinstance(handler, SizeTimeRotatingFileHandler)
     assert isinstance(handler.formatter, JsonFormatter)
 
     streaming_logger.log_connect()
-    handler.flush()
+    _flush_streaming_logger()
 
     log_files = list(streaming_log_dir.glob("*_streaming_*.log.json"))
     assert len(log_files) == 1
@@ -61,8 +80,7 @@ def test_log_connect_writes_json(streaming_logger_setup):
 
     streaming_logger.log_connect()
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert len(lines) == 1
@@ -75,8 +93,7 @@ def test_log_disconnect_writes_reason(streaming_logger_setup):
 
     streaming_logger.log_disconnect(reason="market_closed")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert lines[0]["data"]["action"] == "disconnect"
@@ -92,8 +109,7 @@ def test_log_subscribe_writes_categories_and_count(streaming_logger_setup):
         active_count=3,
     )
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -108,8 +124,7 @@ def test_log_unsubscribe_writes_code_and_count(streaming_logger_setup):
 
     streaming_logger.log_unsubscribe(code="005930", active_count=2)
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -127,8 +142,7 @@ def test_log_summary_writes_full_state(streaming_logger_setup):
         pending_by_priority={"HIGH": ["005930"], "MEDIUM": ["000660"], "LOW": []},
     )
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -148,8 +162,7 @@ def test_log_reconnect_writes_trigger_and_stats(streaming_logger_setup):
         total=2,
     )
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -165,8 +178,7 @@ def test_log_restore_writes_stats(streaming_logger_setup):
 
     streaming_logger.log_restore(codes=["005930"], success=1, total=1)
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -182,8 +194,7 @@ def test_log_pt_subscribe_and_unsubscribe(streaming_logger_setup):
     streaming_logger.log_pt_subscribe(code="005930", reason="reconnect")
     streaming_logger.log_pt_unsubscribe(code="005930", reason="reconnect_failed")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert len(lines) == 2
@@ -202,8 +213,7 @@ def test_log_price_subscribe_and_unsubscribe(streaming_logger_setup):
     streaming_logger.log_price_subscribe(code="000660", reason="restore")
     streaming_logger.log_price_unsubscribe(code="000660", reason="restore_failed")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert len(lines) == 2
@@ -230,8 +240,7 @@ def test_get_streaming_logger_returns_same_file_on_second_call(tmp_path):
     logger2 = get_streaming_logger(log_dir=str(log_dir))
 
     logger1.log_connect()
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     streaming_log_dir = log_dir / "streaming"
     log_files = list(streaming_log_dir.glob("*_streaming_*.log.json"))
@@ -251,8 +260,7 @@ def test_log_subscription_policy_extended_events(streaming_logger_setup):
     streaming_logger.log_subscribe_failure(code="005930", message="subscribe error msg")
     streaming_logger.log_unsubscribe_failure(code="005930", message="unsubscribe error msg")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert len(lines) == 6
@@ -275,8 +283,7 @@ def test_log_watchdog_start(streaming_logger_setup):
 
     streaming_logger.log_watchdog_start(task_count=2)
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert len(lines) == 1
@@ -292,8 +299,7 @@ def test_log_watchdog_stop_lifecycle(streaming_logger_setup):
     streaming_logger.log_watchdog_stop_start(task_count=3)
     streaming_logger.log_watchdog_stop_done()
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert len(lines) == 2
@@ -308,8 +314,7 @@ def test_log_watchdog_suspend_and_resume(streaming_logger_setup):
     streaming_logger.log_watchdog_suspend()
     streaming_logger.log_watchdog_resume()
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert lines[0]["data"]["action"] == "watchdog_suspend"
@@ -323,8 +328,7 @@ def test_log_market_closed_disconnect(streaming_logger_setup):
 
     streaming_logger.log_market_closed_disconnect()
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert lines[0]["data"]["action"] == "market_closed_disconnect"
@@ -336,8 +340,7 @@ def test_log_market_open_connect(streaming_logger_setup):
 
     streaming_logger.log_market_open_connect()
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert lines[0]["data"]["action"] == "market_open_connect"
@@ -349,8 +352,7 @@ def test_log_receive_task_dead(streaming_logger_setup):
 
     streaming_logger.log_receive_task_dead()
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert lines[0]["data"]["action"] == "receive_task_dead"
@@ -362,8 +364,7 @@ def test_log_pt_data_gap(streaming_logger_setup):
 
     streaming_logger.log_pt_data_gap(data_gap_sec=310.7, threshold_sec=300)
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -378,8 +379,7 @@ def test_log_watchdog_error(streaming_logger_setup):
 
     streaming_logger.log_watchdog_error("connection reset by peer")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -393,8 +393,7 @@ def test_log_pt_restore_connect_failed(streaming_logger_setup):
 
     streaming_logger.log_pt_restore_connect_failed("005930")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -408,8 +407,7 @@ def test_log_pt_restore_error(streaming_logger_setup):
 
     streaming_logger.log_pt_restore_error("000660", "timeout")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -424,8 +422,7 @@ def test_log_pt_restore_failed_removed(streaming_logger_setup):
 
     streaming_logger.log_pt_restore_failed_removed(["000660", "005930"])
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -440,8 +437,7 @@ def test_log_price_restore_start_and_done(streaming_logger_setup):
     streaming_logger.log_price_restore_start(desired_count=5)
     streaming_logger.log_price_restore_done(active_count=4)
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     assert len(lines) == 2
@@ -459,8 +455,7 @@ def test_log_force_reconnect_start(streaming_logger_setup):
         pt_codes=["000660", "005930"],
     )
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -475,8 +470,7 @@ def test_log_force_reconnect_disconnect_error(streaming_logger_setup):
 
     streaming_logger.log_force_reconnect_disconnect_error("Disconnect Error")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
@@ -490,8 +484,7 @@ def test_log_force_reconnect_done(streaming_logger_setup):
 
     streaming_logger.log_force_reconnect_done("manual")
 
-    for h in logging.getLogger("streaming_event").handlers:
-        h.flush()
+    _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]

@@ -1,6 +1,8 @@
 # core/logger.py
 import logging
 import os
+import queue
+from logging.handlers import QueueHandler, QueueListener
 
 from core.loggers.log_config import (
     LOG_MAX_BYTES,
@@ -14,6 +16,19 @@ from core.loggers.streaming_event_logger import StreamingEventLogger
 from core.loggers.cache_event_logger import CacheEventLogger
 from core.loggers.strategy_info_filter import StrategyInfoFilter
 from core.loggers.app_logger import Logger
+
+_active_listeners = []
+
+def setup_async_logger(logger: logging.Logger, file_handler: logging.Handler):
+    """파일 I/O를 백그라운드 스레드로 위임하는 비동기 큐 세팅"""
+    log_queue = queue.Queue(-1)
+    queue_handler = QueueHandler(log_queue)
+    logger.addHandler(queue_handler)
+
+    listener = QueueListener(log_queue, file_handler, respect_handler_level=True)
+    listener.start()
+    _active_listeners.append(listener)
+    return listener
 
 def get_streaming_logger(log_dir: str = "logs") -> "StreamingEventLogger":
     """
@@ -48,7 +63,7 @@ def get_streaming_logger(log_dir: str = "logs") -> "StreamingEventLogger":
             backupCount=LOG_BACKUP_COUNT,
         )
         handler.setFormatter(JsonFormatter())
-        logger.addHandler(handler)
+        setup_async_logger(logger, handler)
 
     return StreamingEventLogger(logger)
 
@@ -81,7 +96,7 @@ def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
             backupCount=LOG_BACKUP_COUNT,
         )
         handler.setFormatter(JsonFormatter())
-        logger.addHandler(handler)
+        setup_async_logger(logger, handler)
 
     return CacheEventLogger(logger)
 
@@ -120,7 +135,7 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
         backupCount=LOG_BACKUP_COUNT
     )
     file_handler.setFormatter(JsonFormatter())
-    logger.addHandler(file_handler)
+    setup_async_logger(logger, file_handler)
 
     return logger
 
@@ -152,6 +167,6 @@ def get_performance_logger(log_dir="logs"):
         backupCount=LOG_BACKUP_COUNT
     )
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-    logger.addHandler(file_handler)
+    setup_async_logger(logger, file_handler)
 
     return logger

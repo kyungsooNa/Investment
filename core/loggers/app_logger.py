@@ -2,6 +2,8 @@ import logging
 import os
 import time
 import http.client
+import queue
+from logging.handlers import QueueHandler, QueueListener
 
 from core.loggers.log_config import get_log_timestamp, LOG_MAX_BYTES, LOG_BACKUP_COUNT
 from core.loggers.size_time_rotating_file_handler import SizeTimeRotatingFileHandler
@@ -18,6 +20,7 @@ class Logger:
         self.log_dir = log_dir
         self.common_log_dir = os.path.join(self.log_dir, "common")
         self.strategy_log_dir = os.path.join(self.log_dir, "strategies")
+        self._listeners = []
 
         # 공유 타임스탬프 생성
         timestamp = get_log_timestamp()
@@ -97,7 +100,14 @@ class Logger:
         )
         file_handler.setLevel(level)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'))
-        logger.addHandler(file_handler)
+        
+        log_queue = queue.Queue(-1)
+        queue_handler = QueueHandler(log_queue)
+        logger.addHandler(queue_handler)
+
+        listener = QueueListener(log_queue, file_handler, respect_handler_level=True)
+        listener.start()
+        self._listeners.append(listener)
 
         return logger
 
@@ -126,3 +136,14 @@ class Logger:
         주로 except 블록 안에서 사용합니다.
         """
         self.error(message, exc_info=True)
+
+    def flush(self):
+        """비동기 큐의 남은 로그를 모두 처리하고 파일에 플러시합니다."""
+        for listener in self._listeners:
+            listener.queue.join()
+            for fh in listener.handlers:
+                fh.flush()
+
+    def close(self):
+        for listener in self._listeners:
+            listener.stop()
