@@ -2,7 +2,6 @@ import pytest
 import json
 import numpy as np
 from unittest.mock import MagicMock, AsyncMock
-from dataclasses import asdict
 
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
@@ -88,7 +87,7 @@ async def test_all_strategies_json_serializable_no_type_error(StrategyClass):
     
     # 5. JSON 직렬화 테스트 (핵심 검증)
     try:
-        serialized = json.dumps(asdict(signal))
+        serialized = json.dumps(signal.to_dict())
         assert "001820" in serialized
     except TypeError as e:
         pytest.fail(f"{StrategyClass.__name__} JSON 직렬화 에러 발생: numpy 타입 캐스팅 누락이 의심됩니다. {e}")
