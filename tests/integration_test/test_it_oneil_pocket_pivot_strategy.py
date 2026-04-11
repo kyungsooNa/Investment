@@ -53,7 +53,7 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     mock_get_ohlcv = mocker.patch.object(
         broker, "inquire_daily_itemchartprice",
         new_callable=AsyncMock,
-        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data={"output2": dummy_ohlcv})
+            return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=dummy_ohlcv)
     )
     
     # 체결강도 등 캐시되지 않는 API 모킹
@@ -149,7 +149,7 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     # [검증 1] 캐시를 타는 현재가 API는 호출되지 않아야 함
     assert mock_get_price.call_count == 0, "캐시 적중 시 현재가 외부 API는 호출되지 않아야 합니다."
     
-    # [검증 2] 전략에서 end_date를 명시하여 호출하므로 DB-first 로직을 우회하여 외부 API가 호출됨
+    # [검증 2] end_date가 명시되어도 캐시에 충분한 데이터가 있다면 외부 API는 호출되지 않아야 함
     assert mock_get_ohlcv.call_count == 0, "캐시 적중 시 OHLCV 외부 API는 호출되지 않아야 합니다."
     
     # [검증 3] 실시간 API(체결강도)는 항상 호출되어야 함

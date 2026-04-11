@@ -775,23 +775,25 @@ async def test_get_recent_daily_ohlcv_db_insufficient_falls_back_to_api(trading_
 
 
 @pytest.mark.asyncio
-async def test_get_recent_daily_ohlcv_end_date_skips_db(trading_service_fixture, mock_deps):
-    """get_recent_daily_ohlcv: end_date 지정 시 DB-first 경로를 건너뛰고 API 호출."""
+async def test_get_recent_daily_ohlcv_end_date_slices_db_data(trading_service_fixture, mock_deps):
+    """get_recent_daily_ohlcv: end_date 지정 시 DB-first 경로를 타고 슬라이싱 처리."""
     broker = mock_deps.broker
     service = trading_service_fixture
-    db_rows = [{"date": f"2025010{i}", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000} for i in range(1, 6)]
+    
+    # DB에 end_date(20241231) 이전 데이터가 충분히 존재하도록 구성
+    db_rows = [{"date": f"202412{20+i}", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000} for i in range(12)]
+    # 이후 데이터
+    db_rows += [{"date": f"2025010{i}", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000} for i in range(1, 6)]
 
     mock_deps.stock_repo.get_stock_data.return_value = {"ohlcv": db_rows, "historical_complete": True}
 
-    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK",
-        data=[{"stck_bsop_date": "20241231", "stck_clpr": "100", "stck_oprc": "100", "stck_hgpr": "100", "stck_lwpr": "100", "acml_vol": "100"}],
-    )
+    result = await service.get_recent_daily_ohlcv("005930", limit=5, end_date="20241231")
 
-    await service.get_recent_daily_ohlcv("005930", limit=5, end_date="20241231")
-
-    broker.inquire_daily_itemchartprice.assert_awaited()
-    mock_deps.stock_repo.get_stock_data.assert_not_awaited()
+    broker.inquire_daily_itemchartprice.assert_not_awaited()
+    mock_deps.stock_repo.get_stock_data.assert_awaited()
+    
+    assert len(result) == 5
+    assert result[-1]["date"] == "20241231"
 
 
 @pytest.mark.asyncio

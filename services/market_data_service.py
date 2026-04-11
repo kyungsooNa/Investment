@@ -492,17 +492,19 @@ class MarketDataService:
         t_start = self.pm.start_timer()
         current_ed_dt = datetime.strptime(end_date, "%Y%m%d") if end_date else self._market_clock.get_current_kst_time()
 
-        # DB-first: 날짜 범위가 명시되지 않은 경우에만 시도
-        if not end_date and not start_date and self._stock_repo:
-            stock_data = await self._stock_repo.get_stock_data(code, ohlcv_limit=limit, caller="get_recent_daily_ohlcv")
+        # DB-first: start_date가 지정되지 않은 경우에만 시도 (end_date가 있어도 DB 데이터 슬라이싱으로 대응)
+        if not start_date and self._stock_repo:
+            fetch_limit = 600 if end_date else limit
+            stock_data = await self._stock_repo.get_stock_data(code, ohlcv_limit=fetch_limit, caller="get_recent_daily_ohlcv")
             if stock_data:
                 rows = stock_data.get("ohlcv", [])
+                if end_date:
+                    rows = [r for r in rows if r['date'] <= end_date]
                 if len(rows) >= limit:
                     self.pm.log_timer(f"MarketData.get_recent_daily_ohlcv({code})[DB]", t_start)
                     return rows[-limit:]
 
         if start_date:
-
             resp = await self.get_ohlcv_range(code, "D", start_date, self._market_clock.to_yyyymmdd(current_ed_dt), exchange=exchange)
             return resp.data or [] if resp and resp.rt_cd == ErrorCode.SUCCESS.value else []
 
@@ -530,6 +532,9 @@ class MarketDataService:
                 all_rows_map[r['date']] = r
 
         all_rows = sorted(all_rows_map.values(), key=lambda x: x['date'])
+        
+        if self._stock_repo and all_rows:
+            await self._stock_repo.upsert_ohlcv([{**r, "code": code} for r in all_rows])
         
         if len(all_rows) > limit: 
             all_rows = all_rows[-limit:]
