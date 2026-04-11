@@ -83,6 +83,8 @@ class ClientWithCache:
             is_open = False
             if self._mcs:
                 is_open = await self._mcs.is_market_open_now()
+            else:
+                is_open = self._market_clock.is_market_operating_hours()
 
             if is_open:
                 self._logger.debug(f"⏳ 시장 개장 중 → 캐시 우회: {key}")
@@ -95,7 +97,7 @@ class ClientWithCache:
                     
                     is_valid = False
                     # [수정] next_open_time도 async 메서드
-                    next_open_time = await self._mcs.get_next_open_time() if self._mcs else None
+                    next_open_time = await self._mcs.get_next_open_time() if self._mcs else self._market_clock.get_next_market_open_time()
 
                     if cache_time and next_open_time and cache_time < next_open_time:
                         # [수정] MarketCalendarService가 있으면 실제 거래일 기준으로 검증
@@ -126,6 +128,12 @@ class ClientWithCache:
                             else:
                                 # mcs이 거래일을 확인할 수 없는 경우 캐시를 유효한 것으로 간주
                                 is_valid = True
+                        else:
+                            latest_close_time = self._market_clock.get_latest_market_close_time()
+                            if latest_close_time and cache_time >= latest_close_time:
+                                is_valid = True
+                            else:
+                                self._logger.debug(f"📉 캐시 만료 (장 마감 시간 {latest_close_time} > 캐시 데이터 {cache_time})")
 
                     if is_valid:
                         if cache_type == "memory":

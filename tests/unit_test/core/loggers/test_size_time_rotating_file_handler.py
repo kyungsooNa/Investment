@@ -104,10 +104,10 @@ def test_json_extension_handling(tmp_path):
 
 def test_find_max_index_with_empty_suffix(tmp_path):
     """
-    glob 패턴에는 맞지만 인덱스가 비어있는 경우(_ .log)를 무시하는지 테스트합니다.
+    glob 패턴에는 맞지만 인덱스가 순수 숫자가 아닌 경우(_1a.log)를 무시하는지 테스트합니다.
     """
     log_file = tmp_path / "test_invalid.log"
-    (tmp_path / "test_invalid_.log").touch()     # isdigit() == False
+    (tmp_path / "test_invalid_1a.log").touch()     # isdigit() == False
     (tmp_path / "test_invalid_2.log").touch()
     
     handler = SizeTimeRotatingFileHandler(str(log_file))
@@ -159,20 +159,21 @@ def test_rollover_with_delay(tmp_path):
 
 def test_sort_backup_files_with_invalid_suffix(tmp_path):
     """
-    backup 파일 정리 중 _ 뒤의 인덱스가 숫자가 아닐 경우(-1 처리) 정렬 및 삭제가 동작하는지 확인합니다.
+    backup 파일 정리 중 _ 뒤의 인덱스가 순수 숫자가 아닐 경우(-1 처리) 정렬 및 삭제가 동작하는지 확인합니다.
     """
     log_file = tmp_path / "test_sort.log"
     (tmp_path / "test_sort_1.log").touch()
     (tmp_path / "test_sort_2.log").touch()
-    (tmp_path / "test_sort_.log").touch()  # isdigit() == False -> -1 반환
+    (tmp_path / "test_sort_1a.log").touch()  # isdigit() == False -> -1 반환
     
-    handler = SizeTimeRotatingFileHandler(str(log_file), maxBytes=10, backupCount=1)
+    # delay=True를 설정하여 초기 활성 로그(test_sort_3.log)가 생성되어 계산에 혼선을 주지 않도록 방지합니다.
+    handler = SizeTimeRotatingFileHandler(str(log_file), maxBytes=10, backupCount=1, delay=True)
     handler.doRollover()
     handler.close()
     
     # backupCount=1이면 총 파일 개수에서 가장 오래된 것들 순서대로 지워짐.
-    # 정렬: ["test_sort_.log" (-1), "test_sort_1.log" (1), "test_sort_2.log" (2)]
-    # len=3, backupCount=1 -> 앞의 2개 삭제 (test_sort_.log, test_sort_1.log)
-    assert not (tmp_path / "test_sort_.log").exists()
+    # 정렬: ["test_sort_1a.log" (-1), "test_sort_1.log" (1), "test_sort_2.log" (2)]
+    # len=3, backupCount=1 -> 앞의 2개 삭제 (test_sort_1a.log, test_sort_1.log)
+    assert not (tmp_path / "test_sort_1a.log").exists()
     assert not (tmp_path / "test_sort_1.log").exists()
     assert (tmp_path / "test_sort_2.log").exists()
