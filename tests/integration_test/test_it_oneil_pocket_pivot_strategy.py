@@ -38,11 +38,15 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     
     # 90일치 완벽한 정배열 및 최근 구간 박스권(BB 스퀴즈)을 연출하는 OHLCV 데이터
     dummy_ohlcv = []
+    from datetime import timedelta
+    base_dt = datetime(2026, 3, 7)
     for i in range(90):
-        # 과거(인덱스가 클수록) 가격이 낮고 최근이 높은 우상향 추세 생성
+        # 과거(인덱스가 작을수록) 가격이 낮고 최근이 높은 우상향 추세 생성
+        dt = base_dt - timedelta(days=89 - i)
+        date_str = dt.strftime("%Y%m%d")
         price = 100000 + (90 - i) * 300
         dummy_ohlcv.append({
-            "stck_bsop_date": f"2026{(1000 - i):04d}",
+            "stck_bsop_date": date_str,
             "stck_clpr": str(price), "close": price,
             "stck_hgpr": str(price + 500), "high": price + 500,
             "stck_lwpr": str(price - 500), "low": price - 500,
@@ -53,7 +57,7 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     mock_get_ohlcv = mocker.patch.object(
         broker, "inquire_daily_itemchartprice",
         new_callable=AsyncMock,
-            return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=dummy_ohlcv)
+        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=dummy_ohlcv)
     )
     
     # 체결강도 등 캐시되지 않는 API 모킹
@@ -66,7 +70,7 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     # 3. 실시간 급등주 랭킹 API 모킹 (_build_daily_surge_pool 용)
     mock_sqs = deep_paper_ctx.stock_query_service
     mocker.patch.object(mock_sqs, 'get_top_trading_value_stocks', new_callable=AsyncMock, 
-                        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[{"mksc_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스"}]))
+                        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[{"mksc_shrn_iscd": "999992", "hts_kor_isnm": "테스트종목B"}]))
     mocker.patch.object(mock_sqs, 'get_top_rise_fall_stocks', new_callable=AsyncMock, 
                         return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[]))
     mocker.patch.object(mock_sqs, 'get_top_volume_stocks', new_callable=AsyncMock, 
@@ -98,9 +102,9 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
         )
     )
 
-    # _load_premium_stocks는 삼성전자 1개를 반환하도록 모킹 (Pool A)
+    # _load_premium_stocks는 테스트종목A 1개를 반환하도록 모킹 (Pool A)
     premium_item = OSBWatchlistItem(
-        code="005930", name="삼성전자", market="KOSPI", 
+        code="999991", name="테스트종목A", market="KOSPI",
         high_20d=72000, ma_20d=70000.0, ma_50d=68000.0, 
         avg_vol_20d=600000.0, bb_width_min_20d=0.03, prev_bb_width=0.04, 
         w52_hgpr=77000, avg_trading_value_5d=50000000000, market_cap=400_000_000_000_000,
@@ -132,7 +136,7 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     calls_ohlcv_on_miss = mock_get_ohlcv.call_count
     calls_conclusion_on_miss = mock_get_conclusion.call_count
     
-    # 삼성전자(Pool A) + SK하이닉스(Pool B) 두 종목이 모두 검증을 통과해야 함
+    # 테스트종목A(Pool A) + 테스트종목B(Pool B) 두 종목이 모두 검증을 통과해야 함
     assert calls_price_on_miss >= 2, f"초기 스캔 시 현재가 API가 호출되어야 함 ({calls_price_on_miss})"
     assert calls_ohlcv_on_miss >= 2, f"초기 스캔 시 일봉 API가 호출되어야 함 ({calls_ohlcv_on_miss})"
 
