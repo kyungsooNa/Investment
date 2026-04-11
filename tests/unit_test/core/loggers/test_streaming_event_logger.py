@@ -631,3 +631,65 @@ def test_log_subscription_recovery_done(streaming_logger_setup):
     assert d["failed_codes"] == ["035720"]
     assert d["elapsed_ms"] == 123.5
     assert lines[0]["level"] == "INFO"
+
+
+def test_log_ignored_when_level_is_high(streaming_logger_setup):
+    streaming_logger, streaming_log_dir = streaming_logger_setup
+
+    inner = logging.getLogger("streaming_event")
+    # CRITICAL 레벨 설정하여 하위 레벨(DEBUG, INFO, WARNING, ERROR) 로그가 isEnabledFor 검사를 통과하지 못하게 함
+    inner.setLevel(logging.CRITICAL)
+
+    # 모든 로깅 메서드 호출
+    streaming_logger.log_subscribe("005930", {}, 1)
+    streaming_logger.log_unsubscribe("005930", 1)
+    streaming_logger.log_summary(1, [], {})
+    streaming_logger.log_connect()
+    streaming_logger.log_disconnect()
+    streaming_logger.log_reconnect("trigger", [], 0, 0)
+    streaming_logger.log_restore([], 0, 0)
+    streaming_logger.log_pt_subscribe("005930")
+    streaming_logger.log_pt_unsubscribe("005930")
+    streaming_logger.log_price_subscribe("005930")
+    streaming_logger.log_price_unsubscribe("005930")
+    streaming_logger.log_connection_lost("reason")
+    streaming_logger.log_appkey_collision(1, 1.0, 1)
+    streaming_logger.log_reconnect_attempt(1, 1)
+    streaming_logger.log_reconnect_success(1, 1)
+    streaming_logger.log_unsubscribe_failure("005930", "msg")
+    streaming_logger.log_subscribe_failure("005930", "msg")
+    streaming_logger.log_watchdog_check(True, 0.0, True, 1)
+    streaming_logger.log_subscription_recovery_start(1, [])
+    streaming_logger.log_subscription_recovery_done(1, 1, [], 1.0)
+    
+    # explicit isEnabledFor가 없으나 내부 로거가 필터링하는 메서드들
+    streaming_logger.log_clear_active_state("msg")
+    streaming_logger.log_add_subscription_rejection("005930", "msg")
+    streaming_logger.log_dropped_subscriptions("msg")
+    streaming_logger.log_watchdog_start(1)
+    streaming_logger.log_watchdog_stop_start(1)
+    streaming_logger.log_watchdog_stop_done()
+    streaming_logger.log_watchdog_suspend()
+    streaming_logger.log_watchdog_resume()
+    streaming_logger.log_market_closed_disconnect()
+    streaming_logger.log_market_open_connect()
+    streaming_logger.log_receive_task_dead()
+    streaming_logger.log_pt_data_gap(1.0, 1)
+    streaming_logger.log_watchdog_error("msg")
+    streaming_logger.log_pt_restore_connect_failed("005930")
+    streaming_logger.log_pt_restore_error("005930", "err")
+    streaming_logger.log_pt_restore_failed_removed([])
+    streaming_logger.log_price_restore_start(1)
+    streaming_logger.log_price_restore_done(1)
+    streaming_logger.log_force_reconnect_start("trig", [])
+    streaming_logger.log_force_reconnect_disconnect_error("err")
+    streaming_logger.log_force_reconnect_done("trig")
+    streaming_logger.log_subscribe_pending("005930", "msg")
+
+    _flush_streaming_logger()
+
+    files = list(streaming_log_dir.glob("*.log.json"))
+    if files:
+        with open(files[0], encoding="utf-8") as f:
+            lines = [line for line in f if line.strip()]
+            assert len(lines) == 0
