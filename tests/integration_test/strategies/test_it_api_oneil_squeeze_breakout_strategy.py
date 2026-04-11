@@ -118,6 +118,7 @@ async def test_osb_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     # [상황 B] 연속 실행 (Memory Cache Hit)
     mock_get_price.reset_mock()
     mock_get_conclusion.reset_mock()
+    strategy._position_state.clear()
     
     await strategy.scan()
     

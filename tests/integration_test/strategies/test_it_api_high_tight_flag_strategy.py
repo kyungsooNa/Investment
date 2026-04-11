@@ -146,6 +146,7 @@ async def test_htf_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     mock_get_price.reset_mock()
     mock_get_ohlcv.reset_mock()
     mock_get_conclusion.reset_mock()
+    strategy._position_state.clear()
     
     await strategy.scan()
     

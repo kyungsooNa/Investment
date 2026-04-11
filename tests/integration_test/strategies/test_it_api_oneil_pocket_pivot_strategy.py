@@ -162,6 +162,7 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     mock_get_conclusion.reset_mock()
     
     # 메모리에 적재된 상태에서 다시 스캔
+    strategy._position_state.clear()
     await strategy.scan()
     
     # [검증 1] 캐시를 타는 현재가 API는 호출되지 않아야 함
