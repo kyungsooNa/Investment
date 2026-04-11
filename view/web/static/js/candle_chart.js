@@ -282,7 +282,7 @@ function renderStockChart(period) {
                     type: 'category', // [수정] 1970년 문제 해결을 위해 명시적 category 설정
                     ticks: { autoSkip: true, maxTicksLimit: 10 }
                 },
-                y: { type: 'linear', position: 'right', stack: 'stock', stackWeight: 4, grid: { color: 'rgba(255,255,255,0.1)' } },
+                y: { type: 'linear', position: 'right', stack: 'stock', stackWeight: 4, grid: { color: 'rgba(128, 128, 128, 0.2)', drawOnChartArea: true } },
                 y_spacer: { // [추가] 주가/거래량 사이 간격
                     type: 'linear',
                     display: false,
