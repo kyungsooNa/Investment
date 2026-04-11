@@ -3,6 +3,7 @@
 import pytest
 import json
 import pytz
+import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 from core.cache.cache_wrapper import cache_wrap_client, ClientWithCache
 from core.cache.cache_store import CacheStore
@@ -922,3 +923,200 @@ async def test_market_close_cache_avoids_repeated_parsing(cache_store, test_cach
 
     # _market_close_cache 덕분에 get_market_close_time은 최초 1회만 호출되어야 함
     market_clock.get_market_close_time.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_api_exception_propagates(cache_store, test_cache_config):
+    """API 호출 중 발생한 예외가 In-flight 중복 대기 중인 모든 퓨처에 전파되는지 검증"""
+    logger = MagicMock()
+    market_clock = MagicMock()
+    market_clock.is_market_operating_hours.return_value = False
+
+    class ExceptionClient:
+        async def get_data(self, x):
+            await asyncio.sleep(0.01)
+            raise ValueError("API Error")
+
+    wrapped = cache_wrap_client(
+        api_client=ExceptionClient(),
+        logger=logger,
+        market_clock=market_clock,
+        mode_getter=lambda: "TEST",
+        cache_store=cache_store,
+        config=test_cache_config
+    )
+
+    t1 = asyncio.create_task(wrapped.get_data(1))
+    t2 = asyncio.create_task(wrapped.get_data(1))
+
+    with pytest.raises(ValueError, match="API Error"):
+        await t1
+
+    with pytest.raises(ValueError, match="API Error"):
+        await t2
+
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_in_flight_hit(cache_store, test_cache_config):
+    """In-flight HIT를 통해 동시 요청 시 API 호출이 한 번만 이루어지는지 검증"""
+    import asyncio
+    logger = MagicMock()
+    market_clock = MagicMock()
+    market_clock.is_market_operating_hours.return_value = False
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    market_clock.market_timezone = seoul_tz
+    
+    now = seoul_tz.localize(datetime.now())
+    market_clock.get_latest_market_close_time.return_value = now - timedelta(minutes=5)
+    market_clock.get_next_market_open_time.return_value = now + timedelta(hours=8)
+    market_clock.get_current_kst_time.return_value = now
+
+    class SlowClient:
+        def __init__(self):
+            self.call_count = 0
+            self.started = asyncio.Event()
+            self.finish = asyncio.Event()
+
+        async def get_data(self, x):
+            self.call_count += 1
+            self.started.set()
+            await self.finish.wait()
+            return ResCommonResponse(rt_cd="0", msg1="OK", data={"key": f"value-{x}"})
+
+    client = SlowClient()
+    wrapped = cache_wrap_client(
+        api_client=client,
+        logger=logger,
+        market_clock=market_clock,
+        mode_getter=lambda: "TEST",
+        cache_store=cache_store,
+        config=test_cache_config
+    )
+
+    tasks = [asyncio.create_task(wrapped.get_data(99)) for _ in range(5)]
+
+    await client.started.wait()
+    # 나머지 4개의 Task가 in-flight 방지 구간에 걸릴 수 있도록 루프 진행
+    await asyncio.sleep(0)
+    client.finish.set()
+
+    results = await asyncio.gather(*tasks)
+
+    assert client.call_count == 1
+    for res in results:
+        assert res.data["key"] == "value-99"
+
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("In-flight HIT" in msg for msg in debug_logs)
+
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_cache_hit_attribute_error_ignored(cache_store, test_cache_config):
+    """원시 타입(tuple 등)이 캐시되어 있을 때 AttributeError 무시 검증"""
+    logger = MagicMock()
+    market_clock = MagicMock()
+    market_clock.is_market_operating_hours.return_value = False
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    market_clock.market_timezone = seoul_tz
+    
+    now = seoul_tz.localize(datetime.now())
+    market_clock.get_latest_market_close_time.return_value = now - timedelta(minutes=5)
+    market_clock.get_next_market_open_time.return_value = now + timedelta(hours=8)
+    market_clock.get_current_kst_time.return_value = now
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        market_clock=market_clock,
+        mode_getter=lambda: "TEST",
+        cache_store=cache_store,
+        config=test_cache_config,
+        market_calendar_service=None
+    )
+    
+    key = "TEST_get_data_888"
+    cache_store.set(key, {
+        "timestamp": now.isoformat(),
+        "data": (1, 2, 3)
+    })
+
+    result = await wrapped.get_data(888)
+    assert result == (1, 2, 3)
+
+
+@pytest.mark.asyncio
+async def test_parse_timestamp_no_logger(cache_store, test_cache_config):
+    """logger가 None일 때 _parse_timestamp 예외 발생 무시 검증"""
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=None,
+        market_clock=MagicMock(),
+        mode_getter=lambda: "TEST",
+        cache_store=cache_store,
+        config=test_cache_config
+    )
+    
+    assert wrapped._parse_timestamp("invalid-date") is None
+
+
+@pytest.mark.asyncio
+async def test_build_cache_key_with_kwargs(cache_store, test_cache_config):
+    """kwargs 파라미터가 포함될 때 _build_cache_key 동작 검증"""
+    logger = MagicMock()
+    market_clock = MagicMock()
+    market_clock.is_market_operating_hours.return_value = False
+
+    class KwargClient:
+        async def get_data(self, x, **kwargs):
+            return ResCommonResponse(rt_cd="0", msg1="OK", data={"key": f"{x}-{kwargs.get('y')}"})
+
+    wrapped = cache_wrap_client(
+        api_client=KwargClient(),
+        logger=logger,
+        market_clock=market_clock,
+        mode_getter=lambda: "TEST",
+        cache_store=cache_store,
+        config=test_cache_config
+    )
+
+    await wrapped.get_data(1, y=2, z=3)
+    
+    debug_logs = [call.args[0] for call in logger.debug.call_args_list]
+    assert any("TEST_get_data_1_y=2_z=3" in msg for msg in debug_logs)
+
+
+@pytest.mark.asyncio
+async def test_cache_wrapper_no_mcs_fallback_cache_expired(cache_store, test_cache_config):
+    """MarketCalendarService가 없을 때 MarketClock을 폴백으로 사용하여 만료를 검증"""
+    logger = MagicMock()
+    market_clock = MagicMock()
+    market_clock.is_market_operating_hours.return_value = False
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    market_clock.market_timezone = seoul_tz
+    
+    now = seoul_tz.localize(datetime.now())
+    market_clock.get_latest_market_close_time.return_value = now - timedelta(minutes=5)
+    market_clock.get_next_market_open_time.return_value = now + timedelta(hours=8)
+    market_clock.get_current_kst_time.return_value = now
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        market_clock=market_clock,
+        mode_getter=lambda: "TEST",
+        cache_store=cache_store,
+        config=test_cache_config,
+        market_calendar_service=None
+    )
+    
+    # 캐시 만료 강제 (장 마감 전으로)
+    key = "TEST_get_data_1"
+    cache_store.set(key, {
+        "timestamp": (now - timedelta(hours=1)).isoformat(),
+        "data": ResCommonResponse(rt_cd="0", msg1="OK", data={"key": "cached_old"})
+    })
+
+    await wrapped.get_data(1)
+    
+    debug_logs = [c.args[0] for c in logger.debug.call_args_list]
+    assert any("📉 캐시 만료" in msg for msg in debug_logs)
