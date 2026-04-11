@@ -55,6 +55,13 @@ class _LRUCache:
             if key in self.item_hits:
                 del self.item_hits[key]
 
+    def clear(self):
+        self.cache.clear()
+        self.item_hits.clear()
+        self.caller_stats.clear()
+        self.hits = 0
+        self.misses = 0
+
     def get_stats(self, expand: bool = False) -> dict:
         """캐시 적중률 통계를 반환합니다."""
         total = self.hits + self.misses
@@ -157,6 +164,13 @@ class _LFUCache:
             del self._cache[key]
             if key in self._freq:
                 del self._freq[key]
+
+    def clear(self):
+        self._cache.clear()
+        self._freq.clear()
+        self.caller_stats.clear()
+        self.hits = 0
+        self.misses = 0
 
     def get_stats(self, expand: bool = False, latest_trading_date: str = None) -> dict:
         """캐시 적중률 통계를 반환합니다."""

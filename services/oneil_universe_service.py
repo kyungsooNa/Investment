@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import asdict
 from typing import Dict, List, Optional
 
@@ -212,7 +212,7 @@ class OneilUniverseService:
         candidates = [(c, n) for c, n in candidate_map.items() if c not in skip_codes]
         
         for chunk in _chunked(candidates, self._cfg.api_chunk_size):
-            tasks = [self._analyze_candidate(code, name, logger=logger) for code, name in chunk]
+            tasks = [self._analyze_surge_candidate(code, name, logger=logger) for code, name in chunk]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             for res in results:
@@ -251,8 +251,9 @@ class OneilUniverseService:
         self.pm.log_timer("OneilUniverseService._build_daily_surge_pool", t_start, threshold=3.0)
         return {item.code: item for item in items[:self._cfg.daily_surge_size]}
 
-    async def _analyze_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
-        """개별 종목 분석 (OHLCV, BB, RS 등)."""
+    async def _analyze_premium_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
+        """장마감 후 전일 기준 우량주(Pool A) 분석. 
+        어제까지의 확정된 일봉 데이터만 사용하므로 별도의 슬라이싱이 필요하지 않습니다."""
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=90)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
 
@@ -367,6 +368,147 @@ class OneilUniverseService:
             rs_return_3m=rs_return
         )
 
+    async def _analyze_surge_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
+        """장중 실시간 급등주(Pool B) 분석.
+        어제까지의 캐시된 OHLCV 데이터와 오늘의 실시간 가격을 결합하여 분석합니다.
+        """
+
+        # 1. 어제 날짜 계산 (전략의 _check_entry 패턴 적용)
+        now = self._tm.get_current_kst_time()
+        yesterday_str = (now - timedelta(days=1)).strftime("%Y%m%d")
+        today_str = now.strftime("%Y%m%d")
+        
+        # 2. 어제까지의 OHLCV 조회 (end_date 지정 시 DB/캐시 히트율 상승)
+        # limit은 분석에 필요한 ma_50d 등을 고려하여 90일로 유지
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=90, end_date=yesterday_str)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
+
+        if not ohlcv:
+            return None
+
+        # 3. 실시간 현재가/거래량 조회 (어차피 스캔 시 필요한 데이터)
+        full_resp = await self._sqs.get_current_price(code, caller="OneilUniverseService")
+        if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
+            return None
+        output = full_resp.data.get("output")
+        if not output:
+            return None
+        
+        # 데이터 추출 (전략 패턴과 동일하게 안전하게 추출)
+        if isinstance(output, dict):
+            current = int(output.get("stck_prpr", 0))
+            vol = int(output.get("acml_vol", 0))
+            today_open = int(output.get("stck_oprc", 0))
+            today_high = int(output.get("stck_hgpr", 0))
+            today_low = int(output.get("stck_lwpr", 0))
+        else:
+            current = int(getattr(output, "stck_prpr", 0) or 0)
+            vol = int(getattr(output, "acml_vol", 0) or 0)
+            today_open = int(getattr(output, "stck_oprc", 0) or 0)
+            today_high = int(getattr(output, "stck_hgpr", 0) or 0)
+            today_low = int(getattr(output, "stck_lwpr", 0) or 0)
+
+        # 4. 실시간 가상 캔들 합성 (Today Candle Injection)
+        today_candle = {
+            "date": today_str,
+            "open": float(today_open),
+            "high": float(today_high),
+            "low": float(today_low),
+            "close": float(current),
+            "volume": vol,
+        }
+        
+        # 혹시 API가 오늘 데이터를 포함했더라도 중복되지 않게 처리
+        if ohlcv[-1].get("date") == today_str:
+            ohlcv[-1] = today_candle
+        else:
+            ohlcv.append(today_candle)
+
+        # 5. 이제 실시간 데이터가 포함된 ohlcv를 사용하여 정량 분석 진행
+        closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
+        if len(closes) < 50:
+            return None
+
+        period = self._cfg.high_breakout_period
+        highs = [r.get("high", 0) for r in ohlcv[-period:] if r.get("high") is not None]
+        volumes = [r.get("volume", 0) for r in ohlcv[-period:] if r.get("volume") is not None]
+
+        if not highs or not volumes:
+            return None
+
+        # 지표 계산 (오늘의 실시간 변동이 반영됨)
+        ma_20d = sum(closes[-20:]) / 20
+        ma_50d = sum(closes[-50:]) / 50
+        # prev_close는 '어제 종가'여야 하므로 리스트의 마지막에서 두 번째(-2) 사용
+        prev_close = closes[-2]
+
+        high_20d = int(max(highs))
+        avg_vol_20d = sum(volumes) / len(volumes)
+
+        # 필터: 거래대금 (최근 5일 = 어제까지 4일 + 오늘 실시간 1일)
+        recent_5 = ohlcv[-5:]
+        tv_5d = sum([(r.get("volume", 0) * r.get("close", 0)) for r in recent_5]) / len(recent_5)
+        
+        if tv_5d < self._cfg.min_avg_trading_value_5d:
+            return None
+
+        # 필터: 정배열 (실시간 주가 반영)
+        if not (current > ma_20d > ma_50d):
+            return None
+
+        # 필터: 52주 고가 근접
+        full_resp = await self._sqs.get_current_price(code, caller="OneilUniverseService")
+        if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "current_price_api_fail"})
+            return None
+        output = full_resp.data.get("output") if full_resp.data else None
+        if not output:
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "no_price_output"})
+            return None
+        
+        if isinstance(output, dict):
+            w52_hgpr = int(output.get("w52_hgpr") or 0)
+            cap_billion = int(output.get("hts_avls") or output.get("stck_llam") or 0)
+        else:
+            w52_hgpr = int(getattr(output, "w52_hgpr", 0) or 0)
+            cap_billion = int(getattr(output, "hts_avls", 0) or getattr(output, "stck_llam", 0) or 0)
+        stck_llam = cap_billion * 100_000_000
+
+        # 필터: 시가총액 (2천억 ~ 2조)
+        if not (self._cfg.premium_stocks_cap_min <= stck_llam <= self._cfg.premium_stocks_cap_max):
+            if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
+            return None
+
+        dist = 0
+        if w52_hgpr > 0:
+            dist = ((w52_hgpr - prev_close) / w52_hgpr) * 100
+            if dist > self._cfg.near_52w_high_pct:
+                if logger: logger.debug({"event": "drop", "code": code, "reason": "far_from_52w_high", "dist": dist})
+                return None
+
+        # BB 스퀴즈
+        widths = self._indicator.calc_bb_widths_sync(ohlcv[:-1], period=self._cfg.bb_period, multiplier=self._cfg.multiplier)
+        if len(widths) < period:
+            return None
+        bb_min = min(widths[-period:])
+        prev_width = widths[-1]
+        if prev_width > bb_min * self._cfg.squeeze_tolerance:
+            return None
+        
+        # RS 계산
+        rs_return = self._indicator.calc_rs_sync(ohlcv[:-1], period_days=self._cfg.rs_period_days)
+        market = "KOSDAQ" if self.stock_code_repository.is_kosdaq(code) else "KOSPI"
+
+        if logger: logger.debug({"event": "selected_surge", "code": code, "name": name})
+
+        return OSBWatchlistItem(
+            code=code, name=name, market=market,
+            high_20d=high_20d, ma_20d=ma_20d, ma_50d=ma_50d,
+            avg_vol_20d=avg_vol_20d, bb_width_min_20d=bb_min, prev_bb_width=prev_width,
+            w52_hgpr=w52_hgpr, avg_trading_value_5d=tv_5d, market_cap=stck_llam,
+            rs_return_3m=rs_return
+        )
+
     # ── 전일 기준 우량주 생성 (배치) ─────────────────────────────────────────
 
     async def generate_premium_watchlist(self, trading_date: Optional[str] = None) -> dict:
@@ -468,7 +610,7 @@ class OneilUniverseService:
         processed_count_2 = 0
         for chunk in _chunked(passed_first, self._cfg.api_chunk_size):
             for code, name, market in chunk:
-                item = await self._analyze_candidate(code, name, logger=pool_a_logger)
+                item = await self._analyze_premium_candidate(code, name, logger=pool_a_logger)
                 if item:
                     items.append(item)
             

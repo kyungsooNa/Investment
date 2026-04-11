@@ -206,7 +206,7 @@ async def test_build_daily_surge_pool_parallel_execution(mock_components):
         data=[{"mksc_shrn_iscd": "000050", "hts_kor_isnm": "Stock5"}]
     )
     
-    # _analyze_candidate 메서드를 Mocking하여 실제 복잡한 분석 로직은 건너뛰고 성공 결과 반환
+    # _analyze_surge_candidate 메서드를 Mocking하여 실제 복잡한 분석 로직은 건너뛰고 성공 결과 반환
     async def mock_analyze(code, name, logger=None):
         return OSBWatchlistItem(
             code=code, name=name, market="KOSPI",
@@ -215,14 +215,14 @@ async def test_build_daily_surge_pool_parallel_execution(mock_components):
             avg_trading_value_5d=10000000000, market_cap=500000000000
         )
     
-    service._analyze_candidate = AsyncMock(side_effect=mock_analyze)
+    service._analyze_surge_candidate = AsyncMock(side_effect=mock_analyze)
     
     # 실행
     pool_b = await service._build_daily_surge_pool()
     
     # 검증
     # 총 5개 후보에 대해 analyze가 호출되었는지 확인
-    assert service._analyze_candidate.call_count == 5
+    assert service._analyze_surge_candidate.call_count == 5
     
     # 결과 딕셔너리에 5개가 모두 포함되었는지 확인
     assert len(pool_b) == 5

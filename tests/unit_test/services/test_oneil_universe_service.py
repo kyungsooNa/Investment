@@ -87,8 +87,8 @@ def oneil_service_fixture():
     mock_indicator.calc_rs_sync = MagicMock(return_value=10.0)
     return service, mock_sqs, mock_indicator
 
-async def test_analyze_candidate_success(mock_deps):
-    """_analyze_candidate: 모든 필터 조건을 통과하는 경우 검증."""
+async def test_analyze_premium_candidate_success(mock_deps):
+    """_analyze_premium_candidate: 모든 필터 조건을 통과하는 경우 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -114,7 +114,7 @@ async def test_analyze_candidate_success(mock_deps):
     mapper.is_kosdaq.return_value = True
     
     # 실행
-    item = await service._analyze_candidate("005930", "Samsung")
+    item = await service._analyze_premium_candidate("005930", "Samsung")
     
     # 검증
     assert item is not None
@@ -123,8 +123,8 @@ async def test_analyze_candidate_success(mock_deps):
     assert item.market == "KOSDAQ"
     assert item.rs_return_3m == 10.0
 
-async def test_analyze_candidate_filter_market_cap(mock_deps):
-    """_analyze_candidate: 시가총액 범위(2천억~2조) 벗어날 시 탈락 검증."""
+async def test_analyze_premium_candidate_filter_market_cap(mock_deps):
+    """_analyze_premium_candidate: 시가총액 범위(2천억~2조) 벗어날 시 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -137,14 +137,14 @@ async def test_analyze_candidate_filter_market_cap(mock_deps):
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "1000"})}
     )
-    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is None
     
     # Case 2: 시가총액 초과 (21조 = 210000억, cap_max=20조 초과)
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "210000"})}
     )
-    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is None
 
     # Case 3: 정상 범위 (5000억)
@@ -155,11 +155,11 @@ async def test_analyze_candidate_filter_market_cap(mock_deps):
     indicator.calc_bb_widths_sync.return_value = [20.0] * 90
     indicator.calc_rs_sync.return_value = 10.0
     
-    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is not None
 
-async def test_analyze_candidate_filter_trading_value(mock_deps):
-    """_analyze_candidate: 거래대금 부족 시 None 반환 검증."""
+async def test_analyze_premium_candidate_filter_trading_value(mock_deps):
+    """_analyze_premium_candidate: 거래대금 부족 시 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -167,7 +167,7 @@ async def test_analyze_candidate_filter_trading_value(mock_deps):
     ohlcv = [{"close": 100, "high": 110, "volume": 10} for _ in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
-    item = await service._analyze_candidate("005930", "Samsung")
+    item = await service._analyze_premium_candidate("005930", "Samsung")
     assert item is None
 
 async def test_generate_premium_watchlist(mock_deps, tmp_path):
@@ -202,9 +202,9 @@ async def test_generate_premium_watchlist(mock_deps, tmp_path):
     def mock_get_logger_side_effect(name, sub_dir=None):
         return get_strategy_logger(name, log_dir=str(tmp_path), sub_dir=sub_dir)
 
-    # 3. 2차 필터 (_analyze_candidate) Mock
+    # 3. 2차 필터 (_analyze_premium_candidate) Mock
     # StockA 통과 가정
-    with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze, \
+    with patch.object(service, '_analyze_premium_candidate', new_callable=AsyncMock) as mock_analyze, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect):
         mock_analyze.return_value = OSBWatchlistItem(
             code="000001", name="StockA", market="KOSPI",
@@ -252,9 +252,9 @@ async def test_get_watchlist_refresh_logic(mock_deps):
             mock_build.assert_awaited_once()
             assert 30 in service._watchlist_refresh_done
 
-async def test_analyze_candidate_with_zero_volume(oneil_service_fixture):
+async def test_analyze_premium_candidate_with_zero_volume(oneil_service_fixture):
     """
-    _analyze_candidate가 최근 거래량이 모두 0인 종목을 처리할 때 ZeroDivisionError 없이 None을 반환하는지 테스트합니다.
+    _analyze_premium_candidate가 최근 거래량이 모두 0인 종목을 처리할 때 ZeroDivisionError 없이 None을 반환하는지 테스트합니다.
     """
     # Arrange
     service, mock_sqs, _ = oneil_service_fixture
@@ -263,16 +263,16 @@ async def test_analyze_candidate_with_zero_volume(oneil_service_fixture):
     mock_sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=mock_ohlcv)
 
     # Act
-    result = await service._analyze_candidate("TESTCODE", "Test Stock")
+    result = await service._analyze_premium_candidate("TESTCODE", "Test Stock")
 
     # Assert
     # 함수는 오류를 발생시키지 않고 None을 반환해야 합니다.
     assert result is None
     mock_sqs.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=90)
 
-async def test_analyze_candidate_with_no_high_data(oneil_service_fixture):
+async def test_analyze_premium_candidate_with_no_high_data(oneil_service_fixture):
     """
-    _analyze_candidate가 최근 고가(high) 데이터가 없는 경우 None을 반환하는지 테스트합니다.
+    _analyze_premium_candidate가 최근 고가(high) 데이터가 없는 경우 None을 반환하는지 테스트합니다.
     """
     # Arrange
     service, mock_sqs, _ = oneil_service_fixture
@@ -280,7 +280,7 @@ async def test_analyze_candidate_with_no_high_data(oneil_service_fixture):
     mock_sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=mock_ohlcv)
 
     # Act
-    result = await service._analyze_candidate("TESTCODE", "Test Stock")
+    result = await service._analyze_premium_candidate("TESTCODE", "Test Stock")
 
     # Assert
     assert result is None
@@ -306,7 +306,7 @@ async def test_generate_premium_watchlist_sorting_with_tie_score(mock_deps, tmp_
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"hts_avls": "5000", "stck_llam": "5000"})}
     )
 
-    # 3. 2차 필터 (_analyze_candidate) Mock
+    # 3. 2차 필터 (_analyze_premium_candidate) Mock
     # 두 종목 모두 total_score는 50점으로 동일하게 설정
     # StockA: 시총 1000, 거래대금 100 -> 회전율 0.1
     # StockB: 시총 1000, 거래대금 500 -> 회전율 0.5 (더 높음) -> B가 먼저 와야 함
@@ -337,7 +337,7 @@ async def test_generate_premium_watchlist_sorting_with_tie_score(mock_deps, tmp_
         return get_strategy_logger(name, log_dir=str(tmp_path), sub_dir=sub_dir)
 
     # 내부 메서드 모킹
-    with patch.object(service, '_analyze_candidate', side_effect=mock_analyze), \
+    with patch.object(service, '_analyze_premium_candidate', side_effect=mock_analyze), \
          patch.object(service, '_compute_rs_scores'), \
          patch.object(service, '_compute_profit_growth_scores', new_callable=AsyncMock), \
          patch.object(service, '_compute_total_scores'), \
@@ -402,8 +402,8 @@ async def test_load_premium_stocks_date_validation(mock_deps):
         result = service._load_premium_stocks()
         assert result == []
 
-async def test_analyze_candidate_rs_calculation(mock_deps):
-    """_analyze_candidate: RS 값 계산 및 매핑 로직 검증."""
+async def test_analyze_premium_candidate_rs_calculation(mock_deps):
+    """_analyze_premium_candidate: RS 값 계산 및 매핑 로직 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
 
@@ -423,7 +423,7 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
     mapper.is_kosdaq.return_value = False
 
     # 실행
-    item = await service._analyze_candidate("005930", "Samsung")
+    item = await service._analyze_premium_candidate("005930", "Samsung")
 
     # 검증
     assert item is not None
@@ -434,8 +434,8 @@ async def test_analyze_candidate_rs_calculation(mock_deps):
     assert call_args[0][0] == ohlcv # ohlcv_data
     assert call_args[1]['period_days'] == service._cfg.rs_period_days
 
-async def test_analyze_candidate_rs_calculation_failure(mock_deps):
-    """_analyze_candidate: RS 계산 실패 시 0.0 처리 검증."""
+async def test_analyze_premium_candidate_rs_calculation_failure(mock_deps):
+    """_analyze_premium_candidate: RS 계산 실패 시 0.0 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
 
@@ -453,7 +453,7 @@ async def test_analyze_candidate_rs_calculation_failure(mock_deps):
     mapper.is_kosdaq.return_value = False
 
     # 실행
-    item = await service._analyze_candidate("005930", "Samsung")
+    item = await service._analyze_premium_candidate("005930", "Samsung")
 
     # 검증
     assert item is not None
@@ -681,7 +681,7 @@ async def test_build_daily_surge_pool_logic(mock_deps):
     # Pool A에 이미 "A"가 있다고 가정 -> "A"는 스킵되어야 함
     service._pool_a_items = {"A": MagicMock()}
     
-    # _analyze_candidate Mock
+    # _analyze_surge_candidate Mock
     # B는 통과, C는 없음(위에서 C는 정의 안함, B만 정의함)
     # analyze는 B에 대해서만 호출될 것임 (A는 스킵)
     async def mock_analyze(code, name, logger=None):
@@ -691,7 +691,7 @@ async def test_build_daily_surge_pool_logic(mock_deps):
                                     bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200, avg_trading_value_5d=100)
         return None
         
-    with patch.object(service, '_analyze_candidate', side_effect=mock_analyze):
+    with patch.object(service, '_analyze_surge_candidate', side_effect=mock_analyze):
         pool_b = await service._build_daily_surge_pool()
         
         assert "A" not in pool_b # Pool A 중복 제외
@@ -741,15 +741,15 @@ async def test_save_load_premium_stocks_exceptions(mock_deps):
         items = service._load_premium_stocks()
         assert items == [] # 빈 리스트 반환
 
-async def test_analyze_candidate_insufficient_data(mock_deps):
-    """_analyze_candidate: 데이터 부족 시 None 반환 검증."""
+async def test_analyze_premium_candidate_insufficient_data(mock_deps):
+    """_analyze_premium_candidate: 데이터 부족 시 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     # 데이터가 50개 미만
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[{"close": 100}] * 40)
     
-    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    item = await service._analyze_premium_candidate("CODE", "Name", logger=logger)
     assert item is None
 
 async def test_update_market_timing_updates_cache(mock_deps):
@@ -775,8 +775,8 @@ async def test_update_market_timing_updates_cache(mock_deps):
         ]
         mock_check.assert_has_awaits(expected_calls, any_order=True)
 
-async def test_analyze_candidate_trend_filter_fail(mock_deps):
-    """_analyze_candidate: 정배열 조건(Close > MA20 > MA50) 불만족 시 탈락 검증."""
+async def test_analyze_premium_candidate_trend_filter_fail(mock_deps):
+    """_analyze_premium_candidate: 정배열 조건(Close > MA20 > MA50) 불만족 시 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -786,7 +786,7 @@ async def test_analyze_candidate_trend_filter_fail(mock_deps):
     ohlcv = [{"close": 200 - i, "high": 210 - i, "volume": 1000000} for i in range(100)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
-    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    item = await service._analyze_premium_candidate("CODE", "Name", logger=logger)
     assert item is None
 
 async def test_build_watchlist_merge_priority(mock_deps):
@@ -841,7 +841,7 @@ async def test_build_daily_surge_pool_skip_duplicates_and_dict_parsing(mock_deps
     sqs.get_top_rise_fall_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
     sqs.get_top_volume_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
     
-    # _analyze_candidate Mock
+    # _analyze_surge_candidate Mock
     async def mock_analyze(code, name, logger=None):
         if code == "B":
             return OSBWatchlistItem(code="B", name="StockB", market="KOSPI",
@@ -849,7 +849,7 @@ async def test_build_daily_surge_pool_skip_duplicates_and_dict_parsing(mock_deps
                                     bb_width_min_20d=0, prev_bb_width=0, w52_hgpr=0, avg_trading_value_5d=0)
         return None
 
-    with patch.object(service, '_analyze_candidate', side_effect=mock_analyze) as mock_analyze_spy, \
+    with patch.object(service, '_analyze_surge_candidate', side_effect=mock_analyze) as mock_analyze_spy, \
          patch.object(service, '_compute_rs_scores'), \
          patch.object(service, '_compute_profit_growth_scores', new_callable=AsyncMock), \
          patch.object(service, '_compute_total_scores'):
@@ -867,8 +867,8 @@ async def test_build_daily_surge_pool_skip_duplicates_and_dict_parsing(mock_deps
         assert "A" not in pool_b
         assert "B" in pool_b
 
-async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
-    """_analyze_candidate: 52주 고가 대비 너무 많이 하락한 경우 탈락 검증."""
+async def test_analyze_premium_candidate_52w_high_filter_fail(mock_deps):
+    """_analyze_premium_candidate: 52주 고가 대비 너무 많이 하락한 경우 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -883,11 +883,11 @@ async def test_analyze_candidate_52w_high_filter_fail(mock_deps):
         rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "2000", "hts_avls": "3000"})}
     )
     
-    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    item = await service._analyze_premium_candidate("CODE", "Name", logger=logger)
     assert item is None
 
-async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
-    """_analyze_candidate: 볼린저 밴드 스퀴즈 조건 불만족 시 탈락 검증."""
+async def test_analyze_premium_candidate_bb_squeeze_fail(mock_deps):
+    """_analyze_premium_candidate: 볼린저 밴드 스퀴즈 조건 불만족 시 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -903,7 +903,7 @@ async def test_analyze_candidate_bb_squeeze_fail(mock_deps):
     widths = [10.0] * 80 + [50.0] * 10
     indicator.calc_bb_widths_sync.return_value = widths
 
-    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    item = await service._analyze_premium_candidate("CODE", "Name", logger=logger)
     assert item is None
 
 async def test_is_market_timing_ok_caching(mock_deps):
@@ -947,8 +947,8 @@ def test_calc_turnover_ratio_zero_cap(mock_deps):
     )
     assert OneilUniverseService._calc_turnover_ratio(item) == 0
 
-async def test_analyze_candidate_insufficient_bb_data(mock_deps):
-    """_analyze_candidate: BB 데이터가 부족할 때 None 반환."""
+async def test_analyze_premium_candidate_insufficient_bb_data(mock_deps):
+    """_analyze_premium_candidate: BB 데이터가 부족할 때 None 반환."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -961,7 +961,7 @@ async def test_analyze_candidate_insufficient_bb_data(mock_deps):
     # BB Data Short (period=20이지만 10개만 반환)
     indicator.calc_bb_widths_sync.return_value = [20.0] * 10
 
-    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    item = await service._analyze_premium_candidate("CODE", "Name", logger=logger)
     assert item is None
 
 # ════════════════════════════════════════════════════════════════
@@ -986,8 +986,8 @@ async def test_build_daily_surge_pool_partial_api_failure(mock_deps):
         rt_cd="0", msg1="OK", data=[{"mksc_shrn_iscd": "A", "hts_kor_isnm": "StockA"}]
     )
     
-    # _analyze_candidate Mock (성공)
-    with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze:
+    # _analyze_surge_candidate Mock (성공)
+    with patch.object(service, '_analyze_surge_candidate', new_callable=AsyncMock) as mock_analyze:
         mock_analyze.return_value = OSBWatchlistItem(
             code="A", name="StockA", market="KOSPI",
             high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=1000,
@@ -999,8 +999,8 @@ async def test_build_daily_surge_pool_partial_api_failure(mock_deps):
         assert "A" in pool_b
         assert len(pool_b) == 1
 
-async def test_analyze_candidate_price_api_object_access(mock_deps):
-    """_analyze_candidate: get_current_price 응답이 객체(속성 접근)일 때 처리 검증."""
+async def test_analyze_premium_candidate_price_api_object_access(mock_deps):
+    """_analyze_premium_candidate: get_current_price 응답이 객체(속성 접근)일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1035,12 +1035,12 @@ async def test_analyze_candidate_price_api_object_access(mock_deps):
     
     mapper.is_kosdaq.return_value = False
 
-    item = await service._analyze_candidate("005930", "Samsung")
+    item = await service._analyze_premium_candidate("005930", "Samsung")
     assert item is not None
     assert item.market_cap == 300000000000
 
-async def test_analyze_candidate_bb_data_integrity(mock_deps):
-    """_analyze_candidate: BB 데이터에 None이 포함된 경우 처리 검증."""
+async def test_analyze_premium_candidate_bb_data_integrity(mock_deps):
+    """_analyze_premium_candidate: BB 데이터에 None이 포함된 경우 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1052,13 +1052,13 @@ async def test_analyze_candidate_bb_data_integrity(mock_deps):
     
     # 1. 유효 데이터 부족 -> None 반환 (period=20이지만 5개만 반환)
     indicator.calc_bb_widths_sync.return_value = [20.0] * 5
-    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is None
 
     # 2. 유효 데이터 충분 -> 성공
     indicator.calc_bb_widths_sync.return_value = [20.0] * 90
     indicator.calc_rs_sync.return_value = 10.0
-    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is not None
 
 async def test_generate_premium_watchlist_fallback_market_cap(mock_deps, tmp_path):
@@ -1084,7 +1084,7 @@ async def test_generate_premium_watchlist_fallback_market_cap(mock_deps, tmp_pat
     def mock_get_logger_side_effect(name, sub_dir=None):
         return get_strategy_logger(name, log_dir=str(tmp_path), sub_dir=sub_dir)
 
-    with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze, \
+    with patch.object(service, '_analyze_premium_candidate', new_callable=AsyncMock) as mock_analyze, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect), \
          patch.object(service, '_save_premium_stocks'):
         
@@ -1128,7 +1128,7 @@ def test_should_refresh_watchlist_logic(mock_deps):
     assert 30 in service._watchlist_refresh_done
 
 async def test_build_daily_surge_pool_analyze_exception(mock_deps):
-    """_build_daily_surge_pool: _analyze_candidate 예외 발생 시 건너뛰기 검증."""
+    """_build_daily_surge_pool: _analyze_surge_candidate 예외 발생 시 건너뛰기 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1138,12 +1138,12 @@ async def test_build_daily_surge_pool_analyze_exception(mock_deps):
     sqs.get_top_rise_fall_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     sqs.get_top_volume_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     
-    with patch.object(service, '_analyze_candidate', side_effect=Exception("Analysis Error")):
+    with patch.object(service, '_analyze_surge_candidate', side_effect=Exception("Analysis Error")):
         pool_b = await service._build_daily_surge_pool()
         assert len(pool_b) == 0
 
-async def test_analyze_candidate_price_api_failure(mock_deps):
-    """_analyze_candidate: 현재가 API 호출 실패 시 None 반환 검증."""
+async def test_analyze_premium_candidate_price_api_failure(mock_deps):
+    """_analyze_premium_candidate: 현재가 API 호출 실패 시 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1156,11 +1156,11 @@ async def test_analyze_candidate_price_api_failure(mock_deps):
         rt_cd="1", msg1="Fail", data=None
     )
     
-    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is None
 
-async def test_analyze_candidate_no_price_output(mock_deps):
-    """_analyze_candidate: 현재가 API 성공이나 output 없음 검증."""
+async def test_analyze_premium_candidate_no_price_output(mock_deps):
+    """_analyze_premium_candidate: 현재가 API 성공이나 output 없음 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1172,11 +1172,11 @@ async def test_analyze_candidate_no_price_output(mock_deps):
         rt_cd="0", msg1="OK", data={"output": None}
     )
     
-    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is None
 
-async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
-    """_analyze_candidate: 52주 고가가 0일 때 (신규 상장 등) 처리 검증."""
+async def test_analyze_premium_candidate_w52_hgpr_zero(mock_deps):
+    """_analyze_premium_candidate: 52주 고가가 0일 때 (신규 상장 등) 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
@@ -1192,7 +1192,7 @@ async def test_analyze_candidate_w52_hgpr_zero(mock_deps):
     indicator.calc_bb_widths_sync.return_value = [20.0] * 90
     indicator.calc_rs_sync.return_value = 10.0
     
-    item = await service._analyze_candidate("005930", "Samsung", logger=logger)
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is not None
     # w52_hgpr이 0이어도 다른 조건 만족하면 통과 (52주 고가 근접 체크 스킵)
 
@@ -1216,8 +1216,8 @@ async def test_build_daily_surge_pool_response_items_as_objects(mock_deps):
     sqs.get_top_rise_fall_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     sqs.get_top_volume_stocks.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     
-    # Analyze Mock
-    with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze:
+    # _analyze_surge_candidate Mock
+    with patch.object(service, '_analyze_surge_candidate', new_callable=AsyncMock) as mock_analyze:
         mock_analyze.return_value = OSBWatchlistItem(
             code="A", name="StockA", market="KOSPI",
             high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=1000,
@@ -1265,7 +1265,7 @@ async def test_generate_premium_watchlist_api_failure_in_loop(mock_deps, tmp_pat
     def mock_get_logger_side_effect(name, sub_dir=None):
         return get_strategy_logger(name, log_dir=str(tmp_path), sub_dir=sub_dir)
 
-    with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze, \
+    with patch.object(service, '_analyze_premium_candidate', new_callable=AsyncMock) as mock_analyze, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect), \
          patch.object(service, '_save_premium_stocks'):
         
@@ -1282,14 +1282,14 @@ async def test_generate_premium_watchlist_api_failure_in_loop(mock_deps, tmp_pat
         assert result['passed_first'] == 1
         assert result['total_scanned'] == 2
 
-async def test_analyze_candidate_ohlcv_none(mock_deps):
-    """_analyze_candidate: OHLCV 데이터가 None일 때 None 반환 검증."""
+async def test_analyze_premium_candidate_ohlcv_none(mock_deps):
+    """_analyze_premium_candidate: OHLCV 데이터가 None일 때 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
     
     sqs.get_recent_daily_ohlcv.return_value = None
     
-    item = await service._analyze_candidate("CODE", "Name", logger=logger)
+    item = await service._analyze_premium_candidate("CODE", "Name", logger=logger)
     assert item is None
 
 async def test_generate_premium_watchlist_price_output_as_object(mock_deps, tmp_path):
@@ -1319,7 +1319,7 @@ async def test_generate_premium_watchlist_price_output_as_object(mock_deps, tmp_
     def mock_get_logger_side_effect(name, sub_dir=None):
         return get_strategy_logger(name, log_dir=str(tmp_path), sub_dir=sub_dir)
 
-    with patch.object(service, '_analyze_candidate', new_callable=AsyncMock) as mock_analyze, \
+    with patch.object(service, '_analyze_premium_candidate', new_callable=AsyncMock) as mock_analyze, \
          patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect), \
          patch.object(service, '_save_premium_stocks'):
         
@@ -1368,3 +1368,35 @@ async def test_check_etf_ma_rising_ohlcv_none(mock_deps):
     
     result = await service._check_etf_ma_rising("000000")
     assert result is False
+
+async def test_analyze_surge_candidate_slices_today_candle(mock_deps):
+    """_analyze_surge_candidate: 당일 캔들 슬라이싱 로직 검증."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    
+    # 오늘 날짜 설정
+    today_str = "20250102"
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    
+    # OHLCV Mock (총 100개 + 미완성 오늘 캔들 1개 = 101개)
+    ohlcv = [{"date": "20241231", "close": 1000 + i, "high": 1100 + i, "volume": 100000000} for i in range(100)]
+    ohlcv.append({"date": today_str, "close": 9999, "high": 9999, "volume": 999999999})
+    
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000", "stck_prpr": "2000"})}
+    )
+    indicator.calc_bb_widths_sync.return_value = [20.0] * 90
+    indicator.calc_rs_sync.return_value = 10.0
+    
+    mapper.is_kosdaq.return_value = True
+    
+    # 실행
+    item = await service._analyze_surge_candidate("005930", "Samsung")
+    
+    assert item is not None
+    # 지표 계산에 전달된 ohlcv 데이터 검증 (오늘 날짜가 제외되었는지 확인)
+    indicator.calc_bb_widths_sync.assert_called_once()
+    passed_ohlcv = indicator.calc_bb_widths_sync.call_args[0][0]
+    assert len(passed_ohlcv) == 100
+    assert passed_ohlcv[-1]["date"] != today_str
