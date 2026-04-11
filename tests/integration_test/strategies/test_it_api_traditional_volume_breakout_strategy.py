@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
 from pytz import timezone
@@ -10,6 +11,9 @@ from common.types import ResCommonResponse
 @pytest.mark.asyncio
 async def test_tvb_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker):
     """전략 스캔 시, Memory Cache Hit 여부에 따라 실제 브로커 API 호출이 어떻게 감소하는지 검증."""
+
+    uid = uuid.uuid4().int
+    code_a = str(uid % 1000000).zfill(6)
     
     # 테스트 실행 환경이 느려 캐시 TTL이 만료되는 것을 방지하기 위해 시간 고정
     mocker.patch("time.time", return_value=1600000000.0)
@@ -26,8 +30,14 @@ async def test_tvb_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
         return_value=ResCommonResponse(rt_cd="0", msg1="ok", data={
             "output": {
                 "stck_prpr": "75000",
+                "stck_oprc": "74000",
+                "stck_hgpr": "76000",
+                "stck_lwpr": "74000",
+                "prdy_vrss": "1000",
+                "prdy_vrss_sign": "2",
                 "acml_vol": "3000000",
                 "hts_avls": "10000",
+                "stck_llam": "10000"
             }
         })
     )
@@ -58,7 +68,7 @@ async def test_tvb_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     # 워치리스트 빌드용 API 모킹
     mock_sqs = deep_paper_ctx.stock_query_service
     mocker.patch.object(mock_sqs, 'get_top_trading_value_stocks', new_callable=AsyncMock, 
-                        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "테스트종목"}]))
+                        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[{"mksc_shrn_iscd": code_a, "hts_kor_isnm": "테스트종목"}]))
 
     # 3. 시간 모킹
     kst = timezone("Asia/Seoul")

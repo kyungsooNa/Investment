@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
 from pytz import timezone
@@ -15,6 +16,10 @@ from common.types import ResCommonResponse
 async def test_fp_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker):
     """전략 스캔 시, Memory Cache Hit 여부에 따라 실제 브로커 API 호출이 어떻게 감소하는지 검증."""
     
+    uid = uuid.uuid4().int
+    code_a = str(uid % 1000000).zfill(6)
+    code_b = str((uid // 1000000) % 1000000).zfill(6)
+
     # 테스트 실행 환경이 느려 캐시 TTL이 만료되는 것을 방지하기 위해 시간 고정
     mocker.patch("time.time", return_value=1600000000.0)
 
@@ -31,9 +36,15 @@ async def test_fp_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker):
             "output": {
                 "stck_prpr": "96000",
                 "stck_oprc": "94000",
+                "stck_hgpr": "97000",
                 "stck_lwpr": "94000",
                 "prdy_vrss": "2000",
                 "prdy_vrss_sign": "2",
+                "acml_vol": "3000000",
+                "pgtr_ntby_qty": "100000",
+                "acml_tr_pbmn": "500000000000",
+                "hts_avls": "10000",
+                "stck_llam": "10000"
             }
         })
     )
@@ -86,7 +97,7 @@ async def test_fp_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker):
     # 3. 워치리스트 빌드용 API 모킹
     mock_sqs = deep_paper_ctx.stock_query_service
     mocker.patch.object(mock_sqs, 'get_top_trading_value_stocks', new_callable=AsyncMock, 
-                        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[{"mksc_shrn_iscd": "999991", "hts_kor_isnm": "테스트종목A"}]))
+                        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[{"mksc_shrn_iscd": code_b, "hts_kor_isnm": "테스트종목A"}]))
     mocker.patch.object(mock_sqs, 'get_top_rise_fall_stocks', new_callable=AsyncMock, return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[]))
     mocker.patch.object(mock_sqs, 'get_top_volume_stocks', new_callable=AsyncMock, return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[]))
 
@@ -110,7 +121,7 @@ async def test_fp_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker):
     )
 
     premium_item = OSBWatchlistItem(
-        code="999991", name="테스트종목A", market="KOSPI",
+        code=code_a, name="테스트종목A", market="KOSPI",
         high_20d=100100, ma_20d=95000.0, ma_50d=85000.0, 
         avg_vol_20d=600000.0, bb_width_min_20d=0.03, prev_bb_width=0.04, 
         w52_hgpr=100100, avg_trading_value_5d=50000000000, market_cap=400_000_000_000_000,

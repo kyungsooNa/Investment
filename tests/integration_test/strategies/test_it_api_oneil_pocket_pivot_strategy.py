@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
 from pytz import timezone
@@ -13,6 +14,11 @@ from common.types import ResCommonResponse
 @pytest.mark.asyncio
 async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker):
     """전략 스캔 시, Memory Cache Hit 여부에 따라 실제 브로커 API 호출이 어떻게 감소하는지 검증."""
+    
+    # DB 잔존 데이터(이전 테스트 실행 결과)로 인한 캐시 히트를 방지하기 위해 매 실행마다 고유한 6자리 종목 코드 생성
+    uid = uuid.uuid4().int
+    code_a = str(uid % 1000000).zfill(6)
+    code_b = str((uid // 1000000) % 1000000).zfill(6)
     
     # 테스트 실행 환경이 느려 캐시 TTL(3초)이 만료되는 것을 방지하기 위해 시간 고정
     mocker.patch("time.time", return_value=1600000000.0)
@@ -31,7 +37,15 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
                 "stck_prpr": "127000",
                 "w52_hgpr": "130000",  # 현재가와 근접 (이격도 15% 이내)
                 "hts_avls": "10000",   # 1조 원 (2천억 ~ 20조 사이)
-                "stck_llam": "10000"
+                "stck_llam": "10000",
+                "acml_vol": "2000000",
+                "pgtr_ntby_qty": "100000",
+                "acml_tr_pbmn": "500000000000",
+                "stck_oprc": "125000",
+                "stck_hgpr": "128000",
+                "stck_lwpr": "125000",
+                "prdy_vrss": "2000",
+                "prdy_vrss_sign": "2"
             }
         })
     )
@@ -70,7 +84,7 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     # 3. 실시간 급등주 랭킹 API 모킹 (_build_daily_surge_pool 용)
     mock_sqs = deep_paper_ctx.stock_query_service
     mocker.patch.object(mock_sqs, 'get_top_trading_value_stocks', new_callable=AsyncMock, 
-                        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[{"mksc_shrn_iscd": "999992", "hts_kor_isnm": "테스트종목B"}]))
+                        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[{"mksc_shrn_iscd": code_b, "hts_kor_isnm": "테스트종목B"}]))
     mocker.patch.object(mock_sqs, 'get_top_rise_fall_stocks', new_callable=AsyncMock, 
                         return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[]))
     mocker.patch.object(mock_sqs, 'get_top_volume_stocks', new_callable=AsyncMock, 
@@ -104,7 +118,7 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
 
     # _load_premium_stocks는 테스트종목A 1개를 반환하도록 모킹 (Pool A)
     premium_item = OSBWatchlistItem(
-        code="999991", name="테스트종목A", market="KOSPI",
+        code=code_a, name="테스트종목A", market="KOSPI",
         high_20d=72000, ma_20d=70000.0, ma_50d=68000.0, 
         avg_vol_20d=600000.0, bb_width_min_20d=0.03, prev_bb_width=0.04, 
         w52_hgpr=77000, avg_trading_value_5d=50000000000, market_cap=400_000_000_000_000,
