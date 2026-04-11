@@ -1384,7 +1384,7 @@ async def test_analyze_surge_candidate_slices_today_candle(mock_deps):
     
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000"})}
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1200", "hts_avls": "3000", "stck_prpr": "2000"})}
     )
     indicator.calc_bb_widths_sync.return_value = [20.0] * 90
     indicator.calc_rs_sync.return_value = 10.0

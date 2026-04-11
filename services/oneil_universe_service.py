@@ -395,11 +395,18 @@ class OneilUniverseService:
             return None
         
         # 데이터 추출 (전략 패턴과 동일하게 안전하게 추출)
-        current = int(output.get("stck_prpr", 0))
-        vol = int(output.get("acml_vol", 0))
-        today_open = int(output.get("stck_oprc", 0))
-        today_high = int(output.get("stck_hgpr", 0))
-        today_low = int(output.get("stck_lwpr", 0))
+        if isinstance(output, dict):
+            current = int(output.get("stck_prpr", 0))
+            vol = int(output.get("acml_vol", 0))
+            today_open = int(output.get("stck_oprc", 0))
+            today_high = int(output.get("stck_hgpr", 0))
+            today_low = int(output.get("stck_lwpr", 0))
+        else:
+            current = int(getattr(output, "stck_prpr", 0) or 0)
+            vol = int(getattr(output, "acml_vol", 0) or 0)
+            today_open = int(getattr(output, "stck_oprc", 0) or 0)
+            today_high = int(getattr(output, "stck_hgpr", 0) or 0)
+            today_low = int(getattr(output, "stck_lwpr", 0) or 0)
 
         # 4. 실시간 가상 캔들 합성 (Today Candle Injection)
         today_candle = {
@@ -422,11 +429,21 @@ class OneilUniverseService:
         if len(closes) < 50:
             return None
 
+        period = self._cfg.high_breakout_period
+        highs = [r.get("high", 0) for r in ohlcv[-period:] if r.get("high") is not None]
+        volumes = [r.get("volume", 0) for r in ohlcv[-period:] if r.get("volume") is not None]
+
+        if not highs or not volumes:
+            return None
+
         # 지표 계산 (오늘의 실시간 변동이 반영됨)
         ma_20d = sum(closes[-20:]) / 20
         ma_50d = sum(closes[-50:]) / 50
         # prev_close는 '어제 종가'여야 하므로 리스트의 마지막에서 두 번째(-2) 사용
-        prev_close_for_trend = closes[-2]
+        prev_close = closes[-2]
+
+        high_20d = int(max(highs))
+        avg_vol_20d = sum(volumes) / len(volumes)
 
         # 필터: 거래대금 (최근 5일 = 어제까지 4일 + 오늘 실시간 1일)
         recent_5 = ohlcv[-5:]
@@ -470,7 +487,7 @@ class OneilUniverseService:
                 return None
 
         # BB 스퀴즈
-        widths = self._indicator.calc_bb_widths_sync(ohlcv, period=self._cfg.bb_period, multiplier=self._cfg.multiplier)
+        widths = self._indicator.calc_bb_widths_sync(ohlcv[:-1], period=self._cfg.bb_period, multiplier=self._cfg.multiplier)
         if len(widths) < period:
             return None
         bb_min = min(widths[-period:])
@@ -479,7 +496,7 @@ class OneilUniverseService:
             return None
         
         # RS 계산
-        rs_return = self._indicator.calc_rs_sync(ohlcv, period_days=self._cfg.rs_period_days)
+        rs_return = self._indicator.calc_rs_sync(ohlcv[:-1], period_days=self._cfg.rs_period_days)
         market = "KOSDAQ" if self.stock_code_repository.is_kosdaq(code) else "KOSPI"
 
         if logger: logger.debug({"event": "selected_surge", "code": code, "name": name})
