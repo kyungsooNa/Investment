@@ -94,6 +94,10 @@ class StockRepository:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         return await self._ohlcv_repo.get_prices_by_date(trade_date)
 
+    async def get_all_daily_snapshots(self, trade_date: str) -> List[Dict]:
+        """특정 거래일의 전체 종목 스냅샷을 시가총액 내림차순으로 조회."""
+        return await self._ohlcv_repo.get_all_daily_snapshots(trade_date)
+
     async def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
         """특정 종목의 최근 N일간 스냅샷 이력 조회."""
         return await self._ohlcv_repo.get_price_history(code, days)

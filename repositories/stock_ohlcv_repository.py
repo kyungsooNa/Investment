@@ -344,6 +344,20 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository daily_prices 날짜별 조회 실패: {e}")
             return []
 
+    async def get_all_daily_snapshots(self, trade_date: str) -> List[Dict]:
+        """특정 거래일의 전체 종목 스냅샷을 시가총액 내림차순으로 조회."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT * FROM daily_prices WHERE trade_date = ? ORDER BY market_cap DESC",
+                    (trade_date,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
+            return []
+
     async def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
         """특정 종목의 최근 N일간 스냅샷 이력 조회."""
         try:

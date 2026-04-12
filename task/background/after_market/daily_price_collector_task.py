@@ -73,6 +73,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
         # 수집 상태
         self._is_collecting: bool = False
+        self._collection_done_event: asyncio.Event = asyncio.Event()
+        self._collection_done_event.set()  # 초기에는 수집 완료(대기 불필요) 상태
         self._last_collected_date: Optional[str] = None
         self._progress: Dict = {
             "running": False,
@@ -147,24 +149,26 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
         self._logger.info(f"전체 종목 수집 파이프라인 시작 (기준일: {target_date})")
         self._is_collecting = True
+        self._collection_done_event.clear()
         start_time = time.time()
         
         # 반복 조회를 피하기 위해 한 번 로드 후 캐싱
         self._all_stocks_cache = self._load_all_stocks()
         
         try:            
-            # [Tier 1] pykrx 실패/검증 실패 시 FinanceDataReader 시도
-            if await self._try_collect_via_fdr(target_date, start_time):
-                await self._finish_collection(target_date, start_time, "FDR")
-                return
+            # FinanceDataReader 제외: FinanceDataReader는 신고가 데이터(w52_high/w52_low)를 제공하지 않아 NewHighTask의 핵심 데이터 소스로 활용할 수 없습니다.
+            # # [Tier 1] FinanceDataReader 시도
+            # if await self._try_collect_via_fdr(target_date, start_time):
+            #     await self._finish_collection(target_date, start_time, "FDR")
+            #     return
             
-            # [Tier 2] 모두 실패 시 최후의 보루 증권사 API 청크 수집
-            self._logger.warning("크롤링 모두 실패. 증권사 API(Chunk) 수집으로 Fallback 합니다.")
-            if self._ns:
-                await self._ns.emit(
-                    NotificationCategory.BACKGROUND, NotificationLevel.WARNING,
-                    "수집 모드 전환", "크롤링 라이브러리 오류로 인해 증권사 API 일일이 수집 모드(약 10분 소요)로 동작합니다."
-                )
+            # # [Tier 2] 모두 실패 시 최후의 보루 증권사 API 청크 수집
+            # self._logger.warning("크롤링 모두 실패. 증권사 API(Chunk) 수집으로 Fallback 합니다.")
+            # if self._ns:
+            #     await self._ns.emit(
+            #         NotificationCategory.BACKGROUND, NotificationLevel.WARNING,
+            #         "수집 모드 전환", "크롤링 라이브러리 오류로 인해 증권사 API 일일이 수집 모드(약 10분 소요)로 동작합니다."
+            #     )
             await self._collect_via_broker_api(target_date, start_time)
             await self._finish_collection(target_date, start_time, "Broker API")
 
@@ -172,6 +176,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
             self._logger.error(f"전체 수집 파이프라인 실패: {e}", exc_info=True)
         finally:
             self._is_collecting = False
+            self._collection_done_event.set()
             self._all_stocks_cache = None
     
     # ── 2. 데이터 검증 (Sanity Check) ─────────────────────────────
@@ -486,10 +491,36 @@ class DailyPriceCollectorTask(AfterMarketTask):
         return dict(self._progress)
 
     async def force_collect(self) -> None:
-        """강제 수집: skip 조건을 무시하고 전 종목 현재가를 API 재호출한다."""
-        self._logger.info("DailyPriceCollectorTask 강제 수집 요청")
+        """강제 수집: FDR 크롤링을 우회하고 증권사 API를 직접 호출하여 w52_high 포함 전 종목 현재가를 수집한다."""
+        self._logger.info("DailyPriceCollectorTask 강제 수집 요청 (증권사 API 직접 호출)")
         async with self._running_state():
-            await self._collect_all_prices(force=True)
+            if self._is_collecting:
+                # 진행 중인 수집이 완료될 때까지 대기 — 즉시 리턴하면 NewHighTask가 미완성 데이터로 재조회함
+                self._logger.info("현재가 수집 이미 진행 중 — 완료 대기 후 반환")
+                await self._collection_done_event.wait()
+                self._logger.info("진행 중 수집 완료 확인 — 강제 수집 생략")
+                return
+
+            target_date = await self._mcs.get_latest_trading_date() if self._mcs else None
+            if not target_date:
+                self._logger.error("최근 거래일을 확인할 수 없어 강제 수집을 중단합니다.")
+                return
+
+            self._is_collecting = True
+            self._collection_done_event.clear()
+            start_time = time.time()
+            self._all_stocks_cache = self._load_all_stocks()
+
+            try:
+                self._logger.info(f"전체 종목 강제 수집 시작 (증권사 API, 기준일: {target_date})")
+                await self._collect_via_broker_api(target_date, start_time)
+                await self._finish_collection(target_date, start_time, "Broker API (Forced)")
+            except Exception as e:
+                self._logger.error(f"강제 수집 실패: {e}", exc_info=True)
+            finally:
+                self._is_collecting = False
+                self._collection_done_event.set()
+                self._all_stocks_cache = None
 
     def _format_dataframe_to_records(self, df: pd.DataFrame) -> List[Dict]:
         """

@@ -30,6 +30,7 @@ from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
 from task.background.after_market.log_cleanup_task import LogCleanupTask
+from task.background.after_market.newhigh_task import NewHighTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
@@ -83,6 +84,7 @@ class WebAppContext:
         self.premium_watchlist_generator_task: PremiumWatchlistGeneratorTask = None
         self.cache_warmup_task: CacheWarmupTask = None
         self.log_cleanup_task: LogCleanupTask = None
+        self.newhigh_task: NewHighTask = None
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
@@ -344,6 +346,16 @@ class WebAppContext:
             logger=self.logger,
         )
 
+        self.newhigh_task = NewHighTask(
+            stock_repo=self.stock_repository,
+            market_calendar_service=self._mcs,
+            market_clock=self.market_clock,
+            logger=self.logger,
+            telegram_reporter=getattr(self, 'telegram_reporter', None),
+            notification_service=self.notification_service,
+            daily_price_collector_task=self.daily_price_collector_task,
+        )
+
         # NotificationQueueTask 초기화
         self.notification_queue_task = NotificationQueueTask(
             notification_service=self.notification_service,
@@ -370,6 +382,8 @@ class WebAppContext:
             self.background_scheduler.register(self.cache_warmup_task)
         if self.log_cleanup_task:
             self.background_scheduler.register(self.log_cleanup_task)
+        if self.newhigh_task:
+            self.background_scheduler.register(self.newhigh_task)
         if self.notification_queue_task:
             self.background_scheduler.register(self.notification_queue_task)
 

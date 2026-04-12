@@ -20,6 +20,7 @@ _SCHEDULE_TYPES = {
     "daily_price_collector": "after_market",
     "ohlcv_update":        "after_market",
     "전일기준주도주_생성":  "after_market",
+    "newhigh":             "after_market",
     "notification_queue_task":  "always_on",
 }
 
@@ -273,3 +274,19 @@ async def force_cache_warmup():
 
     asyncio.create_task(task.force_warmup())
     return {"success": True, "message": "캐시 웜업이 시작되었습니다."}
+
+
+@router.post("/background/newhigh/force-update")
+async def force_newhigh_update():
+    """skip 조건을 무시하고 52주 신고가 탐색을 강제 실행한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "newhigh_task", None)
+    if not task:
+        raise HTTPException(status_code=503, detail="NewHighTask가 초기화되지 않았습니다")
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 탐색이 진행 중입니다")
+
+    asyncio.create_task(task.force_collect())
+    return {"success": True, "message": "52주 신고가 강제 탐색이 시작되었습니다."}

@@ -281,6 +281,20 @@ function renderProgressCell(progress, taskName) {
         return '<span style="color:#888; font-size:0.88em;">대기 중</span>';
     }
 
+    // ── 52주 신고가 태스크 ──
+    if (taskName === 'newhigh') {
+        if (progress.status) {
+            return `<span style="background:orange; color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">${progress.status}</span>`;
+        }
+        if (progress.running) {
+            return `<span style="background:var(--primary-color,#2196F3); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">탐색 중...</span>`;
+        }
+        if (progress.last_date) {
+            return `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">완료</span> <span style="font-size:0.85em; color:#888;">${progress.last_date} · 신고가 ${progress.newhigh_count ?? 0}종목</span>`;
+        }
+        return '<span style="color:#888; font-size:0.88em;">대기 중</span>';
+    }
+
     // ── 캐시 웜업 태스크 ──
     if (taskName === 'cache_warmup') {
         const isRunning = progress.running;
@@ -339,6 +353,7 @@ const FORCE_UPDATE_CONFIG = {
     daily_price_collector:{ endpoint: '/api/background/daily-price/force-update',      label: '강제 수집' },
     '전일기준주도주_생성': { endpoint: '/api/background/watchlist/force-update',        label: '강제 생성' },
     cache_warmup:         { endpoint: '/api/background/cache-warmup/force-update',     label: '강제 웜업' },
+    newhigh:              { endpoint: '/api/background/newhigh/force-update',          label: '강제 수집' },
 };
 
 function renderActionCell(task) {
