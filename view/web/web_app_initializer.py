@@ -410,17 +410,15 @@ class WebAppContext:
 
         from services.price_subscription_service import SubscriptionPriority
 
-        # 1. 보유 종목 → HIGH 구독
+        # 1. 보유 종목 → HIGH 구독 (전략 스케줄러의 가상 보유 종목 기준)
         try:
-            resp = await self.broker.get_account_balance()
-            if resp and resp.rt_cd == "0" and resp.data:
-                holdings = resp.data.get("output2", []) if isinstance(resp.data, dict) else []
-                for item in holdings:
-                    code = item.get("pdno", "").strip()
-                    if code:
-                        await self.price_subscription_service.add_subscription(
-                            code, SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE
-                        )
+            holdings = self.virtual_trade_service.get_holds() if self.virtual_trade_service else []
+            for item in holdings:
+                code = item.get("code", "").strip()
+                if code:
+                    await self.price_subscription_service.add_subscription(
+                        code, SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE
+                    )
         except Exception as e:
             self.logger.warning(f"보유 종목 구독 초기화 실패: {e}")
 
@@ -431,7 +429,12 @@ class WebAppContext:
             if os.path.exists(premium_path):
                 with open(premium_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                codes = data.get("kospi", []) + data.get("kosdaq", [])
+                raw = data.get("kospi", []) + data.get("kosdaq", [])
+                codes = [
+                    item["code"] if isinstance(item, dict) else item
+                    for item in raw
+                    if (item.get("code") if isinstance(item, dict) else item)
+                ]
                 if codes:
                     await self.price_subscription_service.sync_subscriptions(
                         codes=codes,

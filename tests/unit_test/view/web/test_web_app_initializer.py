@@ -388,3 +388,121 @@ async def test_initialize_services_injects_reporter(mock_deps):
     mock_newhigh_cls = mock_deps["newhigh_task"]
     _, newhigh_kwargs = mock_newhigh_cls.call_args
     assert newhigh_kwargs.get("stock_query_service") == ctx.stock_query_service
+
+
+# ── _initialize_price_subscriptions ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_initialize_price_subscriptions_holdings(mock_deps):
+    """보유 종목 구독: virtual_trade_service.get_holds() 기준으로 HIGH 구독."""
+    from unittest.mock import patch as _patch
+    ctx = WebAppContext(None)
+
+    mock_price_svc = AsyncMock()
+    ctx.price_subscription_service = mock_price_svc
+
+    mock_vts = MagicMock()
+    mock_vts.get_holds.return_value = [
+        {"code": "005930", "name": "삼성전자"},
+        {"code": "000660", "name": "SK하이닉스"},
+    ]
+    ctx.virtual_trade_service = mock_vts
+
+    with _patch("view.web.web_app_initializer.StreamingType") as mock_st, \
+         _patch("view.web.web_app_initializer.SubscriptionPriority", create=True):
+        from services.price_subscription_service import SubscriptionPriority
+        await ctx._initialize_price_subscriptions()
+
+    # get_holds()가 호출되어야 하고, broker API는 호출되지 않아야 함
+    mock_vts.get_holds.assert_called_once()
+    assert mock_price_svc.add_subscription.call_count == 2
+    codes_called = [c.args[0] for c in mock_price_svc.add_subscription.call_args_list]
+    assert "005930" in codes_called
+    assert "000660" in codes_called
+
+
+@pytest.mark.asyncio
+async def test_initialize_price_subscriptions_holdings_no_broker_call(mock_deps):
+    """보유 종목 구독 시 broker.get_account_balance()를 호출하지 않음."""
+    ctx = WebAppContext(None)
+
+    mock_price_svc = AsyncMock()
+    ctx.price_subscription_service = mock_price_svc
+
+    mock_broker = MagicMock()
+    ctx.broker = mock_broker
+
+    mock_vts = MagicMock()
+    mock_vts.get_holds.return_value = []
+    ctx.virtual_trade_service = mock_vts
+
+    await ctx._initialize_price_subscriptions()
+
+    mock_broker.get_account_balance.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_initialize_price_subscriptions_premium_extracts_code(mock_deps, tmp_path):
+    """프리미엄 종목 구독: dict 항목에서 'code' 필드만 추출하여 sync_subscriptions에 전달."""
+    import json
+    premium_data = {
+        "kospi": [
+            {"code": "001820", "name": "삼화콘덴서", "market": "KOSPI", "rs_score": 0.0},
+            {"code": "005930", "name": "삼성전자", "market": "KOSPI"},
+        ],
+        "kosdaq": [
+            {"code": "086520", "name": "에코프로", "market": "KOSDAQ"},
+        ],
+    }
+    premium_file = tmp_path / "premium_stocks.json"
+    premium_file.write_text(json.dumps(premium_data), encoding="utf-8")
+
+    ctx = WebAppContext(None)
+
+    mock_price_svc = AsyncMock()
+    ctx.price_subscription_service = mock_price_svc
+
+    mock_vts = MagicMock()
+    mock_vts.get_holds.return_value = []
+    ctx.virtual_trade_service = mock_vts
+
+    with patch("os.path.join", return_value=str(premium_file)), \
+         patch("os.path.exists", return_value=True):
+        await ctx._initialize_price_subscriptions()
+
+    mock_price_svc.sync_subscriptions.assert_called_once()
+    call_kwargs = mock_price_svc.sync_subscriptions.call_args[1]
+    codes = call_kwargs["codes"]
+    # 문자열 코드만 들어있어야 함 (dict 아님)
+    assert all(isinstance(c, str) for c in codes), f"dict가 섞임: {codes}"
+    assert set(codes) == {"001820", "005930", "086520"}
+
+
+@pytest.mark.asyncio
+async def test_initialize_price_subscriptions_premium_no_dict_leakage(mock_deps, tmp_path):
+    """프리미엄 종목 codes에 dict가 절대 포함되지 않음을 확인 (버그 재현 방지)."""
+    import json
+    premium_data = {
+        "kospi": [{"code": "001820", "name": "삼화콘덴서"}],
+        "kosdaq": [],
+    }
+    premium_file = tmp_path / "premium_stocks.json"
+    premium_file.write_text(json.dumps(premium_data), encoding="utf-8")
+
+    ctx = WebAppContext(None)
+
+    mock_price_svc = AsyncMock()
+    ctx.price_subscription_service = mock_price_svc
+
+    mock_vts = MagicMock()
+    mock_vts.get_holds.return_value = []
+    ctx.virtual_trade_service = mock_vts
+
+    with patch("os.path.join", return_value=str(premium_file)), \
+         patch("os.path.exists", return_value=True):
+        await ctx._initialize_price_subscriptions()
+
+    call_kwargs = mock_price_svc.sync_subscriptions.call_args[1]
+    codes = call_kwargs["codes"]
+    for c in codes:
+        assert not isinstance(c, dict), f"codes에 dict 포함: {c}"
