@@ -256,3 +256,37 @@ class TelegramReporter:
 
         if current_message:
             await self._send_message(current_message)
+
+    async def send_newhigh_report(self, stocks: List[Dict], report_date: str):
+        """52주 신고가 종목 리포트를 텔레그램에 전송합니다."""
+        title = f"🚀 <b>52주 신고가 종목 리포트 ({report_date})</b>\n총 {len(stocks)}개 종목\n"
+        await self._send_message(title)
+
+        if not stocks:
+            await self._send_message("신고가 종목 없음")
+            return
+
+        lines = []
+        for i, s in enumerate(stocks, 1):
+            name = s.get("name") or ""
+            code = s.get("code") or ""
+            price = s.get("current_price") or 0
+            cap = s.get("market_cap") or 0
+            cap_str = f"{cap / 100_000_000:.0f}억" if cap > 0 else "-"
+            try:
+                rate_f = float(s.get("change_rate") or "0")
+                rate_str = f"+{rate_f:.2f}%" if rate_f >= 0 else f"{rate_f:.2f}%"
+            except (ValueError, TypeError):
+                rate_str = "-"
+            lines.append(f"{i:3}. {name}({code}) {price:,}원 {rate_str} 시총:{cap_str}")
+
+        current = ""
+        for line in lines:
+            chunk = line + "\n"
+            if len((current + chunk).encode("utf-8")) > 4000:
+                await self._send_message(f"<pre>{current}</pre>")
+                current = chunk
+            else:
+                current += chunk
+        if current:
+            await self._send_message(f"<pre>{current}</pre>")

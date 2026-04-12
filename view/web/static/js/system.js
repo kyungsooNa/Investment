@@ -339,6 +339,7 @@ const FORCE_UPDATE_CONFIG = {
     daily_price_collector:{ endpoint: '/api/background/daily-price/force-update',      label: '강제 수집' },
     '전일기준주도주_생성': { endpoint: '/api/background/watchlist/force-update',        label: '강제 생성' },
     cache_warmup:         { endpoint: '/api/background/cache-warmup/force-update',     label: '강제 웜업' },
+    newhigh:              { endpoint: '/api/background/newhigh/force-update',          label: '강제 수집' },
 };
 
 function renderActionCell(task) {
