@@ -153,18 +153,19 @@ class DailyPriceCollectorTask(AfterMarketTask):
         self._all_stocks_cache = self._load_all_stocks()
         
         try:            
-            # [Tier 1] pykrx 실패/검증 실패 시 FinanceDataReader 시도
-            if await self._try_collect_via_fdr(target_date, start_time):
-                await self._finish_collection(target_date, start_time, "FDR")
-                return
+            # FinanceDataReader 제외: FinanceDataReader는 신고가 데이터(w52_high/w52_low)를 제공하지 않아 NewHighTask의 핵심 데이터 소스로 활용할 수 없습니다.
+            # # [Tier 1] FinanceDataReader 시도
+            # if await self._try_collect_via_fdr(target_date, start_time):
+            #     await self._finish_collection(target_date, start_time, "FDR")
+            #     return
             
-            # [Tier 2] 모두 실패 시 최후의 보루 증권사 API 청크 수집
-            self._logger.warning("크롤링 모두 실패. 증권사 API(Chunk) 수집으로 Fallback 합니다.")
-            if self._ns:
-                await self._ns.emit(
-                    NotificationCategory.BACKGROUND, NotificationLevel.WARNING,
-                    "수집 모드 전환", "크롤링 라이브러리 오류로 인해 증권사 API 일일이 수집 모드(약 10분 소요)로 동작합니다."
-                )
+            # # [Tier 2] 모두 실패 시 최후의 보루 증권사 API 청크 수집
+            # self._logger.warning("크롤링 모두 실패. 증권사 API(Chunk) 수집으로 Fallback 합니다.")
+            # if self._ns:
+            #     await self._ns.emit(
+            #         NotificationCategory.BACKGROUND, NotificationLevel.WARNING,
+            #         "수집 모드 전환", "크롤링 라이브러리 오류로 인해 증권사 API 일일이 수집 모드(약 10분 소요)로 동작합니다."
+            #     )
             await self._collect_via_broker_api(target_date, start_time)
             await self._finish_collection(target_date, start_time, "Broker API")
 
