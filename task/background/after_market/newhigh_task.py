@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from services.market_calendar_service import MarketCalendarService
     from services.telegram_notifier import TelegramReporter
     from repositories.stock_repository import StockRepository
+    from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
 
 
 # ETF/ETN 브랜드명 접두사 (RankingTask._ETF_PREFIXES 와 동일)
@@ -38,6 +39,7 @@ class NewHighTask(AfterMarketTask):
         logger=None,
         telegram_reporter: Optional["TelegramReporter"] = None,
         notification_service: Optional[NotificationService] = None,
+        daily_price_collector_task: Optional["DailyPriceCollectorTask"] = None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -47,6 +49,7 @@ class NewHighTask(AfterMarketTask):
         self._stock_repo = stock_repo
         self._telegram_reporter = telegram_reporter
         self._notification_service = notification_service
+        self._daily_price_collector_task = daily_price_collector_task
         self._last_collected_date: Optional[str] = None
         self._progress: Dict = {"running": False, "last_date": None, "newhigh_count": 0}
 
@@ -85,11 +88,19 @@ class NewHighTask(AfterMarketTask):
         try:
             self._logger.info(f"NewHighTask: {latest_trading_date} 신고가 탐색 시작")
             snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
-    
+
             if not snapshots:
                 self._logger.warning(f"NewHighTask: daily_prices 데이터 없음 (date={latest_trading_date})")
                 return
-    
+
+            # w52_high 데이터 부재 시 DailyPriceCollectorTask로 강제 최신화 후 재조회
+            if self._daily_price_collector_task and not self._has_sufficient_w52_data(snapshots):
+                self._logger.warning(
+                    f"NewHighTask: w52_high 데이터 부재 — DailyPriceCollectorTask.force_collect() 실행 후 재조회"
+                )
+                await self._daily_price_collector_task.force_collect()
+                snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
+
             newhigh_stocks = self._filter_newhigh(snapshots)
             self._logger.info(
                 f"NewHighTask: 신고가 {len(newhigh_stocks)}개 감지 / 전체 {len(snapshots)}개 (date={latest_trading_date})"
@@ -126,6 +137,14 @@ class NewHighTask(AfterMarketTask):
             await self._run_newhigh(target_date)
 
     # ── 내부 헬퍼 ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _has_sufficient_w52_data(snapshots: List[Dict]) -> bool:
+        """스냅샷 중 20% 이상에 유효한 w52_high 값이 있으면 True (FDR 수집 시 전량 None 케이스 감지용)."""
+        if not snapshots:
+            return True
+        valid = sum(1 for s in snapshots if (s.get("w52_high") or 0) > 0)
+        return valid / len(snapshots) >= 0.2
 
     def _filter_newhigh(self, snapshots: List[Dict]) -> List[Dict]:
         """current_price >= w52_high 인 종목 반환 (ETF/ETN 제외, 시가총액 내림차순)."""

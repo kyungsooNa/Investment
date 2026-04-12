@@ -486,10 +486,31 @@ class DailyPriceCollectorTask(AfterMarketTask):
         return dict(self._progress)
 
     async def force_collect(self) -> None:
-        """강제 수집: skip 조건을 무시하고 전 종목 현재가를 API 재호출한다."""
-        self._logger.info("DailyPriceCollectorTask 강제 수집 요청")
+        """강제 수집: FDR 크롤링을 우회하고 증권사 API를 직접 호출하여 w52_high 포함 전 종목 현재가를 수집한다."""
+        self._logger.info("DailyPriceCollectorTask 강제 수집 요청 (증권사 API 직접 호출)")
         async with self._running_state():
-            await self._collect_all_prices(force=True)
+            if self._is_collecting:
+                self._logger.info("현재가 수집 이미 진행 중 — 강제 수집 스킵")
+                return
+
+            target_date = await self._mcs.get_latest_trading_date() if self._mcs else None
+            if not target_date:
+                self._logger.error("최근 거래일을 확인할 수 없어 강제 수집을 중단합니다.")
+                return
+
+            self._is_collecting = True
+            start_time = time.time()
+            self._all_stocks_cache = self._load_all_stocks()
+
+            try:
+                self._logger.info(f"전체 종목 강제 수집 시작 (증권사 API, 기준일: {target_date})")
+                await self._collect_via_broker_api(target_date, start_time)
+                await self._finish_collection(target_date, start_time, "Broker API (Forced)")
+            except Exception as e:
+                self._logger.error(f"강제 수집 실패: {e}", exc_info=True)
+            finally:
+                self._is_collecting = False
+                self._all_stocks_cache = None
 
     def _format_dataframe_to_records(self, df: pd.DataFrame) -> List[Dict]:
         """
