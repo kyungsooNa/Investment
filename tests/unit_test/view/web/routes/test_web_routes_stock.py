@@ -37,6 +37,57 @@ async def test_get_stock_price(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_stock_detail_success(web_client, mock_web_ctx):
+    """GET /api/stock/{code}/detail — force_fresh=True로 handle_get_current_stock_price 호출"""
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success",
+        data={"code": "005930", "price": 70000, "per": 12.5, "bps": 50000}
+    )
+
+    response = web_client.get("/api/stock/005930/detail")
+
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["rt_cd"] == "0"
+    assert json_resp["data"]["per"] == 12.5
+
+    from common.types import Exchange
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with(
+        "005930",
+        caller="stock.py - get_stock_detail",
+        exchange=Exchange.KRX,
+        force_fresh=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_stock_detail_api_failure(web_client, mock_web_ctx):
+    """GET /api/stock/{code}/detail — 증권사 API 실패 시 rt_cd != 0 반환"""
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="1", msg1="API 오류", data=None
+    )
+
+    response = web_client.get("/api/stock/005930/detail")
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_get_stock_detail_timeout(web_client, mock_web_ctx):
+    """GET /api/stock/{code}/detail — 타임아웃 시 에러 메시지 반환"""
+    import asyncio
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.side_effect = asyncio.TimeoutError()
+
+    response = web_client.get("/api/stock/005930/detail")
+
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["rt_cd"] == "1"
+    assert "초과" in json_resp["msg1"]
+
+
+@pytest.mark.asyncio
 async def test_get_stock_chart(web_client, mock_web_ctx):
     """GET /api/chart/{code} 엔드포인트 테스트"""
     mock_web_ctx.stock_query_service.get_ohlcv.return_value = ResCommonResponse(

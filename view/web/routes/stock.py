@@ -66,6 +66,28 @@ async def search_stock_by_name(q: str = ""):
     return {"results": results}
 
 
+@router.get("/stock/{code}/detail")
+async def get_stock_detail(code: str, exchange: str = Query("KRX")):
+    """증권사 API 직접 호출로 PER/PBR/EPS/BPS/업종/52주 등 상세 정보 반환 (캐시·DB 우회)."""
+    ctx = _get_ctx()
+    try:
+        exchange_enum = Exchange(exchange.upper())
+    except ValueError:
+        exchange_enum = Exchange.KRX
+    try:
+        resp = await asyncio.wait_for(
+            ctx.stock_query_service.handle_get_current_stock_price(
+                code, caller="stock.py - get_stock_detail", exchange=exchange_enum,
+                force_fresh=True,
+            ),
+            timeout=12.0,
+        )
+    except asyncio.TimeoutError:
+        ctx.logger.warning(f"[stock] 상세 정보 조회 타임아웃 ({code}, 12s 초과)")
+        return {"rt_cd": "1", "msg1": "API 응답 시간이 초과되었습니다.", "data": None}
+    return _serialize_response(resp)
+
+
 @router.get("/stock/{code}")
 async def get_stock_price(code: str, exchange: str = Query("KRX")):
     """현재가 조회. 종목명이 들어오면 종목코드로 변환 후 조회. exchange=KRX|NXT|UN 선택 가능."""

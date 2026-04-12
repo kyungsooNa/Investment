@@ -37,9 +37,9 @@ class StockQueryService:
         else:  # 3:보합 (또는 기타)
             return ""
 
-    async def get_current_price(self, stock_code: str, exchange: Exchange = Exchange.KRX, count_stats: bool = True, caller: str = "unknown") -> ResCommonResponse:
+    async def get_current_price(self, stock_code: str, exchange: Exchange = Exchange.KRX, count_stats: bool = True, caller: str = "unknown", force_fresh: bool = False) -> ResCommonResponse:
         """현재가만 빠르게 조회 (MarketDataService 래퍼)."""
-        return await self.market_data_service.get_current_price(stock_code, exchange=exchange, count_stats=count_stats, caller=caller)
+        return await self.market_data_service.get_current_price(stock_code, exchange=exchange, count_stats=count_stats, caller=caller, force_fresh=force_fresh)
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, MarketDataService 래퍼)."""
@@ -65,10 +65,10 @@ class StockQueryService:
         """체결 정보 조회 (MarketDataService 래퍼)."""
         return await self.market_data_service.get_stock_conclusion(stock_code)
 
-    async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown", exchange: Exchange = Exchange.KRX):
+    async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown", exchange: Exchange = Exchange.KRX, force_fresh: bool = False):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
-        resp: ResCommonResponse = await self.market_data_service.get_current_price(stock_code, exchange=exchange, caller=caller)
+        resp: ResCommonResponse = await self.market_data_service.get_current_price(stock_code, exchange=exchange, caller=caller, force_fresh=force_fresh)
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
