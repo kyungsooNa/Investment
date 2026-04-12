@@ -51,7 +51,7 @@ class NewHighTask(AfterMarketTask):
         self._notification_service = notification_service
         self._daily_price_collector_task = daily_price_collector_task
         self._last_collected_date: Optional[str] = None
-        self._progress: Dict = {"running": False, "last_date": None, "newhigh_count": 0}
+        self._progress: Dict = {"running": False, "last_date": None, "newhigh_count": 0, "status": None}
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────────
 
@@ -98,7 +98,9 @@ class NewHighTask(AfterMarketTask):
                 self._logger.warning(
                     f"NewHighTask: w52_high 데이터 부재 — DailyPriceCollectorTask.force_collect() 실행 후 재조회"
                 )
+                self._progress["status"] = "DailyPriceCollector 데이터 수집 중..."
                 await self._daily_price_collector_task.force_collect()
+                self._progress["status"] = None
                 snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
 
             newhigh_stocks = self._filter_newhigh(snapshots)
@@ -123,6 +125,7 @@ class NewHighTask(AfterMarketTask):
             self._logger.error(f"NewHighTask 신고가 탐색 중 오류 발생: {e}", exc_info=True)
         finally:
             self._progress["running"] = False
+            self._progress["status"] = None
 
     async def force_collect(self) -> None:
         """skip 조건을 무시하고 즉시 52주 신고가 탐색을 실행한다."""
