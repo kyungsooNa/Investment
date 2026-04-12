@@ -14,7 +14,8 @@
   1. 백그라운드 태스크 현황의: websocket_watchdog의 구독 종목수가 실시간 현재가 구독현황과 sync가 안맞는문제.
 - [ ] **[현재가조회]** 
   현재가 조회시 stock_repository.py에 있는 현재가 cache를 통해 가지고 오는데, cache가 있으면 PER,PBR 수급정보 등의 API에서 가지고 올수 있는 data를 조회할 수 없음. 가지고 올수 있는 방법이 뭐가 있을지 확인. (장마감 이후 daily_price_update_task에서 pdr로 update 하는데 이때 해당 detail 정보는 못가지고 오는것으로 보임. pdr에 없는지, 없으면 어떻게 할지?)
-    
+
+
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[아키텍처]** UI 출력 로직 완전 격리: Service 계층 내부에 존재하는 콘솔 출력(`print`) 로직을 제거하고, View 계층에 위임.
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
