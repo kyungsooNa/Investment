@@ -136,8 +136,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         from common.types import Exchange
-        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX, count_stats=True, caller="unknown")
-
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with(
+            "005930", exchange=Exchange.KRX, count_stats=True, caller="unknown", force_fresh=False
+        )
         self.assertEqual(result, expected_response)
 
     async def test_get_current_price_failure(self):
@@ -151,8 +152,37 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         from common.types import Exchange
-        self.mock_market_data_service.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX, count_stats=True, caller="unknown")
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with(
+            "005930", exchange=Exchange.KRX, count_stats=True, caller="unknown", force_fresh=False
+        )
         self.assertEqual(result, expected_response)
+
+    async def test_get_current_price_force_fresh_passed_through(self):
+        """force_fresh=True가 market_data_service.get_current_price에 그대로 전달되는지 검증"""
+        from common.types import Exchange
+        expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"stck_prpr": "80000"})
+        self.mock_market_data_service.get_current_price.return_value = expected
+
+        result = await self.stockQueryService.get_current_price("005930", force_fresh=True)
+
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with(
+            "005930", exchange=Exchange.KRX, count_stats=True, caller="unknown", force_fresh=True
+        )
+        self.assertEqual(result, expected)
+
+    async def test_handle_get_current_stock_price_force_fresh_passed_through(self):
+        """handle_get_current_stock_price의 force_fresh=True가 market_data_service에 전달되는지 검증"""
+        from common.types import Exchange
+        mock_output = self._create_dummy_stock_info({"stck_prpr": "80000", "stck_shrn_iscd": "005930"})
+        self.mock_market_data_service.get_current_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="정상", data={"output": mock_output}
+        )
+        self.mock_market_data_service.get_name_by_code.return_value = "삼성전자"
+
+        await self.stockQueryService.handle_get_current_stock_price("005930", force_fresh=True)
+
+        call_kwargs = self.mock_market_data_service.get_current_price.call_args
+        self.assertTrue(call_kwargs.kwargs.get("force_fresh", False))
 
     # --- New Wrapper Methods Tests ---
     async def test_get_top_trading_value_stocks(self):

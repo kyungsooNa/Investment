@@ -82,6 +82,72 @@ async def test_fetch_past_daily_ohlcv(trading_service_fixture, mock_deps):
     assert broker.inquire_daily_itemchartprice.call_count == 3
 
 @pytest.mark.asyncio
+async def test_get_current_price_uses_cache_by_default(trading_service_fixture, mock_deps):
+    """force_fresh=False(기본값)일 때 캐시 데이터가 있으면 broker API를 호출하지 않는다."""
+    service = trading_service_fixture
+    cached = {"stck_prpr": "70000", "code": "005930"}
+    mock_deps.stock_repo.get_current_price.return_value = cached
+
+    result = await service.get_current_price("005930")
+
+    assert result.rt_cd == "0"
+    assert result.msg1 == "성공(Cache)"
+    mock_deps.broker.get_current_price.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_force_fresh_skips_cache(trading_service_fixture, mock_deps):
+    """force_fresh=True이면 캐시가 있어도 broker API를 직접 호출한다."""
+    service = trading_service_fixture
+    # 캐시에 데이터가 있어도 무시되어야 함
+    mock_deps.stock_repo.get_current_price.return_value = {"stck_prpr": "70000"}
+    broker_resp = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": {}})
+    mock_deps.broker.get_current_price.return_value = broker_resp
+
+    result = await service.get_current_price("005930", force_fresh=True)
+
+    mock_deps.broker.get_current_price.assert_awaited_once()
+    assert result == broker_resp
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_force_fresh_skips_db_snapshot(trading_service_fixture, mock_deps):
+    """force_fresh=True이면 DB 스냅샷도 건너뛰고 broker API를 호출한다."""
+    service = trading_service_fixture
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False  # 장 마감 상태
+    service._mcs.get_latest_trading_date.return_value = "20260412"
+
+    # 캐시 없음, DB 스냅샷은 있음
+    mock_deps.stock_repo.get_current_price.return_value = None
+    mock_deps.stock_repo.get_latest_daily_snapshot.return_value = {"stck_prpr": "70000", "_trade_date": "20260412"}
+
+    broker_resp = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": {}})
+    mock_deps.broker.get_current_price.return_value = broker_resp
+
+    result = await service.get_current_price("005930", force_fresh=True)
+
+    # DB 스냅샷 조회가 호출되지 않아야 함
+    mock_deps.stock_repo.get_latest_daily_snapshot.assert_not_awaited()
+    mock_deps.broker.get_current_price.assert_awaited_once()
+    assert result == broker_resp
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_force_fresh_updates_cache(trading_service_fixture, mock_deps):
+    """force_fresh=True로 broker API 호출 성공 시 결과를 캐시에 저장한다."""
+    service = trading_service_fixture
+    mock_deps.stock_repo.get_current_price.return_value = None
+    broker_data = {"output": {"stck_prpr": "80000"}}
+    broker_resp = ResCommonResponse(rt_cd="0", msg1="정상", data=broker_data)
+    mock_deps.broker.get_current_price.return_value = broker_resp
+
+    await service.get_current_price("005930", force_fresh=True)
+
+    mock_deps.stock_repo.set_current_price.assert_called_once_with("005930", broker_data)
+
+
+@pytest.mark.asyncio
 async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     """get_ohlcv 메서드의 로컬 저장소 연동 및 백필 동작 검증"""
     broker = mock_deps.broker

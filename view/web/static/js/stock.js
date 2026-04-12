@@ -250,6 +250,7 @@ async function searchStock(codeOverride, exchangeOverride) {
                  }
                  .fav-star-btn:hover { transform: scale(1.05); background: var(--bg-card, #e8e8e8); }
                  .fav-star-btn.active { color: #ffc107; border-color: #ffc107; }
+                 .detail-loading { color: var(--text-secondary, #999); font-style: italic; }
             </style>
         `;
 
@@ -261,12 +262,15 @@ async function searchStock(codeOverride, exchangeOverride) {
             </div>
         `;
 
+        // Phase 1 렌더: 캐시/DB 데이터로 즉시 표기 (상세 필드는 로딩 placeholder)
+        const loading = '<span class="detail-loading">조회 중...</span>';
+
         resultDiv.innerHTML = styles + `
             <div class="card stock-info-box" style="position: relative;">
                 <button id="fav-toggle-btn" class="fav-star-btn" onclick="toggleFavorite('${data.code}')" title="관심종목">☆</button>
                 ${exchangeButtons}
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <h3 class="stock-title" style="margin:0;">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
+                    <h3 class="stock-title" style="margin:0;" id="stock-title-area">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
                 </div>
                 <p id="rt-price" class="price ${changeClass}">${fnum(data.price, '원')}</p>
                 <p id="rt-change-rate" class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
@@ -276,8 +280,8 @@ async function searchStock(codeOverride, exchangeOverride) {
                 <div class="stock-details">
                     <div class="detail-group">
                         <h4>ℹ️ 기본 정보</h4>
-                        <p><strong>업종:</strong> <span>${data.bstp_kor_isnm || 'N/A'}</span></p>
-                        <p><strong>상태:</strong> <span>${data.iscd_stat_cls_code_desc || 'N/A'}</span></p>
+                        <p><strong>업종:</strong> <span id="detail-sector">${data.bstp_kor_isnm || loading}</span></p>
+                        <p><strong>상태:</strong> <span id="detail-status">${data.iscd_stat_cls_code_desc || loading}</span></p>
                     </div>
                     <div class="detail-group">
                         <h4>📊 당일 시세</h4>
@@ -290,35 +294,35 @@ async function searchStock(codeOverride, exchangeOverride) {
                         <h4>📈 거래 정보</h4>
                         <p><strong>누적 거래량:</strong> <span>${fnum(data.acml_vol, ' 주')}</span></p>
                         <p><strong>누적 거래대금:</strong> <span>${formatTradingValue(data.acml_tr_pbmn)}</span></p>
-                        <p><strong>전일 대비 거래량:</strong> <span>${frate(data.prdy_vrss_vol_rate)}</span></p>
+                        <p><strong>전일 대비 거래량:</strong> <span id="detail-vol-rate">${data.prdy_vrss_vol_rate != null ? frate(data.prdy_vrss_vol_rate) : loading}</span></p>
                     </div>
                     <div class="detail-group">
                         <h4>🌐 수급 정보</h4>
-                        <p><strong>외국인 순매수:</strong> <span>${fnum(data.frgn_ntby_qty, ' 주')}</span></p>
-                        <p><strong>프로그램 순매수:</strong> <span>${fnum(data.pgtr_ntby_qty, ' 주')}</span></p>
+                        <p><strong>외국인 순매수:</strong> <span id="detail-frgn">${data.frgn_ntby_qty != null ? fnum(data.frgn_ntby_qty, ' 주') : loading}</span></p>
+                        <p><strong>프로그램 순매수:</strong> <span id="detail-pgtr">${data.pgtr_ntby_qty != null ? fnum(data.pgtr_ntby_qty, ' 주') : loading}</span></p>
                     </div>
                      <div class="detail-group full-width">
                         <h4>💹 투자 지표</h4>
                         <div style="display: flex; justify-content: space-around;">
-                           <p style="flex-direction: column; align-items: center;"><strong>PER:</strong> <span>${frate(data.per, ' 배')}</span></p>
-                           <p style="flex-direction: column; align-items: center;"><strong>PBR:</strong> <span>${frate(data.pbr, ' 배')}</span></p>
-                           <p style="flex-direction: column; align-items: center;"><strong>EPS:</strong> <span>${fnum(data.eps)}</span></p>
-                           <p style="flex-direction: column; align-items: center;"><strong>BPS:</strong> <span>${fnum(data.bps)}</span></p>
+                           <p style="flex-direction: column; align-items: center;"><strong>PER:</strong> <span id="detail-per">${data.per != null ? frate(data.per, ' 배') : loading}</span></p>
+                           <p style="flex-direction: column; align-items: center;"><strong>PBR:</strong> <span id="detail-pbr">${data.pbr != null ? frate(data.pbr, ' 배') : loading}</span></p>
+                           <p style="flex-direction: column; align-items: center;"><strong>EPS:</strong> <span id="detail-eps">${data.eps != null ? fnum(data.eps) : loading}</span></p>
+                           <p style="flex-direction: column; align-items: center;"><strong>BPS:</strong> <span id="detail-bps">${data.bps != null ? fnum(data.bps) : loading}</span></p>
                         </div>
                     </div>
                     <div class="detail-group full-width">
                         <h4>📅 주요 가격 정보</h4>
-                        <p><strong>52주 최고:</strong> <span>${fnum(data.w52_hgpr)} (${data.w52_hgpr_date}) | 대비: ${frate(data.w52_hgpr_vrss_prpr_ctrt)}</span></p>
-                        <p><strong>52주 최저:</strong> <span>${fnum(data.w52_lwpr)} (${data.w52_lwpr_date}) | 대비: ${frate(data.w52_lwpr_vrss_prpr_ctrt)}</span></p>
-                        <p><strong>250일 최고:</strong> <span>${fnum(data.d250_hgpr)} (${data.d250_hgpr_date}) | 대비: ${frate(data.d250_hgpr_vrss_prpr_rate)}</span></p>
-                        <p><strong>250일 최저:</strong> <span>${fnum(data.d250_lwpr)} (${data.d250_lwpr_date}) | 대비: ${frate(data.d250_lwpr_vrss_prpr_rate)}</span></p>
+                        <p><strong>52주 최고:</strong> <span id="detail-w52h">${data.w52_hgpr ? fnum(data.w52_hgpr) + ' (' + (data.w52_hgpr_date||'') + ') | 대비: ' + frate(data.w52_hgpr_vrss_prpr_ctrt) : loading}</span></p>
+                        <p><strong>52주 최저:</strong> <span id="detail-w52l">${data.w52_lwpr ? fnum(data.w52_lwpr) + ' (' + (data.w52_lwpr_date||'') + ') | 대비: ' + frate(data.w52_lwpr_vrss_prpr_ctrt) : loading}</span></p>
+                        <p><strong>250일 최고:</strong> <span id="detail-d250h">${data.d250_hgpr ? fnum(data.d250_hgpr) + ' (' + (data.d250_hgpr_date||'') + ') | 대비: ' + frate(data.d250_hgpr_vrss_prpr_rate) : loading}</span></p>
+                        <p><strong>250일 최저:</strong> <span id="detail-d250l">${data.d250_lwpr ? fnum(data.d250_lwpr) + ' (' + (data.d250_lwpr_date||'') + ') | 대비: ' + frate(data.d250_lwpr_vrss_prpr_rate) : loading}</span></p>
                     </div>
                     <div class="detail-group full-width">
                         <h4>📋 기타 상태</h4>
-                        <p><strong>신용 가능:</strong> <span>${data.crdt_able_yn}</span></p>
-                        <p><strong>관리 종목:</strong> <span>${data.mang_issu_cls_code}</span></p>
-                        <p><strong>단기 과열:</strong> <span>${data.short_over_yn}</span></p>
-                        <p><strong>정리 매매:</strong> <span>${data.sltr_yn}</span></p>
+                        <p><strong>신용 가능:</strong> <span id="detail-crdt">${data.crdt_able_yn || loading}</span></p>
+                        <p><strong>관리 종목:</strong> <span id="detail-mang">${data.mang_issu_cls_code || loading}</span></p>
+                        <p><strong>단기 과열:</strong> <span id="detail-short">${data.short_over_yn || loading}</span></p>
+                        <p><strong>정리 매매:</strong> <span id="detail-sltr">${data.sltr_yn || loading}</span></p>
                     </div>
                 </div>
             </div>
@@ -342,6 +346,9 @@ async function searchStock(codeOverride, exchangeOverride) {
 
         // 관심종목 버튼 초기 상태 설정
         _updateFavBtn(code);
+
+        // Phase 2: 증권사 API 상세 정보 백그라운드 로드
+        _loadStockDetail(code);
 
     } catch (e) {
         console.error("Error in searchStock:", e);
@@ -392,5 +399,81 @@ async function toggleFavorite(code) {
         }
     } catch (e) {
         if (typeof showToast === 'function') showToast(`오류: ${e.message}`, 'error');
+    }
+}
+
+/* ── Phase 2: 증권사 API 상세 정보 로드 & DOM 업데이트 ── */
+async function _loadStockDetail(code) {
+    try {
+        const res = await fetchWithTimeout(`/api/stock/${code}/detail?exchange=${_currentExchange}`, {}, 15000);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json.rt_cd !== "0" || !json.data) return;
+        _updateDetailDOM(json.data);
+    } catch (e) {
+        // 상세 조회 실패 시 조용히 무시 (Phase 1 데이터는 이미 표기됨)
+        console.debug('[stock] 상세 정보 조회 실패:', e.message);
+    }
+}
+
+function _updateDetailDOM(data) {
+    const fnum = (n, suffix = "") => {
+        if (n === null || n === undefined || String(n).trim() === '' || String(n).toLowerCase() === 'n/a') return 'N/A';
+        try {
+            const val = parseFloat(String(n).replace(/,/g, ''));
+            if (isNaN(val)) return String(n);
+            return val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + suffix;
+        } catch { return String(n); }
+    };
+    const frate = (n, suffix = "%") => {
+        if (n === null || n === undefined || String(n).trim() === '' || String(n).toLowerCase() === 'n/a') return 'N/A';
+        try {
+            const val = parseFloat(String(n).replace(/,/g, ''));
+            if (isNaN(val)) return String(n);
+            return (val > 0 ? '+' : '') + val.toFixed(2) + suffix;
+        } catch { return String(n); }
+    };
+
+    const set = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.innerHTML = val; };
+
+    // ℹ️ 기본 정보
+    set('detail-sector', data.bstp_kor_isnm || 'N/A');
+    set('detail-status', data.iscd_stat_cls_code_desc || 'N/A');
+
+    // 📈 거래 정보
+    set('detail-vol-rate', frate(data.prdy_vrss_vol_rate));
+
+    // 🌐 수급 정보
+    set('detail-frgn', fnum(data.frgn_ntby_qty, ' 주'));
+    set('detail-pgtr', fnum(data.pgtr_ntby_qty, ' 주'));
+
+    // 💹 투자 지표
+    set('detail-per', frate(data.per, ' 배'));
+    set('detail-pbr', frate(data.pbr, ' 배'));
+    set('detail-eps', fnum(data.eps));
+    set('detail-bps', fnum(data.bps));
+
+    // 📅 주요 가격 정보
+    if (data.w52_hgpr) set('detail-w52h', `${fnum(data.w52_hgpr)} (${data.w52_hgpr_date || ''}) | 대비: ${frate(data.w52_hgpr_vrss_prpr_ctrt)}`);
+    if (data.w52_lwpr) set('detail-w52l', `${fnum(data.w52_lwpr)} (${data.w52_lwpr_date || ''}) | 대비: ${frate(data.w52_lwpr_vrss_prpr_ctrt)}`);
+    if (data.d250_hgpr) set('detail-d250h', `${fnum(data.d250_hgpr)} (${data.d250_hgpr_date || ''}) | 대비: ${frate(data.d250_hgpr_vrss_prpr_rate)}`);
+    if (data.d250_lwpr) set('detail-d250l', `${fnum(data.d250_lwpr)} (${data.d250_lwpr_date || ''}) | 대비: ${frate(data.d250_lwpr_vrss_prpr_rate)}`);
+
+    // 📋 기타 상태
+    set('detail-crdt', data.crdt_able_yn || 'N/A');
+    set('detail-mang', data.mang_issu_cls_code || 'N/A');
+    set('detail-short', data.short_over_yn || 'N/A');
+    set('detail-sltr', data.sltr_yn || 'N/A');
+
+    // 신고가/신저가 배지 업데이트
+    const titleArea = document.getElementById('stock-title-area');
+    if (titleArea && (data.is_new_high !== undefined || data.is_new_low !== undefined)) {
+        const newHighBadge = data.is_new_high ? '<span class="badge new-high">🔥 신고가</span>' : '';
+        const newLowBadge  = data.is_new_low  ? '<span class="badge new-low">💧 신저가</span>'  : '';
+        // 배지만 교체 (종목명·코드 유지)
+        const badges = titleArea.querySelectorAll('.badge');
+        badges.forEach(b => b.remove());
+        if (newHighBadge) titleArea.insertAdjacentHTML('beforeend', newHighBadge);
+        if (newLowBadge)  titleArea.insertAdjacentHTML('beforeend', newLowBadge);
     }
 }
