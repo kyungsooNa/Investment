@@ -26,6 +26,7 @@ def mock_deps():
         ("watchdog_task", patch("view.web.web_app_initializer.WebSocketWatchdogTask", autospec=True)),
         ("premium_watchlist_task", patch("view.web.web_app_initializer.PremiumWatchlistGeneratorTask", autospec=True)),
         ("log_cleanup_task", patch("view.web.web_app_initializer.LogCleanupTask", autospec=True)),
+        ("newhigh_task", patch("view.web.web_app_initializer.NewHighTask", autospec=True)),
         ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
         ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
         ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
@@ -383,3 +384,7 @@ async def test_initialize_services_injects_reporter(mock_deps):
     mock_ranking_cls = mock_deps["ranking_task"]
     _, kwargs = mock_ranking_cls.call_args
     assert kwargs.get("telegram_reporter") == ctx.telegram_reporter
+    
+    mock_newhigh_cls = mock_deps["newhigh_task"]
+    _, newhigh_kwargs = mock_newhigh_cls.call_args
+    assert newhigh_kwargs.get("stock_query_service") == ctx.stock_query_service

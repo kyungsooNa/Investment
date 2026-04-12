@@ -271,22 +271,52 @@ class TelegramReporter:
             name = s.get("name") or ""
             code = s.get("code") or ""
             price = s.get("current_price") or 0
-            cap = s.get("market_cap") or 0
-            cap_str = f"{cap / 100_000_000:.0f}억" if cap > 0 else "-"
+            
+            # 시가총액 (API: hts_avls '억원' / FDR: Marcap '원' 단위 혼재 가능성 처리)
+            try:
+                cap = float(s.get("market_cap") or 0)
+                # 10억 '억원'(1경원) 이상일 경우 '원' 단위 데이터로 간주하고 보정
+                if cap > 1_000_000_000:
+                    cap = cap / 100_000_000
+                
+                if cap > 0:
+                    cap_str = f"{cap:.1f}억" if cap < 1 else f"{cap:,.0f}억"
+                else:
+                    cap_str = "-"
+            except (ValueError, TypeError):
+                cap_str = "-"
+            
+            # 거래대금 (API acml_tr_pbmn 기준 '원' 단위) -> 억원 변환
+            try:
+                tv = float(s.get("trading_value") or 0)
+                if tv > 0:
+                    tv_100m = tv / 100_000_000
+                    tv_str = f"{tv_100m:.1f}억" if tv_100m < 1 else f"{tv_100m:,.0f}억"
+                else:
+                    tv_str = "-"
+            except (ValueError, TypeError):
+                tv_str = "-"
+            
+            # RS (상대강도) - 추후 연동 전까지 기본값 표기
+            rs = s.get("rs", "-")
+
             try:
                 rate_f = float(s.get("change_rate") or "0")
                 rate_str = f"+{rate_f:.2f}%" if rate_f >= 0 else f"{rate_f:.2f}%"
             except (ValueError, TypeError):
                 rate_str = "-"
-            lines.append(f"{i:3}. {name}({code}) {price:,}원 {rate_str} 시총:{cap_str}")
+            
+            is_historical = s.get("is_historical_new_high", False)
+            hist_badge = "👑역 " if is_historical else ""
+            lines.append(f"{i:2}. {hist_badge}<b>{name}</b>({code}) {price:,}원 {rate_str} | 대금:{tv_str} | 시총:{cap_str} | RS:{rs}")
 
         current = ""
         for line in lines:
             chunk = line + "\n"
             if len((current + chunk).encode("utf-8")) > 4000:
-                await self._send_message(f"<pre>{current}</pre>")
+                await self._send_message(current)
                 current = chunk
             else:
                 current += chunk
         if current:
-            await self._send_message(f"<pre>{current}</pre>")
+            await self._send_message(current)

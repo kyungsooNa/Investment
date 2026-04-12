@@ -11,14 +11,19 @@ from interfaces.schedulable_task import TaskState
 
 # ── 공통 스냅샷 헬퍼 ─────────────────────────────────────────────────────
 
-def _snap(code, name, current_price, w52_high, market_cap=0, change_rate="1.0"):
+def _snap(code, name, current_price, w52_high, market_cap=0, change_rate="1.0", high_price=None, volume=1000, trading_value=200000000):
+    if high_price is None:
+        high_price = current_price
     return {
         "code": code,
         "name": name,
         "current_price": current_price,
+        "high_price": high_price,
         "w52_high": w52_high,
         "market_cap": market_cap,
         "change_rate": change_rate,
+        "volume": volume,
+        "trading_value": trading_value,
     }
 
 
@@ -46,7 +51,14 @@ def mock_notification_service():
 
 
 @pytest.fixture
-def task(mock_stock_repo, mock_telegram_reporter, mock_notification_service):
+def mock_stock_query_service():
+    sqs = MagicMock()
+    sqs.get_ohlcv = AsyncMock()
+    return sqs
+
+
+@pytest.fixture
+def task(mock_stock_repo, mock_telegram_reporter, mock_notification_service, mock_stock_query_service):
     return NewHighTask(
         stock_repo=mock_stock_repo,
         market_calendar_service=None,
@@ -54,6 +66,7 @@ def task(mock_stock_repo, mock_telegram_reporter, mock_notification_service):
         logger=MagicMock(),
         telegram_reporter=mock_telegram_reporter,
         notification_service=mock_notification_service,
+        stock_query_service=mock_stock_query_service,
     )
 
 
@@ -65,7 +78,7 @@ def mock_daily_price_collector():
 
 
 @pytest.fixture
-def task_with_collector(mock_stock_repo, mock_telegram_reporter, mock_notification_service, mock_daily_price_collector):
+def task_with_collector(mock_stock_repo, mock_telegram_reporter, mock_notification_service, mock_daily_price_collector, mock_stock_query_service):
     return NewHighTask(
         stock_repo=mock_stock_repo,
         market_calendar_service=None,
@@ -74,6 +87,7 @@ def task_with_collector(mock_stock_repo, mock_telegram_reporter, mock_notificati
         telegram_reporter=mock_telegram_reporter,
         notification_service=mock_notification_service,
         daily_price_collector_task=mock_daily_price_collector,
+        stock_query_service=mock_stock_query_service,
     )
 
 
@@ -119,10 +133,16 @@ def test_filter_newhigh_basic(task):
         _snap("000001", "종목A", 10000, 10000, market_cap=5_000_000_000),
         _snap("000002", "종목B", 9000, 10000),   # 신고가 미달
         _snap("000003", "종목C", 11000, 10000, market_cap=3_000_000_000),  # 신고가 초과
+        _snap("000004", "종목D", 9000, 10000, high_price=10500), # 유지율 미달 (9000/10500 < 0.97)
+        _snap("000005", "종목E", 10000, 10000, volume=0), # 거래량 부족
+        _snap("000006", "종목F", 10000, 10000, trading_value=50000), # 거래대금 부족
     ]
     result = task._filter_newhigh(snaps)
     codes = [r["code"] for r in result]
     assert "000002" not in codes
+    assert "000004" not in codes
+    assert "000005" not in codes
+    assert "000006" not in codes
     assert "000001" in codes
     assert "000003" in codes
 
@@ -308,6 +328,36 @@ async def test_force_collect_not_triggered_without_collector(task, mock_stock_re
     ]
     await task._on_market_closed("20260412")  # no exception
     assert task._last_collected_date == "20260412"
+
+
+# ── _enrich_historical_high ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_enrich_historical_high_true(task, mock_stock_query_service):
+    mock_stock_query_service.get_ohlcv.return_value = MagicMock(rt_cd="0", data=[{"high": 1000}, {"high": 1500}])
+    stocks = [{"code": "005930", "current_price": 2000}]
+    
+    enriched = await task._enrich_historical_high(stocks)
+    
+    assert enriched[0]["is_historical_new_high"] is True
+
+@pytest.mark.asyncio
+async def test_enrich_historical_high_false(task, mock_stock_query_service):
+    mock_stock_query_service.get_ohlcv.return_value = MagicMock(rt_cd="0", data=[{"high": 3000}, {"high": 1500}])
+    stocks = [{"code": "005930", "current_price": 2000}]
+    
+    enriched = await task._enrich_historical_high(stocks)
+    
+    assert enriched[0]["is_historical_new_high"] is False
+    
+@pytest.mark.asyncio
+async def test_enrich_historical_high_api_fail(task, mock_stock_query_service):
+    mock_stock_query_service.get_ohlcv.return_value = MagicMock(rt_cd="1", data=None)
+    stocks = [{"code": "005930", "current_price": 2000}]
+    
+    enriched = await task._enrich_historical_high(stocks)
+    
+    assert enriched[0]["is_historical_new_high"] is False
 
 
 @pytest.mark.asyncio

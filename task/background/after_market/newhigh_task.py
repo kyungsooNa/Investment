@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from services.telegram_notifier import TelegramReporter
     from repositories.stock_repository import StockRepository
     from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
+    from services.stock_query_service import StockQueryService
 
 
 # ETF/ETN 브랜드명 접두사 (RankingTask._ETF_PREFIXES 와 동일)
@@ -40,6 +41,7 @@ class NewHighTask(AfterMarketTask):
         telegram_reporter: Optional["TelegramReporter"] = None,
         notification_service: Optional[NotificationService] = None,
         daily_price_collector_task: Optional["DailyPriceCollectorTask"] = None,
+        stock_query_service: Optional["StockQueryService"] = None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -50,6 +52,7 @@ class NewHighTask(AfterMarketTask):
         self._telegram_reporter = telegram_reporter
         self._notification_service = notification_service
         self._daily_price_collector_task = daily_price_collector_task
+        self._stock_query_service = stock_query_service
         self._last_collected_date: Optional[str] = None
         self._progress: Dict = {"running": False, "last_date": None, "newhigh_count": 0, "status": None}
 
@@ -104,6 +107,11 @@ class NewHighTask(AfterMarketTask):
                 snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
 
             newhigh_stocks = self._filter_newhigh(snapshots)
+            
+            # 600일치 데이터를 바탕으로 역사적 신고가 판별
+            if self._stock_query_service and newhigh_stocks:
+                newhigh_stocks = await self._enrich_historical_high(newhigh_stocks)
+                
             self._logger.info(
                 f"NewHighTask: 신고가 {len(newhigh_stocks)}개 감지 / 전체 {len(snapshots)}개 (date={latest_trading_date})"
             )
@@ -154,11 +162,57 @@ class NewHighTask(AfterMarketTask):
         result = []
         for s in snapshots:
             name = s.get("name") or ""
+            if name == "RF머트리얼즈":
+                a = 1
             if any(name.startswith(p) for p in _ETF_PREFIXES):
                 continue
             current = s.get("current_price") or 0
+            high = s.get("high_price") or 0
             w52 = s.get("w52_high") or 0
-            if current > 0 and w52 > 0 and current >= w52:
-                result.append(s)
+            volume = s.get("volume") or 0
+            trading_value = s.get("trading_value") or 0 # 거래대금
+
+            # 1. 거래량이 0이거나 거래대금이 너무 적은 종목 제외
+            # (예: 당일 거래대금 최소 1억 이상인 종목만 주도주 후보로 인정)
+            if volume <= 0 or trading_value < 100_000_000:
+                continue
+            # 2. 일단 기술적 신고가 여부 확인
+            if current > 0 and w52 > 0 and high >= w52:
+                # 3. 전략적 필터: 고가 대비 종가가 너무 밀렸는가? (유지율 97% 이상 권장)
+                # 71,700원 고가 대비 68,100원 종가라면 유지율이 95% 미만이므로 탈락
+                maintenance_ratio = current / high
+                if maintenance_ratio >= 0.97: 
+                    # 4. 추가 조건: 거래량 폭발 등 (선택 사항)
+                    # 추후 RS(Relative Strength) 등 추가 데이터를 위한 자리표시자
+                    s.setdefault("rs", "-")
+                    result.append(s)
+
         result.sort(key=lambda x: x.get("market_cap") or 0, reverse=True)
         return result
+
+    async def _enrich_historical_high(self, stocks: List[Dict]) -> List[Dict]:
+        """OHLCV 600일치를 조회하여 역사적 신고가(600일 내 최고가) 여부를 판별합니다."""
+        enriched = []
+        for s in stocks:
+            code = s.get("code")
+            s["is_historical_new_high"] = False  # 기본값
+            
+            if not code:
+                enriched.append(s)
+                continue
+            
+            try:
+                resp = await self._stock_query_service.get_ohlcv(code, period="D", caller="NewHighTask")
+                if resp and str(resp.rt_cd) == "0" and resp.data:
+                    ohlcv = resp.data
+                    if ohlcv:
+                        max_high = max((float(candle.get("high", 0)) for candle in ohlcv), default=0.0)
+                        current_high = float(s.get("high_price") or s.get("current_price") or 0)
+                        
+                        if current_high >= max_high and current_high > 0:
+                            s["is_historical_new_high"] = True
+            except Exception as e:
+                self._logger.warning(f"NewHighTask: {code} 역사적 신고가 판별 위한 OHLCV 조회 실패 - {e}")
+            
+            enriched.append(s)
+        return enriched

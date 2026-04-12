@@ -427,3 +427,23 @@ async def test_send_ranking_report_combined_ranking_exception(telegram_reporter)
     # 정상 종목만 계산에 포함되고 오류종목은 건너뛰어야 함
     assert "정상종목" in full_message
     assert "오류종목" not in full_message
+
+@pytest.mark.asyncio
+async def test_send_newhigh_report_with_historical_badge(telegram_reporter):
+    """역신고가 뱃지가 포함된 52주 신고가 리포트 전송 검증"""
+    stocks = [
+        {"code": "005930", "name": "삼성전자", "current_price": 80000, "market_cap": 5000000000, "trading_value": 1000000000, "change_rate": 1.5, "is_historical_new_high": True},
+        {"code": "000660", "name": "SK하이닉스", "current_price": 120000, "market_cap": 3000000000, "trading_value": 500000000, "change_rate": -1.0, "is_historical_new_high": False}
+    ]
+    
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    
+    await telegram_reporter.send_newhigh_report(stocks, "2026-05-15")
+    
+    telegram_reporter._send_message.assert_called()
+    calls = telegram_reporter._send_message.call_args_list
+    full_message = "".join([call[0][0] for call in calls])
+    
+    assert "👑역 삼성전자" in full_message
+    assert "👑역 SK하이닉스" not in full_message
+    assert "SK하이닉스" in full_message
