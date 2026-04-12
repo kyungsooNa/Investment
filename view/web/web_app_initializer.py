@@ -354,6 +354,7 @@ class WebAppContext:
             telegram_reporter=getattr(self, 'telegram_reporter', None),
             notification_service=self.notification_service,
             daily_price_collector_task=self.daily_price_collector_task,
+            stock_query_service=self.stock_query_service,
         )
 
         # NotificationQueueTask 초기화

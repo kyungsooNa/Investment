@@ -435,6 +435,18 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 except (ValueError, TypeError):
                     return default
 
+            def _safe_bool(val, default=False):
+                if val is None:
+                    return default
+                if isinstance(val, bool):
+                    return val
+                if isinstance(val, str):
+                    return val.strip().lower() in ("true", "1", "t", "y", "yes")
+                try:
+                    return bool(int(val))
+                except (ValueError, TypeError):
+                    return default
+
             # ResStockFullInfoApiOutput 필드 → DB 레코드 변환
             # output이 Pydantic 모델이면 getattr, dict면 get
             _get = (
@@ -462,6 +474,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 "eps": _safe_float(_get("eps")),
                 "w52_high": _safe_int(_get("w52_hgpr")),
                 "w52_low": _safe_int(_get("w52_lwpr")),
+                "is_new_high": _safe_bool(_get("is_new_high")),
+                "is_new_low": _safe_bool(_get("is_new_low")),
                 "market": market,
             }
         except Exception:
