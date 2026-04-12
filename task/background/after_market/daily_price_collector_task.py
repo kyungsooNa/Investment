@@ -73,6 +73,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
         # 수집 상태
         self._is_collecting: bool = False
+        self._collection_done_event: asyncio.Event = asyncio.Event()
+        self._collection_done_event.set()  # 초기에는 수집 완료(대기 불필요) 상태
         self._last_collected_date: Optional[str] = None
         self._progress: Dict = {
             "running": False,
@@ -147,6 +149,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
         self._logger.info(f"전체 종목 수집 파이프라인 시작 (기준일: {target_date})")
         self._is_collecting = True
+        self._collection_done_event.clear()
         start_time = time.time()
         
         # 반복 조회를 피하기 위해 한 번 로드 후 캐싱
@@ -173,6 +176,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
             self._logger.error(f"전체 수집 파이프라인 실패: {e}", exc_info=True)
         finally:
             self._is_collecting = False
+            self._collection_done_event.set()
             self._all_stocks_cache = None
     
     # ── 2. 데이터 검증 (Sanity Check) ─────────────────────────────
@@ -491,7 +495,10 @@ class DailyPriceCollectorTask(AfterMarketTask):
         self._logger.info("DailyPriceCollectorTask 강제 수집 요청 (증권사 API 직접 호출)")
         async with self._running_state():
             if self._is_collecting:
-                self._logger.info("현재가 수집 이미 진행 중 — 강제 수집 스킵")
+                # 진행 중인 수집이 완료될 때까지 대기 — 즉시 리턴하면 NewHighTask가 미완성 데이터로 재조회함
+                self._logger.info("현재가 수집 이미 진행 중 — 완료 대기 후 반환")
+                await self._collection_done_event.wait()
+                self._logger.info("진행 중 수집 완료 확인 — 강제 수집 생략")
                 return
 
             target_date = await self._mcs.get_latest_trading_date() if self._mcs else None
@@ -500,6 +507,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 return
 
             self._is_collecting = True
+            self._collection_done_event.clear()
             start_time = time.time()
             self._all_stocks_cache = self._load_all_stocks()
 
@@ -511,6 +519,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 self._logger.error(f"강제 수집 실패: {e}", exc_info=True)
             finally:
                 self._is_collecting = False
+                self._collection_done_event.set()
                 self._all_stocks_cache = None
 
     def _format_dataframe_to_records(self, df: pd.DataFrame) -> List[Dict]:

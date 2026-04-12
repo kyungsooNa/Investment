@@ -68,19 +68,17 @@ async def test_collect_all_prices_already_collected(task):
         mock_fdr.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_collect_all_prices_tier1_fdr_success(task):
-    """Tier 1 (FDR) 수집 성공 시 Broker API 호출 안 하는지 확인"""
-    with patch.object(task, '_try_collect_via_fdr', return_value=True) as mock_fdr, \
-         patch.object(task, '_finish_collection', new_callable=AsyncMock) as mock_finish, \
-         patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_api:
-        
+async def test_collect_all_prices_broker_api_direct(task):
+    """FDR 제거 후 _collect_all_prices 는 증권사 API를 직접 호출한다."""
+    with patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_api, \
+         patch.object(task, '_finish_collection', new_callable=AsyncMock) as mock_finish:
+
         await task._collect_all_prices()
-        mock_fdr.assert_called_once()
-        mock_api.assert_not_called()
+        mock_api.assert_called_once()
         mock_finish.assert_called_once()
         args, _ = mock_finish.call_args
         assert args[0] == "2025-01-01"
-        assert args[2] == "FDR"
+        assert args[2] == "Broker API"
 
 @pytest.mark.asyncio
 async def test_collect_all_prices_tier2_broker_api_success(task):
@@ -274,8 +272,9 @@ async def test_collect_via_broker_api(task):
 @pytest.mark.asyncio
 async def test_task_state_management(task):
     """start, suspend, resume 등 SchedulableTask 인터페이스 상태 관리 확인"""
-    # start
-    await task.start()
+    # start — 백그라운드 스케줄러가 실제 실행되지 않도록 create_task 패치
+    with patch("asyncio.create_task"):
+        await task.start()
     assert task._state == TaskState.RUNNING
     assert task._suspend_event.is_set()
 
@@ -304,11 +303,41 @@ async def test_on_market_closed_trigger(task):
         mock_collect.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_force_collect(task):
-    """강제 수집 호출 시 force=True 파라미터 전달 확인"""
-    with patch.object(task, '_collect_all_prices', new_callable=AsyncMock) as mock_collect:
+async def test_force_collect(task, mock_mcs):
+    """force_collect: FDR 없이 증권사 API(_collect_via_broker_api)를 직접 호출한다."""
+    mock_mcs.is_market_open_now.return_value = False
+    mock_mcs.get_latest_trading_date.return_value = "2025-01-01"
+    with patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_broker, \
+         patch.object(task, '_finish_collection', new_callable=AsyncMock), \
+         patch.object(task, '_load_all_stocks', return_value=[]):
         await task.force_collect()
-        mock_collect.assert_called_once_with(force=True)
+        mock_broker.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_force_collect_waits_for_ongoing_collection(task, mock_mcs):
+    """force_collect 호출 시 이미 수집 중이면 완료될 때까지 대기 후 반환한다."""
+    import asyncio as _asyncio
+    mock_mcs.get_latest_trading_date.return_value = "2025-01-01"
+
+    # 수집 진행 중 상태 시뮬레이션
+    task._is_collecting = True
+    task._collection_done_event.clear()
+
+    # 50ms 뒤 수집 완료 신호
+    async def _signal_done():
+        await _asyncio.sleep(0.05)
+        task._is_collecting = False
+        task._collection_done_event.set()
+
+    _asyncio.create_task(_signal_done())
+
+    with patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_broker:
+        await task.force_collect()
+        # 진행 중 수집 완료를 기다렸으므로 새 수집은 시작하지 않음
+        mock_broker.assert_not_awaited()
+
+    assert task._collection_done_event.is_set()
 
 @pytest.mark.asyncio
 async def test_collect_all_prices_no_trading_date(task, mock_mcs):
