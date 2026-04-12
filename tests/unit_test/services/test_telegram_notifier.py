@@ -444,6 +444,6 @@ async def test_send_newhigh_report_with_historical_badge(telegram_reporter):
     calls = telegram_reporter._send_message.call_args_list
     full_message = "".join([call[0][0] for call in calls])
     
-    assert "👑역 삼성전자" in full_message
-    assert "👑역 SK하이닉스" not in full_message
-    assert "SK하이닉스" in full_message
+    assert "👑역 <b>삼성전자</b>" in full_message
+    assert "👑역 <b>SK하이닉스</b>" not in full_message
+    assert "<b>SK하이닉스</b>" in full_message
