@@ -19,7 +19,7 @@
 - [ ] **[아키텍처]** UI 출력 로직 완전 격리: Service 계층 내부에 존재하는 콘솔 출력(`print`) 로직을 제거하고, View 계층에 위임.
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
 - [ ] **[BackgroundService]** naver_finance_scraper.py 도 background task로 전환.
-- log data, db data의 오래된 data를 정리하는 background task도 생성.
+- [ ] **[전략]** bad market timing중 오늘의 데이터랑 상관없이 bad로 판명나면 하루 1회 Telegram으로 bad market timing (ma detail 포함해서) 전송하도록 수정. 그리고 bad market timing일때 오늘의 시장 변화로 market timing이 개선될 수 있는지? 아니라면 당일엔 전략을 돌리지 않아도 될거같음.
 
 
 ## Ⅱ. ⚡ 성능 최적화 및 인프라 전환 (Performance & Infra)

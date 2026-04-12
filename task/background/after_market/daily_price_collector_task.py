@@ -23,6 +23,7 @@ from services.notification_service import NotificationService, NotificationCateg
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
+    from services.rs_rating_service import RSRatingService
 
 
 def _chunked(lst, size):
@@ -56,6 +57,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         market_clock: Optional[MarketClock] = None,
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
+        rs_rating_service: Optional["RSRatingService"] = None,
         logger=None,
     ):
         super().__init__(
@@ -68,6 +70,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         self._stock_repo = stock_repo
         self._pm = performance_profiler or PerformanceProfiler(enabled=False)
         self._ns = notification_service
+        self._rs_rating_service = rs_rating_service
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능
 
@@ -370,10 +373,19 @@ class DailyPriceCollectorTask(AfterMarketTask):
         self._logger.info(f"전체 종목 수집 완료 (Source: {source}), 소요: {elapsed:.1f}s")
         if self._ns:
             await self._ns.emit(
-                NotificationCategory.BACKGROUND, NotificationLevel.INFO, 
+                NotificationCategory.BACKGROUND, NotificationLevel.INFO,
                 "전체 종목 현재가 수집 완료",
                 f"소스: {source} / 소요: {elapsed:.1f}초"
             )
+
+        # RS Rating 배치 계산 (실패해도 수집 결과에 영향 없음)
+        if self._rs_rating_service:
+            try:
+                self._logger.info(f"RS Rating 배치 계산 시작 (기준일: {target_date})")
+                rs_resp = await self._rs_rating_service.compute_and_store_ratings(target_date)
+                self._logger.info(f"RS Rating 배치 계산 완료: {rs_resp.msg1}")
+            except Exception as e:
+                self._logger.warning(f"RS Rating 계산 중 오류 (수집은 정상 완료): {e}")
 
     # # ── 내부 헬퍼 ─────────────────────────────────────────
 

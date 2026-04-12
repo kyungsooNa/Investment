@@ -19,6 +19,10 @@ from core.logger import get_strategy_logger
 from core.performance_profiler import PerformanceProfiler
 from services.price_subscription_service import SubscriptionPriority
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from services.rs_rating_service import RSRatingService
+
 def _chunked(lst, size):
     for i in range(0, len(lst), size):
         yield lst[i:i + size]
@@ -44,7 +48,8 @@ class OneilUniverseService:
         config: Optional[OneilUniverseConfig] = None,
         logger: Optional[logging.Logger] = None,
         performance_profiler: Optional[PerformanceProfiler] = None,
-        price_subscription_service=None
+        price_subscription_service=None,
+        rs_rating_service: Optional["RSRatingService"] = None,
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
@@ -55,6 +60,7 @@ class OneilUniverseService:
         self._logger = logger or logging.getLogger(__name__)
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._price_sub_svc = price_subscription_service
+        self._rs_rating_service = rs_rating_service
 
         # 상태 관리
         self._watchlist: Dict[str, OSBWatchlistItem] = {}
@@ -223,8 +229,10 @@ class OneilUniverseService:
             await asyncio.sleep(0.1)
 
         # 스코어링
-        self._compute_rs_scores(items, logger=logger)
-        # 2. 실적(스크래핑) 및 과거 3일 수급(API)은 장중 병목 방지 및 
+        today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        surge_rating_map = await self._fetch_rs_rating_map(today_str)
+        self._compute_rs_scores(items, logger=logger, rating_map=surge_rating_map)
+        # 2. 실적(스크래핑) 및 과거 3일 수급(API)은 장중 병목 방지 및
         # 당일 첫 급등주(Day-1) 포착을 위해 장 중에는 생략!
         # await self._compute_profit_growth_scores(items, logger=logger)
         # await self._compute_smart_money_scores(items, logger=logger)
@@ -629,7 +637,8 @@ class OneilUniverseService:
         self._generation_progress.update({"phase": "스코어링"})
 
         # 4. 스코어링 및 저장
-        self._compute_rs_scores(items, logger=pool_a_logger)
+        pool_a_rating_map = await self._fetch_rs_rating_map(trading_date)
+        self._compute_rs_scores(items, logger=pool_a_logger, rating_map=pool_a_rating_map)
         await self._compute_profit_growth_scores(items, logger=pool_a_logger)
         await self._compute_smart_money_scores(items, logger=pool_a_logger, date=trading_date)
         self._compute_total_scores(items, logger=pool_a_logger)
@@ -719,39 +728,84 @@ class OneilUniverseService:
 
         return is_rising
 
-    def _compute_rs_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None):
+    def _compute_rs_scores(
+        self,
+        items: List[OSBWatchlistItem],
+        logger: Optional[logging.Logger] = None,
+        rating_map: Optional[Dict[str, int]] = None,
+    ):
+        """RS 스코어 계산.
+
+        rating_map이 제공되면 DB에서 가져온 1~99 IBD/오닐 RS Rating을 이용한 연속 점수,
+        없으면 기존 백분위 이진 점수(0 또는 rs_score_points) 방식으로 폴백.
+        """
         logger = logger or self._logger
-        if not items: return
-        logger.debug({"event": "compute_rs_scores_started", "item_count": len(items)})
-        rets = sorted([i.rs_return_3m for i in items])
-        
-        # 백분위수 계산 (상위 10% -> 90 백분위수)
-        percentile_index = min(int(len(rets) * (1 - self._cfg.rs_top_percentile / 100)), len(rets) - 1)
-        cutoff = rets[percentile_index]
+        if not items:
+            return
+        logger.debug({"event": "compute_rs_scores_started", "item_count": len(items), "mode": "rating" if rating_map else "percentile"})
 
-        logger.debug({
-            "event": "rs_score_calculation_details",
-            "item_count": len(items),
-            "top_percentile_config": self._cfg.rs_top_percentile,
-            "cutoff_return": round(cutoff, 2),
-            "returns_distribution": {
-                "min": round(rets[0], 2),
-                "p25": round(rets[int(len(rets) * 0.25)], 2),
-                "median": round(rets[int(len(rets) * 0.5)], 2),
-                "p75": round(rets[int(len(rets) * 0.75)], 2),
-                "max": round(rets[-1], 2)
-            }
-        })
+        if rating_map:
+            # ── RS Rating 모드 (1~99 연속 점수) ─────────────────────────
+            rs_rating_min = getattr(self._cfg, "rs_rating_min", 0)
+            for item in items:
+                rating = rating_map.get(item.code, 0)
+                item.rs_rating = rating
+                # 연속 점수: rating / 99 × rs_score_points (최대 = rs_score_points)
+                item.rs_score = round(rating / 99 * self._cfg.rs_score_points, 2) if rating > 0 else 0.0
+                if rating > 0:
+                    logger.debug({
+                        "event": "rs_score_assigned", "code": item.code, "name": item.name,
+                        "rs_rating": rating, "score": item.rs_score, "mode": "rating",
+                    })
+            logger.debug({
+                "event": "compute_rs_scores_finished", "mode": "rating",
+                "items_with_rating": sum(1 for i in items if i.rs_rating > 0),
+                "rs_rating_min_cfg": rs_rating_min,
+            })
+        else:
+            # ── 폴백: 기존 백분위 이진 점수 ─────────────────────────────
+            rets = sorted([i.rs_return_3m for i in items])
+            percentile_index = min(int(len(rets) * (1 - self._cfg.rs_top_percentile / 100)), len(rets) - 1)
+            cutoff = rets[percentile_index]
 
-        for item in items:
-            is_top_tier = item.rs_return_3m >= cutoff
-            item.rs_score = self._cfg.rs_score_points if is_top_tier else 0.0
-            if is_top_tier:
-                logger.debug({
-                    "event": "rs_score_assigned", "code": item.code, "name": item.name,
-                    "return_3m": round(item.rs_return_3m, 2), "score": item.rs_score
-                })
-        logger.debug({"event": "compute_rs_scores_finished"})
+            logger.debug({
+                "event": "rs_score_calculation_details",
+                "item_count": len(items),
+                "top_percentile_config": self._cfg.rs_top_percentile,
+                "cutoff_return": round(cutoff, 2),
+                "returns_distribution": {
+                    "min": round(rets[0], 2),
+                    "p25": round(rets[int(len(rets) * 0.25)], 2),
+                    "median": round(rets[int(len(rets) * 0.5)], 2),
+                    "p75": round(rets[int(len(rets) * 0.75)], 2),
+                    "max": round(rets[-1], 2),
+                },
+                "mode": "percentile_fallback",
+            })
+
+            for item in items:
+                is_top_tier = item.rs_return_3m >= cutoff
+                item.rs_score = self._cfg.rs_score_points if is_top_tier else 0.0
+                if is_top_tier:
+                    logger.debug({
+                        "event": "rs_score_assigned", "code": item.code, "name": item.name,
+                        "return_3m": round(item.rs_return_3m, 2), "score": item.rs_score,
+                    })
+            logger.debug({"event": "compute_rs_scores_finished", "mode": "percentile_fallback"})
+
+    async def _fetch_rs_rating_map(self, trade_date: str) -> Optional[Dict[str, int]]:
+        """RS Rating 서비스에서 해당 날짜의 {code: rs_rating} 맵을 조회합니다.
+        서비스가 없거나 데이터가 없으면 None 반환 → 폴백(이진 점수) 사용.
+        """
+        if not self._rs_rating_service:
+            return None
+        try:
+            resp = await self._rs_rating_service.get_ratings_by_date(trade_date)
+            if resp.rt_cd == "0" and resp.data:
+                return resp.data
+        except Exception as e:
+            self._logger.warning(f"OneilUniverseService: RS Rating 조회 실패 ({e}) — 이진 스코어로 폴백")
+        return None
 
     async def _compute_profit_growth_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None):
         logger = logger or self._logger

@@ -28,6 +28,7 @@ class OneilUniverseConfig(BaseStrategyConfig):
     rs_period_days: int = 63
     rs_top_percentile: float = 10.0
     rs_score_points: float = 30.0
+    rs_rating_min: int = 70         # RS Rating 최소 기준 (0=비활성, 70~80 권장)
     profit_growth_threshold_pct: float = 25.0
     profit_growth_score_points: float = 20.0
     api_chunk_size: int = 10
@@ -94,6 +95,7 @@ class OSBWatchlistItem:
     # 스코어링
     rs_return_3m: float = 0.0
     rs_score: float = 0.0
+    rs_rating: int = 0              # 1~99 IBD/오닐 RS Rating (0=미계산)
     profit_growth_score: float = 0.0
     smart_money_score: float = 0.0
     total_score: float = 0.0
