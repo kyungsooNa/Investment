@@ -257,13 +257,13 @@ class IndicatorService:
 
     async def get_chart_indicators(self, stock_code: str, ohlcv_data: List[Dict]) -> ResCommonResponse:
         """
-        차트 렌더링용 지표(MA 5/10/20/60/120, BB, RS)를 한 번에 계산하여 반환합니다.
+        차트 렌더링용 지표(MA 5/10/20/50/60/120/150/200, BB, RS)를 한 번에 계산하여 반환합니다.
         과거 데이터에 대한 계산 결과를 캐싱하여 성능을 최적화합니다.
         """
         t_start = self.pm.start_timer()
         
-        # 데이터가 너무 적거나 캐시 매니저가 없으면 전체 계산 (최대 기간 120일 + 여유)
-        if not ohlcv_data or len(ohlcv_data) < 130 or not self.cache_store:
+        # 데이터가 너무 적거나 캐시 매니저가 없으면 전체 계산 (최대 기간 200일 + 여유)
+        if not ohlcv_data or len(ohlcv_data) < 220 or not self.cache_store:
              resp = self._calculate_indicators_full(stock_code, ohlcv_data)
              self.pm.log_timer(f"IndicatorService.get_chart_indicators({stock_code})", t_start, extra_info="Full Calc", threshold=0.5)
              return resp
@@ -309,8 +309,8 @@ class IndicatorService:
                 }, save_to_file=True)
 
             # 4. 오늘 데이터(마지막 1개)에 대한 지표 계산 (증분 계산)
-            # 이동평균 등 계산을 위해 과거 데이터 일부가 필요함 (최대 120일 + 여유)
-            lookback = 130
+            # 이동평균 등 계산을 위해 과거 데이터 일부가 필요함 (최대 200일 + 여유)
+            lookback = 220
             partial_data = ohlcv_data[-lookback:]
             
             resp_partial = self._calculate_indicators_full(stock_code, partial_data)
@@ -511,8 +511,8 @@ class IndicatorService:
                  return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 없음", data=None)
 
             # 2. 지표 계산 (Vectorized operations)
-            # MA
-            for p in [5, 10, 20, 60, 120]:
+            # MA (추가: 50, 150, 200 포함)
+            for p in [5, 10, 20, 50, 60, 120, 150, 200]:
                 df = self._compute_ma(df, p, "sma", target_col=f"ma{p}")
 
             # BB (20일, 2.0)
@@ -537,8 +537,8 @@ class IndicatorService:
             # 4. 결과 포맷팅 (itertuples 활용 최적화)
             indicators = {}
             
-            # MA 추출
-            for p in [5, 10, 20, 60, 120]:
+            # MA 추출 (5,10,20,50,60,120,150,200)
+            for p in [5, 10, 20, 50, 60, 120, 150, 200]:
                 ma_key = f'ma{p}'
                 indicators[ma_key] = [
                     {"date": str(r.date), "close": r.close, "ma": getattr(r, ma_key)}
