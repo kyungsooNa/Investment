@@ -262,8 +262,9 @@ class IndicatorService:
         """
         t_start = self.pm.start_timer()
         
-        # 데이터가 너무 적거나 캐시 매니저가 없으면 전체 계산 (최대 기간 200일 + 여유)
-        if not ohlcv_data or len(ohlcv_data) < 220 or not self.cache_store:
+        # 데이터가 너무 적거나 캐시 매니저가 없으면 전체 계산
+        # 캐시(특히 MA200)를 신뢰하려면 최소 200개 이상의 확정 데이터가 필요
+        if not ohlcv_data or len(ohlcv_data) < 200 or not self.cache_store:
              resp = self._calculate_indicators_full(stock_code, ohlcv_data)
              self.pm.log_timer(f"IndicatorService.get_chart_indicators({stock_code})", t_start, extra_info="Full Calc", threshold=0.5)
              return resp
