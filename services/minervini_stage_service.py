@@ -301,6 +301,10 @@ class MinerviniStageService:
                 closes.append(float(close_val))
                 lows.append(float(low_val))
             except (TypeError, ValueError):
+                self._logger.warning(
+                    f"[MinerviniStage] 가격 데이터 변환 실패 — "
+                    f"close={close_val!r}, low={low_val!r}"
+                )
                 continue
         return closes, lows
 

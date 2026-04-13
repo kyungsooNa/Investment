@@ -29,6 +29,10 @@ class StrategyExecutor:
             stage_guard:             True 시 Stage Guard 활성화. 기본 False.
             allowed_stages:          통과 허용 Stage 번호 튜플.
                                      기본 (0, 2) — 미계산(0)·상승(2)만 허용.
+                                     Stage 0(미계산)을 포함하는 이유: 데이터 부족/오류로
+                                     Stage 판정 불가 종목을 차단하지 않고 전략 자체 기준에
+                                     맡기기 위한 의도적 설계. 엄격하게 Stage 2만 허용하려면
+                                     (2,)로 변경할 것.
             guard_timeout:           종목별 Stage 조회 타임아웃(초). 기본 3.0.
             logger:                  Logger 인스턴스.
         """
