@@ -251,6 +251,28 @@ async function searchStock(codeOverride, exchangeOverride) {
                  .fav-star-btn:hover { transform: scale(1.05); background: var(--bg-card, #e8e8e8); }
                  .fav-star-btn.active { color: #ffc107; border-color: #ffc107; }
                  .detail-loading { color: var(--text-secondary, #999); font-style: italic; }
+                 .rs-rating-box {
+                     position: absolute;
+                     top: 16px;
+                     right: 64px;
+                     background: var(--bg-primary, #f5f5f5);
+                     border: 1px solid var(--border, #ccc);
+                     border-radius: 8px;
+                     height: 38px;
+                     display: flex;
+                     align-items: center;
+                     justify-content: center;
+                     padding: 0 10px;
+                     font-weight: bold;
+                     color: var(--text-secondary, #555);
+                     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                     font-size: 0.9rem;
+                 }
+                 .rs-rating-box .val {
+                     color: var(--text-primary, #333);
+                     margin-left: 6px;
+                     font-size: 1.2rem;
+                 }
             </style>
         `;
 
@@ -267,6 +289,9 @@ async function searchStock(codeOverride, exchangeOverride) {
 
         resultDiv.innerHTML = styles + `
             <div class="card stock-info-box" style="position: relative;">
+                <div id="rs-rating-container" class="rs-rating-box" style="display: none;" title="IBD/오닐 RS Rating">
+                    RS<span id="rs-rating-val" class="val">-</span>
+                </div>
                 <button id="fav-toggle-btn" class="fav-star-btn" onclick="toggleFavorite('${data.code}')" title="관심종목">☆</button>
                 ${exchangeButtons}
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -349,6 +374,7 @@ async function searchStock(codeOverride, exchangeOverride) {
 
         // Phase 2: 증권사 API 상세 정보 백그라운드 로드
         _loadStockDetail(code);
+        _loadRsRating(code);
 
     } catch (e) {
         console.error("Error in searchStock:", e);
@@ -399,6 +425,29 @@ async function toggleFavorite(code) {
         }
     } catch (e) {
         if (typeof showToast === 'function') showToast(`오류: ${e.message}`, 'error');
+    }
+}
+
+/* ── RS Rating 로드 ── */
+async function _loadRsRating(code) {
+    try {
+        const res = await fetchWithTimeout(`/api/stock/${code}/rs_rating`, {}, 5000);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json.rt_cd === "0" && json.data) {
+            const container = document.getElementById('rs-rating-container');
+            const valEl = document.getElementById('rs-rating-val');
+            if (container && valEl) {
+                const rating = json.data.rs_rating;
+                valEl.textContent = rating || '-';
+                container.style.display = 'flex';
+                if (rating >= 80) valEl.style.color = '#e94560';
+                else if (rating >= 50) valEl.style.color = '#feca57';
+                else valEl.style.color = '#1e90ff';
+            }
+        }
+    } catch (e) {
+        console.debug('[stock] RS Rating 조회 실패:', e.message);
     }
 }
 

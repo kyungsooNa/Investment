@@ -425,6 +425,21 @@ class ResRelativeStrength(BaseModel):
         return self.model_dump()
 
 
+class ResRSRating(BaseModel):
+    """RS Rating (IBD/오닐 방식 1~99 백분위 순위)."""
+    code: str
+    trade_date: str
+    rs_rating: int          # 1~99 백분위 점수
+    weighted_rs: float      # 오닐 가중 RS 원시값 (정규화 전)
+
+    def to_dict(self):
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls.model_validate(data)
+
+
 # --- 공통 응답 구조 (유지 또는 dataclass로 래핑 가능) ---
 
 class ResCommonResponse(BaseModel, Generic[T]):

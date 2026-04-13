@@ -13,6 +13,7 @@ from services.order_execution_service import OrderExecutionService
 from repositories.virtual_trade_repository import VirtualTradeRepository
 from services.virtual_trade_service import VirtualTradeService
 from repositories.stock_code_repository import StockCodeRepository
+from repositories.rs_rating_repository import RSRatingRepository
 from repositories.favorite_repository import FavoriteRepository
 from services.favorite_service import FavoriteService
 from services.indicator_service import IndicatorService
@@ -52,6 +53,7 @@ from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
+from services.rs_rating_service import RSRatingService
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
@@ -199,6 +201,21 @@ class WebAppContext:
         # Repository 초기화 (StockQueryService 주입을 위해 선 생성)
         self.stock_repository = StockRepository(logger=self.logger)
 
+        # RS Rating 저장소 및 서비스 초기화 (웹에서 종목 조회 시 활용)
+        try:
+            self.rs_rating_repository = RSRatingRepository(logger=self.logger)
+            # StockRepository 내부의 OHLCV 리포를 재사용하여 DB 커넥션 공유
+            self.rs_rating_service = RSRatingService(
+                stock_ohlcv_repository=self.stock_repository._ohlcv_repo,
+                rs_rating_repository=self.rs_rating_repository,
+                stock_code_repository=self.stock_code_repository,
+                logger=self.logger,
+                performance_profiler=self.pm,
+            )
+        except Exception as e:
+            # 실패 시에도 앱은 계속 동작하도록 로깅만 수행
+            self.logger.warning(f"RSRatingService 초기화 실패: {e}")
+
         self.market_data_service = MarketDataService(
             broker_api_wrapper=self.broker, env=self.env, logger=self.logger, market_clock=self.market_clock, cache_store=cache_store,
             market_calendar_service=self._mcs,
@@ -234,6 +251,7 @@ class WebAppContext:
         # FavoriteService에 StockQueryService, StockRepository 주입 (현재가 조회용)
         self.favorite_service.stock_query_service = self.stock_query_service
         self.favorite_service.stock_repository = self.stock_repository
+        self.favorite_service.rs_rating_service = getattr(self, "rs_rating_service", None)
         # StreamingService 초기화
         self.streaming_service = StreamingService(
             broker_api_wrapper=self.broker,
@@ -285,6 +303,7 @@ class WebAppContext:
             performance_profiler=self.pm,
             notification_service=self.notification_service,
             logger=self.logger,
+            rs_rating_service=getattr(self, "rs_rating_service", None),
         )
 
         self.ohlcv_update_task = OhlcvUpdateTask(

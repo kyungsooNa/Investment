@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from repositories.stock_repository import StockRepository
     from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
     from services.stock_query_service import StockQueryService
+    from services.rs_rating_service import RSRatingService
 
 
 # ETF/ETN 브랜드명 접두사 (RankingTask._ETF_PREFIXES 와 동일)
@@ -42,6 +43,8 @@ class NewHighTask(AfterMarketTask):
         notification_service: Optional[NotificationService] = None,
         daily_price_collector_task: Optional["DailyPriceCollectorTask"] = None,
         stock_query_service: Optional["StockQueryService"] = None,
+        rs_rating_service: Optional["RSRatingService"] = None,
+        rs_rating_min: int = 80,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -53,6 +56,8 @@ class NewHighTask(AfterMarketTask):
         self._notification_service = notification_service
         self._daily_price_collector_task = daily_price_collector_task
         self._stock_query_service = stock_query_service
+        self._rs_rating_service = rs_rating_service
+        self._rs_rating_min = rs_rating_min  # 0이면 RS Rating 필터 비활성
         self._last_collected_date: Optional[str] = None
         self._progress: Dict = {"running": False, "last_date": None, "newhigh_count": 0, "status": None}
 
@@ -107,11 +112,17 @@ class NewHighTask(AfterMarketTask):
                 snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
 
             newhigh_stocks = self._filter_newhigh(snapshots)
-            
+
             # 600일치 데이터를 바탕으로 역사적 신고가 판별
             if self._stock_query_service and newhigh_stocks:
                 newhigh_stocks = await self._enrich_historical_high(newhigh_stocks)
-                
+
+            # RS Rating 주입 및 필터링 (rs_rating_min > 0 이고 서비스가 있을 때만 활성)
+            if self._rs_rating_service and newhigh_stocks:
+                newhigh_stocks = await self._enrich_and_filter_rs_rating(
+                    newhigh_stocks, latest_trading_date
+                )
+
             self._logger.info(
                 f"NewHighTask: 신고가 {len(newhigh_stocks)}개 감지 / 전체 {len(snapshots)}개 (date={latest_trading_date})"
             )
@@ -188,6 +199,44 @@ class NewHighTask(AfterMarketTask):
                     result.append(s)
 
         result.sort(key=lambda x: x.get("market_cap") or 0, reverse=True)
+        return result
+
+    async def _enrich_and_filter_rs_rating(
+        self, stocks: List[Dict], trade_date: str
+    ) -> List[Dict]:
+        """RS Rating을 각 종목에 주입하고 rs_rating_min 미만 종목을 제거합니다.
+
+        DB에 당일 데이터가 없으면 필터링을 건너뛰고 rs_rating=0으로 주입합니다.
+        """
+        try:
+            resp = await self._rs_rating_service.get_ratings_by_date(trade_date)
+            if resp.rt_cd != "0" or not resp.data:
+                # 데이터 없으면 rs_rating=0 주입 후 필터 미적용
+                for s in stocks:
+                    s.setdefault("rs_rating", 0)
+                return stocks
+
+            rating_map: Dict[str, int] = resp.data
+        except Exception as e:
+            self._logger.warning(f"NewHighTask: RS Rating 조회 실패 ({e}) — 필터 건너뜀")
+            for s in stocks:
+                s.setdefault("rs_rating", 0)
+            return stocks
+
+        result = []
+        for s in stocks:
+            code = s.get("code", "")
+            rating = rating_map.get(code, 0)
+            s["rs_rating"] = rating
+            if self._rs_rating_min > 0 and rating < self._rs_rating_min:
+                continue
+            result.append(s)
+
+        filtered_out = len(stocks) - len(result)
+        if filtered_out > 0:
+            self._logger.info(
+                f"NewHighTask: RS Rating < {self._rs_rating_min} 종목 {filtered_out}개 제외"
+            )
         return result
 
     async def _enrich_historical_high(self, stocks: List[Dict]) -> List[Dict]:
