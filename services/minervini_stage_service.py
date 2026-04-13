@@ -67,6 +67,33 @@ class MinerviniStageService:
             1~4 (Stage), 또는 0 (데이터 부족으로 미계산).
         """
         try:
+            # 1) 우선 DB에 저장된 장마감 기준 Minervini 결과가 있는지 확인
+            try:
+                stock_repo = None
+                if hasattr(self._stock_query_svc, 'market_data_service'):
+                    stock_repo = getattr(self._stock_query_svc.market_data_service, '_stock_repo', None)
+                if stock_repo:
+                    try:
+                        snap = await stock_repo.get_latest_daily_snapshot(code)
+                        if snap and snap.get('minervini_stage') is not None:
+                            # 확인된 경우, 최신 거래일 스냅샷인지 검증
+                            latest_td = None
+                            if hasattr(self._stock_query_svc.market_data_service, '_mcs') and self._stock_query_svc.market_data_service._mcs:
+                                latest_td = await self._stock_query_svc.market_data_service._mcs.get_latest_trading_date()
+                            # snap['trade_date'] 비교 — 없으면 그대로 반환
+                            if not latest_td or snap.get('trade_date') == latest_td:
+                                try:
+                                    stage_val = int(snap.get('minervini_stage') or 0)
+                                except Exception:
+                                    stage_val = self.STAGE_UNKNOWN
+                                reason_val = snap.get('minervini_reason') or "(DB)"
+                                self._logger.info(f"[MinerviniStage] {code} DB snapshot used: stage={stage_val}")
+                                return stage_val, reason_val
+                    except Exception:
+                        # DB access 실패시 무시하고 실시간 계산 실행
+                        pass
+            except Exception:
+                pass
             try:
                 ohlcv_resp = await self._stock_query_svc.get_recent_daily_ohlcv(
                     code, limit=260

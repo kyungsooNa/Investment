@@ -273,6 +273,7 @@ class WebAppContext:
             self.minervini_update_task = MinerviniUpdateTask(
                 minervini_service=getattr(self, 'minervini_stage_service', None),
                 stock_code_repository=self.stock_code_repository,
+                stock_repository=self.stock_repository,
                 stock_query_service=self.stock_query_service,
                 broker_api_wrapper=self.broker,
                 rs_rating_service=getattr(self, 'rs_rating_service', None),

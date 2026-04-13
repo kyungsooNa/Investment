@@ -30,7 +30,8 @@ class MinerviniUpdateTask(AfterMarketTask):
     def __init__(
         self,
         minervini_service,
-        stock_code_repository: StockCodeRepository,
+        stock_code_repository: StockCodeRepository = None,
+        stock_repository=None,
         stock_query_service=None,
         broker_api_wrapper=None,
         rs_rating_service=None,
@@ -43,6 +44,7 @@ class MinerviniUpdateTask(AfterMarketTask):
         super().__init__(mcs=market_calendar_service, market_clock=market_clock, logger=logger or logging.getLogger(__name__))
         self._minervini = minervini_service
         self.stock_code_repository = stock_code_repository
+        self._stock_repo = stock_repository
         self._sqs = stock_query_service
         self._broker = broker_api_wrapper
         self._rs_svc = rs_rating_service
@@ -144,12 +146,18 @@ class MinerviniUpdateTask(AfterMarketTask):
                     if isinstance(resp, Exception):
                         continue
                     try:
-                        stage = resp[0] if isinstance(resp, (list, tuple)) else resp
+                        # resp expected as (stage, reason) tuple
+                        if isinstance(resp, (list, tuple)):
+                            stage = int(resp[0])
+                            reason = str(resp[1]) if len(resp) > 1 else ""
+                        else:
+                            stage = int(resp)
+                            reason = ""
                     except Exception:
                         continue
                     if stage == 2:
                         stage2_codes.append(code)
-                        code_map[code] = {"code": code, "name": name, "stage": 2}
+                        code_map[code] = {"code": code, "name": name, "stage": 2, "reason": reason}
 
                 # 3) Stage2 종목의 현재가/시가총액/RS 병렬 수집
                 follow_tasks = []
@@ -217,6 +225,35 @@ class MinerviniUpdateTask(AfterMarketTask):
             self._logger.info(f"Minervini Stage2 갱신 완료: {len(collected)}개, 소요: {elapsed:.1f}s")
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.BACKGROUND, NotificationLevel.INFO, "Minervini S2 갱신 완료", f"{len(collected)}개 수집, 소요: {elapsed:.1f}s")
+
+            # Persist minervini stage info into daily snapshot DB (best-effort)
+            try:
+                if self._stock_repo:
+                    trade_date = target_date or (self._mcs.get_latest_trading_date() if self._mcs else None)
+                    # if trade_date is a coroutine, await it
+                    if asyncio.iscoroutine(trade_date):
+                        trade_date = await trade_date
+                    if not trade_date:
+                        # fallback to today's date string
+                        trade_date = datetime.now().strftime('%Y%m%d')
+
+                    records = []
+                    for it in collected:
+                        records.append({
+                            "code": it.get("code"),
+                            "name": it.get("name"),
+                            "current_price": it.get("stck_prpr") or None,
+                            "change_price": it.get("prdy_vrss") or None,
+                            "change_rate": it.get("prdy_ctrt") or None,
+                            "market_cap": it.get("market_cap") or None,
+                            "market": it.get("market") or None,
+                            "minervini_stage": int(it.get("stage") or 2),
+                            "minervini_reason": it.get("reason") or None,
+                        })
+                    if records:
+                        await self._stock_repo.upsert_daily_snapshot(trade_date, records)
+            except Exception as e:
+                self._logger.warning(f"MinerviniUpdateTask DB에 쓰기 실패: {e}")
 
         except Exception as e:
             self._logger.error(f"Minervini Stage2 갱신 실패: {e}", exc_info=True)
