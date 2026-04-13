@@ -100,6 +100,12 @@ class OSBWatchlistItem:
     smart_money_score: float = 0.0
     total_score: float = 0.0
 
+    # 미너비니 트렌드 템플릿
+    ma_150d: float = 0.0            # 150일 이동평균 (Trend Template)
+    ma_200d: float = 0.0            # 200일 이동평균 (Trend Template)
+    w52_lwpr: int = 0               # 52주 최저가 (장중 저가 기준)
+    minervini_stage: int = 0        # 1~4단계 (0=미계산)
+
 
 @dataclass
 class OSBPositionState:

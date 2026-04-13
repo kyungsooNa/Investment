@@ -268,7 +268,7 @@ async def test_analyze_premium_candidate_with_zero_volume(oneil_service_fixture)
     # Assert
     # 함수는 오류를 발생시키지 않고 None을 반환해야 합니다.
     assert result is None
-    mock_sqs.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=90)
+    mock_sqs.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=260)
 
 async def test_analyze_premium_candidate_with_no_high_data(oneil_service_fixture):
     """
@@ -284,7 +284,7 @@ async def test_analyze_premium_candidate_with_no_high_data(oneil_service_fixture
 
     # Assert
     assert result is None
-    mock_sqs.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=90)
+    mock_sqs.get_recent_daily_ohlcv.assert_awaited_once_with("TESTCODE", limit=260)
     # 조기 반환되므로 추가 API 호출이 없어야 합니다.
     mock_sqs.get_current_price.assert_not_called()
 

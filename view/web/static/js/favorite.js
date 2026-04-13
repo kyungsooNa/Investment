@@ -22,7 +22,7 @@ async function loadFavoriteList() {
     const tbody = document.getElementById('favorite-list-body');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">로딩 중...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">로딩 중...</td></tr>';
 
     try {
         const resp = await fetch('/api/favorite');
@@ -41,7 +41,7 @@ function renderFavoriteTable() {
     if (!tbody) return;
 
     if (!_favoriteData || !_favoriteData.length) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-secondary);">등록된 관심종목이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-secondary);">등록된 관심종목이 없습니다.</td></tr>';
         return;
     }
 
@@ -55,6 +55,9 @@ function renderFavoriteTable() {
                 va = a.name || '';
                 vb = b.name || '';
                 return d * va.localeCompare(vb);
+            } else if (k === 'minervini_stage') {
+                va = a.minervini_stage ? parseInt(a.minervini_stage) : 0;
+                vb = b.minervini_stage ? parseInt(b.minervini_stage) : 0;
             } else if (k === 'rs_rating') {
                 va = a.rs_rating ? parseInt(a.rs_rating) : -1;
                 vb = b.rs_rating ? parseInt(b.rs_rating) : -1;
@@ -108,8 +111,17 @@ function _buildRow(item) {
     else if (item.rs_rating >= 50) rsColor = '#feca57'; // 노랑
     const rsBadge = `<span style="display:inline-block; padding:2px 8px; border-radius:4px; background:#f0f0f0; color:${rsColor}; font-weight:bold; font-size:0.85rem; border:1px solid #ccc; text-align:center;" title="RS Rating">${rsVal}</span>`;
 
+    const stageLabels = { 1: 'S1', 2: 'S2', 3: 'S3', 4: 'S4' };
+    const stageColors = { 1: '#6c757d', 2: '#28a745', 3: '#fd7e14', 4: '#dc3545' };
+    const stageTitles = { 1: '무관심', 2: '상승', 3: '고점', 4: '하락' };
+    const stageVal = item.minervini_stage;
+    const stageBadge = stageVal
+        ? `<span style="display:inline-block; padding:2px 8px; border-radius:4px; background:${stageColors[stageVal]}; color:#fff; font-weight:bold; font-size:0.82rem; text-align:center;" title="Minervini Stage: ${stageTitles[stageVal] || ''}">${stageLabels[stageVal] || stageVal}</span>`
+        : '<span style="color:#aaa; font-size:0.82rem;">-</span>';
+
     return `<tr id="fav-row-${item.code}">
         <td><a href="/stock?code=${item.code}" style="color:var(--accent); font-weight:bold; text-decoration:none;">${item.name} <span style="font-weight:normal; font-size:0.85rem; color:#888;">(${item.code})</span></a></td>
+        <td style="text-align:center;">${stageBadge}</td>
         <td style="text-align:center;">${rsBadge}</td>
         <td class="${rateClass}">${priceStr}</td>
         <td class="${rateClass}">${rateStr}</td>

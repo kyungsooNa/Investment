@@ -54,6 +54,7 @@ from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
 from services.rs_rating_service import RSRatingService
+from services.minervini_stage_service import MinerviniStageService
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
@@ -252,6 +253,19 @@ class WebAppContext:
         self.favorite_service.stock_query_service = self.stock_query_service
         self.favorite_service.stock_repository = self.stock_repository
         self.favorite_service.rs_rating_service = getattr(self, "rs_rating_service", None)
+
+        # MinerviniStageService 초기화 (stock_query_service 초기화 이후에 생성)
+        try:
+            self.minervini_stage_service = MinerviniStageService(
+                stock_query_service=self.stock_query_service,
+                rs_rating_service=getattr(self, "rs_rating_service", None),
+                logger=self.logger,
+            )
+            self.favorite_service.minervini_stage_service = self.minervini_stage_service
+        except Exception as e:
+            self.logger.warning(f"MinerviniStageService 초기화 실패: {e}")
+            self.minervini_stage_service = None
+
         # StreamingService 초기화
         self.streaming_service = StreamingService(
             broker_api_wrapper=self.broker,
@@ -336,6 +350,7 @@ class WebAppContext:
             logger=self.logger,
             performance_profiler=self.pm,
             price_subscription_service=self.price_subscription_service,
+            minervini_service=getattr(self, "minervini_stage_service", None),
         )
 
         self.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(

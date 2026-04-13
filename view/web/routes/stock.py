@@ -72,9 +72,19 @@ async def get_stock_rs_rating(code: str):
     ctx = _get_ctx()
     if not getattr(ctx, "rs_rating_service", None):
         return {"rt_cd": "1", "msg1": "RS Rating 서비스가 비활성화되어 있습니다.", "data": None}
-    
+
     resp = await ctx.rs_rating_service.get_rating(code)
     return _serialize_response(resp)
+
+
+@router.get("/stock/{code}/stage")
+async def get_stock_stage(code: str):
+    """종목의 Minervini Stage 조회 (1~4단계, 0=미계산)"""
+    ctx = _get_ctx()
+    if not getattr(ctx, "minervini_stage_service", None):
+        return {"rt_cd": "1", "msg1": "MinerviniStageService가 비활성화되어 있습니다.", "data": None}
+    stage = await ctx.minervini_stage_service.get_stage_for_code(code)
+    return {"rt_cd": "0", "msg1": "성공", "data": {"code": code, "stage": stage}}
 
 
 @router.get("/stock/{code}/detail")

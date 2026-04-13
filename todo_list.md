@@ -71,6 +71,11 @@
   - 실시간 방아쇠: REST/WS 연동하여 체결강도 120% 이상 & 5,000만 원 이상 고래 탐지 시 즉시 진입(Event-Driven).
 - [ ] **[기타 탐색]** GPT 추천 기반 추세 돌파매매(Trend Breakout), ConsolidationScanner 전략 타당성 검토.
 - [ ] **[전략]** 미너비니의 SEPA기법, VCP 추가
+  - Phase 2 진행.
+  - 미너비니 stage 수집하는 background task 추가.
+  - 2단계 종목을 telegram으로 report.
+  - 2단계 종목 list를 보여주는 web page 생성 (view/web/routes/minervini_stage.py, view/web/static/minuervini_stage.js, view/web/templates/minervini_stage.html)
+
   1. SPEA 정량화
     💤 1단계: 무관심 국면 (Stage 1: Consolidation / Neglect)
     폭락을 멈추고 바닥을 다지며 옆으로 기어가는 시기입니다.
