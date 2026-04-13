@@ -66,6 +66,17 @@ async def search_stock_by_name(q: str = ""):
     return {"results": results}
 
 
+@router.get("/stock/{code}/rs_rating")
+async def get_stock_rs_rating(code: str):
+    """종목의 RS Rating 조회"""
+    ctx = _get_ctx()
+    if not getattr(ctx, "rs_rating_service", None):
+        return {"rt_cd": "1", "msg1": "RS Rating 서비스가 비활성화되어 있습니다.", "data": None}
+    
+    resp = await ctx.rs_rating_service.get_rating(code)
+    return _serialize_response(resp)
+
+
 @router.get("/stock/{code}/detail")
 async def get_stock_detail(code: str, exchange: str = Query("KRX")):
     """증권사 API 직접 호출로 PER/PBR/EPS/BPS/업종/52주 등 상세 정보 반환 (캐시·DB 우회)."""
