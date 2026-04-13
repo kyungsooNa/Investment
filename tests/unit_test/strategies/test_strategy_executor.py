@@ -181,3 +181,102 @@ async def test_strategy_executor_live_mode_without_backtest_lookup():
 
     assert "follow_through" in result
     assert result["follow_through"] == [{"code": "005930", "name": "삼성전자"}]
+
+
+# ── Stage Guard 테스트 ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_stage_guard_filters_non_stage2():
+    """stage_guard=True 시 Stage 2·0 이외 종목은 strategy.run()에 전달되지 않는다."""
+    import strategies.strategy_executor as se
+    se = importlib.reload(se)
+    StrategyExecutor = se.StrategyExecutor
+
+    # Stage map: 0001=Stage2, 0002=Stage4(제거), 0003=Stage0(통과), 0004=Stage1(제거)
+    stage_map = {"0001": (2, "ok"), "0002": (4, "declining"), "0003": (0, "unknown"), "0004": (1, "neglect")}
+
+    mock_minervini = AsyncMock()
+    mock_minervini.get_stage_for_code.side_effect = lambda code: stage_map[code]
+
+    received_codes: list = []
+
+    class CapturingStrategy:
+        async def run(self, codes):
+            received_codes.extend(codes)
+            return {"follow_through": [], "not_follow_through": []}
+
+    executor = StrategyExecutor(
+        strategy=CapturingStrategy(),
+        minervini_stage_service=mock_minervini,
+        stage_guard=True,
+        allowed_stages=(0, 2),
+    )
+
+    await executor.execute(["0001", "0002", "0003", "0004"])
+
+    assert "0001" in received_codes   # Stage 2 → 통과
+    assert "0003" in received_codes   # Stage 0 → 통과
+    assert "0002" not in received_codes  # Stage 4 → 제거
+    assert "0004" not in received_codes  # Stage 1 → 제거
+
+
+@pytest.mark.asyncio
+async def test_stage_guard_disabled_passes_all():
+    """stage_guard=False(기본값)이면 Stage 조회 없이 모든 종목이 그대로 전달된다."""
+    import strategies.strategy_executor as se
+    se = importlib.reload(se)
+    StrategyExecutor = se.StrategyExecutor
+
+    mock_minervini = AsyncMock()
+    received_codes: list = []
+
+    class CapturingStrategy:
+        async def run(self, codes):
+            received_codes.extend(codes)
+            return {}
+
+    executor = StrategyExecutor(
+        strategy=CapturingStrategy(),
+        minervini_stage_service=mock_minervini,
+        stage_guard=False,          # 비활성
+    )
+
+    await executor.execute(["A", "B", "C"])
+
+    assert received_codes == ["A", "B", "C"]
+    mock_minervini.get_stage_for_code.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stage_guard_timeout_passes_through():
+    """Stage 조회 타임아웃 발생 시 해당 종목은 Stage 0으로 처리되어 통과한다."""
+    import strategies.strategy_executor as se
+    se = importlib.reload(se)
+    StrategyExecutor = se.StrategyExecutor
+
+    async def slow_stage(code):
+        import asyncio
+        await asyncio.sleep(99)  # 절대 완료 안 됨
+        return (2, "ok")
+
+    mock_minervini = AsyncMock()
+    mock_minervini.get_stage_for_code.side_effect = slow_stage
+
+    received_codes: list = []
+
+    class CapturingStrategy:
+        async def run(self, codes):
+            received_codes.extend(codes)
+            return {}
+
+    executor = StrategyExecutor(
+        strategy=CapturingStrategy(),
+        minervini_stage_service=mock_minervini,
+        stage_guard=True,
+        allowed_stages=(0, 2),
+        guard_timeout=0.01,         # 매우 짧은 타임아웃
+    )
+
+    await executor.execute(["X"])
+
+    assert "X" in received_codes   # 타임아웃 → Stage 0 처리 → 통과

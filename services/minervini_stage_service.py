@@ -229,8 +229,8 @@ class MinerviniStageService:
     def _is_high_volatility(self, closes: List[float], period: int = 20) -> bool:
         """ATR-proxy: 일간 절대 변화량 / 평균가 > vol_threshold (기본 2%).
 
-        향후 Phase 2에서 VCP(Volatility Contraction Pattern) 판정으로 확장 예정.
-        check_vcp_pattern(): 최근 4~5주 고점 대비 하락폭 수축 여부 체크.
+        Stage 3(고점/배분) 판정에 사용.
+        VCP 설정 중인 종목은 check_vcp_pattern()으로 별도 판별.
         """
         if len(closes) < period + 1:
             return False
@@ -238,6 +238,51 @@ class MinerviniStageService:
         changes = [abs(window[i] - window[i - 1]) for i in range(1, len(window))]
         avg_price = mean(window[1:]) or 1.0
         return (mean(changes) / avg_price) > self._vol_threshold
+
+    def check_vcp_pattern(
+        self,
+        closes: List[float],
+        highs: Optional[List[float]] = None,
+        weeks: int = 5,
+    ) -> bool:
+        """VCP(Volatility Contraction Pattern) 감지: 연속 주간 변동폭이 수축하는지 확인.
+
+        미너비니의 VCP는 매 사이클마다 고점-저점 폭이 줄어드는 패턴으로,
+        Stage 2 진입 직전 저변동성 눌림목 구간임을 나타낸다.
+        (Stage 3의 고변동성과 반대 — Stage 1→2 전환 신호)
+
+        Args:
+            closes: 종가 리스트 (오래된 순). 최소 weeks × 5개 필요.
+            highs:  장중 고가 리스트 (optional). 없으면 closes로 대체.
+            weeks:  분석할 주 수 (기본 5주 = ~25거래일).
+
+        Returns:
+            True if VCP 패턴 감지
+            (마지막 weeks−1개 주간 중 절반 이상이 이전 주보다 변동폭 수축).
+        """
+        period = weeks * 5
+        if len(closes) < period:
+            return False
+
+        window_c = closes[-period:]
+        window_h = (highs[-period:] if highs and len(highs) >= period else window_c)
+
+        weekly_ranges: List[float] = []
+        for i in range(0, period, 5):
+            wh = window_h[i: i + 5]
+            wl = window_c[i: i + 5]
+            if wh and wl:
+                weekly_ranges.append(max(wh) - min(wl))
+
+        if len(weekly_ranges) < 2:
+            return False
+
+        contractions = sum(
+            1
+            for i in range(1, len(weekly_ranges))
+            if weekly_ranges[i] < weekly_ranges[i - 1]
+        )
+        return contractions >= max(1, len(weekly_ranges) // 2)
 
     def _extract_price_series(
         self, rows: list
