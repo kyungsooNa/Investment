@@ -39,6 +39,7 @@ class MinerviniUpdateTask(AfterMarketTask):
         logger=None,
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
+        telegram_reporter=None,
         market_calendar_service=None,
     ):
         super().__init__(mcs=market_calendar_service, market_clock=market_clock, logger=logger or logging.getLogger(__name__))
@@ -50,6 +51,7 @@ class MinerviniUpdateTask(AfterMarketTask):
         self._rs_svc = rs_rating_service
         self.pm = performance_profiler or PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
+        self._telegram_reporter = telegram_reporter
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()
 
@@ -262,6 +264,16 @@ class MinerviniUpdateTask(AfterMarketTask):
             self._logger.info(f"Minervini Stage2 갱신 완료: {len(collected)}개, 소요: {elapsed:.1f}s")
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.BACKGROUND, NotificationLevel.INFO, "Minervini S2 갱신 완료", f"{len(collected)}개 수집, 소요: {elapsed:.1f}s")
+
+            # Telegram report (if reporter available)
+            try:
+                if getattr(self, '_telegram_reporter', None):
+                    # use trade_date if available, else formatted updated_at
+                    report_date = target_date or (self._updated_at.strftime('%Y%m%d') if self._updated_at else datetime.now().strftime('%Y%m%d'))
+                    # send top N (already sorted by rs)
+                    await self._telegram_reporter.send_minervini_report(collected, report_date)
+            except Exception as e:
+                self._logger.warning(f"Telegram 리포트 전송 실패: {e}")
 
             # Persist minervini stage info into daily snapshot DB (best-effort)
             try:

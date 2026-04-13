@@ -320,3 +320,55 @@ class TelegramReporter:
                 current += chunk
         if current:
             await self._send_message(current)
+
+    async def send_minervini_report(self, items: List[Dict], report_date: str, limit: int = 30):
+        """Minervini Stage2 종목 목록을 텔레그램으로 전송합니다.
+
+        items: 리스트 항목은 사전에 정렬되어 있다고 가정합니다. 각 항목은 최소한
+        'code', 'name', 'stck_prpr'(현재가), 'rs_rating', 'market_cap', 'reason' 키를 가집니다.
+        """
+        if not items:
+            await self._send_message(f"Minervini Stage2 리포트 ({report_date}) - 결과 없음")
+            return
+
+        title = f"🔎 <b>Minervini Stage2 리포트 ({report_date})</b> — 총 {len(items)}개\n"
+        await self._send_message(title)
+
+        lines = []
+        for i, it in enumerate(items[:limit], 1):
+            name = it.get('name') or ''
+            code = it.get('code') or ''
+            try:
+                price = int(it.get('stck_prpr') or it.get('current_price') or 0)
+                price_str = f"{price:,}원" if price else "-"
+            except Exception:
+                price_str = '-'
+            rs = it.get('rs_rating') or it.get('rs') or '-'
+            try:
+                mcap = it.get('market_cap') or None
+                if mcap:
+                    mcap_val = float(mcap)
+                    # if value seems large (already in won), convert to 억
+                    if mcap_val > 1_000_000_000:
+                        mcap_str = f"{mcap_val/100_000_000:.1f}억"
+                    else:
+                        mcap_str = f"{mcap_val:,.0f}"
+                else:
+                    mcap_str = '-'
+            except Exception:
+                mcap_str = '-'
+            reason = it.get('reason') or ''
+            lines.append(f"{i:2}. <b>{name}</b>({code}) {price_str} | RS:{rs} | 시총:{mcap_str} {('· '+reason) if reason else ''}")
+
+        # send in chunks to avoid Telegram message size limits
+        current = ""
+        for line in lines:
+            chunk = line + "\n"
+            if len((current + chunk).encode('utf-8')) > 4000:
+                await self._send_message(current)
+                current = chunk
+            else:
+                current += chunk
+
+        if current:
+            await self._send_message(current)

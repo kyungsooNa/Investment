@@ -281,6 +281,7 @@ class WebAppContext:
                 logger=self.logger,
                 performance_profiler=self.pm,
                 notification_service=self.notification_service,
+                telegram_reporter=getattr(self, 'telegram_reporter', None),
                 market_calendar_service=self._mcs,
             )
         except Exception as e:
