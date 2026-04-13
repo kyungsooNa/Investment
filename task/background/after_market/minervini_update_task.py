@@ -153,6 +153,8 @@ class MinerviniUpdateTask(AfterMarketTask):
             })
 
             processed = 0
+            # accumulate stage info for ALL stocks across chunks
+            all_code_map = {}
             for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
                 await self._suspend_event.wait()
 
@@ -163,22 +165,30 @@ class MinerviniUpdateTask(AfterMarketTask):
                 # 2) Stage2인 종목만 후속 정보 수집
                 stage2_codes = []
                 code_map = {}
+                # populate stage info for ALL codes in this chunk
                 for (code, name, market), resp in zip(chunk, responses):
+                    stage = None
+                    reason = ""
                     if isinstance(resp, Exception):
-                        continue
-                    try:
-                        # resp expected as (stage, reason) tuple
-                        if isinstance(resp, (list, tuple)):
-                            stage = int(resp[0])
-                            reason = str(resp[1]) if len(resp) > 1 else ""
-                        else:
-                            stage = int(resp)
-                            reason = ""
-                    except Exception:
-                        continue
-                    if stage == 2:
+                        stage = None
+                    else:
+                        try:
+                            if isinstance(resp, (list, tuple)):
+                                stage = int(resp[0])
+                                reason = str(resp[1]) if len(resp) > 1 else ""
+                            else:
+                                stage = int(resp)
+                                reason = ""
+                        except Exception:
+                            stage = None
+                    stg = int(stage) if stage is not None else 0
+                    code_map[code] = {"code": code, "name": name, "stage": stg, "reason": reason, "market": market}
+                    if stg == 2:
                         stage2_codes.append(code)
-                        code_map[code] = {"code": code, "name": name, "stage": 2, "reason": reason}
+
+                # merge chunk map into global all_code_map for persistence later
+                for k, v in code_map.items():
+                    all_code_map[k] = v
 
                 # 3) Stage2 종목의 현재가/시가총액/RS 병렬 수집
                 follow_tasks = []
@@ -230,6 +240,8 @@ class MinerviniUpdateTask(AfterMarketTask):
                     except Exception:
                         pass
                     collected.append(item)
+                    # also ensure the global map reflects any enriched fields
+                    all_code_map[code] = item
 
                 # rate-limit sleep
                 await asyncio.sleep(self.CHUNK_SLEEP_SEC)
@@ -287,7 +299,8 @@ class MinerviniUpdateTask(AfterMarketTask):
                         trade_date = datetime.now().strftime('%Y%m%d')
 
                     records = []
-                    for it in collected:
+                    # persist ALL stocks' stage info (not only Stage2)
+                    for it in all_code_map.values():
                         records.append({
                             "code": it.get("code"),
                             "name": it.get("name"),
@@ -296,7 +309,7 @@ class MinerviniUpdateTask(AfterMarketTask):
                             "change_rate": it.get("prdy_ctrt") or None,
                             "market_cap": it.get("market_cap") or None,
                             "market": it.get("market") or None,
-                            "minervini_stage": int(it.get("stage") or 2),
+                            "minervini_stage": int(it.get("stage") or 0),
                             "minervini_reason": it.get("reason") or None,
                         })
                     if records:
