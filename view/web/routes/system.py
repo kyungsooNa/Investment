@@ -132,13 +132,22 @@ async def get_background_status():
         raw_state = item.get("state")
         state_str = raw_state.value if hasattr(raw_state, "value") else str(raw_state)
 
-        # 3. IDLE 상태일 경우 방어 로직: get_progress() 호출 생략
+        # 3. IDLE 상태일 경우 방어 로직: 대부분 태스크는 get_progress() 호출을 생략하지만,
+        #    강제 수집 API로 직접 실행되는 태스크(예: force_collect로 즉시 실행)가 내부 플래그
+        #    를 통해 진행 중임을 알릴 수 있으므로 그런 경우에는 get_progress()를 호출하여
+        #    실제 진행 상태를 반영하도록 합니다.
         progress = None
         if task:
-            # 👇 전략 스케줄러는 IDLE 상태에서도 활성 전략 목록을 반환해야 하므로 예외 처리
             if state_str == "idle" and name != "strategy_scheduler":
-                # 아직 시작되지 않은 태스크의 get_progress() 호출을 막아 블로킹을 방지
-                progress = {"running": False, "status": "Waiting to start"}
+                # If the task exposes an internal progress or running flag, call get_progress()
+                if getattr(task, "_is_refreshing", False) or hasattr(task, "_progress"):
+                    try:
+                        progress = task.get_progress()
+                    except Exception as e:
+                        progress = {"running": False, "error": str(e)}
+                else:
+                    # Default safe placeholder for not-yet-started tasks
+                    progress = {"running": False, "status": "Waiting to start"}
             else:
                 try:
                     progress = task.get_progress()

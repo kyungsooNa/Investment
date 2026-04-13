@@ -56,6 +56,14 @@ class MinerviniUpdateTask(AfterMarketTask):
         self._minervini_stage2_cache: List[Dict] = []
         self._updated_at: Optional[datetime] = None
         self._is_refreshing = False
+        self._progress: Dict = {
+            "running": False,
+            "processed": 0,
+            "total": 0,
+            "collected": 0,
+            "elapsed": 0.0,
+            "status": "",
+        }
 
     @property
     def task_name(self) -> str:
@@ -132,6 +140,17 @@ class MinerviniUpdateTask(AfterMarketTask):
             total = len(all_stocks)
             collected: List[Dict] = []
 
+            # initialize progress
+            self._progress.update({
+                "running": True,
+                "processed": 0,
+                "total": total,
+                "collected": 0,
+                "elapsed": 0.0,
+                "status": "Minervini Stage 판정 및 정보 수집 중...",
+            })
+
+            processed = 0
             for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
                 await self._suspend_event.wait()
 
@@ -213,6 +232,15 @@ class MinerviniUpdateTask(AfterMarketTask):
                 # rate-limit sleep
                 await asyncio.sleep(self.CHUNK_SLEEP_SEC)
 
+                # update progress after each chunk
+                processed += len(chunk)
+                elapsed = time.time() - start_time
+                self._progress.update({
+                    "processed": processed,
+                    "collected": len(collected),
+                    "elapsed": round(elapsed, 1),
+                })
+
             # sort by rs_rating desc
             try:
                 collected.sort(key=lambda x: float(x.get('rs_rating') or 0), reverse=True)
@@ -221,6 +249,15 @@ class MinerviniUpdateTask(AfterMarketTask):
 
             self._minervini_stage2_cache = collected
             self._updated_at = datetime.now()
+            # mark progress complete
+            elapsed = time.time() - start_time
+            self._progress.update({
+                "running": False,
+                "processed": total,
+                "collected": len(collected),
+                "elapsed": round(elapsed, 1),
+                "status": "완료",
+            })
             elapsed = time.time() - start_time
             self._logger.info(f"Minervini Stage2 갱신 완료: {len(collected)}개, 소요: {elapsed:.1f}s")
             if self._notification_service:
@@ -261,6 +298,11 @@ class MinerviniUpdateTask(AfterMarketTask):
                 await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "Minervini S2 갱신 실패", str(e))
         finally:
             self._is_refreshing = False
+            # ensure running flag is cleared on any exit
+            try:
+                self._progress["running"] = False
+            except Exception:
+                pass
 
     async def get_minervini_stage2_cache(self, limit: int = 200):
         if not self._minervini_stage2_cache and not self._is_refreshing:
@@ -274,4 +316,14 @@ class MinerviniUpdateTask(AfterMarketTask):
 
     async def force_collect(self) -> None:
         self._logger.info("MinerviniUpdateTask 강제 수집 요청")
-        await self.refresh_minervini_stage2(force=True)
+        async with self._running_state():
+            if self._is_refreshing:
+                self._logger.info("Minervini 갱신 이미 진행 중 — 완료 대기 후 반환")
+                return
+            await self.refresh_minervini_stage2(force=True)
+
+    def get_progress(self) -> dict:
+        """태스크 진행률 반환 (SchedulableTask 인터페이스 구현)."""
+        p = dict(self._progress)
+        p["last_updated"] = self._updated_at.strftime('%Y-%m-%d %H:%M:%S') if self._updated_at else None
+        return p
