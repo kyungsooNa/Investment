@@ -70,3 +70,18 @@
   - 실시간 방아쇠: REST/WS 연동하여 체결강도 120% 이상 & 5,000만 원 이상 고래 탐지 시 즉시 진입(Event-Driven).
 - [ ] **[기타 탐색]** GPT 추천 기반 추세 돌파매매(Trend Breakout), ConsolidationScanner 전략 타당성 검토.
 
+
+### Review
+MinerviniUpdateTask의 _on_market_closed 로직:
+
+needs = (not self._updated_at) or (self._updated_at and self._updated_at.strftime('%Y-%m-%d') != latest_trading_date)
+이 로직은 정확하지만, datetime 객체를 직접 비교하는 방식으로 약간 더 간결하게 만들 수 있습니다.
+
+from datetime import datetime
+# ...
+latest_trading_date_dt = datetime.strptime(latest_trading_date, '%Y%m%d').date()
+needs = (not self._updated_at) or (self._updated_at.date() != latest_trading_date_dt)
+(매우 사소한 개선이며, 현재 코드도 기능적으로는 완벽합니다.)
+
+MinerviniUpdateTask의 _progress 업데이트:
+refresh_minervini_stage2 메서드 내에서 elapsed = time.time() - start_time 계산이 여러 번 반복됩니다. 마지막 finally 블록에서 한 번만 계산하여 _progress를 업데이트해도 충분할 것 같습니다. (역시 매우 사소한 최적화입니다.)
