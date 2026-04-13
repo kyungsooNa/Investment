@@ -23,11 +23,13 @@ class FavoriteService:
         stock_code_repository: StockCodeRepository,
         stock_query_service=None,
         stock_repository=None,
+        rs_rating_service=None,
     ):
         self.repository = repository
         self.stock_code_repository = stock_code_repository
         self.stock_query_service = stock_query_service
         self.stock_repository = stock_repository
+        self.rs_rating_service = rs_rating_service
 
     async def get_all(self) -> list:
         return await self.repository.get_all()
@@ -60,6 +62,7 @@ class FavoriteService:
                 "name": self.stock_code_repository.get_name_by_code(code) or code,
                 "price": None,
                 "rate": None,
+                "rs_rating": None,
             }
             for code in codes
         }
@@ -112,5 +115,13 @@ class FavoriteService:
                     price, rate = _extract_price_rate(resp.data)
                     result[code]["price"] = price
                     result[code]["rate"] = rate
+
+        # 4단계: RS Rating 점수 조회 및 병합
+        if self.rs_rating_service:
+            rs_tasks = [self.rs_rating_service.get_rating(c) for c in result.keys()]
+            rs_responses = await asyncio.gather(*rs_tasks, return_exceptions=True)
+            for code, rs_resp in zip(result.keys(), rs_responses):
+                if not isinstance(rs_resp, Exception) and getattr(rs_resp, "rt_cd", None) == "0" and rs_resp.data:
+                    result[code]["rs_rating"] = rs_resp.data.rs_rating
 
         return list(result.values())

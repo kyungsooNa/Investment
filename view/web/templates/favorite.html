@@ -25,10 +25,10 @@
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th>종목코드</th>
-                        <th>종목명</th>
-                        <th>현재가</th>
-                        <th>등락률</th>
+                        <th class="sortable" data-sort="name" onclick="sortFavorites('name')">종목명(Code)</th>
+                        <th class="sortable" data-sort="rs_rating" onclick="sortFavorites('rs_rating')">RS Rating</th>
+                        <th class="sortable" data-sort="price" onclick="sortFavorites('price')">현재가</th>
+                        <th class="sortable" data-sort="rate" onclick="sortFavorites('rate')">등락률</th>
                         <th>액션</th>
                     </tr>
                 </thead>
@@ -65,5 +65,5 @@
     }
 </script>
 <script src="/static/js/autocomplete.js?v=1"></script>
-<script src="/static/js/favorite.js?v=2"></script>
+<script src="/static/js/favorite.js?v=5"></script>
 {% endblock %}
