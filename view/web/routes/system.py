@@ -18,6 +18,7 @@ _SCHEDULE_TYPES = {
     "strategy_scheduler":  "intraday",
     "ranking_refresh":     "after_market",
     "daily_price_collector": "after_market",
+    "minervini_update":     "after_market",
     "ohlcv_update":        "after_market",
     "전일기준주도주_생성":  "after_market",
     "newhigh":             "after_market",
@@ -290,3 +291,19 @@ async def force_newhigh_update():
 
     asyncio.create_task(task.force_collect())
     return {"success": True, "message": "52주 신고가 강제 탐색이 시작되었습니다."}
+
+
+@router.post("/background/minervini/force-update")
+async def force_minervini_update():
+    """skip 조건을 무시하고 Minervini Stage2 캐시를 강제 갱신한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "minervini_update_task", None)
+    if not task:
+        raise HTTPException(status_code=503, detail="MinerviniUpdateTask가 초기화되지 않았습니다")
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 수집이 진행 중입니다")
+
+    asyncio.create_task(task.force_collect())
+    return {"success": True, "message": "Minervini S2 강제 갱신이 시작되었습니다."}
