@@ -290,13 +290,7 @@ class MinerviniUpdateTask(AfterMarketTask):
             # Persist minervini stage info into daily snapshot DB (best-effort)
             try:
                 if self._stock_repo:
-                    trade_date = target_date or (self._mcs.get_latest_trading_date() if self._mcs else None)
-                    # if trade_date is a coroutine, await it
-                    if asyncio.iscoroutine(trade_date):
-                        trade_date = await trade_date
-                    if not trade_date:
-                        # fallback to today's date string
-                        trade_date = datetime.now().strftime('%Y%m%d')
+                    trade_date = target_date or datetime.now().strftime('%Y%m%d')
 
                     records = []
                     # persist ALL stocks' stage info (not only Stage2)
