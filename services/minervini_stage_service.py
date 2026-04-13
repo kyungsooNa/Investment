@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from statistics import mean
+import asyncio
 from typing import List, Optional, TYPE_CHECKING
 
 import numpy as np
@@ -66,12 +67,17 @@ class MinerviniStageService:
             1~4 (Stage), 또는 0 (데이터 부족으로 미계산).
         """
         try:
-            ohlcv_resp = await self._stock_query_svc.get_recent_daily_ohlcv(
-                code, limit=260
-            )
+            try:
+                ohlcv_resp = await self._stock_query_svc.get_recent_daily_ohlcv(
+                    code, limit=260
+                )
+            except asyncio.CancelledError:
+                self._logger.debug(f"[MinerviniStage] {code} OHLCV 호출 취소됨")
+                return self.STAGE_UNKNOWN, "작업 취소"
+
             if not ohlcv_resp or ohlcv_resp.rt_cd != "0" or not ohlcv_resp.data:
                 self._logger.debug(f"[MinerviniStage] {code} OHLCV 데이터 없음")
-                return self.STAGE_UNKNOWN
+                return self.STAGE_UNKNOWN, "OHLCV 데이터 없음"
 
             rows = ohlcv_resp.data
             closes, lows = self._extract_price_series(rows)
@@ -80,7 +86,7 @@ class MinerviniStageService:
                 self._logger.debug(
                     f"[MinerviniStage] {code} 종가 데이터 부족 ({len(closes)}일) — STAGE_UNKNOWN"
                 )
-                return self.STAGE_UNKNOWN
+                return self.STAGE_UNKNOWN, f"데이터 부족 ({len(closes)}일)"
 
             rs_rating = await self._fetch_rs_rating(code)
             stage, reason = self.classify_stage(closes, lows, rs_rating, return_reason=True)
@@ -90,7 +96,7 @@ class MinerviniStageService:
 
         except Exception as e:
             self._logger.warning(f"[MinerviniStage] {code} Stage 계산 오류: {e}")
-            return self.STAGE_UNKNOWN
+            return self.STAGE_UNKNOWN, f"오류: {e}"
 
     # ── 핵심 계산 메서드 (동기, 순수 함수) ────────────────────────────────
 
@@ -231,7 +237,11 @@ class MinerviniStageService:
         if not self._rs_rating_svc:
             return 0
         try:
-            resp = await self._rs_rating_svc.get_rating(code)
+            try:
+                resp = await self._rs_rating_svc.get_rating(code)
+            except asyncio.CancelledError:
+                self._logger.debug(f"[MinerviniStage] {code} RS Rating 조회 취소됨")
+                return 0
             if resp and resp.rt_cd == "0" and resp.data:
                 return int(resp.data.rs_rating)
         except Exception as e:
