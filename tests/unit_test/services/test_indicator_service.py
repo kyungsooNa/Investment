@@ -861,20 +861,20 @@ async def test_get_chart_indicators_caching_hit(indicator_service_with_cache):
     # 200개 데이터 (0~199)
     full_data = [{"date": f"202501{i+1:03d}", "close": 10000 + i} for i in range(200)]
     
-    # 캐시된 데이터 (과거 139개에 대한 지표 결과)
+    # 캐시된 데이터 (과거 199개에 대한 지표 결과, confirmed_data = full_data[:-1])
     cached_indicators = {
         "ma5": [{"date": d["date"], "ma": 10000.0} for d in full_data[:-1]],
         "bb": [], "rs": []
     }
-    
+
     # get_raw 리턴: (wrapper, metadata)
     mock_cache.get_raw.return_value = ({"data": cached_indicators}, None)
-    
+
     result = await service.get_chart_indicators("005930", ohlcv_data=full_data)
-    
+
     assert result.rt_cd == ErrorCode.SUCCESS.value
-    # 결과 데이터 길이 = 140개 (캐시 139 + 오늘 1)
-    assert len(result.data["ma5"]) == 140
+    # 결과 데이터 길이 = 200개 (캐시 199 + 오늘 1)
+    assert len(result.data["ma5"]) == 200
     mock_cache.set.assert_not_called()
 
 @pytest.mark.asyncio
@@ -891,7 +891,7 @@ async def test_get_chart_indicators_cache_exception(indicator_service_with_cache
     result = await service.get_chart_indicators("005930", ohlcv_data=data)
     
     assert result.rt_cd == ErrorCode.SUCCESS.value
-    assert len(result.data["ma5"]) == 140
+    assert len(result.data["ma5"]) == 200
 
 @pytest.mark.asyncio
 async def test_get_bollinger_bands_caching_hit(indicator_service_with_cache):
