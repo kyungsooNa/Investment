@@ -130,9 +130,13 @@ class FavoriteService:
         if minervini_svc:
             async def _get_stage(code: str) -> int:
                 try:
-                    return await asyncio.wait_for(
+                    res = await asyncio.wait_for(
                         minervini_svc.get_stage_for_code(code), timeout=3.0
                     )
+                    # get_stage_for_code now returns (stage, reason)
+                    if isinstance(res, tuple) and len(res) >= 1:
+                        return int(res[0]) if res[0] is not None else 0
+                    return int(res) if res is not None else 0
                 except Exception:
                     return 0
 

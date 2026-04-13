@@ -83,8 +83,8 @@ async def get_stock_stage(code: str):
     ctx = _get_ctx()
     if not getattr(ctx, "minervini_stage_service", None):
         return {"rt_cd": "1", "msg1": "MinerviniStageService가 비활성화되어 있습니다.", "data": None}
-    stage = await ctx.minervini_stage_service.get_stage_for_code(code)
-    return {"rt_cd": "0", "msg1": "성공", "data": {"code": code, "stage": stage}}
+    stage, reason = await ctx.minervini_stage_service.get_stage_for_code(code)
+    return {"rt_cd": "0", "msg1": "성공", "data": {"code": code, "stage": stage, "reason": reason}}
 
 
 @router.get("/stock/{code}/detail")

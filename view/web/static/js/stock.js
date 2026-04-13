@@ -466,6 +466,17 @@ async function _loadStage(code) {
                 container.style.color = '#fff';
                 container.style.borderColor = colors[stage] || '#6c757d';
                 container.style.display = 'flex';
+                // 툴팁: API에서 반환한 판정 이유가 있으면 title에 설정
+                try {
+                    const reason = json.data.reason || '';
+                    if (reason && reason.trim().length > 0) {
+                        container.title = `판정 이유: ${reason}`;
+                    } else {
+                        container.title = 'Minervini Stage (1~4단계)';
+                    }
+                } catch (err) {
+                    container.title = 'Minervini Stage (1~4단계)';
+                }
             }
         }
     } catch (e) {

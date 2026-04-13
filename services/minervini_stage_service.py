@@ -57,7 +57,7 @@ class MinerviniStageService:
 
     # ── 공개 비동기 메서드 ─────────────────────────────────────────────────
 
-    async def get_stage_for_code(self, code: str) -> int:
+    async def get_stage_for_code(self, code: str) -> tuple[int, str]:
         """단일 종목의 현재 Stage를 실시간으로 계산한다.
 
         OHLCV 260일치 조회 → RS Rating 조회 → classify_stage() 호출.
@@ -83,7 +83,10 @@ class MinerviniStageService:
                 return self.STAGE_UNKNOWN
 
             rs_rating = await self._fetch_rs_rating(code)
-            return self.classify_stage(closes, lows, rs_rating)
+            stage, reason = self.classify_stage(closes, lows, rs_rating, return_reason=True)
+            # 로그에 판정 이유를 남기고 호출자에게도 반환
+            self._logger.info(f"[MinerviniStage] {code} Stage={stage} reason={reason}")
+            return stage, reason
 
         except Exception as e:
             self._logger.warning(f"[MinerviniStage] {code} Stage 계산 오류: {e}")
@@ -96,7 +99,8 @@ class MinerviniStageService:
         closes: List[float],
         lows: List[float],
         rs_rating: int = 0,
-    ) -> int:
+        return_reason: bool = False,
+    ) -> tuple[int, str] | int:
         """미너비니 트렌드 템플릿으로 Stage 1~4를 분류한다.
 
         Args:
@@ -108,7 +112,8 @@ class MinerviniStageService:
             STAGE_4 (4), STAGE_2 (2), STAGE_3 (3), STAGE_1 (1), STAGE_UNKNOWN (0).
         """
         if len(closes) < 200:
-            return self.STAGE_UNKNOWN
+            reason = f"데이터 부족 ({len(closes)}일, 200일 필요)"
+            return (self.STAGE_UNKNOWN, reason) if return_reason else self.STAGE_UNKNOWN
 
         price = closes[-1]
         ma50  = mean(closes[-50:])
@@ -128,8 +133,12 @@ class MinerviniStageService:
         w52_low = min(low_window) if low_window else min(closes)
 
         # ── Stage 4 (최우선 필터) ──────────────────────────────────────────
-        if price < ma200 or ma200_slope <= 0:
-            return self.STAGE_4_DECLINING
+        if price < ma200:
+            reason = f"가격이 MA200 아래 (가격={price:.2f} < MA200={ma200:.2f})"
+            return (self.STAGE_4_DECLINING, reason) if return_reason else self.STAGE_4_DECLINING
+        if ma200_slope <= 0:
+            reason = f"MA200 기울기 비양수 (기울기={ma200_slope:.6f})"
+            return (self.STAGE_4_DECLINING, reason) if return_reason else self.STAGE_4_DECLINING
 
         # ── Stage 2 (트렌드 템플릿 8조건) ────────────────────────────────
         # 조건 8: RS Rating — 데이터 없으면(0) skip하고 경고 로그
@@ -151,14 +160,20 @@ class MinerviniStageService:
             and rs_ok                    # ⑧  RS Rating >= 70
         )
         if is_stage2:
-            return self.STAGE_2_ADVANCING
+            reason = (
+                f"트렌드 템플릿 충족: ma200_slope={ma200_slope:.6f}, ma50={ma50:.2f}, "
+                f"ma150={ma150:.2f}, ma200={ma200:.2f}, 가격={price:.2f}, RS={rs_rating}"
+            )
+            return (self.STAGE_2_ADVANCING, reason) if return_reason else self.STAGE_2_ADVANCING
 
         # ── Stage 3 (고점/배분) ───────────────────────────────────────────
         if price < ma50 and self._is_high_volatility(closes):
-            return self.STAGE_3_TOPPING
+            reason = f"MA50 아래이면서 고변동성 (가격={price:.2f} < MA50={ma50:.2f})"
+            return (self.STAGE_3_TOPPING, reason) if return_reason else self.STAGE_3_TOPPING
 
         # ── Stage 1 (무관심/횡보) ─────────────────────────────────────────
-        return self.STAGE_1_NEGLECT
+        reason = "기본: 무관심/횡보"
+        return (self.STAGE_1_NEGLECT, reason) if return_reason else self.STAGE_1_NEGLECT
 
     # ── 내부 헬퍼 ──────────────────────────────────────────────────────────
 
