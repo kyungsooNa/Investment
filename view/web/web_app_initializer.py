@@ -26,6 +26,7 @@ from scheduler.foreground_scheduler import ForegroundScheduler
 from task.background.intraday.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.after_market.ranking_task import RankingTask
+from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
@@ -54,6 +55,7 @@ from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
 from services.rs_rating_service import RSRatingService
+from services.minervini_stage_service import MinerviniStageService
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
@@ -80,6 +82,7 @@ class WebAppContext:
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
+        self.minervini_update_task: MinerviniUpdateTask = None
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self.daily_price_collector_task: DailyPriceCollectorTask = None
         self.ohlcv_update_task: OhlcvUpdateTask = None
@@ -252,6 +255,39 @@ class WebAppContext:
         self.favorite_service.stock_query_service = self.stock_query_service
         self.favorite_service.stock_repository = self.stock_repository
         self.favorite_service.rs_rating_service = getattr(self, "rs_rating_service", None)
+
+        # MinerviniStageService 초기화 (stock_query_service 초기화 이후에 생성)
+        try:
+            self.minervini_stage_service = MinerviniStageService(
+                stock_query_service=self.stock_query_service,
+                rs_rating_service=getattr(self, "rs_rating_service", None),
+                logger=self.logger,
+            )
+            self.favorite_service.minervini_stage_service = self.minervini_stage_service
+        except Exception as e:
+            self.logger.warning(f"MinerviniStageService 초기화 실패: {e}")
+            self.minervini_stage_service = None
+
+        # Minervini Stage2 백그라운드 업데이트 태스크 초기화
+        try:
+            self.minervini_update_task = MinerviniUpdateTask(
+                minervini_service=getattr(self, 'minervini_stage_service', None),
+                stock_code_repository=self.stock_code_repository,
+                stock_repository=self.stock_repository,
+                stock_query_service=self.stock_query_service,
+                broker_api_wrapper=self.broker,
+                rs_rating_service=getattr(self, 'rs_rating_service', None),
+                market_clock=self.market_clock,
+                logger=self.logger,
+                performance_profiler=self.pm,
+                notification_service=self.notification_service,
+                telegram_reporter=getattr(self, 'telegram_reporter', None),
+                market_calendar_service=self._mcs,
+            )
+        except Exception as e:
+            self.logger.warning(f"MinerviniUpdateTask 초기화 실패: {e}")
+            self.minervini_update_task = None
+
         # StreamingService 초기화
         self.streaming_service = StreamingService(
             broker_api_wrapper=self.broker,
@@ -336,6 +372,8 @@ class WebAppContext:
             logger=self.logger,
             performance_profiler=self.pm,
             price_subscription_service=self.price_subscription_service,
+            rs_rating_service=getattr(self, "rs_rating_service", None),
+            minervini_service=getattr(self, "minervini_stage_service", None),
         )
 
         self.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
@@ -390,6 +428,8 @@ class WebAppContext:
         )
         if self.ranking_task:
             self.background_scheduler.register(self.ranking_task)
+        if self.minervini_update_task:
+            self.background_scheduler.register(self.minervini_update_task)
         if self.websocket_watchdog_task:
             self.background_scheduler.register(self.websocket_watchdog_task)
         if self.daily_price_collector_task:

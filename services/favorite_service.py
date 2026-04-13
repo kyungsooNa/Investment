@@ -63,6 +63,7 @@ class FavoriteService:
                 "price": None,
                 "rate": None,
                 "rs_rating": None,
+                "minervini_stage": None,
             }
             for code in codes
         }
@@ -123,5 +124,27 @@ class FavoriteService:
             for code, rs_resp in zip(result.keys(), rs_responses):
                 if not isinstance(rs_resp, Exception) and getattr(rs_resp, "rt_cd", None) == "0" and rs_resp.data:
                     result[code]["rs_rating"] = rs_resp.data.rs_rating
+
+        # 5단계: Minervini Stage 조회 및 병합 (병렬, 3초 timeout)
+        minervini_svc = getattr(self, "minervini_stage_service", None)
+        if minervini_svc:
+            async def _get_stage(code: str) -> int:
+                try:
+                    res = await asyncio.wait_for(
+                        minervini_svc.get_stage_for_code(code), timeout=3.0
+                    )
+                    # get_stage_for_code now returns (stage, reason)
+                    if isinstance(res, tuple) and len(res) >= 1:
+                        return int(res[0]) if res[0] is not None else 0
+                    return int(res) if res is not None else 0
+                except Exception:
+                    return 0
+
+            stage_results = await asyncio.gather(
+                *[_get_stage(c) for c in result.keys()], return_exceptions=True
+            )
+            for code, stage in zip(result.keys(), stage_results):
+                if not isinstance(stage, Exception) and isinstance(stage, int) and stage > 0:
+                    result[code]["minervini_stage"] = stage
 
         return list(result.values())

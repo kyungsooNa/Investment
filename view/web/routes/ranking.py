@@ -17,6 +17,22 @@ async def get_ranking_progress():
     return {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
 
 
+@router.get("/ranking/minervini_stage2")
+async def get_minervini_stage2():
+    """Minervini Stage 2에 해당하는 전체 종목 목록을 RS 순으로 반환한다.
+
+    MinerviniUpdateTask가 장 마감 후 미리 계산하고 캐시해 둔 결과를 반환한다.
+    각 항목은 dict: { code, name, stck_prpr, prdy_ctrt, stage, rs_rating, market_cap }
+    """
+    ctx = _get_ctx()
+    if not ctx or not getattr(ctx, "minervini_update_task", None):
+        return {"rt_cd": "1", "msg1": "MinerviniUpdateTask 미설정", "data": None}
+
+    items = await ctx.minervini_update_task.get_minervini_stage2_cache()
+
+    return {"rt_cd": "0", "msg1": "성공", "data": items}
+
+
 @router.get("/ranking/{category}")
 async def get_ranking(category: str):
     """랭킹 조회 (rise/fall/volume/trading_value/foreign_buy/foreign_sell/inst_buy/inst_sell/prsn_buy/prsn_sell)."""
@@ -38,6 +54,8 @@ async def get_ranking(category: str):
             "data": _serialize_list_items(resp.data)
         }
     return _serialize_response(resp)
+
+
 
 
 @router.get("/top-market-cap")

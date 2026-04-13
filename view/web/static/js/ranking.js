@@ -63,7 +63,12 @@ async function loadRanking(category) {
     _showRankingSkeleton();
 
     try {
-        const res = await fetchWithTimeout(`/api/ranking/${category}`);
+        let res;
+        if (category === 'minervini_stage2') {
+            res = await fetchWithTimeout(`/api/ranking/minervini_stage2`);
+        } else {
+            res = await fetchWithTimeout(`/api/ranking/${category}`);
+        }
         const json = await res.json();
 
         if (json.rt_cd !== "0") {
@@ -332,9 +337,22 @@ function renderRankingTable() {
             + `<th class="${sortCls('volume')}" onclick="sortRanking('volume')">거래량</th>`;
     }
 
+    // Minervini Stage 2 전용 헤더
+    const isMinervini = (cat === 'minervini_stage2');
+    if (isMinervini) {
+        headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
+            + `<th class="${sortCls('name')}" onclick="sortRanking('name')">종목명</th>`
+            + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
+            + `<th class="${sortCls('rate')}" onclick="sortRanking('rate')">등락률</th>`
+            + `<th class="${sortCls('stage')}" onclick="sortRanking('stage')">Stage</th>`
+            + `<th class="${sortCls('rs')}" onclick="sortRanking('rs')">RS</th>`
+            + `<th class="${sortCls('market_cap')}" onclick="sortRanking('market_cap')">시가총액</th>`;
+    }
+
     let data = _rankingData.slice();
     if (_rankingSortState.key) {
-        data = rankingSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
+        if (isMinervini) data = _minerviniSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
+        else data = rankingSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
     }
 
     let rows = '';
@@ -343,6 +361,9 @@ function renderRankingTable() {
         const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
         const code = item.stck_shrn_iscd || item.iscd || item.mksc_shrn_iscd || item.code || '';
         let extraCols;
+        if (isMinervini) {
+            extraCols = `<td>S${item.stage}</td><td>${item.rs_rating || '-'}</td><td>${formatTradingValue(item.market_cap || 0)}</td>`;
+        } else
         if (isCombined) {
             const pbmnVal = formatTradingValue(String(item._combined_pbmn));
             const qtyVal = parseInt(item._combined_qty || 0).toLocaleString();
@@ -455,3 +476,39 @@ function rankingSortCompare(data, key, dir) {
     });
     return sorted;
 }
+
+    // 추가: Minervini 전용 정렬 지원
+    function _minerviniSortCompare(data, key, dir) {
+        const sorted = data.slice();
+        const d = dir === 'asc' ? 1 : -1;
+        sorted.sort((a, b) => {
+            let va = 0, vb = 0;
+            if (key === 'name') {
+                va = (a.name || '').toLowerCase();
+                vb = (b.name || '').toLowerCase();
+                return d * va.localeCompare(vb);
+            } else if (key === 'price') {
+                va = parseInt(a.stck_prpr || 0);
+                vb = parseInt(b.stck_prpr || 0);
+            } else if (key === 'rate') {
+                va = parseFloat(a.prdy_ctrt || 0);
+                vb = parseFloat(b.prdy_ctrt || 0);
+            } else if (key === 'stage') {
+                va = parseInt(a.stage || 0);
+                vb = parseInt(b.stage || 0);
+            } else if (key === 'rs') {
+                va = parseInt(a.rs_rating || 0);
+                vb = parseInt(b.rs_rating || 0);
+            } else if (key === 'market_cap') {
+                va = parseInt(a.market_cap || 0);
+                vb = parseInt(b.market_cap || 0);
+            } else if (key === 'rank') {
+                va = parseInt(a.data_rank || a.rank || 0);
+                vb = parseInt(b.data_rank || b.rank || 0);
+            } else {
+                return 0;
+            }
+            return d * (va - vb);
+        });
+        return sorted;
+    }

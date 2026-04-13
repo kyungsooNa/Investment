@@ -138,8 +138,8 @@ function renderStockChart(period) {
     const candles = new Array(len);
     const volumes = new Array(len);
     const volumeColors = new Array(len);
-    const ma5 = new Array(len), ma10 = new Array(len), ma20 = new Array(len);
-    const ma60 = new Array(len), ma120 = new Array(len);
+    const ma5 = new Array(len), ma10 = new Array(len), ma20 = new Array(len), ma50 = new Array(len);
+    const ma60 = new Array(len), ma120 = new Array(len), ma150 = new Array(len), ma200 = new Array(len);
     const bbUpper = new Array(len), bbMiddle = new Array(len), bbLower = new Array(len);
 
     const currentPrice = slicedRaw[len - 1].close;
@@ -164,8 +164,11 @@ function renderStockChart(period) {
         if (ind.ma5[rawIdx])   ma5[i]   = { x: i, y: ind.ma5[rawIdx].ma };
         if (ind.ma10[rawIdx])  ma10[i]  = { x: i, y: ind.ma10[rawIdx].ma };
         if (ind.ma20[rawIdx])  ma20[i]  = { x: i, y: ind.ma20[rawIdx].ma };
+        if (ind.ma50 && ind.ma50[rawIdx])  ma50[i]  = { x: i, y: ind.ma50[rawIdx].ma };
         if (ind.ma60[rawIdx])  ma60[i]  = { x: i, y: ind.ma60[rawIdx].ma };
         if (ind.ma120[rawIdx]) ma120[i] = { x: i, y: ind.ma120[rawIdx].ma };
+        if (ind.ma150 && ind.ma150[rawIdx]) ma150[i] = { x: i, y: ind.ma150[rawIdx].ma };
+        if (ind.ma200 && ind.ma200[rawIdx]) ma200[i] = { x: i, y: ind.ma200[rawIdx].ma };
         if (ind.bb[rawIdx]) {
             bbUpper[i]  = { x: i, y: ind.bb[rawIdx].upper };
             bbMiddle[i] = { x: i, y: ind.bb[rawIdx].middle };
@@ -259,8 +262,11 @@ function renderStockChart(period) {
                 { label: 'MA5', data: ma5, type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA10', data: ma10, type: 'line', borderColor: '#51cf66', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] Green
                 { label: 'MA20', data: ma20, type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA50', data: ma50, type: 'line', borderColor: '#ff8a00', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA60', data: ma60, type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'MA120', data: ma120, type: 'line', borderColor: '#a29bfe', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] 보라색 계열
+                { label: 'MA150', data: ma150, type: 'line', borderColor: '#6f42c1', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA200', data: ma200, type: 'line', borderColor: '#2ecc71', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
                 { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
                 { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
                 { label: 'BB Middle', data: bbMiddle, type: 'line', borderColor: 'rgba(255, 215, 0, 0.8)', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y', fill: false, order: 3, hidden: true }, // [수정] MA20과 중복되므로 기본 숨김

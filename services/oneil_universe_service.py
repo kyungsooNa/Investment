@@ -22,6 +22,7 @@ from services.price_subscription_service import SubscriptionPriority
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from services.rs_rating_service import RSRatingService
+    from services.minervini_stage_service import MinerviniStageService
 
 def _chunked(lst, size):
     for i in range(0, len(lst), size):
@@ -50,6 +51,7 @@ class OneilUniverseService:
         performance_profiler: Optional[PerformanceProfiler] = None,
         price_subscription_service=None,
         rs_rating_service: Optional["RSRatingService"] = None,
+        minervini_service: Optional["MinerviniStageService"] = None,
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
@@ -61,6 +63,7 @@ class OneilUniverseService:
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._price_sub_svc = price_subscription_service
         self._rs_rating_service = rs_rating_service
+        self._minervini_svc = minervini_service
 
         # 상태 관리
         self._watchlist: Dict[str, OSBWatchlistItem] = {}
@@ -262,7 +265,7 @@ class OneilUniverseService:
     async def _analyze_premium_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
         """장마감 후 전일 기준 우량주(Pool A) 분석. 
         어제까지의 확정된 일봉 데이터만 사용하므로 별도의 슬라이싱이 필요하지 않습니다."""
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=90)
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=260)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
 
         if not ohlcv:
@@ -284,9 +287,16 @@ class OneilUniverseService:
 
         ma_20d = sum(closes[-20:]) / 20
         ma_50d = sum(closes[-50:]) / 50
+        ma_150d = sum(closes[-150:]) / 150 if len(closes) >= 150 else 0.0
+        ma_200d = sum(closes[-200:]) / 200 if len(closes) >= 200 else 0.0
         high_20d = int(max(highs))
         avg_vol_20d = sum(volumes) / len(volumes)
         prev_close = closes[-1]
+
+        # 52주 저가: 장중 저가(low) 기준 — 미너비니 원칙
+        lows_all = [r.get("low", 0) for r in ohlcv if r.get("low") is not None]
+        w52_lows = lows_all[-252:] if len(lows_all) >= 252 else lows_all
+        w52_lwpr = int(min(w52_lows)) if w52_lows else 0
 
         # 필터: 거래대금, 정배열
         recent_5 = ohlcv[-5:]
@@ -366,6 +376,14 @@ class OneilUniverseService:
 
         market = "KOSDAQ" if self.stock_code_repository.is_kosdaq(code) else "KOSPI"
 
+        # 미너비니 Stage 4 하드 필터 (MA200 데이터가 충분할 때만 적용)
+        minervini_stage = 0
+        if self._minervini_svc and len(closes) >= 200:
+            minervini_stage = self._minervini_svc.classify_stage(closes, lows_all, rs_rating=0)
+            if minervini_stage == 4:
+                if logger: logger.debug({"event": "drop", "code": code, "reason": "minervini_stage4"})
+                return None
+
         if logger: logger.debug({"event": "selected", "code": code, "name": name})
 
         return OSBWatchlistItem(
@@ -373,7 +391,8 @@ class OneilUniverseService:
             high_20d=high_20d, ma_20d=ma_20d, ma_50d=ma_50d,
             avg_vol_20d=avg_vol_20d, bb_width_min_20d=bb_min, prev_bb_width=prev_width,
             w52_hgpr=w52_hgpr, avg_trading_value_5d=tv_5d, market_cap=stck_llam,
-            rs_return_3m=rs_return
+            rs_return_3m=rs_return,
+            ma_150d=ma_150d, ma_200d=ma_200d, w52_lwpr=w52_lwpr, minervini_stage=minervini_stage,
         )
 
     async def _analyze_surge_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
@@ -898,11 +917,15 @@ class OneilUniverseService:
         logger.debug({"event": "compute_total_scores_started", "item_count": len(items)})
         for item in items:
             item.total_score = item.rs_score + item.profit_growth_score + item.smart_money_score
+            # 미너비니 Stage 2 가산점: 트렌드 템플릿 충족 종목 우선
+            if item.minervini_stage == 2:
+                item.total_score += 20.0
             if item.total_score > 0:
                 logger.debug({
                     "event": "total_score_calculated", "code": item.code, "name": item.name,
                     "rs_score": item.rs_score, "profit_score": item.profit_growth_score,
                     "smart_money_score": item.smart_money_score,
+                    "minervini_stage": item.minervini_stage,
                     "total_score": item.total_score
                 })
         logger.debug({"event": "compute_total_scores_finished"})

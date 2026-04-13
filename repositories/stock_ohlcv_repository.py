@@ -87,6 +87,8 @@ class StockOhlcvRepository:
                         w52_high INTEGER,
                         w52_low INTEGER,
                         market TEXT,
+                        minervini_stage INTEGER,
+                        minervini_reason TEXT,
                         collected_at REAL,
                         PRIMARY KEY (code, trade_date)
                     )
@@ -97,6 +99,14 @@ class StockOhlcvRepository:
                 )
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository DB 초기화 실패: {e}")
+        # 기존 DB를 사용하는 경우 컬럼이 없을 수 있으므로 ALTER TABLE 시도
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute("ALTER TABLE daily_prices ADD COLUMN minervini_stage INTEGER")
+                conn.execute("ALTER TABLE daily_prices ADD COLUMN minervini_reason TEXT")
+        except Exception:
+            # 이미 컬럼이 있거나 ALTER 실패하면 무시
+            pass
 
     @asynccontextmanager
     async def _get_write_connection(self):
@@ -311,7 +321,7 @@ class StockOhlcvRepository:
                         volume, trading_value, market_cap,
                         per, pbr, eps,
                         w52_high, w52_low,
-                        market, collected_at
+                        market, minervini_stage, minervini_reason, collected_at
                     ) VALUES (
                         :code, :trade_date, :name,
                         :current_price, :open_price, :high_price, :low_price, :prev_close,
@@ -319,10 +329,12 @@ class StockOhlcvRepository:
                         :volume, :trading_value, :market_cap,
                         :per, :pbr, :eps,
                         :w52_high, :w52_low,
-                        :market, :collected_at
+                        :market, :minervini_stage, :minervini_reason, :collected_at
                     )
                     """,
-                    [{**r, "trade_date": trade_date, "collected_at": now} for r in records],
+                    [{**r, "trade_date": trade_date, "collected_at": now,
+                      "minervini_stage": r.get("minervini_stage"), "minervini_reason": r.get("minervini_reason")}
+                     for r in records],
                 )
             self._logger.debug(
                 f"StockOhlcvRepository: daily_prices {len(records)}건 upsert 완료 (date={trade_date})"

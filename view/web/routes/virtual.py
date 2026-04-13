@@ -410,3 +410,54 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
 
     ctx.pm.log_timer("get_virtual_history", t_start)
     return _sanitize_for_json({"trades": trades, **agg})
+
+
+@router.get("/virtual/stage3-alerts")
+async def get_stage3_alerts():
+    """보유 종목 중 Minervini Stage 3(고점)에 진입한 종목 목록을 반환한다.
+
+    VirtualTradeService에서 HOLD 포지션을 가져온 뒤,
+    MinerviniStageService로 각 종목의 현재 Stage를 병렬 조회한다.
+    Stage 3 종목에는 "Trailing Stop 강화 권장" 알림이 포함된다.
+
+    MinerviniStageService가 미초기화된 경우 Stage 데이터 없이
+    보유 종목 목록만 반환한다 (graceful degradation).
+    """
+    ctx = _get_ctx()
+    vm = getattr(ctx, "virtual_trade_service", None)
+    minervini_svc = getattr(ctx, "minervini_stage_service", None)
+
+    if not vm:
+        return {"alerts": [], "error": "VirtualTradeService 미초기화"}
+
+    holds = vm.get_holds()
+    if not holds:
+        return {"alerts": [], "count": 0}
+
+    async def _check_stage(hold: dict):
+        code = hold.get("code")
+        if not code:
+            return None
+        stage = 0
+        if minervini_svc:
+            try:
+                result = await asyncio.wait_for(
+                    minervini_svc.get_stage_for_code(code), timeout=5.0
+                )
+                stage = result[0] if isinstance(result, tuple) else int(result)
+            except Exception:
+                stage = 0
+        if stage == 3:
+            return {
+                "code": code,
+                "strategy": hold.get("strategy"),
+                "buy_price": hold.get("buy_price"),
+                "buy_date": hold.get("buy_date"),
+                "stage": stage,
+                "alert": "Stage 3(고점) 진입 — Trailing Stop 강화 권장",
+            }
+        return None
+
+    results = await asyncio.gather(*[_check_stage(h) for h in holds])
+    alerts = [r for r in results if r is not None]
+    return {"alerts": alerts, "count": len(alerts)}

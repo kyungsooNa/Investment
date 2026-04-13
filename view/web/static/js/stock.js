@@ -251,6 +251,22 @@ async function searchStock(codeOverride, exchangeOverride) {
                  .fav-star-btn:hover { transform: scale(1.05); background: var(--bg-card, #e8e8e8); }
                  .fav-star-btn.active { color: #ffc107; border-color: #ffc107; }
                  .detail-loading { color: var(--text-secondary, #999); font-style: italic; }
+                 .stage-badge-box {
+                     position: absolute;
+                     top: 16px;
+                     right: 142px;
+                     background: var(--bg-primary, #f5f5f5);
+                     border: 1px solid var(--border, #ccc);
+                     border-radius: 8px;
+                     height: 38px;
+                     display: none;
+                     align-items: center;
+                     justify-content: center;
+                     padding: 0 10px;
+                     font-weight: bold;
+                     font-size: 0.85rem;
+                     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                 }
                  .rs-rating-box {
                      position: absolute;
                      top: 16px;
@@ -289,6 +305,9 @@ async function searchStock(codeOverride, exchangeOverride) {
 
         resultDiv.innerHTML = styles + `
             <div class="card stock-info-box" style="position: relative;">
+                <div id="stage-badge-container" class="stage-badge-box" title="Minervini Stage (1~4단계)">
+                    <span id="stage-badge-val">-</span>
+                </div>
                 <div id="rs-rating-container" class="rs-rating-box" style="display: none;" title="IBD/오닐 RS Rating">
                     RS<span id="rs-rating-val" class="val">-</span>
                 </div>
@@ -375,6 +394,7 @@ async function searchStock(codeOverride, exchangeOverride) {
         // Phase 2: 증권사 API 상세 정보 백그라운드 로드
         _loadStockDetail(code);
         _loadRsRating(code);
+        _loadStage(code);
 
     } catch (e) {
         console.error("Error in searchStock:", e);
@@ -425,6 +445,38 @@ async function toggleFavorite(code) {
         }
     } catch (e) {
         if (typeof showToast === 'function') showToast(`오류: ${e.message}`, 'error');
+    }
+}
+
+/* ── Minervini Stage 로드 ── */
+async function _loadStage(code) {
+    try {
+        const res = await fetchWithTimeout(`/api/stock/${code}/stage`, {}, 8000);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json.rt_cd === "0" && json.data && json.data.stage > 0) {
+            const container = document.getElementById('stage-badge-container');
+            const valEl = document.getElementById('stage-badge-val');
+            if (container && valEl) {
+                const stage = json.data.stage;
+                const labels = { 1: 'S1 무관심', 2: 'S2 상승', 3: 'S3 고점', 4: 'S4 하락' };
+                const colors = { 1: '#6c757d', 2: '#28a745', 3: '#fd7e14', 4: '#dc3545' };
+                valEl.textContent = labels[stage] || `S${stage}`;
+                container.style.background = colors[stage] || '#6c757d';
+                container.style.color = '#fff';
+                container.style.borderColor = colors[stage] || '#6c757d';
+                container.style.display = 'flex';
+                // 툴팁: API에서 반환한 판정 이유가 있으면 title에 설정
+                const reason = json.data.reason || '';
+                if (reason && reason.trim().length > 0) {
+                    container.title = `판정 이유: ${reason}`;
+                } else {
+                    container.title = 'Minervini Stage (1~4단계)';
+                }
+            }
+        }
+    } catch (e) {
+        console.debug('[stock] Minervini Stage 조회 실패:', e.message);
     }
 }
 
