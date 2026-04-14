@@ -447,3 +447,65 @@ async def test_send_newhigh_report_with_historical_badge(telegram_reporter):
     assert "👑역 <b>삼성전자</b>" in full_message
     assert "👑역 <b>SK하이닉스</b>" not in full_message
     assert "<b>SK하이닉스</b>" in full_message
+
+
+@pytest.mark.asyncio
+async def test_handle_event_unknown_level_default_emoji(telegram_notifier, sample_event):
+    """알 수 없는 레벨 값일 때 기본 이모지가 사용되는지 검증"""
+    # 이벤트의 level을 MagicMock으로 대체하여 .value 속성이 매핑되지 않게 함
+    sample_event.level = MagicMock(value="MYSTIC")
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        await telegram_notifier.handle_event(sample_event)
+        payload = mock_post.call_args[1]["json"]
+        # 매핑되지 않는 레벨은 기본 이모지 '🔔' 사용
+        assert "🔔" in payload["text"]
+
+
+def test_format_ranking_table_no_ratio(telegram_reporter):
+    """show_ratio=False 분기에서 비중 컬럼이 포함되지 않는지 검증"""
+    data = [
+        {'hts_kor_isnm': 'A', 'value': '100000000', 'prdy_ctrt': '2.0'},
+    ]
+    table = telegram_reporter._format_ranking_table("No Ratio", data, 'value', show_ratio=False)
+    # '비중' 컬럼은 포함되지 않아야 함
+    assert "비중" not in table
+    assert "No Ratio" in table
+
+
+@pytest.mark.asyncio
+async def test_send_newhigh_report_empty(telegram_reporter):
+    """빈 신고가 리스트일 때 '신고가 종목 없음' 메시지를 전송하는지 검증"""
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    await telegram_reporter.send_newhigh_report([], "2026-05-15")
+    calls = telegram_reporter._send_message.call_args_list
+    full = "".join([c[0][0] for c in calls])
+    assert "신고가 종목 없음" in full
+
+
+@pytest.mark.asyncio
+async def test_send_minervini_report_empty_and_normal(telegram_reporter):
+    """Minervini 리포트의 빈 리스트 처리와 정상 항목 전송 검증"""
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    # 빈 리스트 -> 결과 없음 메시지 전송
+    await telegram_reporter.send_minervini_report([], "2026-05-15")
+    assert telegram_reporter._send_message.called
+
+    telegram_reporter._send_message.reset_mock()
+
+    items = [
+        {'code':'005930','name':'삼성전자','stck_prpr':'80000','rs_rating':'70','market_cap':'2000000000','reason':'테스트 사유'},
+        {'code':'000660','name':'SK하이닉스','stck_prpr':None,'rs_rating':None,'market_cap':'5000000000000','reason':''}
+    ]
+
+    await telegram_reporter.send_minervini_report(items, "2026-05-15", limit=2)
+    calls = telegram_reporter._send_message.call_args_list
+    full_message = "".join([call[0][0] for call in calls])
+    assert "Minervini Stage2 리포트" in full_message
+    assert "삼성전자" in full_message
+    assert "SK하이닉스" in full_message
+    assert "테스트 사유" in full_message
