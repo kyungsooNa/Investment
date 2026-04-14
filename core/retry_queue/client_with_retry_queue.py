@@ -34,8 +34,14 @@ class ClientWithRetryQueue:
     def __init__(self, client, queue: ApiRequestQueue):
         self._client = client
         self._queue = queue
+        # 캐시된 래퍼 함수 저장: 동적 함수 객체 생성을 방지
+        self._method_cache: dict = {}
 
     def __getattr__(self, name: str):
+        # 이미 생성된 래퍼가 있으면 재사용
+        if name in self._method_cache:
+            return self._method_cache[name]
+
         attr = getattr(self._client, name)
 
         # 동기 메서드 또는 제외 목록 → 그대로 반환
@@ -47,6 +53,8 @@ class ClientWithRetryQueue:
             future = await self._queue.submit(attr, *args, request_id=name, **kwargs)
             return await future
 
+        # 캐싱 후 반환
+        self._method_cache[name] = queued
         return queued
 
 

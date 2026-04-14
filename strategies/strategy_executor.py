@@ -21,6 +21,7 @@ class StrategyExecutor:
         allowed_stages: Tuple[int, ...] = (0, 2),
         guard_timeout: float = 3.0,
         logger: Optional[logging.Logger] = None,
+        max_stage_concurrency: int = 20,
     ):
         """
         Args:
@@ -42,6 +43,7 @@ class StrategyExecutor:
         self._allowed_stages = allowed_stages
         self._guard_timeout = guard_timeout
         self._logger = logger or logging.getLogger(__name__)
+        self._max_stage_concurrency = max_stage_concurrency
 
     async def execute(self, stock_codes: List[str]) -> Dict:
         filtered = await self._apply_stage_guard(stock_codes)
@@ -58,12 +60,15 @@ class StrategyExecutor:
         if not self._stage_guard or not self._minervini_svc:
             return stock_codes
 
+        sem = asyncio.Semaphore(self._max_stage_concurrency)
+
         async def _safe_stage(code: str) -> int:
             try:
-                result = await asyncio.wait_for(
-                    self._minervini_svc.get_stage_for_code(code),
-                    timeout=self._guard_timeout,
-                )
+                async with sem:
+                    result = await asyncio.wait_for(
+                        self._minervini_svc.get_stage_for_code(code),
+                        timeout=self._guard_timeout,
+                    )
                 # get_stage_for_code 반환값: tuple(int, str) 또는 int 호환
                 return result[0] if isinstance(result, tuple) else int(result)
             except Exception:
