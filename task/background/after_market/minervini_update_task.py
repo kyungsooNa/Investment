@@ -139,7 +139,7 @@ class MinerviniUpdateTask(AfterMarketTask):
             if self._mcs:
                 target_date = await self._mcs.get_latest_trading_date()
 
-            if not force and self._updated_at and target_date and self._updated_at.strftime('%Y-%m-%d') == target_date:
+            if not force and self._updated_at and target_date and self._updated_at.strftime('%Y%m%d') == target_date:
                 self._logger.info(f"이미 {target_date} Minervini Stage2 갱신 완료 — 스킵")
                 self._is_refreshing = False
                 return
@@ -273,20 +273,27 @@ class MinerviniUpdateTask(AfterMarketTask):
                     try:
                         if price_resp and not isinstance(price_resp, Exception):
                             out = price_resp.data if hasattr(price_resp, 'data') else None
-                            if isinstance(out, dict):
-                                item["stck_prpr"] = out.get("stck_prpr") or out.get('stck_clpr') or out.get('current_price')
-                                item["prdy_ctrt"] = out.get("prdy_ctrt") or out.get('change_rate')
-                                item["prdy_vrss"] = out.get("prdy_vrss") or out.get('change_price')
+                            if out is not None:
+                                get_field = out.get if isinstance(out, dict) else lambda k: getattr(out, k, None)
+                                item["stck_prpr"] = get_field("stck_prpr") or get_field("stck_clpr") or get_field("current_price")
+                                item["prdy_ctrt"] = get_field("prdy_ctrt") or get_field("change_rate")
+                                item["prdy_vrss"] = get_field("prdy_vrss") or get_field("change_price")
                         if mcap_resp and not isinstance(mcap_resp, Exception):
-                            item["market_cap"] = getattr(mcap_resp, 'data', None) or (mcap_resp.data if hasattr(mcap_resp, 'data') else None)
+                            item["market_cap"] = getattr(mcap_resp, 'data', None)
                         if rs_resp and not isinstance(rs_resp, Exception):
-                            # rs_resp may be ResCommonResponse or plain value
-                            val = None
-                            if hasattr(rs_resp, 'data'):
-                                val = rs_resp.data
-                            elif isinstance(rs_resp, (int, float)):
-                                val = rs_resp
-                            item["rs_rating"] = val or 0
+                            val = 0
+                            try:
+                                if hasattr(rs_resp, 'data') and rs_resp.data is not None:
+                                    d = rs_resp.data
+                                    if hasattr(d, 'rs_rating'):
+                                        val = int(d.rs_rating)
+                                    elif isinstance(d, (int, float)):
+                                        val = int(d)
+                                elif isinstance(rs_resp, (int, float)):
+                                    val = int(rs_resp)
+                            except (TypeError, ValueError):
+                                val = 0
+                            item["rs_rating"] = val
                     except Exception:
                         pass
                     collected.append(item)
