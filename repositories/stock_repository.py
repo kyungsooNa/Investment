@@ -118,6 +118,10 @@ class StockRepository:
         """특정 날짜에 저장된 종목 수 반환."""
         return await self._ohlcv_repo.get_count_by_date(trade_date)
 
+    async def get_minervini_stage_count(self, trade_date: str) -> int:
+        """특정 날짜에 minervini_stage가 계산된 종목 수 반환."""
+        return await self._ohlcv_repo.get_minervini_stage_count(trade_date)
+
     async def cleanup_old_data(self, keep_days: int = 365):
         """오래된 daily_prices 데이터 정리."""
         await self._ohlcv_repo.cleanup_old_data(keep_days)

@@ -137,3 +137,67 @@ class TestGetMinerviniStage2Stocks:
         result = await repo.get_minervini_stage2_stocks("20260414")
         assert len(result) == 1
         assert result[0]["rs_rating"] == 88.0
+
+
+class TestGetMinerviniStageCount:
+    """get_minervini_stage_count: minervini_stage IS NOT NULL 종목 수 검증."""
+
+    @pytest.mark.asyncio
+    async def test_counts_only_non_null_stages(self, repo):
+        """minervini_stage가 있는 종목만 카운트한다 (NULL 제외)."""
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot("A001", stage=2),
+            _make_snapshot("A002", stage=1),
+            _make_snapshot("A003", stage=4),
+        ])
+        # _make_snapshot은 항상 stage 값을 설정하므로 3개
+        assert await repo.get_minervini_stage_count("20260414") == 3
+
+    @pytest.mark.asyncio
+    async def test_null_stage_not_counted(self, repo):
+        """minervini_stage가 NULL인 종목은 카운트에서 제외된다."""
+        # stage 있는 종목 upsert
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot("A001", stage=2),
+        ])
+        # stage 없는 종목 upsert (update_minervini_fields로 stage만 따로 주입)
+        # stage=None인 레코드를 만들기 위해 직접 DB 조작
+        import aiosqlite
+        async with aiosqlite.connect(repo._db_path) as conn:
+            await conn.execute(
+                "INSERT OR REPLACE INTO daily_prices (trade_date, code, name, minervini_stage) VALUES (?, ?, ?, NULL)",
+                ("20260414", "A002", "테스트2"),
+            )
+            await conn.commit()
+
+        assert await repo.get_minervini_stage_count("20260414") == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_for_missing_date(self, repo):
+        """데이터가 없는 날짜는 0 반환."""
+        assert await repo.get_minervini_stage_count("20200101") == 0
+
+    @pytest.mark.asyncio
+    async def test_date_isolation(self, repo):
+        """다른 날짜의 stage 데이터는 카운트에 포함되지 않는다."""
+        await repo.upsert_daily_snapshot("20260413", [
+            _make_snapshot("A001", stage=2),
+            _make_snapshot("A002", stage=1),
+        ])
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot("A003", stage=2),
+        ])
+
+        assert await repo.get_minervini_stage_count("20260414") == 1
+        assert await repo.get_minervini_stage_count("20260413") == 2
+
+    @pytest.mark.asyncio
+    async def test_all_stages_counted(self, repo):
+        """Stage 1~4 모두 NULL이 아니므로 카운트에 포함된다."""
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot("A001", stage=1),
+            _make_snapshot("A002", stage=2),
+            _make_snapshot("A003", stage=3),
+            _make_snapshot("A004", stage=4),
+        ])
+        assert await repo.get_minervini_stage_count("20260414") == 4

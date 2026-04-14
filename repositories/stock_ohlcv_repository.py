@@ -465,6 +465,20 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository daily_prices 카운트 조회 실패: {e}")
             return 0
 
+    async def get_minervini_stage_count(self, trade_date: str) -> int:
+        """특정 날짜에 minervini_stage가 계산된 종목 수 반환."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT COUNT(*) FROM daily_prices WHERE trade_date = ? AND minervini_stage IS NOT NULL",
+                    (trade_date,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                return row[0] if row else 0
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository minervini_stage 카운트 조회 실패: {e}")
+            return 0
+
     async def cleanup_old_data(self, keep_days: int = 365):
         """오래된 daily_prices 데이터 정리."""
         from datetime import datetime, timedelta

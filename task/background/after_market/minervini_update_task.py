@@ -27,6 +27,9 @@ class MinerviniUpdateTask(AfterMarketTask):
     API_CHUNK_SIZE = 12
     CHUNK_SLEEP_SEC = 1.0
 
+    # 가격 데이터 수집 완료로 간주할 최소 종목 수 (KOSPI+KOSDAQ ~2500개의 약 20%)
+    MIN_PRICE_COUNT = 500
+
     def __init__(
         self,
         minervini_service,
@@ -41,9 +44,11 @@ class MinerviniUpdateTask(AfterMarketTask):
         notification_service: Optional[NotificationService] = None,
         telegram_reporter=None,
         market_calendar_service=None,
+        daily_price_collector_task=None,
     ):
         super().__init__(mcs=market_calendar_service, market_clock=market_clock, logger=logger or logging.getLogger(__name__))
         self._minervini = minervini_service
+        self._daily_price_collector_task = daily_price_collector_task
         self.stock_code_repository = stock_code_repository
         self._stock_repo = stock_repository
         self._sqs = stock_query_service
@@ -138,6 +143,50 @@ class MinerviniUpdateTask(AfterMarketTask):
                 self._logger.info(f"이미 {target_date} Minervini Stage2 갱신 완료 — 스킵")
                 self._is_refreshing = False
                 return
+
+            # ── 사전 체크 1: 가격 데이터가 DB에 있는지 확인 ──────────────────────
+            if target_date and self._stock_repo:
+                price_count = await self._stock_repo.get_count_by_date(target_date)
+                if price_count < self.MIN_PRICE_COUNT:
+                    self._logger.info(
+                        f"[MinerviniUpdate] {target_date} 가격 데이터 부족 ({price_count}개) "
+                        f"— DailyPriceCollectorTask 먼저 실행"
+                    )
+                    if self._daily_price_collector_task:
+                        dpc = self._daily_price_collector_task
+                        if dpc._is_collecting:
+                            self._logger.info("[MinerviniUpdate] DailyPriceCollector 수집 진행 중 — 완료 대기")
+                            await dpc._collection_done_event.wait()
+                        else:
+                            await dpc.force_collect()
+                    else:
+                        self._logger.warning("[MinerviniUpdate] DailyPriceCollectorTask 미설정 — 가격 데이터 없이 진행")
+
+            # ── 사전 체크 2: Stage 데이터가 이미 DB에 있는지 확인 ────────────────
+            if not force and target_date and self._stock_repo:
+                stage_count = await self._stock_repo.get_minervini_stage_count(target_date)
+                if stage_count > 0:
+                    self._logger.info(
+                        f"[MinerviniUpdate] {target_date} Stage 데이터 이미 존재 ({stage_count}개) "
+                        f"— DB에서 캐시 로드 후 스킵"
+                    )
+                    db_stage2 = await self._stock_repo.get_minervini_stage2_stocks(target_date)
+                    if db_stage2:
+                        self._minervini_stage2_cache = [
+                            {
+                                "code": it.get("code", ""),
+                                "name": it.get("name", ""),
+                                "stck_prpr": str(it.get("current_price") or 0),
+                                "prdy_ctrt": str(it.get("change_rate") or 0),
+                                "stage": it.get("minervini_stage", 2),
+                                "rs_rating": it.get("rs_rating") or 0,
+                                "market_cap": it.get("market_cap") or 0,
+                            }
+                            for it in db_stage2
+                        ]
+                        self._updated_at = datetime.now()
+                    self._is_refreshing = False
+                    return
 
             all_stocks = self._load_all_stocks()
             total = len(all_stocks)

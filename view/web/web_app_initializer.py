@@ -293,6 +293,8 @@ class WebAppContext:
         if self.minervini_stage_service and self.minervini_update_task:
             self.minervini_stage_service._minervini_update_task = self.minervini_update_task
 
+        # NOTE: MinerviniUpdateTask._daily_price_collector_task는 DailyPriceCollectorTask 생성 후 사후 주입
+
         # StreamingService 초기화
         self.streaming_service = StreamingService(
             broker_api_wrapper=self.broker,
@@ -346,6 +348,10 @@ class WebAppContext:
             logger=self.logger,
             rs_rating_service=getattr(self, "rs_rating_service", None),
         )
+
+        # MinerviniUpdateTask에 DailyPriceCollectorTask 사후 주입 (생성 순서 역전 해결)
+        if self.minervini_update_task and self.daily_price_collector_task:
+            self.minervini_update_task._daily_price_collector_task = self.daily_price_collector_task
 
         self.ohlcv_update_task = OhlcvUpdateTask(
             stock_query_service=self.stock_query_service,
