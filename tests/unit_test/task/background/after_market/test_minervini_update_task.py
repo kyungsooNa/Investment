@@ -143,67 +143,42 @@ async def test_telegram_only_stage2():
     # only stage2 code should be in collected
     codes = {it.get("code") for it in collected}
     assert codes == {"0002"}
-import asyncio
-import pytest
-from datetime import datetime
-
-from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 
 
-class DummyStockCodeRepo:
-    def __init__(self, rows):
-        import pandas as pd
-        self.df = pd.DataFrame(rows)
+@pytest.mark.asyncio
+async def test_rs_rating_persisted_in_db_records():
+    """refresh_minervini_stage2 실행 후 DB upsert 레코드에 rs_rating이 포함된다."""
+    rows = [
+        {"종목코드": "0001", "종목명": "A", "시장구분": "KOSPI"},
+        {"종목코드": "0002", "종목명": "B", "시장구분": "KOSDAQ"},
+    ]
+    sc_repo = DummyStockCodeRepo(rows)
+    # 0002 만 Stage2
+    minervini = DummyMinerviniSvc({"0001": 1, "0002": (2, "reason")})
+    sqs = DummySQS()
+    broker = DummyBroker()
+    rs = DummyRS()      # get_rating returns 85
+    stock_repo = DummyStockRepo()
 
+    task = MinerviniUpdateTask(
+        minervini_service=minervini,
+        stock_code_repository=sc_repo,
+        stock_repository=stock_repo,
+        stock_query_service=sqs,
+        broker_api_wrapper=broker,
+        rs_rating_service=rs,
+        market_clock=None,
+        logger=None,
+    )
 
-class DummyMinerviniSvc:
-    def __init__(self, mapping):
-        # mapping: code -> stage or (stage, reason)
-        self._mapping = mapping
+    await task.refresh_minervini_stage2(force=True)
 
-    async def get_stage_for_code(self, code):
-        # simulate async call
-        await asyncio.sleep(0)
-        return self._mapping.get(code, 0)
+    assert stock_repo.records is not None
+    _, records = stock_repo.records
+    record_map = {r["code"]: r for r in records}
 
+    # Stage2 종목에는 rs_rating=85 가 포함되어야 함
+    assert record_map["0002"]["rs_rating"] == 85
 
-class DummySQS:
-    async def get_current_price(self, code, caller=None):
-        class R:
-            def __init__(self, data):
-                self.data = data
-
-        await asyncio.sleep(0)
-        return R({"stck_prpr": 100, "prdy_ctrt": 1.5, "prdy_vrss": 2})
-
-
-class DummyBroker:
-    async def get_market_cap(self, code):
-        class R:
-            def __init__(self, data):
-                self.data = data
-
-        await asyncio.sleep(0)
-        return R(1_000_000)
-
-
-class DummyRS:
-    async def get_rating(self, code):
-        await asyncio.sleep(0)
-        return 85
-
-
-class DummyStockRepo:
-    def __init__(self):
-        self.records = None
-
-    async def upsert_daily_snapshot(self, trade_date, records):
-        self.records = (trade_date, records)
-
-
-class DummyTelegram:
-    def __init__(self):
-        self.sent = None
-
-    async def send_minervini_report(self, collected, report_date):
-        self.sent = (collected, report_date)
+    # Stage1 종목도 rs_rating 키를 가지고 있어야 함 (None 허용)
+    assert "rs_rating" in record_map["0001"]

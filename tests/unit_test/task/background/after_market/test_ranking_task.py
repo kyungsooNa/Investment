@@ -1423,3 +1423,111 @@ async def test_scheduler_skips_monday_premarket_after_sunday_update(bg_service, 
 
     bg_service.refresh_basic_ranking.assert_not_awaited()
     bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# get_minervini_stage2 엔드포인트 — 3단계 폴백 로직 테스트
+# ---------------------------------------------------------------------------
+
+from view.web.routes.ranking import get_minervini_stage2
+import view.web.api_common as api_common
+
+
+def _make_ctx(stock_repo=None, minervini_task=None):
+    ctx = MagicMock()
+    ctx.stock_repository = stock_repo
+    ctx.minervini_update_task = minervini_task
+    return ctx
+
+
+def _make_stock_repo(latest_date="20260414", stage2_rows=None):
+    repo = MagicMock()
+    repo.get_latest_trade_date = AsyncMock(return_value=latest_date)
+    repo.get_minervini_stage2_stocks = AsyncMock(return_value=stage2_rows or [])
+    return repo
+
+
+def _make_minervini_task(cache=None, is_refreshing=False):
+    task = MagicMock()
+    task.get_minervini_stage2_cache = AsyncMock(return_value=cache or [])
+    task.get_progress = MagicMock(return_value={"running": is_refreshing})
+    task.refresh_minervini_stage2 = AsyncMock()
+    return task
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_returns_from_db():
+    """1차: DB에 Stage2 데이터가 있으면 DB에서 반환한다."""
+    db_rows = [
+        {"code": "A001", "name": "테스트", "current_price": 50000,
+         "change_rate": "1.5", "minervini_stage": 2, "rs_rating": 90.0, "market_cap": 1_000_000},
+    ]
+    repo = _make_stock_repo(stage2_rows=db_rows)
+    ctx = _make_ctx(stock_repo=repo)
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "0"
+    assert len(result["data"]) == 1
+    assert result["data"][0]["code"] == "A001"
+    assert result["data"][0]["rs_rating"] == 90.0
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_falls_back_to_memory_cache():
+    """2차: DB에 데이터 없고 in-memory 캐시에 있으면 캐시에서 반환한다."""
+    repo = _make_stock_repo(stage2_rows=[])
+    cache_items = [{"code": "B001", "name": "캐시종목", "rs_rating": 85}]
+    task = _make_minervini_task(cache=cache_items)
+    ctx = _make_ctx(stock_repo=repo, minervini_task=task)
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "0"
+    assert result["data"] == cache_items
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_triggers_refresh_when_empty():
+    """3차: DB·캐시 모두 없고 갱신 중이 아니면 백그라운드 갱신을 트리거하고 빈 data 반환."""
+    repo = _make_stock_repo(stage2_rows=[])
+    task = _make_minervini_task(cache=[], is_refreshing=False)
+    ctx = _make_ctx(stock_repo=repo, minervini_task=task)
+
+    with patch.object(api_common, "_ctx", ctx), \
+         patch("view.web.routes.ranking.asyncio.create_task") as mock_create_task:
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "0"
+    assert result["data"] == []
+    mock_create_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_skips_trigger_when_already_refreshing():
+    """3차: 이미 갱신 중이면 create_task를 호출하지 않고 빈 data 반환한다."""
+    repo = _make_stock_repo(stage2_rows=[])
+    task = _make_minervini_task(cache=[], is_refreshing=True)
+    ctx = _make_ctx(stock_repo=repo, minervini_task=task)
+
+    with patch.object(api_common, "_ctx", ctx), \
+         patch("view.web.routes.ranking.asyncio.create_task") as mock_create_task:
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "0"
+    assert result["data"] == []
+    mock_create_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_no_task_returns_error():
+    """MinerviniUpdateTask가 없고 DB도 비어있으면 에러 응답을 반환한다."""
+    repo = _make_stock_repo(stage2_rows=[])
+    ctx = _make_ctx(stock_repo=repo, minervini_task=None)
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "1"

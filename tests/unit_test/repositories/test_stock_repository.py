@@ -507,3 +507,44 @@ def test_cache_separation_price_does_not_pollute_ohlcv(repo):
     # OHLCV 캐시는 여전히 살아있어야 함
     ohlcv_cached = repo._ohlcv_repo._ohlcv_cache.get("HOTSTOCK", count_stats=False)
     assert ohlcv_cached is not None, "OHLCV cache should not be evicted by price cache pollution"
+
+
+# --- get_minervini_stage2_stocks (StockRepository 프록시) 테스트 ---
+
+def _minervini_snapshot(code, stage=2, rs_rating=80.0, price=50000):
+    return {
+        "code": code, "name": "테스트", "market": "KOSPI",
+        "current_price": price, "open_price": None, "high_price": None,
+        "low_price": None, "prev_close": None, "change_price": None,
+        "change_sign": None, "change_rate": "1.5",
+        "volume": None, "trading_value": None, "market_cap": 1_000_000,
+        "per": None, "pbr": None, "eps": None,
+        "w52_high": None, "w52_low": None,
+        "minervini_stage": stage, "minervini_reason": "test",
+        "rs_rating": rs_rating,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_minervini_stage2_stocks_proxy(repo):
+    """StockRepository.get_minervini_stage2_stocks가 Stage2 종목만 rs_rating 내림차순으로 반환한다."""
+    await repo.upsert_daily_snapshot("20260414", [
+        _minervini_snapshot("B001", stage=2, rs_rating=90.0),
+        _minervini_snapshot("B002", stage=1, rs_rating=95.0),
+        _minervini_snapshot("B003", stage=2, rs_rating=75.0),
+    ])
+
+    result = await repo.get_minervini_stage2_stocks("20260414")
+    codes = [r["code"] for r in result]
+    assert "B001" in codes
+    assert "B003" in codes
+    assert "B002" not in codes  # Stage1 제외
+    # RS 내림차순 정렬 확인
+    assert result[0]["rs_rating"] >= result[-1]["rs_rating"]
+
+
+@pytest.mark.asyncio
+async def test_get_minervini_stage2_stocks_empty(repo):
+    """Stage2 종목이 없거나 날짜가 없으면 빈 리스트 반환."""
+    result = await repo.get_minervini_stage2_stocks("20200101")
+    assert result == []
