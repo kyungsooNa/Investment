@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import time
 from typing import Callable, Dict, List, Optional, TYPE_CHECKING
+import asyncio
 
 from common.types import ResCommonResponse, ErrorCode
 
@@ -207,7 +208,27 @@ class StreamingService:
         # ── 등록된 핸들러 호출 (Observer 격리) ──────────────────────
         for handler in self._handlers.get(data_type, []):
             try:
-                handler(inner)
+                if asyncio.iscoroutinefunction(handler):
+                    # 코루틴 핸들러는 백그라운드 태스크로 분리
+                    loop = asyncio.get_running_loop()
+                    task = loop.create_task(handler(inner))
+                    # 예외 로깅을 위해 콜백 추가
+                    def _log_done(t: asyncio.Task, h=handler):
+                        try:
+                            exc = t.exception()
+                            if exc:
+                                self.logger.error(f"[{data_type}] 핸들러 예외 ({h!r}): {exc}", exc_info=True)
+                        except asyncio.CancelledError:
+                            pass
+                    task.add_done_callback(_log_done)
+                else:
+                    # 동기(또는 블로킹) 핸들러는 스레드 풀로 오프로드
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.run_in_executor(None, handler, inner)
+                    except RuntimeError:
+                        # 이벤트 루프가 없으면 동기 호출
+                        handler(inner)
             except Exception as e:
                 self.logger.error(
                     f"[{data_type}] 핸들러 오류 ({handler!r}): {e}", exc_info=True

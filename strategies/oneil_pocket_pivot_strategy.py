@@ -225,7 +225,12 @@ class OneilPocketPivotStrategy(LiveStrategy):
             supporting_ma=supporting_ma,
             gap_day_low=gap_day_low,
         )
-        self._save_state()
+        # 즉시 파일을 보장하려면 await 가능한 호출자가 _save_state_async 를 사용합니다.
+        try:
+            await self._save_state_async()
+        except Exception:
+            # 백워드 호환성: 호출 컨텍스트가 동기일 수 있으므로 예외는 무시
+            pass
 
         if entry_type == "PP":
             proj_vol = extra_info.get("proj_vol", 0)
@@ -431,6 +436,12 @@ class OneilPocketPivotStrategy(LiveStrategy):
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         signals = []
         state_dirty = False
+        # 캐시된 마켓 타이밍을 한 번만 조회 (N+1 호출 방지)
+        market_timing_cache = {
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", logger=self._logger),
+        }
+
         for hold in holdings:
             code = hold.get("code")
             buy_price_raw = hold.get("buy_price")
@@ -485,7 +496,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
             # 🚨 우선순위 1: 하드 스탑 (마켓타이밍 악화 OR 고점 대비 -10%)
             market = hold.get("market", "KOSPI") # type: ignore
-            hard_reason = await self._check_hard_stop(state, current, market)
+            hard_reason = await self._check_hard_stop(state, current, market, market_timing_cache.get(market, False))
             if hard_reason:
                 reason = hard_reason
 
@@ -527,14 +538,26 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 ))
 
         if state_dirty:
-            self._save_state()
+            try:
+                await self._save_state_async()
+            except Exception:
+                # 동기 호출 컨텍스트가 있을 수 있으므로 안전하게 무시
+                pass
         return signals
 
-    async def _check_hard_stop(self, state: PPPositionState, current: int, market: str) -> Optional[str]:
-        """하드 스탑: 마켓타이밍 악화 또는 고점 대비 -10%."""
-        # 마켓 타이밍 악화
-        if not await self._universe.is_market_timing_ok(market, logger=self._logger):
-            return "하드스탑(마켓타이밍 악화)"
+    async def _check_hard_stop(self, state: PPPositionState, current: int, market: str, market_timing_ok: Optional[bool] = None) -> Optional[str]:
+        """하드 스탑: 마켓타이밍 악화 또는 고점 대비 -10%.
+
+        Args:
+            market_timing_ok: 사전 계산된 마켓 타이밍 불리언 (None이면 내부에서 조회)
+        """
+        # 마켓 타이밍 악화 (사전 계산값이 있으면 사용)
+        if market_timing_ok is None:
+            if not await self._universe.is_market_timing_ok(market, logger=self._logger):
+                return "하드스탑(마켓타이밍 악화)"
+        else:
+            if not market_timing_ok:
+                return "하드스탑(마켓타이밍 악화)"
 
         # 고점 대비 폭락
         if state.peak_price > 0:
@@ -641,20 +664,71 @@ class OneilPocketPivotStrategy(LiveStrategy):
         return min(elapsed / total, 1.0) if total > 0 else 0.0
 
     def _load_state(self):
-        if os.path.exists(self.STATE_FILE):
-            try:
+        """초기화 시 상태 파일을 비동기(가능하면)로 로드합니다.
+
+        - 이벤트 루프가 실행 중이면 백그라운드 태스크로 로드합니다.
+        - 그렇지 않으면 기존 동기 방식으로 안전하게 로드합니다.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 이벤트 루프 없음 → 동기 로드 (초기화 시 안전한 경로)
+            if os.path.exists(self.STATE_FILE):
+                try:
+                    with open(self.STATE_FILE, "r") as f:
+                        data = json.load(f)
+                    for k, v in data.items():
+                        self._position_state[k] = PPPositionState(**v)
+                except Exception:
+                    pass
+            return
+
+        # 이벤트 루프가 실행 중이면 비동기 태스크로 읽기
+        loop.create_task(self._load_state_async())
+
+    async def _load_state_async(self):
+        if not os.path.exists(self.STATE_FILE):
+            return
+        try:
+            def _read_file():
                 with open(self.STATE_FILE, "r") as f:
-                    data = json.load(f)
-                for k, v in data.items():
-                    self._position_state[k] = PPPositionState(**v)
-            except Exception:
-                pass
+                    return json.load(f)
+
+            data = await asyncio.to_thread(_read_file)
+            for k, v in data.items():
+                self._position_state[k] = PPPositionState(**v)
+        except Exception:
+            pass
 
     def _save_state(self):
+        """백워드 호환성 있는 동기-스케줄러 래퍼: 이벤트 루프가 있으면 백그라운드에 저장 태스크를 생성,
+        루프가 없으면 동기적으로 파일에 저장합니다.
+        """
         try:
-            os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 이벤트 루프 없음 → 동기 저장
+            try:
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                data = {k: asdict(v) for k, v in self._position_state.items()}
+                with open(self.STATE_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+            except Exception:
+                pass
+            return
+
+        # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
+        loop.create_task(self._save_state_async())
+
+    async def _save_state_async(self):
+        """비동기 방식으로 상태 파일을 저장합니다 (파일 I/O는 스레드로 오프로드)."""
+        try:
+            def _write_file(data):
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                with open(self.STATE_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+
             data = {k: asdict(v) for k, v in self._position_state.items()}
-            with open(self.STATE_FILE, "w") as f:
-                json.dump(data, f, indent=2)
+            await asyncio.to_thread(_write_file, data)
         except Exception:
             pass

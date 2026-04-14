@@ -6,6 +6,7 @@ from common.types import ResCommonResponse, ErrorCode
 from core.cache.cache_store import CacheStore
 from core.cache.cache_config import load_cache_config
 from datetime import datetime
+from collections import OrderedDict
 
 T = TypeVar("T")
 
@@ -42,7 +43,9 @@ class ClientWithCache:
         self.cached_methods = set(config["cache"]["enabled_methods"])
 
         # market_close datetime 파싱 결과를 거래일 문자열 단위로 캐시 (hot-path strptime 절감)
-        self._market_close_cache: dict = {}
+        # 거래일별 장 마감시간 캐시(한정된 크기 유지)
+        self._market_close_cache: OrderedDict = OrderedDict()
+        self._MARKET_CLOSE_CACHE_MAX = 60
         # in-flight 요청 중복 방지 (Thundering Herd 방어)
         self._in_flight: dict = {}
 
@@ -116,6 +119,12 @@ class ClientWithCache:
                                         latest_trading_date_dt = datetime.strptime(latest_trading_date_str, "%Y%m%d")
                                         self._market_close_cache[latest_trading_date_str] = \
                                             self._market_clock.get_market_close_time(target_dt=latest_trading_date_dt)
+                                        # 캐시 크기 제한 유지
+                                        if len(self._market_close_cache) > self._MARKET_CLOSE_CACHE_MAX:
+                                            try:
+                                                self._market_close_cache.popitem(last=False)
+                                            except Exception:
+                                                pass
                                     market_close = self._market_close_cache[latest_trading_date_str]
                                     if cache_time >= market_close:
                                         is_valid = True
