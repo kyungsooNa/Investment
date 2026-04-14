@@ -90,6 +90,10 @@ class StockRepository:
         """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert."""
         await self._ohlcv_repo.upsert_daily_snapshot(trade_date, records)
 
+    async def update_minervini_fields(self, trade_date: str, records: List[Dict]):
+        """minervini_stage / minervini_reason / rs_rating 컬럼만 UPDATE."""
+        await self._ohlcv_repo.update_minervini_fields(trade_date, records)
+
     async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         return await self._ohlcv_repo.get_prices_by_date(trade_date)
@@ -97,6 +101,10 @@ class StockRepository:
     async def get_all_daily_snapshots(self, trade_date: str) -> List[Dict]:
         """특정 거래일의 전체 종목 스냅샷을 시가총액 내림차순으로 조회."""
         return await self._ohlcv_repo.get_all_daily_snapshots(trade_date)
+
+    async def get_minervini_stage2_stocks(self, trade_date: str) -> List[Dict]:
+        """특정 거래일의 Minervini Stage2 종목을 rs_rating 내림차순으로 조회."""
+        return await self._ohlcv_repo.get_minervini_stage2_stocks(trade_date)
 
     async def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
         """특정 종목의 최근 N일간 스냅샷 이력 조회."""
@@ -109,6 +117,10 @@ class StockRepository:
     async def get_count_by_date(self, trade_date: str) -> int:
         """특정 날짜에 저장된 종목 수 반환."""
         return await self._ohlcv_repo.get_count_by_date(trade_date)
+
+    async def get_minervini_stage_count(self, trade_date: str) -> int:
+        """특정 날짜에 minervini_stage가 계산된 종목 수 반환."""
+        return await self._ohlcv_repo.get_minervini_stage_count(trade_date)
 
     async def cleanup_old_data(self, keep_days: int = 365):
         """오래된 daily_prices 데이터 정리."""

@@ -82,3 +82,94 @@ def test_describe_stage_mapping():
     svc = _make_svc()
     assert "Stage 2" in svc.describe_stage(svc.STAGE_2_ADVANCING)
     assert "미계산" in svc.describe_stage(svc.STAGE_UNKNOWN)
+
+
+# ── get_stage2_list ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_stage2_list_returns_db_data_when_available():
+    """stock_repository에 데이터 있으면 DB 결과 반환."""
+    stock_repo = AsyncMock()
+    stock_repo.get_latest_trade_date.return_value = "20260101"
+    stock_repo.get_minervini_stage2_stocks.return_value = [
+        {"code": "005930", "name": "삼성전자", "current_price": 70000,
+         "change_rate": 1.0, "minervini_stage": 2, "rs_rating": 85, "market_cap": 1000000}
+    ]
+    svc = MinerviniStageService(stock_query_service=AsyncMock(),
+                                stock_repository=stock_repo)
+    resp = await svc.get_stage2_list()
+    assert resp.rt_cd == "0"
+    assert resp.msg1 == "성공"
+    assert resp.data[0]["code"] == "005930"
+    assert resp.data[0]["stck_prpr"] == "70000"
+
+
+@pytest.mark.asyncio
+async def test_get_stage2_list_falls_back_to_cache_when_db_empty():
+    """DB에 데이터 없으면 in-memory 캐시 사용."""
+    stock_repo = AsyncMock()
+    stock_repo.get_latest_trade_date.return_value = "20260101"
+    stock_repo.get_minervini_stage2_stocks.return_value = []
+
+    update_task = AsyncMock()
+    update_task.get_minervini_stage2_cache.return_value = [
+        {"code": "000660", "name": "SK하이닉스"}
+    ]
+
+    svc = MinerviniStageService(stock_query_service=AsyncMock(),
+                                stock_repository=stock_repo)
+    svc._minervini_update_task = update_task
+
+    resp = await svc.get_stage2_list()
+    assert resp.rt_cd == "0"
+    assert resp.data[0]["code"] == "000660"
+
+
+@pytest.mark.asyncio
+async def test_get_stage2_list_triggers_refresh_when_no_data():
+    """캐시도 없고 갱신 중이 아니면 refresh 트리거 후 수집 중 반환."""
+    from unittest.mock import MagicMock
+    stock_repo = AsyncMock()
+    stock_repo.get_latest_trade_date.return_value = None
+
+    update_task = AsyncMock()
+    update_task.get_minervini_stage2_cache.return_value = []
+    update_task.get_progress = MagicMock(return_value={"running": False})
+
+    svc = MinerviniStageService(stock_query_service=AsyncMock(),
+                                stock_repository=stock_repo)
+    svc._minervini_update_task = update_task
+
+    resp = await svc.get_stage2_list()
+    assert resp.rt_cd == "0"
+    assert resp.msg1 == "수집 중"
+    assert resp.data == []
+
+
+@pytest.mark.asyncio
+async def test_get_stage2_list_no_task_returns_error():
+    """_minervini_update_task 미설정 시 rt_cd=1 반환."""
+    svc = MinerviniStageService(stock_query_service=AsyncMock(),
+                                stock_repository=None)
+    svc._minervini_update_task = None
+    resp = await svc.get_stage2_list()
+    assert resp.rt_cd == "1"
+    assert resp.data is None
+
+
+@pytest.mark.asyncio
+async def test_get_stage2_list_db_exception_falls_back_to_task():
+    """DB 조회 예외 발생 시 task 캐시로 폴백."""
+    stock_repo = AsyncMock()
+    stock_repo.get_latest_trade_date.side_effect = RuntimeError("DB 오류")
+
+    update_task = AsyncMock()
+    update_task.get_minervini_stage2_cache.return_value = [{"code": "035720"}]
+
+    svc = MinerviniStageService(stock_query_service=AsyncMock(),
+                                stock_repository=stock_repo)
+    svc._minervini_update_task = update_task
+
+    resp = await svc.get_stage2_list()
+    assert resp.rt_cd == "0"
+    assert resp.data[0]["code"] == "035720"

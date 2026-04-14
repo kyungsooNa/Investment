@@ -166,6 +166,67 @@ async def test_get_ranking_prsn_sell(web_client, mock_web_ctx):
     assert response.json()["data"][0]["prsn_ntby_qty"] == "-500"
 
 
+# ── Minervini Stage 2 목록 ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_minervini_stage2_success(web_client, mock_web_ctx):
+    """get_minervini_stage2 - DB에서 정상 데이터 반환."""
+    from unittest.mock import AsyncMock
+    from common.types import ResCommonResponse
+    mock_web_ctx.minervini_stage_service.get_stage2_list = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd="0", msg1="성공",
+            data=[{"code": "005930", "name": "삼성전자", "stck_prpr": "70000",
+                   "prdy_ctrt": "1.0", "stage": 2, "rs_rating": 85, "market_cap": 1000000}]
+        )
+    )
+    response = web_client.get("/api/ranking/minervini_stage2")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"][0]["code"] == "005930"
+    mock_web_ctx.minervini_stage_service.get_stage2_list.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_minervini_stage2_collecting(web_client, mock_web_ctx):
+    """get_minervini_stage2 - 수집 중 상태 반환."""
+    from unittest.mock import AsyncMock
+    from common.types import ResCommonResponse
+    mock_web_ctx.minervini_stage_service.get_stage2_list = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="수집 중", data=[])
+    )
+    response = web_client.get("/api/ranking/minervini_stage2")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"] == []
+    assert "수집 중" in body["msg1"]
+
+
+@pytest.mark.asyncio
+async def test_get_minervini_stage2_no_service(web_client, mock_web_ctx):
+    """get_minervini_stage2 - MinerviniStageService 미설정 시 rt_cd=1."""
+    mock_web_ctx.minervini_stage_service = None
+    response = web_client.get("/api/ranking/minervini_stage2")
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_get_minervini_stage2_task_not_set(web_client, mock_web_ctx):
+    """get_minervini_stage2 - MinerviniUpdateTask 미설정 시 서비스가 rt_cd=1 반환."""
+    from unittest.mock import AsyncMock
+    from common.types import ResCommonResponse
+    mock_web_ctx.minervini_stage_service.get_stage2_list = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="1", msg1="MinerviniUpdateTask 미설정", data=None)
+    )
+    response = web_client.get("/api/ranking/minervini_stage2")
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "1"
+    assert response.json()["data"] is None
+
+
 # ── 진행률 조회 ──────────────────────────────────────────
 
 @pytest.mark.asyncio

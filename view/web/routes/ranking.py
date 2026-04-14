@@ -19,18 +19,17 @@ async def get_ranking_progress():
 
 @router.get("/ranking/minervini_stage2")
 async def get_minervini_stage2():
-    """Minervini Stage 2에 해당하는 전체 종목 목록을 RS 순으로 반환한다.
+    """Minervini Stage 2 종목 목록을 RS 순으로 반환한다.
 
-    MinerviniUpdateTask가 장 마감 후 미리 계산하고 캐시해 둔 결과를 반환한다.
     각 항목은 dict: { code, name, stck_prpr, prdy_ctrt, stage, rs_rating, market_cap }
+    조회 우선순위(DB → in-memory 캐시 → 백그라운드 갱신 트리거)는 MinerviniStageService에서 처리한다.
     """
     ctx = _get_ctx()
-    if not ctx or not getattr(ctx, "minervini_update_task", None):
-        return {"rt_cd": "1", "msg1": "MinerviniUpdateTask 미설정", "data": None}
-
-    items = await ctx.minervini_update_task.get_minervini_stage2_cache()
-
-    return {"rt_cd": "0", "msg1": "성공", "data": items}
+    svc = getattr(ctx, "minervini_stage_service", None)
+    if not svc:
+        return {"rt_cd": "1", "msg1": "MinerviniStageService 미설정", "data": None}
+    resp = await svc.get_stage2_list()
+    return {"rt_cd": resp.rt_cd, "msg1": resp.msg1, "data": resp.data}
 
 
 @router.get("/ranking/{category}")

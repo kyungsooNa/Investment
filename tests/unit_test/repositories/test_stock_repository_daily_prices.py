@@ -132,6 +132,40 @@ class TestCountByDate:
         assert await repo.get_count_by_date("20200101") == 0
 
 
+class TestMinerviniStageCount:
+    """minervini_stage 계산 완료 여부 확인 테스트."""
+
+    @pytest.mark.asyncio
+    async def test_returns_count_of_staged_records(self, repo):
+        """minervini_stage가 설정된 종목 수를 반환한다."""
+        records = [
+            {**_make_record("005930"), "minervini_stage": 2, "minervini_reason": "트렌드 충족"},
+            {**_make_record("000660"), "minervini_stage": 1, "minervini_reason": "횡보"},
+            {**_make_record("035420"), "minervini_stage": 4, "minervini_reason": "하락"},
+        ]
+        await repo.upsert_daily_snapshot("20260318", records)
+        assert await repo.get_minervini_stage_count("20260318") == 3
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_for_missing_date(self, repo):
+        """데이터가 없는 날짜는 0을 반환한다."""
+        assert await repo.get_minervini_stage_count("20200101") == 0
+
+    @pytest.mark.asyncio
+    async def test_date_isolation(self, repo):
+        """다른 날짜의 stage 데이터는 카운트에 포함되지 않는다."""
+        await repo.upsert_daily_snapshot("20260317", [
+            {**_make_record("005930"), "minervini_stage": 2},
+            {**_make_record("000660"), "minervini_stage": 1},
+        ])
+        await repo.upsert_daily_snapshot("20260318", [
+            {**_make_record("035420"), "minervini_stage": 2},
+        ])
+
+        assert await repo.get_minervini_stage_count("20260318") == 1
+        assert await repo.get_minervini_stage_count("20260317") == 2
+
+
 class TestCleanup:
     """오래된 데이터 삭제 테스트."""
 

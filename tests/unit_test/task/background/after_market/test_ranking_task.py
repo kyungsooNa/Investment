@@ -1423,3 +1423,99 @@ async def test_scheduler_skips_monday_premarket_after_sunday_update(bg_service, 
 
     bg_service.refresh_basic_ranking.assert_not_awaited()
     bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# get_minervini_stage2 엔드포인트 — MinerviniStageService 위임 테스트
+# ---------------------------------------------------------------------------
+
+from view.web.routes.ranking import get_minervini_stage2
+import view.web.api_common as api_common
+from common.types import ResCommonResponse
+from services.minervini_stage_service import MinerviniStageService
+
+
+def _make_svc_ctx(svc=None):
+    """ctx.minervini_stage_service 를 지정한 ctx MagicMock 생성."""
+    ctx = MagicMock()
+    ctx.minervini_stage_service = svc
+    return ctx
+
+
+def _make_svc(data, rt_cd="0", msg1="성공"):
+    """get_stage2_list() 가 ResCommonResponse 를 반환하는 서비스 mock."""
+    svc = MagicMock(spec=MinerviniStageService)
+    svc.get_stage2_list = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=rt_cd, msg1=msg1, data=data)
+    )
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_returns_from_db():
+    """엔드포인트가 서비스의 DB 조회 결과를 그대로 전달한다."""
+    db_data = [
+        {"code": "A001", "name": "테스트", "stck_prpr": "50000",
+         "prdy_ctrt": "1.5", "stage": 2, "rs_rating": 90.0, "market_cap": 1_000_000},
+    ]
+    svc = _make_svc(data=db_data)
+    ctx = _make_svc_ctx(svc=svc)
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "0"
+    assert len(result["data"]) == 1
+    assert result["data"][0]["code"] == "A001"
+    assert result["data"][0]["rs_rating"] == 90.0
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_falls_back_to_memory_cache():
+    """엔드포인트가 서비스의 in-memory 캐시 결과를 그대로 전달한다."""
+    cache_items = [{"code": "B001", "name": "캐시종목", "rs_rating": 85}]
+    svc = _make_svc(data=cache_items)
+    ctx = _make_svc_ctx(svc=svc)
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "0"
+    assert result["data"] == cache_items
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_triggers_refresh_when_empty():
+    """서비스가 '수집 중' 빈 응답을 반환하면 엔드포인트도 빈 data 를 그대로 전달한다."""
+    svc = _make_svc(data=[], msg1="수집 중")
+    ctx = _make_svc_ctx(svc=svc)
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "0"
+    assert result["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_skips_trigger_when_already_refreshing():
+    """서비스가 갱신 중 빈 응답을 반환하면 엔드포인트도 빈 data 를 그대로 전달한다."""
+    svc = _make_svc(data=[], msg1="수집 중")
+    ctx = _make_svc_ctx(svc=svc)
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "0"
+    assert result["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_no_task_returns_error():
+    """minervini_stage_service 가 없으면 에러 응답을 반환한다."""
+    ctx = _make_svc_ctx(svc=None)
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_minervini_stage2()
+
+    assert result["rt_cd"] == "1"

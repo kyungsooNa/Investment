@@ -89,6 +89,7 @@ class StockOhlcvRepository:
                         market TEXT,
                         minervini_stage INTEGER,
                         minervini_reason TEXT,
+                        rs_rating REAL,
                         collected_at REAL,
                         PRIMARY KEY (code, trade_date)
                     )
@@ -100,13 +101,16 @@ class StockOhlcvRepository:
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository DB 초기화 실패: {e}")
         # 기존 DB를 사용하는 경우 컬럼이 없을 수 있으므로 ALTER TABLE 시도
-        try:
-            with sqlite3.connect(self._db_path) as conn:
-                conn.execute("ALTER TABLE daily_prices ADD COLUMN minervini_stage INTEGER")
-                conn.execute("ALTER TABLE daily_prices ADD COLUMN minervini_reason TEXT")
-        except Exception:
-            # 이미 컬럼이 있거나 ALTER 실패하면 무시
-            pass
+        for alter_sql in [
+            "ALTER TABLE daily_prices ADD COLUMN minervini_stage INTEGER",
+            "ALTER TABLE daily_prices ADD COLUMN minervini_reason TEXT",
+            "ALTER TABLE daily_prices ADD COLUMN rs_rating REAL",
+        ]:
+            try:
+                with sqlite3.connect(self._db_path) as conn:
+                    conn.execute(alter_sql)
+            except Exception:
+                pass
 
     @asynccontextmanager
     async def _get_write_connection(self):
@@ -321,7 +325,7 @@ class StockOhlcvRepository:
                         volume, trading_value, market_cap,
                         per, pbr, eps,
                         w52_high, w52_low,
-                        market, minervini_stage, minervini_reason, collected_at
+                        market, minervini_stage, minervini_reason, rs_rating, collected_at
                     ) VALUES (
                         :code, :trade_date, :name,
                         :current_price, :open_price, :high_price, :low_price, :prev_close,
@@ -329,11 +333,12 @@ class StockOhlcvRepository:
                         :volume, :trading_value, :market_cap,
                         :per, :pbr, :eps,
                         :w52_high, :w52_low,
-                        :market, :minervini_stage, :minervini_reason, :collected_at
+                        :market, :minervini_stage, :minervini_reason, :rs_rating, :collected_at
                     )
                     """,
                     [{**r, "trade_date": trade_date, "collected_at": now,
-                      "minervini_stage": r.get("minervini_stage"), "minervini_reason": r.get("minervini_reason")}
+                      "minervini_stage": r.get("minervini_stage"), "minervini_reason": r.get("minervini_reason"),
+                      "rs_rating": r.get("rs_rating")}
                      for r in records],
                 )
             self._logger.debug(
@@ -341,6 +346,42 @@ class StockOhlcvRepository:
             )
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices upsert 실패: {e}")
+
+    async def update_minervini_fields(self, trade_date: str, records: List[Dict]):
+        """daily_prices의 minervini_stage / minervini_reason / rs_rating 컬럼만 UPDATE.
+
+        DailyPriceCollectorTask의 INSERT OR REPLACE가 해당 컬럼을 NULL로 덮어쓰는 문제를
+        방지하기 위해 MinerviniUpdateTask에서 이 메서드를 사용한다.
+        대상 row가 없으면 UPDATE는 아무 동작도 하지 않는다(best-effort).
+        """
+        if not records:
+            return
+        try:
+            async with self._get_write_connection() as conn:
+                await conn.executemany(
+                    """
+                    UPDATE daily_prices
+                    SET minervini_stage = :minervini_stage,
+                        minervini_reason = :minervini_reason,
+                        rs_rating = :rs_rating
+                    WHERE code = :code AND trade_date = :trade_date
+                    """,
+                    [
+                        {
+                            "code": r.get("code"),
+                            "trade_date": trade_date,
+                            "minervini_stage": r.get("minervini_stage"),
+                            "minervini_reason": r.get("minervini_reason"),
+                            "rs_rating": r.get("rs_rating"),
+                        }
+                        for r in records
+                    ],
+                )
+            self._logger.debug(
+                f"StockOhlcvRepository: minervini fields {len(records)}건 update 완료 (date={trade_date})"
+            )
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository minervini fields update 실패: {e}")
 
     async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
         """특정 날짜의 전체 종목 스냅샷 조회."""
@@ -368,6 +409,20 @@ class StockOhlcvRepository:
                 return [dict(row) for row in rows]
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
+            return []
+
+    async def get_minervini_stage2_stocks(self, trade_date: str) -> List[Dict]:
+        """특정 거래일의 Minervini Stage2 종목을 rs_rating 내림차순으로 조회."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT * FROM daily_prices WHERE trade_date = ? AND minervini_stage = 2 ORDER BY rs_rating DESC",
+                    (trade_date,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository minervini stage2 조회 실패: {e}")
             return []
 
     async def get_price_history(self, code: str, days: int = 30) -> List[Dict]:
@@ -408,6 +463,20 @@ class StockOhlcvRepository:
                 return row[0] if row else 0
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices 카운트 조회 실패: {e}")
+            return 0
+
+    async def get_minervini_stage_count(self, trade_date: str) -> int:
+        """특정 날짜에 minervini_stage가 계산된 종목 수 반환."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT COUNT(*) FROM daily_prices WHERE trade_date = ? AND minervini_stage IS NOT NULL",
+                    (trade_date,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                return row[0] if row else 0
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository minervini_stage 카운트 조회 실패: {e}")
             return 0
 
     async def cleanup_old_data(self, keep_days: int = 365):

@@ -27,6 +27,9 @@ class MinerviniUpdateTask(AfterMarketTask):
     API_CHUNK_SIZE = 12
     CHUNK_SLEEP_SEC = 1.0
 
+    # 가격 데이터 수집 완료로 간주할 최소 종목 수 (KOSPI+KOSDAQ ~2500개의 약 20%)
+    MIN_PRICE_COUNT = 500
+
     def __init__(
         self,
         minervini_service,
@@ -41,9 +44,11 @@ class MinerviniUpdateTask(AfterMarketTask):
         notification_service: Optional[NotificationService] = None,
         telegram_reporter=None,
         market_calendar_service=None,
+        daily_price_collector_task=None,
     ):
         super().__init__(mcs=market_calendar_service, market_clock=market_clock, logger=logger or logging.getLogger(__name__))
         self._minervini = minervini_service
+        self._daily_price_collector_task = daily_price_collector_task
         self.stock_code_repository = stock_code_repository
         self._stock_repo = stock_repository
         self._sqs = stock_query_service
@@ -99,7 +104,8 @@ class MinerviniUpdateTask(AfterMarketTask):
         await self._after_market_scheduler()
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
-        needs = (not self._updated_at) or (self._updated_at and self._updated_at.strftime('%Y-%m-%d') != latest_trading_date)
+        latest_trading_date_dt = datetime.strptime(latest_trading_date, '%Y-%m-%d').date()
+        needs = (not self._updated_at) or (self._updated_at.date() != latest_trading_date_dt)
         if needs:
             await self.refresh_minervini_stage2()
 
@@ -133,10 +139,54 @@ class MinerviniUpdateTask(AfterMarketTask):
             if self._mcs:
                 target_date = await self._mcs.get_latest_trading_date()
 
-            if not force and self._updated_at and target_date and self._updated_at.strftime('%Y-%m-%d') == target_date:
+            if not force and self._updated_at and target_date and self._updated_at.strftime('%Y%m%d') == target_date:
                 self._logger.info(f"이미 {target_date} Minervini Stage2 갱신 완료 — 스킵")
                 self._is_refreshing = False
                 return
+
+            # ── 사전 체크 1: 가격 데이터가 DB에 있는지 확인 ──────────────────────
+            if target_date and self._stock_repo:
+                price_count = await self._stock_repo.get_count_by_date(target_date)
+                if price_count < self.MIN_PRICE_COUNT:
+                    self._logger.info(
+                        f"[MinerviniUpdate] {target_date} 가격 데이터 부족 ({price_count}개) "
+                        f"— DailyPriceCollectorTask 먼저 실행"
+                    )
+                    if self._daily_price_collector_task:
+                        dpc = self._daily_price_collector_task
+                        if dpc._is_collecting:
+                            self._logger.info("[MinerviniUpdate] DailyPriceCollector 수집 진행 중 — 완료 대기")
+                            await dpc._collection_done_event.wait()
+                        else:
+                            await dpc.force_collect()
+                    else:
+                        self._logger.warning("[MinerviniUpdate] DailyPriceCollectorTask 미설정 — 가격 데이터 없이 진행")
+
+            # ── 사전 체크 2: Stage 데이터가 이미 DB에 있는지 확인 ────────────────
+            if not force and target_date and self._stock_repo:
+                stage_count = await self._stock_repo.get_minervini_stage_count(target_date)
+                if stage_count > 0:
+                    self._logger.info(
+                        f"[MinerviniUpdate] {target_date} Stage 데이터 이미 존재 ({stage_count}개) "
+                        f"— DB에서 캐시 로드 후 스킵"
+                    )
+                    db_stage2 = await self._stock_repo.get_minervini_stage2_stocks(target_date)
+                    if db_stage2:
+                        self._minervini_stage2_cache = [
+                            {
+                                "code": it.get("code", ""),
+                                "name": it.get("name", ""),
+                                "stck_prpr": str(it.get("current_price") or 0),
+                                "prdy_ctrt": str(it.get("change_rate") or 0),
+                                "stage": it.get("minervini_stage", 2),
+                                "rs_rating": it.get("rs_rating") or 0,
+                                "market_cap": it.get("market_cap") or 0,
+                            }
+                            for it in db_stage2
+                        ]
+                        self._updated_at = datetime.now()
+                    self._is_refreshing = False
+                    return
 
             all_stocks = self._load_all_stocks()
             total = len(all_stocks)
@@ -223,20 +273,27 @@ class MinerviniUpdateTask(AfterMarketTask):
                     try:
                         if price_resp and not isinstance(price_resp, Exception):
                             out = price_resp.data if hasattr(price_resp, 'data') else None
-                            if isinstance(out, dict):
-                                item["stck_prpr"] = out.get("stck_prpr") or out.get('stck_clpr') or out.get('current_price')
-                                item["prdy_ctrt"] = out.get("prdy_ctrt") or out.get('change_rate')
-                                item["prdy_vrss"] = out.get("prdy_vrss") or out.get('change_price')
+                            if out is not None:
+                                get_field = out.get if isinstance(out, dict) else lambda k: getattr(out, k, None)
+                                item["stck_prpr"] = get_field("stck_prpr") or get_field("stck_clpr") or get_field("current_price")
+                                item["prdy_ctrt"] = get_field("prdy_ctrt") or get_field("change_rate")
+                                item["prdy_vrss"] = get_field("prdy_vrss") or get_field("change_price")
                         if mcap_resp and not isinstance(mcap_resp, Exception):
-                            item["market_cap"] = getattr(mcap_resp, 'data', None) or (mcap_resp.data if hasattr(mcap_resp, 'data') else None)
+                            item["market_cap"] = getattr(mcap_resp, 'data', None)
                         if rs_resp and not isinstance(rs_resp, Exception):
-                            # rs_resp may be ResCommonResponse or plain value
-                            val = None
-                            if hasattr(rs_resp, 'data'):
-                                val = rs_resp.data
-                            elif isinstance(rs_resp, (int, float)):
-                                val = rs_resp
-                            item["rs_rating"] = val or 0
+                            val = 0
+                            try:
+                                if hasattr(rs_resp, 'data') and rs_resp.data is not None:
+                                    d = rs_resp.data
+                                    if hasattr(d, 'rs_rating'):
+                                        val = int(d.rs_rating)
+                                    elif isinstance(d, (int, float)):
+                                        val = int(d)
+                                elif isinstance(rs_resp, (int, float)):
+                                    val = int(rs_resp)
+                            except (TypeError, ValueError):
+                                val = 0
+                            item["rs_rating"] = val
                     except Exception:
                         pass
                     collected.append(item)
@@ -272,7 +329,6 @@ class MinerviniUpdateTask(AfterMarketTask):
                 "elapsed": round(elapsed, 1),
                 "status": "완료",
             })
-            elapsed = time.time() - start_time
             self._logger.info(f"Minervini Stage2 갱신 완료: {len(collected)}개, 소요: {elapsed:.1f}s")
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.BACKGROUND, NotificationLevel.INFO, "Minervini S2 갱신 완료", f"{len(collected)}개 수집, 소요: {elapsed:.1f}s")
@@ -288,26 +344,22 @@ class MinerviniUpdateTask(AfterMarketTask):
                 self._logger.warning(f"Telegram 리포트 전송 실패: {e}")
 
             # Persist minervini stage info into daily snapshot DB (best-effort)
+            # update_minervini_fields만 호출하여 DailyPriceCollectorTask의
+            # INSERT OR REPLACE가 해당 컬럼을 NULL로 덮어쓰는 문제를 방지한다.
             try:
                 if self._stock_repo:
                     trade_date = target_date or datetime.now().strftime('%Y%m%d')
 
                     records = []
-                    # persist ALL stocks' stage info (not only Stage2)
                     for it in all_code_map.values():
                         records.append({
                             "code": it.get("code"),
-                            "name": it.get("name"),
-                            "current_price": it.get("stck_prpr") or None,
-                            "change_price": it.get("prdy_vrss") or None,
-                            "change_rate": it.get("prdy_ctrt") or None,
-                            "market_cap": it.get("market_cap") or None,
-                            "market": it.get("market") or None,
                             "minervini_stage": int(it.get("stage") or 0),
                             "minervini_reason": it.get("reason") or None,
+                            "rs_rating": it.get("rs_rating") or None,
                         })
                     if records:
-                        await self._stock_repo.upsert_daily_snapshot(trade_date, records)
+                        await self._stock_repo.update_minervini_fields(trade_date, records)
             except Exception as e:
                 self._logger.warning(f"MinerviniUpdateTask DB에 쓰기 실패: {e}")
 

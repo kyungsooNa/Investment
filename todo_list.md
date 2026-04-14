@@ -5,17 +5,13 @@
 
 ### 0. 치명적 불량 수정 (Critical Bugs)
 - [ ] **[설정/환경]** `tr_ids_config.yaml`과 `kis_config.yaml`의 `tr_id`, `url`을 `(실전, 모의)` 튜플(Tuple) 형태로 변경. 모의투자에서 지원하지 않는 API는 빈 값으로 두어 자동 차단되도록 수정.
-- [ ] **[전략]** 주문 api 실패헀을경우 기록되지 않게 수정. 
-  - 전략에서 매도실패시 재시도를 안하는건지, 매수 실패시 포지션에 포함되는건지?
+
 
 - [ ] **[프로그램매매]** 이전 구독종목 복구 중... 이 너무 오래걸림. 현재 모든 tick 단위가 db에 저장되고 있는데, ui에서는 1분이 최소 단위임으로, 보여지는건 최신의 data를 보여주되 db저장은 1분 단위로 마지막 tick 정보만 저장하도록 수정. 이렇게하면 memory에 다 올려도 부담 없을것으로 예상됨. 종목당 (KRX 09시~15시30분 => 390분(개), NTX 포함해도 08시~20시 => 720분(개))
 
-- [ ] **[시스템]** 
-  1. 백그라운드 태스크 현황의: websocket_watchdog의 구독 종목수가 실시간 현재가 구독현황과 sync가 안맞는문제.
 
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
-- [ ] **[아키텍처]** UI 출력 로직 완전 격리: Service 계층 내부에 존재하는 콘솔 출력(`print`) 로직을 제거하고, View 계층에 위임.
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
 - [ ] **[BackgroundService]** naver_finance_scraper.py 도 background task로 전환.
 - [ ] **[전략]** bad market timing중 오늘의 데이터랑 상관없이 bad로 판명나면 하루 1회 Telegram으로 bad market timing (ma detail 포함해서) 전송하도록 수정. 그리고 bad market timing일때 오늘의 시장 변화로 market timing이 개선될 수 있는지? 아니라면 당일엔 전략을 돌리지 않아도 될거같음.
@@ -69,19 +65,3 @@
   - 코스피/코스닥 마켓 타이밍 지수 직접 조회 연동.
   - 실시간 방아쇠: REST/WS 연동하여 체결강도 120% 이상 & 5,000만 원 이상 고래 탐지 시 즉시 진입(Event-Driven).
 - [ ] **[기타 탐색]** GPT 추천 기반 추세 돌파매매(Trend Breakout), ConsolidationScanner 전략 타당성 검토.
-
-
-### Review
-MinerviniUpdateTask의 _on_market_closed 로직:
-
-needs = (not self._updated_at) or (self._updated_at and self._updated_at.strftime('%Y-%m-%d') != latest_trading_date)
-이 로직은 정확하지만, datetime 객체를 직접 비교하는 방식으로 약간 더 간결하게 만들 수 있습니다.
-
-from datetime import datetime
-# ...
-latest_trading_date_dt = datetime.strptime(latest_trading_date, '%Y%m%d').date()
-needs = (not self._updated_at) or (self._updated_at.date() != latest_trading_date_dt)
-(매우 사소한 개선이며, 현재 코드도 기능적으로는 완벽합니다.)
-
-MinerviniUpdateTask의 _progress 업데이트:
-refresh_minervini_stage2 메서드 내에서 elapsed = time.time() - start_time 계산이 여러 번 반복됩니다. 마지막 finally 블록에서 한 번만 계산하여 _progress를 업데이트해도 충분할 것 같습니다. (역시 매우 사소한 최적화입니다.)
