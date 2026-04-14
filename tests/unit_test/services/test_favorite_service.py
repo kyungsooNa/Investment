@@ -210,3 +210,46 @@ async def test_get_with_details_step3_api_rt_cd_not_0(mock_repo, mock_stock_code
     assert len(result) == 1
     assert result[0]["price"] is None
     assert result[0]["rate"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_with_details_with_rs_rating(mock_repo, mock_stock_code_repo):
+    """RS rating 서비스 응답을 병합하는지 검증"""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_rs = AsyncMock()
+    mock_rs.get_rating.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=MagicMock(rs_rating=85))
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        rs_rating_service=mock_rs,
+    )
+
+    result = await svc.get_with_details()
+    assert len(result) == 1
+    assert result[0]["rs_rating"] == 85
+
+
+@pytest.mark.asyncio
+async def test_get_with_details_minervini_stage_various(mock_repo, mock_stock_code_repo):
+    """Minervini 서비스에서 튜플/정수 반환을 모두 처리하는지 검증"""
+    mock_repo.get_all.return_value = ["005930", "000660"]
+
+    ms = MagicMock()
+    async def _get_stage_a(code):
+        return (2, "reason") if code == "005930" else 0
+
+    ms.get_stage_for_code = AsyncMock(side_effect=_get_stage_a)
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+    )
+    # attach service dynamically as attribute
+    svc.minervini_stage_service = ms
+
+    result = await svc.get_with_details()
+    # for 005930 stage should be 2, for 000660 should remain None/0 (no positive stage)
+    mapping = {r["code"]: r for r in result}
+    assert mapping["005930"]["minervini_stage"] == 2
+    assert mapping["000660"]["minervini_stage"] in (None, 0)

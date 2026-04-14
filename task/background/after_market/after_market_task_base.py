@@ -154,14 +154,26 @@ class AfterMarketTask(SchedulableTask, ABC):
                 await self._on_market_closed(date)
 
         delay_sec = _load_after_market_delays().get(self.task_name, 0)
-        await run_after_market_loop(
-            mcs=self._mcs,
-            market_clock=self._market_clock,
-            logger=self._logger,
-            on_market_closed=_on_closed_with_state,
-            label=self._scheduler_label,
-            delay_sec=delay_sec,
-        )
+        try:
+            await run_after_market_loop(
+                mcs=self._mcs,
+                market_clock=self._market_clock,
+                logger=self._logger,
+                on_market_closed=_on_closed_with_state,
+                label=self._scheduler_label,
+                delay_sec=delay_sec,
+            )
+        except asyncio.CancelledError:
+            # Propagate cancellation so callers can cancel the task normally.
+            raise
+        except Exception as e:
+            # Guard against unexpected errors (including test-mocking side-effects)
+            # to avoid unraisable exceptions from background scheduler coroutines.
+            try:
+                self._logger.error(f"{self.task_name} 스케줄러 예외로 종료: {e}", exc_info=True)
+            except Exception:
+                # Ensure logging failures do not raise further
+                pass
 
     @abstractmethod
     async def _on_market_closed(self, latest_trading_date: str) -> None:

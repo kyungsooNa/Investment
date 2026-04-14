@@ -143,3 +143,67 @@ async def test_telegram_only_stage2():
     # only stage2 code should be in collected
     codes = {it.get("code") for it in collected}
     assert codes == {"0002"}
+import asyncio
+import pytest
+from datetime import datetime
+
+from task.background.after_market.minervini_update_task import MinerviniUpdateTask
+
+
+class DummyStockCodeRepo:
+    def __init__(self, rows):
+        import pandas as pd
+        self.df = pd.DataFrame(rows)
+
+
+class DummyMinerviniSvc:
+    def __init__(self, mapping):
+        # mapping: code -> stage or (stage, reason)
+        self._mapping = mapping
+
+    async def get_stage_for_code(self, code):
+        # simulate async call
+        await asyncio.sleep(0)
+        return self._mapping.get(code, 0)
+
+
+class DummySQS:
+    async def get_current_price(self, code, caller=None):
+        class R:
+            def __init__(self, data):
+                self.data = data
+
+        await asyncio.sleep(0)
+        return R({"stck_prpr": 100, "prdy_ctrt": 1.5, "prdy_vrss": 2})
+
+
+class DummyBroker:
+    async def get_market_cap(self, code):
+        class R:
+            def __init__(self, data):
+                self.data = data
+
+        await asyncio.sleep(0)
+        return R(1_000_000)
+
+
+class DummyRS:
+    async def get_rating(self, code):
+        await asyncio.sleep(0)
+        return 85
+
+
+class DummyStockRepo:
+    def __init__(self):
+        self.records = None
+
+    async def upsert_daily_snapshot(self, trade_date, records):
+        self.records = (trade_date, records)
+
+
+class DummyTelegram:
+    def __init__(self):
+        self.sent = None
+
+    async def send_minervini_report(self, collected, report_date):
+        self.sent = (collected, report_date)

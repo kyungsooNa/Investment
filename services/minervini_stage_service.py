@@ -298,14 +298,16 @@ class MinerviniStageService:
             close_val = r.get("stck_clpr") or r.get("close") or 0
             low_val   = r.get("stck_lwpr") or r.get("low") or close_val
             try:
-                closes.append(float(close_val))
-                lows.append(float(low_val))
+                c = float(close_val)
+                l = float(low_val)
             except (TypeError, ValueError):
                 self._logger.warning(
                     f"[MinerviniStage] 가격 데이터 변환 실패 — "
                     f"close={close_val!r}, low={low_val!r}"
                 )
                 continue
+            closes.append(c)
+            lows.append(l)
         return closes, lows
 
     async def _fetch_rs_rating(self, code: str) -> int:
