@@ -45,9 +45,9 @@ async def test_check_etf_ma_rising_logs(service, mock_components):
     ohlcv = [{"close": c} for c in closes]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
-    result = await service._check_etf_ma_rising("TEST_ETF")
+    is_rising, fail_detail, ma_values = await service._check_etf_ma_rising("TEST_ETF")
     
-    assert result is True
+    assert is_rising is True
     
     # 로그 확인
     found_log = False

@@ -589,19 +589,22 @@ async def test_check_etf_ma_rising_logic(mock_deps):
     
     # Case 1: 데이터 부족
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[{"close": 100}] * 10)
-    assert await service._check_etf_ma_rising("000000") is False
+    is_rising, fail_detail, _ = await service._check_etf_ma_rising("000000")
+    assert is_rising is False
     
     # Case 2: 상승 추세 (MA가 3일 연속 상승)
     # period=20, days=3. 총 23일치 데이터 필요.
     # 간단히 close 가격이 계속 상승한다고 가정하면 MA도 상승함.
     data = [{"close": 100 + i} for i in range(30)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=data)
-    assert await service._check_etf_ma_rising("000000") is True
+    is_rising, fail_detail, _ = await service._check_etf_ma_rising("000000")
+    assert is_rising is True
     
     # Case 3: 하락 추세
     data = [{"close": 100 - i} for i in range(30)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=data)
-    assert await service._check_etf_ma_rising("000000") is False
+    is_rising, fail_detail, _ = await service._check_etf_ma_rising("000000")
+    assert is_rising is False
 
 async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     """_check_etf_ma_rising: MA 값의 연속 상승/하락을 정확히 계산하고 로그를 남기는지 검증."""
@@ -617,7 +620,8 @@ async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     # MA 값: (30, 40, 50) -> 상승
     closes_rising = [{"close": c} for c in [10, 20, 30, 40, 50, 60, 70]]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_rising)
-    assert await service._check_etf_ma_rising("RISING") is True
+    is_rising, fail_detail, _ = await service._check_etf_ma_rising("RISING")
+    assert is_rising is True
 
     # 로그 확인 (성공)
     log_call = logger.debug.call_args[0][0]
@@ -630,7 +634,8 @@ async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     # MA 값: (30, 40, 36) -> 실패
     closes_falling = [{"close": c} for c in [10, 20, 30, 40, 50, 60, 0]]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_falling)
-    assert await service._check_etf_ma_rising("FALLING") is False
+    is_rising, fail_detail, _ = await service._check_etf_ma_rising("FALLING")
+    assert is_rising is False
 
     # 로그 확인 (실패)
     log_call = logger.debug.call_args[0][0]
@@ -644,7 +649,8 @@ async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     # MA 값: (30, 28, 38) -> 실패
     closes_dip = [{"close": c} for c in [10, 20, 30, 40, 50, 0, 70]]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_dip)
-    assert await service._check_etf_ma_rising("DIP") is False
+    is_rising, fail_detail, _ = await service._check_etf_ma_rising("DIP")
+    assert is_rising is False
 
     # 로그 확인 (실패)
     log_call = logger.debug.call_args[0][0]
@@ -760,7 +766,7 @@ async def test_update_market_timing_updates_cache(mock_deps):
     # _check_etf_ma_rising 모킹
     with patch.object(service, '_check_etf_ma_rising', new_callable=AsyncMock) as mock_check:
         # KOSDAQ(True), KOSPI(False) 반환 설정
-        mock_check.side_effect = [True, False]
+        mock_check.side_effect = [(True, "", []), (False, "fail", [])]
         
         await service._update_market_timing()
         
@@ -1366,8 +1372,8 @@ async def test_check_etf_ma_rising_ohlcv_none(mock_deps):
     
     sqs.get_recent_daily_ohlcv.return_value = None
     
-    result = await service._check_etf_ma_rising("000000")
-    assert result is False
+    is_rising, fail_detail, _ = await service._check_etf_ma_rising("000000")
+    assert is_rising is False
 
 async def test_analyze_surge_candidate_slices_today_candle(mock_deps):
     """_analyze_surge_candidate: 당일 캔들 슬라이싱 로직 검증."""
