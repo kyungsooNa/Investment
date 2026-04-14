@@ -58,6 +58,7 @@ class NewHighTask(AfterMarketTask):
         self._stock_query_service = stock_query_service
         self._rs_rating_service = rs_rating_service
         self._rs_rating_min = rs_rating_min  # 0이면 RS Rating 필터 비활성
+        self._newhigh_cache: List[Dict] = []
         self._last_collected_date: Optional[str] = None
         self._progress: Dict = {"running": False, "last_date": None, "newhigh_count": 0, "status": None}
 
@@ -73,6 +74,16 @@ class NewHighTask(AfterMarketTask):
 
     def get_progress(self) -> Dict:
         return dict(self._progress)
+
+    async def get_newhigh_cache(self, limit: int = 200):
+        """현재 메모리에 캐시된 신고가 종목 목록을 반환한다 (웹 UI 등에서 호출)."""
+        if not self._newhigh_cache and not self._progress.get("running"):
+            try:
+                asyncio.get_running_loop()
+                asyncio.create_task(self.force_collect())
+            except RuntimeError:
+                self._logger.warning("이벤트 루프 없음 — NewHigh 즉시 갱신 스킵")
+        return self._newhigh_cache[:limit]
 
     async def start(self) -> None:
         """장마감 후 자동 스케줄러 시작."""
@@ -122,6 +133,24 @@ class NewHighTask(AfterMarketTask):
                 newhigh_stocks = await self._enrich_and_filter_rs_rating(
                     newhigh_stocks, latest_trading_date
                 )
+
+            self._newhigh_cache = newhigh_stocks
+            
+            # DB에 신고가 여부 기록 (best-effort)
+            try:
+                if self._stock_repo:
+                    trade_date = latest_trading_date
+                    records = []
+                    for s in newhigh_stocks:
+                        records.append({
+                            "code": s.get("code"),
+                            "is_newhigh": True,
+                            "is_historical_new_high": s.get("is_historical_new_high", False)
+                        })
+                    if records:
+                        await self._stock_repo.update_newhigh_fields(trade_date, records)
+            except Exception as e:
+                self._logger.warning(f"NewHighTask DB에 쓰기 실패: {e}")
 
             self._logger.info(
                 f"NewHighTask: 신고가 {len(newhigh_stocks)}개 감지 / 전체 {len(snapshots)}개 (date={latest_trading_date})"
@@ -196,6 +225,7 @@ class NewHighTask(AfterMarketTask):
                     # 4. 추가 조건: 거래량 폭발 등 (선택 사항)
                     # 추후 RS(Relative Strength) 등 추가 데이터를 위한 자리표시자
                     s.setdefault("rs", "-")
+                    s["is_newhigh"] = True
                     result.append(s)
 
         result.sort(key=lambda x: x.get("market_cap") or 0, reverse=True)

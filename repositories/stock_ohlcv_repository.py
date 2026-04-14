@@ -105,6 +105,8 @@ class StockOhlcvRepository:
             "ALTER TABLE daily_prices ADD COLUMN minervini_stage INTEGER",
             "ALTER TABLE daily_prices ADD COLUMN minervini_reason TEXT",
             "ALTER TABLE daily_prices ADD COLUMN rs_rating REAL",
+                "ALTER TABLE daily_prices ADD COLUMN is_newhigh INTEGER",
+                "ALTER TABLE daily_prices ADD COLUMN is_historical_newhigh INTEGER",
         ]:
             try:
                 with sqlite3.connect(self._db_path) as conn:
@@ -383,6 +385,35 @@ class StockOhlcvRepository:
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository minervini fields update 실패: {e}")
 
+    async def update_newhigh_fields(self, trade_date: str, records: List[Dict]):
+        """daily_prices의 is_newhigh / is_historical_newhigh 컬럼만 UPDATE."""
+        if not records:
+            return
+        try:
+            async with self._get_write_connection() as conn:
+                await conn.executemany(
+                    """
+                    UPDATE daily_prices
+                    SET is_newhigh = :is_newhigh,
+                        is_historical_newhigh = :is_historical_newhigh
+                    WHERE code = :code AND trade_date = :trade_date
+                    """,
+                    [
+                        {
+                            "code": r.get("code"),
+                            "trade_date": trade_date,
+                            "is_newhigh": 1 if r.get("is_newhigh") else 0,
+                            "is_historical_newhigh": 1 if r.get("is_historical_new_high") else 0,
+                        }
+                        for r in records
+                    ],
+                )
+            self._logger.debug(
+                f"StockOhlcvRepository: newhigh fields {len(records)}건 update 완료 (date={trade_date})"
+            )
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository newhigh fields update 실패: {e}")
+
     async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         try:
@@ -409,6 +440,20 @@ class StockOhlcvRepository:
                 return [dict(row) for row in rows]
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
+            return []
+
+    async def get_newhigh_stocks(self, trade_date: str) -> List[Dict]:
+        """특정 거래일의 신고가(is_newhigh=1) 종목을 시가총액 내림차순으로 조회."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT * FROM daily_prices WHERE trade_date = ? AND is_newhigh = 1 ORDER BY market_cap DESC",
+                    (trade_date,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository newhigh 조회 실패: {e}")
             return []
 
     async def get_minervini_stage2_stocks(self, trade_date: str) -> List[Dict]:
