@@ -261,6 +261,7 @@ class WebAppContext:
             self.minervini_stage_service = MinerviniStageService(
                 stock_query_service=self.stock_query_service,
                 rs_rating_service=getattr(self, "rs_rating_service", None),
+                stock_repository=self.stock_repository,
                 logger=self.logger,
             )
             self.favorite_service.minervini_stage_service = self.minervini_stage_service
@@ -287,6 +288,10 @@ class WebAppContext:
         except Exception as e:
             self.logger.warning(f"MinerviniUpdateTask 초기화 실패: {e}")
             self.minervini_update_task = None
+
+        # MinerviniStageService에 MinerviniUpdateTask 연결 (생성 순서 때문에 사후 주입)
+        if self.minervini_stage_service and self.minervini_update_task:
+            self.minervini_stage_service._minervini_update_task = self.minervini_update_task
 
         # StreamingService 초기화
         self.streaming_service = StreamingService(

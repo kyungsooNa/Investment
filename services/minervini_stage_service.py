@@ -22,6 +22,8 @@ import numpy as np
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
     from services.rs_rating_service import RSRatingService
+    from repositories.stock_repository import StockRepository
+    from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 
 
 class MinerviniStageService:
@@ -38,6 +40,7 @@ class MinerviniStageService:
         self,
         stock_query_service: "StockQueryService",
         rs_rating_service: Optional["RSRatingService"] = None,
+        stock_repository: Optional["StockRepository"] = None,
         slope_lookback: int = 20,
         volatility_threshold: float = 0.02,
         logger: Optional[logging.Logger] = None,
@@ -46,17 +49,71 @@ class MinerviniStageService:
         Args:
             stock_query_service: OHLCV 조회용 서비스.
             rs_rating_service:   RS Rating 조회용 서비스 (선택적).
+            stock_repository:    Stage2 DB 조회용 레포지터리 (선택적).
             slope_lookback:      MA200 기울기 계산 기간(거래일). 기본 20 = 미너비니 "최소 1개월".
             volatility_threshold: Stage 3 고변동성 임계값 (ATR/평균가). 기본 0.02 = 2%.
             logger:              Logger 인스턴스.
         """
         self._stock_query_svc = stock_query_service
         self._rs_rating_svc = rs_rating_service
+        self._stock_repository = stock_repository
+        self._minervini_update_task: Optional["MinerviniUpdateTask"] = None
         self._slope_lookback = slope_lookback
         self._vol_threshold = volatility_threshold
         self._logger = logger or logging.getLogger(__name__)
 
     # ── 공개 비동기 메서드 ─────────────────────────────────────────────────
+
+    async def get_stage2_list(self):
+        """Minervini Stage 2 종목 목록을 조회한다.
+
+        1차: DB(stock_repository)에서 최신 거래일의 Stage2 종목 조회.
+        2차: DB에 데이터가 없으면 _minervini_update_task in-memory 캐시 사용.
+        3차: 캐시도 없고 갱신 중이 아니면 백그라운드 갱신 트리거 후 수집 대기 응답.
+
+        Returns:
+            ResCommonResponse: rt_cd="0" 성공(data=list), rt_cd="0" 수집 중(data=[]),
+                               rt_cd="1" 태스크 미설정(data=None).
+        """
+        from common.types import ResCommonResponse
+
+        # 1차: DB 조회
+        if self._stock_repository:
+            try:
+                latest_date = await self._stock_repository.get_latest_trade_date()
+                if latest_date:
+                    db_items = await self._stock_repository.get_minervini_stage2_stocks(latest_date)
+                    if db_items:
+                        data = [
+                            {
+                                "code": it.get("code", ""),
+                                "name": it.get("name", ""),
+                                "stck_prpr": str(it.get("current_price") or 0),
+                                "prdy_ctrt": str(it.get("change_rate") or 0),
+                                "stage": it.get("minervini_stage", 2),
+                                "rs_rating": it.get("rs_rating") or 0,
+                                "market_cap": it.get("market_cap") or 0,
+                            }
+                            for it in db_items
+                        ]
+                        return ResCommonResponse(rt_cd="0", msg1="성공", data=data)
+            except Exception:
+                pass
+
+        # 2차: in-memory 캐시
+        task = self._minervini_update_task
+        if not task:
+            return ResCommonResponse(rt_cd="1", msg1="MinerviniUpdateTask 미설정", data=None)
+
+        cache = await task.get_minervini_stage2_cache()
+        if cache:
+            return ResCommonResponse(rt_cd="0", msg1="성공", data=cache)
+
+        # 3차: 갱신 트리거 후 수집 대기
+        progress = task.get_progress()
+        if not progress.get("running"):
+            asyncio.create_task(task.refresh_minervini_stage2())
+        return ResCommonResponse(rt_cd="0", msg1="수집 중", data=[])
 
     async def get_stage_for_code(self, code: str) -> tuple[int, str]:
         """단일 종목의 현재 Stage를 실시간으로 계산한다.
