@@ -30,10 +30,37 @@ async def flush_event_loop():
     aiosqlite 워커 스레드가 테스트 종료 후 call_soon_threadsafe를 호출할 때
     이벤트 루프가 닫혀 발생하는 PytestUnhandledThreadExceptionWarning 방지.
     """
-    yield
-    # Allow background worker threads (aiosqlite) time to schedule callbacks
-    # before the event loop is torn down to avoid "Event loop is closed" warnings.
-    await asyncio.sleep(0.5)
+    # Monkeypatch aiosqlite worker to ignore Event loop is closed errors
+    try:
+        import aiosqlite.core as _ac
+        _orig_worker = getattr(_ac, "_connection_worker_thread", None)
+
+        def _safe_worker_thread(*args, **kwargs):
+            try:
+                if _orig_worker:
+                    return _orig_worker(*args, **kwargs)
+            except RuntimeError as e:
+                # Ignore worker thread attempts to call into a closed loop.
+                if "Event loop is closed" in str(e):
+                    return
+                raise
+
+        if _orig_worker:
+            _ac._connection_worker_thread = _safe_worker_thread
+    except Exception:
+        _orig_worker = None
+
+    try:
+        yield
+    finally:
+        # Allow background worker threads time to finish scheduling callbacks
+        await asyncio.sleep(0.5)
+        # Restore original worker if we replaced it
+        try:
+            if _orig_worker is not None:
+                _ac._connection_worker_thread = _orig_worker
+        except Exception:
+            pass
 
 # ============================================================================
 # 테스트 데이터 팩토리
