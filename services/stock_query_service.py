@@ -148,6 +148,7 @@ class StockQueryService:
             "pbr": output.pbr,
             "eps": output.eps,
             "bps": output.bps,
+            "hts_avls": output.hts_avls,
 
             # 250일 정보
             "d250_hgpr": output.d250_hgpr,
