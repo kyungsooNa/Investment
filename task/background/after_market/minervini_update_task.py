@@ -288,27 +288,22 @@ class MinerviniUpdateTask(AfterMarketTask):
                 self._logger.warning(f"Telegram 리포트 전송 실패: {e}")
 
             # Persist minervini stage info into daily snapshot DB (best-effort)
+            # update_minervini_fields만 호출하여 DailyPriceCollectorTask의
+            # INSERT OR REPLACE가 해당 컬럼을 NULL로 덮어쓰는 문제를 방지한다.
             try:
                 if self._stock_repo:
                     trade_date = target_date or datetime.now().strftime('%Y%m%d')
 
                     records = []
-                    # persist ALL stocks' stage info (not only Stage2)
                     for it in all_code_map.values():
                         records.append({
                             "code": it.get("code"),
-                            "name": it.get("name"),
-                            "current_price": it.get("stck_prpr") or None,
-                            "change_price": it.get("prdy_vrss") or None,
-                            "change_rate": it.get("prdy_ctrt") or None,
-                            "market_cap": it.get("market_cap") or None,
-                            "market": it.get("market") or None,
                             "minervini_stage": int(it.get("stage") or 0),
                             "minervini_reason": it.get("reason") or None,
                             "rs_rating": it.get("rs_rating") or None,
                         })
                     if records:
-                        await self._stock_repo.upsert_daily_snapshot(trade_date, records)
+                        await self._stock_repo.update_minervini_fields(trade_date, records)
             except Exception as e:
                 self._logger.warning(f"MinerviniUpdateTask DB에 쓰기 실패: {e}")
 

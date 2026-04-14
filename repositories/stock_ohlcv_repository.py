@@ -347,6 +347,42 @@ class StockOhlcvRepository:
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices upsert 실패: {e}")
 
+    async def update_minervini_fields(self, trade_date: str, records: List[Dict]):
+        """daily_prices의 minervini_stage / minervini_reason / rs_rating 컬럼만 UPDATE.
+
+        DailyPriceCollectorTask의 INSERT OR REPLACE가 해당 컬럼을 NULL로 덮어쓰는 문제를
+        방지하기 위해 MinerviniUpdateTask에서 이 메서드를 사용한다.
+        대상 row가 없으면 UPDATE는 아무 동작도 하지 않는다(best-effort).
+        """
+        if not records:
+            return
+        try:
+            async with self._get_write_connection() as conn:
+                await conn.executemany(
+                    """
+                    UPDATE daily_prices
+                    SET minervini_stage = :minervini_stage,
+                        minervini_reason = :minervini_reason,
+                        rs_rating = :rs_rating
+                    WHERE code = :code AND trade_date = :trade_date
+                    """,
+                    [
+                        {
+                            "code": r.get("code"),
+                            "trade_date": trade_date,
+                            "minervini_stage": r.get("minervini_stage"),
+                            "minervini_reason": r.get("minervini_reason"),
+                            "rs_rating": r.get("rs_rating"),
+                        }
+                        for r in records
+                    ],
+                )
+            self._logger.debug(
+                f"StockOhlcvRepository: minervini fields {len(records)}건 update 완료 (date={trade_date})"
+            )
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository minervini fields update 실패: {e}")
+
     async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         try:

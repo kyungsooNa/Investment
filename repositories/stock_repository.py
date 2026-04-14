@@ -90,6 +90,10 @@ class StockRepository:
         """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert."""
         await self._ohlcv_repo.upsert_daily_snapshot(trade_date, records)
 
+    async def update_minervini_fields(self, trade_date: str, records: List[Dict]):
+        """minervini_stage / minervini_reason / rs_rating 컬럼만 UPDATE."""
+        await self._ohlcv_repo.update_minervini_fields(trade_date, records)
+
     async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         return await self._ohlcv_repo.get_prices_by_date(trade_date)
