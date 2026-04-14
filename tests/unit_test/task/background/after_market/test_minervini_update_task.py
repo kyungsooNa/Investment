@@ -52,8 +52,14 @@ class DummyStockRepo:
     def __init__(self):
         self.records = None
 
-    async def upsert_daily_snapshot(self, trade_date, records):
+    async def update_minervini_fields(self, trade_date, records):
         self.records = (trade_date, records)
+
+    async def get_count_by_date(self, trade_date):
+        return 9999
+
+    async def get_minervini_stage_count(self, trade_date):
+        return 0
 
 
 class DummyTelegram:

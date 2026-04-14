@@ -1426,44 +1426,40 @@ async def test_scheduler_skips_monday_premarket_after_sunday_update(bg_service, 
 
 
 # ---------------------------------------------------------------------------
-# get_minervini_stage2 엔드포인트 — 3단계 폴백 로직 테스트
+# get_minervini_stage2 엔드포인트 — MinerviniStageService 위임 테스트
 # ---------------------------------------------------------------------------
 
 from view.web.routes.ranking import get_minervini_stage2
 import view.web.api_common as api_common
+from common.types import ResCommonResponse
+from services.minervini_stage_service import MinerviniStageService
 
 
-def _make_ctx(stock_repo=None, minervini_task=None):
+def _make_svc_ctx(svc=None):
+    """ctx.minervini_stage_service 를 지정한 ctx MagicMock 생성."""
     ctx = MagicMock()
-    ctx.stock_repository = stock_repo
-    ctx.minervini_update_task = minervini_task
+    ctx.minervini_stage_service = svc
     return ctx
 
 
-def _make_stock_repo(latest_date="20260414", stage2_rows=None):
-    repo = MagicMock()
-    repo.get_latest_trade_date = AsyncMock(return_value=latest_date)
-    repo.get_minervini_stage2_stocks = AsyncMock(return_value=stage2_rows or [])
-    return repo
-
-
-def _make_minervini_task(cache=None, is_refreshing=False):
-    task = MagicMock()
-    task.get_minervini_stage2_cache = AsyncMock(return_value=cache or [])
-    task.get_progress = MagicMock(return_value={"running": is_refreshing})
-    task.refresh_minervini_stage2 = AsyncMock()
-    return task
+def _make_svc(data, rt_cd="0", msg1="성공"):
+    """get_stage2_list() 가 ResCommonResponse 를 반환하는 서비스 mock."""
+    svc = MagicMock(spec=MinerviniStageService)
+    svc.get_stage2_list = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=rt_cd, msg1=msg1, data=data)
+    )
+    return svc
 
 
 @pytest.mark.asyncio
 async def test_minervini_stage2_returns_from_db():
-    """1차: DB에 Stage2 데이터가 있으면 DB에서 반환한다."""
-    db_rows = [
-        {"code": "A001", "name": "테스트", "current_price": 50000,
-         "change_rate": "1.5", "minervini_stage": 2, "rs_rating": 90.0, "market_cap": 1_000_000},
+    """엔드포인트가 서비스의 DB 조회 결과를 그대로 전달한다."""
+    db_data = [
+        {"code": "A001", "name": "테스트", "stck_prpr": "50000",
+         "prdy_ctrt": "1.5", "stage": 2, "rs_rating": 90.0, "market_cap": 1_000_000},
     ]
-    repo = _make_stock_repo(stage2_rows=db_rows)
-    ctx = _make_ctx(stock_repo=repo)
+    svc = _make_svc(data=db_data)
+    ctx = _make_svc_ctx(svc=svc)
 
     with patch.object(api_common, "_ctx", ctx):
         result = await get_minervini_stage2()
@@ -1476,11 +1472,10 @@ async def test_minervini_stage2_returns_from_db():
 
 @pytest.mark.asyncio
 async def test_minervini_stage2_falls_back_to_memory_cache():
-    """2차: DB에 데이터 없고 in-memory 캐시에 있으면 캐시에서 반환한다."""
-    repo = _make_stock_repo(stage2_rows=[])
+    """엔드포인트가 서비스의 in-memory 캐시 결과를 그대로 전달한다."""
     cache_items = [{"code": "B001", "name": "캐시종목", "rs_rating": 85}]
-    task = _make_minervini_task(cache=cache_items)
-    ctx = _make_ctx(stock_repo=repo, minervini_task=task)
+    svc = _make_svc(data=cache_items)
+    ctx = _make_svc_ctx(svc=svc)
 
     with patch.object(api_common, "_ctx", ctx):
         result = await get_minervini_stage2()
@@ -1491,41 +1486,34 @@ async def test_minervini_stage2_falls_back_to_memory_cache():
 
 @pytest.mark.asyncio
 async def test_minervini_stage2_triggers_refresh_when_empty():
-    """3차: DB·캐시 모두 없고 갱신 중이 아니면 백그라운드 갱신을 트리거하고 빈 data 반환."""
-    repo = _make_stock_repo(stage2_rows=[])
-    task = _make_minervini_task(cache=[], is_refreshing=False)
-    ctx = _make_ctx(stock_repo=repo, minervini_task=task)
+    """서비스가 '수집 중' 빈 응답을 반환하면 엔드포인트도 빈 data 를 그대로 전달한다."""
+    svc = _make_svc(data=[], msg1="수집 중")
+    ctx = _make_svc_ctx(svc=svc)
 
-    with patch.object(api_common, "_ctx", ctx), \
-         patch("view.web.routes.ranking.asyncio.create_task") as mock_create_task:
+    with patch.object(api_common, "_ctx", ctx):
         result = await get_minervini_stage2()
 
     assert result["rt_cd"] == "0"
     assert result["data"] == []
-    mock_create_task.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_minervini_stage2_skips_trigger_when_already_refreshing():
-    """3차: 이미 갱신 중이면 create_task를 호출하지 않고 빈 data 반환한다."""
-    repo = _make_stock_repo(stage2_rows=[])
-    task = _make_minervini_task(cache=[], is_refreshing=True)
-    ctx = _make_ctx(stock_repo=repo, minervini_task=task)
+    """서비스가 갱신 중 빈 응답을 반환하면 엔드포인트도 빈 data 를 그대로 전달한다."""
+    svc = _make_svc(data=[], msg1="수집 중")
+    ctx = _make_svc_ctx(svc=svc)
 
-    with patch.object(api_common, "_ctx", ctx), \
-         patch("view.web.routes.ranking.asyncio.create_task") as mock_create_task:
+    with patch.object(api_common, "_ctx", ctx):
         result = await get_minervini_stage2()
 
     assert result["rt_cd"] == "0"
     assert result["data"] == []
-    mock_create_task.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_minervini_stage2_no_task_returns_error():
-    """MinerviniUpdateTask가 없고 DB도 비어있으면 에러 응답을 반환한다."""
-    repo = _make_stock_repo(stage2_rows=[])
-    ctx = _make_ctx(stock_repo=repo, minervini_task=None)
+    """minervini_stage_service 가 없으면 에러 응답을 반환한다."""
+    ctx = _make_svc_ctx(svc=None)
 
     with patch.object(api_common, "_ctx", ctx):
         result = await get_minervini_stage2()
