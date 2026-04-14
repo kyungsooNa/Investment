@@ -43,7 +43,7 @@ async def test__fetch_rs_rating_no_service_returns_zero():
 async def test__fetch_rs_rating_handles_service_response_and_errors():
     rs_svc = AsyncMock()
     # case: successful response with data
-    rs_svc.get_rating.return_value = ResCommonResponse(rt_cd="0", data=ResRSRating(code="005930", trade_date="20260101", rs_rating=88, weighted_rs=10.1))
+    rs_svc.get_rating.return_value = ResCommonResponse(rt_cd="0", msg1="", data=ResRSRating(code="005930", trade_date="20260101", rs_rating=88, weighted_rs=10.1))
     svc = MinerviniStageService(stock_query_service=AsyncMock(), rs_rating_service=rs_svc)
     val = await svc._fetch_rs_rating("005930")
     assert val == 88
