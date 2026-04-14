@@ -380,6 +380,19 @@ function renderRankingTable() {
         else data = rankingSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
     }
 
+    const formatMarketCap = (val) => {
+        if (!val) return '-';
+        let v = parseFloat(val);
+        if (isNaN(v)) return '-';
+        if (v > 100000000) v = v / 100000000; // 원 -> 억 단위 보정
+        if (v >= 10000) {
+            const jo = Math.floor(v / 10000);
+            const uk = Math.floor(v % 10000);
+            return jo.toLocaleString() + "조" + (uk > 0 ? " " + uk.toLocaleString() + "억" : "");
+        }
+        return v.toLocaleString() + "억";
+    };
+
     let rows = '';
     data.forEach(item => {
         const rate = parseFloat(item.prdy_ctrt || 0);
@@ -387,7 +400,7 @@ function renderRankingTable() {
         const code = item.stck_shrn_iscd || item.iscd || item.mksc_shrn_iscd || item.code || '';
         let extraCols;
         if (isMinervini) {
-            extraCols = `<td>S${item.stage}</td><td>${item.rs_rating || '-'}</td><td>${formatTradingValue(item.market_cap || 0)}</td>`;
+            extraCols = `<td>S${item.stage}</td><td>${item.rs_rating || '-'}</td><td>${formatMarketCap(item.market_cap || 0)}</td>`;
         } else if (isNewHigh) {
             const isHist = item.is_historical_new_high || item.is_historical_newhigh;
             const histBadge = isHist ? '<span style="color:var(--text-red); font-weight:bold;">O</span>' : '<span style="color:#aaa;">X</span>';
@@ -395,7 +408,7 @@ function renderRankingTable() {
             const tvFmt = tv > 0 ? formatTradingValue(tv) : '-';
             const stage = parseInt(item.minervini_stage || 0);
             const stageBadge = stage > 0 ? `<span style="color:${stage === 2 ? 'var(--text-red)' : '#aaa'};">S${stage}</span>` : '<span style="color:#aaa;">-</span>';
-            extraCols = `<td>${formatTradingValue(item.market_cap || 0)}</td><td>${tvFmt}</td><td>${item.rs_rating || item.rs || '-'}</td><td>${histBadge}</td><td>${stageBadge}</td>`;
+            extraCols = `<td>${formatMarketCap(item.market_cap || 0)}</td><td>${tvFmt}</td><td>${item.rs_rating || item.rs || '-'}</td><td>${histBadge}</td><td>${stageBadge}</td>`;
         } else
         if (isCombined) {
             const pbmnVal = formatTradingValue(String(item._combined_pbmn));

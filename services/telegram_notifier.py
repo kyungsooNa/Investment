@@ -280,7 +280,12 @@ class TelegramReporter:
                     cap = cap / 100_000_000
                 
                 if cap > 0:
-                    cap_str = f"{cap:.1f}억" if cap < 1 else f"{cap:,.0f}억"
+                    if cap >= 10000:
+                        jo = int(cap // 10000)
+                        uk = int(cap % 10000)
+                        cap_str = f"{jo:,}조" + (f" {uk:,}억" if uk > 0 else "")
+                    else:
+                        cap_str = f"{cap:.1f}억" if cap < 1 else f"{int(cap):,}억"
                 else:
                     cap_str = "-"
             except (ValueError, TypeError):
@@ -350,9 +355,13 @@ class TelegramReporter:
                     mcap_val = float(mcap)
                     # if value seems large (already in won), convert to 억
                     if mcap_val > 1_000_000_000:
-                        mcap_str = f"{mcap_val/100_000_000:.1f}억"
+                        mcap_val = mcap_val / 100_000_000
+                    if mcap_val >= 10000:
+                        jo = int(mcap_val // 10000)
+                        uk = int(mcap_val % 10000)
+                        mcap_str = f"{jo:,}조" + (f" {uk:,}억" if uk > 0 else "")
                     else:
-                        mcap_str = f"{mcap_val:,.0f}"
+                        mcap_str = f"{mcap_val:.1f}억" if mcap_val < 1 else f"{int(mcap_val):,}억"
                 else:
                     mcap_str = '-'
             except Exception:
