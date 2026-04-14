@@ -763,3 +763,115 @@ async def test_on_market_closed_no_telegram_reporter(mock_stock_repo, mock_notif
     ]
     await task._on_market_closed("20260412")  # no exception
     assert task._last_collected_date == "20260412"
+
+
+# ── 추가: 커버리지 보완 TC ──────────────────────────────────────────────
+
+def test_get_progress(task):
+    """get_progress()가 복사된 dict를 반환하는지 테스트"""
+    task._progress["status"] = "test_status"
+    prog = task.get_progress()
+    assert prog["status"] == "test_status"
+    
+    prog["status"] = "changed"
+    assert task._progress["status"] == "test_status"
+
+
+@pytest.mark.asyncio
+async def test_force_collect_success(task):
+    """force_collect() 호출 시 mcs에서 날짜를 가져와 _run_newhigh를 호출하는지 검증"""
+    task._mcs = MagicMock()
+    task._mcs.get_latest_trading_date = AsyncMock(return_value="20260413")
+    
+    with patch.object(task, "_run_newhigh", new_callable=AsyncMock) as mock_run:
+        await task.force_collect()
+        mock_run.assert_awaited_once_with("20260413")
+
+
+@pytest.mark.asyncio
+async def test_force_collect_no_target_date(task):
+    """target_date가 없을 경우 force_collect()가 중단되는지 검증"""
+    task._mcs = MagicMock()
+    task._mcs.get_latest_trading_date = AsyncMock(return_value=None)
+    
+    with patch.object(task, "_run_newhigh", new_callable=AsyncMock) as mock_run:
+        await task.force_collect()
+        mock_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_newhigh_empty_snapshots(task, mock_stock_repo):
+    """조회된 snapshot 데이터가 없을 경우 early return 동작 검증"""
+    mock_stock_repo.get_all_daily_snapshots.return_value = []
+    await task._run_newhigh("20260413")
+    # finally 블록을 거쳐 running=False가 되어야 함
+    assert task._progress["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_newhigh_exception_handled(task, mock_stock_repo):
+    """_run_newhigh 내부에서 예외 발생 시 크래시 방지 및 상태 초기화 검증"""
+    mock_stock_repo.get_all_daily_snapshots.side_effect = Exception("DB Error")
+    await task._run_newhigh("20260413")
+    assert task._progress["running"] is False
+
+
+def test_filter_newhigh_rf_materials(task):
+    """RF머트리얼즈 등 특수한 종목명 디버깅 코드 경로 커버"""
+    snaps = [
+        _snap("123456", "RF머트리얼즈", 10000, 10000, market_cap=5_000_000_000),
+    ]
+    result = task._filter_newhigh(snaps)
+    assert len(result) == 1
+    assert result[0]["name"] == "RF머트리얼즈"
+
+
+@pytest.fixture
+def mock_rs_rating_service():
+    svc = MagicMock()
+    svc.get_ratings_by_date = AsyncMock()
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_enrich_and_filter_rs_rating_success(task, mock_rs_rating_service):
+    """rs_rating 정상 주입 및 임계치 미달 필터링 검증"""
+    task._rs_rating_service = mock_rs_rating_service
+    task._rs_rating_min = 80
+    
+    mock_rs_rating_service.get_ratings_by_date.return_value = MagicMock(
+        rt_cd="0", data={"005930": 85, "000660": 70}
+    )
+    
+    stocks = [
+        {"code": "005930", "name": "삼성전자"},
+        {"code": "000660", "name": "SK하이닉스"},
+        {"code": "035420", "name": "NAVER"}, # rating 데이터 없음 -> 0 처리
+    ]
+    result = await task._enrich_and_filter_rs_rating(stocks, "20260413")
+    
+    assert len(result) == 1
+    assert result[0]["code"] == "005930"
+    assert result[0]["rs_rating"] == 85
+
+
+@pytest.mark.asyncio
+async def test_enrich_and_filter_rs_rating_api_fail(task, mock_rs_rating_service):
+    """RS Rating 조회 실패 시 rs_rating=0 주입 후 필터 미적용 반환하는지 검증"""
+    task._rs_rating_service = mock_rs_rating_service
+    mock_rs_rating_service.get_ratings_by_date.return_value = MagicMock(rt_cd="1", data=None)
+    stocks = [{"code": "005930", "name": "삼성전자"}]
+    result = await task._enrich_and_filter_rs_rating(stocks, "20260413")
+    assert len(result) == 1
+    assert result[0]["rs_rating"] == 0
+
+
+@pytest.mark.asyncio
+async def test_enrich_and_filter_rs_rating_exception(task, mock_rs_rating_service):
+    """RS Rating 조회 중 예외 발생 시에도 앱이 크래시되지 않고 rs_rating=0 주입 검증"""
+    task._rs_rating_service = mock_rs_rating_service
+    mock_rs_rating_service.get_ratings_by_date.side_effect = Exception("API error")
+    stocks = [{"code": "005930", "name": "삼성전자"}]
+    result = await task._enrich_and_filter_rs_rating(stocks, "20260413")
+    assert len(result) == 1
+    assert result[0]["rs_rating"] == 0
