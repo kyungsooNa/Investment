@@ -237,9 +237,33 @@ class StreamingService:
         # ── 내장 콘솔/디버그 출력 (스로틀링) ──────────────────────
         now = time.monotonic()
 
+        def _throttle_allowed(dtype: str) -> bool:
+            """Support both old float and new per-type dict for last print times."""
+            last = self._last_console_print_time
+            try:
+                # dict mode
+                if isinstance(last, dict):
+                    last_time = last.get(dtype, 0.0)
+                    if now - last_time >= self._PRINT_THROTTLE_SEC:
+                        last[dtype] = now
+                        return True
+                    return False
+                # float mode (backward compatibility)
+                if now - float(last) >= self._PRINT_THROTTLE_SEC:
+                    # convert to dict for future per-type use
+                    self._last_console_print_time = {dtype: now}
+                    return True
+                return False
+            except Exception:
+                # fallback: allow
+                try:
+                    self._last_console_print_time = {dtype: now}
+                except Exception:
+                    self._last_console_print_time = now
+                return True
+
         if data_type == 'realtime_price':
-            if now - self._last_console_print_time >= self._PRINT_THROTTLE_SEC:
-                self._last_console_print_time = now
+            if _throttle_allowed('realtime_price'):
                 stock_code = inner.get('유가증권단축종목코드')
                 current_price = inner.get('주식현재가')
                 change = inner.get('전일대비', 'N/A')
@@ -254,8 +278,7 @@ class StreamingService:
                 self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}")
 
         elif data_type == 'realtime_quote':
-            if now - self._last_console_print_time >= self._PRINT_THROTTLE_SEC:
-                self._last_console_print_time = now
+            if _throttle_allowed('realtime_quote'):
                 stock_code = inner.get('유가증권단축종목코드', 'N/A')
                 askp1 = inner.get('매도호가1', 'N/A')
                 bidp1 = inner.get('매수호가1', 'N/A')
@@ -276,8 +299,7 @@ class StreamingService:
             )
 
         elif data_type == 'realtime_program_trading':
-            if now - self._last_console_print_time >= self._PRINT_THROTTLE_SEC:
-                self._last_console_print_time = now
+            if _throttle_allowed('realtime_program_trading'):
                 t = inner.get('주식체결시간', 'N/A')
                 ntby = inner.get('순매수거래대금', '0')
                 msg = f"[프로그램매매 - {t}] 순매수거래대금: {ntby}"
