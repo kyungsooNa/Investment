@@ -99,7 +99,8 @@ class MinerviniUpdateTask(AfterMarketTask):
         await self._after_market_scheduler()
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
-        needs = (not self._updated_at) or (self._updated_at and self._updated_at.strftime('%Y-%m-%d') != latest_trading_date)
+        latest_trading_date_dt = datetime.strptime(latest_trading_date, '%Y-%m-%d').date()
+        needs = (not self._updated_at) or (self._updated_at.date() != latest_trading_date_dt)
         if needs:
             await self.refresh_minervini_stage2()
 
@@ -272,7 +273,6 @@ class MinerviniUpdateTask(AfterMarketTask):
                 "elapsed": round(elapsed, 1),
                 "status": "완료",
             })
-            elapsed = time.time() - start_time
             self._logger.info(f"Minervini Stage2 갱신 완료: {len(collected)}개, 소요: {elapsed:.1f}s")
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.BACKGROUND, NotificationLevel.INFO, "Minervini S2 갱신 완료", f"{len(collected)}개 수집, 소요: {elapsed:.1f}s")
