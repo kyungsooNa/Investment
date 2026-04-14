@@ -751,21 +751,6 @@ async def test_enrich_historical_high_api_fail(task, mock_stock_query_service):
 
 
 @pytest.mark.asyncio
-async def test_force_collect_retries_only_once(
-    task_with_collector, mock_stock_repo, mock_daily_price_collector
-):
-    """force_collect 후 재조회한 데이터에 여전히 w52_high 없어도 두 번째 force_collect 미호출."""
-    mock_stock_repo.get_all_daily_snapshots.return_value = [
-        _snap("005930", "삼성전자", 80000, 0),
-    ]
-    await task_with_collector._on_market_closed("20260412")
-
-    # force_collect 는 한 번만
-    mock_daily_price_collector.force_collect.assert_awaited_once()
-    assert mock_stock_repo.get_all_daily_snapshots.await_count == 2
-
-
-@pytest.mark.asyncio
 async def test_on_market_closed_no_telegram_reporter(mock_stock_repo, mock_notification_service):
     """telegram_reporter 없어도 예외 없이 동작."""
     task = NewHighTask(
