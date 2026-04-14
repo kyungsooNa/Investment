@@ -88,7 +88,12 @@ async function loadRanking(category) {
             return;
         }
 
-        _rankingData = json.data;
+        let data = json.data;
+        if (category === 'minervini_stage2') {
+            data = data.slice().sort((a, b) => parseInt(b.rs_rating || 0) - parseInt(a.rs_rating || 0));
+            data.forEach((item, i) => { item.data_rank = String(i + 1); });
+        }
+        _rankingData = data;
         _rankingSortState = { key: null, dir: 'asc' };
         renderRankingTable();
 
