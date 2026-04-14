@@ -677,8 +677,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 try:
                     with open(self.STATE_FILE, "r") as f:
                         data = json.load(f)
+                    # Merge loaded state without overwriting in-memory entries
                     for k, v in data.items():
-                        self._position_state[k] = PPPositionState(**v)
+                        if k not in self._position_state:
+                            self._position_state[k] = PPPositionState(**v)
                 except Exception:
                     pass
             return
@@ -695,8 +697,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
                     return json.load(f)
 
             data = await asyncio.to_thread(_read_file)
+            # Merge loaded state without overwriting in-memory entries (avoids race with tests/runtime)
             for k, v in data.items():
-                self._position_state[k] = PPPositionState(**v)
+                if k not in self._position_state:
+                    self._position_state[k] = PPPositionState(**v)
         except Exception:
             pass
 

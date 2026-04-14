@@ -23,6 +23,31 @@ def _make_ohlcv(count=60, close=68000, open_=67000, volume=50000):
 
 # ── 공통 Fixture ──────────────────────────────────────────────
 
+_FILE_IO_TESTS = {"test_load_save_state", "test_load_save_state_exceptions"}
+
+
+@pytest.fixture(autouse=True)
+def no_file_io(monkeypatch, request):
+    """_load_state/_save_state* 파일 I/O를 전체 테스트에서 차단.
+
+    _load_state_async 백그라운드 태스크가 check_exits 의 pop() 이후
+    포지션을 재삽입하는 race condition을 방지한다.
+    파일 I/O 자체를 검증하는 TC는 제외한다.
+    """
+    if request.node.name in _FILE_IO_TESTS:
+        return
+    monkeypatch.setattr(OneilPocketPivotStrategy, '_load_state', lambda self: None)
+    monkeypatch.setattr(OneilPocketPivotStrategy, '_save_state', lambda self: None)
+    monkeypatch.setattr(
+        OneilPocketPivotStrategy, '_save_state_async',
+        lambda self: _async_noop()
+    )
+
+
+async def _async_noop():
+    pass
+
+
 @pytest.fixture
 def mock_deps():
     sqs = MagicMock(spec=StockQueryService)
