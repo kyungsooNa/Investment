@@ -89,6 +89,7 @@ class StockOhlcvRepository:
                         market TEXT,
                         minervini_stage INTEGER,
                         minervini_reason TEXT,
+                        rs_rating REAL,
                         collected_at REAL,
                         PRIMARY KEY (code, trade_date)
                     )
@@ -100,13 +101,16 @@ class StockOhlcvRepository:
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository DB 초기화 실패: {e}")
         # 기존 DB를 사용하는 경우 컬럼이 없을 수 있으므로 ALTER TABLE 시도
-        try:
-            with sqlite3.connect(self._db_path) as conn:
-                conn.execute("ALTER TABLE daily_prices ADD COLUMN minervini_stage INTEGER")
-                conn.execute("ALTER TABLE daily_prices ADD COLUMN minervini_reason TEXT")
-        except Exception:
-            # 이미 컬럼이 있거나 ALTER 실패하면 무시
-            pass
+        for alter_sql in [
+            "ALTER TABLE daily_prices ADD COLUMN minervini_stage INTEGER",
+            "ALTER TABLE daily_prices ADD COLUMN minervini_reason TEXT",
+            "ALTER TABLE daily_prices ADD COLUMN rs_rating REAL",
+        ]:
+            try:
+                with sqlite3.connect(self._db_path) as conn:
+                    conn.execute(alter_sql)
+            except Exception:
+                pass
 
     @asynccontextmanager
     async def _get_write_connection(self):
@@ -321,7 +325,7 @@ class StockOhlcvRepository:
                         volume, trading_value, market_cap,
                         per, pbr, eps,
                         w52_high, w52_low,
-                        market, minervini_stage, minervini_reason, collected_at
+                        market, minervini_stage, minervini_reason, rs_rating, collected_at
                     ) VALUES (
                         :code, :trade_date, :name,
                         :current_price, :open_price, :high_price, :low_price, :prev_close,
@@ -329,11 +333,12 @@ class StockOhlcvRepository:
                         :volume, :trading_value, :market_cap,
                         :per, :pbr, :eps,
                         :w52_high, :w52_low,
-                        :market, :minervini_stage, :minervini_reason, :collected_at
+                        :market, :minervini_stage, :minervini_reason, :rs_rating, :collected_at
                     )
                     """,
                     [{**r, "trade_date": trade_date, "collected_at": now,
-                      "minervini_stage": r.get("minervini_stage"), "minervini_reason": r.get("minervini_reason")}
+                      "minervini_stage": r.get("minervini_stage"), "minervini_reason": r.get("minervini_reason"),
+                      "rs_rating": r.get("rs_rating")}
                      for r in records],
                 )
             self._logger.debug(
@@ -368,6 +373,20 @@ class StockOhlcvRepository:
                 return [dict(row) for row in rows]
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
+            return []
+
+    async def get_minervini_stage2_stocks(self, trade_date: str) -> List[Dict]:
+        """특정 거래일의 Minervini Stage2 종목을 rs_rating 내림차순으로 조회."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT * FROM daily_prices WHERE trade_date = ? AND minervini_stage = 2 ORDER BY rs_rating DESC",
+                    (trade_date,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository minervini stage2 조회 실패: {e}")
             return []
 
     async def get_price_history(self, code: str, days: int = 30) -> List[Dict]:

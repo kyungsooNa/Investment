@@ -1,6 +1,7 @@
 """
 랭킹/시가총액 관련 API 엔드포인트 (ranking.html, marketcap.html).
 """
+import asyncio
 from fastapi import APIRouter, HTTPException
 from common.types import ErrorCode
 from view.web.api_common import _get_ctx, _serialize_response, _serialize_list_items
@@ -19,18 +20,55 @@ async def get_ranking_progress():
 
 @router.get("/ranking/minervini_stage2")
 async def get_minervini_stage2():
-    """Minervini Stage 2에 해당하는 전체 종목 목록을 RS 순으로 반환한다.
+    """Minervini Stage 2 종목 목록을 RS 순으로 반환한다.
 
-    MinerviniUpdateTask가 장 마감 후 미리 계산하고 캐시해 둔 결과를 반환한다.
+    1차: DB(daily_prices)에서 최신 거래일의 Stage2 종목을 조회한다.
+    2차: DB에 데이터가 없으면 MinerviniUpdateTask의 in-memory 캐시를 사용한다.
+    3차: 캐시도 없고 갱신 중이면 수집 대기 상태(data=None, running=True)를 반환하고,
+         갱신 중이 아니면 백그라운드 갱신을 트리거한 뒤 같은 응답을 반환한다.
     각 항목은 dict: { code, name, stck_prpr, prdy_ctrt, stage, rs_rating, market_cap }
     """
     ctx = _get_ctx()
-    if not ctx or not getattr(ctx, "minervini_update_task", None):
+
+    # 1차: DB 조회
+    stock_repo = getattr(ctx, "stock_repository", None)
+    if stock_repo:
+        try:
+            latest_date = await stock_repo.get_latest_trade_date()
+            if latest_date:
+                db_items = await stock_repo.get_minervini_stage2_stocks(latest_date)
+                if db_items:
+                    data = [
+                        {
+                            "code": it.get("code", ""),
+                            "name": it.get("name", ""),
+                            "stck_prpr": str(it.get("current_price") or 0),
+                            "prdy_ctrt": str(it.get("change_rate") or 0),
+                            "stage": it.get("minervini_stage", 2),
+                            "rs_rating": it.get("rs_rating") or 0,
+                            "market_cap": it.get("market_cap") or 0,
+                        }
+                        for it in db_items
+                    ]
+                    return {"rt_cd": "0", "msg1": "성공", "data": data}
+        except Exception:
+            pass
+
+    # 2차: in-memory 캐시
+    task = getattr(ctx, "minervini_update_task", None)
+    if not task:
         return {"rt_cd": "1", "msg1": "MinerviniUpdateTask 미설정", "data": None}
 
-    items = await ctx.minervini_update_task.get_minervini_stage2_cache()
+    cache = await task.get_minervini_stage2_cache()
+    if cache:
+        return {"rt_cd": "0", "msg1": "성공", "data": cache}
 
-    return {"rt_cd": "0", "msg1": "성공", "data": items}
+    # 3차: 데이터 없음 — 갱신 트리거 후 수집 대기 상태 반환
+    progress = task.get_progress()
+    if not progress.get("running"):
+        asyncio.create_task(task.refresh_minervini_stage2())
+
+    return {"rt_cd": "0", "msg1": "수집 중", "data": []}
 
 
 @router.get("/ranking/{category}")

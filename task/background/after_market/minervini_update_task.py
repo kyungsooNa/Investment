@@ -305,6 +305,7 @@ class MinerviniUpdateTask(AfterMarketTask):
                             "market": it.get("market") or None,
                             "minervini_stage": int(it.get("stage") or 0),
                             "minervini_reason": it.get("reason") or None,
+                            "rs_rating": it.get("rs_rating") or None,
                         })
                     if records:
                         await self._stock_repo.upsert_daily_snapshot(trade_date, records)
