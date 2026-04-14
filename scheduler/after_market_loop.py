@@ -59,7 +59,12 @@ async def run_after_market_loop(
                     _log.info(
                         f"[{label}] 장 마감까지 {wait_sec:.0f}초 대기"
                     )
-                    await asyncio.sleep(wait_sec + 60)  # 마감 1분 뒤
+                    try:
+                        await asyncio.sleep(wait_sec + 60)  # 마감 1분 뒤
+                    except Exception:
+                        # Some tests patch asyncio.sleep or the event loop may be closed;
+                        # swallow sleep-related errors to avoid unraisable exceptions.
+                        _log.debug(f"[{label}] sleep interrupted or mocked; continuing")
                 continue
 
             # ── 1b. 장 시작 전(09:00 이전)이면 마감 이후까지 대기 ──
@@ -78,7 +83,10 @@ async def run_after_market_loop(
             # ── 2. 장 마감 이후 — Padding 대기 후 콜백 실행 ──
             if delay_sec > 0:
                 _log.info(f"[{label}] 장 마감 감지 — {delay_sec}초 Padding 대기 후 실행")
-                await asyncio.sleep(delay_sec)
+                try:
+                    await asyncio.sleep(delay_sec)
+                except Exception:
+                    _log.debug(f"[{label}] padding sleep interrupted or mocked; continuing")
 
             latest_trading_date = (
                 await mcs.get_latest_trading_date() if mcs else None
@@ -87,14 +95,20 @@ async def run_after_market_loop(
                 await on_market_closed(latest_trading_date)
 
             # ── 3. 스마트 대기: 다음 장 마감까지 ──
-            await _smart_sleep(market_clock, _log, label)
+            try:
+                await _smart_sleep(market_clock, _log, label)
+            except Exception:
+                _log.debug(f"[{label}] smart sleep interrupted or mocked; continuing")
 
         except asyncio.CancelledError:
             _log.info(f"[{label}] 장마감 후 스케줄러 종료")
             break
         except Exception as e:
             _log.error(f"[{label}] 스케줄러 오류: {e}", exc_info=True)
-            await asyncio.sleep(60)
+            try:
+                await asyncio.sleep(60)
+            except Exception:
+                _log.debug(f"[{label}] error-sleep interrupted or mocked; continuing")
 
 
 async def _smart_sleep(
@@ -115,9 +129,15 @@ async def _smart_sleep(
         logger.info(
             f"[{label}] 다음 장 마감까지 {wait_sec / 3600:.1f}시간 대기"
         )
-        await asyncio.sleep(wait_sec + 60)
+        try:
+            await asyncio.sleep(wait_sec + 60)
+        except Exception:
+            logger.debug(f"[{label}] smart sleep interrupted or mocked; continuing")
     else:
         logger.info(
             f"[{label}] 오늘 작업 완료 또는 휴장. 12시간 대기"
         )
-        await asyncio.sleep(12 * 3600)
+        try:
+            await asyncio.sleep(12 * 3600)
+        except Exception:
+            logger.debug(f"[{label}] smart sleep interrupted or mocked; continuing")

@@ -31,7 +31,9 @@ async def flush_event_loop():
     이벤트 루프가 닫혀 발생하는 PytestUnhandledThreadExceptionWarning 방지.
     """
     yield
-    await asyncio.sleep(0.1)
+    # Allow background worker threads (aiosqlite) time to schedule callbacks
+    # before the event loop is torn down to avoid "Event loop is closed" warnings.
+    await asyncio.sleep(0.5)
 
 # ============================================================================
 # 테스트 데이터 팩토리
