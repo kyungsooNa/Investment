@@ -385,6 +385,7 @@ class WebAppContext:
             price_subscription_service=self.price_subscription_service,
             rs_rating_service=getattr(self, "rs_rating_service", None),
             minervini_service=getattr(self, "minervini_stage_service", None),
+            notification_service=getattr(self, "notification_service", None),
         )
 
         self.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(

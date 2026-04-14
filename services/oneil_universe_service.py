@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime, timedelta
 from dataclasses import asdict
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from common.types import ErrorCode
 from services.stock_query_service import StockQueryService
@@ -18,6 +18,7 @@ from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from core.logger import get_strategy_logger
 from core.performance_profiler import PerformanceProfiler
 from services.price_subscription_service import SubscriptionPriority
+from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -52,6 +53,7 @@ class OneilUniverseService:
         price_subscription_service=None,
         rs_rating_service: Optional["RSRatingService"] = None,
         minervini_service: Optional["MinerviniStageService"] = None,
+        notification_service: Optional[NotificationService] = None,
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
@@ -64,6 +66,7 @@ class OneilUniverseService:
         self._price_sub_svc = price_subscription_service
         self._rs_rating_service = rs_rating_service
         self._minervini_svc = minervini_service
+        self._notification_service = notification_service
 
         # 상태 관리
         self._watchlist: Dict[str, OSBWatchlistItem] = {}
@@ -708,9 +711,27 @@ class OneilUniverseService:
     async def _update_market_timing(self, logger: Optional[logging.Logger] = None):
         logger = logger or self._logger
         for market, code in [("KOSDAQ", self._cfg.kosdaq_etf_code), ("KOSPI", self._cfg.kospi_etf_code)]:
-            self._market_timing_cache[market] = await self._check_etf_ma_rising(code, logger=logger)
+            is_rising, fail_detail, ma_values = await self._check_etf_ma_rising(code, logger=logger)
+            self._market_timing_cache[market] = is_rising
+            
+            if self._notification_service:
+                status_text = "🟢 매수 적합 (우상향)" if is_rising else "🔴 매수 부적합 (추세 꺾임)"
+                level = NotificationLevel.INFO if is_rising else NotificationLevel.WARNING
+                
+                ma_str = " ➔ ".join([f"{v:.2f}" for v in ma_values])
+                msg = f"• 지수: {market} ({code})\n• 상태: {status_text}\n"
+                if not is_rising and fail_detail:
+                    msg += f"• 사유: {fail_detail}\n"
+                msg += f"• 최근 MA(20) 추이: {ma_str}"
+                
+                await self._notification_service.emit(
+                    category=NotificationCategory.STRATEGY,
+                    level=level,
+                    title=f"마켓 타이밍 갱신 ({market})",
+                    message=msg
+                )
 
-    async def _check_etf_ma_rising(self, etf_code: str, logger: Optional[logging.Logger] = None) -> bool:
+    async def _check_etf_ma_rising(self, etf_code: str, logger: Optional[logging.Logger] = None) -> Tuple[bool, str, List[float]]:
         logger = logger or self._logger
         period = self._cfg.market_ma_period
         days = self._cfg.market_ma_rising_days
@@ -718,7 +739,7 @@ class OneilUniverseService:
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
 
         if not ohlcv or len(ohlcv) < period + days: # This check should be based on the actual 'closes' list length
-            return False
+            return False, "데이터 부족", []
         
         closes = [r.get("close", 0) for r in ohlcv] # Changed: Do not filter out 0 values
         ma_values = []
@@ -745,7 +766,7 @@ class OneilUniverseService:
 
         logger.debug(log_data)
 
-        return is_rising
+        return is_rising, fail_detail, ma_values
 
     def _compute_rs_scores(
         self,
