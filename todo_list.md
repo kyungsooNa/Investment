@@ -13,7 +13,6 @@
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
-- [ ] **[BackgroundService]** naver_finance_scraper.py 도 background task로 전환.
 
 
 ## Ⅱ. ⚡ 성능 최적화 및 인프라 전환 (Performance & Infra)
