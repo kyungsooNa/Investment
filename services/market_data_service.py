@@ -64,7 +64,13 @@ class MarketDataService:
             if self._stock_repo:
                 cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0, count_stats=count_stats, caller=caller)
                 if cached_data:
-                    return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(Cache)", data=cached_data)
+                    # _source="tick" 인 불완전 캐시(WebSocket 틱만 수신, API 미조회)는
+                    # 전체 필드가 없어 handle_get_current_stock_price()에서 파싱 오류 발생.
+                    # 이 경우 캐시를 무시하고 API를 호출하여 완전한 데이터를 저장/반환한다.
+                    if isinstance(cached_data, dict) and cached_data.get("_source") == "tick":
+                        pass  # fall through → API 호출
+                    else:
+                        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(Cache)", data=cached_data)
 
             # 2. 장 마감 시간대에는 daily_prices DB 스냅샷 확인 (API 호출 절약)
             is_market_open = (await self._mcs.is_market_open_now()) if self._mcs else self._market_clock.is_market_operating_hours()
