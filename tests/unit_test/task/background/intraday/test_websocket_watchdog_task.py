@@ -107,9 +107,25 @@ def mock_streaming_logger():
 # ── _restore_all_subscriptions 테스트 ────────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_restore_skipped_when_market_closed(watchdog_task):
+    """_restore_all_subscriptions: 장 마감 중에는 WebSocket 연결 없이 즉시 반환한다."""
+    svc = watchdog_task
+    # fixture 기본값이 False지만 명시적으로 설정
+    svc.mcs.is_market_open_now = AsyncMock(return_value=False)
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+
+    await svc._restore_all_subscriptions()
+
+    svc._streaming_service.connect_websocket.assert_not_called()
+    svc._streaming_service.subscribe_program_trading.assert_not_called()
+    svc._streaming_stock_repo.clear_active.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_restore_program_trading_success(watchdog_task, mock_deps):
     """_restore_all_subscriptions: 모든 PT 종목 구독 복원 성공 케이스."""
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     codes = ["005930", "000660"]
     svc._streaming_stock_repo.get_desired.return_value = set(codes)
 
@@ -126,6 +142,7 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
 async def test_restore_program_trading_partial_failure(watchdog_task, mock_deps):
     """_restore_all_subscriptions: 연결 실패 종목은 desired에서 제거, 성공 종목은 active로 등록."""
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     # "000660"만 connect 실패, "005930"과 "035720"은 성공
     connect_results = iter([True, False, True])
 
@@ -236,6 +253,7 @@ async def test_streaming_watchdog_skips_when_no_repo(watchdog_task):
 async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
     """force_reconnect_program_trading: 연결 종료 후 재구독 검증."""
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._streaming_stock_repo.get_desired.return_value = {"005930", "000660"}
 
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
@@ -252,6 +270,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
 async def test_force_reconnect_calls_connect_without_callback(watchdog_task, mock_deps):
     """force_reconnect: connect_websocket()을 콜백 인자 없이 호출하는지 검증."""
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._streaming_stock_repo.get_desired.return_value = {"005930"}
 
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
@@ -358,6 +377,7 @@ async def test_force_reconnect_program_trading_early_returns(watchdog_task):
 async def test_force_reconnect_program_trading_errors(watchdog_task, mock_deps):
     """연결 종료 오류 및 구독 실패 시나리오 검증."""
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._streaming_stock_repo.get_desired.return_value = {"005930"}
 
     # disconnect_websocket에서 오류 발생 (무시하고 계속 진행되어야 함)
@@ -492,6 +512,7 @@ async def test_restore_all_subscriptions_with_price_service(watchdog_task, mock_
     watchdog_task._price_subscription_service = mock_price_subscription_service
     watchdog_task._streaming_logger = mock_streaming_logger
     watchdog_task._streaming_stock_repo.get_desired.return_value = set()  # PT 구독 없음
+    watchdog_task.mcs.is_market_open_now = AsyncMock(return_value=True)
 
     await watchdog_task._restore_all_subscriptions()
 
@@ -657,6 +678,7 @@ async def test_force_reconnect_returns_when_no_subs(watchdog_task):
 async def test_streaming_logger_calls_on_restore_and_reconnect(watchdog_task, mock_streaming_logger):
     """복원 및 재연결 과정에서 streaming_logger 메서드들이 제대로 호출되는지 검증."""
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._streaming_logger = mock_streaming_logger
     svc._streaming_stock_repo.get_desired.return_value = {"005930"}
 
@@ -694,10 +716,11 @@ async def test_streaming_watchdog_watchdog_log(watchdog_task, mock_streaming_log
 @pytest.mark.asyncio
 async def test_restore_accounts_for_pt_slots_before_rebalance(watchdog_task, mock_price_subscription_service):
     """
-    PT 복원이 완료되어 Repo에 active로 기록된 후, 
+    PT 복원이 완료되어 Repo에 active로 기록된 후,
     최종적으로 PriceService의 _rebalance가 호출되는지 순서와 상태를 검증.
     """
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._price_subscription_service = mock_price_subscription_service
     pt_codes = ["005930"]
     svc._streaming_stock_repo.get_desired.return_value = set(pt_codes)
@@ -725,6 +748,7 @@ async def test_restore_sequence_accounts_for_pt_slots(watchdog_task, mock_price_
     이 순서가 보장되어야 _rebalance 내에서 PT가 점유한 슬롯을 제외하고 계산할 수 있음.
     """
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._price_subscription_service = mock_price_subscription_service
 
     # 1. PT 종목 1개 설정
@@ -762,6 +786,7 @@ async def test_restore_price_only_calls_connect_websocket(watchdog_task, mock_pr
     PT 종목이 없을 경우 WebSocket 미연결 상태로 _rebalance()가 실행되어 구독 실패했음.
     """
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._price_subscription_service = mock_price_subscription_service
     svc._streaming_logger = mock_streaming_logger
     svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
@@ -785,6 +810,7 @@ async def test_restore_price_only_calls_connect_websocket(watchdog_task, mock_pr
 async def test_restore_price_only_connect_failed_logs_failure(watchdog_task, mock_price_subscription_service, mock_streaming_logger):
     """[Bug Fix] H0UNCNT0 복원 시 connect_websocket()이 False를 반환하면 실패 로그를 남긴다."""
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._price_subscription_service = mock_price_subscription_service
     svc._streaming_logger = mock_streaming_logger
     svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
@@ -803,6 +829,7 @@ async def test_restore_price_done_log_called_with_single_arg(watchdog_task, mock
     'takes 2 positional arguments but 3 were given' 오류가 발생했음.
     """
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._price_subscription_service = mock_price_subscription_service
     svc._streaming_logger = mock_streaming_logger
     svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
@@ -820,6 +847,7 @@ async def test_restore_price_done_log_called_with_single_arg(watchdog_task, mock
 async def test_restore_price_done_log_reflects_active_count(watchdog_task, mock_price_subscription_service, mock_streaming_logger):
     """log_price_restore_done()에 전달되는 값이 _active_codes_price의 실제 크기와 일치한다."""
     svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._price_subscription_service = mock_price_subscription_service
     svc._streaming_logger = mock_streaming_logger
     svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
