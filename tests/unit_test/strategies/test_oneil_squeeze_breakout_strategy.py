@@ -577,7 +577,7 @@ async def test_scan_mixed_market_timing(scan_setup):
     universe.get_watchlist.return_value = {"005930": item_kospi, "123456": item_kosdaq}
 
     # 마켓 타이밍: KOSPI False, KOSDAQ True
-    async def mock_is_market_timing_ok(market, logger=None):
+    async def mock_is_market_timing_ok(market, caller=None, logger=None):
         return market == "KOSDAQ"
     universe.is_market_timing_ok.side_effect = mock_is_market_timing_ok
 
