@@ -335,6 +335,105 @@ async def test_lifecycle_and_progress():
 
 
 @pytest.mark.asyncio
+async def test_on_market_closed_parses_yyyymmdd_format():
+    """_on_market_closed가 'YYYYMMDD' 형식의 날짜를 올바르게 파싱하는지 확인 (버그 픽스 검증)"""
+    mcs = DummyMCS(is_open=False, latest_date="20260415")
+    stock_repo = DummyStockRepo()
+    sc_repo = DummyStockCodeRepo([])
+
+    task = MinerviniUpdateTask(
+        minervini_service=DummyMinerviniSvc({}),
+        stock_code_repository=sc_repo,
+        stock_repository=stock_repo,
+        market_calendar_service=mcs,
+    )
+
+    # '20260415' 형식을 파싱할 때 ValueError가 발생하지 않아야 함
+    await task._on_market_closed("20260415")
+
+
+@pytest.mark.asyncio
+async def test_on_market_closed_triggers_refresh_when_not_updated():
+    """_on_market_closed: 오늘 미업데이트 상태면 refresh가 호출되는지 확인"""
+    mcs = DummyMCS(is_open=False, latest_date="20260415")
+    stock_repo = DummyStockRepo()
+    sc_repo = DummyStockCodeRepo([])
+
+    task = MinerviniUpdateTask(
+        minervini_service=DummyMinerviniSvc({}),
+        stock_code_repository=sc_repo,
+        stock_repository=stock_repo,
+        market_calendar_service=mcs,
+    )
+    task._updated_at = None  # 업데이트 이력 없음
+
+    refresh_called = []
+
+    async def mock_refresh(force=False):
+        refresh_called.append(True)
+
+    task.refresh_minervini_stage2 = mock_refresh
+
+    await task._on_market_closed("20260415")
+
+    assert refresh_called, "업데이트 이력이 없으면 refresh가 호출되어야 함"
+
+
+@pytest.mark.asyncio
+async def test_on_market_closed_skips_refresh_when_already_updated_today():
+    """_on_market_closed: 이미 당일 업데이트를 마쳤다면 refresh를 건너뛰는지 확인"""
+    mcs = DummyMCS(is_open=False, latest_date="20260415")
+    stock_repo = DummyStockRepo()
+    sc_repo = DummyStockCodeRepo([])
+
+    task = MinerviniUpdateTask(
+        minervini_service=DummyMinerviniSvc({}),
+        stock_code_repository=sc_repo,
+        stock_repository=stock_repo,
+        market_calendar_service=mcs,
+    )
+    task._updated_at = datetime(2026, 4, 15, 16, 0, 0)  # 당일 업데이트 완료
+
+    refresh_called = []
+
+    async def mock_refresh(force=False):
+        refresh_called.append(True)
+
+    task.refresh_minervini_stage2 = mock_refresh
+
+    await task._on_market_closed("20260415")
+
+    assert not refresh_called, "당일 업데이트가 완료된 경우 refresh를 건너뛰어야 함"
+
+
+@pytest.mark.asyncio
+async def test_on_market_closed_triggers_refresh_when_updated_on_different_date():
+    """_on_market_closed: 마지막 업데이트가 다른 날짜면 refresh가 호출되는지 확인"""
+    mcs = DummyMCS(is_open=False, latest_date="20260415")
+    stock_repo = DummyStockRepo()
+    sc_repo = DummyStockCodeRepo([])
+
+    task = MinerviniUpdateTask(
+        minervini_service=DummyMinerviniSvc({}),
+        stock_code_repository=sc_repo,
+        stock_repository=stock_repo,
+        market_calendar_service=mcs,
+    )
+    task._updated_at = datetime(2026, 4, 14, 16, 0, 0)  # 전날 업데이트
+
+    refresh_called = []
+
+    async def mock_refresh(force=False):
+        refresh_called.append(True)
+
+    task.refresh_minervini_stage2 = mock_refresh
+
+    await task._on_market_closed("20260415")
+
+    assert refresh_called, "마지막 업데이트가 다른 날짜면 refresh가 호출되어야 함"
+
+
+@pytest.mark.asyncio
 async def test_exception_in_stage_retrieval():
     """API 응답 등에서 예외가 발생했을 때 앱이 뻗지 않고 Stage=0으로 복구하는지 확인"""
     sc_repo = DummyStockCodeRepo([{"종목코드": "0001", "종목명": "A", "시장구분": "KOSPI"}])
