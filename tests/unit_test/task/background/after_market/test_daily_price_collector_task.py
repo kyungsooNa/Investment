@@ -125,7 +125,7 @@ async def test_verify_crawler_data_success(task):
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="", data={"output": data[code]})
 
     with patch.object(task, '_fetch_with_retry', side_effect=mock_fetch):
-        result = await task._verify_crawler_data(df_crawled, "TEST")
+        result = await task._verify_crawler_data(df_crawled, "TEST", force_fresh=True)
         assert result is True
 
 @pytest.mark.asyncio
@@ -147,7 +147,7 @@ async def test_verify_crawler_data_partial_mismatch_allowed(task):
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="", data={"output": data[code]})
 
     with patch.object(task, '_fetch_with_retry', side_effect=mock_fetch):
-        result = await task._verify_crawler_data(df_crawled, "TEST")
+        result = await task._verify_crawler_data(df_crawled, "TEST", force_fresh=True)
         assert result is True
 
 @pytest.mark.asyncio
@@ -169,7 +169,7 @@ async def test_verify_crawler_data_fail_mismatch(task):
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="", data={"output": data[code]})
 
     with patch.object(task, '_fetch_with_retry', side_effect=mock_fetch):
-        result = await task._verify_crawler_data(df_crawled, "TEST")
+        result = await task._verify_crawler_data(df_crawled, "TEST", force_fresh=True)
         assert result is False
 
 @pytest.mark.asyncio
@@ -177,7 +177,7 @@ async def test_verify_crawler_data_api_fail(task):
     """검증용 API 호출 자체가 실패했을 때 검증 실패 처리 확인"""
     df_crawled = pd.DataFrame()
     with patch.object(task, '_fetch_with_retry', return_value=None):
-        result = await task._verify_crawler_data(df_crawled, "TEST")
+        result = await task._verify_crawler_data(df_crawled, "TEST", force_fresh=True)
         assert result is False
 
 @pytest.mark.asyncio
