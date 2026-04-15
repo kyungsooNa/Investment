@@ -319,19 +319,22 @@ async def test_load_from_db_when_stage_data_exists():
 async def test_lifecycle_and_progress():
     """태스크의 상태 변경 라이프사이클 및 get_progress 기능 검증"""
     task = MinerviniUpdateTask(minervini_service=DummyMinerviniSvc({}))
-    
-    await task.start()
-    assert task.state == TaskState.RUNNING
-    
-    await task.suspend()
-    assert task.state == TaskState.SUSPENDED
-    
-    await task.resume()
-    assert task.state == TaskState.RUNNING
-    
-    prog = task.get_progress()
-    assert "running" in prog
-    assert "last_updated" in prog
+
+    try:
+        await task.start()
+        assert task.state == TaskState.RUNNING
+
+        await task.suspend()
+        assert task.state == TaskState.SUSPENDED
+
+        await task.resume()
+        assert task.state == TaskState.RUNNING
+
+        prog = task.get_progress()
+        assert "running" in prog
+        assert "last_updated" in prog
+    finally:
+        await task.stop()  # 백그라운드 스케줄러 Task 취소 — 미취소 시 12시간 sleep hang
 
 
 @pytest.mark.asyncio
