@@ -311,7 +311,12 @@ class StockOhlcvRepository:
     # ── daily_prices (장마감 후 전종목 스냅샷) ──────────────────────────────────
 
     async def upsert_daily_snapshot(self, trade_date: str, records: List[Dict]):
-        """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert."""
+        """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert.
+
+        ON CONFLICT DO UPDATE를 사용하여 충돌 시 가격 데이터만 덮어씁니다.
+        - is_newhigh, is_historical_newhigh: DO UPDATE에 포함하지 않아 기존 값 보존
+        - minervini_stage, minervini_reason, rs_rating: 새 값이 NULL이면 기존 값 유지 (COALESCE)
+        """
         if not records:
             return
 
@@ -320,7 +325,7 @@ class StockOhlcvRepository:
             async with self._get_write_connection() as conn:
                 await conn.executemany(
                     """
-                    INSERT OR REPLACE INTO daily_prices (
+                    INSERT INTO daily_prices (
                         code, trade_date, name,
                         current_price, open_price, high_price, low_price, prev_close,
                         change_price, change_sign, change_rate,
@@ -337,6 +342,30 @@ class StockOhlcvRepository:
                         :w52_high, :w52_low,
                         :market, :minervini_stage, :minervini_reason, :rs_rating, :collected_at
                     )
+                    ON CONFLICT(code, trade_date) DO UPDATE SET
+                        name            = excluded.name,
+                        current_price   = excluded.current_price,
+                        open_price      = excluded.open_price,
+                        high_price      = excluded.high_price,
+                        low_price       = excluded.low_price,
+                        prev_close      = excluded.prev_close,
+                        change_price    = excluded.change_price,
+                        change_sign     = excluded.change_sign,
+                        change_rate     = excluded.change_rate,
+                        volume          = excluded.volume,
+                        trading_value   = excluded.trading_value,
+                        market_cap      = excluded.market_cap,
+                        per             = excluded.per,
+                        pbr             = excluded.pbr,
+                        eps             = excluded.eps,
+                        w52_high        = excluded.w52_high,
+                        w52_low         = excluded.w52_low,
+                        market          = excluded.market,
+                        minervini_stage  = COALESCE(excluded.minervini_stage,  minervini_stage),
+                        minervini_reason = COALESCE(excluded.minervini_reason, minervini_reason),
+                        rs_rating        = COALESCE(excluded.rs_rating,        rs_rating),
+                        collected_at    = excluded.collected_at
+                    -- is_newhigh, is_historical_newhigh 는 언급하지 않으므로 기존 값 보존
                     """,
                     [{**r, "trade_date": trade_date, "collected_at": now,
                       "minervini_stage": r.get("minervini_stage"), "minervini_reason": r.get("minervini_reason"),

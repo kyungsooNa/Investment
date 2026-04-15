@@ -6,11 +6,11 @@
 ### 0. 치명적 불량 수정 (Critical Bugs)
 - [ ] **[설정/환경]** `tr_ids_config.yaml`과 `kis_config.yaml`의 `tr_id`, `url`을 `(실전, 모의)` 튜플(Tuple) 형태로 변경. 모의투자에서 지원하지 않는 API는 빈 값으로 두어 자동 차단되도록 수정.
 
-
 - [ ] **[프로그램매매]** 이전 구독종목 복구 중... 이 너무 오래걸림. 현재 모든 tick 단위가 db에 저장되고 있는데, ui에서는 1분이 최소 단위임으로, 보여지는건 최신의 data를 보여주되 db저장은 1분 단위로 마지막 tick 정보만 저장하도록 수정. 이렇게하면 memory에 다 올려도 부담 없을것으로 예상됨. 종목당 (KRX 09시~15시30분 => 390분(개), NTX 포함해도 08시~20시 => 720분(개))
 
 - [ ] **[Ranking]** newhigh 랭킹에서 이미 background로 update 했음에도 cache나 db hit가 안나고 다시 background task를 수행하는 불량. 수행후에도 data는 표기되지 않음.
-
+- [ ] **[Streaming]** 구독중인데 data를 못받는 종목들이 있음. 
+- [ ] **[candle_chart]** 신고가/신저가 표기가 3개월/6개월/1년 버튼을 눌러야 변경됨.
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
 - [ ] **[보안]** 단순 쿠키 기반 인증을 JWT(JSON Web Token) 기반으로 고도화 (세션 만료 및 Secure/HttpOnly 적용).
