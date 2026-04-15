@@ -265,6 +265,12 @@ class WebSocketWatchdogTask(SchedulableTask):
              (단순 _rebalance() 호출만 하면 _active_codes에 이전 상태가 남아
               "이미 구독됨"으로 판단해 브로커에 subscribe를 보내지 않는 버그 방지)
         """
+        # 장 마감 중에는 WebSocket 연결 불필요 — 워치독 루프가 장 개장 시 재연결 처리
+        market_is_open = bool(self.mcs and await self.mcs.is_market_open_now())
+        if not market_is_open:
+            self._logger.info("[WebSocketWatchdog] 장 마감 중 — 구독 복원 생략 (워치독이 장 개장 시 재연결)")
+            return
+
         from repositories.streaming_stock_repo import StreamingType
 
         # ── 1. PT active 상태 초기화 ──────────────────────────────
