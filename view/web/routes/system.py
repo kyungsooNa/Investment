@@ -198,7 +198,7 @@ async def force_daily_price_update():
     if progress.get("running"):
         raise HTTPException(status_code=409, detail="이미 수집이 진행 중입니다")
 
-    asyncio.create_task(task.force_collect())
+    asyncio.create_task(task.force_collect(force_fresh=True))
     return {"success": True, "message": "현재가 강제 수집이 시작되었습니다."}
 
 

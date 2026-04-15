@@ -124,12 +124,12 @@ class OneilUniverseService:
             ))
         return self._watchlist
 
-    async def is_market_timing_ok(self, market: str, logger: Optional[logging.Logger] = None) -> bool:
+    async def is_market_timing_ok(self, market: str, caller: str = "", logger: Optional[logging.Logger] = None) -> bool:
         """해당 시장(KOSPI/KOSDAQ)의 마켓 타이밍이 매수 적합한지 확인."""
         logger = logger or self._logger
         today = self._tm.get_current_kst_time().strftime("%Y%m%d")
         if self._market_timing_date != today:
-            await self._update_market_timing(logger=logger)
+            await self._update_market_timing(caller=caller, logger=logger)
             self._market_timing_date = today
         
         return self._market_timing_cache.get(market, False)
@@ -708,7 +708,7 @@ class OneilUniverseService:
                 triggered = True
         return triggered
 
-    async def _update_market_timing(self, logger: Optional[logging.Logger] = None):
+    async def _update_market_timing(self, caller: str = "", logger: Optional[logging.Logger] = None):
         logger = logger or self._logger
         for market, code in [("KOSDAQ", self._cfg.kosdaq_etf_code), ("KOSPI", self._cfg.kospi_etf_code)]:
             is_rising, fail_detail, ma_values = await self._check_etf_ma_rising(code, logger=logger)
@@ -724,10 +724,14 @@ class OneilUniverseService:
                     msg += f"• 사유: {fail_detail}\n"
                 msg += f"• 최근 MA(20) 추이: {ma_str}"
                 
+                title = f"마켓 타이밍 갱신 ({market})"
+                if caller:
+                    title = f"[{caller}] {title}"
+                
                 await self._notification_service.emit(
                     category=NotificationCategory.STRATEGY,
                     level=level,
-                    title=f"마켓 타이밍 갱신 ({market})",
+                    title=title,
                     message=msg
                 )
 

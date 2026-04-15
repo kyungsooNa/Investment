@@ -117,7 +117,7 @@ async def test_verify_crawler_data_success(task):
         "저가": [78000, 130000]
     }).set_index("종목코드")
 
-    async def mock_fetch(code):
+    async def mock_fetch(code, force_fresh=False):
         data = {
             "005930": {"stck_prpr": "80000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"},
             "000660": {"stck_prpr": "150000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"}
@@ -139,7 +139,7 @@ async def test_verify_crawler_data_partial_mismatch_allowed(task):
         "저가": [78000, 130000]
     }).set_index("종목코드")
 
-    async def mock_fetch(code):
+    async def mock_fetch(code, force_fresh=False):
         data = {
             "005930": {"stck_prpr": "80000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"},
             "000660": {"stck_prpr": "151000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"} # 종가 다름
@@ -161,7 +161,7 @@ async def test_verify_crawler_data_fail_mismatch(task):
         "저가": [78000, 130000]
     }).set_index("종목코드")
 
-    async def mock_fetch(code):
+    async def mock_fetch(code, force_fresh=False):
         data = {
             "005930": {"stck_prpr": "81000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"}, # 다름
             "000660": {"stck_prpr": "151000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"} # 다름
@@ -407,7 +407,7 @@ async def test_verify_crawler_data_missing_stock_in_crawled(task):
         "종목코드": ["000660"], "종가": [150000], "시가": [140000], "고가": [160000], "저가": [130000]
     }).set_index("종목코드")
 
-    async def mock_fetch(code):
+    async def mock_fetch(code, force_fresh=False):
         if code == "000660":
             data = {"stck_prpr": "150000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"}
             return ResCommonResponse(rt_cd="0", msg1="", data={"output": data})

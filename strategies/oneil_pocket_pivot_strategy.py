@@ -81,8 +81,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         # 3. 마켓 타이밍 사전 체크
         market_timing = {
-            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", logger=self._logger),
-            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", logger=self._logger)
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger)
         }
         if not any(market_timing.values()):
             self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
@@ -438,8 +438,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
         state_dirty = False
         # 캐시된 마켓 타이밍을 한 번만 조회 (N+1 호출 방지)
         market_timing_cache = {
-            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", logger=self._logger),
-            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", logger=self._logger),
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger),
         }
 
         for hold in holdings:
@@ -553,7 +553,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         """
         # 마켓 타이밍 악화 (사전 계산값이 있으면 사용)
         if market_timing_ok is None:
-            if not await self._universe.is_market_timing_ok(market, logger=self._logger):
+            if not await self._universe.is_market_timing_ok(market, caller=self.name, logger=self._logger):
                 return "하드스탑(마켓타이밍 악화)"
         else:
             if not market_timing_ok:

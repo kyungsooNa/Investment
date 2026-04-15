@@ -583,6 +583,8 @@ class StockOhlcvRepository:
             if not row:
                 return None
             r = dict(row)
+            if r['w52_high'] == 1:
+                a = 1
             output = {
                 "stck_prpr":     str(r.get("current_price") or 0),
                 "stck_oprc":     str(r.get("open_price") or 0),

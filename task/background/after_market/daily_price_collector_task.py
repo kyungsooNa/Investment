@@ -195,7 +195,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         
         for code in self.CANARY_STOCKS:
             # 1. 증권사 API에서 Source of Truth 호출
-            api_resp = await self._fetch_with_retry(code)
+            api_resp = await self._fetch_with_retry(code, force_fresh=True)
             if not api_resp or api_resp.rt_cd != ErrorCode.SUCCESS.value:
                 self._logger.debug(f"검증용 API 호출 실패({code}) - 스킵")
                 continue
@@ -298,7 +298,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
             self._logger.warning(f"FDR 수집 중 예외 발생 (Fallback 시도): {e}")
             return False
 
-    async def _collect_via_broker_api(self, target_date: str, start_time: float) -> None:
+    async def _collect_via_broker_api(self, target_date: str, start_time: float, force_fresh: bool = False) -> None:
         """[Tier 2] 증권사 API 청크 기반 수집 로직 (약 10분 소요)"""
         all_stocks = getattr(self, "_all_stocks_cache", None) or self._load_all_stocks()
         total = len(all_stocks)
@@ -316,7 +316,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
             await self._suspend_event.wait()
             
             # 1. 8개씩 병렬 API 호출
-            tasks = [self._fetch_with_retry(code) for code, _, _ in chunk]
+            tasks = [self._fetch_with_retry(code, force_fresh=force_fresh) for code, _, _ in chunk]
             responses = await asyncio.gather(*tasks, return_exceptions=True)
 
             # 2. 응답 데이터 추출 및 버퍼에 담기
@@ -389,13 +389,13 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
     # # ── 내부 헬퍼 ─────────────────────────────────────────
 
-    async def _fetch_with_retry(self, code: str):
+    async def _fetch_with_retry(self, code: str, force_fresh: bool = False):
         """get_current_price API 호출 + 재시도."""
         max_retries = 3
         delay = 1.0
         for attempt in range(max_retries):
             try:
-                resp = await self._stock_query_service.get_current_price(code, count_stats=False, caller="DailyPriceCollectorTask")
+                resp = await self._stock_query_service.get_current_price(code, count_stats=False, caller="DailyPriceCollectorTask", force_fresh=force_fresh)
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     return resp
                 error_msg = resp.msg1 if resp else "응답 없음"
@@ -514,7 +514,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         """수집 진행률 반환."""
         return dict(self._progress)
 
-    async def force_collect(self) -> None:
+    async def force_collect(self, force_fresh: bool = False) -> None:
         """강제 수집: FDR 크롤링을 우회하고 증권사 API를 직접 호출하여 w52_high 포함 전 종목 현재가를 수집한다."""
         self._logger.info("DailyPriceCollectorTask 강제 수집 요청 (증권사 API 직접 호출)")
         async with self._running_state():
@@ -537,7 +537,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
 
             try:
                 self._logger.info(f"전체 종목 강제 수집 시작 (증권사 API, 기준일: {target_date})")
-                await self._collect_via_broker_api(target_date, start_time)
+                await self._collect_via_broker_api(target_date, start_time, force_fresh=force_fresh)
                 await self._finish_collection(target_date, start_time, "Broker API (Forced)")
             except Exception as e:
                 self._logger.error(f"강제 수집 실패: {e}", exc_info=True)
