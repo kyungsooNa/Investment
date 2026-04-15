@@ -1429,7 +1429,7 @@ async def test_scheduler_skips_monday_premarket_after_sunday_update(bg_service, 
 # get_minervini_stage2 엔드포인트 — MinerviniStageService 위임 테스트
 # ---------------------------------------------------------------------------
 
-from view.web.routes.ranking import get_minervini_stage2
+from view.web.routes.ranking import get_minervini_stage2, get_newhigh, get_newhigh_progress
 import view.web.api_common as api_common
 from common.types import ResCommonResponse
 from services.minervini_stage_service import MinerviniStageService
@@ -1519,3 +1519,72 @@ async def test_minervini_stage2_no_task_returns_error():
         result = await get_minervini_stage2()
 
     assert result["rt_cd"] == "1"
+
+
+# ---------------------------------------------------------------------------
+# get_newhigh 및 get_newhigh_progress 엔드포인트 테스트
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_newhigh_returns_from_service():
+    """get_newhigh 엔드포인트가 서비스의 결과를 정상 반환한다."""
+    svc = MagicMock()
+    svc.get_newhigh_list = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="성공", data=[{"code": "005930"}])
+    )
+    ctx = _make_svc_ctx()
+    ctx.newhigh_service = svc
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_newhigh()
+
+    assert result["rt_cd"] == "0"
+    assert result["msg1"] == "성공"
+    assert result["data"] == [{"code": "005930"}]
+
+@pytest.mark.asyncio
+async def test_get_newhigh_no_service_returns_error():
+    """newhigh_service가 없을 때 에러 응답을 반환한다."""
+    ctx = _make_svc_ctx()
+    ctx.newhigh_service = None
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_newhigh()
+
+    assert result["rt_cd"] == "1"
+    assert result["msg1"] == "NewHighService 미설정"
+    assert result["data"] is None
+
+@pytest.mark.asyncio
+async def test_get_newhigh_progress_returns_from_task():
+    """newhigh_task가 있을 때 task의 진행률을 반환한다."""
+    task = MagicMock()
+    expected_progress = {"running": True, "processed": 10, "total": 100, "collected": 5, "elapsed": 1.5}
+    task.get_progress.return_value = expected_progress
+    
+    ctx = _make_svc_ctx()
+    ctx.newhigh_task = task
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_newhigh_progress()
+
+    assert result == expected_progress
+
+@pytest.mark.asyncio
+async def test_get_newhigh_progress_no_task_returns_default():
+    """newhigh_task가 없을 때 기본 진행률을 반환한다."""
+    ctx = _make_svc_ctx()
+    # 1. newhigh_task 속성이 None인 경우
+    ctx.newhigh_task = None
+
+    with patch.object(api_common, "_ctx", ctx):
+        result = await get_newhigh_progress()
+
+    assert result == {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
+
+    # 2. newhigh_task 속성 자체가 없는 경우 (hasattr=False 커버리지)
+    del ctx.newhigh_task
+    with patch.object(api_common, "_ctx", ctx):
+        result2 = await get_newhigh_progress()
+    
+    assert result2 == {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}

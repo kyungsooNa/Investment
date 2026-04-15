@@ -321,6 +321,63 @@ def test_get_background_status_module_names(web_client, mock_web_ctx):
     assert types["t5"] == "unknown"
 
 
+def test_get_background_status_idle_with_internal_flag(web_client, mock_web_ctx):
+    """태스크가 IDLE 상태지만 내부 플래그(_is_refreshing)가 있는 경우 get_progress() 호출 확인"""
+    mock_task = MagicMock()
+    mock_task._is_refreshing = True
+    mock_task.get_progress.return_value = {"running": True, "processed": 10}
+    
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "some_idle_task", "state": "idle", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+    assert data[0]["progress"] == {"running": True, "processed": 10}
+    mock_task.get_progress.assert_called_once()
+
+
+def test_get_background_status_idle_with_internal_flag_error(web_client, mock_web_ctx):
+    """태스크가 IDLE 상태이고 내부 플래그(_progress)가 있는데 get_progress()가 에러를 낼 경우"""
+    mock_task = MagicMock()
+    mock_task._progress = {}
+    mock_task.get_progress.side_effect = Exception("test error")
+    
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "some_idle_task", "state": "idle", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+    assert data[0]["progress"] == {"running": False, "error": "test error"}
+
+
+def test_get_background_status_running_error(web_client, mock_web_ctx):
+    """태스크가 RUNNING 상태에서 get_progress()가 예외를 발생시키는 경우 처리 확인"""
+    mock_task = MagicMock()
+    mock_task.get_progress.side_effect = Exception("running error")
+    
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "some_running_task", "state": "running", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+    assert data[0]["progress"] == {"running": False, "error": "running error"}
+
+
 # ── POST /api/background/ranking/force-update ─────────────────────────
 
 @pytest.mark.asyncio
@@ -452,6 +509,71 @@ async def test_force_cache_warmup_running(web_client, mock_web_ctx):
 async def test_force_cache_warmup_not_init(web_client, mock_web_ctx):
     mock_web_ctx.cache_warmup_task = None
     response = web_client.post("/api/background/cache-warmup/force-update")
+    assert response.status_code == 503
+
+
+# ── POST /api/background/newhigh/force-update ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_force_newhigh_update_success(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+    mock_task.force_collect = AsyncMock()
+    mock_web_ctx.newhigh_task = mock_task
+
+    response = web_client.post("/api/background/newhigh/force-update")
+    
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    
+    await asyncio.sleep(0)
+    mock_task.force_collect.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_force_newhigh_update_running(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.newhigh_task = mock_task
+
+    response = web_client.post("/api/background/newhigh/force-update")
+    assert response.status_code == 409
+
+@pytest.mark.asyncio
+async def test_force_newhigh_update_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.newhigh_task = None
+    response = web_client.post("/api/background/newhigh/force-update")
+    assert response.status_code == 503
+
+
+# ── POST /api/background/minervini/force-update ───────────────────────
+
+@pytest.mark.asyncio
+async def test_force_minervini_update_success(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+    mock_task.force_collect = AsyncMock()
+    mock_web_ctx.minervini_update_task = mock_task
+
+    response = web_client.post("/api/background/minervini/force-update")
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    
+    await asyncio.sleep(0)
+    mock_task.force_collect.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_force_minervini_update_running(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.minervini_update_task = mock_task
+
+    response = web_client.post("/api/background/minervini/force-update")
+    assert response.status_code == 409
+
+@pytest.mark.asyncio
+async def test_force_minervini_update_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.minervini_update_task = None
+    response = web_client.post("/api/background/minervini/force-update")
     assert response.status_code == 503
 
 
