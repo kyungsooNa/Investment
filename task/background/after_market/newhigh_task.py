@@ -205,8 +205,6 @@ class NewHighTask(AfterMarketTask):
         result = []
         for s in snapshots:
             name = s.get("name") or ""
-            if name == "RF머트리얼즈":
-                a = 1
             if any(name.startswith(p) for p in _ETF_PREFIXES):
                 continue
             current = s.get("current_price") or 0
