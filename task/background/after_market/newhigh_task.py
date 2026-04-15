@@ -5,6 +5,7 @@ daily_prices 스냅샷의 w52_high 기준으로 current_price >= w52_high 종목
 """
 import asyncio
 import logging
+import time
 from typing import List, Optional, TYPE_CHECKING
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
@@ -104,6 +105,7 @@ class NewHighTask(AfterMarketTask):
 
     async def _run_newhigh(self, latest_trading_date: str) -> None:
         self._progress["running"] = True
+        start_time = time.time()
         try:
             self._logger.info(f"NewHighTask: {latest_trading_date} 신고가 탐색 시작")
             snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
@@ -152,8 +154,9 @@ class NewHighTask(AfterMarketTask):
             except Exception as e:
                 self._logger.warning(f"NewHighTask DB에 쓰기 실패: {e}")
 
+            elapsed = time.time() - start_time
             self._logger.info(
-                f"NewHighTask: 신고가 {len(newhigh_stocks)}개 감지 / 전체 {len(snapshots)}개 (date={latest_trading_date})"
+                f"NewHighTask: 신고가 {len(newhigh_stocks)}개 감지 / 전체 {len(snapshots)}개 (date={latest_trading_date}) / 소요: {elapsed:.1f}s"
             )
     
             if self._telegram_reporter:
@@ -164,7 +167,7 @@ class NewHighTask(AfterMarketTask):
                     NotificationCategory.BACKGROUND,
                     NotificationLevel.INFO,
                     "52주 신고가 리포트",
-                    f"{len(newhigh_stocks)}개 종목 감지 (date={latest_trading_date})",
+                    f"{len(newhigh_stocks)}개 종목 감지 (date={latest_trading_date}) / 소요: {elapsed:.1f}초",
                 )
     
             self._last_collected_date = latest_trading_date
