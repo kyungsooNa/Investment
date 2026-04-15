@@ -148,6 +148,80 @@ async def test_get_current_price_force_fresh_updates_cache(trading_service_fixtu
 
 
 @pytest.mark.asyncio
+async def test_get_current_price_tick_only_cache_calls_api(trading_service_fixture, mock_deps):
+    """_source='tick' 인 불완전 캐시가 있을 때 API를 호출하여 완전한 데이터를 반환한다.
+
+    시나리오:
+      WebSocket 틱만 수신(API 미조회) → update_current_price()가
+      {"output": {"stck_prpr": "X"}, "_source": "tick"} 최소 구조를 캐시에 저장.
+      이 상태에서 현재가 조회 시 파싱 오류 방지를 위해 캐시를 무시하고 API를 호출해야 한다.
+    """
+    service = trading_service_fixture
+    tick_cache = {"output": {"stck_prpr": "80000", "acml_vol": "1234"}, "_source": "tick"}
+    mock_deps.stock_repo.get_current_price.return_value = tick_cache
+
+    broker_data = {"output": {"stck_prpr": "80100", "stck_hgpr": "81000"}}
+    broker_resp = ResCommonResponse(rt_cd="0", msg1="정상", data=broker_data)
+    mock_deps.broker.get_current_price.return_value = broker_resp
+
+    result = await service.get_current_price("039560")
+
+    # tick-only 캐시는 무시 → broker API 호출
+    mock_deps.broker.get_current_price.assert_awaited_once()
+    assert result == broker_resp
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_tick_only_cache_updates_cache_on_success(trading_service_fixture, mock_deps):
+    """_source='tick' 캐시 우회 후 API 성공 시 완전한 데이터로 캐시를 갱신한다."""
+    service = trading_service_fixture
+    tick_cache = {"output": {"stck_prpr": "5000"}, "_source": "tick"}
+    mock_deps.stock_repo.get_current_price.return_value = tick_cache
+
+    broker_data = {"output": {"stck_prpr": "5100", "stck_hgpr": "5200"}}
+    mock_deps.broker.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="정상", data=broker_data
+    )
+
+    await service.get_current_price("077360")
+
+    # API 응답으로 캐시 갱신 확인
+    mock_deps.stock_repo.set_current_price.assert_called_once_with("077360", broker_data)
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_complete_cache_skips_api(trading_service_fixture, mock_deps):
+    """_source 필드가 없는 정상 캐시(API 조회 결과)는 그대로 반환하고 API를 호출하지 않는다."""
+    service = trading_service_fixture
+    full_cache = {"output": {"stck_prpr": "70000", "stck_hgpr": "72000"}}  # _source 없음
+    mock_deps.stock_repo.get_current_price.return_value = full_cache
+
+    result = await service.get_current_price("230240")
+
+    mock_deps.broker.get_current_price.assert_not_awaited()
+    assert result.rt_cd == "0"
+    assert result.msg1 == "성공(Cache)"
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_tick_only_cache_api_failure_propagated(trading_service_fixture, mock_deps):
+    """_source='tick' 캐시 우회 후 API 실패 시 오류 응답을 그대로 반환한다."""
+    service = trading_service_fixture
+    tick_cache = {"output": {"stck_prpr": "3000"}, "_source": "tick"}
+    mock_deps.stock_repo.get_current_price.return_value = tick_cache
+
+    error_resp = ResCommonResponse(rt_cd="1", msg1="API 오류", data=None)
+    mock_deps.broker.get_current_price.return_value = error_resp
+
+    result = await service.get_current_price("080220")
+
+    mock_deps.broker.get_current_price.assert_awaited_once()
+    assert result.rt_cd == "1"
+    # API 실패 시 캐시 갱신 없음
+    mock_deps.stock_repo.set_current_price.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_ohlcv_caching(trading_service_fixture, mock_deps):
     """get_ohlcv 메서드의 로컬 저장소 연동 및 백필 동작 검증"""
     broker = mock_deps.broker
