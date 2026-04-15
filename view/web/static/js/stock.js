@@ -189,6 +189,19 @@ async function searchStock(codeOverride, exchangeOverride) {
                 return (val > 0 ? '+' : '') + val.toFixed(2) + suffix;
             } catch { return n; }
         };
+        const fmcap = (n) => {
+            if (n === null || n === undefined || String(n).trim() === '' || String(n).toLowerCase() === 'n/a') return 'N/A';
+            try {
+                const val = parseFloat(String(n).replace(/,/g, ''));
+                if (isNaN(val)) return n;
+                if (val >= 10000) {
+                    const jo = Math.floor(val / 10000);
+                    const uk = val % 10000;
+                    return jo.toLocaleString() + "조" + (uk > 0 ? " " + uk.toLocaleString() + "억" : "");
+                }
+                return val.toLocaleString() + "억";
+            } catch { return n; }
+        };
 
         const changeVal = parseInt(data.change) || 0;
         const changeClass = (changeVal > 0) ? 'text-red' : (changeVal < 0 ? 'text-blue' : '');
@@ -326,6 +339,7 @@ async function searchStock(codeOverride, exchangeOverride) {
                         <h4>ℹ️ 기본 정보</h4>
                         <p><strong>업종:</strong> <span id="detail-sector">${data.bstp_kor_isnm || loading}</span></p>
                         <p><strong>상태:</strong> <span id="detail-status">${data.iscd_stat_cls_code_desc || loading}</span></p>
+                        <p><strong>시가총액:</strong> <span id="detail-mcap">${data.hts_avls ? fmcap(data.hts_avls) : loading}</span></p>
                     </div>
                     <div class="detail-group">
                         <h4>📊 당일 시세</h4>
@@ -534,12 +548,26 @@ function _updateDetailDOM(data) {
             return (val > 0 ? '+' : '') + val.toFixed(2) + suffix;
         } catch { return String(n); }
     };
+    const fmcap = (n) => {
+        if (n === null || n === undefined || String(n).trim() === '' || String(n).toLowerCase() === 'n/a') return 'N/A';
+        try {
+            const val = parseFloat(String(n).replace(/,/g, ''));
+            if (isNaN(val)) return String(n);
+            if (val >= 10000) {
+                const jo = Math.floor(val / 10000);
+                const uk = val % 10000;
+                return jo.toLocaleString() + "조" + (uk > 0 ? " " + uk.toLocaleString() + "억" : "");
+            }
+            return val.toLocaleString() + "억";
+        } catch { return String(n); }
+    };
 
     const set = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.innerHTML = val; };
 
     // ℹ️ 기본 정보
     set('detail-sector', data.bstp_kor_isnm || 'N/A');
     set('detail-status', data.iscd_stat_cls_code_desc || 'N/A');
+    set('detail-mcap', data.hts_avls ? fmcap(data.hts_avls) : 'N/A');
 
     // 📈 거래 정보
     set('detail-vol-rate', frate(data.prdy_vrss_vol_rate));

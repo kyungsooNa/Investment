@@ -66,6 +66,8 @@ async function loadRanking(category) {
         let res;
         if (category === 'minervini_stage2') {
             res = await fetchWithTimeout(`/api/ranking/minervini_stage2`);
+        } else if (category === 'newhigh') {
+            res = await fetchWithTimeout(`/api/ranking/newhigh`);
         } else {
             res = await fetchWithTimeout(`/api/ranking/${category}`);
         }
@@ -91,6 +93,9 @@ async function loadRanking(category) {
         let data = json.data;
         if (category === 'minervini_stage2') {
             data = data.slice().sort((a, b) => parseInt(b.rs_rating || 0) - parseInt(a.rs_rating || 0));
+            data.forEach((item, i) => { item.data_rank = String(i + 1); });
+        } else if (category === 'newhigh') {
+            data = data.slice().sort((a, b) => parseInt(b.market_cap || 0) - parseInt(a.market_cap || 0));
             data.forEach((item, i) => { item.data_rank = String(i + 1); });
         }
         _rankingData = data;
@@ -263,7 +268,8 @@ function _startProgressPolling(category, div) {
             && _rankingCurrentCategory !== 'investor_buy'
             && _rankingCurrentCategory !== 'investor_sell') return;
         try {
-            const res = await fetch('/api/ranking/progress');
+            const endpoint = category === 'newhigh' ? '/api/ranking/newhigh_progress' : '/api/ranking/progress';
+            const res = await fetch(endpoint);
             const p = await res.json();
             const el = document.getElementById('ranking-progress-text');
             if (el && p.total > 0) {
@@ -354,11 +360,38 @@ function renderRankingTable() {
             + `<th class="${sortCls('market_cap')}" onclick="sortRanking('market_cap')">시가총액</th>`;
     }
 
+    const isNewHigh = (cat === 'newhigh');
+    if (isNewHigh) {
+        headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
+            + `<th class="${sortCls('name')}" onclick="sortRanking('name')">종목명</th>`
+            + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
+            + `<th class="${sortCls('rate')}" onclick="sortRanking('rate')">등락률</th>`
+            + `<th class="${sortCls('market_cap')}" onclick="sortRanking('market_cap')">시가총액</th>`
+            + `<th class="${sortCls('trading_value')}" onclick="sortRanking('trading_value')">거래대금</th>`
+            + `<th class="${sortCls('rs')}" onclick="sortRanking('rs')">RS</th>`
+            + `<th class="${sortCls('is_historical')}" onclick="sortRanking('is_historical')">역사적신고가</th>`
+            + `<th class="${sortCls('stage')}" onclick="sortRanking('stage')">Stage</th>`;
+    }
+
     let data = _rankingData.slice();
     if (_rankingSortState.key) {
         if (isMinervini) data = _minerviniSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
+        else if (isNewHigh) data = rankingSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
         else data = rankingSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
     }
+
+    const formatMarketCap = (val) => {
+        if (!val) return '-';
+        let v = parseFloat(val);
+        if (isNaN(v)) return '-';
+        if (v > 100000000) v = v / 100000000; // 원 -> 억 단위 보정
+        if (v >= 10000) {
+            const jo = Math.floor(v / 10000);
+            const uk = Math.floor(v % 10000);
+            return jo.toLocaleString() + "조" + (uk > 0 ? " " + uk.toLocaleString() + "억" : "");
+        }
+        return v.toLocaleString() + "억";
+    };
 
     let rows = '';
     data.forEach(item => {
@@ -367,7 +400,15 @@ function renderRankingTable() {
         const code = item.stck_shrn_iscd || item.iscd || item.mksc_shrn_iscd || item.code || '';
         let extraCols;
         if (isMinervini) {
-            extraCols = `<td>S${item.stage}</td><td>${item.rs_rating || '-'}</td><td>${formatTradingValue(item.market_cap || 0)}</td>`;
+            extraCols = `<td>S${item.stage}</td><td>${item.rs_rating || '-'}</td><td>${formatMarketCap(item.market_cap || 0)}</td>`;
+        } else if (isNewHigh) {
+            const isHist = item.is_historical_new_high || item.is_historical_newhigh;
+            const histBadge = isHist ? '<span style="color:var(--text-red); font-weight:bold;">O</span>' : '<span style="color:#aaa;">X</span>';
+            const tv = parseInt(item.trading_value || item.acml_tr_pbmn || 0);
+            const tvFmt = tv > 0 ? formatTradingValue(tv) : '-';
+            const stage = parseInt(item.minervini_stage || 0);
+            const stageBadge = stage > 0 ? `<span style="color:${stage === 2 ? 'var(--text-red)' : '#aaa'};">S${stage}</span>` : '<span style="color:#aaa;">-</span>';
+            extraCols = `<td>${formatMarketCap(item.market_cap || 0)}</td><td>${tvFmt}</td><td>${item.rs_rating || item.rs || '-'}</td><td>${histBadge}</td><td>${stageBadge}</td>`;
         } else
         if (isCombined) {
             const pbmnVal = formatTradingValue(String(item._combined_pbmn));
@@ -474,6 +515,21 @@ function rankingSortCompare(data, key, dir) {
                 va = acmlA ? (rawA / acmlA) : 0;
                 vb = acmlB ? (rawB / acmlB) : 0;
             }
+        } else if (key === 'market_cap') {
+            va = parseInt(a.market_cap || 0);
+            vb = parseInt(b.market_cap || 0);
+        } else if (key === 'trading_value') {
+            va = parseInt(a.trading_value || a.acml_tr_pbmn || 0);
+            vb = parseInt(b.trading_value || b.acml_tr_pbmn || 0);
+        } else if (key === 'rs') {
+            va = parseInt(a.rs_rating || a.rs || 0);
+            vb = parseInt(b.rs_rating || b.rs || 0);
+        } else if (key === 'is_historical') {
+            va = (a.is_historical_new_high || a.is_historical_newhigh) ? 1 : 0;
+            vb = (b.is_historical_new_high || b.is_historical_newhigh) ? 1 : 0;
+        } else if (key === 'stage') {
+            va = parseInt(a.minervini_stage || 0);
+            vb = parseInt(b.minervini_stage || 0);
         } else {
             return 0;
         }

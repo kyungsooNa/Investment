@@ -17,6 +17,29 @@ async def get_ranking_progress():
     return {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
 
 
+@router.get("/ranking/newhigh")
+async def get_newhigh():
+    """52주 신고가 종목 목록을 반환한다.
+
+    DB 조회 → In-memory 캐시 → 백그라운드 갱신 트리거 순으로 데이터를 가져온다.
+    """
+    ctx = _get_ctx()
+    svc = getattr(ctx, "newhigh_service", None)
+    if not svc:
+        return {"rt_cd": "1", "msg1": "NewHighService 미설정", "data": None}
+    resp = await svc.get_newhigh_list()
+    return {"rt_cd": resp.rt_cd, "msg1": resp.msg1, "data": resp.data}
+
+
+@router.get("/ranking/newhigh_progress")
+async def get_newhigh_progress():
+    """신고가 탐색 진행률을 반환한다."""
+    ctx = _get_ctx()
+    if hasattr(ctx, "newhigh_task") and ctx.newhigh_task:
+        return ctx.newhigh_task.get_progress()
+    return {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
+
+
 @router.get("/ranking/minervini_stage2")
 async def get_minervini_stage2():
     """Minervini Stage 2 종목 목록을 RS 순으로 반환한다.

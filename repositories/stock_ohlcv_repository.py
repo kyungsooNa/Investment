@@ -105,6 +105,8 @@ class StockOhlcvRepository:
             "ALTER TABLE daily_prices ADD COLUMN minervini_stage INTEGER",
             "ALTER TABLE daily_prices ADD COLUMN minervini_reason TEXT",
             "ALTER TABLE daily_prices ADD COLUMN rs_rating REAL",
+                "ALTER TABLE daily_prices ADD COLUMN is_newhigh INTEGER",
+                "ALTER TABLE daily_prices ADD COLUMN is_historical_newhigh INTEGER",
         ]:
             try:
                 with sqlite3.connect(self._db_path) as conn:
@@ -309,7 +311,12 @@ class StockOhlcvRepository:
     # ── daily_prices (장마감 후 전종목 스냅샷) ──────────────────────────────────
 
     async def upsert_daily_snapshot(self, trade_date: str, records: List[Dict]):
-        """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert."""
+        """장마감 후 전체 종목 현재가+펀더멘털 스냅샷을 일괄 upsert.
+
+        ON CONFLICT DO UPDATE를 사용하여 충돌 시 가격 데이터만 덮어씁니다.
+        - is_newhigh, is_historical_newhigh: DO UPDATE에 포함하지 않아 기존 값 보존
+        - minervini_stage, minervini_reason, rs_rating: 새 값이 NULL이면 기존 값 유지 (COALESCE)
+        """
         if not records:
             return
 
@@ -318,7 +325,7 @@ class StockOhlcvRepository:
             async with self._get_write_connection() as conn:
                 await conn.executemany(
                     """
-                    INSERT OR REPLACE INTO daily_prices (
+                    INSERT INTO daily_prices (
                         code, trade_date, name,
                         current_price, open_price, high_price, low_price, prev_close,
                         change_price, change_sign, change_rate,
@@ -335,6 +342,30 @@ class StockOhlcvRepository:
                         :w52_high, :w52_low,
                         :market, :minervini_stage, :minervini_reason, :rs_rating, :collected_at
                     )
+                    ON CONFLICT(code, trade_date) DO UPDATE SET
+                        name            = excluded.name,
+                        current_price   = excluded.current_price,
+                        open_price      = excluded.open_price,
+                        high_price      = excluded.high_price,
+                        low_price       = excluded.low_price,
+                        prev_close      = excluded.prev_close,
+                        change_price    = excluded.change_price,
+                        change_sign     = excluded.change_sign,
+                        change_rate     = excluded.change_rate,
+                        volume          = excluded.volume,
+                        trading_value   = excluded.trading_value,
+                        market_cap      = excluded.market_cap,
+                        per             = excluded.per,
+                        pbr             = excluded.pbr,
+                        eps             = excluded.eps,
+                        w52_high        = excluded.w52_high,
+                        w52_low         = excluded.w52_low,
+                        market          = excluded.market,
+                        minervini_stage  = COALESCE(excluded.minervini_stage,  minervini_stage),
+                        minervini_reason = COALESCE(excluded.minervini_reason, minervini_reason),
+                        rs_rating        = COALESCE(excluded.rs_rating,        rs_rating),
+                        collected_at    = excluded.collected_at
+                    -- is_newhigh, is_historical_newhigh 는 언급하지 않으므로 기존 값 보존
                     """,
                     [{**r, "trade_date": trade_date, "collected_at": now,
                       "minervini_stage": r.get("minervini_stage"), "minervini_reason": r.get("minervini_reason"),
@@ -383,6 +414,35 @@ class StockOhlcvRepository:
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository minervini fields update 실패: {e}")
 
+    async def update_newhigh_fields(self, trade_date: str, records: List[Dict]):
+        """daily_prices의 is_newhigh / is_historical_newhigh 컬럼만 UPDATE."""
+        if not records:
+            return
+        try:
+            async with self._get_write_connection() as conn:
+                await conn.executemany(
+                    """
+                    UPDATE daily_prices
+                    SET is_newhigh = :is_newhigh,
+                        is_historical_newhigh = :is_historical_newhigh
+                    WHERE code = :code AND trade_date = :trade_date
+                    """,
+                    [
+                        {
+                            "code": r.get("code"),
+                            "trade_date": trade_date,
+                            "is_newhigh": 1 if r.get("is_newhigh") else 0,
+                            "is_historical_newhigh": 1 if r.get("is_historical_new_high") else 0,
+                        }
+                        for r in records
+                    ],
+                )
+            self._logger.debug(
+                f"StockOhlcvRepository: newhigh fields {len(records)}건 update 완료 (date={trade_date})"
+            )
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository newhigh fields update 실패: {e}")
+
     async def get_prices_by_date(self, trade_date: str) -> List[Dict]:
         """특정 날짜의 전체 종목 스냅샷 조회."""
         try:
@@ -409,6 +469,20 @@ class StockOhlcvRepository:
                 return [dict(row) for row in rows]
         except Exception as e:
             self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
+            return []
+
+    async def get_newhigh_stocks(self, trade_date: str) -> List[Dict]:
+        """특정 거래일의 신고가(is_newhigh=1) 종목을 시가총액 내림차순으로 조회."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT * FROM daily_prices WHERE trade_date = ? AND is_newhigh = 1 ORDER BY market_cap DESC",
+                    (trade_date,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository newhigh 조회 실패: {e}")
             return []
 
     async def get_minervini_stage2_stocks(self, trade_date: str) -> List[Dict]:

@@ -56,6 +56,7 @@ from view.web import web_api  # 임포트 확인
 from core.cache.cache_store import CacheStore
 from services.rs_rating_service import RSRatingService
 from services.minervini_stage_service import MinerviniStageService
+from services.newhigh_service import NewHighService
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
@@ -424,6 +425,13 @@ class WebAppContext:
             notification_service=self.notification_service,
             daily_price_collector_task=self.daily_price_collector_task,
             stock_query_service=self.stock_query_service,
+            rs_rating_service=getattr(self, 'rs_rating_service', None),
+        )
+
+        self.newhigh_service = NewHighService(
+            stock_repository=self.stock_repository,
+            newhigh_task=self.newhigh_task,
+            logger=self.logger,
         )
 
         # NotificationQueueTask 초기화

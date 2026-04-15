@@ -486,8 +486,6 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 "eps": _safe_float(_get("eps")),
                 "w52_high": _safe_int(_get("w52_hgpr")),
                 "w52_low": _safe_int(_get("w52_lwpr")),
-                "is_new_high": _safe_bool(_get("is_new_high")),
-                "is_new_low": _safe_bool(_get("is_new_low")),
                 "market": market,
             }
         except Exception:

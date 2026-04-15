@@ -102,6 +102,14 @@ class StockRepository:
         """특정 거래일의 전체 종목 스냅샷을 시가총액 내림차순으로 조회."""
         return await self._ohlcv_repo.get_all_daily_snapshots(trade_date)
 
+    async def update_newhigh_fields(self, trade_date: str, records: List[Dict]):
+        """is_newhigh 및 is_historical_newhigh 컬럼 업데이트."""
+        await self._ohlcv_repo.update_newhigh_fields(trade_date, records)
+
+    async def get_newhigh_stocks(self, trade_date: str) -> List[Dict]:
+        """특정 거래일의 신고가(is_newhigh=1) 종목 조회."""
+        return await self._ohlcv_repo.get_newhigh_stocks(trade_date)
+
     async def get_minervini_stage2_stocks(self, trade_date: str) -> List[Dict]:
         """특정 거래일의 Minervini Stage2 종목을 rs_rating 내림차순으로 조회."""
         return await self._ohlcv_repo.get_minervini_stage2_stocks(trade_date)
