@@ -104,7 +104,7 @@ class MinerviniUpdateTask(AfterMarketTask):
         await self._after_market_scheduler()
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
-        latest_trading_date_dt = datetime.strptime(latest_trading_date, '%Y-%m-%d').date()
+        latest_trading_date_dt = datetime.strptime(latest_trading_date, '%Y%m%d').date()
         needs = (not self._updated_at) or (self._updated_at.date() != latest_trading_date_dt)
         if needs:
             await self.refresh_minervini_stage2()
