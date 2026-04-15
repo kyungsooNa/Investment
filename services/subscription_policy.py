@@ -4,7 +4,7 @@
 
 역할:
   - 여러 요청자(Portfolio, Strategy, UI)로부터 구독 요청을 받아 참조 카운팅으로 관리
-  - 우선순위(HIGH > MEDIUM > LOW) 기반으로 MAX_SUBSCRIPTIONS(35) 한도 내 최적 구독 유지
+  - 우선순위(HIGH > MEDIUM > LOW) 기반으로 MAX_WS_SLOTS(40) 한도 내 최적 구독 유지
   - 실제 WebSocket 구독/해지는 StreamingService에 위임
   - 구독 활성화 시 StockRepository에 mark_streaming() 알림 (TTL 우회 활성화)
 
@@ -54,7 +54,7 @@ class SubscriptionPolicy:
       - 우선순위가 동일하면 종목코드 오름차순으로 결정적(deterministic) 선택
     """
 
-    MAX_WS_SLOTS = 40  # KIS 웹소켓 최대 구독 한도
+    MAX_WS_SLOTS = 40  # KIS 웹소켓 최대 구독 한도 (PT=2슬롯, Price=1슬롯)
 
     def __init__(
         self,
@@ -195,7 +195,7 @@ class SubscriptionPolicy:
 
         return {
             "active_count": len(self._active_codes_price) + len(self._active_codes_pt),
-            "max_subscriptions": self.MAX_WS_SLOTS,  # 수정: MAX_SUBSCRIPTIONS -> MAX_WS_SLOTS
+            "max_subscriptions": self.MAX_WS_SLOTS,
             "active_codes_price": sorted(self._active_codes_price),
             "active_codes_pt": sorted(self._active_codes_pt),
             "pending_count": len(self._refs),
@@ -222,7 +222,7 @@ class SubscriptionPolicy:
         
         desired_price: Set[str] = set()
         desired_pt: Set[str] = set()
-        
+
         available_slots = self.MAX_WS_SLOTS
 
         # 2. 슬롯 할당 (Greedy)
@@ -230,11 +230,11 @@ class SubscriptionPolicy:
             requests = self._refs[code].values()
             is_pt = any(req["type"] == StreamingType.PROGRAM_TRADING for req in requests)
             is_price = any(req["type"] == StreamingType.UNIFIED_PRICE for req in requests)
-            
+
             slots_needed = 0
             if is_pt: slots_needed += 2
             if is_price: slots_needed += 1
-            
+
             if available_slots >= slots_needed:
                 if is_pt: desired_pt.add(code)
                 if is_price: desired_price.add(code)
