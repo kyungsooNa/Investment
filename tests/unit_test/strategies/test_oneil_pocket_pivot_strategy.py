@@ -1242,20 +1242,24 @@ async def test_scan_today_candle_high_from_stck_hgpr(pp_scan_setup):
 
 
 def test_load_save_state_exceptions(mock_deps, tmp_path):
-    """_load_state, _save_state: 파일 입출력 예외 처리 검증."""
+    """_load_state, _save_state: 파일 입출력 예외 처리 — 빈 상태 유지 + 에러 로깅."""
     sqs, universe, tm, logger = mock_deps
     strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
-    
+
     test_file = tmp_path / "corrupted.json"
     test_file.write_text("{invalid json")
     strategy.STATE_FILE = str(test_file)
-    
+
     # __init__ 시점에 로드되었을 수 있는 기존 찌꺼기 상태 비우기
     strategy._position_state.clear()
-    
+    logger.reset_mock()
+
     strategy._load_state()
     assert strategy._position_state == {}
+    logger.error.assert_called()
 
+    logger.reset_mock()
     strategy.STATE_FILE = "/unwritable/path/state.json"
     with patch("os.makedirs", side_effect=OSError("Permission denied")):
         strategy._save_state()
+    logger.error.assert_called()

@@ -23,11 +23,11 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     핵심: 시장 주도주 중 볼린저 밴드가 극도로 수축(스퀴즈)된 종목이
         거래량을 동반하며 20일 최고가를 돌파할 때 매수.
         프로그램 순매수 필터(2중 스마트 머니)로 기관 수급 확인.
-    
+
     특징:
       - 유니버스 관리(종목 발굴)는 OneilUniverseService에 위임.
       - 이 클래스는 '언제 살까(돌파)'와 '언제 팔까(청산)'에만 집중.
-      
+
     [v1 범위]
     - 유니버스: get_top_trading_value_stocks() → 기본 필터(거래대금/52주고가/정배열)
     - 매수/매도 뼈대 구축 및 스케줄러 연동 완료
@@ -37,7 +37,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     - 유니버스: Pool A(장 마감 후 배치) / Pool B(장중 3중 그물망 실시간 발굴) 병합
     - 스코어링: RS(3개월 상대강도 상위10% → +30점), 영업이익 25% 이상 증가 → +20점 적용
     - 마켓타이밍: ETF 프록시(KODEX 200/코스닥150) 20일선 3일 연속 우상향 로직 적용
-    
+
     [v3 예정 (TODO)]
     - 스코어링 고도화: 업종 소분류 주도 (테마 대장주) 키워드 매칭 스코어링 (+20점) 추가
     - 마켓타이밍 고도화: 코스닥/코스피 지수 직접 조회 API 연동 (ETF 프록시 대체)
@@ -72,7 +72,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})
-        
+
         # 1. 유니버스 서비스로부터 완성된 워치리스트 획득 (캐싱됨)
         watchlist = await self._universe.get_watchlist(logger=self._logger)
         if not watchlist:
@@ -105,7 +105,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
             results = await asyncio.gather(
-                *[self._check_breakout(code, item, market_progress) for code, item in chunk],
+                *[self._check_breakout(code, item, market_progress, market_timing) for code, item in chunk],
                 return_exceptions=True,
             )
             for result in results:
@@ -117,7 +117,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
-    async def _check_breakout(self, code, item, progress) -> Optional[TradeSignal]:
+    async def _check_breakout(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         # 1. 기본 시세 및 프로그램 수급 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0": return None
@@ -140,25 +140,30 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if current <= item.high_20d:
             # 너무 많은 로그를 피하기 위해 이 단계는 로그 생략
             return None
-            
+
         # 🚨 [관문 2] 거래량 돌파 (+ 뻥튀기 방어)
         effective_progress = max(progress, 0.05) # 장 초반 최소 5% 진행 보장
         proj_vol = vol / effective_progress
-        
+
         if vol < (item.avg_vol_20d * 0.3): # 최소 절대 거래량 (평소 20일 평균의 30%) 미달 시 가짜 돌파
             self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_absolute_volume", "vol": vol, "min_required": item.avg_vol_20d * 0.3})
             return None
         if proj_vol < item.avg_vol_20d * self._cfg.volume_breakout_multiplier:
-            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "insufficient_projected_volume", "proj_vol": int(proj_vol), "threshold": item.avg_vol_20d * self._cfg.volume_breakout_multiplier})
+            vol_ratio_pct = (proj_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
+            self._logger.debug({
+                "event": "breakout_rejected", "code": code, "reason": "insufficient_projected_volume",
+                "proj_vol": int(proj_vol), "threshold": item.avg_vol_20d * self._cfg.volume_breakout_multiplier,
+                "vol_ratio_pct": round(vol_ratio_pct, 1),
+            })
             return None
-            
+
         # 🚨 [관문 3] 스마트 머니(프로그램 수급) 상세 필터
         if pg_buy <= self._cfg.program_net_buy_min:
             self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_net_buy", "pg_buy": pg_buy, "min_required": self._cfg.program_net_buy_min})
             return None
-            
+
         pg_buy_amount = pg_buy * current # 프로그램 순매수 금액 (추정)
-        
+
         # 3-1. 거래대금의 10% 이상 개입했는가?
         if trade_value > 0:
             pg_to_tv_pct = pg_buy_amount / trade_value * 100
@@ -168,7 +173,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     "pg_to_tv_pct": round(pg_to_tv_pct, 2), "threshold": self._cfg.program_to_trade_value_pct
                 })
                 return None
-            
+
         # 3-2. 시가총액의 0.5% 이상 개입했는가?
         if item.market_cap > 0:
             pg_to_mc_pct = pg_buy_amount / item.market_cap * 100
@@ -182,24 +187,20 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         self._logger.debug({"event": "smart_money_passed", "code": code, "pg_buy_amount": pg_buy_amount})
 
         # 🌟 [최종 관문] 매수 직전 체결강도 스냅샷 (>=120%) 🌟
-        # 이 관문까지 살아서 내려왔다면 조건이 완벽하게 맞은 상태입니다.
-        # 매수 버튼을 누르기 직전, '주식현재가 체결(inquire-ccnl)' API를 1회 쏴서 체결강도를 확인합니다.
         cgld_val = 0.0
         try:
             ccnl_resp = await self._sqs.get_stock_conclusion(code)
             if ccnl_resp and ccnl_resp.rt_cd == "0":
                 ccnl_output = ccnl_resp.data.get("output") if isinstance(ccnl_resp.data, dict) else None
                 if ccnl_output and isinstance(ccnl_output, list) and len(ccnl_output) > 0:
-                    # output은 체결 내역 배열 → 첫 번째(최신) 체결의 당일 체결강도 사용
                     val = ccnl_output[0].get("tday_rltv")
                     cgld_val = float(val) if val else 0.0
         except Exception as e:
             self._logger.warning({"event": "cgld_check_failed", "code": code, "error": str(e)})
-            # 실패 시 안전을 위해 매수 보류하거나, 정책에 따라 통과시킬 수 있음. 여기서는 보류(None)
             return None
 
         if cgld_val < 120.0:
-            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val})
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val, "threshold": 120.0})
             return None
 
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
@@ -211,7 +212,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             breakout_level=item.high_20d
         )
         self._save_state()
-        
+
         pg_ratio = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0.0
         vol_ratio = (proj_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
 
@@ -221,15 +222,24 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             f"PG매수 {pg_buy_amount//100_000_000:,}억({pg_ratio:.1f}%), "
             f"체결강도 {cgld_val:.1f}%)"
         )
-        
+
         self._logger.info({
             "event": "buy_signal_generated",
-            "code": code,
-            "name": item.name,
-            "price": current,
-            "reason": reason_msg
+            "code": code, "name": item.name,
+            "metrics": {
+                "price": current,
+                "breakout_level": item.high_20d,
+                "vol_ratio_pct": round(vol_ratio, 1),
+                "pg_participation_pct": round(pg_ratio, 2),
+                "execution_strength": cgld_val,
+                "rs_score": item.rs_score,
+                "rs_rating": item.rs_rating,
+                "total_score": item.total_score,
+                "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
+            },
+            "reason": reason_msg,
         })
-        
+
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current, qty=qty,
             reason=reason_msg, strategy_name=self.name
@@ -241,24 +251,24 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         if not ohlcv or len(ohlcv) < period:
             return False, ""
-            
+
         closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
         volumes = [r.get("volume", 0) for r in ohlcv if r.get("volume")]
-        
+
         # 2. 10일 이동평균선 계산
         ma_10d = sum(closes[-period:]) / period
-        
+
         # 🚨 가격 조건: 현재가가 10일선을 깼는가? (안 깼으면 안전하므로 바로 리턴)
         if current_price >= ma_10d:
             return False, ""
-            
+
         # 3. 거래량 조건 검증 (현재가가 10일선을 깬 상태에서만 계산)
         avg_vol_20d = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else sum(volumes) / len(volumes)
-        
+
         progress = self._get_market_progress_ratio()
         effective_progress = max(progress, 0.05) # 뻥튀기 방어 (최소 5% 진행 보장)
         proj_vol = current_vol / effective_progress
-        
+
         # 🚨 거래량 조건: 장중 환산(예상) 거래량이 평소 20일 평균보다 많은가? (기관 매도 징후)
         if proj_vol > avg_vol_20d:
             reason = f"추세이탈(10MA {ma_10d:,.0f} 붕괴+대량거래)"
@@ -271,83 +281,129 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 "avg_vol": int(avg_vol_20d)
             })
             return True, reason
-            
+
         return False, ""
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
-        signals = []
+        if not holdings:
+            return []
+
+        results = await asyncio.gather(
+            *[self._check_single_exit(hold) for hold in holdings],
+            return_exceptions=True,
+        )
+
+        signals: List[TradeSignal] = []
+        state_dirty = False
+        for result in results:
+            if isinstance(result, Exception):
+                self._logger.error({"event": "exit_check_error", "error": str(result)})
+            elif result:
+                s_list, dirty = result
+                signals.extend(s_list)
+                if dirty:
+                    state_dirty = True
+
+        if state_dirty:
+            await self._save_state_async()
+        return signals
+
+    async def _check_single_exit(self, hold: dict) -> tuple:
+        """단일 보유 종목 청산 조건 검사.
+
+        Returns: (List[TradeSignal], state_dirty: bool)
+        """
+        signals: List[TradeSignal] = []
         state_dirty = False
         ohlcv_limit = max(self._cfg.time_stop_days + 20, max(self._cfg.trend_exit_ma_period, 20))
 
-        for hold in holdings:
-            code = hold.get("code")
-            buy_price_raw = hold.get("buy_price")
-            if not code or not buy_price_raw: continue
+        code = hold.get("code")
+        buy_price_raw = hold.get("buy_price")
+        if not code or not buy_price_raw:
+            return signals, state_dirty
 
-            buy_price = float(buy_price_raw)
+        buy_price = float(buy_price_raw)
 
-            state = self._position_state.get(code)
-            if not state:
-                state = OSBPositionState(int(buy_price), "", int(buy_price), int(buy_price))
-                self._position_state[code] = state
+        state = self._position_state.get(code)
+        if not state:
+            state = OSBPositionState(int(buy_price), "", int(buy_price), int(buy_price))
+            self._position_state[code] = state
 
-            resp = await self._sqs.get_current_price(code, caller=self.name)
-            if not resp or resp.rt_cd != "0": continue
+        resp = await self._sqs.get_current_price(code, caller=self.name)
+        if not resp or resp.rt_cd != "0":
+            return signals, state_dirty
 
-            output = resp.data.get("output") if isinstance(resp.data, dict) else None
-            if not output: continue
+        output = resp.data.get("output") if isinstance(resp.data, dict) else None
+        if not output:
+            return signals, state_dirty
 
-            if isinstance(output, dict):
-                current = int(output.get("stck_prpr", 0))
-                current_vol = int(output.get("acml_vol", 0))
-            else:
-                current = int(getattr(output, "stck_prpr", 0) or 0)
-                current_vol = int(getattr(output, "acml_vol", 0) or 0)
+        if isinstance(output, dict):
+            current = int(output.get("stck_prpr", 0))
+            current_vol = int(output.get("acml_vol", 0))
+        else:
+            current = int(getattr(output, "stck_prpr", 0) or 0)
+            current_vol = int(getattr(output, "acml_vol", 0) or 0)
 
-            if current <= 0: continue
+        if current <= 0:
+            return signals, state_dirty
 
-            # 최고가 갱신 (dirty flag — 루프 후 1회 저장)
-            if current > state.peak_price:
-                state.peak_price = current
-                state_dirty = True
+        # 최고가 갱신 (dirty flag)
+        if current > state.peak_price:
+            state.peak_price = current
+            state_dirty = True
 
-            pnl = float((current - buy_price) / buy_price * 100)
-            reason = ""
+        pnl = float((current - buy_price) / buy_price * 100)
 
-            # 1. 손절
-            if pnl <= self._cfg.stop_loss_pct:
-                reason = f"손절({pnl:.1f}%)"
-            # 2. 트레일링 스탑
-            elif state.peak_price > 0:
-                drop = float((current - state.peak_price) / state.peak_price * 100)
-                if drop <= -self._cfg.trailing_stop_pct:
-                    reason = f"트레일링스탑({drop:.1f}%)"
+        # MFE / MAE 갱신
+        if pnl > state.mfe_pct:
+            state.mfe_pct = round(pnl, 2)
+            state_dirty = True
+        if pnl < state.mae_pct:
+            state.mae_pct = round(pnl, 2)
+            state_dirty = True
 
-            # 3·4. 시간손절 + 추세이탈 — OHLCV 1회 조회 후 양쪽에 전달
-            if not reason:
-                ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=ohlcv_limit)
-                ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
+        reason = ""
 
-                if self._check_time_stop(state, current, ohlcv):
-                    reason = f"시간손절({self._cfg.time_stop_days}일 횡보)"
-                elif ohlcv:
-                    is_break, break_reason = self._check_trend_break(code, current, current_vol, ohlcv)
-                    if is_break:
-                        reason = break_reason
+        # 1. 손절
+        if pnl <= self._cfg.stop_loss_pct:
+            reason = f"손절({pnl:.1f}%)"
+        # 2. 트레일링 스탑
+        elif state.peak_price > 0:
+            drop = float((current - state.peak_price) / state.peak_price * 100)
+            if drop <= -self._cfg.trailing_stop_pct:
+                reason = f"트레일링스탑({drop:.1f}%)"
 
-            # 매도 시그널 생성
-            if reason:
-                holding_qty = int(hold.get("qty", 1))
-                self._position_state.pop(code, None)
-                state_dirty = True
-                signals.append(TradeSignal(
-                    code=code, name=hold.get("name", code), action="SELL",
-                    price=current, qty=holding_qty, reason=reason, strategy_name=self.name
-                ))
+        # 3·4. 시간손절 + 추세이탈 — OHLCV 1회 조회 후 양쪽에 전달
+        if not reason:
+            ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=ohlcv_limit)
+            ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
 
-        if state_dirty:
-            self._save_state()
-        return signals
+            if self._check_time_stop(state, current, ohlcv):
+                reason = f"시간손절({self._cfg.time_stop_days}일 횡보)"
+            elif ohlcv:
+                is_break, break_reason = self._check_trend_break(code, current, current_vol, ohlcv)
+                if is_break:
+                    reason = break_reason
+
+        # 매도 시그널 생성
+        if reason:
+            holding_qty = int(hold.get("qty", 1))
+            self._logger.info({
+                "event": "exit_signal_generated",
+                "code": code, "name": hold.get("name", code),
+                "reason": reason,
+                "pnl_pct": round(pnl, 2),
+                "mfe_pct": state.mfe_pct,
+                "mae_pct": state.mae_pct,
+            })
+            self._position_state.pop(code, None)
+            state_dirty = True
+            signals.append(TradeSignal(
+                code=code, name=hold.get("name", code), action="SELL",
+                price=current, qty=holding_qty, reason=reason, strategy_name=self.name
+            ))
+
+        return signals, state_dirty
 
     def _check_time_stop(self, state: OSBPositionState, current_price: int, ohlcv: list) -> bool:
         """시간 손절 조건 체크. ohlcv는 호출자가 미리 조회해서 전달.
@@ -366,27 +422,27 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         if not ohlcv:
             return False
-            
+
         trading_days = 0
         safe_entry_date = state.entry_date.replace("-", "")
-        
+
         # 🌟 버그 수정: == 대신 >= 를 사용하여 하이픈 제거 및 진입일 이후 데이터 필터링
         for candle in ohlcv:
             date_str = str(candle.get('date', '')).replace("-", "")
             if date_str > safe_entry_date: # 진입일 '다음 날'부터 1일로 카운트
                 trading_days += 1
-                
+
         # 설정된 거래일이 안 지났으면 패스
         if trading_days < self._cfg.time_stop_days:
             return False
-            
+
         # 2. 횡보 또는 하락 조건 확인 (현재가가 박스권 상단 이상으로 치고 나가지 못했는가?)
         pnl_pct = float((current_price - state.entry_price) / state.entry_price * 100)
-        
+
         # 🌟 버그 수정: abs() 제거. 2% 이상 '상승'한 게 아니라면 다 잘라버림 (하락 포함)
         if pnl_pct > self._cfg.time_stop_box_range_pct:
             return False
-            
+
         # 3. '찍고 내려온 놈' 제외 (최고가가 진입가 대비 크게 오르지 않았어야 함)
         peak_pnl_pct = float((state.peak_price - state.entry_price) / state.entry_price * 100)
         if peak_pnl_pct > (self._cfg.time_stop_box_range_pct * 2.5):
@@ -414,18 +470,64 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         return min(elapsed / total, 1.0) if total > 0 else 0.0
 
     def _load_state(self):
-        if os.path.exists(self.STATE_FILE):
-            try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 이벤트 루프 없음 → 동기 로드 (초기화 시 안전한 경로)
+            if os.path.exists(self.STATE_FILE):
+                try:
+                    with open(self.STATE_FILE, "r") as f:
+                        data = json.load(f)
+                    for k, v in data.items():
+                        if k not in self._position_state:
+                            self._position_state[k] = OSBPositionState(**v)
+                except Exception as e:
+                    self._logger.error(f"Failed to load state for {self.name}: {e}")
+            return
+        # 이벤트 루프가 실행 중이면 비동기 태스크로 읽기
+        loop.create_task(self._load_state_async())
+
+    async def _load_state_async(self):
+        if not os.path.exists(self.STATE_FILE):
+            return
+        try:
+            def _read_file():
                 with open(self.STATE_FILE, "r") as f:
-                    data = json.load(f)
-                for k, v in data.items():
+                    return json.load(f)
+
+            data = await asyncio.to_thread(_read_file)
+            for k, v in data.items():
+                if k not in self._position_state:
                     self._position_state[k] = OSBPositionState(**v)
-            except: pass
+        except Exception as e:
+            self._logger.error(f"Failed to load state async for {self.name}: {e}")
 
     def _save_state(self):
+        """백워드 호환성 있는 동기-스케줄러 래퍼."""
         try:
-            os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 이벤트 루프 없음 → 동기 저장
+            try:
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                data = {k: asdict(v) for k, v in self._position_state.items()}
+                with open(self.STATE_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+            except Exception as e:
+                self._logger.error(f"Failed to save state for {self.name}: {e}")
+            return
+        # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
+        loop.create_task(self._save_state_async())
+
+    async def _save_state_async(self):
+        """비동기 방식으로 상태 파일을 저장합니다 (파일 I/O는 스레드로 오프로드)."""
+        try:
+            def _write_file(data):
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                with open(self.STATE_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+
             data = {k: asdict(v) for k, v in self._position_state.items()}
-            with open(self.STATE_FILE, "w") as f:
-                json.dump(data, f, indent=2)
-        except: pass
+            await asyncio.to_thread(_write_file, data)
+        except Exception as e:
+            self._logger.error(f"Failed to save state async for {self.name}: {e}")
