@@ -293,12 +293,17 @@ class OneilPocketPivotStrategy(LiveStrategy):
         ma_10d = sum(closes[-10:]) / 10
         ma_candidates = [(ma_10d, "10"), (item.ma_20d, "20"), (item.ma_50d, "50")]
         supporting_ma = ""
+        ma_proximity_debug = {}
         for ma_val, ma_name in ma_candidates:
             if ma_val <= 0: continue
+            pct_from_ma = (current - ma_val) / ma_val * 100
+            ma_proximity_debug[f"ma{ma_name}_pct"] = round(pct_from_ma, 2)
             if ma_val * (1 + self._cfg.pp_ma_proximity_lower_pct/100) <= current <= ma_val * (1 + self._cfg.pp_ma_proximity_upper_pct/100):
                 supporting_ma = ma_name
                 break
-        if not supporting_ma: return None
+        if not supporting_ma:
+            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "no_ma_proximity", **ma_proximity_debug})
+            return None
 
         # 2. 캔들 품질 체크 (추가): 윗꼬리가 너무 길어 밀리는 종목 배제
         today_ohlcv = ohlcv[-1]
