@@ -14,9 +14,9 @@ after_market_tasks:
   after_market_delay_sec:
     ranking_refresh: 10          # RankingTask — 장 마감 10분 후
     daily_price_collector: 30      # DailyPriceCollectorTask — 장 30분 후
-    ohlcv_update: 50             # OhlcvUpdateTask — 장 마감 50분 후
-    newhigh: 80                  # NewHighTask — daily_price_collector 완료(80분) + 여유
-    minervini_update: 90        # MinerviniUpdateTask — 장 마감 90분 후
-    전일기준주도주_생성: 120        # PremiumWatchlistGeneratorTask — 장 마감 120분 후
-    cache_warmup: 150             # CacheWarmupTask — 장 마감 150분 후 (우량주 생성 완료 후)
+    ohlcv_update: 40             # OhlcvUpdateTask — 장 마감 40분 후
+    newhigh: 45                  # NewHighTask — daily_price_collector 완료(45분) + 여유
+    minervini_update: 45        # MinerviniUpdateTask — 장 마감 45분 후
+    전일기준주도주_생성: 50        # PremiumWatchlistGeneratorTask — 장 마감 50분 후
+    cache_warmup: 60             # CacheWarmupTask — 장 마감 60분 후 (우량주 생성 완료 후)
     log_cleanup: 300              # LogCleanupTask — 장 마감 300분(5시간) 후
