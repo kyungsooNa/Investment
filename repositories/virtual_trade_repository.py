@@ -106,9 +106,12 @@ class VirtualTradeRepository:
         if os.path.exists(flag_path):
             return
 
+        # 레거시 파일은 VirtualTradeManager 디렉토리에 위치
+        legacy_dir = os.path.join(os.path.dirname(base_dir), "VirtualTradeManager")
+
         migrated = False
 
-        csv_path = os.path.join(base_dir, "trade_journal.csv")
+        csv_path = os.path.join(legacy_dir, "trade_journal.csv")
         if os.path.exists(csv_path):
             try:
                 df = pd.read_csv(csv_path, dtype={'code': str, 'sell_date': object}, encoding='utf-8')
@@ -123,7 +126,7 @@ class VirtualTradeRepository:
             except Exception as e:
                 logger.warning(f"[마이그레이션] CSV 마이그레이션 실패: {e}")
 
-        snap_path = os.path.join(base_dir, "portfolio_snapshots.json")
+        snap_path = os.path.join(legacy_dir, "portfolio_snapshots.json")
         if os.path.exists(snap_path):
             try:
                 with open(snap_path, 'r', encoding='utf-8') as f:
@@ -136,7 +139,7 @@ class VirtualTradeRepository:
             except Exception as e:
                 logger.warning(f"[마이그레이션] 스냅샷 마이그레이션 실패: {e}")
 
-        price_path = os.path.join(base_dir, "close_price_cache.json")
+        price_path = os.path.join(legacy_dir, "close_price_cache.json")
         if os.path.exists(price_path):
             try:
                 with open(price_path, 'r', encoding='utf-8') as f:
@@ -147,9 +150,9 @@ class VirtualTradeRepository:
             except Exception as e:
                 logger.warning(f"[마이그레이션] 가격 캐시 마이그레이션 실패: {e}")
 
-        with open(flag_path, 'w') as f:
-            f.write("1")
         if migrated:
+            with open(flag_path, 'w') as f:
+                f.write("1")
             logger.info("[마이그레이션] 레거시 데이터 마이그레이션 완료.")
 
     def _read(self) -> pd.DataFrame:
