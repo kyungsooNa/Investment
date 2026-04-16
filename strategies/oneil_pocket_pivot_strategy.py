@@ -413,7 +413,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         # [개선] 시가총액 규모에 따른 '동적 허들' 설정
         # 덩치가 큰 종목일수록 시총 대비 0.3%를 채우기 매우 어렵기 때문입니다.
-        if market_cap >= 10 * 10**12:      # 10조 이상 (초대형주: 삼성전자 등)
+        # program_to_market_cap_pct=0.0 이면 mc 필터 비활성화 (슬라이딩 스케일 미적용)
+        if self._cfg.program_to_market_cap_pct <= 0:
+            mc_threshold = 0.0
+        elif market_cap >= 10 * 10**12:    # 10조 이상 (초대형주: 삼성전자 등)
             mc_threshold = 0.1             # 0.1%만 들어와도 인정
         elif market_cap >= 1 * 10**12:     # 1조 이상 (대형주)
             mc_threshold = 0.2             # 0.2%
