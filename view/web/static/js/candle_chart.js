@@ -141,6 +141,7 @@ function renderStockChart(period) {
     const ma5 = new Array(len), ma10 = new Array(len), ma20 = new Array(len), ma50 = new Array(len);
     const ma60 = new Array(len), ma120 = new Array(len), ma150 = new Array(len), ma200 = new Array(len);
     const bbUpper = new Array(len), bbMiddle = new Array(len), bbLower = new Array(len);
+    const volMa5 = new Array(len), volMa20 = new Array(len), volMa60 = new Array(len);
 
     const currentPrice = slicedRaw[len - 1].close;
     let highestPrice = -Infinity, lowestPrice = Infinity;
@@ -174,6 +175,9 @@ function renderStockChart(period) {
             bbMiddle[i] = { x: i, y: ind.bb[rawIdx].middle };
             bbLower[i]  = { x: i, y: ind.bb[rawIdx].lower };
         }
+        if (ind.vol_ma5  && ind.vol_ma5[rawIdx])  volMa5[i]  = { x: i, y: ind.vol_ma5[rawIdx].ma };
+        if (ind.vol_ma20 && ind.vol_ma20[rawIdx]) volMa20[i] = { x: i, y: ind.vol_ma20[rawIdx].ma };
+        if (ind.vol_ma60 && ind.vol_ma60[rawIdx]) volMa60[i] = { x: i, y: ind.vol_ma60[rawIdx].ma };
     }
 
     const highPct = ((highestPrice - currentPrice) / currentPrice * 100).toFixed(1);
@@ -270,7 +274,10 @@ function renderStockChart(period) {
                 { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
                 { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
                 { label: 'BB Middle', data: bbMiddle, type: 'line', borderColor: 'rgba(255, 215, 0, 0.8)', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y', fill: false, order: 3, hidden: true }, // [수정] MA20과 중복되므로 기본 숨김
-                { label: '거래량', data: volumes, type: 'bar', yAxisID: 'y1', backgroundColor: volumeColors, order: 4 }
+                { label: '거래량', data: volumes, type: 'bar', yAxisID: 'y1', backgroundColor: volumeColors, order: 4 },
+                { label: 'Vol MA5',  data: volMa5,  type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 },
+                { label: 'Vol MA20', data: volMa20, type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 },
+                { label: 'Vol MA60', data: volMa60, type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 }
             ]
         },
         options: {
@@ -308,11 +315,11 @@ function renderStockChart(period) {
                         pointStyle: 'line',
                         boxWidth: 20,
                         filter: function(item, chart) {
-                            return item.text.includes('MA') || item.text.includes('BB');
+                            return item.text.includes('MA') || item.text.includes('BB') || item.text.includes('Vol MA');
                         },
                         generateLabels: function(chart) {
                             const original = Chart.defaults.plugins.legend.labels.generateLabels(chart);
-                            return original.filter(item => item.text.includes('MA') || item.text.includes('BB')).map(item => {
+                            return original.filter(item => item.text.includes('MA') || item.text.includes('BB') || item.text.includes('Vol MA')).map(item => {
                                 item.pointStyle = 'line';
                                 return item;
                             });

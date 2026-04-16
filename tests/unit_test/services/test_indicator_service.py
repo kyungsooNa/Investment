@@ -799,39 +799,54 @@ async def test_service_without_sqs():
 async def test_get_chart_indicators_no_cache_manager(indicator_service):
     """캐시 매니저 없이 차트 지표 계산 (전체 계산)"""
     service, mock_sqs = indicator_service # cache_store is None
-    
-    # 150일치 데이터 (충분한 데이터)
-    data = [{"date": f"202501{i+1:03d}", "close": 10000 + i * 10} for i in range(150)]
-    
+
+    # 150일치 데이터 (충분한 데이터, volume 포함)
+    data = [{"date": f"202501{i+1:03d}", "close": 10000 + i * 10, "volume": 1000 + i * 10} for i in range(150)]
+
     # ohlcv_data 직접 전달
     result = await service.get_chart_indicators("005930", ohlcv_data=data)
-    
+
     assert result.rt_cd == ErrorCode.SUCCESS.value
     indicators = result.data
-    
-    # 키 확인
+
+    # 가격 MA 키 확인
     assert "ma5" in indicators
     assert "ma120" in indicators
     assert "bb" in indicators
     assert "rs" in indicators
-    
+
+    # 거래량 MA 키 확인
+    assert "vol_ma5" in indicators
+    assert "vol_ma20" in indicators
+    assert "vol_ma60" in indicators
+
     # 데이터 길이 확인
     assert len(indicators["ma5"]) == 150
     assert len(indicators["bb"]) == 150
+    assert len(indicators["vol_ma5"]) == 150
+
+    # vol_ma 구조 확인 (date, ma 키 포함)
+    last_vol_ma5 = indicators["vol_ma5"][-1]
+    assert "date" in last_vol_ma5
+    assert "ma" in last_vol_ma5
+    assert last_vol_ma5["ma"] is not None  # 충분한 데이터이므로 None이 아니어야 함
 
 @pytest.mark.asyncio
 async def test_get_chart_indicators_insufficient_data(indicator_service):
     """데이터 부족 시 차트 지표 계산"""
     service, mock_sqs = indicator_service
-    
-    # 100개 (130개 미만)
-    data = [{"date": f"202501{i+1:03d}", "close": 10000} for i in range(100)]
-    
+
+    # 100개 (200개 미만 → 캐싱 미적용), volume 포함
+    data = [{"date": f"202501{i+1:03d}", "close": 10000, "volume": 1000} for i in range(100)]
+
     result = await service.get_chart_indicators("005930", ohlcv_data=data)
-    
+
     # 데이터가 적어도 계산은 수행함 (캐싱만 안함)
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert len(result.data["ma5"]) == 100
+    # volume이 있으므로 vol_ma 키도 존재해야 함
+    assert "vol_ma5" in result.data
+    assert len(result.data["vol_ma5"]) == 100
 
 @pytest.mark.asyncio
 async def test_get_chart_indicators_caching_miss(indicator_service_with_cache):
@@ -1512,7 +1527,134 @@ def test_calc_rs_sync_invalid_close(indicator_service):
 def test_calc_rs_sync_exception(indicator_service):
     """calc_rs_sync: 리스트가 아닌 데이터(None 등) 주입 시 내부 예외(Exception) 발생 처리"""
     service, _ = indicator_service
-    
+
     # None 객체를 전달하여 len() 호출 시 TypeError 유도 -> 내부 try-except로 잡혀서 0.0 반환
     rs_val = service.calc_rs_sync(None, period_days=63)
     assert rs_val == 0.0
+
+
+# ═══════════════════════════════════════════════════════
+# 거래량 이동평균(Volume MA) 테스트
+# ═══════════════════════════════════════════════════════
+
+def test_calculate_indicators_full_volume_ma_values(indicator_service):
+    """_calculate_indicators_full: vol_ma5/20/60 값이 volume 기반으로 정확히 계산되는지 검증"""
+    service, _ = indicator_service
+
+    # 65일치 데이터 (vol_ma60 계산 가능), 거래량은 i+1 (1,2,...,65)
+    data = [
+        {"date": f"202501{i+1:03d}", "close": 10000, "volume": i + 1}
+        for i in range(65)
+    ]
+
+    result = service._calculate_indicators_full("005930", data)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    indicators = result.data
+
+    # vol_ma 키 존재 확인
+    assert "vol_ma5" in indicators
+    assert "vol_ma20" in indicators
+    assert "vol_ma60" in indicators
+
+    # 마지막 vol_ma5 값 검증: volume 61~65 평균 = (61+62+63+64+65)/5 = 63.0
+    assert indicators["vol_ma5"][-1]["ma"] == 63.0
+
+    # 마지막 vol_ma20 값 검증: volume 46~65 평균 = sum(46..65)/20 = 55.5
+    assert indicators["vol_ma20"][-1]["ma"] == 55.5
+
+    # 마지막 vol_ma60 값: volume 6~65 평균 = sum(6..65)/60 = 35.5
+    assert indicators["vol_ma60"][-1]["ma"] == 35.5
+
+
+def test_calculate_indicators_full_volume_ma_no_volume_column(indicator_service):
+    """_calculate_indicators_full: volume 컬럼 없으면 vol_ma 키가 결과에 포함되지 않아야 함"""
+    service, _ = indicator_service
+
+    # volume 없는 데이터
+    data = [{"date": f"202501{i+1:03d}", "close": 10000} for i in range(30)]
+
+    result = service._calculate_indicators_full("005930", data)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    indicators = result.data
+
+    # 가격 MA는 존재
+    assert "ma5" in indicators
+    # volume 컬럼 없으므로 vol_ma 키는 없어야 함
+    assert "vol_ma5" not in indicators
+    assert "vol_ma20" not in indicators
+    assert "vol_ma60" not in indicators
+
+
+def test_calculate_indicators_full_volume_ma_insufficient_data(indicator_service):
+    """_calculate_indicators_full: 데이터 부족 시 vol_ma 초기 항목은 None"""
+    service, _ = indicator_service
+
+    # 10일치 데이터 (vol_ma5는 5일부터 계산, vol_ma20/60은 모두 None)
+    data = [
+        {"date": f"2025010{i+1}", "close": 10000, "volume": 1000}
+        for i in range(10)
+    ]
+
+    result = service._calculate_indicators_full("005930", data)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    indicators = result.data
+
+    # vol_ma5: 처음 4개는 None, 5번째부터 값 있음
+    assert indicators["vol_ma5"][0]["ma"] is None
+    assert indicators["vol_ma5"][4]["ma"] is not None
+
+    # vol_ma20/60: 데이터 부족으로 모두 None
+    assert all(row["ma"] is None for row in indicators["vol_ma20"])
+    assert all(row["ma"] is None for row in indicators["vol_ma60"])
+
+
+def test_compute_ma_source_col_param(indicator_service):
+    """_compute_ma: source_col 파라미터로 volume 컬럼 MA를 계산하는지 검증"""
+    service, _ = indicator_service
+
+    df = pd.DataFrame({
+        "close": [100, 200, 300, 400, 500],
+        "volume": [10, 20, 30, 40, 50],
+    })
+
+    # volume 기반 MA3 계산
+    result_df = service._compute_ma(df.copy(), period=3, method="sma", target_col="vol_ma3", source_col="volume")
+
+    # (10+20+30)/3=20, (20+30+40)/3=30, (30+40+50)/3=40
+    assert result_df["vol_ma3"].iloc[2] == 20.0
+    assert result_df["vol_ma3"].iloc[3] == 30.0
+    assert result_df["vol_ma3"].iloc[4] == 40.0
+
+    # close 컬럼은 변경되지 않아야 함
+    assert list(result_df["close"]) == [100, 200, 300, 400, 500]
+
+
+def test_compute_ma_default_source_col_unchanged(indicator_service):
+    """_compute_ma: source_col 기본값이 'close'여서 기존 동작 그대로인지 검증"""
+    service, _ = indicator_service
+
+    df = pd.DataFrame({"close": [100, 200, 300, 400, 500]})
+
+    result_df = service._compute_ma(df.copy(), period=3, method="sma", target_col="ma3")
+
+    assert result_df["ma3"].iloc[2] == 200.0  # (100+200+300)/3
+
+
+@pytest.mark.asyncio
+async def test_get_chart_indicators_no_volume_no_vol_ma(indicator_service):
+    """get_chart_indicators: volume 컬럼 없는 데이터 → vol_ma 키 미포함 (오류 없음)"""
+    service, _ = indicator_service
+
+    data = [{"date": f"202501{i+1:03d}", "close": 10000 + i} for i in range(150)]
+
+    result = await service.get_chart_indicators("005930", ohlcv_data=data)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    # volume 없으므로 vol_ma 키 없음
+    assert "vol_ma5" not in result.data
+    assert "vol_ma20" not in result.data
+    # 가격 MA는 정상 존재
+    assert "ma5" in result.data
