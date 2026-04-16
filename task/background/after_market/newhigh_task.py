@@ -222,10 +222,10 @@ class NewHighTask(AfterMarketTask):
                 # 3. 전략적 필터: 고가 대비 종가가 너무 밀렸는가? (유지율 97% 이상 권장)
                 # 71,700원 고가 대비 68,100원 종가라면 유지율이 95% 미만이므로 탈락
                 maintenance_ratio = current / high
-                if maintenance_ratio >= 0.97: 
+                if maintenance_ratio >= 0.97:
                     # 4. 추가 조건: 거래량 폭발 등 (선택 사항)
-                    # 추후 RS(Relative Strength) 등 추가 데이터를 위한 자리표시자
-                    s.setdefault("rs", "-")
+                    # rs_rating(DB 컬럼) 값을 rs 필드로 전달; 없으면 "-" 기본값
+                    s["rs"] = s.get("rs") or s.get("rs_rating") or "-"
                     s["is_newhigh"] = True
                     result.append(s)
 
