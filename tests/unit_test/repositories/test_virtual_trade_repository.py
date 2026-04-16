@@ -237,9 +237,13 @@ def test_snapshot_migration_from_old_format(tmp_path):
     journal_dir = tmp_path / "data" / "VirtualTradeRepository"
     journal_dir.mkdir(parents=True)
 
+    # 레거시 파일은 VirtualTradeManager 디렉토리에 위치
+    legacy_dir = tmp_path / "data" / "VirtualTradeManager"
+    legacy_dir.mkdir(parents=True)
+
     # 구버전 포맷: daily 키 없이 날짜가 최상위
     old_data = {"2025-01-01": {"ALL": 1.0}}
-    snap_file = journal_dir / "portfolio_snapshots.json"
+    snap_file = legacy_dir / "portfolio_snapshots.json"
     with open(snap_file, 'w', encoding='utf-8') as f:
         json.dump(old_data, f)
 
