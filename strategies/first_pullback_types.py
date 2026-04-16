@@ -14,7 +14,8 @@ class FirstPullbackConfig(BaseStrategyConfig):
     rapid_surge_max_days: int = 10          # 급등 최대 기간
     ma_period: int = 20                     # 이동평균선 기간
     ma_rising_days: int = 5                 # 20MA 우상향 연속 일수
-
+    ma_rising_min_count: int = 4            # 20MA 우상향 최소 일수 (5일 중 4일 이상)
+    
     # Phase 2: Pullback (건전한 숨 고르기)
     pullback_lower_pct: float = -1.0        # 20MA 대비 하한 (-1%)
     pullback_upper_pct: float = 3.0         # 20MA 대비 상한 (+3%)

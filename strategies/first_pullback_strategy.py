@@ -301,30 +301,35 @@ class FirstPullbackStrategy(LiveStrategy):
         return None
 
     def _check_ma_uptrend(self, ohlcv: list) -> bool:
-        """20일 이동평균선이 최근 5일 연속 우상향인지 확인."""
+        """20일 이동평균선이 전반적인 우상향 추세인지 확인."""
         closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
         period = self._cfg.ma_period
         needed = period + self._cfg.ma_rising_days
+        
         if len(closes) < needed:
             return False
 
-        # 최근 (ma_rising_days + 1)일의 20MA 계산
+        # 최근 (ma_rising_days + 1)일의 20MA 계산 (기존과 동일)
         ma_values = []
         for i in range(self._cfg.ma_rising_days + 1):
             end_idx = len(closes) - i
             start_idx = end_idx - period
-            if start_idx < 0:
-                return False
             ma = sum(closes[start_idx:end_idx]) / period
             ma_values.append(ma)
 
-        # ma_values: [오늘MA, 어제MA, ..., 5일전MA] (역순)
-        ma_values.reverse()  # [5일전MA, ..., 어제MA, 오늘MA]
+        ma_values.reverse()  # [5일전, ..., 오늘]
 
-        # 5일 연속 기울기 양수 확인
-        for i in range(1, len(ma_values)):
-            if ma_values[i] <= ma_values[i - 1]:
-                return False
+        # --- 유연한 카운팅 로직 적용 ---
+        # 1. 실제로 상승한 횟수 계산
+        actual_rising_count = sum(1 for i in range(1, len(ma_values)) if ma_values[i] > ma_values[i - 1])
+        
+        # 2. 설정값(4일)과 비교
+        if actual_rising_count < self._cfg.ma_rising_min_count:
+            return False
+            
+        # 3. 추가 안전장치: 중간에 횡보하더라도 '오늘'이 '5일전' 보다는 무조건 높아야 함
+        if ma_values[-1] <= ma_values[0]:
+            return False
 
         return True
 
