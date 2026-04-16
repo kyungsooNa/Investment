@@ -91,6 +91,9 @@ async def test_initialize_services_success(mock_deps):
     assert ctx.initialized is True
     env_instance.set_trading_mode.assert_called_with(True)
     mock_deps["broker"].assert_called()
+    # StockCodeRepository 인스턴스가 BrokerAPIWrapper에 주입되었는지 검증
+    _, broker_kwargs = mock_deps["broker"].call_args
+    assert broker_kwargs.get("stock_code_repository") is mock_deps["scm"].return_value
     mock_deps["mds"].assert_called()
     mock_deps["ind"].assert_called()
     mock_deps["sqs"].assert_called()
