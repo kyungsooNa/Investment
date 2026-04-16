@@ -372,12 +372,12 @@ class IndicatorService:
             raise e
 
     @staticmethod
-    def _compute_ma(df: pd.DataFrame, period: int, method: str = "sma", target_col: str = "ma") -> pd.DataFrame:
-        """이동평균 계산 및 컬럼 추가"""
+    def _compute_ma(df: pd.DataFrame, period: int, method: str = "sma", target_col: str = "ma", source_col: str = "close") -> pd.DataFrame:
+        """이동평균 계산 및 컬럼 추가 (source_col: 계산 대상 컬럼, 기본값 'close')"""
         if method.lower() == "ema":
-            df[target_col] = df['close'].ewm(span=period, adjust=False).mean()
+            df[target_col] = df[source_col].ewm(span=period, adjust=False).mean()
         else:
-            df[target_col] = df['close'].rolling(window=period).mean()
+            df[target_col] = df[source_col].rolling(window=period).mean()
         return df
 
     @staticmethod
@@ -516,6 +516,12 @@ class IndicatorService:
             for p in [5, 10, 20, 50, 60, 120, 150, 200]:
                 df = self._compute_ma(df, p, "sma", target_col=f"ma{p}")
 
+            # 거래량 이동평균 (volume MA 5, 20, 60)
+            if 'volume' in df.columns:
+                df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
+                for p in [5, 20, 60]:
+                    df = self._compute_ma(df, p, "sma", target_col=f"vol_ma{p}", source_col="volume")
+
             # BB (20일, 2.0)
             df = self._compute_bb(df, 20, 2.0, prefix="bb")
 
@@ -560,6 +566,15 @@ class IndicatorService:
                 {"date": str(r.date), "rs": r.rs}
                 for r in df.itertuples(index=False)
             ]
+
+            # 거래량 MA 추출 (vol_ma5, vol_ma20, vol_ma60)
+            for p in [5, 20, 60]:
+                col = f"vol_ma{p}"
+                if col in df.columns:
+                    indicators[col] = [
+                        {"date": str(r.date), "ma": getattr(r, col)}
+                        for r in df.itertuples(index=False)
+                    ]
 
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=indicators)
 
