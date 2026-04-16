@@ -20,11 +20,12 @@ class BrokerAPIWrapper:
 
     def __init__(self, broker: str = "korea_investment", env=None, logger=None, market_clock=None,
                  cache_config=None, market_calendar_service=None,
-                 streaming_logger: Optional["StreamingEventLogger"] = None):
+                 streaming_logger: Optional["StreamingEventLogger"] = None,
+                 stock_code_repository=None):
         self._broker = broker
         self._logger = logger
         self._client = None
-        self._stock_mapper = StockCodeRepository(logger=logger)
+        self._stock_mapper = stock_code_repository if stock_code_repository is not None else StockCodeRepository(logger=logger)
         self.env = env
         self._retry_queue: ApiRequestQueue | None = None
 

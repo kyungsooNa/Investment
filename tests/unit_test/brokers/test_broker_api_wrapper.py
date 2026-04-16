@@ -405,6 +405,31 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
     assert wrapper._stock_mapper is mock_stock_mapper.return_value  # _stock_mapper가 mock_stock_mapper 인스턴스를 참조하는지 확인
 
 
+@patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
+@patch(f"{wrapper_module.__name__}.StockCodeRepository")
+def test_initialization_with_injected_stock_code_repository(mock_stock_mapper, mock_client, mock_env, mock_logger, mock_market_clock):
+    """
+    stock_code_repository를 외부에서 주입하면 StockCodeRepository가 내부에서 생성되지 않고
+    주입된 인스턴스가 _stock_mapper로 사용되는지 검증합니다.
+    """
+    injected_repo = MagicMock()
+
+    with patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c), \
+         patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c):
+        wrapper = BrokerAPIWrapper(
+            broker="korea_investment",
+            env=mock_env,
+            logger=mock_logger,
+            market_clock=mock_market_clock,
+            stock_code_repository=injected_repo,
+        )
+
+    # 주입된 인스턴스가 _stock_mapper로 설정되어야 함
+    assert wrapper._stock_mapper is injected_repo
+    # StockCodeRepository 생성자가 호출되지 않아야 함
+    mock_stock_mapper.assert_not_called()
+
+
 @patch(f"{wrapper_module.__name__}.StockCodeRepository")
 def test_initialization_no_env_raises_error(mock_mapper_class, mock_logger):
     """
