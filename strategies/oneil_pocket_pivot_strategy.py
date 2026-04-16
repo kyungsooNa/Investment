@@ -190,12 +190,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         entry_type, supporting_ma, gap_day_low, extra_info = entry_result
 
-        # 5. ★ 공통 스마트 머니 필터 (기술적 조건 통과 후에만 호출)
-        if not self._check_smart_money(code, current, pg_buy, trade_value, item.market_cap):
-            self._logger.debug({"event": "entry_rejected_by_smart_money", "code": code, "entry_type": entry_type})
-            return None
-
-        # 6. ★ 체결강도 스냅샷 (>=120%)
+        # 5. ★ 체결강도 스냅샷 (>=120%) — 스마트머니 유연 조건(cgld 연동)에 필요해 먼저 조회
         cgld_val = 0.0
         try:
             ccnl_resp = await self._sqs.get_stock_conclusion(code)
@@ -210,6 +205,11 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         if cgld_val < self._cfg.execution_strength_min:
             self._logger.debug({"event": "entry_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val})
+            return None
+
+        # 6. ★ 공통 스마트 머니 필터 (cgld_val 전달로 유연 조건 활성화)
+        if not self._check_smart_money(code, current, pg_buy, trade_value, item.market_cap, cgld_val):
+            self._logger.debug({"event": "entry_rejected_by_smart_money", "code": code, "entry_type": entry_type})
             return None
 
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
@@ -301,8 +301,9 @@ class OneilPocketPivotStrategy(LiveStrategy):
         if not supporting_ma: return None
 
         # 2. 캔들 품질 체크 (추가): 윗꼬리가 너무 길어 밀리는 종목 배제
-        day_high = item.high  # 실시간 고가
-        day_low = item.low    # 실시간 저가
+        today_ohlcv = ohlcv[-1]
+        day_high = today_ohlcv.get("high", 0)
+        day_low = today_ohlcv.get("low", 0)
         day_range = day_high - day_low
         if day_range > 0:
             # 저가 대비 현재 위치 (0.0: 저가, 1.0: 고가)
