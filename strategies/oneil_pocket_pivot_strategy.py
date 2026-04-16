@@ -284,85 +284,59 @@ class OneilPocketPivotStrategy(LiveStrategy):
     def _check_pocket_pivot(
         self, code, current, vol, progress, ohlcv, item, prev_close
     ) -> Optional[Tuple[str, str, int, dict]]:
-        """Pocket Pivot 조건 검사.
-
-        Returns: ("PP", supporting_ma, 0, extra_info) 또는 None
-        """
+        """Pocket Pivot 조건 검사 (개선 버전)."""
         closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
         if len(closes) < 10:
-            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "insufficient_data"})
             return None
 
-        # 1. MA 계산 (10일은 직접 계산, 20/50일은 item에서)
+        # 1. 이동평균선 근접성 체크 (기존 로직 동일)
         ma_10d = sum(closes[-10:]) / 10
-        ma_candidates = [
-            (ma_10d, "10"),
-            (item.ma_20d, "20"),
-            (item.ma_50d, "50"),
-        ]
-
-        # 2. 이평선 근접성 체크 (-2% ~ +4%)
+        ma_candidates = [(ma_10d, "10"), (item.ma_20d, "20"), (item.ma_50d, "50")]
         supporting_ma = ""
         for ma_val, ma_name in ma_candidates:
-            if ma_val <= 0:
-                continue
-            lower = ma_val * (1 + self._cfg.pp_ma_proximity_lower_pct / 100)
-            upper = ma_val * (1 + self._cfg.pp_ma_proximity_upper_pct / 100)
-            if lower <= current <= upper:
+            if ma_val <= 0: continue
+            if ma_val * (1 + self._cfg.pp_ma_proximity_lower_pct/100) <= current <= ma_val * (1 + self._cfg.pp_ma_proximity_upper_pct/100):
                 supporting_ma = ma_name
                 break
+        if not supporting_ma: return None
 
-        if not supporting_ma:
-            # 가장 가까운 MA와의 거리 계산 (파라미터 최적화 참고용)
-            closest_pct = None
-            for ma_val, ma_name in ma_candidates:
-                if ma_val > 0:
-                    pct = (current - ma_val) / ma_val * 100
-                    if closest_pct is None or abs(pct) < abs(closest_pct):
-                        closest_pct = pct
-            self._logger.debug({
-                "event": "pp_rejected", "code": code, "reason": "not_near_ma",
-                "closest_ma_pct": round(closest_pct, 2) if closest_pct is not None else None,
-                "allowed_range": f"{self._cfg.pp_ma_proximity_lower_pct}% ~ {self._cfg.pp_ma_proximity_upper_pct}%",
-            })
-            return None
+        # 2. 캔들 품질 체크 (추가): 윗꼬리가 너무 길어 밀리는 종목 배제
+        day_high = item.high  # 실시간 고가
+        day_low = item.low    # 실시간 저가
+        day_range = day_high - day_low
+        if day_range > 0:
+            # 저가 대비 현재 위치 (0.0: 저가, 1.0: 고가)
+            relative_pos = (current - day_low) / day_range
+            if relative_pos < self._cfg.pp_min_candle_relative_pos:
+                self._logger.debug({"event": "pp_rejected", "code": code, "reason": "poor_candle_quality", "pos": round(relative_pos, 2)})
+                return None
 
-        # 3. 당일 상승일 확인 (현재가 > 전일 종가)
+        # 3. 당일 상승일 확인 (양봉 및 전일비 상승)
         if current <= prev_close:
-            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "not_an_up_day"})
             return None
 
-        # 4. 과거 10일 하락일(close < open) 거래량 중 MAX 산출
+        # 4. 과거 10일 하락일 거래량 분석 및 노이즈 제거 (개선)
         lookback = min(self._cfg.pp_down_day_lookback, len(ohlcv))
         recent = ohlcv[-lookback:]
-        down_day_volumes = []
-        for candle in recent:
-            c = candle.get("close", 0)
-            o = candle.get("open", 0)
-            v = candle.get("volume", 0)
-            if c and o and c < o and v:
-                down_day_volumes.append(v)
+        down_day_volumes = [c.get("volume", 0) for c in recent if c.get("close", 0) < c.get("open", 0)]
 
-        max_down_vol = max(down_day_volumes) if down_day_volumes else 0
-
-        # 하락일(음봉)이 단 하루도 없었다면, 정상적인 조정(Base) 구간이 아니므로 기각
-        if max_down_vol <= 0:
-            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "no_down_day_volume"})
+        if not down_day_volumes:
             return None
         
-        # 5. 거래량 우위: 환산 거래량 > 하락일 최대 거래량
+        # [수정] 100%가 아닌 설정된 비율(예: 90%)만 넘어도 통과하도록 유연화
+        max_down_vol = max(down_day_volumes)
+        threshold_vol = max_down_vol * self._cfg.pp_down_vol_threshold_ratio
+
+        # 5. 거래량 우위 확인
         effective_progress = max(progress, 0.05)
         proj_vol = vol / effective_progress
 
-        if proj_vol <= max_down_vol:
-            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "insufficient_volume", "proj_vol": int(proj_vol), "max_down_vol": max_down_vol})
+        if proj_vol <= threshold_vol:
+            self._logger.debug({
+                "event": "pp_rejected", "code": code, "reason": "insufficient_volume",
+                "proj_vol": int(proj_vol), "threshold": int(threshold_vol)
+            })
             return None
-
-        self._logger.debug({
-            "event": "pocket_pivot_matched", "code": code,
-            "supporting_ma": supporting_ma,
-            "proj_vol": int(proj_vol), "max_down_vol": int(max_down_vol),
-        })
 
         return ("PP", supporting_ma, 0, {"proj_vol": proj_vol, "max_down_vol": max_down_vol})
 
@@ -418,35 +392,56 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
     # ── 스마트 머니 필터 ──────────────────────────────────────────
 
-    def _check_smart_money(self, code: str, current: int, pg_buy: int, trade_value: int, market_cap: int) -> bool:
-        """스마트 머니(프로그램 수급) 필터."""
+    def _check_smart_money(self, code: str, current: int, pg_buy: int, trade_value: int, market_cap: int, cgld_val: float = 0.0) -> bool:
+        """스마트 머니(프로그램 수급) 필터 — 시가총액 규모별 가변 기준 적용."""
         if pg_buy <= 0:
-            self._logger.debug({"event": "smart_money_rejected", "code": code, "reason": "not_net_buy", "pg_buy": pg_buy})
             return False
 
         pg_buy_amount = pg_buy * current
+        
+        # 1. 거래대금 대비 비중 (%)
+        pg_to_tv_pct = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0
+        
+        # 2. 시가총액 대비 비중 (%)
+        pg_to_mc_pct = (pg_buy_amount / market_cap * 100) if market_cap > 0 else 0
 
-        # 거래대금의 10% 이상 개입
-        if trade_value > 0:
-            pg_to_tv_pct = pg_buy_amount / trade_value * 100
-            if pg_to_tv_pct < self._cfg.program_to_trade_value_pct:
-                self._logger.debug({
-                    "event": "smart_money_rejected", "code": code, "reason": "low_pg_to_trade_value",
-                    "pg_to_tv_pct": round(pg_to_tv_pct, 2), "threshold": self._cfg.program_to_trade_value_pct
-                })
-                return False
+        # [개선] 시가총액 규모에 따른 '동적 허들' 설정
+        # 덩치가 큰 종목일수록 시총 대비 0.3%를 채우기 매우 어렵기 때문입니다.
+        if market_cap >= 10 * 10**12:      # 10조 이상 (초대형주: 삼성전자 등)
+            mc_threshold = 0.1             # 0.1%만 들어와도 인정
+        elif market_cap >= 1 * 10**12:     # 1조 이상 (대형주)
+            mc_threshold = 0.2             # 0.2%
+        else:                              # 1조 미만 (중소형주)
+            mc_threshold = self._cfg.program_to_market_cap_pct  # 기본값 (0.3%)
 
-        # 시가총액의 0.3% 이상 개입
-        if market_cap > 0:
-            pg_to_mc_pct = pg_buy_amount / market_cap * 100
-            if pg_to_mc_pct < self._cfg.program_to_market_cap_pct:
-                self._logger.debug({
-                    "event": "smart_money_rejected", "code": code, "reason": "low_pg_to_market_cap",
-                    "pg_to_mc_pct": round(pg_to_mc_pct, 2), "threshold": self._cfg.program_to_market_cap_pct
-                })
-                return False
+        # --- 판정 로직 ---
+        
+        # 조건 A: 정석적인 수급 (거래대금 10% 이상 AND 시총 대비 동적 허들 돌파)
+        is_standard_ok = (pg_to_tv_pct >= self._cfg.program_to_trade_value_pct and 
+                          pg_to_mc_pct >= mc_threshold)
+        
+        # 조건 B: 유연한 수급 (수급은 약간 부족해도 '체결강도'라는 에너지가 뒷받침될 때)
+        # 예: 프로그램 비중 7% + 체결강도 140% + 시총 대비 비중은 절반만 채워도 인정
+        is_flexible_ok = (pg_to_tv_pct >= self._cfg.sm_flexible_pg_ratio and 
+                          cgld_val >= self._cfg.sm_flexible_execution_strength and
+                          pg_to_mc_pct >= (mc_threshold * 0.7))
 
-        self._logger.debug({"event": "smart_money_passed", "code": code, "pg_buy_amount": pg_buy_amount})
+        if not (is_standard_ok or is_flexible_ok):
+            self._logger.debug({
+                "event": "smart_money_rejected", "code": code, 
+                "reason": "low_pg_metrics", 
+                "pg_tv_pct": round(pg_to_tv_pct, 2), 
+                "pg_mc_pct": round(pg_to_mc_pct, 3),
+                "mc_threshold": mc_threshold,
+                "cgld": cgld_val
+            })
+            return False
+
+        self._logger.debug({
+            "event": "smart_money_passed", "code": code, 
+            "pg_tv_pct": round(pg_to_tv_pct, 2), 
+            "pg_mc_pct": round(pg_to_mc_pct, 3)
+        })
         return True
 
     # ── check_exits ────────────────────────────────────────────────
