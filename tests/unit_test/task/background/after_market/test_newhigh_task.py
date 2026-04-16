@@ -875,3 +875,42 @@ async def test_enrich_and_filter_rs_rating_exception(task, mock_rs_rating_servic
     result = await task._enrich_and_filter_rs_rating(stocks, "20260413")
     assert len(result) == 1
     assert result[0]["rs_rating"] == 0
+
+
+# ── _filter_newhigh: rs 필드 전달 버그 수정 검증 ─────────────────────────
+
+def test_filter_newhigh_rs_uses_rs_rating_from_snapshot(task):
+    """DB 스냅샷의 rs_rating 값이 반환 종목의 rs 필드로 전달되는지 검증."""
+    snap = _snap("005930", "삼성전자", 80000, 80000, market_cap=1_000_000_000)
+    snap["rs_rating"] = 85
+    result = task._filter_newhigh([snap])
+    assert len(result) == 1
+    assert result[0]["rs"] == 85
+
+
+def test_filter_newhigh_rs_defaults_to_dash_when_no_rs_rating(task):
+    """rs_rating이 없는 스냅샷에서 rs 필드가 '-' 기본값으로 세팅되는지 검증."""
+    snap = _snap("005930", "삼성전자", 80000, 80000, market_cap=1_000_000_000)
+    # rs_rating 미포함 (DB 컬럼 없는 경우)
+    result = task._filter_newhigh([snap])
+    assert len(result) == 1
+    assert result[0]["rs"] == "-"
+
+
+def test_filter_newhigh_rs_preserved_when_already_set(task):
+    """스냅샷에 rs 값이 이미 있으면 rs_rating과 무관하게 기존 rs 값을 유지하는지 검증."""
+    snap = _snap("005930", "삼성전자", 80000, 80000, market_cap=1_000_000_000)
+    snap["rs"] = "custom_rs"
+    snap["rs_rating"] = 90
+    result = task._filter_newhigh([snap])
+    assert len(result) == 1
+    assert result[0]["rs"] == "custom_rs"
+
+
+def test_filter_newhigh_rs_defaults_to_dash_when_rs_rating_is_none(task):
+    """rs_rating=None인 스냅샷에서 rs 필드가 '-' 기본값으로 세팅되는지 검증."""
+    snap = _snap("005930", "삼성전자", 80000, 80000, market_cap=1_000_000_000)
+    snap["rs_rating"] = None
+    result = task._filter_newhigh([snap])
+    assert len(result) == 1
+    assert result[0]["rs"] == "-"
