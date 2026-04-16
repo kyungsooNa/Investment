@@ -53,7 +53,6 @@ class OneilUniverseConfig(BaseStrategyConfig):
     smart_money_to_tv_pct: float = 10.0           # 또는 누적 거래대금의 10% 이상 매집 시
     smart_money_score_points: float = 15.0        # +15점 부여
 
-
 @dataclass
 class OneilBreakoutConfig(BaseStrategyConfig):
     """오닐 돌파 매매 전략(Strategy B) 설정."""
@@ -156,6 +155,18 @@ class OneilPocketPivotConfig(BaseStrategyConfig):
     position_size_pct: float = 5.0
     min_qty: int = 2                              # 부분 익절을 위해 최소 2주 매수
 
+    # [추가] 1. 거래량 노이즈 제거 필터
+    # 과거 음봉 최대 거래량의 몇 %를 넘어야 인정할 것인가 (예: 0.9 = 90%)
+    pp_down_vol_threshold_ratio: float = 0.9 
+    
+    # [추가] 2. 스마트 머니 유연화 (상호 보완 조건)
+    # 프로그램 비중이 낮더라도 체결강도가 이 수치 이상이면 통과
+    sm_flexible_pg_ratio: float = 7.0
+    sm_flexible_execution_strength: float = 140.0
+    
+    # [추가] 3. 캔들 품질 (몸통 위치)
+    # 0.0(저가) ~ 1.0(고가) 사이에서 현재가가 최소 어디에 위치해야 하는가
+    pp_min_candle_relative_pos: float = 0.5
 
 @dataclass
 class PPPositionState:

@@ -209,6 +209,38 @@ async def test_scan_pp_rejects_low_volume(pp_scan_setup):
 
 
 @pytest.mark.asyncio
+async def test_scan_pp_volume_90pct_threshold(pp_scan_setup):
+    """PP: 하락일 최대 거래량의 90~100% 구간이어도 통과 (노이즈 제거 적용)."""
+    strategy, sqs, _, _, _ = pp_scan_setup
+
+    # pp_scan_setup OHLCV: 전체 하락일(close=67500 < open=68000), vol=50000
+    # max_down_vol=50000, threshold=50000*0.9=45000
+    # vol=24000 → proj_vol=24000/0.5=48000 > 45000 → 통과 (100% 기준이면 48000<50000 탈락)
+    sqs.get_current_price.return_value = _pp_price_output(vol="24000")
+    sqs.get_stock_conclusion.return_value = _cgld_output("150.0")
+
+    signals = await strategy.scan()
+    assert len(signals) == 1
+    assert signals[0].action == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_scan_pp_rejects_poor_candle_quality(pp_scan_setup):
+    """PP: 현재가가 당일 고저 범위 하단 50% 미만이면 기각 (윗꼬리 밀림)."""
+    strategy, sqs, _, _, _ = pp_scan_setup
+
+    # today_high=70000, today_low=68000, current=68500
+    # relative_pos = (68500-68000)/(70000-68000) = 500/2000 = 0.25 < 0.5 → 기각
+    sqs.get_current_price.return_value = _pp_price_output(
+        current="68500", today_high="70000", today_low="68000"
+    )
+    sqs.get_stock_conclusion.return_value = _cgld_output("150.0")
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
 async def test_scan_pp_rejects_low_execution_strength(pp_scan_setup):
     """PP: 체결강도 < 120%이면 시그널 없음."""
     strategy, sqs, _, _, _ = pp_scan_setup
@@ -1070,12 +1102,12 @@ async def test_check_bgu_edge_cases(bgu_scan_setup):
     assert len(signals) == 0
 
 @pytest.mark.parametrize("pg_buy, trade_value, market_cap, expected", [
-    (0, 1000, 10000, False),
-    (-100, 1000, 10000, False),
-    (100, 0, 10000, True),
-    (100, 10000, 0, True),
-    (100, 10000, 10000, True),
-    (1000, 1000, 100000, True),
+    (0, 1000, 10000, False),        # pg_buy <= 0
+    (-100, 1000, 10000, False),     # pg_buy <= 0
+    (100, 0, 10000, False),         # tv=0 → pg_to_tv_pct=0 < 10%, flexible도 pgRatio 미달 → False
+    (100, 10000, 0, False),         # mc=0 → pg_to_mc_pct=0 < threshold, flexible cgld=0 → False
+    (100, 10000, 10000, True),      # pg_to_tv_pct=100%, pg_to_mc_pct=100% → standard 통과
+    (1000, 1000, 100000, True),     # pg_to_tv_pct=10000%, pg_to_mc_pct=1000% → standard 통과
 ])
 def test_check_smart_money_filters(mock_deps, pg_buy, trade_value, market_cap, expected):
     """_check_smart_money: 다양한 필터링 조건 검증."""
@@ -1083,6 +1115,47 @@ def test_check_smart_money_filters(mock_deps, pg_buy, trade_value, market_cap, e
     strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
     result = strategy._check_smart_money("005930", 100, pg_buy, trade_value, market_cap)
     assert result is expected
+
+
+def test_check_smart_money_sliding_scale(mock_deps):
+    """_check_smart_money: 시가총액 규모별 슬라이딩 기준 검증."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+
+    current = 1000
+    # pg_buy_amount = 0.15% of 10조 = 150억 → pg_to_mc_pct=0.15%
+    # pg_to_tv_pct = 10% (standard 통과 요건)
+    pg_buy = 15_000_000           # 1500만주 × 1000원 = 150억
+    trade_value = 150_000_000_000  # 1500억 → pg_to_tv_pct = 150억/1500억 = 10%
+
+    # 10조 이상: mc_threshold=0.1% → 0.15% ≥ 0.1% → 통과
+    assert strategy._check_smart_money("A", current, pg_buy, trade_value, 10 * 10**12) is True
+
+    # 1조(mc_threshold=0.2%): pg_buy_amount=0.15% of 1조=15억 → 15억/1조=0.15% < 0.2% → 탈락
+    pg_buy_1t = 1_500_000          # 150만주 × 1000원 = 15억
+    trade_value_1t = 15_000_000_000  # 150억 → pg_to_tv_pct = 10%
+    assert strategy._check_smart_money("B", current, pg_buy_1t, trade_value_1t, 1 * 10**12) is False
+
+
+def test_check_smart_money_flexible_condition(mock_deps):
+    """_check_smart_money: pgRatio 7%+ & 체결강도 140%+ 시 유연 조건으로 통과."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+
+    # pg_to_tv_pct = 8% (7% 이상, 10% 미만) — standard 탈락 구간
+    # market_cap = 500억 (< 1조): mc_threshold = 0.3%
+    # pg_to_mc_pct = 0.25% (mc_threshold의 70% = 0.21% 이상 → flexible 허들 충족)
+    market_cap = 50_000_000_000    # 500억
+    current = 100
+    pg_buy_amount = int(0.0025 * market_cap)   # 0.25%  = 1.25억
+    pg_buy = pg_buy_amount // current          # 125만주
+    trade_value = int(pg_buy_amount / 0.08)   # pg_to_tv_pct = 8%
+
+    # cgld 없음 → flexible 탈락 → False
+    assert strategy._check_smart_money("005930", current, pg_buy, trade_value, market_cap, cgld_val=0.0) is False
+
+    # cgld 145% → flexible 통과 → True
+    assert strategy._check_smart_money("005930", current, pg_buy, trade_value, market_cap, cgld_val=145.0) is True
 
 @pytest.mark.asyncio
 async def test_check_exits_edge_cases(mock_deps):
