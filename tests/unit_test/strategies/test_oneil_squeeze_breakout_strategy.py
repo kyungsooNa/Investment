@@ -40,11 +40,14 @@ _FILE_IO_TESTS = {"test_load_save_state"}
 
 @pytest.fixture(autouse=True)
 def _block_async_file_io(monkeypatch, request):
-    """check_exits에서 _save_state_async 호출 시 파일 I/O 방지."""
+    """check_exits에서 _save_state_async 호출 시 파일 I/O 방지.
+    _load_state_async도 패치해 trailing stop 후 pop() 된 코드가 백그라운드 태스크에 의해 재로드되는 레이스 컨디션 방지.
+    """
     if request.node.name in _FILE_IO_TESTS:
         yield
         return
     monkeypatch.setattr(OneilSqueezeBreakoutStrategy, "_save_state_async", AsyncMock())
+    monkeypatch.setattr(OneilSqueezeBreakoutStrategy, "_load_state_async", AsyncMock())
     yield
 
 
