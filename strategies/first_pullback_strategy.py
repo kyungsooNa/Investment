@@ -106,7 +106,7 @@ class FirstPullbackStrategy(LiveStrategy):
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
-    async def _check_entry(self, code, item, progress, market_timing=None) -> Optional[TradeSignal]:
+    async def _check_entry(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         """진입 조건 검사: Phase 1 → 2 → 3 순서로 필터링."""
         # ── 현재가 데이터 선행 조회 (OHLCV 캐시 활용 위해) ──
         resp = await self._sqs.get_current_price(code, caller=self.name)
@@ -254,7 +254,7 @@ class FirstPullbackStrategy(LiveStrategy):
                 "rs_score": getattr(item, "rs_score", 0.0),
                 "rs_rating": getattr(item, "rs_rating", 0),
                 "total_score": getattr(item, "total_score", 0.0),
-                "market_timing": market_timing.get(item.market) if market_timing else None,
+                "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
             },
             "reason": reason_msg,
         })
@@ -535,8 +535,8 @@ class FirstPullbackStrategy(LiveStrategy):
                     for k, v in data.items():
                         if k not in self._position_state:
                             self._position_state[k] = FPPositionState(**v)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._logger.error(f"Failed to load state for {self.name}: {e}")
             return
         # 이벤트 루프가 실행 중이면 비동기 태스크로 읽기
         loop.create_task(self._load_state_async())
@@ -553,8 +553,8 @@ class FirstPullbackStrategy(LiveStrategy):
             for k, v in data.items():
                 if k not in self._position_state:
                     self._position_state[k] = FPPositionState(**v)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to load state async for {self.name}: {e}")
 
     def _save_state(self):
         """백워드 호환성 있는 동기-스케줄러 래퍼."""
@@ -567,8 +567,8 @@ class FirstPullbackStrategy(LiveStrategy):
                 data = {k: asdict(v) for k, v in self._position_state.items()}
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.error(f"Failed to save state for {self.name}: {e}")
             return
         # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
         loop.create_task(self._save_state_async())
@@ -583,5 +583,5 @@ class FirstPullbackStrategy(LiveStrategy):
 
             data = {k: asdict(v) for k, v in self._position_state.items()}
             await asyncio.to_thread(_write_file, data)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to save state async for {self.name}: {e}")

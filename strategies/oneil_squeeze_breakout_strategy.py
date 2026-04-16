@@ -117,7 +117,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
-    async def _check_breakout(self, code, item, progress, market_timing=None) -> Optional[TradeSignal]:
+    async def _check_breakout(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         # 1. 기본 시세 및 프로그램 수급 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0": return None
@@ -235,7 +235,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 "rs_score": item.rs_score,
                 "rs_rating": item.rs_rating,
                 "total_score": item.total_score,
-                "market_timing": market_timing.get(item.market) if market_timing else None,
+                "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
             },
             "reason": reason_msg,
         })
@@ -481,8 +481,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     for k, v in data.items():
                         if k not in self._position_state:
                             self._position_state[k] = OSBPositionState(**v)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._logger.error(f"Failed to load state for {self.name}: {e}")
             return
         # 이벤트 루프가 실행 중이면 비동기 태스크로 읽기
         loop.create_task(self._load_state_async())
@@ -499,8 +499,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             for k, v in data.items():
                 if k not in self._position_state:
                     self._position_state[k] = OSBPositionState(**v)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to load state async for {self.name}: {e}")
 
     def _save_state(self):
         """백워드 호환성 있는 동기-스케줄러 래퍼."""
@@ -513,8 +513,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 data = {k: asdict(v) for k, v in self._position_state.items()}
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.error(f"Failed to save state for {self.name}: {e}")
             return
         # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
         loop.create_task(self._save_state_async())
@@ -529,5 +529,5 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
             data = {k: asdict(v) for k, v in self._position_state.items()}
             await asyncio.to_thread(_write_file, data)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to save state async for {self.name}: {e}")

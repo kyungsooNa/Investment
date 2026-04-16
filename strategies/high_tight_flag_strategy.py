@@ -102,7 +102,7 @@ class HighTightFlagStrategy(LiveStrategy):
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
-    async def _check_htf_setup(self, code, item, progress, market_timing=None) -> Optional[TradeSignal]:
+    async def _check_htf_setup(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         """HTF 패턴 감지 + 실시간 돌파 확인."""
         # 1. OHLCV 조회 (깃대 40일 + 깃발 최대 25일 = 65일)
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=65)
@@ -124,7 +124,7 @@ class HighTightFlagStrategy(LiveStrategy):
         })
 
         # 3. Phase 3: 실시간 돌파 확인
-        return await self._check_breakout(code, item, pattern, ohlcv, progress, market_timing)
+        return await self._check_breakout(code, item, pattern, ohlcv, progress, market_timing_cache)
 
     def _detect_pole_and_flag(self, ohlcv: list) -> Optional[dict]:
         """Phase 1+2: 깃대 폭등 + 깃발 횡보 패턴 감지 (순수 계산, API 호출 없음).
@@ -191,7 +191,7 @@ class HighTightFlagStrategy(LiveStrategy):
             "flag_avg_vol": flag_avg_vol,
         }
 
-    async def _check_breakout(self, code, item, pattern, ohlcv, progress, market_timing=None) -> Optional[TradeSignal]:
+    async def _check_breakout(self, code, item, pattern, ohlcv, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         """Phase 3: 실시간 돌파 확인 (가격 + 거래량 + 체결강도)."""
         # 1. 현재가 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
@@ -295,7 +295,7 @@ class HighTightFlagStrategy(LiveStrategy):
                 "rs_score": getattr(item, "rs_score", 0.0),
                 "rs_rating": getattr(item, "rs_rating", 0),
                 "total_score": getattr(item, "total_score", 0.0),
-                "market_timing": market_timing.get(item.market) if market_timing else None,
+                "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
             },
             "reason": reason_msg,
         })
@@ -459,8 +459,8 @@ class HighTightFlagStrategy(LiveStrategy):
                     for k, v in data.items():
                         if k not in self._position_state:
                             self._position_state[k] = HTFPositionState(**v)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._logger.error(f"Failed to load state for {self.name}: {e}")
             return
         # 이벤트 루프가 실행 중이면 비동기 태스크로 읽기
         loop.create_task(self._load_state_async())
@@ -477,8 +477,8 @@ class HighTightFlagStrategy(LiveStrategy):
             for k, v in data.items():
                 if k not in self._position_state:
                     self._position_state[k] = HTFPositionState(**v)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to load state async for {self.name}: {e}")
 
     def _save_state(self):
         """백워드 호환성 있는 동기-스케줄러 래퍼."""
@@ -491,8 +491,8 @@ class HighTightFlagStrategy(LiveStrategy):
                 data = {k: asdict(v) for k, v in self._position_state.items()}
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.error(f"Failed to save state for {self.name}: {e}")
             return
         # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
         loop.create_task(self._save_state_async())
@@ -507,5 +507,5 @@ class HighTightFlagStrategy(LiveStrategy):
 
             data = {k: asdict(v) for k, v in self._position_state.items()}
             await asyncio.to_thread(_write_file, data)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to save state async for {self.name}: {e}")

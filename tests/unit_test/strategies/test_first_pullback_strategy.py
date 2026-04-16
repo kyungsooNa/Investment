@@ -856,7 +856,7 @@ def test_load_save_state(mock_deps, tmp_path):
 
 
 def test_load_state_corrupted(mock_deps, tmp_path):
-    """손상된 상태 파일 로드 시 빈 상태 유지."""
+    """손상된 상태 파일 로드 시 빈 상태 유지 + 에러 로깅."""
     sqs, universe, tm, logger = mock_deps
     strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
 
@@ -866,16 +866,18 @@ def test_load_state_corrupted(mock_deps, tmp_path):
     strategy._position_state = {}
     strategy._load_state()
     assert strategy._position_state == {}
+    logger.error.assert_called()
 
 
 def test_save_state_permission_error(mock_deps):
-    """저장 실패 시 예외가 전파되지 않음."""
+    """저장 실패 시 예외가 전파되지 않고 에러가 로깅됨."""
     sqs, universe, tm, logger = mock_deps
     strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
 
     strategy.STATE_FILE = "/unwritable/path/state.json"
     with patch("os.makedirs", side_effect=OSError("Permission denied")):
         strategy._save_state()  # 예외 발생 안 함
+    logger.error.assert_called()
 
 
 def test_name_property(mock_deps):

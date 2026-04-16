@@ -228,9 +228,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
         # 즉시 파일을 보장하려면 await 가능한 호출자가 _save_state_async 를 사용합니다.
         try:
             await self._save_state_async()
-        except Exception:
-            # 백워드 호환성: 호출 컨텍스트가 동기일 수 있으므로 예외는 무시
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to save state async for {self.name}: {e}")
 
         if entry_type == "PP":
             proj_vol = extra_info.get("proj_vol", 0)
@@ -481,8 +480,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
         if state_dirty:
             try:
                 await self._save_state_async()
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.error(f"Failed to save state async for {self.name}: {e}")
         return signals
 
     async def _check_single_exit(self, hold: dict, market_timing_cache: dict) -> tuple:
@@ -741,8 +740,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
                     for k, v in data.items():
                         if k not in self._position_state:
                             self._position_state[k] = PPPositionState(**v)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._logger.error(f"Failed to load state for {self.name}: {e}")
             return
 
         # 이벤트 루프가 실행 중이면 비동기 태스크로 읽기
@@ -761,8 +760,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
             for k, v in data.items():
                 if k not in self._position_state:
                     self._position_state[k] = PPPositionState(**v)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to load state async for {self.name}: {e}")
 
     def _save_state(self):
         """백워드 호환성 있는 동기-스케줄러 래퍼: 이벤트 루프가 있으면 백그라운드에 저장 태스크를 생성,
@@ -777,8 +776,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 data = {k: asdict(v) for k, v in self._position_state.items()}
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.error(f"Failed to save state for {self.name}: {e}")
             return
 
         # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
@@ -794,5 +793,5 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
             data = {k: asdict(v) for k, v in self._position_state.items()}
             await asyncio.to_thread(_write_file, data)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"Failed to save state async for {self.name}: {e}")
