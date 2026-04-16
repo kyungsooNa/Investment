@@ -90,7 +90,7 @@ class HighTightFlagStrategy(LiveStrategy):
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
             results = await asyncio.gather(
-                *[self._check_htf_setup(code, item, market_progress) for code, item in chunk],
+                *[self._check_htf_setup(code, item, market_progress, market_timing) for code, item in chunk],
                 return_exceptions=True,
             )
             for result in results:
@@ -102,7 +102,7 @@ class HighTightFlagStrategy(LiveStrategy):
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
-    async def _check_htf_setup(self, code, item, progress) -> Optional[TradeSignal]:
+    async def _check_htf_setup(self, code, item, progress, market_timing=None) -> Optional[TradeSignal]:
         """HTF 패턴 감지 + 실시간 돌파 확인."""
         # 1. OHLCV 조회 (깃대 40일 + 깃발 최대 25일 = 65일)
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=65)
@@ -124,7 +124,7 @@ class HighTightFlagStrategy(LiveStrategy):
         })
 
         # 3. Phase 3: 실시간 돌파 확인
-        return await self._check_breakout(code, item, pattern, ohlcv, progress)
+        return await self._check_breakout(code, item, pattern, ohlcv, progress, market_timing)
 
     def _detect_pole_and_flag(self, ohlcv: list) -> Optional[dict]:
         """Phase 1+2: 깃대 폭등 + 깃발 횡보 패턴 감지 (순수 계산, API 호출 없음).
@@ -191,7 +191,7 @@ class HighTightFlagStrategy(LiveStrategy):
             "flag_avg_vol": flag_avg_vol,
         }
 
-    async def _check_breakout(self, code, item, pattern, ohlcv, progress) -> Optional[TradeSignal]:
+    async def _check_breakout(self, code, item, pattern, ohlcv, progress, market_timing=None) -> Optional[TradeSignal]:
         """Phase 3: 실시간 돌파 확인 (가격 + 거래량 + 체결강도)."""
         # 1. 현재가 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
@@ -231,10 +231,12 @@ class HighTightFlagStrategy(LiveStrategy):
 
         vol_threshold = avg_vol_50d * self._cfg.volume_breakout_multiplier
         if proj_vol < vol_threshold:
+            vol_ratio_pct = (proj_vol / avg_vol_50d * 100) if avg_vol_50d > 0 else 0.0
             self._logger.debug({
                 "event": "breakout_rejected", "code": code,
                 "reason": "insufficient_projected_volume",
-                "proj_vol": int(proj_vol), "threshold": int(vol_threshold)
+                "proj_vol": int(proj_vol), "threshold": int(vol_threshold),
+                "vol_ratio_pct": round(vol_ratio_pct, 1),
             })
             return None
 
@@ -282,7 +284,20 @@ class HighTightFlagStrategy(LiveStrategy):
         self._logger.info({
             "event": "buy_signal_generated",
             "code": code, "name": item.name,
-            "price": current, "reason": reason_msg,
+            "metrics": {
+                "price": current,
+                "pole_high": pole_high,
+                "vol_ratio_pct": round(vol_ratio, 1),
+                "surge_ratio": round(pattern["surge_ratio"], 2),
+                "flag_days": pattern["flag_days"],
+                "drawdown_pct": round(pattern["drawdown_pct"], 1),
+                "execution_strength": cgld_val,
+                "rs_score": getattr(item, "rs_score", 0.0),
+                "rs_rating": getattr(item, "rs_rating", 0),
+                "total_score": getattr(item, "total_score", 0.0),
+                "market_timing": market_timing.get(item.market) if market_timing else None,
+            },
+            "reason": reason_msg,
         })
 
         return TradeSignal(
@@ -293,68 +308,111 @@ class HighTightFlagStrategy(LiveStrategy):
     # ── check_exits ──────────────────────────────────────────────────
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
-        signals = []
+        if not holdings:
+            return []
+
+        results = await asyncio.gather(
+            *[self._check_single_exit(hold) for hold in holdings],
+            return_exceptions=True,
+        )
+
+        signals: List[TradeSignal] = []
         state_dirty = False
-        for hold in holdings:
-            code = hold.get("code")
-            buy_price_raw = hold.get("buy_price")
-            if not code or not buy_price_raw:
-                continue
-
-            buy_price = float(buy_price_raw)
-
-            state = self._position_state.get(code)
-            if not state:
-                state = HTFPositionState(int(buy_price), "", int(buy_price), int(buy_price))
-                self._position_state[code] = state
-
-            resp = await self._sqs.get_current_price(code, caller=self.name)
-            if not resp or resp.rt_cd != "0":
-                continue
-
-            output = resp.data.get("output") if isinstance(resp.data, dict) else None
-            if not output:
-                continue
-
-            if isinstance(output, dict):
-                current = int(output.get("stck_prpr", 0))
-            else:
-                current = int(getattr(output, "stck_prpr", 0) or 0)
-
-            if current <= 0:
-                continue
-
-            # 최고가 갱신 (dirty flag — 루프 후 1회 저장)
-            if current > state.peak_price:
-                state.peak_price = current
-                state_dirty = True
-
-            pnl = float((current - buy_price) / buy_price * 100)
-            reason = ""
-
-            # 1. 칼손절
-            if pnl <= self._cfg.stop_loss_pct:
-                reason = f"칼손절({pnl:.1f}%)"
-
-            # 2. 10일 MA 트레일링스탑
-            if not reason:
-                is_break, break_reason = await self._check_trailing_ma_stop(code, current)
-                if is_break:
-                    reason = break_reason
-
-            # 매도 시그널 생성 (전량 매도)
-            if reason:
-                holding_qty = int(hold.get("qty", 1))
-                self._position_state.pop(code, None)
-                state_dirty = True
-                signals.append(TradeSignal(
-                    code=code, name=hold.get("name", code), action="SELL",
-                    price=current, qty=holding_qty, reason=reason, strategy_name=self.name,
-                ))
+        for result in results:
+            if isinstance(result, Exception):
+                self._logger.error({"event": "exit_check_error", "error": str(result)})
+            elif result:
+                s_list, dirty = result
+                signals.extend(s_list)
+                if dirty:
+                    state_dirty = True
 
         if state_dirty:
-            self._save_state()
+            await self._save_state_async()
         return signals
+
+    async def _check_single_exit(self, hold: dict) -> tuple:
+        """단일 보유 종목 청산 조건 검사.
+
+        Returns: (List[TradeSignal], state_dirty: bool)
+        """
+        signals: List[TradeSignal] = []
+        state_dirty = False
+
+        code = hold.get("code")
+        buy_price_raw = hold.get("buy_price")
+        if not code or not buy_price_raw:
+            return signals, state_dirty
+
+        buy_price = float(buy_price_raw)
+
+        state = self._position_state.get(code)
+        if not state:
+            state = HTFPositionState(int(buy_price), "", int(buy_price), int(buy_price))
+            self._position_state[code] = state
+
+        resp = await self._sqs.get_current_price(code, caller=self.name)
+        if not resp or resp.rt_cd != "0":
+            return signals, state_dirty
+
+        output = resp.data.get("output") if isinstance(resp.data, dict) else None
+        if not output:
+            return signals, state_dirty
+
+        if isinstance(output, dict):
+            current = int(output.get("stck_prpr", 0))
+        else:
+            current = int(getattr(output, "stck_prpr", 0) or 0)
+
+        if current <= 0:
+            return signals, state_dirty
+
+        # 최고가 갱신 (dirty flag)
+        if current > state.peak_price:
+            state.peak_price = current
+            state_dirty = True
+
+        pnl = float((current - buy_price) / buy_price * 100)
+
+        # MFE / MAE 갱신
+        if pnl > state.mfe_pct:
+            state.mfe_pct = round(pnl, 2)
+            state_dirty = True
+        if pnl < state.mae_pct:
+            state.mae_pct = round(pnl, 2)
+            state_dirty = True
+
+        reason = ""
+
+        # 1. 칼손절
+        if pnl <= self._cfg.stop_loss_pct:
+            reason = f"칼손절({pnl:.1f}%)"
+
+        # 2. 10일 MA 트레일링스탑
+        if not reason:
+            is_break, break_reason = await self._check_trailing_ma_stop(code, current)
+            if is_break:
+                reason = break_reason
+
+        # 매도 시그널 생성 (전량 매도)
+        if reason:
+            holding_qty = int(hold.get("qty", 1))
+            self._logger.info({
+                "event": "exit_signal_generated",
+                "code": code, "name": hold.get("name", code),
+                "reason": reason,
+                "pnl_pct": round(pnl, 2),
+                "mfe_pct": state.mfe_pct,
+                "mae_pct": state.mae_pct,
+            })
+            self._position_state.pop(code, None)
+            state_dirty = True
+            signals.append(TradeSignal(
+                code=code, name=hold.get("name", code), action="SELL",
+                price=current, qty=holding_qty, reason=reason, strategy_name=self.name,
+            ))
+
+        return signals, state_dirty
 
     async def _check_trailing_ma_stop(self, code: str, current_price: int) -> tuple:
         """10일 MA 트레일링스탑 체크."""
@@ -390,20 +448,64 @@ class HighTightFlagStrategy(LiveStrategy):
         return min(elapsed / total, 1.0) if total > 0 else 0.0
 
     def _load_state(self):
-        if os.path.exists(self.STATE_FILE):
-            try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 이벤트 루프 없음 → 동기 로드 (초기화 시 안전한 경로)
+            if os.path.exists(self.STATE_FILE):
+                try:
+                    with open(self.STATE_FILE, "r") as f:
+                        data = json.load(f)
+                    for k, v in data.items():
+                        if k not in self._position_state:
+                            self._position_state[k] = HTFPositionState(**v)
+                except Exception:
+                    pass
+            return
+        # 이벤트 루프가 실행 중이면 비동기 태스크로 읽기
+        loop.create_task(self._load_state_async())
+
+    async def _load_state_async(self):
+        if not os.path.exists(self.STATE_FILE):
+            return
+        try:
+            def _read_file():
                 with open(self.STATE_FILE, "r") as f:
-                    data = json.load(f)
-                for k, v in data.items():
+                    return json.load(f)
+
+            data = await asyncio.to_thread(_read_file)
+            for k, v in data.items():
+                if k not in self._position_state:
                     self._position_state[k] = HTFPositionState(**v)
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     def _save_state(self):
+        """백워드 호환성 있는 동기-스케줄러 래퍼."""
         try:
-            os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 이벤트 루프 없음 → 동기 저장
+            try:
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                data = {k: asdict(v) for k, v in self._position_state.items()}
+                with open(self.STATE_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+            except Exception:
+                pass
+            return
+        # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
+        loop.create_task(self._save_state_async())
+
+    async def _save_state_async(self):
+        """비동기 방식으로 상태 파일을 저장합니다 (파일 I/O는 스레드로 오프로드)."""
+        try:
+            def _write_file(data):
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                with open(self.STATE_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+
             data = {k: asdict(v) for k, v in self._position_state.items()}
-            with open(self.STATE_FILE, "w") as f:
-                json.dump(data, f, indent=2)
+            await asyncio.to_thread(_write_file, data)
         except Exception:
             pass

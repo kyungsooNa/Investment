@@ -61,6 +61,19 @@ def _make_ohlcv_pole_and_flag(
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
+# _save_state_async 파일 I/O 차단 (파일 I/O 전용 TC 제외)
+_FILE_IO_TESTS = {"test_state_persistence"}
+
+@pytest.fixture(autouse=True)
+def _block_async_file_io(monkeypatch, request):
+    """check_exits에서 _save_state_async 호출 시 파일 I/O 방지."""
+    if request.node.name in _FILE_IO_TESTS:
+        yield
+        return
+    monkeypatch.setattr(HighTightFlagStrategy, "_save_state_async", AsyncMock())
+    yield
+
+
 @pytest.fixture
 def mock_deps():
     sqs = MagicMock(spec=StockQueryService)

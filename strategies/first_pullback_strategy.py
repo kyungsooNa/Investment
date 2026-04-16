@@ -94,7 +94,7 @@ class FirstPullbackStrategy(LiveStrategy):
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
             results = await asyncio.gather(
-                *[self._check_entry(code, item, market_progress) for code, item in chunk],
+                *[self._check_entry(code, item, market_progress, market_timing) for code, item in chunk],
                 return_exceptions=True,
             )
             for result in results:
@@ -106,7 +106,7 @@ class FirstPullbackStrategy(LiveStrategy):
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
-    async def _check_entry(self, code, item, progress) -> Optional[TradeSignal]:
+    async def _check_entry(self, code, item, progress, market_timing=None) -> Optional[TradeSignal]:
         """진입 조건 검사: Phase 1 → 2 → 3 순서로 필터링."""
         # ── 현재가 데이터 선행 조회 (OHLCV 캐시 활용 위해) ──
         resp = await self._sqs.get_current_price(code, caller=self.name)
@@ -172,7 +172,8 @@ class FirstPullbackStrategy(LiveStrategy):
             self._logger.debug({
                 "event": "entry_rejected", "code": code, "reason": "pullback_out_of_range",
                 "pullback_pct": round(pullback_pct, 2),
-                "allowed_range": f"{self._cfg.pullback_lower_pct}% ~ {self._cfg.pullback_upper_pct}%"
+                "allowed_range": f"{self._cfg.pullback_lower_pct}% ~ {self._cfg.pullback_upper_pct}%",
+                "today_low": today_low, "ma_20d": round(ma_20d, 0),
             })
             return None
 
@@ -183,7 +184,8 @@ class FirstPullbackStrategy(LiveStrategy):
             vol_dryup_pct = (avg_vol / surge_volume * 100) if surge_volume > 0 else 0.0
             self._logger.debug({
                 "event": "entry_rejected", "code": code, "reason": "volume_not_dry",
-                "vol_dryup_pct": round(vol_dryup_pct, 2), "threshold_pct": self._cfg.volume_dryup_ratio * 100
+                "vol_dryup_pct": round(vol_dryup_pct, 2), "threshold_pct": self._cfg.volume_dryup_ratio * 100,
+                "avg_vol": int(avg_vol), "surge_volume": surge_volume,
             })
             return None
 
@@ -243,7 +245,17 @@ class FirstPullbackStrategy(LiveStrategy):
         self._logger.info({
             "event": "buy_signal_generated",
             "code": code, "name": item.name,
-            "price": current,
+            "metrics": {
+                "price": current,
+                "ma_20d": round(ma_20d, 0),
+                "pullback_pct": round(pullback_pct, 2),
+                "vol_dryup_pct": round(vol_dryup_pct, 1),
+                "execution_strength": cgld_val,
+                "rs_score": getattr(item, "rs_score", 0.0),
+                "rs_rating": getattr(item, "rs_rating", 0),
+                "total_score": getattr(item, "total_score", 0.0),
+                "market_timing": market_timing.get(item.market) if market_timing else None,
+            },
             "reason": reason_msg,
         })
 
@@ -350,106 +362,150 @@ class FirstPullbackStrategy(LiveStrategy):
     # ── check_exits ────────────────────────────────────────────────
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
-        signals = []
+        if not holdings:
+            return []
+
+        results = await asyncio.gather(
+            *[self._check_single_exit(hold) for hold in holdings],
+            return_exceptions=True,
+        )
+
+        signals: List[TradeSignal] = []
         state_dirty = False
-        for hold in holdings:
-            code = hold.get("code")
-            buy_price_raw = hold.get("buy_price")
-            if not code or not buy_price_raw:
-                continue
-
-            buy_price = float(buy_price_raw)  # numpy.float64 타입 제거 (순수 float 형변환)
-
-            state = self._position_state.get(code)
-            if not state:
-                state = FPPositionState(
-                    entry_price=int(buy_price),
-                    entry_date="",
-                    peak_price=int(buy_price),
-                    surge_day_high=0,
-                )
-                self._position_state[code] = state
-
-            # 현재가 조회
-            resp = await self._sqs.get_current_price(code, caller=self.name)
-            if not resp or resp.rt_cd != "0":
-                continue
-
-            output = resp.data.get("output") if isinstance(resp.data, dict) else None
-            if not output:
-                continue
-
-            if isinstance(output, dict):
-                current = int(output.get("stck_prpr", 0))
-            else:
-                current = int(getattr(output, "stck_prpr", 0) or 0)
-
-            if current <= 0:
-                continue
-
-            # 최고가 갱신 (dirty flag — 루프 후 1회 저장)
-            if current > state.peak_price:
-                state.peak_price = current
-                state_dirty = True
-
-            # 20MA 동적 계산 (매일 변하는 최신 MA)
-            ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.ma_period)
-            ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
-            closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
-
-            pnl = float((current - buy_price) / buy_price * 100)
-            reason = ""
-
-            # 🚨 손절: 20MA -2% 이탈 → 잔량 전체 매도
-            if len(closes) >= self._cfg.ma_period:
-                ma_20d = float(sum(closes[-self._cfg.ma_period:]) / self._cfg.ma_period)
-                threshold = ma_20d * (1 + self._cfg.stop_loss_below_ma_pct / 100)
-                if current < threshold:
-                    reason = f"손절(20MA {ma_20d:,.0f} 하향이탈 {pnl:.1f}%)"
-
-            # 🌟 부분 익절: 직전 익절가(또는 진입가) 대비 +10% 도달 시 반복 실행
-            if not reason:
-                ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
-                pnl_from_ref = float((current - ref_price) / ref_price * 100)
-                if pnl_from_ref >= self._cfg.take_profit_lower_pct:
-                    holding_qty = int(hold.get("qty", 1))
-                    sell_qty = max(1, int(holding_qty * self._cfg.partial_sell_ratio))
-
-                    if sell_qty >= holding_qty:
-                        sell_qty = holding_qty
-                        sell_reason = f"전량익절({pnl_from_ref:.1f}%, 잔고 {holding_qty}주)"
-                    else:
-                        sell_reason = f"부분익절({pnl_from_ref:.1f}%, {sell_qty}주/{holding_qty}주)"
-
-                    self._logger.info({
-                        "event": "partial_profit_signal",
-                        "code": code, "pnl": round(pnl_from_ref, 2),
-                        "sell_qty": sell_qty, "holding_qty": holding_qty,
-                    })
-
-                    state.last_partial_sell_price = current
+        for result in results:
+            if isinstance(result, Exception):
+                self._logger.error({"event": "exit_check_error", "error": str(result)})
+            elif result:
+                s_list, dirty = result
+                signals.extend(s_list)
+                if dirty:
                     state_dirty = True
 
-                    signals.append(TradeSignal(
-                        code=code, name=hold.get("name", code), action="SELL",
-                        price=current, qty=sell_qty,
-                        reason=sell_reason, strategy_name=self.name
-                    ))
-                    continue  # 부분 매도 후 손절 체크하지 않음
+        if state_dirty:
+            await self._save_state_async()
+        return signals
 
-            # 매도 시그널 생성 (손절)
-            if reason:
+    async def _check_single_exit(self, hold: dict) -> tuple:
+        """단일 보유 종목 청산 조건 검사.
+
+        Returns: (List[TradeSignal], state_dirty: bool)
+        """
+        signals: List[TradeSignal] = []
+        state_dirty = False
+
+        code = hold.get("code")
+        buy_price_raw = hold.get("buy_price")
+        if not code or not buy_price_raw:
+            return signals, state_dirty
+
+        buy_price = float(buy_price_raw)  # numpy.float64 타입 제거 (순수 float 형변환)
+
+        state = self._position_state.get(code)
+        if not state:
+            state = FPPositionState(
+                entry_price=int(buy_price),
+                entry_date="",
+                peak_price=int(buy_price),
+                surge_day_high=0,
+            )
+            self._position_state[code] = state
+
+        # 현재가 조회
+        resp = await self._sqs.get_current_price(code, caller=self.name)
+        if not resp or resp.rt_cd != "0":
+            return signals, state_dirty
+
+        output = resp.data.get("output") if isinstance(resp.data, dict) else None
+        if not output:
+            return signals, state_dirty
+
+        if isinstance(output, dict):
+            current = int(output.get("stck_prpr", 0))
+        else:
+            current = int(getattr(output, "stck_prpr", 0) or 0)
+
+        if current <= 0:
+            return signals, state_dirty
+
+        # 최고가 갱신 (dirty flag)
+        if current > state.peak_price:
+            state.peak_price = current
+            state_dirty = True
+
+        pnl = float((current - buy_price) / buy_price * 100)
+
+        # MFE / MAE 갱신
+        if pnl > state.mfe_pct:
+            state.mfe_pct = round(pnl, 2)
+            state_dirty = True
+        if pnl < state.mae_pct:
+            state.mae_pct = round(pnl, 2)
+            state_dirty = True
+
+        # 20MA 동적 계산 (매일 변하는 최신 MA)
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.ma_period)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
+        closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
+
+        reason = ""
+
+        # 🚨 손절: 20MA -2% 이탈 → 잔량 전체 매도
+        if len(closes) >= self._cfg.ma_period:
+            ma_20d = float(sum(closes[-self._cfg.ma_period:]) / self._cfg.ma_period)
+            threshold = ma_20d * (1 + self._cfg.stop_loss_below_ma_pct / 100)
+            if current < threshold:
+                reason = f"손절(20MA {ma_20d:,.0f} 하향이탈 {pnl:.1f}%)"
+
+        # 🌟 부분 익절: 직전 익절가(또는 진입가) 대비 +10% 도달 시 반복 실행
+        if not reason:
+            ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
+            pnl_from_ref = float((current - ref_price) / ref_price * 100)
+            if pnl_from_ref >= self._cfg.take_profit_lower_pct:
                 holding_qty = int(hold.get("qty", 1))
-                self._position_state.pop(code, None)
+                sell_qty = max(1, int(holding_qty * self._cfg.partial_sell_ratio))
+
+                if sell_qty >= holding_qty:
+                    sell_qty = holding_qty
+                    sell_reason = f"전량익절({pnl_from_ref:.1f}%, 잔고 {holding_qty}주)"
+                else:
+                    sell_reason = f"부분익절({pnl_from_ref:.1f}%, {sell_qty}주/{holding_qty}주)"
+
+                self._logger.info({
+                    "event": "partial_profit_signal",
+                    "code": code, "pnl": round(pnl_from_ref, 2),
+                    "sell_qty": sell_qty, "holding_qty": holding_qty,
+                    "mfe_pct": state.mfe_pct, "mae_pct": state.mae_pct,
+                })
+
+                state.last_partial_sell_price = current
                 state_dirty = True
+
                 signals.append(TradeSignal(
                     code=code, name=hold.get("name", code), action="SELL",
-                    price=current, qty=holding_qty, reason=reason, strategy_name=self.name
+                    price=current, qty=sell_qty,
+                    reason=sell_reason, strategy_name=self.name
                 ))
+                return signals, state_dirty  # 부분 매도 후 손절 체크하지 않음
 
-        if state_dirty:
-            self._save_state()
-        return signals
+        # 매도 시그널 생성 (손절)
+        if reason:
+            holding_qty = int(hold.get("qty", 1))
+            self._logger.info({
+                "event": "exit_signal_generated",
+                "code": code, "name": hold.get("name", code),
+                "reason": reason,
+                "pnl_pct": round(pnl, 2),
+                "mfe_pct": state.mfe_pct,
+                "mae_pct": state.mae_pct,
+            })
+            self._position_state.pop(code, None)
+            state_dirty = True
+            signals.append(TradeSignal(
+                code=code, name=hold.get("name", code), action="SELL",
+                price=current, qty=holding_qty, reason=reason, strategy_name=self.name
+            ))
+
+        return signals, state_dirty
 
     # ── 헬퍼 ──────────────────────────────────────────────────────
 
@@ -468,20 +524,64 @@ class FirstPullbackStrategy(LiveStrategy):
         return min(elapsed / total, 1.0) if total > 0 else 0.0
 
     def _load_state(self):
-        if os.path.exists(self.STATE_FILE):
-            try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 이벤트 루프 없음 → 동기 로드 (초기화 시 안전한 경로)
+            if os.path.exists(self.STATE_FILE):
+                try:
+                    with open(self.STATE_FILE, "r") as f:
+                        data = json.load(f)
+                    for k, v in data.items():
+                        if k not in self._position_state:
+                            self._position_state[k] = FPPositionState(**v)
+                except Exception:
+                    pass
+            return
+        # 이벤트 루프가 실행 중이면 비동기 태스크로 읽기
+        loop.create_task(self._load_state_async())
+
+    async def _load_state_async(self):
+        if not os.path.exists(self.STATE_FILE):
+            return
+        try:
+            def _read_file():
                 with open(self.STATE_FILE, "r") as f:
-                    data = json.load(f)
-                for k, v in data.items():
+                    return json.load(f)
+
+            data = await asyncio.to_thread(_read_file)
+            for k, v in data.items():
+                if k not in self._position_state:
                     self._position_state[k] = FPPositionState(**v)
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     def _save_state(self):
+        """백워드 호환성 있는 동기-스케줄러 래퍼."""
         try:
-            os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 이벤트 루프 없음 → 동기 저장
+            try:
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                data = {k: asdict(v) for k, v in self._position_state.items()}
+                with open(self.STATE_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+            except Exception:
+                pass
+            return
+        # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
+        loop.create_task(self._save_state_async())
+
+    async def _save_state_async(self):
+        """비동기 방식으로 상태 파일을 저장합니다 (파일 I/O는 스레드로 오프로드)."""
+        try:
+            def _write_file(data):
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                with open(self.STATE_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
+
             data = {k: asdict(v) for k, v in self._position_state.items()}
-            with open(self.STATE_FILE, "w") as f:
-                json.dump(data, f, indent=2)
+            await asyncio.to_thread(_write_file, data)
         except Exception:
             pass

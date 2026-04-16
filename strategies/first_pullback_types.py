@@ -45,3 +45,5 @@ class FPPositionState:
     surge_day_high: int                 # 급등기 고점 (익절 참조가)
     partial_sold: bool = False          # deprecated (JSON 하위호환용)
     last_partial_sell_price: int = 0    # 마지막 부분익절 가격 (0=미실행, >0=기준가)
+    mfe_pct: float = 0.0               # Maximum Favorable Excursion (진입 후 최대 수익률 %)
+    mae_pct: float = 0.0               # Maximum Adverse Excursion (진입 후 최대 손실률 %)

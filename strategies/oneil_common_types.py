@@ -114,6 +114,8 @@ class OSBPositionState:
     entry_date: str         # 진입일 (YYYYMMDD)
     peak_price: int         # 진입 후 최고가 (트레일링 스탑용)
     breakout_level: int     # 진입 시 20일 최고가
+    mfe_pct: float = 0.0   # Maximum Favorable Excursion (진입 후 최대 수익률 %)
+    mae_pct: float = 0.0   # Maximum Adverse Excursion (진입 후 최대 손실률 %)
 
 
 @dataclass
@@ -167,6 +169,8 @@ class PPPositionState:
     partial_sold: bool = False          # deprecated (JSON 하위호환용)
     holding_start_date: str = ""        # 수익 안착일 (+5% 돌파 시 1회만 기록, 7주 룰 기산점)
     last_partial_sell_price: int = 0    # 마지막 부분익절 가격 (0=미실행, >0=기준가)
+    mfe_pct: float = 0.0               # Maximum Favorable Excursion (진입 후 최대 수익률 %)
+    mae_pct: float = 0.0               # Maximum Adverse Excursion (진입 후 최대 손실률 %)
 
 
 @dataclass
@@ -203,3 +207,5 @@ class HTFPositionState:
     entry_date: str          # 진입일 (YYYYMMDD)
     peak_price: int          # 진입 후 최고가
     pole_high: int           # 깃대 최고점 (돌파 기준가)
+    mfe_pct: float = 0.0    # Maximum Favorable Excursion (진입 후 최대 수익률 %)
+    mae_pct: float = 0.0    # Maximum Adverse Excursion (진입 후 최대 손실률 %)

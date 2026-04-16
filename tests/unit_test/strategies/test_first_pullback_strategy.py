@@ -115,6 +115,19 @@ def watchlist_item():
     )
 
 
+# _save_state_async 파일 I/O 차단 (파일 I/O 전용 TC 제외)
+_FILE_IO_TESTS = {"test_load_save_state", "test_save_state_permission_error"}
+
+@pytest.fixture(autouse=True)
+def _block_async_file_io(monkeypatch, request):
+    """check_exits에서 _save_state_async 호출 시 파일 I/O 방지."""
+    if request.node.name in _FILE_IO_TESTS:
+        yield
+        return
+    monkeypatch.setattr(FirstPullbackStrategy, "_save_state_async", AsyncMock())
+    yield
+
+
 @pytest.fixture
 def fp_scan_setup(mock_deps, watchlist_item):
     """scan() 테스트 공통 셋업: 모든 조건 통과하도록 구성."""
@@ -884,6 +897,7 @@ async def test_check_exits_dirty_flag_saves_once(mock_deps):
     sqs, universe, tm, logger = mock_deps
     strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
     strategy._save_state = MagicMock()
+    strategy._save_state_async = AsyncMock()
 
     # 2개 종목 보유 — peak 10000, 현재가 10500 → 갱신 대상
     for code in ["005930", "000660"]:
@@ -914,8 +928,8 @@ async def test_check_exits_dirty_flag_saves_once(mock_deps):
     assert signals == []
     assert strategy._position_state["005930"].peak_price == 10500
     assert strategy._position_state["000660"].peak_price == 10500
-    # dirty flag: 루프 후 1회만 저장
-    strategy._save_state.assert_called_once()
+    # dirty flag: check_exits는 _save_state_async를 1회만 호출
+    strategy._save_state_async.assert_called_once()
 
 
 # ════════════════════════════════════════════════════════════════

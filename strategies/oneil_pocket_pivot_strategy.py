@@ -96,7 +96,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
             results = await asyncio.gather(
-                *[self._check_entry(code, item, market_progress) for code, item in chunk],
+                *[self._check_entry(code, item, market_progress, market_timing) for code, item in chunk],
                 return_exceptions=True,
             )
             for result in results:
@@ -108,7 +108,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
 
-    async def _check_entry(self, code, item, progress) -> Optional[TradeSignal]:
+    async def _check_entry(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         """진입 조건 검사: PP 또는 BGU → 스마트머니 → 체결강도."""
         # 1. 현재가 데이터 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
@@ -262,8 +262,16 @@ class OneilPocketPivotStrategy(LiveStrategy):
         self._logger.info({
             "event": "buy_signal_generated",
             "code": code, "name": item.name,
-            "entry_type": entry_type,
-            "price": current,
+            "metrics": {
+                "price": current,
+                "entry_type": entry_type,
+                "pg_participation_pct": round(pg_ratio, 2),
+                "execution_strength": cgld_val,
+                "rs_score": getattr(item, "rs_score", 0.0),
+                "rs_rating": getattr(item, "rs_rating", 0),
+                "total_score": getattr(item, "total_score", 0.0),
+                "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
+            },
             "reason": reason_msg,
         })
 
@@ -306,7 +314,18 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 break
 
         if not supporting_ma:
-            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "not_near_ma"})
+            # 가장 가까운 MA와의 거리 계산 (파라미터 최적화 참고용)
+            closest_pct = None
+            for ma_val, ma_name in ma_candidates:
+                if ma_val > 0:
+                    pct = (current - ma_val) / ma_val * 100
+                    if closest_pct is None or abs(pct) < abs(closest_pct):
+                        closest_pct = pct
+            self._logger.debug({
+                "event": "pp_rejected", "code": code, "reason": "not_near_ma",
+                "closest_ma_pct": round(closest_pct, 2) if closest_pct is not None else None,
+                "allowed_range": f"{self._cfg.pp_ma_proximity_lower_pct}% ~ {self._cfg.pp_ma_proximity_upper_pct}%",
+            })
             return None
 
         # 3. 당일 상승일 확인 (현재가 > 전일 종가)
@@ -434,116 +453,157 @@ class OneilPocketPivotStrategy(LiveStrategy):
     # ── check_exits ────────────────────────────────────────────────
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
-        signals = []
-        state_dirty = False
+        if not holdings:
+            return []
+
         # 캐시된 마켓 타이밍을 한 번만 조회 (N+1 호출 방지)
         market_timing_cache = {
             "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
             "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger),
         }
 
-        for hold in holdings:
-            code = hold.get("code")
-            buy_price_raw = hold.get("buy_price")
-            if not code or not buy_price_raw:
-                continue
+        results = await asyncio.gather(
+            *[self._check_single_exit(hold, market_timing_cache) for hold in holdings],
+            return_exceptions=True,
+        )
 
-            buy_price = float(buy_price_raw)
-
-            state = self._position_state.get(code)
-            if not state:
-                state = PPPositionState(
-                    entry_type="PP", entry_price=int(buy_price),
-                    entry_date="", peak_price=int(buy_price),
-                    supporting_ma="20", gap_day_low=0,
-                )
-                self._position_state[code] = state
-
-            resp = await self._sqs.get_current_price(code, caller=self.name)
-            if not resp or resp.rt_cd != "0":
-                continue
-
-            output = resp.data.get("output") if isinstance(resp.data, dict) else None
-            if not output:
-                continue
-
-            if isinstance(output, dict):
-                current = int(output.get("stck_prpr", 0))
-            else:
-                current = int(getattr(output, "stck_prpr", 0) or 0)
-
-            if current <= 0:
-                continue
-
-            # 최고가 갱신 (dirty flag — 루프 후 1회 저장)
-            if current > state.peak_price:
-                state.peak_price = current
-                state_dirty = True
-
-            pnl = float((current - buy_price) / buy_price * 100)
-            today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
-
-            # 수익 안착 추적 (+5% 돌파 시 1회만 기록)
-            if pnl >= self._cfg.holding_profit_anchor_pct and state.holding_start_date == "":
-                state.holding_start_date = today_str
-                state_dirty = True
-
-            # OHLCV (MA 기반 체크용)
-            ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=60)
-            ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
-
-            reason = ""
-
-            # 🚨 우선순위 1: 하드 스탑 (마켓타이밍 악화 OR 고점 대비 -10%)
-            market = hold.get("market", "KOSPI") # type: ignore
-            hard_reason = await self._check_hard_stop(state, current, market, market_timing_cache.get(market, False))
-            if hard_reason:
-                reason = hard_reason
-
-            # 🚨 우선순위 2: 엔트리별 손절
-            if not reason:
-                if state.entry_type == "PP":
-                    pp_reason = self._check_pp_stop_loss(state, current, ohlcv)
-                    if pp_reason:
-                        reason = pp_reason
-                elif state.entry_type == "BGU":
-                    bgu_reason = self._check_bgu_stop_loss(state, current)
-                    if bgu_reason:
-                        reason = bgu_reason
-
-            # 🌟 우선순위 3: 부분 익절 (직전 익절가 대비 +15% 시 반복 실행)
-            if not reason:
-                ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
-                partial_signal = self._check_partial_profit(code, state, current, ref_price, hold)
-                if partial_signal:
-                    signals.append(partial_signal)
-                    state.last_partial_sell_price = current
+        signals: List[TradeSignal] = []
+        state_dirty = False
+        for result in results:
+            if isinstance(result, Exception):
+                self._logger.error({"event": "exit_check_error", "error": str(result)})
+            elif result:
+                s_list, dirty = result
+                signals.extend(s_list)
+                if dirty:
                     state_dirty = True
-                    continue  # 부분 매도 후 전량 청산하지 않음
-
-            # 🌟 우선순위 4: 7주 룰 만료 (수익 안착 후 35거래일 & 50MA 이탈)
-            if not reason and state.holding_start_date:
-                week7_reason = self._check_7week_hold(state, current, ohlcv)
-                if week7_reason:
-                    reason = week7_reason
-
-            # 매도 시그널 생성
-            if reason:
-                holding_qty = int(hold.get("qty", 1))
-                self._position_state.pop(code, None)
-                state_dirty = True
-                signals.append(TradeSignal(
-                    code=code, name=hold.get("name", code), action="SELL",
-                    price=current, qty=holding_qty, reason=reason, strategy_name=self.name
-                ))
 
         if state_dirty:
             try:
                 await self._save_state_async()
             except Exception:
-                # 동기 호출 컨텍스트가 있을 수 있으므로 안전하게 무시
                 pass
         return signals
+
+    async def _check_single_exit(self, hold: dict, market_timing_cache: dict) -> tuple:
+        """단일 보유 종목 청산 조건 검사.
+
+        Returns: (List[TradeSignal], state_dirty: bool)
+        """
+        signals: List[TradeSignal] = []
+        state_dirty = False
+
+        code = hold.get("code")
+        buy_price_raw = hold.get("buy_price")
+        if not code or not buy_price_raw:
+            return signals, state_dirty
+
+        buy_price = float(buy_price_raw)
+
+        state = self._position_state.get(code)
+        if not state:
+            state = PPPositionState(
+                entry_type="PP", entry_price=int(buy_price),
+                entry_date="", peak_price=int(buy_price),
+                supporting_ma="20", gap_day_low=0,
+            )
+            self._position_state[code] = state
+
+        resp = await self._sqs.get_current_price(code, caller=self.name)
+        if not resp or resp.rt_cd != "0":
+            return signals, state_dirty
+
+        output = resp.data.get("output") if isinstance(resp.data, dict) else None
+        if not output:
+            return signals, state_dirty
+
+        if isinstance(output, dict):
+            current = int(output.get("stck_prpr", 0))
+        else:
+            current = int(getattr(output, "stck_prpr", 0) or 0)
+
+        if current <= 0:
+            return signals, state_dirty
+
+        # 최고가 갱신 (dirty flag)
+        if current > state.peak_price:
+            state.peak_price = current
+            state_dirty = True
+
+        pnl = float((current - buy_price) / buy_price * 100)
+        today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
+
+        # MFE / MAE 갱신
+        if pnl > state.mfe_pct:
+            state.mfe_pct = round(pnl, 2)
+            state_dirty = True
+        if pnl < state.mae_pct:
+            state.mae_pct = round(pnl, 2)
+            state_dirty = True
+
+        # 수익 안착 추적 (+5% 돌파 시 1회만 기록)
+        if pnl >= self._cfg.holding_profit_anchor_pct and state.holding_start_date == "":
+            state.holding_start_date = today_str
+            state_dirty = True
+
+        # OHLCV (MA 기반 체크용)
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=60)
+        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
+
+        reason = ""
+
+        # 🚨 우선순위 1: 하드 스탑 (마켓타이밍 악화 OR 고점 대비 -10%)
+        market = hold.get("market", "KOSPI")  # type: ignore
+        hard_reason = await self._check_hard_stop(state, current, market, market_timing_cache.get(market, False))
+        if hard_reason:
+            reason = hard_reason
+
+        # 🚨 우선순위 2: 엔트리별 손절
+        if not reason:
+            if state.entry_type == "PP":
+                pp_reason = self._check_pp_stop_loss(state, current, ohlcv)
+                if pp_reason:
+                    reason = pp_reason
+            elif state.entry_type == "BGU":
+                bgu_reason = self._check_bgu_stop_loss(state, current)
+                if bgu_reason:
+                    reason = bgu_reason
+
+        # 🌟 우선순위 3: 부분 익절 (직전 익절가 대비 +15% 시 반복 실행)
+        if not reason:
+            ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
+            partial_signal = self._check_partial_profit(code, state, current, ref_price, hold)
+            if partial_signal:
+                signals.append(partial_signal)
+                state.last_partial_sell_price = current
+                state_dirty = True
+                return signals, state_dirty  # 부분 매도 후 전량 청산하지 않음
+
+        # 🌟 우선순위 4: 7주 룰 만료 (수익 안착 후 35거래일 & 50MA 이탈)
+        if not reason and state.holding_start_date:
+            week7_reason = self._check_7week_hold(state, current, ohlcv)
+            if week7_reason:
+                reason = week7_reason
+
+        # 매도 시그널 생성
+        if reason:
+            holding_qty = int(hold.get("qty", 1))
+            self._logger.info({
+                "event": "exit_signal_generated",
+                "code": code, "name": hold.get("name", code),
+                "reason": reason,
+                "pnl_pct": round(pnl, 2),
+                "mfe_pct": state.mfe_pct,
+                "mae_pct": state.mae_pct,
+            })
+            self._position_state.pop(code, None)
+            state_dirty = True
+            signals.append(TradeSignal(
+                code=code, name=hold.get("name", code), action="SELL",
+                price=current, qty=holding_qty, reason=reason, strategy_name=self.name
+            ))
+
+        return signals, state_dirty
 
     async def _check_hard_stop(self, state: PPPositionState, current: int, market: str, market_timing_ok: Optional[bool] = None) -> Optional[str]:
         """하드 스탑: 마켓타이밍 악화 또는 고점 대비 -10%.

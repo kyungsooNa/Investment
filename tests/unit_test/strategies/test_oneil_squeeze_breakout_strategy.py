@@ -35,6 +35,19 @@ def breakout_candidate_item():
         market_cap=100_000_000_000 # 1000억 (테스트용)
     )
 
+# _save_state_async 파일 I/O 차단 (파일 I/O 전용 TC 제외)
+_FILE_IO_TESTS = {"test_load_save_state"}
+
+@pytest.fixture(autouse=True)
+def _block_async_file_io(monkeypatch, request):
+    """check_exits에서 _save_state_async 호출 시 파일 I/O 방지."""
+    if request.node.name in _FILE_IO_TESTS:
+        yield
+        return
+    monkeypatch.setattr(OneilSqueezeBreakoutStrategy, "_save_state_async", AsyncMock())
+    yield
+
+
 @pytest.fixture
 def scan_setup(mock_strategy_deps, breakout_candidate_item):
     """scan 메서드 테스트를 위한 공통 설정 픽스처."""
@@ -643,6 +656,7 @@ async def test_check_exits_dirty_flag_saves_once(mock_strategy_deps):
     sqs, universe, tm, logger = mock_strategy_deps
     strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
     strategy._save_state = MagicMock()
+    strategy._save_state_async = AsyncMock()
 
     # 3개 종목 보유 — 모두 최고가 갱신 대상 (peak 10000 < current 11000)
     for code in ["005930", "000660", "035420"]:
@@ -671,8 +685,8 @@ async def test_check_exits_dirty_flag_saves_once(mock_strategy_deps):
     assert signals == []
     for code in ["005930", "000660", "035420"]:
         assert strategy._position_state[code].peak_price == 11000
-    # dirty flag: 루프 후 1회만 저장
-    strategy._save_state.assert_called_once()
+    # dirty flag: check_exits는 _save_state_async를 1회만 호출
+    strategy._save_state_async.assert_called_once()
 
 
 @pytest.mark.asyncio
