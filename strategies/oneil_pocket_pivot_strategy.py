@@ -302,7 +302,11 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 supporting_ma = ma_name
                 break
         if not supporting_ma:
-            self._logger.debug({"event": "pp_rejected", "code": code, "reason": "no_ma_proximity", **ma_proximity_debug})
+            closest_ma_pct = min(ma_proximity_debug.values(), key=abs) if ma_proximity_debug else None
+            self._logger.debug({
+                "event": "pp_rejected", "code": code, "reason": "no_ma_proximity",
+                "closest_ma_pct": closest_ma_pct, **ma_proximity_debug,
+            })
             return None
 
         # 2. 캔들 품질 체크 (추가): 윗꼬리가 너무 길어 밀리는 종목 배제
