@@ -74,6 +74,15 @@ class OneilBreakoutConfig(BaseStrategyConfig):
     position_size_pct: float = 5.0
     min_qty: int = 1
 
+    # [추가] 돌파 품질: 현재가가 당일 변동폭(고가-저가)의 상단 70% 위에 있어야 함
+    osb_min_candle_relative_pos: float = 0.7 
+    
+    # [추가] 스마트 머니 유연화 기준
+    sm_flexible_pg_ratio: float = 7.0           # 프로그램 비중이 약간 낮아도(7%)
+    sm_flexible_execution_strength: float = 140.0 # 체결강도가 압도적(140%)이면 인정
+    
+    # [추가] 시가총액 대비 프로그램 매수 기본 허들 (중소형주 기준)
+    program_to_market_cap_pct: float = 0.3
 
 @dataclass
 class OSBWatchlistItem:
