@@ -24,7 +24,11 @@ from interfaces.schedulable_task import TaskState, TaskPriority
 # ---------------------------------------------------------------------------
 
 class _ConcreteTask(AfterMarketTask):
-    """AfterMarketTask 추상 클래스의 최소 구현체 (테스트 전용)."""
+    """AfterMarketTask 추상 클래스의 최소 구현체 (테스트 전용).
+
+    start()를 override해 asyncio.create_task 생성을 방지한다.
+    _running_state / stop 등 start()와 무관한 동작 테스트에 사용한다.
+    """
 
     @property
     def task_name(self) -> str:
@@ -38,6 +42,24 @@ class _ConcreteTask(AfterMarketTask):
         pass
 
     async def start(self) -> None:
+        pass
+
+    def get_progress(self):
+        return {"running": self._state == TaskState.RUNNING}
+
+
+class _ConcreteTaskWithBaseStart(AfterMarketTask):
+    """start() 기본 구현을 테스트하기 위한 구현체. start()를 override하지 않는다."""
+
+    @property
+    def task_name(self) -> str:
+        return "test_task_base_start"
+
+    @property
+    def _scheduler_label(self) -> str:
+        return "test_task_base_start_scheduler"
+
+    async def _on_market_closed(self, latest_trading_date: str) -> None:
         pass
 
     def get_progress(self):
@@ -274,3 +296,62 @@ class TestAfterMarketSchedulerIdleTransition:
 
         assert called_states == [TaskState.RUNNING]
         assert task.state == TaskState.IDLE
+
+
+# ---------------------------------------------------------------------------
+# start(): Ticket-driven vs 폴백 모드 상태 전환 검증
+# ---------------------------------------------------------------------------
+
+class TestStart:
+
+    async def test_ticket_driven_start_keeps_idle(self):
+        """WorkerPool 주입 시 start()는 state를 IDLE로 유지한다.
+
+        실행은 Ticket이 도착해 execute()가 호출될 때 _running_state()가 처리한다.
+        """
+        mock_pool = MagicMock()
+        mock_pool.register = MagicMock()
+        task = _ConcreteTaskWithBaseStart(
+            mcs=MagicMock(), market_clock=MagicMock(), logger=MagicMock(), worker_pool=mock_pool
+        )
+        await task.start()
+        assert task.state == TaskState.IDLE
+        mock_pool.register.assert_called_once_with(task.task_name, task.execute)
+
+    async def test_ticket_driven_start_idempotent(self):
+        """WorkerPool 주입 시 start()를 두 번 호출해도 핸들러는 한 번만 등록된다."""
+        mock_pool = MagicMock()
+        mock_pool.register = MagicMock()
+        task = _ConcreteTaskWithBaseStart(
+            mcs=MagicMock(), market_clock=MagicMock(), logger=MagicMock(), worker_pool=mock_pool
+        )
+        await task.start()
+        await task.start()
+        assert mock_pool.register.call_count == 1
+
+    async def test_ticket_driven_registered_flag_reset_on_stop(self):
+        """stop() 후에는 _registered가 False로 초기화된다."""
+        mock_pool = MagicMock()
+        mock_pool.register = MagicMock()
+        task = _ConcreteTaskWithBaseStart(
+            mcs=MagicMock(), market_clock=MagicMock(), logger=MagicMock(), worker_pool=mock_pool
+        )
+        await task.start()
+        assert task._registered is True
+        await task.stop()
+        assert task._registered is False
+
+    async def test_fallback_start_sets_running(self):
+        """WorkerPool 미주입 시 start()는 state를 RUNNING으로 전환하고 루프를 시작한다."""
+        task = _ConcreteTaskWithBaseStart(
+            mcs=MagicMock(), market_clock=MagicMock(), logger=MagicMock(), worker_pool=None
+        )
+        with patch(
+            "task.background.after_market.after_market_task_base.run_after_market_loop",
+            new_callable=AsyncMock,
+        ):
+            await task.start()
+            try:
+                assert task.state == TaskState.RUNNING
+            finally:
+                await task.stop()

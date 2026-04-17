@@ -244,7 +244,7 @@ class WebAppContext:
             broker=self.message_broker,
             dlq_manager=self.dlq_manager,
             logger=self.logger,
-            num_workers=2,
+            num_workers=1,
         )
         self.time_dispatcher = TimeDispatcher(
             broker=self.message_broker,

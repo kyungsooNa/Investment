@@ -58,6 +58,7 @@ class AfterMarketTask(SchedulableTask, ABC):
         self._tasks: List[asyncio.Task] = []
         self._running_depth: int = 0  # 중첩 _running_state() 호출 횟수
         self._worker_pool = worker_pool
+        self._registered: bool = False  # Ticket-driven 모드에서 핸들러 등록 여부
 
     # ── SchedulableTask 공통 구현 ────────────────────────────────
 
@@ -77,6 +78,7 @@ class AfterMarketTask(SchedulableTask, ABC):
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+        self._registered = False
         self._state = TaskState.STOPPED
         self._logger.info(f"{self.task_name} 종료 완료")
 
@@ -94,16 +96,21 @@ class AfterMarketTask(SchedulableTask, ABC):
         """태스크 시작.
 
         WorkerPool이 주입된 경우: execute()를 handler로 등록 (Ticket-driven).
+          - state는 IDLE 유지 — _running_state()가 execute() 호출 시점에 RUNNING으로 전환한다.
         주입되지 않은 경우: 기존 after_market_loop 방식으로 폴백.
+          - state를 RUNNING으로 전환 후 백그라운드 루프를 시작한다.
         """
         if self._state == TaskState.RUNNING:
             return
-        self._state = TaskState.RUNNING
+        if self._worker_pool is not None and self._registered:
+            return  # 이미 등록됨 — 중복 start() 방지
         await self._on_start_hook()
         if self._worker_pool is not None:
+            self._registered = True
             self._worker_pool.register(self.task_name, self.execute)
-            self._logger.info(f"{self.task_name} WorkerPool 핸들러 등록 (Ticket-driven)")
+            self._logger.info(f"{self.task_name} WorkerPool 핸들러 등록 (Ticket-driven, state=IDLE)")
         else:
+            self._state = TaskState.RUNNING
             self._tasks.append(asyncio.create_task(self._after_market_scheduler()))
             self._logger.info(f"{self.task_name} 시작")
 

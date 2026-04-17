@@ -96,9 +96,6 @@ class MinerviniUpdateTask(AfterMarketTask):
             self._state = TaskState.RUNNING
             self._logger.info("MinerviniUpdateTask 재개")
 
-    async def start_after_market_scheduler(self) -> None:
-        await self._after_market_scheduler()
-
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         latest_trading_date_dt = datetime.strptime(latest_trading_date, '%Y%m%d').date()
         needs = (not self._updated_at) or (self._updated_at.date() != latest_trading_date_dt)
