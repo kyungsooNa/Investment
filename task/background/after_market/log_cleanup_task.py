@@ -20,7 +20,7 @@ from typing import Dict, Optional, TYPE_CHECKING
 
 from core.loggers.log_config import LOG_DELETE_DAYS, LOG_COMPRESS_DAYS
 from task.background.after_market.after_market_task_base import AfterMarketTask
-from interfaces.schedulable_task import TaskPriority, TaskState
+from interfaces.schedulable_task import TaskPriority
 
 if TYPE_CHECKING:
     from core.market_clock import MarketClock
@@ -38,11 +38,13 @@ class LogCleanupTask(AfterMarketTask):
         market_calendar_service: Optional["MarketCalendarService"] = None,
         market_clock: Optional["MarketClock"] = None,
         logger=None,
+        worker_pool=None,
     ) -> None:
         super().__init__(
             mcs=market_calendar_service,
             market_clock=market_clock,
             logger=logger or logging.getLogger(__name__),
+            worker_pool=worker_pool,
         )
         self._log_dir = log_dir
         self._delete_days = delete_days
@@ -63,13 +65,6 @@ class LogCleanupTask(AfterMarketTask):
     @property
     def priority(self) -> TaskPriority:
         return TaskPriority.MAINTENANCE
-
-    async def start(self) -> None:
-        if self._state == TaskState.RUNNING:
-            return
-        self._state = TaskState.RUNNING
-        self._tasks.append(asyncio.create_task(self._after_market_scheduler()))
-        self._logger.info("LogCleanupTask 시작")
 
     def get_progress(self) -> Dict:
         return dict(self._progress)

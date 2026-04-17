@@ -11,7 +11,6 @@ import time
 from typing import Dict, Optional, TYPE_CHECKING
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
-from interfaces.schedulable_task import TaskState
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
 if TYPE_CHECKING:
@@ -30,11 +29,13 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
         market_clock: Optional["MarketClock"] = None,
         logger=None,
         notification_service: Optional["NotificationService"] = None,
+        worker_pool=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
             market_clock=market_clock,
             logger=logger or logging.getLogger(__name__),
+            worker_pool=worker_pool,
         )
         self._universe_service = universe_service
         self._ns = notification_service
@@ -56,13 +57,6 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
     @property
     def _scheduler_label(self) -> str:
         return "전일기준우량주생성"
-
-    async def start(self) -> None:
-        if self._state == TaskState.RUNNING:
-            return
-        self._state = TaskState.RUNNING
-        self._tasks.append(asyncio.create_task(self._after_market_scheduler()))
-        self._logger.info("PremiumWatchlistGeneratorTask 시작")
 
     def get_progress(self) -> Dict:
         result = dict(self._progress)

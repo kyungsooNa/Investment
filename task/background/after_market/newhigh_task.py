@@ -9,7 +9,6 @@ import time
 from typing import List, Optional, TYPE_CHECKING
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
-from interfaces.schedulable_task import TaskState
 from typing import Dict
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
@@ -46,11 +45,13 @@ class NewHighTask(AfterMarketTask):
         stock_query_service: Optional["StockQueryService"] = None,
         rs_rating_service: Optional["RSRatingService"] = None,
         rs_rating_min: int = 80,
+        worker_pool=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
             market_clock=market_clock,
             logger=logger or logging.getLogger(__name__),
+            worker_pool=worker_pool,
         )
         self._stock_repo = stock_repo
         self._telegram_reporter = telegram_reporter
@@ -85,14 +86,6 @@ class NewHighTask(AfterMarketTask):
             except RuntimeError:
                 self._logger.warning("이벤트 루프 없음 — NewHigh 즉시 갱신 스킵")
         return self._newhigh_cache[:limit]
-
-    async def start(self) -> None:
-        """장마감 후 자동 스케줄러 시작."""
-        if self._state == TaskState.RUNNING:
-            return
-        self._state = TaskState.RUNNING
-        self._tasks.append(asyncio.create_task(self._after_market_scheduler()))
-        self._logger.info("NewHighTask 시작")
 
     # ── 장마감 후 콜백 ──────────────────────────────────────────────
 
