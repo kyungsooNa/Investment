@@ -135,11 +135,17 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         day_high = get_val("stck_hgpr", current)
         day_low = get_val("stck_lwpr", current)
 
+        # 장 시작 직후에는 예상 거래량이 튀기 쉬우므로, 최소한 평균 거래량의 30%는 달성해야 함
+        min_absolute_vol = item.avg_vol_20d * 0.3
+        if vol < min_absolute_vol:
+            return None
+            
         # 🚨 [관문 1] 가격 돌파 (20일 신고가)
         if current < item.high_20d: return None
 
         # 🚨 [신규 관문] 캔들 품질: 윗꼬리가 너무 길면 가짜 돌파 (상단 70% 유지 필수)
         day_range = day_high - day_low
+        relative_pos = 1.0
         if day_range > 0:
             relative_pos = (current - day_low) / day_range
             if relative_pos < self._cfg.osb_min_candle_relative_pos: # 0.7 권장

@@ -88,7 +88,11 @@ async def test_scan_buy_signal(scan_setup):
     # 시총: 1000억 -> 21.3/1000 = 2.13% (> 0.5%)
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000",
+            "stck_prpr": "71000", 
+            "stck_hgpr": "71100",  # 고가를 현재가와 가깝게 수정 (윗꼬리 축소)
+            "stck_lwpr": "70500",  # 저가 유지
+            "acml_vol": "200000", 
+            "pgtr_ntby_qty": "30000",
             "acml_tr_pbmn": "14200000000"
         }}
     )
@@ -268,7 +272,12 @@ async def test_scan_early_market_volume_defense(scan_setup):
     # Defense 1 적용: 40,000 / 0.05 = 800,000 (> 150,000). 통과.
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "71000", "acml_vol": "40000", "pgtr_ntby_qty": "10000", "acml_tr_pbmn": "2840000000"
+            "stck_prpr": "71000",
+            "stck_hgpr": "71100",  # 고가 추가
+            "stck_lwpr": "70500",  # 저가 추가
+            "acml_vol": "40000",
+            "pgtr_ntby_qty": "10000",
+            "acml_tr_pbmn": "2840000000"
         }}
     )
     
