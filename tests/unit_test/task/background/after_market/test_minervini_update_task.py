@@ -33,16 +33,6 @@ class DummySQS:
         return R({"stck_prpr": 100, "prdy_ctrt": 1.5, "prdy_vrss": 2})
 
 
-class DummyBroker:
-    async def get_market_cap(self, code):
-        class R:
-            def __init__(self, data):
-                self.data = data
-
-        await asyncio.sleep(0)
-        return R(1_000_000)
-
-
 class DummyRS:
     async def get_rating(self, code):
         await asyncio.sleep(0)
@@ -110,7 +100,6 @@ async def test_persist_all_stages(tmp_path):
     minervini = DummyMinerviniSvc({"0001": 1, "0002": (2, "reason")})
 
     sqs = DummySQS()
-    broker = DummyBroker()
     rs = DummyRS()
     stock_repo = DummyStockRepo()
 
@@ -119,7 +108,6 @@ async def test_persist_all_stages(tmp_path):
         stock_code_repository=sc_repo,
         stock_repository=stock_repo,
         stock_query_service=sqs,
-        broker_api_wrapper=broker,
         rs_rating_service=rs,
         market_clock=None,
         logger=None,
@@ -151,7 +139,6 @@ async def test_telegram_only_stage2():
     minervini = DummyMinerviniSvc({"0001": 0, "0002": (2, "r"), "0003": 1})
 
     sqs = DummySQS()
-    broker = DummyBroker()
     rs = DummyRS()
     stock_repo = DummyStockRepo()
     tg = DummyTelegram()
@@ -161,7 +148,6 @@ async def test_telegram_only_stage2():
         stock_code_repository=sc_repo,
         stock_repository=stock_repo,
         stock_query_service=sqs,
-        broker_api_wrapper=broker,
         rs_rating_service=rs,
         market_clock=None,
         logger=None,
@@ -189,7 +175,6 @@ async def test_rs_rating_persisted_in_db_records():
     # 0002 만 Stage2
     minervini = DummyMinerviniSvc({"0001": 1, "0002": (2, "reason")})
     sqs = DummySQS()
-    broker = DummyBroker()
     rs = DummyRS()      # get_rating returns 85
     stock_repo = DummyStockRepo()
 
@@ -198,7 +183,6 @@ async def test_rs_rating_persisted_in_db_records():
         stock_code_repository=sc_repo,
         stock_repository=stock_repo,
         stock_query_service=sqs,
-        broker_api_wrapper=broker,
         rs_rating_service=rs,
         market_clock=None,
         logger=None,
@@ -527,9 +511,8 @@ async def test_refresh_without_sqs_broker_rs():
         minervini_service=minervini,
         stock_code_repository=sc_repo,
         stock_repository=stock_repo,
-        stock_query_service=None,   # L250
-        broker_api_wrapper=None,    # L261
-        rs_rating_service=None,     # L265
+        stock_query_service=None,
+        rs_rating_service=None,
     )
     await task.refresh_minervini_stage2(force=True)
 
