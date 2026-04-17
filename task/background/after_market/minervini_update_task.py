@@ -251,35 +251,36 @@ class MinerviniUpdateTask(AfterMarketTask):
 
                 follow_resps = await asyncio.gather(*follow_tasks, return_exceptions=True)
 
-                # RS & market cap collection (best-effort)
-                mcap_tasks = []
+                # RS collection (best-effort)
                 rs_tasks = []
                 for code in stage2_codes:
-                    if self._broker:
-                        mcap_tasks.append(self._broker.get_market_cap(code))
-                    else:
-                        mcap_tasks.append(asyncio.sleep(0, result=None))
                     if self._rs_svc:
                         rs_tasks.append(self._rs_svc.get_rating(code))
                     else:
                         rs_tasks.append(asyncio.sleep(0, result=None))
 
-                mcap_resps = await asyncio.gather(*mcap_tasks, return_exceptions=True)
                 rs_resps = await asyncio.gather(*rs_tasks, return_exceptions=True)
 
                 # assemble
-                for code, price_resp, mcap_resp, rs_resp in zip(stage2_codes, follow_resps, mcap_resps, rs_resps):
+                for code, price_resp, rs_resp in zip(stage2_codes, follow_resps, rs_resps):
                     item = code_map.get(code, {"code": code})
                     try:
                         if price_resp and not isinstance(price_resp, Exception):
-                            out = price_resp.data if hasattr(price_resp, 'data') else None
+                            if hasattr(price_resp, 'data'):
+                                out = price_resp.data
+                            elif isinstance(price_resp, dict):
+                                out = price_resp.get('output') or price_resp
+                            else:
+                                out = None
+                            # unwrap {'output': ResStockFullInfoApiOutput, ...} dict
+                            if isinstance(out, dict) and 'output' in out:
+                                out = out['output']
                             if out is not None:
                                 get_field = out.get if isinstance(out, dict) else lambda k: getattr(out, k, None)
                                 item["stck_prpr"] = get_field("stck_prpr") or get_field("stck_clpr") or get_field("current_price")
                                 item["prdy_ctrt"] = get_field("prdy_ctrt") or get_field("change_rate")
                                 item["prdy_vrss"] = get_field("prdy_vrss") or get_field("change_price")
-                        if mcap_resp and not isinstance(mcap_resp, Exception):
-                            item["market_cap"] = getattr(mcap_resp, 'data', None)
+                                item["market_cap"] = get_field("hts_avls") or get_field("market_cap")
                         if rs_resp and not isinstance(rs_resp, Exception):
                             val = 0
                             try:
