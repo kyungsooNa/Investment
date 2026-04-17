@@ -21,6 +21,7 @@ from repositories.stock_code_repository import StockCodeRepository
 from core.performance_profiler import PerformanceProfiler
 from services.telegram_notifier import TelegramReporter
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
+from scheduler.worker.worker_pool import WorkerPool
 
 
 def _chunked(lst, size):
@@ -55,6 +56,7 @@ class RankingTask(AfterMarketTask):
         notification_service: Optional[NotificationService] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
         market_calendar_service: Optional[MarketCalendarService] = None,
+        worker_pool: Optional[WorkerPool] = None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -68,6 +70,7 @@ class RankingTask(AfterMarketTask):
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
+        self._worker_pool: Optional[WorkerPool] = worker_pool
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능 상태
 
@@ -111,16 +114,24 @@ class RankingTask(AfterMarketTask):
         return "RankingTask"
 
     async def start(self) -> None:
-        """장마감 후 자동 갱신 스케줄러 시작."""
+        """태스크 시작.
+
+        WorkerPool이 주입된 경우: execute()를 handler로 등록 (Ticket-driven).
+        주입되지 않은 경우: 기존 after_market_loop 방식으로 폴백.
+        """
         if self._state == TaskState.RUNNING:
             return
         self._state = TaskState.RUNNING
         self._suspend_event.set()
 
-        self._tasks.append(
-            asyncio.create_task(self.start_after_market_scheduler())
-        )
-        self._logger.info(f"RankingTask 시작: {len(self._tasks)}개 태스크")
+        if self._worker_pool is not None:
+            self._worker_pool.register(self.task_name, self.execute)
+            self._logger.info("RankingTask 시작: WorkerPool 핸들러 등록 (Ticket-driven)")
+        else:
+            self._tasks.append(
+                asyncio.create_task(self.start_after_market_scheduler())
+            )
+            self._logger.info(f"RankingTask 시작: after_market_loop 방식 ({len(self._tasks)}개 태스크)")
 
     async def suspend(self) -> None:
         """랭킹 수집을 일시 중지한다 (chunk 사이에서 대기)."""
@@ -135,6 +146,28 @@ class RankingTask(AfterMarketTask):
             self._suspend_event.set()
             self._state = TaskState.RUNNING
             self._logger.info("RankingTask 재개")
+
+    async def execute(self, payload: dict) -> None:
+        """WorkerPool 핸들러 — Ticket의 payload를 받아 랭킹 갱신을 수행한다.
+
+        멱등성 보장: 동일 날짜에 기본·투자자 랭킹이 모두 수집되어 있으면 즉시 반환.
+        """
+        date: str = payload.get("date", "")
+        needs_basic = not self._basic_last_collected_date or self._basic_last_collected_date != date
+        needs_investor = not self._last_collected_date or self._last_collected_date != date
+
+        if not needs_basic and not needs_investor:
+            self._logger.info(f"RankingTask execute: {date} 이미 완료 — 스킵")
+            return
+
+        self._logger.info(f"RankingTask execute: {date} 갱신 시작")
+        async with self._running_state():
+            if needs_basic:
+                await self.refresh_basic_ranking()
+                self._basic_last_collected_date = date
+            if needs_investor:
+                await self.refresh_investor_ranking()
+                self._last_collected_date = date
 
     # ── 장마감 후 자동 갱신 스케줄러 ────────────────────────────
 

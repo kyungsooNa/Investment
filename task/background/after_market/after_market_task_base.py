@@ -178,3 +178,14 @@ class AfterMarketTask(SchedulableTask, ABC):
     @abstractmethod
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         """장 마감 후 콜백 — 서브클래스에서 구체적인 작업을 구현한다."""
+
+    async def execute(self, payload: dict) -> None:
+        """WorkerPool 핸들러 진입점.
+
+        Ticket-driven 아키텍처로 전환된 서브클래스는 이 메서드를 재정의한다.
+        기본 구현은 payload의 "date" 필드를 _on_market_closed()로 위임하여
+        아직 전환되지 않은 태스크도 WorkerPool에서 호출 가능하도록 한다.
+        """
+        date = payload.get("date", "")
+        async with self._running_state():
+            await self._on_market_closed(date)
