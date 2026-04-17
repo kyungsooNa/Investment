@@ -6,7 +6,7 @@ import logging
 import os
 import json
 from dataclasses import dataclass, asdict
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal, ErrorCode
@@ -118,93 +118,83 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         return signals
 
     async def _check_breakout(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
-        # 1. 기본 시세 및 프로그램 수급 조회
+        # 1. 기본 시세 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0": return None
-
-        out = resp.data.get("output") if isinstance(resp.data, dict) else None
+        out = resp.data.get("output")
         if not out: return None
 
-        if isinstance(out, dict):
-            current = int(out.get("stck_prpr", 0))
-            vol = int(out.get("acml_vol", 0))
-            pg_buy = int(out.get("pgtr_ntby_qty", 0))
-            trade_value = int(out.get("acml_tr_pbmn", 0))
-        else:
-            current = int(getattr(out, "stck_prpr", 0) or 0)
-            vol = int(getattr(out, "acml_vol", 0) or 0)
-            pg_buy = int(getattr(out, "pgtr_ntby_qty", 0) or 0)
-            trade_value = int(getattr(out, "acml_tr_pbmn", 0) or 0)
+        # 데이터 추출 (dict/object 호환)
+        def get_val(key, default=0):
+            return int(out.get(key, default)) if isinstance(out, dict) else int(getattr(out, key, default) or 0)
 
-        # 🚨 [관문 1] 가격 돌파
-        if current <= item.high_20d:
-            # 너무 많은 로그를 피하기 위해 이 단계는 로그 생략
+        current = get_val("stck_prpr")
+        vol = get_val("acml_vol")
+        pg_buy = get_val("pgtr_ntby_qty")
+        trade_value = get_val("acml_tr_pbmn")
+        day_high = get_val("stck_hgpr", current)
+        day_low = get_val("stck_lwpr", current)
+
+        # 장 시작 직후에는 예상 거래량이 튀기 쉬우므로, 최소한 평균 거래량의 30%는 달성해야 함
+        min_absolute_vol = item.avg_vol_20d * 0.3
+        if vol < min_absolute_vol:
             return None
+            
+        # 🚨 [관문 1] 가격 돌파 (20일 신고가)
+        if current < item.high_20d: return None
 
-        # 🚨 [관문 2] 거래량 돌파 (+ 뻥튀기 방어)
-        effective_progress = max(progress, 0.05) # 장 초반 최소 5% 진행 보장
+        # 🚨 [신규 관문] 캔들 품질: 윗꼬리가 너무 길면 가짜 돌파 (상단 70% 유지 필수)
+        day_range = day_high - day_low
+        relative_pos = 1.0
+        if day_range > 0:
+            relative_pos = (current - day_low) / day_range
+            if relative_pos < self._cfg.osb_min_candle_relative_pos: # 0.7 권장
+                self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "poor_candle_quality", "pos": round(relative_pos, 2)})
+                return None
+
+        # 🚨 [관문 2] 거래량 돌파 (기존 동일)
+        effective_progress = max(progress, 0.05)
         proj_vol = vol / effective_progress
-
-        if vol < (item.avg_vol_20d * 0.3): # 최소 절대 거래량 (평소 20일 평균의 30%) 미달 시 가짜 돌파
-            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_absolute_volume", "vol": vol, "min_required": item.avg_vol_20d * 0.3})
-            return None
         if proj_vol < item.avg_vol_20d * self._cfg.volume_breakout_multiplier:
-            vol_ratio_pct = (proj_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
-            self._logger.debug({
-                "event": "breakout_rejected", "code": code, "reason": "insufficient_projected_volume",
-                "proj_vol": int(proj_vol), "threshold": item.avg_vol_20d * self._cfg.volume_breakout_multiplier,
-                "vol_ratio_pct": round(vol_ratio_pct, 1),
-            })
             return None
 
-        # 🚨 [관문 3] 스마트 머니(프로그램 수급) 상세 필터
-        if pg_buy <= self._cfg.program_net_buy_min:
-            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_program_net_buy", "pg_buy": pg_buy, "min_required": self._cfg.program_net_buy_min})
-            return None
-
-        pg_buy_amount = pg_buy * current # 프로그램 순매수 금액 (추정)
-
-        # 3-1. 거래대금의 10% 이상 개입했는가?
-        if trade_value > 0:
-            pg_to_tv_pct = pg_buy_amount / trade_value * 100
-            if pg_to_tv_pct < self._cfg.program_to_trade_value_pct:
-                self._logger.debug({
-                    "event": "breakout_rejected", "code": code, "reason": "low_program_to_trade_value",
-                    "pg_to_tv_pct": round(pg_to_tv_pct, 2), "threshold": self._cfg.program_to_trade_value_pct
-                })
-                return None
-
-        # 3-2. 시가총액의 0.5% 이상 개입했는가?
-        if item.market_cap > 0:
-            pg_to_mc_pct = pg_buy_amount / item.market_cap * 100
-            if pg_to_mc_pct < self._cfg.program_to_market_cap_pct:
-                self._logger.debug({
-                    "event": "breakout_rejected", "code": code, "reason": "low_program_to_market_cap",
-                    "pg_to_mc_pct": round(pg_to_mc_pct, 2), "threshold": self._cfg.program_to_market_cap_pct
-                })
-                return None
-
-        self._logger.debug({"event": "smart_money_passed", "code": code, "pg_buy_amount": pg_buy_amount})
-
-        # 🌟 [최종 관문] 매수 직전 체결강도 스냅샷 (>=120%) 🌟
+        # 🚨 [선행 조회] 체결강도 스냅샷 (수급 판정의 재료로 사용)
         cgld_val = 0.0
         try:
             ccnl_resp = await self._sqs.get_stock_conclusion(code)
             if ccnl_resp and ccnl_resp.rt_cd == "0":
-                ccnl_output = ccnl_resp.data.get("output") if isinstance(ccnl_resp.data, dict) else None
-                if ccnl_output and isinstance(ccnl_output, list) and len(ccnl_output) > 0:
-                    val = ccnl_output[0].get("tday_rltv")
-                    cgld_val = float(val) if val else 0.0
+                ccnl_output = ccnl_resp.data.get("output", [])
+                if ccnl_output and len(ccnl_output) > 0:
+                    cgld_val = float(ccnl_output[0].get("tday_rltv") or 0.0)
         except Exception as e:
             self._logger.warning({"event": "cgld_check_failed", "code": code, "error": str(e)})
-            return None
 
-        if cgld_val < 120.0:
-            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val, "threshold": 120.0})
+        if cgld_val < self._cfg.execution_strength_min:
+            self._logger.debug({
+                "event": "breakout_rejected", "code": code, 
+                "reason": "low_execution_strength", 
+                "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
+            })
+            return None # 🌟 여기서 걸러져야 테스트가 통과됩니다.
+
+        # 🚨 [관문 3] 스마트 머니 + 시총 가변 허들 + 체결강도 유연화 판정
+        sm_ok, sm_metrics = self._is_smart_money_ok(code, current, pg_buy, trade_value, item.market_cap, cgld_val)
+        
+        if not sm_ok:
             return None
 
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
         qty = self._calculate_qty(current)
+        # 1. 판정 유형 및 상세 수치 재계산 (로깅용)
+        # 이제 sm_metrics에서 필요한 값을 꺼내서 씁니다.
+        pass_type = sm_metrics["pass_type"]
+        pg_buy_amount = sm_metrics["pg_buy_amount"]
+        pg_ratio = sm_metrics["pg_to_tv_pct"]
+        pg_mc_ratio = sm_metrics["pg_to_mc_pct"]
+        
+        vol_ratio = (proj_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
+        
+        # 2. 포지션 상태 저장
         self._position_state[code] = OSBPositionState(
             entry_price=current,
             entry_date=self._tm.get_current_kst_time().strftime("%Y%m%d"),
@@ -213,25 +203,28 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         )
         self._save_state()
 
-        pg_ratio = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0.0
-        vol_ratio = (proj_vol / item.avg_vol_20d * 100) if item.avg_vol_20d > 0 else 0.0
-
+        # 3. 상세 사유 메시지 구성 (복기 핵심 데이터 포함)
         reason_msg = (
-            f"오닐돌파(돌파 {current:,}>{item.high_20d:,}, "
+            f"OSB돌파({pass_type}|{current:,}>{item.high_20d:,}, "
             f"예상거래 {vol_ratio:.0f}%, "
-            f"PG매수 {pg_buy_amount//100_000_000:,}억({pg_ratio:.1f}%), "
-            f"체결강도 {cgld_val:.1f}%)"
+            f"PG {pg_ratio:.1f}%/시총 {pg_mc_ratio:.2f}%, "
+            f"강도 {cgld_val:.1f}%, "
+            f"위치 {relative_pos:.2f})"
         )
 
+        # 4. 정보성 로그 출력 (metrics 확장)
         self._logger.info({
             "event": "buy_signal_generated",
             "code": code, "name": item.name,
             "metrics": {
                 "price": current,
                 "breakout_level": item.high_20d,
+                "pass_type": pass_type,
                 "vol_ratio_pct": round(vol_ratio, 1),
                 "pg_participation_pct": round(pg_ratio, 2),
+                "pg_market_cap_pct": round(pg_mc_ratio, 3),
                 "execution_strength": cgld_val,
+                "candle_relative_pos": round(relative_pos, 2),
                 "rs_score": item.rs_score,
                 "rs_rating": item.rs_rating,
                 "total_score": item.total_score,
@@ -244,6 +237,36 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             code=code, name=item.name, action="BUY", price=current, qty=qty,
             reason=reason_msg, strategy_name=self.name
         )
+
+    def _is_smart_money_ok(self, code: str, current: int, pg_buy: int, trade_value: int, market_cap: int, cgld_val: float) -> Tuple[bool, dict]:
+        """수급 판정 결과와 계산된 메트릭을 함께 반환."""
+        if pg_buy <= 0:
+            return False, {}
+
+        pg_buy_amount = pg_buy * current
+        pg_to_tv_pct = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0
+        pg_to_mc_pct = (pg_buy_amount / market_cap * 100) if market_cap > 0 else 0
+
+        # 시가총액별 동적 허들 계산
+        if market_cap >= 10 * 10**12: mc_threshold = 0.1
+        elif market_cap >= 1 * 10**12: mc_threshold = 0.2
+        else: mc_threshold = self._cfg.program_to_market_cap_pct
+
+        is_standard = (pg_to_tv_pct >= self._cfg.program_to_trade_value_pct and pg_to_mc_pct >= mc_threshold)
+        is_flexible = (pg_to_tv_pct >= self._cfg.sm_flexible_pg_ratio and 
+                       cgld_val >= self._cfg.sm_flexible_execution_strength and
+                       pg_to_mc_pct >= (mc_threshold * 0.7))
+
+        # 계산된 모든 값을 딕셔너리에 담습니다.
+        metrics = {
+            "pg_buy_amount": pg_buy_amount,
+            "pg_to_tv_pct": pg_to_tv_pct,
+            "pg_to_mc_pct": pg_to_mc_pct,
+            "mc_threshold": mc_threshold,
+            "pass_type": "정석" if is_standard else "유연"
+        }
+
+        return (is_standard or is_flexible), metrics
 
     def _check_trend_break(self, code: str, current_price: int, current_vol: int, ohlcv: list) -> tuple[bool, str]:
         """추세 이탈 검사 (10일선 붕괴 + 대량 거래량 동반). ohlcv는 호출자가 미리 조회해서 전달."""

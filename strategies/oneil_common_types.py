@@ -74,7 +74,18 @@ class OneilBreakoutConfig(BaseStrategyConfig):
     position_size_pct: float = 5.0
     min_qty: int = 1
 
-
+    # [추가] 돌파 품질: 현재가가 당일 변동폭(고가-저가)의 상단 70% 위에 있어야 함
+    osb_min_candle_relative_pos: float = 0.7 
+    
+    # [추가] 스마트 머니 유연화 기준
+    sm_flexible_pg_ratio: float = 7.0           # 프로그램 비중이 약간 낮아도(7%)
+    sm_flexible_execution_strength: float = 140.0 # 체결강도가 압도적(140%)이면 인정
+    
+    # [추가] 시가총액 대비 프로그램 매수 기본 허들 (중소형주 기준)
+    program_to_market_cap_pct: float = 0.3
+    
+    execution_strength_min: float = 120.0  # 🌟 추가: 체결강도 기본 하한선
+    
 @dataclass
 class OSBWatchlistItem:
     """감시 종목 정보 (Universe Service -> Strategy 전달 객체)."""
@@ -210,6 +221,10 @@ class HTFConfig(BaseStrategyConfig):
     position_size_pct: float = 5.0
     min_qty: int = 1
 
+    min_candle_relative_pos: float = 0.7  # 돌파 시 현재가가 당일 변동폭 상단 70% 이상 위치해야 함
+    sm_flexible_pg_ratio : float = 7.0           # 프로그램 비중이 약간 낮아도(7%)
+    sm_flexible_execution_strength: float = 150.0 # 체결강도가 압도적(150%)이면 인정
+    program_to_market_cap_pct: float = 0.3        # (프로그램순매수금/시총) >= 0.3%
 
 @dataclass
 class HTFPositionState:

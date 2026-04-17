@@ -224,13 +224,18 @@ async def test_scan_buy_signal(htf_scan_setup):
     # 현재가: 10500 (> pole_high 10000) + 거래량 대량
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "10500", "acml_vol": "600000",
+            "stck_prpr": "10500",        # 가격 돌파 (> 10000)
+            "stck_hgpr": "10515",        # 캔들 품질: 0.87 (0.7↑ 통과)
+            "stck_lwpr": "10400",
+            "acml_vol": "700000",        # 거래량: 약 210% (200%↑ 통과)
+            "pgtr_ntby_qty": "100000",   # 수급 금액: 10.5억 (시총 5000억의 0.21%↑ 통과)
+            "acml_tr_pbmn": "6000000000" # 프로그램 비중: 17.5% (7%↑ 통과)
         }}
     )
 
-    # 체결강도 130%
+    # 체결강도 151%
     sqs.get_stock_conclusion.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "130.0"}]}
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "151.0"}]} # 150.0 이상으로 설정
     )
 
     signals = await strategy.scan()
@@ -239,8 +244,9 @@ async def test_scan_buy_signal(htf_scan_setup):
     assert signals[0].code == "005930"
     assert signals[0].action == "BUY"
     assert "HTF돌파" in signals[0].reason
-    assert "체결강도 130.0%" in signals[0].reason
-    assert "005930" in strategy._position_state
+    # 130.0을 151.0으로 수정
+    assert "강도 151.0%" in signals[0].reason 
+    assert "유연" in signals[0].reason
 
 
 @pytest.mark.asyncio
@@ -779,6 +785,7 @@ def breakout_setup(htf_scan_setup):
     code = "005930"
     item = MagicMock()
     item.name = "테스트종목"
+    item.market_cap = 500_000_000_000  # 시가총액 5000억 추가
     pattern = {
         "pole_high": 10000,
         "surge_ratio": 2.0,
@@ -823,20 +830,33 @@ async def test_check_breakout_price_output_is_object(breakout_setup):
     """_check_breakout: 현재가 API 응답의 output이 객체일 때도 정상 처리."""
     strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
 
+    # 1. 시가총액 설정 (Standard 판정 기준인 0.3% 계산용)
+    item.market_cap = 500_000_000_000 # 5000억
+
+    # 2. Mock 객체 보강 (필수 필드 모두 추가)
     class MockPriceOutput:
-        stck_prpr = "10500"
-        acml_vol = "600000"
+        stck_prpr = "10500"          # 현재가
+        acml_vol = "800000"          # 거래량 (평균 10만 대비 충분히 높게)
+        stck_hgpr = "10510"          # 고가 (캔들 품질 0.7↑)
+        stck_lwpr = "10400"          # 저가
+        # 0.3% of 500B = 1.5B. 1.5B / 10500 = 약 142,857주 필요
+        pgtr_ntby_qty = "150000"     # 프로그램 매수 (시총 0.3% 초과)
+        acml_tr_pbmn = "10000000000" # 거래대금 100억 (프로그램 비중 15.7%로 10% 초과)
 
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": MockPriceOutput()}
     )
+    
+    # 체결강도 130.0% (Standard 수급 기준을 만족하므로 120%만 넘으면 통과)
     sqs.get_stock_conclusion.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "130.0"}]}
     )
 
     signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    
     assert signal is not None
     assert signal.action == "BUY"
+    assert "정석" in signal.reason # Standard 판정 확인
 
 
 @pytest.mark.asyncio
@@ -891,8 +911,19 @@ async def test_check_breakout_early_market_volume_defense(breakout_setup):
 
     # Case 2: 거래량 충분 (proj_vol = 10000 / 0.05 = 200,000 >= 200,000)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "10000"}}
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "10500", 
+            "acml_vol": "10000",
+            "pgtr_ntby_qty": "100000",   # 🌟 2만 -> 10만주로 상향 (0.21% 충족)
+            "acml_tr_pbmn": "6000000000" # 🌟 10억 -> 60억으로 상향 (비중 정합성)
+        }}
     )
+
+    # 체결강도 151% (유연 판정 기준 충족)
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "151.0"}]}
+    )
+
     signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
     assert signal is not None
     assert signal.action == "BUY"

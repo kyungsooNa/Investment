@@ -544,7 +544,8 @@ class TestOneilSqueezeBreakoutScan:
 
         # 현재가 75000, 거래량 3M, 프로그램순매수 100000주, 거래대금 500B
         price_resp = _make_current_price_response(
-            code="005930", price="75000", vol="3000000",
+            code="005930", price="75000", high="75500", low="73000",
+            vol="3000000",
             pgtr_ntby_qty="100000", acml_tr_pbmn="500000000000",
         )
         # 체결강도 135%
@@ -570,7 +571,7 @@ class TestOneilSqueezeBreakoutScan:
             avg_vol_20d=1000000.0,  # 환산거래량 6M > 1M*1.5 → 통과
             bb_width_min_20d=0.03, prev_bb_width=0.04,
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
-            market_cap=400_000_000_000_000,  # 400조
+            market_cap=400_000_000_000,  # 4000억 (대형주 동적 허들 우회)
         )
         mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
         mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
@@ -603,7 +604,7 @@ class TestOneilSqueezeBreakoutScan:
         assert sig.code == "005930"
         assert sig.action == "BUY"
         assert sig.strategy_name == "오닐스퀴즈돌파"
-        assert "체결강도" in sig.reason
+        assert "강도" in sig.reason
 
     async def test_scan_no_signal_low_execution_strength(self, deep_paper_ctx, mocker):
         """체결강도 120% 미만이면 시그널 없음."""
@@ -614,7 +615,8 @@ class TestOneilSqueezeBreakoutScan:
         quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
 
         price_resp = _make_current_price_response(
-            code="005930", price="75000", vol="3000000",
+            code="005930", price="75000", high="75500", low="73000",
+            vol="3000000",
             pgtr_ntby_qty="100000", acml_tr_pbmn="500000000000",
         )
         # 체결강도 95% → 120% 미만
@@ -638,7 +640,7 @@ class TestOneilSqueezeBreakoutScan:
             avg_vol_20d=1000000.0,
             bb_width_min_20d=0.03, prev_bb_width=0.04,
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
-            market_cap=400_000_000_000_000,
+            market_cap=400_000_000_000,  # 4000억
         )
         mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
         mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
@@ -652,6 +654,7 @@ class TestOneilSqueezeBreakoutScan:
         mock_tm.get_market_close_time.return_value = datetime(2026, 3, 8, 15, 30, tzinfo=kst)
 
         config = OneilBreakoutConfig(
+            execution_strength_min=120.0,  # 🌟 기준 설정
             program_net_buy_min=0,
             program_to_trade_value_pct=0.0,
             program_to_market_cap_pct=0.0,
@@ -732,7 +735,7 @@ class TestOneilPocketPivotScan:
             avg_vol_20d=600000.0,
             bb_width_min_20d=0.03, prev_bb_width=0.04,
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
-            market_cap=400_000_000_000_000,
+            market_cap=400_000_000_000,  # 4000억
         )
         mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
         mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
@@ -792,7 +795,7 @@ class TestOneilPocketPivotScan:
             avg_vol_20d=600000.0,
             bb_width_min_20d=0.03, prev_bb_width=0.04,
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
-            market_cap=400_000_000_000_000,
+            market_cap=400_000_000_000,  # 4000억
         )
         mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
         # 마켓 타이밍 불량
@@ -850,7 +853,7 @@ class TestScanChunkParallelism:
             high_20d=70000, ma_20d=68000.0, ma_50d=65000.0,
             avg_vol_20d=1_000_000.0, bb_width_min_20d=0.03, prev_bb_width=0.04,
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
-            market_cap=400_000_000_000_000,
+            market_cap=400_000_000_000,  # 4000억
         )
         defaults.update(kwargs)
         return OSBWatchlistItem(code=code, **defaults)
@@ -886,6 +889,7 @@ class TestScanChunkParallelism:
             data={"output": {
                 "stck_prpr": "75000", "acml_vol": "3000000",
                 "pgtr_ntby_qty": "100000", "acml_tr_pbmn": "500000000000",
+                "stck_hgpr": "75500", "stck_lwpr": "73000",
             }}
         )
         conclusion_ok = ResCommonResponse(
@@ -944,6 +948,7 @@ class TestScanChunkParallelism:
             data={"output": {
                 "stck_prpr": "75000", "acml_vol": "3000000",
                 "pgtr_ntby_qty": "100000", "acml_tr_pbmn": "500000000000",
+                "stck_hgpr": "75500", "stck_lwpr": "73000",
             }}
         )
         conclusion_ok = ResCommonResponse(

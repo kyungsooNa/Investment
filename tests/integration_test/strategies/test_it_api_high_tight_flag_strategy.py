@@ -35,7 +35,7 @@ async def test_htf_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
             "output": {
                 "stck_prpr": "220000",
                 "stck_oprc": "210000",
-                "stck_hgpr": "225000",
+                "stck_hgpr": "223000",  # 225000 -> 223000으로 수정 (품질 향상)
                 "stck_lwpr": "210000",
                 "prdy_vrss": "5000",
                 "prdy_vrss_sign": "2",

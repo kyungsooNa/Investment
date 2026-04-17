@@ -6,7 +6,7 @@ import logging
 import os
 import json
 from dataclasses import asdict
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
 from common.types import TradeSignal
@@ -205,9 +205,17 @@ class HighTightFlagStrategy(LiveStrategy):
         if isinstance(out, dict):
             current = int(out.get("stck_prpr", 0))
             vol = int(out.get("acml_vol", 0))
+            pg_buy = int(out.get("pgtr_ntby_qty", 0))
+            trade_value = int(out.get("acml_tr_pbmn", 0))
+            day_high = int(out.get("stck_hgpr", 0))
+            day_low = int(out.get("stck_lwpr", 0))
         else:
             current = int(getattr(out, "stck_prpr", 0) or 0)
             vol = int(getattr(out, "acml_vol", 0) or 0)
+            pg_buy = int(getattr(out, "pgtr_ntby_qty", 0) or 0)
+            trade_value = int(getattr(out, "acml_tr_pbmn", 0) or 0)
+            day_high = int(getattr(out, "stck_hgpr", 0) or 0)
+            day_low = int(getattr(out, "stck_lwpr", 0) or 0)
 
         if current <= 0:
             return None
@@ -218,6 +226,21 @@ class HighTightFlagStrategy(LiveStrategy):
             # 너무 많은 로그를 피하기 위해 가격 미달 단계는 로그 생략
             return None
 
+        # 🚨 [관문 2] 캔들 품질 검증 (Strict Quality!)
+        day_range = day_high - day_low
+        # 상대적 위치 계산: (현재가 - 저가) / (고가 - 저가)
+        relative_pos = (current - day_low) / day_range if day_range > 0 else 1.0
+        
+        if relative_pos < self._cfg.min_candle_relative_pos:
+            self._logger.debug({
+                "event": "breakout_rejected", 
+                "code": code, 
+                "reason": "poor_candle_quality", 
+                "pos": round(relative_pos, 2),
+                "threshold": self._cfg.min_candle_relative_pos
+            })
+            return None
+        
         # 3. 거래량 돌파: 예상거래량 >= 50일 평균 * 200%
         effective_progress = max(progress, 0.05)
         proj_vol = vol / effective_progress
@@ -261,41 +284,65 @@ class HighTightFlagStrategy(LiveStrategy):
             })
             return None
 
+        # ✅ [신규 관문] 스마트 머니 유연 판정 (수급은 유연하게!)
+        # 체결강도 조회 후 _is_smart_money_ok 호출 (OSB 전략 로직 재사용)
+        sm_ok, sm_metrics = self._is_smart_money_ok(code, current, pg_buy, trade_value, item.market_cap, cgld_val)
+        if not sm_ok:
+            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "smart_money_filter_failed"})
+            return None
+        
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
         qty = self._calculate_qty(current)
+
+        # 1. sm_metrics에서 상세 수치 추출 (로깅 및 분석용)
+        pass_type = sm_metrics.get("pass_type", "알수없음")
+        pg_ratio = sm_metrics.get("pg_to_tv_pct", 0.0)
+        pg_mc_ratio = sm_metrics.get("pg_to_mc_pct", 0.0)
+        pg_buy_amount = sm_metrics.get("pg_buy_amount", 0)
+
+        # 2. 포지션 상태 저장
         self._position_state[code] = HTFPositionState(
             entry_price=current,
             entry_date=self._tm.get_current_kst_time().strftime("%Y%m%d"),
             peak_price=current,
             pole_high=pole_high,
         )
-        self._save_state()
+        self._save_state() #
 
+        # 3. 상세 사유 메시지 구성 (가독성 중심)
+        # OSB 전략과 일관성을 유지하면서 HTF 특유의 패턴 정보(폭등비율, 깃발기간)를 포함합니다.
         vol_ratio = (proj_vol / avg_vol_50d * 100) if avg_vol_50d > 0 else 0.0
 
         reason_msg = (
-            f"HTF돌파(돌파 {current:,}>{pole_high:,}, "
+            f"HTF돌파({pass_type}|{current:,}>{pole_high:,}, "
             f"예상거래 {vol_ratio:.0f}%, "
-            f"깃대폭등 {pattern['surge_ratio']:.0%}, "
-            f"깃발 {pattern['flag_days']}일(-{pattern['drawdown_pct']:.1f}%), "
-            f"체결강도 {cgld_val:.1f}%)"
+            f"PG {pg_ratio:.1f}%/시총 {pg_mc_ratio:.2f}%, "
+            f"강도 {cgld_val:.1f}%, "
+            f"위치 {relative_pos:.2f}, "  # 캔들 품질 추가
+            f"폭등 {pattern['surge_ratio']:.1f}x, "
+            f"깃발 {pattern['flag_days']}일)"
         )
 
+        # 4. 정보성 로그 출력 (구조화된 metrics 데이터)
         self._logger.info({
             "event": "buy_signal_generated",
             "code": code, "name": item.name,
             "metrics": {
                 "price": current,
                 "pole_high": pole_high,
+                "pass_type": pass_type,           # 정석 vs 유연
                 "vol_ratio_pct": round(vol_ratio, 1),
+                "pg_participation_pct": round(pg_ratio, 2),
+                "pg_market_cap_pct": round(pg_mc_ratio, 3),
+                "execution_strength": cgld_val,
+                "candle_relative_pos": round(relative_pos, 2),
                 "surge_ratio": round(pattern["surge_ratio"], 2),
                 "flag_days": pattern["flag_days"],
                 "drawdown_pct": round(pattern["drawdown_pct"], 1),
-                "execution_strength": cgld_val,
-                "rs_score": getattr(item, "rs_score", 0.0),
-                "rs_rating": getattr(item, "rs_rating", 0),
+                "rs_score": getattr(item, "rs_score", 0.0), #
+                "rs_rating": getattr(item, "rs_rating", 0), #
                 "total_score": getattr(item, "total_score", 0.0),
-                "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
+                "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None, #
             },
             "reason": reason_msg,
         })
@@ -432,7 +479,45 @@ class HighTightFlagStrategy(LiveStrategy):
         return False, ""
 
     # ── 헬퍼 ─────────────────────────────────────────────────────────
+    def _is_smart_money_ok(self, code: str, current: int, pg_buy: int, trade_value: int, market_cap: int, cgld_val: float) -> Tuple[bool, dict]:
+        """
+        HTF 전략용 스마트 머니(프로그램 수급) 필터.
+        품질은 엄격하게 보되, 압도적인 에너지가 확인되면 수급 수치를 유연하게 적용합니다.
+        """
+        if pg_buy <= 0:
+            return False, {}
 
+        pg_buy_amount = pg_buy * current
+        pg_to_tv_pct = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0
+        pg_to_mc_pct = (pg_buy_amount / market_cap * 100) if market_cap > 0 else 0
+
+        # 1. 시가총액별 동적 허들 (OSB 전략 기준 준용)
+        if market_cap >= 10 * 10**12:      # 10조 이상
+            mc_threshold = 0.1
+        elif market_cap >= 1 * 10**12:     # 1조 이상
+            mc_threshold = 0.2
+        else:                              # 1조 미만 (중소형주)
+            mc_threshold = self._cfg.program_to_market_cap_pct # 기본값 0.3~0.5%
+
+        # 2. 판정 로직
+        # 정석: 비중 10% 이상 & 시총 허들 통과
+        is_standard = (pg_to_tv_pct >= 10.0 and pg_to_mc_pct >= mc_threshold)
+        
+        # 유연: 비중 7% 이상 & 체결강도가 압도적(150%↑) & 시총 허들의 70% 통과
+        is_flexible = (pg_to_tv_pct >= self._cfg.sm_flexible_pg_ratio and 
+                    cgld_val >= self._cfg.sm_flexible_execution_strength and
+                    pg_to_mc_pct >= (mc_threshold * 0.7))
+
+        metrics = {
+            "pg_buy_amount": pg_buy_amount,
+            "pg_to_tv_pct": pg_to_tv_pct,
+            "pg_to_mc_pct": pg_to_mc_pct,
+            "mc_threshold": mc_threshold,
+            "pass_type": "정석" if is_standard else "유연"
+        }
+
+        return (is_standard or is_flexible), metrics
+    
     def _calculate_qty(self, price: int) -> int:
         if price <= 0:
             return self._cfg.min_qty

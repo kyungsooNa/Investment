@@ -33,7 +33,7 @@ async def test_osb_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
         new_callable=AsyncMock,
         return_value=ResCommonResponse(rt_cd="0", msg1="ok", data={
             "output": {
-                "stck_prpr": "75000",
+                "stck_prpr": "75500",  # 캔들 품질 검증(0.7 이상)을 통과하기 위해 75000 -> 75500으로 상향 (상대 위치 0.75)
                 "stck_oprc": "74000",
                 "stck_hgpr": "76000",
                 "stck_lwpr": "74000",
