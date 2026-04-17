@@ -239,7 +239,7 @@ async def test_scan_buy_signal(htf_scan_setup):
     assert signals[0].code == "005930"
     assert signals[0].action == "BUY"
     assert "HTF돌파" in signals[0].reason
-    assert "체결강도 130.0%" in signals[0].reason
+    assert "강도 130.0%" in signals[0].reason
     assert "005930" in strategy._position_state
 
 

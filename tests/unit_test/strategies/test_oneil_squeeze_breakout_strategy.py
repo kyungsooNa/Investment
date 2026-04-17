@@ -103,7 +103,7 @@ async def test_scan_buy_signal(scan_setup):
     assert len(signals) == 1
     assert signals[0].code == "005930"
     assert signals[0].action == "BUY"
-    assert "체결강도 150.0%" in signals[0].reason
+    assert "강도 150.0%" in signals[0].reason
     assert signals[0].price == 71000
     # 내부 상태에 포지션 기록되었는지 확인
     assert "005930" in strategy._position_state
@@ -148,20 +148,72 @@ async def test_scan_no_signal_if_program_market_cap_ratio_low(scan_setup):
     strategy, sqs, _, _, _ = scan_setup
     
     # 시가총액: 1000억 (fixture 설정)
-    # 프로그램 순매수: 6000주 * 71000원 = 4.26억
-    #   -> 시총 대비: 4.26억 / 1000억 = 0.426% (< 0.5% 기준 미달)
-    # 거래대금: 40억
-    #   -> 거래대금 대비: 4.26억 / 40억 = 10.65% (> 10% 기준 만족)
+    # 프로그램 순매수: 4000주 * 71000원 = 2.84억
+    #   -> 시총 대비: 2.84억 / 1000억 = 0.284% (< 0.3% 기준 미달)
+    # 거래대금: 25억
+    #   -> 거래대금 대비: 2.84억 / 25억 = 11.36% (> 10% 기준 만족)
     
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "6000", "acml_tr_pbmn": "4000000000"
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "4000", "acml_tr_pbmn": "2500000000"
         }}
     )
     
     signals = await strategy.scan()
     
     assert len(signals) == 0
+
+@pytest.mark.asyncio
+async def test_scan_no_signal_if_candle_quality_poor(scan_setup):
+    """scan: 캔들 품질이 기준 미달(윗꼬리가 너무 김) 시 매수 시그널 없음."""
+    strategy, sqs, _, _, _ = scan_setup
+
+    # 돌파/거래량/수급 모두 만족하지만,
+    # 고가 75000, 저가 65000 (변동폭 10000)
+    # 현재가 71000
+    # 상대 위치 = (71000 - 65000) / 10000 = 6000 / 10000 = 0.6 (< 0.7 기준 미달)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "30000",
+            "acml_tr_pbmn": "14200000000",
+            "stck_hgpr": "75000", "stck_lwpr": "65000"
+        }}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "150.0"}]}
+    )
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+@pytest.mark.asyncio
+async def test_scan_buy_signal_flexible_smart_money(scan_setup):
+    """scan: 프로그램 순매수 비중이 10% 미달이더라도 유연화 조건(7% 이상 & 체결강도 140 이상) 만족 시 매수."""
+    strategy, sqs, _, _, _ = scan_setup
+
+    # 시가총액: 1000억
+    # 프로그램 순매수: 12000주 * 71000원 = 8.52억
+    # 거래대금: 100억
+    # -> 거래대금 대비: 8.52 / 100 = 8.52% (10% 미달이지만 7% 이상 만족)
+    # -> 시총 대비: 8.52 / 1000 = 0.852% (>= 0.3% * 0.7 = 0.21% 만족)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000", "acml_vol": "200000", "pgtr_ntby_qty": "12000",
+            "acml_tr_pbmn": "10000000000",
+            "stck_hgpr": "71500", "stck_lwpr": "69000"
+        }}
+    )
+    
+    # 체결강도 145 (> 140 유연화 기준)
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "145.0"}]}
+    )
+
+    signals = await strategy.scan()
+
+    assert len(signals) == 1
+    assert signals[0].action == "BUY"
+    assert "유연" in signals[0].reason
 
 @pytest.mark.asyncio
 async def test_scan_no_signal_if_execution_strength_low(scan_setup):

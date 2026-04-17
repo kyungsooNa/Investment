@@ -219,6 +219,10 @@ class HTFConfig(BaseStrategyConfig):
     position_size_pct: float = 5.0
     min_qty: int = 1
 
+    min_candle_relative_pos: float = 0.7  # 돌파 시 현재가가 당일 변동폭 상단 70% 이상 위치해야 함
+    sm_flexible_pg_ratio : float = 7.0           # 프로그램 비중이 약간 낮아도(7%)
+    sm_flexible_execution_strength: float = 150.0 # 체결강도가 압도적(150%)이면 인정
+    program_to_market_cap_pct: float = 0.3        # (프로그램순매수금/시총) >= 0.3%
 
 @dataclass
 class HTFPositionState:
