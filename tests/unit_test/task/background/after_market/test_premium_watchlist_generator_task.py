@@ -375,31 +375,31 @@ class TestRunGeneration:
         assert task._progress["running"] is False  # 완료 후 False
 
 
-# --- 강제 생성(force_generate) 테스트 ---
+# --- 강제 생성(force_run) 테스트 ---
 
 
 class TestForceGenerate:
 
-    async def test_force_generate_success(self, task, mock_mcs, mock_universe_service):
+    async def test_force_run_success(self, task, mock_mcs, mock_universe_service):
         """정상적으로 최근 거래일을 가져와 생성을 강제 실행한다."""
-        await task.force_generate()
+        await task.force_run()
         
         mock_mcs.get_latest_trading_date.assert_awaited_once()
         mock_universe_service.generate_premium_watchlist.assert_awaited_once_with(trading_date="20260320")
 
-    async def test_force_generate_stops_if_no_trading_date(self, task, mock_mcs, mock_universe_service):
+    async def test_force_run_stops_if_no_trading_date(self, task, mock_mcs, mock_universe_service):
         """최근 거래일을 확인할 수 없으면 강제 생성을 중단한다."""
         mock_mcs.get_latest_trading_date.return_value = None
         
-        await task.force_generate()
+        await task.force_run()
         
         mock_universe_service.generate_premium_watchlist.assert_not_called()
 
-    async def test_force_generate_stops_if_no_mcs(self, task, mock_universe_service):
+    async def test_force_run_stops_if_no_mcs(self, task, mock_universe_service):
         """mcs가 없으면 강제 생성을 중단한다."""
         task._mcs = None
         
-        await task.force_generate()
+        await task.force_run()
         
         mock_universe_service.generate_premium_watchlist.assert_not_called()
 

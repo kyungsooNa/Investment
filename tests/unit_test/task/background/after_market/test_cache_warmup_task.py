@@ -376,7 +376,7 @@ class TestForceWarmup:
 
     async def test_force_warmup_runs_with_latest_trading_date(self, task, mock_mcs):
         with patch.object(task, "_run_warmup", new_callable=AsyncMock) as mock_run:
-            await task.force_warmup()
+            await task.force_run()
             mock_run.assert_awaited_once_with("20260320")
 
     async def test_force_warmup_aborts_if_no_mcs(self, mock_mds, mock_sqs, mock_market_clock):
@@ -388,5 +388,5 @@ class TestForceWarmup:
             logger=MagicMock(),
         )
         with patch.object(t, "_run_warmup", new_callable=AsyncMock) as mock_run:
-            await t.force_warmup()
+            await t.force_run()
             mock_run.assert_not_awaited()

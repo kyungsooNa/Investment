@@ -133,7 +133,7 @@ async def get_background_status():
         state_str = raw_state.value if hasattr(raw_state, "value") else str(raw_state)
 
         # 3. IDLE 상태일 경우 방어 로직: 대부분 태스크는 get_progress() 호출을 생략하지만,
-        #    강제 수집 API로 직접 실행되는 태스크(예: force_collect로 즉시 실행)가 내부 플래그
+        #    강제 수집 API로 직접 실행되는 태스크(예: force_run 즉시 실행)가 내부 플래그
         #    를 통해 진행 중임을 알릴 수 있으므로 그런 경우에는 get_progress()를 호출하여
         #    실제 진행 상태를 반영하도록 합니다.
         progress = None

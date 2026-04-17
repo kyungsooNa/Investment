@@ -36,7 +36,7 @@ async def test_force_ohlcv_update_success(web_client, mock_web_ctx):
     """POST /api/ohlcv/force-update 정상 강제 수집 트리거 테스트"""
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
-    mock_task.force_collect = AsyncMock()
+    mock_task.force_run = AsyncMock()
     mock_web_ctx.ohlcv_update_task = mock_task
 
     response = web_client.post("/api/ohlcv/force-update")
@@ -47,7 +47,7 @@ async def test_force_ohlcv_update_success(web_client, mock_web_ctx):
     
     # 백그라운드 Task가 이벤트 루프에서 실행될 수 있도록 제어권 양보
     await asyncio.sleep(0)
-    mock_task.force_collect.assert_called_once()
+    mock_task.force_run.assert_called_once()
 
 
 @pytest.mark.asyncio

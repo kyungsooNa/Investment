@@ -37,5 +37,5 @@ async def force_ohlcv_update():
     if progress.get("running"):
         raise HTTPException(status_code=409, detail="이미 수집이 진행 중입니다")
 
-    asyncio.create_task(task.force_collect())
+    asyncio.create_task(task.force_run())
     return {"success": True, "message": "강제 수집이 시작되었습니다. /api/ohlcv/progress 에서 진행률을 확인하세요."}

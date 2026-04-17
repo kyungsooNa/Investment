@@ -71,12 +71,12 @@ class DummyMCS:
 
 class DummyDailyPriceCollector:
     def __init__(self):
-        self.force_collect_called = False
+        self.force_run_called = False
         self._is_collecting = False
         self._collection_done_event = asyncio.Event()
         self._collection_done_event.set()
-    async def force_collect(self):
-        self.force_collect_called = True
+    async def force_run(self):
+        self.force_run_called = True
 
 
 class DummyTelegram:
@@ -244,7 +244,7 @@ async def test_dpc_trigger_when_data_missing():
     )
     
     await task.refresh_minervini_stage2(force=True)
-    assert dpc.force_collect_called is True
+    assert dpc.force_run_called is True
 
 
 @pytest.mark.asyncio
@@ -273,8 +273,8 @@ async def test_dpc_wait_when_collecting():
     asyncio.create_task(release_event())
     await task.refresh_minervini_stage2(force=True)
     
-    # 대기를 했으므로 force_collect를 직접 호출하지 않음
-    assert dpc.force_collect_called is False
+    # 대기를 했으므로 force_run를 직접 호출하지 않음
+    assert dpc.force_run_called is False
 
 
 @pytest.mark.asyncio
@@ -725,8 +725,8 @@ async def test_get_cache_creates_background_task_when_empty():
 
 
 @pytest.mark.asyncio
-async def test_force_collect_invokes_refresh():
-    """force_collect 호출 시 refresh_minervini_stage2(force=True)가 실행되는지 확인 (L389-L394)"""
+async def test_force_run_invokes_refresh():
+    """force_run 호출 시 refresh_minervini_stage2(force=True)가 실행되는지 확인 (L389-L394)"""
     sc_repo = DummyStockCodeRepo([])
     stock_repo = DummyStockRepo()
 
@@ -735,7 +735,7 @@ async def test_force_collect_invokes_refresh():
         stock_code_repository=sc_repo,
         stock_repository=stock_repo,
     )
-    await task.force_collect()
+    await task.force_run()
 
     assert task._updated_at is not None
     assert task._is_refreshing is False

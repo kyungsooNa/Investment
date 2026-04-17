@@ -303,20 +303,20 @@ async def test_on_market_closed_trigger(task):
         mock_collect.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_force_collect(task, mock_mcs):
-    """force_collect: FDR 없이 증권사 API(_collect_via_broker_api)를 직접 호출한다."""
+async def test_force_run(task, mock_mcs):
+    """force_run: FDR 없이 증권사 API(_collect_via_broker_api)를 직접 호출한다."""
     mock_mcs.is_market_open_now.return_value = False
     mock_mcs.get_latest_trading_date.return_value = "2025-01-01"
     with patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_broker, \
          patch.object(task, '_finish_collection', new_callable=AsyncMock), \
          patch.object(task, '_load_all_stocks', return_value=[]):
-        await task.force_collect()
+        await task.force_run()
         mock_broker.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_force_collect_waits_for_ongoing_collection(task, mock_mcs):
-    """force_collect 호출 시 이미 수집 중이면 완료될 때까지 대기 후 반환한다."""
+async def test_force_run_waits_for_ongoing_collection(task, mock_mcs):
+    """force_run 호출 시 이미 수집 중이면 완료될 때까지 대기 후 반환한다."""
     import asyncio as _asyncio
     mock_mcs.get_latest_trading_date.return_value = "2025-01-01"
 
@@ -333,7 +333,7 @@ async def test_force_collect_waits_for_ongoing_collection(task, mock_mcs):
     _asyncio.create_task(_signal_done())
 
     with patch.object(task, '_collect_via_broker_api', new_callable=AsyncMock) as mock_broker:
-        await task.force_collect()
+        await task.force_run()
         # 진행 중 수집 완료를 기다렸으므로 새 수집은 시작하지 않음
         mock_broker.assert_not_awaited()
 

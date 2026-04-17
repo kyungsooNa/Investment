@@ -151,7 +151,7 @@ class MinerviniUpdateTask(AfterMarketTask):
                             self._logger.info("[MinerviniUpdate] DailyPriceCollector 수집 진행 중 — 완료 대기")
                             await dpc._collection_done_event.wait()
                         else:
-                            await dpc.force_collect()
+                            await dpc.force_run()
                     else:
                         self._logger.warning("[MinerviniUpdate] DailyPriceCollectorTask 미설정 — 가격 데이터 없이 진행")
 

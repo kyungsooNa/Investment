@@ -73,7 +73,7 @@ def task(mock_stock_repo, mock_telegram_reporter, mock_notification_service, moc
 @pytest.fixture
 def mock_daily_price_collector():
     collector = MagicMock()
-    collector.force_collect = AsyncMock()
+    collector.force_run = AsyncMock()
     return collector
 
 
@@ -284,45 +284,45 @@ def test_has_sufficient_w52_data_empty(task):
     assert task._has_sufficient_w52_data([]) is True
 
 
-# ── force_collect 트리거 시나리오 ────────────────────────────────────────
+# ── force_run 트리거 시나리오 ────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_force_collect_triggered_when_w52_missing(
+async def test_force_run_triggered_when_w52_missing(
     task_with_collector, mock_stock_repo, mock_daily_price_collector, mock_telegram_reporter
 ):
-    """w52_high 데이터 부재 시 force_collect 호출 후 재조회하여 신고가 탐색."""
+    """w52_high 데이터 부재 시 force_run 호출 후 재조회하여 신고가 탐색."""
     mock_stock_repo.get_all_daily_snapshots.side_effect = [
         # 1차 조회: w52_high 없음 (FDR 수집 케이스)
         [_snap("005930", "삼성전자", 80000, 0, market_cap=500_000_000_000)],
-        # 2차 조회 (force_collect 후): w52_high 복원
+        # 2차 조회 (force_run 후): w52_high 복원
         [_snap("005930", "삼성전자", 80000, 80000, market_cap=500_000_000_000)],
     ]
     await task_with_collector._on_market_closed("20260412")
 
-    mock_daily_price_collector.force_collect.assert_awaited_once()
+    mock_daily_price_collector.force_run.assert_awaited_once()
     assert mock_stock_repo.get_all_daily_snapshots.await_count == 2
     stocks = mock_telegram_reporter.send_newhigh_report.call_args[0][0]
     assert stocks[0]["code"] == "005930"
 
 
 @pytest.mark.asyncio
-async def test_force_collect_not_triggered_when_w52_present(
+async def test_force_run_not_triggered_when_w52_present(
     task_with_collector, mock_stock_repo, mock_daily_price_collector
 ):
-    """w52_high 데이터 충분 시 force_collect 미호출."""
+    """w52_high 데이터 충분 시 force_run 미호출."""
     mock_stock_repo.get_all_daily_snapshots.return_value = [
         _snap("005930", "삼성전자", 80000, 80000, market_cap=500_000_000_000),
         _snap("000660", "SK하이닉스", 50000, 50000, market_cap=300_000_000_000),
     ]
     await task_with_collector._on_market_closed("20260412")
 
-    mock_daily_price_collector.force_collect.assert_not_awaited()
+    mock_daily_price_collector.force_run.assert_not_awaited()
     assert mock_stock_repo.get_all_daily_snapshots.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_force_collect_not_triggered_without_collector(task, mock_stock_repo):
-    """daily_price_collector_task 없으면 w52_high 부재여도 force_collect 없이 정상 완료."""
+async def test_force_run_not_triggered_without_collector(task, mock_stock_repo):
+    """daily_price_collector_task 없으면 w52_high 부재여도 force_run 없이 정상 완료."""
     mock_stock_repo.get_all_daily_snapshots.return_value = [
         _snap("005930", "삼성전자", 80000, 0),
     ]
@@ -361,17 +361,17 @@ async def test_enrich_historical_high_api_fail(task, mock_stock_query_service):
 
 
 @pytest.mark.asyncio
-async def test_force_collect_retries_only_once(
+async def test_force_run_retries_only_once(
     task_with_collector, mock_stock_repo, mock_daily_price_collector
 ):
-    """force_collect 후 재조회한 데이터에 여전히 w52_high 없어도 두 번째 force_collect 미호출."""
+    """force_run 후 재조회한 데이터에 여전히 w52_high 없어도 두 번째 force_run 미호출."""
     mock_stock_repo.get_all_daily_snapshots.return_value = [
         _snap("005930", "삼성전자", 80000, 0),
     ]
     await task_with_collector._on_market_closed("20260412")
 
-    # force_collect 는 한 번만
-    mock_daily_price_collector.force_collect.assert_awaited_once()
+    # force_run 는 한 번만
+    mock_daily_price_collector.force_run.assert_awaited_once()
     assert mock_stock_repo.get_all_daily_snapshots.await_count == 2
 
 
@@ -463,7 +463,7 @@ def task(mock_stock_repo, mock_telegram_reporter, mock_notification_service, moc
 @pytest.fixture
 def mock_daily_price_collector():
     collector = MagicMock()
-    collector.force_collect = AsyncMock()
+    collector.force_run = AsyncMock()
     return collector
 
 
@@ -674,45 +674,45 @@ def test_has_sufficient_w52_data_empty(task):
     assert task._has_sufficient_w52_data([]) is True
 
 
-# ── force_collect 트리거 시나리오 ────────────────────────────────────────
+# ── force_run 트리거 시나리오 ────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_force_collect_triggered_when_w52_missing(
+async def test_force_run_triggered_when_w52_missing(
     task_with_collector, mock_stock_repo, mock_daily_price_collector, mock_telegram_reporter
 ):
-    """w52_high 데이터 부재 시 force_collect 호출 후 재조회하여 신고가 탐색."""
+    """w52_high 데이터 부재 시 force_run 호출 후 재조회하여 신고가 탐색."""
     mock_stock_repo.get_all_daily_snapshots.side_effect = [
         # 1차 조회: w52_high 없음 (FDR 수집 케이스)
         [_snap("005930", "삼성전자", 80000, 0, market_cap=500_000_000_000)],
-        # 2차 조회 (force_collect 후): w52_high 복원
+        # 2차 조회 (force_run 후): w52_high 복원
         [_snap("005930", "삼성전자", 80000, 80000, market_cap=500_000_000_000)],
     ]
     await task_with_collector._on_market_closed("20260412")
 
-    mock_daily_price_collector.force_collect.assert_awaited_once()
+    mock_daily_price_collector.force_run.assert_awaited_once()
     assert mock_stock_repo.get_all_daily_snapshots.await_count == 2
     stocks = mock_telegram_reporter.send_newhigh_report.call_args[0][0]
     assert stocks[0]["code"] == "005930"
 
 
 @pytest.mark.asyncio
-async def test_force_collect_not_triggered_when_w52_present(
+async def test_force_run_not_triggered_when_w52_present(
     task_with_collector, mock_stock_repo, mock_daily_price_collector
 ):
-    """w52_high 데이터 충분 시 force_collect 미호출."""
+    """w52_high 데이터 충분 시 force_run 미호출."""
     mock_stock_repo.get_all_daily_snapshots.return_value = [
         _snap("005930", "삼성전자", 80000, 80000, market_cap=500_000_000_000),
         _snap("000660", "SK하이닉스", 50000, 50000, market_cap=300_000_000_000),
     ]
     await task_with_collector._on_market_closed("20260412")
 
-    mock_daily_price_collector.force_collect.assert_not_awaited()
+    mock_daily_price_collector.force_run.assert_not_awaited()
     assert mock_stock_repo.get_all_daily_snapshots.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_force_collect_not_triggered_without_collector(task, mock_stock_repo):
-    """daily_price_collector_task 없으면 w52_high 부재여도 force_collect 없이 정상 완료."""
+async def test_force_run_not_triggered_without_collector(task, mock_stock_repo):
+    """daily_price_collector_task 없으면 w52_high 부재여도 force_run 없이 정상 완료."""
     mock_stock_repo.get_all_daily_snapshots.return_value = [
         _snap("005930", "삼성전자", 80000, 0),
     ]
@@ -778,24 +778,24 @@ def test_get_progress(task):
 
 
 @pytest.mark.asyncio
-async def test_force_collect_success(task):
-    """force_collect() 호출 시 mcs에서 날짜를 가져와 _run_newhigh를 호출하는지 검증"""
+async def test_force_run_success(task):
+    """force_run() 호출 시 mcs에서 날짜를 가져와 _run_newhigh를 호출하는지 검증"""
     task._mcs = MagicMock()
     task._mcs.get_latest_trading_date = AsyncMock(return_value="20260413")
     
     with patch.object(task, "_run_newhigh", new_callable=AsyncMock) as mock_run:
-        await task.force_collect()
+        await task.force_run()
         mock_run.assert_awaited_once_with("20260413")
 
 
 @pytest.mark.asyncio
-async def test_force_collect_no_target_date(task):
-    """target_date가 없을 경우 force_collect()가 중단되는지 검증"""
+async def test_force_run_no_target_date(task):
+    """target_date가 없을 경우 force_run()가 중단되는지 검증"""
     task._mcs = MagicMock()
     task._mcs.get_latest_trading_date = AsyncMock(return_value=None)
     
     with patch.object(task, "_run_newhigh", new_callable=AsyncMock) as mock_run:
-        await task.force_collect()
+        await task.force_run()
         mock_run.assert_not_awaited()
 
 

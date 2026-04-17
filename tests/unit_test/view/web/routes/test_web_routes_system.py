@@ -385,7 +385,7 @@ async def test_force_ranking_update_success(web_client, mock_web_ctx):
     """특정 태스크(예: ranking_refresh) 강제 실행 성공 테스트"""
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
-    mock_task.force_collect = AsyncMock()
+    mock_task.force_run = AsyncMock()
     
     mock_web_ctx.ranking_task = mock_task
 
@@ -396,7 +396,7 @@ async def test_force_ranking_update_success(web_client, mock_web_ctx):
     
     # 백그라운드 Task가 실행될 수 있도록 제어권 양보
     await asyncio.sleep(0)
-    mock_task.force_collect.assert_called_once()
+    mock_task.force_run.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_force_ranking_update_running(web_client, mock_web_ctx):
@@ -420,7 +420,7 @@ async def test_force_ranking_update_not_init(web_client, mock_web_ctx):
 async def test_force_daily_price_update_success(web_client, mock_web_ctx):
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
-    mock_task.force_collect = AsyncMock()
+    mock_task.force_run = AsyncMock()
     mock_web_ctx.daily_price_collector_task = mock_task
 
     response = web_client.post("/api/background/daily-price/force-update")
@@ -429,7 +429,7 @@ async def test_force_daily_price_update_success(web_client, mock_web_ctx):
     assert response.json()["success"] is True
     
     await asyncio.sleep(0)
-    mock_task.force_collect.assert_called_once()
+    mock_task.force_run.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_force_daily_price_update_running(web_client, mock_web_ctx):
@@ -453,7 +453,7 @@ async def test_force_daily_price_update_not_init(web_client, mock_web_ctx):
 async def test_force_watchlist_update_success(web_client, mock_web_ctx):
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
-    mock_task.force_generate = AsyncMock()
+    mock_task.force_run = AsyncMock()
     mock_web_ctx.premium_watchlist_generator_task = mock_task
 
     response = web_client.post("/api/background/watchlist/force-update")
@@ -462,7 +462,7 @@ async def test_force_watchlist_update_success(web_client, mock_web_ctx):
     assert response.json()["success"] is True
     
     await asyncio.sleep(0)
-    mock_task.force_generate.assert_called_once()
+    mock_task.force_run.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_force_watchlist_update_running(web_client, mock_web_ctx):
@@ -486,7 +486,7 @@ async def test_force_watchlist_update_not_init(web_client, mock_web_ctx):
 async def test_force_cache_warmup_success(web_client, mock_web_ctx):
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
-    mock_task.force_warmup = AsyncMock()
+    mock_task.force_run = AsyncMock()
     mock_web_ctx.cache_warmup_task = mock_task
 
     response = web_client.post("/api/background/cache-warmup/force-update")
@@ -494,7 +494,7 @@ async def test_force_cache_warmup_success(web_client, mock_web_ctx):
     assert response.json()["success"] is True
     
     await asyncio.sleep(0)
-    mock_task.force_warmup.assert_called_once()
+    mock_task.force_run.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_force_cache_warmup_running(web_client, mock_web_ctx):
@@ -518,7 +518,7 @@ async def test_force_cache_warmup_not_init(web_client, mock_web_ctx):
 async def test_force_newhigh_update_success(web_client, mock_web_ctx):
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
-    mock_task.force_collect = AsyncMock()
+    mock_task.force_run = AsyncMock()
     mock_web_ctx.newhigh_task = mock_task
 
     response = web_client.post("/api/background/newhigh/force-update")
@@ -527,7 +527,7 @@ async def test_force_newhigh_update_success(web_client, mock_web_ctx):
     assert response.json()["success"] is True
     
     await asyncio.sleep(0)
-    mock_task.force_collect.assert_called_once()
+    mock_task.force_run.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_force_newhigh_update_running(web_client, mock_web_ctx):
@@ -551,7 +551,7 @@ async def test_force_newhigh_update_not_init(web_client, mock_web_ctx):
 async def test_force_minervini_update_success(web_client, mock_web_ctx):
     mock_task = MagicMock()
     mock_task.get_progress.return_value = {"running": False}
-    mock_task.force_collect = AsyncMock()
+    mock_task.force_run = AsyncMock()
     mock_web_ctx.minervini_update_task = mock_task
 
     response = web_client.post("/api/background/minervini/force-update")
@@ -559,7 +559,7 @@ async def test_force_minervini_update_success(web_client, mock_web_ctx):
     assert response.json()["success"] is True
     
     await asyncio.sleep(0)
-    mock_task.force_collect.assert_called_once()
+    mock_task.force_run.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_force_minervini_update_running(web_client, mock_web_ctx):

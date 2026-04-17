@@ -82,7 +82,7 @@ class NewHighTask(AfterMarketTask):
         if not self._newhigh_cache and not self._progress.get("running"):
             try:
                 asyncio.get_running_loop()
-                asyncio.create_task(self.force_collect())
+                asyncio.create_task(self.force_run())
             except RuntimeError:
                 self._logger.warning("이벤트 루프 없음 — NewHigh 즉시 갱신 스킵")
         return self._newhigh_cache[:limit]
@@ -110,10 +110,10 @@ class NewHighTask(AfterMarketTask):
             # w52_high 데이터 부재 시 DailyPriceCollectorTask로 강제 최신화 후 재조회
             if self._daily_price_collector_task and not self._has_sufficient_w52_data(snapshots):
                 self._logger.warning(
-                    f"NewHighTask: w52_high 데이터 부재 — DailyPriceCollectorTask.force_collect() 실행 후 재조회"
+                    f"NewHighTask: w52_high 데이터 부재 — DailyPriceCollectorTask.force_run() 실행 후 재조회"
                 )
                 self._progress["status"] = "DailyPriceCollector 데이터 수집 중..."
-                await self._daily_price_collector_task.force_collect()
+                await self._daily_price_collector_task.force_run()
                 self._progress["status"] = None
                 snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
 
