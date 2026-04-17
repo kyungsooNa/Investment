@@ -124,7 +124,7 @@ class OhlcvUpdateTask(AfterMarketTask):
         if self._last_collected_date != latest_trading_date:
             await self._collect_all_ohlcv()
 
-    async def force_collect(self) -> None:
+    async def force_run(self) -> None:
         """강제 전체 수집: skip 조건을 무시하고 모든 종목을 API 재호출한다.
 
         - 최초 설치(로컬 DB 없음) 또는 다른 머신으로 이전 시 전체 백필 보장

@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 
 from scheduler.after_market_loop import run_after_market_loop, _smart_sleep
 import task.background.after_market.after_market_task_base as base_module
-from task.background.after_market.after_market_task_base import _load_after_market_delays
+import config.task_config_loader as loader_module
+from config.task_config_loader import load_after_market_delays as _load_after_market_delays
 
 
 # --- _smart_sleep 테스트 ---
@@ -199,9 +200,9 @@ class TestLoadAfterMarketDelays:
     @pytest.fixture(autouse=True)
     def clear_cache(self):
         """테스트 간 간섭을 막기 위해 전역 캐시를 매번 초기화합니다."""
-        base_module._DEFAULT_DELAYS.clear()
+        loader_module._CACHED.clear()
         yield
-        base_module._DEFAULT_DELAYS.clear()
+        loader_module._CACHED.clear()
 
     def test_load_delays_converts_minutes_to_seconds(self):
         """분 단위 설정이 초 단위로 올바르게 변환되며 문자열도 int로 캐스팅된다."""
@@ -229,7 +230,7 @@ class TestLoadAfterMarketDelays:
 
     def test_load_delays_uses_cache(self):
         """최초 로드 이후에는 캐시된 데이터를 반환하여 I/O를 수행하지 않는다."""
-        base_module._DEFAULT_DELAYS["cached_task"] = 120
+        loader_module._CACHED["cached_task"] = 120
         
         with patch("builtins.open") as mock_file:
             delays = _load_after_market_delays()

@@ -507,7 +507,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         """수집 진행률 반환."""
         return dict(self._progress)
 
-    async def force_collect(self, force_fresh: bool = False) -> None:
+    async def force_run(self, force_fresh: bool = False) -> None:
         """강제 수집: FDR 크롤링을 우회하고 증권사 API를 직접 호출하여 w52_high 포함 전 종목 현재가를 수집한다."""
         self._logger.info("DailyPriceCollectorTask 강제 수집 요청 (증권사 API 직접 호출)")
         async with self._running_state():

@@ -612,7 +612,7 @@ class RankingTask(AfterMarketTask):
                 all_stocks.append((code, name, market))
         return all_stocks
 
-    async def force_collect(self) -> None:
+    async def force_run(self) -> None:
         """강제 수집: skip 조건을 무시하고 투자자 랭킹을 재수집한다."""
         self._logger.info("RankingTask 강제 수집 요청")
         async with self._running_state():

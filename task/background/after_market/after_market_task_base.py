@@ -28,12 +28,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional, TYPE_CHECKING
-
-import yaml
+from typing import List, Optional, TYPE_CHECKING
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from scheduler.after_market_loop import run_after_market_loop
@@ -42,36 +39,6 @@ if TYPE_CHECKING:
     from core.market_clock import MarketClock
     from services.market_calendar_service import MarketCalendarService
     from scheduler.worker.worker_pool import WorkerPool
-
-from pydantic import BaseModel, Field
-
-class AfterMarketTasksConfig(BaseModel):
-    after_market_delay_sec: Dict[str, int] = Field(default_factory=dict)
-
-class TaskConfigModel(BaseModel):
-    after_market_tasks: AfterMarketTasksConfig = Field(default_factory=AfterMarketTasksConfig)
-
-_TASK_CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "..", "..", "..", "config", "task_config.yaml",
-)
-_DEFAULT_DELAYS: Dict[str, int] = {}
-
-def _load_after_market_delays() -> Dict[str, int]:
-    """task_config.yaml 에서 after_market_delay_sec 매핑을 로드한다."""
-    global _DEFAULT_DELAYS
-    if _DEFAULT_DELAYS:
-        return _DEFAULT_DELAYS
-    try:
-        with open(_TASK_CONFIG_PATH, encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-        
-        # Pydantic 모델을 통한 안전한 파싱, 타입 캐스팅 및 기본값 할당
-        config = TaskConfigModel(**raw)
-        _DEFAULT_DELAYS = {k: v * 60 for k, v in config.after_market_tasks.after_market_delay_sec.items()}
-    except Exception:
-        _DEFAULT_DELAYS = {}
-    return _DEFAULT_DELAYS
 
 
 class AfterMarketTask(SchedulableTask, ABC):
@@ -181,7 +148,6 @@ class AfterMarketTask(SchedulableTask, ABC):
             async with self._running_state():
                 await self._on_market_closed(date)
 
-        delay_sec = _load_after_market_delays().get(self.task_name, 0)
         try:
             await run_after_market_loop(
                 mcs=self._mcs,
@@ -189,7 +155,6 @@ class AfterMarketTask(SchedulableTask, ABC):
                 logger=self._logger,
                 on_market_closed=_on_closed_with_state,
                 label=self._scheduler_label,
-                delay_sec=delay_sec,
             )
         except asyncio.CancelledError:
             # Propagate cancellation so callers can cancel the task normally.
@@ -217,3 +182,7 @@ class AfterMarketTask(SchedulableTask, ABC):
         date = payload.get("date", "")
         async with self._running_state():
             await self._on_market_closed(date)
+
+    async def force_run(self) -> None:
+        """skip 조건을 무시하고 즉시 실행한다. 서브클래스에서 재정의한다."""
+        raise NotImplementedError(f"{self.task_name}.force_run() 미구현")

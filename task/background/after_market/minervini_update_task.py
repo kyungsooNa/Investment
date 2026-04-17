@@ -382,7 +382,7 @@ class MinerviniUpdateTask(AfterMarketTask):
 
         return self._minervini_stage2_cache[:limit]
 
-    async def force_collect(self) -> None:
+    async def force_run(self) -> None:
         self._logger.info("MinerviniUpdateTask 강제 수집 요청")
         async with self._running_state():
             if self._is_refreshing:

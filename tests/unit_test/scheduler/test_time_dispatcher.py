@@ -25,11 +25,19 @@ async def test_no_ticket_during_market_hours():
     assert broker.empty is True
 
 
+async def _drain(dispatcher) -> None:
+    """pending_publish_tasks가 모두 완료될 때까지 대기한다."""
+    pending = list(dispatcher._pending_publish_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 async def test_ticket_published_after_market_close():
     dispatcher, broker = _make_dispatcher(is_operating=False, latest_date="20250417")
     dispatcher.register_task("RANKING_UPDATE", priority=100)
 
     result = await dispatcher._maybe_dispatch(None)
+    await _drain(dispatcher)
     assert result == "20250417"
     assert broker.qsize == 1
 
@@ -44,6 +52,7 @@ async def test_no_duplicate_ticket_same_date():
     dispatcher.register_task("RANKING_UPDATE", priority=100)
 
     await dispatcher._maybe_dispatch(None)
+    await _drain(dispatcher)
     result2 = await dispatcher._maybe_dispatch("20250417")  # 이미 발행된 날짜
 
     assert result2 == "20250417"

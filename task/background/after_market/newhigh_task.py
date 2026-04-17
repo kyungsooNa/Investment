@@ -171,7 +171,7 @@ class NewHighTask(AfterMarketTask):
             self._progress["running"] = False
             self._progress["status"] = None
 
-    async def force_collect(self) -> None:
+    async def force_run(self) -> None:
         """skip 조건을 무시하고 즉시 52주 신고가 탐색을 실행한다."""
         self._logger.info("NewHighTask 강제 실행 요청")
         async with self._running_state():

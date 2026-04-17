@@ -138,7 +138,7 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
             self._is_generating = False
             self._progress["running"] = False
 
-    async def force_generate(self) -> None:
+    async def force_run(self) -> None:
         """강제 생성: skip 조건을 무시하고 전일 기준 우량주를 재생성한다."""
         self._logger.info("PremiumWatchlistGeneratorTask 강제 생성 요청")
         async with self._running_state():

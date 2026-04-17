@@ -127,7 +127,7 @@ class CacheWarmupTask(AfterMarketTask):
 
     # ── 강제 실행 ─────────────────────────────────────────────────
 
-    async def force_warmup(self) -> None:
+    async def force_run(self) -> None:
         """skip 조건을 무시하고 즉시 캐시 웜업을 실행한다."""
         self._logger.info("CacheWarmupTask 강제 웜업 요청")
         async with self._running_state():

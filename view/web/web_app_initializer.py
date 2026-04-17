@@ -27,6 +27,7 @@ from scheduler.ticket_queue.message_broker import MessageBroker
 from scheduler.ticket_queue.dlq_manager import DlqManager
 from scheduler.worker.worker_pool import WorkerPool
 from scheduler.dispatcher.time_dispatcher import TimeDispatcher
+from config.task_config_loader import load_after_market_delays
 from interfaces.schedulable_task import TaskPriority
 from task.background.intraday.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
@@ -472,6 +473,7 @@ class WebAppContext:
         )
 
         # TimeDispatcher에 after_market 태스크 등록
+        _delays = load_after_market_delays()
         for task, priority in [
             (self.ranking_task,                     TaskPriority.LOW),
             (self.minervini_update_task,             TaskPriority.LOW),
@@ -483,7 +485,9 @@ class WebAppContext:
             (self.log_cleanup_task,                  TaskPriority.MAINTENANCE),
         ]:
             if task:
-                self.time_dispatcher.register_task(task.task_name, priority)
+                self.time_dispatcher.register_task(
+                    task.task_name, priority, delay_sec=_delays.get(task.task_name, 0)
+                )
 
         # BackgroundScheduler 초기화 및 태스크 등록
         self.background_scheduler = BackgroundScheduler(
