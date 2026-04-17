@@ -786,7 +786,7 @@ class TestStartStop:
 
 class TestForceCollect:
 
-    async def test_force_collect_ignores_last_collected_date(
+    async def test_force_run_ignores_last_collected_date(
         self, task, mock_sqs, mock_stock_repo
     ):
         """force=True이면 _last_collected_date == target_date여도 수집이 실행된다."""
@@ -795,11 +795,11 @@ class TestForceCollect:
         }
         task._last_collected_date = TARGET_DATE  # 이미 오늘 수집 완료 표시
 
-        await task.force_collect()
+        await task.force_run()
 
         mock_sqs.get_ohlcv.assert_called()
 
-    async def test_force_collect_calls_api_even_if_count_sufficient(
+    async def test_force_run_calls_api_even_if_count_sufficient(
         self, task, mock_sqs, mock_stock_repo
     ):
         """force=True이면 latest_date == today 스킵 조건을 무시하고 API를 호출한다."""
@@ -807,11 +807,11 @@ class TestForceCollect:
             "count": 600, "latest_date": TARGET_DATE, "oldest_date": "20231001"
         }
 
-        await task.force_collect()
+        await task.force_run()
 
         mock_sqs.get_ohlcv.assert_called()
 
-    async def test_force_collect_sets_progress_force_flag(
+    async def test_force_run_sets_progress_force_flag(
         self, task, mock_stock_repo
     ):
         """force 수집 중 progress['force']가 True로 설정된다."""
@@ -822,7 +822,7 @@ class TestForceCollect:
             "count": 0, "latest_date": None, "oldest_date": None
         }
 
-        await task.force_collect()
+        await task.force_run()
 
         # 수집 완료 후 progress에 force 키가 존재했어야 함 (running=False로 리셋됨)
         # _last_collected_date는 정상적으로 갱신

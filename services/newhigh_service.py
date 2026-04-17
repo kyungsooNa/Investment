@@ -82,6 +82,6 @@ class NewHighService:
         # 3차: 갱신 트리거 후 수집 대기
         progress = task.get_progress()
         if not progress.get("running"):
-            asyncio.create_task(task.force_collect())
+            asyncio.create_task(task.force_run())
             
         return ResCommonResponse(rt_cd="0", msg1="수집 중", data=[])

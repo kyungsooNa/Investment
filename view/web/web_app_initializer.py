@@ -23,6 +23,12 @@ from core.performance_profiler import PerformanceProfiler
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from scheduler.background_scheduler import BackgroundScheduler
 from scheduler.foreground_scheduler import ForegroundScheduler
+from scheduler.ticket_queue.message_broker import MessageBroker
+from scheduler.ticket_queue.dlq_manager import DlqManager
+from scheduler.worker.worker_pool import WorkerPool
+from scheduler.dispatcher.time_dispatcher import TimeDispatcher
+from config.task_config_loader import load_after_market_delays
+from interfaces.schedulable_task import TaskPriority
 from task.background.intraday.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.after_market.ranking_task import RankingTask
@@ -231,6 +237,22 @@ class WebAppContext:
         # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
         self.indicator_service = IndicatorService(cache_store=cache_store, performance_profiler=self.pm)
         
+        # Ticket-driven 인프라 초기화
+        self.message_broker = MessageBroker()
+        self.dlq_manager = DlqManager(logger=self.logger)
+        self.worker_pool = WorkerPool(
+            broker=self.message_broker,
+            dlq_manager=self.dlq_manager,
+            logger=self.logger,
+            num_workers=1,  # after_market 태스크는 API 레이트 리밋 고려해 순차 실행
+        )
+        self.time_dispatcher = TimeDispatcher(
+            broker=self.message_broker,
+            market_clock=self.market_clock,
+            mcs=self._mcs,
+            logger=self.logger,
+        )
+
         self.ranking_task = RankingTask(
             broker_api_wrapper=self.broker,
             stock_code_repository=self.stock_code_repository,
@@ -242,6 +264,7 @@ class WebAppContext:
             telegram_reporter=getattr(self, 'telegram_reporter', None),
             market_calendar_service=self._mcs,
             market_data_service=self.market_data_service,
+            worker_pool=self.worker_pool,
         )
         self.stock_query_service = StockQueryService(
             market_data_service=self.market_data_service, logger=self.logger, market_clock=self.market_clock,
@@ -286,6 +309,7 @@ class WebAppContext:
                 notification_service=self.notification_service,
                 telegram_reporter=getattr(self, 'telegram_reporter', None),
                 market_calendar_service=self._mcs,
+                worker_pool=self.worker_pool,
             )
         except Exception as e:
             self.logger.warning(f"MinerviniUpdateTask 초기화 실패: {e}")
@@ -349,6 +373,7 @@ class WebAppContext:
             notification_service=self.notification_service,
             logger=self.logger,
             rs_rating_service=getattr(self, "rs_rating_service", None),
+            worker_pool=self.worker_pool,
         )
 
         # MinerviniUpdateTask에 DailyPriceCollectorTask 사후 주입 (생성 순서 역전 해결)
@@ -364,6 +389,7 @@ class WebAppContext:
             performance_profiler=self.pm,
             notification_service=self.notification_service,
             logger=self.logger,
+            worker_pool=self.worker_pool,
         )
 
         self.order_execution_service = OrderExecutionService(
@@ -396,6 +422,7 @@ class WebAppContext:
             market_clock=self.market_clock,
             notification_service=self.notification_service,
             logger=self.logger,
+            worker_pool=self.worker_pool,
         )
 
         self.cache_warmup_task = CacheWarmupTask(
@@ -406,6 +433,7 @@ class WebAppContext:
             market_clock=self.market_clock,
             notification_service=self.notification_service,
             logger=self.logger,
+            worker_pool=self.worker_pool,
         )
 
         self.log_cleanup_task = LogCleanupTask(
@@ -415,6 +443,7 @@ class WebAppContext:
             market_calendar_service=self._mcs,
             market_clock=self.market_clock,
             logger=self.logger,
+            worker_pool=self.worker_pool,
         )
 
         self.newhigh_task = NewHighTask(
@@ -427,6 +456,7 @@ class WebAppContext:
             daily_price_collector_task=self.daily_price_collector_task,
             stock_query_service=self.stock_query_service,
             rs_rating_service=getattr(self, 'rs_rating_service', None),
+            worker_pool=self.worker_pool,
         )
 
         self.newhigh_service = NewHighService(
@@ -442,10 +472,29 @@ class WebAppContext:
             logger=self.logger,
         )
 
+        # TimeDispatcher에 after_market 태스크 등록
+        _delays = load_after_market_delays()
+        for task, priority in [
+            (self.ranking_task,                     TaskPriority.LOW),
+            (self.minervini_update_task,             TaskPriority.LOW),
+            (self.daily_price_collector_task,        TaskPriority.LOW),
+            (self.ohlcv_update_task,                 TaskPriority.LOW),
+            (self.premium_watchlist_generator_task,  TaskPriority.LOW),
+            (self.cache_warmup_task,                 TaskPriority.LOW),
+            (self.newhigh_task,                      TaskPriority.LOW),
+            (self.log_cleanup_task,                  TaskPriority.MAINTENANCE),
+        ]:
+            if task:
+                self.time_dispatcher.register_task(
+                    task.task_name, priority, delay_sec=_delays.get(task.task_name, 0)
+                )
+
         # BackgroundScheduler 초기화 및 태스크 등록
         self.background_scheduler = BackgroundScheduler(
             logger=self.logger,
             performance_profiler=self.pm,
+            worker_pool=self.worker_pool,
+            time_dispatcher=self.time_dispatcher,
         )
         if self.ranking_task:
             self.background_scheduler.register(self.ranking_task)

@@ -48,7 +48,7 @@ def mock_task():
     ]
     # get_progress는 동기 메서드이므로 MagicMock으로 별도 설정
     task.get_progress = MagicMock(return_value={"running": False})
-    task.force_collect = AsyncMock()
+    task.force_run = AsyncMock()
     return task
 
 
@@ -196,10 +196,10 @@ async def test_get_newhigh_list_cache_null_fields(mock_task):
     assert item["minervini_stage"] == 0
 
 
-# ── force_collect 트리거 ──────────────────────────────────────────────────────
+# ── force_run 트리거 ──────────────────────────────────────────────────────
 
 async def test_get_newhigh_list_no_cache_triggers_collect(mock_task):
-    """캐시가 없고 task가 실행 중이 아닐 때 force_collect를 트리거하고 빈 목록을 반환한다."""
+    """캐시가 없고 task가 실행 중이 아닐 때 force_run을 트리거하고 빈 목록을 반환한다."""
     mock_task.get_newhigh_cache.return_value = []
     mock_task.get_progress.return_value = {"running": False}
 
@@ -214,7 +214,7 @@ async def test_get_newhigh_list_no_cache_triggers_collect(mock_task):
 
 
 async def test_get_newhigh_list_no_cache_already_running_no_duplicate_trigger(mock_task):
-    """캐시가 없고 task가 이미 실행 중이면 force_collect를 중복 트리거하지 않는다."""
+    """캐시가 없고 task가 이미 실행 중이면 force_run을 중복 트리거하지 않는다."""
     mock_task.get_newhigh_cache.return_value = []
     mock_task.get_progress.return_value = {"running": True}
 

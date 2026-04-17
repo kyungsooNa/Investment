@@ -133,7 +133,7 @@ async def get_background_status():
         state_str = raw_state.value if hasattr(raw_state, "value") else str(raw_state)
 
         # 3. IDLE 상태일 경우 방어 로직: 대부분 태스크는 get_progress() 호출을 생략하지만,
-        #    강제 수집 API로 직접 실행되는 태스크(예: force_collect로 즉시 실행)가 내부 플래그
+        #    강제 수집 API로 직접 실행되는 태스크(예: force_run 즉시 실행)가 내부 플래그
         #    를 통해 진행 중임을 알릴 수 있으므로 그런 경우에는 get_progress()를 호출하여
         #    실제 진행 상태를 반영하도록 합니다.
         progress = None
@@ -182,7 +182,7 @@ async def force_ranking_update():
     if progress.get("running"):
         raise HTTPException(status_code=409, detail="이미 수집이 진행 중입니다")
 
-    asyncio.create_task(task.force_collect())
+    asyncio.create_task(task.force_run())
     return {"success": True, "message": "투자자 랭킹 강제 수집이 시작되었습니다."}
 
 
@@ -198,7 +198,7 @@ async def force_daily_price_update():
     if progress.get("running"):
         raise HTTPException(status_code=409, detail="이미 수집이 진행 중입니다")
 
-    asyncio.create_task(task.force_collect(force_fresh=True))
+    asyncio.create_task(task.force_run(force_fresh=True))
     return {"success": True, "message": "현재가 강제 수집이 시작되었습니다."}
 
 
@@ -266,7 +266,7 @@ async def force_watchlist_update():
     if progress.get("running"):
         raise HTTPException(status_code=409, detail="이미 생성이 진행 중입니다")
 
-    asyncio.create_task(task.force_generate())
+    asyncio.create_task(task.force_run())
     return {"success": True, "message": "전일기준우량주 강제 생성이 시작되었습니다."}
 
 
@@ -282,7 +282,7 @@ async def force_cache_warmup():
     if progress.get("running"):
         raise HTTPException(status_code=409, detail="이미 웜업이 진행 중입니다")
 
-    asyncio.create_task(task.force_warmup())
+    asyncio.create_task(task.force_run())
     return {"success": True, "message": "캐시 웜업이 시작되었습니다."}
 
 
@@ -298,7 +298,7 @@ async def force_newhigh_update():
     if progress.get("running"):
         raise HTTPException(status_code=409, detail="이미 탐색이 진행 중입니다")
 
-    asyncio.create_task(task.force_collect())
+    asyncio.create_task(task.force_run())
     return {"success": True, "message": "52주 신고가 강제 탐색이 시작되었습니다."}
 
 
@@ -314,5 +314,5 @@ async def force_minervini_update():
     if progress.get("running"):
         raise HTTPException(status_code=409, detail="이미 수집이 진행 중입니다")
 
-    asyncio.create_task(task.force_collect())
+    asyncio.create_task(task.force_run())
     return {"success": True, "message": "Minervini S2 강제 갱신이 시작되었습니다."}

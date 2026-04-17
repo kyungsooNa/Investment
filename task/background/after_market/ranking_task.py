@@ -21,6 +21,7 @@ from repositories.stock_code_repository import StockCodeRepository
 from core.performance_profiler import PerformanceProfiler
 from services.telegram_notifier import TelegramReporter
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
+from scheduler.worker.worker_pool import WorkerPool
 
 
 def _chunked(lst, size):
@@ -55,11 +56,13 @@ class RankingTask(AfterMarketTask):
         notification_service: Optional[NotificationService] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
         market_calendar_service: Optional[MarketCalendarService] = None,
+        worker_pool: Optional[WorkerPool] = None,
     ):
         super().__init__(
             mcs=market_calendar_service,
             market_clock=market_clock,
             logger=logger or logging.getLogger(__name__),
+            worker_pool=worker_pool,
         )
         self._broker = broker_api_wrapper
         self.stock_code_repository = stock_code_repository
@@ -110,17 +113,8 @@ class RankingTask(AfterMarketTask):
     def _scheduler_label(self) -> str:
         return "RankingTask"
 
-    async def start(self) -> None:
-        """장마감 후 자동 갱신 스케줄러 시작."""
-        if self._state == TaskState.RUNNING:
-            return
-        self._state = TaskState.RUNNING
+    async def _on_start_hook(self) -> None:
         self._suspend_event.set()
-
-        self._tasks.append(
-            asyncio.create_task(self.start_after_market_scheduler())
-        )
-        self._logger.info(f"RankingTask 시작: {len(self._tasks)}개 태스크")
 
     async def suspend(self) -> None:
         """랭킹 수집을 일시 중지한다 (chunk 사이에서 대기)."""
@@ -135,6 +129,28 @@ class RankingTask(AfterMarketTask):
             self._suspend_event.set()
             self._state = TaskState.RUNNING
             self._logger.info("RankingTask 재개")
+
+    async def execute(self, payload: dict) -> None:
+        """WorkerPool 핸들러 — Ticket의 payload를 받아 랭킹 갱신을 수행한다.
+
+        멱등성 보장: 동일 날짜에 기본·투자자 랭킹이 모두 수집되어 있으면 즉시 반환.
+        """
+        date: str = payload.get("date", "")
+        needs_basic = not self._basic_last_collected_date or self._basic_last_collected_date != date
+        needs_investor = not self._last_collected_date or self._last_collected_date != date
+
+        if not needs_basic and not needs_investor:
+            self._logger.info(f"RankingTask execute: {date} 이미 완료 — 스킵")
+            return
+
+        self._logger.info(f"RankingTask execute: {date} 갱신 시작")
+        async with self._running_state():
+            if needs_basic:
+                await self.refresh_basic_ranking()
+                self._basic_last_collected_date = date
+            if needs_investor:
+                await self.refresh_investor_ranking()
+                self._last_collected_date = date
 
     # ── 장마감 후 자동 갱신 스케줄러 ────────────────────────────
 
@@ -596,7 +612,7 @@ class RankingTask(AfterMarketTask):
                 all_stocks.append((code, name, market))
         return all_stocks
 
-    async def force_collect(self) -> None:
+    async def force_run(self) -> None:
         """강제 수집: skip 조건을 무시하고 투자자 랭킹을 재수집한다."""
         self._logger.info("RankingTask 강제 수집 요청")
         async with self._running_state():

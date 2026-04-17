@@ -58,11 +58,13 @@ class CacheWarmupTask(AfterMarketTask):
         market_clock: Optional["MarketClock"] = None,
         notification_service: Optional["NotificationService"] = None,
         logger=None,
+        worker_pool=None,
     ) -> None:
         super().__init__(
             mcs=market_calendar_service,
             market_clock=market_clock,
             logger=logger or logging.getLogger(__name__),
+            worker_pool=worker_pool,
         )
         self._mds = market_data_service
         self._sqs = stock_query_service
@@ -94,13 +96,8 @@ class CacheWarmupTask(AfterMarketTask):
     def _scheduler_label(self) -> str:
         return "CacheWarmup"
 
-    async def start(self) -> None:
-        if self._state == TaskState.RUNNING:
-            return
-        self._state = TaskState.RUNNING
+    async def _on_start_hook(self) -> None:
         self._suspend_event.set()
-        self._tasks.append(asyncio.create_task(self._after_market_scheduler()))
-        self._logger.info("CacheWarmupTask 시작")
 
     async def suspend(self) -> None:
         if self._state == TaskState.RUNNING:
@@ -130,7 +127,7 @@ class CacheWarmupTask(AfterMarketTask):
 
     # ── 강제 실행 ─────────────────────────────────────────────────
 
-    async def force_warmup(self) -> None:
+    async def force_run(self) -> None:
         """skip 조건을 무시하고 즉시 캐시 웜업을 실행한다."""
         self._logger.info("CacheWarmupTask 강제 웜업 요청")
         async with self._running_state():

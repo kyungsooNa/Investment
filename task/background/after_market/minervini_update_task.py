@@ -45,8 +45,9 @@ class MinerviniUpdateTask(AfterMarketTask):
         telegram_reporter=None,
         market_calendar_service=None,
         daily_price_collector_task=None,
+        worker_pool=None,
     ):
-        super().__init__(mcs=market_calendar_service, market_clock=market_clock, logger=logger or logging.getLogger(__name__))
+        super().__init__(mcs=market_calendar_service, market_clock=market_clock, logger=logger or logging.getLogger(__name__), worker_pool=worker_pool)
         self._minervini = minervini_service
         self._daily_price_collector_task = daily_price_collector_task
         self.stock_code_repository = stock_code_repository
@@ -80,13 +81,8 @@ class MinerviniUpdateTask(AfterMarketTask):
     def _scheduler_label(self) -> str:
         return "MinerviniUpdateTask"
 
-    async def start(self) -> None:
-        if self._state == TaskState.RUNNING:
-            return
-        self._state = TaskState.RUNNING
+    async def _on_start_hook(self) -> None:
         self._suspend_event.set()
-        self._tasks.append(asyncio.create_task(self.start_after_market_scheduler()))
-        self._logger.info("MinerviniUpdateTask 시작")
 
     async def suspend(self) -> None:
         if self._state == TaskState.RUNNING:
@@ -99,9 +95,6 @@ class MinerviniUpdateTask(AfterMarketTask):
             self._suspend_event.set()
             self._state = TaskState.RUNNING
             self._logger.info("MinerviniUpdateTask 재개")
-
-    async def start_after_market_scheduler(self) -> None:
-        await self._after_market_scheduler()
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         latest_trading_date_dt = datetime.strptime(latest_trading_date, '%Y%m%d').date()
@@ -158,7 +151,7 @@ class MinerviniUpdateTask(AfterMarketTask):
                             self._logger.info("[MinerviniUpdate] DailyPriceCollector 수집 진행 중 — 완료 대기")
                             await dpc._collection_done_event.wait()
                         else:
-                            await dpc.force_collect()
+                            await dpc.force_run()
                     else:
                         self._logger.warning("[MinerviniUpdate] DailyPriceCollectorTask 미설정 — 가격 데이터 없이 진행")
 
@@ -386,7 +379,7 @@ class MinerviniUpdateTask(AfterMarketTask):
 
         return self._minervini_stage2_cache[:limit]
 
-    async def force_collect(self) -> None:
+    async def force_run(self) -> None:
         self._logger.info("MinerviniUpdateTask 강제 수집 요청")
         async with self._running_state():
             if self._is_refreshing:

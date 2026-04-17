@@ -59,11 +59,13 @@ class DailyPriceCollectorTask(AfterMarketTask):
         notification_service: Optional[NotificationService] = None,
         rs_rating_service: Optional["RSRatingService"] = None,
         logger=None,
+        worker_pool=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
             market_clock=market_clock,
             logger=logger or logging.getLogger(__name__),
+            worker_pool=worker_pool,
         )
         self._stock_query_service = stock_query_service
         self.stock_code_repository = stock_code_repository
@@ -99,17 +101,8 @@ class DailyPriceCollectorTask(AfterMarketTask):
     def _scheduler_label(self) -> str:
         return "DailyPriceCollector"
 
-    async def start(self) -> None:
-        """장마감 후 자동 스케줄러 시작."""
-        if self._state == TaskState.RUNNING:
-            return
-        self._state = TaskState.RUNNING
+    async def _on_start_hook(self) -> None:
         self._suspend_event.set()
-
-        self._tasks.append(
-            asyncio.create_task(self._after_market_scheduler())
-        )
-        self._logger.info(f"DailyPriceCollectorTask 시작: {len(self._tasks)}개 태스크")
 
     async def suspend(self) -> None:
         """수집을 일시 중지한다 (chunk 사이에서 대기)."""
@@ -514,7 +507,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
         """수집 진행률 반환."""
         return dict(self._progress)
 
-    async def force_collect(self, force_fresh: bool = False) -> None:
+    async def force_run(self, force_fresh: bool = False) -> None:
         """강제 수집: FDR 크롤링을 우회하고 증권사 API를 직접 호출하여 w52_high 포함 전 종목 현재가를 수집한다."""
         self._logger.info("DailyPriceCollectorTask 강제 수집 요청 (증권사 API 직접 호출)")
         async with self._running_state():

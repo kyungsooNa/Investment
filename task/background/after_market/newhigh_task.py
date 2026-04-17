@@ -9,7 +9,6 @@ import time
 from typing import List, Optional, TYPE_CHECKING
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
-from interfaces.schedulable_task import TaskState
 from typing import Dict
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
@@ -46,11 +45,13 @@ class NewHighTask(AfterMarketTask):
         stock_query_service: Optional["StockQueryService"] = None,
         rs_rating_service: Optional["RSRatingService"] = None,
         rs_rating_min: int = 80,
+        worker_pool=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
             market_clock=market_clock,
             logger=logger or logging.getLogger(__name__),
+            worker_pool=worker_pool,
         )
         self._stock_repo = stock_repo
         self._telegram_reporter = telegram_reporter
@@ -81,18 +82,10 @@ class NewHighTask(AfterMarketTask):
         if not self._newhigh_cache and not self._progress.get("running"):
             try:
                 asyncio.get_running_loop()
-                asyncio.create_task(self.force_collect())
+                asyncio.create_task(self.force_run())
             except RuntimeError:
                 self._logger.warning("이벤트 루프 없음 — NewHigh 즉시 갱신 스킵")
         return self._newhigh_cache[:limit]
-
-    async def start(self) -> None:
-        """장마감 후 자동 스케줄러 시작."""
-        if self._state == TaskState.RUNNING:
-            return
-        self._state = TaskState.RUNNING
-        self._tasks.append(asyncio.create_task(self._after_market_scheduler()))
-        self._logger.info("NewHighTask 시작")
 
     # ── 장마감 후 콜백 ──────────────────────────────────────────────
 
@@ -117,10 +110,10 @@ class NewHighTask(AfterMarketTask):
             # w52_high 데이터 부재 시 DailyPriceCollectorTask로 강제 최신화 후 재조회
             if self._daily_price_collector_task and not self._has_sufficient_w52_data(snapshots):
                 self._logger.warning(
-                    f"NewHighTask: w52_high 데이터 부재 — DailyPriceCollectorTask.force_collect() 실행 후 재조회"
+                    f"NewHighTask: w52_high 데이터 부재 — DailyPriceCollectorTask.force_run() 실행 후 재조회"
                 )
                 self._progress["status"] = "DailyPriceCollector 데이터 수집 중..."
-                await self._daily_price_collector_task.force_collect()
+                await self._daily_price_collector_task.force_run()
                 self._progress["status"] = None
                 snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
 
@@ -178,7 +171,7 @@ class NewHighTask(AfterMarketTask):
             self._progress["running"] = False
             self._progress["status"] = None
 
-    async def force_collect(self) -> None:
+    async def force_run(self) -> None:
         """skip 조건을 무시하고 즉시 52주 신고가 탐색을 실행한다."""
         self._logger.info("NewHighTask 강제 실행 요청")
         async with self._running_state():
