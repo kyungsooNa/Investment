@@ -1366,7 +1366,9 @@ async def test_scheduler_skips_when_latest_trading_date_unavailable(bg_service, 
     import asyncio
     _, _, _, _, _, market_calendar_service = mock_deps
     market_calendar_service.is_business_day.return_value = True
-    market_calendar_service.get_latest_trading_date.return_value = None
+    
+    # 무한 루프(Busy loop) 방지: 첫 번째는 None, 두 번째는 예외를 던져 루프를 강제 종료시킵니다.
+    market_calendar_service.get_latest_trading_date.side_effect = [None, asyncio.CancelledError()]
 
     bg_service.refresh_basic_ranking = AsyncMock()
     bg_service.refresh_investor_ranking = AsyncMock()
