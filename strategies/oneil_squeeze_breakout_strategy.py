@@ -169,6 +169,14 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         except Exception as e:
             self._logger.warning({"event": "cgld_check_failed", "code": code, "error": str(e)})
 
+        if cgld_val < self._cfg.execution_strength_min:
+            self._logger.debug({
+                "event": "breakout_rejected", "code": code, 
+                "reason": "low_execution_strength", 
+                "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
+            })
+            return None # 🌟 여기서 걸러져야 테스트가 통과됩니다.
+
         # 🚨 [관문 3] 스마트 머니 + 시총 가변 허들 + 체결강도 유연화 판정
         sm_ok, sm_metrics = self._is_smart_money_ok(code, current, pg_buy, trade_value, item.market_cap, cgld_val)
         

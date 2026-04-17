@@ -830,20 +830,33 @@ async def test_check_breakout_price_output_is_object(breakout_setup):
     """_check_breakout: 현재가 API 응답의 output이 객체일 때도 정상 처리."""
     strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
 
+    # 1. 시가총액 설정 (Standard 판정 기준인 0.3% 계산용)
+    item.market_cap = 500_000_000_000 # 5000억
+
+    # 2. Mock 객체 보강 (필수 필드 모두 추가)
     class MockPriceOutput:
-        stck_prpr = "10500"
-        acml_vol = "600000"
+        stck_prpr = "10500"          # 현재가
+        acml_vol = "800000"          # 거래량 (평균 10만 대비 충분히 높게)
+        stck_hgpr = "10510"          # 고가 (캔들 품질 0.7↑)
+        stck_lwpr = "10400"          # 저가
+        # 0.3% of 500B = 1.5B. 1.5B / 10500 = 약 142,857주 필요
+        pgtr_ntby_qty = "150000"     # 프로그램 매수 (시총 0.3% 초과)
+        acml_tr_pbmn = "10000000000" # 거래대금 100억 (프로그램 비중 15.7%로 10% 초과)
 
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": MockPriceOutput()}
     )
+    
+    # 체결강도 130.0% (Standard 수급 기준을 만족하므로 120%만 넘으면 통과)
     sqs.get_stock_conclusion.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "130.0"}]}
     )
 
     signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+    
     assert signal is not None
     assert signal.action == "BUY"
+    assert "정석" in signal.reason # Standard 판정 확인
 
 
 @pytest.mark.asyncio
@@ -901,8 +914,8 @@ async def test_check_breakout_early_market_volume_defense(breakout_setup):
         rt_cd="0", msg1="OK", data={"output": {
             "stck_prpr": "10500", 
             "acml_vol": "10000",
-            "pgtr_ntby_qty": "20000",   # 프로그램 매수 추가
-            "acml_tr_pbmn": "1000000000" # 거래대금 추가
+            "pgtr_ntby_qty": "100000",   # 🌟 2만 -> 10만주로 상향 (0.21% 충족)
+            "acml_tr_pbmn": "6000000000" # 🌟 10억 -> 60억으로 상향 (비중 정합성)
         }}
     )
 
@@ -910,7 +923,7 @@ async def test_check_breakout_early_market_volume_defense(breakout_setup):
     sqs.get_stock_conclusion.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "151.0"}]}
     )
-    
+
     signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
     assert signal is not None
     assert signal.action == "BUY"

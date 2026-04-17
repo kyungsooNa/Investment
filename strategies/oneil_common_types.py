@@ -83,7 +83,9 @@ class OneilBreakoutConfig(BaseStrategyConfig):
     
     # [추가] 시가총액 대비 프로그램 매수 기본 허들 (중소형주 기준)
     program_to_market_cap_pct: float = 0.3
-
+    
+    execution_strength_min: float = 120.0  # 🌟 추가: 체결강도 기본 하한선
+    
 @dataclass
 class OSBWatchlistItem:
     """감시 종목 정보 (Universe Service -> Strategy 전달 객체)."""

@@ -654,6 +654,7 @@ class TestOneilSqueezeBreakoutScan:
         mock_tm.get_market_close_time.return_value = datetime(2026, 3, 8, 15, 30, tzinfo=kst)
 
         config = OneilBreakoutConfig(
+            execution_strength_min=120.0,  # 🌟 기준 설정
             program_net_buy_min=0,
             program_to_trade_value_pct=0.0,
             program_to_market_cap_pct=0.0,
