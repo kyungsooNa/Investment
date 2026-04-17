@@ -244,7 +244,7 @@ class WebAppContext:
             broker=self.message_broker,
             dlq_manager=self.dlq_manager,
             logger=self.logger,
-            num_workers=1,
+            num_workers=1,  # after_market 태스크는 API 레이트 리밋 고려해 순차 실행
         )
         self.time_dispatcher = TimeDispatcher(
             broker=self.message_broker,

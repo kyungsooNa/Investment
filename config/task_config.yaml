@@ -1,8 +1,8 @@
 # config/task_config.yaml
 # 장 마감 후 백그라운드 태스크 설정
 #
-# after_market_delay_sec
-#   장 마감 감지 후 해당 태스크를 실제로 실행하기까지의 Padding 시간(초).
+# after_market_delay_min
+#   장 마감 감지 후 해당 태스크를 실제로 실행하기까지의 Padding 시간(분).
 #   여러 태스크가 동시에 API를 호출하지 않도록 실행 시점을 분산시킨다.
 #   키는 각 태스크의 task_name 프로퍼티 값과 일치해야 한다.
 #
@@ -11,7 +11,7 @@ always_on_tasks:
     poll_interval_sec: 1.0   # 이벤트 처리 후 이벤트 루프 양보 시간(초). Telegram 레이트 리밋 시 늘릴 것.
 
 after_market_tasks:
-  after_market_delay_sec:
+  after_market_delay_min:
     ranking_refresh: 5          # RankingTask — 장 마감 5분 후
     daily_price_collector: 10      # DailyPriceCollectorTask — 장 마감 10분 후
     ohlcv_update: 20             # OhlcvUpdateTask — 장 마감 20분 후

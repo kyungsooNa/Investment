@@ -17,15 +17,20 @@ from typing import Optional
 from scheduler.ticket_queue.ticket import Ticket
 
 
-_DLQ_LOG_PATH = os.path.join(
+_DEFAULT_DLQ_LOG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "..", "..", "..", "data", "dlq_log.jsonl",
 )
 
 
 class DlqManager:
-    def __init__(self, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        logger: Optional[logging.Logger] = None,
+        log_path: Optional[str] = None,
+    ) -> None:
         self._logger = logger or logging.getLogger(__name__)
+        self._log_path = log_path or _DEFAULT_DLQ_LOG_PATH
 
     async def handle_failed_ticket(self, ticket: Ticket, error: str) -> None:
         """영구 실패 티켓을 DLQ에 기록하고 크리티컬 로그를 남긴다."""
@@ -46,8 +51,8 @@ class DlqManager:
             "created_at": ticket.created_at,
         }
         try:
-            os.makedirs(os.path.dirname(_DLQ_LOG_PATH), exist_ok=True)
-            with open(_DLQ_LOG_PATH, "a", encoding="utf-8") as f:
+            os.makedirs(os.path.dirname(self._log_path), exist_ok=True)
+            with open(self._log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
             self._logger.error(f"[DLQ] 로그 파일 기록 실패: {e}")

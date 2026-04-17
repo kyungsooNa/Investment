@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 
 class _AfterMarketTasksConfig(BaseModel):
-    after_market_delay_sec: Dict[str, int] = Field(default_factory=dict)
+    after_market_delay_min: Dict[str, int] = Field(default_factory=dict)
 
 
 class _TaskConfigModel(BaseModel):
@@ -25,9 +25,8 @@ _CACHED: Dict[str, int] = {}
 
 
 def load_after_market_delays() -> Dict[str, int]:
-    """task_config.yaml의 after_market_delay_sec를 {task_name: seconds} 로 반환한다.
+    """task_config.yaml의 after_market_delay_min을 {task_name: seconds} 로 반환한다.
 
-    값은 분(minute) 단위로 저장되어 있으며 초(second)로 변환하여 반환한다.
     결과는 모듈 수준에서 캐시된다.
     """
     global _CACHED
@@ -37,7 +36,7 @@ def load_after_market_delays() -> Dict[str, int]:
         with open(_TASK_CONFIG_PATH, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         config = _TaskConfigModel(**raw)
-        _CACHED = {k: v * 60 for k, v in config.after_market_tasks.after_market_delay_sec.items()}
+        _CACHED = {k: v * 60 for k, v in config.after_market_tasks.after_market_delay_min.items()}
     except Exception:
         _CACHED = {}
     return _CACHED

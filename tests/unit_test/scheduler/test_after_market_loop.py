@@ -208,7 +208,7 @@ class TestLoadAfterMarketDelays:
         """분 단위 설정이 초 단위로 올바르게 변환되며 문자열도 int로 캐스팅된다."""
         yaml_content = """
         after_market_tasks:
-          after_market_delay_sec:
+          after_market_delay_min:
             task_a: 5
             task_b: "10"
         """
