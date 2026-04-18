@@ -323,6 +323,37 @@ async def test_scan_low_execution_strength(htf_scan_setup):
 
 
 @pytest.mark.asyncio
+async def test_scan_poor_candle_quality(htf_scan_setup):
+    """scan: 캔들 품질(relative_pos < 0.7) 미달 → 시그널 없음."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+
+    ohlcv = _make_ohlcv_pole_and_flag(
+        pole_days=25, pole_start_price=5000, pole_end_price=10000,
+        flag_days=18, flag_drawdown_pct=10.0,
+        pole_volume=500000, flag_volume=100000,
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+
+    # 현재가 10500으로 가격 돌파는 통과하지만 relative_pos = (10500-10000)/(12000-10000) = 0.25 < 0.7
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "10500",
+            "stck_hgpr": "12000",  # 고가
+            "stck_lwpr": "10000",  # 저가 → relative_pos = 0.25 (< 0.7 거부)
+            "acml_vol": "700000",
+            "pgtr_ntby_qty": "100000",
+            "acml_tr_pbmn": "6000000000",
+        }}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "151.0"}]}
+    )
+
+    signals = await strategy.scan()
+    assert len(signals) == 0
+
+
+@pytest.mark.asyncio
 async def test_scan_empty_watchlist(htf_scan_setup):
     """scan: 워치리스트가 비어있으면 빈 리스트."""
     strategy, _, universe, _, _ = htf_scan_setup
