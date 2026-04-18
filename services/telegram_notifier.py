@@ -326,6 +326,22 @@ class TelegramReporter:
         if current:
             await self._send_message(current)
 
+    async def send_strategy_log_report(self, report_html: str, report_date: str):
+        """전략 로그 분석 리포트를 텔레그램으로 전송합니다."""
+        title = f"📋 <b>전략 실행 요약 리포트 ({report_date})</b>\n"
+        await self._send_message(title)
+
+        current = ""
+        for line in report_html.split('\n'):
+            chunk = line + '\n'
+            if len((current + chunk).encode('utf-8')) > 4000:
+                await self._send_message(current)
+                current = chunk
+            else:
+                current += chunk
+        if current:
+            await self._send_message(current)
+
     async def send_minervini_report(self, items: List[Dict], report_date: str, limit: int = 30):
         """Minervini Stage2 종목 목록을 텔레그램으로 전송합니다.
 
