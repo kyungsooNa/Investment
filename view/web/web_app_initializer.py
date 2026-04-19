@@ -39,6 +39,8 @@ from task.background.after_market.premium_watchlist_generator_task import Premiu
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
 from task.background.after_market.log_cleanup_task import LogCleanupTask
 from task.background.after_market.newhigh_task import NewHighTask
+from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
+from services.strategy_log_report_service import StrategyLogReportService
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
@@ -97,6 +99,7 @@ class WebAppContext:
         self.cache_warmup_task: CacheWarmupTask = None
         self.log_cleanup_task: LogCleanupTask = None
         self.newhigh_task: NewHighTask = None
+        self.strategy_log_report_task: StrategyLogReportTask = None
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None
@@ -465,6 +468,16 @@ class WebAppContext:
             logger=self.logger,
         )
 
+        self.strategy_log_report_task = StrategyLogReportTask(
+            report_service=StrategyLogReportService(log_dir=os.path.join(self.logger.log_dir, "strategies")),
+            notification_service=self.notification_service,
+            telegram_reporter=getattr(self, 'telegram_reporter', None),
+            mcs=self._mcs,
+            market_clock=self.market_clock,
+            logger=self.logger,
+            worker_pool=self.worker_pool,
+        )
+
         # NotificationQueueTask 초기화
         self.notification_queue_task = NotificationQueueTask(
             notification_service=self.notification_service,
@@ -483,6 +496,7 @@ class WebAppContext:
             (self.cache_warmup_task,                 TaskPriority.LOW),
             (self.newhigh_task,                      TaskPriority.LOW),
             (self.log_cleanup_task,                  TaskPriority.MAINTENANCE),
+            (self.strategy_log_report_task,          TaskPriority.LOW),
         ]:
             if task:
                 self.time_dispatcher.register_task(
@@ -516,6 +530,8 @@ class WebAppContext:
             self.background_scheduler.register(self.newhigh_task)
         if self.notification_queue_task:
             self.background_scheduler.register(self.notification_queue_task)
+        if self.strategy_log_report_task:
+            self.background_scheduler.register(self.strategy_log_report_task)
 
         # ForegroundScheduler 초기화
         self.foreground_scheduler = ForegroundScheduler(

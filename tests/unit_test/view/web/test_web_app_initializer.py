@@ -37,6 +37,8 @@ def mock_deps():
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
         ("tn", patch("view.web.web_app_initializer.TelegramNotifier", autospec=True)),
         ("tr", patch("view.web.web_app_initializer.TelegramReporter", autospec=True)),
+        ("strategy_log_report_task", patch("view.web.web_app_initializer.StrategyLogReportTask", autospec=True)),
+        ("strategy_log_report_service", patch("view.web.web_app_initializer.StrategyLogReportService", autospec=True)),
     ]
 
     with contextlib.ExitStack() as stack:
