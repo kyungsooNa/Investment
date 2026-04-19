@@ -144,3 +144,46 @@ class VirtualTradeService:
     def save_daily_snapshot(self, strategy_returns: dict): return self._repo.save_daily_snapshot(strategy_returns)
     def _load_data(self): return self._repo._load_data()
     def _save_data(self, data: dict): return self._repo._save_data(data)
+
+    async def reconcile_with_broker(self, actual_holdings: list, logger=None) -> dict:
+        """실제 증권사 잔고와 로컬 DB를 비교하여 불일치를 처리한다.
+
+        - 로컬 HOLD인데 실제 잔고 없음 → log_sell_async(code, 0) 강제 종결 + 경고
+        - 실제 잔고 있는데 로컬 없음 → 경고 로그만 (전략명 불명확 → 자동 insert 불가)
+
+        Args:
+            actual_holdings: broker get_account_balance() resp.data["output1"] 리스트
+            logger: 선택적 logger
+
+        Returns:
+            {"force_closed": [codes], "unknown_in_broker": [codes]}
+        """
+        _log = logger or __import__('logging').getLogger(__name__)
+
+        actual_codes = {
+            str(h.get("pdno", "")).strip()
+            for h in actual_holdings
+            if str(h.get("hldg_qty", "0") or "0").strip() not in ("0", "", "00")
+        }
+
+        local_holds = self.get_holds()
+        local_codes = {str(h.get("code", "")).strip() for h in local_holds if h.get("code")}
+
+        force_closed = []
+        for hold in local_holds:
+            code = str(hold.get("code", "")).strip()
+            if code and code not in actual_codes:
+                _log.warning(
+                    f"[Reconciliation] 로컬 HOLD이나 실제 잔고 없음 → 강제 종결: "
+                    f"{code} (strategy={hold.get('strategy')})"
+                )
+                await self.log_sell_async(code, 0)
+                force_closed.append(code)
+
+        unknown_in_broker = sorted(actual_codes - local_codes)
+        if unknown_in_broker:
+            _log.warning(
+                f"[Reconciliation] 실제 보유 중이나 로컬 DB 없음 (수동 확인 필요): {unknown_in_broker}"
+            )
+
+        return {"force_closed": force_closed, "unknown_in_broker": unknown_in_broker}

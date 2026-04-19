@@ -1008,8 +1008,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             await scheduler._append_signal_db(record)
             mock_to_thread.assert_awaited_once_with(scheduler._store.append_signal, record)
 
-    async def test_run_strategy_sequential_execution_with_exception(self):
-        """순차 매수 실행 중 예외 발생 시 전파되고 후속 매수가 중단되는지 테스트."""
+    async def test_run_strategy_parallel_execution_with_exception(self):
+        """병렬 매수 실행 중 한 신호에서 예외 발생해도 나머지 신호는 모두 실행된다."""
         scheduler, vm, _, _, _ = self._make_scheduler()
 
         buy_signals = [
@@ -1027,11 +1027,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             return
 
         with patch.object(scheduler, '_execute_signal', side_effect=mock_execute) as mock_exec:
-            with self.assertRaises(ValueError):
-                await scheduler._run_strategy(config)
+            # return_exceptions=True 이므로 예외가 전파되지 않음
+            await scheduler._run_strategy(config)
 
-            # 순차 실행이므로 첫 번째 예외 발생 시 두 번째는 실행되지 않음
-            self.assertEqual(mock_exec.call_count, 1)
+            # 병렬 실행 — 첫 번째 예외와 무관하게 두 신호 모두 실행
+            self.assertEqual(mock_exec.call_count, 2)
 
     async def test_execute_signal_market_price_exception_handling(self):
         """_execute_signal에서 현재가 조회 중 예외 발생 시 0원으로 처리되는지 테스트."""
