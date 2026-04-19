@@ -248,15 +248,15 @@ async def test_stage_guard_disabled_passes_all():
 
 
 @pytest.mark.asyncio
-async def test_stage_guard_timeout_passes_through():
-    """Stage 조회 타임아웃 발생 시 해당 종목은 Stage 0으로 처리되어 통과한다."""
+async def test_stage_guard_timeout_blocks_stock():
+    """Stage 조회 타임아웃/오류 발생 시 해당 종목은 차단된다 (Fail-Close)."""
     import strategies.strategy_executor as se
     se = importlib.reload(se)
     StrategyExecutor = se.StrategyExecutor
 
     async def slow_stage(code):
         import asyncio
-        await asyncio.sleep(99)  # 절대 완료 안 됨
+        await asyncio.Event().wait()  # fast_sleep 패치 영향 없이 영원히 대기
         return (2, "ok")
 
     mock_minervini = AsyncMock()
@@ -279,4 +279,33 @@ async def test_stage_guard_timeout_passes_through():
 
     await executor.execute(["X"])
 
-    assert "X" in received_codes   # 타임아웃 → Stage 0 처리 → 통과
+    assert "X" not in received_codes   # 타임아웃 → -1(Fail-Close) → 차단
+
+
+@pytest.mark.asyncio
+async def test_stage_guard_exception_blocks_stock():
+    """Stage 조회 중 예외 발생 시 해당 종목은 차단된다 (Fail-Close)."""
+    import strategies.strategy_executor as se
+    se = importlib.reload(se)
+    StrategyExecutor = se.StrategyExecutor
+
+    mock_minervini = AsyncMock()
+    mock_minervini.get_stage_for_code.side_effect = RuntimeError("API 장애")
+
+    received_codes: list = []
+
+    class CapturingStrategy:
+        async def run(self, codes):
+            received_codes.extend(codes)
+            return {}
+
+    executor = StrategyExecutor(
+        strategy=CapturingStrategy(),
+        minervini_stage_service=mock_minervini,
+        stage_guard=True,
+        allowed_stages=(0, 2),
+    )
+
+    await executor.execute(["Y"])
+
+    assert "Y" not in received_codes   # API 예외 → -1(Fail-Close) → 차단

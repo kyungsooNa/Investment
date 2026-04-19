@@ -3,10 +3,11 @@
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
 from repositories.stock_code_repository import StockCodeRepository
 from typing import Any, List, Optional, TYPE_CHECKING
-from common.types import ResCommonResponse, Exchange
+from common.types import ResCommonResponse, Exchange, ErrorCode
 from core.cache.cache_wrapper import cache_wrap_client
 from core.retry_queue.api_request_queue import ApiRequestQueue
 from core.retry_queue.client_with_retry_queue import retry_queue_wrap_client
+from datetime import datetime, timedelta
 
 if TYPE_CHECKING:
     from core.logger import StreamingEventLogger
@@ -18,16 +19,28 @@ class BrokerAPIWrapper:
     증권사별 구현체를 내부적으로 호출하여, 일관된 방식의 인터페이스를 제공.
     """
 
+    # 서킷 브레이커 기본값
+    _CB_THRESHOLD = 5        # 연속 실패 N회 시 개방
+    _CB_TIMEOUT_MIN = 5      # 개방 후 M분 동안 차단
+
     def __init__(self, broker: str = "korea_investment", env=None, logger=None, market_clock=None,
                  cache_config=None, market_calendar_service=None,
                  streaming_logger: Optional["StreamingEventLogger"] = None,
-                 stock_code_repository=None):
+                 stock_code_repository=None,
+                 circuit_breaker_threshold: int = _CB_THRESHOLD,
+                 circuit_breaker_timeout_min: int = _CB_TIMEOUT_MIN):
         self._broker = broker
         self._logger = logger
         self._client = None
         self._stock_mapper = stock_code_repository if stock_code_repository is not None else StockCodeRepository(logger=logger)
         self.env = env
         self._retry_queue: ApiRequestQueue | None = None
+
+        # 서킷 브레이커 상태
+        self._cb_threshold = circuit_breaker_threshold
+        self._cb_timeout_min = circuit_breaker_timeout_min
+        self._cb_consecutive_failures: int = 0
+        self._cb_open_until: Optional[datetime] = None
 
         if broker == "korea_investment":
             if env is None:
@@ -218,11 +231,55 @@ class BrokerAPIWrapper:
         """계좌 잔고를 조회합니다 (KoreaInvestApiAccount 위임)."""
         return await self._client.get_account_balance(exchange=exchange)
 
+    # --- 서킷 브레이커 ---
+
+    def _cb_is_open(self) -> bool:
+        """서킷이 개방(차단) 상태인지 반환한다."""
+        if self._cb_open_until is None:
+            return False
+        if datetime.now() >= self._cb_open_until:
+            self._cb_open_until = None
+            self._cb_consecutive_failures = 0
+            if self._logger:
+                self._logger.info("[CircuitBreaker] 차단 해제 — 정상 운영 재개")
+            return False
+        return True
+
+    def _cb_record_failure(self):
+        self._cb_consecutive_failures += 1
+        if self._cb_consecutive_failures >= self._cb_threshold:
+            self._cb_open_until = datetime.now() + timedelta(minutes=self._cb_timeout_min)
+            if self._logger:
+                self._logger.error(
+                    f"[CircuitBreaker] 연속 {self._cb_consecutive_failures}회 실패 → "
+                    f"{self._cb_timeout_min}분 차단 (해제: {self._cb_open_until.strftime('%H:%M:%S')})"
+                )
+
+    def _cb_record_success(self):
+        if self._cb_consecutive_failures > 0:
+            self._cb_consecutive_failures = 0
+
     # --- KoreaInvestApiClient / Trading API delegation ---
     async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
                                 exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """범용 주식 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
-        return await self._client.place_stock_order(stock_code, order_price, order_qty, is_buy, exchange=exchange)
+        if self._cb_is_open():
+            remaining = (self._cb_open_until - datetime.now()).seconds // 60
+            if self._logger:
+                self._logger.warning(
+                    f"[CircuitBreaker] 주문 차단됨 ({remaining}분 남음): {stock_code}"
+                )
+            return ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value,
+                msg1=f"서킷 브레이커 개방 — {remaining}분 후 재시도",
+            )
+        resp = await self._client.place_stock_order(stock_code, order_price, order_qty, is_buy, exchange=exchange)
+        rt_cd = getattr(resp, 'rt_cd', None) if resp else None
+        if rt_cd == ErrorCode.SUCCESS.value:
+            self._cb_record_success()
+        else:
+            self._cb_record_failure()
+        return resp
 
     # --- KoreaInvestApiClient / WebSocket API delegation ---
     def is_websocket_receive_alive(self) -> bool:

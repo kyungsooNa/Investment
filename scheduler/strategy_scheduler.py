@@ -106,6 +106,7 @@ class StrategyScheduler:
         self._last_run: Dict[str, datetime] = {}
         self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
         self._force_exit_done: set = set()  # 당일 강제 청산 완료된 전략
+        self._reconciled_dates: set = set()  # 원장 대사 완료된 날짜 (YYYY-MM-DD)
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._subscriber_queues: List[asyncio.Queue] = []
@@ -196,6 +197,12 @@ class StrategyScheduler:
                 now = self._tm.get_current_kst_time()
                 close_time = self._tm.get_market_close_time()
                 minutes_to_close = (close_time - now).total_seconds() / 60
+
+                # 원장 대사: 당일 첫 장 진입 시 1회 실행
+                today_str = now.strftime("%Y-%m-%d")
+                if today_str not in self._reconciled_dates:
+                    self._reconciled_dates.add(today_str)
+                    await self._run_reconciliation()
                 in_force_exit_window = minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE
 
                 # 1. 실행이 필요한 전략들을 수집 (기아 현상 방지를 위해 나중에 우선순위 정렬)
@@ -316,17 +323,11 @@ class StrategyScheduler:
                 if sig.qty <= 1:
                     sig.qty = cfg.order_qty
 
-            # 순차 실행: DB 재조회 없이 메모리 카운터로 max_positions 초과 방지
-            current_count = current_holds_count
-            for sig in target_signals:
-                if current_count >= cfg.max_positions:
-                    self._logger.info(
-                        f"[Scheduler] {name}: 매수 중단 — 최대 포지션 도달 "
-                        f"({current_count}/{cfg.max_positions})"
-                    )
-                    break
-                await self._execute_signal(sig)
-                current_count += 1
+            # target_signals는 remaining 기준으로 이미 슬라이싱됨 → 병렬 실행 안전
+            await asyncio.gather(
+                *[self._execute_signal(sig) for sig in target_signals],
+                return_exceptions=True,
+            )
 
         self._pm.log_timer(f"{name}.run_strategy", t_run)
         self._logger.info(f"[Scheduler] {name} 실행 완료")
@@ -461,24 +462,60 @@ class StrategyScheduler:
                 continue
 
             stock_name = hold.get("name", code)
-            
-            # 보유 수량 조회 (VirtualTradeRepository가 qty를 반환해야 함)
-            # 만약 qty 정보가 없다면 설정된 주문 수량(cfg.order_qty)을 fallback으로 사용
+
             holding_qty = int(hold.get("qty") or 0)
             if holding_qty <= 0:
                 holding_qty = cfg.order_qty
 
-            # 시장가 매도를 위해 가격 0 설정
+            # 최우선매수호가(bidp1) 조회 → 지정가 청산, 실패 시 시장가 fallback
+            sell_price = 0
+            reason = "전략 종료 강제 청산 (시장가)"
+            try:
+                resp = await self._oes.broker_api_wrapper.get_asking_price(code)
+                if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                    best_bid = int(resp.data.get("bidp1", 0) or 0)
+                    if best_bid > 0:
+                        sell_price = best_bid
+                        reason = f"전략 종료 강제 청산 (지정가 {best_bid:,}원)"
+            except Exception as e:
+                self._logger.warning(f"[Scheduler] {code} 호가 조회 실패, 시장가로 청산: {e}")
+
             signal = TradeSignal(
                 strategy_name=name,
                 code=code,
                 name=stock_name,
                 action="SELL",
-                price=0,  # 시장가
+                price=sell_price,
                 qty=holding_qty,
-                reason="전략 종료 강제 청산 (시장가)"
+                reason=reason,
             )
             await self._execute_signal(signal)
+
+    # ── 원장 대사 ──
+
+    async def _run_reconciliation(self):
+        """실제 증권사 잔고와 로컬 DB를 비교하여 불일치를 처리한다 (장 시작 시 1회)."""
+        try:
+            resp = await self._oes.broker_api_wrapper.get_account_balance()
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                self._logger.warning("[Reconciliation] 잔고 조회 실패, 대사 생략")
+                return
+            holdings = (resp.data or {}).get("output1") or []
+            result = await self._virtual_trade_service.reconcile_with_broker(
+                holdings, logger=self._logger
+            )
+            if result["force_closed"] or result["unknown_in_broker"]:
+                msg = (
+                    f"강제종결: {result['force_closed']}, "
+                    f"미등록: {result['unknown_in_broker']}"
+                )
+                if self._notification_service:
+                    await self._notification_service.emit(
+                        NotificationCategory.SYSTEM, NotificationLevel.WARNING,
+                        "원장 대사 불일치", msg,
+                    )
+        except Exception as e:
+            self._logger.error(f"[Reconciliation] 대사 실패: {e}", exc_info=True)
 
     # ── 개별 전략 제어 ──
 

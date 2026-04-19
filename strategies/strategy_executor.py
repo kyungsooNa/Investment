@@ -30,10 +30,9 @@ class StrategyExecutor:
             stage_guard:             True 시 Stage Guard 활성화. 기본 False.
             allowed_stages:          통과 허용 Stage 번호 튜플.
                                      기본 (0, 2) — 미계산(0)·상승(2)만 허용.
-                                     Stage 0(미계산)을 포함하는 이유: 데이터 부족/오류로
-                                     Stage 판정 불가 종목을 차단하지 않고 전략 자체 기준에
-                                     맡기기 위한 의도적 설계. 엄격하게 Stage 2만 허용하려면
-                                     (2,)로 변경할 것.
+                                     Stage 0(미계산): 데이터 부족으로 판정 불가 → 전략 자체 기준에 위임.
+                                     API 오류/타임아웃(-1): Fail-Close로 강제 차단.
+                                     엄격하게 Stage 2만 허용하려면 (2,)로 변경할 것.
             guard_timeout:           종목별 Stage 조회 타임아웃(초). 기본 3.0.
             logger:                  Logger 인스턴스.
         """
@@ -55,7 +54,7 @@ class StrategyExecutor:
         """Stage Guard가 비활성이거나 서비스 미주입 시 그대로 반환.
 
         활성 시: 각 종목 Stage를 병렬 조회 후 allowed_stages 외 코드 제거.
-        타임아웃/오류 발생 종목은 Stage 0(미계산)으로 처리 → 통과.
+        타임아웃/오류 발생 종목은 -1(차단)으로 처리 → Fail-Close.
         """
         if not self._stage_guard or not self._minervini_svc:
             return stock_codes
@@ -72,7 +71,7 @@ class StrategyExecutor:
                 # get_stage_for_code 반환값: tuple(int, str) 또는 int 호환
                 return result[0] if isinstance(result, tuple) else int(result)
             except Exception:
-                return 0  # 오류/타임아웃 → UNKNOWN → 통과
+                return -1  # 오류/타임아웃 → Fail-Close (차단)
 
         stages = await asyncio.gather(*[_safe_stage(c) for c in stock_codes])
 
