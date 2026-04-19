@@ -134,3 +134,156 @@ async def test_start_all_handles_exception(scheduler):
 
     t1.start.assert_awaited_once()
     t2.start.assert_awaited_once()
+
+
+def test_unregister_nonexistent(scheduler):
+    """존재하지 않는 태스크 제거는 아무 효과도 없다."""
+    scheduler.unregister("ghost")  # 예외 없이 통과해야 함
+    assert scheduler.get_task("ghost") is None
+
+
+@pytest.mark.asyncio
+async def test_start_all_with_worker_pool_and_time_dispatcher():
+    """worker_pool / time_dispatcher 주입 시 start_all에서 함께 시작된다."""
+    mock_worker_pool = MagicMock()
+    mock_worker_pool.start = AsyncMock()
+    mock_time_dispatcher = MagicMock()
+    mock_time_dispatcher.run = AsyncMock(return_value=None)
+
+    scheduler = BackgroundScheduler(
+        logger=MagicMock(),
+        worker_pool=mock_worker_pool,
+        time_dispatcher=mock_time_dispatcher,
+    )
+    task = _make_mock_task("t1", TaskState.IDLE)
+    scheduler.register(task)
+
+    await scheduler.start_all()
+
+    mock_worker_pool.start.assert_awaited_once()
+    assert len(scheduler._infra_tasks) == 1
+    task.start.assert_awaited_once()
+
+    # 정리
+    scheduler._infra_tasks[0].cancel()
+    import asyncio
+    await asyncio.gather(*scheduler._infra_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_with_worker_pool_and_time_dispatcher():
+    """shutdown 시 time_dispatcher 중지 → 태스크 종료 → worker_pool.shutdown 순서."""
+    mock_worker_pool = MagicMock()
+    mock_worker_pool.start = AsyncMock()
+    mock_worker_pool.shutdown = AsyncMock()
+    mock_time_dispatcher = MagicMock()
+    mock_time_dispatcher.run = AsyncMock(return_value=None)
+    mock_time_dispatcher.stop = MagicMock()
+
+    scheduler = BackgroundScheduler(
+        logger=MagicMock(),
+        worker_pool=mock_worker_pool,
+        time_dispatcher=mock_time_dispatcher,
+    )
+    task = _make_mock_task("t1", TaskState.RUNNING)
+    scheduler.register(task)
+
+    await scheduler.start_all()
+    await scheduler.shutdown()
+
+    mock_time_dispatcher.stop.assert_called_once()
+    task.stop.assert_awaited_once()
+    mock_worker_pool.shutdown.assert_awaited_once()
+    assert scheduler._infra_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_suspend_all_with_worker_pool():
+    """suspend_all 시 worker_pool.suspend()도 호출된다."""
+    mock_worker_pool = MagicMock()
+    mock_worker_pool.suspend = MagicMock()
+
+    scheduler = BackgroundScheduler(logger=MagicMock(), worker_pool=mock_worker_pool)
+    task = _make_mock_task("t1", TaskState.RUNNING)
+    scheduler.register(task)
+
+    await scheduler.suspend_all()
+
+    mock_worker_pool.suspend.assert_called_once()
+    task.suspend.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resume_all_with_worker_pool():
+    """resume_all 시 worker_pool.resume()도 호출된다."""
+    mock_worker_pool = MagicMock()
+    mock_worker_pool.resume = MagicMock()
+
+    scheduler = BackgroundScheduler(logger=MagicMock(), worker_pool=mock_worker_pool)
+    task = _make_mock_task("t1", TaskState.SUSPENDED)
+    scheduler.register(task)
+
+    await scheduler.resume_all()
+
+    mock_worker_pool.resume.assert_called_once()
+    task.resume.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_all_resume_exception(scheduler):
+    """SUSPENDED 태스크의 resume 중 예외가 발생해도 다른 태스크는 계속 시작된다."""
+    t1 = _make_mock_task("fail_resume", TaskState.SUSPENDED)
+    t1.resume = AsyncMock(side_effect=Exception("resume boom"))
+    t2 = _make_mock_task("ok_task", TaskState.IDLE)
+    scheduler.register(t1)
+    scheduler.register(t2)
+
+    await scheduler.start_all()
+
+    t1.resume.assert_awaited_once()
+    t2.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_handles_exception(scheduler):
+    """stop 중 예외가 발생해도 다른 태스크는 계속 종료된다."""
+    t1 = _make_mock_task("fail_stop", TaskState.RUNNING)
+    t1.stop = AsyncMock(side_effect=Exception("stop boom"))
+    t2 = _make_mock_task("ok_stop", TaskState.RUNNING)
+    scheduler.register(t1)
+    scheduler.register(t2)
+
+    await scheduler.shutdown()
+
+    t1.stop.assert_awaited_once()
+    t2.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_suspend_all_handles_exception(scheduler):
+    """suspend 중 예외가 발생해도 다른 태스크는 계속 처리된다."""
+    t1 = _make_mock_task("fail_suspend", TaskState.RUNNING)
+    t1.suspend = AsyncMock(side_effect=Exception("suspend boom"))
+    t2 = _make_mock_task("ok_suspend", TaskState.RUNNING)
+    scheduler.register(t1)
+    scheduler.register(t2)
+
+    await scheduler.suspend_all()
+
+    t1.suspend.assert_awaited_once()
+    t2.suspend.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resume_all_handles_exception(scheduler):
+    """resume 중 예외가 발생해도 다른 태스크는 계속 재개된다."""
+    t1 = _make_mock_task("fail_resume", TaskState.SUSPENDED)
+    t1.resume = AsyncMock(side_effect=Exception("resume boom"))
+    t2 = _make_mock_task("ok_resume", TaskState.SUSPENDED)
+    scheduler.register(t1)
+    scheduler.register(t2)
+
+    await scheduler.resume_all()
+
+    t1.resume.assert_awaited_once()
+    t2.resume.assert_awaited_once()
