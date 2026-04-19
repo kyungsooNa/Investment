@@ -40,7 +40,7 @@ class StrategyLogReportTask(AfterMarketTask):
 
     @property
     def task_name(self) -> str:
-        return "strategy_log_report_task"
+        return "strategy_log_report"
 
     @property
     def _scheduler_label(self) -> str:
