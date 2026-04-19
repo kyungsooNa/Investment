@@ -70,6 +70,9 @@ class StrategyLogReportTask(AfterMarketTask):
 
         self._logger.info("전략 로그 리포트 발송 완료")
 
+    def get_progress(self) -> dict:
+        return {"running": self._state.value == "RUNNING"}
+
     async def force_run(self) -> None:
         today = datetime.now().strftime('%Y%m%d')
         self._logger.info(f"StrategyLogReportTask 강제 실행: {today}")
