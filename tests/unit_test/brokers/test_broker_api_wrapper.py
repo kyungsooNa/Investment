@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 import logging
+from datetime import datetime, timedelta
 
 # 테스트 대상 클래스 import
 import brokers.broker_api_wrapper as wrapper_module
@@ -638,3 +639,217 @@ async def test_additional_delegations(broker_wrapper_instance):
     result = await wrapper.get_financial_ratio("005930")
     mock_client.get_financial_ratio.assert_called_once_with("005930")
     assert result == {"financial": "ratio"}
+
+
+# --- stop() 테스트 ---
+
+@pytest.mark.asyncio
+async def test_stop_calls_retry_queue_stop(mock_env, mock_logger, mock_market_clock):
+    """stop() 호출 시 _retry_queue.stop()이 호출되는지 테스트합니다."""
+    with patch(f"{wrapper_module.__name__}.StockCodeRepository"), \
+         patch(f"{wrapper_module.__name__}.KoreaInvestApiClient"), \
+         patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c), \
+         patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c):
+        wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, market_clock=mock_market_clock)
+        mock_retry_queue = AsyncMock()
+        wrapper._retry_queue = mock_retry_queue
+
+        await wrapper.stop()
+
+        mock_retry_queue.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stop_no_retry_queue(mock_env, mock_logger, mock_market_clock):
+    """_retry_queue가 None이면 stop()이 예외 없이 완료되는지 테스트합니다."""
+    with patch(f"{wrapper_module.__name__}.StockCodeRepository"), \
+         patch(f"{wrapper_module.__name__}.KoreaInvestApiClient"), \
+         patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c), \
+         patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c):
+        wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, market_clock=mock_market_clock)
+        wrapper._retry_queue = None
+
+        await wrapper.stop()  # 예외 없이 완료되어야 함
+
+
+# --- 투자자/프로그램 매매동향 위임 테스트 ---
+
+@pytest.mark.asyncio
+async def test_investor_and_program_trade_delegations(broker_wrapper_instance):
+    """투자자 매매동향 및 프로그램매매 위임 메서드들을 테스트합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+
+    mock_client.get_investor_trade_by_stock_daily.return_value = {"trade": "daily"}
+    result = await wrapper.get_investor_trade_by_stock_daily("005930", "20250101")
+    mock_client.get_investor_trade_by_stock_daily.assert_called_once_with("005930", "20250101")
+    assert result == {"trade": "daily"}
+
+    mock_client.get_investor_trade_by_stock_daily_multi.return_value = [{"trade": "multi"}]
+    result = await wrapper.get_investor_trade_by_stock_daily_multi("005930", "20250101", days=5)
+    mock_client.get_investor_trade_by_stock_daily_multi.assert_called_once_with("005930", "20250101", 5)
+    assert result == [{"trade": "multi"}]
+
+    mock_client.get_program_trade_by_stock_daily.return_value = {"program": "trade"}
+    result = await wrapper.get_program_trade_by_stock_daily("005930", "20250101")
+    mock_client.get_program_trade_by_stock_daily.assert_called_once_with("005930", "20250101")
+    assert result == {"program": "trade"}
+
+
+@pytest.mark.asyncio
+async def test_check_holiday_delegation(broker_wrapper_instance):
+    """check_holiday 위임을 테스트합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+
+    mock_client.check_holiday.return_value = {"opnd_yn": "N"}
+    result = await wrapper.check_holiday("20250101")
+    mock_client.check_holiday.assert_called_once_with("20250101")
+    assert result == {"opnd_yn": "N"}
+
+
+# --- WebSocket 위임 테스트 ---
+
+def test_is_websocket_receive_alive_delegation(broker_wrapper_instance):
+    """is_websocket_receive_alive() 위임을 테스트합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+
+    mock_client.is_websocket_receive_alive = MagicMock(return_value=True)
+    result = wrapper.is_websocket_receive_alive()
+    mock_client.is_websocket_receive_alive.assert_called_once()
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_unified_price_delegation(broker_wrapper_instance):
+    """unsubscribe_unified_price() 위임을 테스트합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+
+    mock_client.unsubscribe_unified_price.return_value = True
+    result = await wrapper.unsubscribe_unified_price("005930")
+    mock_client.unsubscribe_unified_price.assert_awaited_once_with("005930")
+    assert result is True
+
+
+# --- 서킷 브레이커 테스트 ---
+
+def test_cb_is_open_when_none(broker_wrapper_instance):
+    """_cb_open_until이 None이면 False를 반환하는지 테스트합니다."""
+    wrapper, _, _, _ = broker_wrapper_instance
+    wrapper._cb_open_until = None
+
+    assert wrapper._cb_is_open() is False
+
+
+def test_cb_is_open_when_not_expired(broker_wrapper_instance):
+    """타임아웃이 아직 안 지났으면 True를 반환하는지 테스트합니다."""
+    wrapper, _, _, _ = broker_wrapper_instance
+    wrapper._cb_open_until = datetime.now() + timedelta(minutes=10)
+
+    assert wrapper._cb_is_open() is True
+
+
+def test_cb_is_open_when_expired_resets(broker_wrapper_instance):
+    """타임아웃이 지나면 서킷이 자동 리셋되고 False를 반환하는지 테스트합니다."""
+    wrapper, _, _, mock_logger = broker_wrapper_instance
+    wrapper._cb_open_until = datetime.now() - timedelta(seconds=1)
+    wrapper._cb_consecutive_failures = 3
+
+    result = wrapper._cb_is_open()
+
+    assert result is False
+    assert wrapper._cb_open_until is None
+    assert wrapper._cb_consecutive_failures == 0
+    mock_logger.info.assert_called_with("[CircuitBreaker] 차단 해제 — 정상 운영 재개")
+
+
+def test_cb_record_failure_below_threshold(broker_wrapper_instance):
+    """임계값 미만 실패 시 서킷이 열리지 않는지 테스트합니다."""
+    wrapper, _, _, _ = broker_wrapper_instance
+    wrapper._cb_consecutive_failures = 0
+    wrapper._cb_threshold = 5
+
+    wrapper._cb_record_failure()
+    wrapper._cb_record_failure()
+
+    assert wrapper._cb_consecutive_failures == 2
+    assert wrapper._cb_open_until is None
+
+
+def test_cb_record_failure_reaches_threshold(broker_wrapper_instance):
+    """임계값 도달 시 서킷이 열리고 에러 로그가 찍히는지 테스트합니다."""
+    wrapper, _, _, mock_logger = broker_wrapper_instance
+    wrapper._cb_consecutive_failures = 4
+    wrapper._cb_threshold = 5
+    wrapper._cb_timeout_min = 5
+
+    wrapper._cb_record_failure()
+
+    assert wrapper._cb_consecutive_failures == 5
+    assert wrapper._cb_open_until is not None
+    mock_logger.error.assert_called_once()
+
+
+def test_cb_record_success_resets_failures(broker_wrapper_instance):
+    """성공 기록 시 연속 실패 카운트가 0으로 리셋되는지 테스트합니다."""
+    wrapper, _, _, _ = broker_wrapper_instance
+    wrapper._cb_consecutive_failures = 3
+
+    wrapper._cb_record_success()
+
+    assert wrapper._cb_consecutive_failures == 0
+
+
+def test_cb_record_success_when_no_failures(broker_wrapper_instance):
+    """실패가 없는 상태에서 성공 기록 시 카운트 변화 없음을 테스트합니다."""
+    wrapper, _, _, _ = broker_wrapper_instance
+    wrapper._cb_consecutive_failures = 0
+
+    wrapper._cb_record_success()
+
+    assert wrapper._cb_consecutive_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_place_stock_order_circuit_open_blocks_order(broker_wrapper_instance):
+    """서킷 브레이커 개방 시 주문이 차단되고 API가 호출되지 않는지 테스트합니다."""
+    wrapper, mock_client, _, mock_logger = broker_wrapper_instance
+    wrapper._cb_open_until = datetime.now() + timedelta(minutes=5)
+    wrapper._cb_consecutive_failures = 5
+
+    from common.types import ErrorCode
+    result = await wrapper.place_stock_order("005930", 70000, 10, is_buy=True)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    mock_client.place_stock_order.assert_not_called()
+    mock_logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_place_stock_order_success_resets_cb(broker_wrapper_instance):
+    """주문 성공 시 서킷 브레이커 실패 카운트가 리셋되는지 테스트합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+    wrapper._cb_open_until = None
+    wrapper._cb_consecutive_failures = 3
+
+    from common.types import ErrorCode, ResCommonResponse, Exchange
+    mock_client.place_stock_order.return_value = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공")
+
+    result = await wrapper.place_stock_order("005930", 70000, 10, is_buy=True)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert wrapper._cb_consecutive_failures == 0
+    mock_client.place_stock_order.assert_awaited_once_with("005930", 70000, 10, True, exchange=Exchange.KRX)
+
+
+@pytest.mark.asyncio
+async def test_place_stock_order_failure_increments_cb(broker_wrapper_instance):
+    """주문 실패 시 서킷 브레이커 실패 카운트가 증가하는지 테스트합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+    wrapper._cb_open_until = None
+    wrapper._cb_consecutive_failures = 0
+
+    from common.types import ErrorCode, ResCommonResponse, Exchange
+    mock_client.place_stock_order.return_value = ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="실패")
+
+    await wrapper.place_stock_order("005930", 70000, 10, is_buy=True)
+
+    assert wrapper._cb_consecutive_failures == 1

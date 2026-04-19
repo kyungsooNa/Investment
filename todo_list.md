@@ -9,7 +9,6 @@
 
 - [ ] **[Streaming]** 구독중인데 data를 못받는 종목들이 있음. 이 종목들은 현재가조회가 실패함.
 - [ ] **[candle_chart]** 신고가/신저가 표기가 3개월/6개월/1년 버튼을 눌러야 변경됨.
-- [ ] **[StrategyLogReportTask]** 장 마감 3분 이후 ticket 생성 되도록 수정.
 - [ ] **[TimeDispatcher]** ticket 생성 로직에 1일1회 ticket 생성만 되도록 수정. (ticket 생성 여부를 sqlite등의 db로 관리하여 system 종료시에도 승계되도록.)
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)

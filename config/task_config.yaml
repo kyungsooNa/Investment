@@ -12,6 +12,7 @@ always_on_tasks:
 
 after_market_tasks:
   after_market_delay_min:
+    strategy_log_report_task: 3          # strategy_log_report_task — 장 마감 3분 후
     ranking_refresh: 5          # RankingTask — 장 마감 5분 후
     daily_price_collector: 10      # DailyPriceCollectorTask — 장 마감 10분 후
     ohlcv_update: 20             # OhlcvUpdateTask — 장 마감 20분 후
