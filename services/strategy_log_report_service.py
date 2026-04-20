@@ -110,10 +110,13 @@ class StrategyLogReportService:
                 "당일 전략 로그가 없습니다."
             )
 
-        sections: List[str] = []
-        for idx, (name, files) in enumerate(sorted(strategy_files.items()), 1):
+        active_sections: List[str] = []
+        inactive_names: List[str] = []
+        idx = 0
+
+        for name, files in sorted(strategy_files.items()):
             bought: Dict[str, dict] = {}    # code → {name, price, reason}
-            rejected: Dict[str, dict] = {}  # code → {name, reason, count}
+            rejected: Dict[str, dict] = {}  # code → {name, reason}
 
             for fpath in sorted(files):
                 for _level, data in self._iter_events(fpath, date_prefix):
@@ -132,17 +135,17 @@ class StrategyLogReportService:
 
                     elif event in self.REJECTED_EVENTS or event.endswith('_rejected'):
                         if code not in bought:
-                            prev = rejected.get(code, {
-                                'name': data.get('name', code),
-                                'reason': '',
-                                'count': 0,
-                            })
+                            prev = rejected.get(code, {'name': data.get('name', code), 'reason': ''})
                             rejected[code] = {
                                 'name': data.get('name', code),
                                 'reason': data.get('reason', prev['reason']),
-                                'count': prev['count'] + 1,
                             }
 
+            if not bought and not rejected:
+                inactive_names.append(name)
+                continue
+
+            idx += 1
             lines = [f"<b>{idx}. {name}</b>"]
 
             if bought:
@@ -156,14 +159,26 @@ class StrategyLogReportService:
             if rejected:
                 lines.append(f"\n❌ 매수 실패 ({len(rejected)}건)")
                 for code, info in rejected.items():
-                    count_str = f" ({info['count']}회 탈락)" if info['count'] > 1 else ""
-                    lines.append(f"• {info['name']}({code}): {info['reason']}{count_str}")
+                    lines.append(f"• {info['name']}({code}): {info['reason']}")
             else:
                 lines.append("\n❌ 매수 실패: 없음")
 
-            sections.append("\n".join(lines))
+            active_sections.append("\n".join(lines))
 
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         header = f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>"
         footer = f"\n\n<i>생성: {now_str}</i>"
-        return header + "\n\n" + "\n\n".join(sections) + footer
+
+        if not active_sections:
+            return header + "\n\n당일 활동한 전략이 없습니다." + footer
+
+        body = "\n\n".join(active_sections)
+
+        if inactive_names:
+            inactive_summary = f"\n\n💤 <i>활동 없음: {', '.join(inactive_names[:3])}"
+            if len(inactive_names) > 3:
+                inactive_summary += f" 외 {len(inactive_names) - 3}개"
+            inactive_summary += "</i>"
+            body += inactive_summary
+
+        return header + "\n\n" + body + footer
