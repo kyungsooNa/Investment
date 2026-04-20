@@ -73,7 +73,8 @@ class TelegramNotifier:
 
         # 비동기 HTTP 요청으로 Telegram API 호출
         try:
-            async with aiohttp.ClientSession() as session:
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(api_url, json=payload) as response:
                     if response.status != 200:
                         response_text = await response.text()
@@ -102,7 +103,8 @@ class TelegramReporter:
             "disable_web_page_preview": True,
         }
         try:
-            async with aiohttp.ClientSession() as session:
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(self.api_url, json=payload) as response:
                     if response.status != 200:
                         response_text = await response.text()
