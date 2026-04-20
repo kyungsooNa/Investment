@@ -502,16 +502,9 @@ async def test_refresh_basic_ranking_no_trading_service(bg_service):
 
 @pytest.mark.asyncio
 async def test_after_market_scheduler_triggers_refresh(mock_deps):
-    """장마감 상태에서 스케줄러가 갱신을 트리거하는지 검증."""
-    import asyncio
-    from datetime import datetime
+    """장마감 콜백이 호출되면 갱신이 트리거되는지 검증."""
     broker, mapper, env, logger, market_clock, market_calendar_service = mock_deps
-    market_calendar_service.is_market_open_now.return_value = False  # 장마감
-    market_calendar_service.is_business_day.return_value = True
     market_calendar_service.get_latest_trading_date = AsyncMock(return_value="20260316")
-    market_clock.get_sleep_seconds_until_market_close.return_value = 0.0
-    market_clock.get_current_kst_time.return_value = datetime(2026, 3, 16, 16, 0, 0)
-    market_clock.get_current_kst_date_str.return_value = "20260316"
 
     market_data_service = MagicMock()
     market_data_service.get_top_rise_fall_stocks = AsyncMock(
@@ -529,23 +522,11 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
         env=env, logger=logger, market_clock=market_clock,
         market_data_service=market_data_service,
     )
-    bg._mcs = market_calendar_service  # Ensure mcs is set for this test
+    bg._mcs = market_calendar_service
 
-    # asyncio.sleep를 1회만 실행 후 CancelledError로 종료
-    call_count = 0
-    async def mock_sleep(sec):
-        nonlocal call_count
-        call_count += 1
-        if call_count > 1:
-            raise asyncio.CancelledError()
+    # _on_market_closed 직접 호출로 갱신 트리거 검증 (APScheduler 루프 우회)
+    await bg._on_market_closed("20260316")
 
-    with patch("asyncio.sleep", side_effect=mock_sleep):
-        try:
-            await bg.start_after_market_scheduler()
-        except asyncio.CancelledError:
-            pass
-
-    # 기본 랭킹과 투자자 랭킹 모두 갱신 시도됨
     assert bg._basic_ranking_updated_at is not None
 
 
@@ -782,25 +763,28 @@ async def test_check_and_trigger_refresh_no_loop(bg_service):
 
 @pytest.mark.asyncio
 async def test_start_after_market_scheduler_exception_handling(bg_service, mock_deps):
-    """스케줄러 루프 내 일반 예외 발생 시 처리 테스트."""
-    import asyncio
+    """콜백 내 예외 발생 시 AfterMarketLoop가 오류를 로깅하고 계속 동작하는지 테스트."""
+    from scheduler.after_market_loop import AfterMarketLoop
     _, _, _, logger, market_clock, market_calendar_service = mock_deps
-    market_calendar_service.is_market_open_now.return_value = False
-    market_clock.get_sleep_seconds_until_market_close.return_value = 0.0
+    market_calendar_service.get_latest_trading_date = AsyncMock(return_value="20250101")
     market_clock.get_current_kst_date_str.return_value = "20250101"
 
     # refresh_basic_ranking에서 예외 발생
     bg_service.refresh_basic_ranking = AsyncMock(side_effect=Exception("Scheduler Error"))
 
-    # sleep을 모킹하여 루프를 한 번 돌고 종료(CancelledError)하도록 설정
-    with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
-         try:
-             await bg_service.start_after_market_scheduler()
-         except asyncio.CancelledError:
-             pass
+    loop = AfterMarketLoop(
+        mcs=market_calendar_service,
+        market_clock=market_clock,
+        logger=logger,
+        on_market_closed=bg_service._on_market_closed,
+        label="RankingTask",
+    )
+
+    # _run_job 직접 호출 — 내부에서 예외를 잡아 로깅 후 정상 반환
+    await loop._run_job()
 
     logger.error.assert_called()
-    assert "스케줄러 오류" in logger.error.call_args[0][0]
+    assert "콜백 오류" in logger.error.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -1162,23 +1146,24 @@ async def test_fetch_with_retry_all_fail(bg_service, mock_deps):
 
 @pytest.mark.asyncio
 async def test_start_after_market_scheduler_waits_efficiently(bg_service, mock_deps):
-    """장 중일 때 효율적인 대기 시간(get_sleep_seconds_until_market_close)을 사용하는지 검증."""
-    import asyncio
+    """장 중 시간대(15:41 이전)에는 catch-up을 트리거하지 않는지 검증."""
+    from scheduler.after_market_loop import AfterMarketLoop
     _, _, _, logger, market_clock, market_calendar_service = mock_deps
 
-    # 1. Market is Open
-    market_calendar_service.is_market_open_now.return_value = True
-    # 2. MarketClock suggests waiting 1000 seconds
-    market_clock.get_sleep_seconds_until_market_close.return_value = 1000.0
+    # 장 중 시간대 (09:00 — catch-up 트리거 조건 미충족)
+    market_clock.get_current_kst_time.return_value = MagicMock(hour=9, minute=0)
 
-    # 무한 루프를 막기 위해 sleep 호출 즉시 강제 예외 발생
-    with patch("asyncio.sleep", side_effect=asyncio.CancelledError) as patched_sleep:
-        try:
-            await bg_service.start_after_market_scheduler()
-        except asyncio.CancelledError:
-            pass
+    loop = AfterMarketLoop(
+        mcs=market_calendar_service,
+        market_clock=market_clock,
+        logger=logger,
+        on_market_closed=bg_service._on_market_closed,
+        label="Test",
+    )
 
-    assert patched_sleep.call_count >= 1
+    with patch("asyncio.create_task") as mock_create:
+        await loop._catch_up_if_needed()
+        mock_create.assert_not_called()  # 장 중이므로 즉시 실행 없어야 함
 
 
 @pytest.mark.asyncio

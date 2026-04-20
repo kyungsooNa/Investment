@@ -29,3 +29,4 @@ finance-datareader>=0.9.110
 aiosqlite>=0.19.0
 orjson
 pytest-timeout>=2.1.0
+apscheduler>=3.10.0
