@@ -92,7 +92,16 @@ async def run_after_market_loop(
                 await mcs.get_latest_trading_date() if mcs else None
             )
             if latest_trading_date:
-                await on_market_closed(latest_trading_date)
+                today_str = (
+                    market_clock.get_current_kst_date_str() if market_clock else None
+                )
+                if today_str and latest_trading_date != today_str:
+                    # 오늘이 휴장일(주말·공휴일): 최신 거래일 != 오늘이므로 콜백 스킵
+                    _log.info(
+                        f"[{label}] 오늘({today_str})은 휴장일 — 콜백 스킵 (latest={latest_trading_date})"
+                    )
+                else:
+                    await on_market_closed(latest_trading_date)
 
             # ── 3. 스마트 대기: 다음 장 마감까지 ──
             try:
