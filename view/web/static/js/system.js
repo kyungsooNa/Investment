@@ -198,38 +198,46 @@ const PRIORITY_LABEL = {
     200: 'MAINTANCE',
 };
 
+// 티켓 상태 3단계:
+//   "before"   — 장중, 아직 오늘 티켓 미발행
+//   "issued"   — 발행됨, delay_sec 대기 중
+//   "consumed" — delay_sec 경과, 태스크 실행됨
+//   "pending"  — 장 마감 후지만 아직 미발행 (폴링 대기)
+function _ticketState(issued, marketIsOpen, dispatchedAt, delaySec) {
+    if (!issued) return marketIsOpen ? 'before' : 'pending';
+    const now = Date.now() / 1000;
+    return (dispatchedAt && (dispatchedAt + delaySec) > now) ? 'issued' : 'consumed';
+}
+
 function renderTicketStatusSuffix(taskName) {
     if (!_timeDispatcherInfo) return '';
     const tasks = _timeDispatcherInfo.registered_tasks || [];
     const taskInfo = tasks.find(t => t.name === taskName);
     if (!taskInfo) return '';
 
-    const issued = _timeDispatcherInfo.ticket_issued_today;
-    const dispatchedAt = _timeDispatcherInfo.last_dispatched_at;
-    const lastDate = _timeDispatcherInfo.last_dispatched_date;
+    const { ticket_issued_today, last_dispatched_at, last_dispatched_date, market_is_open } = _timeDispatcherInfo;
+    const state = _ticketState(ticket_issued_today, market_is_open, last_dispatched_at, taskInfo.delay_sec);
 
     let html;
-    if (issued) {
-        html = `<span style="background:#E3F2FD;color:#1565C0;border:1px solid #90CAF9;padding:1px 7px;border-radius:8px;font-size:0.8em;font-weight:bold;">티켓 발행됨</span>`;
-        if (lastDate) {
-            html += ` <span style="font-size:0.8em;color:#888;">${lastDate}</span>`;
-        }
-        if (dispatchedAt && taskInfo.delay_sec > 0) {
-            const execAt = dispatchedAt + taskInfo.delay_sec;
-            const remaining = execAt - Date.now() / 1000;
-            if (remaining > 60) {
-                html += ` <span style="font-size:0.8em;color:orange;">${Math.round(remaining / 60)}분 후 실행 예정</span>`;
-            } else if (remaining > 0) {
-                html += ` <span style="font-size:0.8em;color:orange;">곧 실행 예정</span>`;
-            } else {
-                html += ` <span style="font-size:0.8em;color:#888;">${Math.round(-remaining / 60)}분 전 실행됨</span>`;
-            }
-        }
-    } else {
-        html = `<span style="background:#FFF3E0;color:#E65100;border:1px solid #FFCC80;padding:1px 7px;border-radius:8px;font-size:0.8em;font-weight:bold;">티켓 미발행</span>`;
-        html += ` <span style="font-size:0.8em;color:#888;">장 마감 후 자동 발행 예정</span>`;
-        if (lastDate) {
-            html += ` <span style="font-size:0.8em;color:#aaa;">(마지막: ${lastDate})</span>`;
+    if (state === 'before') {
+        html = `<span style="background:#E3F2FD;color:#1565C0;border:1px solid #90CAF9;padding:1px 7px;border-radius:8px;font-size:0.8em;">티켓 발행 전</span>`;
+        html += ` <span style="font-size:0.8em;color:#888;">장 마감 후 발행 예정</span>`;
+    } else if (state === 'pending') {
+        html = `<span style="background:#FFF3E0;color:#E65100;border:1px solid #FFCC80;padding:1px 7px;border-radius:8px;font-size:0.8em;">티켓 발행 전</span>`;
+        html += ` <span style="font-size:0.8em;color:#888;">장 마감 감지 대기 중</span>`;
+        if (last_dispatched_date) html += ` <span style="font-size:0.8em;color:#aaa;">(마지막: ${last_dispatched_date})</span>`;
+    } else if (state === 'issued') {
+        const remaining = (last_dispatched_at + taskInfo.delay_sec) - Date.now() / 1000;
+        const mins = remaining > 60 ? `${Math.round(remaining / 60)}분 후 실행 예정` : '곧 실행 예정';
+        html = `<span style="background:#E8F5E9;color:#2E7D32;border:1px solid #A5D6A7;padding:1px 7px;border-radius:8px;font-size:0.8em;font-weight:bold;">티켓 발행됨</span>`;
+        html += ` <span style="font-size:0.8em;color:orange;">${mins}</span>`;
+    } else { // consumed
+        html = `<span style="background:var(--success-color,#4CAF50);color:#fff;padding:1px 7px;border-radius:8px;font-size:0.8em;font-weight:bold;">티켓 사용됨</span>`;
+        if (last_dispatched_at && taskInfo.delay_sec > 0) {
+            const elapsed = Math.round((Date.now() / 1000 - last_dispatched_at - taskInfo.delay_sec) / 60);
+            html += ` <span style="font-size:0.8em;color:#888;">${elapsed}분 전 실행됨</span>`;
+        } else if (last_dispatched_date) {
+            html += ` <span style="font-size:0.8em;color:#888;">${last_dispatched_date}</span>`;
         }
     }
     return `<div style="margin-top:5px;">${html}</div>`;
@@ -240,20 +248,24 @@ function renderTimeDispatcherStatus(td) {
     if (!el) return;
     if (!td) { el.innerHTML = ''; return; }
 
-    const { ticket_issued_today, last_dispatched_date, last_dispatched_at, latest_trading_date, registered_tasks } = td;
+    const { ticket_issued_today, last_dispatched_date, last_dispatched_at, market_is_open, registered_tasks } = td;
     const taskCount = (registered_tasks || []).length;
+    // 대표 state: delay_sec=0 기준으로 전체 상태 판단
+    const overallState = _ticketState(ticket_issued_today, market_is_open, last_dispatched_at, 0);
 
     let badge, detail;
-    if (ticket_issued_today) {
+    if (overallState === 'before') {
+        badge = `<span style="background:#1976D2;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.82em;font-weight:bold;">발행 전 (장중)</span>`;
+        detail = '장 마감 후 자동 발행 예정';
+        if (last_dispatched_date) detail += ` · 마지막: ${last_dispatched_date}`;
+    } else if (overallState === 'pending') {
+        badge = `<span style="background:orange;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.82em;font-weight:bold;">발행 전 (폴링 대기)</span>`;
+        detail = last_dispatched_date ? `마지막: ${last_dispatched_date} · ` : '첫 실행 전 · ';
+        detail += '장 마감 감지 대기 중 (1분 폴링)';
+    } else { // issued or consumed (ticket_issued_today=true)
         badge = `<span style="background:var(--success-color,#4CAF50);color:#fff;padding:2px 8px;border-radius:10px;font-size:0.82em;font-weight:bold;">발행됨</span>`;
         detail = `거래일 ${last_dispatched_date}`;
-        if (last_dispatched_at) {
-            detail += ` · 발행 ${new Date(last_dispatched_at * 1000).toLocaleTimeString('ko-KR', { hour12: false })}`;
-        }
-    } else {
-        badge = `<span style="background:orange;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.82em;font-weight:bold;">미발행</span>`;
-        detail = last_dispatched_date ? `마지막: ${last_dispatched_date} · ` : '첫 실행 전 · ';
-        detail += '장 마감 후 자동 발행 예정 (1분 폴링)';
+        if (last_dispatched_at) detail += ` · 발행 ${new Date(last_dispatched_at * 1000).toLocaleTimeString('ko-KR', { hour12: false })}`;
     }
 
     el.innerHTML = `

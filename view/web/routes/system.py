@@ -121,6 +121,7 @@ async def get_background_status():
                 time_dispatcher_info = {
                     "last_dispatched_date": last_date,
                     "last_dispatched_at": td_status.get("last_dispatched_at"),
+                    "market_is_open": td_status.get("market_is_open"),
                     "latest_trading_date": latest_trading_date,
                     "ticket_issued_today": ticket_issued,
                     "registered_tasks": td_status.get("registered_tasks", []),
