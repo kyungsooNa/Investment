@@ -187,6 +187,7 @@ def test_get_background_status_returns_task_info(web_client, mock_web_ctx):
     assert item["name"] == "ranking_refresh"
     assert item["state"] == "running"
     assert item["priority"] == 100
+    assert item["delay_sec"] == 300  # 5분 * 60초
     assert item["progress"]["running"] is True
     assert item["progress"]["processed"] == 100
     assert item["progress"]["total"] == 500
@@ -247,14 +248,17 @@ def test_get_background_status_multiple_tasks(web_client, mock_web_ctx):
     # 배치 태스크 진행률
     assert by_name["ranking_refresh"]["progress"]["total"] == 2500
     assert by_name["ranking_refresh"]["progress"]["running"] is False
+    assert by_name["ranking_refresh"]["delay_sec"] == 300  # 5분
 
     # 웹소켓 워치독: market_open 포함
     assert by_name["websocket_watchdog"]["progress"]["market_open"] is True
     assert by_name["websocket_watchdog"]["progress"]["subscribed_codes"] == 3
+    assert by_name["websocket_watchdog"]["delay_sec"] == 0  # 딜레이 없음
 
     # 전략 스케줄러: 전략 카운트
     assert by_name["strategy_scheduler"]["progress"]["active_strategies"] == 2
     assert by_name["strategy_scheduler"]["progress"]["total_strategies"] == 3
+    assert by_name["strategy_scheduler"]["delay_sec"] == 0  # 딜레이 없음
 
 
 def test_get_background_status_calls_get_progress_via_interface(web_client, mock_web_ctx):
@@ -319,6 +323,10 @@ def test_get_background_status_module_names(web_client, mock_web_ctx):
     assert types["t3"] == "intraday"
     assert types["t4"] == "intraday"
     assert types["t5"] == "unknown"
+
+    # 모든 태스크명이 task_config.yaml에 없으므로 delay_sec은 0
+    delays = {item["name"]: item["delay_sec"] for item in data}
+    assert all(v == 0 for v in delays.values())
 
 
 def test_get_background_status_idle_with_internal_flag(web_client, mock_web_ctx):
@@ -575,6 +583,142 @@ async def test_force_minervini_update_not_init(web_client, mock_web_ctx):
     mock_web_ctx.minervini_update_task = None
     response = web_client.post("/api/background/minervini/force-update")
     assert response.status_code == 503
+
+
+# ── GET /api/background/status — time_dispatcher 티켓 발행 현황 ──────────────
+
+def _make_td_mock(last_dispatched_date, last_dispatched_at=None, market_is_open=False, registered_tasks=None):
+    """TimeDispatcher mock 생성 헬퍼."""
+    td = MagicMock()
+    td.get_status.return_value = {
+        "last_dispatched_date": last_dispatched_date,
+        "last_dispatched_at": last_dispatched_at,
+        "market_is_open": market_is_open,
+        "registered_tasks": registered_tasks or [
+            {"name": "ranking_refresh", "priority": 100, "delay_sec": 0},
+            {"name": "daily_price_collector", "priority": 50, "delay_sec": 1800},
+        ],
+    }
+    return td
+
+
+def test_background_status_time_dispatcher_none_when_get_status_not_dict(web_client, mock_web_ctx):
+    """ctx.time_dispatcher가 있어도 get_status()가 dict를 반환하지 않으면 time_dispatcher는 null."""
+    mock_web_ctx.background_scheduler = None
+    # MagicMock().get_status() → MagicMock (not dict) → time_dispatcher_info stays None
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    assert response.json()["time_dispatcher"] is None
+
+
+def test_background_status_time_dispatcher_ticket_issued_today(web_client, mock_web_ctx):
+    """last_dispatched_date == latest_trading_date이면 ticket_issued_today=True, market_is_open 포함."""
+    mock_web_ctx.background_scheduler = None
+    # conftest: _mcs.get_latest_trading_date returns "20260326"
+    mock_web_ctx.time_dispatcher = _make_td_mock(
+        last_dispatched_date="20260326",
+        last_dispatched_at=1234567890.0,
+        market_is_open=False,
+    )
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    td = response.json()["time_dispatcher"]
+    assert td is not None
+    assert td["ticket_issued_today"] is True
+    assert td["last_dispatched_date"] == "20260326"
+    assert td["last_dispatched_at"] == 1234567890.0
+    assert td["latest_trading_date"] == "20260326"
+    assert td["market_is_open"] is False
+    assert len(td["registered_tasks"]) == 2
+
+
+def test_background_status_time_dispatcher_ticket_not_issued(web_client, mock_web_ctx):
+    """last_dispatched_date != latest_trading_date이면 ticket_issued_today=False."""
+    mock_web_ctx.background_scheduler = None
+    mock_web_ctx.time_dispatcher = _make_td_mock(last_dispatched_date="20260325")
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    td = response.json()["time_dispatcher"]
+    assert td["ticket_issued_today"] is False
+    assert td["last_dispatched_date"] == "20260325"
+    assert td["latest_trading_date"] == "20260326"
+
+
+def test_background_status_time_dispatcher_never_dispatched(web_client, mock_web_ctx):
+    """last_dispatched_date가 None이면 ticket_issued_today=False."""
+    mock_web_ctx.background_scheduler = None
+    mock_web_ctx.time_dispatcher = _make_td_mock(last_dispatched_date=None)
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    td = response.json()["time_dispatcher"]
+    assert td["ticket_issued_today"] is False
+    assert td["last_dispatched_date"] is None
+
+
+def test_background_status_time_dispatcher_no_mcs(web_client, mock_web_ctx):
+    """_mcs가 None이면 latest_trading_date=None, ticket_issued_today=False."""
+    mock_web_ctx.background_scheduler = None
+    mock_web_ctx._mcs = None
+    mock_web_ctx.time_dispatcher = _make_td_mock(last_dispatched_date="20260326")
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    td = response.json()["time_dispatcher"]
+    assert td["latest_trading_date"] is None
+    assert td["ticket_issued_today"] is False
+
+
+def test_background_status_time_dispatcher_market_is_open_true(web_client, mock_web_ctx):
+    """market_is_open=True이면 응답에 그대로 반영된다 (장중 상태)."""
+    mock_web_ctx.background_scheduler = None
+    mock_web_ctx.time_dispatcher = _make_td_mock(
+        last_dispatched_date="20260325",  # 어제 날짜 → 오늘 미발행
+        market_is_open=True,
+    )
+
+    response = web_client.get("/api/background/status")
+    td = response.json()["time_dispatcher"]
+    assert td["market_is_open"] is True
+    assert td["ticket_issued_today"] is False
+
+
+def test_background_status_time_dispatcher_market_is_open_none(web_client, mock_web_ctx):
+    """market_is_open=None (MarketClock 없음)이면 응답에 null로 반환된다."""
+    mock_web_ctx.background_scheduler = None
+    mock_web_ctx.time_dispatcher = _make_td_mock(
+        last_dispatched_date=None,
+        market_is_open=None,
+    )
+
+    response = web_client.get("/api/background/status")
+    td = response.json()["time_dispatcher"]
+    assert td["market_is_open"] is None
+
+
+def test_background_status_time_dispatcher_included_with_tasks(web_client, mock_web_ctx):
+    """태스크 목록과 함께 time_dispatcher가 올바르게 반환된다."""
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False, "processed": 0, "total": 0}
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "ranking_refresh", "state": "idle", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+    mock_web_ctx.time_dispatcher = _make_td_mock(
+        last_dispatched_date="20260326",
+        registered_tasks=[{"name": "ranking_refresh", "priority": 100, "delay_sec": 300}],
+    )
+
+    response = web_client.get("/api/background/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"][0]["name"] == "ranking_refresh"
+    td = body["time_dispatcher"]
+    assert td["ticket_issued_today"] is True
+    assert td["registered_tasks"][0]["delay_sec"] == 300
 
 
 # ── GET /api/subscriptions/status ─────────────────────────────────────────

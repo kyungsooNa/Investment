@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import sqlite3
+import time
 from typing import Dict, Optional, Set, TYPE_CHECKING
 
 from interfaces.schedulable_task import TaskPriority
@@ -52,6 +53,7 @@ class TimeDispatcher:
         self._pending_publish_tasks: Set[asyncio.Task] = set()
         self._db_path = db_path or os.path.join("data", "time_dispatcher_state.db")
         self._last_dispatched_date: Optional[str] = self._load_state()
+        self._last_dispatched_at: Optional[float] = None
 
     def _init_db(self) -> None:
         os.makedirs(os.path.dirname(self._db_path) or ".", exist_ok=True)
@@ -132,6 +134,7 @@ class TimeDispatcher:
             f"{len(self._task_schedule)}개 티켓 예약"
         )
         self._last_dispatched_date = latest_trading_date
+        self._last_dispatched_at = time.time()
         self._save_state(latest_trading_date)
 
         for task_name, priority in self._task_schedule.items():
@@ -153,6 +156,28 @@ class TimeDispatcher:
             self._logger.info(f"[TimeDispatcher] 티켓 발행: {task_name} ({date})")
         else:
             self._logger.warning(f"[TimeDispatcher] 티켓 발행 실패 (큐 포화): {task_name}")
+
+    def get_status(self) -> dict:
+        """TimeDispatcher 현재 상태를 반환한다."""
+        market_is_open: Optional[bool] = None
+        if self._market_clock is not None:
+            try:
+                market_is_open = self._market_clock.is_market_operating_hours()
+            except Exception:
+                pass
+        return {
+            "last_dispatched_date": self._last_dispatched_date,
+            "last_dispatched_at": self._last_dispatched_at,
+            "market_is_open": market_is_open,
+            "registered_tasks": [
+                {
+                    "name": name,
+                    "priority": priority,
+                    "delay_sec": self._task_delays.get(name, 0),
+                }
+                for name, priority in self._task_schedule.items()
+            ],
+        }
 
     def stop(self) -> None:
         """폴링 루프와 대기 중인 발행 태스크를 모두 중단시킨다."""
