@@ -34,9 +34,15 @@ class MarketCalendarService:
         """오늘을 포함하여 가장 최근에 장이 열렸던 영업일(YYYYMMDD)을 반환합니다."""
         current_date = self._market_clock.get_current_kst_time().strftime("%Y%m%d")
 
-        # 캐시가 있고, 오늘 이미 확인했다면 캐시 반환
+        # 캐시가 있고 오늘 이미 확인했더라도,
+        # 장마감 후 캐시된 날짜가 오늘이 아니면 재조회 (장전 캐시가 장후에도 남는 문제 방지)
         if self._cached_date and self._last_check_date == current_date:
-            return self._cached_date
+            after_close = (
+                self._market_clock.get_current_kst_time()
+                >= self._market_clock.get_market_close_time()
+            )
+            if not after_close or self._cached_date == current_date:
+                return self._cached_date
 
         if not self._broker:
             self._logger.warning("MarketCalendarService: Broker is not set.")
