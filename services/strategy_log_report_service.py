@@ -86,11 +86,12 @@ class StrategyLogReportService:
                         entry = _loads(raw)
                     except Exception:
                         continue
-                    if not entry.get('timestamp', '').startswith(date_prefix):
+                    ts = entry.get('timestamp', '')
+                    if not ts.startswith(date_prefix):
                         continue
                     data = entry.get('data')
                     if isinstance(data, dict):
-                        yield entry.get('level', 'INFO'), data
+                        yield entry.get('level', 'INFO'), ts, data
         except Exception:
             pass
 
@@ -110,60 +111,102 @@ class StrategyLogReportService:
                 "당일 전략 로그가 없습니다."
             )
 
-        sections: List[str] = []
-        for idx, (name, files) in enumerate(sorted(strategy_files.items()), 1):
-            bought: Dict[str, dict] = {}    # code → {name, price, reason}
-            rejected: Dict[str, dict] = {}  # code → {name, reason, count}
+        active_sections: List[str] = []
+        inactive_names: List[str] = []
+        market_timing: Dict[str, bool] = {}
+        idx = 0
+
+        for name, files in sorted(strategy_files.items()):
+            bought: Dict[str, dict] = {}
+            rejected: Dict[str, dict] = {}
+            scan_count: int = 0
 
             for fpath in sorted(files):
-                for _level, data in self._iter_events(fpath, date_prefix):
+                for _level, ts, data in self._iter_events(fpath, date_prefix):
                     event = data.get('event', '')
                     code = data.get('code', '')
-                    if not code:
-                        continue
 
-                    if event == 'buy_signal_generated':
+                    if event == 'scan_with_watchlist':
+                        scan_count = max(scan_count, data.get('count', 0))
+
+                    elif event == 'market_timing_updated':
+                        mkt = data.get('market', '')
+                        if mkt and mkt not in market_timing:
+                            market_timing[mkt] = data.get('ok', False)
+
+                    elif event == 'buy_signal_generated' and code:
+                        metrics = data.get('metrics', {})
+                        price = metrics.get('price', data.get('price', 0))
                         bought[code] = {
                             'name': data.get('name', code),
-                            'price': data.get('price', 0),
+                            'price': price,
                             'reason': data.get('reason', ''),
+                            'time': ts[11:16] if len(ts) >= 16 else '',
                         }
                         rejected.pop(code, None)
 
-                    elif event in self.REJECTED_EVENTS or event.endswith('_rejected'):
+                    elif code and (event in self.REJECTED_EVENTS or event.endswith('_rejected')):
                         if code not in bought:
-                            prev = rejected.get(code, {
-                                'name': data.get('name', code),
-                                'reason': '',
-                                'count': 0,
-                            })
+                            prev = rejected.get(code, {'name': data.get('name', code), 'reason': '', 'count': 0})
                             rejected[code] = {
                                 'name': data.get('name', code),
                                 'reason': data.get('reason', prev['reason']),
                                 'count': prev['count'] + 1,
                             }
 
-            lines = [f"<b>{idx}. {name}</b>"]
+            if not bought and not rejected:
+                inactive_names.append(name)
+                continue
+
+            idx += 1
+            scan_str = f" — {scan_count}종목 스캔" if scan_count else ""
+            lines = [f"<b>{idx}. {name}</b>{scan_str}"]
 
             if bought:
                 lines.append(f"\n✅ 매수 완료 ({len(bought)}건)")
                 for code, info in bought.items():
                     price_str = f" @ ₩{info['price']:,}" if info['price'] else ""
-                    lines.append(f"• {info['name']}({code}): {info['reason']}{price_str}")
+                    time_str = f" ({info['time']})" if info.get('time') else ""
+                    lines.append(f"• {info['name']}({code}): {info['reason']}{price_str}{time_str}")
             else:
                 lines.append("\n✅ 매수 완료: 없음")
 
             if rejected:
                 lines.append(f"\n❌ 매수 실패 ({len(rejected)}건)")
                 for code, info in rejected.items():
-                    count_str = f" ({info['count']}회 탈락)" if info['count'] > 1 else ""
+                    count_str = f" ({info['count']}회 탈락)" if info.get('count', 0) > 1 else ""
                     lines.append(f"• {info['name']}({code}): {info['reason']}{count_str}")
             else:
                 lines.append("\n❌ 매수 실패: 없음")
 
-            sections.append("\n".join(lines))
+            active_sections.append("\n".join(lines))
 
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        header = f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>"
+
+        if market_timing:
+            mt_parts = [
+                f"{mkt} {'🟢' if market_timing[mkt] else '🔴'}"
+                for mkt in ["KOSPI", "KOSDAQ"] if mkt in market_timing
+            ]
+            header = (
+                f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>\n"
+                f"<i>시장: {' | '.join(mt_parts)} (MA20 추세)</i>"
+            )
+        else:
+            header = f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>"
+
         footer = f"\n\n<i>생성: {now_str}</i>"
-        return header + "\n\n" + "\n\n".join(sections) + footer
+
+        if not active_sections:
+            return header + "\n\n당일 활동한 전략이 없습니다." + footer
+
+        body = "\n\n".join(active_sections)
+
+        if inactive_names:
+            inactive_summary = f"\n\n💤 <i>활동 없음: {', '.join(inactive_names[:3])}"
+            if len(inactive_names) > 3:
+                inactive_summary += f" 외 {len(inactive_names) - 3}개"
+            inactive_summary += "</i>"
+            body += inactive_summary
+
+        return header + "\n\n" + body + footer
