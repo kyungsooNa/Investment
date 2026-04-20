@@ -147,10 +147,11 @@ class StrategyLogReportService:
 
                     elif code and (event in self.REJECTED_EVENTS or event.endswith('_rejected')):
                         if code not in bought:
-                            prev = rejected.get(code, {'name': data.get('name', code), 'reason': ''})
+                            prev = rejected.get(code, {'name': data.get('name', code), 'reason': '', 'count': 0})
                             rejected[code] = {
                                 'name': data.get('name', code),
                                 'reason': data.get('reason', prev['reason']),
+                                'count': prev['count'] + 1,
                             }
 
             if not bought and not rejected:
@@ -173,7 +174,8 @@ class StrategyLogReportService:
             if rejected:
                 lines.append(f"\n❌ 매수 실패 ({len(rejected)}건)")
                 for code, info in rejected.items():
-                    lines.append(f"• {info['name']}({code}): {info['reason']}")
+                    count_str = f" ({info['count']}회 탈락)" if info.get('count', 0) > 1 else ""
+                    lines.append(f"• {info['name']}({code}): {info['reason']}{count_str}")
             else:
                 lines.append("\n❌ 매수 실패: 없음")
 
