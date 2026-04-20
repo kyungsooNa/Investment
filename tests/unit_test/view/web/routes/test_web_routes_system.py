@@ -187,6 +187,7 @@ def test_get_background_status_returns_task_info(web_client, mock_web_ctx):
     assert item["name"] == "ranking_refresh"
     assert item["state"] == "running"
     assert item["priority"] == 100
+    assert item["delay_sec"] == 300  # 5분 * 60초
     assert item["progress"]["running"] is True
     assert item["progress"]["processed"] == 100
     assert item["progress"]["total"] == 500
@@ -247,14 +248,17 @@ def test_get_background_status_multiple_tasks(web_client, mock_web_ctx):
     # 배치 태스크 진행률
     assert by_name["ranking_refresh"]["progress"]["total"] == 2500
     assert by_name["ranking_refresh"]["progress"]["running"] is False
+    assert by_name["ranking_refresh"]["delay_sec"] == 300  # 5분
 
     # 웹소켓 워치독: market_open 포함
     assert by_name["websocket_watchdog"]["progress"]["market_open"] is True
     assert by_name["websocket_watchdog"]["progress"]["subscribed_codes"] == 3
+    assert by_name["websocket_watchdog"]["delay_sec"] == 0  # 딜레이 없음
 
     # 전략 스케줄러: 전략 카운트
     assert by_name["strategy_scheduler"]["progress"]["active_strategies"] == 2
     assert by_name["strategy_scheduler"]["progress"]["total_strategies"] == 3
+    assert by_name["strategy_scheduler"]["delay_sec"] == 0  # 딜레이 없음
 
 
 def test_get_background_status_calls_get_progress_via_interface(web_client, mock_web_ctx):
@@ -319,6 +323,10 @@ def test_get_background_status_module_names(web_client, mock_web_ctx):
     assert types["t3"] == "intraday"
     assert types["t4"] == "intraday"
     assert types["t5"] == "unknown"
+
+    # 모든 태스크명이 task_config.yaml에 없으므로 delay_sec은 0
+    delays = {item["name"]: item["delay_sec"] for item in data}
+    assert all(v == 0 for v in delays.values())
 
 
 def test_get_background_status_idle_with_internal_flag(web_client, mock_web_ctx):

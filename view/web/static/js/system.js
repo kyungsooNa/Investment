@@ -516,9 +516,13 @@ async function updateBackgroundStatus() {
             const schHtml = schBadge
                 ? `<span style="background:${schBadge.color}; color:#fff; padding:1px 6px; border-radius:8px; font-size:0.75em; margin-left:6px; vertical-align:middle;">${schBadge.label}</span>`
                 : '';
+            const delayMin = task.delay_sec ? Math.round(task.delay_sec / 60) : 0;
+            const delayHtml = delayMin > 0
+                ? `<span style="color:#aaa; font-size:0.75em; margin-left:5px; vertical-align:middle;">+${delayMin}m</span>`
+                : '';
             return `
                 <tr>
-                    <td style="font-weight:bold; color:var(--text-color);">${task.name}${schHtml}</td>
+                    <td style="font-weight:bold; color:var(--text-color);">${task.name}${schHtml}${delayHtml}</td>
                     <td><span style="background:${badge.color}; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em; font-weight:bold;">${badge.label}</span></td>
                     <td style="font-size:0.88em; color:#888;">${priorityLabel}</td>
                     <td>${progressHtml}</td>

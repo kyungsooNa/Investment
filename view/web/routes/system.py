@@ -6,6 +6,7 @@ import time
 from fastapi import APIRouter, HTTPException
 from view.web.api_common import _get_ctx
 import view.web.api_common as api_common
+from config.task_config_loader import load_after_market_delays
 
 router = APIRouter()
 
@@ -132,6 +133,8 @@ async def get_background_status():
     if not ctx.background_scheduler:
         return {"success": True, "foreground": foreground_info, "time_dispatcher": time_dispatcher_info, "data": []}
 
+    delays = load_after_market_delays()  # {task_name: delay_sec}
+
     result = []
     for item in ctx.background_scheduler.get_all_status():
         name = item["name"]
@@ -181,11 +184,12 @@ async def get_background_status():
             "priority": item.get("priority"),
             "schedule_type": schedule_type,
             "schedule_order": _SCHEDULE_ORDER.get(schedule_type, 99),
+            "delay_sec": delays.get(name, 0),
             "progress": progress,
         })
 
-    # 스케줄 유형(실시간 -> 장중 -> 장마감) 순서로 정렬
-    result.sort(key=lambda x: x["schedule_order"])
+    # 스케줄 유형(실시간 -> 장중 -> 장마감) 순서로 정렬, 같은 유형 내에서는 실행 순서(delay_sec) 기준
+    result.sort(key=lambda x: (x["schedule_order"], x["delay_sec"]))
     return {"success": True, "foreground": foreground_info, "time_dispatcher": time_dispatcher_info, "data": result}
 
 
