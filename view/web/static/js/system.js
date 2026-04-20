@@ -175,6 +175,8 @@ setInterval(updateCacheStatus, 15000);  // 캐시 상태는 15초마다 갱신 (
 
 // ── 백그라운드 태스크 모니터링 ──────────────────────────────
 
+let _timeDispatcherInfo = null;
+
 const STATE_BADGE = {
     running:   { label: 'RUNNING',   color: 'var(--success-color, #4CAF50)' },
     suspended: { label: 'SUSPENDED', color: 'orange' },
@@ -196,7 +198,81 @@ const PRIORITY_LABEL = {
     200: 'MAINTANCE',
 };
 
+function renderTicketStatusSuffix(taskName) {
+    if (!_timeDispatcherInfo) return '';
+    const tasks = _timeDispatcherInfo.registered_tasks || [];
+    const taskInfo = tasks.find(t => t.name === taskName);
+    if (!taskInfo) return '';
+
+    const issued = _timeDispatcherInfo.ticket_issued_today;
+    const dispatchedAt = _timeDispatcherInfo.last_dispatched_at;
+    const lastDate = _timeDispatcherInfo.last_dispatched_date;
+
+    let html;
+    if (issued) {
+        html = `<span style="background:#E3F2FD;color:#1565C0;border:1px solid #90CAF9;padding:1px 7px;border-radius:8px;font-size:0.8em;font-weight:bold;">티켓 발행됨</span>`;
+        if (lastDate) {
+            html += ` <span style="font-size:0.8em;color:#888;">${lastDate}</span>`;
+        }
+        if (dispatchedAt && taskInfo.delay_sec > 0) {
+            const execAt = dispatchedAt + taskInfo.delay_sec;
+            const remaining = execAt - Date.now() / 1000;
+            if (remaining > 60) {
+                html += ` <span style="font-size:0.8em;color:orange;">${Math.round(remaining / 60)}분 후 실행 예정</span>`;
+            } else if (remaining > 0) {
+                html += ` <span style="font-size:0.8em;color:orange;">곧 실행 예정</span>`;
+            } else {
+                html += ` <span style="font-size:0.8em;color:#888;">${Math.round(-remaining / 60)}분 전 실행됨</span>`;
+            }
+        }
+    } else {
+        html = `<span style="background:#FFF3E0;color:#E65100;border:1px solid #FFCC80;padding:1px 7px;border-radius:8px;font-size:0.8em;font-weight:bold;">티켓 미발행</span>`;
+        html += ` <span style="font-size:0.8em;color:#888;">장 마감 후 자동 발행 예정</span>`;
+        if (lastDate) {
+            html += ` <span style="font-size:0.8em;color:#aaa;">(마지막: ${lastDate})</span>`;
+        }
+    }
+    return `<div style="margin-top:5px;">${html}</div>`;
+}
+
+function renderTimeDispatcherStatus(td) {
+    const el = document.getElementById('time-dispatcher-status');
+    if (!el) return;
+    if (!td) { el.innerHTML = ''; return; }
+
+    const { ticket_issued_today, last_dispatched_date, last_dispatched_at, latest_trading_date, registered_tasks } = td;
+    const taskCount = (registered_tasks || []).length;
+
+    let badge, detail;
+    if (ticket_issued_today) {
+        badge = `<span style="background:var(--success-color,#4CAF50);color:#fff;padding:2px 8px;border-radius:10px;font-size:0.82em;font-weight:bold;">발행됨</span>`;
+        detail = `거래일 ${last_dispatched_date}`;
+        if (last_dispatched_at) {
+            detail += ` · 발행 ${new Date(last_dispatched_at * 1000).toLocaleTimeString('ko-KR', { hour12: false })}`;
+        }
+    } else {
+        badge = `<span style="background:orange;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.82em;font-weight:bold;">미발행</span>`;
+        detail = last_dispatched_date ? `마지막: ${last_dispatched_date} · ` : '첫 실행 전 · ';
+        detail += '장 마감 후 자동 발행 예정 (1분 폴링)';
+    }
+
+    el.innerHTML = `
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-color,#f9f9f9);border:1px solid #ddd;border-radius:8px;font-size:0.88em;">
+            <span style="font-weight:bold;color:var(--text-color);">📅 장 마감 티켓</span>
+            ${badge}
+            <span style="color:#888;">${detail}</span>
+            <span style="color:#aaa;margin-left:auto;">등록 ${taskCount}개 태스크</span>
+        </div>`;
+}
+
 function renderProgressCell(progress, taskName) {
+    const main = _renderProgressBody(progress, taskName);
+    if (main === '-') return main;
+    const suffix = renderTicketStatusSuffix(taskName);
+    return suffix ? main + suffix : main;
+}
+
+function _renderProgressBody(progress, taskName) {
     if (!progress) return '-';
 
     // ── 웹소켓 워치독: 장중 / 장 마감 표시 ──
@@ -396,6 +472,9 @@ async function updateBackgroundStatus() {
         if (!response.ok) return;
         const result = await response.json();
         if (!result.success || !result.data) return;
+
+        _timeDispatcherInfo = result.time_dispatcher || null;
+        renderTimeDispatcherStatus(_timeDispatcherInfo);
 
         // ForegroundScheduler 상태 표시 (백그라운드 태스크 중단 여부)
         const fgEl = document.getElementById('foreground-status');

@@ -108,8 +108,28 @@ async def get_background_status():
         "is_blocking_background": fg.is_active if fg else False,
     }
 
+    # TimeDispatcher 티켓 발행 현황
+    latest_trading_date = await ctx._mcs.get_latest_trading_date() if ctx._mcs else None
+    td = getattr(ctx, "time_dispatcher", None)
+    time_dispatcher_info = None
+    if td is not None:
+        try:
+            td_status = td.get_status()
+            if isinstance(td_status, dict):
+                last_date = td_status.get("last_dispatched_date")
+                ticket_issued = isinstance(last_date, str) and last_date == latest_trading_date
+                time_dispatcher_info = {
+                    "last_dispatched_date": last_date,
+                    "last_dispatched_at": td_status.get("last_dispatched_at"),
+                    "latest_trading_date": latest_trading_date,
+                    "ticket_issued_today": ticket_issued,
+                    "registered_tasks": td_status.get("registered_tasks", []),
+                }
+        except Exception:
+            pass
+
     if not ctx.background_scheduler:
-        return {"success": True, "foreground": foreground_info, "data": []}
+        return {"success": True, "foreground": foreground_info, "time_dispatcher": time_dispatcher_info, "data": []}
 
     result = []
     for item in ctx.background_scheduler.get_all_status():
@@ -165,7 +185,7 @@ async def get_background_status():
 
     # 스케줄 유형(실시간 -> 장중 -> 장마감) 순서로 정렬
     result.sort(key=lambda x: x["schedule_order"])
-    return {"success": True, "foreground": foreground_info, "data": result}
+    return {"success": True, "foreground": foreground_info, "time_dispatcher": time_dispatcher_info, "data": result}
 
 
 # ── 장 마감 후 태스크 강제 수집 엔드포인트 ─────────────────────────────
