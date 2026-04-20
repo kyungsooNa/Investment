@@ -1,200 +1,212 @@
 """
-run_after_market_loop 공통 스케줄러 단위 테스트.
-장 중 대기, 장 마감 후 콜백 실행, 스마트 대기 로직 검증.
+AfterMarketLoop / run_after_market_loop 단위 테스트.
+APScheduler + catch-up 로직 검증.
 """
 import asyncio
 import pytest
 
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 
-from scheduler.after_market_loop import run_after_market_loop, _smart_sleep
+from scheduler.after_market_loop import AfterMarketLoop, run_after_market_loop
 import task.background.after_market.after_market_task_base as base_module
 import config.task_config_loader as loader_module
 from config.task_config_loader import load_after_market_delays as _load_after_market_delays
 
 
-# --- _smart_sleep 테스트 ---
+# ── 헬퍼 ──
+
+def _make_loop(
+    *,
+    hour: int = 18,
+    minute: int = 0,
+    today: str = "20260420",
+    latest_trading_date: str = "20260420",
+    last_run: str | None = None,
+    delay_sec: int = 0,
+    with_store: bool = False,
+) -> AfterMarketLoop:
+    tm = MagicMock()
+    tm.get_current_kst_time.return_value = MagicMock(hour=hour, minute=minute)
+    tm.get_current_kst_date_str.return_value = today
+
+    mcs = MagicMock()
+    mcs.get_latest_trading_date = AsyncMock(return_value=latest_trading_date)
+
+    store = None
+    if with_store:
+        store = MagicMock()
+        store.load_keyed.return_value = last_run
+
+    return AfterMarketLoop(
+        mcs=mcs,
+        market_clock=tm,
+        logger=MagicMock(),
+        on_market_closed=AsyncMock(),
+        label="Test",
+        delay_sec=delay_sec,
+        store=store,
+    )
 
 
-class TestSmartSleep:
+# ── catch-up 로직 ──
 
-    async def test_sleep_until_market_close(self):
-        """장 마감 전이면 마감+1분까지 대기."""
-        tm = MagicMock()
-        tm.get_sleep_seconds_until_market_close.return_value = 100.0
+class TestCatchUp:
 
-        with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            await _smart_sleep(tm, MagicMock(), "Test")
-            mock_sleep.assert_awaited_once_with(160.0)  # 100 + 60
+    async def test_not_triggered_before_close(self):
+        """15:41 이전이면 catch-up을 실행하지 않는다."""
+        loop = _make_loop(hour=14, minute=0)
+        with patch("asyncio.create_task") as mock_create:
+            await loop._catch_up_if_needed()
+            mock_create.assert_not_called()
 
-    async def test_sleep_12h_after_market_close(self):
-        """장 마감 후이면 12시간 대기."""
-        tm = MagicMock()
-        tm.get_sleep_seconds_until_market_close.return_value = 0.0
+    async def test_not_triggered_at_exactly_close_boundary(self):
+        """15:40 (마감 1분 전)이면 catch-up을 실행하지 않는다."""
+        loop = _make_loop(hour=15, minute=40)
+        with patch("asyncio.create_task") as mock_create:
+            await loop._catch_up_if_needed()
+            mock_create.assert_not_called()
 
-        with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            await _smart_sleep(tm, MagicMock(), "Test")
-            mock_sleep.assert_awaited_once_with(12 * 3600)
+    async def test_triggered_when_not_yet_run(self):
+        """15:41 이후, 오늘 실행 기록이 없으면 즉시 1회 실행한다."""
+        loop = _make_loop(hour=18, minute=0, with_store=True, last_run=None)
+        created = []
+        with patch("asyncio.create_task", side_effect=lambda c: created.append(c)):
+            await loop._catch_up_if_needed()
+        assert len(created) == 1
 
-    async def test_sleep_12h_without_market_clock(self):
-        """MarketClock 없으면 12시간 대기."""
-        with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            await _smart_sleep(None, MagicMock(), "Test")
-            mock_sleep.assert_awaited_once_with(12 * 3600)
+    async def test_skipped_when_already_run_today(self):
+        """오늘 이미 실행했으면 catch-up을 스킵한다."""
+        loop = _make_loop(hour=18, minute=0, with_store=True, last_run="20260420")
+        with patch("asyncio.create_task") as mock_create:
+            await loop._catch_up_if_needed()
+            mock_create.assert_not_called()
 
-
-# --- run_after_market_loop 테스트 ---
-
-
-class TestRunAfterMarketLoop:
-
-    async def test_calls_callback_after_market_close(self):
-        """장 마감 후 콜백이 latest_trading_date와 함께 호출된다."""
-        mcs = MagicMock()
-        mcs.is_market_open_now = AsyncMock(return_value=False)
-        mcs.get_latest_trading_date = AsyncMock(return_value="20260318")
-
-        callback = AsyncMock()
-        call_count = 0
-
-        async def _tracked_callback(date):
-            nonlocal call_count
-            await callback(date)
-            call_count += 1
-            if call_count >= 1:
-                raise asyncio.CancelledError()  # 1회 실행 후 루프 종료
-
-        await run_after_market_loop(
-            mcs=mcs,
-            market_clock=None,
-            logger=MagicMock(),
-            on_market_closed=_tracked_callback,
-            label="Test",
+    async def test_skipped_on_holiday(self):
+        """오늘이 휴장일(latest_trading_date != today)이면 catch-up을 스킵한다."""
+        loop = _make_loop(
+            hour=18, minute=0,
+            today="20260420", latest_trading_date="20260419",  # 어제가 마지막 거래일
         )
+        with patch("asyncio.create_task") as mock_create:
+            await loop._catch_up_if_needed()
+            mock_create.assert_not_called()
 
-        callback.assert_awaited_once_with("20260318")
+    async def test_triggered_at_exactly_1541(self):
+        """정확히 15:41이면 catch-up을 트리거한다."""
+        loop = _make_loop(hour=15, minute=41, with_store=True, last_run=None)
+        created = []
+        with patch("asyncio.create_task", side_effect=lambda c: created.append(c)):
+            await loop._catch_up_if_needed()
+        assert len(created) == 1
 
-    async def test_waits_during_market_hours(self):
-        """장 중이면 마감까지 대기 후 continue."""
-        mcs = MagicMock()
-        call_count = 0
 
-        async def _mock_is_market_open():
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 1:
-                return True  # 첫 번째: 장 중
-            return False  # 두 번째: 장 마감
+# ── _run_job 실행 로직 ──
 
-        mcs.is_market_open_now = AsyncMock(side_effect=_mock_is_market_open)
-        mcs.get_latest_trading_date = AsyncMock(return_value="20260318")
+class TestRunJob:
 
-        tm = MagicMock()
-        # 0.1 < 3600 이므로 1b 체크(장 시작 전 guard)가 트리거되지 않음
-        tm.get_sleep_seconds_until_market_close.return_value = 0.1
-        tm.get_current_kst_date_str.return_value = "20260318"
+    async def test_calls_callback_with_latest_date(self):
+        """_run_job이 콜백을 latest_trading_date와 함께 호출한다."""
+        loop = _make_loop()
+        await loop._run_job()
+        loop._on_market_closed.assert_awaited_once_with("20260420")
 
-        callback_called = False
+    async def test_skips_callback_on_holiday(self):
+        """오늘이 휴장일이면 콜백을 호출하지 않는다."""
+        loop = _make_loop(today="20260420", latest_trading_date="20260419")
+        await loop._run_job()
+        loop._on_market_closed.assert_not_awaited()
 
-        async def _callback(date):
-            nonlocal callback_called
-            callback_called = True
-            raise asyncio.CancelledError()
+    async def test_skips_callback_when_no_trading_date(self):
+        """get_latest_trading_date가 None이면 콜백을 호출하지 않는다."""
+        loop = _make_loop(latest_trading_date=None)
+        await loop._run_job()
+        loop._on_market_closed.assert_not_awaited()
 
-        with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock):
-            await run_after_market_loop(
-                mcs=mcs, market_clock=tm, logger=MagicMock(),
-                on_market_closed=_callback, label="Test",
-            )
+    async def test_saves_last_run_date_after_callback(self):
+        """콜백 성공 후 store에 last_run_date를 저장한다."""
+        loop = _make_loop(with_store=True, last_run=None)
+        await loop._run_job()
+        loop._store.save_keyed.assert_called_once_with("after_market_last_run_Test", "20260420")
 
-        assert callback_called
+    async def test_does_not_save_on_holiday(self):
+        """휴장일에는 store를 업데이트하지 않는다."""
+        loop = _make_loop(
+            today="20260420", latest_trading_date="20260419",
+            with_store=True,
+        )
+        await loop._run_job()
+        loop._store.save_keyed.assert_not_called()
 
-    async def test_skips_when_no_trading_date(self):
-        """거래일이 없으면 콜백을 호출하지 않는다."""
-        mcs = MagicMock()
-        mcs.is_market_open_now = AsyncMock(return_value=False)
-        mcs.get_latest_trading_date = AsyncMock(return_value=None)
-
-        callback = AsyncMock()
-        loop_count = 0
-
-        original_smart_sleep = _smart_sleep
-
-        async def _mock_smart_sleep(tm, logger, label):
-            nonlocal loop_count
-            loop_count += 1
-            if loop_count >= 1:
-                raise asyncio.CancelledError()
-
-        with patch("scheduler.after_market_loop._smart_sleep", side_effect=_mock_smart_sleep):
-            await run_after_market_loop(
-                mcs=mcs, market_clock=None, logger=MagicMock(),
-                on_market_closed=callback, label="Test",
-            )
-
-        callback.assert_not_awaited()
-
-    async def test_does_not_run_before_market_open(self):
-        """앱이 장 시작 전(09:00 이전)에 기동되면 콜백을 즉시 실행하지 않고 장 마감까지 대기한다."""
-        mcs = MagicMock()
-        mcs.is_market_open_now = AsyncMock(return_value=False)
-        mcs.get_latest_trading_date = AsyncMock(return_value="20260325")
-
-        tm = MagicMock()
-        # 장 마감까지 6시간 50분 남음 (> 3600s) → 장 시작 전으로 판단
-        secs_until_close = 6 * 3600 + 50 * 60
-        tm.get_sleep_seconds_until_market_close.return_value = secs_until_close
-
-        sleep_calls = []
-        callback_called = False
-
-        async def _mock_sleep(sec):
-            sleep_calls.append(sec)
-            if len(sleep_calls) >= 1:
-                raise asyncio.CancelledError()
-
-        async def _callback(_date):
-            nonlocal callback_called
-            callback_called = True
-
-        with patch("scheduler.after_market_loop.asyncio.sleep", side_effect=_mock_sleep):
-            await run_after_market_loop(
-                mcs=mcs, market_clock=tm, logger=MagicMock(),
-                on_market_closed=_callback, label="Test",
-            )
-
-        # 콜백이 실행되지 않아야 하며, 장 마감까지의 대기가 발생해야 한다
-        assert not callback_called
-        assert len(sleep_calls) == 1
-        assert sleep_calls[0] == secs_until_close + 60  # get_sleep_seconds_until_market_close() + 60
-
-    async def test_recovers_from_callback_error(self):
-        """콜백 에러 시 60초 후 재시도한다."""
-        mcs = MagicMock()
-        mcs.is_market_open_now = AsyncMock(return_value=False)
-        mcs.get_latest_trading_date = AsyncMock(return_value="20260318")
-
-        call_count = 0
-
-        async def _failing_callback(date):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise ValueError("test error")
-            raise asyncio.CancelledError()  # 2회차에서 종료
-
+    async def test_padding_delay_applied(self):
+        """delay_sec > 0이면 asyncio.sleep이 호출된다."""
+        loop = _make_loop(delay_sec=300)
         with patch("scheduler.after_market_loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            await run_after_market_loop(
-                mcs=mcs, market_clock=None, logger=MagicMock(),
-                on_market_closed=_failing_callback, label="Test",
-            )
+            await loop._run_job()
+            mock_sleep.assert_awaited_once_with(300)
 
-        assert call_count == 2
-        # 에러 후 60초 대기가 호출되었는지 확인
-        mock_sleep.assert_any_await(60)
+    async def test_callback_error_does_not_propagate(self):
+        """콜백이 예외를 던져도 _run_job 자체는 예외를 전파하지 않는다."""
+        loop = _make_loop()
+        loop._on_market_closed.side_effect = ValueError("test error")
+        await loop._run_job()  # 예외 없이 완료되어야 한다
 
 
-# --- _load_after_market_delays 테스트 ---
+# ── shutdown / stop ──
+
+class TestShutdown:
+
+    def test_shutdown_sets_stop_event(self):
+        """shutdown()이 _stop_event를 설정한다."""
+        loop = _make_loop()
+        assert not loop._stop_event.is_set()
+        loop.shutdown()
+        assert loop._stop_event.is_set()
+
+    async def test_stop_sets_stop_event(self):
+        """async stop()도 _stop_event를 설정한다."""
+        loop = _make_loop()
+        await loop.stop()
+        assert loop._stop_event.is_set()
+
+
+# ── run_after_market_loop 래퍼 ──
+
+class TestRunAfterMarketLoopWrapper:
+
+    async def test_cancelled_error_calls_shutdown(self):
+        """CancelledError 발생 시 shutdown()이 호출된다."""
+        with patch("scheduler.after_market_loop.AfterMarketLoop") as MockClass:
+            instance = MagicMock()
+            instance.start = AsyncMock(side_effect=asyncio.CancelledError)
+            instance.shutdown = MagicMock()
+            MockClass.return_value = instance
+
+            with pytest.raises(asyncio.CancelledError):
+                await run_after_market_loop(
+                    mcs=None, market_clock=None, logger=MagicMock(),
+                    on_market_closed=AsyncMock(), label="Test",
+                )
+
+            instance.shutdown.assert_called_once()
+
+    async def test_exception_calls_shutdown(self):
+        """일반 예외 발생 시에도 shutdown()이 호출된다."""
+        with patch("scheduler.after_market_loop.AfterMarketLoop") as MockClass:
+            instance = MagicMock()
+            instance.start = AsyncMock(side_effect=RuntimeError("boom"))
+            instance.shutdown = MagicMock()
+            MockClass.return_value = instance
+
+            with pytest.raises(RuntimeError):
+                await run_after_market_loop(
+                    mcs=None, market_clock=None, logger=MagicMock(),
+                    on_market_closed=AsyncMock(), label="Test",
+                )
+
+            instance.shutdown.assert_called_once()
+
+
+# ── _load_after_market_delays ──
 
 class TestLoadAfterMarketDelays:
 
@@ -232,7 +244,7 @@ class TestLoadAfterMarketDelays:
     def test_load_delays_uses_cache(self):
         """최초 로드 이후에는 캐시된 데이터를 반환하여 I/O를 수행하지 않는다."""
         loader_module._CACHED["cached_task"] = 120
-        
+
         with patch("builtins.open") as mock_file:
             delays = _load_after_market_delays()
             assert delays == {"cached_task": 120}

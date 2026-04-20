@@ -33,11 +33,23 @@ def run_web():
     host = configs.web.host
     port = configs.web.port
 
+    def _wait_for_port(timeout: float = 10.0) -> bool:
+        import socket, time
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.1)
+                if s.connect_ex((host, port)) == 0:
+                    return True
+            time.sleep(0.1)
+        return False
+
     def open_browser():
-        """서버 시작 후 브라우저 자동 오픈."""
-        import time
-        time.sleep(2)
-        webbrowser.open(f"http://{host}:{port}")
+        """서버 포트가 열리는 즉시 브라우저를 오픈한다."""
+        if _wait_for_port():
+            webbrowser.open(f"http://{host}:{port}")
+        else:
+            print(f"[Web] 서버 구동 시간 초과 — 브라우저 자동 오픈 실패 (http://{host}:{port})")
 
     print(f"\n[Web] http://{host}:{port} 에서 접속 가능")
     print("[Web] 환경 전환은 웹 UI 상단 배지를 클릭하세요.")

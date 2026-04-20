@@ -143,6 +143,24 @@ class StrategySchedulerStore:
             self._conn.execute("DELETE FROM scheduler_state WHERE key = 'state'")
             self._conn.commit()
 
+    def save_keyed(self, key: str, value: str) -> None:
+        """임의 키로 단일 문자열 값 저장."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO scheduler_state (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+            self._conn.commit()
+
+    def load_keyed(self, key: str) -> Optional[str]:
+        """임의 키로 저장된 문자열 값 로드. 없으면 None 반환."""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT value FROM scheduler_state WHERE key = ?", (key,)
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
     # ── 레거시 파일 마이그레이션 ──
 
     def _migrate_legacy_files(self) -> None:

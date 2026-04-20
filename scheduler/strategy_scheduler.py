@@ -103,6 +103,7 @@ class StrategyScheduler:
         self._strategies: List[StrategySchedulerConfig] = []
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._stop_event: asyncio.Event = asyncio.Event()
         self._last_run: Dict[str, datetime] = {}
         self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
         self._force_exit_done: set = set()  # 당일 강제 청산 완료된 전략
@@ -129,6 +130,7 @@ class StrategyScheduler:
         for cfg in self._strategies:
             cfg.enabled = True
         self._running = True
+        self._stop_event.clear()
         self._task = asyncio.create_task(self._loop())
         self._logger.info("[Scheduler] 시작 (전체 전략 활성화)")
         if self._notification_service:
@@ -140,6 +142,7 @@ class StrategyScheduler:
             self._save_scheduler_state()
 
         self._running = False
+        self._stop_event.set()
         for cfg in self._strategies:
             cfg.enabled = False
         if self._task:
@@ -166,7 +169,7 @@ class StrategyScheduler:
 
     async def _loop(self):
         self._logger.info("스케줄러 메인 루프 시작.")
-        while self._running:
+        while self._running and not self._stop_event.is_set():
             try:
                 market_open = await self._mcs.is_market_open_now()
 
