@@ -73,7 +73,7 @@ async def test_get_latest_trading_date_cached(manager, mock_deps):
     manager._last_check_date = "20250101"
     
     # Current date matches last check date
-    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 15, 0, 0)
+    tm.get_current_kst_time.return_value = tm.market_timezone.localize(datetime(2025, 1, 1, 15, 0, 0))
     
     result = await manager.get_latest_trading_date()
     assert result == "20250101"
