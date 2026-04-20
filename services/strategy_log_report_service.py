@@ -86,11 +86,12 @@ class StrategyLogReportService:
                         entry = _loads(raw)
                     except Exception:
                         continue
-                    if not entry.get('timestamp', '').startswith(date_prefix):
+                    ts = entry.get('timestamp', '')
+                    if not ts.startswith(date_prefix):
                         continue
                     data = entry.get('data')
                     if isinstance(data, dict):
-                        yield entry.get('level', 'INFO'), data
+                        yield entry.get('level', 'INFO'), ts, data
         except Exception:
             pass
 
@@ -112,28 +113,39 @@ class StrategyLogReportService:
 
         active_sections: List[str] = []
         inactive_names: List[str] = []
+        market_timing: Dict[str, bool] = {}
         idx = 0
 
         for name, files in sorted(strategy_files.items()):
-            bought: Dict[str, dict] = {}    # code → {name, price, reason}
-            rejected: Dict[str, dict] = {}  # code → {name, reason}
+            bought: Dict[str, dict] = {}
+            rejected: Dict[str, dict] = {}
+            scan_count: int = 0
 
             for fpath in sorted(files):
-                for _level, data in self._iter_events(fpath, date_prefix):
+                for _level, ts, data in self._iter_events(fpath, date_prefix):
                     event = data.get('event', '')
                     code = data.get('code', '')
-                    if not code:
-                        continue
 
-                    if event == 'buy_signal_generated':
+                    if event == 'scan_with_watchlist':
+                        scan_count = max(scan_count, data.get('count', 0))
+
+                    elif event == 'market_timing_updated':
+                        mkt = data.get('market', '')
+                        if mkt and mkt not in market_timing:
+                            market_timing[mkt] = data.get('ok', False)
+
+                    elif event == 'buy_signal_generated' and code:
+                        metrics = data.get('metrics', {})
+                        price = metrics.get('price', data.get('price', 0))
                         bought[code] = {
                             'name': data.get('name', code),
-                            'price': data.get('price', 0),
+                            'price': price,
                             'reason': data.get('reason', ''),
+                            'time': ts[11:16] if len(ts) >= 16 else '',
                         }
                         rejected.pop(code, None)
 
-                    elif event in self.REJECTED_EVENTS or event.endswith('_rejected'):
+                    elif code and (event in self.REJECTED_EVENTS or event.endswith('_rejected')):
                         if code not in bought:
                             prev = rejected.get(code, {'name': data.get('name', code), 'reason': ''})
                             rejected[code] = {
@@ -146,13 +158,15 @@ class StrategyLogReportService:
                 continue
 
             idx += 1
-            lines = [f"<b>{idx}. {name}</b>"]
+            scan_str = f" — {scan_count}종목 스캔" if scan_count else ""
+            lines = [f"<b>{idx}. {name}</b>{scan_str}"]
 
             if bought:
                 lines.append(f"\n✅ 매수 완료 ({len(bought)}건)")
                 for code, info in bought.items():
                     price_str = f" @ ₩{info['price']:,}" if info['price'] else ""
-                    lines.append(f"• {info['name']}({code}): {info['reason']}{price_str}")
+                    time_str = f" ({info['time']})" if info.get('time') else ""
+                    lines.append(f"• {info['name']}({code}): {info['reason']}{price_str}{time_str}")
             else:
                 lines.append("\n✅ 매수 완료: 없음")
 
@@ -166,7 +180,19 @@ class StrategyLogReportService:
             active_sections.append("\n".join(lines))
 
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        header = f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>"
+
+        if market_timing:
+            mt_parts = [
+                f"{mkt} {'🟢' if market_timing[mkt] else '🔴'}"
+                for mkt in ["KOSPI", "KOSDAQ"] if mkt in market_timing
+            ]
+            header = (
+                f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>\n"
+                f"<i>시장: {' | '.join(mt_parts)} (MA20 추세)</i>"
+            )
+        else:
+            header = f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>"
+
         footer = f"\n\n<i>생성: {now_str}</i>"
 
         if not active_sections:

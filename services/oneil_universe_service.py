@@ -713,7 +713,14 @@ class OneilUniverseService:
         for market, code in [("KOSDAQ", self._cfg.kosdaq_etf_code), ("KOSPI", self._cfg.kospi_etf_code)]:
             is_rising, fail_detail, ma_values = await self._check_etf_ma_rising(code, logger=logger)
             self._market_timing_cache[market] = is_rising
-            
+
+            logger.info({
+                "event": "market_timing_updated",
+                "market": market,
+                "ok": is_rising,
+                "fail_reason": fail_detail if not is_rising else "",
+            })
+
             if self._notification_service:
                 status_text = "🟢 매수 적합 (우상향)" if is_rising else "🔴 매수 부적합 (추세 꺾임)"
                 level = NotificationLevel.INFO if is_rising else NotificationLevel.WARNING

@@ -9,6 +9,7 @@
 
 - [ ] **[Streaming]** 구독중인데 data를 못받는 종목들이 있음. 이 종목들은 현재가조회가 실패함.
 - [ ] **[candle_chart]** 신고가/신저가 표기가 3개월/6개월/1년 버튼을 눌러야 변경됨.
+- [ ] **[newhighTask]** 신고가종목 조회에 간헐적으로 실패해서 실제로는 존재하나 0종목을 찾는 버그가 있음. data/stock.db를 daily_price_collector_task나 minervini_update_task등에서 덮어쓰는 문제로 보이는데 원인파악후 수정이 필요.
 
 
 ### 1. 핵심 아키텍처 및 보안 (Core Architecture)
@@ -65,100 +66,6 @@
 - [ ] **[기타 탐색]** GPT 추천 기반 추세 돌파매매(Trend Breakout), ConsolidationScanner 전략 타당성 검토.
 
 
-
-## 1. Sleep을 제거한 최적화
-   목적별로 sleep을 대체하거나 개선할 수 있는 구체적인 방안을 제안해 드립니다.
-
-        1. 장기 대기(수 시간) 스케줄링 개선: APScheduler 도입
-        관련 파일: scheduler/after_market_loop.py
-
-        현재 코드는 현재 시간과 장 마감 시간을 계산하여 그 차이만큼 await asyncio.sleep(wait_sec)을 호출하여 대기하고 있습니다.
-        문제점: 운영체제가 절전 모드에 들어가거나 타임 점프(NTP 동기화 등)가 발생하면 asyncio.sleep의 타이머가 어긋날 수 있으며, 프로세스 재시작 시 상태 관리가 복잡해집니다.
-
-        대체 방안: APScheduler (Advanced Python Scheduler)와 같은 강력한 스케줄링 라이브러리의 Cron Trigger를 사용하는 것을 권장합니다.
-
-        Python
-        # 기존: 수동으로 초를 계산해서 sleep
-        wait_sec = market_clock.get_sleep_seconds_until_market_close()
-        await asyncio.sleep(wait_sec + 60)
-
-        # 개선 (APScheduler AsyncIOScheduler 활용 예시):
-        from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-        scheduler = AsyncIOScheduler()
-
-        # 매일 15시 41분(장 마감 1분 후)에 지정된 태스크 실행
-        scheduler.add_job(on_market_closed, 'cron', day_of_week='mon-fri', hour=15, minute=41)
-        scheduler.start()
-        이렇게 하면 복잡한 while True 루프와 조건문, sleep 계산 로직을 모두 제거하고 직관적으로 스케줄을 관리할 수 있습니다.
-
-        2. 단기 폴링 루프 및 즉시 종료 처리: asyncio.Event 활용
-        관련 파일: scheduler/strategy_scheduler.py
-
-        현재 StrategyScheduler._loop는 while self._running:을 확인하고 끝부분에 await asyncio.sleep(self.LOOP_INTERVAL_SEC)를 호출합니다.
-        문제점: stop() 메서드가 호출되어 self._running = False가 되더라도, 진행 중인 sleep 시간이 다 끝날 때까지 루프가 즉시 종료되지 않으며 Task.cancel()에 의존해야 합니다.
-
-        대체 방안: asyncio.Event를 사용하여 대기하면, 종료 신호가 들어왔을 때 즉시 루프를 빠져나올 수 있습니다.
-
-        Python
-        class StrategyScheduler:
-            def __init__(...):
-                ...
-                self._stop_event = asyncio.Event()
-
-            async def start(self):
-                self._stop_event.clear()
-                self._task = asyncio.create_task(self._loop())
-
-            async def stop(self, save_state: bool = False):
-                self._stop_event.set() # 이벤트 발생시켜 sleep 즉시 중단
-                ...
-
-            async def _loop(self):
-                while not self._stop_event.is_set():
-                    # ... 기존 로직 ...
-                    
-                    # 개선: 단순 sleep 대신 Event의 wait을 활용한 timeout 대기
-                    # Event가 set() 되면 대기를 즉시 중단하고 반환됨
-                    try:
-                        await asyncio.wait_for(self._stop_event.wait(), timeout=self.LOOP_INTERVAL_SEC)
-                    except asyncio.TimeoutError:
-                        pass # 타임아웃 발생 == 정상적인 루프 주기 도래
-        이 방식을 사용하면 스케줄러 정지 시 Task.cancel()로 인한 예외 처리에 덜 의존하면서도 **우아한 종료(Graceful Shutdown)**가 가능해집니다.
-
-        3. 서버 구동 확인 대기 개선: 소켓 연결 확인 (Health Check)
-        관련 파일: main.py의 run_web() 내 open_browser()
-
-        현재 웹 브라우저를 열기 위해 단순 하드코딩된 시간(time.sleep(2))을 대기하고 있습니다.
-        문제점: 서버가 구동되는 데 2초보다 오래 걸리면 에러 페이지가 뜨고, 0.1초 만에 켜진다면 1.9초를 낭비하게 됩니다.
-
-        대체 방안: 해당 포트로 소켓 연결이 가능한지 빠르게 폴링(Polling)하며 체크하는 방식으로 대체합니다.
-
-        Python
-        import socket
-        import time
-
-        def wait_for_port(host, port, timeout=5.0):
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(0.1) # 짧은 타임아웃
-                    if sock.connect_ex((host, port)) == 0:
-                        return True # 서버 구동 완료
-                time.sleep(0.1) # 연결 실패 시 짧게 대기 후 재시도
-            return False
-
-        def open_browser():
-            if wait_for_port(host, port):
-                webbrowser.open(f"http://{host}:{port}")
-            else:
-                print("서버 구동 시간 초과")
-        4. 이벤트 기반 아키텍처 (Pub/Sub)로의 전환 고려
-        현재 구조는 각 스케줄러가 알아서 시계를 보고 sleep하는 방식입니다. 만약 향후에 분산 환경이나 더 복잡한 시스템으로 간다면, "장 시작", "장 마감", "주문 체결 완료" 등의 상태 변화를 이벤트(메시지)로 발행하고, 필요한 모듈들이 이를 구독(Subscribe)하여 실행되도록 하는 것이 가장 이상적인 sleep의 대안입니다.
-
-        지금 당장 코드베이스 전체를 바꾸기는 어렵겠지만, 우선적으로 after_market_loop.py의 비효율적인 수 시간 대기를 APScheduler로 교체하고, strategy_scheduler.py의 루프 대기를 asyncio.Event로 리팩토링하는 것만으로도 충분히 모던하고 안정적인 비동기 처리가 가능해집니다.
-
-    
 ## 2. 전략 고도화.
     20년 차 전업/시스템 트레이더의 냉혹한 관점에서, 작성하신 **'오닐 포켓 피봇(PP/BGU)'**과 '스퀴즈 돌파(OSB)' 전략이 실제 한국 시장(KOSPI/KOSDAQ)에서 돈을 벌 수 있을지 낱낱이 해부해 드리겠습니다.
 
