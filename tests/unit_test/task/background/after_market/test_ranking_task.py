@@ -508,8 +508,10 @@ async def test_after_market_scheduler_triggers_refresh(mock_deps):
     broker, mapper, env, logger, market_clock, market_calendar_service = mock_deps
     market_calendar_service.is_market_open_now.return_value = False  # 장마감
     market_calendar_service.is_business_day.return_value = True
+    market_calendar_service.get_latest_trading_date = AsyncMock(return_value="20260316")
     market_clock.get_sleep_seconds_until_market_close.return_value = 0.0
     market_clock.get_current_kst_time.return_value = datetime(2026, 3, 16, 16, 0, 0)
+    market_clock.get_current_kst_date_str.return_value = "20260316"
 
     market_data_service = MagicMock()
     market_data_service.get_top_rise_fall_stocks = AsyncMock(
@@ -784,6 +786,8 @@ async def test_start_after_market_scheduler_exception_handling(bg_service, mock_
     import asyncio
     _, _, _, logger, market_clock, market_calendar_service = mock_deps
     market_calendar_service.is_market_open_now.return_value = False
+    market_clock.get_sleep_seconds_until_market_close.return_value = 0.0
+    market_clock.get_current_kst_date_str.return_value = "20250101"
 
     # refresh_basic_ranking에서 예외 발생
     bg_service.refresh_basic_ranking = AsyncMock(side_effect=Exception("Scheduler Error"))

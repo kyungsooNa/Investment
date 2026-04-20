@@ -92,6 +92,7 @@ class TestRunAfterMarketLoop:
         tm = MagicMock()
         # 0.1 < 3600 이므로 1b 체크(장 시작 전 guard)가 트리거되지 않음
         tm.get_sleep_seconds_until_market_close.return_value = 0.1
+        tm.get_current_kst_date_str.return_value = "20260318"
 
         callback_called = False
 
