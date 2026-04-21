@@ -566,7 +566,7 @@ class TestOneilSqueezeBreakoutScan:
         mock_universe = MagicMock(spec=OneilUniverseService)
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
-            high_20d=72000,  # 현재가 75000 > 72000 → 돌파
+            high_20d=74000,  # 현재가 75000 > 74000 → 돌파, max_entry=74000*1.02=75480 (within 2%)
             ma_20d=70000.0, ma_50d=68000.0,
             avg_vol_20d=1000000.0,  # 환산거래량 6M > 1M*1.5 → 통과
             bb_width_min_20d=0.03, prev_bb_width=0.04,
@@ -755,6 +755,7 @@ class TestOneilPocketPivotScan:
             execution_strength_min=120.0,
             bgu_gap_pct=4.0,
             bgu_volume_multiplier=1.0,  # 완화: 50일 평균 100%만 넘으면 통과
+            bgu_min_pg_tv_pct=0.0,      # 테스트 PG 비율(~1.2%)이 기본값(8%)보다 낮아 완화
         )
         strategy = OneilPocketPivotStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
@@ -875,8 +876,8 @@ class TestScanChunkParallelism:
         mock_universe = MagicMock(spec=OneilUniverseService)
         # 2개 종목: 000001은 API 예외 유발, 005930은 정상 돌파
         mock_universe.get_watchlist = AsyncMock(return_value={
-            "000001": self._make_watchlist_item("000001", high_20d=70000),
-            "005930": self._make_watchlist_item("005930", high_20d=70000),
+            "000001": self._make_watchlist_item("000001", high_20d=74000),  # price=75000, max_entry=75480
+            "005930": self._make_watchlist_item("005930", high_20d=74000),  # within 2% extension
         })
         mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
 
@@ -935,7 +936,7 @@ class TestScanChunkParallelism:
         mock_universe = MagicMock(spec=OneilUniverseService)
         codes = [f"00{i:04d}" for i in range(1, 4)]  # 3개 종목 (1 청크 내)
         mock_universe.get_watchlist = AsyncMock(return_value={
-            code: self._make_watchlist_item(code, high_20d=70000) for code in codes
+            code: self._make_watchlist_item(code, high_20d=74000) for code in codes  # price=75000, within 2%
         })
         mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
 
