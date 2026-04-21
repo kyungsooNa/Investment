@@ -91,6 +91,7 @@ class TimeDispatcher:
 
     def register_task(self, task_name: str, priority: int = TaskPriority.LOW, delay_sec: int = 0) -> None:
         """장 마감 시 발행할 태스크를 등록하고 DB에서 마지막 발행일을 복원한다."""
+        task_name = str(task_name)  # SQLite 바인딩을 위해 str 보장
         self._task_schedule[task_name] = priority
         self._task_delays[task_name] = delay_sec
         self._task_dispatched_dates[task_name] = self._load_task_date(task_name)
