@@ -13,12 +13,26 @@ from services.notification_service import NotificationCategory, NotificationLeve
 # --- Fixtures ---
 
 
+_SAMPLE_KOSPI_STOCK = {
+    "code": "000001", "name": "StockA", "market": "KOSPI",
+    "total_score": 50.0, "rs_rating": 80, "market_cap": 500000000000,
+    "avg_trading_value_5d": 20000000000, "minervini_stage": 2,
+}
+_SAMPLE_KOSDAQ_STOCK = {
+    "code": "000002", "name": "StockB", "market": "KOSDAQ",
+    "total_score": 40.0, "rs_rating": 70, "market_cap": 300000000000,
+    "avg_trading_value_5d": 10000000000, "minervini_stage": 0,
+}
+
+
 @pytest.fixture
 def mock_universe_service():
     svc = MagicMock()
     svc.generate_premium_watchlist = AsyncMock(return_value={
         "kospi_count": 30,
         "kosdaq_count": 20,
+        "kospi_stocks": [_SAMPLE_KOSPI_STOCK] * 30,
+        "kosdaq_stocks": [_SAMPLE_KOSDAQ_STOCK] * 20,
     })
     svc.generation_progress = {
         "running": False,
@@ -461,3 +475,65 @@ class TestNotification:
         mock_ns.emit.assert_awaited_once_with(
             NotificationCategory.BACKGROUND, NotificationLevel.ERROR, "전일기준우량주 생성 실패", "생성 실패 테스트"
         )
+
+
+# --- TelegramReporter 연동 테스트 ---
+
+
+class TestTelegramReporterIntegration:
+
+    @pytest.fixture
+    def mock_reporter(self):
+        reporter = MagicMock()
+        reporter.send_premium_watchlist_report = AsyncMock()
+        return reporter
+
+    @pytest.fixture
+    def task_with_reporter(self, mock_universe_service, mock_mcs, mock_market_clock, mock_reporter):
+        return PremiumWatchlistGeneratorTask(
+            universe_service=mock_universe_service,
+            market_calendar_service=mock_mcs,
+            market_clock=mock_market_clock,
+            logger=MagicMock(),
+            telegram_reporter=mock_reporter,
+        )
+
+    async def test_run_generation_calls_reporter_on_success(self, task_with_reporter, mock_reporter):
+        """생성 성공 시 TelegramReporter.send_premium_watchlist_report가 호출된다."""
+        with patch("asyncio.create_task") as mock_create_task:
+            await task_with_reporter._run_generation("20260320")
+            mock_create_task.assert_called_once()
+
+    async def test_run_generation_passes_stocks_to_reporter(self, task_with_reporter, mock_reporter, mock_universe_service):
+        """리포터에 kospi_stocks / kosdaq_stocks 가 올바르게 전달된다."""
+        captured_coro = None
+
+        def capture_task(coro):
+            nonlocal captured_coro
+            captured_coro = coro
+            return MagicMock()
+
+        with patch("asyncio.create_task", side_effect=capture_task):
+            await task_with_reporter._run_generation("20260320")
+
+        assert captured_coro is not None
+        await captured_coro  # 실제 코루틴 실행
+
+        mock_reporter.send_premium_watchlist_report.assert_awaited_once_with(
+            kospi=[_SAMPLE_KOSPI_STOCK] * 30,
+            kosdaq=[_SAMPLE_KOSDAQ_STOCK] * 20,
+            report_date="20260320",
+        )
+
+    async def test_run_generation_no_reporter_no_error(self, task, mock_universe_service):
+        """reporter가 없으면 오류 없이 동작한다."""
+        assert task._telegram_reporter is None
+        await task._run_generation("20260320")  # 예외 없이 완료
+        mock_universe_service.generate_premium_watchlist.assert_awaited_once()
+
+    async def test_run_generation_failure_does_not_call_reporter(self, task_with_reporter, mock_universe_service, mock_reporter):
+        """생성 실패 시 리포터를 호출하지 않는다."""
+        mock_universe_service.generate_premium_watchlist.side_effect = RuntimeError("실패")
+        with patch("asyncio.create_task") as mock_create_task:
+            await task_with_reporter._run_generation("20260320")
+            mock_create_task.assert_not_called()

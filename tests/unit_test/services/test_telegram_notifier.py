@@ -487,6 +487,90 @@ async def test_send_newhigh_report_empty(telegram_reporter):
 
 
 @pytest.mark.asyncio
+async def test_send_premium_watchlist_report_basic(telegram_reporter):
+    """send_premium_watchlist_report: 정상 데이터 전송 검증"""
+    kospi = [
+        {"code": "005930", "name": "삼성전자", "total_score": 80.0, "rs_rating": 90,
+         "market_cap": 400_000_000_000_000, "avg_trading_value_5d": 200_000_000_000, "minervini_stage": 2},
+        {"code": "000660", "name": "SK하이닉스", "total_score": 60.0, "rs_rating": 75,
+         "market_cap": 80_000_000_000_000, "avg_trading_value_5d": 50_000_000_000, "minervini_stage": 0},
+    ]
+    kosdaq = [
+        {"code": "035420", "name": "NAVER", "total_score": 50.0, "rs_rating": 65,
+         "market_cap": 30_000_000_000_000, "avg_trading_value_5d": 20_000_000_000, "minervini_stage": 0},
+    ]
+
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    await telegram_reporter.send_premium_watchlist_report(kospi, kosdaq, "20260320")
+
+    calls = telegram_reporter._send_message.call_args_list
+    full = "".join([c[0][0] for c in calls])
+
+    assert "전일 기준 우량주 리포트" in full
+    assert "20260320" in full
+    assert "KOSPI 2개" in full
+    assert "KOSDAQ 1개" in full
+    assert "삼성전자" in full
+    assert "SK하이닉스" in full
+    assert "NAVER" in full
+    # Minervini Stage 2 종목에 ★ 뱃지
+    assert "★" in full
+
+
+@pytest.mark.asyncio
+async def test_send_premium_watchlist_report_empty_markets(telegram_reporter):
+    """send_premium_watchlist_report: KOSPI/KOSDAQ 중 하나가 빈 경우"""
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    await telegram_reporter.send_premium_watchlist_report([], [], "20260320")
+
+    calls = telegram_reporter._send_message.call_args_list
+    full = "".join([c[0][0] for c in calls])
+    assert "전일 기준 우량주 리포트" in full
+    assert "KOSPI 0개" in full
+    assert "KOSDAQ 0개" in full
+
+
+@pytest.mark.asyncio
+async def test_send_premium_watchlist_report_market_cap_formatting(telegram_reporter):
+    """send_premium_watchlist_report: 시가총액 조/억 단위 포맷팅 검증"""
+    stocks = [
+        {"code": "A", "name": "대형주", "total_score": 50.0, "rs_rating": 80,
+         "market_cap": 50_000_000_000_000, "avg_trading_value_5d": 100_000_000_000, "minervini_stage": 0},
+        {"code": "B", "name": "중형주", "total_score": 40.0, "rs_rating": 70,
+         "market_cap": 500_000_000_000, "avg_trading_value_5d": 10_000_000_000, "minervini_stage": 0},
+    ]
+
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    await telegram_reporter.send_premium_watchlist_report(stocks, [], "20260320")
+
+    calls = telegram_reporter._send_message.call_args_list
+    full = "".join([c[0][0] for c in calls])
+
+    assert "50조" in full
+    assert "5,000억" in full   # 500억 표시 (5000억)
+    # avg_trading_value_5d 억 단위 변환
+    assert "1,000억" in full   # 1000억
+    assert "100억" in full
+
+
+@pytest.mark.asyncio
+async def test_send_premium_watchlist_report_invalid_numeric_fields(telegram_reporter):
+    """send_premium_watchlist_report: 숫자 필드가 None/잘못된 값이어도 크래시 없이 '-' 표시"""
+    stocks = [
+        {"code": "A", "name": "오류종목", "total_score": None, "rs_rating": None,
+         "market_cap": None, "avg_trading_value_5d": None, "minervini_stage": 0},
+    ]
+
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    await telegram_reporter.send_premium_watchlist_report(stocks, [], "20260320")
+
+    calls = telegram_reporter._send_message.call_args_list
+    full = "".join([c[0][0] for c in calls])
+    assert "오류종목" in full
+    assert "-" in full  # 숫자 변환 실패 시 '-'
+
+
+@pytest.mark.asyncio
 async def test_send_minervini_report_empty_and_normal(telegram_reporter):
     """Minervini 리포트의 빈 리스트 처리와 정상 항목 전송 검증"""
     telegram_reporter._send_message = AsyncMock(return_value=True)

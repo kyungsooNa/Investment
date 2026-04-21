@@ -687,6 +687,8 @@ class OneilUniverseService:
 
         return {
             "kospi_count": len(kospi), "kosdaq_count": len(kosdaq),
+            "kospi_stocks": [asdict(i) for i in kospi],
+            "kosdaq_stocks": [asdict(i) for i in kosdaq],
             "total_scanned": len(all_stocks), "scanned": len(all_stocks),
             "passed_first": len(passed_first), "first_filter_passed": len(passed_first),
             "second_filter_passed": len(items),
