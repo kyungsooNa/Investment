@@ -72,3 +72,39 @@
 - [ ] **[현재가차트]** 종목 검색 History View 추가.
 - [ ] **[백테스트 시각화]** 웹 UI(/virtual)에 MDD, 샤프 지수, 수익률 곡선 시각화 위젯 연동.
 - [ ] **[알림]** 텔레그램/웹 푸시를 통한 전략 진입/청산 및 시스템 에러 실시간 알림.
+
+
+### 성능 리뷰
+1. 🐍 Python GIL 우회 및 아키텍처 분리 (I/O vs CPU)
+현재 FastAPI와 비동기(asyncio) 기반으로 시스템을 구성하셨다면 I/O(웹소켓 수신, API 호출) 처리에는 매우 탁월합니다. 하지만 파이썬의 GIL(Global Interpreter Lock) 특성상, 하나의 프로세스 내에서 무거운 연산을 수행하면 비동기 루프 전체가 멈추는 블로킹(Blocking) 현상이 발생합니다.
+
+문제점: streaming_service.py에서 수백 종목의 틱을 비동기로 수신하는 도중, strategy_executor.py나 indicator_service.py에서 무거운 연산(예: 복잡한 지표 계산이나 N개 종목 동시 스캔)이 실행되면 틱 수신 지연이 발생합니다.
+
+개선 방안 (ProcessPool 분리): CPU 연산이 많이 필요한 전략 판단(Strategy Evaluation)이나 지표의 대규모 재계산 작업은 concurrent.futures.ProcessPoolExecutor를 사용하여 별도의 프로세스로 위임(Off-loading)해야 합니다. I/O 처리를 하는 메인 Async 이벤트 루프가 절대 멈추지 않도록 보호하는 것이 1원칙입니다.
+
+2. 🗄️ SQLite 및 파일 DB 병목 해소 (Write-Lock Contention)
+todo_list.md에 "현재 모든 tick 단위가 db에 저장되고 있는데... 1분 단위로 수정"한다는 내용이 있었습니다. 파일 기반에서 SQLite로 넘어가더라도, SQLite는 동시 쓰기(Concurrency Write)에 매우 취약합니다.
+
+문제점: 수십 개 종목의 틱 데이터를 SQLite에 매번 INSERT 하면 'Database is locked' 에러가 발생하거나 심각한 I/O 대기(Wait)가 걸립니다.
+
+개선 방안 (Batch Insert & WAL Mode): 1.  WAL 모드 활성화: SQLite 연결 시 반드시 PRAGMA journal_mode=WAL; (Write-Ahead Logging)과 PRAGMA synchronous=NORMAL;을 적용하여 읽기/쓰기 락 경합을 최소화해야 합니다.
+2.  메모리 버퍼링 및 벌크 인서트: 틱 데이터를 즉시 DB에 쓰지 말고, Redis 리스트나 파이썬 내장 asyncio.Queue에 버퍼링해 둡니다. 그리고 백그라운드 태스크(예: daily_price_collector_task.py)에서 1초에 한 번씩 수천 건을 한 번에 묶어서 쿼리 하나로 executemany() 벌크 인서트를 하도록 변경해야 합니다.
+
+3. 🚀 데이터 역직렬화(Deserialization) 오버헤드 최소화
+증권사 웹소켓(한국투자증권 등)에서 날아오는 실시간 체결 데이터는 보통 JSON 포맷이거나 특정 구분자(| 또는 ^)로 연결된 긴 문자열입니다.
+
+개선 방안 (orjson 도입): 파이썬 내장 json 모듈은 매우 느립니다. 이를 Rust로 작성된 orjson이나 C 기반의 ujson으로 교체하기만 해도 JSON 파싱 속도가 3~5배 이상 빨라집니다. 틱 데이터가 초당 수천 번 들어오는 환경에서는 이 파싱 시간 자체가 레이턴시의 주범이 됩니다.
+
+객체 생성 오버헤드 감소: 틱이 들어올 때마다 매번 무거운 Pydantic 모델이나 큰 딕셔너리(dict) 객체를 새로 생성하면 Python의 **가비지 컬렉터(GC Pause)**가 빈번하게 작동하여 시스템이 순간적으로 멈춥니다(스파이크 발생). 실시간 틱 데이터 클래스는 가급적 __slots__를 사용하여 메모리 할당 속도를 높이고 메모리 풋프린트를 줄여야 합니다.
+
+4. 🧮 시계열 연산 고속화 (Pandas의 함정 피하기)
+퀀트 시스템을 만들 때 가장 흔히 하는 실수 중 하나가 실시간 처리 루프 내에서 Pandas DataFrame을 사용하는 것입니다.
+
+문제점: 백테스트에서는 Pandas의 벡터화(Vectorization) 연산이 최고지만, 라이브 환경에서 틱이나 1분봉 데이터 1줄을 DataFrame에 append() 하거나 concat() 하는 작업은 메모리를 통째로 재할당하기 때문에 최악의 성능을 냅니다.
+
+개선 방안 (Circular Buffer 활용): 실시간 지표 계산(이동평균, RSI 등) 시에는 Pandas 대신 파이썬 내장 collections.deque(maxlen=N)를 사용하거나, **미리 크기를 할당해 둔 NumPy 배열(Circular Buffer 방식)**을 사용해야 합니다. 최신 틱이 들어오면 가장 오래된 데이터를 밀어내고 덮어쓰는(O(1) 연산) 구조로 가야 CPU 부하 없이 즉각적인 타점 계산이 가능합니다.
+
+5. 📡 네트워크 레이턴시 및 세션 재사용
+현재 core/retry_queue/ 쪽에 API 재시도 로직이 잘 구현되어 있는 것으로 보입니다.
+
+개선 방안 (Keep-Alive 및 Connection Pool): KIS API 등으로 주문을 넣거나 데이터를 조회할 때, 매번 requests.get/post나 새로운 aiohttp.ClientSession을 생성하면 TCP/TLS Handshake 과정에서 수백 밀리초(ms)가 낭비됩니다. 앱 기동 시(web_app_initializer.py) 하나의 aiohttp.ClientSession 풀을 생성하여 전역적으로 유지하고, Keep-Alive가 적용된 상태에서 주문 패킷만 쏘도록 재사용해야 주문 체결 반응 속도를 극대화할 수 있습니다.
