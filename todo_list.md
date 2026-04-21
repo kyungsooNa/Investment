@@ -1,77 +1,59 @@
-# 📈 Investment Trading App - 통합 To-Do List (v2.0)
+# 📈 Investment Trading App - 통합 To-Do List (v3.0 - 실전 퀀트 최적화)
+# 📈 Investment Trading App - 통합 To-Do List (v3.1 - 실전 퀀트 최적화 및 파일 매핑)
 
-## Ⅰ. 🚨 최우선 개선 및 버그 수정 (High Priority)
-애플리케이션의 핵심 기능 안정성과 데이터 무결성에 직접적인 영향을 미치는 사항입니다.
+## Ⅰ. 🚨 1순위: 시스템 생존 및 치명적 병목 해소 (Tier 1: Survival & Critical Bottlenecks)
+계좌를 보호하는 안전장치를 확보하고, 시스템 다운을 유발하는 치명적 버그와 DB 병목을 최우선으로 해결합니다.
 
-### 0. 치명적 불량 수정 (Critical Bugs)
-- [ ] **[프로그램매매]** 이전 구독종목 복구 지연 개선: DB 저장을 1분 단위 마지막 틱 정보만 저장하도록 수정하여 메모리 부하 절감.
-- [ ] **[Streaming]** 데이터 수신 실패 종목(현재가 조회 실패) 원인 파악 및 수정.
-- [ ] **[candle_chart]** 신고가/신저가 표기 UI 갱신 버그 수정.
-- [ ] **[newhighTask]** DB 덮어쓰기 문제로 인한 신고가 종목 조회 실패 버그 수정.
+- [ ] **[버그] 구독종목 복구 지연:** DB 저장을 1분 단위로 수정.
+    - 📂 `services/program_trading_stream_service.py`, `repositories/program_trading_repo.py`
+- [ ] **[버그] Streaming 데이터 수신 누락:** 현재가 조회 실패 종목 수정.
+    - 📂 `services/streaming_service.py`, `brokers/korea_investment/korea_invest_websocket_api.py`
+- [ ] **[버그] NewhighTask DB 경합:** 신고가 조회 실패 버그 수정.
+    - 📂 `task/background/after_market/newhigh_task.py`, `services/newhigh_service.py`
+- [ ] **[성능] DB WAL 모드 및 벌크 인서트:** 쓰기 락 방지.
+    - 📂 `core/cache/db_cache.py`, `data/stock_db_reader.py`
+- [ ] **[안정성] 주문 상태 기계(FSM):** 중복 매수 방지.
+    - 📂 `common/types.py`, `services/order_execution_service.py`
+- [ ] **[리스크] 킬 스위치 및 포지션 사이징:** 계좌 보호 로직 및 변동성(ATR) 기반 비중 조절.
+    - 📂 `core/pnl_utils.py`, `services/order_execution_service.py`, `services/indicator_service.py`
+- [ ] **[UI 버그] candle_chart 표기:** 신고가/신저가 기간 버튼 갱신 버그 수정.
+    - 📂 `view/web/static/js/candle_chart.js` 
 
-### 1. 보안 및 안정성
-- [ ] **[보안]** JWT(JSON Web Token) 기반 인증 고도화 및 Secure/HttpOnly 쿠키 적용.
-- [ ] **[모니터링]** 시스템 관측성(Observability) 확보: Prometheus/Grafana 연동하여 API 레이턴시 및 에러율 실시간 모니터링 (신규 제안).
+## Ⅱ. ⚡ 2순위: 실시간 체결 성능 및 마이크로 구조 개선 (Tier 2: Execution & Microstructure)
+변동성 장세에서 주문 지연과 슬리피지를 최소화하기 위한 아키텍처 및 체결 알고리즘 최적화입니다.
 
----
+- [ ] **[성능] I/O와 CPU 연산 격리:** `ProcessPoolExecutor` 도입.
+    - 📂 `main.py`, `scheduler/worker/worker_pool.py`, `strategies/strategy_executor.py`
+- [ ] **[성능] orjson 및 Circular Buffer:** 파싱 및 지표 연산 고속화.
+    - 📂 `common/types.py`, `services/indicator_service.py`
+- [ ] **[성능] HTTP Keep-Alive 세션 유지:** KIS API 주문 지연 최소화.
+    - 📂 `view/web/web_app_initializer.py`, `brokers/korea_investment/korea_invest_client.py`
+- [ ] **[알고리즘] 스마트 라우팅 및 호가 분석:** 최적 단가 체결 및 분할 주문(TWAP/VWAP).
+    - 📂 `services/order_execution_service.py`, `brokers/korea_investment/korea_invest_websocket_api.py`
 
-## Ⅱ. ⚡ 인프라 및 데이터 아키텍처 (Infrastructure & Data)
-시스템 성능 최적화와 장기적 운영 안정성을 위한 과제입니다.
+## Ⅲ. 🧠 3순위: 백테스트 현실화 및 전략 확장 (Tier 3: Backtesting & Strategy)
+수익 모델을 고도화하고, 백테스트와 실전의 괴리를 없애기 위한 환경을 구축합니다.
 
-### 1. 데이터베이스 마이그레이션
-- [ ] **[DB 마이그레이션]** 파일 기반 데이터(JSON, CSV)를 SQLite로 전면 마이그레이션.
-- [ ] **[시계열 DB 검토]** 대량의 틱/분봉 데이터 처리를 위한 전용 시계열 DB(TimescaleDB 등) 도입 검토 (신규 제안).
+- [ ] **[백테스트] 가상 브로커 및 Mock 데이터:** 전략 재사용 엔진 및 편향(Survivorship Bias) 제거.
+    - 📂 `interfaces/strategy.py`, `strategies/backtest_data_provider.py`, `services/virtual_trade_service.py`
+- [ ] **[아키텍처] 전략/실행 결합도 낮추기:** Pub/Sub 시그널 구조.
+    - 📂 `scheduler/ticket_queue/message_broker.py`, `strategies/strategy_executor.py`
+- [ ] **[전략] 오닐 스퀴즈 V3 및 마켓 타이밍 지표:** 업종 스코어링 및 시장 폭 지표 구현.
+    - 📂 `services/oneil_universe_service.py`, `services/market_data_service.py`
+- [ ] **[유니버스] 시장 확장 및 AI 연동:** NXT/해외주식 편입 및 LLM 분석.
+    - 📂 `services/stock_sync_service.py` 
 
-### 2. 배포 및 환경 구축
-- [ ] **[컨테이너화]** Dockerfile 및 docker-compose.yml 작성을 통한 배포 용이성 확보.
+## Ⅳ. 🔍 4순위: 관측성 및 유지보수성 개선 (Tier 4: Observability & Maintenance)
+블랙박스 현상을 방지하고, 운영 및 유지보수 생산성을 극대화합니다.
 
----
-
-## Ⅲ. 🛡️ 리스크 및 포트폴리오 관리 (Risk & Portfolio Management)
-실전 매매에서의 생존율을 높이기 위한 핵심 제어 시스템입니다. (전체 신규 제안)
-
-### 1. 자금 관리 (Position Sizing)
-- [ ] **[동적 비중 조절]** 변동성(ATR) 기반 포지션 사이징 엔진 개발.
-- [ ] **[상관관계 필터]** 포트폴리오 내 종목 간 상관관계(Correlation) 분석을 통한 특정 섹터 쏠림 방지 로직.
-
-### 2. 계좌 보호 (Global Safety)
-- [ ] **[킬 스위치]** 일일 최대 손실폭(Daily Stop-loss) 또는 MDD 임계치 도달 시 자동 전량 매도 및 매매 중단 기능.
-- [ ] **[동적 손절]** MAE(최대 평가손실)/MFE(최대 평가수익) 데이터 기반의 전략별 최적 트레일링 스탑 구현.
-
----
-
-## Ⅳ. 💹 주문 집행 및 시장 구조 (Execution & Microstructure)
-체결 효율을 높이고 슬리피지를 최소화하기 위한 기능입니다. (전체 신규 제안)
-
-### 1. 알고리즘 매매 (Execution Algos)
-- [ ] **[분할 주문]** 대량 주문 시 충격을 줄이기 위한 TWAP(시간 가중 평균 가격) 또는 VWAP(거래량 가중 평균 가격) 알고리즘 추가.
-- [ ] **[스마트 라우팅]** 호가창 스프레드 상태에 따른 지정가/시장가 동적 주문 라우팅 로직.
-
-### 2. 시장 분석 고도화
-- [ ] **[호가창 분석]** 호가 불균형(Orderbook Imbalance) 및 체결 강도 틱 단위 분석 지표 추가.
-- [ ] **[시장 폭]** 상승/하락 종목 수(AD Line), 신고가/신저가 비율 등 마켓 타이밍 지표 서비스 구축.
-
----
-
-## Ⅴ. 🧠 전략 고도화 및 백테스팅 (Strategy & Backtesting)
-전략의 승률을 높이고 검증 체계를 정밀화하는 작업입니다.
-
-### 1. 백테스트 엔진의 현실화
-- [ ] **[가상 브로커]** 기존 전략 코드를 재사용하는 Mock Broker 개발.
-- [ ] **[슬리피지 모델링]** 실제 호가 상황을 반영한 슬리피지 및 수수료 정밀 계산 기능 (신규 제안).
-- [ ] **[편향 제거]** 상장폐지 종목 데이터를 포함한 생존자 편향(Survivorship Bias) 방지 로직 (신규 제안).
-
-### 2. 전략 관리 및 AI 확장
-- [ ] **[오닐 스퀴즈 V3]** 업종 소분류 스코어링 및 실시간 고래 탐지(5,000만 원 이상) 진입 로직.
-- [ ] **[성과 모니터링]** 전략 노후화(Strategy Decay) 감지: 실거래 성과가 백테스트 통계치를 이탈할 경우 자동 관망 모드 전환 (신규 제안).
-- [ ] **[AI 연동]** 뉴스/종목 분석 기능을 위한 AI(LLM) 연동 인터페이스 추가.
-
----
-
-## Ⅵ. ✨ 웹 UI 및 사용자 경험 (Web UI & UX)
-- [ ] **[현재가차트]** 종목 검색 History View 추가.
-- [ ] **[백테스트 시각화]** 웹 UI(/virtual)에 MDD, 샤프 지수, 수익률 곡선 시각화 위젯 연동.
-- [ ] **[알림]** 텔레그램/웹 푸시를 통한 전략 진입/청산 및 시스템 에러 실시간 알림.
+- [ ] **[관측성] Trace ID 기반 로그 추적:** 주문 블랙박스 구현.
+    - 📂 `core/loggers/app_logger.py`, `core/loggers/json_formatter.py`
+- [ ] **[유지보수] 전략 노후화 감지:** 실거래 성과 모니터링 및 자동 관망 전환.
+    - 📂 `services/strategy_log_report_service.py`, `task/background/after_market/strategy_log_report_task.py`
+- [ ] **[유지보수] 카오스 엔지니어링:** 결함 주입 테스트 추가.
+    - 📂 `tests/integration_test/test_it_crash_handler.py`, `core/retry_queue/client_with_retry_queue.py`
+- [ ] **[보안 및 인프라]** JWT 인증, 컨테이너화(Docker), UI 위젯 추가.
+    - 📂 `view/web/routes/auth.py`, `Dockerfile`, `view/web/templates/virtual.html`
 
 
 ### 성능 리뷰
