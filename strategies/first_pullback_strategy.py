@@ -6,7 +6,7 @@ import logging
 import os
 import json
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
@@ -53,6 +53,7 @@ class FirstPullbackStrategy(LiveStrategy):
             self._logger = get_strategy_logger("FirstPullback", sub_dir="oneil")
 
         self._position_state: Dict[str, FPPositionState] = {}
+        self._cooldown: Dict[str, str] = {}  # code → unblock_date (YYYYMMDD)
         self._load_state()
 
     @property
@@ -86,10 +87,12 @@ class FirstPullbackStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
             return signals
 
+        today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
         candidates = [
             (code, item) for code, item in watchlist.items()
             if code not in self._position_state
             and market_timing.get(item.market, False)
+            and today_str >= self._cooldown.get(code, "")
         ]
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
@@ -120,12 +123,14 @@ class FirstPullbackStrategy(LiveStrategy):
         if isinstance(out, dict):
             current = int(out.get("stck_prpr", 0))
             today_open = int(out.get("stck_oprc", 0))
+            today_high = int(out.get("stck_hgpr", 0))
             today_low = int(out.get("stck_lwpr", 0))
             prdy_vrss = int(out.get("prdy_vrss", 0))
             prdy_vrss_sign = str(out.get("prdy_vrss_sign", "3"))
         else:
             current = int(getattr(out, "stck_prpr", 0) or 0)
             today_open = int(getattr(out, "stck_oprc", 0) or 0)
+            today_high = int(getattr(out, "stck_hgpr", 0) or 0)
             today_low = int(getattr(out, "stck_lwpr", 0) or 0)
             prdy_vrss = int(getattr(out, "prdy_vrss", 0) or 0)
             prdy_vrss_sign = str(getattr(out, "prdy_vrss_sign", "3") or "3")
@@ -191,10 +196,11 @@ class FirstPullbackStrategy(LiveStrategy):
 
         # ── Phase 3: Trigger (매수 방아쇠) ──
         prev_high = ohlcv[-1].get("high", 0) if ohlcv else 0
-        if not self._check_bullish_reversal(current, today_open, prev_high):
+        if not self._check_bullish_reversal(current, today_open, today_high, today_low, prev_close, prev_high):
             self._logger.debug({
                 "event": "entry_rejected", "code": code, "reason": "no_bullish_reversal",
-                "current": current, "today_open": today_open, "prev_high": prev_high
+                "current": current, "today_open": today_open, "prev_high": prev_high,
+                "today_high": today_high, "today_low": today_low, "prev_close": prev_close,
             })
             return None
 
@@ -356,8 +362,16 @@ class FirstPullbackStrategy(LiveStrategy):
 
     # ── Phase 3 검사 메서드 ────────────────────────────────────────
 
-    def _check_bullish_reversal(self, current: int, today_open: int, prev_high: int) -> bool:
-        """양봉 전환(current > open) 또는 전일 고가 돌파 확인."""
+    def _check_bullish_reversal(self, current: int, today_open: int, today_high: int, today_low: int, prev_close: int, prev_high: int) -> bool:
+        """양봉 전환(current > open) 또는 전일 고가 돌파 확인. 갭하락 가짜양봉 방어."""
+        # 갭하락 가짜양봉 방어 1: 전일종가 대비 floor 미달
+        if prev_close > 0 and current < prev_close * (1 + self._cfg.reversal_prev_close_floor_pct / 100):
+            return False
+        # 갭하락 가짜양봉 방어 2: 캔들 내 현재가가 하단에 위치 (윗꼬리 양봉)
+        if today_high > today_low:
+            rel_pos = (current - today_low) / (today_high - today_low)
+            if rel_pos < self._cfg.reversal_min_relative_pos:
+                return False
         if today_open > 0 and current > today_open:
             return True
         if prev_high > 0 and current > prev_high:
@@ -454,12 +468,30 @@ class FirstPullbackStrategy(LiveStrategy):
 
         reason = ""
 
-        # 🚨 손절: 20MA -2% 이탈 → 잔량 전체 매도
+        # 🚨 손절: 20MA -2% 이탈 → 10분 유예 후 확정 (14:50 이후는 즉시)
         if len(closes) >= self._cfg.ma_period:
             ma_20d = float(sum(closes[-self._cfg.ma_period:]) / self._cfg.ma_period)
             threshold = ma_20d * (1 + self._cfg.stop_loss_below_ma_pct / 100)
             if current < threshold:
-                reason = f"손절(20MA {ma_20d:,.0f} 하향이탈 {pnl:.1f}%)"
+                now = self._tm.get_current_kst_time()
+                eod = now.replace(
+                    hour=self._cfg.ma_break_eod_hour,
+                    minute=self._cfg.ma_break_eod_minute,
+                    second=0, microsecond=0,
+                )
+                if now >= eod:
+                    reason = f"손절(20MA {ma_20d:,.0f} 장마감전 이탈 {pnl:.1f}%)"
+                elif not state.ma_break_since_ts:
+                    state.ma_break_since_ts = now.strftime("%Y%m%d%H%M%S")
+                    state_dirty = True
+                else:
+                    break_dt = datetime.strptime(state.ma_break_since_ts, "%Y%m%d%H%M%S").replace(tzinfo=now.tzinfo)
+                    if (now - break_dt).total_seconds() / 60 >= self._cfg.ma_break_grace_minutes:
+                        reason = f"손절(20MA {ma_20d:,.0f} {self._cfg.ma_break_grace_minutes}분 이탈유지 {pnl:.1f}%)"
+            else:
+                if state.ma_break_since_ts:
+                    state.ma_break_since_ts = None
+                    state_dirty = True
 
         # 🌟 부분 익절: 직전 익절가(또는 진입가) 대비 +10% 도달 시 반복 실행
         if not reason:
@@ -483,6 +515,7 @@ class FirstPullbackStrategy(LiveStrategy):
                 })
 
                 state.last_partial_sell_price = current
+                state.breakeven_armed = True
                 state_dirty = True
 
                 signals.append(TradeSignal(
@@ -491,6 +524,10 @@ class FirstPullbackStrategy(LiveStrategy):
                     reason=sell_reason, strategy_name=self.name
                 ))
                 return signals, state_dirty  # 부분 매도 후 손절 체크하지 않음
+
+        # 🛡️ 본절스탑: 부분익절 후 진입가 하회 시 잔량 전량 청산
+        if not reason and state.breakeven_armed and current < buy_price:
+            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회 {pnl:.1f}%)"
 
         # 매도 시그널 생성 (손절)
         if reason:
@@ -504,6 +541,10 @@ class FirstPullbackStrategy(LiveStrategy):
                 "mae_pct": state.mae_pct,
             })
             self._position_state.pop(code, None)
+            if "손절" in reason or "스탑" in reason:
+                from datetime import date
+                unblock = (date.today() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")
+                self._cooldown[code] = unblock
             state_dirty = True
             signals.append(TradeSignal(
                 code=code, name=hold.get("name", code), action="SELL",
@@ -537,7 +578,9 @@ class FirstPullbackStrategy(LiveStrategy):
                 try:
                     with open(self.STATE_FILE, "r") as f:
                         data = json.load(f)
-                    for k, v in data.items():
+                    positions = data.get("positions", data) if isinstance(data, dict) else {}
+                    self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+                    for k, v in positions.items():
                         if k not in self._position_state:
                             self._position_state[k] = FPPositionState(**v)
                 except Exception as e:
@@ -555,7 +598,9 @@ class FirstPullbackStrategy(LiveStrategy):
                     return json.load(f)
 
             data = await asyncio.to_thread(_read_file)
-            for k, v in data.items():
+            positions = data.get("positions", data) if isinstance(data, dict) else {}
+            self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+            for k, v in positions.items():
                 if k not in self._position_state:
                     self._position_state[k] = FPPositionState(**v)
         except Exception as e:
@@ -569,7 +614,7 @@ class FirstPullbackStrategy(LiveStrategy):
             # 이벤트 루프 없음 → 동기 저장
             try:
                 os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
-                data = {k: asdict(v) for k, v in self._position_state.items()}
+                data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
             except Exception as e:
@@ -586,7 +631,7 @@ class FirstPullbackStrategy(LiveStrategy):
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
 
-            data = {k: asdict(v) for k, v in self._position_state.items()}
+            data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
             await asyncio.to_thread(_write_file, data)
         except Exception as e:
             self._logger.error(f"Failed to save state async for {self.name}: {e}")

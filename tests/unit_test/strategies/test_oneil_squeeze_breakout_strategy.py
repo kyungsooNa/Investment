@@ -244,8 +244,9 @@ async def test_scan_early_market_volume_defense(scan_setup):
     """scan: 장 초반(09:00~09:20) 거래량 뻥튀기 방어 및 최소 거래량 조건 테스트."""
     strategy, sqs, _, tm, _ = scan_setup
     
-    # 1. 장 시작 3분 후 (09:03) -> progress approx 3/390 = 0.0077
-    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 3, 0)
+    # 장 시작 16분 후 (09:16) -> progress ≈ 16/390 = 0.041
+    # early morning guard(progress*390≥15)는 통과하되, effective_progress=max(0.041,0.05)=0.05 적용됨
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 16, 0)
     
     # 체결강도 Mock (150%) - 통과 조건
     sqs.get_stock_conclusion.return_value = ResCommonResponse(
@@ -356,9 +357,10 @@ async def test_check_exits_trailing_stop(mock_strategy_deps):
         entry_price=10000, entry_date="20250101", peak_price=12000, breakout_level=9500
     )
     
-    # 2. 현재가 Mock (트레일링 스탑 발동: 11000원, 최고가 대비 -8.3%)
+    # 2. 현재가 Mock (트레일링 스탑 발동: 10600원, 최고가 12000 대비 -11.7%)
+    # pnl = (10600-10000)/10000 = 6% < 7% → 조기 부분익절 미발동 → 트레일링스탑 도달
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "11000"}}
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10600"}}
     )
     
     # 3. 보유 종목 리스트 전달
@@ -378,25 +380,28 @@ async def test_check_exits_peak_price_update(mock_strategy_deps):
     strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
     strategy._save_state = MagicMock()
     
-    # 1. 보유 상태 설정 (최고가 11000)
-    strategy._position_state["005930"] = OSBPositionState(
+    # 1. 보유 상태 설정 (최고가 11000, last_partial_sell_price=12000 → ref_price=12000)
+    # ref_price=12000 → pnl_from_ref = (12500-12000)/12000 = 4.2% < 7% → 부분익절 미발동
+    state = OSBPositionState(
         entry_price=10000, entry_date="20250101", peak_price=11000, breakout_level=9500
     )
-    
-    # 2. 현재가 Mock (신고가 12000)
+    state.last_partial_sell_price = 12000
+    strategy._position_state["005930"] = state
+
+    # 2. 현재가 Mock (신고가 12500)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "12000"}}
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "12500"}}
     )
-    
+
     # 3. 보유 종목 리스트 전달
     holdings = [{"code": "005930", "buy_price": 10000}]
-    
+
     signals = await strategy.check_exits(holdings)
-    
+
     # 매도 시그널은 없어야 함
     assert len(signals) == 0
-    # 최고가가 12000으로 갱신되었는지 확인
-    assert strategy._position_state["005930"].peak_price == 12000
+    # 최고가가 12500으로 갱신되었는지 확인
+    assert strategy._position_state["005930"].peak_price == 12500
     
 @pytest.mark.asyncio
 async def test_check_exits_signal_name_fallback(mock_strategy_deps):
@@ -584,10 +589,10 @@ async def test_check_exits_trend_break(mock_strategy_deps):
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
     # 3. 현재가 Mock (추세 이탈 조건)
-    # 가격: 10800 (< 10MA 11000) -> 가격 이탈
+    # 가격: 10500 (< 10MA 11000) → 가격 이탈, pnl=5% < 7% → 조기 부분익절 미발동
     # 거래량: 60000. 장 진행률 0.5 가정 -> 예상 120000 (> 100000) -> 거래량 이탈
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10800", "acml_vol": "60000"}}
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "60000"}}
     )
     
     # 장 진행률 50% 설정을 위해 시간 Mock
@@ -619,10 +624,10 @@ async def test_check_exits_trend_break_no_volume(mock_strategy_deps):
     ohlcv = [{"close": 11000, "volume": 100000} for _ in range(20)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     
-    # 가격: 10800 (< 11000) -> 가격 이탈
+    # 가격: 10500 (< 11000) → 가격 이탈, pnl=5% < 7% → 조기 부분익절 미발동
     # 거래량: 40000. 장 진행률 0.5 -> 예상 80000 (< 100000) -> 거래량 부족
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10800", "acml_vol": "40000"}}
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "40000"}}
     )
     
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
@@ -658,14 +663,18 @@ async def test_scan_mixed_market_timing(scan_setup):
         return market == "KOSDAQ"
     universe.is_market_timing_ok.side_effect = mock_is_market_timing_ok
 
-    # 현재가 Mock (둘 다 돌파 조건 충족한다고 가정)
-    # [수정] 스마트 머니 필터 통과를 위해 프로그램 순매수 수량과 거래대금을 충분히 크게 설정
+    # KOSDAQ 종목(123456)만 마켓 타이밍 통과 → KOSDAQ high_20d=10000 기준으로 가격 설정
+    # 10100: high_20d=10000 초과(돌파) & 과확장 가드(10000*1.02=10200) 통과
+    # pg_buy_amount = 5000000 * 10100 = 505억, market_cap = 10조 → 0.505% ≥ 0.5% ✓
+    # pg_to_tv = 505억 / 5000억 = 10.1% ≥ 10% ✓
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {
-            "stck_prpr": "999999", 
-            "acml_vol": "9999999", 
-            "pgtr_ntby_qty": "100000",      # 1000 -> 100000 (약 1000억 매수, 시총 대비 1%)
-            "acml_tr_pbmn": "500000000000"  # 거래대금 5000억 (매수비중 20%)
+            "stck_prpr": "10100",
+            "stck_hgpr": "10150",
+            "stck_lwpr": "9950",
+            "acml_vol": "50000",
+            "pgtr_ntby_qty": "5000000",
+            "acml_tr_pbmn": "500000000000"
         }}
     )
 
@@ -697,9 +706,9 @@ async def test_check_exits_ohlcv_fetched_once_per_holding(mock_strategy_deps):
         entry_price=10000, entry_date="20250101", peak_price=11000, breakout_level=9500
     )
 
-    # 현재가 11000 → pnl +10% (손절 -5% 미달), peak 동일 → trailing stop 없음
+    # 현재가 10600 → pnl +6% < 7% (조기 부분익절 미발동), peak(11000) 동일 → trailing stop 없음
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "11000", "acml_vol": "30000"}}
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10600", "acml_vol": "30000"}}
     )
     # OHLCV: 시간손절·추세이탈 조건 미달 (데이터 부족)
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
@@ -728,9 +737,9 @@ async def test_check_exits_dirty_flag_saves_once(mock_strategy_deps):
             entry_price=10000, entry_date="20250101", peak_price=10000, breakout_level=9500
         )
 
-    # 현재가 11000 → pnl +10%, peak 갱신, 어떤 청산 조건도 미달
+    # 현재가 10500 → pnl +5% < 7% (조기 부분익절 미발동), peak(10000) 갱신, 청산 조건 미달
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "11000", "acml_vol": "30000"}}
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500", "acml_vol": "30000"}}
     )
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
 
@@ -748,7 +757,7 @@ async def test_check_exits_dirty_flag_saves_once(mock_strategy_deps):
     # 매도 시그널 없음, 3종목 모두 peak 갱신
     assert signals == []
     for code in ["005930", "000660", "035420"]:
-        assert strategy._position_state[code].peak_price == 11000
+        assert strategy._position_state[code].peak_price == 10500
     # dirty flag: check_exits는 _save_state_async를 1회만 호출
     strategy._save_state_async.assert_called_once()
 
@@ -787,12 +796,13 @@ async def test_scan_parallel_exception_in_one_does_not_block_others(mock_strateg
     async def price_side_effect(code, caller=None):
         if code == "000001":
             raise Exception("API 타임아웃")
-        # 000002: 가격돌파(11000 > 10000), 거래량 돌파, 스마트머니 통과
-        # pg_buy_amount = 200000 * 11000 = 22억 / 142억 = 15.5% > 10% ✓
-        # pg_to_mc_pct = 22억 / 1000억 = 2.2% > 0.5% ✓
+        # 000002: 가격돌파(10100 > 10000), 과확장 가드 통과(10100 ≤ 10000*1.02=10200)
+        # 거래량 돌파, 스마트머니 통과
+        # pg_buy_amount = 200000 * 10100 = 20.2억 / 142억 = 14.2% > 10% ✓
+        # pg_to_mc_pct = 20.2억 / 1000억 = 2.02% > 0.5% ✓
         return ResCommonResponse(
             rt_cd="0", msg1="OK", data={"output": {
-                "stck_prpr": "11000", "acml_vol": "200000",
+                "stck_prpr": "10100", "acml_vol": "200000",
                 "pgtr_ntby_qty": "200000", "acml_tr_pbmn": "14200000000",
             }}
         )

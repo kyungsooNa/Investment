@@ -182,11 +182,12 @@ class TestDetectPoleAndFlag:
         assert result is None
 
     def test_flag_too_short(self, mock_deps):
-        """횡보 3일 → flag_min_days(5) 미달 → None."""
+        """전체 데이터가 flag_min_days(5)개 이하 → search_end <= 0 → None."""
         strategy = self._make_strategy(mock_deps)
+        # n=5, search_end = 5 - 5 = 0 → 즉시 None (peak 탐색 범위 없음)
         ohlcv = _make_ohlcv_pole_and_flag(
-            pole_days=25, pole_start_price=5000, pole_end_price=10000,
-            flag_days=3, flag_drawdown_pct=10.0,
+            pole_days=4, pole_start_price=5000, pole_end_price=10000,
+            flag_days=1, flag_drawdown_pct=10.0,
             pole_volume=500000, flag_volume=100000,
         )
 
@@ -416,7 +417,7 @@ async def test_exit_hard_stop(mock_deps):
 
 @pytest.mark.asyncio
 async def test_exit_trailing_ma_stop(mock_deps):
-    """check_exits: 10일 MA 하향이탈 → 트레일링스탑."""
+    """check_exits: 5일 MA 하향이탈 → 트레일링스탑."""
     sqs, universe, tm, logger = mock_deps
     strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
     strategy._save_state = MagicMock()
@@ -430,8 +431,8 @@ async def test_exit_trailing_ma_stop(mock_deps):
         rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500"}}
     )
 
-    # 10일 OHLCV: 종가 11000 일정 → 10MA = 11000, 현재가 10500 < 11000
-    ohlcv = [{"close": 11000, "volume": 100000} for _ in range(10)]
+    # 5일 OHLCV: 종가 11000 일정 → 5MA = 11000, 현재가 10500 < 11000
+    ohlcv = [{"close": 11000, "volume": 100000} for _ in range(5)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     holdings = [{"code": "005930", "buy_price": 10000, "qty": 30, "name": "테스트종목"}]
@@ -441,7 +442,7 @@ async def test_exit_trailing_ma_stop(mock_deps):
     assert signals[0].action == "SELL"
     assert signals[0].qty == 30  # 전량 매도
     assert "트레일링스탑" in signals[0].reason
-    assert "10MA" in signals[0].reason
+    assert "5MA" in signals[0].reason
 
 
 @pytest.mark.asyncio
@@ -505,8 +506,8 @@ def test_calculate_qty(mock_deps):
     sqs, universe, tm, logger = mock_deps
     strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
 
-    # 기본: 1000만 * 5% = 50만, 50만 / 10000 = 50주
-    assert strategy._calculate_qty(10000) == 50
+    # 기본: 1000만 * 5% * 0.5(HTF 비중 절반) = 25만, 25만 / 10000 = 25주
+    assert strategy._calculate_qty(10000) == 25
     # 가격 0 → min_qty(1)
     assert strategy._calculate_qty(0) == 1
     assert strategy._calculate_qty(-100) == 1
@@ -776,8 +777,8 @@ async def test_check_exits_trailing_ma_data_insufficient(mock_deps):
         rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500"}}
     )
 
-    # OHLCV 데이터가 10일치 미만 (5일)
-    ohlcv = [{"close": 11000} for _ in range(5)]
+    # OHLCV 데이터가 5MA 기준(5일) 미만 (4일) → 데이터 부족
+    ohlcv = [{"close": 11000} for _ in range(4)]
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
     holdings = [{"code": "005930", "buy_price": 10000, "name": "테스트종목"}]
@@ -924,10 +925,11 @@ async def test_check_breakout_conclusion_no_tday_rltv(breakout_setup):
 
 @pytest.mark.asyncio
 async def test_check_breakout_early_market_volume_defense(breakout_setup):
-    """_check_breakout: 장 초반(progress < 0.05) 거래량 계산 시 effective_progress(0.05) 적용 검증."""
+    """_check_breakout: 장 초반(progress < 0.05) 거래량 계산 시 effective_progress(0.05) 적용 검증.
+    progress=0.04: 장초반 가드(0.04*390=15.6>=15) 통과하지만 effective_progress=max(0.04,0.05)=0.05 적용."""
     strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
 
-    progress = 0.01
+    progress = 0.04
 
     sqs.get_stock_conclusion.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "130.0"}]}

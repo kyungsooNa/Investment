@@ -55,6 +55,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             self._logger = get_strategy_logger("OneilPocketPivot")
 
         self._position_state: Dict[str, PPPositionState] = {}
+        self._cooldown: Dict[str, str] = {}
         self._load_state()
 
     @property
@@ -88,10 +89,12 @@ class OneilPocketPivotStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
             return signals
 
+        today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
         candidates = [
             (code, item) for code, item in watchlist.items()
             if code not in self._position_state
             and market_timing.get(item.market, False)
+            and today_str >= self._cooldown.get(code, "")
         ]
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
@@ -182,7 +185,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
         # 4. 조건 B (BGU) 시도
         if not entry_result:
             entry_result = self._check_bgu(
-                code, current, vol, progress, ohlcv, today_open, today_low, prev_close
+                code, current, vol, progress, ohlcv, today_open, today_low, prev_close,
+                pg_buy=pg_buy, trade_value=trade_value,
             )
 
         if not entry_result:
@@ -217,6 +221,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         pg_buy_amount = pg_buy * current
         pg_ratio = (pg_buy_amount / trade_value * 100) if trade_value > 0 else 0.0
 
+        entry_pg_buy_amount = pg_buy * current
         self._position_state[code] = PPPositionState(
             entry_type=entry_type,
             entry_price=current,
@@ -224,6 +229,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
             peak_price=current,
             supporting_ma=supporting_ma,
             gap_day_low=gap_day_low,
+            entry_pg_buy_amount=entry_pg_buy_amount,
+            entry_cgld=cgld_val,
         )
         # 즉시 파일을 보장하려면 await 가능한 호출자가 _save_state_async 를 사용합니다.
         try:
@@ -353,7 +360,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
     # ── 조건 B: BGU ───────────────────────────────────────────────
 
     def _check_bgu(
-        self, code, current, vol, progress, ohlcv, today_open, today_low, prev_close
+        self, code, current, vol, progress, ohlcv, today_open, today_low, prev_close,
+        pg_buy: int = 0, trade_value: int = 0,
     ) -> Optional[Tuple[str, str, int, dict]]:
         """BGU(Buyable Gap-Up) 조건 검사.
 
@@ -376,6 +384,18 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         # 3. 가격 지지 확인 (현재가 >= 시가)
         if current < today_open:
+            return None
+
+        # 3.5. BGU 스마트머니 최소 비중 확인
+        if pg_buy <= 0 or trade_value <= 0:
+            return None
+        pg_buy_amount = pg_buy * current
+        pg_to_tv_pct = pg_buy_amount / trade_value * 100
+        if pg_to_tv_pct < self._cfg.bgu_min_pg_tv_pct:
+            self._logger.debug({
+                "event": "bgu_rejected", "code": code, "reason": "low_pg_ratio",
+                "pg_to_tv_pct": round(pg_to_tv_pct, 2), "threshold": self._cfg.bgu_min_pg_tv_pct,
+            })
             return None
 
         # 4. 상대 거래량 체크 (환산 거래량 >= 50일 평균 × 300%)
@@ -526,8 +546,12 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         if isinstance(output, dict):
             current = int(output.get("stck_prpr", 0))
+            cur_pg_buy = int(output.get("pgtr_ntby_qty", 0))
+            cur_trade_value = int(output.get("acml_tr_pbmn", 0))
         else:
             current = int(getattr(output, "stck_prpr", 0) or 0)
+            cur_pg_buy = int(getattr(output, "pgtr_ntby_qty", 0) or 0)
+            cur_trade_value = int(getattr(output, "acml_tr_pbmn", 0) or 0)
 
         if current <= 0:
             return signals, state_dirty
@@ -565,6 +589,23 @@ class OneilPocketPivotStrategy(LiveStrategy):
         if hard_reason:
             reason = hard_reason
 
+        # 🚨 우선순위 1.5: 수급이탈 조기 청산 (진입 시점 대비 PG/체결강도 급감 + 손실 중)
+        if not reason and pnl <= 0 and state.entry_pg_buy_amount > 0 and state.entry_cgld > 0:
+            cur_pg_amount = cur_pg_buy * current
+            try:
+                ccnl_resp = await self._sqs.get_stock_conclusion(code)
+                if ccnl_resp and ccnl_resp.rt_cd == "0":
+                    ccnl_output = ccnl_resp.data.get("output") if isinstance(ccnl_resp.data, dict) else None
+                    cur_cgld = float(ccnl_output[0].get("tday_rltv") or 0.0) if ccnl_output else 0.0
+                else:
+                    cur_cgld = 0.0
+            except Exception:
+                cur_cgld = 0.0
+            pg_ratio = cur_pg_amount / state.entry_pg_buy_amount if state.entry_pg_buy_amount > 0 else 1.0
+            cgld_ratio = cur_cgld / state.entry_cgld if state.entry_cgld > 0 else 1.0
+            if pg_ratio < self._cfg.smart_money_exit_pg_ratio and cgld_ratio < self._cfg.smart_money_exit_cgld_ratio:
+                reason = f"수급이탈(PG {pg_ratio:.0%}/체결강도 {cgld_ratio:.0%} {pnl:.1f}%)"
+
         # 🚨 우선순위 2: 엔트리별 손절
         if not reason:
             if state.entry_type == "PP":
@@ -583,8 +624,13 @@ class OneilPocketPivotStrategy(LiveStrategy):
             if partial_signal:
                 signals.append(partial_signal)
                 state.last_partial_sell_price = current
+                state.breakeven_armed = True
                 state_dirty = True
                 return signals, state_dirty  # 부분 매도 후 전량 청산하지 않음
+
+        # 🛡️ 우선순위 3.5: 본절스탑 (부분익절 후 진입가 하회)
+        if not reason and state.breakeven_armed and current < buy_price:
+            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회 {pnl:.1f}%)"
 
         # 🌟 우선순위 4: 7주 룰 만료 (수익 안착 후 35거래일 & 50MA 이탈)
         if not reason and state.holding_start_date:
@@ -604,6 +650,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 "mae_pct": state.mae_pct,
             })
             self._position_state.pop(code, None)
+            if "손절" in reason or "스탑" in reason or "수급이탈" in reason:
+                from datetime import date, timedelta
+                unblock = (date.today() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")
+                self._cooldown[code] = unblock
             state_dirty = True
             signals.append(TradeSignal(
                 code=code, name=hold.get("name", code), action="SELL",
@@ -744,8 +794,9 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 try:
                     with open(self.STATE_FILE, "r") as f:
                         data = json.load(f)
-                    # Merge loaded state without overwriting in-memory entries
-                    for k, v in data.items():
+                    positions = data.get("positions", data) if isinstance(data, dict) else {}
+                    self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+                    for k, v in positions.items():
                         if k not in self._position_state:
                             self._position_state[k] = PPPositionState(**v)
                 except Exception as e:
@@ -764,8 +815,9 @@ class OneilPocketPivotStrategy(LiveStrategy):
                     return json.load(f)
 
             data = await asyncio.to_thread(_read_file)
-            # Merge loaded state without overwriting in-memory entries (avoids race with tests/runtime)
-            for k, v in data.items():
+            positions = data.get("positions", data) if isinstance(data, dict) else {}
+            self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+            for k, v in positions.items():
                 if k not in self._position_state:
                     self._position_state[k] = PPPositionState(**v)
         except Exception as e:
@@ -781,7 +833,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             # 이벤트 루프 없음 → 동기 저장
             try:
                 os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
-                data = {k: asdict(v) for k, v in self._position_state.items()}
+                data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
             except Exception as e:
@@ -799,7 +851,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
 
-            data = {k: asdict(v) for k, v in self._position_state.items()}
+            data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
             await asyncio.to_thread(_write_file, data)
         except Exception as e:
             self._logger.error(f"Failed to save state async for {self.name}: {e}")

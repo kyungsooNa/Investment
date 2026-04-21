@@ -63,6 +63,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             self._logger = get_strategy_logger("OneilSqueezeBreakout")
 
         self._position_state: Dict[str, OSBPositionState] = {}
+        self._cooldown: Dict[str, str] = {}
         self._load_state()
 
     @property
@@ -97,10 +98,12 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return signals
 
         # 4. 종목별 돌파 체크 (청크 기반 병렬 처리, TPS 제한 대응)
+        today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
         candidates = [
             (code, item) for code, item in watchlist.items()
             if code not in self._position_state
             and market_timing.get(item.market, False)
+            and today_str >= self._cooldown.get(code, "")
         ]
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
@@ -142,6 +145,20 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             
         # 🚨 [관문 1] 가격 돌파 (20일 신고가)
         if current < item.high_20d: return None
+
+        # 장 초반 15분 이내: proj_vol 뻥튀기로 인한 가짜 돌파 시그널 방지
+        if progress * 390 < 15:
+            self._logger.debug({"event": "breakout_skipped", "code": code, "reason": "early_morning_guard"})
+            return None
+
+        # 과확장 방어: 고점 대비 2% 이상 올라간 종목은 추격 포기
+        max_entry = item.high_20d * (1 + self._cfg.osb_max_extension_pct / 100)
+        if current > max_entry:
+            self._logger.debug({
+                "event": "breakout_rejected", "code": code, "reason": "over_extended",
+                "current": current, "max_entry": int(max_entry),
+            })
+            return None
 
         # 🚨 [신규 관문] 캔들 품질: 윗꼬리가 너무 길면 가짜 돌파 (상단 70% 유지 필수)
         day_range = day_high - day_low
@@ -387,6 +404,33 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         reason = ""
 
+        # 0. 조기 부분익절: ref_price 대비 +7% 도달 시 30% 매도
+        ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
+        pnl_from_ref = float((current - ref_price) / ref_price * 100)
+        if pnl_from_ref >= self._cfg.early_partial_profit_pct:
+            holding_qty = int(hold.get("qty", 1))
+            sell_qty = max(1, int(holding_qty * self._cfg.early_partial_sell_ratio))
+            if sell_qty >= holding_qty:
+                sell_qty = holding_qty
+                sell_reason = f"전량익절({pnl_from_ref:.1f}%, 잔고 {holding_qty}주)"
+            else:
+                sell_reason = f"조기부분익절({pnl_from_ref:.1f}%, {sell_qty}주/{holding_qty}주)"
+            self._logger.info({
+                "event": "partial_profit_signal",
+                "code": code, "pnl": round(pnl_from_ref, 2),
+                "sell_qty": sell_qty, "holding_qty": holding_qty,
+                "mfe_pct": state.mfe_pct, "mae_pct": state.mae_pct,
+            })
+            state.last_partial_sell_price = current
+            state.breakeven_armed = True
+            state_dirty = True
+            signals.append(TradeSignal(
+                code=code, name=hold.get("name", code), action="SELL",
+                price=current, qty=sell_qty,
+                reason=sell_reason, strategy_name=self.name,
+            ))
+            return signals, state_dirty
+
         # 1. 손절
         if pnl <= self._cfg.stop_loss_pct:
             reason = f"손절({pnl:.1f}%)"
@@ -395,6 +439,10 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             drop = float((current - state.peak_price) / state.peak_price * 100)
             if drop <= -self._cfg.trailing_stop_pct:
                 reason = f"트레일링스탑({drop:.1f}%)"
+
+        # 2.5. 본절스탑: 부분익절 후 진입가 하회
+        if not reason and state.breakeven_armed and current < buy_price:
+            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회 {pnl:.1f}%)"
 
         # 3·4. 시간손절 + 추세이탈 — OHLCV 1회 조회 후 양쪽에 전달
         if not reason:
@@ -420,6 +468,10 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 "mae_pct": state.mae_pct,
             })
             self._position_state.pop(code, None)
+            if "손절" in reason or "스탑" in reason:
+                from datetime import date, timedelta
+                unblock = (date.today() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")
+                self._cooldown[code] = unblock
             state_dirty = True
             signals.append(TradeSignal(
                 code=code, name=hold.get("name", code), action="SELL",
@@ -501,7 +553,9 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 try:
                     with open(self.STATE_FILE, "r") as f:
                         data = json.load(f)
-                    for k, v in data.items():
+                    positions = data.get("positions", data) if isinstance(data, dict) else {}
+                    self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+                    for k, v in positions.items():
                         if k not in self._position_state:
                             self._position_state[k] = OSBPositionState(**v)
                 except Exception as e:
@@ -519,7 +573,9 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     return json.load(f)
 
             data = await asyncio.to_thread(_read_file)
-            for k, v in data.items():
+            positions = data.get("positions", data) if isinstance(data, dict) else {}
+            self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+            for k, v in positions.items():
                 if k not in self._position_state:
                     self._position_state[k] = OSBPositionState(**v)
         except Exception as e:
@@ -533,7 +589,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             # 이벤트 루프 없음 → 동기 저장
             try:
                 os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
-                data = {k: asdict(v) for k, v in self._position_state.items()}
+                data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
             except Exception as e:
@@ -550,7 +606,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
 
-            data = {k: asdict(v) for k, v in self._position_state.items()}
+            data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
             await asyncio.to_thread(_write_file, data)
         except Exception as e:
             self._logger.error(f"Failed to save state async for {self.name}: {e}")

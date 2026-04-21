@@ -432,6 +432,9 @@ async def test_exits_stop_loss_below_ma(mock_deps):
     ohlcv = _make_ohlcv(20, close=10000)
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
+    # 14:50 이후 → MA 이탈 즉시 손절
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 15, 0, 0)
+
     # 현재가 9700 < 9800 → 손절
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9700"}}
@@ -569,6 +572,9 @@ async def test_exits_stop_loss_after_partial_sold(mock_deps):
     ohlcv = _make_ohlcv(20, close=10000)
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
+    # 14:50 이후 → MA 이탈 즉시 손절
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 15, 0, 0)
+
     # 현재가 9700 < 20MA(10000) * 0.98 = 9800 → 손절
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9700"}}
@@ -679,6 +685,9 @@ async def test_exits_no_state_creates_default(mock_deps):
     ohlcv = _make_ohlcv(20, close=10000)
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
+    # 14:50 이후 → MA 이탈 즉시 손절
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 15, 0, 0)
+
     # 현재가 9700 < threshold 9800 → 손절
     sqs.get_current_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9700"}}
@@ -698,6 +707,10 @@ async def test_exits_signal_name_fallback(mock_deps):
 
     ohlcv = _make_ohlcv(20, close=10000)
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+
+    # 14:50 이후 → MA 이탈 즉시 손절
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 15, 0, 0)
+
     sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9700"}})
 
     holdings = [{"code": "005930", "buy_price": 10000, "name": "기존이름"}]
@@ -796,16 +809,16 @@ def test_check_volume_dryup(mock_deps):
 
 
 def test_check_bullish_reversal(mock_deps):
-    """_check_bullish_reversal: 양봉/전일고가 돌파 판단."""
+    """_check_bullish_reversal: 양봉/전일고가 돌파 판단 (6-arg: current, today_open, today_high, today_low, prev_close, prev_high)."""
     sqs, universe, tm, logger = mock_deps
     strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
 
-    # 양봉: current > open
-    assert strategy._check_bullish_reversal(10500, 10300, 10400) is True
-    # 전일고가 돌파: current > prev_high
-    assert strategy._check_bullish_reversal(10500, 10600, 10400) is True
-    # 둘 다 실패
-    assert strategy._check_bullish_reversal(10200, 10300, 10400) is False
+    # 양봉: current(10500) > today_open(10300), prev_close 조건 충족, rel_pos 충족
+    assert strategy._check_bullish_reversal(10500, 10300, 10600, 10200, 10000, 10400) is True
+    # 전일고가 돌파: current(10500) > prev_high(10400), today_open(10600)보다 낮아 음봉이지만 전일고가 돌파
+    assert strategy._check_bullish_reversal(10500, 10600, 10700, 10200, 10000, 10400) is True
+    # 둘 다 실패: current(10200) < today_open(10300), current(10200) < prev_high(10400)
+    assert strategy._check_bullish_reversal(10200, 10300, 10300, 9900, 10000, 10400) is False
 
 
 # ════════════════════════════════════════════════════════════════
