@@ -49,6 +49,7 @@ class HighTightFlagStrategy(LiveStrategy):
             self._logger = get_strategy_logger("HighTightFlag", sub_dir="oneil")
 
         self._position_state: Dict[str, HTFPositionState] = {}
+        self._cooldown: Dict[str, str] = {}
         self._load_state()
 
     @property
@@ -82,10 +83,12 @@ class HighTightFlagStrategy(LiveStrategy):
             self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
             return signals
 
+        today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
         candidates = [
             (code, item) for code, item in watchlist.items()
             if code not in self._position_state
             and market_timing.get(item.market, False)
+            and today_str >= self._cooldown.get(code, "")
         ]
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
@@ -137,8 +140,11 @@ class HighTightFlagStrategy(LiveStrategy):
         volumes = [r.get("volume", 0) for r in ohlcv]
         n = len(ohlcv)
 
-        # 전체 구간에서 최고점 찾기
-        peak_high = max(highs)
+        # 최고점 탐색: flag_min_days 이전 범위로 제한 (flag 구간 내 오탐 방지)
+        search_end = n - self._cfg.flag_min_days
+        if search_end <= 0:
+            return None
+        peak_high = max(highs[:search_end])
         peak_idx = highs.index(peak_high)
 
         # Phase 1: 깃대 (peak 이전 최대 40일 구간)
@@ -218,6 +224,11 @@ class HighTightFlagStrategy(LiveStrategy):
             day_low = int(getattr(out, "stck_lwpr", 0) or 0)
 
         if current <= 0:
+            return None
+
+        # 장 초반 15분 이내: proj_vol 뻥튀기로 인한 가짜 돌파 시그널 방지
+        if progress * 390 < 15:
+            self._logger.debug({"event": "breakout_skipped", "code": code, "reason": "early_morning_guard"})
             return None
 
         # 2. 가격 돌파: 현재가 > 40일 최고가 (옵션 A)
@@ -435,9 +446,40 @@ class HighTightFlagStrategy(LiveStrategy):
         if pnl <= self._cfg.stop_loss_pct:
             reason = f"칼손절({pnl:.1f}%)"
 
-        # 2. 10일 MA 트레일링스탑
+        # 2. 부분 익절: ref_price 대비 +20% 도달 시 반복 실행
         if not reason:
-            is_break, break_reason = await self._check_trailing_ma_stop(code, current)
+            ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
+            pnl_from_ref = float((current - ref_price) / ref_price * 100)
+            if pnl_from_ref >= self._cfg.partial_profit_trigger_pct:
+                holding_qty = int(hold.get("qty", 1))
+                sell_qty = max(1, int(holding_qty * self._cfg.partial_sell_ratio))
+                if sell_qty >= holding_qty:
+                    sell_qty = holding_qty
+                    sell_reason = f"전량익절({pnl_from_ref:.1f}%, 잔고 {holding_qty}주)"
+                else:
+                    sell_reason = f"부분익절({pnl_from_ref:.1f}%, {sell_qty}주/{holding_qty}주)"
+                self._logger.info({
+                    "event": "partial_profit_signal",
+                    "code": code, "pnl": round(pnl_from_ref, 2),
+                    "sell_qty": sell_qty, "holding_qty": holding_qty,
+                })
+                state.last_partial_sell_price = current
+                state.breakeven_armed = True
+                state_dirty = True
+                signals.append(TradeSignal(
+                    code=code, name=hold.get("name", code), action="SELL",
+                    price=current, qty=sell_qty,
+                    reason=sell_reason, strategy_name=self.name,
+                ))
+                return signals, state_dirty
+
+        # 3. 본절스탑: 부분익절 후 진입가 하회 시 잔량 전량 청산
+        if not reason and state.breakeven_armed and current < buy_price:
+            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회 {pnl:.1f}%)"
+
+        # 4. 5일 MA 트레일링스탑 + 고점 낙폭 -8%
+        if not reason:
+            is_break, break_reason = await self._check_trailing_ma_stop(code, current, state)
             if is_break:
                 reason = break_reason
 
@@ -453,6 +495,10 @@ class HighTightFlagStrategy(LiveStrategy):
                 "mae_pct": state.mae_pct,
             })
             self._position_state.pop(code, None)
+            if "손절" in reason or "스탑" in reason:
+                from datetime import date, timedelta
+                unblock = (date.today() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")
+                self._cooldown[code] = unblock
             state_dirty = True
             signals.append(TradeSignal(
                 code=code, name=hold.get("name", code), action="SELL",
@@ -461,8 +507,8 @@ class HighTightFlagStrategy(LiveStrategy):
 
         return signals, state_dirty
 
-    async def _check_trailing_ma_stop(self, code: str, current_price: int) -> tuple:
-        """10일 MA 트레일링스탑 체크."""
+    async def _check_trailing_ma_stop(self, code: str, current_price: int, state: HTFPositionState) -> tuple:
+        """5일 MA 또는 고점 대비 -8% 트레일링스탑 체크 (둘 중 하나라도 해당 시 청산)."""
         period = self._cfg.trailing_ma_period
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=period)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
@@ -475,7 +521,13 @@ class HighTightFlagStrategy(LiveStrategy):
 
         ma = sum(closes[-period:]) / period
         if current_price < ma:
-            return True, f"트레일링스탑(10MA {ma:,.0f} 하향이탈)"
+            return True, f"트레일링스탑({period}MA {ma:,.0f} 하향이탈)"
+
+        if state.peak_price > 0:
+            peak_drop_pct = (current_price - state.peak_price) / state.peak_price * 100
+            if peak_drop_pct <= self._cfg.trailing_peak_drop_pct:
+                return True, f"고점낙폭스탑(고점{state.peak_price:,} 대비 {peak_drop_pct:.1f}%)"
+
         return False, ""
 
     # ── 헬퍼 ─────────────────────────────────────────────────────────
@@ -521,7 +573,7 @@ class HighTightFlagStrategy(LiveStrategy):
     def _calculate_qty(self, price: int) -> int:
         if price <= 0:
             return self._cfg.min_qty
-        budget = self._cfg.total_portfolio_krw * (self._cfg.position_size_pct / 100)
+        budget = self._cfg.total_portfolio_krw * (self._cfg.position_size_pct / 100) * self._cfg.position_size_scale
         return max(int(budget / price), self._cfg.min_qty)
 
     def _get_market_progress_ratio(self) -> float:
@@ -541,7 +593,9 @@ class HighTightFlagStrategy(LiveStrategy):
                 try:
                     with open(self.STATE_FILE, "r") as f:
                         data = json.load(f)
-                    for k, v in data.items():
+                    positions = data.get("positions", data) if isinstance(data, dict) else {}
+                    self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+                    for k, v in positions.items():
                         if k not in self._position_state:
                             self._position_state[k] = HTFPositionState(**v)
                 except Exception as e:
@@ -559,7 +613,9 @@ class HighTightFlagStrategy(LiveStrategy):
                     return json.load(f)
 
             data = await asyncio.to_thread(_read_file)
-            for k, v in data.items():
+            positions = data.get("positions", data) if isinstance(data, dict) else {}
+            self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+            for k, v in positions.items():
                 if k not in self._position_state:
                     self._position_state[k] = HTFPositionState(**v)
         except Exception as e:
@@ -573,7 +629,7 @@ class HighTightFlagStrategy(LiveStrategy):
             # 이벤트 루프 없음 → 동기 저장
             try:
                 os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
-                data = {k: asdict(v) for k, v in self._position_state.items()}
+                data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
             except Exception as e:
@@ -590,7 +646,7 @@ class HighTightFlagStrategy(LiveStrategy):
                 with open(self.STATE_FILE, "w") as f:
                     json.dump(data, f, indent=2)
 
-            data = {k: asdict(v) for k, v in self._position_state.items()}
+            data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
             await asyncio.to_thread(_write_file, data)
         except Exception as e:
             self._logger.error(f"Failed to save state async for {self.name}: {e}")

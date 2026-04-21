@@ -84,8 +84,12 @@ class OneilBreakoutConfig(BaseStrategyConfig):
     # [추가] 시가총액 대비 프로그램 매수 기본 허들 (중소형주 기준)
     program_to_market_cap_pct: float = 0.3
     
-    execution_strength_min: float = 120.0  # 🌟 추가: 체결강도 기본 하한선
-    
+    execution_strength_min: float = 120.0  # 체결강도 기본 하한선
+    osb_max_extension_pct: float = 2.0     # 돌파 후 최대 추격 허용 범위 (2%)
+    early_partial_profit_pct: float = 7.0  # 조기 부분익절 기준 (+7%)
+    early_partial_sell_ratio: float = 0.3  # 조기 부분익절 비율 (30%)
+    cooldown_days: int = 3                 # 손절 후 재진입 금지 기간 (일)
+
 @dataclass
 class OSBWatchlistItem:
     """감시 종목 정보 (Universe Service -> Strategy 전달 객체)."""
@@ -124,6 +128,8 @@ class OSBPositionState:
     entry_date: str         # 진입일 (YYYYMMDD)
     peak_price: int         # 진입 후 최고가 (트레일링 스탑용)
     breakout_level: int     # 진입 시 20일 최고가
+    last_partial_sell_price: int = 0   # 마지막 부분익절 가격 (0=미실행)
+    breakeven_armed: bool = False       # 부분익절 후 본절스탑 활성화 플래그
     mfe_pct: float = 0.0   # Maximum Favorable Excursion (진입 후 최대 수익률 %)
     mae_pct: float = 0.0   # Maximum Adverse Excursion (진입 후 최대 손실률 %)
 
@@ -178,6 +184,14 @@ class OneilPocketPivotConfig(BaseStrategyConfig):
     # [추가] 3. 캔들 품질 (몸통 위치)
     # 0.0(저가) ~ 1.0(고가) 사이에서 현재가가 최소 어디에 위치해야 하는가
     pp_min_candle_relative_pos: float = 0.5
+    cooldown_days: int = 3                 # 손절 후 재진입 금지 기간 (일)
+
+    # BGU 전용: 진입 시 최소 스마트머니 비중 (거래대금 대비 %)
+    bgu_min_pg_tv_pct: float = 8.0
+
+    # 수급이탈 조기 청산 기준 (진입 시점 대비 비율)
+    smart_money_exit_pg_ratio: float = 0.5    # 진입 시 PG순매수금의 50% 미만으로 감소
+    smart_money_exit_cgld_ratio: float = 0.7  # 진입 시 체결강도의 70% 미만으로 감소
 
 @dataclass
 class PPPositionState:
@@ -191,6 +205,9 @@ class PPPositionState:
     partial_sold: bool = False          # deprecated (JSON 하위호환용)
     holding_start_date: str = ""        # 수익 안착일 (+5% 돌파 시 1회만 기록, 7주 룰 기산점)
     last_partial_sell_price: int = 0    # 마지막 부분익절 가격 (0=미실행, >0=기준가)
+    entry_pg_buy_amount: int = 0        # 진입 시점 PG순매수금액 (수급이탈 기준값)
+    entry_cgld: float = 0.0             # 진입 시점 체결강도 (수급이탈 기준값)
+    breakeven_armed: bool = False       # 부분익절 후 본절스탑 활성화 플래그
     mfe_pct: float = 0.0               # Maximum Favorable Excursion (진입 후 최대 수익률 %)
     mae_pct: float = 0.0               # Maximum Adverse Excursion (진입 후 최대 손실률 %)
 
@@ -214,17 +231,22 @@ class HTFConfig(BaseStrategyConfig):
 
     # Phase 4: 청산 (Exit)
     stop_loss_pct: float = -5.0              # 칼손절
-    trailing_ma_period: int = 10             # 10일 MA 트레일링스탑
+    trailing_ma_period: int = 5              # 5일 MA 트레일링스탑 (HTF 고변동성 대응)
+    trailing_peak_drop_pct: float = -8.0     # 고점 대비 -8% 이탈 시 트레일링스탑
+    partial_profit_trigger_pct: float = 20.0 # +20% 도달 시 부분익절
+    partial_sell_ratio: float = 0.5          # 50% 매도
 
     # 자금 관리
     total_portfolio_krw: int = 10_000_000
     position_size_pct: float = 5.0
+    position_size_scale: float = 0.5         # HTF 고변동성 대응: 기본 비중의 50% 적용
     min_qty: int = 1
 
     min_candle_relative_pos: float = 0.7  # 돌파 시 현재가가 당일 변동폭 상단 70% 이상 위치해야 함
     sm_flexible_pg_ratio : float = 7.0           # 프로그램 비중이 약간 낮아도(7%)
     sm_flexible_execution_strength: float = 150.0 # 체결강도가 압도적(150%)이면 인정
     program_to_market_cap_pct: float = 0.3        # (프로그램순매수금/시총) >= 0.3%
+    cooldown_days: int = 5                         # 손절 후 재진입 금지 기간 (일, HTF는 더 길게)
 
 @dataclass
 class HTFPositionState:
@@ -233,5 +255,7 @@ class HTFPositionState:
     entry_date: str          # 진입일 (YYYYMMDD)
     peak_price: int          # 진입 후 최고가
     pole_high: int           # 깃대 최고점 (돌파 기준가)
+    last_partial_sell_price: int = 0   # 마지막 부분익절 가격 (0=미실행)
+    breakeven_armed: bool = False       # 부분익절 후 본절스탑 활성화 플래그
     mfe_pct: float = 0.0    # Maximum Favorable Excursion (진입 후 최대 수익률 %)
     mae_pct: float = 0.0    # Maximum Adverse Excursion (진입 후 최대 손실률 %)

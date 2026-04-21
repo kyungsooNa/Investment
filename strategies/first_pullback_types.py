@@ -1,5 +1,6 @@
 # strategies/first_pullback_types.py
 from dataclasses import dataclass
+from typing import Optional
 from strategies.base_strategy_config import BaseStrategyConfig
 
 
@@ -24,9 +25,14 @@ class FirstPullbackConfig(BaseStrategyConfig):
 
     # Phase 3: Trigger (매수 방아쇠)
     execution_strength_min: float = 100.0   # 체결강도 >= 100%
+    reversal_prev_close_floor_pct: float = -2.0   # 전일종가 대비 최소 위치 (-2%)
+    reversal_min_relative_pos: float = 0.5         # 캔들 내 현재가 상대위치 최소값 (0.5=중간)
 
     # Phase 4: Exit (기계적 청산)
     stop_loss_below_ma_pct: float = -2.0    # 20MA -2% 이탈 시 손절
+    ma_break_grace_minutes: int = 10        # 20MA 이탈 후 손절 유예 시간 (분)
+    ma_break_eod_hour: int = 14             # 장마감 전 즉시손절 기준 시각 (시)
+    ma_break_eod_minute: int = 50           # 장마감 전 즉시손절 기준 시각 (분)
     take_profit_pct: float = 15.0           # 진입가 대비 +15% 익절 상한
     take_profit_lower_pct: float = 10.0     # +10% 부터 익절 구간 시작
     partial_sell_ratio: float = 0.5         # 50% 분할 매도
@@ -35,6 +41,7 @@ class FirstPullbackConfig(BaseStrategyConfig):
     total_portfolio_krw: int = 10_000_000
     position_size_pct: float = 5.0
     min_qty: int = 2                        # 분할 매도를 위해 최소 2주
+    cooldown_days: int = 3                  # 손절 후 재진입 금지 기간 (일)
 
 
 @dataclass
@@ -48,3 +55,5 @@ class FPPositionState:
     last_partial_sell_price: int = 0    # 마지막 부분익절 가격 (0=미실행, >0=기준가)
     mfe_pct: float = 0.0               # Maximum Favorable Excursion (진입 후 최대 수익률 %)
     mae_pct: float = 0.0               # Maximum Adverse Excursion (진입 후 최대 손실률 %)
+    ma_break_since_ts: Optional[str] = None  # 20MA 이탈 첫 감지 타임스탬프 (YYYYMMDDHHMMSS)
+    breakeven_armed: bool = False       # 부분익절 후 본절스탑 활성화 플래그

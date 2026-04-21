@@ -1,6 +1,7 @@
 import pytest
 import json
 import numpy as np
+from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock
 
 from strategies.first_pullback_strategy import FirstPullbackStrategy
@@ -53,6 +54,10 @@ async def test_all_strategies_json_serializable_no_type_error(StrategyClass):
     mock_universe.is_market_timing_ok = AsyncMock(return_value=False)
 
     mock_tm = MagicMock()
+    # 14:50 이후 시각 설정 → FirstPullbackStrategy MA grace period 즉시 손절 트리거
+    mock_tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 15, 0, 0)
+    mock_tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    mock_tm.get_market_close_time.return_value = datetime(2025, 1, 1, 15, 30, 0)
     mock_mapper = MagicMock()
     mock_mapper.get_name_by_code = MagicMock(return_value="테스트종목")
 
