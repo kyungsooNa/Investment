@@ -344,6 +344,66 @@ class TelegramReporter:
         if current:
             await self._send_message(current)
 
+    async def send_premium_watchlist_report(self, kospi: List[Dict], kosdaq: List[Dict], report_date: str, limit: int = 30):
+        """전일 기준 우량주 풀 리포트를 텔레그램으로 전송합니다."""
+        title = (
+            f"⭐ <b>전일 기준 우량주 리포트 ({report_date})</b>\n"
+            f"KOSPI {len(kospi)}개 | KOSDAQ {len(kosdaq)}개\n"
+        )
+        await self._send_message(title)
+
+        for market_label, stocks in [("KOSPI", kospi), ("KOSDAQ", kosdaq)]:
+            if not stocks:
+                continue
+
+            lines = [f"<b>── {market_label} ({len(stocks)}개) ──</b>"]
+            for i, s in enumerate(stocks[:limit], 1):
+                name = s.get("name", "")
+                code = s.get("code", "")
+                total_score = s.get("total_score", 0)
+                rs_rating = s.get("rs_rating") or "-"
+                stage = s.get("minervini_stage", 0)
+                stage_badge = "★" if stage == 2 else ""
+
+                try:
+                    mcap = float(s.get("market_cap") or 0)
+                    if mcap > 0:
+                        mcap_uk = mcap / 100_000_000
+                        if mcap_uk >= 10000:
+                            jo = int(mcap_uk // 10000)
+                            uk = int(mcap_uk % 10000)
+                            mcap_str = f"{jo:,}조" + (f" {uk:,}억" if uk > 0 else "")
+                        else:
+                            mcap_str = f"{int(mcap_uk):,}억"
+                    else:
+                        mcap_str = "-"
+                except Exception:
+                    mcap_str = "-"
+
+                try:
+                    tv = float(s.get("avg_trading_value_5d") or 0)
+                    tv_str = f"{tv / 100_000_000:,.0f}억" if tv > 0 else "-"
+                except Exception:
+                    tv_str = "-"
+
+                score = total_score if total_score is not None else 0
+                lines.append(
+                    f"{i:2}. {stage_badge}<b>{name}</b>({code}) "
+                    f"점수:{score:.0f} RS:{rs_rating} "
+                    f"시총:{mcap_str} 대금:{tv_str}"
+                )
+
+            current = ""
+            for line in lines:
+                chunk = line + "\n"
+                if len((current + chunk).encode("utf-8")) > 4000:
+                    await self._send_message(current)
+                    current = chunk
+                else:
+                    current += chunk
+            if current:
+                await self._send_message(current)
+
     async def send_minervini_report(self, items: List[Dict], report_date: str, limit: int = 30):
         """Minervini Stage2 종목 목록을 텔레그램으로 전송합니다.
 

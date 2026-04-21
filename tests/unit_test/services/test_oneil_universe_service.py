@@ -216,10 +216,16 @@ async def test_generate_premium_watchlist(mock_deps, tmp_path):
         # 4. 파일 저장 Mock
         with patch.object(service, '_save_premium_stocks') as mock_save:
             result = await service.generate_premium_watchlist()
-            
+
             assert result['total_scanned'] == 2
             assert result['passed_first'] == 1  # StockA만 통과
             mock_save.assert_called_once()
+            # 종목 raw 데이터도 반환되는지 확인
+            assert 'kospi_stocks' in result
+            assert 'kosdaq_stocks' in result
+            assert isinstance(result['kospi_stocks'], list)
+            assert len(result['kospi_stocks']) == 1
+            assert result['kospi_stocks'][0]['code'] == "000001"
 
 async def test_get_watchlist_refresh_logic(mock_deps):
     """get_watchlist: 시간 경과에 따른 갱신 및 캐싱 로직 검증."""

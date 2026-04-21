@@ -426,6 +426,7 @@ class WebAppContext:
             notification_service=self.notification_service,
             logger=self.logger,
             worker_pool=self.worker_pool,
+            telegram_reporter=getattr(self, 'telegram_reporter', None),
         )
 
         self.cache_warmup_task = CacheWarmupTask(
