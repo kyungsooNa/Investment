@@ -243,6 +243,40 @@ async def test_handle_event_return_rate_zero(telegram_notifier):
         payload = mock_post.call_args[1]["json"]
         assert "➖ 수익: +0.00%" in payload["text"]
 
+
+@pytest.mark.asyncio
+async def test_handle_event_unsupported_category_returns_early(telegram_notifier, api_event):
+    """허용 카테고리 제한이 없더라도 미지원 카테고리는 전송하지 않는다."""
+    telegram_notifier.allowed_categories = None
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        await telegram_notifier.handle_event(api_event)
+        mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_event_return_rate_none_keeps_message_body(telegram_notifier):
+    """return_rate 키는 있지만 값이 None이면 메시지 본문을 수정하지 않는다."""
+    event = NotificationEvent(
+        id="1",
+        timestamp="2026",
+        category=NotificationCategory.STRATEGY,
+        level=NotificationLevel.INFO,
+        title="매도",
+        message="원본 메시지",
+        metadata={"return_rate": None},
+    )
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        await telegram_notifier.handle_event(event)
+
+        payload = mock_post.call_args[1]["json"]
+        assert "원본 메시지" in payload["text"]
+        assert "수익:" not in payload["text"]
+
 # --- TelegramReporter Tests ---
 
 @pytest.fixture
@@ -476,6 +510,25 @@ def test_format_ranking_table_no_ratio(telegram_reporter):
     assert "No Ratio" in table
 
 
+def test_format_ranking_table_truncates_wide_name_and_handles_small_cap_ratio(telegram_reporter):
+    """긴 전각 종목명 자르기와 작은 금액/비중 포맷을 검증한다."""
+    data = [
+        {
+            'hts_kor_isnm': '가나다라마바사아자차카타파하',
+            'value': '50000000',
+            'acml_tr_pbmn': '100000000',
+            'prdy_ctrt': '0',
+        }
+    ]
+
+    table = telegram_reporter._format_ranking_table("긴 이름", data, "value", divisor=100_000_000)
+
+    assert "가나다라" in table
+    assert "마바사" not in table
+    assert " 0 " in table or "\n1  가나다라    0.0%        0  50.0%\n" in table
+    assert "50.0%" in table
+
+
 @pytest.mark.asyncio
 async def test_send_newhigh_report_empty(telegram_reporter):
     """빈 신고가 리스트일 때 '신고가 종목 없음' 메시지를 전송하는지 검증"""
@@ -484,6 +537,41 @@ async def test_send_newhigh_report_empty(telegram_reporter):
     calls = telegram_reporter._send_message.call_args_list
     full = "".join([c[0][0] for c in calls])
     assert "신고가 종목 없음" in full
+
+
+@pytest.mark.asyncio
+async def test_send_newhigh_report_numeric_formatting_and_exceptions(telegram_reporter):
+    """신고가 리포트의 시총/거래대금/등락률 예외 및 포맷 분기를 검증한다."""
+    stocks = [
+        {
+            "code": "A",
+            "name": "소형주",
+            "current_price": 1000,
+            "market_cap": 0.5,
+            "trading_value": 50000000,
+            "change_rate": "bad",
+            "rs": 77,
+        },
+        {
+            "code": "B",
+            "name": "대형주",
+            "current_price": 2000,
+            "market_cap": 1500000000000,
+            "trading_value": "bad",
+            "change_rate": 1.25,
+        },
+    ]
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    await telegram_reporter.send_newhigh_report(stocks, "2026-05-15")
+
+    full = "".join([c[0][0] for c in telegram_reporter._send_message.call_args_list])
+    assert "0.5억" in full
+    assert "1조 5,000억" in full
+    assert "0.5억" in full
+    assert "대금:-" in full
+    assert "RS:77" in full
+    assert "| RS:-" in full
 
 
 @pytest.mark.asyncio
@@ -568,6 +656,115 @@ async def test_send_premium_watchlist_report_invalid_numeric_fields(telegram_rep
     full = "".join([c[0][0] for c in calls])
     assert "오류종목" in full
     assert "-" in full  # 숫자 변환 실패 시 '-'
+
+
+@pytest.mark.asyncio
+async def test_send_strategy_log_report_splits_long_message(telegram_reporter):
+    """전략 로그 리포트가 길면 여러 메시지로 분할 전송한다."""
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    long_line = "A" * 3900
+    report_html = "\n".join([long_line, long_line, "tail"])
+
+    await telegram_reporter.send_strategy_log_report(report_html, "2026-05-15")
+
+    assert telegram_reporter._send_message.call_count >= 3
+    first_text = telegram_reporter._send_message.call_args_list[0][0][0]
+    assert "전략 실행 요약 리포트" in first_text
+
+
+@pytest.mark.asyncio
+async def test_send_premium_watchlist_report_splits_and_formats_exceptions(telegram_reporter):
+    """우량주 리포트의 분할 전송과 숫자 포맷 예외 경로를 검증한다."""
+    long_name = "종목" * 800
+    stocks = [
+        {
+            "code": f"C{i}",
+            "name": long_name,
+            "total_score": 10.0,
+            "rs_rating": 50,
+            "market_cap": "bad" if i == 0 else 1000000000000,
+            "avg_trading_value_5d": "bad" if i == 1 else 100000000000,
+            "minervini_stage": 0,
+        }
+        for i in range(3)
+    ]
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    await telegram_reporter.send_premium_watchlist_report(stocks, [], "20260320")
+
+    full = "".join([c[0][0] for c in telegram_reporter._send_message.call_args_list])
+    assert telegram_reporter._send_message.call_count >= 2
+    assert "시총:-" in full
+    assert "대금:-" in full
+
+
+@pytest.mark.asyncio
+async def test_send_minervini_report_formatting_exceptions_and_split(telegram_reporter):
+    """Minervini 리포트의 가격/시총 예외 처리와 분할 전송을 검증한다."""
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    long_reason = "사유" * 1200
+    items = [
+        {
+            "code": "A",
+            "name": "예외종목",
+            "stck_prpr": "bad",
+            "rs": 88,
+            "market_cap": "bad",
+            "reason": long_reason,
+        },
+        {
+            "code": "B",
+            "name": "초대형주",
+            "current_price": 12345,
+            "rs_rating": 99,
+            "market_cap": 1500000000000,
+            "reason": "",
+        },
+    ]
+
+    await telegram_reporter.send_minervini_report(items, "2026-05-15", limit=2)
+
+    full = "".join([c[0][0] for c in telegram_reporter._send_message.call_args_list])
+    assert telegram_reporter._send_message.call_count >= 2
+    assert "예외종목" in full
+    assert "초대형주" in full
+    assert "| RS:88 | 시총:-" in full
+    assert "1조 5,000억" in full
+    assert "-" in full
+
+
+@pytest.mark.asyncio
+async def test_send_ranking_report_program_combined_exception_skips_bad_stock(telegram_reporter):
+    """program_all_stocks 결합 계산 중 예외가 나면 해당 종목을 건너뛴다."""
+    rankings = {
+        "all_stocks": [
+            {
+                "stck_shrn_iscd": "005930",
+                "hts_kor_isnm": "정상종목",
+                "frgn_ntby_tr_pbmn": "100",
+                "orgn_ntby_tr_pbmn": "200",
+                "acml_tr_pbmn": "100000000",
+            },
+            {
+                "stck_shrn_iscd": "000660",
+                "hts_kor_isnm": "오류종목",
+                "frgn_ntby_tr_pbmn": "100",
+                "orgn_ntby_tr_pbmn": "bad",
+                "acml_tr_pbmn": "100000000",
+            },
+        ],
+        "program_all_stocks": [
+            {"stck_shrn_iscd": "005930", "whol_smtn_ntby_tr_pbmn": "100000000"},
+            {"stck_shrn_iscd": "000660", "whol_smtn_ntby_tr_pbmn": "200000000"},
+        ],
+    }
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    await telegram_reporter.send_ranking_report(rankings, "20250101")
+
+    full = "".join([call[0][0] for call in telegram_reporter._send_message.call_args_list])
+    assert "정상종목" in full
+    assert "오류종목" not in full
 
 
 @pytest.mark.asyncio
