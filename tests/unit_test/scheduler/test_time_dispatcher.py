@@ -271,3 +271,92 @@ async def test_partial_dispatch_then_second_task_added(db_path):
     ticket = await broker2.consume()
     broker2.task_done()
     assert ticket.task_name == "TASK_B"
+
+
+async def test_unregister_task_removes_registered_state(db_path):
+    """unregister_task()는 등록 정보와 발행일 상태를 모두 제거한다."""
+    dispatcher, _ = _make_dispatcher(is_operating=False, latest_date="20250417", db_path=db_path)
+    dispatcher.register_task("TASK_A", priority=100, delay_sec=15)
+
+    dispatcher.unregister_task("TASK_A")
+
+    assert "TASK_A" not in dispatcher._task_schedule
+    assert "TASK_A" not in dispatcher._task_delays
+    assert "TASK_A" not in dispatcher._task_dispatched_dates
+
+
+async def test_publish_after_delay_warns_when_broker_queue_is_full(db_path):
+    """broker.publish()가 False면 큐 포화 경고를 남긴다."""
+    broker = MagicMock()
+    broker.publish = AsyncMock(return_value=False)
+    dispatcher = TimeDispatcher(
+        broker=broker,
+        market_clock=_make_clock(is_operating=False, is_after_close=True),
+        mcs=MagicMock(),
+        logger=MagicMock(),
+        db_path=db_path,
+    )
+
+    await dispatcher._publish_after_delay("TASK_A", priority=100, date="20250417", delay_sec=0)
+
+    broker.publish.assert_awaited_once()
+    dispatcher._logger.warning.assert_called_once()
+
+
+async def test_publish_after_delay_waits_before_publishing(db_path, monkeypatch):
+    """delay_sec가 있으면 지정한 시간만큼 대기 후 발행한다."""
+    broker = MagicMock()
+    broker.publish = AsyncMock(return_value=True)
+    dispatcher = TimeDispatcher(
+        broker=broker,
+        market_clock=_make_clock(is_operating=False, is_after_close=True),
+        mcs=MagicMock(),
+        logger=MagicMock(),
+        db_path=db_path,
+    )
+    sleep_calls = []
+
+    async def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    await dispatcher._publish_after_delay("TASK_A", priority=50, date="20250417", delay_sec=3)
+
+    assert sleep_calls == [3]
+    broker.publish.assert_awaited_once()
+
+
+def test_get_status_handles_market_clock_exception(db_path):
+    """get_status()는 MarketClock 조회 예외가 발생해도 상태 반환을 유지한다."""
+    dispatcher, _ = _make_dispatcher(is_operating=False, latest_date="20250417", db_path=db_path)
+    dispatcher.register_task("TASK_A", priority=100, delay_sec=7)
+    dispatcher._task_dispatched_dates["TASK_A"] = "20250416"
+    dispatcher._market_clock.is_market_operating_hours.side_effect = RuntimeError("clock error")
+
+    status = dispatcher.get_status()
+
+    assert status["market_is_open"] is None
+    assert status["registered_tasks"] == [
+        {
+            "name": "TASK_A",
+            "priority": 100,
+            "delay_sec": 7,
+            "last_dispatched_date": "20250416",
+        }
+    ]
+
+
+async def test_stop_cancels_pending_publish_tasks(db_path):
+    """stop()은 대기 중인 발행 태스크를 취소한다."""
+    dispatcher, _ = _make_dispatcher(is_operating=False, latest_date="20250417", db_path=db_path)
+    dispatcher.register_task("TASK_A", priority=100, delay_sec=10)
+
+    await dispatcher._maybe_dispatch()
+    pending = list(dispatcher._pending_publish_tasks)
+    assert len(pending) == 1
+
+    dispatcher.stop()
+    results = await asyncio.gather(*pending, return_exceptions=True)
+
+    assert any(isinstance(result, asyncio.CancelledError) for result in results)
