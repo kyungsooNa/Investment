@@ -101,6 +101,23 @@ async def test_initialize_services_success(mock_deps):
     mock_deps["sqs"].assert_called()
     mock_deps["oes"].assert_called()
     mock_deps["ous"].assert_called()
+    env_instance.get_real_access_token.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_initialize_services_real_mode_skips_real_token_prefetch(mock_deps):
+    """실전투자 모드에서는 실전 토큰 사전 발급을 추가 호출하지 않는다."""
+    ctx = WebAppContext(None)
+    ctx.load_config_and_env()
+
+    env_instance = mock_deps["env"].return_value
+    env_instance.get_access_token = AsyncMock(return_value=True)
+    env_instance.get_real_access_token = AsyncMock(return_value="fake_real_token")
+
+    res = await ctx.initialize_services(is_paper_trading=False)
+
+    assert res is True
+    env_instance.set_trading_mode.assert_called_with(False)
+    env_instance.get_real_access_token.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_initialize_services_failure(mock_deps):

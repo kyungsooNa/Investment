@@ -416,6 +416,8 @@ class TestIndicatorsPaper:
 class TestEnvironmentPaper:
     def test_change_to_real_environment(self, paper_client, mock_paper_ctx):
         """모의 → 실전 환경 전환 성공."""
+        from view.web.routes import stock
+        stock._status_cache = {"env_type": "모의투자", "current_time": "cached"}
         mock_paper_ctx.get_env_type.return_value = "실전투자"
 
         resp = paper_client.post("/api/environment", json={"is_paper": False})
@@ -425,13 +427,19 @@ class TestEnvironmentPaper:
         assert body["success"] is True
         assert body["env_type"] == "실전투자"
         mock_paper_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=False)
+        mock_paper_ctx.start_background_tasks.assert_called_once()
+        assert stock._status_cache is None
 
     def test_environment_change_failure(self, paper_client, mock_paper_ctx):
         """환경 전환 실패 시 500 에러."""
+        from view.web.routes import stock
+        stock._status_cache = {"env_type": "모의투자", "current_time": "cached"}
         mock_paper_ctx.initialize_services = AsyncMock(return_value=False)
 
         resp = paper_client.post("/api/environment", json={"is_paper": False})
         assert resp.status_code == 500
+        mock_paper_ctx.start_background_tasks.assert_not_called()
+        assert stock._status_cache is None
 
 
 # ============================================================================
