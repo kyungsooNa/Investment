@@ -8,6 +8,7 @@ from services.strategy_log_report_service import (
     StrategyLogReportService,
     _extract_strategy_name,
     _fmt_date,
+    _build_metric_str,
 )
 
 
@@ -132,7 +133,7 @@ async def test_report_deduplication_rejected_count(log_dir):
     report = await svc.generate_report("20260418")
 
     assert "3회 탈락" in report
-    assert "poor_candle_quality" in report
+    assert "캔들 위치 미달" in report
 
 
 @pytest.mark.asyncio
@@ -182,3 +183,136 @@ async def test_report_rotated_files(log_dir):
     report = await svc.generate_report("20260418")
 
     assert "SK하이닉스" in report
+
+
+# ── _build_metric_str ─────────────────────────────────────────────
+
+def test_build_metric_str_low_execution_strength():
+    data = {"cgld": 94.5, "threshold": 100.0}
+    assert "94.5%" in _build_metric_str("breakout_rejected", "low_execution_strength", data)
+    assert "100%" in _build_metric_str("breakout_rejected", "low_execution_strength", data)
+
+
+def test_build_metric_str_htf_pattern_detected():
+    data = {"surge_ratio": 2.1, "flag_days": 8}
+    result = _build_metric_str("htf_pattern_detected", "", data)
+    assert "2.1x" in result
+    assert "8일" in result
+
+
+def test_build_metric_str_no_ma_proximity():
+    data = {"closest_ma_pct": -1.5}
+    assert "-1.50%" in _build_metric_str("pp_rejected", "no_ma_proximity", data)
+
+
+# ── near-miss 섹션 ────────────────────────────────────────────────
+
+def _make_info_entry(event: str, code: str, name: str, date: str = "2026-04-18", **extra) -> dict:
+    """INFO 레벨 near-miss 로그 항목을 생성한다."""
+    return {
+        "timestamp": f"{date} 10:30:00,000",
+        "level": "INFO",
+        "name": "strategy.TestStrategy",
+        "data": {"event": event, "code": code, "name": name, **extra},
+    }
+
+
+@pytest.mark.asyncio
+async def test_near_miss_section_appears(log_dir):
+    """breakout_rejected + low_execution_strength 이벤트가 있으면 🎯 섹션이 출력된다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("breakout_rejected", "000660", "SK하이닉스",
+                         reason="low_execution_strength", cgld=94.5, threshold=100.0),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "🎯 매수 근접" in report
+    assert "SK하이닉스" in report
+    assert "체결강도 미달" in report
+    assert "94.5%" in report
+
+
+@pytest.mark.asyncio
+async def test_near_miss_highest_gate_wins(log_dir):
+    """동일 종목에 여러 rejection이 있을 때 gate가 높은(마지막 관문) 사유만 표시된다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("breakout_rejected", "005930", "삼성전자",
+                         reason="poor_candle_quality", pos=0.62),
+        _make_info_entry("breakout_rejected", "005930", "삼성전자",
+                         reason="low_execution_strength", cgld=94.5, threshold=100.0),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "체결강도 미달" in report
+    assert "캔들 위치 미달" not in report
+
+
+@pytest.mark.asyncio
+async def test_htf_pattern_detected_in_near_miss(log_dir):
+    """htf_pattern_detected 이벤트가 있으면 🎯 섹션에 HTF 패턴 감지로 포함된다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("htf_pattern_detected", "035420", "NAVER",
+                         surge_ratio=2.1, flag_days=8, drawdown_pct=12.5),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "🎯 매수 근접" in report
+    assert "NAVER" in report
+    assert "HTF 패턴 감지" in report
+    assert "2.1x" in report
+
+
+@pytest.mark.asyncio
+async def test_bought_excluded_from_near_miss(log_dir):
+    """매수 완료된 종목은 near-miss 섹션에 표시되지 않는다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("breakout_rejected", "005930", "삼성전자",
+                         reason="low_execution_strength", cgld=94.5, threshold=100.0),
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="OSB돌파", price=85000),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "매수 완료 (1건)" in report
+    assert "🎯 매수 근접" not in report
+
+
+@pytest.mark.asyncio
+async def test_near_miss_top3_limit(log_dir):
+    """near-miss 후보가 3개 초과여도 상위 3개(gate 높은 순)만 출력된다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("breakout_rejected", "A00001", "종목A",
+                         reason="smart_money_filter_failed"),          # gate=7
+        _make_info_entry("breakout_rejected", "A00002", "종목B",
+                         reason="low_execution_strength", cgld=90.0, threshold=100.0),  # gate=6
+        _make_info_entry("entry_rejected",    "A00003", "종목C",
+                         reason="no_bullish_reversal"),                # gate=5
+        _make_info_entry("breakout_rejected", "A00004", "종목D",
+                         reason="poor_candle_quality", pos=0.55),      # gate=4
+        _make_info_entry("pp_rejected",       "A00005", "종목E",
+                         reason="no_ma_proximity", closest_ma_pct=-3.2),  # gate=2
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    # near-miss Top3 reason_kr은 한국어로만 표시됨 (rejected는 영문 reason 사용)
+    assert "수급 미달" in report      # 종목A gate=7 → near-miss 포함
+    assert "체결강도 미달" in report   # 종목B gate=6 → near-miss 포함
+    assert "반등 미확인" in report     # 종목C gate=5 → near-miss 포함
+    # near-miss 섹션에만 없으면 됨 (매수 실패 섹션에는 동일 한국어 사유가 표시될 수 있음)
+    near_miss_section = report.split("🎯 매수 근접")[1] if "🎯 매수 근접" in report else ""
+    assert "종목D" not in near_miss_section  # gate=4 → near-miss 제외
+    assert "종목E" not in near_miss_section  # gate=2 → near-miss 제외

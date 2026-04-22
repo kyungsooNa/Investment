@@ -288,8 +288,8 @@ class HighTightFlagStrategy(LiveStrategy):
             return None
 
         if cgld_val < self._cfg.execution_strength_min:
-            self._logger.debug({
-                "event": "breakout_rejected", "code": code,
+            self._logger.info({
+                "event": "breakout_rejected", "code": code, "name": item.name,
                 "reason": "low_execution_strength",
                 "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
             })
@@ -299,7 +299,7 @@ class HighTightFlagStrategy(LiveStrategy):
         # 체결강도 조회 후 _is_smart_money_ok 호출 (OSB 전략 로직 재사용)
         sm_ok, sm_metrics = self._is_smart_money_ok(code, current, pg_buy, trade_value, item.market_cap, cgld_val)
         if not sm_ok:
-            self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "smart_money_filter_failed"})
+            self._logger.info({"event": "breakout_rejected", "code": code, "name": item.name, "reason": "smart_money_filter_failed"})
             return None
         
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
