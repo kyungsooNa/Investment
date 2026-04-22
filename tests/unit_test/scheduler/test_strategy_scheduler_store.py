@@ -3,7 +3,7 @@ import csv
 import json
 import sqlite3
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
 import scheduler.strategy_scheduler_store as store_module
@@ -112,6 +112,15 @@ def test_load_state_invalid_json(store):
     assert store.load_state() is None
 
 
+def test_save_and_load_keyed_value(store):
+    """임의 키 문자열 저장/조회 및 미존재 키 None 반환 확인"""
+    assert store.load_keyed("missing") is None
+
+    store.save_keyed("last_run", "2026-04-22 09:00:00")
+
+    assert store.load_keyed("last_run") == "2026-04-22 09:00:00"
+
+
 def test_migrate_csv_success(tmp_path, mock_logger, monkeypatch):
     """CSV 레거시 파일 마이그레이션 성공 테스트"""
     csv_path = tmp_path / "signal_history.csv"
@@ -159,6 +168,43 @@ def test_migrate_csv_success(tmp_path, mock_logger, monkeypatch):
     assert os.path.exists(str(csv_path) + ".migrated")
 
 
+def test_migrate_csv_logs_warning_for_invalid_row(tmp_path, mock_logger, monkeypatch):
+    """개별 CSV 행 삽입 실패 시 warning만 남기고 나머지 처리는 계속한다."""
+    csv_path = tmp_path / "signal_history.csv"
+    monkeypatch.setattr(store_module, "_LEGACY_SIGNAL_CSV", str(csv_path))
+
+    with open(csv_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "strategy_name", "code", "name", "action", "price", "qty",
+            "return_rate", "reason", "timestamp", "api_success"
+        ])
+        writer.writeheader()
+        writer.writerow({
+            "strategy_name": "Broken", "code": "005930", "name": "삼성전자",
+            "action": "BUY", "price": "invalid_price", "qty": "2", "return_rate": "",
+            "reason": "bad", "timestamp": "2025-01-01", "api_success": "True"
+        })
+
+    StrategySchedulerStore(db_path=str(tmp_path / "warn.db"), logger=mock_logger)
+
+    mock_logger.warning.assert_called_once()
+    assert os.path.exists(str(csv_path) + ".migrated")
+
+
+def test_migrate_csv_logs_error_on_file_read_failure(tmp_path, mock_logger, monkeypatch):
+    """CSV 파일 자체를 읽지 못하면 error를 로깅한다."""
+    csv_path = tmp_path / "signal_history.csv"
+    monkeypatch.setattr(store_module, "_LEGACY_SIGNAL_CSV", str(csv_path))
+
+    store = StrategySchedulerStore(db_path=str(tmp_path / "csv_fail.db"), logger=mock_logger)
+    csv_path.write_text("dummy", encoding="utf-8")
+
+    with patch("builtins.open", side_effect=OSError("read fail")):
+        store._migrate_csv()
+
+    mock_logger.error.assert_called()
+
+
 def test_migrate_json_success(tmp_path, mock_logger, monkeypatch):
     """JSON 레거시 상태 파일 마이그레이션 성공 테스트"""
     json_path = tmp_path / "scheduler_state.json"
@@ -175,6 +221,35 @@ def test_migrate_json_success(tmp_path, mock_logger, monkeypatch):
     
     assert not os.path.exists(str(json_path))
     assert os.path.exists(str(json_path) + ".migrated")
+
+
+def test_migrate_json_skip_when_db_exists(tmp_path, mock_logger, monkeypatch):
+    """DB에 이미 상태가 있으면 JSON 내용은 넣지 않고 파일명만 변경한다."""
+    json_path = tmp_path / "scheduler_state.json"
+    monkeypatch.setattr(store_module, "_LEGACY_STATE_JSON", str(json_path))
+
+    db_path = str(tmp_path / "test_skip_json.db")
+    store = StrategySchedulerStore(db_path=db_path, logger=mock_logger)
+    store.save_state({"current": True})
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump({"legacy": True}, f)
+
+    store._migrate_json()
+
+    assert store.load_state() == {"current": True}
+    assert not os.path.exists(str(json_path))
+    assert os.path.exists(str(json_path) + ".migrated")
+
+
+def test_migrate_json_logs_error_on_invalid_json(tmp_path, mock_logger, monkeypatch):
+    """JSON 파싱 실패 시 error를 로깅하고 예외를 삼킨다."""
+    json_path = tmp_path / "scheduler_state.json"
+    monkeypatch.setattr(store_module, "_LEGACY_STATE_JSON", str(json_path))
+    json_path.write_text("{ invalid json", encoding="utf-8")
+
+    StrategySchedulerStore(db_path=str(tmp_path / "bad_json.db"), logger=mock_logger)
+
+    mock_logger.error.assert_called()
 
 
 def test_migrate_skip_when_db_exists(store, tmp_path, mock_logger, monkeypatch):
