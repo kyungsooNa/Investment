@@ -133,7 +133,7 @@ async def test_report_deduplication_rejected_count(log_dir):
     report = await svc.generate_report("20260418")
 
     assert "3회 탈락" in report
-    assert "poor_candle_quality" in report
+    assert "캔들 위치 미달" in report
 
 
 @pytest.mark.asyncio
@@ -312,5 +312,7 @@ async def test_near_miss_top3_limit(log_dir):
     assert "수급 미달" in report      # 종목A gate=7 → near-miss 포함
     assert "체결강도 미달" in report   # 종목B gate=6 → near-miss 포함
     assert "반등 미확인" in report     # 종목C gate=5 → near-miss 포함
-    assert "캔들 위치 미달" not in report  # 종목D gate=4 → near-miss 제외
-    assert "MA 거리 초과" not in report    # 종목E gate=2 → near-miss 제외
+    # near-miss 섹션에만 없으면 됨 (매수 실패 섹션에는 동일 한국어 사유가 표시될 수 있음)
+    near_miss_section = report.split("🎯 매수 근접")[1] if "🎯 매수 근접" in report else ""
+    assert "종목D" not in near_miss_section  # gate=4 → near-miss 제외
+    assert "종목E" not in near_miss_section  # gate=2 → near-miss 제외
