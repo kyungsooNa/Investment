@@ -2219,6 +2219,195 @@ async def test_websocket_reconnection_and_resubscription(websocket_api_instance)
                 mock_send_request.assert_awaited_once_with(tr_id, tr_key, tr_type="1")
 
 
+def test_handle_websocket_message_unified_realtime_price(websocket_api_instance):
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+    data_parts = [''] * 60
+    data_parts[0] = '0003'
+    data_parts[2] = '12345'
+    message = f"0|H0UNCNT0|dummy|{'^'.join(data_parts)}"
+
+    api._handle_websocket_message(message)
+
+    api.on_realtime_message_callback.assert_called_once()
+    result = api.on_realtime_message_callback.call_args[0][0]
+    assert result["type"] == "realtime_price"
+    assert result["tr_id"] == "H0UNCNT0"
+    assert result["data"]["유가증권단축종목코드"] == "0003"
+
+
+def test_handle_websocket_message_program_trading_success(websocket_api_instance):
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+    data_str = "005930^120000^10^10000^20^20000^10^10000^100^200^300"
+    message = f"0|H0STPGM0|dummy|{data_str}"
+
+    api._handle_websocket_message(message)
+
+    api.on_realtime_message_callback.assert_called_once()
+    result = api.on_realtime_message_callback.call_args[0][0]
+    assert result["type"] == "realtime_program_trading"
+    assert result["data"]["순매수체결량"] == "10"
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_appkey_collision_retry_logs(websocket_api_instance):
+    api = websocket_api_instance
+    api._auto_reconnect = True
+    api._is_connected = False
+    api._appkey_collision = True
+    api._streaming_logger = MagicMock()
+
+    async def establish():
+        api._auto_reconnect = False
+        api._is_connected = True
+        return True
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
+         patch.object(api, "_establish_connection", side_effect=establish), \
+         patch.object(api, "_resubscribe_all", new_callable=AsyncMock):
+        await api._receive_messages()
+
+    mock_sleep.assert_awaited_once_with(60)
+    api._streaming_logger.log_appkey_collision.assert_called_once()
+    api._streaming_logger.log_reconnect_attempt.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_resubscribe_error_logged(websocket_api_instance):
+    api = websocket_api_instance
+    api._auto_reconnect = True
+    api._is_connected = False
+    api._streaming_logger = MagicMock()
+
+    async def establish():
+        api._auto_reconnect = False
+        api._is_connected = True
+        return True
+
+    with patch("asyncio.sleep", new_callable=AsyncMock), \
+         patch.object(api, "_establish_connection", side_effect=establish), \
+         patch.object(api, "_resubscribe_all", new_callable=AsyncMock, side_effect=Exception("restore boom")):
+        await api._receive_messages()
+
+    api._logger.error.assert_called_with("구독 복구 중 오류 발생: restore boom")
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_timeout_closes_when_market_check_false(websocket_api_instance):
+    api = websocket_api_instance
+    api._auto_reconnect = True
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.approval_key = "approval"
+    api._mcs = AsyncMock()
+    api._mcs.is_market_open_now = AsyncMock(return_value=False)
+
+    async def wait_for_side_effect(*args, **kwargs):
+        api._auto_reconnect = False
+        raise asyncio.TimeoutError
+
+    with patch("asyncio.wait_for", side_effect=wait_for_side_effect):
+        await api._receive_messages()
+
+    assert api._is_connected is False
+    assert api.ws is None
+    assert api.approval_key is None
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_connection_lost_without_warning_when_auto_reconnect_false(websocket_api_instance):
+    api = websocket_api_instance
+    api._auto_reconnect = True
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.approval_key = "approval"
+    api._streaming_logger = MagicMock()
+
+    async def wait_for_side_effect(*args, **kwargs):
+        api._auto_reconnect = False
+        raise Exception("socket lost")
+
+    with patch("asyncio.wait_for", side_effect=wait_for_side_effect):
+        await api._receive_messages()
+
+    api._streaming_logger.log_connection_lost.assert_called_once()
+    assert api._logger.warning.call_count == 0 or all("웹소켓 연결 끊김" not in str(c[0][0]) for c in api._logger.warning.call_args_list if c[0])
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_connection_lost_close_error_swallowed(websocket_api_instance):
+    api = websocket_api_instance
+    api._auto_reconnect = True
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.ws.close.side_effect = Exception("close fail")
+    api.approval_key = "approval"
+
+    async def wait_for_side_effect(*args, **kwargs):
+        api._auto_reconnect = False
+        raise Exception("socket lost")
+
+    with patch("asyncio.wait_for", side_effect=wait_for_side_effect):
+        await api._receive_messages()
+
+    assert api.ws is None
+    assert api.approval_key is None
+
+
+@pytest.mark.asyncio
+async def test_connect_cancels_existing_receive_task_before_restart(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = False
+    api.ws = None
+
+    class DummyTask:
+        def __init__(self):
+            self.cancel = MagicMock()
+
+        def done(self):
+            return False
+
+        def __await__(self):
+            async def _wait():
+                return None
+            return _wait().__await__()
+
+    existing_task = DummyTask()
+    api._receive_task = existing_task
+
+    with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=True), \
+         patch("asyncio.create_task", return_value=MagicMock()) as mock_create_task:
+        result = await api.connect()
+
+    assert result is True
+    existing_task.cancel.assert_called_once()
+    mock_create_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_not_connected_receive_task_exception_logs_without_exc_info(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = False
+    api.ws = None
+
+    class DummyTask:
+        def cancel(self):
+            pass
+
+        def __await__(self):
+            def generator():
+                raise Exception("branch error")
+                yield
+            return generator()
+
+    api._receive_task = DummyTask()
+
+    await api.disconnect()
+
+    api._logger.error.assert_called_once_with("웹소켓 수신 태스크 종료 중 오류: branch error")
+
+
 # ─── tr_ids_config.yaml 웹소켓 필수 키 검증 ──────────────────────────────────
 
 def test_tr_ids_config_yaml_websocket_required_keys():
@@ -2286,6 +2475,38 @@ def test_json_compat_dumps_returns_str():
     assert '"tr_id"' in result
 
 
+def test_parse_program_trading_data(websocket_api_instance):
+    api = websocket_api_instance
+    data_str = "005930^120000^10^10000^20^20000^10^10000^100^200^300"
+
+    result = api._parse_program_trading_data(data_str)
+
+    assert result["유가증권단축종목코드"] == "005930"
+    assert result["순매수거래대금"] == "10000"
+
+
+def test_is_receive_alive_true_and_false(websocket_api_instance):
+    api = websocket_api_instance
+    done_task = MagicMock()
+    done_task.done.return_value = True
+    alive_task = MagicMock()
+    alive_task.done.return_value = False
+
+    api._receive_task = None
+    api._auto_reconnect = True
+    assert api.is_receive_alive() is False
+
+    api._receive_task = done_task
+    assert api.is_receive_alive() is False
+
+    api._receive_task = alive_task
+    api._auto_reconnect = False
+    assert api.is_receive_alive() is False
+
+    api._auto_reconnect = True
+    assert api.is_receive_alive() is True
+
+
 @pytest.mark.asyncio
 async def test_send_realtime_request_sends_str_to_websocket(websocket_api_instance):
     """send_realtime_request가 ws.send()에 str(bytes 아닌)을 전달하는지 검증합니다.
@@ -2302,3 +2523,49 @@ async def test_send_realtime_request_sends_str_to_websocket(websocket_api_instan
     api.ws.send.assert_called_once()
     sent_arg = api.ws.send.call_args[0][0]
     assert isinstance(sent_arg, str), f"ws.send()에 str이 아닌 {type(sent_arg)} 전달됨"
+
+
+@pytest.mark.asyncio
+async def test_send_realtime_request_unsubscribe_discards_subscription(websocket_api_instance):
+    api = websocket_api_instance
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.approval_key = "dummy_approval_key"
+    api._subscribed_items.add(("H0STCNT0", "005930"))
+
+    result = await api.send_realtime_request("H0STCNT0", "005930", tr_type="2")
+
+    assert result is True
+    assert ("H0STCNT0", "005930") not in api._subscribed_items
+
+
+@pytest.mark.asyncio
+async def test_subscribe_unsubscribe_wrappers(websocket_api_instance):
+    api = websocket_api_instance
+    with patch.object(api, "send_realtime_request", new_callable=AsyncMock, return_value=True) as mock_send:
+        await api.subscribe_program_trading("005930")
+        await api.unsubscribe_program_trading("005930")
+        await api.subscribe_unified_price("005930")
+        await api.unsubscribe_unified_price("005930")
+
+    assert mock_send.await_args_list[0].args == ("H0STPGM0", "005930")
+    assert mock_send.await_args_list[0].kwargs == {"tr_type": "1"}
+    assert mock_send.await_args_list[1].args == ("H0STPGM0", "005930")
+    assert mock_send.await_args_list[1].kwargs == {"tr_type": "2"}
+    assert mock_send.await_args_list[2].args == ("H0UNCNT0", "005930")
+    assert mock_send.await_args_list[2].kwargs == {"tr_type": "1"}
+    assert mock_send.await_args_list[3].args == ("H0UNCNT0", "005930")
+    assert mock_send.await_args_list[3].kwargs == {"tr_type": "2"}
+
+
+@pytest.mark.asyncio
+async def test_resubscribe_all_sleeps_between_items(websocket_api_instance):
+    api = websocket_api_instance
+    api._subscribed_items = {("TR1", "A"), ("TR2", "B")}
+
+    with patch.object(api, "send_realtime_request", new_callable=AsyncMock, return_value=True) as mock_send, \
+         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await api._resubscribe_all()
+
+    assert mock_send.await_count == 2
+    mock_sleep.assert_awaited_once_with(0.1)
