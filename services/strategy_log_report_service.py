@@ -7,7 +7,7 @@ import os
 import re
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import orjson
@@ -32,15 +32,15 @@ _NEAR_MISS_EVENTS = frozenset({
 
 # 높을수록 매수에 가까운 단계에서 탈락 (최대 8)
 _GATE_PRIORITY: Dict[Tuple[str, str], int] = {
-    ("htf_pattern_detected",  ""):                       8,
-    ("breakout_rejected",     "smart_money_filter_failed"): 7,
-    ("breakout_rejected",     "low_execution_strength"):  6,
-    ("entry_rejected",        "low_execution_strength"):  6,
+    ("htf_pattern_detected",  ""):                           8,
+    ("breakout_rejected",     "smart_money_filter_failed"):  7,
+    ("breakout_rejected",     "low_execution_strength"):     6,
+    ("entry_rejected",        "low_execution_strength"):     6,
     ("breakout_rejected",     "insufficient_projected_volume"): 5,
-    ("pp_rejected",           "insufficient_volume"):     5,
-    ("entry_rejected",        "no_bullish_reversal"):     5,
-    ("breakout_rejected",     "poor_candle_quality"):     4,
-    ("pp_rejected",           "no_ma_proximity"):         2,
+    ("pp_rejected",           "insufficient_volume"):        5,
+    ("entry_rejected",        "no_bullish_reversal"):        5,
+    ("breakout_rejected",     "poor_candle_quality"):        4,
+    ("pp_rejected",           "no_ma_proximity"):            2,
 }
 
 _REASON_KR: Dict[str, str] = {
@@ -51,11 +51,19 @@ _REASON_KR: Dict[str, str] = {
     "no_bullish_reversal":           "반등 미확인",
     "poor_candle_quality":           "캔들 위치 미달",
     "no_ma_proximity":               "MA 거리 초과",
+    "pullback_out_of_range":         "눌림폭 범위 초과",
+    "over_extended":                 "과확장(추격 포기)",
+    "no_surge_history":              "급등 이력 없음",
+    "ma_not_uptrending":             "MA 우상향 아님",
+    "volume_not_dry":                "거래량 미고갈",
 }
+
+# 매수 실패 섹션에서 보여줄 최대 종목 수
+_MAX_REJECTED_SHOWN = 5
 
 
 def _build_metric_str(event: str, reason: str, data: dict) -> str:
-    """rejection 데이터에서 핵심 수치 문자열을 반환한다."""
+    """rejection/near-miss 데이터에서 핵심 수치 문자열을 반환한다."""
     if event == "htf_pattern_detected":
         return f"폭등 {data.get('surge_ratio', 0):.1f}x, 깃발 {data.get('flag_days', 0)}일"
     if reason == "low_execution_strength":
@@ -71,6 +79,19 @@ def _build_metric_str(event: str, reason: str, data: dict) -> str:
         pv = data.get('proj_vol', 0)
         thr = data.get('threshold', 0)
         return f"예상거래 {int(pv):,}/기준 {int(thr):,}" if thr else ""
+    if reason == "pullback_out_of_range":
+        pct = data.get('pullback_pct')
+        allowed = data.get('allowed_range', '')
+        if pct is not None:
+            return f"{pct:+.1f}% / 기준 {allowed}" if allowed else f"{pct:+.1f}%"
+        return ""
+    if reason == "over_extended":
+        current = data.get('current', 0)
+        max_entry = data.get('max_entry', 0)
+        if current and max_entry:
+            over_pct = (current - max_entry) / max_entry * 100
+            return f"초과 +{over_pct:.1f}%"
+        return ""
     return ""
 
 
@@ -101,8 +122,9 @@ class StrategyLogReportService:
         "entry_rejected",
     })
 
-    def __init__(self, log_dir: str = "logs/strategies"):
+    def __init__(self, log_dir: str = "logs/strategies", stock_code_repo: Optional[Any] = None):
         self._log_dir = log_dir
+        self._stock_code_repo = stock_code_repo
 
     # ── 파일 탐색 ────────────────────────────────────────────────
 
@@ -145,6 +167,13 @@ class StrategyLogReportService:
                         yield entry.get('level', 'INFO'), ts, data
         except Exception:
             pass
+
+    def _db_resolve(self, code: str, current_name: str) -> str:
+        """종목명이 코드와 같으면 StockCodeRepository에서 이름을 조회한다."""
+        if current_name != code or not self._stock_code_repo:
+            return current_name
+        db_name = self._stock_code_repo.get_name_by_code(code)
+        return db_name if db_name else code
 
     # ── 리포트 생성 ──────────────────────────────────────────────
 
@@ -194,7 +223,7 @@ class StrategyLogReportService:
                         metrics = data.get('metrics', {})
                         price = metrics.get('price', data.get('price', 0))
                         bought[code] = {
-                            'name': data.get('name', code),
+                            'name': name_map.get(code, data.get('name', code)),
                             'price': price,
                             'reason': data.get('reason', ''),
                             'time': ts[11:16] if len(ts) >= 16 else '',
@@ -204,10 +233,13 @@ class StrategyLogReportService:
 
                     elif code and (event in self.REJECTED_EVENTS or event.endswith('_rejected')):
                         if code not in bought:
-                            prev = rejected.get(code, {'name': data.get('name', code), 'reason': '', 'count': 0})
+                            prev = rejected.get(code, {'name': '', 'reason': '', 'event': '', 'data': {}, 'count': 0})
+                            cand_name = name_map.get(code) or data.get('name', '') or prev['name'] or code
                             rejected[code] = {
-                                'name': data.get('name', code),
+                                'name': cand_name,
                                 'reason': data.get('reason', prev['reason']),
+                                'event': event,
+                                'data': data,
                                 'count': prev['count'] + 1,
                             }
 
@@ -220,7 +252,17 @@ class StrategyLogReportService:
                                 'gate': gate,
                                 'reason_kr': _REASON_KR.get(reason, "HTF 패턴 감지" if event == "htf_pattern_detected" else reason),
                                 'metric_str': _build_metric_str(event, reason, data),
+                                'time': ts[11:16] if len(ts) >= 16 else '',
                             }
+
+            # StockCodeRepository로 미해결 종목명 보완
+            if self._stock_code_repo:
+                for code, info in bought.items():
+                    info['name'] = self._db_resolve(code, info['name'])
+                for code, info in rejected.items():
+                    info['name'] = self._db_resolve(code, info['name'])
+                for code, info in near_miss.items():
+                    info['name'] = self._db_resolve(code, info['name'])
 
             if not bought and not rejected and not near_miss:
                 inactive_names.append(name)
@@ -241,9 +283,17 @@ class StrategyLogReportService:
 
             if rejected:
                 lines.append(f"\n❌ 매수 실패 ({len(rejected)}건)")
-                for code, info in rejected.items():
+                sorted_rejected = sorted(rejected.items(), key=lambda x: -x[1].get('count', 0))
+                shown = sorted_rejected[:_MAX_REJECTED_SHOWN]
+                rest_count = len(sorted_rejected) - _MAX_REJECTED_SHOWN
+                for code, info in shown:
+                    reason_kr = _REASON_KR.get(info['reason'], info['reason'])
+                    metric = _build_metric_str(info.get('event', ''), info['reason'], info.get('data', {}))
+                    metric_str = f" ({metric})" if metric else ""
                     count_str = f" ({info['count']}회 탈락)" if info.get('count', 0) > 1 else ""
-                    lines.append(f"• {info['name']}({code}): {info['reason']}{count_str}")
+                    lines.append(f"• {info['name']}({code}): {reason_kr}{metric_str}{count_str}")
+                if rest_count > 0:
+                    lines.append(f"  …외 {rest_count}건")
             else:
                 lines.append("\n❌ 매수 실패: 없음")
 
@@ -252,7 +302,8 @@ class StrategyLogReportService:
                 lines.append("\n🎯 매수 근접")
                 for c in top3:
                     metric = f" ({c['metric_str']})" if c['metric_str'] else ""
-                    lines.append(f"• {c['name']}: {c['reason_kr']}{metric}")
+                    time_str = f" ({c['time']})" if c.get('time') else ""
+                    lines.append(f"• {c['name']}: {c['reason_kr']}{metric}{time_str}")
 
             active_sections.append("\n".join(lines))
 
