@@ -304,6 +304,12 @@ def test_state_property(watchdog_task):
     """state 프로퍼티 검증."""
     assert watchdog_task.state == TaskState.IDLE
 
+
+def test_task_name_and_priority_properties(watchdog_task):
+    """기본 프로퍼티(task_name, priority) 검증."""
+    assert watchdog_task.task_name == "websocket_watchdog"
+    assert watchdog_task.priority.name == "NORMAL"
+
 @pytest.mark.asyncio
 async def test_start_and_already_running(watchdog_task):
     """start 메서드 호출 및 이미 실행 중일 때 조기 리턴 검증."""
@@ -355,6 +361,19 @@ async def test_suspend_and_resume(watchdog_task):
     svc._state = TaskState.IDLE
     await svc.resume()
     assert svc.state == TaskState.IDLE
+
+
+@pytest.mark.asyncio
+async def test_stop_without_tasks_or_services():
+    """추적 태스크/실시간 서비스가 없어도 stop이 안전하게 종료된다."""
+    svc = WebSocketWatchdogTask(
+        program_trading_stream_service=None,
+        streaming_logger=None,
+    )
+
+    await svc.stop()
+
+    assert svc.state == TaskState.STOPPED
 
 
 @pytest.mark.asyncio
@@ -497,6 +516,57 @@ async def test_streaming_watchdog_sets_market_open_true(watchdog_task):
     assert svc._market_open is True
 
 
+@pytest.mark.asyncio
+async def test_streaming_watchdog_suspended_skips_all_checks(watchdog_task):
+    """SUSPENDED 상태면 시장 조회/재연결 없이 다음 루프로 넘어간다."""
+    svc = watchdog_task
+    svc._state = TaskState.SUSPENDED
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        await svc._streaming_watchdog()
+
+    svc.mcs.is_market_open_now.assert_not_called()
+    svc.force_reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_transitions_running_to_idle_on_market_close_without_disconnect(watchdog_task):
+    """장 마감 + 수신 태스크 비활성 상태면 RUNNING에서 IDLE로만 전환된다."""
+    svc = watchdog_task
+    svc._state = TaskState.RUNNING
+    svc.mcs.is_market_open_now.return_value = False
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        await svc._streaming_watchdog()
+
+    assert svc.state == TaskState.IDLE
+    svc._streaming_service.disconnect_websocket.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_logs_runtime_error(watchdog_task, mock_streaming_logger):
+    """워치독 루프 예외는 log_watchdog_error로 기록된다."""
+    svc = watchdog_task
+    svc._streaming_logger = mock_streaming_logger
+    svc._streaming_stock_repo.get_desired.side_effect = [RuntimeError("boom"), RuntimeError("boom"), asyncio.CancelledError()]
+
+    async def sleep_side_effect(*args, **kwargs):
+        return
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new=AsyncMock(side_effect=sleep_side_effect)):
+        try:
+            await asyncio.wait_for(svc._streaming_watchdog(), timeout=0.05)
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            pass
+
+    mock_streaming_logger.log_watchdog_error.assert_called()
+
+
 # ── 추가 Coverage 확보용 테스트 ──────────────────────────────────────────────
 
 def test_init_without_performance_profiler():
@@ -522,6 +592,33 @@ async def test_restore_all_subscriptions_with_price_service(watchdog_task, mock_
     
     # PT가 없으므로 PT 관련 로그는 안 찍힘
     mock_streaming_logger.log_restore.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_restore_all_subscriptions_without_logger_or_repo():
+    """logger/repo 없이도 price subscription 복원이 안전하게 동작한다."""
+    streaming_service = MagicMock()
+    streaming_service.connect_websocket = AsyncMock(return_value=True)
+    mcs = AsyncMock()
+    mcs.is_market_open_now = AsyncMock(return_value=True)
+    price_svc = MagicMock()
+    price_svc.clear_active_state = MagicMock()
+    price_svc._rebalance = AsyncMock()
+    price_svc._refs = {"005930": 1}
+    price_svc._active_codes_price = {"005930"}
+
+    svc = WebSocketWatchdogTask(
+        streaming_service=streaming_service,
+        market_calendar_service=mcs,
+        streaming_stock_repo=None,
+        price_subscription_service=price_svc,
+        streaming_logger=None,
+    )
+
+    await svc._restore_all_subscriptions()
+
+    price_svc.clear_active_state.assert_called_once()
+    price_svc._rebalance.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -857,4 +954,38 @@ async def test_restore_price_done_log_reflects_active_count(watchdog_task, mock_
 
     args, _ = mock_streaming_logger.log_price_restore_done.call_args
     assert args[0] == 2  # _active_codes_price 크기와 동일
+
+
+@pytest.mark.asyncio
+async def test_restore_program_trading_subscribe_exception_marks_failed(watchdog_task):
+    """PT 구독 중 예외가 나면 실패 목록으로 이동하고 desired에서 제거된다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._streaming_service.connect_websocket = AsyncMock(return_value=True)
+    svc._streaming_service.subscribe_program_trading = AsyncMock(side_effect=RuntimeError("sub fail"))
+
+    await svc._restore_all_subscriptions()
+
+    svc._streaming_logger.log_pt_restore_error.assert_called_once()
+    svc._streaming_stock_repo.unmark_desired.assert_awaited_once_with("005930", StreamingType.PROGRAM_TRADING)
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_logs_active_pt_count(watchdog_task, mock_price_subscription_service):
+    """force_reconnect는 active PT 개수 기준으로 reconnect 로그를 남긴다."""
+    svc = watchdog_task
+    svc._streaming_stock_repo.get_desired.side_effect = lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    svc._streaming_stock_repo.get_active.return_value = {"005930"}
+    svc._price_subscription_service = mock_price_subscription_service
+    svc._restore_all_subscriptions = AsyncMock()
+
+    await svc.force_reconnect(trigger="manual")
+
+    svc._streaming_logger.log_reconnect.assert_called_once_with(
+        trigger="manual",
+        codes=["005930"],
+        success=1,
+        total=1,
+    )
     
