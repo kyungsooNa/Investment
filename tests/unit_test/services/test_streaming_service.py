@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from services.streaming_service import StreamingService
@@ -45,6 +46,11 @@ def streaming_service(mock_broker, mock_logger, mock_market_clock, mock_market_d
         market_data_service=mock_market_data_service
     )
 
+
+@pytest.fixture
+def mock_streaming_logger():
+    return MagicMock()
+
 def test_init_with_price_stream_service(mock_broker, mock_logger, mock_market_clock, mock_market_data_service):
     """초기화 시 price_stream_service를 전달하면 자동으로 핸들러가 등록되는지 테스트"""
     mock_price_stream = MagicMock()
@@ -66,6 +72,27 @@ async def test_connect_disconnect_websocket(streaming_service, mock_broker):
 
     await streaming_service.disconnect_websocket()
     mock_broker.disconnect_websocket.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_connect_disconnect_websocket_logs_streaming_events(
+    mock_broker, mock_logger, mock_market_clock, mock_market_data_service, mock_streaming_logger
+):
+    """streaming_logger가 있으면 connect/disconnect 이벤트를 기록한다."""
+    mock_broker.connect_websocket.return_value = True
+    service = StreamingService(
+        broker_api_wrapper=mock_broker,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_data_service=mock_market_data_service,
+        streaming_logger=mock_streaming_logger,
+    )
+
+    await service.connect_websocket()
+    await service.disconnect_websocket()
+
+    mock_streaming_logger.log_connect.assert_called_once()
+    mock_streaming_logger.log_disconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -239,6 +266,74 @@ def test_handler_exception_does_not_affect_other_handlers(streaming_service):
     streaming_service.logger.error.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_async_handler_is_scheduled_with_inner_data(streaming_service):
+    """코루틴 핸들러는 background task로 스케줄되고 inner data를 전달받는다."""
+    called = []
+
+    async def async_handler(inner):
+        called.append(inner)
+
+    streaming_service.register_handler('realtime_price', async_handler)
+    inner = {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    current_loop = asyncio.get_running_loop()
+    tasks = []
+    fake_loop = MagicMock()
+
+    def _create_task(coro):
+        task = current_loop.create_task(coro)
+        tasks.append(task)
+        return task
+
+    fake_loop.create_task.side_effect = _create_task
+
+    with patch('services.streaming_service.asyncio.iscoroutinefunction', return_value=True), \
+         patch('services.streaming_service.asyncio.get_running_loop', return_value=fake_loop):
+        streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+    await asyncio.gather(*tasks)
+
+    assert called == [inner]
+
+
+@pytest.mark.asyncio
+async def test_async_handler_exception_is_logged(streaming_service):
+    """코루틴 핸들러 내부 예외는 done callback에서 로깅된다."""
+    async def failing_async_handler(_inner):
+        raise RuntimeError("async crash")
+
+    streaming_service.register_handler('realtime_price', failing_async_handler)
+    inner = {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    current_loop = asyncio.get_running_loop()
+    tasks = []
+    fake_loop = MagicMock()
+
+    def _create_task(coro):
+        task = current_loop.create_task(coro)
+        tasks.append(task)
+        return task
+
+    fake_loop.create_task.side_effect = _create_task
+
+    with patch('services.streaming_service.asyncio.iscoroutinefunction', return_value=True), \
+         patch('services.streaming_service.asyncio.get_running_loop', return_value=fake_loop):
+        streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert streaming_service.logger.error.call_count >= 1
+
+
+def test_handler_without_running_loop_falls_back_to_sync_call(streaming_service):
+    """이벤트 루프가 없으면 동기 핸들러를 직접 호출한다."""
+    handler = MagicMock()
+    streaming_service.register_handler('realtime_price', handler)
+    inner = {'유가증권단축종목코드': '005930'}
+
+    with patch('services.streaming_service.asyncio.get_running_loop', side_effect=RuntimeError):
+        streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+
+    handler.assert_called_once_with(inner)
+
+
 def test_set_price_stream_service_registers_handler(streaming_service):
     """set_price_stream_service: on_price_tick이 realtime_price 핸들러로 등록됨"""
     mock_svc = MagicMock()
@@ -344,6 +439,25 @@ def test_dispatch_realtime_message_program_trading(streaming_service):
     assert "[프로그램매매 - 100000]" in debug_calls_str
     assert "순매수거래대금: 5000" in debug_calls_str
 
+
+def test_dispatch_realtime_message_signing_notice(streaming_service):
+    """메시지 디스패치: 체결통보 수신 시 상세 로그를 남긴다."""
+    data = {
+        'type': 'signing_notice',
+        'data': {
+            '주문번호': 'A001',
+            '체결수량': '10',
+            '체결단가': '70000',
+            '주식체결시간': '100000',
+        }
+    }
+
+    streaming_service.dispatch_realtime_message(data)
+
+    debug_calls_str = str(streaming_service.logger.debug.call_args_list)
+    assert "[체결통보]" in debug_calls_str
+    assert "주문: A001" in debug_calls_str
+
 def test_dispatch_realtime_message_unknown_type(streaming_service):
     """메시지 디스패치: 알 수 없는 타입의 메시지 수신 시 로깅 처리"""
     data = {
@@ -379,6 +493,34 @@ def test_dispatch_realtime_message_throttling(streaming_service):
         # 3. "실시간 데이터 수신..." (무조건 출력)
         # 4. "[실시간 체결..." (스로틀 통과)
         assert streaming_service.logger.debug.call_count == 5
+
+
+def test_dispatch_realtime_message_throttling_with_dict_state(streaming_service):
+    """dict 기반 per-type 스로틀 상태도 정상 동작한다."""
+    streaming_service._last_console_print_time = {'realtime_price': 99.0}
+    data = {
+        'type': 'realtime_price',
+        'data': {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    }
+
+    with patch('time.monotonic', return_value=100.0):
+        streaming_service.dispatch_realtime_message(data)
+
+    assert streaming_service._last_console_print_time['realtime_price'] == 100.0
+
+
+def test_dispatch_realtime_message_throttling_fallback_on_bad_state(streaming_service):
+    """스로틀 상태가 비정상이면 fallback으로 허용하고 dict 상태로 복구한다."""
+    streaming_service._last_console_print_time = object()
+    data = {
+        'type': 'realtime_program_trading',
+        'data': {'주식체결시간': '100000', '순매수거래대금': '5000'}
+    }
+
+    with patch('time.monotonic', return_value=100.0):
+        streaming_service.dispatch_realtime_message(data)
+
+    assert streaming_service._last_console_print_time == {'realtime_program_trading': 100.0}
 
 @pytest.mark.asyncio
 async def test_handle_get_program_trading_history_success(streaming_service, mock_broker):
