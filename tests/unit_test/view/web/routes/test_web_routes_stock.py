@@ -2,7 +2,7 @@
 종목 조회 관련 테스트 (index.html — 현재가, 차트, 지표, 환경 전환).
 """
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from common.types import ResCommonResponse
 
 
@@ -282,3 +282,103 @@ async def test_change_environment_ctx_none(web_client, monkeypatch):
     response = web_client.post("/api/environment", json={"is_paper": False})
     assert response.status_code == 503
     assert response.json()["detail"] == "서비스가 초기화되지 않았습니다."
+
+
+@pytest.mark.asyncio
+async def test_get_stock_rs_rating_disabled_and_success(web_client, mock_web_ctx):
+    """RS Rating 서비스 비활성화/정상 응답 분기 검증."""
+    mock_web_ctx.rs_rating_service = None
+    response = web_client.get("/api/stock/005930/rs_rating")
+    assert response.status_code == 200
+    assert "비활성화" in response.json()["msg1"]
+
+    mock_web_ctx.rs_rating_service = MagicMock()
+    mock_web_ctx.rs_rating_service.get_rating = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={"code": "005930", "rating": 95})
+    )
+    response = web_client.get("/api/stock/005930/rs_rating")
+    assert response.status_code == 200
+    assert response.json()["data"]["rating"] == 95
+
+
+@pytest.mark.asyncio
+async def test_get_stock_stage_disabled_and_success(web_client, mock_web_ctx):
+    """Minervini Stage 서비스 비활성화/정상 응답 분기 검증."""
+    mock_web_ctx.minervini_stage_service = None
+    response = web_client.get("/api/stock/005930/stage")
+    assert response.status_code == 200
+    assert "비활성화" in response.json()["msg1"]
+
+    mock_web_ctx.minervini_stage_service = MagicMock()
+    mock_web_ctx.minervini_stage_service.get_stage_for_code = AsyncMock(return_value=(2, "상승 추세"))
+    response = web_client.get("/api/stock/005930/stage")
+    assert response.status_code == 200
+    assert response.json()["data"]["stage"] == 2
+    assert response.json()["data"]["reason"] == "상승 추세"
+
+
+@pytest.mark.asyncio
+async def test_get_stock_detail_invalid_exchange_falls_back_to_krx(web_client, mock_web_ctx):
+    """상세조회 exchange 값이 잘못되면 KRX로 폴백한다."""
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"code": "005930"}
+    )
+    response = web_client.get("/api/stock/005930/detail?exchange=INVALID")
+    assert response.status_code == 200
+
+    from common.types import Exchange
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with(
+        "005930",
+        caller="stock.py - get_stock_detail",
+        exchange=Exchange.KRX,
+        force_fresh=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_stock_price_timeout_and_invalid_exchange(web_client, mock_web_ctx):
+    """현재가 조회 타임아웃과 exchange 폴백 분기 검증."""
+    import asyncio
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.side_effect = asyncio.TimeoutError()
+    response = web_client.get("/api/stock/005930?exchange=BAD")
+    assert response.status_code == 200
+    assert "초과" in response.json()["msg1"]
+
+
+@pytest.mark.asyncio
+async def test_get_stock_price_by_name_and_background_tasks(web_client, mock_web_ctx):
+    """종목명 해석 및 background task 생성 분기 검증."""
+    mock_web_ctx.stock_code_repository.get_code_by_name.return_value = "005930"
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"price": 70000}
+    )
+    mock_web_ctx.price_subscription_service = MagicMock()
+    mock_web_ctx.price_subscription_service.add_subscription = AsyncMock()
+    mock_web_ctx.stock_query_service.get_ohlcv = AsyncMock()
+
+    created = []
+    def fake_create_task(coro):
+        created.append(coro)
+        coro.close()
+        return MagicMock()
+
+    with patch("view.web.routes.stock.asyncio.create_task", side_effect=fake_create_task):
+        response = web_client.get("/api/stock/삼성전자")
+
+    assert response.status_code == 200
+    assert len(created) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_stock_chart_invalid_exchange_fallback(web_client, mock_web_ctx):
+    """차트 조회 exchange 값이 잘못되면 KRX로 폴백한다."""
+    mock_web_ctx.stock_query_service.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=[]
+    )
+    response = web_client.get("/api/chart/005930?exchange=BAD")
+    assert response.status_code == 200
+
+    from common.types import Exchange
+    mock_web_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with(
+        "005930", "D", caller="stock.py - get_stock_chart", exchange=Exchange.KRX
+    )

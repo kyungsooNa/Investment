@@ -230,6 +230,33 @@ async def test_get_program_trading_status(web_client, mock_web_ctx):
     assert sorted(data["codes"]) == ["000660", "005930"]
 
 
+@pytest.mark.asyncio
+async def test_get_program_trading_history_without_mapper(web_client, mock_web_ctx):
+    """히스토리 응답 성공 시 mapper가 없어도 name은 빈 문자열로 내려간다."""
+    from common.types import ResCommonResponse
+    mock_web_ctx.stock_code_repository = None
+    mock_web_ctx.streaming_service.handle_get_program_trading_history = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data={})
+    )
+
+    response = web_client.get("/api/program-trading/history/005930")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["name"] == ""
+
+
+@pytest.mark.asyncio
+async def test_get_program_trading_status_without_repo(web_client, mock_web_ctx):
+    """repo가 없으면 subscribed=false, codes=[] 를 반환한다."""
+    mock_web_ctx.streaming_stock_repo = None
+    mock_web_ctx.is_market_open_now = AsyncMock(return_value=False)
+
+    response = web_client.get("/api/program-trading/status")
+
+    assert response.status_code == 200
+    assert response.json() == {"subscribed": False, "codes": [], "is_market_open": False}
+
+
 def test_websocket_echo_endpoint(web_client):
     """WebSocket /api/ws/echo 엔드포인트 테스트"""
     with web_client.websocket_connect("/api/ws/echo") as websocket:
@@ -345,3 +372,52 @@ async def test_stream_program_trading_cancellation(mock_web_ctx):
 
     # finally 블록 실행 확인
     mock_rdm.remove_subscriber_queue.assert_called_with(mock_queue)
+
+
+@pytest.mark.asyncio
+async def test_stream_program_trading_replays_history_and_disconnects(mock_web_ctx):
+    """히스토리 replay 후 클라이언트 연결 종료 시 스트림이 정리된다."""
+    from view.web.routes.program import stream_program_trading
+    from fastapi import Request
+
+    mock_request = AsyncMock(spec=Request)
+    mock_request.is_disconnected = AsyncMock(return_value=True)
+
+    mock_rdm = MagicMock()
+    mock_web_ctx.program_trading_stream_service = mock_rdm
+    test_queue = asyncio.Queue()
+    mock_rdm.create_subscriber_queue.return_value = test_queue
+    mock_rdm.get_history_data.return_value = {
+        "005930": [{
+            "주식체결시간": "120000",
+            "price": 70000,
+            "rate": 1.5,
+            "change": 1000,
+            "sign": "2",
+        }]
+    }
+
+    with patch("view.web.routes.program._get_ctx", return_value=mock_web_ctx):
+        response = await stream_program_trading(mock_request)
+
+    iterator = response.body_iterator
+    first = await iterator.__anext__()
+    assert first.startswith("data: [")
+    assert "005930" in first
+
+    with pytest.raises(StopAsyncIteration):
+        await iterator.__anext__()
+
+    mock_rdm.remove_subscriber_queue.assert_called_with(test_queue)
+
+
+def test_get_db_status(web_client, mock_web_ctx):
+    """DB 상태 조회가 manager 결과를 그대로 반환한다."""
+    mock_rdm = MagicMock()
+    mock_rdm.inspect_db_status.return_value = {"history_count": 3, "last_snapshot": "2025-01-01"}
+    mock_web_ctx.program_trading_stream_service = mock_rdm
+
+    response = web_client.get("/api/program-trading/db-status")
+
+    assert response.status_code == 200
+    assert response.json()["history_count"] == 3

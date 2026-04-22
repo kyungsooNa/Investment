@@ -3,7 +3,7 @@
 """
 import time
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from common.types import ResCommonResponse
 from view.web import web_api
 
@@ -769,3 +769,106 @@ async def test_get_virtual_history_pf_with_hold_trades(web_client, mock_web_ctx)
     assert exp["S1"]["value"] == 2000.0  # 1건, 100% 승률, 수익 2000
     assert exp["S1"]["wins"] == 1
     assert exp["S1"]["losses"] == 0
+
+
+@pytest.mark.asyncio
+async def test_calculate_benchmark_exception_returns_zero_history(mock_web_ctx):
+    """벤치마크 계산 중 예외가 나면 0 수익률 히스토리로 폴백한다."""
+    from view.web.routes.virtual import _calculate_benchmark
+
+    mock_web_ctx.stock_query_service.get_ohlcv_range = AsyncMock(side_effect=Exception("boom"))
+    ref_history = [{"date": "2025-01-01"}, {"date": "2025-01-02"}]
+
+    result = await _calculate_benchmark(mock_web_ctx, "069500", ref_history, "20250101", "20250102")
+
+    assert result == [
+        {"date": "2025-01-01", "return_rate": 0},
+        {"date": "2025-01-02", "return_rate": 0},
+    ]
+
+
+def test_aggregate_virtual_data_empty_and_exception_path():
+    """집계 함수의 빈 입력/예외 폴백 분기 검증."""
+    from view.web.routes.virtual import _aggregate_virtual_data
+
+    empty = _aggregate_virtual_data([], MagicMock(), False)
+    assert empty["summary_agg"] == {}
+    assert empty["profit_factors"] == {}
+
+    broken_vm = MagicMock()
+    broken_vm.get_trade_amount.side_effect = Exception("bad")
+    trades = [mock_trade(code="005930", strategy="A")]
+    result = _aggregate_virtual_data(trades, broken_vm, False)
+    assert result["summary_agg"] == {}
+    assert result["counts"] == {}
+
+
+def test_sanitize_for_json_replaces_nan_and_inf():
+    """NaN/Infinity 값이 0.0으로 치환되는지 검증."""
+    from view.web.routes.virtual import _sanitize_for_json
+
+    payload = {"a": float("nan"), "b": [1.0, float("inf"), {"c": float("-inf")}]}
+    sanitized = _sanitize_for_json(payload)
+
+    assert sanitized == {"a": 0.0, "b": [1.0, 0.0, {"c": 0.0}]}
+
+
+@pytest.mark.asyncio
+async def test_get_virtual_history_non_dict_batch_item_and_na_rate(web_client, mock_web_ctx):
+    """복수시세 응답에 dict가 아닌 항목/N.A. 등락률이 있어도 안전하게 처리한다."""
+    web_api._PRICE_CACHE.clear()
+    mock_web_ctx.virtual_trade_service.get_all_trades.return_value = [
+        mock_trade(code="005930", status="HOLD", buy_price=1000, strategy="A")
+    ]
+    mock_web_ctx.virtual_trade_service.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_trade_service._load_data.return_value = {}
+    mock_web_ctx.virtual_trade_service.get_daily_change.return_value = (0.0, None)
+    mock_web_ctx.virtual_trade_service.get_weekly_change.return_value = (0.0, None)
+
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[
+            "not-a-dict",
+            {"stck_shrn_iscd": "005930", "stck_prpr": "1234", "prdy_ctrt": "N/A"}
+        ])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+    trade = response.json()["trades"][0]
+    assert trade["current_price"] == 1234
+    assert trade["daily_change_rate"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_get_stage3_alerts_paths(web_client, mock_web_ctx):
+    """Stage3 alerts의 미초기화/빈보유/정상/예외 분기 검증."""
+    from view.web.routes import virtual
+
+    with patch("view.web.routes.virtual._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.virtual_trade_service = None
+        response = web_client.get("/api/virtual/stage3-alerts")
+        assert response.status_code == 200
+        assert "미초기화" in response.json()["error"]
+
+        mock_web_ctx.virtual_trade_service = MagicMock()
+        mock_web_ctx.virtual_trade_service.get_holds.return_value = []
+        response = web_client.get("/api/virtual/stage3-alerts")
+        assert response.status_code == 200
+        assert response.json()["count"] == 0
+
+        mock_web_ctx.virtual_trade_service.get_holds.return_value = [
+            {"code": "005930", "strategy": "A", "buy_price": 1000, "buy_date": "2025-01-01"},
+            {"code": "000660", "strategy": "B", "buy_price": 2000, "buy_date": "2025-01-02"},
+            {"strategy": "NO_CODE"},
+        ]
+        mock_web_ctx.minervini_stage_service = MagicMock()
+        mock_web_ctx.minervini_stage_service.get_stage_for_code = AsyncMock(side_effect=[
+            (3, "고점"),
+            Exception("timeout"),
+        ])
+        response = web_client.get("/api/virtual/stage3-alerts")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["alerts"][0]["code"] == "005930"
+        assert "Trailing Stop" in data["alerts"][0]["alert"]
