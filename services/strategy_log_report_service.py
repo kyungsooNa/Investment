@@ -7,7 +7,7 @@ import os
 import re
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 try:
     import orjson
@@ -22,6 +22,56 @@ except ImportError:
 
 
 _STRATEGY_NAME_RE = re.compile(r'^\d{8}_\d{6}_(.+?)(?:\.log\.json.*)$')
+
+# 매수 근접 추적 상수 ─────────────────────────────────────────────────
+
+_NEAR_MISS_EVENTS = frozenset({
+    "htf_pattern_detected",
+    "breakout_rejected", "pp_rejected", "entry_rejected",
+})
+
+# 높을수록 매수에 가까운 단계에서 탈락 (최대 8)
+_GATE_PRIORITY: Dict[Tuple[str, str], int] = {
+    ("htf_pattern_detected",  ""):                       8,
+    ("breakout_rejected",     "smart_money_filter_failed"): 7,
+    ("breakout_rejected",     "low_execution_strength"):  6,
+    ("entry_rejected",        "low_execution_strength"):  6,
+    ("breakout_rejected",     "insufficient_projected_volume"): 5,
+    ("pp_rejected",           "insufficient_volume"):     5,
+    ("entry_rejected",        "no_bullish_reversal"):     5,
+    ("breakout_rejected",     "poor_candle_quality"):     4,
+    ("pp_rejected",           "no_ma_proximity"):         2,
+}
+
+_REASON_KR: Dict[str, str] = {
+    "smart_money_filter_failed":     "수급 미달",
+    "low_execution_strength":        "체결강도 미달",
+    "insufficient_projected_volume": "거래량 미달",
+    "insufficient_volume":           "거래량 미달",
+    "no_bullish_reversal":           "반등 미확인",
+    "poor_candle_quality":           "캔들 위치 미달",
+    "no_ma_proximity":               "MA 거리 초과",
+}
+
+
+def _build_metric_str(event: str, reason: str, data: dict) -> str:
+    """rejection 데이터에서 핵심 수치 문자열을 반환한다."""
+    if event == "htf_pattern_detected":
+        return f"폭등 {data.get('surge_ratio', 0):.1f}x, 깃발 {data.get('flag_days', 0)}일"
+    if reason == "low_execution_strength":
+        cgld = data.get('cgld', 0)
+        thr = data.get('threshold', 0)
+        return f"강도 {cgld:.1f}%/기준 {thr:.0f}%" if thr else f"강도 {cgld:.1f}%"
+    if reason == "poor_candle_quality":
+        return f"위치 {data.get('pos', 0):.2f}"
+    if reason == "no_ma_proximity":
+        pct = data.get('closest_ma_pct')
+        return f"MA 거리 {pct:+.2f}%" if pct is not None else ""
+    if reason in ("insufficient_volume", "insufficient_projected_volume"):
+        pv = data.get('proj_vol', 0)
+        thr = data.get('threshold', 0)
+        return f"예상거래 {int(pv):,}/기준 {int(thr):,}" if thr else ""
+    return ""
 
 
 def _extract_strategy_name(filepath: str) -> Optional[str]:
@@ -48,6 +98,7 @@ class StrategyLogReportService:
 
     REJECTED_EVENTS = frozenset({
         "breakout_rejected", "pp_rejected", "htf_rejected", "fp_rejected",
+        "entry_rejected",
     })
 
     def __init__(self, log_dir: str = "logs/strategies"):
@@ -120,11 +171,16 @@ class StrategyLogReportService:
             bought: Dict[str, dict] = {}
             rejected: Dict[str, dict] = {}
             scan_count: int = 0
+            near_miss: Dict[str, dict] = {}
+            name_map: Dict[str, str] = {}
 
             for fpath in sorted(files):
                 for _level, ts, data in self._iter_events(fpath, date_prefix):
                     event = data.get('event', '')
                     code = data.get('code', '')
+
+                    if code and data.get('name'):
+                        name_map[code] = data['name']
 
                     if event == 'scan_with_watchlist':
                         scan_count = max(scan_count, data.get('count', 0))
@@ -144,6 +200,7 @@ class StrategyLogReportService:
                             'time': ts[11:16] if len(ts) >= 16 else '',
                         }
                         rejected.pop(code, None)
+                        near_miss.pop(code, None)
 
                     elif code and (event in self.REJECTED_EVENTS or event.endswith('_rejected')):
                         if code not in bought:
@@ -154,7 +211,18 @@ class StrategyLogReportService:
                                 'count': prev['count'] + 1,
                             }
 
-            if not bought and not rejected:
+                    if event in _NEAR_MISS_EVENTS and code and code not in bought:
+                        reason = data.get('reason', '')
+                        gate = _GATE_PRIORITY.get((event, reason), 0)
+                        if gate > 0 and gate > near_miss.get(code, {}).get('gate', -1):
+                            near_miss[code] = {
+                                'name': name_map.get(code, data.get('name', code)),
+                                'gate': gate,
+                                'reason_kr': _REASON_KR.get(reason, "HTF 패턴 감지" if event == "htf_pattern_detected" else reason),
+                                'metric_str': _build_metric_str(event, reason, data),
+                            }
+
+            if not bought and not rejected and not near_miss:
                 inactive_names.append(name)
                 continue
 
@@ -178,6 +246,13 @@ class StrategyLogReportService:
                     lines.append(f"• {info['name']}({code}): {info['reason']}{count_str}")
             else:
                 lines.append("\n❌ 매수 실패: 없음")
+
+            top3 = sorted(near_miss.values(), key=lambda x: -x['gate'])[:3]
+            if top3:
+                lines.append("\n🎯 매수 근접")
+                for c in top3:
+                    metric = f" ({c['metric_str']})" if c['metric_str'] else ""
+                    lines.append(f"• {c['name']}: {c['reason_kr']}{metric}")
 
             active_sections.append("\n".join(lines))
 

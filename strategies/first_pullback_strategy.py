@@ -197,8 +197,8 @@ class FirstPullbackStrategy(LiveStrategy):
         # ── Phase 3: Trigger (매수 방아쇠) ──
         prev_high = ohlcv[-1].get("high", 0) if ohlcv else 0
         if not self._check_bullish_reversal(current, today_open, today_high, today_low, prev_close, prev_high):
-            self._logger.debug({
-                "event": "entry_rejected", "code": code, "reason": "no_bullish_reversal",
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "name": item.name, "reason": "no_bullish_reversal",
                 "current": current, "today_open": today_open, "prev_high": prev_high,
                 "today_high": today_high, "today_low": today_low, "prev_close": prev_close,
             })
@@ -218,8 +218,8 @@ class FirstPullbackStrategy(LiveStrategy):
             return None
 
         if cgld_val < self._cfg.execution_strength_min:
-            self._logger.debug({
-                "event": "entry_rejected", "code": code, "reason": "low_execution_strength",
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "name": item.name, "reason": "low_execution_strength",
                 "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
             })
             return None

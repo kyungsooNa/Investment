@@ -208,7 +208,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             return None
 
         if cgld_val < self._cfg.execution_strength_min:
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "low_execution_strength", "cgld": cgld_val})
+            self._logger.info({"event": "entry_rejected", "code": code, "name": item.name, "reason": "low_execution_strength", "cgld": cgld_val, "threshold": self._cfg.execution_strength_min})
             return None
 
         # 6. ★ 공통 스마트 머니 필터 (cgld_val 전달로 유연 조건 활성화)
@@ -310,8 +310,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 break
         if not supporting_ma:
             closest_ma_pct = min(ma_proximity_debug.values(), key=abs) if ma_proximity_debug else None
-            self._logger.debug({
-                "event": "pp_rejected", "code": code, "reason": "no_ma_proximity",
+            self._logger.info({
+                "event": "pp_rejected", "code": code, "name": item.name, "reason": "no_ma_proximity",
                 "closest_ma_pct": closest_ma_pct, **ma_proximity_debug,
             })
             return None
@@ -349,8 +349,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
         proj_vol = vol / effective_progress
 
         if proj_vol <= threshold_vol:
-            self._logger.debug({
-                "event": "pp_rejected", "code": code, "reason": "insufficient_volume",
+            self._logger.info({
+                "event": "pp_rejected", "code": code, "name": item.name, "reason": "insufficient_volume",
                 "proj_vol": int(proj_vol), "threshold": int(threshold_vol)
             })
             return None

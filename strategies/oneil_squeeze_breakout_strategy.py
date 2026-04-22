@@ -166,7 +166,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if day_range > 0:
             relative_pos = (current - day_low) / day_range
             if relative_pos < self._cfg.osb_min_candle_relative_pos: # 0.7 권장
-                self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "poor_candle_quality", "pos": round(relative_pos, 2)})
+                self._logger.info({"event": "breakout_rejected", "code": code, "name": item.name, "reason": "poor_candle_quality", "pos": round(relative_pos, 2), "threshold": self._cfg.osb_min_candle_relative_pos})
                 return None
 
         # 🚨 [관문 2] 거래량 돌파 (기존 동일)
@@ -187,9 +187,9 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             self._logger.warning({"event": "cgld_check_failed", "code": code, "error": str(e)})
 
         if cgld_val < self._cfg.execution_strength_min:
-            self._logger.debug({
-                "event": "breakout_rejected", "code": code, 
-                "reason": "low_execution_strength", 
+            self._logger.info({
+                "event": "breakout_rejected", "code": code, "name": item.name,
+                "reason": "low_execution_strength",
                 "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
             })
             return None # 🌟 여기서 걸러져야 테스트가 통과됩니다.
