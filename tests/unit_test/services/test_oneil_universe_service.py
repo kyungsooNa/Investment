@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
 from datetime import datetime
 import pandas as pd
 import json
+from types import SimpleNamespace
 
 from common.types import ResCommonResponse, ErrorCode
 from common.types import ResStockFullInfoApiOutput, ResBollingerBand, ResRelativeStrength
@@ -39,6 +40,29 @@ def create_mock_stock_info(overrides=None):
     if overrides:
         base_data.update(overrides)
     return ResStockFullInfoApiOutput.model_validate(base_data)
+
+
+def create_surge_ohlcv(length=90, include_today=False, today_str="20250102", close_start=1000, step=5, volume=100000000):
+    data = []
+    for i in range(length):
+        data.append({
+            "date": f"202410{i+1:02d}",
+            "open": close_start + i * step - 5,
+            "high": close_start + i * step + 10,
+            "low": close_start + i * step - 10,
+            "close": close_start + i * step,
+            "volume": volume,
+        })
+    if include_today:
+        data.append({
+            "date": today_str,
+            "open": 9999,
+            "high": 10010,
+            "low": 9980,
+            "close": 10000,
+            "volume": volume,
+        })
+    return data
 
 @pytest.fixture
 def mock_deps():
@@ -1412,3 +1436,393 @@ async def test_analyze_surge_candidate_slices_today_candle(mock_deps):
     passed_ohlcv = indicator.calc_bb_widths_sync.call_args[0][0]
     assert len(passed_ohlcv) == 100
     assert passed_ohlcv[-1]["date"] != today_str
+
+
+def test_generation_progress_returns_snapshot_copy(mock_deps):
+    """generation_progress는 내부 상태의 복사본을 반환해야 한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    progress = service.generation_progress
+    progress["processed"] = 999
+
+    assert service._generation_progress["processed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_watchlist_syncs_subscriptions(mock_deps):
+    """워치리스트가 있고 구독 서비스가 있으면 비동기 구독 동기화를 트리거한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    price_sub = MagicMock()
+    price_sub.sync_subscriptions = AsyncMock()
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, price_subscription_service=price_sub)
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 10, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    service._watchlist = {
+        "A": OSBWatchlistItem(code="A", name="A", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1)
+    }
+    service._watchlist_date = "20250101"
+
+    created = {}
+    def fake_create_task(coro):
+        created["coro"] = coro
+        coro.close()
+        return MagicMock()
+
+    with patch.object(service, "_should_refresh_watchlist", return_value=False), \
+         patch("services.oneil_universe_service.asyncio.create_task", side_effect=fake_create_task) as mock_create_task:
+        result = await service.get_watchlist()
+
+    assert result == service._watchlist
+    mock_create_task.assert_called_once()
+    assert created["coro"] is not None
+
+
+@pytest.mark.asyncio
+async def test_analyze_premium_candidate_minervini_stage4_filtered(mock_deps):
+    """MA200 데이터가 충분하고 미너비니 Stage 4면 탈락한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    minervini = MagicMock()
+    minervini.classify_stage.return_value = 4
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, minervini_service=minervini)
+
+    ohlcv = [{
+        "close": 1000 + i, "high": 1100 + i, "low": 900 + i, "volume": 100000000
+    } for i in range(220)]
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({"w52_hgpr": "1300", "hts_avls": "3000"})}
+    )
+    indicator.calc_bb_widths_sync.return_value = [10.0] * 220
+    indicator.calc_rs_sync.return_value = 15.0
+
+    item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
+    assert item is None
+    minervini.classify_stage.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_analyze_surge_candidate_success_with_dict_output(mock_deps):
+    """dict 기반 현재가 응답과 오늘 캔들 append 경로를 검증한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    mapper.is_kosdaq.return_value = False
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=create_surge_ohlcv(length=90)
+    )
+    price_output = {
+        "stck_prpr": "2500",
+        "acml_vol": "200000000",
+        "stck_oprc": "2400",
+        "stck_hgpr": "2550",
+        "stck_lwpr": "2350",
+        "w52_hgpr": "1500",
+        "hts_avls": "5000",
+    }
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": price_output}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": price_output}),
+    ]
+    indicator.calc_bb_widths_sync.return_value = [10.0] * 25
+    indicator.calc_rs_sync.return_value = 12.3
+
+    item = await service._analyze_surge_candidate("005930", "Samsung", logger=logger)
+
+    assert item is not None
+    assert item.market == "KOSPI"
+    assert item.market_cap == 500000000000
+    assert item.w52_hgpr == 1500
+    passed_ohlcv = indicator.calc_bb_widths_sync.call_args[0][0]
+    assert passed_ohlcv[-1]["date"] != "20250102"
+
+
+@pytest.mark.asyncio
+async def test_analyze_surge_candidate_early_return_branches(mock_deps):
+    """surge candidate 분석의 주요 조기 반환 분기를 묶어서 검증한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+
+    sqs.get_recent_daily_ohlcv.return_value = None
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=create_surge_ohlcv(length=90))
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="1", msg1="Fail", data=None)
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None})
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=create_surge_ohlcv(length=10))
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "2500", "acml_vol": "1", "stck_oprc": "2400", "stck_hgpr": "2550", "stck_lwpr": "2350"}})
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+
+@pytest.mark.asyncio
+async def test_analyze_surge_candidate_filter_branches_after_candle_merge(mock_deps):
+    """오늘 캔들 병합 이후의 세부 필터 분기를 검증한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+
+    base_ohlcv = create_surge_ohlcv(length=90)
+    good_output = {
+        "stck_prpr": "2500",
+        "acml_vol": "200000000",
+        "stck_oprc": "2400",
+        "stck_hgpr": "2550",
+        "stck_lwpr": "2350",
+        "w52_hgpr": "2600",
+        "hts_avls": "5000",
+    }
+
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=base_ohlcv)
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {**good_output, "acml_vol": "0"}}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": good_output}),
+    ]
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    low_tv_output = {**good_output, "stck_prpr": "10", "acml_vol": "1"}
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": low_tv_output}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": low_tv_output}),
+    ]
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    downtrend_output = {**good_output, "stck_prpr": "100"}
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": downtrend_output}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": downtrend_output}),
+    ]
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": good_output}),
+        ResCommonResponse(rt_cd="1", msg1="Fail", data=None),
+    ]
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": good_output}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None}),
+    ]
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    small_cap = {**good_output, "hts_avls": "100"}
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": small_cap}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": small_cap}),
+    ]
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    far_output = {**good_output, "w52_hgpr": "10000"}
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": far_output}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": far_output}),
+    ]
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": good_output}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": good_output}),
+    ]
+    indicator.calc_bb_widths_sync.return_value = [10.0] * 5
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+    indicator.calc_bb_widths_sync.return_value = [10.0] * 25
+    indicator.calc_rs_sync.return_value = 10.0
+    service._cfg.squeeze_tolerance = 1.1
+    sqs.get_current_price.side_effect = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": good_output}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": good_output}),
+    ]
+    indicator.calc_bb_widths_sync.return_value[-1] = 20.0
+    assert await service._analyze_surge_candidate("A", "A", logger=logger) is None
+
+
+@pytest.mark.asyncio
+async def test_update_market_timing_emits_notifications(mock_deps):
+    """마켓 타이밍 갱신 시 상승/하락 모두 알림을 발행한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    notification = AsyncMock()
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, notification_service=notification)
+
+    with patch.object(service, "_check_etf_ma_rising", new_callable=AsyncMock, side_effect=[
+        (True, "", [1.0, 2.0, 3.0]),
+        (False, "MA decline", [3.0, 2.0, 1.0]),
+    ]):
+        await service._update_market_timing(caller="tester", logger=logger)
+
+    assert notification.emit.await_count == 2
+    first_call = notification.emit.await_args_list[0].kwargs
+    second_call = notification.emit.await_args_list[1].kwargs
+    assert first_call["level"] == service._notification_service.emit.await_args_list[0].kwargs["level"]
+    assert "[tester] 마켓 타이밍 갱신 (KOSDAQ)" == first_call["title"]
+    assert "MA decline" in second_call["message"]
+
+
+def test_compute_rs_scores_rating_mode(mock_deps):
+    """rating_map이 있으면 연속 점수 모드로 계산한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    items = [
+        OSBWatchlistItem(code="A", name="A", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1),
+        OSBWatchlistItem(code="B", name="B", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1),
+    ]
+
+    service._compute_rs_scores(items, logger=logger, rating_map={"A": 99, "B": 50})
+
+    assert items[0].rs_rating == 99
+    assert items[0].rs_score == service._cfg.rs_score_points
+    assert items[1].rs_score > 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_rs_rating_map_result_paths(mock_deps):
+    """RS rating 조회의 성공/실패/예외 분기를 검증한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    rs_service = AsyncMock()
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, rs_rating_service=rs_service)
+
+    rs_service.get_ratings_by_date.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"A": 95})
+    assert await service._fetch_rs_rating_map("20250102") == {"A": 95}
+
+    rs_service.get_ratings_by_date.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=None)
+    assert await service._fetch_rs_rating_map("20250102") is None
+
+    rs_service.get_ratings_by_date.side_effect = RuntimeError("db fail")
+    assert await service._fetch_rs_rating_map("20250102") is None
+
+
+@pytest.mark.asyncio
+async def test_compute_profit_growth_scores_exception_turnaround_and_empty(mock_deps):
+    """이익성장 스코어의 빈 입력, 예외, 턴어라운드 경로를 검증한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    scraper = MagicMock()
+    scraper.fetch_yoy_profit_growth = AsyncMock(side_effect=[RuntimeError("scrape fail"), 999.0, 5.0])
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=scraper, logger=logger)
+
+    await service._compute_profit_growth_scores([], logger=logger)
+
+    items = [
+        OSBWatchlistItem(code="A", name="A", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1),
+        OSBWatchlistItem(code="B", name="B", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1),
+        OSBWatchlistItem(code="C", name="C", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1),
+    ]
+    await service._compute_profit_growth_scores(items, logger=logger)
+
+    assert items[0].profit_growth_score == 0.0
+    assert items[1].profit_growth_score == service._cfg.profit_growth_score_points
+    assert items[2].profit_growth_score == 0.0
+
+
+@pytest.mark.asyncio
+async def test_compute_smart_money_scores_paths(mock_deps):
+    """스마트머니 스코어의 빈 입력, 예외, 스코어 부여 경로를 검증한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    sqs.get_investor_trade_daily_multi = AsyncMock(side_effect=[
+        RuntimeError("api fail"),
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[
+            {"frgn_ntby_tr_pbmn": "10000", "orgn_ntby_tr_pbmn": "5000", "acml_tr_pbmn": "1000000000"}
+        ]),
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[]),
+    ])
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    await service._compute_smart_money_scores([], logger=logger)
+
+    items = [
+        OSBWatchlistItem(code="A", name="A", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1, market_cap=100000000000),
+        OSBWatchlistItem(code="B", name="B", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1, market_cap=100000000000),
+        OSBWatchlistItem(code="C", name="C", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1, market_cap=100000000000),
+    ]
+    await service._compute_smart_money_scores(items, logger=logger, date="20250102")
+
+    assert items[0].smart_money_score == 0.0
+    assert items[1].smart_money_score == service._cfg.smart_money_score_points
+    assert items[2].smart_money_score == 0.0
+
+
+def test_compute_total_scores_stage2_bonus(mock_deps):
+    """미너비니 Stage 2 종목은 총점에 가산점을 받는다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    item = OSBWatchlistItem(code="A", name="A", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1, minervini_stage=2)
+    item.rs_score = 10.0
+    item.profit_growth_score = 20.0
+    item.smart_money_score = 5.0
+
+    service._compute_total_scores([item], logger=logger)
+
+    assert item.total_score == 55.0
+
+
+def test_save_and_load_premium_stocks_and_meta(mock_deps, tmp_path):
+    """저장/로드/메타 조회 및 예외 분기를 검증한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    service._cfg.premium_stocks_file = str(tmp_path / "premium.json")
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+
+    item = OSBWatchlistItem(code="A", name="A", market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1, avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1)
+    service._save_premium_stocks([item], [], trading_date="20250102")
+
+    loaded = service._load_premium_stocks()
+    meta = service.get_premium_stocks_meta()
+
+    assert len(loaded) == 1
+    assert loaded[0].code == "A"
+    assert meta["generated_date"] == "20250102"
+    assert meta["generated_at"] is not None
+
+    with patch("json.dump", side_effect=RuntimeError("write fail")):
+        service._save_premium_stocks([item], [], trading_date="20250102")
+        logger.error.assert_called()
+
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", side_effect=RuntimeError("read fail")):
+        assert service.get_premium_stocks_meta() is None
+
+
+@pytest.mark.asyncio
+async def test_generate_premium_watchlist_non_target_market_and_cap_string_branch(mock_deps, tmp_path):
+    """시장 필터와 억 단위 시총 문자열 분기를 검증한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    scraper = MagicMock()
+    scraper.fetch_yoy_profit_growth = AsyncMock(return_value=0.0)
+    service = OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=scraper, logger=logger)
+    service._cfg.premium_stocks_cap_max = 900000000000
+
+    mapper.df = pd.DataFrame({
+        "종목코드": ["A", "B", ""],
+        "종목명": ["StockA", "ETF", "Blank"],
+        "시장구분": ["KOSPI", "ETF", "KOSDAQ"],
+    })
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None})
+
+    def mock_get_logger_side_effect(name, sub_dir=None):
+        return get_strategy_logger(name, log_dir=str(tmp_path), sub_dir=sub_dir)
+
+    with patch("services.oneil_universe_service.get_strategy_logger", side_effect=mock_get_logger_side_effect), \
+         patch.object(service, "_save_premium_stocks") as mock_save:
+        result = await service.generate_premium_watchlist()
+
+    mock_save.assert_called_once()
+    assert result["total_scanned"] == 1
+    assert result["market_cap_filter"].endswith("억")
+
+
+def test_extract_op_profit_growth_exception_path(mock_deps):
+    """영업이익 증가율 추출 중 예외가 나면 0.0으로 폴백한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    class BrokenDict(dict):
+        def get(self, key, default=None):
+            raise RuntimeError("boom")
+
+    assert service._extract_op_profit_growth({"output": [BrokenDict()]}) == 0.0

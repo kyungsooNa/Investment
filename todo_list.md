@@ -262,6 +262,5 @@
 2. 주문 상태 기계(FSM) 도입 설계
 3. `WebAppContext` 비대화 범위 정의
 4. background task lifecycle 표준화
-5. paper/real 전환 회귀 테스트 강화
 
 이 5개가 현재 코드베이스와 운영 리스크 기준으로 가장 투자 대비 효과가 크다.
