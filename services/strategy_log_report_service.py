@@ -44,22 +44,30 @@ _GATE_PRIORITY: Dict[Tuple[str, str], int] = {
 }
 
 _REASON_KR: Dict[str, str] = {
+    # ── 공통 ────────────────────────────────────────────────────
     "smart_money_filter_failed":     "수급 미달",
     "low_execution_strength":        "체결강도 미달",
     "insufficient_projected_volume": "거래량 미달",
     "insufficient_volume":           "거래량 미달",
-    "no_bullish_reversal":           "반등 미확인",
+    "insufficient_volume_data":      "거래량 데이터 부족",
     "poor_candle_quality":           "캔들 위치 미달",
+    "low_pg_metrics":                "프로그램 수급 미달",
+    "low_pg_ratio":                  "프로그램 비중 미달",
+    # ── OneilPocketPivot / FirstPullback ────────────────────────
     "no_ma_proximity":               "MA 거리 초과",
+    "no_bullish_reversal":           "반등 미확인",
+    # ── FirstPullback ────────────────────────────────────────────
     "pullback_out_of_range":         "눌림폭 범위 초과",
-    "over_extended":                 "과확장(추격 포기)",
     "no_surge_history":              "급등 이력 없음",
     "ma_not_uptrending":             "MA 우상향 아님",
     "volume_not_dry":                "거래량 미고갈",
+    # ── OneilSqueezeBreakout ─────────────────────────────────────
+    "over_extended":                 "과확장(추격 포기)",
 }
 
-# 매수 실패 섹션에서 보여줄 최대 종목 수
+# 각 섹션에서 보여줄 최대 종목 수
 _MAX_REJECTED_SHOWN = 5
+_MAX_NEAR_MISS_SHOWN = 3
 
 
 def _build_metric_str(event: str, reason: str, data: dict) -> str:
@@ -297,7 +305,7 @@ class StrategyLogReportService:
             else:
                 lines.append("\n❌ 매수 실패: 없음")
 
-            top3 = sorted(near_miss.values(), key=lambda x: -x['gate'])[:3]
+            top3 = sorted(near_miss.values(), key=lambda x: -x['gate'])[:_MAX_NEAR_MISS_SHOWN]
             if top3:
                 lines.append("\n🎯 매수 근접")
                 for c in top3:
