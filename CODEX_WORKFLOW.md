@@ -10,6 +10,15 @@
 - 프로젝트 공용 지식은 `CODEBASE_SUMMARY.md`에 유지한다.
 - Codex는 이 문서를 자신의 작업 루틴 문서로 사용한다.
 
+## Git 주의사항
+
+- 이 작업 폴더는 Windows `Encrypted` 속성이 걸려 있어, 샌드박스 상태의 `git`이 가끔 `.git` 폴더를 보고도 `not a git repository`를 반환할 수 있다.
+- 이런 경우:
+  - 먼저 `Get-ChildItem -Force .git`로 `.git` 폴더 존재를 확인한다.
+  - 그 다음 `git rev-parse --show-toplevel` 또는 `git status --short --branch`를 권한 상승으로 다시 실행해 저장소 인식 여부를 확인한다.
+  - 저장소 루트가 정상 출력되면 이후 `git checkout -b ...`, `git status`, `git diff` 같은 git 명령도 같은 방식으로 진행한다.
+- 즉, 이 저장소에서 git이 갑자기 루트를 못 찾으면 실제 저장소 문제가 아니라 권한/암호화 이슈일 가능성을 먼저 의심한다.
+
 ## 시작 순서
 
 새 작업을 시작할 때는 아래 순서를 기본으로 한다.
@@ -204,6 +213,30 @@ Codex는 아래를 기본 원칙으로 삼는다.
 - mock 반환값은 가능하면 `ResCommonResponse`로 맞춘다
 - background task를 시작했으면 종료 cleanup까지 테스트에 포함한다
 - xdist 병렬 실행에서만 깨지면 외부 I/O 초기화 누락을 먼저 의심한다
+
+### 테스트 실행 트러블슈팅 메모
+
+- 이 저장소에서는 `pytest`를 PATH에 잡힌 기본 Python으로 바로 실행하지 않는다.
+  - 실제로 기본 `pytest`가 Python 3.14 환경으로 실행되면서 프로젝트 의존성(`orjson`)이 없어 수집 단계에서 실패한 적이 있다.
+  - 이 경우 `pytest.ini` 해석이나 plugin 조합도 프로젝트 의도와 달라질 수 있다.
+
+- 기본 원칙:
+  - 항상 프로젝트 Anaconda `py310` 인터프리터로 실행한다.
+  - 권장 명령:
+
+```powershell
+C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\unit_test\view\web\test_web_app_initializer.py -v -o addopts=
+```
+
+- `-n0` 또는 기본 `addopts` 때문에 인자 파싱이 꼬이거나 xdist 관련 오류가 보이면:
+  - 먼저 `python -m pytest ... -o addopts=`로 `pytest.ini`의 기본 `addopts`를 비우고 순차 실행으로 확인한다.
+  - 즉, "가장 작은 범위 + py310 + `-o addopts=`"를 1차 진단 루틴으로 사용한다.
+
+- 권장 진단 순서:
+  1. `C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest <대상파일> -v -o addopts=`
+  2. 통과하면 필요한 경우에만 병렬 옵션이나 기본 설정으로 다시 확인
+  3. 실패가 import 단계라면 의존성/인터프리터 문제를 먼저 의심
+  4. 실패가 실행 단계라면 hang, mock, background cleanup 문제로 내려간다
 
 ## 위험 구역
 
