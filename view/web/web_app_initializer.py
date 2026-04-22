@@ -3,6 +3,7 @@
 TradingApp의 초기화 로직을 참고하여 서비스 레이어만 초기화한다.
 """
 import asyncio
+import time
 from config.config_loader import load_configs
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
@@ -114,6 +115,7 @@ class WebAppContext:
         self.price_subscription_service: PriceSubscriptionService = None
         self.price_stream_service: PriceStreamService = None
         self.streaming_stock_repo: StreamingStockRepo = None
+        self._last_missing_reason_log_ts: dict[tuple[str, str], float] = {}
 
         # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
         self.streaming_event_logger = get_streaming_logger()
@@ -276,6 +278,7 @@ class WebAppContext:
             performance_profiler=self.pm,
             notification_service=self.notification_service,
             broker_api_wrapper=self.broker,
+            streaming_logger=self.streaming_event_logger,
         )
         # IndicatorService에 StockQueryService 주입
         self.indicator_service.stock_query_service = self.stock_query_service
@@ -342,6 +345,7 @@ class WebAppContext:
         # StreamingStockRepo 초기화 (구독 상태 중앙 저장소)
         self.streaming_stock_repo = StreamingStockRepo(logger=self.logger)
         self.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
+        self.streaming_service.set_streaming_stock_repo(self.streaming_stock_repo)
 
         # PriceSubscriptionService 초기화 (StreamingService 생성 이후)
         self.price_subscription_service = PriceSubscriptionService(
@@ -364,6 +368,7 @@ class WebAppContext:
             streaming_logger=self.streaming_event_logger,
             streaming_stock_repo=self.streaming_stock_repo,
             price_subscription_service=self.price_subscription_service,
+            price_stream_service=self.price_stream_service,
         )
 
         self.daily_price_collector_task = DailyPriceCollectorTask(
@@ -789,9 +794,34 @@ class WebAppContext:
                         item['sign'] = price_data.get('sign')
                     else:
                         item['price'] = price_data
+                elif code:
+                    self._log_streaming_missing_reason(code)
 
         if self.streaming_service:
             self.streaming_service.dispatch_realtime_message(data)
+
+    def _log_streaming_missing_reason(self, code: str) -> None:
+        """PT 이벤트에 비해 체결가가 없는 상황의 원인을 저빈도로 기록한다."""
+        if not self.streaming_event_logger or not self.streaming_service:
+            return
+
+        if not self.streaming_service.is_subscribed_realtime_price(code):
+            reason = "not_subscribed"
+        elif self.price_stream_service:
+            subscription_age = self.price_stream_service.get_subscription_age(code)
+            if subscription_age < WebSocketWatchdogTask.PRICE_SUBSCRIPTION_GRACE_SEC:
+                return
+            reason = "subscribed_no_tick"
+        else:
+            reason = "subscribed_no_tick"
+
+        now_ts = time.monotonic()
+        last_logged_ts = self._last_missing_reason_log_ts.get((code, reason), 0.0)
+        if (now_ts - last_logged_ts) < 60.0:
+            return
+
+        self._last_missing_reason_log_ts[(code, reason)] = now_ts
+        self.streaming_event_logger.log_missing_reason(code, reason)
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""

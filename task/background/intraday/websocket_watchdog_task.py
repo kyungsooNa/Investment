@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from services.program_trading_stream_service import ProgramTradingStreamService
     from services.market_calendar_service import MarketCalendarService
     from services.price_subscription_service import PriceSubscriptionService
+    from services.price_stream_service import PriceStreamService
     from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
     from core.logger import StreamingEventLogger
 
@@ -26,6 +27,10 @@ class WebSocketWatchdogTask(SchedulableTask):
 
     # 재구독 시 패킷 간 딜레이 (초) — 증권사 Rate Limit 방지
     SUBSCRIBE_DELAY_SEC = 0.2
+    WATCHDOG_INTERVAL_SEC = 60
+    PT_DATA_GAP_THRESHOLD_SEC = 300
+    PRICE_DATA_GAP_THRESHOLD_SEC = 180
+    PRICE_SUBSCRIPTION_GRACE_SEC = 30
 
     def __init__(
         self,
@@ -38,6 +43,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         streaming_logger: Optional["StreamingEventLogger"] = None,
         streaming_stock_repo: Optional["StreamingStockRepo"] = None,
         price_subscription_service: Optional["PriceSubscriptionService"] = None,
+        price_stream_service: Optional["PriceStreamService"] = None,
     ):
         self._streaming_service = streaming_service
         self._program_trading_stream_service = program_trading_stream_service
@@ -48,6 +54,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._streaming_logger = streaming_logger
         self._streaming_stock_repo = streaming_stock_repo
         self._price_subscription_service = price_subscription_service
+        self._price_stream_service = price_stream_service
 
         # SchedulableTask 상태
         self._state: TaskState = TaskState.IDLE
@@ -136,12 +143,9 @@ class WebSocketWatchdogTask(SchedulableTask):
         PT와 실시간 체결가(H0UNCNT0) 구독 여부를 모두 확인하여,
         둘 중 하나라도 활성 구독이 있으면 감시를 수행한다.
         """
-        WATCHDOG_INTERVAL = 60   # 감시 주기 (초)
-        DATA_GAP_THRESHOLD = 300  # PT 데이터 미수신 허용 최대 시간 (초)
-
         while True:
             try:
-                await asyncio.sleep(WATCHDOG_INTERVAL)
+                await asyncio.sleep(self.WATCHDOG_INTERVAL_SEC)
 
                 # suspend 상태이면 감시 스킵
                 if self._state == TaskState.SUSPENDED:
@@ -151,11 +155,11 @@ class WebSocketWatchdogTask(SchedulableTask):
                 from repositories.streaming_stock_repo import StreamingType
                 pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) \
                     if self._streaming_stock_repo else []
+                price_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE)) \
+                    if self._streaming_stock_repo else []
 
                 # 실시간 체결가(H0UNCNT0) 구독 여부 확인
-                has_price_subs = bool(
-                    self._price_subscription_service and self._price_subscription_service._refs
-                )
+                has_price_subs = bool(price_codes)
 
                 # PT 구독도 없고 실시간 체결가 구독도 없으면 감시 불필요
                 if not pt_codes and not has_price_subs:
@@ -191,13 +195,27 @@ class WebSocketWatchdogTask(SchedulableTask):
                     last_ts = self._program_trading_stream_service.last_data_ts
                     data_gap = (time.time() - last_ts) if last_ts > 0 else 0.0
 
+                price_gap = None
+                stale_price_codes = []
+                if has_price_subs and self._price_stream_service:
+                    last_any_tick_ts = self._price_stream_service.get_last_any_tick_ts()
+                    if last_any_tick_ts > 0:
+                        price_gap = time.time() - last_any_tick_ts
+                    stale_price_codes = self._price_stream_service.get_stale_codes(
+                        self.PRICE_DATA_GAP_THRESHOLD_SEC,
+                        codes=price_codes,
+                    )
+
                 if self._streaming_logger:
                     self._streaming_logger.log_watchdog_check(
                         receive_alive=receive_alive,
                         data_gap_sec=data_gap,
+                        price_data_gap_sec=price_gap,
                         market_open=market_is_open,
-                        subscribed_count=len(pt_codes),
+                        subscribed_count=len(pt_codes) + len(price_codes),
                     )
+                    if stale_price_codes:
+                        self._streaming_logger.log_stale_price_codes(stale_price_codes)
 
                 reconnect_trigger = None
                 if not receive_alive:
@@ -210,11 +228,15 @@ class WebSocketWatchdogTask(SchedulableTask):
                         if self._streaming_logger:
                             self._streaming_logger.log_receive_task_dead()
                         reconnect_trigger = "receive_task_dead"
-                elif pt_codes and data_gap > DATA_GAP_THRESHOLD:
+                elif pt_codes and data_gap > self.PT_DATA_GAP_THRESHOLD_SEC:
                     # 수신 태스크는 살아있지만 PT 데이터가 임계값 이상 안 오는 경우
                     if self._streaming_logger:
-                        self._streaming_logger.log_pt_data_gap(data_gap, DATA_GAP_THRESHOLD)
-                    reconnect_trigger = f"data_gap_{data_gap:.0f}s"
+                        self._streaming_logger.log_pt_data_gap(data_gap, self.PT_DATA_GAP_THRESHOLD_SEC)
+                    reconnect_trigger = f"pt_data_gap_{data_gap:.0f}s"
+                elif has_price_subs and price_gap is not None and price_gap > self.PRICE_DATA_GAP_THRESHOLD_SEC:
+                    if self._streaming_logger:
+                        self._streaming_logger.log_price_data_gap(price_gap, self.PRICE_DATA_GAP_THRESHOLD_SEC)
+                    reconnect_trigger = f"price_data_gap_{price_gap:.0f}s"
 
                 if reconnect_trigger:
                     self._intentionally_disconnected = False
@@ -240,10 +262,16 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         last_ts = 0.0
         data_gap = None
+        price_gap = None
         if self._program_trading_stream_service:
             last_ts = getattr(self._program_trading_stream_service, "last_data_ts", 0.0)
             if last_ts > 0:
                 data_gap = round(time.time() - last_ts, 1)
+
+        if self._price_stream_service:
+            last_price_ts = self._price_stream_service.get_last_any_tick_ts()
+            if last_price_ts > 0:
+                price_gap = round(time.time() - last_price_ts, 1)
 
         return {
             "running": self._state == TaskState.RUNNING,
@@ -251,6 +279,7 @@ class WebSocketWatchdogTask(SchedulableTask):
             "subscribed_pt_codes": subscribed_pt,
             "subscribed_price_codes": subscribed_price,
             "data_gap_sec": data_gap,
+            "price_data_gap_sec": price_gap,
             "market_open": self._market_open,
         }
 

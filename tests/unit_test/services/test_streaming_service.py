@@ -378,6 +378,40 @@ def test_get_cached_realtime_price_returns_none_without_service(streaming_servic
     assert result is None
 
 
+def test_is_subscribed_realtime_price_uses_streaming_stock_repo(streaming_service):
+    """통합 체결가 desired 상태를 기준으로 구독 여부를 판단한다."""
+    repo = MagicMock()
+    repo.get_desired.return_value = {"005930"}
+    streaming_service.set_streaming_stock_repo(repo)
+
+    assert streaming_service.is_subscribed_realtime_price("005930") is True
+    assert streaming_service.is_subscribed_realtime_price("000660") is False
+
+
+@pytest.mark.asyncio
+async def test_subscribe_realtime_price_marks_subscription_requested(streaming_service, mock_broker):
+    """실시간 가격 구독 전 price stream service에 구독 요청 시각을 기록한다."""
+    mock_price_stream = MagicMock()
+    streaming_service.set_price_stream_service(mock_price_stream)
+
+    await streaming_service.subscribe_realtime_price("005930")
+
+    mock_price_stream.mark_subscription_requested.assert_called_once_with("005930")
+    mock_broker.subscribe_realtime_price.assert_awaited_once_with("005930")
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_unified_price_clears_subscription_state(streaming_service, mock_broker):
+    """통합 체결가 해지 시 price stream service의 추적 상태를 정리한다."""
+    mock_price_stream = MagicMock()
+    streaming_service.set_price_stream_service(mock_price_stream)
+
+    await streaming_service.unsubscribe_unified_price("005930")
+
+    mock_price_stream.clear_subscription_state.assert_called_once_with("005930")
+    mock_broker.unsubscribe_unified_price.assert_awaited_once_with("005930")
+
+
 def test_dispatch_realtime_message_realtime_price_console_log(streaming_service):
     """dispatch_realtime_message: realtime_price 수신 시 콘솔 디버그 로그 출력"""
     # 스로틀 우회를 위해 마지막 출력 시각을 과거로 설정

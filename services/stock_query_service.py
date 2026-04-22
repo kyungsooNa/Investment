@@ -18,7 +18,8 @@ class StockQueryService:
     def __init__(self, market_data_service: MarketDataService, logger, market_clock, indicator_service=None,
                  ranking_task=None, performance_profiler: Optional[PerformanceProfiler] = None,
                  notification_service: Optional[NotificationService] = None,
-                 broker_api_wrapper=None):
+                 broker_api_wrapper=None,
+                 streaming_logger=None):
         self.broker = broker_api_wrapper
         self.market_data_service = market_data_service
         self.logger = logger
@@ -27,6 +28,7 @@ class StockQueryService:
         self.ranking_task = ranking_task
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
+        self._streaming_logger = streaming_logger
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -73,6 +75,8 @@ class StockQueryService:
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"
             self.logger.error(f"{stock_code} 현재가 및 상세 정보 조회 실패: {msg}")
+            if self._streaming_logger:
+                self._streaming_logger.log_missing_reason(stock_code, "rest_failed")
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.WARNING, "현재가 조회 실패",
                                     f"{stock_code} - {msg}",

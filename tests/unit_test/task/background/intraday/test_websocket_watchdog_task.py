@@ -62,12 +62,16 @@ def mock_deps():
 
     streaming_stock_repo = _make_streaming_stock_repo()
 
-    return streaming_service, program_trading_stream_service, market_calendar_service, logger, streaming_stock_repo
+    price_stream_service = MagicMock()
+    price_stream_service.get_last_any_tick_ts = MagicMock(return_value=0.0)
+    price_stream_service.get_stale_codes = MagicMock(return_value=[])
+
+    return streaming_service, program_trading_stream_service, market_calendar_service, logger, streaming_stock_repo, price_stream_service
 
 
 @pytest.fixture
 def watchdog_task(mock_deps, mock_streaming_logger):
-    streaming_service, program_trading_stream_service, market_calendar_service, logger, streaming_stock_repo = mock_deps
+    streaming_service, program_trading_stream_service, market_calendar_service, logger, streaming_stock_repo, price_stream_service = mock_deps
     return WebSocketWatchdogTask(
         streaming_service=streaming_service,
         program_trading_stream_service=program_trading_stream_service,
@@ -75,6 +79,7 @@ def watchdog_task(mock_deps, mock_streaming_logger):
         logger=logger,
         streaming_stock_repo=streaming_stock_repo,
         streaming_logger=mock_streaming_logger,
+        price_stream_service=price_stream_service,
     )
 
 
@@ -101,6 +106,8 @@ def mock_streaming_logger():
     logger.log_subscription_recovery_done = MagicMock()
     logger.log_restore = MagicMock()
     logger.log_reconnect = MagicMock()
+    logger.log_price_data_gap = MagicMock()
+    logger.log_stale_price_codes = MagicMock()
     return logger
 
 
@@ -209,6 +216,52 @@ async def test_streaming_watchdog_data_gap(watchdog_task, mock_deps):
     svc._streaming_logger.log_pt_data_gap.assert_called_once()
     data_gap_arg = svc._streaming_logger.log_pt_data_gap.call_args[0][0]
     assert data_gap_arg > 300
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_price_data_gap_triggers_reconnect(watchdog_task):
+    """체결가 전역 수신 갭이 임계값을 넘으면 price_data_gap trigger로 재연결한다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    svc._price_stream_service.get_last_any_tick_ts.return_value = time.time() - 190
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc._streaming_logger.log_price_data_gap.assert_called_once()
+    svc.force_reconnect.assert_called_once()
+    assert svc.force_reconnect.call_args.kwargs["trigger"].startswith("price_data_gap_")
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_logs_stale_price_codes_without_reconnect(watchdog_task):
+    """개별 stale 종목은 로그로 남기되 전역 gap이 없으면 즉시 재연결하지 않는다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930", "000660"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    svc._price_stream_service.get_last_any_tick_ts.return_value = time.time() - 30
+    svc._price_stream_service.get_stale_codes.return_value = ["005930"]
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc._streaming_logger.log_stale_price_codes.assert_called_once_with(["005930"])
+    svc.force_reconnect.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -426,6 +479,7 @@ def test_get_progress_initial_state(watchdog_task):
     assert p["subscribed_pt_codes"] == 0
     assert p["subscribed_price_codes"] == 0
     assert p["data_gap_sec"] is None
+    assert p["price_data_gap_sec"] is None
     assert p["market_open"] is None
 
 
@@ -455,6 +509,16 @@ def test_get_progress_data_gap_calculated(watchdog_task):
 
     assert p["data_gap_sec"] is not None
     assert 28.0 <= p["data_gap_sec"] <= 33.0  # 30초 ± 여유
+
+
+def test_get_progress_price_data_gap_calculated(watchdog_task):
+    """price stream last tick이 설정되면 price_data_gap_sec을 계산한다."""
+    watchdog_task._price_stream_service.get_last_any_tick_ts.return_value = time.time() - 25.0
+
+    p = watchdog_task.get_progress()
+
+    assert p["price_data_gap_sec"] is not None
+    assert 23.0 <= p["price_data_gap_sec"] <= 28.0
 
 
 def test_get_progress_no_data_ts_returns_none_gap(watchdog_task):
@@ -701,7 +765,9 @@ async def test_streaming_watchdog_no_desired_codes(watchdog_task):
 async def test_streaming_watchdog_price_only_subscription_proceeds(watchdog_task, mock_price_subscription_service):
     """PT 구독이 없어도 실시간 체결가 구독이 있으면 워치독이 receive_alive를 감시한다."""
     svc = watchdog_task
-    svc._streaming_stock_repo.get_desired.return_value = set()  # PT 없음
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
     svc._price_subscription_service = mock_price_subscription_service  # 체결가 구독 있음
     svc.mcs.is_market_open_now.return_value = True
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
