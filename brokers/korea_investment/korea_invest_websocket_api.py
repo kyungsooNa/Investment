@@ -368,8 +368,6 @@ class KoreaInvestWebSocketAPI:
                     self._logger.info(f"실시간 요청 응답 성공: TR_KEY={tr_key}, MSG={json_object['body']['msg1']}")
                     if tr_type == "1":
                         self._subscribed_items.add((tr_id, tr_key))
-                    elif tr_type == "2":
-                        self._subscribed_items.discard((tr_id, tr_key))
                     # 체결통보용 AES KEY, IV 수신 처리
                     if tr_id in ["H0IFCNI0", "H0STCNI0", "H0STCNI9", "H0MFCNI0", "H0EUCNI0"] and json_object.get("body",
                                                                                                                  {}).get(
@@ -738,6 +736,8 @@ class KoreaInvestWebSocketAPI:
         try:
             await self.ws.send(message_json)
             self._pending_requests[(tr_id, tr_key)] = {"tr_type": tr_type}
+            if tr_type == "2":
+                self._subscribed_items.discard((tr_id, tr_key))
             return True
         except Exception as e:
             self._logger.exception(f"실시간 요청 전송 중 오류 발생: {e}")

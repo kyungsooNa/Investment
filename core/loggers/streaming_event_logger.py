@@ -306,9 +306,9 @@ class StreamingEventLogger:
         self,
         receive_alive: bool,
         data_gap_sec: float,
-        price_data_gap_sec: float | None,
         market_open: bool,
         subscribed_count: int,
+        price_data_gap_sec: float | None = None,
     ) -> None:
         """워치독 주기 체크 결과 스냅샷.
 
