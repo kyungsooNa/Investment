@@ -31,6 +31,14 @@
     - `services/price_subscription_service.py`
     - `brokers/korea_investment/korea_invest_websocket_api.py`
     - `task/background/intraday/websocket_watchdog_task.py`
+  - 장중 실검증 체크리스트:
+    - 실제 장중에 `python main.py --web` 실행 후 종목 2~3개를 구독한다.
+    - 체결가가 정상 수신될 때 `PriceStreamService` 캐시와 관련 스트리밍 로그가 갱신되는지 확인한다.
+    - WebSocket 수신 중단을 유도한 뒤 `price_data_gap_*` trigger로 재연결이 발생하는지 확인한다.
+    - 재연결 이후 동일 종목의 체결가 수신이 다시 살아나는지 확인한다.
+    - PT 데이터는 오는데 체결가가 없을 때 `not_subscribed` 또는 `subscribed_no_tick` 로그가 기대대로 남는지 확인한다.
+    - 현재가 REST 조회 실패 상황에서 `rest_failed` 로그가 남는지 확인한다.
+    - 장 마감 후 조용한 상태를 장애로 오탐하지 않는지 로그를 함께 점검한다.
 
 - [ ] `NewHighTask` DB 경합 및 실패 경로 점검
   - 목표: 신고가 후처리 중 DB 락, 중복 실행, 후속 서비스 실패가 있는지 정리하고 수정한다.
