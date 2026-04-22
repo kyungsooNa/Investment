@@ -36,6 +36,9 @@ class PriceStreamService:
         self._logger = logger or logging.getLogger(__name__)
         self._latest_prices: Dict[str, dict] = {}
         self._sse_queues: Dict[str, List[asyncio.Queue]] = {}  # code → SSE 구독 큐 목록
+        self._last_tick_ts: Dict[str, float] = {}
+        self._last_any_tick_ts: float = 0.0
+        self._subscription_requested_ts: Dict[str, float] = {}
 
     def on_price_tick(self, realtime_data: dict) -> None:
         """
@@ -50,12 +53,16 @@ class PriceStreamService:
         if not stock_code or not current_price:
             return
 
+        now_ts = time.time()
+        self._last_tick_ts[stock_code] = now_ts
+        self._last_any_tick_ts = now_ts
+
         self._latest_prices[stock_code] = {
             "price": current_price,
             "change": realtime_data.get('전일대비', '0'),
             "rate": realtime_data.get('전일대비율', '0.00'),
             "sign": realtime_data.get('전일대비부호', '3'),
-            "received_at": time.time(),
+            "received_at": now_ts,
         }
 
         try:
@@ -92,6 +99,51 @@ class PriceStreamService:
     def get_cached_price(self, code: str) -> Optional[dict]:
         """메모리 캐시에서 최신가 정보를 반환한다."""
         return self._latest_prices.get(code)
+
+    def mark_subscription_requested(self, code: str) -> None:
+        """체결가 구독 요청 시각을 기록한다."""
+        if code:
+            self._subscription_requested_ts[code] = time.time()
+
+    def clear_subscription_state(self, code: str) -> None:
+        """구독 해제 시 감시용 상태를 정리한다."""
+        self._subscription_requested_ts.pop(code, None)
+        self._last_tick_ts.pop(code, None)
+        self._latest_prices.pop(code, None)
+
+    def get_last_tick_ts(self, code: str) -> float:
+        """종목별 마지막 틱 수신 시각(epoch)을 반환한다."""
+        return self._last_tick_ts.get(code, 0.0)
+
+    def get_last_any_tick_ts(self) -> float:
+        """전체 체결가 스트림의 마지막 틱 수신 시각(epoch)을 반환한다."""
+        return self._last_any_tick_ts
+
+    def get_subscription_age(self, code: str) -> float:
+        """종목 구독 요청 이후 경과 시간(초)을 반환한다."""
+        requested_ts = self._subscription_requested_ts.get(code, 0.0)
+        if requested_ts <= 0:
+            return 0.0
+        return max(0.0, time.time() - requested_ts)
+
+    def get_stale_codes(self, threshold_sec: float, codes: Optional[List[str]] = None) -> List[str]:
+        """임계값 이상 틱이 없던 종목 목록을 반환한다."""
+        now_ts = time.time()
+        target_codes = codes or list(self._last_tick_ts.keys())
+        stale_codes: List[str] = []
+
+        for code in target_codes:
+            last_tick_ts = self._last_tick_ts.get(code, 0.0)
+            if last_tick_ts > 0:
+                if (now_ts - last_tick_ts) > threshold_sec:
+                    stale_codes.append(code)
+                continue
+
+            requested_ts = self._subscription_requested_ts.get(code, 0.0)
+            if requested_ts > 0 and (now_ts - requested_ts) > threshold_sec:
+                stale_codes.append(code)
+
+        return sorted(stale_codes)
 
     def create_subscriber_queue(self, code: str) -> asyncio.Queue:
         """SSE 클라이언트용 큐를 생성하고 등록한다."""

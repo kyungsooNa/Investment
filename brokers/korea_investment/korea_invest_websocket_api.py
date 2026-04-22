@@ -69,6 +69,7 @@ class KoreaInvestWebSocketAPI:
 
         # 재연결 시 복구를 위한 구독 목록 저장소 set((tr_id, tr_key))
         self._subscribed_items = set()
+        self._pending_requests = {}
 
         # 서버가 appkey 중복 사용을 거부한 경우 True → 다음 재연결 시 긴 대기 적용
         self._appkey_collision = False
@@ -361,7 +362,12 @@ class KoreaInvestWebSocketAPI:
                     self._logger.debug("PINGPONG 수신됨. PONG 응답.")
                     # websockets 라이브러리 내부에서 PONG 응답 자동 처리 (ping_interval, ping_timeout 설정 시)
                 elif json_object.get("body", {}).get("rt_cd") == '0':
-                    self._logger.info(f"실시간 요청 응답 성공: TR_KEY={header.get('tr_key')}, MSG={json_object['body']['msg1']}")
+                    tr_key = header.get('tr_key')
+                    pending = self._pending_requests.pop((tr_id, tr_key), None)
+                    tr_type = pending.get("tr_type") if pending else header.get("tr_type")
+                    self._logger.info(f"실시간 요청 응답 성공: TR_KEY={tr_key}, MSG={json_object['body']['msg1']}")
+                    if tr_type == "1":
+                        self._subscribed_items.add((tr_id, tr_key))
                     # 체결통보용 AES KEY, IV 수신 처리
                     if tr_id in ["H0IFCNI0", "H0STCNI0", "H0STCNI9", "H0MFCNI0", "H0EUCNI0"] and json_object.get("body",
                                                                                                                  {}).get(
@@ -370,14 +376,23 @@ class KoreaInvestWebSocketAPI:
                         self._aes_iv = json_object["body"]["output"].get("iv")
                         self._logger.info(f"체결통보용 AES KEY/IV 수신 성공. TRID={tr_id}")
                 else:
+                    tr_key = header.get('tr_key')
+                    pending = self._pending_requests.pop((tr_id, tr_key), None)
+                    tr_type = pending.get("tr_type") if pending else header.get("tr_type")
                     msg1 = json_object.get("body", {}).get("msg1", "")
                     self._logger.error(
-                        f"실시간 요청 응답 오류: TR_KEY={header.get('tr_key')}, RT_CD={json_object.get('body', {}).get('rt_cd')}, MSG={msg1}")
+                        f"실시간 요청 응답 오류: TR_KEY={tr_key}, RT_CD={json_object.get('body', {}).get('rt_cd')}, MSG={msg1}")
                     if msg1 == 'ALREADY IN SUBSCRIBE':
                         self._logger.warning("이미 구독 중인 종목입니다.")
+                        self._subscribed_items.add((tr_id, tr_key))
                     elif 'ALREADY IN USE' in msg1:
                         self._logger.warning("서버가 appkey 중복 사용을 거부했습니다. 재연결 시 대기 시간을 늘립니다.")
                         self._appkey_collision = True
+                    elif self._streaming_logger:
+                        if tr_type == "2":
+                            self._streaming_logger.log_unsubscribe_failure(tr_key or tr_id, msg1 or "ACK error")
+                        else:
+                            self._streaming_logger.log_subscribe_failure(tr_key or tr_id, msg1 or "ACK error")
             except json.JSONDecodeError:
                 self._logger.exception(f"제어 메시지 JSON 디코딩 실패: {message}")
             except Exception as e:
@@ -686,9 +701,19 @@ class KoreaInvestWebSocketAPI:
 
         if not self._is_connected or not self.ws:
             self._logger.error("웹소켓이 연결되어 있지 않아 실시간 요청을 보낼 수 없습니다.")
+            if self._streaming_logger:
+                if tr_type == "2":
+                    self._streaming_logger.log_unsubscribe_failure(tr_key, "WebSocket 미연결")
+                else:
+                    self._streaming_logger.log_subscribe_failure(tr_key, "WebSocket 미연결")
             return False
         if not self.approval_key:
             self._logger.error("approval_key가 없어 실시간 요청을 보낼 수 없습니다.")
+            if self._streaming_logger:
+                if tr_type == "2":
+                    self._streaming_logger.log_unsubscribe_failure(tr_key, "approval_key 없음")
+                else:
+                    self._streaming_logger.log_subscribe_failure(tr_key, "approval_key 없음")
             return False
 
         header = {
@@ -710,15 +735,19 @@ class KoreaInvestWebSocketAPI:
         self._logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")
         try:
             await self.ws.send(message_json)
-            
-            # 구독 목록 관리
-            if tr_type == "1":
-                self._subscribed_items.add((tr_id, tr_key))
-            elif tr_type == "2":
+            self._pending_requests[(tr_id, tr_key)] = {"tr_type": tr_type}
+            if tr_type == "2":
                 self._subscribed_items.discard((tr_id, tr_key))
             return True
         except Exception as e:
             self._logger.exception(f"실시간 요청 전송 중 오류 발생: {e}")
+            self._pending_requests.pop((tr_id, tr_key), None)
+            if self._streaming_logger:
+                message = f"실시간 요청 전송 예외: {e}"
+                if tr_type == "2":
+                    self._streaming_logger.log_unsubscribe_failure(tr_key, message)
+                else:
+                    self._streaming_logger.log_subscribe_failure(tr_key, message)
             self._is_connected = False
             self.ws = None
             return False

@@ -24,12 +24,14 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_broker = AsyncMock()
         self.mock_market_data_service = AsyncMock()
         self.mock_market_data_service._env = AsyncMock()
+        self.mock_streaming_logger = MagicMock()
         self._original_stdout = sys.stdout
 
         self.stockQueryService = StockQueryService(
             market_data_service=self.mock_market_data_service, 
             logger=self.mock_logger, market_clock=self.mock_market_clock, indicator_service=self.mock_indicator_service,
-            broker_api_wrapper=self.mock_broker
+            broker_api_wrapper=self.mock_broker,
+            streaming_logger=self.mock_streaming_logger,
         )
 
     def _create_dummy_stock_info(self, overrides=None):
@@ -94,6 +96,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         await self.stockQueryService.handle_get_current_stock_price("005930")
         self.mock_logger.error.assert_called()
+        self.mock_streaming_logger.log_missing_reason.assert_called_once_with("005930", "rest_failed")
         self.assertIn("현재가 및 상세 정보 조회 실패", self.mock_logger.error.call_args[0][0])
 
     async def test_handle_get_current_stock_price_none_response(self):

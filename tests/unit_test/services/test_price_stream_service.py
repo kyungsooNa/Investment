@@ -26,6 +26,8 @@ def test_init(mock_stock_repo, mock_logger):
     assert service._stock_repo == mock_stock_repo
     assert service._logger == mock_logger
     assert service._latest_prices == {}
+    assert service._last_tick_ts == {}
+    assert service._last_any_tick_ts == 0.0
 
 
 def test_on_price_tick_missing_code_or_price(price_stream_service, mock_stock_repo):
@@ -63,6 +65,8 @@ def test_on_price_tick_success(price_stream_service, mock_stock_repo):
     assert cached['sign'] == '2'
     assert 'received_at' in cached
     assert isinstance(cached['received_at'], float)
+    assert price_stream_service.get_last_tick_ts('005930') == cached['received_at']
+    assert price_stream_service.get_last_any_tick_ts() == cached['received_at']
 
     # 2. StockRepository.update_realtime_data 호출 확인
     mock_stock_repo.update_realtime_data.assert_called_once_with('005930', 75000.0, 1500000)
@@ -203,3 +207,51 @@ def test_on_price_tick_broadcasts_even_if_repo_fails(price_stream_service, mock_
     tick = q.get_nowait()
     assert tick["price"] == 75000.0
     assert tick["volume"] == 1000
+
+
+def test_mark_subscription_requested_and_get_subscription_age(price_stream_service):
+    """구독 요청 시각이 기록되고 age 조회에 반영된다."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("services.price_stream_service.time.time", lambda: 1000.0)
+        price_stream_service.mark_subscription_requested("005930")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("services.price_stream_service.time.time", lambda: 1015.0)
+        assert price_stream_service.get_subscription_age("005930") == 15.0
+
+
+def test_get_stale_codes_with_last_tick(price_stream_service):
+    """마지막 틱 시각이 임계값을 넘은 종목만 stale로 판단한다."""
+    price_stream_service._last_tick_ts["005930"] = 100.0
+    price_stream_service._last_tick_ts["000660"] = 250.0
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("services.price_stream_service.time.time", lambda: 400.0)
+        stale_codes = price_stream_service.get_stale_codes(180.0, codes=["005930", "000660"])
+
+    assert stale_codes == ["005930"]
+
+
+def test_get_stale_codes_with_no_tick_after_grace(price_stream_service):
+    """아직 틱이 없더라도 구독 후 충분히 오래되면 stale로 판단한다."""
+    price_stream_service._subscription_requested_ts["005930"] = 100.0
+    price_stream_service._subscription_requested_ts["000660"] = 350.0
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("services.price_stream_service.time.time", lambda: 400.0)
+        stale_codes = price_stream_service.get_stale_codes(180.0, codes=["005930", "000660"])
+
+    assert stale_codes == ["005930"]
+
+
+def test_clear_subscription_state_removes_cached_tracking(price_stream_service):
+    """구독 해제 시 캐시/추적 상태가 정리된다."""
+    price_stream_service._latest_prices["005930"] = {"price": "70000"}
+    price_stream_service._last_tick_ts["005930"] = 100.0
+    price_stream_service._subscription_requested_ts["005930"] = 50.0
+
+    price_stream_service.clear_subscription_state("005930")
+
+    assert price_stream_service.get_cached_price("005930") is None
+    assert price_stream_service.get_last_tick_ts("005930") == 0.0
+    assert price_stream_service.get_subscription_age("005930") == 0.0

@@ -308,6 +308,7 @@ class StreamingEventLogger:
         data_gap_sec: float,
         market_open: bool,
         subscribed_count: int,
+        price_data_gap_sec: float | None = None,
     ) -> None:
         """워치독 주기 체크 결과 스냅샷.
 
@@ -323,6 +324,7 @@ class StreamingEventLogger:
             "action": "watchdog_check",
             "receive_alive": receive_alive,
             "data_gap_sec": round(data_gap_sec, 1),
+            "price_data_gap_sec": round(price_data_gap_sec, 1) if price_data_gap_sec is not None else None,
             "market_open": market_open,
             "subscribed_count": subscribed_count,
         })
@@ -447,6 +449,31 @@ class StreamingEventLogger:
             "action": "pt_data_gap",
             "data_gap_sec": round(data_gap_sec, 1),
             "threshold_sec": threshold_sec,
+        })
+
+    def log_price_data_gap(self, data_gap_sec: float, threshold_sec: int) -> None:
+        """체결가 데이터 수신 갭이 임계값을 초과함."""
+        self._logger.warning({
+            "action": "price_data_gap",
+            "data_gap_sec": round(data_gap_sec, 1),
+            "threshold_sec": threshold_sec,
+        })
+
+    def log_stale_price_codes(self, codes: list[str]) -> None:
+        """일부 체결가 구독 종목만 stale 상태임."""
+        if not codes:
+            return
+        self._logger.warning({
+            "action": "stale_price_codes",
+            "codes": sorted(codes),
+        })
+
+    def log_missing_reason(self, code: str, reason: str) -> None:
+        """체결가 누락 원인을 구조화 로그로 기록한다."""
+        self._logger.warning({
+            "action": "missing_reason",
+            "code": code,
+            "reason": reason,
         })
 
     def log_watchdog_error(self, message: str) -> None:

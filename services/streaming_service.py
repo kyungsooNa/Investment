@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from services.market_data_service import MarketDataService
     from services.price_stream_service import PriceStreamService
     from core.logger import StreamingEventLogger
+    from repositories.streaming_stock_repo import StreamingStockRepo
 
 
 class StreamingService:
@@ -45,6 +46,7 @@ class StreamingService:
         market_data_service: Optional["MarketDataService"] = None,
         streaming_logger: Optional["StreamingEventLogger"] = None,
         price_stream_service: Optional["PriceStreamService"] = None,
+        streaming_stock_repo: Optional["StreamingStockRepo"] = None,
     ):
         self.broker = broker_api_wrapper
         self.logger = logger
@@ -52,6 +54,7 @@ class StreamingService:
         self.market_data_service = market_data_service
         self._streaming_logger = streaming_logger
         self._price_stream_service: Optional["PriceStreamService"] = None
+        self._streaming_stock_repo: Optional["StreamingStockRepo"] = streaming_stock_repo
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
         self._callback = None  # 재연결 시 콜백 유실 방지용 저장
@@ -92,6 +95,10 @@ class StreamingService:
         self._price_stream_service = svc
         self.register_handler('realtime_price', svc.on_price_tick)
 
+    def set_streaming_stock_repo(self, repo: "StreamingStockRepo") -> None:
+        """StreamingStockRepo를 사후 주입한다."""
+        self._streaming_stock_repo = repo
+
     # ── 연결 수명주기 ──────────────────────────────────────────────
 
     async def connect_websocket(self, callback=None):
@@ -126,19 +133,31 @@ class StreamingService:
 
     async def subscribe_realtime_price(self, code: str):
         """실시간 체결가 구독 (BrokerAPIWrapper 위임)."""
-        return await self.broker.subscribe_realtime_price(code)
+        result = await self.broker.subscribe_realtime_price(code)
+        if result and self._price_stream_service:
+            self._price_stream_service.mark_subscription_requested(code)
+        return result
 
     async def unsubscribe_realtime_price(self, code: str):
         """실시간 체결가 구독 해지 (BrokerAPIWrapper 위임)."""
-        return await self.broker.unsubscribe_realtime_price(code)
+        result = await self.broker.unsubscribe_realtime_price(code)
+        if result and self._price_stream_service:
+            self._price_stream_service.clear_subscription_state(code)
+        return result
 
     async def subscribe_unified_price(self, code: str) -> bool:
         """실시간 통합 체결가(H0UNCNT0) 구독 — PriceSubscriptionService 전용."""
-        return await self.broker.subscribe_unified_price(code)
+        result = await self.broker.subscribe_unified_price(code)
+        if result and self._price_stream_service:
+            self._price_stream_service.mark_subscription_requested(code)
+        return result
 
     async def unsubscribe_unified_price(self, code: str) -> bool:
         """실시간 통합 체결가(H0UNCNT0) 구독 해지 — PriceSubscriptionService 전용."""
-        return await self.broker.unsubscribe_unified_price(code)
+        result = await self.broker.unsubscribe_unified_price(code)
+        if result and self._price_stream_service:
+            self._price_stream_service.clear_subscription_state(code)
+        return result
 
     # ── 고수준 스트림 핸들러 ──────────────────────────────────────
 
@@ -318,6 +337,13 @@ class StreamingService:
         if self._price_stream_service:
             return self._price_stream_service.get_cached_price(code)
         return None
+
+    def is_subscribed_realtime_price(self, code: str) -> bool:
+        """종목이 현재 통합 체결가 desired 구독 상태인지 반환한다."""
+        if not self._streaming_stock_repo:
+            return False
+        from repositories.streaming_stock_repo import StreamingType
+        return code in self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE)
 
     # ── REST 조회 ─────────────────────────────────────────────────
 
