@@ -1644,3 +1644,276 @@ async def test_get_current_price_no_mcs_falls_back_to_api(trading_service_fixtur
     assert resp.rt_cd == "0"
     from common.types import Exchange
     broker.get_current_price.assert_awaited_once_with("005930", exchange=Exchange.KRX)
+
+
+@pytest.mark.asyncio
+async def test_get_top_market_cap_stocks_code_uses_default_limit_when_missing(trading_service_fixture, mock_deps):
+    service = trading_service_fixture
+    mock_deps.env.is_paper_trading = False
+    expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    mock_deps.broker.get_top_market_cap_stocks_code = AsyncMock(return_value=expected)
+
+    result = await service.get_top_market_cap_stocks_code("0000")
+
+    assert result == expected
+    mock_deps.broker.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", 30)
+    mock_deps.logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_current_upper_limit_stocks_accepts_dict_items(trading_service_fixture, mock_deps):
+    result = await trading_service_fixture.get_current_upper_limit_stocks([
+        {
+            "stck_shrn_iscd": "005930",
+            "stck_prpr": "70000",
+            "prdy_ctrt": "29.5",
+            "hts_kor_isnm": "삼성전자",
+            "prdy_vrss": "1500",
+        }
+    ])
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data == []
+    mock_deps.logger.warning.assert_called_once()
+    mock_deps.tm.get_current_kst_time.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_top_trading_value_stocks_handles_invalid_amount_and_blank_code(trading_service_fixture, mock_deps):
+    service = trading_service_fixture
+    mock_deps.broker.get_top_volume_stocks = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": [
+            {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "acml_tr_pbmn": "bad"},
+            {"mksc_shrn_iscd": "", "hts_kor_isnm": "이름만있음", "acml_tr_pbmn": "100"},
+        ]},
+    ))
+    mock_deps.broker.get_top_market_cap_stocks_code = AsyncMock(side_effect=[
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[]),
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[]),
+    ])
+    mock_deps.broker.get_top_rise_fall_stocks = AsyncMock(side_effect=[
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[]),
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[]),
+    ])
+
+    result = await service.get_top_trading_value_stocks()
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 1
+    assert result.data[0]["mksc_shrn_iscd"] == "005930"
+    assert result.data[0]["acml_tr_pbmn"] == "bad"
+
+
+def test_wrap_snapshot_output_returns_original_when_output_is_not_dict(trading_service_fixture):
+    db_data = {"output": ["unexpected"]}
+
+    wrapped = trading_service_fixture._wrap_snapshot_output(db_data)
+
+    assert wrapped == db_data
+
+
+def test_wrap_snapshot_output_builds_model_with_defaults(trading_service_fixture):
+    db_data = {"output": {"stck_prpr": "70000", "stck_bsop_date": "20250102"}}
+
+    wrapped = trading_service_fixture._wrap_snapshot_output(db_data)
+
+    assert isinstance(wrapped["output"], ResStockFullInfoApiOutput)
+    assert wrapped["output"].stck_prpr == "70000"
+    assert wrapped["output"].new_hgpr_lwpr_cls_code is None
+
+
+def test_normalize_ohlcv_rows_handles_objects_none_and_sorts(trading_service_fixture):
+    rows = trading_service_fixture._normalize_ohlcv_rows([
+        None,
+        {"date": "20250103", "open": "1,000", "high": "1,100", "low": "900", "close": "1,050", "volume": "1,234"},
+        SimpleNamespace(
+            stck_bsop_date="20250102",
+            stck_oprc="950",
+            stck_hgpr="980",
+            stck_lwpr="930",
+            stck_clpr="970",
+            acml_vol="321",
+        ),
+        {"close": "1000"},
+    ])
+
+    assert [row["date"] for row in rows] == ["20250102", "20250103"]
+    assert rows[0]["close"] == 970.0
+    assert rows[1]["volume"] == 1234
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_returns_db_slice_when_sufficient(trading_service_fixture, mock_deps):
+    rows = [
+        {"date": f"202501{idx:02d}", "open": 1.0, "high": 1.0, "low": 1.0, "close": float(idx), "volume": idx}
+        for idx in range(1, 6)
+    ]
+    mock_deps.stock_repo.get_stock_data.return_value = {"ohlcv": rows}
+
+    result = await trading_service_fixture.get_recent_daily_ohlcv("005930", limit=3)
+
+    assert [row["date"] for row in result] == ["20250103", "20250104", "20250105"]
+    mock_deps.stock_repo.upsert_ohlcv.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_with_start_date_uses_range_api(trading_service_fixture, mock_deps):
+    service = trading_service_fixture
+    service.get_ohlcv_range = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data=[{"date": "20250102", "close": 10.0}],
+    ))
+
+    result = await service.get_recent_daily_ohlcv("005930", start_date="20250101", end_date="20250131")
+
+    assert result == [{"date": "20250102", "close": 10.0}]
+    from common.types import Exchange
+    service.get_ohlcv_range.assert_awaited_once_with("005930", "D", "20250101", "20250131", exchange=Exchange.KRX)
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_merges_responses_and_trims_limit(trading_service_fixture, mock_deps):
+    service = trading_service_fixture
+    service.get_ohlcv_range = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[
+        {"date": "20250101", "close": 1.0},
+        {"date": "20250102", "close": 20.0},
+        {"date": "20250103", "close": 3.0},
+    ]))
+
+    result = await service.get_recent_daily_ohlcv("005930", limit=2, end_date="20250131")
+
+    assert [row["date"] for row in result] == ["20250102", "20250103"]
+    mock_deps.stock_repo.upsert_ohlcv.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_ignores_failed_range_response(trading_service_fixture):
+    service = trading_service_fixture
+    service._stock_repo = None
+    service.get_ohlcv_range = AsyncMock(side_effect=[
+        ResCommonResponse(rt_cd="0", msg1="OK", data=[
+            {"date": "20250101", "close": 1.0},
+            {"date": "20250102", "close": 2.0},
+        ]),
+        Exception("temporary"),
+    ])
+
+    result = await service.get_recent_daily_ohlcv("005930", limit=100, end_date="20250131")
+
+    assert [row["date"] for row in result] == ["20250101", "20250102"]
+
+
+@pytest.mark.asyncio
+async def test_get_intraday_minutes_today_delegates_to_broker(trading_service_fixture, mock_deps):
+    expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[{"x": 1}])
+    mock_deps.broker.inquire_time_itemchartprice = AsyncMock(return_value=expected)
+
+    result = await trading_service_fixture.get_intraday_minutes_today(stock_code="005930", input_hour_1="093000")
+
+    assert result == expected
+    mock_deps.broker.inquire_time_itemchartprice.assert_awaited_once_with(
+        stock_code="005930",
+        input_hour_1="093000",
+        pw_data_incu_yn="Y",
+        etc_cls_code="0",
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_intraday_minutes_by_date_returns_error_in_paper_mode(trading_service_fixture, mock_deps):
+    mock_deps.env.is_paper_trading = True
+
+    result = await trading_service_fixture.get_intraday_minutes_by_date(stock_code="005930", input_date_1="20250102")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert result.data == []
+    mock_deps.broker.inquire_time_dailychartprice.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_intraday_minutes_by_date_delegates_in_real_mode(trading_service_fixture, mock_deps):
+    mock_deps.env.is_paper_trading = False
+    expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[{"date": "20250102"}])
+    mock_deps.broker.inquire_time_dailychartprice = AsyncMock(return_value=expected)
+
+    result = await trading_service_fixture.get_intraday_minutes_by_date(
+        stock_code="005930",
+        input_date_1="20250102",
+        input_hour_1="100000",
+    )
+
+    assert result == expected
+    mock_deps.broker.inquire_time_dailychartprice.assert_awaited_once_with(
+        stock_code="005930",
+        input_date_1="20250102",
+        input_hour_1="100000",
+        pw_data_incu_yn="Y",
+        fake_tick_incu_yn="",
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_latest_trading_date_returns_none_without_calendar_service(trading_service_fixture):
+    trading_service_fixture._mcs = None
+
+    assert await trading_service_fixture.get_latest_trading_date() is None
+
+
+@pytest.mark.asyncio
+async def test_get_next_open_day_skips_failures_and_closed_days(trading_service_fixture, mock_deps):
+    mock_deps.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    mock_deps.broker.check_holiday = AsyncMock(side_effect=[
+        None,
+        ResCommonResponse(rt_cd="1", msg1="fail", data={}),
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": [
+            {"bass_dt": "20250103", "bzdy_yn": "N"},
+            {"bass_dt": "20250104", "bzdy_yn": "Y"},
+        ]}),
+    ])
+
+    result = await trading_service_fixture.get_next_open_day()
+
+    assert result == "20250104"
+
+
+@pytest.mark.asyncio
+async def test_get_next_open_day_returns_none_when_no_open_day_found(trading_service_fixture, mock_deps):
+    mock_deps.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    mock_deps.broker.check_holiday = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": []},
+    ))
+
+    result = await trading_service_fixture.get_next_open_day()
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_next_open_day_advances_when_batch_has_no_open_day(trading_service_fixture, mock_deps):
+    mock_deps.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    mock_deps.broker.check_holiday = AsyncMock(side_effect=[
+        ResCommonResponse(
+            rt_cd="0",
+            msg1="OK",
+            data={"output": [
+                {"bass_dt": "20250101", "bzdy_yn": "N"},
+                {"bass_dt": "20250102", "bzdy_yn": "N"},
+            ]},
+        ),
+        ResCommonResponse(
+            rt_cd="0",
+            msg1="OK",
+            data={"output": [
+                {"bass_dt": "20250103", "bzdy_yn": "Y"},
+            ]},
+        ),
+    ])
+
+    result = await trading_service_fixture.get_next_open_day()
+
+    assert result == "20250103"
