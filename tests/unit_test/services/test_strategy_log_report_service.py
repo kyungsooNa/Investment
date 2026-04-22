@@ -1,7 +1,9 @@
 """StrategyLogReportService 단위 테스트."""
+import gzip
 import json
 import os
 import tempfile
+import time
 import pytest
 
 from services.strategy_log_report_service import (
@@ -19,6 +21,15 @@ def _write_log(path: str, entries: list):
     with open(path, 'w', encoding='utf-8') as f:
         for entry in entries:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+
+def _write_gzip_log(path: str, entries: list, extra_lines: list[bytes] | None = None):
+    """gzip JSON Lines 형식의 로그 파일을 작성한다."""
+    with gzip.open(path, 'wb') as f:
+        for line in extra_lines or []:
+            f.write(line)
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=False).encode('utf-8') + b'\n')
 
 
 def _make_entry(event: str, code: str, name: str, date: str = "2026-04-18",
@@ -185,6 +196,78 @@ async def test_report_rotated_files(log_dir):
     assert "SK하이닉스" in report
 
 
+@pytest.mark.asyncio
+async def test_report_gzip_market_timing_and_db_name_resolution(log_dir):
+    """gzip 로그, 시장 타이밍 헤더, DB 종목명 보정이 함께 반영된다."""
+    class DummyRepo:
+        def get_name_by_code(self, code: str) -> str | None:
+            return {"005930": "삼성전자"}.get(code)
+
+    nested_dir = os.path.join(log_dir, "nested")
+    os.makedirs(nested_dir, exist_ok=True)
+    log_path = os.path.join(nested_dir, "20260418_093000_TestStrategy.log.json.gz")
+    _write_gzip_log(
+        log_path,
+        [
+            _make_info_entry("market_timing_updated", "", "", market="KOSPI", ok=True),
+            _make_info_entry("market_timing_updated", "", "", market="KOSDAQ", ok=False),
+            _make_entry("buy_signal_generated", "005930", "005930", reason="오닐돌파", price=75000),
+        ],
+        extra_lines=[b"\n", b"not-json\n", json.dumps({"timestamp": "2026-04-18 09:00:00,000", "data": []}).encode("utf-8") + b"\n"],
+    )
+
+    svc = StrategyLogReportService(log_dir=log_dir, stock_code_repo=DummyRepo())
+    report = await svc.generate_report("20260418")
+
+    assert "시장: KOSPI 🟢 | KOSDAQ 🔴" in report
+    assert "삼성전자(005930)" in report
+
+
+@pytest.mark.asyncio
+async def test_report_inactive_summary_and_old_file_ignored(log_dir):
+    """활동 없는 전략은 요약되고, 48시간보다 오래된 파일은 탐색에서 제외된다."""
+    active_path = os.path.join(log_dir, "20260418_093000_ActiveStrategy.log.json")
+    _write_log(active_path, [
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="돌파"),
+    ])
+
+    for name in ["DormantA", "DormantB", "DormantC", "DormantD"]:
+        path = os.path.join(log_dir, f"20260418_093000_{name}.log.json")
+        _write_log(path, [
+            _make_entry("scan_with_watchlist", "", "", date="2026-04-17"),
+        ])
+
+    stale_path = os.path.join(log_dir, "20260418_093000_StaleStrategy.log.json")
+    _write_log(stale_path, [
+        _make_entry("buy_signal_generated", "000660", "SK하이닉스", reason="오래된로그"),
+    ])
+    old_mtime = time.time() - (49 * 3600)
+    os.utime(stale_path, (old_mtime, old_mtime))
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "💤 <i>활동 없음: DormantA, DormantB, DormantC 외 1개" in report
+    assert "StaleStrategy" not in report
+
+
+@pytest.mark.asyncio
+async def test_report_rejected_limit_shows_rest_count(log_dir):
+    """매수 실패 종목이 5건을 넘으면 나머지 건수가 요약 표시된다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    entries = [
+        _make_entry("breakout_rejected", f"A0000{i}", f"종목{i}", reason="poor_candle_quality")
+        for i in range(1, 7)
+    ]
+    _write_log(log_path, entries)
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "…외 1건" in report
+    assert "종목6(A00006)" not in report
+
+
 # ── _build_metric_str ─────────────────────────────────────────────
 
 def test_build_metric_str_low_execution_strength():
@@ -203,6 +286,26 @@ def test_build_metric_str_htf_pattern_detected():
 def test_build_metric_str_no_ma_proximity():
     data = {"closest_ma_pct": -1.5}
     assert "-1.50%" in _build_metric_str("pp_rejected", "no_ma_proximity", data)
+
+
+def test_build_metric_str_projected_volume():
+    data = {"proj_vol": 1250000, "threshold": 2000000}
+    result = _build_metric_str("breakout_rejected", "insufficient_projected_volume", data)
+    assert "1,250,000" in result
+    assert "2,000,000" in result
+
+
+def test_build_metric_str_pullback_out_of_range():
+    data = {"pullback_pct": -7.5, "allowed_range": "-3%~-5%"}
+    result = _build_metric_str("fp_rejected", "pullback_out_of_range", data)
+    assert "-7.5%" in result
+    assert "-3%~-5%" in result
+
+
+def test_build_metric_str_over_extended():
+    data = {"current": 112000, "max_entry": 100000}
+    result = _build_metric_str("entry_rejected", "over_extended", data)
+    assert "초과 +12.0%" == result
 
 
 # ── near-miss 섹션 ────────────────────────────────────────────────

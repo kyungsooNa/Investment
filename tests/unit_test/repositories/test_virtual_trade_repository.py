@@ -715,3 +715,163 @@ def test_get_all_trades_with_cost(virutal_trade_repository):
     trades_cost = virutal_trade_repository.get_all_trades(apply_cost=True)
     assert len(trades_cost) == 1
     assert trades_cost[0]['return_rate'] < 10.0
+
+
+def test_log_order_failure_records_failed_trade(virutal_trade_repository):
+    """주문 실패 기록은 FAILED 상태와 사유를 저장한다."""
+    virutal_trade_repository.log_order_failure("매수", "005930", 70000, 3, "잔고부족", "전략A")
+
+    df = virutal_trade_repository._read()
+    assert len(df) == 1
+    assert df.iloc[0]["strategy"] == "전략A"
+    assert df.iloc[0]["status"] == "FAILED"
+    assert df.iloc[0]["reason"] == "잔고부족"
+
+
+def test_log_order_failure_uses_default_strategy_label(virutal_trade_repository):
+    """전략명이 없으면 action 기반 기본 전략명이 저장된다."""
+    virutal_trade_repository.log_order_failure("매도", "005930", 70000, 1, "주문거부")
+
+    df = virutal_trade_repository._read()
+    assert df.iloc[0]["strategy"] == "매도실패"
+
+
+@pytest.mark.asyncio
+async def test_log_order_failure_async_thread_execution(virutal_trade_repository):
+    """log_order_failure_async가 asyncio.to_thread를 사용한다."""
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        await virutal_trade_repository.log_order_failure_async("매수", "005930", 70000, 2, "실패", "전략A")
+        mock_to_thread.assert_awaited_once_with(
+            virutal_trade_repository.log_order_failure, "매수", "005930", 70000, 2, "실패", "전략A"
+        )
+
+
+def test_write_normalizes_nan_fields(virutal_trade_repository):
+    """_write는 NaN/None 값을 SQLite 저장용 기본값으로 정규화한다."""
+    df = pd.DataFrame([{
+        "strategy": "S1",
+        "code": "005930",
+        "buy_date": "2025-01-01 12:00:00",
+        "buy_price": 1000,
+        "qty": float("nan"),
+        "sell_date": float("nan"),
+        "sell_price": float("nan"),
+        "return_rate": float("nan"),
+        "status": "HOLD",
+        "reason": None,
+    }])
+
+    virutal_trade_repository._write(df)
+    saved = virutal_trade_repository._read().iloc[0]
+
+    assert saved["qty"] == 1
+    assert saved["sell_price"] is None or pd.isna(saved["sell_price"])
+    assert saved["return_rate"] == 0.0
+    assert saved["reason"] == ""
+
+
+def test_fix_sell_price_with_buy_date_filter(virutal_trade_repository):
+    """buy_date 필터가 있으면 해당 건만 보정한다."""
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    virutal_trade_repository.log_buy("S1", "005930", 10000)
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 1)
+    virutal_trade_repository.log_buy("S2", "005930", 20000)
+    df = virutal_trade_repository._read()
+    first_buy_date = df.iloc[0]["buy_date"]
+    second_buy_date = df.iloc[1]["buy_date"]
+    df["status"] = "SOLD"
+    df["sell_price"] = 0
+    virutal_trade_repository._write(df)
+
+    virutal_trade_repository.fix_sell_price("005930", first_buy_date, 15000)
+    fixed = virutal_trade_repository._read()
+
+    first = fixed[fixed["buy_date"] == first_buy_date].iloc[0]
+    second = fixed[fixed["buy_date"] == second_buy_date].iloc[0]
+    assert first["sell_price"] == 15000
+    assert second["sell_price"] == 0
+
+
+def test_save_daily_snapshot_trims_old_data_and_skips_same_strategy_values(virutal_trade_repository):
+    """30일 이전 데이터는 정리되고 개별 전략 값이 같으면 저장을 스킵한다."""
+    old_day = "2024-11-20"
+    keep_day = "2024-12-31"
+    virutal_trade_repository._save_data({
+        "daily": {
+            old_day: {"S1": 1.0, "ALL": 1.0},
+            keep_day: {"S1": 2.0, "ALL": 2.0},
+        },
+        "prev_values": {}
+    })
+
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 2)
+    virutal_trade_repository.save_daily_snapshot({"S1": 2.0, "ALL": 999.0})
+    data = virutal_trade_repository._load_data()
+    assert "2025-01-02" not in data["daily"]
+
+    virutal_trade_repository.save_daily_snapshot({"S1": 3.0, "ALL": 3.0})
+    refreshed = virutal_trade_repository._load_data()
+    assert old_day not in refreshed["daily"]
+    assert keep_day in refreshed["daily"]
+    assert refreshed["daily"]["2025-01-02"]["S1"] == 3.0
+
+
+def test_save_data_logs_error_on_failure(virutal_trade_repository):
+    """_save_data는 DB 저장 실패를 로깅한다."""
+    class FailingDB:
+        def execute(self, *_args, **_kwargs):
+            raise Exception("save fail")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    original_db = virutal_trade_repository._db
+    virutal_trade_repository._db = FailingDB()
+    try:
+        with patch("repositories.virtual_trade_repository.logger") as mock_logger:
+            virutal_trade_repository._save_data({"daily": {"2025-01-01": {"ALL": 1.0}}, "prev_values": {}})
+            mock_logger.error.assert_called_once()
+    finally:
+        virutal_trade_repository._db = original_db
+
+
+def test_get_weekly_change_returns_none_when_missing_reference(virutal_trade_repository):
+    """주간 기준일 후보가 없거나 기준 전략값이 없으면 None을 반환한다."""
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 10)
+    no_candidate = {"daily": {"2025-01-10": {"S1": 5.0}}}
+    assert virutal_trade_repository.get_weekly_change("S1", 5.0, _data=no_candidate) == (None, None)
+
+    missing_ref = {"daily": {"2025-01-03": {"S2": 2.0}, "2025-01-10": {"S1": 5.0}}}
+    assert virutal_trade_repository.get_weekly_change("S1", 5.0, _data=missing_ref) == (None, None)
+
+
+def test_get_strategy_return_history_and_all_strategies_empty_paths(virutal_trade_repository):
+    """스냅샷이 비어 있으면 빈 히스토리/전략 목록을 반환한다."""
+    virutal_trade_repository._save_data({"daily": {}, "prev_values": {}})
+    virutal_trade_repository._cached_data = None
+
+    assert virutal_trade_repository.get_strategy_return_history("S1") == []
+    assert virutal_trade_repository.get_all_strategies() == []
+
+
+def test_migrate_legacy_data_handles_failures(tmp_path):
+    """레거시 마이그레이션 중 일부 파일 실패가 나도 나머지는 진행한다."""
+    db_dir = tmp_path / "data" / "VirtualTradeRepository"
+    db_dir.mkdir(parents=True)
+    legacy_dir = tmp_path / "data" / "VirtualTradeManager"
+    legacy_dir.mkdir(parents=True)
+
+    (legacy_dir / "trade_journal.csv").write_text("bad,csv\n", encoding="utf-8")
+    (legacy_dir / "portfolio_snapshots.json").write_text("{bad json", encoding="utf-8")
+    with open(legacy_dir / "close_price_cache.json", "w", encoding="utf-8") as f:
+        json.dump({"005930": {"2025-01-01": 70000}}, f)
+
+    with patch("repositories.virtual_trade_repository.logger") as mock_logger:
+        repo = VirtualTradeRepository(db_path=str(db_dir / "virtual_trade.db"))
+
+    loaded_cache = repo._load_price_cache()
+    assert loaded_cache["005930"]["2025-01-01"] == 70000
+    assert mock_logger.warning.call_count >= 2

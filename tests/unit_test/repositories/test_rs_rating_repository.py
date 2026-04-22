@@ -1,4 +1,6 @@
+import asyncio
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from repositories.rs_rating_repository import RSRatingRepository
 
@@ -63,3 +65,57 @@ async def test_get_by_code_limit(tmp_path):
     assert res[0].trade_date == "2026-04-06"
 
     await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_empty_query_paths_and_close_resets_connections(tmp_path):
+    db = str(tmp_path / "rs3.db")
+    repo = RSRatingRepository(db_path=db)
+
+    assert await repo.get_by_code("MISSING") == []
+    assert await repo.get_single("MISSING", "2026-04-14") is None
+    assert await repo.get_latest_date() is None
+
+    await repo._get_write_conn()
+    await repo._get_read_conn()
+    assert repo._write_conn is not None
+    assert repo._read_conn is not None
+
+    await repo.close()
+
+    assert repo._write_conn is None
+    assert repo._read_conn is None
+
+
+@pytest.mark.asyncio
+async def test_upsert_and_query_error_paths_are_handled(tmp_path):
+    db = str(tmp_path / "rs4.db")
+    logger = MagicMock()
+    repo = RSRatingRepository(db_path=db, logger=logger)
+    repo._write_lock = asyncio.Lock()
+    repo._read_conn_lock = asyncio.Lock()
+
+    failing_conn = MagicMock()
+    failing_conn.executemany = AsyncMock(side_effect=Exception("write fail"))
+    repo._get_write_conn = AsyncMock(return_value=failing_conn)
+    assert await repo.upsert_batch([
+        {"trade_date": "2026-04-14", "code": "0001", "rs_rating": 90, "weighted_rs": 0.9}
+    ]) == 0
+
+    repo._get_read_conn = AsyncMock(side_effect=Exception("read fail"))
+    assert await repo.get_by_date("2026-04-14") == {}
+    assert await repo.get_by_code("0001") == []
+    assert await repo.get_single("0001", "2026-04-14") is None
+    assert await repo.get_latest_date() is None
+
+    assert logger.error.call_count >= 5
+
+
+def test_init_db_sync_logs_error_on_sqlite_failure(tmp_path):
+    db = str(tmp_path / "rs5.db")
+    logger = MagicMock()
+
+    with patch("repositories.rs_rating_repository.sqlite3.connect", side_effect=Exception("db init fail")):
+        RSRatingRepository(db_path=db, logger=logger)
+
+    logger.error.assert_called_once()

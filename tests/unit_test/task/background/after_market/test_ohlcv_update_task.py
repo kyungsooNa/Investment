@@ -10,6 +10,7 @@ import asyncio
 import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+from types import SimpleNamespace
 import pandas as pd
 
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
@@ -959,3 +960,130 @@ class TestNotificationAndProgressEdgeCases:
         df_crawled = pd.DataFrame({"Code": ["999999"], "Close": [1000]})
         result = await task._verify_crawler_data(df_crawled, "TEST")
         assert result is False
+
+
+class TestAdditionalCoverage:
+    def test_scheduler_label(self, task):
+        assert task._scheduler_label == "OhlcvUpdate"
+
+    async def test_try_daily_bulk_via_fdr_success_saves_records(self, task):
+        df = pd.DataFrame([{"Code": "005930", "Close": 70000}])
+        records = [{"code": "005930", "date": TARGET_DATE, "close": 70000}]
+        start_time = time.time()
+
+        with patch("task.background.after_market.ohlcv_update_task.asyncio.to_thread", new=AsyncMock(return_value=df)), \
+             patch.object(task, "_verify_crawler_data", new=AsyncMock(return_value=True)), \
+             patch.object(task, "_format_fdr_listing_to_ohlcv_records", return_value=records), \
+             patch.object(task, "_save_bulk_to_db_with_progress", new=AsyncMock()) as mock_save:
+            result = await task._try_daily_bulk_via_fdr(TARGET_DATE, start_time, {"005930"})
+
+        assert result is True
+        mock_save.assert_awaited_once_with(records, start_time)
+
+    async def test_backfill_upserts_when_db_empty_without_api_fallback(
+        self, task, mock_stock_repo
+    ):
+        df = pd.DataFrame(
+            [{"Open": 100, "High": 110, "Low": 90, "Close": 105, "Volume": 10}],
+            index=[pd.to_datetime(TARGET_DATE)],
+        )
+        mock_stock_repo.upsert_ohlcv = AsyncMock()
+        mock_stock_repo.get_stock_data = AsyncMock(return_value=None)
+
+        with patch("task.background.after_market.ohlcv_update_task.fdr.DataReader", return_value=df), \
+             patch.object(task, "_update_stock_ohlcv", new=AsyncMock()) as mock_update:
+            await task._backfill_historical_data(
+                [("005930", "삼성전자", "KOSPI")], TARGET_DATE, False, time.time()
+            )
+
+        mock_stock_repo.upsert_ohlcv.assert_awaited_once()
+        mock_update.assert_not_awaited()
+
+    async def test_backfill_upserts_when_latest_db_date_differs(
+        self, task, mock_stock_repo
+    ):
+        df = pd.DataFrame(
+            [{"Open": 100, "High": 110, "Low": 90, "Close": 105, "Volume": 10}],
+            index=[pd.to_datetime(TARGET_DATE)],
+        )
+        mock_stock_repo.upsert_ohlcv = AsyncMock()
+        mock_stock_repo.get_stock_data = AsyncMock(
+            return_value={"ohlcv": [{"date": "20260317", "close": 999}]}
+        )
+
+        with patch("task.background.after_market.ohlcv_update_task.fdr.DataReader", return_value=df), \
+             patch.object(task, "_update_stock_ohlcv", new=AsyncMock()) as mock_update:
+            await task._backfill_historical_data(
+                [("005930", "삼성전자", "KOSPI")], TARGET_DATE, False, time.time()
+            )
+
+        mock_stock_repo.upsert_ohlcv.assert_awaited_once()
+        mock_update.assert_not_awaited()
+
+    async def test_update_stock_ohlcv_reraises_cancelled_error(self, task, mock_sqs):
+        mock_sqs.get_ohlcv = AsyncMock(side_effect=asyncio.CancelledError())
+
+        with pytest.raises(asyncio.CancelledError):
+            await task._update_stock_ohlcv("005930")
+
+    async def test_save_bulk_to_db_with_progress_batches_records(self, task, mock_stock_repo):
+        task.DB_UPSERT_BATCH_SIZE = 2
+        mock_stock_repo.upsert_ohlcv = AsyncMock()
+        records = [
+            {"code": "005930", "date": "20260318"},
+            {"code": "000660", "date": "20260318"},
+            {"code": "035420", "date": "20260318"},
+        ]
+
+        with patch("task.background.after_market.ohlcv_update_task.asyncio.sleep", new=AsyncMock()):
+            await task._save_bulk_to_db_with_progress(records, time.time())
+
+        assert mock_stock_repo.upsert_ohlcv.await_count == 2
+        assert task.get_progress()["processed"] == 3
+        assert task.get_progress()["updated"] == 3
+
+    async def test_verify_crawler_data_returns_false_on_api_failure(self, task, mock_sqs):
+        mock_sqs.get_current_price = AsyncMock(return_value=None)
+
+        result = await task._verify_crawler_data(pd.DataFrame(), "TEST")
+
+        assert result is False
+
+    async def test_verify_crawler_data_detects_ohlc_mismatch(self, task, mock_sqs):
+        task.CANARY_STOCKS = ["005930"]
+        mock_sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output": {"stck_prpr": "70000", "stck_oprc": "69000", "stck_hgpr": "71000", "stck_lwpr": "68000"}},
+            )
+        )
+        df = pd.DataFrame([
+            {"Code": "005930", "Close": 70000, "Open": 69000, "High": 72000, "Low": 68000}
+        ])
+
+        result = await task._verify_crawler_data(df, "TEST")
+
+        assert result is False
+
+    async def test_verify_crawler_data_passes_with_object_output(self, task, mock_sqs):
+        task.CANARY_STOCKS = ["005930"]
+        mock_sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data=SimpleNamespace(
+                    stck_prpr="70000",
+                    stck_oprc="69000",
+                    stck_hgpr="71000",
+                    stck_lwpr="68000",
+                ),
+            )
+        )
+        df = pd.DataFrame([
+            {"Code": "005930", "Close": 70000, "Open": 69000, "High": 71000, "Low": 68000}
+        ])
+
+        result = await task._verify_crawler_data(df, "TEST")
+
+        assert result is True

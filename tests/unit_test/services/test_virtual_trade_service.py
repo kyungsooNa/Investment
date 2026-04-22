@@ -6,7 +6,12 @@ import pandas as pd
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
 
-from services.virtual_trade_service import VirtualTradeService
+from services.virtual_trade_service import (
+    VirtualTradeService,
+    _get_trading_dates,
+    _is_weekday,
+    _strategy_values,
+)
 
 @pytest.fixture
 def mock_repo():
@@ -148,6 +153,107 @@ def test_get_all_strategies(virtual_trade_service, mock_repo):
     assert strategies == ["S1", "S2"]
 
 
+def test_helper_functions_cover_weekday_and_trading_dates():
+    """helper 함수들이 평일/전략값 기준 거래일 계산을 올바르게 수행한다."""
+    assert _is_weekday("2023-10-09") is True
+    assert _is_weekday("2023-10-08") is False
+    assert _strategy_values({"S1": 1.0, "ALL": 3.0}) == {"S1": 1.0}
+
+    daily = {
+        "2023-10-06": {"S1": 1.0, "ALL": 1.0},
+        "2023-10-07": {"S1": 99.0, "ALL": 99.0},  # 주말 제외
+        "2023-10-09": {"S1": 1.0, "ALL": 10.0},   # 전략값 동일 → 제외
+        "2023-10-10": {"S1": 2.0, "ALL": 20.0},   # 전략값 변경 → 포함
+    }
+    assert _get_trading_dates(daily) == ["2023-10-06", "2023-10-10"]
+
+
+def test_get_all_trades_apply_cost_skips_non_sold_or_missing_prices(virtual_trade_service, mock_repo):
+    """비용 적용 시에도 SOLD가 아니거나 가격 정보가 없으면 return_rate를 추가하지 않는다."""
+    df = pd.DataFrame([
+        {"status": "HOLD", "buy_price": 1000, "sell_price": None, "qty": 1},
+        {"status": "SOLD", "buy_price": 1000, "sell_price": None, "qty": 1},
+    ])
+    mock_repo._read.return_value = df
+    mock_repo._to_json_records.return_value = [
+        {"status": "HOLD", "buy_price": 1000, "sell_price": None, "qty": 1},
+        {"status": "SOLD", "buy_price": 1000, "sell_price": None, "qty": 1},
+    ]
+
+    res = virtual_trade_service.get_all_trades(apply_cost=True)
+
+    assert "return_rate" not in res[0]
+    assert "return_rate" not in res[1]
+
+
+def test_get_daily_change_returns_none_when_strategy_value_missing(virtual_trade_service, mock_clock):
+    """직전/최신 거래일 중 하나라도 전략 값이 없으면 None을 반환한다."""
+    data = {
+        "daily": {
+            "2023-10-09": {"S1": 5.0, "ALL": 5.0},
+            "2023-10-10": {"ALL": 10.0},
+        }
+    }
+    mock_clock.get_current_kst_time.return_value = datetime(2023, 10, 10, 12, 0)
+
+    change, ref_date = virtual_trade_service.get_daily_change("S1", 10.0, _data=data)
+
+    assert change is None and ref_date is None
+
+
+def test_get_weekly_change_returns_none_without_candidate_or_ref_value(virtual_trade_service, mock_clock):
+    """기준 주간 후보가 없거나 기준값이 없으면 None을 반환한다."""
+    mock_clock.get_current_kst_time.return_value = datetime(2023, 10, 10, 12, 0)
+
+    no_candidate = {"daily": {"2023-10-10": {"S1": 10.0}}}
+    change, ref_date = virtual_trade_service.get_weekly_change("S1", 10.0, _data=no_candidate)
+    assert change is None and ref_date is None
+
+    missing_ref = {
+        "daily": {
+            "2023-10-03": {"S2": 2.0},
+            "2023-10-10": {"S1": 10.0},
+        }
+    }
+    change, ref_date = virtual_trade_service.get_weekly_change("S1", 10.0, _data=missing_ref)
+    assert change is None and ref_date is None
+
+
+def test_get_strategy_return_history_handles_empty_or_unknown_strategy(virtual_trade_service, mock_repo):
+    """daily가 비어 있거나 전략 컬럼이 없으면 빈 리스트를 반환한다."""
+    mock_repo._load_data.return_value = {"daily": {}}
+    assert virtual_trade_service.get_strategy_return_history("S1") == []
+
+    mock_repo._load_data.return_value = {"daily": {"2023-10-09": {"S2": 2.0}}}
+    assert virtual_trade_service.get_strategy_return_history("S1") == []
+
+
+def test_get_strategy_return_history_ffill_and_weekend_filter(virtual_trade_service, mock_repo):
+    """전략 이력은 정렬/ffill 후 주말 출력만 제외한다."""
+    mock_repo._load_data.return_value = {
+        "daily": {
+            "2023-10-06": {"S1": 1.0},
+            "2023-10-07": {"S1": 2.0},
+            "2023-10-09": {"S1": None},
+            "2023-10-10": {"S1": 4.0},
+        }
+    }
+
+    history = virtual_trade_service.get_strategy_return_history("S1")
+
+    assert history == [
+        {"date": "2023-10-06", "return_rate": 1.0},
+        {"date": "2023-10-09", "return_rate": 2.0},
+        {"date": "2023-10-10", "return_rate": 4.0},
+    ]
+
+
+def test_get_all_strategies_returns_empty_when_no_daily_data(virtual_trade_service, mock_repo):
+    """daily 데이터가 없으면 빈 전략 목록을 반환한다."""
+    mock_repo._load_data.return_value = {"daily": {}}
+    assert virtual_trade_service.get_all_strategies() == []
+
+
 @pytest.mark.asyncio
 async def test_facade_delegation(virtual_trade_service, mock_repo):
     """Repository 위임(Facade) 메서드 정상 호출 테스트"""
@@ -169,3 +275,44 @@ async def test_facade_delegation(virtual_trade_service, mock_repo):
     mock_repo.log_sell_async = AsyncMock()
     await virtual_trade_service.log_sell_async("005930", 1200)
     mock_repo.log_sell_async.assert_awaited_with("005930", 1200)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_broker_force_closes_missing_local_holds(virtual_trade_service, mock_repo):
+    """로컬 HOLD인데 실제 잔고가 없으면 강제 종결한다."""
+    mock_repo.get_holds.return_value = [
+        {"code": "005930", "strategy": "S1"},
+        {"code": "000660", "strategy": "S2"},
+    ]
+    mock_repo.log_sell_async = AsyncMock()
+    test_logger = MagicMock()
+
+    result = await virtual_trade_service.reconcile_with_broker(
+        actual_holdings=[{"pdno": "000660", "hldg_qty": "3"}],
+        logger=test_logger,
+    )
+
+    mock_repo.log_sell_async.assert_awaited_once_with("005930", 0)
+    assert result == {"force_closed": ["005930"], "unknown_in_broker": []}
+    test_logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_broker_reports_unknown_broker_holdings(virtual_trade_service, mock_repo):
+    """실제 보유인데 로컬 DB가 없으면 unknown_in_broker로 보고한다."""
+    mock_repo.get_holds.return_value = [{"code": "005930", "strategy": "S1"}]
+    mock_repo.log_sell_async = AsyncMock()
+    test_logger = MagicMock()
+
+    result = await virtual_trade_service.reconcile_with_broker(
+        actual_holdings=[
+            {"pdno": "005930", "hldg_qty": "2"},
+            {"pdno": "035420", "hldg_qty": "1"},
+            {"pdno": "111111", "hldg_qty": "0"},
+        ],
+        logger=test_logger,
+    )
+
+    mock_repo.log_sell_async.assert_not_awaited()
+    assert result == {"force_closed": [], "unknown_in_broker": ["035420"]}
+    assert test_logger.warning.call_count == 1

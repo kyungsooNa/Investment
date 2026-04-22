@@ -2,10 +2,14 @@
 StockRepository daily_prices 단위 테스트.
 SQLite 기반 전체 종목 일별 스냅샷(현재가+펀더멘털) 저장/조회 검증.
 """
+import time
 import pytest
 import pytest_asyncio
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from repositories.stock_repository import StockRepository
+from repositories.stock_price_repository import StockPriceRepository
 
 
 @pytest_asyncio.fixture
@@ -304,3 +308,144 @@ class TestAllFields:
         assert r["w52_low"] == 55000
         assert r["market"] == "KOSPI"
         assert r["collected_at"] is not None
+
+
+@pytest.fixture
+def price_repo():
+    cache_logger = MagicMock()
+    return StockPriceRepository(logger=MagicMock(), cache_logger=cache_logger)
+
+
+class TestStockPriceRepository:
+    """StockPriceRepository 현재가 캐시/streaming/통계 테스트."""
+
+    def test_on_price_evicted_logs(self, price_repo):
+        price_repo._on_price_evicted("005930")
+        price_repo._cache_logger.log_price_evicted.assert_called_once_with(
+            "005930", capacity=price_repo._price_cache.capacity
+        )
+
+    def test_set_current_price_new_and_get_hit(self, price_repo):
+        with patch("repositories.stock_price_repository.time.time", return_value=100.0):
+            price_repo.set_current_price("005930", {"output": {"stck_prpr": "70000"}})
+
+        with patch("repositories.stock_price_repository.time.time", return_value=101.0):
+            result = price_repo.get_current_price("005930", caller="tester")
+
+        assert result == {"output": {"stck_prpr": "70000"}}
+        price_repo._cache_logger.log_price_set.assert_called_once_with("005930", "api", None, "70000", True)
+        price_repo._cache_logger.log_price_hit.assert_called_once()
+
+    def test_set_current_price_existing_cached_object_output(self, price_repo):
+        existing_output = SimpleNamespace(stck_prpr="68000")
+        price_repo._price_cache.put("005930", {"current_price_data": {"output": existing_output}, "price_updated_at": 1})
+
+        with patch("repositories.stock_price_repository.time.time", return_value=200.0):
+            price_repo.set_current_price("005930", {"stck_prpr": "71000"})
+
+        cached = price_repo._price_cache.get("005930", count_stats=False, item_type="check")
+        assert cached["current_price_data"] == {"stck_prpr": "71000"}
+        price_repo._cache_logger.log_price_set.assert_called_once_with("005930", "api", "68000", "71000", False)
+
+    def test_get_current_price_ttl_expired_and_not_found(self, price_repo):
+        price_repo.set_current_price("005930", {"output": {"stck_prpr": "70000"}})
+        with patch("repositories.stock_price_repository.time.time", return_value=time.time() + 10):
+            assert price_repo.get_current_price("005930", max_age_sec=3.0, caller="ttl") is None
+
+        assert price_repo.get_current_price("000660", caller="miss") is None
+        reasons = [call.args[2] for call in price_repo._cache_logger.log_price_miss.call_args_list]
+        assert "ttl_expired" in reasons
+        assert "not_found" in reasons
+
+    def test_get_current_price_streaming_bypasses_ttl(self, price_repo):
+        with patch("repositories.stock_price_repository.time.time", return_value=100.0):
+            price_repo.set_current_price("005930", {"output": {"stck_prpr": "70000"}})
+        price_repo.mark_streaming("005930")
+
+        with patch("repositories.stock_price_repository.time.time", return_value=10000.0):
+            result = price_repo.get_current_price("005930", max_age_sec=0.1, caller="streaming")
+
+        assert result == {"output": {"stck_prpr": "70000"}}
+        assert price_repo.is_streaming("005930") is True
+
+    def test_get_current_price_no_stats_no_cache_logger_calls(self, price_repo):
+        with patch("repositories.stock_price_repository.time.time", return_value=100.0):
+            price_repo.set_current_price("005930", {"output": {"stck_prpr": "70000"}})
+        price_repo._cache_logger.reset_mock()
+
+        with patch("repositories.stock_price_repository.time.time", return_value=101.0):
+            result = price_repo.get_current_price("005930", caller="nostats", count_stats=False)
+
+        assert result == {"output": {"stck_prpr": "70000"}}
+        price_repo._cache_logger.log_price_hit.assert_not_called()
+        price_repo._cache_logger.log_price_miss.assert_not_called()
+
+    def test_update_current_price_creates_tick_cache(self, price_repo):
+        with patch("repositories.stock_price_repository.time.time", return_value=123.0):
+            price_repo.update_current_price("005930", 70123, volume=55)
+
+        cached = price_repo._price_cache.get("005930", count_stats=False, item_type="check")
+        assert cached["current_price_data"]["_source"] == "tick"
+        assert cached["current_price_data"]["output"]["stck_prpr"] == "70123"
+        assert cached["current_price_data"]["output"]["acml_vol"] == "55"
+
+    def test_update_current_price_updates_dict_output_and_logs(self, price_repo):
+        price_repo._price_cache.put(
+            "005930",
+            {"current_price_data": {"output": {"stck_prpr": "70000", "acml_vol": "1"}}, "price_updated_at": 1},
+        )
+
+        with patch("repositories.stock_price_repository.time.time", return_value=200.0):
+            price_repo.update_current_price("005930", 71000, volume=99)
+
+        cached = price_repo._price_cache.get("005930", count_stats=False, item_type="check")
+        assert cached["current_price_data"]["output"]["stck_prpr"] == "71000"
+        assert cached["current_price_data"]["output"]["acml_vol"] == "99"
+        price_repo._cache_logger.log_price_update_tick.assert_called_once_with("005930", "70000", "71000", 99)
+
+    def test_update_current_price_updates_object_output_and_swallow_exception(self, price_repo):
+        output = SimpleNamespace(stck_prpr="70000", acml_vol="1")
+        price_repo._price_cache.put(
+            "005930",
+            {"current_price_data": {"output": output}, "price_updated_at": 1},
+        )
+
+        with patch("repositories.stock_price_repository.time.time", return_value=200.0):
+            price_repo.update_current_price("005930", 72000, volume=0)
+
+        assert output.stck_prpr == "72000"
+        assert output.acml_vol == "1"
+
+        class BrokenOutput:
+            def __init__(self):
+                self.stck_prpr = "72000"
+
+            def __setattr__(self, name, value):
+                if name != "stck_prpr":
+                    raise RuntimeError("boom")
+                object.__setattr__(self, name, value)
+
+        broken = BrokenOutput()
+        price_repo._price_cache.put(
+            "000660",
+            {"current_price_data": {"output": broken}, "price_updated_at": 1},
+        )
+        with patch("repositories.stock_price_repository.time.time", return_value=300.0):
+            price_repo.update_current_price("000660", 73000, volume=10)
+
+        assert broken.stck_prpr == "73000"
+
+    def test_mark_unmark_streaming_and_cache_stats_expand(self, price_repo):
+        price_repo.set_current_price("005930", {"output": {"stck_prpr": "70000"}})
+        price_repo.mark_streaming("005930")
+        expanded = price_repo.get_cache_stats(expand=True)
+        assert expanded["streaming_count"] == 1
+        assert expanded["items"][0]["is_streaming"] is True
+
+        compact = price_repo.get_cache_stats(expand=False)
+        assert compact["streaming_count"] == 1
+
+        price_repo.unmark_streaming("005930")
+        assert price_repo.is_streaming("005930") is False
+        price_repo._cache_logger.log_streaming_mark.assert_called_once()
+        price_repo._cache_logger.log_streaming_unmark.assert_called_once()

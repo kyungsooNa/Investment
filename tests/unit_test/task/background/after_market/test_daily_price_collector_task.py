@@ -1,10 +1,11 @@
 import pytest
 import asyncio
 import pandas as pd
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from interfaces.schedulable_task import TaskState
-from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
+from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask, _chunked
 from common.types import ErrorCode, ResCommonResponse
 
 @pytest.fixture
@@ -438,3 +439,232 @@ def test_format_dataframe_to_records_empty_and_error(task):
         "종가": ["invalid_str"] # int 변환 시 예외 발생 유도
     })
     assert task._format_dataframe_to_records(df_bad) == []
+
+
+def test_chunked_and_basic_properties(task):
+    """헬퍼 함수 및 기본 프로퍼티 반환값 확인"""
+    assert list(_chunked([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
+    assert task.task_name == "daily_price_collector"
+    assert task._scheduler_label == "DailyPriceCollector"
+
+
+@pytest.mark.asyncio
+async def test_suspend_resume_noop_when_state_not_matching(task):
+    """RUNNING/SUSPENDED 상태가 아니면 suspend/resume이 무시되는지 확인"""
+    task._state = TaskState.STOPPED
+    task._suspend_event.set()
+
+    await task.suspend()
+    assert task._state == TaskState.STOPPED
+    assert task._suspend_event.is_set()
+
+    await task.resume()
+    assert task._state == TaskState.STOPPED
+    assert task._suspend_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_collect_all_prices_skip_when_already_collecting(task):
+    """이미 수집 중이면 즉시 스킵하는지 확인"""
+    task._is_collecting = True
+
+    with patch.object(task, "_collect_via_broker_api", new_callable=AsyncMock) as mock_collect:
+        await task._collect_all_prices()
+        mock_collect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_collect_all_prices_broker_api_exception_resets_state(task):
+    """Broker API 수집 예외 시에도 상태와 이벤트가 정리되는지 확인"""
+    with patch.object(task, "_load_all_stocks", return_value=[]), \
+         patch.object(task, "_collect_via_broker_api", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+        await task._collect_all_prices()
+
+    assert task._is_collecting is False
+    assert task._collection_done_event.is_set()
+    assert task._all_stocks_cache is None
+
+
+@pytest.mark.asyncio
+async def test_verify_crawler_data_uses_code_column_and_handles_parse_error(task):
+    """인덱스가 아닌 종목코드 컬럼 탐색 및 파싱 예외 스킵 분기 확인"""
+    df_crawled = pd.DataFrame({
+        "종목코드": ["005930", "000660"],
+        "종가": ["bad", 150000],
+        "시가": [79000, 140000],
+        "고가": [81000, 160000],
+        "저가": [78000, 130000],
+    })
+
+    async def mock_fetch(code, force_fresh=False):
+        data = {
+            "005930": {"stck_prpr": "80000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"},
+            "000660": {"stck_prpr": "150000", "stck_oprc": "140000", "stck_hgpr": "160000", "stck_lwpr": "130000"},
+        }
+        return ResCommonResponse(rt_cd="0", msg1="", data={"output": data[code]})
+
+    with patch.object(task, "_fetch_with_retry", side_effect=mock_fetch):
+        assert await task._verify_crawler_data(df_crawled, "TEST") is True
+
+
+@pytest.mark.asyncio
+async def test_try_collect_via_fdr_executes_sync_fetch_and_rename(task):
+    """to_thread 내부 동기 함수가 실제 실행되어 rename 경로를 타는지 확인"""
+    df_fdr = pd.DataFrame({"Code": ["005930"], "Close": [80000]})
+
+    async def run_sync(func):
+        return func()
+
+    with patch("task.background.after_market.daily_price_collector_task.fdr.StockListing", return_value=df_fdr.copy()), \
+         patch("asyncio.to_thread", new=run_sync), \
+         patch.object(task, "_verify_crawler_data", new_callable=AsyncMock, return_value=True) as mock_verify, \
+         patch.object(task, "_format_dataframe_to_records", return_value=[{"code": "005930"}]), \
+         patch.object(task, "_save_bulk_to_db_with_progress", new_callable=AsyncMock):
+        assert await task._try_collect_via_fdr("2025-01-01", 0.0) is True
+
+    passed_df = mock_verify.await_args.args[0]
+    assert "종목코드" in passed_df.columns
+    assert "종가" in passed_df.columns
+
+
+@pytest.mark.asyncio
+async def test_collect_via_broker_api_skips_sleep_for_cache_hits_and_flushes_tail(task):
+    """모든 응답이 캐시 히트면 sleep을 건너뛰고 마지막 잔여 버퍼를 저장하는지 확인"""
+    task.API_CHUNK_SIZE = 1
+    task.DB_UPSERT_BATCH_SIZE = 5
+    cached_resp = ResCommonResponse(
+        rt_cd="0",
+        msg1="",
+        data={"output": {"stck_prpr": "80000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"}},
+    )
+    cached_resp._cache_hit = True
+
+    with patch.object(task, "_load_all_stocks", return_value=[("005930", "삼성전자", "KOSPI")]), \
+         patch.object(task, "_fetch_with_retry", new_callable=AsyncMock, return_value=cached_resp), \
+         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await task._collect_via_broker_api("2025-01-01", 0.0)
+
+    mock_sleep.assert_not_awaited()
+    task._stock_repo.upsert_daily_snapshot.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_collect_via_broker_api_handles_exception_response(task):
+    """gather 결과에 예외 객체가 포함되어도 나머지 레코드는 저장하는지 확인"""
+    task.API_CHUNK_SIZE = 2
+    task.DB_UPSERT_BATCH_SIZE = 10
+    success_resp = ResCommonResponse(
+        rt_cd="0",
+        msg1="",
+        data={"output": {"stck_prpr": "80000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"}},
+    )
+
+    with patch.object(task, "_load_all_stocks", return_value=[("005930", "삼성전자", "KOSPI"), ("000660", "SK하이닉스", "KOSPI")]), \
+         patch.object(task, "_fetch_with_retry", new_callable=AsyncMock, side_effect=[success_resp, RuntimeError("api error")]), \
+         patch("asyncio.sleep", new_callable=AsyncMock):
+        await task._collect_via_broker_api("2025-01-01", 0.0)
+
+    saved_batch = task._stock_repo.upsert_daily_snapshot.await_args.args[1]
+    assert len(saved_batch) == 1
+    assert saved_batch[0]["code"] == "005930"
+
+
+@pytest.mark.asyncio
+async def test_finish_collection_with_rs_rating_success_and_failure(task):
+    """RS Rating 후처리 성공/실패 분기와 알림 없는 경로를 함께 확인"""
+    task._ns = None
+    task._rs_rating_service = AsyncMock()
+    task._rs_rating_service.compute_and_store_ratings.return_value = SimpleNamespace(msg1="done")
+
+    await task._finish_collection("2025-01-01", 0.0, "TEST")
+    task._rs_rating_service.compute_and_store_ratings.assert_awaited_once_with("2025-01-01")
+
+    task._rs_rating_service.compute_and_store_ratings.reset_mock(side_effect=True)
+    task._rs_rating_service.compute_and_store_ratings.side_effect = RuntimeError("rs fail")
+    await task._finish_collection("2025-01-02", 0.0, "TEST")
+    assert task._last_collected_date == "2025-01-02"
+
+
+def test_extract_broker_api_record_object_output_and_failure_paths(task):
+    """객체 output 처리 및 output/예외 분기 확인"""
+    resp_with_object = ResCommonResponse(
+        rt_cd="0",
+        msg1="",
+        data=SimpleNamespace(
+            stck_prpr="70000",
+            stck_oprc="69000",
+            stck_hgpr="71000",
+            stck_lwpr="68000",
+            stck_sdpr="69500",
+            prdy_vrss="500",
+            prdy_vrss_sign="2",
+            prdy_ctrt="0.72",
+            acml_vol="1234",
+            acml_tr_pbmn="999999",
+            hts_avls="555555",
+            per="11.1",
+            pbr="1.2",
+            eps="123",
+            w52_hgpr="90000",
+            w52_lwpr="60000",
+        ),
+    )
+    record = task._extract_broker_api_record("005930", "삼성전자", "KOSPI", resp_with_object)
+    assert record["current_price"] == 70000
+    assert record["market"] == "KOSPI"
+
+    resp_without_output = ResCommonResponse(rt_cd="0", msg1="", data={"output": None})
+    assert task._extract_broker_api_record("005930", "삼성전자", "KOSPI", resp_without_output) is None
+
+    class BrokenOutput:
+        def __getattr__(self, name):
+            raise RuntimeError("broken")
+
+    resp_broken = ResCommonResponse(rt_cd="0", msg1="", data=BrokenOutput())
+    assert task._extract_broker_api_record("005930", "삼성전자", "KOSPI", resp_broken) is None
+
+
+def test_get_progress_and_zero_change_record(task):
+    """진행률 복사본 반환 및 보합 종목 change_sign 계산 확인"""
+    progress = task.get_progress()
+    progress["processed"] = 999
+    assert task._progress["processed"] != 999
+
+    df = pd.DataFrame({
+        "종목코드": ["005930"],
+        "종가": [80000],
+        "시가": [80000],
+        "고가": [80500],
+        "저가": [79500],
+        "거래량": [1000],
+        "거래대금": [80000000],
+        "시가총액": [400000000000],
+        "대비": [0],
+        "등락률": [0],
+    })
+    record = task._format_dataframe_to_records(df)[0]
+    assert record["change_sign"] == "3"
+
+
+@pytest.mark.asyncio
+async def test_force_run_no_trading_date_and_exception_cleanup(task, mock_mcs):
+    """force_run의 거래일 없음/예외 발생 분기 확인"""
+    mock_mcs.get_latest_trading_date.return_value = None
+    await task.force_run()
+    assert task._is_collecting is False
+
+    mock_mcs.get_latest_trading_date.return_value = "2025-01-03"
+    with patch.object(task, "_load_all_stocks", return_value=[]), \
+         patch.object(task, "_collect_via_broker_api", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+        await task.force_run(force_fresh=True)
+
+    assert task._is_collecting is False
+    assert task._collection_done_event.is_set()
+    assert task._all_stocks_cache is None
+
+
+@pytest.mark.asyncio
+async def test_save_bulk_to_db_with_progress_empty_records(task):
+    """저장 대상이 없으면 DB 호출 없이 반환하는지 확인"""
+    await task._save_bulk_to_db_with_progress("2025-01-01", [], 0.0)
+    task._stock_repo.upsert_daily_snapshot.assert_not_called()
