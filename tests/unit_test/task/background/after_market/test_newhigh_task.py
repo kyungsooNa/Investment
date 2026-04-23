@@ -2,6 +2,7 @@
 NewHighTask 단위 테스트.
 daily_prices 스냅샷 → w52_high 기준 신고가 필터링 및 텔레그램 리포트 전송 로직 검증.
 """
+import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
@@ -245,6 +246,36 @@ async def test_on_market_closed_emits_notification(task, mock_stock_repo, mock_n
     ]
     await task._on_market_closed("20260412")
     mock_notification_service.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_run_same_date_executes_once(task, mock_stock_repo, mock_telegram_reporter):
+    """같은 거래일 동시 실행 요청은 한 번만 실제 계산한다."""
+    mock_stock_repo.get_all_daily_snapshots.return_value = [
+        _snap("005930", "삼성전자", 80000, 80000),
+    ]
+
+    await asyncio.gather(
+        task._run_newhigh("20260412"),
+        task._run_newhigh("20260412"),
+    )
+
+    assert mock_stock_repo.get_all_daily_snapshots.await_count == 1
+    assert mock_telegram_reporter.send_newhigh_report.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_telegram_failure_still_marks_completed(task, mock_stock_repo, mock_telegram_reporter):
+    """후속 리포트 실패가 신고가 계산 완료 상태를 되돌리지 않는다."""
+    mock_stock_repo.get_all_daily_snapshots.return_value = [
+        _snap("005930", "삼성전자", 80000, 80000),
+    ]
+    mock_telegram_reporter.send_newhigh_report.side_effect = Exception("telegram down")
+
+    await task._on_market_closed("20260412")
+
+    assert task._last_collected_date == "20260412"
+    assert task.get_progress()["newhigh_count"] == 1
 
 
 # ── _has_sufficient_w52_data ────────────────────────────────────────────
@@ -800,6 +831,16 @@ async def test_force_run_no_target_date(task):
 
 
 @pytest.mark.asyncio
+async def test_trigger_refresh_deduplicates_background_task(task):
+    """백그라운드 갱신 예약이 이미 있으면 중복 create_task 하지 않는다."""
+    assert task.trigger_refresh() is True
+    assert task.trigger_refresh() is False
+
+    if task._refresh_task:
+        await asyncio.gather(task._refresh_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_run_newhigh_empty_snapshots(task, mock_stock_repo):
     """조회된 snapshot 데이터가 없을 경우 early return 동작 검증"""
     mock_stock_repo.get_all_daily_snapshots.return_value = []
@@ -875,6 +916,26 @@ async def test_enrich_and_filter_rs_rating_exception(task, mock_rs_rating_servic
     result = await task._enrich_and_filter_rs_rating(stocks, "20260413")
     assert len(result) == 1
     assert result[0]["rs_rating"] == 0
+
+
+@pytest.mark.asyncio
+async def test_enrich_and_filter_rs_rating_low_coverage_skips_filter(task, mock_rs_rating_service):
+    """RS Rating 부분 데이터가 신고가 후보를 전부 0건으로 만들지 않도록 필터를 건너뛴다."""
+    task._rs_rating_service = mock_rs_rating_service
+    task._rs_rating_min = 80
+    mock_rs_rating_service.get_ratings_by_date.return_value = MagicMock(
+        rt_cd="0",
+        data={"999999": 99},
+    )
+    stocks = [
+        {"code": "005930", "name": "삼성전자"},
+        {"code": "000660", "name": "SK하이닉스"},
+    ]
+
+    result = await task._enrich_and_filter_rs_rating(stocks, "20260413")
+
+    assert len(result) == 2
+    assert all(s["rs_rating"] == 0 for s in result)
 
 
 # ── _filter_newhigh: rs 필드 전달 버그 수정 검증 ─────────────────────────

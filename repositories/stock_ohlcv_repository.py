@@ -52,6 +52,7 @@ class StockOhlcvRepository:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA busy_timeout=10000")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS ohlcv (
                         code TEXT NOT NULL,
@@ -123,6 +124,7 @@ class StockOhlcvRepository:
             if self._write_conn is None:
                 self._write_conn = await aiosqlite.connect(self._db_path)
                 await self._write_conn.execute("PRAGMA synchronous=NORMAL")
+                await self._write_conn.execute("PRAGMA busy_timeout=10000")
             try:
                 yield self._write_conn
                 await self._write_conn.commit()
@@ -138,6 +140,7 @@ class StockOhlcvRepository:
                 if self._read_conn is None:
                     conn = await aiosqlite.connect(self._db_path)
                     conn.row_factory = aiosqlite.Row
+                    await conn.execute("PRAGMA busy_timeout=10000")
                     self._read_conn = conn
         yield self._read_conn
 
@@ -415,28 +418,36 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository minervini fields update 실패: {e}")
 
     async def update_newhigh_fields(self, trade_date: str, records: List[Dict]):
-        """daily_prices의 is_newhigh / is_historical_newhigh 컬럼만 UPDATE."""
-        if not records:
-            return
+        """daily_prices의 is_newhigh / is_historical_newhigh 컬럼을 해당 날짜 기준으로 재작성."""
         try:
             async with self._get_write_connection() as conn:
-                await conn.executemany(
+                await conn.execute(
                     """
                     UPDATE daily_prices
-                    SET is_newhigh = :is_newhigh,
-                        is_historical_newhigh = :is_historical_newhigh
-                    WHERE code = :code AND trade_date = :trade_date
+                    SET is_newhigh = 0,
+                        is_historical_newhigh = 0
+                    WHERE trade_date = ?
                     """,
-                    [
-                        {
-                            "code": r.get("code"),
-                            "trade_date": trade_date,
-                            "is_newhigh": 1 if r.get("is_newhigh") else 0,
-                            "is_historical_newhigh": 1 if r.get("is_historical_new_high") else 0,
-                        }
-                        for r in records
-                    ],
+                    (trade_date,),
                 )
+                if records:
+                    await conn.executemany(
+                        """
+                        UPDATE daily_prices
+                        SET is_newhigh = :is_newhigh,
+                            is_historical_newhigh = :is_historical_newhigh
+                        WHERE code = :code AND trade_date = :trade_date
+                        """,
+                        [
+                            {
+                                "code": r.get("code"),
+                                "trade_date": trade_date,
+                                "is_newhigh": 1 if r.get("is_newhigh") else 0,
+                                "is_historical_newhigh": 1 if r.get("is_historical_new_high") else 0,
+                            }
+                            for r in records
+                        ],
+                    )
             self._logger.debug(
                 f"StockOhlcvRepository: newhigh fields {len(records)}건 update 완료 (date={trade_date})"
             )
