@@ -167,14 +167,6 @@
     - `tests/integration_test/**`
     - `tests/**/conftest.py`
 
-- [ ] paper/real 전환 회귀 테스트 강화
-  - 목표: `is_paper_trading` 전환 시 URL, TR ID, 토큰, 미지원 API 가드가 항상 맞게 동작하는지 고정한다.
-  - 대상:
-    - `brokers/korea_investment/korea_invest_env.py`
-    - `brokers/korea_investment/*_provider.py`
-    - `view/web/web_app_initializer.py`
-    - `tests/integration_test/test_it_web_api_paper.py`
-    - `tests/integration_test/test_it_web_api_real.py`
 
 - [ ] 실행 진입점 문서 정합성 정리
   - 목표: 문서상 CLI/Web 설명과 실제 `main.py` 동작의 차이를 정리한다.
