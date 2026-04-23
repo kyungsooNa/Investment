@@ -474,8 +474,8 @@ class TestDeepBuyOrder:
         body = resp.json()
         assert body["rt_cd"] == "0"
 
-        # virtual_trade_service에 수동매매 기록 검증
-        deep_paper_ctx.virtual_trade_service.log_buy.assert_called_once_with("수동매매", "005930", 70000)
+        # 가상매매 기록은 실제 체결 확인 이후 OrderExecutionService가 처리
+        deep_paper_ctx.virtual_trade_service.log_buy.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_buy_order_market_closed(self, deep_paper_ctx, mocker):
@@ -547,7 +547,7 @@ class TestDeepSellOrder:
         body = resp.json()
         assert body["rt_cd"] == "0"
 
-        deep_paper_ctx.virtual_trade_service.log_sell.assert_called_once_with("005930", 71000)
+        deep_paper_ctx.virtual_trade_service.log_sell.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sell_order_hashkey_failure(self, deep_paper_ctx, mocker):

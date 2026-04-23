@@ -1,6 +1,7 @@
 # app/order_execution_service.py
 import asyncio
-from datetime import datetime
+from collections import OrderedDict
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
 from core.performance_profiler import PerformanceProfiler
@@ -19,6 +20,12 @@ class OrderExecutionService:
 
     _ORDER_MAX_RETRIES = 5
     _ORDER_RETRY_DELAY_SEC = 3
+    _PROCESSED_EXECUTION_EVENT_LIMIT = 5000
+    _FAST_POLL_INTERVAL_SEC = 5
+    _DEFAULT_ACTIVE_ORDER_POLL_INTERVAL_SEC = 15
+    _POST_SUBMIT_FAST_POLL_WINDOW_SEC = 60
+    _STUCK_ORDER_WARNING_SEC = 60
+    _STUCK_ORDER_CRITICAL_SEC = 180
 
     def __init__(self, broker_api_wrapper, logger,
                  market_clock: Optional[MarketClock] = None,
@@ -38,7 +45,16 @@ class OrderExecutionService:
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
         self._order_no_index: Dict[str, str] = {}
-        self._processed_execution_events: set[str] = set()
+        self._processed_execution_events: OrderedDict[str, None] = OrderedDict()
+        self._processed_execution_event_limit = self._PROCESSED_EXECUTION_EVENT_LIMIT
+        self._post_submit_fast_poll_until: Dict[str, datetime] = {}
+
+    def _get_now(self) -> datetime:
+        return self.market_clock.get_current_kst_time() if self.market_clock else datetime.now()
+
+    def _is_paper_trading_mode(self) -> bool:
+        env = getattr(self.broker_api_wrapper, "env", None)
+        return getattr(env, "is_paper_trading", True)
 
     def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
         return f"{exchange.value}:{stock_code}:{side.value}"
@@ -85,6 +101,12 @@ class OrderExecutionService:
         return None
 
     def _set_order_context(self, context: OrderContext) -> OrderContext:
+        now = self._get_now()
+        if context.created_at is None or context.state_entered_at is None:
+            context = context.model_copy(update={
+                "created_at": context.created_at or now,
+                "state_entered_at": context.state_entered_at or now,
+            })
         self._order_states[context.order_key] = context
         if context.broker_order_no:
             self._order_no_index[context.broker_order_no] = context.order_key
@@ -92,11 +114,71 @@ class OrderExecutionService:
 
     def _transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> OrderContext:
         context = self._order_states[order_key]
-        next_context = context.transition(new_state, **kwargs)
+        next_context = context.transition(
+            new_state,
+            transition_time=self._get_now(),
+            **kwargs,
+        )
         self._order_states[order_key] = next_context
         if next_context.broker_order_no:
             self._order_no_index[next_context.broker_order_no] = order_key
         return next_context
+
+    def _mark_virtual_trade_recorded(self, context: OrderContext, recorded_qty: int) -> OrderContext:
+        next_context = context.model_copy(update={
+            "virtual_recorded_qty": min(max(recorded_qty, 0), context.filled_qty),
+        })
+        self._order_states[context.order_key] = next_context
+        if next_context.broker_order_no:
+            self._order_no_index[next_context.broker_order_no] = context.order_key
+        return next_context
+
+    @staticmethod
+    def _strategy_name_from_source(source: str) -> tuple[str, bool]:
+        source = source or ""
+        if source.startswith("strategy:"):
+            return source.split(":", 1)[1] or "default", True
+        if source.startswith("manual:"):
+            return source.split(":", 1)[1] or "수동매매", False
+        if source in ("", "default", "manual", "web"):
+            return "수동매매", False
+        return source, False
+
+    async def _persist_virtual_trade_for_terminal_report(
+        self,
+        context: OrderContext,
+        report: OrderExecutionReport,
+    ) -> OrderContext:
+        if not self._virtual_trade_service or not context.state.is_terminal:
+            return context
+        if context.state == OrderState.REJECTED or context.filled_qty <= 0:
+            return context
+        if context.virtual_recorded_qty >= context.filled_qty:
+            return context
+
+        strategy_name, is_strategy_source = self._strategy_name_from_source(context.source)
+        record_qty = context.filled_qty
+        record_price = report.fill_price or context.price
+        try:
+            if context.side == OrderSide.BUY:
+                await self._virtual_trade_service.log_buy_async(
+                    strategy_name, context.stock_code, record_price, record_qty
+                )
+            elif is_strategy_source:
+                await self._virtual_trade_service.log_sell_by_strategy_async(
+                    strategy_name, context.stock_code, record_price, record_qty
+                )
+            else:
+                await self._virtual_trade_service.log_sell_async(
+                    context.stock_code, record_price, record_qty
+                )
+        except Exception as e:
+            self.logger.warning(
+                f"체결확정 가상매매 기록 실패: 주문={context.order_key}, "
+                f"수량={record_qty}, 사유={e}"
+            )
+            return context
+        return self._mark_virtual_trade_recorded(context, record_qty)
 
     def _find_context_for_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
         order_key = self._order_no_index.get(report.broker_order_no)
@@ -109,6 +191,22 @@ class OrderExecutionService:
             if context and context.broker_order_no == report.broker_order_no:
                 return context
         return None
+
+    def _mark_execution_event_seen(self, event_key: str) -> bool:
+        """Return True only for an event key that has not been processed recently."""
+        if event_key in self._processed_execution_events:
+            self._processed_execution_events.move_to_end(event_key)
+            return False
+
+        limit = self._processed_execution_event_limit
+        if limit <= 0:
+            self._processed_execution_events.clear()
+            return True
+
+        self._processed_execution_events[event_key] = None
+        while len(self._processed_execution_events) > limit:
+            self._processed_execution_events.popitem(last=False)
+        return True
 
     async def apply_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
         """체결통보/polling 이벤트를 주문 FSM에 적용합니다."""
@@ -125,11 +223,10 @@ class OrderExecutionService:
                 )
                 return None
 
-            if report.event_key in self._processed_execution_events:
-                return context
-            self._processed_execution_events.add(report.event_key)
-
             if context.state.is_terminal:
+                return context
+
+            if not self._mark_execution_event_seen(report.event_key):
                 return context
 
             if not context.broker_order_no:
@@ -147,7 +244,8 @@ class OrderExecutionService:
                 )
 
             if report.event_state == OrderState.CANCELED:
-                return self._transition_order_context(context.order_key, OrderState.CANCELED)
+                canceled = self._transition_order_context(context.order_key, OrderState.CANCELED)
+                return await self._persist_virtual_trade_for_terminal_report(canceled, report)
 
             if report.fill_qty <= 0:
                 if context.state == OrderState.PENDING_SUBMIT:
@@ -155,7 +253,7 @@ class OrderExecutionService:
                 return context
 
             if report.cumulative_filled_qty is not None:
-                filled_qty = report.cumulative_filled_qty
+                filled_qty = max(report.cumulative_filled_qty, context.filled_qty)
             else:
                 filled_qty = context.filled_qty + report.fill_qty
 
@@ -163,13 +261,16 @@ class OrderExecutionService:
                 is_filled = report.remaining_qty <= 0
             else:
                 is_filled = filled_qty >= context.qty
+            if is_filled:
+                filled_qty = max(filled_qty, context.qty)
             next_state = OrderState.FILLED if is_filled else OrderState.PARTIAL_FILLED
-            return self._transition_order_context(
+            transitioned = self._transition_order_context(
                 context.order_key,
                 next_state,
                 filled_qty=filled_qty,
                 broker_order_no=report.broker_order_no,
             )
+            return await self._persist_virtual_trade_for_terminal_report(transitioned, report)
 
     async def handle_signing_notice(self, data: dict, tr_id: str = "") -> Optional[OrderContext]:
         """WebSocket signing_notice payload를 정규화한 뒤 FSM에 적용합니다."""
@@ -183,6 +284,116 @@ class OrderExecutionService:
             for context in self._order_states.values()
             if not context.state.is_terminal
         ]
+
+    def _register_post_submit_fast_poll(self, order_key: str, now: Optional[datetime] = None) -> None:
+        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
+        self._post_submit_fast_poll_until[order_key] = now + timedelta(seconds=self._POST_SUBMIT_FAST_POLL_WINDOW_SEC)
+
+    def _prune_post_submit_fast_poll(self, now: Optional[datetime] = None) -> None:
+        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
+        active_order_keys = {
+            context.order_key
+            for context in self._order_states.values()
+            if not context.state.is_terminal
+        }
+        stale_keys = [
+            order_key
+            for order_key, until in self._post_submit_fast_poll_until.items()
+            if order_key not in active_order_keys or until <= now
+        ]
+        for order_key in stale_keys:
+            self._post_submit_fast_poll_until.pop(order_key, None)
+
+    def get_active_order_poll_interval_sec(
+        self,
+        now: Optional[datetime] = None,
+        *,
+        default_interval_sec: int = _DEFAULT_ACTIVE_ORDER_POLL_INTERVAL_SEC,
+    ) -> Optional[int]:
+        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
+        contexts = self._active_order_contexts()
+        if not contexts:
+            self._prune_post_submit_fast_poll(now)
+            return None
+
+        self._prune_post_submit_fast_poll(now)
+        active_order_keys = {context.order_key for context in contexts}
+        if any(order_key in self._post_submit_fast_poll_until for order_key in active_order_keys):
+            return min(default_interval_sec, self._FAST_POLL_INTERVAL_SEC)
+        return default_interval_sec
+
+    def _get_stuck_order_alert_level(
+        self,
+        context: OrderContext,
+        age_sec: float,
+    ) -> Optional[NotificationLevel]:
+        if context.state not in (OrderState.SUBMITTED, OrderState.PARTIAL_FILLED):
+            return None
+        if age_sec < self._STUCK_ORDER_WARNING_SEC:
+            return None
+        if not self._is_paper_trading_mode() and age_sec >= self._STUCK_ORDER_CRITICAL_SEC:
+            return NotificationLevel.CRITICAL
+        return NotificationLevel.WARNING
+
+    async def check_stuck_orders_once(self, now: Optional[datetime] = None) -> int:
+        now = now or self._get_now()
+        notified_count = 0
+
+        for context in self._active_order_contexts():
+            entered_at = context.state_entered_at or context.created_at
+            if entered_at is None:
+                continue
+
+            age_sec = max((now - entered_at).total_seconds(), 0)
+            alert_level = self._get_stuck_order_alert_level(context, age_sec)
+            if alert_level is None:
+                continue
+            if context.last_stuck_alert_level == alert_level.value:
+                continue
+
+            age_text = f"{age_sec:.0f}s"
+            message = (
+                f"stuck order detected: order_key={context.order_key}, "
+                f"broker_order_no={context.broker_order_no or 'N/A'}, "
+                f"side={context.side.value}, qty={context.qty}, "
+                f"filled_qty={context.filled_qty}, remaining_qty={context.remaining_qty}, "
+                f"source={context.source}, state={context.state.value}, age={age_text}"
+            )
+
+            if alert_level == NotificationLevel.CRITICAL:
+                self.logger.critical(message)
+            else:
+                self.logger.warning(message)
+
+            if self._notification_service:
+                await self._notification_service.emit(
+                    NotificationCategory.TRADE,
+                    alert_level,
+                    "Stuck order detected",
+                    message,
+                    metadata={
+                        "order_key": context.order_key,
+                        "broker_order_no": context.broker_order_no or "",
+                        "stock_code": context.stock_code,
+                        "side": context.side.value,
+                        "qty": context.qty,
+                        "filled_qty": context.filled_qty,
+                        "remaining_qty": context.remaining_qty,
+                        "source": context.source,
+                        "state": context.state.value,
+                        "age_sec": int(age_sec),
+                    },
+                )
+
+            self._transition_order_context(
+                context.order_key,
+                context.state,
+                stuck_alert_at=now,
+                stuck_alert_level=alert_level.value,
+            )
+            notified_count += 1
+
+        return notified_count
 
     @staticmethod
     def _extract_order_query_rows(data) -> list[dict]:
@@ -315,6 +526,86 @@ class OrderExecutionService:
             final_state=OrderState.CANCELED,
         )
 
+    async def cancel_order(
+        self,
+        stock_code: Optional[str] = None,
+        is_buy: Optional[bool] = None,
+        *,
+        broker_order_no: Optional[str] = None,
+        exchange: Exchange = Exchange.KRX,
+        order_orgno: str = "06010",
+    ) -> ResCommonResponse:
+        context = None
+        if broker_order_no:
+            order_key = self._order_no_index.get(broker_order_no)
+            context = self._order_states.get(order_key) if order_key else None
+        if context is None and stock_code is not None and is_buy is not None:
+            context = self.get_order_context(stock_code, is_buy, exchange)
+
+        if context is None:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="취소할 활성 주문 컨텍스트를 찾을 수 없습니다.",
+                data=None,
+            )
+        if context.state.is_terminal:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1=f"이미 종료된 주문은 취소할 수 없습니다. 상태={context.state.value}",
+                data=context.to_dict(),
+            )
+
+        target_order_no = broker_order_no or context.broker_order_no
+        if not target_order_no:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="broker_order_no가 없어 취소 요청을 보낼 수 없습니다.",
+                data=context.to_dict(),
+            )
+        if context.broker_order_no and target_order_no != context.broker_order_no:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="요청한 broker_order_no가 로컬 주문 컨텍스트와 일치하지 않습니다.",
+                data=context.to_dict(),
+            )
+
+        remaining_qty = max(context.remaining_qty, 0)
+        if remaining_qty <= 0:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="취소 가능한 잔여 수량이 없습니다.",
+                data=context.to_dict(),
+            )
+
+        try:
+            result = await self.broker_api_wrapper.cancel_stock_order(
+                broker_order_no=target_order_no,
+                order_qty=remaining_qty,
+                order_price=0,
+                order_orgno=order_orgno,
+                order_dvsn="00",
+                qty_all_ord_yn="Y",
+                exchange=context.exchange,
+            )
+        except Exception as e:
+            self.logger.exception(f"주문 취소 요청 중 오류 발생: {str(e)}")
+            return ResCommonResponse(
+                rt_cd=ErrorCode.UNKNOWN_ERROR.value,
+                msg1=f"주문 취소 요청 중 예외 발생: {str(e)}",
+                data=context.to_dict(),
+            )
+
+        if result and result.rt_cd == ErrorCode.SUCCESS.value:
+            self.logger.info(
+                f"주문 취소 요청 성공: order_key={context.order_key}, broker_order_no={target_order_no}"
+            )
+        else:
+            message = result.msg1 if result else "응답 없음"
+            self.logger.warning(
+                f"주문 취소 요청 실패: order_key={context.order_key}, broker_order_no={target_order_no}, 사유={message}"
+            )
+        return result
+
     async def mark_order_rejected(
         self,
         stock_code,
@@ -438,6 +729,8 @@ class OrderExecutionService:
 
             latest = self._order_states.get(order_key)
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
+                if latest and latest.state == OrderState.SUBMITTED:
+                    self._register_post_submit_fast_poll(order_key)
                 if finalize_immediately and latest and latest.state == OrderState.SUBMITTED:
                     self._transition_order_context(order_key, OrderState.FILLED, filled_qty=qty)
                 return result
@@ -555,7 +848,15 @@ class OrderExecutionService:
         self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)
         return sell_order_result
 
-    async def handle_buy_stock(self, stock_code, qty_input, price_input, exchange: Exchange = Exchange.KRX):
+    async def handle_buy_stock(
+        self,
+        stock_code,
+        qty_input,
+        price_input,
+        exchange: Exchange = Exchange.KRX,
+        source: str = "manual:수동매매",
+        finalize_immediately: bool = True,
+    ):
         """
         사용자 입력을 받아 주식 매수 주문을 처리합니다.
         trading_app.py의 '3'번 옵션에 매핑됩니다.
@@ -570,9 +871,24 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
 
         # handle_place_buy_order 호출
-        return await self.handle_place_buy_order(stock_code, price, qty, exchange=exchange)
+        return await self.handle_place_buy_order(
+            stock_code,
+            price,
+            qty,
+            exchange=exchange,
+            source=source,
+            finalize_immediately=finalize_immediately,
+        )
 
-    async def handle_sell_stock(self, stock_code, qty_input, price_input, exchange: Exchange = Exchange.KRX):
+    async def handle_sell_stock(
+        self,
+        stock_code,
+        qty_input,
+        price_input,
+        exchange: Exchange = Exchange.KRX,
+        source: str = "manual:수동매매",
+        finalize_immediately: bool = True,
+    ):
         """
         사용자 입력을 받아 주식 매도 주문을 처리합니다.
         trading_app.py의 '4'번 옵션에 매핑됩니다.
@@ -586,7 +902,14 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
 
         # handle_place_sell_order 호출
-        return await self.handle_place_sell_order(stock_code, price, qty, exchange=exchange)
+        return await self.handle_place_sell_order(
+            stock_code,
+            price,
+            qty,
+            exchange=exchange,
+            source=source,
+            finalize_immediately=finalize_immediately,
+        )
 
     async def sell_all_stocks(self, exchange: Exchange = Exchange.KRX):
         """보유하고 있는 모든 주식을 시장가로 매도합니다."""

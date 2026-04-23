@@ -573,3 +573,20 @@ def test_shared_client_created_with_explicit_limits(mocker):
     limits = call_kwargs["limits"]
     assert limits.max_keepalive_connections == 50
     assert limits.max_connections == 100
+@pytest.mark.asyncio
+async def test_cancel_stock_order_delegation(korea_invest_client_instance):
+    client, _, _, mock_trading, _, _, _ = korea_invest_client_instance
+    mock_trading.cancel_stock_order.return_value = {"rt_cd": "0", "msg1": "취소 요청 성공"}
+
+    result = await client.cancel_stock_order(
+        broker_order_no="A0001",
+        order_qty=6,
+        order_orgno="06010",
+    )
+
+    mock_trading.cancel_stock_order.assert_awaited_once_with(
+        broker_order_no="A0001",
+        order_qty=6,
+        order_orgno="06010",
+    )
+    assert result == {"rt_cd": "0", "msg1": "취소 요청 성공"}

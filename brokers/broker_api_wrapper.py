@@ -285,6 +285,10 @@ class BrokerAPIWrapper:
             self._cb_record_failure()
         return resp
 
+    async def cancel_stock_order(self, **kwargs) -> ResCommonResponse:
+        """주식 주문 취소를 실행합니다 (KoreaInvestApiTrading 위임)."""
+        return await self._client.cancel_stock_order(**kwargs)
+
     # --- KoreaInvestApiClient / WebSocket API delegation ---
     def is_websocket_receive_alive(self) -> bool:
         """웹소켓 수신 태스크가 살아있는지 확인."""

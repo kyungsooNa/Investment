@@ -27,7 +27,9 @@ def mock_tr_ids():
             "order_cash_buy_paper": "TR_BUY_PAPER",
             "order_cash_buy_real": "TR_BUY_REAL",
             "order_cash_sell_paper": "TR_SELL_PAPER",
-            "order_cash_sell_real": "TR_SELL_REAL"
+            "order_cash_sell_real": "TR_SELL_REAL",
+            "order_rvsecncl_paper": "TR_CANCEL_PAPER",
+            "order_rvsecncl_real": "TR_CANCEL_REAL"
         }
     }
 
@@ -81,6 +83,7 @@ def test_get_logic_trid_paper(mock_env, mock_tr_ids):
     assert provider.get(TrId.INQUIRE_DAILY_CCLD) == "TR_CCLD_PAPER"
     assert provider.get(TrId.ORDER_CASH_BUY) == "TR_BUY_PAPER"
     assert provider.get(TrId.ORDER_CASH_SELL) == "TR_SELL_PAPER"
+    assert provider.get(TrId.ORDER_RVSECNCL) == "TR_CANCEL_PAPER"
 
 def test_get_logic_trid_real(mock_env, mock_tr_ids):
     mock_env.is_paper_trading = False
@@ -90,6 +93,7 @@ def test_get_logic_trid_real(mock_env, mock_tr_ids):
     assert provider.get(TrId.INQUIRE_DAILY_CCLD) == "TR_CCLD_REAL"
     assert provider.get(TrId.ORDER_CASH_BUY) == "TR_BUY_REAL"
     assert provider.get(TrId.ORDER_CASH_SELL) == "TR_SELL_REAL"
+    assert provider.get(TrId.ORDER_RVSECNCL) == "TR_CANCEL_REAL"
 
 def test_convenience_methods(mock_env, mock_tr_ids):
     provider = KoreaInvestTrIdProvider(mock_env, mock_tr_ids)
@@ -102,6 +106,7 @@ def test_convenience_methods(mock_env, mock_tr_ids):
     
     assert provider.trading_order_cash(is_buy=True) == "TR_BUY_PAPER"
     assert provider.trading_order_cash(is_buy=False) == "TR_SELL_PAPER"
+    assert provider.trading_order_rvsecncl() == "TR_CANCEL_PAPER"
     
     assert provider.daily_itemchartprice() == "TR_DAILY_CHART"
     assert provider.time_itemchartprice() == "TR_TIME_CHART"

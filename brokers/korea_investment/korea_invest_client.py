@@ -97,6 +97,9 @@ class KoreaInvestApiClient:
                                 exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         return await self._trading.place_stock_order(stock_code, order_price, order_qty, is_buy, exchange=exchange)
 
+    async def cancel_stock_order(self, **kwargs) -> ResCommonResponse:
+        return await self._trading.cancel_stock_order(**kwargs)
+
     # --- Quotations API delegation (Updated) ---
     # KoreaInvestApiQuotations의 모든 메서드가 ResCommonResponse를 반환하도록 이미 수정되었으므로, 해당 반환 타입을 반영
     async def get_stock_info_by_code(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:

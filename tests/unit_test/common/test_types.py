@@ -1,6 +1,7 @@
 # tests/unit_test/test_types.py
 import pytest
 from dataclasses import asdict
+from pathlib import Path
 from pydantic import ValidationError
 from common.types import (
     ResCommonResponse,
@@ -10,7 +11,32 @@ from common.types import (
     ResFluctuation,
     ResPriceSummary,
     TradeSignal,
+    OrderExecutionReport,
+    OrderSide,
+    OrderState,
 )
+from utils.kis_inquire_daily_ccld_fixture_utils import discover_inquire_daily_ccld_fixture_documents
+
+
+KIS_FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "kis"
+
+
+def _load_inquire_daily_ccld_cases():
+    cases = []
+    for fixture_path, payload in discover_inquire_daily_ccld_fixture_documents(KIS_FIXTURE_DIR):
+        fixture_name = payload.get("fixture_name") or fixture_path.stem
+        tr_id = payload.get("tr_id", "")
+        for row in payload["rows"]:
+            case = dict(row)
+            case["_fixture_name"] = fixture_name
+            case["_fixture_path"] = fixture_path.name
+            case["_tr_id"] = tr_id
+            cases.append(case)
+    return cases
+
+
+def _case_id(case):
+    return f"{case['_fixture_name']}:{case['case']}"
 
 
 # --- Test for ResCommonResponse.to_dict ---
@@ -157,6 +183,84 @@ def test_res_daily_chart_api_item_missing_required_fields_raises_error():
     payload = {"stck_bsop_date": "20260325"}
     with pytest.raises(ValidationError):
         ResDailyChartApiItem.from_dict(payload)
+
+
+def test_order_query_report_missing_order_qty_does_not_raise():
+    report = OrderExecutionReport.from_order_query({
+        "odno": "A0001",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "tot_ccld_qty": "3",
+        "avg_prvs": "70000",
+    })
+
+    assert report.order_qty is None
+    assert report.event_state == OrderState.PARTIAL_FILLED
+    assert report.cumulative_filled_qty == 3
+
+
+def test_order_query_report_reject_qty_without_order_qty_is_rejected():
+    report = OrderExecutionReport.from_order_query({
+        "odno": "A0001",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "tot_ccld_qty": "0",
+        "rjct_qty": "10",
+    })
+
+    assert report.order_qty is None
+    assert report.event_state == OrderState.REJECTED
+
+
+def test_order_query_report_cancel_qty_without_remaining_qty_is_canceled():
+    report = OrderExecutionReport.from_order_query({
+        "odno": "A0001",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "ord_qty": "10",
+        "tot_ccld_qty": "4",
+        "cncl_cfrm_qty": "6",
+    })
+
+    assert report.remaining_qty is None
+    assert report.event_state == OrderState.CANCELED
+
+
+def test_order_query_report_cancel_yn_without_remaining_qty_is_canceled():
+    report = OrderExecutionReport.from_order_query({
+        "odno": "A0001",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "ord_qty": "10",
+        "tot_ccld_qty": "0",
+        "cncl_yn": "Y",
+    })
+
+    assert report.remaining_qty is None
+    assert report.event_state == OrderState.CANCELED
+
+
+@pytest.mark.parametrize(
+    "case",
+    _load_inquire_daily_ccld_cases(),
+    ids=_case_id,
+)
+def test_order_query_report_from_kis_inquire_daily_ccld_fixture(case):
+    report = OrderExecutionReport.from_order_query(case["row"], tr_id=case["_tr_id"])
+    expected = case["expected"]
+
+    assert report.broker_order_no == expected["broker_order_no"]
+    assert report.stock_code == expected["stock_code"]
+    assert report.side == (OrderSide(expected["side"]) if expected["side"] else None)
+    assert report.event_state == OrderState(expected["event_state"])
+    assert report.order_qty == expected["order_qty"]
+    assert report.fill_qty == expected["fill_qty"]
+    assert report.cumulative_filled_qty == expected["cumulative_filled_qty"]
+    assert report.remaining_qty == expected["remaining_qty"]
+    assert report.fill_price == expected["fill_price"]
+    assert report.event_time == expected["event_time"]
+    assert report.source == (f"polling:{case['_tr_id']}" if case["_tr_id"] else "polling")
+    assert report.raw == case["row"]
 
 
 # --- Test for other simple to_dict methods ---

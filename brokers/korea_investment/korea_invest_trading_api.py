@@ -120,3 +120,44 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._logger.info(
                 f"주식 {'매수' if is_buy else '매도'} 주문 시도 - 종목:{stock_code}, 수량:{order_qty}, 가격:{order_price}")
             return await self.call_api('POST', EndpointKey.ORDER_CASH, data=data, retry_count=10)
+
+    async def cancel_stock_order(
+        self,
+        *,
+        broker_order_no: str,
+        order_qty: int,
+        order_price: int = 0,
+        order_orgno: str = "06010",
+        order_dvsn: str = "00",
+        qty_all_ord_yn: str = "Y",
+        exchange: Exchange = Exchange.KRX,
+    ) -> ResCommonResponse:
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.trading_order_rvsecncl()
+        data = Params.order_rvsecncl_body(
+            cano=full_config["stock_account_number"],
+            acnt_prdt_cd="01",
+            order_orgno=order_orgno,
+            original_order_no=broker_order_no,
+            ord_dvsn=order_dvsn,
+            rvse_cncl_dvsn_cd="02",
+            ord_qty=order_qty,
+            ord_unpr=order_price,
+            qty_all_ord_yn=qty_all_ord_yn,
+            excg_id_dvsn_cd=exchange.value if exchange != Exchange.KRX else "",
+        )
+
+        calculated_hashkey = await self._get_hashkey(data)
+        if not calculated_hashkey:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.MISSING_KEY.value,
+                msg1=f"hashkey 怨꾩궛 ?ㅽ뙣 - {calculated_hashkey}",
+                data=None,
+            )
+
+        with self._headers.temp(tr_id=tr_id, custtype=full_config["custtype"], hashkey=calculated_hashkey):
+            self._headers.set_gt_uid()
+            self._logger.info(
+                f"二쇱떇 痍⑥냼 二쇰Ц ?쒕룄 - 二쇰Ц踰덊샇:{broker_order_no}, ?섎웾:{order_qty}"
+            )
+            return await self.call_api("POST", EndpointKey.ORDER_RVSECNCL, data=data, retry_count=3)

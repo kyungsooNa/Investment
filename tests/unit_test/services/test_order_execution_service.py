@@ -1,10 +1,12 @@
 import pytest
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import builtins
 from unittest.mock import call, ANY
 from services.market_calendar_service import MarketCalendarService
-from common.types import ResCommonResponse, ErrorCode, Exchange, OrderState
+from common.types import ResCommonResponse, ErrorCode, Exchange, OrderContext, OrderState, OrderExecutionReport, OrderSide
+from services.notification_service import NotificationCategory, NotificationLevel
 from services.order_execution_service import OrderExecutionService
 
 # 테스트를 위한 MockLogger
@@ -22,6 +24,8 @@ def mock_broker_api_wrapper():
     mock = AsyncMock()
     # place_stock_order의 기본 반환값 설정
     mock.place_stock_order.return_value = ResCommonResponse(rt_cd="0", msg1="주문 성공", data=None)
+    mock.cancel_stock_order.return_value = ResCommonResponse(rt_cd="0", msg1="취소 요청 성공", data=None)
+    mock.env = MagicMock(is_paper_trading=True)
     return mock
 
 @pytest.fixture
@@ -35,6 +39,7 @@ def mock_market_clock():
     mock = MagicMock()
     mock.is_market_operating_hours.return_value = True # 기본값 설정
     mock.async_sleep = AsyncMock()
+    mock.get_current_kst_time.return_value = datetime(2026, 4, 24, 9, 0, 0)
     return mock
 
 @pytest.fixture
@@ -45,13 +50,20 @@ def mock_market_calendar_service():
     return mock
 
 @pytest.fixture
-def handler(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+def mock_notification_service():
+    mock = AsyncMock()
+    mock.emit = AsyncMock()
+    return mock
+
+@pytest.fixture
+def handler(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service, mock_notification_service):
     """TransactionHandlers 인스턴스를 제공하는 픽스처."""
     handler_instance = OrderExecutionService(
         broker_api_wrapper=mock_broker_api_wrapper,
         logger=mock_logger,
         market_clock=mock_market_clock,
-        market_calendar_service=mock_market_calendar_service
+        market_calendar_service=mock_market_calendar_service,
+        notification_service=mock_notification_service,
     )
     return handler_instance
 
@@ -595,6 +607,52 @@ async def test_handle_place_buy_order_leaves_submitted_state_until_resolved(hand
 
 
 @pytest.mark.asyncio
+async def test_handle_place_buy_order_registers_fast_poll_window(
+    handler,
+    mock_broker_api_wrapper,
+    mock_market_clock,
+):
+    now = datetime(2026, 4, 23, 10, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = now
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False, source="strategy:test"
+    )
+
+    assert handler.get_active_order_poll_interval_sec(now) == 5
+    assert handler.get_active_order_poll_interval_sec(now + timedelta(seconds=61)) == 15
+
+
+@pytest.mark.asyncio
+async def test_active_order_poll_interval_returns_none_when_terminal(
+    handler,
+    mock_broker_api_wrapper,
+    mock_market_clock,
+):
+    now = datetime(2026, 4, 23, 10, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = now
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False, source="strategy:test"
+    )
+    await handler.resolve_submitted_order(
+        "005930", True, exchange=Exchange.KRX, final_state=OrderState.FILLED, filled_qty=10
+    )
+
+    assert handler.get_active_order_poll_interval_sec(now + timedelta(seconds=1)) is None
+
+
+@pytest.mark.asyncio
 async def test_handle_place_buy_order_blocks_duplicate_while_submitted(handler, mock_broker_api_wrapper):
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
@@ -755,6 +813,80 @@ async def test_signing_notice_duplicate_event_is_idempotent(handler, mock_broker
 
 
 @pytest.mark.asyncio
+async def test_processed_execution_events_are_bounded(handler, mock_broker_api_wrapper):
+    handler._processed_execution_event_limit = 2
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    for event_time in ("101500", "101501", "101502"):
+        await handler.handle_signing_notice({
+            "ODER_NO": "A0001",
+            "STCK_SHRN_ISCD": "005930",
+            "SELN_BYOV_CLS": "02",
+            "CNTG_QTY": "1",
+            "CNTG_UNPR": "70000",
+            "STCK_CNTG_HOUR": event_time,
+            "RFUS_YN": "N",
+            "CNTG_YN": "2",
+            "ACPT_YN": "Y",
+            "ODER_QTY": "10",
+        }, tr_id="H0STCNI0")
+
+    assert len(handler._processed_execution_events) == 2
+    assert "websocket:H0STCNI0:A0001:101500:PARTIAL_FILLED:1:70000:None" not in handler._processed_execution_events
+    assert "websocket:H0STCNI0:A0001:101501:PARTIAL_FILLED:1:70000:None" in handler._processed_execution_events
+    assert "websocket:H0STCNI0:A0001:101502:PARTIAL_FILLED:1:70000:None" in handler._processed_execution_events
+
+
+@pytest.mark.asyncio
+async def test_late_acceptance_notice_after_partial_fill_is_noop(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    partial = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "4",
+        "CNTG_UNPR": "70000",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+    late_acceptance = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "0",
+        "CNTG_UNPR": "0",
+        "STCK_CNTG_HOUR": "101400",
+        "RFUS_YN": "N",
+        "CNTG_YN": "1",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+
+    assert partial.state == OrderState.PARTIAL_FILLED
+    assert late_acceptance.state == OrderState.PARTIAL_FILLED
+    assert late_acceptance.filled_qty == 4
+    assert late_acceptance.remaining_qty == 6
+
+
+@pytest.mark.asyncio
 async def test_signing_notice_rejects_submitted_order(handler, mock_broker_api_wrapper):
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
@@ -829,3 +961,451 @@ async def test_poll_active_orders_once_applies_order_query_result(handler, mock_
         order_no="A0001",
         exchange=Exchange.KRX,
     )
+
+
+@pytest.mark.asyncio
+async def test_execution_confirmed_buy_persists_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, source="strategy:모멘텀", finalize_immediately=False
+    )
+
+    filled = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "10",
+        "CNTG_UNPR": "70100",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+
+    assert filled.state == OrderState.FILLED
+    assert filled.virtual_recorded_qty == 10
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("모멘텀", "005930", 70100, 10)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_execution_notice_does_not_duplicate_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, source="strategy:모멘텀", finalize_immediately=False
+    )
+    notice = {
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "10",
+        "CNTG_UNPR": "70100",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }
+
+    await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
+    await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
+
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("모멘텀", "005930", 70100, 10)
+
+
+@pytest.mark.asyncio
+async def test_execution_confirmed_sell_persists_strategy_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "S0001"},
+    )
+    await handler.handle_place_sell_order(
+        "005930", 71000, 5, source="strategy:모멘텀", finalize_immediately=False
+    )
+
+    filled = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="S0001",
+        stock_code="005930",
+        side=OrderSide.SELL,
+        event_state=OrderState.FILLED,
+        order_qty=5,
+        fill_qty=5,
+        fill_price=71100,
+        cumulative_filled_qty=5,
+        remaining_qty=0,
+        event_time="101500",
+    ))
+
+    assert filled.state == OrderState.FILLED
+    assert filled.virtual_recorded_qty == 5
+    virtual_trade_service.log_sell_by_strategy_async.assert_awaited_once_with("모멘텀", "005930", 71100, 5)
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_then_cancel_persists_confirmed_partial_qty(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, source="manual:수동매매", finalize_immediately=False
+    )
+
+    partial = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.PARTIAL_FILLED,
+        order_qty=10,
+        fill_qty=4,
+        fill_price=70100,
+        cumulative_filled_qty=4,
+        remaining_qty=6,
+        event_time="101500",
+    ))
+    assert partial.state == OrderState.PARTIAL_FILLED
+    virtual_trade_service.log_buy_async.assert_not_awaited()
+
+    canceled = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.CANCELED,
+        fill_qty=0,
+        fill_price=70200,
+        cumulative_filled_qty=4,
+        remaining_qty=6,
+        event_time="101700",
+    ))
+
+    assert canceled.state == OrderState.CANCELED
+    assert canceled.virtual_recorded_qty == 4
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("수동매매", "005930", 70200, 4)
+
+
+def _seed_order_context(
+    handler,
+    *,
+    state=OrderState.SUBMITTED,
+    broker_order_no="A0001",
+    remaining_qty=10,
+    created_at=None,
+    state_entered_at=None,
+    last_stuck_alert_at=None,
+    last_stuck_alert_level="",
+):
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    return handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=state,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        filled_qty=10 - remaining_qty,
+        remaining_qty=remaining_qty,
+        broker_order_no=broker_order_no,
+        source="strategy:test",
+        created_at=created_at,
+        state_entered_at=state_entered_at,
+        last_stuck_alert_at=last_stuck_alert_at,
+        last_stuck_alert_level=last_stuck_alert_level,
+    ))
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_requests_broker_with_remaining_qty(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    context = _seed_order_context(
+        handler,
+        state=OrderState.PARTIAL_FILLED,
+        broker_order_no="A0001",
+        remaining_qty=6,
+    )
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_awaited_once_with(
+        broker_order_no="A0001",
+        order_qty=6,
+        order_price=0,
+        order_orgno="06010",
+        order_dvsn="00",
+        qty_all_ord_yn="Y",
+        exchange=Exchange.KRX,
+    )
+    assert handler._order_states[context.order_key].state == OrderState.PARTIAL_FILLED
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_requires_active_context(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_requires_broker_order_no(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    _seed_order_context(handler, broker_order_no="", remaining_qty=10)
+
+    result = await handler.cancel_order(stock_code="005930", is_buy=True)
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_rejects_terminal_context(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_returns_broker_failure_without_forcing_state(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    mock_broker_api_wrapper.cancel_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="취소 실패",
+        data=None,
+    )
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    context = _seed_order_context(handler, state=OrderState.SUBMITTED, broker_order_no="A0001", remaining_qty=10)
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert handler._order_states[context.order_key].state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_check_stuck_orders_once_warns_once_in_paper_mode(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+    mock_notification_service,
+):
+    created_at = datetime(2026, 4, 24, 9, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = created_at
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        notification_service=mock_notification_service,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    context = _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+        created_at=created_at,
+        state_entered_at=created_at,
+    )
+
+    first_count = await handler.check_stuck_orders_once(created_at + timedelta(seconds=61))
+    second_count = await handler.check_stuck_orders_once(created_at + timedelta(seconds=120))
+
+    assert first_count == 1
+    assert second_count == 0
+    mock_logger.warning.assert_called_once()
+    logged_message = mock_logger.warning.call_args.args[0]
+    assert "order_key=" in logged_message
+    assert "broker_order_no=A0001" in logged_message
+    assert "age=61s" in logged_message
+    mock_notification_service.emit.assert_awaited_once()
+    emit_args = mock_notification_service.emit.await_args.args
+    assert emit_args[0] == NotificationCategory.TRADE
+    assert emit_args[1] == NotificationLevel.WARNING
+    updated = handler._order_states[context.order_key]
+    assert updated.last_stuck_alert_level == NotificationLevel.WARNING.value
+    assert updated.last_stuck_alert_at == created_at + timedelta(seconds=61)
+
+
+@pytest.mark.asyncio
+async def test_check_stuck_orders_once_escalates_to_critical_in_real_mode(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+    mock_notification_service,
+):
+    created_at = datetime(2026, 4, 24, 9, 0, 0)
+    mock_broker_api_wrapper.env.is_paper_trading = False
+    mock_market_clock.get_current_kst_time.return_value = created_at
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        notification_service=mock_notification_service,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    context = _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+        created_at=created_at,
+        state_entered_at=created_at,
+    )
+
+    warning_count = await handler.check_stuck_orders_once(created_at + timedelta(seconds=61))
+    critical_count = await handler.check_stuck_orders_once(created_at + timedelta(seconds=181))
+
+    assert warning_count == 1
+    assert critical_count == 1
+    mock_logger.warning.assert_called_once()
+    mock_logger.critical.assert_called_once()
+    emit_calls = mock_notification_service.emit.await_args_list
+    assert emit_calls[0].args[1] == NotificationLevel.WARNING
+    assert emit_calls[1].args[1] == NotificationLevel.CRITICAL
+    updated = handler._order_states[context.order_key]
+    assert updated.last_stuck_alert_level == NotificationLevel.CRITICAL.value
+
+
+@pytest.mark.asyncio
+async def test_state_transition_resets_stuck_order_alert_level(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    created_at = datetime(2026, 4, 24, 9, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = created_at
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+        created_at=created_at,
+        state_entered_at=created_at,
+        last_stuck_alert_at=created_at + timedelta(seconds=61),
+        last_stuck_alert_level=NotificationLevel.WARNING.value,
+    )
+
+    mock_market_clock.get_current_kst_time.return_value = created_at + timedelta(seconds=90)
+    updated = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.PARTIAL_FILLED,
+        order_qty=10,
+        fill_qty=4,
+        fill_price=70100,
+        cumulative_filled_qty=4,
+        remaining_qty=6,
+        event_time="090130",
+    ))
+
+    assert updated.state == OrderState.PARTIAL_FILLED
+    assert updated.last_stuck_alert_level == ""
+    assert updated.last_stuck_alert_at is None
+    assert updated.state_entered_at == created_at + timedelta(seconds=90)

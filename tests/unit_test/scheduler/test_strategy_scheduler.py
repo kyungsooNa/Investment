@@ -57,6 +57,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK")
         )
         oes.resolve_submitted_order = AsyncMock()
+        oes.poll_active_orders_once = AsyncMock(return_value=0)
+        oes.check_stuck_orders_once = AsyncMock(return_value=0)
+        oes.get_active_order_poll_interval_sec = MagicMock(return_value=StrategyScheduler.ORDER_POLL_INTERVAL_SEC)
 
         sqs = MagicMock()
         sqs.get_current_price = AsyncMock(
@@ -105,6 +108,68 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(scheduler._strategies), 1)
         self.assertEqual(scheduler._strategies[0].strategy.name, "테스트전략")
+
+    async def test_poll_active_orders_if_due_calls_order_service(self):
+        from datetime import datetime
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.poll_active_orders_once.return_value = 2
+
+        result = await scheduler._poll_active_orders_if_due(datetime(2026, 4, 23, 10, 0, 0))
+
+        self.assertEqual(result, 2)
+        oes.poll_active_orders_once.assert_awaited_once()
+        oes.check_stuck_orders_once.assert_awaited_once_with(datetime(2026, 4, 23, 10, 0, 0))
+        scheduler._logger.info.assert_called_with("[Scheduler] 활성 주문 polling 보정: 2건")
+
+    async def test_poll_active_orders_if_due_respects_interval(self):
+        from datetime import datetime, timedelta
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        first = datetime(2026, 4, 23, 10, 0, 0)
+
+        first_result = await scheduler._poll_active_orders_if_due(first)
+        second_result = await scheduler._poll_active_orders_if_due(first + timedelta(seconds=5))
+
+        self.assertEqual(first_result, 0)
+        self.assertEqual(second_result, 0)
+        self.assertEqual(oes.poll_active_orders_once.await_count, 1)
+
+    async def test_poll_active_orders_if_due_skips_dry_run(self):
+        from datetime import datetime
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=True)
+
+        result = await scheduler._poll_active_orders_if_due(datetime(2026, 4, 23, 10, 0, 0))
+
+        self.assertEqual(result, 0)
+        oes.poll_active_orders_once.assert_not_awaited()
+        oes.check_stuck_orders_once.assert_not_awaited()
+
+    async def test_poll_active_orders_if_due_uses_fast_fallback_interval(self):
+        from datetime import datetime, timedelta
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.get_active_order_poll_interval_sec.return_value = 5
+        first = datetime(2026, 4, 23, 10, 0, 0)
+
+        first_result = await scheduler._poll_active_orders_if_due(first)
+        second_result = await scheduler._poll_active_orders_if_due(first + timedelta(seconds=5))
+
+        self.assertEqual(first_result, 0)
+        self.assertEqual(second_result, 0)
+        self.assertEqual(oes.poll_active_orders_once.await_count, 2)
+
+    async def test_poll_active_orders_if_due_skips_when_no_active_order_exists(self):
+        from datetime import datetime
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.get_active_order_poll_interval_sec.return_value = None
+
+        result = await scheduler._poll_active_orders_if_due(datetime(2026, 4, 23, 10, 0, 0))
+
+        self.assertEqual(result, 0)
+        oes.poll_active_orders_once.assert_not_awaited()
 
     def test_get_status_with_holdings(self):
         """전략 등록 및 보유 종목이 있는 경우 get_status 테스트."""
@@ -176,7 +241,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         oes.handle_place_sell_order.assert_not_called()
 
     async def test_execute_buy_signal_with_api(self):
-        """dry_run=False: CSV 기록 + API 주문 모두 실행."""
+        """dry_run=False: API 주문만 실행하고 가상매매 기록은 체결 확인에 맡긴다."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
 
         signal = TradeSignal(
@@ -185,7 +250,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler._execute_signal(signal)
 
-        vm.log_buy_async.assert_awaited_once_with("테스트전략", "005930", 70000, 1)
+        vm.log_buy_async.assert_not_awaited()
         oes.handle_place_buy_order.assert_called_once_with(
             "005930",
             70000,
@@ -858,8 +923,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy:TestStrategy",
             finalize_immediately=False,
         )
-        # 3. VM 로그 기록은 조회된 현재가(60000)로 기록됨
-        vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrategy", "005930", 60000, 5)
+        # 3. live 모드 가상매매 기록은 체결 확인 이후 OrderExecutionService가 처리
+        vm.log_sell_by_strategy_async.assert_not_awaited()
 
     async def test_force_liquidate_uses_holding_qty(self):
         """강제 청산 시 설정된 주문 수량이 아닌 실제 보유 수량을 사용하는지 테스트."""
@@ -892,8 +957,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy:TestStrategy",
             finalize_immediately=False,
         )
-        # VM 로그 기록도 3으로 기록되어야 함
-        vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrategy", "005930", 60000, 3)
+        vm.log_sell_by_strategy_async.assert_not_awaited()
 
     async def test_stop_strategy_triggers_liquidation(self):
         """stop_strategy 호출 시 강제 청산 옵션이 켜져 있으면 청산 수행."""
@@ -999,8 +1063,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy:TestStrat",
             finalize_immediately=False,
         )
-        # 3. 로그는 조회된 80000원으로 기록되었는지 확인
-        vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrat", "000660", 80000, 10)
+        vm.log_sell_by_strategy_async.assert_not_awaited()
 
     async def test_run_strategy_concurrent_execution(self):
         """_run_strategy가 여러 시그널을 동시(concurrent)에 처리하는지 테스트."""
@@ -1087,8 +1150,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             finalize_immediately=False,
         )
 
-        # 3. 로그는 0원으로 기록되었는지 확인 (조회 실패 시 fallback)
-        vm.log_sell_by_strategy_async.assert_awaited_once_with("TestStrat", "000660", 0, 10)
+        vm.log_sell_by_strategy_async.assert_not_awaited()
 
     async def test_start_already_running(self):
         """이미 실행 중일 때 start 호출 시 경고 로그 및 리턴 테스트."""
@@ -1296,8 +1358,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         await scheduler._execute_signal(signal)
         
-        # 로그는 0원으로 기록되어야 함
-        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+        vm.log_buy_async.assert_not_awaited()
 
     async def test_execute_signal_market_price_lookup_object_response(self):
         """시장가 주문 시 현재가 조회가 객체 형태로 반환될 때 테스트."""
@@ -1323,8 +1384,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         await scheduler._execute_signal(signal)
         
-        # 로그는 55000원으로 기록되어야 함
-        vm.log_buy_async.assert_awaited_once_with("S", "005930", 55000, 1)
+        vm.log_buy_async.assert_not_awaited()
 
     async def test_run_strategy_updates_qty(self):
         """전략 실행 시 시그널 수량이 1 이하이면 설정된 주문 수량으로 업데이트하는지 테스트."""
@@ -1447,7 +1507,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         await scheduler._execute_signal(signal)
         
-        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+        vm.log_buy_async.assert_not_awaited()
 
     async def test_execute_signal_market_price_lookup_object_missing_attr(self):
         """시장가 주문 시 현재가 조회 객체에 속성이 없을 때 테스트."""
@@ -1470,7 +1530,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         await scheduler._execute_signal(signal)
         
-        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+        vm.log_buy_async.assert_not_awaited()
 
     async def test_execute_signal_market_price_lookup_data_object_missing_output(self):
         """시장가 주문 시 현재가 조회 데이터 객체에 output 속성이 없을 때 테스트."""
@@ -1490,7 +1550,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         await scheduler._execute_signal(signal)
         
-        vm.log_buy_async.assert_awaited_once_with("S", "005930", 0, 1)
+        vm.log_buy_async.assert_not_awaited()
 
     # ── SSE 구독자 관리 테스트 ──
 

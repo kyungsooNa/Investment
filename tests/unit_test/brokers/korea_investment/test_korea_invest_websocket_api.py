@@ -818,6 +818,36 @@ def test_parse_signing_notice_fill_data(websocket_api_instance):
     assert parsed["tr_id"] == "H0STCNI0"
 
 
+def test_parse_signing_notice_acceptance_data(websocket_api_instance):
+    api = websocket_api_instance
+    values = [
+        "test-htsid", "12345678", "A0001", "", "02", "00", "00", "00",
+        "005930", "10", "70000", "101400", "N", "1", "Y", "001",
+        "", "계좌명", "0", "KRX", "Y", "", "", "", "삼성전자", "0"
+    ]
+
+    parsed = KoreaInvestWebSocketAPI._parse_signing_notice(api, "^".join(values), "H0STCNI0")
+
+    assert parsed["주문번호"] == "A0001"
+    assert parsed["주문수량"] == "10"
+    assert parsed["체결여부"] == "1"
+    assert parsed["CNTG_YN"] == "1"
+    assert parsed["통보유형"] == "접수"
+
+
+def test_parse_signing_notice_short_payload_is_observable(websocket_api_instance):
+    api = websocket_api_instance
+
+    parsed = KoreaInvestWebSocketAPI._parse_signing_notice(api, "test-htsid^12345678^A0001", "H0STCNI0")
+
+    assert parsed["tr_id"] == "H0STCNI0"
+    assert parsed["통보유형"] == "unknown"
+    assert parsed["parse_error"] == "insufficient_fields"
+    assert parsed["field_count"] == 3
+    assert parsed["raw"] == "test-htsid^12345678^A0001"
+    api._logger.warning.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_subscribe_order_notice_success(websocket_api_instance):
     api = websocket_api_instance
@@ -837,6 +867,18 @@ async def test_subscribe_order_notice_paper_uses_paper_tr_id(websocket_api_insta
 
     assert result is True
     mock_send.assert_awaited_once_with("H0STCNI9", "test-htsid", tr_type="1")
+
+
+@pytest.mark.asyncio
+async def test_subscribe_order_notice_missing_htsid_real_raises(websocket_api_instance):
+    api = websocket_api_instance
+    api._env.active_config["htsid"] = ""
+    api._env.is_paper_trading = False
+
+    with pytest.raises(RuntimeError, match="htsid"):
+        await api.subscribe_order_notice()
+
+    api._logger.critical.assert_called_once()
 
 
 @pytest.mark.asyncio

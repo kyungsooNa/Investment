@@ -9,45 +9,29 @@ router = APIRouter()
 
 @router.post("/order")
 async def place_order(req: OrderRequest):
-    """매수/매도 주문 (성공 시 가상 매매 기록에도 '수동매매'로 저장)"""
+    """매수/매도 주문. 가상 매매 기록은 실제 체결 확인 후 OrderExecutionService가 처리한다."""
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
 
     # 1. 실제/모의 투자 주문 전송
     if req.side == "buy":
-        resp = await ctx.order_execution_service.handle_buy_stock(req.code, req.qty, req.price)
+        resp = await ctx.order_execution_service.handle_buy_stock(
+            req.code,
+            req.qty,
+            req.price,
+            source="manual:수동매매",
+            finalize_immediately=False,
+        )
     elif req.side == "sell":
-        resp = await ctx.order_execution_service.handle_sell_stock(req.code, req.qty, req.price)
+        resp = await ctx.order_execution_service.handle_sell_stock(
+            req.code,
+            req.qty,
+            req.price,
+            source="manual:수동매매",
+            finalize_immediately=False,
+        )
     else:
         raise HTTPException(status_code=400, detail="side는 'buy' 또는 'sell'이어야 합니다.")
-
-    # 2. [추가됨] 주문 성공 시 가상 매매 장부에도 기록 (전략명: "수동매매")
-    if resp and resp.rt_cd == "0":
-        # virtual_trade_service가 초기화되어 있는지 확인
-        if hasattr(ctx, 'virtual_trade_service') and ctx.virtual_trade_service:
-            try:
-                # 가격 형변환 (문자열 -> 숫자)
-                price_val = int(req.price) if req.price and req.price.isdigit() else 0
-
-                # 시장가 주문(price=0)인 경우 현재가를 조회하여 사용
-                if price_val == 0 and getattr(ctx, 'stock_query_service', None):
-                    try:
-                        price_resp = await ctx.stock_query_service.handle_get_current_stock_price(req.code)
-                        if price_resp and price_resp.rt_cd == "0" and isinstance(price_resp.data, dict):
-                            price_str = str(price_resp.data.get('price', '0'))
-                            price_val = int(price_str) if price_str.isdigit() else 0
-                    except Exception:
-                        pass
-
-                if req.side == "buy":
-                    # 매수 기록 (전략명: 수동매매)
-                    ctx.virtual_trade_service.log_buy("수동매매", req.code, price_val)
-                elif req.side == "sell":
-                    # 매도 기록 (수익률 계산됨)
-                    ctx.virtual_trade_service.log_sell(req.code, price_val)
-
-            except Exception as e:
-                print(f"[WebAPI] 수동매매 기록 중 오류 발생: {e}")
 
     ctx.pm.log_timer("place_order", t_start)
     return _serialize_response(resp)

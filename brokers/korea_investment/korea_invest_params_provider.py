@@ -672,6 +672,23 @@ class OrderCashBody:
 
 # ---- 얇은 파사드: 기존 코드에서 함수 호출만으로 dict를 얻을 수 있게 ----
 
+@dataclass(frozen=True)
+class OrderRvsecnclBody:
+    CANO: str
+    ACNT_PRDT_CD: str
+    KRX_FWDG_ORD_ORGNO: str
+    ORGN_ODNO: str
+    ORD_DVSN: str
+    RVSE_CNCL_DVSN_CD: str
+    ORD_QTY: str
+    ORD_UNPR: str
+    QTY_ALL_ORD_YN: str = "Y"
+    EXCG_ID_DVSN_CD: str = ""
+
+    def to_dict(self):
+        return asdict(self)
+
+
 class Params:
     """기존 코드 변경 최소화를 위한 dict 파사드"""
 
@@ -867,4 +884,31 @@ class Params:
             EXCG_ID_DVSN_CD=excg_id_dvsn_cd,
             SLL_TYPE=sll_type,
             CNDT_PRIC=cndt_pric,
+        ).to_dict()
+
+    @staticmethod
+    def order_rvsecncl_body(
+            *,
+            cano: str,
+            acnt_prdt_cd: str,
+            order_orgno: str,
+            original_order_no: str,
+            ord_dvsn: str = "00",
+            rvse_cncl_dvsn_cd: str = "02",
+            ord_qty: str | int = 0,
+            ord_unpr: str | int = 0,
+            qty_all_ord_yn: str = "Y",
+            excg_id_dvsn_cd: str = "",
+    ) -> dict:
+        return OrderRvsecnclBody(
+            CANO=cano,
+            ACNT_PRDT_CD=acnt_prdt_cd,
+            KRX_FWDG_ORD_ORGNO=order_orgno,
+            ORGN_ODNO=original_order_no,
+            ORD_DVSN=ord_dvsn,
+            RVSE_CNCL_DVSN_CD=rvse_cncl_dvsn_cd,
+            ORD_QTY=str(ord_qty),
+            ORD_UNPR=str(ord_unpr),
+            QTY_ALL_ORD_YN=qty_all_ord_yn,
+            EXCG_ID_DVSN_CD=excg_id_dvsn_cd,
         ).to_dict()

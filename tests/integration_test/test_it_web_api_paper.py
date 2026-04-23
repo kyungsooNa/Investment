@@ -186,7 +186,7 @@ class TestBalancePaper:
 
 class TestBuyOrderPaper:
     def test_buy_order_success(self, paper_client, mock_paper_ctx):
-        """매수 주문 성공 시 수동매매 기록도 생성된다."""
+        """매수 주문 성공 시 수동매매 기록은 체결 확인 이후로 미룬다."""
         order_result = {"ord_no": "1234567890"}
         mock_paper_ctx.order_execution_service.handle_buy_stock = AsyncMock(
             return_value=make_success_response(order_result)
@@ -202,10 +202,9 @@ class TestBuyOrderPaper:
 
         # 서비스 호출 검증
         mock_paper_ctx.order_execution_service.handle_buy_stock.assert_awaited_once_with(
-            "005930", "10", "70000"
+            "005930", "10", "70000", source="manual:수동매매", finalize_immediately=False
         )
-        # 수동매매 기록 검증
-        mock_paper_ctx.virtual_trade_service.log_buy.assert_called_once_with("수동매매", "005930", 70000)
+        mock_paper_ctx.virtual_trade_service.log_buy.assert_not_called()
 
     def test_buy_order_failure(self, paper_client, mock_paper_ctx):
         """매수 주문 실패 시 가상 매매 기록이 생성되지 않는다."""
@@ -222,7 +221,7 @@ class TestBuyOrderPaper:
         mock_paper_ctx.virtual_trade_service.log_buy.assert_not_called()
 
     def test_buy_order_market_price(self, paper_client, mock_paper_ctx):
-        """시장가 매수 (price=0) 시 현재가를 조회하여 기록한다."""
+        """시장가 매수도 API 승인 시점에는 가상매매 기록을 생성하지 않는다."""
         order_result = {"ord_no": "1234567890"}
         mock_paper_ctx.order_execution_service.handle_buy_stock = AsyncMock(
             return_value=make_success_response(order_result)
@@ -238,8 +237,7 @@ class TestBuyOrderPaper:
         assert resp.status_code == 200
         assert resp.json()["rt_cd"] == "0"
 
-        # 현재가(71000)로 기록되어야 함
-        mock_paper_ctx.virtual_trade_service.log_buy.assert_called_once_with("수동매매", "005930", 71000)
+        mock_paper_ctx.virtual_trade_service.log_buy.assert_not_called()
 
 
 # ============================================================================
@@ -248,7 +246,7 @@ class TestBuyOrderPaper:
 
 class TestSellOrderPaper:
     def test_sell_order_success(self, paper_client, mock_paper_ctx):
-        """매도 주문 성공 시 수동매매 매도 기록이 생성된다."""
+        """매도 주문 성공 시 수동매매 매도 기록은 체결 확인 이후로 미룬다."""
         order_result = {"ord_no": "S123456789"}
         mock_paper_ctx.order_execution_service.handle_sell_stock = AsyncMock(
             return_value=make_success_response(order_result)
@@ -263,9 +261,9 @@ class TestSellOrderPaper:
         assert body["rt_cd"] == "0"
 
         mock_paper_ctx.order_execution_service.handle_sell_stock.assert_awaited_once_with(
-            "005930", "5", "71000"
+            "005930", "5", "71000", source="manual:수동매매", finalize_immediately=False
         )
-        mock_paper_ctx.virtual_trade_service.log_sell.assert_called_once_with("005930", 71000)
+        mock_paper_ctx.virtual_trade_service.log_sell.assert_not_called()
 
     def test_sell_order_failure(self, paper_client, mock_paper_ctx):
         """매도 주문 실패 시 가상 매매 기록이 생성되지 않는다."""

@@ -70,6 +70,7 @@ class StrategyScheduler:
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
     FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산
     STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
+    ORDER_POLL_INTERVAL_SEC = 15    # 활성 주문 체결조회 보정 주기 (초)
 
     def __init__(
         self,
@@ -106,6 +107,7 @@ class StrategyScheduler:
         self._stop_event: asyncio.Event = asyncio.Event()
         self._last_run: Dict[str, datetime] = {}
         self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
+        self._last_order_poll_time: Optional[datetime] = None
         self._force_exit_done: set = set()  # 당일 강제 청산 완료된 전략
         self._reconciled_dates: set = set()  # 원장 대사 완료된 날짜 (YYYY-MM-DD)
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
@@ -200,6 +202,7 @@ class StrategyScheduler:
                 now = self._tm.get_current_kst_time()
                 close_time = self._tm.get_market_close_time()
                 minutes_to_close = (close_time - now).total_seconds() / 60
+                await self._poll_active_orders_if_due(now)
 
                 # 원장 대사: 당일 첫 장 진입 시 1회 실행
                 today_str = now.strftime("%Y-%m-%d")
@@ -272,6 +275,39 @@ class StrategyScheduler:
                 await asyncio.sleep(self.LOOP_INTERVAL_SEC)
 
     # ── 전략 실행 ──
+
+    async def _poll_active_orders_if_due(self, now: Optional[datetime] = None) -> int:
+        """기존 스케줄러 루프에서 활성 주문 상태를 주기적으로 보정합니다."""
+        if self._dry_run or not hasattr(self._oes, "poll_active_orders_once"):
+            return 0
+
+        now = now or self._tm.get_current_kst_time()
+        poll_interval_sec = self.ORDER_POLL_INTERVAL_SEC
+        if hasattr(self._oes, "get_active_order_poll_interval_sec"):
+            poll_interval_hint = self._oes.get_active_order_poll_interval_sec(
+                now,
+                default_interval_sec=self.ORDER_POLL_INTERVAL_SEC,
+            )
+            if poll_interval_hint is None:
+                return 0
+            poll_interval_sec = poll_interval_hint
+
+        if self._last_order_poll_time is not None:
+            elapsed = (now - self._last_order_poll_time).total_seconds()
+            if elapsed < poll_interval_sec:
+                return 0
+
+        self._last_order_poll_time = now
+        try:
+            applied_count = await self._oes.poll_active_orders_once()
+            if hasattr(self._oes, "check_stuck_orders_once"):
+                await self._oes.check_stuck_orders_once(now)
+            if applied_count:
+                self._logger.info(f"[Scheduler] 활성 주문 polling 보정: {applied_count}건")
+            return applied_count
+        except Exception as e:
+            self._logger.warning(f"[Scheduler] 활성 주문 polling 실패: {e}", exc_info=True)
+            return 0
 
     async def _run_strategy(self, cfg: StrategySchedulerConfig, force_exit_only: bool = False):
         name = cfg.strategy.name
@@ -403,11 +439,9 @@ class StrategyScheduler:
 
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     if signal.action == "BUY":
-                        await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
                         if self._price_sub_svc:
                             await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
                     else:
-                        return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
                         if self._price_sub_svc:
                             await self._price_sub_svc.remove_subscription(signal.code, category_key)
                     self._logger.info(
