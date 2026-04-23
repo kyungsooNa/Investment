@@ -1,6 +1,5 @@
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from services.newhigh_service import NewHighService
 from common.types import ResCommonResponse
@@ -49,6 +48,7 @@ def mock_task():
     # get_progress는 동기 메서드이므로 MagicMock으로 별도 설정
     task.get_progress = MagicMock(return_value={"running": False})
     task.force_run = AsyncMock()
+    task.trigger_refresh = MagicMock(return_value=True)
     return task
 
 
@@ -136,6 +136,26 @@ async def test_get_newhigh_list_db_empty_items_falls_to_cache(mock_repo, mock_ta
     assert result.data[0]["code"] == "000660"
 
 
+async def test_get_newhigh_list_db_empty_completed_zero_returns_success(mock_repo, mock_task):
+    """이미 해당 날짜 계산이 끝난 0건은 재수집으로 오인하지 않는다."""
+    mock_repo.get_newhigh_stocks.return_value = []
+    mock_task.get_progress.return_value = {
+        "running": False,
+        "last_date": "20260414",
+        "newhigh_count": 0,
+    }
+    mock_task.get_newhigh_cache.return_value = []
+
+    service = make_service(repo=mock_repo, task=mock_task)
+    result = await service.get_newhigh_list()
+
+    assert result.rt_cd == "0"
+    assert result.msg1 == "성공"
+    assert result.data == []
+    mock_task.get_newhigh_cache.assert_not_awaited()
+    mock_task.trigger_refresh.assert_not_called()
+
+
 async def test_get_newhigh_list_db_exception_falls_to_cache(mock_repo, mock_task):
     """DB 조회 중 예외 발생 시 캐시로 폴백한다."""
     mock_repo.get_latest_trade_date.side_effect = Exception("DB 연결 실패")
@@ -199,18 +219,17 @@ async def test_get_newhigh_list_cache_null_fields(mock_task):
 # ── force_run 트리거 ──────────────────────────────────────────────────────
 
 async def test_get_newhigh_list_no_cache_triggers_collect(mock_task):
-    """캐시가 없고 task가 실행 중이 아닐 때 force_run을 트리거하고 빈 목록을 반환한다."""
+    """캐시가 없고 task가 실행 중이 아닐 때 갱신을 트리거하고 빈 목록을 반환한다."""
     mock_task.get_newhigh_cache.return_value = []
     mock_task.get_progress.return_value = {"running": False}
 
     service = make_service(task=mock_task)
-    with patch("asyncio.create_task") as mock_create_task:
-        result = await service.get_newhigh_list()
+    result = await service.get_newhigh_list()
 
     assert result.rt_cd == "0"
     assert result.msg1 == "수집 중"
     assert result.data == []
-    mock_create_task.assert_called_once()
+    mock_task.trigger_refresh.assert_called_once()
 
 
 async def test_get_newhigh_list_no_cache_already_running_no_duplicate_trigger(mock_task):
@@ -219,12 +238,11 @@ async def test_get_newhigh_list_no_cache_already_running_no_duplicate_trigger(mo
     mock_task.get_progress.return_value = {"running": True}
 
     service = make_service(task=mock_task)
-    with patch("asyncio.create_task") as mock_create_task:
-        result = await service.get_newhigh_list()
+    result = await service.get_newhigh_list()
 
     assert result.rt_cd == "0"
     assert result.msg1 == "수집 중"
-    mock_create_task.assert_not_called()
+    mock_task.trigger_refresh.assert_not_called()
 
 
 # ── task 미설정 ───────────────────────────────────────────────────────────────

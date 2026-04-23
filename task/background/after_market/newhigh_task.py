@@ -62,7 +62,19 @@ class NewHighTask(AfterMarketTask):
         self._rs_rating_min = rs_rating_min  # 0이면 RS Rating 필터 비활성
         self._newhigh_cache: List[Dict] = []
         self._last_collected_date: Optional[str] = None
-        self._progress: Dict = {"running": False, "last_date": None, "newhigh_count": 0, "status": None}
+        self._run_lock = asyncio.Lock()
+        self._refresh_task: Optional[asyncio.Task] = None
+        self._progress: Dict = {
+            "running": False,
+            "last_date": None,
+            "newhigh_count": 0,
+            "status": None,
+            "processed": 0,
+            "total": 0,
+            "collected": 0,
+            "elapsed": 0.0,
+            "last_error": None,
+        }
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────────
 
@@ -80,12 +92,39 @@ class NewHighTask(AfterMarketTask):
     async def get_newhigh_cache(self, limit: int = 200):
         """현재 메모리에 캐시된 신고가 종목 목록을 반환한다 (웹 UI 등에서 호출)."""
         if not self._newhigh_cache and not self._progress.get("running"):
-            try:
-                asyncio.get_running_loop()
-                asyncio.create_task(self.force_run())
-            except RuntimeError:
-                self._logger.warning("이벤트 루프 없음 — NewHigh 즉시 갱신 스킵")
+            self.trigger_refresh()
         return self._newhigh_cache[:limit]
+
+    def trigger_refresh(self) -> bool:
+        """캐시가 비었을 때 신고가 갱신을 한 번만 백그라운드로 예약한다."""
+        if self._refresh_task and not self._refresh_task.done():
+            return False
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._logger.warning("이벤트 루프 없음 — NewHigh 즉시 갱신 스킵")
+            return False
+
+        self._progress["running"] = True
+        self._progress["status"] = "신고가 갱신 대기 중..."
+        self._refresh_task = asyncio.create_task(self.force_run())
+        self._refresh_task.add_done_callback(self._clear_refresh_task)
+        return True
+
+    def _clear_refresh_task(self, task: asyncio.Task) -> None:
+        if self._refresh_task is task:
+            self._refresh_task = None
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            self._logger.error(f"NewHighTask 백그라운드 갱신 오류: {e}", exc_info=True)
+        if self._progress.get("status") == "신고가 갱신 대기 중...":
+            self._progress["status"] = None
+        if self._progress.get("running") and not self._run_lock.locked():
+            self._progress["running"] = False
 
     # ── 장마감 후 콜백 ──────────────────────────────────────────────
 
@@ -97,79 +136,120 @@ class NewHighTask(AfterMarketTask):
         await self._run_newhigh(latest_trading_date)
 
     async def _run_newhigh(self, latest_trading_date: str) -> None:
-        self._progress["running"] = True
+        async with self._run_lock:
+            await self._run_newhigh_locked(latest_trading_date)
+
+    async def _run_newhigh_locked(self, latest_trading_date: str) -> None:
+        if self._last_collected_date == latest_trading_date:
+            self._logger.info(f"NewHighTask: {latest_trading_date} 이미 처리됨, 건너뜀")
+            return
+
+        self._progress.update({
+            "running": True,
+            "status": "신고가 탐색 중...",
+            "processed": 0,
+            "total": 0,
+            "collected": 0,
+            "elapsed": 0.0,
+            "last_error": None,
+        })
         start_time = time.time()
         try:
-            self._logger.info(f"NewHighTask: {latest_trading_date} 신고가 탐색 시작")
-            snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
-
+            snapshots = await self._load_snapshots_for_newhigh(latest_trading_date)
             if not snapshots:
-                self._logger.warning(f"NewHighTask: daily_prices 데이터 없음 (date={latest_trading_date})")
                 return
 
-            # w52_high 데이터 부재 시 DailyPriceCollectorTask로 강제 최신화 후 재조회
-            if self._daily_price_collector_task and not self._has_sufficient_w52_data(snapshots):
-                self._logger.warning(
-                    f"NewHighTask: w52_high 데이터 부재 — DailyPriceCollectorTask.force_run() 실행 후 재조회"
-                )
-                self._progress["status"] = "DailyPriceCollector 데이터 수집 중..."
-                await self._daily_price_collector_task.force_run()
-                self._progress["status"] = None
-                snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
-
             newhigh_stocks = self._filter_newhigh(snapshots)
-
-            # 600일치 데이터를 바탕으로 역사적 신고가 판별
             if self._stock_query_service and newhigh_stocks:
                 newhigh_stocks = await self._enrich_historical_high(newhigh_stocks)
-
-            # RS Rating 주입 및 필터링 (rs_rating_min > 0 이고 서비스가 있을 때만 활성)
             if self._rs_rating_service and newhigh_stocks:
                 newhigh_stocks = await self._enrich_and_filter_rs_rating(
                     newhigh_stocks, latest_trading_date
                 )
 
             self._newhigh_cache = newhigh_stocks
-            
-            # DB에 신고가 여부 기록 (best-effort)
-            try:
-                if self._stock_repo:
-                    trade_date = latest_trading_date
-                    records = []
-                    for s in newhigh_stocks:
-                        records.append({
-                            "code": s.get("code"),
-                            "is_newhigh": True,
-                            "is_historical_new_high": s.get("is_historical_new_high", False)
-                        })
-                    if records:
-                        await self._stock_repo.update_newhigh_fields(trade_date, records)
-            except Exception as e:
-                self._logger.warning(f"NewHighTask DB에 쓰기 실패: {e}")
+            await self._write_newhigh_fields(latest_trading_date, newhigh_stocks)
 
             elapsed = time.time() - start_time
             self._logger.info(
-                f"NewHighTask: 신고가 {len(newhigh_stocks)}개 감지 / 전체 {len(snapshots)}개 (date={latest_trading_date}) / 소요: {elapsed:.1f}s"
+                f"NewHighTask: 신고가 {len(newhigh_stocks)}개 감지 / 전체 {len(snapshots)}개 "
+                f"(date={latest_trading_date}) / 소요: {elapsed:.1f}s"
             )
-    
-            if self._telegram_reporter:
-                await self._telegram_reporter.send_newhigh_report(newhigh_stocks, latest_trading_date)
-    
-            if self._notification_service:
-                await self._notification_service.emit(
-                    NotificationCategory.BACKGROUND,
-                    NotificationLevel.INFO,
-                    "52주 신고가 리포트",
-                    f"{len(newhigh_stocks)}개 종목 감지 (date={latest_trading_date}) / 소요: {elapsed:.1f}초",
-                )
-    
+
             self._last_collected_date = latest_trading_date
-            self._progress.update({"last_date": latest_trading_date, "newhigh_count": len(newhigh_stocks)})
+            self._progress.update({
+                "last_date": latest_trading_date,
+                "newhigh_count": len(newhigh_stocks),
+                "collected": len(newhigh_stocks),
+                "elapsed": elapsed,
+            })
+            await self._send_reports(newhigh_stocks, latest_trading_date, elapsed)
         except Exception as e:
+            self._progress["last_error"] = str(e)
             self._logger.error(f"NewHighTask 신고가 탐색 중 오류 발생: {e}", exc_info=True)
         finally:
             self._progress["running"] = False
             self._progress["status"] = None
+
+    async def _load_snapshots_for_newhigh(self, latest_trading_date: str) -> List[Dict]:
+        self._logger.info(f"NewHighTask: {latest_trading_date} 신고가 탐색 시작")
+        snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
+        if not snapshots:
+            message = f"daily_prices 데이터 없음 (date={latest_trading_date})"
+            self._logger.warning(f"NewHighTask: {message}")
+            self._progress["last_error"] = message
+            return []
+
+        self._progress.update({"total": len(snapshots), "processed": len(snapshots)})
+        if self._daily_price_collector_task and not self._has_sufficient_w52_data(snapshots):
+            self._logger.warning(
+                "NewHighTask: w52_high 데이터 부재 — DailyPriceCollectorTask.force_run() 실행 후 재조회"
+            )
+            self._progress["status"] = "DailyPriceCollector 데이터 수집 중..."
+            await self._daily_price_collector_task.force_run()
+            self._progress["status"] = "신고가 탐색 중..."
+            snapshots = await self._stock_repo.get_all_daily_snapshots(latest_trading_date)
+            self._progress.update({"total": len(snapshots), "processed": len(snapshots)})
+
+        if not snapshots:
+            message = f"DailyPriceCollector 재수집 후에도 daily_prices 데이터 없음 (date={latest_trading_date})"
+            self._logger.warning(f"NewHighTask: {message}")
+            self._progress["last_error"] = message
+            return []
+        return snapshots
+
+    async def _write_newhigh_fields(self, trade_date: str, stocks: List[Dict]) -> None:
+        try:
+            records = [
+                {
+                    "code": s.get("code"),
+                    "is_newhigh": True,
+                    "is_historical_new_high": s.get("is_historical_new_high", False),
+                }
+                for s in stocks
+                if s.get("code")
+            ]
+            await self._stock_repo.update_newhigh_fields(trade_date, records)
+        except Exception as e:
+            self._logger.warning(f"NewHighTask DB에 쓰기 실패: {e}")
+
+    async def _send_reports(self, stocks: List[Dict], latest_trading_date: str, elapsed: float) -> None:
+        if self._telegram_reporter:
+            try:
+                await self._telegram_reporter.send_newhigh_report(stocks, latest_trading_date)
+            except Exception as e:
+                self._logger.warning(f"NewHighTask 텔레그램 리포트 전송 실패: {e}")
+
+        if self._notification_service:
+            try:
+                await self._notification_service.emit(
+                    NotificationCategory.BACKGROUND,
+                    NotificationLevel.INFO,
+                    "52주 신고가 리포트",
+                    f"{len(stocks)}개 종목 감지 (date={latest_trading_date}) / 소요: {elapsed:.1f}초",
+                )
+            except Exception as e:
+                self._logger.warning(f"NewHighTask 알림 발행 실패: {e}")
 
     async def force_run(self) -> None:
         """skip 조건을 무시하고 즉시 52주 신고가 탐색을 실행한다."""
@@ -180,6 +260,7 @@ class NewHighTask(AfterMarketTask):
                 target_date = await self._mcs.get_latest_trading_date()
             if not target_date:
                 self._logger.error("최근 거래일을 확인할 수 없어 강제 실행을 중단합니다.")
+                self._progress.update({"running": False, "status": None, "last_error": "최근 거래일 확인 실패"})
                 return
             await self._run_newhigh(target_date)
 
@@ -243,6 +324,16 @@ class NewHighTask(AfterMarketTask):
             rating_map: Dict[str, int] = resp.data
         except Exception as e:
             self._logger.warning(f"NewHighTask: RS Rating 조회 실패 ({e}) — 필터 건너뜀")
+            for s in stocks:
+                s.setdefault("rs_rating", 0)
+            return stocks
+
+        matched_count = sum(1 for s in stocks if s.get("code", "") in rating_map)
+        coverage = matched_count / len(stocks) if stocks else 1.0
+        if self._rs_rating_min > 0 and coverage < 0.2:
+            self._logger.warning(
+                f"NewHighTask: RS Rating 매칭률 낮음 ({matched_count}/{len(stocks)}) — 필터 건너뜀"
+            )
             for s in stocks:
                 s.setdefault("rs_rating", 0)
             return stocks

@@ -307,9 +307,33 @@ class TestUpdateNewhighFields:
         assert newhighs == []
 
     @pytest.mark.asyncio
-    async def test_empty_records_is_noop(self, repo):
-        """빈 records 전달 시 아무 동작도 하지 않는다."""
+    async def test_empty_records_clears_existing_flags(self, repo):
+        """빈 records는 해당 날짜의 기존 신고가 플래그를 모두 내린다."""
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot("A001", stage=2),
+        ])
+        await repo.update_newhigh_fields("20260414", [
+            {"code": "A001", "is_newhigh": True, "is_historical_new_high": True},
+        ])
         await repo.update_newhigh_fields("20260414", [])
+        assert await repo.get_newhigh_stocks("20260414") == []
+
+    @pytest.mark.asyncio
+    async def test_rewrite_clears_stale_newhigh_flags(self, repo):
+        """새 결과를 쓸 때 이전 신고가 종목이 결과에서 빠지면 플래그가 내려간다."""
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot("A001", stage=2),
+            _make_snapshot("A002", stage=2),
+        ])
+        await repo.update_newhigh_fields("20260414", [
+            {"code": "A001", "is_newhigh": True, "is_historical_new_high": False},
+        ])
+        await repo.update_newhigh_fields("20260414", [
+            {"code": "A002", "is_newhigh": True, "is_historical_new_high": False},
+        ])
+
+        result = await repo.get_newhigh_stocks("20260414")
+        assert [r["code"] for r in result] == ["A002"]
 
     @pytest.mark.asyncio
     async def test_exception_is_handled(self, repo, monkeypatch):
