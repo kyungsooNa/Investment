@@ -633,6 +633,28 @@ class AccountBalanceParams:
 
 
 @dataclass(frozen=True)
+class InquireDailyCcldParams:
+    CANO: str
+    ACNT_PRDT_CD: str = "01"
+    INQR_STRT_DT: str = ""
+    INQR_END_DT: str = ""
+    SLL_BUY_DVSN_CD: str = "00"
+    PDNO: str = ""
+    CCLD_DVSN: str = "00"
+    INQR_DVSN: str = "00"
+    INQR_DVSN_3: str = "00"
+    ORD_GNO_BRNO: str = ""
+    ODNO: str = ""
+    INQR_DVSN_1: str = ""
+    CTX_AREA_FK100: str = ""
+    CTX_AREA_NK100: str = ""
+    EXCG_ID_DVSN_CD: str = ""
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class OrderCashBody:
     CANO: str
     ACNT_PRDT_CD: str
@@ -800,6 +822,35 @@ class Params:
             fund_sttl_icld_yn, inqr_dvsn, ofl_yn,
             prcs_dvsn, unpr_dvsn,
             ctx_area_fk100, ctx_area_nk100
+        ).to_dict()
+
+    @staticmethod
+    def inquire_daily_ccld(
+            *,
+            cano: str,
+            acnt_prdt_cd: str = "01",
+            start_date: str = "",
+            end_date: str = "",
+            side_code: str = "00",
+            stock_code: str = "",
+            ccld_dvsn: str = "00",
+            order_no: str = "",
+            exchange_code: str = "",
+            ctx_area_fk100: str = "",
+            ctx_area_nk100: str = "",
+    ) -> Dict[str, str]:
+        return InquireDailyCcldParams(
+            CANO=cano,
+            ACNT_PRDT_CD=acnt_prdt_cd,
+            INQR_STRT_DT=start_date,
+            INQR_END_DT=end_date,
+            SLL_BUY_DVSN_CD=side_code,
+            PDNO=stock_code,
+            CCLD_DVSN=ccld_dvsn,
+            ODNO=order_no,
+            CTX_AREA_FK100=ctx_area_fk100,
+            CTX_AREA_NK100=ctx_area_nk100,
+            EXCG_ID_DVSN_CD=exchange_code,
         ).to_dict()
 
     @staticmethod

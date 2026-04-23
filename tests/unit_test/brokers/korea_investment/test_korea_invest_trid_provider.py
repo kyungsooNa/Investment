@@ -19,7 +19,9 @@ def mock_tr_ids():
         },
         "account": {
             "inquire_balance_paper": "TR_BALANCE_PAPER",
-            "inquire_balance_real": "TR_BALANCE_REAL"
+            "inquire_balance_real": "TR_BALANCE_REAL",
+            "inquire_daily_ccld_paper": "TR_CCLD_PAPER",
+            "inquire_daily_ccld_real": "TR_CCLD_REAL"
         },
         "trading": {
             "order_cash_buy_paper": "TR_BUY_PAPER",
@@ -76,6 +78,7 @@ def test_get_logic_trid_paper(mock_env, mock_tr_ids):
     provider = KoreaInvestTrIdProvider(mock_env, mock_tr_ids)
     
     assert provider.get(TrId.INQUIRE_BALANCE) == "TR_BALANCE_PAPER"
+    assert provider.get(TrId.INQUIRE_DAILY_CCLD) == "TR_CCLD_PAPER"
     assert provider.get(TrId.ORDER_CASH_BUY) == "TR_BUY_PAPER"
     assert provider.get(TrId.ORDER_CASH_SELL) == "TR_SELL_PAPER"
 
@@ -84,6 +87,7 @@ def test_get_logic_trid_real(mock_env, mock_tr_ids):
     provider = KoreaInvestTrIdProvider(mock_env, mock_tr_ids)
     
     assert provider.get(TrId.INQUIRE_BALANCE) == "TR_BALANCE_REAL"
+    assert provider.get(TrId.INQUIRE_DAILY_CCLD) == "TR_CCLD_REAL"
     assert provider.get(TrId.ORDER_CASH_BUY) == "TR_BUY_REAL"
     assert provider.get(TrId.ORDER_CASH_SELL) == "TR_SELL_REAL"
 
@@ -94,6 +98,7 @@ def test_convenience_methods(mock_env, mock_tr_ids):
     
     mock_env.is_paper_trading = True
     assert provider.account_inquire_balance() == "TR_BALANCE_PAPER"
+    assert provider.account_inquire_daily_ccld() == "TR_CCLD_PAPER"
     
     assert provider.trading_order_cash(is_buy=True) == "TR_BUY_PAPER"
     assert provider.trading_order_cash(is_buy=False) == "TR_SELL_PAPER"

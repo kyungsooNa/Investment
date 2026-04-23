@@ -15,6 +15,8 @@ def mock_broker():
     broker.unsubscribe_realtime_price = AsyncMock()
     broker.subscribe_realtime_quote = AsyncMock()
     broker.unsubscribe_realtime_quote = AsyncMock()
+    broker.subscribe_order_notice = AsyncMock(return_value=True)
+    broker.unsubscribe_order_notice = AsyncMock(return_value=True)
     broker.subscribe_unified_price = AsyncMock()
     broker.unsubscribe_unified_price = AsyncMock()
     broker.get_program_trade_by_stock_daily = AsyncMock()

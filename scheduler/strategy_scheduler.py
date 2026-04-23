@@ -362,22 +362,21 @@ class StrategyScheduler:
         if not signal.name or signal.name == signal.code:
             signal.name = self.stock_code_repository.get_name_by_code(signal.code) or signal.code
 
-        # CSV 기록 (항상) + 스트리밍 구독 동기화
         return_rate = None
         category_key = f"scheduler_{signal.strategy_name}"
-        if signal.action == "BUY":
-            await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
-            if self._price_sub_svc:
-                await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
-        elif signal.action == "SELL":
-            return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
-            if self._price_sub_svc:
-                await self._price_sub_svc.remove_subscription(signal.code, category_key)
-
         api_success = True
+        resp = None
 
-        # API 주문 (dry_run이 아닐 때)
-        if not self._dry_run:
+        if self._dry_run:
+            if signal.action == "BUY":
+                await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+                if self._price_sub_svc:
+                    await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
+            elif signal.action == "SELL":
+                return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+                if self._price_sub_svc:
+                    await self._price_sub_svc.remove_subscription(signal.code, category_key)
+        else:
             try:
                 try:
                     signal_exchange = Exchange(signal.exchange) if signal.exchange else Exchange.KRX
@@ -385,14 +384,32 @@ class StrategyScheduler:
                     signal_exchange = Exchange.KRX
                 if signal.action == "BUY":
                     resp = await self._oes.handle_place_buy_order(
-                        signal.code, signal.price, signal.qty, exchange=signal_exchange
+                        signal.code,
+                        signal.price,
+                        signal.qty,
+                        exchange=signal_exchange,
+                        source=f"strategy:{signal.strategy_name}",
+                        finalize_immediately=False,
                     )
                 else:
                     resp = await self._oes.handle_place_sell_order(
-                        signal.code, signal.price, signal.qty, exchange=signal_exchange
+                        signal.code,
+                        signal.price,
+                        signal.qty,
+                        exchange=signal_exchange,
+                        source=f"strategy:{signal.strategy_name}",
+                        finalize_immediately=False,
                     )
 
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                    if signal.action == "BUY":
+                        await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+                        if self._price_sub_svc:
+                            await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
+                    else:
+                        return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+                        if self._price_sub_svc:
+                            await self._price_sub_svc.remove_subscription(signal.code, category_key)
                     self._logger.info(
                         f"[Scheduler] API 주문 성공: {signal.action} {signal.code}"
                     )

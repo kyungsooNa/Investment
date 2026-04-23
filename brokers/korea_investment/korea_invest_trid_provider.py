@@ -59,6 +59,9 @@ class KoreaInvestTrIdProvider:
             if key is TrId.INQUIRE_BALANCE:
                 leaf = TrIdLeaf.INQUIRE_BALANCE_PAPER if is_paper else TrIdLeaf.INQUIRE_BALANCE_REAL
                 return self.get_by_leaf(leaf)
+            if key is TrId.INQUIRE_DAILY_CCLD:
+                leaf = TrIdLeaf.INQUIRE_DAILY_CCLD_PAPER if is_paper else TrIdLeaf.INQUIRE_DAILY_CCLD_REAL
+                return self.get_by_leaf(leaf)
             if key is TrId.ORDER_CASH_BUY:
                 leaf = TrIdLeaf.ORDER_CASH_BUY_PAPER if is_paper else TrIdLeaf.ORDER_CASH_BUY_REAL
                 return self.get_by_leaf(leaf)
@@ -76,6 +79,9 @@ class KoreaInvestTrIdProvider:
 
     def account_inquire_balance(self) -> str:
         return self.get(TrId.INQUIRE_BALANCE)
+
+    def account_inquire_daily_ccld(self) -> str:
+        return self.get(TrId.INQUIRE_DAILY_CCLD)
 
     def trading_order_cash(self, is_buy: bool) -> str:
         return self.get(TrId.ORDER_CASH_BUY if is_buy else TrId.ORDER_CASH_SELL)

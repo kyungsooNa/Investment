@@ -48,6 +48,241 @@ class TradeSignal(BaseModel):
         return self.model_dump()
 
 
+class OrderSide(str, Enum):
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+class OrderState(str, Enum):
+    PENDING_SUBMIT = "PENDING_SUBMIT"
+    SUBMITTED = "SUBMITTED"
+    PARTIAL_FILLED = "PARTIAL_FILLED"
+    FILLED = "FILLED"
+    CANCELED = "CANCELED"
+    REJECTED = "REJECTED"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {
+            OrderState.FILLED,
+            OrderState.CANCELED,
+            OrderState.REJECTED,
+        }
+
+
+class OrderContext(BaseModel):
+    order_key: str
+    stock_code: str
+    side: OrderSide
+    state: OrderState
+    exchange: Exchange = Exchange.KRX
+    price: int
+    qty: int
+    source: str = "default"
+    attempt_count: int = 0
+    filled_qty: int = 0
+    remaining_qty: int = 0
+    broker_order_no: Optional[str] = None
+    last_error_code: Optional[str] = None
+    last_error_message: str = ""
+
+    @model_validator(mode="after")
+    def sync_remaining_qty(self) -> "OrderContext":
+        self.remaining_qty = max(self.qty - self.filled_qty, 0)
+        return self
+
+    def to_dict(self):
+        return self.model_dump()
+
+    def can_transition_to(self, new_state: OrderState) -> bool:
+        allowed_transitions = {
+            OrderState.PENDING_SUBMIT: {
+                OrderState.SUBMITTED,
+                OrderState.CANCELED,
+                OrderState.REJECTED,
+            },
+            OrderState.SUBMITTED: {
+                OrderState.PARTIAL_FILLED,
+                OrderState.FILLED,
+                OrderState.CANCELED,
+                OrderState.REJECTED,
+            },
+            OrderState.PARTIAL_FILLED: {
+                OrderState.FILLED,
+                OrderState.CANCELED,
+            },
+            OrderState.FILLED: set(),
+            OrderState.CANCELED: set(),
+            OrderState.REJECTED: set(),
+        }
+        return new_state == self.state or new_state in allowed_transitions[self.state]
+
+    def transition(
+        self,
+        new_state: OrderState,
+        *,
+        attempt_count: Optional[int] = None,
+        filled_qty: Optional[int] = None,
+        broker_order_no: Optional[str] = None,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> "OrderContext":
+        if not self.can_transition_to(new_state):
+            raise ValueError(f"잘못된 주문 상태 전이: {self.state} -> {new_state}")
+
+        next_filled_qty = self.filled_qty if filled_qty is None else max(filled_qty, 0)
+        next_attempt_count = self.attempt_count if attempt_count is None else attempt_count
+        next_broker_order_no = self.broker_order_no if broker_order_no is None else broker_order_no
+
+        return self.model_copy(update={
+            "state": new_state,
+            "attempt_count": next_attempt_count,
+            "filled_qty": next_filled_qty,
+            "remaining_qty": max(self.qty - next_filled_qty, 0),
+            "broker_order_no": next_broker_order_no,
+            "last_error_code": error_code,
+            "last_error_message": error_message or "",
+        })
+
+
+class OrderExecutionReport(BaseModel):
+    """체결통보 WebSocket과 주문조회 polling 결과를 FSM에 적용하기 위한 공통 이벤트."""
+    broker_order_no: str
+    stock_code: str
+    side: Optional[OrderSide] = None
+    exchange: Exchange = Exchange.KRX
+    event_state: OrderState = OrderState.SUBMITTED
+    order_qty: Optional[int] = None
+    fill_qty: int = 0
+    fill_price: int = 0
+    cumulative_filled_qty: Optional[int] = None
+    remaining_qty: Optional[int] = None
+    original_order_no: Optional[str] = None
+    event_time: str = ""
+    source: str = "websocket"
+    message: str = ""
+    raw: Dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def event_key(self) -> str:
+        return (
+            f"{self.source}:{self.broker_order_no}:{self.event_time}:"
+            f"{self.event_state.value}:{self.fill_qty}:{self.fill_price}:{self.cumulative_filled_qty}"
+        )
+
+    def to_dict(self):
+        return self.model_dump()
+
+    @staticmethod
+    def _to_int(value: Any, default: int = 0) -> int:
+        try:
+            text = str(value or "").replace(",", "").strip()
+            return int(float(text)) if text else default
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _parse_side(value: Any) -> Optional[OrderSide]:
+        side_value = str(value or "").strip().upper()
+        if side_value in ("01", "1", "매도", "SELL"):
+            return OrderSide.SELL
+        if side_value in ("02", "2", "매수", "BUY"):
+            return OrderSide.BUY
+        return None
+
+    @staticmethod
+    def _parse_exchange(value: Any) -> Exchange:
+        exchange_value = str(value or "").upper()
+        return Exchange.NXT if exchange_value == Exchange.NXT.value else Exchange.KRX
+
+    @classmethod
+    def from_signing_notice(cls, data: dict, *, tr_id: str = "") -> "OrderExecutionReport":
+        side = cls._parse_side(data.get("매도매수구분") or data.get("SELN_BYOV_CLS"))
+        fill_qty = cls._to_int(data.get("체결수량") or data.get("CNTG_QTY"))
+        order_qty = cls._to_int(data.get("주문수량") or data.get("ODER_QTY")) or None
+        rejected = str(data.get("거부여부") or data.get("RFUS_YN") or "").upper() == "Y"
+        accepted = str(data.get("접수여부") or data.get("ACPT_YN") or "").upper() == "Y"
+        concluded = str(data.get("체결여부") or data.get("CNTG_YN") or "") == "2"
+
+        if rejected:
+            event_state = OrderState.REJECTED
+        elif concluded and order_qty and fill_qty >= order_qty:
+            event_state = OrderState.FILLED
+        elif concluded and fill_qty > 0:
+            event_state = OrderState.PARTIAL_FILLED
+        elif accepted:
+            event_state = OrderState.SUBMITTED
+        else:
+            event_state = OrderState.SUBMITTED
+
+        exchange = cls._parse_exchange(data.get("주문거래소구분") or data.get("ORD_EXG_GB"))
+
+        return cls(
+            broker_order_no=str(data.get("주문번호") or data.get("ODER_NO") or "").strip(),
+            original_order_no=str(data.get("원주문번호") or data.get("OODER_NO") or "").strip() or None,
+            stock_code=str(data.get("주식단축종목코드") or data.get("STCK_SHRN_ISCD") or "").strip(),
+            side=side,
+            exchange=exchange,
+            event_state=event_state,
+            order_qty=order_qty,
+            fill_qty=fill_qty,
+            fill_price=cls._to_int(data.get("체결단가") or data.get("CNTG_UNPR")),
+            event_time=str(data.get("주식체결시간") or data.get("STCK_CNTG_HOUR") or ""),
+            source=f"websocket:{tr_id}" if tr_id else "websocket",
+            message="거부" if rejected else ("체결" if concluded else "접수"),
+            raw=data,
+        )
+
+    @classmethod
+    def from_order_query(cls, data: dict, *, tr_id: str = "") -> "OrderExecutionReport":
+        """주문체결내역 조회(inquire-daily-ccld) row를 공통 체결 이벤트로 변환합니다."""
+        order_qty = cls._to_int(data.get("ord_qty") or data.get("ORD_QTY") or data.get("주문수량")) or None
+        filled_qty = cls._to_int(data.get("tot_ccld_qty") or data.get("TOT_CCLD_QTY") or data.get("체결수량"))
+        raw_remaining_qty = data.get("rmn_qty") or data.get("RMN_QTY") or data.get("잔여수량")
+        remaining_qty = cls._to_int(raw_remaining_qty) if raw_remaining_qty not in (None, "") else None
+        rejected_qty = cls._to_int(data.get("rjct_qty") or data.get("RJCT_QTY") or data.get("거부수량"))
+        canceled_qty = cls._to_int(data.get("cncl_cfrm_qty") or data.get("CNCL_CFRM_QTY") or data.get("취소확인수량"))
+        canceled = str(data.get("cncl_yn") or data.get("CNCL_YN") or "").upper() == "Y"
+
+        if rejected_qty and order_qty and rejected_qty >= order_qty and filled_qty == 0:
+            event_state = OrderState.REJECTED
+        elif canceled or (canceled_qty and remaining_qty == 0 and (not order_qty or filled_qty < order_qty)):
+            event_state = OrderState.CANCELED
+        elif order_qty and filled_qty >= order_qty:
+            event_state = OrderState.FILLED
+        elif remaining_qty is not None and remaining_qty == 0 and filled_qty > 0:
+            event_state = OrderState.FILLED
+        elif filled_qty > 0:
+            event_state = OrderState.PARTIAL_FILLED
+        else:
+            event_state = OrderState.SUBMITTED
+
+        event_time = str(
+            data.get("ord_dt")
+            or data.get("ORD_DT")
+            or data.get("주문일자")
+            or ""
+        ) + str(data.get("ord_tmd") or data.get("ORD_TMD") or data.get("주문시각") or "")
+
+        return cls(
+            broker_order_no=str(data.get("odno") or data.get("ODNO") or data.get("주문번호") or "").strip(),
+            original_order_no=str(data.get("orgn_odno") or data.get("ORGN_ODNO") or data.get("원주문번호") or "").strip() or None,
+            stock_code=str(data.get("pdno") or data.get("PDNO") or data.get("종목코드") or "").strip(),
+            side=cls._parse_side(data.get("sll_buy_dvsn_cd") or data.get("SLL_BUY_DVSN_CD") or data.get("매도매수구분")),
+            exchange=cls._parse_exchange(data.get("excg_dvsn_cd") or data.get("EXCG_DVSN_CD") or data.get("거래소구분")),
+            event_state=event_state,
+            order_qty=order_qty,
+            fill_qty=filled_qty,
+            fill_price=cls._to_int(data.get("avg_prvs") or data.get("AVG_PRVS") or data.get("평균가")),
+            cumulative_filled_qty=filled_qty,
+            remaining_qty=remaining_qty,
+            event_time=event_time,
+            source=f"polling:{tr_id}" if tr_id else "polling",
+            message="주문조회",
+            raw=data,
+        )
+
+
 # --- 공통적으로 사용되는 데이터 응답 구조 ---
 class ResPriceSummary(BaseModel):
     symbol: str

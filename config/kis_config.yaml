@@ -21,6 +21,7 @@ paths:
   check_holiday: /uapi/domestic-stock/v1/quotations/chk-holiday
   # 계좌/주문
   inquire_balance: /uapi/domestic-stock/v1/trading/inquire-balance
+  inquire_daily_ccld: /uapi/domestic-stock/v1/trading/inquire-daily-ccld
   order_cash: /uapi/domestic-stock/v1/trading/order-cash
   hashkey: /uapi/hashkey   # 선택: 없으면 코드에서 리터럴로 써도 됨
 

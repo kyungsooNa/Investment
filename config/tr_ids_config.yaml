@@ -25,6 +25,8 @@ tr_ids:
   account:
     inquire_balance_real: TTTC8434R # 실전 계좌 잔고 조회
     inquire_balance_paper: VTTC8434R # 모의 계좌 잔고 조회
+    inquire_daily_ccld_real: TTTC0081R # 실전 주문체결내역 조회
+    inquire_daily_ccld_paper: VTTC0081R # 모의 주문체결내역 조회
   trading:
     order_cash_buy_real: TTTC0012U # 실전 주식 현금 매수
     order_cash_sell_real: TTTC0011U # 실전 주식 현금 매도
@@ -38,6 +40,8 @@ tr_ids:
     realtime_price: H0STCNT0 # 실시간 주식체결 TR ID (KRX/KOSDAQ)
     realtime_quote: H0STASP0  # 실시간 주식호가 TR ID (KRX/KOSDAQ)
     unified_realtime_price: H0UNCNT0 # 실시간 통합체결 TR ID (KRX+NXT 통합)
+    order_notice_real: H0STCNI0 # 국내주식 체결통보 TR ID (실전)
+    order_notice_paper: H0STCNI9 # 국내주식 체결통보 TR ID (모의)
     realtime_program_trading: "H0STPGM0"  # 프로그램매매 TR ID (KRX)
     nxt_realtime_price: H0NXCNT0       # 실시간 주식체결 TR ID (NXT)
     nxt_realtime_quote: H0NXASP0       # 실시간 주식호가 TR ID (NXT)

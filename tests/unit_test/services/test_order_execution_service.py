@@ -4,7 +4,7 @@ from io import StringIO
 import builtins
 from unittest.mock import call, ANY
 from services.market_calendar_service import MarketCalendarService
-from common.types import ResCommonResponse, ErrorCode
+from common.types import ResCommonResponse, ErrorCode, Exchange, OrderState
 from services.order_execution_service import OrderExecutionService
 
 # 테스트를 위한 MockLogger
@@ -71,7 +71,6 @@ async def test_handle_buy_stock_success(handler, mock_broker_api_wrapper, mock_l
     )
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    from common.types import Exchange
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(stock_code_input, int(price_input), int(qty_input), is_buy=True, exchange=Exchange.KRX)
 
     mock_logger.info.assert_called()
@@ -120,7 +119,6 @@ async def test_handle_buy_stock_place_order_delegation_failure(handler, mock_bro
     )
     await handler.handle_buy_stock(stock_code_input, qty_input, price_input)
 
-    from common.types import Exchange
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with("005930", 70000, 10, is_buy=True, exchange=Exchange.KRX)
     logged_msg = mock_logger.error.call_args[0][0]
     assert "매수 주문 실패" in logged_msg
@@ -140,7 +138,6 @@ async def test_handle_sell_stock_success(handler, mock_broker_api_wrapper):
     )
     await handler.handle_sell_stock(stock_code_input, qty_input, price_input)
 
-    from common.types import Exchange
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with("005930", 60000, 5, is_buy=False, exchange=Exchange.KRX)
 
 
@@ -201,7 +198,6 @@ async def test_handle_place_buy_order_success(handler, mock_broker_api_wrapper, 
     )
     result = await handler.handle_place_buy_order("005930", 70000, 10)
 
-    from common.types import Exchange
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(
         "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
     )
@@ -233,7 +229,6 @@ async def test_handle_place_sell_order_success(handler, mock_broker_api_wrapper,
     )
     result = await handler.handle_place_sell_order("005930", 60000, 5)
 
-    from common.types import Exchange
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(
         "005930", 60000, 5, is_buy=False, exchange=Exchange.KRX
     )
@@ -567,7 +562,270 @@ async def test_sell_all_stocks_success(handler, mock_broker_api_wrapper, mock_lo
     assert res2["success"] is False
     assert res2["message"] == "매도 실패"
 
-    from common.types import Exchange
     assert mock_broker_api_wrapper.place_stock_order.await_count == 2
     mock_broker_api_wrapper.place_stock_order.assert_any_await("005930", 0, 10, is_buy=False, exchange=Exchange.KRX)
     mock_broker_api_wrapper.place_stock_order.assert_any_await("000660", 0, 5, is_buy=False, exchange=Exchange.KRX)
+
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_leaves_submitted_state_until_resolved(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    result = await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False, source="strategy:test"
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    context = handler.get_order_context("005930", is_buy=True)
+    assert context is not None
+    assert context.state == OrderState.SUBMITTED
+    assert context.broker_order_no == "A0001"
+    assert context.source == "strategy:test"
+
+    resolved = await handler.resolve_submitted_order(
+        "005930", True, exchange=Exchange.KRX, final_state=OrderState.FILLED, filled_qty=10
+    )
+    assert resolved is not None
+    assert resolved.state == OrderState.FILLED
+    assert resolved.remaining_qty == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_blocks_duplicate_while_submitted(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    first = await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False, source="strategy:first"
+    )
+    second = await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False, source="strategy:second"
+    )
+
+    assert first.rt_cd == ErrorCode.SUCCESS.value
+    assert second.rt_cd == ErrorCode.RETRY_LIMIT.value
+    assert "진행 중인 주문" in second.msg1
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_rejects_after_retry_exhaustion(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.RETRY_LIMIT.value,
+        msg1="재시도 한도 초과",
+        data=None,
+    )
+
+    result = await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    assert result.rt_cd == ErrorCode.RETRY_LIMIT.value
+    context = handler.get_order_context("005930", is_buy=True)
+    assert context is not None
+    assert context.state == OrderState.REJECTED
+    assert context.attempt_count == handler._ORDER_MAX_RETRIES
+    assert handler.has_active_order("005930") is False
+
+
+@pytest.mark.asyncio
+async def test_order_partial_fill_recomputes_remaining_qty(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    partial = await handler.mark_order_partial_filled("005930", True, 4)
+    assert partial is not None
+    assert partial.state == OrderState.PARTIAL_FILLED
+    assert partial.filled_qty == 4
+    assert partial.remaining_qty == 6
+
+    filled = await handler.resolve_submitted_order(
+        "005930", True, final_state=OrderState.FILLED, filled_qty=10
+    )
+    assert filled is not None
+    assert filled.remaining_qty == 0
+
+
+@pytest.mark.asyncio
+async def test_next_order_allowed_after_previous_order_filled(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+    await handler.resolve_submitted_order("005930", True, final_state=OrderState.FILLED)
+
+    second = await handler.handle_place_buy_order(
+        "005930", 70100, 5, finalize_immediately=False
+    )
+
+    assert second.rt_cd == ErrorCode.SUCCESS.value
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_signing_notice_accumulates_partial_fills_to_filled(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    first = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "4",
+        "CNTG_UNPR": "70000",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+    assert first.state == OrderState.PARTIAL_FILLED
+    assert first.filled_qty == 4
+    assert first.remaining_qty == 6
+
+    second = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "6",
+        "CNTG_UNPR": "70100",
+        "STCK_CNTG_HOUR": "101700",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+    assert second.state == OrderState.FILLED
+    assert second.filled_qty == 10
+    assert second.remaining_qty == 0
+
+
+@pytest.mark.asyncio
+async def test_signing_notice_duplicate_event_is_idempotent(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+    notice = {
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "4",
+        "CNTG_UNPR": "70000",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }
+
+    await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
+    duplicate = await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
+
+    assert duplicate.state == OrderState.PARTIAL_FILLED
+    assert duplicate.filled_qty == 4
+    assert duplicate.remaining_qty == 6
+
+
+@pytest.mark.asyncio
+async def test_signing_notice_rejects_submitted_order(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    rejected = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "0",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "Y",
+        "CNTG_YN": "1",
+        "ACPT_YN": "N",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+
+    assert rejected.state == OrderState.REJECTED
+    assert handler.has_active_order("005930") is False
+
+
+@pytest.mark.asyncio
+async def test_poll_active_orders_once_applies_order_query_result(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    mock_broker_api_wrapper.inquire_daily_ccld.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "output1": [
+                {
+                    "odno": "A0001",
+                    "pdno": "005930",
+                    "sll_buy_dvsn_cd": "02",
+                    "ord_qty": "10",
+                    "tot_ccld_qty": "10",
+                    "rmn_qty": "0",
+                    "avg_prvs": "70000",
+                    "ord_dt": "20260423",
+                    "ord_tmd": "101500",
+                }
+            ]
+        },
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    applied_count = await handler.poll_active_orders_once(
+        start_date="20260423",
+        end_date="20260423",
+    )
+
+    context = handler.get_order_context("005930", is_buy=True)
+    assert applied_count == 1
+    assert context.state == OrderState.FILLED
+    assert context.filled_qty == 10
+    mock_broker_api_wrapper.inquire_daily_ccld.assert_awaited_once_with(
+        start_date="20260423",
+        end_date="20260423",
+        side_code="02",
+        stock_code="005930",
+        ccld_dvsn="00",
+        order_no="A0001",
+        exchange=Exchange.KRX,
+    )

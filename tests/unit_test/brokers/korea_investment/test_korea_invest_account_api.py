@@ -2,6 +2,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
+from brokers.korea_investment.korea_invest_url_keys import EndpointKey
+from common.types import Exchange
 
 
 def get_api():
@@ -52,3 +54,34 @@ async def test_get_real_account_balance_without_dash():
 
     assert result == {'result': 'real_success_without_dash'}
     api._logger.info.assert_called_with("실전투자 계좌 잔고 조회 시도...")
+
+
+@pytest.mark.asyncio
+async def test_inquire_daily_ccld_builds_order_query_params():
+    api = get_api()
+    api._env.active_config = {
+        "custtype": "P",
+        "stock_account_number": "12345678-01",
+    }
+    api._trid_provider.account_inquire_daily_ccld.return_value = "VTTC0081R"
+    api.call_api = AsyncMock(return_value={"result": "success"})
+
+    result = await api.inquire_daily_ccld(
+        start_date="20260423",
+        end_date="20260423",
+        side_code="02",
+        stock_code="005930",
+        order_no="A0001",
+        exchange=Exchange.NXT,
+    )
+
+    assert result == {"result": "success"}
+    args, kwargs = api.call_api.await_args
+    assert args[0] == "GET"
+    assert args[1] == EndpointKey.INQUIRE_DAILY_CCLD
+    assert kwargs["params"]["CANO"] == "12345678"
+    assert kwargs["params"]["ACNT_PRDT_CD"] == "01"
+    assert kwargs["params"]["SLL_BUY_DVSN_CD"] == "02"
+    assert kwargs["params"]["PDNO"] == "005930"
+    assert kwargs["params"]["ODNO"] == "A0001"
+    assert kwargs["params"]["EXCG_ID_DVSN_CD"] == "NX"
