@@ -1,5 +1,4 @@
 # tests/unit_test/test_types.py
-import json
 import pytest
 from dataclasses import asdict
 from pathlib import Path
@@ -16,14 +15,28 @@ from common.types import (
     OrderSide,
     OrderState,
 )
+from utils.kis_inquire_daily_ccld_fixture_utils import discover_inquire_daily_ccld_fixture_documents
 
 
 KIS_FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "kis"
 
 
 def _load_inquire_daily_ccld_cases():
-    fixture_path = KIS_FIXTURE_DIR / "inquire_daily_ccld_output1_synthetic.json"
-    return json.loads(fixture_path.read_text(encoding="utf-8"))["rows"]
+    cases = []
+    for fixture_path, payload in discover_inquire_daily_ccld_fixture_documents(KIS_FIXTURE_DIR):
+        fixture_name = payload.get("fixture_name") or fixture_path.stem
+        tr_id = payload.get("tr_id", "")
+        for row in payload["rows"]:
+            case = dict(row)
+            case["_fixture_name"] = fixture_name
+            case["_fixture_path"] = fixture_path.name
+            case["_tr_id"] = tr_id
+            cases.append(case)
+    return cases
+
+
+def _case_id(case):
+    return f"{case['_fixture_name']}:{case['case']}"
 
 
 # --- Test for ResCommonResponse.to_dict ---
@@ -230,15 +243,15 @@ def test_order_query_report_cancel_yn_without_remaining_qty_is_canceled():
 @pytest.mark.parametrize(
     "case",
     _load_inquire_daily_ccld_cases(),
-    ids=lambda case: case["case"],
+    ids=_case_id,
 )
 def test_order_query_report_from_kis_inquire_daily_ccld_fixture(case):
-    report = OrderExecutionReport.from_order_query(case["row"], tr_id="VTTC0081R")
+    report = OrderExecutionReport.from_order_query(case["row"], tr_id=case["_tr_id"])
     expected = case["expected"]
 
     assert report.broker_order_no == expected["broker_order_no"]
     assert report.stock_code == expected["stock_code"]
-    assert report.side == OrderSide(expected["side"])
+    assert report.side == (OrderSide(expected["side"]) if expected["side"] else None)
     assert report.event_state == OrderState(expected["event_state"])
     assert report.order_qty == expected["order_qty"]
     assert report.fill_qty == expected["fill_qty"]
@@ -246,7 +259,7 @@ def test_order_query_report_from_kis_inquire_daily_ccld_fixture(case):
     assert report.remaining_qty == expected["remaining_qty"]
     assert report.fill_price == expected["fill_price"]
     assert report.event_time == expected["event_time"]
-    assert report.source == "polling:VTTC0081R"
+    assert report.source == (f"polling:{case['_tr_id']}" if case["_tr_id"] else "polling")
     assert report.raw == case["row"]
 
 
