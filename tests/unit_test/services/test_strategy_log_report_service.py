@@ -210,6 +210,7 @@ async def test_report_gzip_market_timing_and_db_name_resolution(log_dir):
         log_path,
         [
             _make_info_entry("market_timing_updated", "", "", market="KOSPI", ok=True),
+            _make_info_entry("market_timing_updated", "", "", market="KOSPI", ok=False),
             _make_info_entry("market_timing_updated", "", "", market="KOSDAQ", ok=False),
             _make_entry("buy_signal_generated", "005930", "005930", reason="오닐돌파", price=75000),
         ],
@@ -219,7 +220,7 @@ async def test_report_gzip_market_timing_and_db_name_resolution(log_dir):
     svc = StrategyLogReportService(log_dir=log_dir, stock_code_repo=DummyRepo())
     report = await svc.generate_report("20260418")
 
-    assert "시장: KOSPI 🟢 | KOSDAQ 🔴" in report
+    assert "시장: KOSPI 🔴 | KOSDAQ 🔴" in report
     assert "삼성전자(005930)" in report
 
 
@@ -237,6 +238,11 @@ async def test_report_inactive_summary_and_old_file_ignored(log_dir):
             _make_entry("scan_with_watchlist", "", "", date="2026-04-17"),
         ])
 
+    scanned_path = os.path.join(log_dir, "20260418_093000_ScannedStrategy.log.json")
+    scanned_entry = _make_entry("scan_with_watchlist", "", "")
+    scanned_entry["data"]["count"] = 17
+    _write_log(scanned_path, [scanned_entry])
+
     stale_path = os.path.join(log_dir, "20260418_093000_StaleStrategy.log.json")
     _write_log(stale_path, [
         _make_entry("buy_signal_generated", "000660", "SK하이닉스", reason="오래된로그"),
@@ -247,7 +253,9 @@ async def test_report_inactive_summary_and_old_file_ignored(log_dir):
     svc = StrategyLogReportService(log_dir=log_dir)
     report = await svc.generate_report("20260418")
 
+    assert "ScannedStrategy</b> — 17종목 스캔 (시그널 없음)" in report
     assert "💤 <i>활동 없음: DormantA, DormantB, DormantC 외 1개" in report
+    assert "활동 없음: ScannedStrategy" not in report
     assert "StaleStrategy" not in report
 
 
@@ -375,6 +383,24 @@ async def test_htf_pattern_detected_in_near_miss(log_dir):
 
 
 @pytest.mark.asyncio
+async def test_htf_near_miss_shows_early_morning_guard_note(log_dir):
+    """HTF 패턴 감지 후 장 초반 가드로 스킵되면 근접 사유에 방어 로직을 표시한다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("htf_pattern_detected", "035420", "NAVER",
+                         surge_ratio=2.1, flag_days=8),
+        _make_info_entry("breakout_skipped", "035420", "NAVER",
+                         reason="early_morning_guard"),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "HTF 패턴 감지" in report
+    assert "장 초반 진입 제한으로 스킵" in report
+
+
+@pytest.mark.asyncio
 async def test_bought_excluded_from_near_miss(log_dir):
     """매수 완료된 종목은 near-miss 섹션에 표시되지 않는다."""
     log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
@@ -419,3 +445,26 @@ async def test_near_miss_top3_limit(log_dir):
     near_miss_section = report.split("🎯 매수 근접")[1] if "🎯 매수 근접" in report else ""
     assert "종목D" not in near_miss_section  # gate=4 → near-miss 제외
     assert "종목E" not in near_miss_section  # gate=2 → near-miss 제외
+
+
+@pytest.mark.asyncio
+async def test_near_miss_ma_proximity_filters_far_distance_and_sorts_closest(log_dir):
+    """MA 거리 초과 near-miss는 허용 범위에 가까운 종목만 가까운 순으로 표시한다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("pp_rejected", "A00001", "먼종목",
+                         reason="no_ma_proximity", closest_ma_pct=19.61),
+        _make_info_entry("pp_rejected", "A00002", "덜가까운종목",
+                         reason="no_ma_proximity", closest_ma_pct=7.54),
+        _make_info_entry("pp_rejected", "A00003", "가까운종목",
+                         reason="no_ma_proximity", closest_ma_pct=4.04),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+    near_miss_section = report.split("🎯 매수 근접")[1] if "🎯 매수 근접" in report else ""
+
+    assert "가까운종목" in near_miss_section
+    assert "덜가까운종목" in near_miss_section
+    assert "먼종목" not in near_miss_section
+    assert near_miss_section.index("가까운종목") < near_miss_section.index("덜가까운종목")

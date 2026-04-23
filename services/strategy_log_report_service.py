@@ -68,6 +68,29 @@ _REASON_KR: Dict[str, str] = {
 # 각 섹션에서 보여줄 최대 종목 수
 _MAX_REJECTED_SHOWN = 5
 _MAX_NEAR_MISS_SHOWN = 3
+_MA_PROXIMITY_LOWER_PCT = -2.0
+_MA_PROXIMITY_UPPER_PCT = 4.0
+_MA_NEAR_MISS_MAX_EXCESS_PCT = 4.0
+
+
+def _ma_proximity_excess_pct(pct: Optional[float]) -> Optional[float]:
+    """MA 허용 범위에서 벗어난 정도를 percentage point 단위로 반환한다."""
+    if pct is None:
+        return None
+    if pct < _MA_PROXIMITY_LOWER_PCT:
+        return _MA_PROXIMITY_LOWER_PCT - pct
+    if pct > _MA_PROXIMITY_UPPER_PCT:
+        return pct - _MA_PROXIMITY_UPPER_PCT
+    return 0.0
+
+
+def _near_miss_sort_metric(event: str, reason: str, data: dict) -> Optional[float]:
+    if reason == "no_ma_proximity":
+        excess = _ma_proximity_excess_pct(data.get('closest_ma_pct'))
+        if excess is None or excess > _MA_NEAR_MISS_MAX_EXCESS_PCT:
+            return None
+        return excess
+    return 0.0
 
 
 def _build_metric_str(event: str, reason: str, data: dict) -> str:
@@ -201,7 +224,7 @@ class StrategyLogReportService:
 
         active_sections: List[str] = []
         inactive_names: List[str] = []
-        market_timing: Dict[str, bool] = {}
+        market_timing: Dict[str, Tuple[str, bool]] = {}
         idx = 0
 
         for name, files in sorted(strategy_files.items()):
@@ -210,6 +233,7 @@ class StrategyLogReportService:
             scan_count: int = 0
             near_miss: Dict[str, dict] = {}
             name_map: Dict[str, str] = {}
+            early_guard_skipped: set[str] = set()
 
             for fpath in sorted(files):
                 for _level, ts, data in self._iter_events(fpath, date_prefix):
@@ -224,8 +248,8 @@ class StrategyLogReportService:
 
                     elif event == 'market_timing_updated':
                         mkt = data.get('market', '')
-                        if mkt and mkt not in market_timing:
-                            market_timing[mkt] = data.get('ok', False)
+                        if mkt and ts >= market_timing.get(mkt, ('', False))[0]:
+                            market_timing[mkt] = (ts, data.get('ok', False))
 
                     elif event == 'buy_signal_generated' and code:
                         metrics = data.get('metrics', {})
@@ -251,16 +275,32 @@ class StrategyLogReportService:
                                 'count': prev['count'] + 1,
                             }
 
+                    if event == 'breakout_skipped' and data.get('reason') == 'early_morning_guard' and code:
+                        early_guard_skipped.add(code)
+                        if code in near_miss:
+                            near_miss[code]['note'] = "장 초반 진입 제한으로 스킵"
+
                     if event in _NEAR_MISS_EVENTS and code and code not in bought:
                         reason = data.get('reason', '')
                         gate = _GATE_PRIORITY.get((event, reason), 0)
-                        if gate > 0 and gate > near_miss.get(code, {}).get('gate', -1):
+                        sort_metric = _near_miss_sort_metric(event, reason, data)
+                        prev = near_miss.get(code)
+                        should_replace = (
+                            gate > 0 and sort_metric is not None and (
+                                not prev
+                                or gate > prev.get('gate', -1)
+                                or (gate == prev.get('gate') and sort_metric < prev.get('sort_metric', float('inf')))
+                            )
+                        )
+                        if should_replace:
                             near_miss[code] = {
                                 'name': name_map.get(code, data.get('name', code)),
                                 'gate': gate,
+                                'sort_metric': sort_metric,
                                 'reason_kr': _REASON_KR.get(reason, "HTF 패턴 감지" if event == "htf_pattern_detected" else reason),
                                 'metric_str': _build_metric_str(event, reason, data),
                                 'time': ts[11:16] if len(ts) >= 16 else '',
+                                'note': "장 초반 진입 제한으로 스킵" if code in early_guard_skipped else "",
                             }
 
             # StockCodeRepository로 미해결 종목명 보완
@@ -273,6 +313,10 @@ class StrategyLogReportService:
                     info['name'] = self._db_resolve(code, info['name'])
 
             if not bought and not rejected and not near_miss:
+                if scan_count:
+                    idx += 1
+                    active_sections.append(f"<b>{idx}. {name}</b> — {scan_count}종목 스캔 (시그널 없음)")
+                    continue
                 inactive_names.append(name)
                 continue
 
@@ -305,13 +349,17 @@ class StrategyLogReportService:
             else:
                 lines.append("\n❌ 매수 실패: 없음")
 
-            top3 = sorted(near_miss.values(), key=lambda x: -x['gate'])[:_MAX_NEAR_MISS_SHOWN]
+            top3 = sorted(
+                near_miss.values(),
+                key=lambda x: (-x['gate'], x.get('sort_metric', float('inf')))
+            )[:_MAX_NEAR_MISS_SHOWN]
             if top3:
                 lines.append("\n🎯 매수 근접")
                 for c in top3:
                     metric = f" ({c['metric_str']})" if c['metric_str'] else ""
                     time_str = f" ({c['time']})" if c.get('time') else ""
-                    lines.append(f"• {c['name']}: {c['reason_kr']}{metric}{time_str}")
+                    note_str = f" - {c['note']}" if c.get('note') else ""
+                    lines.append(f"• {c['name']}: {c['reason_kr']}{metric}{time_str}{note_str}")
 
             active_sections.append("\n".join(lines))
 
@@ -319,7 +367,7 @@ class StrategyLogReportService:
 
         if market_timing:
             mt_parts = [
-                f"{mkt} {'🟢' if market_timing[mkt] else '🔴'}"
+                f"{mkt} {'🟢' if market_timing[mkt][1] else '🔴'}"
                 for mkt in ["KOSPI", "KOSDAQ"] if mkt in market_timing
             ]
             header = (
