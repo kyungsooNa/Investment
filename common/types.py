@@ -48,6 +48,104 @@ class TradeSignal(BaseModel):
         return self.model_dump()
 
 
+class OrderSide(str, Enum):
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+class OrderState(str, Enum):
+    PENDING_SUBMIT = "PENDING_SUBMIT"
+    SUBMITTED = "SUBMITTED"
+    PARTIAL_FILLED = "PARTIAL_FILLED"
+    FILLED = "FILLED"
+    CANCELED = "CANCELED"
+    REJECTED = "REJECTED"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {
+            OrderState.FILLED,
+            OrderState.CANCELED,
+            OrderState.REJECTED,
+        }
+
+
+class OrderContext(BaseModel):
+    order_key: str
+    stock_code: str
+    side: OrderSide
+    state: OrderState
+    exchange: Exchange = Exchange.KRX
+    price: int
+    qty: int
+    source: str = "default"
+    attempt_count: int = 0
+    filled_qty: int = 0
+    remaining_qty: int = 0
+    broker_order_no: Optional[str] = None
+    last_error_code: Optional[str] = None
+    last_error_message: str = ""
+
+    @model_validator(mode="after")
+    def sync_remaining_qty(self) -> "OrderContext":
+        if self.remaining_qty <= 0:
+            self.remaining_qty = max(self.qty - self.filled_qty, 0)
+        return self
+
+    def to_dict(self):
+        return self.model_dump()
+
+    def can_transition_to(self, new_state: OrderState) -> bool:
+        allowed_transitions = {
+            OrderState.PENDING_SUBMIT: {
+                OrderState.SUBMITTED,
+                OrderState.CANCELED,
+                OrderState.REJECTED,
+            },
+            OrderState.SUBMITTED: {
+                OrderState.PARTIAL_FILLED,
+                OrderState.FILLED,
+                OrderState.CANCELED,
+                OrderState.REJECTED,
+            },
+            OrderState.PARTIAL_FILLED: {
+                OrderState.FILLED,
+                OrderState.CANCELED,
+            },
+            OrderState.FILLED: set(),
+            OrderState.CANCELED: set(),
+            OrderState.REJECTED: set(),
+        }
+        return new_state == self.state or new_state in allowed_transitions[self.state]
+
+    def transition(
+        self,
+        new_state: OrderState,
+        *,
+        attempt_count: Optional[int] = None,
+        filled_qty: Optional[int] = None,
+        broker_order_no: Optional[str] = None,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> "OrderContext":
+        if not self.can_transition_to(new_state):
+            raise ValueError(f"잘못된 주문 상태 전이: {self.state} -> {new_state}")
+
+        next_filled_qty = self.filled_qty if filled_qty is None else max(filled_qty, 0)
+        next_attempt_count = self.attempt_count if attempt_count is None else attempt_count
+        next_broker_order_no = self.broker_order_no if broker_order_no is None else broker_order_no
+
+        return self.model_copy(update={
+            "state": new_state,
+            "attempt_count": next_attempt_count,
+            "filled_qty": next_filled_qty,
+            "remaining_qty": max(self.qty - next_filled_qty, 0),
+            "broker_order_no": next_broker_order_no,
+            "last_error_code": error_code,
+            "last_error_message": error_message or "",
+        })
+
+
 # --- 공통적으로 사용되는 데이터 응답 구조 ---
 class ResPriceSummary(BaseModel):
     symbol: str

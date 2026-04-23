@@ -1,7 +1,8 @@
 # app/order_execution_service.py
 import asyncio
-from typing import Optional
-from common.types import ErrorCode, ResCommonResponse, Exchange
+from collections import defaultdict
+from typing import Dict, Optional
+from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
 from repositories.streaming_stock_repo import StreamingType
@@ -34,13 +35,71 @@ class OrderExecutionService:
         self.market_calendar_service = market_calendar_service
         self._price_sub_svc = price_subscription_service
         self._virtual_trade_service = virtual_trade_service
+        self._order_states: Dict[str, OrderContext] = {}
+        self._order_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    async def _retry_order(self, order_fn, stock_code, price, qty) -> ResCommonResponse:
+    def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
+        return f"{exchange.value}:{stock_code}:{side.value}"
+
+    def _make_symbol_lock_key(self, stock_code: str, exchange: Exchange) -> str:
+        return f"{exchange.value}:{stock_code}"
+
+    def get_order_context(self, stock_code, is_buy: bool, exchange: Exchange = Exchange.KRX) -> Optional[OrderContext]:
+        side = OrderSide.BUY if is_buy else OrderSide.SELL
+        return self._order_states.get(self._make_order_key(stock_code, side, exchange))
+
+    def has_active_order(self, stock_code, exchange: Exchange = Exchange.KRX) -> bool:
+        for side in (OrderSide.BUY, OrderSide.SELL):
+            context = self.get_order_context(stock_code, side == OrderSide.BUY, exchange)
+            if context and not context.state.is_terminal:
+                return True
+        return False
+
+    def _set_order_context(self, context: OrderContext) -> OrderContext:
+        self._order_states[context.order_key] = context
+        return context
+
+    def _transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> OrderContext:
+        context = self._order_states[order_key]
+        next_context = context.transition(new_state, **kwargs)
+        self._order_states[order_key] = next_context
+        return next_context
+
+    async def resolve_submitted_order(
+        self,
+        stock_code,
+        is_buy: bool,
+        *,
+        exchange: Exchange = Exchange.KRX,
+        final_state: OrderState = OrderState.FILLED,
+        filled_qty: Optional[int] = None,
+    ) -> Optional[OrderContext]:
+        side = OrderSide.BUY if is_buy else OrderSide.SELL
+        order_key = self._make_order_key(stock_code, side, exchange)
+        context = self._order_states.get(order_key)
+        if not context or context.state.is_terminal:
+            return context
+        qty = context.qty if filled_qty is None and final_state == OrderState.FILLED else (filled_qty or context.filled_qty)
+        return self._transition_order_context(order_key, final_state, filled_qty=qty)
+
+    async def _retry_order(self, order_fn, stock_code, price, qty, order_key: Optional[str] = None) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도."""
         last_result = None
         for attempt in range(1, self._ORDER_MAX_RETRIES + 1):
             result: ResCommonResponse = await order_fn(stock_code, price, qty)
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
+                if order_key and order_key in self._order_states:
+                    broker_order_no = None
+                    if result.data and hasattr(result.data, "ordno"):
+                        broker_order_no = result.data.ordno
+                    elif isinstance(result.data, dict):
+                        broker_order_no = result.data.get("ordno")
+                    self._transition_order_context(
+                        order_key,
+                        OrderState.SUBMITTED,
+                        attempt_count=attempt,
+                        broker_order_no=broker_order_no,
+                    )
                 return result
             last_result = result
 
@@ -50,6 +109,16 @@ class OrderExecutionService:
                     error_code = ErrorCode(result.rt_cd)
                 except ValueError:
                     pass
+
+            if order_key and order_key in self._order_states:
+                current_state = OrderState.PENDING_SUBMIT if attempt < self._ORDER_MAX_RETRIES else OrderState.REJECTED
+                self._transition_order_context(
+                    order_key,
+                    current_state,
+                    attempt_count=attempt,
+                    error_code=result.rt_cd if result else None,
+                    error_message=result.msg1 if result else "응답 없음",
+                )
 
             if error_code and error_code.is_retriable and attempt < self._ORDER_MAX_RETRIES:
                 self.logger.warning(
@@ -70,7 +139,81 @@ class OrderExecutionService:
             self.logger.exception(f"{action_str} 주문 중 오류 발생: {str(e)}")
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"{action_str} 주문 처리 중 예외 발생: {str(e)}", data=None)
 
-    async def handle_place_buy_order(self, stock_code, price, qty, exchange: Exchange = Exchange.KRX):
+    async def _submit_order_with_fsm(
+        self,
+        *,
+        stock_code,
+        price,
+        qty,
+        exchange: Exchange,
+        side: OrderSide,
+        source: str,
+        finalize_immediately: bool,
+    ) -> ResCommonResponse:
+        order_key = self._make_order_key(stock_code, side, exchange)
+        symbol_lock_key = self._make_symbol_lock_key(stock_code, exchange)
+        action_kr = "매수" if side == OrderSide.BUY else "매도"
+
+        async with self._order_locks[symbol_lock_key]:
+            for existing_side in (OrderSide.BUY, OrderSide.SELL):
+                existing = self._order_states.get(self._make_order_key(stock_code, existing_side, exchange))
+                if existing and not existing.state.is_terminal:
+                    self.logger.warning(
+                        f"{action_kr} 주문 차단: 진행 중인 주문이 있습니다. "
+                        f"종목={stock_code}, 기존상태={existing.state.value}, 기존주문={existing.order_key}"
+                    )
+                    return ResCommonResponse(
+                        rt_cd=ErrorCode.RETRY_LIMIT.value,
+                        msg1=f"진행 중인 주문이 있어 {action_kr} 주문을 차단했습니다. 상태={existing.state.value}",
+                        data=existing.to_dict(),
+                    )
+
+            context = OrderContext(
+                order_key=order_key,
+                stock_code=stock_code,
+                side=side,
+                state=OrderState.PENDING_SUBMIT,
+                exchange=exchange,
+                price=price,
+                qty=qty,
+                source=source,
+            )
+            self._set_order_context(context)
+
+            result = await self._retry_order(
+                lambda c, p, q: self._execute_order_via_broker(
+                    c, p, q, is_buy=(side == OrderSide.BUY), exchange=exchange
+                ),
+                stock_code,
+                price,
+                qty,
+                order_key=order_key,
+            )
+
+            latest = self._order_states.get(order_key)
+            if result and result.rt_cd == ErrorCode.SUCCESS.value:
+                if finalize_immediately and latest and latest.state == OrderState.SUBMITTED:
+                    self._transition_order_context(order_key, OrderState.FILLED, filled_qty=qty)
+                return result
+
+            if latest and latest.state == OrderState.PENDING_SUBMIT:
+                self._transition_order_context(
+                    order_key,
+                    OrderState.REJECTED,
+                    error_code=result.rt_cd if result else None,
+                    error_message=result.msg1 if result else "응답 없음",
+                )
+            return result
+
+    async def handle_place_buy_order(
+        self,
+        stock_code,
+        price,
+        qty,
+        exchange: Exchange = Exchange.KRX,
+        source: str = "default",
+        finalize_immediately: bool = True,
+    ):
         """주식 매수 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
         if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
@@ -80,8 +223,14 @@ class OrderExecutionService:
         elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
-        buy_order_result: ResCommonResponse = await self._retry_order(
-            lambda c, p, q: self._execute_order_via_broker(c, p, q, is_buy=True, exchange=exchange), stock_code, price, qty
+        buy_order_result: ResCommonResponse = await self._submit_order_with_fsm(
+            stock_code=stock_code,
+            price=price,
+            qty=qty,
+            exchange=exchange,
+            side=OrderSide.BUY,
+            source=source,
+            finalize_immediately=finalize_immediately,
         )
         if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
@@ -108,7 +257,15 @@ class OrderExecutionService:
         self.pm.log_timer(f"OrderExecutionService.handle_place_buy_order({stock_code})", t_start)
         return buy_order_result
 
-    async def handle_place_sell_order(self, stock_code, price, qty, exchange: Exchange = Exchange.KRX):
+    async def handle_place_sell_order(
+        self,
+        stock_code,
+        price,
+        qty,
+        exchange: Exchange = Exchange.KRX,
+        source: str = "default",
+        finalize_immediately: bool = True,
+    ):
         """주식 매도 주문 요청 및 결과 출력."""
         t_start = self.pm.start_timer()
         if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
@@ -118,8 +275,14 @@ class OrderExecutionService:
         elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
             return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
-        sell_order_result: ResCommonResponse = await self._retry_order(
-            lambda c, p, q: self._execute_order_via_broker(c, p, q, is_buy=False, exchange=exchange), stock_code, price, qty
+        sell_order_result: ResCommonResponse = await self._submit_order_with_fsm(
+            stock_code=stock_code,
+            price=price,
+            qty=qty,
+            exchange=exchange,
+            side=OrderSide.SELL,
+            source=source,
+            finalize_immediately=finalize_immediately,
         )
         if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
             self.logger.info(
