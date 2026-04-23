@@ -6,6 +6,7 @@ import builtins
 from unittest.mock import call, ANY
 from services.market_calendar_service import MarketCalendarService
 from common.types import ResCommonResponse, ErrorCode, Exchange, OrderContext, OrderState, OrderExecutionReport, OrderSide
+from services.notification_service import NotificationCategory, NotificationLevel
 from services.order_execution_service import OrderExecutionService
 
 # 테스트를 위한 MockLogger
@@ -24,6 +25,7 @@ def mock_broker_api_wrapper():
     # place_stock_order의 기본 반환값 설정
     mock.place_stock_order.return_value = ResCommonResponse(rt_cd="0", msg1="주문 성공", data=None)
     mock.cancel_stock_order.return_value = ResCommonResponse(rt_cd="0", msg1="취소 요청 성공", data=None)
+    mock.env = MagicMock(is_paper_trading=True)
     return mock
 
 @pytest.fixture
@@ -37,6 +39,7 @@ def mock_market_clock():
     mock = MagicMock()
     mock.is_market_operating_hours.return_value = True # 기본값 설정
     mock.async_sleep = AsyncMock()
+    mock.get_current_kst_time.return_value = datetime(2026, 4, 24, 9, 0, 0)
     return mock
 
 @pytest.fixture
@@ -47,13 +50,20 @@ def mock_market_calendar_service():
     return mock
 
 @pytest.fixture
-def handler(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+def mock_notification_service():
+    mock = AsyncMock()
+    mock.emit = AsyncMock()
+    return mock
+
+@pytest.fixture
+def handler(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service, mock_notification_service):
     """TransactionHandlers 인스턴스를 제공하는 픽스처."""
     handler_instance = OrderExecutionService(
         broker_api_wrapper=mock_broker_api_wrapper,
         logger=mock_logger,
         market_clock=mock_market_clock,
-        market_calendar_service=mock_market_calendar_service
+        market_calendar_service=mock_market_calendar_service,
+        notification_service=mock_notification_service,
     )
     return handler_instance
 
@@ -1115,7 +1125,17 @@ async def test_partial_fill_then_cancel_persists_confirmed_partial_qty(mock_brok
     virtual_trade_service.log_buy_async.assert_awaited_once_with("수동매매", "005930", 70200, 4)
 
 
-def _seed_order_context(handler, *, state=OrderState.SUBMITTED, broker_order_no="A0001", remaining_qty=10):
+def _seed_order_context(
+    handler,
+    *,
+    state=OrderState.SUBMITTED,
+    broker_order_no="A0001",
+    remaining_qty=10,
+    created_at=None,
+    state_entered_at=None,
+    last_stuck_alert_at=None,
+    last_stuck_alert_level="",
+):
     order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
     return handler._set_order_context(OrderContext(
         order_key=order_key,
@@ -1129,6 +1149,10 @@ def _seed_order_context(handler, *, state=OrderState.SUBMITTED, broker_order_no=
         remaining_qty=remaining_qty,
         broker_order_no=broker_order_no,
         source="strategy:test",
+        created_at=created_at,
+        state_entered_at=state_entered_at,
+        last_stuck_alert_at=last_stuck_alert_at,
+        last_stuck_alert_level=last_stuck_alert_level,
     ))
 
 
@@ -1253,3 +1277,135 @@ async def test_cancel_order_returns_broker_failure_without_forcing_state(
 
     assert result.rt_cd == ErrorCode.API_ERROR.value
     assert handler._order_states[context.order_key].state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_check_stuck_orders_once_warns_once_in_paper_mode(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+    mock_notification_service,
+):
+    created_at = datetime(2026, 4, 24, 9, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = created_at
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        notification_service=mock_notification_service,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    context = _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+        created_at=created_at,
+        state_entered_at=created_at,
+    )
+
+    first_count = await handler.check_stuck_orders_once(created_at + timedelta(seconds=61))
+    second_count = await handler.check_stuck_orders_once(created_at + timedelta(seconds=120))
+
+    assert first_count == 1
+    assert second_count == 0
+    mock_logger.warning.assert_called_once()
+    logged_message = mock_logger.warning.call_args.args[0]
+    assert "order_key=" in logged_message
+    assert "broker_order_no=A0001" in logged_message
+    assert "age=61s" in logged_message
+    mock_notification_service.emit.assert_awaited_once()
+    emit_args = mock_notification_service.emit.await_args.args
+    assert emit_args[0] == NotificationCategory.TRADE
+    assert emit_args[1] == NotificationLevel.WARNING
+    updated = handler._order_states[context.order_key]
+    assert updated.last_stuck_alert_level == NotificationLevel.WARNING.value
+    assert updated.last_stuck_alert_at == created_at + timedelta(seconds=61)
+
+
+@pytest.mark.asyncio
+async def test_check_stuck_orders_once_escalates_to_critical_in_real_mode(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+    mock_notification_service,
+):
+    created_at = datetime(2026, 4, 24, 9, 0, 0)
+    mock_broker_api_wrapper.env.is_paper_trading = False
+    mock_market_clock.get_current_kst_time.return_value = created_at
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        notification_service=mock_notification_service,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    context = _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+        created_at=created_at,
+        state_entered_at=created_at,
+    )
+
+    warning_count = await handler.check_stuck_orders_once(created_at + timedelta(seconds=61))
+    critical_count = await handler.check_stuck_orders_once(created_at + timedelta(seconds=181))
+
+    assert warning_count == 1
+    assert critical_count == 1
+    mock_logger.warning.assert_called_once()
+    mock_logger.critical.assert_called_once()
+    emit_calls = mock_notification_service.emit.await_args_list
+    assert emit_calls[0].args[1] == NotificationLevel.WARNING
+    assert emit_calls[1].args[1] == NotificationLevel.CRITICAL
+    updated = handler._order_states[context.order_key]
+    assert updated.last_stuck_alert_level == NotificationLevel.CRITICAL.value
+
+
+@pytest.mark.asyncio
+async def test_state_transition_resets_stuck_order_alert_level(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    created_at = datetime(2026, 4, 24, 9, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = created_at
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+        created_at=created_at,
+        state_entered_at=created_at,
+        last_stuck_alert_at=created_at + timedelta(seconds=61),
+        last_stuck_alert_level=NotificationLevel.WARNING.value,
+    )
+
+    mock_market_clock.get_current_kst_time.return_value = created_at + timedelta(seconds=90)
+    updated = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.PARTIAL_FILLED,
+        order_qty=10,
+        fill_qty=4,
+        fill_price=70100,
+        cumulative_filled_qty=4,
+        remaining_qty=6,
+        event_time="090130",
+    ))
+
+    assert updated.state == OrderState.PARTIAL_FILLED
+    assert updated.last_stuck_alert_level == ""
+    assert updated.last_stuck_alert_at is None
+    assert updated.state_entered_at == created_at + timedelta(seconds=90)

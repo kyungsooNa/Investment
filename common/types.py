@@ -1,4 +1,5 @@
 # common/types.py
+from datetime import datetime
 from typing import Optional, Generic, TypeVar, Type, Any, Dict
 from enum import Enum, auto
 from pydantic import BaseModel, Field, model_validator, ConfigDict
@@ -86,6 +87,10 @@ class OrderContext(BaseModel):
     broker_order_no: Optional[str] = None
     last_error_code: Optional[str] = None
     last_error_message: str = ""
+    created_at: Optional[datetime] = None
+    state_entered_at: Optional[datetime] = None
+    last_stuck_alert_at: Optional[datetime] = None
+    last_stuck_alert_level: str = ""
 
     @model_validator(mode="after")
     def sync_remaining_qty(self) -> "OrderContext":
@@ -128,6 +133,9 @@ class OrderContext(BaseModel):
         broker_order_no: Optional[str] = None,
         error_code: Optional[str] = None,
         error_message: Optional[str] = None,
+        transition_time: Optional[datetime] = None,
+        stuck_alert_at: Optional[datetime] = None,
+        stuck_alert_level: Optional[str] = None,
     ) -> "OrderContext":
         if not self.can_transition_to(new_state):
             raise ValueError(f"잘못된 주문 상태 전이: {self.state} -> {new_state}")
@@ -136,6 +144,20 @@ class OrderContext(BaseModel):
         next_virtual_recorded_qty = self.virtual_recorded_qty if virtual_recorded_qty is None else max(virtual_recorded_qty, 0)
         next_attempt_count = self.attempt_count if attempt_count is None else attempt_count
         next_broker_order_no = self.broker_order_no if broker_order_no is None else broker_order_no
+        state_changed = new_state != self.state
+        next_state_entered_at = self.state_entered_at
+        if state_changed:
+            next_state_entered_at = transition_time or datetime.now()
+
+        next_last_stuck_alert_at = self.last_stuck_alert_at
+        next_last_stuck_alert_level = self.last_stuck_alert_level
+        if state_changed:
+            next_last_stuck_alert_at = None
+            next_last_stuck_alert_level = ""
+        if stuck_alert_at is not None:
+            next_last_stuck_alert_at = stuck_alert_at
+        if stuck_alert_level is not None:
+            next_last_stuck_alert_level = stuck_alert_level
 
         return self.model_copy(update={
             "state": new_state,
@@ -146,6 +168,9 @@ class OrderContext(BaseModel):
             "broker_order_no": next_broker_order_no,
             "last_error_code": error_code,
             "last_error_message": error_message or "",
+            "state_entered_at": next_state_entered_at,
+            "last_stuck_alert_at": next_last_stuck_alert_at,
+            "last_stuck_alert_level": next_last_stuck_alert_level,
         })
 
 

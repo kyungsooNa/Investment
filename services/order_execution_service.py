@@ -24,6 +24,8 @@ class OrderExecutionService:
     _FAST_POLL_INTERVAL_SEC = 5
     _DEFAULT_ACTIVE_ORDER_POLL_INTERVAL_SEC = 15
     _POST_SUBMIT_FAST_POLL_WINDOW_SEC = 60
+    _STUCK_ORDER_WARNING_SEC = 60
+    _STUCK_ORDER_CRITICAL_SEC = 180
 
     def __init__(self, broker_api_wrapper, logger,
                  market_clock: Optional[MarketClock] = None,
@@ -46,6 +48,13 @@ class OrderExecutionService:
         self._processed_execution_events: OrderedDict[str, None] = OrderedDict()
         self._processed_execution_event_limit = self._PROCESSED_EXECUTION_EVENT_LIMIT
         self._post_submit_fast_poll_until: Dict[str, datetime] = {}
+
+    def _get_now(self) -> datetime:
+        return self.market_clock.get_current_kst_time() if self.market_clock else datetime.now()
+
+    def _is_paper_trading_mode(self) -> bool:
+        env = getattr(self.broker_api_wrapper, "env", None)
+        return getattr(env, "is_paper_trading", True)
 
     def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
         return f"{exchange.value}:{stock_code}:{side.value}"
@@ -92,6 +101,12 @@ class OrderExecutionService:
         return None
 
     def _set_order_context(self, context: OrderContext) -> OrderContext:
+        now = self._get_now()
+        if context.created_at is None or context.state_entered_at is None:
+            context = context.model_copy(update={
+                "created_at": context.created_at or now,
+                "state_entered_at": context.state_entered_at or now,
+            })
         self._order_states[context.order_key] = context
         if context.broker_order_no:
             self._order_no_index[context.broker_order_no] = context.order_key
@@ -99,7 +114,11 @@ class OrderExecutionService:
 
     def _transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> OrderContext:
         context = self._order_states[order_key]
-        next_context = context.transition(new_state, **kwargs)
+        next_context = context.transition(
+            new_state,
+            transition_time=self._get_now(),
+            **kwargs,
+        )
         self._order_states[order_key] = next_context
         if next_context.broker_order_no:
             self._order_no_index[next_context.broker_order_no] = order_key
@@ -302,6 +321,79 @@ class OrderExecutionService:
         if any(order_key in self._post_submit_fast_poll_until for order_key in active_order_keys):
             return min(default_interval_sec, self._FAST_POLL_INTERVAL_SEC)
         return default_interval_sec
+
+    def _get_stuck_order_alert_level(
+        self,
+        context: OrderContext,
+        age_sec: float,
+    ) -> Optional[NotificationLevel]:
+        if context.state not in (OrderState.SUBMITTED, OrderState.PARTIAL_FILLED):
+            return None
+        if age_sec < self._STUCK_ORDER_WARNING_SEC:
+            return None
+        if not self._is_paper_trading_mode() and age_sec >= self._STUCK_ORDER_CRITICAL_SEC:
+            return NotificationLevel.CRITICAL
+        return NotificationLevel.WARNING
+
+    async def check_stuck_orders_once(self, now: Optional[datetime] = None) -> int:
+        now = now or self._get_now()
+        notified_count = 0
+
+        for context in self._active_order_contexts():
+            entered_at = context.state_entered_at or context.created_at
+            if entered_at is None:
+                continue
+
+            age_sec = max((now - entered_at).total_seconds(), 0)
+            alert_level = self._get_stuck_order_alert_level(context, age_sec)
+            if alert_level is None:
+                continue
+            if context.last_stuck_alert_level == alert_level.value:
+                continue
+
+            age_text = f"{age_sec:.0f}s"
+            message = (
+                f"stuck order detected: order_key={context.order_key}, "
+                f"broker_order_no={context.broker_order_no or 'N/A'}, "
+                f"side={context.side.value}, qty={context.qty}, "
+                f"filled_qty={context.filled_qty}, remaining_qty={context.remaining_qty}, "
+                f"source={context.source}, state={context.state.value}, age={age_text}"
+            )
+
+            if alert_level == NotificationLevel.CRITICAL:
+                self.logger.critical(message)
+            else:
+                self.logger.warning(message)
+
+            if self._notification_service:
+                await self._notification_service.emit(
+                    NotificationCategory.TRADE,
+                    alert_level,
+                    "Stuck order detected",
+                    message,
+                    metadata={
+                        "order_key": context.order_key,
+                        "broker_order_no": context.broker_order_no or "",
+                        "stock_code": context.stock_code,
+                        "side": context.side.value,
+                        "qty": context.qty,
+                        "filled_qty": context.filled_qty,
+                        "remaining_qty": context.remaining_qty,
+                        "source": context.source,
+                        "state": context.state.value,
+                        "age_sec": int(age_sec),
+                    },
+                )
+
+            self._transition_order_context(
+                context.order_key,
+                context.state,
+                stuck_alert_at=now,
+                stuck_alert_level=alert_level.value,
+            )
+            notified_count += 1
+
+        return notified_count
 
     @staticmethod
     def _extract_order_query_rows(data) -> list[dict]:

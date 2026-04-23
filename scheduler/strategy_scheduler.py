@@ -300,6 +300,8 @@ class StrategyScheduler:
         self._last_order_poll_time = now
         try:
             applied_count = await self._oes.poll_active_orders_once()
+            if hasattr(self._oes, "check_stuck_orders_once"):
+                await self._oes.check_stuck_orders_once(now)
             if applied_count:
                 self._logger.info(f"[Scheduler] 활성 주문 polling 보정: {applied_count}건")
             return applied_count

@@ -58,6 +58,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         )
         oes.resolve_submitted_order = AsyncMock()
         oes.poll_active_orders_once = AsyncMock(return_value=0)
+        oes.check_stuck_orders_once = AsyncMock(return_value=0)
         oes.get_active_order_poll_interval_sec = MagicMock(return_value=StrategyScheduler.ORDER_POLL_INTERVAL_SEC)
 
         sqs = MagicMock()
@@ -118,6 +119,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, 2)
         oes.poll_active_orders_once.assert_awaited_once()
+        oes.check_stuck_orders_once.assert_awaited_once_with(datetime(2026, 4, 23, 10, 0, 0))
         scheduler._logger.info.assert_called_with("[Scheduler] 활성 주문 polling 보정: 2건")
 
     async def test_poll_active_orders_if_due_respects_interval(self):
@@ -142,6 +144,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, 0)
         oes.poll_active_orders_once.assert_not_awaited()
+        oes.check_stuck_orders_once.assert_not_awaited()
 
     async def test_poll_active_orders_if_due_uses_fast_fallback_interval(self):
         from datetime import datetime, timedelta
