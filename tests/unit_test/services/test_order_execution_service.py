@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
 import builtins
@@ -593,6 +594,52 @@ async def test_handle_place_buy_order_leaves_submitted_state_until_resolved(hand
     assert resolved is not None
     assert resolved.state == OrderState.FILLED
     assert resolved.remaining_qty == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_registers_fast_poll_window(
+    handler,
+    mock_broker_api_wrapper,
+    mock_market_clock,
+):
+    now = datetime(2026, 4, 23, 10, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = now
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False, source="strategy:test"
+    )
+
+    assert handler.get_active_order_poll_interval_sec(now) == 5
+    assert handler.get_active_order_poll_interval_sec(now + timedelta(seconds=61)) == 15
+
+
+@pytest.mark.asyncio
+async def test_active_order_poll_interval_returns_none_when_terminal(
+    handler,
+    mock_broker_api_wrapper,
+    mock_market_clock,
+):
+    now = datetime(2026, 4, 23, 10, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = now
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False, source="strategy:test"
+    )
+    await handler.resolve_submitted_order(
+        "005930", True, exchange=Exchange.KRX, final_state=OrderState.FILLED, filled_qty=10
+    )
+
+    assert handler.get_active_order_poll_interval_sec(now + timedelta(seconds=1)) is None
 
 
 @pytest.mark.asyncio

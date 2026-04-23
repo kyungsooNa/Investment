@@ -60,16 +60,22 @@
 - [x] Verified Phase4 impact scope: `133 passed`.
 - [x] Verified Phase4 syntax/import health with `compileall`.
 
+### Phase 5 Completed - Post-Submit Polling Fallback
+- [x] Added post-submit fast-poll window tracking in `OrderExecutionService`.
+- [x] Exposed active-order polling interval hints so the scheduler can choose between fast and default polling cadence.
+- [x] Kept the existing single scheduler loop and avoided adding a separate polling background task.
+- [x] Applied fast polling only for a short post-submit window, then automatically fell back to the default active-order polling interval.
+- [x] Ensured terminal orders stop affecting polling cadence without extra lifecycle management.
+- [x] Added regression tests for fast-poll registration, expiry, terminal-order pruning, and scheduler interval override behavior.
+- [x] Verified Phase5 impact scope: `145 passed`.
+- [x] Verified Phase5 syntax/import health with `compileall`.
+
 ### Remaining Order FSM Work
 - [ ] Validate real KIS `inquire-daily-ccld` response fields in both paper and real environments.
   - Fixture/schema prep: sanitized synthetic `output1` rows and parser contract tests added for submitted, partial-filled, filled, canceled, and rejected rows.
   - Confirm order number, stock code, side, order qty, cumulative fill qty, remaining qty, average fill price, cancel/reject fields.
   - Save sanitized captured examples for regression fixtures if possible.
   - Still required: validate against captured paper and real KIS responses.
-- [ ] Add an operation-level fallback policy for missed WebSocket notices.
-  - After order submit, poll frequently until terminal state or timeout.
-  - Slow down or stop polling once terminal state is reached.
-  - Define what happens when polling and WebSocket disagree.
 - [ ] Add notification/logging for orders stuck in `SUBMITTED` or `PARTIAL_FILLED` beyond a threshold.
   - Include order key, broker order number, side, qty, filled qty, remaining qty, source, and age.
   - Decide warning vs critical thresholds for real trading.
@@ -79,9 +85,8 @@
 
 ### Recommended Next Order
 1. Validate KIS polling fields with captured paper-trading responses.
-2. Add operation-level post-submit polling fallback until terminal state.
-3. Add stuck-order notification/logging for long-lived `SUBMITTED` / `PARTIAL_FILLED`.
-4. Investigate full `tests/unit_test` timeout separately.
+2. Add stuck-order notification/logging for long-lived `SUBMITTED` / `PARTIAL_FILLED`.
+3. Investigate full `tests/unit_test` timeout separately.
 
 최종 업데이트: 2026-04-23
 

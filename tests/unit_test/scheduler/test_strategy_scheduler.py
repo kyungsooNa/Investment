@@ -58,6 +58,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         )
         oes.resolve_submitted_order = AsyncMock()
         oes.poll_active_orders_once = AsyncMock(return_value=0)
+        oes.get_active_order_poll_interval_sec = MagicMock(return_value=StrategyScheduler.ORDER_POLL_INTERVAL_SEC)
 
         sqs = MagicMock()
         sqs.get_current_price = AsyncMock(
@@ -136,6 +137,31 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         from datetime import datetime
 
         scheduler, _, oes, _, _ = self._make_scheduler(dry_run=True)
+
+        result = await scheduler._poll_active_orders_if_due(datetime(2026, 4, 23, 10, 0, 0))
+
+        self.assertEqual(result, 0)
+        oes.poll_active_orders_once.assert_not_awaited()
+
+    async def test_poll_active_orders_if_due_uses_fast_fallback_interval(self):
+        from datetime import datetime, timedelta
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.get_active_order_poll_interval_sec.return_value = 5
+        first = datetime(2026, 4, 23, 10, 0, 0)
+
+        first_result = await scheduler._poll_active_orders_if_due(first)
+        second_result = await scheduler._poll_active_orders_if_due(first + timedelta(seconds=5))
+
+        self.assertEqual(first_result, 0)
+        self.assertEqual(second_result, 0)
+        self.assertEqual(oes.poll_active_orders_once.await_count, 2)
+
+    async def test_poll_active_orders_if_due_skips_when_no_active_order_exists(self):
+        from datetime import datetime
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.get_active_order_poll_interval_sec.return_value = None
 
         result = await scheduler._poll_active_orders_if_due(datetime(2026, 4, 23, 10, 0, 0))
 

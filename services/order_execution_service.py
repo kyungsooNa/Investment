@@ -1,7 +1,7 @@
 # app/order_execution_service.py
 import asyncio
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
 from core.performance_profiler import PerformanceProfiler
@@ -21,6 +21,9 @@ class OrderExecutionService:
     _ORDER_MAX_RETRIES = 5
     _ORDER_RETRY_DELAY_SEC = 3
     _PROCESSED_EXECUTION_EVENT_LIMIT = 5000
+    _FAST_POLL_INTERVAL_SEC = 5
+    _DEFAULT_ACTIVE_ORDER_POLL_INTERVAL_SEC = 15
+    _POST_SUBMIT_FAST_POLL_WINDOW_SEC = 60
 
     def __init__(self, broker_api_wrapper, logger,
                  market_clock: Optional[MarketClock] = None,
@@ -42,6 +45,7 @@ class OrderExecutionService:
         self._order_no_index: Dict[str, str] = {}
         self._processed_execution_events: OrderedDict[str, None] = OrderedDict()
         self._processed_execution_event_limit = self._PROCESSED_EXECUTION_EVENT_LIMIT
+        self._post_submit_fast_poll_until: Dict[str, datetime] = {}
 
     def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
         return f"{exchange.value}:{stock_code}:{side.value}"
@@ -261,6 +265,43 @@ class OrderExecutionService:
             for context in self._order_states.values()
             if not context.state.is_terminal
         ]
+
+    def _register_post_submit_fast_poll(self, order_key: str, now: Optional[datetime] = None) -> None:
+        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
+        self._post_submit_fast_poll_until[order_key] = now + timedelta(seconds=self._POST_SUBMIT_FAST_POLL_WINDOW_SEC)
+
+    def _prune_post_submit_fast_poll(self, now: Optional[datetime] = None) -> None:
+        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
+        active_order_keys = {
+            context.order_key
+            for context in self._order_states.values()
+            if not context.state.is_terminal
+        }
+        stale_keys = [
+            order_key
+            for order_key, until in self._post_submit_fast_poll_until.items()
+            if order_key not in active_order_keys or until <= now
+        ]
+        for order_key in stale_keys:
+            self._post_submit_fast_poll_until.pop(order_key, None)
+
+    def get_active_order_poll_interval_sec(
+        self,
+        now: Optional[datetime] = None,
+        *,
+        default_interval_sec: int = _DEFAULT_ACTIVE_ORDER_POLL_INTERVAL_SEC,
+    ) -> Optional[int]:
+        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
+        contexts = self._active_order_contexts()
+        if not contexts:
+            self._prune_post_submit_fast_poll(now)
+            return None
+
+        self._prune_post_submit_fast_poll(now)
+        active_order_keys = {context.order_key for context in contexts}
+        if any(order_key in self._post_submit_fast_poll_until for order_key in active_order_keys):
+            return min(default_interval_sec, self._FAST_POLL_INTERVAL_SEC)
+        return default_interval_sec
 
     @staticmethod
     def _extract_order_query_rows(data) -> list[dict]:
@@ -596,6 +637,8 @@ class OrderExecutionService:
 
             latest = self._order_states.get(order_key)
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
+                if latest and latest.state == OrderState.SUBMITTED:
+                    self._register_post_submit_fast_poll(order_key)
                 if finalize_immediately and latest and latest.state == OrderState.SUBMITTED:
                     self._transition_order_context(order_key, OrderState.FILLED, filled_qty=qty)
                 return result

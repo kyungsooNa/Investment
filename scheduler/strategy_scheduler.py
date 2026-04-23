@@ -282,9 +282,19 @@ class StrategyScheduler:
             return 0
 
         now = now or self._tm.get_current_kst_time()
+        poll_interval_sec = self.ORDER_POLL_INTERVAL_SEC
+        if hasattr(self._oes, "get_active_order_poll_interval_sec"):
+            poll_interval_hint = self._oes.get_active_order_poll_interval_sec(
+                now,
+                default_interval_sec=self.ORDER_POLL_INTERVAL_SEC,
+            )
+            if poll_interval_hint is None:
+                return 0
+            poll_interval_sec = poll_interval_hint
+
         if self._last_order_poll_time is not None:
             elapsed = (now - self._last_order_poll_time).total_seconds()
-            if elapsed < self.ORDER_POLL_INTERVAL_SEC:
+            if elapsed < poll_interval_sec:
                 return 0
 
         self._last_order_poll_time = now
