@@ -1,7 +1,8 @@
 # app/order_execution_service.py
 import asyncio
+from datetime import datetime
 from typing import Dict, Optional
-from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState
+from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
 from repositories.streaming_stock_repo import StreamingType
@@ -36,6 +37,8 @@ class OrderExecutionService:
         self._virtual_trade_service = virtual_trade_service
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
+        self._order_no_index: Dict[str, str] = {}
+        self._processed_execution_events: set[str] = set()
 
     def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
         return f"{exchange.value}:{stock_code}:{side.value}"
@@ -83,13 +86,187 @@ class OrderExecutionService:
 
     def _set_order_context(self, context: OrderContext) -> OrderContext:
         self._order_states[context.order_key] = context
+        if context.broker_order_no:
+            self._order_no_index[context.broker_order_no] = context.order_key
         return context
 
     def _transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> OrderContext:
         context = self._order_states[order_key]
         next_context = context.transition(new_state, **kwargs)
         self._order_states[order_key] = next_context
+        if next_context.broker_order_no:
+            self._order_no_index[next_context.broker_order_no] = order_key
         return next_context
+
+    def _find_context_for_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
+        order_key = self._order_no_index.get(report.broker_order_no)
+        if order_key:
+            return self._order_states.get(order_key)
+        if report.side:
+            return self._get_order_context_by_side(report.stock_code, report.side, report.exchange)
+        for side in (OrderSide.BUY, OrderSide.SELL):
+            context = self._get_order_context_by_side(report.stock_code, side, report.exchange)
+            if context and context.broker_order_no == report.broker_order_no:
+                return context
+        return None
+
+    async def apply_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
+        """체결통보/polling 이벤트를 주문 FSM에 적용합니다."""
+        if not report.broker_order_no or not report.stock_code:
+            self.logger.warning(f"주문 이벤트 무시: 주문번호/종목코드 누락 - {report.to_dict()}")
+            return None
+
+        async with self._get_symbol_lock(report.stock_code, report.exchange):
+            context = self._find_context_for_execution_report(report)
+            if not context:
+                self.logger.warning(
+                    f"매칭되는 주문 FSM이 없습니다: 주문번호={report.broker_order_no}, "
+                    f"종목={report.stock_code}, 상태={report.event_state.value}"
+                )
+                return None
+
+            if report.event_key in self._processed_execution_events:
+                return context
+            self._processed_execution_events.add(report.event_key)
+
+            if context.state.is_terminal:
+                return context
+
+            if not context.broker_order_no:
+                context = self._transition_order_context(
+                    context.order_key,
+                    context.state,
+                    broker_order_no=report.broker_order_no,
+                )
+
+            if report.event_state == OrderState.REJECTED:
+                return self._transition_order_context(
+                    context.order_key,
+                    OrderState.REJECTED,
+                    error_message=report.message or "주문 거부",
+                )
+
+            if report.event_state == OrderState.CANCELED:
+                return self._transition_order_context(context.order_key, OrderState.CANCELED)
+
+            if report.fill_qty <= 0:
+                if context.state == OrderState.PENDING_SUBMIT:
+                    return self._transition_order_context(context.order_key, OrderState.SUBMITTED)
+                return context
+
+            if report.cumulative_filled_qty is not None:
+                filled_qty = report.cumulative_filled_qty
+            else:
+                filled_qty = context.filled_qty + report.fill_qty
+
+            if report.remaining_qty is not None:
+                is_filled = report.remaining_qty <= 0
+            else:
+                is_filled = filled_qty >= context.qty
+            next_state = OrderState.FILLED if is_filled else OrderState.PARTIAL_FILLED
+            return self._transition_order_context(
+                context.order_key,
+                next_state,
+                filled_qty=filled_qty,
+                broker_order_no=report.broker_order_no,
+            )
+
+    async def handle_signing_notice(self, data: dict, tr_id: str = "") -> Optional[OrderContext]:
+        """WebSocket signing_notice payload를 정규화한 뒤 FSM에 적용합니다."""
+        return await self.apply_execution_report(
+            OrderExecutionReport.from_signing_notice(data, tr_id=tr_id)
+        )
+
+    def _active_order_contexts(self) -> list[OrderContext]:
+        return [
+            context
+            for context in self._order_states.values()
+            if not context.state.is_terminal
+        ]
+
+    @staticmethod
+    def _extract_order_query_rows(data) -> list[dict]:
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict)]
+        if not isinstance(data, dict):
+            return []
+
+        rows: list[dict] = []
+        for key in ("output", "output1", "output2"):
+            value = data.get(key)
+            if isinstance(value, list):
+                rows.extend(row for row in value if isinstance(row, dict))
+            elif isinstance(value, dict):
+                rows.append(value)
+        return rows
+
+    @staticmethod
+    def _query_row_matches_context(row: dict, context: OrderContext) -> bool:
+        order_no = str(row.get("odno") or row.get("ODNO") or row.get("주문번호") or "").strip()
+        stock_code = str(row.get("pdno") or row.get("PDNO") or row.get("종목코드") or "").strip()
+        if context.broker_order_no and order_no and order_no != context.broker_order_no:
+            return False
+        if stock_code and stock_code != context.stock_code:
+            return False
+        return True
+
+    async def poll_active_orders_once(
+        self,
+        *,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> int:
+        """활성 주문을 주문조회 API로 한 번 보정하고 적용한 이벤트 수를 반환합니다."""
+        contexts = self._active_order_contexts()
+        if not contexts:
+            return 0
+
+        if not start_date or not end_date:
+            now = self.market_clock.get_current_kst_time() if self.market_clock else datetime.now()
+            today = now.strftime("%Y%m%d")
+            start_date = start_date or today
+            end_date = end_date or today
+
+        applied_count = 0
+        for context in contexts:
+            side_code = "02" if context.side == OrderSide.BUY else "01"
+            response = await self.broker_api_wrapper.inquire_daily_ccld(
+                start_date=start_date,
+                end_date=end_date,
+                side_code=side_code,
+                stock_code=context.stock_code,
+                ccld_dvsn="00",
+                order_no=context.broker_order_no or "",
+                exchange=context.exchange,
+            )
+            if not response or response.rt_cd != ErrorCode.SUCCESS.value:
+                msg = response.msg1 if response else "응답 없음"
+                self.logger.warning(f"주문조회 polling 실패: {context.order_key} - {msg}")
+                continue
+
+            for row in self._extract_order_query_rows(response.data):
+                if not self._query_row_matches_context(row, context):
+                    continue
+                report = OrderExecutionReport.from_order_query(row)
+                if not report.broker_order_no or not report.stock_code:
+                    continue
+                was_seen = report.event_key in self._processed_execution_events
+                before = self._find_context_for_execution_report(report)
+                before_snapshot = (
+                    before.state,
+                    before.filled_qty,
+                    before.broker_order_no,
+                ) if before else None
+                applied = await self.apply_execution_report(report)
+                after_snapshot = (
+                    applied.state,
+                    applied.filled_qty,
+                    applied.broker_order_no,
+                ) if applied else None
+                if applied is not None and not was_seen and before_snapshot != after_snapshot:
+                    applied_count += 1
+
+        return applied_count
 
     async def resolve_submitted_order(
         self,

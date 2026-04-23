@@ -89,6 +89,9 @@ class KoreaInvestApiClient:
     async def get_account_balance(self, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         return await self._account.get_account_balance(exchange=exchange)
 
+    async def inquire_daily_ccld(self, **kwargs) -> ResCommonResponse:
+        return await self._account.inquire_daily_ccld(**kwargs)
+
     # --- Trading API delegation ---
     async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
                                 exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
@@ -272,6 +275,13 @@ class KoreaInvestApiClient:
         """실시간 주식호가 데이터 구독을 해지합니다."""
         return await self._websocketAPI.unsubscribe_realtime_quote(stock_code)
 
+    async def subscribe_order_notice(self) -> Any:
+        """국내주식 체결통보를 구독합니다."""
+        return await self._websocketAPI.subscribe_order_notice()
+
+    async def unsubscribe_order_notice(self) -> Any:
+        """국내주식 체결통보 구독을 해지합니다."""
+        return await self._websocketAPI.unsubscribe_order_notice()
 
     def is_websocket_receive_alive(self) -> bool:
         """웹소켓 수신 태스크가 살아있는지 확인."""

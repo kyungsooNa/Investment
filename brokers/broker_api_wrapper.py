@@ -231,6 +231,10 @@ class BrokerAPIWrapper:
         """계좌 잔고를 조회합니다 (KoreaInvestApiAccount 위임)."""
         return await self._client.get_account_balance(exchange=exchange)
 
+    async def inquire_daily_ccld(self, **kwargs) -> ResCommonResponse:
+        """주문체결내역을 조회합니다(KoreaInvestApiAccount 위임)."""
+        return await self._client.inquire_daily_ccld(**kwargs)
+
     # --- 서킷 브레이커 ---
 
     def _cb_is_open(self) -> bool:
@@ -317,6 +321,14 @@ class BrokerAPIWrapper:
     async def unsubscribe_realtime_quote(self, stock_code: str) -> Any:  # 실제 반환 값에 따라 타입 변경
         """실시간 호가 데이터 구독 해지합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.unsubscribe_realtime_quote(stock_code)
+
+    async def subscribe_order_notice(self) -> Any:
+        """국내주식 체결통보를 구독합니다 (KoreaInvestWebSocketAPI 위임)."""
+        return await self._client.subscribe_order_notice()
+
+    async def unsubscribe_order_notice(self) -> Any:
+        """국내주식 체결통보 구독을 해지합니다 (KoreaInvestWebSocketAPI 위임)."""
+        return await self._client.unsubscribe_order_notice()
 
     async def subscribe_program_trading(self, stock_code: str):
         return await self._client.subscribe_program_trading(stock_code)

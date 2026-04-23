@@ -436,6 +436,20 @@ class KoreaInvestWebSocketAPI:
         values = data_str.split('^')
         return dict(zip(keys, values[:len(keys)]))
 
+    def _parse_signing_notice(self, data_str: str, tr_id: str) -> dict:
+        """H0STCNI0/H0STCNI9 (국내주식 체결통보)를 파싱합니다."""
+        values = data_str.split('^')
+        is_fill_notice = len(values) > 13 and values[13] == "2"
+        if is_fill_notice:
+            menulist = "고객ID|계좌번호|주문번호|원주문번호|매도매수구분|정정구분|주문종류|주문조건|주식단축종목코드|체결수량|체결단가|주식체결시간|거부여부|체결여부|접수여부|지점번호|주문수량|계좌명|호가조건가격|주문거래소구분|실시간체결창표시여부|필러|신용구분|신용대출일자|체결종목명40|주문가격"
+        else:
+            menulist = "고객ID|계좌번호|주문번호|원주문번호|매도매수구분|정정구분|주문종류|주문조건|주식단축종목코드|주문수량|주문가격|주식체결시간|거부여부|체결여부|접수여부|지점번호|주문수량_미출력|계좌명|호가조건가격|주문거래소구분|실시간체결창표시여부|필러|신용구분|신용대출일자|체결종목명40|체결단가"
+        keys = menulist.split('|')
+        parsed = dict(zip(keys, values[:len(keys)]))
+        parsed["tr_id"] = tr_id
+        parsed["통보유형"] = "체결" if is_fill_notice else "접수"
+        return parsed
+
     def _parse_futs_optn_quote_data(self, data_str):
         """H0IFASP0, H0IOASP0 (지수선물/옵션 호가) 데이터를 파싱합니다."""
         recvvalue = data_str.split('^')
@@ -787,6 +801,32 @@ class KoreaInvestWebSocketAPI:
         tr_id = self._env.active_config['tr_ids']['websocket']['realtime_quote']
         self._logger.info(f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
+    def _get_order_notice_tr_id(self) -> str:
+        websocket_config = self._env.active_config.get('tr_ids', {}).get('websocket', {})
+        if self._env.is_paper_trading:
+            return websocket_config.get('order_notice_paper', 'H0STCNI9')
+        return websocket_config.get('order_notice_real', 'H0STCNI0')
+
+    async def subscribe_order_notice(self):
+        """국내주식 체결통보를 구독합니다. tr_key는 HTS ID를 사용합니다."""
+        tr_id = self._get_order_notice_tr_id()
+        htsid = self._env.active_config.get('htsid')
+        if not htsid:
+            self._logger.error("체결통보 구독 실패: htsid가 설정되어 있지 않습니다.")
+            return False
+        self._logger.info(f"국내주식 체결통보 구독 요청 ({tr_id}, HTS_ID={htsid})...")
+        return await self.send_realtime_request(tr_id, htsid, tr_type="1")
+
+    async def unsubscribe_order_notice(self):
+        """국내주식 체결통보 구독을 해지합니다."""
+        tr_id = self._get_order_notice_tr_id()
+        htsid = self._env.active_config.get('htsid')
+        if not htsid:
+            self._logger.error("체결통보 구독 해지 실패: htsid가 설정되어 있지 않습니다.")
+            return False
+        self._logger.info(f"국내주식 체결통보 구독 해지 요청 ({tr_id}, HTS_ID={htsid})...")
+        return await self.send_realtime_request(tr_id, htsid, tr_type="2")
 
     # For test only
     async def _on_receive(self, message):

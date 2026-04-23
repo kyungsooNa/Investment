@@ -677,3 +677,155 @@ async def test_next_order_allowed_after_previous_order_filled(handler, mock_brok
 
     assert second.rt_cd == ErrorCode.SUCCESS.value
     assert mock_broker_api_wrapper.place_stock_order.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_signing_notice_accumulates_partial_fills_to_filled(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    first = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "4",
+        "CNTG_UNPR": "70000",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+    assert first.state == OrderState.PARTIAL_FILLED
+    assert first.filled_qty == 4
+    assert first.remaining_qty == 6
+
+    second = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "6",
+        "CNTG_UNPR": "70100",
+        "STCK_CNTG_HOUR": "101700",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+    assert second.state == OrderState.FILLED
+    assert second.filled_qty == 10
+    assert second.remaining_qty == 0
+
+
+@pytest.mark.asyncio
+async def test_signing_notice_duplicate_event_is_idempotent(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+    notice = {
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "4",
+        "CNTG_UNPR": "70000",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }
+
+    await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
+    duplicate = await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
+
+    assert duplicate.state == OrderState.PARTIAL_FILLED
+    assert duplicate.filled_qty == 4
+    assert duplicate.remaining_qty == 6
+
+
+@pytest.mark.asyncio
+async def test_signing_notice_rejects_submitted_order(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    rejected = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "0",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "Y",
+        "CNTG_YN": "1",
+        "ACPT_YN": "N",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+
+    assert rejected.state == OrderState.REJECTED
+    assert handler.has_active_order("005930") is False
+
+
+@pytest.mark.asyncio
+async def test_poll_active_orders_once_applies_order_query_result(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    mock_broker_api_wrapper.inquire_daily_ccld.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={
+            "output1": [
+                {
+                    "odno": "A0001",
+                    "pdno": "005930",
+                    "sll_buy_dvsn_cd": "02",
+                    "ord_qty": "10",
+                    "tot_ccld_qty": "10",
+                    "rmn_qty": "0",
+                    "avg_prvs": "70000",
+                    "ord_dt": "20260423",
+                    "ord_tmd": "101500",
+                }
+            ]
+        },
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    applied_count = await handler.poll_active_orders_once(
+        start_date="20260423",
+        end_date="20260423",
+    )
+
+    context = handler.get_order_context("005930", is_buy=True)
+    assert applied_count == 1
+    assert context.state == OrderState.FILLED
+    assert context.filled_qty == 10
+    mock_broker_api_wrapper.inquire_daily_ccld.assert_awaited_once_with(
+        start_date="20260423",
+        end_date="20260423",
+        side_code="02",
+        stock_code="005930",
+        ccld_dvsn="00",
+        order_no="A0001",
+        exchange=Exchange.KRX,
+    )

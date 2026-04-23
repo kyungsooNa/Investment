@@ -28,6 +28,7 @@ def websocket_api_instance():
         "api_secret_key": "dummy-secret-key",
         "base_url": "https://dummy-base-url",
         "custtype": "P",  # send_realtime_request에서 사용
+        "htsid": "test-htsid",
         "tr_ids": {  # 핵심: 'tr_ids' 키 추가
             "H0STASP0": {"msg_type": "stock_quote", "encrypted": False},
             "H0STCNT0": {"msg_type": "stock_contract", "encrypted": True},
@@ -38,7 +39,9 @@ def websocket_api_instance():
             "H0EUCNI0": {"msg_type": "signing_notice", "encrypted": True},
             "websocket": {
                 "realtime_price": "H0STCNT0",
-                "realtime_quote": "H0STASP0"
+                "realtime_quote": "H0STASP0",
+                "order_notice_real": "H0STCNI0",
+                "order_notice_paper": "H0STCNI9"
             }
         }
     }
@@ -48,6 +51,7 @@ def websocket_api_instance():
     mock_env.get_full_config.return_value = full_config
     mock_env.get_websocket_url.return_value = full_config["websocket_url"]
     mock_env.active_config = full_config  # ✅ 여기 추가!
+    mock_env.is_paper_trading = False
 
     # websockets 모듈 자체를 패치하여 예외 클래스에 대한 접근을 제어
     # 더미 예외를 사용하므로 이 패치는 더 이상 필요하지 않을 수 있지만, 안전을 위해 유지
@@ -794,6 +798,45 @@ async def test_unsubscribe_realtime_quote_success(websocket_api_instance):
         api._logger.info.assert_called_once()
         logged_message = api._logger.info.call_args[0][0]
         assert f"종목 {stock_code} 실시간 호가 데이터 구독 해지 요청" in logged_message
+
+
+def test_parse_signing_notice_fill_data(websocket_api_instance):
+    api = websocket_api_instance
+    values = [
+        "test-htsid", "12345678", "A0001", "", "02", "00", "00", "00",
+        "005930", "4", "70000", "101500", "N", "2", "Y", "001",
+        "10", "계좌명", "0", "KRX", "Y", "", "", "", "삼성전자", "70000"
+    ]
+
+    parsed = KoreaInvestWebSocketAPI._parse_signing_notice(api, "^".join(values), "H0STCNI0")
+
+    assert parsed["주문번호"] == "A0001"
+    assert parsed["주식단축종목코드"] == "005930"
+    assert parsed["체결수량"] == "4"
+    assert parsed["체결단가"] == "70000"
+    assert parsed["통보유형"] == "체결"
+    assert parsed["tr_id"] == "H0STCNI0"
+
+
+@pytest.mark.asyncio
+async def test_subscribe_order_notice_success(websocket_api_instance):
+    api = websocket_api_instance
+    with patch.object(api, "send_realtime_request", new_callable=AsyncMock, return_value=True) as mock_send:
+        result = await api.subscribe_order_notice()
+
+    assert result is True
+    mock_send.assert_awaited_once_with("H0STCNI0", "test-htsid", tr_type="1")
+
+
+@pytest.mark.asyncio
+async def test_subscribe_order_notice_paper_uses_paper_tr_id(websocket_api_instance):
+    api = websocket_api_instance
+    api._env.is_paper_trading = True
+    with patch.object(api, "send_realtime_request", new_callable=AsyncMock, return_value=True) as mock_send:
+        result = await api.subscribe_order_notice()
+
+    assert result is True
+    mock_send.assert_awaited_once_with("H0STCNI9", "test-htsid", tr_type="1")
 
 
 @pytest.mark.asyncio

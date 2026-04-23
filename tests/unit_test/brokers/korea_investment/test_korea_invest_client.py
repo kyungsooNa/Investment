@@ -174,6 +174,20 @@ async def test_get_account_balance_delegation(korea_invest_client_instance):
 
 
 @pytest.mark.asyncio
+async def test_inquire_daily_ccld_delegation(korea_invest_client_instance):
+    client, _, mock_account, _, _, _, _ = korea_invest_client_instance
+    mock_account.inquire_daily_ccld.return_value = {"output1": []}
+
+    result = await client.inquire_daily_ccld(stock_code="005930", order_no="A0001")
+
+    mock_account.inquire_daily_ccld.assert_awaited_once_with(
+        stock_code="005930",
+        order_no="A0001",
+    )
+    assert result == {"output1": []}
+
+
+@pytest.mark.asyncio
 async def test_place_stock_order_sell_delegation(korea_invest_client_instance):
     """place_stock_order 메서드가 _trading.place_stock_order를 올바른 인자로 호출하는지 테스트합니다."""
     client, _, _, mock_trading, _, _, _ = korea_invest_client_instance

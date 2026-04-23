@@ -408,6 +408,10 @@ class WebAppContext:
             market_calendar_service=self._mcs,
             price_subscription_service=self.price_subscription_service,
         )
+        self.streaming_service.register_handler(
+            "signing_notice",
+            self.order_execution_service.handle_signing_notice,
+        )
         
         # [신규] 오닐 유니버스 서비스 초기화
         self.oneil_universe_service = OneilUniverseService(

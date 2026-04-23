@@ -112,6 +112,11 @@ class StreamingService:
         result = await self.broker.connect_websocket(self._callback)
         if result and self._streaming_logger:
             self._streaming_logger.log_connect()
+        if result:
+            try:
+                await self.subscribe_order_notice()
+            except Exception as e:
+                self.logger.warning(f"체결통보 구독 실패: {e}")
         return result
 
     async def disconnect_websocket(self):
@@ -144,6 +149,14 @@ class StreamingService:
         if result and self._price_stream_service:
             self._price_stream_service.clear_subscription_state(code)
         return result
+
+    async def subscribe_order_notice(self):
+        """국내주식 체결통보 구독 (BrokerAPIWrapper 위임)."""
+        return await self.broker.subscribe_order_notice()
+
+    async def unsubscribe_order_notice(self):
+        """국내주식 체결통보 구독 해지 (BrokerAPIWrapper 위임)."""
+        return await self.broker.unsubscribe_order_notice()
 
     async def subscribe_unified_price(self, code: str) -> bool:
         """실시간 통합 체결가(H0UNCNT0) 구독 — PriceSubscriptionService 전용."""
