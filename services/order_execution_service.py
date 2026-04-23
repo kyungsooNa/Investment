@@ -1,6 +1,5 @@
 # app/order_execution_service.py
 import asyncio
-from collections import defaultdict
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState
 from core.performance_profiler import PerformanceProfiler
@@ -36,7 +35,7 @@ class OrderExecutionService:
         self._price_sub_svc = price_subscription_service
         self._virtual_trade_service = virtual_trade_service
         self._order_states: Dict[str, OrderContext] = {}
-        self._order_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._order_locks: Dict[str, asyncio.Lock] = {}
 
     def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
         return f"{exchange.value}:{stock_code}:{side.value}"
@@ -44,16 +43,43 @@ class OrderExecutionService:
     def _make_symbol_lock_key(self, stock_code: str, exchange: Exchange) -> str:
         return f"{exchange.value}:{stock_code}"
 
+    def _get_symbol_lock(self, stock_code: str, exchange: Exchange) -> asyncio.Lock:
+        lock_key = self._make_symbol_lock_key(stock_code, exchange)
+        current_loop = asyncio.get_running_loop()
+        lock = self._order_locks.get(lock_key)
+        lock_loop = getattr(lock, "_loop", None) if lock else None
+        if lock is None or (lock_loop is not None and lock_loop is not current_loop):
+            lock = asyncio.Lock()
+            self._order_locks[lock_key] = lock
+        return lock
+
+    def _get_order_context_by_side(
+        self,
+        stock_code: str,
+        side: OrderSide,
+        exchange: Exchange = Exchange.KRX,
+    ) -> Optional[OrderContext]:
+        return self._order_states.get(self._make_order_key(stock_code, side, exchange))
+
     def get_order_context(self, stock_code, is_buy: bool, exchange: Exchange = Exchange.KRX) -> Optional[OrderContext]:
         side = OrderSide.BUY if is_buy else OrderSide.SELL
-        return self._order_states.get(self._make_order_key(stock_code, side, exchange))
+        return self._get_order_context_by_side(stock_code, side, exchange)
 
     def has_active_order(self, stock_code, exchange: Exchange = Exchange.KRX) -> bool:
         for side in (OrderSide.BUY, OrderSide.SELL):
-            context = self.get_order_context(stock_code, side == OrderSide.BUY, exchange)
+            context = self._get_order_context_by_side(stock_code, side, exchange)
             if context and not context.state.is_terminal:
                 return True
         return False
+
+    def _extract_broker_order_no(self, result: ResCommonResponse) -> Optional[str]:
+        if not result or not result.data:
+            return None
+        if hasattr(result.data, "ordno"):
+            return result.data.ordno
+        if isinstance(result.data, dict):
+            return result.data.get("ordno") or result.data.get("order_no") or result.data.get("odno")
+        return None
 
     def _set_order_context(self, context: OrderContext) -> OrderContext:
         self._order_states[context.order_key] = context
@@ -82,6 +108,55 @@ class OrderExecutionService:
         qty = context.qty if filled_qty is None and final_state == OrderState.FILLED else (filled_qty or context.filled_qty)
         return self._transition_order_context(order_key, final_state, filled_qty=qty)
 
+    async def mark_order_partial_filled(
+        self,
+        stock_code,
+        is_buy: bool,
+        filled_qty: int,
+        *,
+        exchange: Exchange = Exchange.KRX,
+    ) -> Optional[OrderContext]:
+        return await self.resolve_submitted_order(
+            stock_code,
+            is_buy,
+            exchange=exchange,
+            final_state=OrderState.PARTIAL_FILLED,
+            filled_qty=filled_qty,
+        )
+
+    async def mark_order_canceled(
+        self,
+        stock_code,
+        is_buy: bool,
+        *,
+        exchange: Exchange = Exchange.KRX,
+    ) -> Optional[OrderContext]:
+        return await self.resolve_submitted_order(
+            stock_code,
+            is_buy,
+            exchange=exchange,
+            final_state=OrderState.CANCELED,
+        )
+
+    async def mark_order_rejected(
+        self,
+        stock_code,
+        is_buy: bool,
+        *,
+        exchange: Exchange = Exchange.KRX,
+        error_message: str = "",
+    ) -> Optional[OrderContext]:
+        side = OrderSide.BUY if is_buy else OrderSide.SELL
+        order_key = self._make_order_key(stock_code, side, exchange)
+        context = self._order_states.get(order_key)
+        if not context or context.state.is_terminal:
+            return context
+        return self._transition_order_context(
+            order_key,
+            OrderState.REJECTED,
+            error_message=error_message,
+        )
+
     async def _retry_order(self, order_fn, stock_code, price, qty, order_key: Optional[str] = None) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도."""
         last_result = None
@@ -89,16 +164,11 @@ class OrderExecutionService:
             result: ResCommonResponse = await order_fn(stock_code, price, qty)
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
                 if order_key and order_key in self._order_states:
-                    broker_order_no = None
-                    if result.data and hasattr(result.data, "ordno"):
-                        broker_order_no = result.data.ordno
-                    elif isinstance(result.data, dict):
-                        broker_order_no = result.data.get("ordno")
                     self._transition_order_context(
                         order_key,
                         OrderState.SUBMITTED,
                         attempt_count=attempt,
-                        broker_order_no=broker_order_no,
+                        broker_order_no=self._extract_broker_order_no(result),
                     )
                 return result
             last_result = result
@@ -151,12 +221,11 @@ class OrderExecutionService:
         finalize_immediately: bool,
     ) -> ResCommonResponse:
         order_key = self._make_order_key(stock_code, side, exchange)
-        symbol_lock_key = self._make_symbol_lock_key(stock_code, exchange)
         action_kr = "매수" if side == OrderSide.BUY else "매도"
 
-        async with self._order_locks[symbol_lock_key]:
+        async with self._get_symbol_lock(stock_code, exchange):
             for existing_side in (OrderSide.BUY, OrderSide.SELL):
-                existing = self._order_states.get(self._make_order_key(stock_code, existing_side, exchange))
+                existing = self._get_order_context_by_side(stock_code, existing_side, exchange)
                 if existing and not existing.state.is_terminal:
                     self.logger.warning(
                         f"{action_kr} 주문 차단: 진행 중인 주문이 있습니다. "

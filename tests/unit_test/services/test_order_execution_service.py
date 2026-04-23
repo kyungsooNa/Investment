@@ -613,3 +613,67 @@ async def test_handle_place_buy_order_blocks_duplicate_while_submitted(handler, 
     assert second.rt_cd == ErrorCode.RETRY_LIMIT.value
     assert "진행 중인 주문" in second.msg1
     assert mock_broker_api_wrapper.place_stock_order.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_rejects_after_retry_exhaustion(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.RETRY_LIMIT.value,
+        msg1="재시도 한도 초과",
+        data=None,
+    )
+
+    result = await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    assert result.rt_cd == ErrorCode.RETRY_LIMIT.value
+    context = handler.get_order_context("005930", is_buy=True)
+    assert context is not None
+    assert context.state == OrderState.REJECTED
+    assert context.attempt_count == handler._ORDER_MAX_RETRIES
+    assert handler.has_active_order("005930") is False
+
+
+@pytest.mark.asyncio
+async def test_order_partial_fill_recomputes_remaining_qty(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    partial = await handler.mark_order_partial_filled("005930", True, 4)
+    assert partial is not None
+    assert partial.state == OrderState.PARTIAL_FILLED
+    assert partial.filled_qty == 4
+    assert partial.remaining_qty == 6
+
+    filled = await handler.resolve_submitted_order(
+        "005930", True, final_state=OrderState.FILLED, filled_qty=10
+    )
+    assert filled is not None
+    assert filled.remaining_qty == 0
+
+
+@pytest.mark.asyncio
+async def test_next_order_allowed_after_previous_order_filled(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+    await handler.resolve_submitted_order("005930", True, final_state=OrderState.FILLED)
+
+    second = await handler.handle_place_buy_order(
+        "005930", 70100, 5, finalize_immediately=False
+    )
+
+    assert second.rt_cd == ErrorCode.SUCCESS.value
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 2

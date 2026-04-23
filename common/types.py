@@ -88,8 +88,7 @@ class OrderContext(BaseModel):
 
     @model_validator(mode="after")
     def sync_remaining_qty(self) -> "OrderContext":
-        if self.remaining_qty <= 0:
-            self.remaining_qty = max(self.qty - self.filled_qty, 0)
+        self.remaining_qty = max(self.qty - self.filled_qty, 0)
         return self
 
     def to_dict(self):
