@@ -4,7 +4,7 @@ from io import StringIO
 import builtins
 from unittest.mock import call, ANY
 from services.market_calendar_service import MarketCalendarService
-from common.types import ResCommonResponse, ErrorCode, Exchange, OrderState, OrderExecutionReport, OrderSide
+from common.types import ResCommonResponse, ErrorCode, Exchange, OrderContext, OrderState, OrderExecutionReport, OrderSide
 from services.order_execution_service import OrderExecutionService
 
 # 테스트를 위한 MockLogger
@@ -22,6 +22,7 @@ def mock_broker_api_wrapper():
     mock = AsyncMock()
     # place_stock_order의 기본 반환값 설정
     mock.place_stock_order.return_value = ResCommonResponse(rt_cd="0", msg1="주문 성공", data=None)
+    mock.cancel_stock_order.return_value = ResCommonResponse(rt_cd="0", msg1="취소 요청 성공", data=None)
     return mock
 
 @pytest.fixture
@@ -1065,3 +1066,143 @@ async def test_partial_fill_then_cancel_persists_confirmed_partial_qty(mock_brok
     assert canceled.state == OrderState.CANCELED
     assert canceled.virtual_recorded_qty == 4
     virtual_trade_service.log_buy_async.assert_awaited_once_with("수동매매", "005930", 70200, 4)
+
+
+def _seed_order_context(handler, *, state=OrderState.SUBMITTED, broker_order_no="A0001", remaining_qty=10):
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    return handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=state,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        filled_qty=10 - remaining_qty,
+        remaining_qty=remaining_qty,
+        broker_order_no=broker_order_no,
+        source="strategy:test",
+    ))
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_requests_broker_with_remaining_qty(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    context = _seed_order_context(
+        handler,
+        state=OrderState.PARTIAL_FILLED,
+        broker_order_no="A0001",
+        remaining_qty=6,
+    )
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_awaited_once_with(
+        broker_order_no="A0001",
+        order_qty=6,
+        order_price=0,
+        order_orgno="06010",
+        order_dvsn="00",
+        qty_all_ord_yn="Y",
+        exchange=Exchange.KRX,
+    )
+    assert handler._order_states[context.order_key].state == OrderState.PARTIAL_FILLED
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_requires_active_context(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_requires_broker_order_no(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    _seed_order_context(handler, broker_order_no="", remaining_qty=10)
+
+    result = await handler.cancel_order(stock_code="005930", is_buy=True)
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_rejects_terminal_context(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_returns_broker_failure_without_forcing_state(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    mock_broker_api_wrapper.cancel_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="취소 실패",
+        data=None,
+    )
+    handler = OrderExecutionService(
+        mock_broker_api_wrapper,
+        mock_logger,
+        mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    context = _seed_order_context(handler, state=OrderState.SUBMITTED, broker_order_no="A0001", remaining_qty=10)
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert handler._order_states[context.order_key].state == OrderState.SUBMITTED

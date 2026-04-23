@@ -853,3 +853,18 @@ async def test_place_stock_order_failure_increments_cb(broker_wrapper_instance):
     await wrapper.place_stock_order("005930", 70000, 10, is_buy=True)
 
     assert wrapper._cb_consecutive_failures == 1
+@pytest.mark.asyncio
+async def test_cancel_stock_order_delegation(mock_env, mock_logger, mock_market_clock):
+    with patch(f"{wrapper_module.__name__}.StockCodeRepository"), \
+         patch(f"{wrapper_module.__name__}.KoreaInvestApiClient") as mock_client_class, \
+         patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c), \
+         patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c):
+        mock_client = AsyncMock()
+        mock_client.cancel_stock_order.return_value = {"rt_cd": "0", "msg1": "취소 요청 성공"}
+        mock_client_class.return_value = mock_client
+
+        wrapper = BrokerAPIWrapper("korea_investment", env=mock_env, logger=mock_logger, market_clock=mock_market_clock)
+        result = await wrapper.cancel_stock_order(broker_order_no="A0001", order_qty=6)
+
+        mock_client.cancel_stock_order.assert_awaited_once_with(broker_order_no="A0001", order_qty=6)
+        assert result == {"rt_cd": "0", "msg1": "취소 요청 성공"}

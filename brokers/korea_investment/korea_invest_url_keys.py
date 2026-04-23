@@ -25,4 +25,5 @@ class EndpointKey(str, Enum):
     INQUIRE_BALANCE = "inquire_balance"
     INQUIRE_DAILY_CCLD = "inquire_daily_ccld"
     ORDER_CASH = "order_cash"
+    ORDER_RVSECNCL = "order_rvsecncl"
     HASHKEY = "hashkey"                       # YAML에 없으면 리터럴(/uapi/hashkey) 써도 됨

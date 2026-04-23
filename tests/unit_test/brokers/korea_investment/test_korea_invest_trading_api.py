@@ -4,7 +4,7 @@ import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
 from brokers.korea_investment.korea_invest_url_keys import EndpointKey
-from common.types import ErrorCode, ResCommonResponse
+from common.types import ErrorCode, Exchange, ResCommonResponse
 
 
 def make_api():
@@ -89,6 +89,49 @@ async def test_place_stock_order_buy_success():
 
     # 4) 새 설계에서는 temp 컨텍스트 종료 후 hashkey가 지워지는 것이 정상
     assert trading_api._headers.build().get('hashkey') is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_stock_order_builds_order_rvsecncl_request():
+    api = make_api()
+    api._env.active_config.update({
+        "custtype": "P",
+        "stock_account_number": "12345678",
+    })
+    api._trid_provider.trading_order_rvsecncl.return_value = "VTTC0803U"
+    api._get_hashkey = AsyncMock(return_value="mocked_hash")
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="취소 요청 성공",
+        data={"odno": "A0001"},
+    ))
+
+    result = await api.cancel_stock_order(
+        broker_order_no="A0001",
+        order_qty=6,
+        order_orgno="06010",
+        exchange=Exchange.KRX,
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    api._get_hashkey.assert_awaited_once()
+    body = api._get_hashkey.await_args.args[0]
+    assert body["CANO"] == "12345678"
+    assert body["ACNT_PRDT_CD"] == "01"
+    assert body["KRX_FWDG_ORD_ORGNO"] == "06010"
+    assert body["ORGN_ODNO"] == "A0001"
+    assert body["ORD_DVSN"] == "00"
+    assert body["RVSE_CNCL_DVSN_CD"] == "02"
+    assert body["ORD_QTY"] == "6"
+    assert body["ORD_UNPR"] == "0"
+    assert body["QTY_ALL_ORD_YN"] == "Y"
+
+    api.call_api.assert_awaited_once_with(
+        "POST",
+        EndpointKey.ORDER_RVSECNCL,
+        data=body,
+        retry_count=3,
+    )
 
 
 @pytest.mark.asyncio

@@ -33,6 +33,8 @@ class TrIdLeaf(str, Enum):
     ORDER_CASH_BUY_PAPER = "order_cash_buy_paper"
     ORDER_CASH_SELL_REAL = "order_cash_sell_real"
     ORDER_CASH_SELL_PAPER = "order_cash_sell_paper"
+    ORDER_RVSECNCL_REAL = "order_rvsecncl_real"
+    ORDER_RVSECNCL_PAPER = "order_rvsecncl_paper"
 
 
 class TrIdLeafWebSocket(str, Enum):
@@ -55,3 +57,4 @@ class TrId(str, Enum):
     # trading
     ORDER_CASH_BUY = "order_cash_buy"
     ORDER_CASH_SELL = "order_cash_sell"
+    ORDER_RVSECNCL = "order_rvsecncl"

@@ -49,16 +49,23 @@
 - [x] Verified Phase3 impact scope: `242 passed`.
 - [x] Verified Phase3 syntax/import health with `compileall`.
 
+### Phase 4 Completed - Cancel Request Integration
+- [x] Added KIS domestic stock `order-rvsecncl` endpoint and real/paper TR IDs.
+- [x] Added revise/cancel request body params for cancel requests using `RVSE_CNCL_DVSN_CD="02"`.
+- [x] Added cancel delegation through KIS trading API, client, and broker wrapper.
+- [x] Added `OrderExecutionService.cancel_order()` using local FSM context plus `broker_order_no`.
+- [x] Sent cancel requests with remaining quantity and preserved terminal-state confirmation for execution notice/polling.
+- [x] Kept cancel API success from forcing immediate `OrderState.CANCELED`.
+- [x] Added regression tests for TR ID/provider selection, trading/client/wrapper delegation, and cancel service edge cases.
+- [x] Verified Phase4 impact scope: `133 passed`.
+- [x] Verified Phase4 syntax/import health with `compileall`.
+
 ### Remaining Order FSM Work
 - [ ] Validate real KIS `inquire-daily-ccld` response fields in both paper and real environments.
   - Fixture/schema prep: sanitized synthetic `output1` rows and parser contract tests added for submitted, partial-filled, filled, canceled, and rejected rows.
   - Confirm order number, stock code, side, order qty, cumulative fill qty, remaining qty, average fill price, cancel/reject fields.
   - Save sanitized captured examples for regression fixtures if possible.
   - Still required: validate against captured paper and real KIS responses.
-- [ ] Add cancellation API integration using `broker_order_no`.
-  - Wire broker cancel request params/TR IDs/client/wrapper delegation.
-  - Add `OrderExecutionService.cancel_order()` or equivalent API using local context + broker order number.
-  - Map cancel response and later execution notice/polling rows into `OrderState.CANCELED`.
 - [ ] Add an operation-level fallback policy for missed WebSocket notices.
   - After order submit, poll frequently until terminal state or timeout.
   - Slow down or stop polling once terminal state is reached.
@@ -72,10 +79,9 @@
 
 ### Recommended Next Order
 1. Validate KIS polling fields with captured paper-trading responses.
-2. Implement cancel request path and map cancel responses back into FSM.
-3. Add operation-level post-submit polling fallback until terminal state.
-4. Add stuck-order notification/logging for long-lived `SUBMITTED` / `PARTIAL_FILLED`.
-5. Investigate full `tests/unit_test` timeout separately.
+2. Add operation-level post-submit polling fallback until terminal state.
+3. Add stuck-order notification/logging for long-lived `SUBMITTED` / `PARTIAL_FILLED`.
+4. Investigate full `tests/unit_test` timeout separately.
 
 최종 업데이트: 2026-04-23
 
@@ -334,9 +340,8 @@
 
 1. FSM 실체결 기준 가상매매 기록 전환
 2. KIS `inquire-daily-ccld` 실응답 필드 검증 및 fixture화
-3. broker order number 기반 주문 취소 API 연동
-4. missed WebSocket notice 대비 post-submit polling fallback 정책
-5. stuck-order notification/logging 추가
-6. full `tests/unit_test` timeout 원인 조사
+3. missed WebSocket notice 대비 post-submit polling fallback 정책
+4. stuck-order notification/logging 추가
+5. full `tests/unit_test` timeout 원인 조사
 
-이 6개가 Phase1/2 이후 주문 실행 안정성을 완성하는 데 가장 투자 대비 효과가 크다.
+이 5개가 Phase1/2 이후 주문 실행 안정성을 완성하는 데 가장 투자 대비 효과가 크다.
