@@ -96,11 +96,6 @@
     - 현재가 REST 조회 실패 상황에서 `rest_failed` 로그가 남는지 확인한다.
     - 장 마감 후 조용한 상태를 장애로 오탐하지 않는지 로그를 함께 점검한다.
 
-- [ ] `NewHighTask` DB 경합 및 실패 경로 점검
-  - 목표: 신고가 후처리 중 DB 락, 중복 실행, 후속 서비스 실패가 있는지 정리하고 수정한다.
-  - 대상:
-    - `task/background/after_market/newhigh_task.py`
-    - `services/newhigh_service.py`
 
 - [ ] 주문 상태 기계(FSM) 도입
   - 목표: `PENDING_SUBMIT -> SUBMITTED -> PARTIAL_FILLED -> FILLED/CANCELED` 같은 명시적 상태 전이로 중복 주문과 race condition을 줄인다.
