@@ -101,6 +101,62 @@ class OrderExecutionService:
             self._order_no_index[next_context.broker_order_no] = order_key
         return next_context
 
+    def _mark_virtual_trade_recorded(self, context: OrderContext, recorded_qty: int) -> OrderContext:
+        next_context = context.model_copy(update={
+            "virtual_recorded_qty": min(max(recorded_qty, 0), context.filled_qty),
+        })
+        self._order_states[context.order_key] = next_context
+        if next_context.broker_order_no:
+            self._order_no_index[next_context.broker_order_no] = context.order_key
+        return next_context
+
+    @staticmethod
+    def _strategy_name_from_source(source: str) -> tuple[str, bool]:
+        source = source or ""
+        if source.startswith("strategy:"):
+            return source.split(":", 1)[1] or "default", True
+        if source.startswith("manual:"):
+            return source.split(":", 1)[1] or "수동매매", False
+        if source in ("", "default", "manual", "web"):
+            return "수동매매", False
+        return source, False
+
+    async def _persist_virtual_trade_for_terminal_report(
+        self,
+        context: OrderContext,
+        report: OrderExecutionReport,
+    ) -> OrderContext:
+        if not self._virtual_trade_service or not context.state.is_terminal:
+            return context
+        if context.state == OrderState.REJECTED or context.filled_qty <= 0:
+            return context
+        if context.virtual_recorded_qty >= context.filled_qty:
+            return context
+
+        strategy_name, is_strategy_source = self._strategy_name_from_source(context.source)
+        record_qty = context.filled_qty
+        record_price = report.fill_price or context.price
+        try:
+            if context.side == OrderSide.BUY:
+                await self._virtual_trade_service.log_buy_async(
+                    strategy_name, context.stock_code, record_price, record_qty
+                )
+            elif is_strategy_source:
+                await self._virtual_trade_service.log_sell_by_strategy_async(
+                    strategy_name, context.stock_code, record_price, record_qty
+                )
+            else:
+                await self._virtual_trade_service.log_sell_async(
+                    context.stock_code, record_price, record_qty
+                )
+        except Exception as e:
+            self.logger.warning(
+                f"체결확정 가상매매 기록 실패: 주문={context.order_key}, "
+                f"수량={record_qty}, 사유={e}"
+            )
+            return context
+        return self._mark_virtual_trade_recorded(context, record_qty)
+
     def _find_context_for_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
         order_key = self._order_no_index.get(report.broker_order_no)
         if order_key:
@@ -165,7 +221,8 @@ class OrderExecutionService:
                 )
 
             if report.event_state == OrderState.CANCELED:
-                return self._transition_order_context(context.order_key, OrderState.CANCELED)
+                canceled = self._transition_order_context(context.order_key, OrderState.CANCELED)
+                return await self._persist_virtual_trade_for_terminal_report(canceled, report)
 
             if report.fill_qty <= 0:
                 if context.state == OrderState.PENDING_SUBMIT:
@@ -184,12 +241,13 @@ class OrderExecutionService:
             if is_filled:
                 filled_qty = max(filled_qty, context.qty)
             next_state = OrderState.FILLED if is_filled else OrderState.PARTIAL_FILLED
-            return self._transition_order_context(
+            transitioned = self._transition_order_context(
                 context.order_key,
                 next_state,
                 filled_qty=filled_qty,
                 broker_order_no=report.broker_order_no,
             )
+            return await self._persist_virtual_trade_for_terminal_report(transitioned, report)
 
     async def handle_signing_notice(self, data: dict, tr_id: str = "") -> Optional[OrderContext]:
         """WebSocket signing_notice payload를 정규화한 뒤 FSM에 적용합니다."""
@@ -575,7 +633,15 @@ class OrderExecutionService:
         self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)
         return sell_order_result
 
-    async def handle_buy_stock(self, stock_code, qty_input, price_input, exchange: Exchange = Exchange.KRX):
+    async def handle_buy_stock(
+        self,
+        stock_code,
+        qty_input,
+        price_input,
+        exchange: Exchange = Exchange.KRX,
+        source: str = "manual:수동매매",
+        finalize_immediately: bool = True,
+    ):
         """
         사용자 입력을 받아 주식 매수 주문을 처리합니다.
         trading_app.py의 '3'번 옵션에 매핑됩니다.
@@ -590,9 +656,24 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
 
         # handle_place_buy_order 호출
-        return await self.handle_place_buy_order(stock_code, price, qty, exchange=exchange)
+        return await self.handle_place_buy_order(
+            stock_code,
+            price,
+            qty,
+            exchange=exchange,
+            source=source,
+            finalize_immediately=finalize_immediately,
+        )
 
-    async def handle_sell_stock(self, stock_code, qty_input, price_input, exchange: Exchange = Exchange.KRX):
+    async def handle_sell_stock(
+        self,
+        stock_code,
+        qty_input,
+        price_input,
+        exchange: Exchange = Exchange.KRX,
+        source: str = "manual:수동매매",
+        finalize_immediately: bool = True,
+    ):
         """
         사용자 입력을 받아 주식 매도 주문을 처리합니다.
         trading_app.py의 '4'번 옵션에 매핑됩니다.
@@ -606,7 +687,14 @@ class OrderExecutionService:
             return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
 
         # handle_place_sell_order 호출
-        return await self.handle_place_sell_order(stock_code, price, qty, exchange=exchange)
+        return await self.handle_place_sell_order(
+            stock_code,
+            price,
+            qty,
+            exchange=exchange,
+            source=source,
+            finalize_immediately=finalize_immediately,
+        )
 
     async def sell_all_stocks(self, exchange: Exchange = Exchange.KRX):
         """보유하고 있는 모든 주식을 시장가로 매도합니다."""

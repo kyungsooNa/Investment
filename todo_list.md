@@ -1,47 +1,81 @@
 # Investment Trading App - Refined To-Do List
 
-## 2026-04-23 Update - Order FSM / Execution Notice / Polling
+## 2026-04-23 Summary - Order FSM Phase 1-2
 
-### Done This Session
-- [x] Added `OrderExecutionReport` as a common event model for WebSocket execution notices and order-query polling.
+### Phase 1 Completed - Core FSM / Execution Notice / Polling
+- [x] Added explicit order state models: `OrderState`, `OrderSide`, `OrderContext`.
+- [x] Added active-order protection using symbol-level locks and `has_active_order()` checks.
+- [x] Added retry-aware FSM transitions for `PENDING_SUBMIT`, `SUBMITTED`, `FILLED`, `PARTIAL_FILLED`, `CANCELED`, and `REJECTED`.
+- [x] Added broker order-number extraction and order-number indexing for matching broker events back to local FSM contexts.
+- [x] Added helper transition methods: partial fill, cancel, reject, and submitted-order resolution.
+- [x] Added `OrderExecutionReport` as a shared event model for WebSocket execution notices and order-query polling.
 - [x] Added domestic stock execution notice parsing for `H0STCNI0` (real) and `H0STCNI9` (paper).
 - [x] Added `htsid` based execution-notice subscribe/unsubscribe delegation through WebSocket API, KIS client, broker wrapper, and streaming service.
-- [x] Registered `signing_notice` handling in `WebAppContext` so execution notices can update `OrderExecutionService`.
-- [x] Added idempotent FSM event application: duplicate event prevention, partial-fill accumulation, `FILLED`, `CANCELED`, and `REJECTED` transitions.
+- [x] Registered `signing_notice` handling in `WebAppContext` so execution notices update `OrderExecutionService`.
+- [x] Added idempotent FSM event application with duplicate event prevention and partial-fill accumulation.
 - [x] Added KIS `inquire-daily-ccld` endpoint, TR IDs, params, account API method, client delegation, and broker wrapper delegation.
-- [x] Added `OrderExecutionService.poll_active_orders_once()` to reconcile currently active orders via order-query polling.
-- [x] Removed scheduler-side forced `FILLED` transition after API order success so actual execution notice/polling can finalize order state.
-- [x] Added unit tests for execution notice parsing/subscription, FSM event application, polling reconciliation, and KIS delegation paths.
-- [x] Verified direct impact scope: `375 passed`.
-- [x] Verified syntax/import health with `compileall`.
-- [x] Added bounded lifecycle management for `_processed_execution_events`.
-- [x] Added out-of-order regression coverage for partial fill followed by late acceptance notice.
-- [x] Wired `poll_active_orders_once()` into the strategy scheduler loop as a lightweight periodic reconciliation caller.
-- [x] Hardened signing-notice parsing for short/drifted payloads and escalated missing real-trading `htsid`.
-- [x] Hardened `from_order_query()` rejected/canceled edge cases for missing quantity fields.
+- [x] Added `OrderExecutionService.poll_active_orders_once()` to reconcile active orders via order-query polling.
+- [x] Removed scheduler-side forced `FILLED` transition after API order success so execution notice/polling can finalize state.
+- [x] Added unit tests for FSM transitions, execution notice parsing/subscription, polling reconciliation, and KIS delegation paths.
+- [x] Verified Phase1 direct impact scope: `375 passed`.
+- [x] Verified Phase1 syntax/import health with `compileall`.
 
-### Remaining Work
-- [ ] Decide whether virtual trade records should be written on API order acceptance or only after actual `FILLED` execution.
-  - Current state: scheduler still writes virtual trade records after API order success.
-  - Safer target: write/update virtual trades from `OrderExecutionService` when execution events confirm fills.
+### Phase 2 Completed - Operational Hardening
+- [x] Added bounded lifecycle management for `_processed_execution_events` with LRU-style retention.
+- [x] Kept duplicate `event_key` behavior idempotent after the retention refactor.
+- [x] Hardened out-of-order handling: partial fill followed by late acceptance/SUBMITTED notice remains a no-op.
+- [x] Made cumulative fill handling monotonic so older polling rows cannot reduce filled quantity.
+- [x] Wired `poll_active_orders_once()` into the strategy scheduler loop as a lightweight periodic reconciliation caller.
+- [x] Avoided adding a separate long-lived polling task to reduce pytest/background-task hang risk.
+- [x] Hardened signing-notice parsing for short/drifted payloads and kept unknown/parse-error payloads observable.
+- [x] Escalated missing `htsid` in real trading mode with critical logging and startup-facing exception.
+- [x] Hardened `from_order_query()` rejected/canceled edge cases for missing `ord_qty`, cancel quantity, reject quantity, and missing remaining quantity.
+- [x] Added regression tests for Phase2 hardening paths.
+- [x] Verified Phase2 impact scope: `286 passed`.
+- [x] Verified Phase2 syntax/import health with `compileall`.
+
+### Phase 3 Completed - Execution-Confirmed Virtual Trade Persistence
+- [x] Moved live scheduler virtual-trade persistence away from API order acceptance.
+- [x] Kept dry-run virtual-trade persistence unchanged, because dry-run has no broker execution event.
+- [x] Added execution-confirmed virtual trade persistence in `OrderExecutionService`.
+- [x] Persisted BUY fills through `log_buy_async()` using confirmed fill price/qty.
+- [x] Persisted strategy SELL fills through `log_sell_by_strategy_async()`.
+- [x] Persisted manual/default SELL fills through `log_sell_async()`.
+- [x] Added idempotent virtual-trade recording with `OrderContext.virtual_recorded_qty`.
+- [x] Deferred partial-fill virtual persistence until terminal `FILLED` or partial-then-`CANCELED`.
+- [x] Stopped web manual orders from writing virtual trades immediately after API acceptance.
+- [x] Added regression tests for confirmed BUY/SELL persistence, duplicate execution notices, and partial-fill-then-cancel persistence.
+- [x] Updated scheduler and web route tests so live/API-accepted paths do not write virtual trades prematurely.
+- [x] Verified Phase3 impact scope: `242 passed`.
+- [x] Verified Phase3 syntax/import health with `compileall`.
+
+### Remaining Order FSM Work
 - [ ] Validate real KIS `inquire-daily-ccld` response fields in both paper and real environments.
+  - Fixture/schema prep: sanitized synthetic `output1` rows and parser contract tests added for submitted, partial-filled, filled, canceled, and rejected rows.
   - Confirm order number, stock code, side, order qty, cumulative fill qty, remaining qty, average fill price, cancel/reject fields.
+  - Save sanitized captured examples for regression fixtures if possible.
+  - Still required: validate against captured paper and real KIS responses.
 - [ ] Add cancellation API integration using `broker_order_no`.
-  - Target FSM methods already exist conceptually (`mark_order_canceled`, `OrderState.CANCELED`), but broker cancel request flow is not wired.
+  - Wire broker cancel request params/TR IDs/client/wrapper delegation.
+  - Add `OrderExecutionService.cancel_order()` or equivalent API using local context + broker order number.
+  - Map cancel response and later execution notice/polling rows into `OrderState.CANCELED`.
 - [ ] Add an operation-level fallback policy for missed WebSocket notices.
-  - Example: run polling after order submit until terminal state, then slow down or stop polling for that order.
+  - After order submit, poll frequently until terminal state or timeout.
+  - Slow down or stop polling once terminal state is reached.
+  - Define what happens when polling and WebSocket disagree.
 - [ ] Add notification/logging for orders stuck in `SUBMITTED` or `PARTIAL_FILLED` beyond a threshold.
+  - Include order key, broker order number, side, qty, filled qty, remaining qty, source, and age.
+  - Decide warning vs critical thresholds for real trading.
 - [ ] Investigate full `tests/unit_test` timeout separately.
-  - Direct impact tests pass, but full suite hit the 5-minute command timeout during this session.
-  - Check the hang guide patterns first: retry queue with plain dict mocks and background `asyncio.create_task()` loops not stopped.
+  - Direct impact tests pass, but full suite previously hit the 5-minute command timeout.
+  - Check retry queue plain-dict mocks, background `asyncio.create_task()` loops not stopped, and websocket pending task warnings.
 
 ### Recommended Next Order
-1. Move strategy virtual-trade persistence from "API accepted" toward "execution confirmed".
-2. Validate KIS polling fields with captured paper-trading responses.
-3. Implement cancel request path and map cancel responses back into FSM.
-4. Add an operation-level fallback policy for missed WebSocket notices.
-5. Add stuck-order notification/logging for long-lived `SUBMITTED` / `PARTIAL_FILLED`.
-6. Investigate full `tests/unit_test` timeout separately.
+1. Validate KIS polling fields with captured paper-trading responses.
+2. Implement cancel request path and map cancel responses back into FSM.
+3. Add operation-level post-submit polling fallback until terminal state.
+4. Add stuck-order notification/logging for long-lived `SUBMITTED` / `PARTIAL_FILLED`.
+5. Investigate full `tests/unit_test` timeout separately.
 
 최종 업데이트: 2026-04-23
 
@@ -84,12 +118,14 @@
     - 장 마감 후 조용한 상태를 장애로 오탐하지 않는지 로그를 함께 점검한다.
 
 
-- [ ] 주문 상태 기계(FSM) 도입
-  - 목표: `PENDING_SUBMIT -> SUBMITTED -> PARTIAL_FILLED -> FILLED/CANCELED` 같은 명시적 상태 전이로 중복 주문과 race condition을 줄인다.
+- [x] 주문 상태 기계(FSM) 도입
+  - 상태: Phase1/2에서 기본 FSM, 체결통보, 주문조회 polling, scheduler polling caller까지 적용됨.
+  - 후속 목표: 실체결 기준 가상매매 기록, 취소 API, post-submit fallback polling, stuck-order 알림으로 운영 안전성을 높인다.
   - 대상:
     - `common/types.py`
     - `services/order_execution_service.py`
-    - 필요 시 `scheduler/strategy_scheduler.py`
+    - `scheduler/strategy_scheduler.py`
+    - `brokers/korea_investment/*`
 
 - [ ] 계좌 보호용 킬 스위치 추가
   - 목표: 일손실 한도, 연속 손실, 비정상 응답 반복, 체결 이상 시 자동으로 주문/전략 실행을 막는다.
@@ -296,9 +332,11 @@
 
 ## 지금 바로 착수 추천 순서
 
-1. 스트리밍 수신 누락 원인 정리 및 수정
-2. 주문 상태 기계(FSM) 도입 설계
-3. `WebAppContext` 비대화 범위 정의
-4. background task lifecycle 표준화
+1. FSM 실체결 기준 가상매매 기록 전환
+2. KIS `inquire-daily-ccld` 실응답 필드 검증 및 fixture화
+3. broker order number 기반 주문 취소 API 연동
+4. missed WebSocket notice 대비 post-submit polling fallback 정책
+5. stuck-order notification/logging 추가
+6. full `tests/unit_test` timeout 원인 조사
 
-이 5개가 현재 코드베이스와 운영 리스크 기준으로 가장 투자 대비 효과가 크다.
+이 6개가 Phase1/2 이후 주문 실행 안정성을 완성하는 데 가장 투자 대비 효과가 크다.

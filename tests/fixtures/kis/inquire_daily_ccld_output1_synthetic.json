@@ -1,0 +1,147 @@
+{
+  "description": "Sanitized synthetic KIS inquire-daily-ccld output1 rows for parser contract tests. Replace or extend with captured paper/real rows after field validation.",
+  "rows": [
+    {
+      "case": "submitted_buy",
+      "row": {
+        "odno": "0000000001",
+        "orgn_odno": "",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "excg_dvsn_cd": "KRX",
+        "ord_qty": "10",
+        "tot_ccld_qty": "0",
+        "rmn_qty": "10",
+        "avg_prvs": "0",
+        "ord_dt": "20260423",
+        "ord_tmd": "090001"
+      },
+      "expected": {
+        "broker_order_no": "0000000001",
+        "stock_code": "005930",
+        "side": "BUY",
+        "event_state": "SUBMITTED",
+        "order_qty": 10,
+        "fill_qty": 0,
+        "cumulative_filled_qty": 0,
+        "remaining_qty": 10,
+        "fill_price": 0,
+        "event_time": "20260423090001"
+      }
+    },
+    {
+      "case": "partial_buy",
+      "row": {
+        "odno": "0000000002",
+        "orgn_odno": "",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "excg_dvsn_cd": "KRX",
+        "ord_qty": "10",
+        "tot_ccld_qty": "4",
+        "rmn_qty": "6",
+        "avg_prvs": "70100",
+        "ord_dt": "20260423",
+        "ord_tmd": "090010"
+      },
+      "expected": {
+        "broker_order_no": "0000000002",
+        "stock_code": "005930",
+        "side": "BUY",
+        "event_state": "PARTIAL_FILLED",
+        "order_qty": 10,
+        "fill_qty": 4,
+        "cumulative_filled_qty": 4,
+        "remaining_qty": 6,
+        "fill_price": 70100,
+        "event_time": "20260423090010"
+      }
+    },
+    {
+      "case": "filled_sell",
+      "row": {
+        "odno": "0000000003",
+        "orgn_odno": "",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "01",
+        "excg_dvsn_cd": "KRX",
+        "ord_qty": "5",
+        "tot_ccld_qty": "5",
+        "rmn_qty": "0",
+        "avg_prvs": "71200",
+        "ord_dt": "20260423",
+        "ord_tmd": "090020"
+      },
+      "expected": {
+        "broker_order_no": "0000000003",
+        "stock_code": "005930",
+        "side": "SELL",
+        "event_state": "FILLED",
+        "order_qty": 5,
+        "fill_qty": 5,
+        "cumulative_filled_qty": 5,
+        "remaining_qty": 0,
+        "fill_price": 71200,
+        "event_time": "20260423090020"
+      }
+    },
+    {
+      "case": "partial_then_canceled_buy",
+      "row": {
+        "odno": "0000000004",
+        "orgn_odno": "",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "excg_dvsn_cd": "KRX",
+        "ord_qty": "10",
+        "tot_ccld_qty": "4",
+        "rmn_qty": "0",
+        "cncl_cfrm_qty": "6",
+        "avg_prvs": "70200",
+        "ord_dt": "20260423",
+        "ord_tmd": "090030"
+      },
+      "expected": {
+        "broker_order_no": "0000000004",
+        "stock_code": "005930",
+        "side": "BUY",
+        "event_state": "CANCELED",
+        "order_qty": 10,
+        "fill_qty": 4,
+        "cumulative_filled_qty": 4,
+        "remaining_qty": 0,
+        "fill_price": 70200,
+        "event_time": "20260423090030"
+      }
+    },
+    {
+      "case": "rejected_sell",
+      "row": {
+        "odno": "0000000005",
+        "orgn_odno": "",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "01",
+        "excg_dvsn_cd": "KRX",
+        "ord_qty": "5",
+        "tot_ccld_qty": "0",
+        "rmn_qty": "5",
+        "rjct_qty": "5",
+        "avg_prvs": "0",
+        "ord_dt": "20260423",
+        "ord_tmd": "090040"
+      },
+      "expected": {
+        "broker_order_no": "0000000005",
+        "stock_code": "005930",
+        "side": "SELL",
+        "event_state": "REJECTED",
+        "order_qty": 5,
+        "fill_qty": 0,
+        "cumulative_filled_qty": 0,
+        "remaining_qty": 5,
+        "fill_price": 0,
+        "event_time": "20260423090040"
+      }
+    }
+  ]
+}

@@ -151,7 +151,7 @@ class TestBalanceReal:
 
 class TestBuyOrderReal:
     def test_buy_order_success(self, real_client, mock_real_ctx):
-        """실전 매수 주문 성공."""
+        """실전 매수 주문 성공. 가상매매 기록은 체결 확인 이후 처리한다."""
         order_result = {"ord_no": "R1234567890"}
         mock_real_ctx.order_execution_service.handle_buy_stock = AsyncMock(
             return_value=make_success_response(order_result)
@@ -165,9 +165,9 @@ class TestBuyOrderReal:
         body = resp.json()
         assert body["rt_cd"] == "0"
         mock_real_ctx.order_execution_service.handle_buy_stock.assert_awaited_once_with(
-            "005930", "10", "70000"
+            "005930", "10", "70000", source="manual:수동매매", finalize_immediately=False
         )
-        mock_real_ctx.virtual_trade_service.log_buy.assert_called_once_with("수동매매", "005930", 70000)
+        mock_real_ctx.virtual_trade_service.log_buy.assert_not_called()
 
     def test_buy_order_failure_no_log(self, real_client, mock_real_ctx):
         """매수 실패 시 가상 매매 기록 미생성."""
@@ -189,7 +189,7 @@ class TestBuyOrderReal:
 
 class TestSellOrderReal:
     def test_sell_order_success(self, real_client, mock_real_ctx):
-        """실전 매도 주문 성공."""
+        """실전 매도 주문 성공. 가상매매 기록은 체결 확인 이후 처리한다."""
         order_result = {"ord_no": "S987654321"}
         mock_real_ctx.order_execution_service.handle_sell_stock = AsyncMock(
             return_value=make_success_response(order_result)
@@ -203,9 +203,9 @@ class TestSellOrderReal:
         body = resp.json()
         assert body["rt_cd"] == "0"
         mock_real_ctx.order_execution_service.handle_sell_stock.assert_awaited_once_with(
-            "005930", "5", "71000"
+            "005930", "5", "71000", source="manual:수동매매", finalize_immediately=False
         )
-        mock_real_ctx.virtual_trade_service.log_sell.assert_called_once_with("005930", 71000)
+        mock_real_ctx.virtual_trade_service.log_sell.assert_not_called()
 
     def test_sell_order_failure_no_log(self, real_client, mock_real_ctx):
         """매도 실패 시 가상 매매 기록 미생성."""

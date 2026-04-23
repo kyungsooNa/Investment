@@ -4,7 +4,7 @@ from io import StringIO
 import builtins
 from unittest.mock import call, ANY
 from services.market_calendar_service import MarketCalendarService
-from common.types import ResCommonResponse, ErrorCode, Exchange, OrderState
+from common.types import ResCommonResponse, ErrorCode, Exchange, OrderState, OrderExecutionReport, OrderSide
 from services.order_execution_service import OrderExecutionService
 
 # 테스트를 위한 MockLogger
@@ -903,3 +903,165 @@ async def test_poll_active_orders_once_applies_order_query_result(handler, mock_
         order_no="A0001",
         exchange=Exchange.KRX,
     )
+
+
+@pytest.mark.asyncio
+async def test_execution_confirmed_buy_persists_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, source="strategy:모멘텀", finalize_immediately=False
+    )
+
+    filled = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "10",
+        "CNTG_UNPR": "70100",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+
+    assert filled.state == OrderState.FILLED
+    assert filled.virtual_recorded_qty == 10
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("모멘텀", "005930", 70100, 10)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_execution_notice_does_not_duplicate_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, source="strategy:모멘텀", finalize_immediately=False
+    )
+    notice = {
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "10",
+        "CNTG_UNPR": "70100",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }
+
+    await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
+    await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
+
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("모멘텀", "005930", 70100, 10)
+
+
+@pytest.mark.asyncio
+async def test_execution_confirmed_sell_persists_strategy_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "S0001"},
+    )
+    await handler.handle_place_sell_order(
+        "005930", 71000, 5, source="strategy:모멘텀", finalize_immediately=False
+    )
+
+    filled = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="S0001",
+        stock_code="005930",
+        side=OrderSide.SELL,
+        event_state=OrderState.FILLED,
+        order_qty=5,
+        fill_qty=5,
+        fill_price=71100,
+        cumulative_filled_qty=5,
+        remaining_qty=0,
+        event_time="101500",
+    ))
+
+    assert filled.state == OrderState.FILLED
+    assert filled.virtual_recorded_qty == 5
+    virtual_trade_service.log_sell_by_strategy_async.assert_awaited_once_with("모멘텀", "005930", 71100, 5)
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_then_cancel_persists_confirmed_partial_qty(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, source="manual:수동매매", finalize_immediately=False
+    )
+
+    partial = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.PARTIAL_FILLED,
+        order_qty=10,
+        fill_qty=4,
+        fill_price=70100,
+        cumulative_filled_qty=4,
+        remaining_qty=6,
+        event_time="101500",
+    ))
+    assert partial.state == OrderState.PARTIAL_FILLED
+    virtual_trade_service.log_buy_async.assert_not_awaited()
+
+    canceled = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.CANCELED,
+        fill_qty=0,
+        fill_price=70200,
+        cumulative_filled_qty=4,
+        remaining_qty=6,
+        event_time="101700",
+    ))
+
+    assert canceled.state == OrderState.CANCELED
+    assert canceled.virtual_recorded_qty == 4
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("수동매매", "005930", 70200, 4)

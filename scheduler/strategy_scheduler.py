@@ -427,11 +427,9 @@ class StrategyScheduler:
 
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     if signal.action == "BUY":
-                        await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
                         if self._price_sub_svc:
                             await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
                     else:
-                        return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
                         if self._price_sub_svc:
                             await self._price_sub_svc.remove_subscription(signal.code, category_key)
                     self._logger.info(

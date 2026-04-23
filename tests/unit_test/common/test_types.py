@@ -1,6 +1,8 @@
 # tests/unit_test/test_types.py
+import json
 import pytest
 from dataclasses import asdict
+from pathlib import Path
 from pydantic import ValidationError
 from common.types import (
     ResCommonResponse,
@@ -11,8 +13,17 @@ from common.types import (
     ResPriceSummary,
     TradeSignal,
     OrderExecutionReport,
+    OrderSide,
     OrderState,
 )
+
+
+KIS_FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "kis"
+
+
+def _load_inquire_daily_ccld_cases():
+    fixture_path = KIS_FIXTURE_DIR / "inquire_daily_ccld_output1_synthetic.json"
+    return json.loads(fixture_path.read_text(encoding="utf-8"))["rows"]
 
 
 # --- Test for ResCommonResponse.to_dict ---
@@ -214,6 +225,29 @@ def test_order_query_report_cancel_yn_without_remaining_qty_is_canceled():
 
     assert report.remaining_qty is None
     assert report.event_state == OrderState.CANCELED
+
+
+@pytest.mark.parametrize(
+    "case",
+    _load_inquire_daily_ccld_cases(),
+    ids=lambda case: case["case"],
+)
+def test_order_query_report_from_kis_inquire_daily_ccld_fixture(case):
+    report = OrderExecutionReport.from_order_query(case["row"], tr_id="VTTC0081R")
+    expected = case["expected"]
+
+    assert report.broker_order_no == expected["broker_order_no"]
+    assert report.stock_code == expected["stock_code"]
+    assert report.side == OrderSide(expected["side"])
+    assert report.event_state == OrderState(expected["event_state"])
+    assert report.order_qty == expected["order_qty"]
+    assert report.fill_qty == expected["fill_qty"]
+    assert report.cumulative_filled_qty == expected["cumulative_filled_qty"]
+    assert report.remaining_qty == expected["remaining_qty"]
+    assert report.fill_price == expected["fill_price"]
+    assert report.event_time == expected["event_time"]
+    assert report.source == "polling:VTTC0081R"
+    assert report.raw == case["row"]
 
 
 # --- Test for other simple to_dict methods ---
