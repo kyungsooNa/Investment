@@ -1,5 +1,6 @@
 # app/order_execution_service.py
 import asyncio
+from collections import OrderedDict
 from datetime import datetime
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
@@ -19,6 +20,7 @@ class OrderExecutionService:
 
     _ORDER_MAX_RETRIES = 5
     _ORDER_RETRY_DELAY_SEC = 3
+    _PROCESSED_EXECUTION_EVENT_LIMIT = 5000
 
     def __init__(self, broker_api_wrapper, logger,
                  market_clock: Optional[MarketClock] = None,
@@ -38,7 +40,8 @@ class OrderExecutionService:
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
         self._order_no_index: Dict[str, str] = {}
-        self._processed_execution_events: set[str] = set()
+        self._processed_execution_events: OrderedDict[str, None] = OrderedDict()
+        self._processed_execution_event_limit = self._PROCESSED_EXECUTION_EVENT_LIMIT
 
     def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
         return f"{exchange.value}:{stock_code}:{side.value}"
@@ -110,6 +113,22 @@ class OrderExecutionService:
                 return context
         return None
 
+    def _mark_execution_event_seen(self, event_key: str) -> bool:
+        """Return True only for an event key that has not been processed recently."""
+        if event_key in self._processed_execution_events:
+            self._processed_execution_events.move_to_end(event_key)
+            return False
+
+        limit = self._processed_execution_event_limit
+        if limit <= 0:
+            self._processed_execution_events.clear()
+            return True
+
+        self._processed_execution_events[event_key] = None
+        while len(self._processed_execution_events) > limit:
+            self._processed_execution_events.popitem(last=False)
+        return True
+
     async def apply_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
         """체결통보/polling 이벤트를 주문 FSM에 적용합니다."""
         if not report.broker_order_no or not report.stock_code:
@@ -125,11 +144,10 @@ class OrderExecutionService:
                 )
                 return None
 
-            if report.event_key in self._processed_execution_events:
-                return context
-            self._processed_execution_events.add(report.event_key)
-
             if context.state.is_terminal:
+                return context
+
+            if not self._mark_execution_event_seen(report.event_key):
                 return context
 
             if not context.broker_order_no:
@@ -155,7 +173,7 @@ class OrderExecutionService:
                 return context
 
             if report.cumulative_filled_qty is not None:
-                filled_qty = report.cumulative_filled_qty
+                filled_qty = max(report.cumulative_filled_qty, context.filled_qty)
             else:
                 filled_qty = context.filled_qty + report.fill_qty
 
@@ -163,6 +181,8 @@ class OrderExecutionService:
                 is_filled = report.remaining_qty <= 0
             else:
                 is_filled = filled_qty >= context.qty
+            if is_filled:
+                filled_qty = max(filled_qty, context.qty)
             next_state = OrderState.FILLED if is_filled else OrderState.PARTIAL_FILLED
             return self._transition_order_context(
                 context.order_key,

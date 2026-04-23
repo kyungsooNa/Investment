@@ -439,7 +439,20 @@ class KoreaInvestWebSocketAPI:
     def _parse_signing_notice(self, data_str: str, tr_id: str) -> dict:
         """H0STCNI0/H0STCNI9 (국내주식 체결통보)를 파싱합니다."""
         values = data_str.split('^')
-        is_fill_notice = len(values) > 13 and values[13] == "2"
+        if len(values) < 16:
+            self._logger.warning(
+                f"체결통보 필드 수 부족: TR_ID={tr_id}, field_count={len(values)}, payload={data_str[:100]}"
+            )
+            return {
+                "tr_id": tr_id,
+                "통보유형": "unknown",
+                "parse_error": "insufficient_fields",
+                "field_count": len(values),
+                "raw": data_str,
+            }
+
+        cntg_yn = values[13]
+        is_fill_notice = cntg_yn == "2"
         if is_fill_notice:
             menulist = "고객ID|계좌번호|주문번호|원주문번호|매도매수구분|정정구분|주문종류|주문조건|주식단축종목코드|체결수량|체결단가|주식체결시간|거부여부|체결여부|접수여부|지점번호|주문수량|계좌명|호가조건가격|주문거래소구분|실시간체결창표시여부|필러|신용구분|신용대출일자|체결종목명40|주문가격"
         else:
@@ -447,7 +460,25 @@ class KoreaInvestWebSocketAPI:
         keys = menulist.split('|')
         parsed = dict(zip(keys, values[:len(keys)]))
         parsed["tr_id"] = tr_id
-        parsed["통보유형"] = "체결" if is_fill_notice else "접수"
+        parsed["CNTG_YN"] = parsed.get("체결여부", "")
+        parsed["ACPT_YN"] = parsed.get("접수여부", "")
+        parsed["RFUS_YN"] = parsed.get("거부여부", "")
+        if len(values) < len(keys):
+            parsed["parse_warning"] = "short_payload"
+            parsed["field_count"] = len(values)
+            parsed["raw"] = data_str
+            self._logger.warning(
+                f"체결통보 payload가 공식 필드 수보다 짧습니다: TR_ID={tr_id}, "
+                f"field_count={len(values)}, expected={len(keys)}"
+            )
+        if parsed["RFUS_YN"].upper() == "Y":
+            parsed["통보유형"] = "거부"
+        elif parsed["CNTG_YN"] == "2":
+            parsed["통보유형"] = "체결"
+        elif parsed["ACPT_YN"].upper() == "Y":
+            parsed["통보유형"] = "접수"
+        else:
+            parsed["통보유형"] = "unknown"
         return parsed
 
     def _parse_futs_optn_quote_data(self, data_str):
@@ -813,7 +844,11 @@ class KoreaInvestWebSocketAPI:
         tr_id = self._get_order_notice_tr_id()
         htsid = self._env.active_config.get('htsid')
         if not htsid:
-            self._logger.error("체결통보 구독 실패: htsid가 설정되어 있지 않습니다.")
+            message = "체결통보 구독 실패: htsid가 설정되어 있지 않습니다."
+            if not self._env.is_paper_trading:
+                self._logger.critical(f"{message} 실전투자 체결통보 채널을 시작할 수 없습니다.")
+                raise RuntimeError(message)
+            self._logger.error(message)
             return False
         self._logger.info(f"국내주식 체결통보 구독 요청 ({tr_id}, HTS_ID={htsid})...")
         return await self.send_realtime_request(tr_id, htsid, tr_type="1")

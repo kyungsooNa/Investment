@@ -244,9 +244,16 @@ class OrderExecutionReport(BaseModel):
         canceled_qty = cls._to_int(data.get("cncl_cfrm_qty") or data.get("CNCL_CFRM_QTY") or data.get("취소확인수량"))
         canceled = str(data.get("cncl_yn") or data.get("CNCL_YN") or "").upper() == "Y"
 
-        if rejected_qty and order_qty and rejected_qty >= order_qty and filled_qty == 0:
+        if rejected_qty and filled_qty == 0 and (order_qty is None or rejected_qty >= order_qty):
             event_state = OrderState.REJECTED
-        elif canceled or (canceled_qty and remaining_qty == 0 and (not order_qty or filled_qty < order_qty)):
+        elif canceled or (
+            canceled_qty
+            and (
+                remaining_qty == 0
+                or order_qty is None
+                or filled_qty + canceled_qty >= order_qty
+            )
+        ):
             event_state = OrderState.CANCELED
         elif order_qty and filled_qty >= order_qty:
             event_state = OrderState.FILLED

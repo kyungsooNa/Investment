@@ -57,6 +57,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK")
         )
         oes.resolve_submitted_order = AsyncMock()
+        oes.poll_active_orders_once = AsyncMock(return_value=0)
 
         sqs = MagicMock()
         sqs.get_current_price = AsyncMock(
@@ -105,6 +106,41 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(scheduler._strategies), 1)
         self.assertEqual(scheduler._strategies[0].strategy.name, "테스트전략")
+
+    async def test_poll_active_orders_if_due_calls_order_service(self):
+        from datetime import datetime
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.poll_active_orders_once.return_value = 2
+
+        result = await scheduler._poll_active_orders_if_due(datetime(2026, 4, 23, 10, 0, 0))
+
+        self.assertEqual(result, 2)
+        oes.poll_active_orders_once.assert_awaited_once()
+        scheduler._logger.info.assert_called_with("[Scheduler] 활성 주문 polling 보정: 2건")
+
+    async def test_poll_active_orders_if_due_respects_interval(self):
+        from datetime import datetime, timedelta
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        first = datetime(2026, 4, 23, 10, 0, 0)
+
+        first_result = await scheduler._poll_active_orders_if_due(first)
+        second_result = await scheduler._poll_active_orders_if_due(first + timedelta(seconds=5))
+
+        self.assertEqual(first_result, 0)
+        self.assertEqual(second_result, 0)
+        self.assertEqual(oes.poll_active_orders_once.await_count, 1)
+
+    async def test_poll_active_orders_if_due_skips_dry_run(self):
+        from datetime import datetime
+
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=True)
+
+        result = await scheduler._poll_active_orders_if_due(datetime(2026, 4, 23, 10, 0, 0))
+
+        self.assertEqual(result, 0)
+        oes.poll_active_orders_once.assert_not_awaited()
 
     def test_get_status_with_holdings(self):
         """전략 등록 및 보유 종목이 있는 경우 get_status 테스트."""

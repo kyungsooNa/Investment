@@ -755,6 +755,80 @@ async def test_signing_notice_duplicate_event_is_idempotent(handler, mock_broker
 
 
 @pytest.mark.asyncio
+async def test_processed_execution_events_are_bounded(handler, mock_broker_api_wrapper):
+    handler._processed_execution_event_limit = 2
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    for event_time in ("101500", "101501", "101502"):
+        await handler.handle_signing_notice({
+            "ODER_NO": "A0001",
+            "STCK_SHRN_ISCD": "005930",
+            "SELN_BYOV_CLS": "02",
+            "CNTG_QTY": "1",
+            "CNTG_UNPR": "70000",
+            "STCK_CNTG_HOUR": event_time,
+            "RFUS_YN": "N",
+            "CNTG_YN": "2",
+            "ACPT_YN": "Y",
+            "ODER_QTY": "10",
+        }, tr_id="H0STCNI0")
+
+    assert len(handler._processed_execution_events) == 2
+    assert "websocket:H0STCNI0:A0001:101500:PARTIAL_FILLED:1:70000:None" not in handler._processed_execution_events
+    assert "websocket:H0STCNI0:A0001:101501:PARTIAL_FILLED:1:70000:None" in handler._processed_execution_events
+    assert "websocket:H0STCNI0:A0001:101502:PARTIAL_FILLED:1:70000:None" in handler._processed_execution_events
+
+
+@pytest.mark.asyncio
+async def test_late_acceptance_notice_after_partial_fill_is_noop(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False
+    )
+
+    partial = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "4",
+        "CNTG_UNPR": "70000",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+    late_acceptance = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "0",
+        "CNTG_UNPR": "0",
+        "STCK_CNTG_HOUR": "101400",
+        "RFUS_YN": "N",
+        "CNTG_YN": "1",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+
+    assert partial.state == OrderState.PARTIAL_FILLED
+    assert late_acceptance.state == OrderState.PARTIAL_FILLED
+    assert late_acceptance.filled_qty == 4
+    assert late_acceptance.remaining_qty == 6
+
+
+@pytest.mark.asyncio
 async def test_signing_notice_rejects_submitted_order(handler, mock_broker_api_wrapper):
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,

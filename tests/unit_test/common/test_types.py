@@ -10,6 +10,8 @@ from common.types import (
     ResFluctuation,
     ResPriceSummary,
     TradeSignal,
+    OrderExecutionReport,
+    OrderState,
 )
 
 
@@ -157,6 +159,61 @@ def test_res_daily_chart_api_item_missing_required_fields_raises_error():
     payload = {"stck_bsop_date": "20260325"}
     with pytest.raises(ValidationError):
         ResDailyChartApiItem.from_dict(payload)
+
+
+def test_order_query_report_missing_order_qty_does_not_raise():
+    report = OrderExecutionReport.from_order_query({
+        "odno": "A0001",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "tot_ccld_qty": "3",
+        "avg_prvs": "70000",
+    })
+
+    assert report.order_qty is None
+    assert report.event_state == OrderState.PARTIAL_FILLED
+    assert report.cumulative_filled_qty == 3
+
+
+def test_order_query_report_reject_qty_without_order_qty_is_rejected():
+    report = OrderExecutionReport.from_order_query({
+        "odno": "A0001",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "tot_ccld_qty": "0",
+        "rjct_qty": "10",
+    })
+
+    assert report.order_qty is None
+    assert report.event_state == OrderState.REJECTED
+
+
+def test_order_query_report_cancel_qty_without_remaining_qty_is_canceled():
+    report = OrderExecutionReport.from_order_query({
+        "odno": "A0001",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "ord_qty": "10",
+        "tot_ccld_qty": "4",
+        "cncl_cfrm_qty": "6",
+    })
+
+    assert report.remaining_qty is None
+    assert report.event_state == OrderState.CANCELED
+
+
+def test_order_query_report_cancel_yn_without_remaining_qty_is_canceled():
+    report = OrderExecutionReport.from_order_query({
+        "odno": "A0001",
+        "pdno": "005930",
+        "sll_buy_dvsn_cd": "02",
+        "ord_qty": "10",
+        "tot_ccld_qty": "0",
+        "cncl_yn": "Y",
+    })
+
+    assert report.remaining_qty is None
+    assert report.event_state == OrderState.CANCELED
 
 
 # --- Test for other simple to_dict methods ---
