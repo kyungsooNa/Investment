@@ -44,7 +44,7 @@ class ProgramTradingRepo:
     FLUSH_INTERVAL_SEC = 1.0
     FLUSH_BATCH_SIZE = 100
 
-    def __init__(self, base_dir: str = "data/program_subscribe", logger=None):
+    def __init__(self, base_dir: str = "data/program_subscribe", logger=None, streaming_stock_repo=None):
         self._logger = logger or logging.getLogger(__name__)
         self._base_dir = base_dir
         self._db_path = os.path.join(base_dir, "program_trading.db")
@@ -56,6 +56,7 @@ class ProgramTradingRepo:
         self._buffer_lock = threading.Lock()
         self._flush_task: Optional[asyncio.Task] = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pt_db")
+        self._streaming_stock_repo = streaming_stock_repo
 
         os.makedirs(self._base_dir, exist_ok=True)
         self._init_db()
@@ -250,8 +251,12 @@ class ProgramTradingRepo:
             while True:
                 await asyncio.sleep(self.FLUSH_INTERVAL_SEC)
                 await self._flush_write_buffer()
+                if self._streaming_stock_repo is not None:
+                    self._streaming_stock_repo.flush_pt_desired_sync()
         except asyncio.CancelledError:
             await self._flush_write_buffer()
+            if self._streaming_stock_repo is not None:
+                self._streaming_stock_repo.flush_pt_desired_sync()
 
     # ── 스냅샷 저장/조회 ─────────────────────────────────────────────
 
@@ -381,6 +386,8 @@ class ProgramTradingRepo:
                 pass
 
         self.flush_write_buffer_sync()
+        if self._streaming_stock_repo is not None:
+            self._streaming_stock_repo.flush_pt_desired_sync()
         self._executor.shutdown(wait=False)
 
         if self._conn:

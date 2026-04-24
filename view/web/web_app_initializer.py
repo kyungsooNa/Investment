@@ -346,6 +346,7 @@ class WebAppContext:
         self.streaming_stock_repo = StreamingStockRepo(logger=self.logger)
         self.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
         self.streaming_service.set_streaming_stock_repo(self.streaming_stock_repo)
+        self.program_trading_stream_service.wire_streaming_stock_repo(self.streaming_stock_repo)
 
         # PriceSubscriptionService 초기화 (StreamingService 생성 이후)
         self.price_subscription_service = PriceSubscriptionService(

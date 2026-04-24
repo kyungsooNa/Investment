@@ -96,17 +96,24 @@ async def test_pt_persistence_flow(tmp_path, mock_logger):
     repo1 = StreamingStockRepo(logger=mock_logger)
     repo1.load_pt_desired_from_db(db_path)
     
-    # 3. 구독 대상 추가
+    # 3. 구독 대상 추가 — flush 전에는 in-memory만 반영, DB는 미반영
     await repo1.mark_desired("005930", StreamingType.PROGRAM_TRADING)
     await repo1.mark_desired("000660", StreamingType.PROGRAM_TRADING)
-    
-    # DB에 저장되었는지 확인
+
+    assert "005930" in repo1.get_desired(StreamingType.PROGRAM_TRADING)
+
     conn = sqlite3.connect(db_path)
-    cursor = conn.execute("SELECT code FROM pt_subscriptions")
-    rows = {row[0] for row in cursor.fetchall()}
+    rows_before = {row[0] for row in conn.execute("SELECT code FROM pt_subscriptions").fetchall()}
+    conn.close()
+    assert len(rows_before) == 0
+
+    # flush 후 DB 반영 확인
+    repo1.flush_pt_desired_sync()
+    conn = sqlite3.connect(db_path)
+    rows = {row[0] for row in conn.execute("SELECT code FROM pt_subscriptions").fetchall()}
+    conn.close()
     assert "005930" in rows
     assert "000660" in rows
-    conn.close()
 
     # 4. 새로운 repo 객체로 DB에서 복원 검증
     repo2 = StreamingStockRepo(logger=mock_logger)
@@ -115,9 +122,10 @@ async def test_pt_persistence_flow(tmp_path, mock_logger):
     assert "005930" in desired2
     assert "000660" in desired2
 
-    # 5. 구독 대상 제거 검증
+    # 5. 구독 대상 제거 검증 — flush 후 DB 반영
     await repo1.unmark_desired("005930", StreamingType.PROGRAM_TRADING)
-    
+    repo1.flush_pt_desired_sync()
+
     repo3 = StreamingStockRepo(logger=mock_logger)
     repo3.load_pt_desired_from_db(db_path)
     desired3 = repo3.get_desired(StreamingType.PROGRAM_TRADING)
@@ -136,12 +144,18 @@ def test_load_pt_desired_from_db_failure(mock_logger):
 
 @pytest.mark.asyncio
 async def test_persist_pt_desired_execute_failure(tmp_path, mock_logger):
-    """DB INSERT/DELETE 쿼리 중 예외 발생 시 무시되고 로깅만 남는지 검증"""
+    """flush_pt_desired_sync() 중 DB 예외 발생 시 무시되고 warning 로깅만 남는지 검증"""
     repo = StreamingStockRepo(logger=mock_logger)
     repo._db_conn = MagicMock()
     repo._db_conn.execute.side_effect = Exception("Mock DB Execute Error")
-    
+
     await repo.mark_desired("005930", StreamingType.PROGRAM_TRADING)
-    
+
+    # mark_desired만으로는 DB 기록 없음 — pending queue에만 적재
+    mock_logger.warning.assert_not_called()
+
+    # flush 시 실제 DB 기록 시도 → 예외 발생 → warning 로그
+    repo.flush_pt_desired_sync()
+
     mock_logger.warning.assert_called_once()
     assert "Mock DB Execute Error" in mock_logger.warning.call_args[0][0]

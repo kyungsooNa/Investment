@@ -320,38 +320,33 @@ class WebSocketWatchdogTask(SchedulableTask):
                     total=len(pt_codes),
                     codes=pt_codes,
                 )
-        for code in pt_codes:
-            try:
-                connected = await self._streaming_service.connect_websocket()
-                if not connected:
-                    if self._streaming_logger:
-                        self._streaming_logger.log_pt_restore_connect_failed(code)
-                    pt_failed.append(code)
-                    continue
-                await self._streaming_service.subscribe_program_trading(code)
+            connected = await self._streaming_service.connect_websocket()
+            if not connected:
                 if self._streaming_logger:
-                    self._streaming_logger.log_pt_subscribe(code, reason="restore")
-                await self._streaming_service.subscribe_realtime_price(code)
-                if self._streaming_logger:
-                    self._streaming_logger.log_price_subscribe(code, reason="restore")
-                if self._streaming_stock_repo:
-                    await self._streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
-                pt_success += 1
-                await asyncio.sleep(self.SUBSCRIBE_DELAY_SEC)
-            except Exception as e:
-                if self._streaming_logger:
-                    self._streaming_logger.log_pt_restore_error(code, str(e))
-                pt_failed.append(code)
+                    self._streaming_logger.log_pt_restore_connect_failed(f"all({len(pt_codes)})")
+                pt_failed = list(pt_codes)
+            else:
+                for code in pt_codes:
+                    try:
+                        await self._streaming_service.subscribe_program_trading(code)
+                        if self._streaming_logger:
+                            self._streaming_logger.log_pt_subscribe(code, reason="restore")
+                        await self._streaming_service.subscribe_realtime_price(code)
+                        if self._streaming_logger:
+                            self._streaming_logger.log_price_subscribe(code, reason="restore")
+                        if self._streaming_stock_repo:
+                            await self._streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
+                        pt_success += 1
+                        await asyncio.sleep(self.SUBSCRIBE_DELAY_SEC)
+                    except Exception as e:
+                        if self._streaming_logger:
+                            self._streaming_logger.log_pt_restore_error(code, str(e))
+                        pt_failed.append(code)
 
         if pt_failed:
+            # desired 유지 — 다음 watchdog tick(60초)에서 재시도
             if self._streaming_logger:
-                self._streaming_logger.log_pt_restore_failed_removed(pt_failed)
-            for code in pt_failed:
-                if self._streaming_stock_repo:
-                    await self._streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
-                if self._streaming_logger:
-                    self._streaming_logger.log_pt_unsubscribe(code, reason="restore_failed")
-                    self._streaming_logger.log_price_unsubscribe(code, reason="restore_failed")
+                self._streaming_logger.log_pt_restore_failed_pending(pt_failed)
 
         if pt_codes:
             if self._streaming_logger:

@@ -139,7 +139,7 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
         await svc._restore_all_subscriptions()
 
-    assert svc._streaming_service.connect_websocket.call_count == 2
+    assert svc._streaming_service.connect_websocket.call_count == 1
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
     assert svc._streaming_service.subscribe_realtime_price.call_count == 2
     svc._streaming_logger.log_subscription_recovery_done.assert_called_once()
@@ -147,31 +147,28 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
 
 @pytest.mark.asyncio
 async def test_restore_program_trading_partial_failure(watchdog_task, mock_deps):
-    """_restore_all_subscriptions: 연결 실패 종목은 desired에서 제거, 성공 종목은 active로 등록."""
+    """_restore_all_subscriptions: 구독 예외 종목은 desired 유지(재시도 대기), 성공 종목은 active 등록."""
     svc = watchdog_task
     svc.mcs.is_market_open_now = AsyncMock(return_value=True)
-    # "000660"만 connect 실패, "005930"과 "035720"은 성공
-    connect_results = iter([True, False, True])
+    svc._streaming_service.connect_websocket = AsyncMock(return_value=True)
 
-    async def connect_side_effect(callback=None):
-        return next(connect_results)
+    # "000660"만 subscribe_program_trading에서 예외 발생
+    async def subscribe_side_effect(code):
+        if code == "000660":
+            raise RuntimeError("subscribe fail")
 
-    svc._streaming_service.connect_websocket = AsyncMock(side_effect=connect_side_effect)
-
-    # 구독 종목 2개 (성공하는 것 1개, 실패하는 것 1개)
-    svc._streaming_stock_repo.get_desired.return_value = {"005930", "000660", "035720"}
+    svc._streaming_service.subscribe_program_trading = AsyncMock(side_effect=subscribe_side_effect)
+    svc._streaming_stock_repo.get_desired.return_value = {"005930", "000660"}
 
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
         await svc._restore_all_subscriptions()
 
-    assert svc._streaming_service.connect_websocket.await_count == 3
+    # connect는 루프 밖에서 1회만 호출
+    assert svc._streaming_service.connect_websocket.await_count == 1
 
-    # connect 실패한 종목은 streaming_logger + unmark_desired 호출 확인
-    from repositories.streaming_stock_repo import StreamingType
-    unmark_calls = {call.args[0] for call in svc._streaming_stock_repo.unmark_desired.call_args_list}
-    assert len(unmark_calls) == 1  # connect 실패 1종목
-    failed_code = next(iter(unmark_calls))
-    svc._streaming_logger.log_pt_restore_connect_failed.assert_called_once_with(failed_code)
+    # 실패 종목도 desired에 유지 — unmark_desired 호출 없음
+    svc._streaming_stock_repo.unmark_desired.assert_not_called()
+    svc._streaming_logger.log_pt_restore_failed_pending.assert_called_once()
 
 
 # ── _streaming_watchdog 테스트 ─────────────────────────────────────────
@@ -313,7 +310,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
         await svc.force_reconnect_program_trading()
 
     svc._streaming_service.disconnect_websocket.assert_awaited_once()
-    assert svc._streaming_service.connect_websocket.call_count == 2
+    assert svc._streaming_service.connect_websocket.call_count == 1
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
     assert svc._streaming_service.subscribe_realtime_price.call_count == 2
     svc._streaming_logger.log_force_reconnect_done.assert_called_once_with("manual")
@@ -461,10 +458,9 @@ async def test_force_reconnect_program_trading_errors(watchdog_task, mock_deps):
         await svc.force_reconnect_program_trading()
 
     svc._streaming_logger.log_force_reconnect_disconnect_error.assert_called_once_with("Disconnect Error")
-    svc._streaming_logger.log_pt_restore_connect_failed.assert_called_once_with("005930")
-    # 실패 종목이 unmark_desired 호출되어야 함
-    svc._streaming_stock_repo.unmark_desired.assert_called_once()
-    assert svc._streaming_stock_repo.unmark_desired.call_args.args[0] == "005930"
+    svc._streaming_logger.log_pt_restore_connect_failed.assert_called_once_with("all(1)")
+    # 실패 종목도 desired 유지 — unmark_desired 호출 없음
+    svc._streaming_stock_repo.unmark_desired.assert_not_called()
 
 
 # ── get_progress() 테스트 ────────────────────────────────────────────────────
@@ -1024,7 +1020,7 @@ async def test_restore_price_done_log_reflects_active_count(watchdog_task, mock_
 
 @pytest.mark.asyncio
 async def test_restore_program_trading_subscribe_exception_marks_failed(watchdog_task):
-    """PT 구독 중 예외가 나면 실패 목록으로 이동하고 desired에서 제거된다."""
+    """PT 구독 중 예외가 나면 실패 로그를 남기고 desired는 유지된다 (다음 watchdog tick 재시도)."""
     svc = watchdog_task
     svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc._streaming_stock_repo.get_desired.return_value = {"005930"}
@@ -1034,7 +1030,7 @@ async def test_restore_program_trading_subscribe_exception_marks_failed(watchdog
     await svc._restore_all_subscriptions()
 
     svc._streaming_logger.log_pt_restore_error.assert_called_once()
-    svc._streaming_stock_repo.unmark_desired.assert_awaited_once_with("005930", StreamingType.PROGRAM_TRADING)
+    svc._streaming_stock_repo.unmark_desired.assert_not_called()
 
 
 @pytest.mark.asyncio
