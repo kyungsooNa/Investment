@@ -183,6 +183,22 @@ async def test_report_multiple_strategies(log_dir):
 
 
 @pytest.mark.asyncio
+async def test_report_highlights_multi_strategy_confluence(log_dir):
+    """같은 종목이 2개 이상 전략에서 매수되면 다중 전략 포착 태그가 붙는다."""
+    _write_log(os.path.join(log_dir, "20260418_093000_StrategyA.log.json"), [
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="A전략 돌파", price=75000),
+    ])
+    _write_log(os.path.join(log_dir, "20260418_093000_StrategyB.log.json"), [
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="B전략 돌파", price=75500),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "[🔥 다중 전략 포착: StrategyA, StrategyB]" in report
+
+
+@pytest.mark.asyncio
 async def test_report_rotated_files(log_dir):
     """SizeTimeRotating으로 생성된 인덱스 파일(_2)도 올바르게 파싱된다."""
     log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json_2")
@@ -274,6 +290,98 @@ async def test_report_rejected_limit_shows_rest_count(log_dir):
 
     assert "…외 1건" in report
     assert "종목6(A00006)" not in report
+
+
+@pytest.mark.asyncio
+async def test_report_translates_freeform_english_reasons(log_dir):
+    """영문 자유형 실패 사유는 한글로 통일해서 출력한다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("breakout_rejected", "000660", "SK하이닉스",
+                         reason="Not near high", distance_pct=3.3, threshold=3.0),
+        _make_info_entry("breakout_rejected", "005930", "삼성전자",
+                         reason="Not in uptrend", close=59000, ma20=60000),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "신고가 근접 미달" in report
+    assert "3.3% > 3.0%" in report
+    assert "이동평균선 역배열/하락" in report
+    assert "종가 59,000 <= MA20 60,000" in report
+    assert "Not near high" not in report
+    assert "Not in uptrend" not in report
+
+
+@pytest.mark.asyncio
+async def test_report_large_rejected_adds_reason_summary(log_dir):
+    """매수 실패가 많으면 사유별 요약 통계를 먼저 출력한다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    entries = []
+    entries.extend(
+        _make_info_entry("breakout_rejected", f"A0000{i}", f"종목{i}",
+                         reason="Not near high", distance_pct=3.3, threshold=3.0)
+        for i in range(1, 7)
+    )
+    entries.extend(
+        _make_info_entry("breakout_rejected", f"B0000{i}", f"하락종목{i}",
+                         reason="Not in uptrend", close=59000, ma20=60000)
+        for i in range(1, 4)
+    )
+    entries.append(
+        _make_info_entry("breakout_rejected", "C00001", "기타종목",
+                         reason="poor_candle_quality", pos=0.33)
+    )
+    _write_log(log_path, entries)
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "주요 탈락 사유: 신고가 근접 미달(6건), 이동평균선 역배열/하락(3건), 기타(1건)" in report
+
+
+@pytest.mark.asyncio
+async def test_report_includes_portfolio_summary_from_virtual_trade_service(log_dir):
+    """가상매매 서비스가 있으면 오늘의 포트폴리오 요약이 리포트 하단에 추가된다."""
+    class DummyRepo:
+        def get_name_by_code(self, code: str) -> str | None:
+            return {"005930": "삼성전자", "000660": "SK하이닉스", "035420": "NAVER"}.get(code)
+
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return [
+                {"code": "005930", "buy_date": "2026-04-18 09:10:00", "status": "HOLD"},
+                {"code": "000660", "buy_date": "2026-04-18 10:20:00", "status": "SOLD"},
+            ]
+
+        def get_solds(self):
+            return [
+                {"code": "000660", "sell_date": "2026-04-18 14:40:00", "return_rate": 3.2},
+            ]
+
+        def get_holds(self):
+            return [
+                {"code": "005930"},
+                {"code": "035420"},
+            ]
+
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="오닐돌파", price=75000),
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        stock_code_repo=DummyRepo(),
+        virtual_trade_service=DummyVirtualTradeService(),
+    )
+    report = await svc.generate_report("20260418")
+
+    assert "💰 오늘의 포트폴리오 요약" in report
+    assert "신규 매수: 2건 (삼성전자 외 1건)" in report
+    assert "당일 청산: 1건 (평균 수익률 +3.20%)" in report
+    assert "현재 보유: 2종목" in report
 
 
 # ── _build_metric_str ─────────────────────────────────────────────

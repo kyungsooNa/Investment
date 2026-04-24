@@ -1,6 +1,7 @@
 """당일 전략 로그 파일을 분석하여 매수 완료/실패 요약 HTML 리포트를 생성한다."""
 from __future__ import annotations
 
+from collections import Counter
 import glob
 import gzip
 import os
@@ -59,18 +60,55 @@ _REASON_KR: Dict[str, str] = {
     # ── FirstPullback ────────────────────────────────────────────
     "pullback_out_of_range":         "눌림폭 범위 초과",
     "no_surge_history":              "급등 이력 없음",
-    "ma_not_uptrending":             "MA 우상향 아님",
+    "ma_not_uptrending":             "이동평균선 역배열/하락",
     "volume_not_dry":                "거래량 미고갈",
     # ── OneilSqueezeBreakout ─────────────────────────────────────
     "over_extended":                 "과확장(추격 포기)",
+    # ── TraditionalVolumeBreakout / free-form English reasons ───
+    "not_near_high":                 "신고가 근접 미달",
+    "not_in_uptrend":                "이동평균선 역배열/하락",
 }
 
 # 각 섹션에서 보여줄 최대 종목 수
 _MAX_REJECTED_SHOWN = 5
 _MAX_NEAR_MISS_SHOWN = 3
+_CONFLUENCE_MIN_STRATEGIES = 2
+_REJECT_REASON_SUMMARY_THRESHOLD = 10
 _MA_PROXIMITY_LOWER_PCT = -2.0
 _MA_PROXIMITY_UPPER_PCT = 4.0
 _MA_NEAR_MISS_MAX_EXCESS_PCT = 4.0
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_number(data: dict, *keys: str) -> Optional[float]:
+    for key in keys:
+        if key in data:
+            value = _to_float(data.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _normalize_reason(reason: str) -> str:
+    normalized = re.sub(r'[\s_-]+', ' ', (reason or "").strip()).casefold()
+    freeform_map = {
+        "not near high": "not_near_high",
+        "not in uptrend": "not_in_uptrend",
+    }
+    return freeform_map.get(normalized, reason)
+
+
+def _reason_to_korean(reason: str) -> str:
+    reason_key = _normalize_reason(reason)
+    return _REASON_KR.get(reason_key, reason)
 
 
 def _ma_proximity_excess_pct(pct: Optional[float]) -> Optional[float]:
@@ -95,34 +133,53 @@ def _near_miss_sort_metric(event: str, reason: str, data: dict) -> Optional[floa
 
 def _build_metric_str(event: str, reason: str, data: dict) -> str:
     """rejection/near-miss 데이터에서 핵심 수치 문자열을 반환한다."""
+    reason_key = _normalize_reason(reason)
+
     if event == "htf_pattern_detected":
         return f"폭등 {data.get('surge_ratio', 0):.1f}x, 깃발 {data.get('flag_days', 0)}일"
-    if reason == "low_execution_strength":
+    if reason_key == "low_execution_strength":
         cgld = data.get('cgld', 0)
         thr = data.get('threshold', 0)
         return f"강도 {cgld:.1f}%/기준 {thr:.0f}%" if thr else f"강도 {cgld:.1f}%"
-    if reason == "poor_candle_quality":
+    if reason_key == "poor_candle_quality":
         return f"위치 {data.get('pos', 0):.2f}"
-    if reason == "no_ma_proximity":
+    if reason_key == "no_ma_proximity":
         pct = data.get('closest_ma_pct')
         return f"MA 거리 {pct:+.2f}%" if pct is not None else ""
-    if reason in ("insufficient_volume", "insufficient_projected_volume"):
+    if reason_key in ("insufficient_volume", "insufficient_projected_volume"):
         pv = data.get('proj_vol', 0)
         thr = data.get('threshold', 0)
         return f"예상거래 {int(pv):,}/기준 {int(thr):,}" if thr else ""
-    if reason == "pullback_out_of_range":
+    if reason_key == "pullback_out_of_range":
         pct = data.get('pullback_pct')
         allowed = data.get('allowed_range', '')
         if pct is not None:
             return f"{pct:+.1f}% / 기준 {allowed}" if allowed else f"{pct:+.1f}%"
         return ""
-    if reason == "over_extended":
+    if reason_key == "over_extended":
         current = data.get('current', 0)
         max_entry = data.get('max_entry', 0)
         if current and max_entry:
             over_pct = (current - max_entry) / max_entry * 100
             return f"초과 +{over_pct:.1f}%"
         return ""
+    if reason_key == "not_near_high":
+        distance_pct = _first_number(
+            data, 'distance_pct', 'near_high_pct', 'pct_from_high', 'off_high_pct', 'high_gap_pct'
+        )
+        threshold = _first_number(
+            data, 'threshold', 'near_high_threshold', 'near_high_threshold_pct', 'max_distance_pct'
+        )
+        if distance_pct is not None and threshold is not None:
+            return f"{distance_pct:.1f}% > {threshold:.1f}%"
+        return ""
+    if reason_key == "not_in_uptrend":
+        close = _first_number(data, 'close', 'current', 'stck_clpr')
+        ma20 = _first_number(data, 'ma20', 'ma_20', 'ma20_value')
+        if close is not None and ma20 is not None:
+            return f"종가 {int(close):,} <= MA20 {int(ma20):,}"
+        detail = data.get('detail')
+        return detail if isinstance(detail, str) else ""
     return ""
 
 
@@ -153,9 +210,15 @@ class StrategyLogReportService:
         "entry_rejected",
     })
 
-    def __init__(self, log_dir: str = "logs/strategies", stock_code_repo: Optional[Any] = None):
+    def __init__(
+        self,
+        log_dir: str = "logs/strategies",
+        stock_code_repo: Optional[Any] = None,
+        virtual_trade_service: Optional[Any] = None,
+    ):
         self._log_dir = log_dir
         self._stock_code_repo = stock_code_repo
+        self._virtual_trade_service = virtual_trade_service
 
     # ── 파일 탐색 ────────────────────────────────────────────────
 
@@ -206,6 +269,77 @@ class StrategyLogReportService:
         db_name = self._stock_code_repo.get_name_by_code(code)
         return db_name if db_name else code
 
+    def _format_buy_preview(self, trades: List[dict]) -> str:
+        if not trades:
+            return "• 신규 매수: 없음"
+
+        first_code = str(trades[0].get('code', '')).strip()
+        current_name = str(trades[0].get('name') or first_code or "미상")
+        first_name = self._db_resolve(first_code, current_name) if first_code else current_name
+        count = len(trades)
+        if count == 1:
+            return f"• 신규 매수: 1건 ({first_name})"
+        return f"• 신규 매수: {count}건 ({first_name} 외 {count - 1}건)"
+
+    def _build_rejected_reason_summary(self, rejected: Dict[str, dict]) -> Optional[str]:
+        if len(rejected) < _REJECT_REASON_SUMMARY_THRESHOLD:
+            return None
+
+        counts = Counter(_reason_to_korean(info['reason']) for info in rejected.values())
+        if not counts:
+            return None
+
+        if len(counts) <= 2:
+            parts = [f"{reason}({count}건)" for reason, count in counts.most_common()]
+        else:
+            top2 = counts.most_common(2)
+            other_count = sum(counts.values()) - sum(count for _, count in top2)
+            parts = [f"{reason}({count}건)" for reason, count in top2]
+            if other_count > 0:
+                parts.append(f"기타({other_count}건)")
+        return f"• 주요 탈락 사유: {', '.join(parts)}"
+
+    def _build_portfolio_summary(
+        self,
+        target_date: str,
+        fallback_buys: List[dict],
+    ) -> Optional[str]:
+        if not self._virtual_trade_service:
+            if not fallback_buys:
+                return None
+            lines = ["<b>💰 오늘의 포트폴리오 요약</b>", self._format_buy_preview(fallback_buys)]
+            return "\n".join(lines)
+
+        date_prefix = _fmt_date(target_date)
+        all_trades = self._virtual_trade_service.get_all_trades()
+        solds = self._virtual_trade_service.get_solds()
+        holds = self._virtual_trade_service.get_holds()
+
+        today_buys = [
+            trade for trade in all_trades
+            if str(trade.get('buy_date', '')).startswith(date_prefix) and trade.get('status') in {"HOLD", "SOLD"}
+        ]
+        today_solds = [
+            trade for trade in solds
+            if str(trade.get('sell_date', '')).startswith(date_prefix)
+        ]
+        hold_codes = {str(trade.get('code', '')).strip() for trade in holds if trade.get('code')}
+
+        lines = ["<b>💰 오늘의 포트폴리오 요약</b>", self._format_buy_preview(today_buys or fallback_buys)]
+
+        if today_solds:
+            avg_return = sum(float(trade.get('return_rate') or 0.0) for trade in today_solds) / len(today_solds)
+            lines.append(f"• 당일 청산: {len(today_solds)}건 (평균 수익률 {avg_return:+.2f}%)")
+        else:
+            lines.append("• 당일 청산: 없음")
+
+        if hold_codes:
+            lines.append(f"• 현재 보유: {len(hold_codes)}종목")
+        else:
+            lines.append("• 현재 보유: 없음")
+
+        return "\n".join(lines)
+
     # ── 리포트 생성 ──────────────────────────────────────────────
 
     async def generate_report(self, target_date: str) -> str:
@@ -222,10 +356,9 @@ class StrategyLogReportService:
                 "당일 전략 로그가 없습니다."
             )
 
-        active_sections: List[str] = []
+        strategy_summaries: List[dict] = []
         inactive_names: List[str] = []
         market_timing: Dict[str, Tuple[str, bool]] = {}
-        idx = 0
 
         for name, files in sorted(strategy_files.items()):
             bought: Dict[str, dict] = {}
@@ -269,7 +402,7 @@ class StrategyLogReportService:
                             cand_name = name_map.get(code) or data.get('name', '') or prev['name'] or code
                             rejected[code] = {
                                 'name': cand_name,
-                                'reason': data.get('reason', prev['reason']),
+                                'reason': _normalize_reason(data.get('reason', prev['reason'])),
                                 'event': event,
                                 'data': data,
                                 'count': prev['count'] + 1,
@@ -297,7 +430,7 @@ class StrategyLogReportService:
                                 'name': name_map.get(code, data.get('name', code)),
                                 'gate': gate,
                                 'sort_metric': sort_metric,
-                                'reason_kr': _REASON_KR.get(reason, "HTF 패턴 감지" if event == "htf_pattern_detected" else reason),
+                                'reason_kr': _reason_to_korean("HTF 패턴 감지" if event == "htf_pattern_detected" else reason),
                                 'metric_str': _build_metric_str(event, reason, data),
                                 'time': ts[11:16] if len(ts) >= 16 else '',
                                 'note': "장 초반 진입 제한으로 스킵" if code in early_guard_skipped else "",
@@ -314,32 +447,69 @@ class StrategyLogReportService:
 
             if not bought and not rejected and not near_miss:
                 if scan_count:
-                    idx += 1
-                    active_sections.append(f"<b>{idx}. {name}</b> — {scan_count}종목 스캔 (시그널 없음)")
+                    strategy_summaries.append({
+                        'name': name,
+                        'scan_count': scan_count,
+                        'bought': bought,
+                        'rejected': rejected,
+                        'near_miss': near_miss,
+                        'scan_only': True,
+                    })
                     continue
                 inactive_names.append(name)
                 continue
 
-            idx += 1
-            scan_str = f" — {scan_count}종목 스캔" if scan_count else ""
-            lines = [f"<b>{idx}. {name}</b>{scan_str}"]
+            strategy_summaries.append({
+                'name': name,
+                'scan_count': scan_count,
+                'bought': bought,
+                'rejected': rejected,
+                'near_miss': near_miss,
+                'scan_only': False,
+            })
 
-            if bought:
-                lines.append(f"\n✅ 매수 완료 ({len(bought)}건)")
-                for code, info in bought.items():
+        confluence_map: Dict[str, dict] = {}
+        fallback_buys: List[dict] = []
+        for summary in strategy_summaries:
+            for code, info in summary['bought'].items():
+                fallback_buys.append({'code': code, 'name': info['name']})
+                entry = confluence_map.setdefault(code, {'name': info['name'], 'count': 0, 'strategies': []})
+                entry['name'] = info['name']
+                entry['count'] += 1
+                entry['strategies'].append(summary['name'])
+
+        active_sections: List[str] = []
+        for idx, summary in enumerate(strategy_summaries, start=1):
+            if summary['scan_only']:
+                active_sections.append(f"<b>{idx}. {summary['name']}</b> — {summary['scan_count']}종목 스캔 (시그널 없음)")
+                continue
+
+            scan_str = f" — {summary['scan_count']}종목 스캔" if summary['scan_count'] else ""
+            lines = [f"<b>{idx}. {summary['name']}</b>{scan_str}"]
+
+            if summary['bought']:
+                lines.append(f"\n✅ 매수 완료 ({len(summary['bought'])}건)")
+                for code, info in summary['bought'].items():
                     price_str = f" @ ₩{info['price']:,}" if info['price'] else ""
                     time_str = f" ({info['time']})" if info.get('time') else ""
-                    lines.append(f"• {info['name']}({code}): {info['reason']}{price_str}{time_str}")
+                    confluence = confluence_map.get(code, {})
+                    confluence_str = ""
+                    if confluence.get('count', 0) >= _CONFLUENCE_MIN_STRATEGIES:
+                        confluence_str = f" [🔥 다중 전략 포착: {', '.join(confluence['strategies'])}]"
+                    lines.append(f"• {info['name']}({code}){confluence_str}: {info['reason']}{price_str}{time_str}")
             else:
                 lines.append("\n✅ 매수 완료: 없음")
 
-            if rejected:
-                lines.append(f"\n❌ 매수 실패 ({len(rejected)}건)")
-                sorted_rejected = sorted(rejected.items(), key=lambda x: -x[1].get('count', 0))
+            if summary['rejected']:
+                lines.append(f"\n❌ 매수 실패 ({len(summary['rejected'])}건)")
+                reason_summary = self._build_rejected_reason_summary(summary['rejected'])
+                if reason_summary:
+                    lines.append(reason_summary)
+                sorted_rejected = sorted(summary['rejected'].items(), key=lambda x: -x[1].get('count', 0))
                 shown = sorted_rejected[:_MAX_REJECTED_SHOWN]
                 rest_count = len(sorted_rejected) - _MAX_REJECTED_SHOWN
                 for code, info in shown:
-                    reason_kr = _REASON_KR.get(info['reason'], info['reason'])
+                    reason_kr = _reason_to_korean(info['reason'])
                     metric = _build_metric_str(info.get('event', ''), info['reason'], info.get('data', {}))
                     metric_str = f" ({metric})" if metric else ""
                     count_str = f" ({info['count']}회 탈락)" if info.get('count', 0) > 1 else ""
@@ -350,7 +520,7 @@ class StrategyLogReportService:
                 lines.append("\n❌ 매수 실패: 없음")
 
             top3 = sorted(
-                near_miss.values(),
+                summary['near_miss'].values(),
                 key=lambda x: (-x['gate'], x.get('sort_metric', float('inf')))
             )[:_MAX_NEAR_MISS_SHOWN]
             if top3:
@@ -383,6 +553,9 @@ class StrategyLogReportService:
             return header + "\n\n당일 활동한 전략이 없습니다." + footer
 
         body = "\n\n".join(active_sections)
+        portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
+        if portfolio_summary:
+            body += f"\n\n{portfolio_summary}"
 
         if inactive_names:
             inactive_summary = f"\n\n💤 <i>활동 없음: {', '.join(inactive_names[:3])}"

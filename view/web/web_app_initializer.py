@@ -485,7 +485,11 @@ class WebAppContext:
         )
 
         self.strategy_log_report_task = StrategyLogReportTask(
-            report_service=StrategyLogReportService(log_dir=os.path.join(self.logger.log_dir, "strategies")),
+            report_service=StrategyLogReportService(
+                log_dir=os.path.join(self.logger.log_dir, "strategies"),
+                stock_code_repo=self.stock_code_repository,
+                virtual_trade_service=self.virtual_trade_service,
+            ),
             notification_service=self.notification_service,
             telegram_reporter=getattr(self, 'telegram_reporter', None),
             mcs=self._mcs,
