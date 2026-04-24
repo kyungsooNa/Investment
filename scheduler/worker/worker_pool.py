@@ -16,6 +16,7 @@ from typing import Awaitable, Callable, Dict, List, Optional
 from scheduler.ticket_queue.ticket import Ticket, POISON_PRIORITY
 from scheduler.ticket_queue.message_broker import MessageBroker
 from scheduler.ticket_queue.dlq_manager import DlqManager
+from core.loggers.trace_context import trace_scope
 
 
 Handler = Callable[[dict], Awaitable[None]]
@@ -109,12 +110,14 @@ class WorkerPool:
             self._logger.warning(f"[Worker-{worker_id}] 등록되지 않은 태스크: {ticket.task_name}")
             return
         try:
-            await handler(ticket.payload)
+            with trace_scope(ticket.trace_id):
+                await handler(ticket.payload)
         except Exception as e:
-            self._logger.error(
-                f"[Worker-{worker_id}] 작업 실패: {ticket.task_name} (시도 {ticket.attempt + 1}/{self.MAX_RETRIES}) — {e}",
-                exc_info=True,
-            )
+            with trace_scope(ticket.trace_id):
+                self._logger.error(
+                    f"[Worker-{worker_id}] 작업 실패: {ticket.task_name} (시도 {ticket.attempt + 1}/{self.MAX_RETRIES}) — {e}",
+                    exc_info=True,
+                )
             ticket.attempt += 1
             if ticket.attempt < self.MAX_RETRIES:
                 delay = self.BASE_DELAY * ticket.attempt

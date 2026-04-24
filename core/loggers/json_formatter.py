@@ -1,6 +1,9 @@
 import logging
 import orjson
 
+from core.loggers.trace_context import get_trace_id
+
+
 class JsonFormatter(logging.Formatter):
     """
     로그 레코드를 orjson을 사용하여 초고속 JSON 형식으로 변환하는 포맷터.
@@ -11,6 +14,12 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "name": record.name,
         }
+
+        # extra={"trace_id": ...} 명시 우선, 없으면 ContextVar fallback
+        trace_id = getattr(record, "trace_id", None) or get_trace_id()
+        if trace_id:
+            log_object["trace_id"] = trace_id
+
         # message가 dict 형태이면, 그대로 data 필드로 추가
         if isinstance(record.msg, dict):
             log_object["data"] = record.msg

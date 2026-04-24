@@ -30,6 +30,7 @@ from core.performance_profiler import PerformanceProfiler
 
 from scheduler.strategy_scheduler_store import StrategySchedulerStore, SCHEDULER_DB_FILE
 from services.price_subscription_service import SubscriptionPriority
+from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 
 
 @dataclass
@@ -45,6 +46,7 @@ class SignalRecord:
     timestamp: str = ""       # ISO format
     api_success: bool = True
     return_rate: Optional[float] = None
+    trace_id: str = ""
 
 
 @dataclass
@@ -374,6 +376,11 @@ class StrategyScheduler:
     # ── 시그널 실행 ──
 
     async def _execute_signal(self, signal: TradeSignal):
+        tid = get_trace_id() or new_trace_id(signal.strategy_name)
+        with trace_scope(tid):
+            await self._execute_signal_inner(signal, tid)
+
+    async def _execute_signal_inner(self, signal: TradeSignal, tid: str):
         self._logger.info(
             f"[Scheduler] 시그널 실행: [{signal.strategy_name}] {signal.action} {signal.name}({signal.code}) "
             f"@ {signal.price:,}원 | {signal.reason}"
@@ -426,6 +433,7 @@ class StrategyScheduler:
                         exchange=signal_exchange,
                         source=f"strategy:{signal.strategy_name}",
                         finalize_immediately=False,
+                        trace_id=tid,
                     )
                 else:
                     resp = await self._oes.handle_place_sell_order(
@@ -435,6 +443,7 @@ class StrategyScheduler:
                         exchange=signal_exchange,
                         source=f"strategy:{signal.strategy_name}",
                         finalize_immediately=False,
+                        trace_id=tid,
                     )
 
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
@@ -474,6 +483,7 @@ class StrategyScheduler:
             timestamp=now.strftime("%Y-%m-%d %H:%M:%S"),
             api_success=api_success,
             return_rate=return_rate,
+            trace_id=tid,
         )
         self._signal_history.append(record)
         if len(self._signal_history) > self.MAX_HISTORY:
@@ -499,6 +509,7 @@ class StrategyScheduler:
                 "reason": signal.reason,
                 "api_success": api_success,
                 "return_rate": return_rate,
+                "trace_id": tid,
             })
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):

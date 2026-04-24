@@ -113,3 +113,46 @@ async def test_poison_pill_priority_beats_low_tickets():
     # 독약이 LOW 티켓보다 먼저이므로 일부만 처리되거나 0개 처리될 수 있음
     # 핵심: shutdown이 hang 없이 완료됨을 검증
     assert True  # 여기까지 도달하면 hang 없음
+
+
+async def test_trace_id_propagated_through_queue():
+    """Queue 경계를 넘어 trace_id가 핸들러 내부에서 복원되는지 검증."""
+    from core.loggers.trace_context import get_trace_id, _trace_id_var
+
+    pool, broker, _ = _make_pool()
+    captured = []
+
+    async def handler(payload):
+        captured.append(get_trace_id())
+
+    pool.register("TRACE_TASK", handler)
+    await pool.start()
+
+    ticket = Ticket(priority=50, task_name="TRACE_TASK", payload={}, trace_id="TEST-TRACE-001")
+    await broker.publish(ticket)
+    await broker.join()
+    await pool.shutdown()
+
+    assert captured == ["TEST-TRACE-001"]
+
+
+async def test_no_trace_id_ticket_handler_gets_none():
+    """trace_id가 없는 Ticket은 핸들러 내부에서 get_trace_id() == None."""
+    from core.loggers.trace_context import get_trace_id, _trace_id_var
+
+    pool, broker, _ = _make_pool()
+    captured = []
+
+    async def handler(payload):
+        captured.append(get_trace_id())
+
+    pool.register("NO_TRACE_TASK", handler)
+    _trace_id_var.set("")  # 부모 컨텍스트도 비워둠
+    await pool.start()
+
+    ticket = Ticket(priority=50, task_name="NO_TRACE_TASK", payload={}, trace_id="")
+    await broker.publish(ticket)
+    await broker.join()
+    await pool.shutdown()
+
+    assert captured == [None]
