@@ -66,9 +66,12 @@ from core.cache.cache_store import CacheStore
 from services.rs_rating_service import RSRatingService
 from services.minervini_stage_service import MinerviniStageService
 from services.newhigh_service import NewHighService
+from common.types import ErrorCode
 
 class WebAppContext:
     """웹 앱에서 사용할 서비스 컨텍스트."""
+
+    REST_PRICE_REFRESH_COOLDOWN_SEC = 10.0
 
     def __init__(self, app_context):
         self.logger = Logger()
@@ -116,6 +119,8 @@ class WebAppContext:
         self.price_stream_service: PriceStreamService = None
         self.streaming_stock_repo: StreamingStockRepo = None
         self._last_missing_reason_log_ts: dict[tuple[str, str], float] = {}
+        self._last_rest_price_refresh_ts: dict[str, float] = {}
+        self._pending_rest_price_refresh_tasks: dict[str, asyncio.Task] = {}
 
         # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
         self.streaming_event_logger = get_streaming_logger()
@@ -775,6 +780,12 @@ class WebAppContext:
 
     async def shutdown(self):
         """서비스 종료 처리 — BackgroundScheduler에 위임."""
+        pending_tasks = list(self._pending_rest_price_refresh_tasks.values())
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        self._pending_rest_price_refresh_tasks.clear()
         if self.background_scheduler:
             await self.background_scheduler.shutdown()
         if self.broker:
@@ -801,9 +812,23 @@ class WebAppContext:
                         item['price'] = price_data
                 elif code:
                     self._log_streaming_missing_reason(code)
+                    self._schedule_rest_price_refresh(code)
 
         if self.streaming_service:
             self.streaming_service.dispatch_realtime_message(data)
+
+    def _emit_missing_reason(self, code: str, reason: str) -> None:
+        """동일 종목/원인 로그를 저빈도로 남긴다."""
+        if not self.streaming_event_logger:
+            return
+
+        now_ts = time.monotonic()
+        last_logged_ts = self._last_missing_reason_log_ts.get((code, reason), 0.0)
+        if (now_ts - last_logged_ts) < 60.0:
+            return
+
+        self._last_missing_reason_log_ts[(code, reason)] = now_ts
+        self.streaming_event_logger.log_missing_reason(code, reason)
 
     def _log_streaming_missing_reason(self, code: str) -> None:
         """PT 이벤트에 비해 체결가가 없는 상황의 원인을 저빈도로 기록한다."""
@@ -820,13 +845,80 @@ class WebAppContext:
         else:
             reason = "subscribed_no_tick"
 
-        now_ts = time.monotonic()
-        last_logged_ts = self._last_missing_reason_log_ts.get((code, reason), 0.0)
-        if (now_ts - last_logged_ts) < 60.0:
+        self._emit_missing_reason(code, reason)
+
+    def _schedule_rest_price_refresh(self, code: str) -> None:
+        """PT 수신은 왔는데 체결가 캐시가 비어 있을 때 REST 스냅샷 보강을 예약한다."""
+        if (
+            not code
+            or not self.stock_query_service
+            or not self.price_stream_service
+            or not self.streaming_service
+            or not self.streaming_service.is_subscribed_realtime_price(code)
+        ):
             return
 
-        self._last_missing_reason_log_ts[(code, reason)] = now_ts
-        self.streaming_event_logger.log_missing_reason(code, reason)
+        existing_task = self._pending_rest_price_refresh_tasks.get(code)
+        if existing_task and not existing_task.done():
+            return
+
+        now_ts = time.monotonic()
+        last_refresh_ts = self._last_rest_price_refresh_ts.get(code, 0.0)
+        if (now_ts - last_refresh_ts) < self.REST_PRICE_REFRESH_COOLDOWN_SEC:
+            return
+
+        self._last_rest_price_refresh_ts[code] = now_ts
+        task = asyncio.create_task(self._refresh_price_from_rest(code))
+        self._pending_rest_price_refresh_tasks[code] = task
+
+        def _cleanup(done_task: asyncio.Task, stock_code: str = code) -> None:
+            if self._pending_rest_price_refresh_tasks.get(stock_code) is done_task:
+                self._pending_rest_price_refresh_tasks.pop(stock_code, None)
+
+        task.add_done_callback(_cleanup)
+
+    async def _refresh_price_from_rest(self, code: str) -> None:
+        """REST 현재가 조회로 가격 캐시를 보강하고 실패 시 원인을 기록한다."""
+        try:
+            resp = await self.stock_query_service.get_current_price(
+                code,
+                caller="WebAppContext",
+                count_stats=False,
+                force_fresh=True,
+            )
+        except Exception as e:
+            self.logger.warning(f"PT 가격 보강용 REST 조회 예외 ({code}): {e}", exc_info=True)
+            self._emit_missing_reason(code, "rest_failed")
+            return
+
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+            self._emit_missing_reason(code, "rest_failed")
+            return
+
+        output = resp.data.get("output") if isinstance(resp.data, dict) else getattr(resp.data, "output", None)
+        if not output:
+            self._emit_missing_reason(code, "rest_failed")
+            return
+
+        def _get(field_name: str, default: str = ""):
+            value = output.get(field_name) if isinstance(output, dict) else getattr(output, field_name, None)
+            if value is None or value == "":
+                return default
+            return str(value)
+
+        price = _get("stck_prpr")
+        if not price:
+            self._emit_missing_reason(code, "rest_failed")
+            return
+
+        self.price_stream_service.cache_price_snapshot(
+            code,
+            price=price,
+            change=_get("prdy_vrss", "0"),
+            rate=_get("prdy_ctrt", "0.00"),
+            sign=_get("prdy_vrss_sign", "3"),
+            volume=_get("acml_vol", "0"),
+        )
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""
@@ -861,8 +953,8 @@ class WebAppContext:
             self.pm.log_timer(f"subscribe_program_trading({code})", t_sub_pt)
 
             t_sub_price = self.pm.start_timer()
-            sub_price_success = await self.streaming_service.subscribe_realtime_price(code)
-            self.pm.log_timer(f"subscribe_realtime_price({code})", t_sub_price)
+            sub_price_success = await self.streaming_service.subscribe_unified_price(code)
+            self.pm.log_timer(f"subscribe_unified_price({code})", t_sub_price)
 
             if sub_pt_success and sub_price_success:
                 if self.streaming_stock_repo:
@@ -876,7 +968,7 @@ class WebAppContext:
                 if sub_pt_success:
                     await self.streaming_service.unsubscribe_program_trading(code)
                 if sub_price_success:
-                    await self.streaming_service.unsubscribe_realtime_price(code)
+                    await self.streaming_service.unsubscribe_unified_price(code)
                 return False
 
         except Exception as e:
@@ -887,7 +979,7 @@ class WebAppContext:
         """특정 종목 프로그램매매 구독 해지."""
         if self.streaming_stock_repo and code in self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING):
             await self.streaming_service.unsubscribe_program_trading(code)
-            await self.streaming_service.unsubscribe_realtime_price(code)
+            await self.streaming_service.unsubscribe_unified_price(code)
             await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
             await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)
 
@@ -896,7 +988,7 @@ class WebAppContext:
         codes = sorted(self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self.streaming_stock_repo else []
         for code in codes:
             await self.streaming_service.unsubscribe_program_trading(code)
-            await self.streaming_service.unsubscribe_realtime_price(code)
+            await self.streaming_service.unsubscribe_unified_price(code)
             if self.streaming_stock_repo:
                 await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
                 await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)

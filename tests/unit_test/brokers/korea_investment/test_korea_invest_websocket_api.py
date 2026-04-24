@@ -2379,14 +2379,14 @@ async def test_receive_messages_resubscribe_error_logged(websocket_api_instance)
 
 
 @pytest.mark.asyncio
-async def test_receive_messages_timeout_closes_when_market_check_false(websocket_api_instance):
+async def test_receive_messages_timeout_closes_when_market_check_true(websocket_api_instance):
     api = websocket_api_instance
     api._auto_reconnect = True
     api._is_connected = True
     api.ws = AsyncMock()
     api.approval_key = "approval"
     api._mcs = AsyncMock()
-    api._mcs.is_market_open_now = AsyncMock(return_value=False)
+    api._mcs.is_market_open_now = AsyncMock(return_value=True)
 
     async def wait_for_side_effect(*args, **kwargs):
         api._auto_reconnect = False
@@ -2398,6 +2398,29 @@ async def test_receive_messages_timeout_closes_when_market_check_false(websocket
     assert api._is_connected is False
     assert api.ws is None
     assert api.approval_key is None
+
+
+@pytest.mark.asyncio
+async def test_receive_messages_timeout_keeps_connection_when_market_closed(websocket_api_instance):
+    api = websocket_api_instance
+    api._auto_reconnect = True
+    api._is_connected = True
+    api.ws = AsyncMock()
+    original_ws = api.ws
+    api.approval_key = "approval"
+    api._mcs = AsyncMock()
+    api._mcs.is_market_open_now = AsyncMock(return_value=False)
+
+    async def wait_for_side_effect(*args, **kwargs):
+        api._auto_reconnect = False
+        raise asyncio.TimeoutError
+
+    with patch("asyncio.wait_for", side_effect=wait_for_side_effect):
+        await api._receive_messages()
+
+    assert api._is_connected is True
+    assert api.ws is original_ws
+    assert api.approval_key == "approval"
 
 
 @pytest.mark.asyncio

@@ -182,9 +182,9 @@ async def test_program_trading_subscription(mock_deps):
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
     ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
-    ctx.streaming_service.subscribe_realtime_price = AsyncMock(return_value=True)
+    ctx.streaming_service.subscribe_unified_price = AsyncMock(return_value=True)
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
-    ctx.streaming_service.unsubscribe_realtime_price = AsyncMock()
+    ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
 
     # streaming_stock_repo mock
     ctx.streaming_stock_repo = MagicMock()
@@ -198,6 +198,7 @@ async def test_program_trading_subscription(mock_deps):
     await ctx.start_program_trading("005930")
     ctx.streaming_service.connect_websocket.assert_awaited_once()
     ctx.streaming_service.subscribe_program_trading.assert_awaited_with("005930")
+    ctx.streaming_service.subscribe_unified_price.assert_awaited_with("005930")
     ctx.streaming_stock_repo.mark_desired.assert_called_with("005930", StreamingType.PROGRAM_TRADING)
 
     # 2. 중복 구독 시도 (API 호출 없어야 함)
@@ -260,6 +261,7 @@ def test_web_realtime_callback(mock_deps):
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.dispatch_realtime_message = MagicMock()
     ctx.streaming_service.get_cached_realtime_price = MagicMock(return_value=None)
+    ctx._schedule_rest_price_refresh = MagicMock()
     ctx.program_trading_stream_service = MagicMock()
 
     # 1. 일반 데이터 (program trading 아님)
@@ -286,6 +288,75 @@ def test_web_realtime_callback(mock_deps):
     ctx.streaming_service.dispatch_realtime_message.assert_called_with(data_pt)
     # on_data_received는 StreamingService 옵저버 패턴을 통해 호출되므로 직접 호출 안 됨
     ctx.program_trading_stream_service.on_data_received.assert_not_called()
+    ctx._schedule_rest_price_refresh.assert_not_called()
+
+    # 3. 프로그램 매매 데이터 (가격 캐시 없음 -> REST 보강 예약)
+    ctx.streaming_service.get_cached_realtime_price.return_value = None
+    data_pt_missing = {
+        "type": "realtime_program_trading",
+        "data": {"유가증권단축종목코드": "000660"}
+    }
+    with patch.object(ctx, "_log_streaming_missing_reason") as mock_missing_reason:
+        ctx._web_realtime_callback(data_pt_missing)
+
+    mock_missing_reason.assert_called_once_with("000660")
+    ctx._schedule_rest_price_refresh.assert_called_once_with("000660")
+
+
+@pytest.mark.asyncio
+async def test_refresh_price_from_rest_caches_snapshot(mock_deps):
+    """REST 현재가 조회 성공 시 PT 보강용 가격 캐시를 채운다."""
+    ctx = WebAppContext(None)
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.get_current_price = AsyncMock(return_value=MagicMock(
+        rt_cd="0",
+        data={
+            "output": {
+                "stck_prpr": "70000",
+                "prdy_vrss": "1000",
+                "prdy_ctrt": "1.45",
+                "prdy_vrss_sign": "2",
+                "acml_vol": "12345",
+            }
+        },
+    ))
+    ctx.price_stream_service = MagicMock()
+    ctx.streaming_event_logger = MagicMock()
+
+    await ctx._refresh_price_from_rest("005930")
+
+    ctx.stock_query_service.get_current_price.assert_awaited_once_with(
+        "005930",
+        caller="WebAppContext",
+        count_stats=False,
+        force_fresh=True,
+    )
+    ctx.price_stream_service.cache_price_snapshot.assert_called_once_with(
+        "005930",
+        price="70000",
+        change="1000",
+        rate="1.45",
+        sign="2",
+        volume="12345",
+    )
+    ctx.streaming_event_logger.log_missing_reason.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_refresh_price_from_rest_logs_rest_failed(mock_deps):
+    """REST 현재가 조회 실패 시 rest_failed 원인을 남긴다."""
+    ctx = WebAppContext(None)
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.get_current_price = AsyncMock(return_value=MagicMock(
+        rt_cd="1",
+        data=None,
+    ))
+    ctx.price_stream_service = MagicMock()
+    ctx.streaming_event_logger = MagicMock()
+
+    await ctx._refresh_price_from_rest("005930")
+
+    ctx.streaming_event_logger.log_missing_reason.assert_called_once_with("005930", "rest_failed")
 
 @pytest.mark.asyncio
 async def test_stop_all_program_trading(mock_deps):
@@ -295,7 +366,7 @@ async def test_stop_all_program_trading(mock_deps):
 
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
-    ctx.streaming_service.unsubscribe_realtime_price = AsyncMock()
+    ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
 
     ctx.streaming_stock_repo = MagicMock()
     ctx.streaming_stock_repo.get_desired = MagicMock(return_value={"005930", "000660"})
@@ -305,7 +376,7 @@ async def test_stop_all_program_trading(mock_deps):
     await ctx.stop_all_program_trading()
 
     assert ctx.streaming_service.unsubscribe_program_trading.call_count == 2
-    assert ctx.streaming_service.unsubscribe_realtime_price.call_count == 2
+    assert ctx.streaming_service.unsubscribe_unified_price.call_count == 2
     assert ctx.streaming_stock_repo.unmark_desired.call_count == 2
 
 @pytest.mark.asyncio

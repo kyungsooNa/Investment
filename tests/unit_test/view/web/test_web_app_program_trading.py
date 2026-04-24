@@ -22,9 +22,9 @@ def mock_ctx():
         ctx.streaming_service = MagicMock()
         ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
         ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
-        ctx.streaming_service.subscribe_realtime_price = AsyncMock(return_value=True)
+        ctx.streaming_service.subscribe_unified_price = AsyncMock(return_value=True)
         ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
-        ctx.streaming_service.unsubscribe_realtime_price = AsyncMock()
+        ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
         ctx.broker = MagicMock()
         ctx.broker.is_websocket_receive_alive = MagicMock(return_value=True)
         ctx.program_trading_stream_service = MockRDM.return_value
@@ -58,7 +58,7 @@ async def test_start_program_trading_success(mock_ctx):
 
     assert result is True
     mock_ctx.streaming_service.subscribe_program_trading.assert_called_once_with(code)
-    mock_ctx.streaming_service.subscribe_realtime_price.assert_called_once_with(code)
+    mock_ctx.streaming_service.subscribe_unified_price.assert_called_once_with(code)
     mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(code, StreamingType.PROGRAM_TRADING)
     mock_ctx.streaming_stock_repo.mark_active.assert_called_once_with(code, StreamingType.PROGRAM_TRADING)
 
@@ -69,7 +69,7 @@ async def test_start_program_trading_partial_fail(mock_ctx):
     code = "005930"
     mock_ctx.streaming_stock_repo.get_desired.return_value = set()
     mock_ctx.streaming_service.subscribe_program_trading.return_value = True
-    mock_ctx.streaming_service.subscribe_realtime_price.return_value = False
+    mock_ctx.streaming_service.subscribe_unified_price.return_value = False
 
     result = await mock_ctx.start_program_trading(code)
 

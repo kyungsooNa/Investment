@@ -100,6 +100,34 @@ class PriceStreamService:
         """메모리 캐시에서 최신가 정보를 반환한다."""
         return self._latest_prices.get(code)
 
+    def cache_price_snapshot(
+        self,
+        code: str,
+        price: str,
+        change: str = '0',
+        rate: str = '0.00',
+        sign: str = '3',
+        volume: str = '0',
+    ) -> None:
+        """REST 스냅샷 현재가를 최신가 캐시에 반영한다."""
+        if not code or not price:
+            return
+
+        now_ts = time.time()
+        self._latest_prices[code] = {
+            "price": price,
+            "change": change,
+            "rate": rate,
+            "sign": sign,
+            "received_at": now_ts,
+        }
+
+        try:
+            vol_int = int(volume) if volume and volume != 'N/A' else 0
+            self._stock_repo.update_realtime_data(code, float(price), vol_int)
+        except Exception as e:
+            self._logger.warning(f"StockRepository 현재가 스냅샷 캐시 갱신 실패: {e}")
+
     def mark_subscription_requested(self, code: str) -> None:
         """체결가 구독 요청 시각을 기록한다."""
         if code:

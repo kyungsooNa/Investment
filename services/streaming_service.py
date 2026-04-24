@@ -138,9 +138,9 @@ class StreamingService:
 
     async def subscribe_realtime_price(self, code: str):
         """실시간 체결가 구독 (BrokerAPIWrapper 위임)."""
-        result = await self.broker.subscribe_realtime_price(code)
-        if result and self._price_stream_service:
+        if self._price_stream_service:
             self._price_stream_service.mark_subscription_requested(code)
+        result = await self.broker.subscribe_realtime_price(code)
         return result
 
     async def unsubscribe_realtime_price(self, code: str):
@@ -160,9 +160,9 @@ class StreamingService:
 
     async def subscribe_unified_price(self, code: str) -> bool:
         """실시간 통합 체결가(H0UNCNT0) 구독 — PriceSubscriptionService 전용."""
-        result = await self.broker.subscribe_unified_price(code)
-        if result and self._price_stream_service:
+        if self._price_stream_service:
             self._price_stream_service.mark_subscription_requested(code)
+        result = await self.broker.subscribe_unified_price(code)
         return result
 
     async def unsubscribe_unified_price(self, code: str) -> bool:
@@ -356,7 +356,10 @@ class StreamingService:
         if not self._streaming_stock_repo:
             return False
         from repositories.streaming_stock_repo import StreamingType
-        return code in self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE)
+        return (
+            code in self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE)
+            or code in self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)
+        )
 
     # ── REST 조회 ─────────────────────────────────────────────────
 

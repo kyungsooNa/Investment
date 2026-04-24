@@ -45,7 +45,8 @@ def mock_deps():
     streaming_service = MagicMock()
     streaming_service.connect_websocket = AsyncMock(return_value=True)
     streaming_service.subscribe_program_trading = AsyncMock()
-    streaming_service.subscribe_realtime_price = AsyncMock()
+    streaming_service.subscribe_unified_price = AsyncMock()
+    streaming_service.unsubscribe_unified_price = AsyncMock()
     streaming_service.disconnect_websocket = AsyncMock()
     streaming_service.broker = MagicMock()
     streaming_service.broker.disconnect_websocket = AsyncMock()
@@ -65,6 +66,8 @@ def mock_deps():
     price_stream_service = MagicMock()
     price_stream_service.get_last_any_tick_ts = MagicMock(return_value=0.0)
     price_stream_service.get_stale_codes = MagicMock(return_value=[])
+    price_stream_service.get_subscription_age = MagicMock(return_value=0.0)
+    price_stream_service.get_last_tick_ts = MagicMock(return_value=0.0)
 
     return streaming_service, program_trading_stream_service, market_calendar_service, logger, streaming_stock_repo, price_stream_service
 
@@ -108,6 +111,7 @@ def mock_streaming_logger():
     logger.log_reconnect = MagicMock()
     logger.log_price_data_gap = MagicMock()
     logger.log_stale_price_codes = MagicMock()
+    logger.log_missing_reason = MagicMock()
     return logger
 
 
@@ -141,7 +145,7 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
 
     assert svc._streaming_service.connect_websocket.call_count == 1
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
-    assert svc._streaming_service.subscribe_realtime_price.call_count == 2
+    assert svc._streaming_service.subscribe_unified_price.call_count == 2
     svc._streaming_logger.log_subscription_recovery_done.assert_called_once()
 
 
@@ -262,6 +266,70 @@ async def test_streaming_watchdog_logs_stale_price_codes_without_reconnect(watch
 
 
 @pytest.mark.asyncio
+async def test_streaming_watchdog_rebalances_not_subscribed_codes(mock_deps, mock_streaming_logger, mock_price_subscription_service):
+    """desired 상태인데 active가 아닌 종목은 not_subscribed로 기록 후 즉시 rebalance한다."""
+    streaming_service, program_trading_stream_service, market_calendar_service, logger, streaming_stock_repo, price_stream_service = mock_deps
+    market_calendar_service.is_market_open_now.return_value = True
+    streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    streaming_stock_repo.get_active.side_effect = lambda stream_type: set()
+    price_stream_service.get_subscription_age.return_value = 35.0
+
+    svc = WebSocketWatchdogTask(
+        streaming_service=streaming_service,
+        program_trading_stream_service=program_trading_stream_service,
+        market_calendar_service=market_calendar_service,
+        logger=logger,
+        streaming_stock_repo=streaming_stock_repo,
+        streaming_logger=mock_streaming_logger,
+        price_stream_service=price_stream_service,
+        price_subscription_service=mock_price_subscription_service,
+    )
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    mock_streaming_logger.log_missing_reason.assert_called_with("005930", "not_subscribed")
+    mock_price_subscription_service._rebalance.assert_awaited_once()
+    svc.force_reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_refreshes_subscribed_no_tick_codes(watchdog_task):
+    """active까지 됐지만 첫 틱이 없는 stale 종목은 subscribed_no_tick으로 기록 후 개별 재구독한다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    svc._streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    svc._price_stream_service.get_last_any_tick_ts.return_value = time.time() - 30
+    svc._price_stream_service.get_stale_codes.return_value = ["005930"]
+    svc._price_stream_service.get_subscription_age.return_value = 190.0
+    svc._price_stream_service.get_last_tick_ts.return_value = 0.0
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(2)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc._streaming_logger.log_missing_reason.assert_called_with("005930", "subscribed_no_tick")
+    svc._streaming_service.unsubscribe_unified_price.assert_awaited_once_with("005930")
+    svc._streaming_service.subscribe_unified_price.assert_awaited_once_with("005930")
+    svc.force_reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_streaming_watchdog_no_reconnect_when_never_received(watchdog_task, mock_deps):
     """_streaming_watchdog: 데이터를 한 번도 받지 않았을 때(last_data_ts=0) 재연결하지 않음."""
     svc = watchdog_task
@@ -312,7 +380,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
     svc._streaming_service.disconnect_websocket.assert_awaited_once()
     assert svc._streaming_service.connect_websocket.call_count == 1
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
-    assert svc._streaming_service.subscribe_realtime_price.call_count == 2
+    assert svc._streaming_service.subscribe_unified_price.call_count == 2
     svc._streaming_logger.log_force_reconnect_done.assert_called_once_with("manual")
 
 

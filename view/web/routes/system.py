@@ -4,6 +4,7 @@
 import asyncio
 import time
 from fastapi import APIRouter, HTTPException
+from repositories.streaming_stock_repo import StreamingType
 from view.web.api_common import _get_ctx
 import view.web.api_common as api_common
 from config.task_config_loader import load_after_market_delays
@@ -275,6 +276,98 @@ def get_subscription_status():
                 "MEDIUM": _enrich(status.get("pending_by_priority", {}).get("MEDIUM", [])),
                 "LOW": _enrich(status.get("pending_by_priority", {}).get("LOW", [])),
             }
+        }
+    }
+
+
+def _unwrap_broker_client_layers(client):
+    """Cache/Retry 래퍼를 벗겨 실제 KoreaInvestApiClient를 반환한다."""
+    current = client
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        inner = getattr(current, "_client", None)
+        if inner is None:
+            break
+        current = inner
+    return current
+
+
+@router.get("/subscriptions/debug")
+def get_subscription_debug(codes: str | None = None):
+    """실시간 구독 내부 상태를 종목별로 자세히 반환한다."""
+    ctx = _get_ctx()
+    sub_svc = getattr(ctx, "price_subscription_service", None)
+    stream_svc = getattr(ctx, "streaming_service", None)
+    price_svc = getattr(ctx, "price_stream_service", None)
+    repo = getattr(ctx, "streaming_stock_repo", None)
+    broker = getattr(ctx, "broker", None)
+
+    if not (sub_svc and stream_svc and price_svc and repo and broker):
+        return {"success": True, "data": None}
+
+    requested_codes = []
+    if codes:
+        requested_codes = [c.strip() for c in codes.split(",") if c.strip()]
+
+    status = sub_svc.get_status()
+    active_price_policy = set(status.get("active_codes_price", []))
+    active_pt_policy = set(status.get("active_codes_pt", []))
+    desired_price = repo.get_desired(StreamingType.UNIFIED_PRICE)
+    desired_pt = repo.get_desired(StreamingType.PROGRAM_TRADING)
+    active_price_repo = repo.get_active(StreamingType.UNIFIED_PRICE)
+    active_pt_repo = repo.get_active(StreamingType.PROGRAM_TRADING)
+
+    raw_client = _unwrap_broker_client_layers(getattr(broker, "_client", None))
+    websocket_api = getattr(raw_client, "_websocketAPI", None)
+    subscribed_items = getattr(websocket_api, "_subscribed_items", set()) if websocket_api else set()
+    pending_requests = getattr(websocket_api, "_pending_requests", {}) if websocket_api else {}
+
+    target_codes = requested_codes
+    if not target_codes:
+        target_codes = sorted(
+            desired_price
+            | desired_pt
+            | active_price_repo
+            | active_pt_repo
+            | active_price_policy
+            | active_pt_policy
+        )
+
+    rows = []
+    for code in target_codes:
+        cached = stream_svc.get_cached_realtime_price(code)
+        broker_items = sorted(
+            tr_id for tr_id, tr_key in subscribed_items
+            if tr_key == code
+        )
+        broker_pending = sorted(
+            tr_id for (tr_id, tr_key) in pending_requests.keys()
+            if tr_key == code
+        )
+        rows.append({
+            "code": code,
+            "name": ctx.stock_code_repository.get_name_by_code(code) or code,
+            "desired_price": code in desired_price,
+            "desired_pt": code in desired_pt,
+            "repo_active_price": code in active_price_repo,
+            "repo_active_pt": code in active_pt_repo,
+            "policy_active_price": code in active_price_policy,
+            "policy_active_pt": code in active_pt_policy,
+            "is_subscribed_realtime_price": stream_svc.is_subscribed_realtime_price(code),
+            "cached_price": cached.get("price") if isinstance(cached, dict) else None,
+            "cached_received_at": cached.get("received_at") if isinstance(cached, dict) else None,
+            "last_tick_ts": price_svc.get_last_tick_ts(code),
+            "subscription_age_sec": price_svc.get_subscription_age(code),
+            "broker_subscribed_tr_ids": broker_items,
+            "broker_pending_tr_ids": broker_pending,
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "receive_alive": broker.is_websocket_receive_alive(),
+            "rows": rows,
         }
     }
 

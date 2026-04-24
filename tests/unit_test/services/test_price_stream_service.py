@@ -91,6 +91,28 @@ def test_on_price_tick_defaults(price_stream_service, mock_stock_repo):
     mock_stock_repo.update_realtime_data.assert_called_once_with('000660', 150000.0, 0)
 
 
+def test_cache_price_snapshot_updates_cache_without_tick_tracking(price_stream_service, mock_stock_repo):
+    """REST 스냅샷 현재가는 캐시를 채우되 웹소켓 틱 시각은 건드리지 않는다."""
+    price_stream_service.cache_price_snapshot(
+        "005930",
+        price="71000",
+        change="500",
+        rate="0.71",
+        sign="2",
+        volume="3210",
+    )
+
+    cached = price_stream_service.get_cached_price("005930")
+    assert cached is not None
+    assert cached["price"] == "71000"
+    assert cached["change"] == "500"
+    assert cached["rate"] == "0.71"
+    assert cached["sign"] == "2"
+    assert price_stream_service.get_last_tick_ts("005930") == 0.0
+    assert price_stream_service.get_last_any_tick_ts() == 0.0
+    mock_stock_repo.update_realtime_data.assert_called_once_with("005930", 71000.0, 3210)
+
+
 def test_on_price_tick_repo_exception(price_stream_service, mock_stock_repo, mock_logger):
     """레포지토리 업데이트 중 예외 발생 시 로거로 경고를 남기고 앱이 중단되지 않는지 검증"""
     data = {'유가증권단축종목코드': '005930', '주식현재가': '75000'}
