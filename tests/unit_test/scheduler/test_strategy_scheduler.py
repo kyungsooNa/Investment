@@ -870,7 +870,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler._running = True
         config.enabled = True
 
-        vm.get_holds.return_value = [{"code": "005930", "name": "삼성전자"}]
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "name": "삼성전자"}]
 
         # Save State
         scheduler._save_scheduler_state()
