@@ -11,6 +11,7 @@ from view.web.api_common import _get_ctx
 from services.notification_service import NotificationCategory
 
 router = APIRouter()
+SSE_KEEPALIVE_TIMEOUT_SEC = 15
 
 
 @router.get("/notifications/recent")
@@ -34,7 +35,7 @@ async def stream_notifications(request: Request):
         try:
             while True:
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=15)
+                    data = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_TIMEOUT_SEC)
                     if data is None:
                         break
                     yield f"data: {data}\n\n"

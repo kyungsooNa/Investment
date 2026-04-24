@@ -1,13 +1,16 @@
 import time
+
 import pytest
-from core.cache.file_cache import FileCache
+
 from core.cache.db_cache import DBCache
+from core.cache.file_cache import FileCache
 from core.cache.memory_cache import MemoryCache
+
 
 @pytest.fixture
 def benchmark_data():
-    # 적당한 크기의 데이터 생성 (약 4KB 정도)
     return {"key": "value", "data": [i for i in range(1000)]}
+
 
 def run_benchmark(manager, operation, count, data=None):
     start_time = time.time()
@@ -19,7 +22,7 @@ def run_benchmark(manager, operation, count, data=None):
                 manager.set(f"key_{i}", data)
     elif operation == "get":
         for i in range(count):
-            if hasattr(manager, 'get_raw'):
+            if hasattr(manager, "get_raw"):
                 manager.get_raw(f"key_{i}")
             else:
                 manager.get(f"key_{i}")
@@ -29,56 +32,51 @@ def run_benchmark(manager, operation, count, data=None):
     end_time = time.time()
     return end_time - start_time
 
+
 @pytest.mark.slow
 def test_cache_performance_comparison(tmp_path, benchmark_data):
-    """FileCache vs DBCache vs MemoryCache 성능 비교 벤치마크"""
-    count = 500  # 테스트 항목 수
-    
-    # 1. FileCache 설정
+    """FileCache vs DBCache vs MemoryCache benchmark."""
+    count = 100
+
     file_cache_dir = tmp_path / "file_cache"
     file_config = {"cache": {"base_dir": str(file_cache_dir), "deserializable_classes": []}}
     file_manager = FileCache(config=file_config)
-    
-    # 2. DBCache 설정
+
     db_cache_dir = tmp_path / "db_cache"
     db_config = {"cache": {"base_dir": str(db_cache_dir), "deserializable_classes": []}}
     db_manager = DBCache(config=db_config)
 
-    # 3. MemoryCache 설정
     memory_manager = MemoryCache()
-    
+
     print(f"\n\n[Cache Benchmark (N={count})]")
-    
-    # --- SET (Write) ---
+
     file_set_time = run_benchmark(file_manager, "set", count, benchmark_data)
     db_set_time = run_benchmark(db_manager, "set", count, benchmark_data)
     mem_set_time = run_benchmark(memory_manager, "set", count, benchmark_data)
-    
-    print(f"SET (Write):")
+
+    print("SET (Write):")
     print(f"  FileCache: {file_set_time:.4f}s")
     print(f"  DBCache:   {db_set_time:.4f}s")
     print(f"  Memory:    {mem_set_time:.4f}s")
     if db_set_time > 0:
         print(f"  Speedup:   {file_set_time / db_set_time:.2f}x")
-    
-    # --- GET (Read) ---
+
     file_get_time = run_benchmark(file_manager, "get", count)
     db_get_time = run_benchmark(db_manager, "get", count)
     mem_get_time = run_benchmark(memory_manager, "get", count)
-    
-    print(f"GET (Read):")
+
+    print("GET (Read):")
     print(f"  FileCache: {file_get_time:.4f}s")
     print(f"  DBCache:   {db_get_time:.4f}s")
     print(f"  Memory:    {mem_get_time:.4f}s")
     if db_get_time > 0:
         print(f"  Speedup:   {file_get_time / db_get_time:.2f}x")
-    
-    # --- DELETE ---
+
     file_del_time = run_benchmark(file_manager, "delete", count)
     db_del_time = run_benchmark(db_manager, "delete", count)
     mem_del_time = run_benchmark(memory_manager, "delete", count)
-    
-    print(f"DELETE:")
+
+    print("DELETE:")
     print(f"  FileCache: {file_del_time:.4f}s")
     print(f"  DBCache:   {db_del_time:.4f}s")
     print(f"  Memory:    {mem_del_time:.4f}s")

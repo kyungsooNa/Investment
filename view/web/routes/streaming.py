@@ -13,6 +13,7 @@ from view.web.api_common import _get_ctx
 from services.price_subscription_service import SubscriptionPriority
 
 router = APIRouter()
+SSE_KEEPALIVE_TIMEOUT_SEC = 15
 
 
 class SubscribeRequest(BaseModel):
@@ -76,7 +77,7 @@ async def stream_stock_price(code: str, request: Request):
         try:
             while True:
                 get_task = asyncio.ensure_future(queue.get())
-                _, pending = await asyncio.wait({get_task}, timeout=15)
+                _, pending = await asyncio.wait({get_task}, timeout=SSE_KEEPALIVE_TIMEOUT_SEC)
                 if pending:
                     get_task.cancel()
                     if await request.is_disconnected():

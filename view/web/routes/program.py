@@ -12,6 +12,7 @@ from view.web.api_common import (
 from repositories.streaming_stock_repo import StreamingType
 
 router = APIRouter()
+SSE_KEEPALIVE_TIMEOUT_SEC = 15.0
 
 
 @router.post("/program-trading/subscribe")
@@ -106,7 +107,7 @@ async def stream_program_trading(request: Request):
             # 2. 실시간 데이터 전송 (program_trading_stream_service에서 JSON 직렬화 후 큐에 삽입됨)
             while True:
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    data = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_TIMEOUT_SEC)
                     if data is None:  # 테스트 종료 신호 (Poison Pill)
                         break
                     yield f"data: {data}\n\n"
