@@ -384,3 +384,46 @@ async def test_shutdown_skips_close_when_connection_missing(repo):
 
     mock_flush.assert_called_once()
     mock_shutdown.assert_called_once_with(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_flush_loop_calls_streaming_stock_repo_flush(tmp_path):
+    """_flush_loop이 매 주기마다 streaming_stock_repo.flush_pt_desired_sync()를 호출한다."""
+    logger = MagicMock()
+    mock_ssr = MagicMock()
+    repo = ProgramTradingRepo(
+        base_dir=str(tmp_path / "pt_repo"),
+        logger=logger,
+        streaming_stock_repo=mock_ssr,
+    )
+    try:
+        with patch.object(repo, "_flush_write_buffer", new=AsyncMock()), \
+             patch(
+                 "repositories.program_trading_repo.asyncio.sleep",
+                 new=AsyncMock(side_effect=[None, asyncio.CancelledError()]),
+             ):
+            await repo._flush_loop()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        if repo._conn:
+            repo._conn.close()
+        repo._executor.shutdown(wait=False)
+
+    assert mock_ssr.flush_pt_desired_sync.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_shutdown_flushes_streaming_stock_repo(tmp_path):
+    """shutdown 시 streaming_stock_repo.flush_pt_desired_sync()가 호출된다."""
+    logger = MagicMock()
+    mock_ssr = MagicMock()
+    repo = ProgramTradingRepo(
+        base_dir=str(tmp_path / "pt_repo"),
+        logger=logger,
+        streaming_stock_repo=mock_ssr,
+    )
+
+    await repo.shutdown()
+
+    mock_ssr.flush_pt_desired_sync.assert_called_once()

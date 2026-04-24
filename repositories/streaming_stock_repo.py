@@ -53,6 +53,10 @@ class StreamingStockRepo:
         self._db_lock = threading.Lock()
         self._db_path: Optional[str] = None
 
+        # 배치 flush용 pending queue — 즉시 commit 대신 flush_pt_desired_sync()에서 일괄 처리
+        self._pending_desired_ops: list = []  # list of (code: str, add: bool)
+        self._pending_lock = threading.Lock()
+
     # ── 초기화 / 영속성 ──────────────────────────────────────────────
 
     def load_pt_desired_from_db(self, db_path: str) -> None:
@@ -71,22 +75,39 @@ class StreamingStockRepo:
             self._logger.warning(f"StreamingStockRepo: PT desired DB 복원 실패 (무시): {e}")
 
     def _persist_pt_desired(self, code: str, add: bool) -> None:
-        """PT desired 상태를 SQLite에 동기 저장. add=True이면 INSERT, False이면 DELETE."""
+        """PT desired 변경을 pending queue에 적재. flush_pt_desired_sync()에서 일괄 커밋."""
         if self._db_conn is None:
             return
+        with self._pending_lock:
+            self._pending_desired_ops.append((code, add))
+
+    def flush_pt_desired_sync(self) -> None:
+        """pending queue의 PT desired 변경을 1회 트랜잭션으로 일괄 커밋."""
+        if self._db_conn is None:
+            return
+        with self._pending_lock:
+            if not self._pending_desired_ops:
+                return
+            ops = list(self._pending_desired_ops)
+            self._pending_desired_ops.clear()
         try:
             with self._db_lock:
-                if add:
-                    self._db_conn.execute(
-                        "INSERT OR IGNORE INTO pt_subscriptions (code) VALUES (?)", (code,)
-                    )
-                else:
-                    self._db_conn.execute(
-                        "DELETE FROM pt_subscriptions WHERE code = ?", (code,)
-                    )
+                for code, add in ops:
+                    if add:
+                        self._db_conn.execute(
+                            "INSERT OR IGNORE INTO pt_subscriptions (code) VALUES (?)", (code,)
+                        )
+                    else:
+                        self._db_conn.execute(
+                            "DELETE FROM pt_subscriptions WHERE code = ?", (code,)
+                        )
                 self._db_conn.commit()
         except Exception as e:
-            self._logger.warning(f"StreamingStockRepo: PT desired DB 업데이트 실패 ({code}): {e}")
+            self._logger.warning(f"StreamingStockRepo: PT desired 배치 flush 실패: {e}")
+            try:
+                self._db_conn.rollback()
+            except Exception:
+                pass
 
     # ── 상태 변경 (asyncio.Lock 보호) ────────────────────────────────
 

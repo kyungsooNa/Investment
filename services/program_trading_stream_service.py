@@ -215,6 +215,10 @@ class ProgramTradingStreamService:
             ).strftime("%Y-%m-%d %H:%M:%S")
         return status
 
+    def wire_streaming_stock_repo(self, streaming_stock_repo) -> None:
+        """StreamingStockRepo를 사후 주입하여 desired flush를 repo의 flush_loop에 통합한다."""
+        self._repo._streaming_stock_repo = streaming_stock_repo
+
     # ── 생명주기 관리 ────────────────────────────────────────────────
 
     def start_background_tasks(self):

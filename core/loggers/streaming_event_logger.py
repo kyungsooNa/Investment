@@ -509,15 +509,15 @@ class StreamingEventLogger:
             return
         self._logger.error({"action": "pt_restore_error", "code": code, "error": error})
 
-    def log_pt_restore_failed_removed(self, codes: list) -> None:
-        """복원 실패한 PT 종목들을 desired 상태에서 제거.
+    def log_pt_restore_failed_pending(self, codes: list) -> None:
+        """복원 실패한 PT 종목들을 재시도 대기 상태로 기록 (desired는 유지).
 
         Args:
-            codes: 제거 대상 종목코드 목록
+            codes: 재시도 대기 종목코드 목록
         """
         if not self._logger.isEnabledFor(logging.WARNING):
             return
-        self._logger.warning({"action": "pt_restore_failed_removed", "codes": sorted(codes)})
+        self._logger.warning({"action": "pt_restore_failed_pending", "codes": sorted(codes)})
 
     def log_price_restore_start(self, desired_count: int) -> None:
         """H0UNCNT0(실시간 체결가) 구독 복원 시작.

@@ -417,16 +417,16 @@ def test_log_pt_restore_error(streaming_logger_setup):
     assert lines[0]["level"] == "ERROR"
 
 
-def test_log_pt_restore_failed_removed(streaming_logger_setup):
+def test_log_pt_restore_failed_pending(streaming_logger_setup):
     streaming_logger, streaming_log_dir = streaming_logger_setup
 
-    streaming_logger.log_pt_restore_failed_removed(["000660", "005930"])
+    streaming_logger.log_pt_restore_failed_pending(["000660", "005930"])
 
     _flush_streaming_logger()
 
     lines = _read_json_lines(streaming_log_dir)
     d = lines[0]["data"]
-    assert d["action"] == "pt_restore_failed_removed"
+    assert d["action"] == "pt_restore_failed_pending"
     assert d["codes"] == ["000660", "005930"]
     assert lines[0]["level"] == "WARNING"
 
@@ -678,7 +678,7 @@ def test_log_ignored_when_level_is_high(streaming_logger_setup):
     streaming_logger.log_watchdog_error("msg")
     streaming_logger.log_pt_restore_connect_failed("005930")
     streaming_logger.log_pt_restore_error("005930", "err")
-    streaming_logger.log_pt_restore_failed_removed([])
+    streaming_logger.log_pt_restore_failed_pending([])
     streaming_logger.log_price_restore_start(1)
     streaming_logger.log_price_restore_done(1)
     streaming_logger.log_force_reconnect_start("trig", [])

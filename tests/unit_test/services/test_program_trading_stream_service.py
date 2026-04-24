@@ -474,3 +474,12 @@ def test_inspect_db_status_exception(manager):
     status = manager.inspect_db_status()
 
     assert "error" in status
+
+
+def test_wire_streaming_stock_repo(manager):
+    """wire_streaming_stock_repo가 _repo에 streaming_stock_repo를 주입한다."""
+    mock_ssr = MagicMock()
+
+    manager.wire_streaming_stock_repo(mock_ssr)
+
+    assert manager._repo._streaming_stock_repo is mock_ssr
