@@ -58,6 +58,12 @@ class FakeClient:
     async def unsubscribe_unified_price(self, stock_code: str) -> bool:
         return True
 
+    async def subscribe_order_notice(self) -> bool:
+        return True
+
+    async def unsubscribe_order_notice(self) -> bool:
+        return True
+
     def is_websocket_receive_alive(self) -> bool:
         return True
 
@@ -153,6 +159,16 @@ class TestExcludedMethodsBypassQueue:
         assert result is True
         assert queue.done_queue.empty()
 
+    async def test_subscribe_order_notice_bypasses_queue(self, wrapped, queue):
+        result = await wrapped.subscribe_order_notice()
+        assert result is True
+        assert queue.done_queue.empty()
+
+    async def test_unsubscribe_order_notice_bypasses_queue(self, wrapped, queue):
+        result = await wrapped.unsubscribe_order_notice()
+        assert result is True
+        assert queue.done_queue.empty()
+
 
 class TestSyncMethodsBypassQueue:
     def test_sync_method_bypasses_queue(self, wrapped, queue):
@@ -220,6 +236,8 @@ class TestExcludedMethodsSet:
             "unsubscribe_program_trading",
             "subscribe_unified_price",
             "unsubscribe_unified_price",
+            "subscribe_order_notice",
+            "unsubscribe_order_notice",
             "is_websocket_receive_alive",
         }
         assert expected.issubset(_EXCLUDED_METHODS)

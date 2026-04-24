@@ -19,6 +19,8 @@ _EXCLUDED_METHODS = frozenset({
     "unsubscribe_program_trading",
     "subscribe_unified_price",
     "unsubscribe_unified_price",
+    "subscribe_order_notice",
+    "unsubscribe_order_notice",
     "is_websocket_receive_alive",
 })
 
