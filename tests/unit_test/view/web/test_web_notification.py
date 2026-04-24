@@ -98,7 +98,8 @@ async def test_stream_notifications_timeout_keepalive(mock_get_ctx, mock_ctx):
         raise asyncio.TimeoutError
 
     # asyncio.wait_for가 TimeoutError를 발생시키도록 패치
-    with patch("asyncio.wait_for", side_effect=raise_timeout):
+    with patch("asyncio.wait_for", side_effect=raise_timeout), \
+         patch("view.web.routes.notification.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01):
         response = await stream_notifications(mock_request)
         iterator = response.body_iterator
         
@@ -125,13 +126,14 @@ async def test_stream_notifications_disconnect(mock_get_ctx, mock_ctx):
     # 바로 연결 끊김 상태
     mock_request.is_disconnected = AsyncMock(return_value=True)
     
-    response = await stream_notifications(mock_request)
-    iterator = response.body_iterator
-    
-    # 데이터 없이 바로 종료되어야 함
-    with pytest.raises(StopAsyncIteration):
-        await iterator.__anext__()
-        
+    with patch("view.web.routes.notification.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01):
+        response = await stream_notifications(mock_request)
+        iterator = response.body_iterator
+
+        # 데이터 없이 바로 종료되어야 함
+        with pytest.raises(StopAsyncIteration):
+            await iterator.__anext__()
+
     mock_ctx.notification_service.remove_subscriber_queue.assert_called_once()
 
 @pytest.mark.asyncio
@@ -152,7 +154,8 @@ async def test_stream_notifications_cancelled(mock_get_ctx, mock_ctx):
         raise asyncio.CancelledError
 
     # wait_for에서 CancelledError 발생 시뮬레이션
-    with patch("asyncio.wait_for", side_effect=raise_cancelled):
+    with patch("asyncio.wait_for", side_effect=raise_cancelled), \
+         patch("view.web.routes.notification.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01):
         response = await stream_notifications(mock_request)
         iterator = response.body_iterator
         
@@ -181,7 +184,8 @@ async def test_stream_notifications_timeout_disconnect_check(mock_get_ctx, mock_
         raise asyncio.TimeoutError
 
     # asyncio.wait_for가 TimeoutError를 발생시키도록 패치
-    with patch("asyncio.wait_for", side_effect=raise_timeout):
+    with patch("asyncio.wait_for", side_effect=raise_timeout), \
+         patch("view.web.routes.notification.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01):
         response = await stream_notifications(mock_request)
         iterator = response.body_iterator
         

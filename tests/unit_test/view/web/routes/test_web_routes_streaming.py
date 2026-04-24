@@ -150,6 +150,7 @@ async def test_stream_price_yields_tick_and_cleanup():
     mock_request.is_disconnected = AsyncMock(return_value=True)
 
     with patch("view.web.routes.streaming._get_ctx", return_value=ctx), \
+         patch("view.web.routes.streaming.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01), \
          patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait_for:
         mock_wait_for.side_effect = [tick_data, asyncio.TimeoutError()]
 
@@ -180,6 +181,7 @@ async def test_stream_price_subscribes_and_unsubscribes():
     mock_request.is_disconnected = AsyncMock(return_value=True)
 
     with patch("view.web.routes.streaming._get_ctx", return_value=ctx), \
+         patch("view.web.routes.streaming.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01), \
          patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait_for:
         mock_wait_for.side_effect = asyncio.TimeoutError()
 
@@ -210,6 +212,7 @@ async def test_stream_price_works_without_sub_svc():
     mock_request.is_disconnected = AsyncMock(return_value=True)
 
     with patch("view.web.routes.streaming._get_ctx", return_value=ctx), \
+         patch("view.web.routes.streaming.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01), \
          patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait_for:
         mock_wait_for.side_effect = asyncio.TimeoutError()
 

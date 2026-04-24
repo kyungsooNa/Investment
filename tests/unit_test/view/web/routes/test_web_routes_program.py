@@ -122,7 +122,8 @@ async def test_stream_program_trading_logic(mock_web_ctx):
 
     # 4. 핸들러 호출 (StreamingResponse 반환)
     # _get_ctx()를 mock_web_ctx로 패치하여 테스트 컨텍스트를 사용하도록 함
-    with patch("view.web.web_api._get_ctx", return_value=mock_web_ctx):
+    with patch("view.web.web_api._get_ctx", return_value=mock_web_ctx), \
+         patch("view.web.routes.program.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01):
         response = await stream_program_trading(mock_request)
 
     iterator = response.body_iterator
@@ -287,27 +288,26 @@ async def test_stream_program_trading_keepalive(mock_web_ctx):
     mock_rdm.get_history_data.return_value = {}
 
     # 핸들러 호출
-    with patch("view.web.web_api._get_ctx", return_value=mock_web_ctx):
+    with patch("view.web.web_api._get_ctx", return_value=mock_web_ctx), \
+         patch("view.web.routes.program.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01):
         response = await stream_program_trading(mock_request)
+        iterator = response.body_iterator
 
-    iterator = response.body_iterator
+        # 1. 데이터 없이 대기 -> 타임아웃 발생 -> keepalive 메시지 수신 예상
+        chunk = await iterator.__anext__()
 
-    # 1. 데이터 없이 대기 -> 타임아웃 발생 -> keepalive 메시지 수신 예상
-    # stream_program_trading 내부 timeout은 0.1초
-    chunk = await iterator.__anext__()
-    
-    # Keepalive 메시지 포맷 검증 (SSE comment 형식)
-    assert chunk == ": keepalive\n\n"
+        # Keepalive 메시지 포맷 검증 (SSE comment 형식)
+        assert chunk == ": keepalive\n\n"
 
-    # 2. 종료 유도
-    mock_request.is_disconnected.return_value = True
-    
-    try:
-        # 타임아웃 후 루프 돌면서 종료 체크
-        await asyncio.wait_for(iterator.__anext__(), timeout=0.2)
-    except (StopAsyncIteration, asyncio.TimeoutError):
-        pass
-        
+        # 2. 종료 유도
+        mock_request.is_disconnected.return_value = True
+
+        try:
+            # 타임아웃 후 루프 돌면서 종료 체크
+            await asyncio.wait_for(iterator.__anext__(), timeout=0.2)
+        except (StopAsyncIteration, asyncio.TimeoutError):
+            pass
+
     mock_rdm.remove_subscriber_queue.assert_called_with(test_queue)
 
 @pytest.mark.asyncio
@@ -357,7 +357,8 @@ async def test_stream_program_trading_cancellation(mock_web_ctx):
     mock_rdm.get_history_data.return_value = {}
 
     # 핸들러 호출 (program.py의 _get_ctx 패치)
-    with patch("view.web.routes.program._get_ctx", return_value=mock_web_ctx):
+    with patch("view.web.routes.program._get_ctx", return_value=mock_web_ctx), \
+         patch("view.web.routes.program.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01):
         response = await stream_program_trading(mock_request)
 
     iterator = response.body_iterator
@@ -397,16 +398,16 @@ async def test_stream_program_trading_replays_history_and_disconnects(mock_web_c
         }]
     }
 
-    with patch("view.web.routes.program._get_ctx", return_value=mock_web_ctx):
+    with patch("view.web.routes.program._get_ctx", return_value=mock_web_ctx), \
+         patch("view.web.routes.program.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01):
         response = await stream_program_trading(mock_request)
+        iterator = response.body_iterator
+        first = await iterator.__anext__()
+        assert first.startswith("data: [")
+        assert "005930" in first
 
-    iterator = response.body_iterator
-    first = await iterator.__anext__()
-    assert first.startswith("data: [")
-    assert "005930" in first
-
-    with pytest.raises(StopAsyncIteration):
-        await iterator.__anext__()
+        with pytest.raises(StopAsyncIteration):
+            await iterator.__anext__()
 
     mock_rdm.remove_subscriber_queue.assert_called_with(test_queue)
 
