@@ -248,6 +248,27 @@ def test_get_strategy_return_history_ffill_and_weekend_filter(virtual_trade_serv
     ]
 
 
+def test_get_strategy_return_history_skips_leading_empty_dates(virtual_trade_service, mock_repo):
+    """첫 실제 snapshot 이전 날짜는 0%로 채우지 않고 제외한다."""
+    mock_repo._load_data.return_value = {
+        "daily": {
+            "2023-10-04": {"S2": 3.0},
+            "2023-10-05": {"S2": 4.0},
+            "2023-10-06": {"S1": 1.0},
+            "2023-10-09": {"S1": None},
+            "2023-10-10": {"S1": 2.5},
+        }
+    }
+
+    history = virtual_trade_service.get_strategy_return_history("S1")
+
+    assert history == [
+        {"date": "2023-10-06", "return_rate": 1.0},
+        {"date": "2023-10-09", "return_rate": 1.0},
+        {"date": "2023-10-10", "return_rate": 2.5},
+    ]
+
+
 def test_get_all_strategies_returns_empty_when_no_daily_data(virtual_trade_service, mock_repo):
     """daily 데이터가 없으면 빈 전략 목록을 반환한다."""
     mock_repo._load_data.return_value = {"daily": {}}
@@ -275,6 +296,16 @@ async def test_facade_delegation(virtual_trade_service, mock_repo):
     mock_repo.log_sell_async = AsyncMock()
     await virtual_trade_service.log_sell_async("005930", 1200)
     mock_repo.log_sell_async.assert_awaited_with("005930", 1200)
+
+
+def test_sync_live_strategy_positions_delegates_to_repo(virtual_trade_service, mock_repo):
+    """live 전략 포지션 sync 요청은 repository로 위임한다."""
+    mock_repo.sync_live_strategy_positions.return_value = [{"code": "489790"}]
+
+    result = virtual_trade_service.sync_live_strategy_positions()
+
+    mock_repo.sync_live_strategy_positions.assert_called_once_with()
+    assert result == [{"code": "489790"}]
 
 
 @pytest.mark.asyncio

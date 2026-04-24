@@ -570,6 +570,12 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
         mock_mcs_instance.is_market_open_now = AsyncMock(return_value=True)
         mock_mcs_instance.set_broker = MagicMock()
 
+        mock_vtm_instance = MockVTM.return_value
+        mock_vtm_instance.log_buy_async = AsyncMock()
+        mock_vtm_instance.log_sell_async = AsyncMock()
+        mock_vtm_instance.log_sell_by_strategy_async = AsyncMock()
+        mock_vtm_instance.log_order_failure_async = AsyncMock()
+
         web_ctx = WebAppContext(SimpleContext())
         web_ctx.logger = test_logger
         web_ctx.load_config_and_env()

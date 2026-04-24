@@ -100,6 +100,8 @@ async def test_initialize_services_success(mock_deps):
     mock_deps["ind"].assert_called()
     mock_deps["sqs"].assert_called()
     mock_deps["oes"].assert_called()
+    _, oes_kwargs = mock_deps["oes"].call_args
+    assert oes_kwargs.get("virtual_trade_service") is ctx.virtual_trade_service
     mock_deps["ous"].assert_called()
     _, report_kwargs = mock_deps["strategy_log_report_service"].call_args
     assert report_kwargs.get("stock_code_repo") is mock_deps["scm"].return_value

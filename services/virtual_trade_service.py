@@ -28,6 +28,27 @@ def _get_trading_dates(daily: dict) -> list[str]:
             trading.append(d)
     return trading
 
+
+def _build_strategy_return_history(daily: dict, strategy_name: str) -> list[dict]:
+    if not daily:
+        return []
+
+    df = pd.DataFrame.from_dict(daily, orient='index')
+    if strategy_name not in df.columns:
+        return []
+
+    series = df[strategy_name].sort_index()
+    first_valid = series.first_valid_index()
+    if first_valid is None:
+        return []
+
+    series = series.loc[first_valid:].ffill()
+    return [
+        {"date": date, "return_rate": float(val)}
+        for date, val in series.items()
+        if _is_weekday(date) and pd.notna(val)
+    ]
+
 class VirtualTradeService:
     """모의매매 통계 계산 및 성과 분석을 담당하는 비즈니스 서비스 계층"""
     def __init__(self, repository: VirtualTradeRepository, market_clock: MarketClock):
@@ -109,11 +130,7 @@ class VirtualTradeService:
     def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
         data = self._repo._load_data()
         daily = data.get("daily", {})
-        if not daily: return []
-        df = pd.DataFrame.from_dict(daily, orient='index')
-        if strategy_name not in df.columns: return []
-        series = df[strategy_name].sort_index().ffill().fillna(0.0)
-        return [{"date": date, "return_rate": float(val)} for date, val in series.items() if _is_weekday(date)]
+        return _build_strategy_return_history(daily, strategy_name)
 
     def get_all_strategies(self) -> list[str]:
         data = self._repo._load_data()
@@ -142,6 +159,7 @@ class VirtualTradeService:
     def fix_sell_price(self, *args, **kwargs): return self._repo.fix_sell_price(*args, **kwargs)
     def backfill_snapshots(self): return self._repo.backfill_snapshots()
     def save_daily_snapshot(self, strategy_returns: dict): return self._repo.save_daily_snapshot(strategy_returns)
+    def sync_live_strategy_positions(self): return self._repo.sync_live_strategy_positions()
     def _load_data(self): return self._repo._load_data()
     def _save_data(self, data: dict): return self._repo._save_data(data)
 
