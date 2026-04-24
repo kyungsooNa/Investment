@@ -81,6 +81,12 @@
     - `services/order_execution_service.py`
     - `scheduler/strategy_scheduler.py`
 
+- [ ] 모의투자 기록에 실제 전략의 매매 기록과 sync가 안맞는 버그 존재
+  - 4.24에 오닐PP/BGU	한화비전(489790), 오닐스퀴즈돌파	코리아써키트(007810), 하이타이트플래그	코리아써키트(007810), 첫눌림목	SNT에너지(100840), 오닐PP/BGU	SNT에너지(100840)	등 존재하는 기록이 있지만 반영안되어있음.
+  - 대상:
+    - `repositories/virtual_trade_repository.py`
+    - `services/virtual_trade_service.py`
+    - `view/web/routes/virtual.py`
 ---
 
 ## Tier 2. 구조 안정화 / 유지보수성
