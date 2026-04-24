@@ -237,10 +237,31 @@ def get_subscription_status():
         return {"success": True, "data": None}
 
     status = svc.get_status()
+    pending_by_priority = {
+        "CRITICAL": set(status.get("pending_by_priority", {}).get("CRITICAL", [])),
+        "HIGH": set(status.get("pending_by_priority", {}).get("HIGH", [])),
+        "MEDIUM": set(status.get("pending_by_priority", {}).get("MEDIUM", [])),
+        "LOW": set(status.get("pending_by_priority", {}).get("LOW", [])),
+    }
 
     # 수정 포인트: active_codes_price와 active_codes_pt를 병합하여 active_set 구성
     streaming_svc = getattr(ctx, "streaming_service", None)
     active_set = set(status.get("active_codes_price", [])) | set(status.get("active_codes_pt", []))
+    pt_codes = set(status.get("active_codes_pt", []))
+
+    repo = getattr(ctx, "streaming_stock_repo", None)
+    if repo is not None:
+        try:
+            desired_pt = repo.get_desired(StreamingType.PROGRAM_TRADING)
+            if isinstance(desired_pt, (set, frozenset, list, tuple)):
+                pt_codes.update(str(code) for code in desired_pt)
+        except Exception:
+            pass
+
+    if pt_codes:
+        pending_by_priority["CRITICAL"].update(pt_codes)
+
+    pending_count = len(set().union(*pending_by_priority.values()))
 
     def _enrich(codes: list) -> list:
         result = []
@@ -269,12 +290,12 @@ def get_subscription_status():
             "max_subscriptions": status.get("max_subscriptions", 40),
             "active_codes_price": status.get("active_codes_price", []),
             "active_codes_pt": status.get("active_codes_pt", []),
-            "pending_count": status.get("pending_count", 0),
+            "pending_count": pending_count,
             "pending_by_priority": {
-                "CRITICAL": _enrich(status.get("pending_by_priority", {}).get("CRITICAL", [])),
-                "HIGH": _enrich(status.get("pending_by_priority", {}).get("HIGH", [])),
-                "MEDIUM": _enrich(status.get("pending_by_priority", {}).get("MEDIUM", [])),
-                "LOW": _enrich(status.get("pending_by_priority", {}).get("LOW", [])),
+                "CRITICAL": _enrich(sorted(pending_by_priority["CRITICAL"])),
+                "HIGH": _enrich(sorted(pending_by_priority["HIGH"])),
+                "MEDIUM": _enrich(sorted(pending_by_priority["MEDIUM"])),
+                "LOW": _enrich(sorted(pending_by_priority["LOW"])),
             }
         }
     }

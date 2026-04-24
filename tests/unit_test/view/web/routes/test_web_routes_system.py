@@ -6,6 +6,7 @@ import asyncio
 import pytest
 import time
 from unittest.mock import MagicMock, AsyncMock
+from repositories.streaming_stock_repo import StreamingType
 from view.web import api_common
 
 
@@ -864,3 +865,40 @@ def test_get_subscription_status_no_streaming_service(web_client, mock_web_ctx):
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["pending_by_priority"]["HIGH"][0]["received_at"] is None
+
+
+def test_get_subscription_status_adds_program_trading_to_critical(web_client, mock_web_ctx):
+    """PT active/desired 상태는 기존 bucket과 별개로 CRITICAL에도 노출된다."""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 2,
+        "max_subscriptions": 40,
+        "active_codes_price": ["005930"],
+        "active_codes_pt": ["035720"],
+        "pending_count": 2,
+        "pending_by_priority": {
+            "CRITICAL": [],
+            "HIGH": ["005930"],
+            "MEDIUM": ["035720"],
+            "LOW": [],
+        },
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.streaming_stock_repo = MagicMock()
+    mock_web_ctx.streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"035720"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
+    mock_web_ctx.stock_code_repository.get_name_by_code.side_effect = lambda c: {
+        "005930": "005930",
+        "035720": "035720",
+    }.get(c, c)
+
+    response = web_client.get("/api/subscriptions/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["pending_count"] == 2
+    assert data["pending_by_priority"]["CRITICAL"][0]["code"] == "035720"
+    assert data["pending_by_priority"]["CRITICAL"][0]["active"] is True
+    assert data["pending_by_priority"]["MEDIUM"][0]["code"] == "035720"
