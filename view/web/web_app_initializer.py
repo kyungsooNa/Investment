@@ -51,6 +51,7 @@ from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrat
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
+from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
 from services.oneil_universe_service import OneilUniverseService
 from repositories.stock_repository import StockRepository
 from services.program_trading_stream_service import ProgramTradingStreamService
@@ -766,6 +767,23 @@ class WebAppContext:
             force_exit_on_close=False,  # 스윙 전략: 오버나잇 허용
             allow_pyramiding=False,
         ))
+        # 래리 윌리엄스 변동성 돌파 전략 등록
+        vbo_strategy = LarryWilliamsVBOStrategy(
+            stock_query_service=self.stock_query_service,
+            market_clock=self.market_clock,
+            universe_service=self.oneil_universe_service,
+            logger=get_strategy_logger('LarryWilliamsVBO'),
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=vbo_strategy,
+            interval_minutes=5,
+            max_positions=3,
+            order_qty=1,
+            enabled=False,
+            force_exit_on_close=True,   # 오버나이트 금지 — 당일 장 마감 전 강제 청산
+            allow_pyramiding=False,
+        ))
+
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
         # StrategyScheduler를 BackgroundScheduler에 어댑터로 등록
