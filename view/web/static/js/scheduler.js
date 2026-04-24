@@ -5,6 +5,16 @@ let allSchedulerHistory = [];
 let currentSchedulerFilter = '전체';
 let schedulerEventSource = null;
 
+function syncSchedulerRealtimeState(data) {
+    if (data && data.running) {
+        if (!schedulerPollingId) {
+            startSchedulerPolling();
+        }
+        return;
+    }
+    stopSchedulerPolling();
+}
+
 async function loadSchedulerStatus() {
     try {
         // 두 요청을 동시에 시작 (병렬)
@@ -14,16 +24,13 @@ async function loadSchedulerStatus() {
         // status가 도착하는 즉시 렌더링 — history를 기다리지 않음
         const statusData = await statusPromise.then(r => r.json());
         renderSchedulerStatus(statusData);
+        syncSchedulerRealtimeState(statusData);
 
         // history가 도착하면 이력 테이블 렌더링
         const historyData = await historyPromise.then(r => r.json());
         allSchedulerHistory = historyData.history || [];
         buildSchedulerHistoryTabs(statusData.strategies || []);
         filterSchedulerHistory(currentSchedulerFilter);
-
-        if (statusData.running && !schedulerPollingId) {
-            startSchedulerPolling();
-        }
     } catch (e) {
         const info = document.getElementById('scheduler-info');
         if (info) info.innerHTML = '<span>스케줄러 상태 조회 실패</span>';
@@ -98,7 +105,7 @@ async function startScheduler() {
         const data = await res.json();
         if (data.success) {
             renderSchedulerStatus(data.status);
-            startSchedulerPolling();
+            syncSchedulerRealtimeState(data.status);
         }
     } catch (e) {
         alert('스케줄러 시작 실패');
@@ -111,7 +118,7 @@ async function stopScheduler() {
         const data = await res.json();
         if (data.success) {
             renderSchedulerStatus(data.status);
-            stopSchedulerPolling();
+            syncSchedulerRealtimeState(data.status);
         }
     } catch (e) {
         alert('스케줄러 정지 실패');
@@ -124,6 +131,7 @@ async function startStrategy(name) {
         const data = await res.json();
         if (data.success) {
             renderSchedulerStatus(data.status);
+            syncSchedulerRealtimeState(data.status);
         } else {
             alert(data.detail || '전략 시작 실패');
         }
@@ -138,6 +146,7 @@ async function stopStrategy(name) {
         const data = await res.json();
         if (data.success) {
             renderSchedulerStatus(data.status);
+            syncSchedulerRealtimeState(data.status);
         } else {
             alert(data.detail || '전략 정지 실패');
         }
@@ -165,6 +174,7 @@ async function updateMaxPositions(name, currentMax) {
         const data = await res.json();
         if (data.success) {
             renderSchedulerStatus(data.status);
+            syncSchedulerRealtimeState(data.status);
         } else {
             alert(data.detail || '포지션 수 변경 실패');
         }
@@ -269,7 +279,10 @@ function connectSchedulerSSE() {
 
             fetch('/api/scheduler/status')
                 .then(res => res.json())
-                .then(data => renderSchedulerStatus(data))
+                .then(data => {
+                    renderSchedulerStatus(data);
+                    syncSchedulerRealtimeState(data);
+                })
                 .catch(() => {});
         } catch (e) {
             console.error('[Scheduler SSE] parse error:', e);

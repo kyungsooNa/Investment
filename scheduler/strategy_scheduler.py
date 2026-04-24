@@ -321,7 +321,7 @@ class StrategyScheduler:
             return
 
         # 1) 보유 종목 청산 조건 체크
-        holdings = self._virtual_trade_service.get_holds_by_strategy(name)
+        holdings = self._get_strategy_holdings(cfg)
         if holdings:
             t_exit = self._pm.start_timer()
             sell_signals = await cfg.strategy.check_exits(holdings)
@@ -332,7 +332,7 @@ class StrategyScheduler:
                     await f
 
         # 2) 새 매수 스캔
-        current_holdings = self._virtual_trade_service.get_holds_by_strategy(name)
+        current_holdings = self._get_strategy_holdings(cfg)
         current_holds_count = len(current_holdings)
 
         if current_holds_count >= cfg.max_positions:
@@ -504,7 +504,7 @@ class StrategyScheduler:
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""
         name = cfg.strategy.name
-        holdings = self._virtual_trade_service.get_holds_by_strategy(name)
+        holdings = self._get_strategy_holdings(cfg)
         if not holdings:
             return
 
@@ -615,6 +615,217 @@ class StrategyScheduler:
                 return True
         return False
 
+    def _get_signal_net_qty(self, strategy_name: str, code: str, *, only_success: bool = True) -> int:
+        """신호 이력 기준으로 전략별 순수량을 추정한다."""
+        net_qty = 0
+        target_code = str(code)
+        for record in self._signal_history:
+            if record.strategy_name != strategy_name or str(record.code) != target_code:
+                continue
+            if only_success and not record.api_success:
+                continue
+            qty = int(record.qty or 0)
+            if record.action == "BUY":
+                net_qty += qty
+            elif record.action == "SELL":
+                net_qty -= qty
+        return net_qty
+
+    def _get_latest_open_buy_record(
+        self,
+        strategy_name: str,
+        code: str,
+        *,
+        only_success: bool = True,
+    ) -> Optional[SignalRecord]:
+        """현재 미청산 포지션에 대응하는 가장 최근 BUY 신호를 찾는다."""
+        remaining_sell_qty = 0
+        target_code = str(code)
+        for record in reversed(self._signal_history):
+            if record.strategy_name != strategy_name or str(record.code) != target_code:
+                continue
+            if only_success and not record.api_success:
+                continue
+            qty = int(record.qty or 0)
+            if record.action == "SELL":
+                remaining_sell_qty += qty
+                continue
+            if record.action != "BUY":
+                continue
+            if remaining_sell_qty >= qty:
+                remaining_sell_qty -= qty
+                continue
+            return record
+        return None
+
+    @staticmethod
+    def _is_valid_strategy_code(code: str) -> bool:
+        """전략 state에 남은 비정상 코드값을 걸러낸다."""
+        return code.isdigit() and len(code) == 6
+
+    def _get_strategy_position_state(self, strategy: LiveStrategy) -> Dict[str, object]:
+        """전략이 자체 관리하는 position_state를 반환한다."""
+        state = getattr(strategy, "_position_state", None)
+        return state if isinstance(state, dict) else {}
+
+    def _persist_strategy_position_state(self, strategy: LiveStrategy):
+        """전략이 제공하는 state 저장 함수를 통해 position_state를 즉시 반영한다."""
+        save_state = getattr(strategy, "_save_state", None)
+        if not callable(save_state):
+            return
+        try:
+            save_state()
+        except Exception as e:
+            self._logger.warning(f"[Scheduler] 전략 state 저장 실패: {strategy.name} - {e}")
+
+    def _has_open_position_evidence(
+        self,
+        strategy_name: str,
+        code: str,
+        *,
+        repo_holdings: Optional[List[dict]] = None,
+    ) -> bool:
+        """가상매매 DB 또는 시그널 이력에 현재 포지션 근거가 남아 있는지 확인한다."""
+        target_code = str(code).strip()
+        holdings = repo_holdings
+        if holdings is None:
+            holdings = self._virtual_trade_service.get_holds_by_strategy(strategy_name) or []
+
+        for hold in holdings:
+            if str(hold.get("code", "")).strip() == target_code:
+                return True
+
+        return (
+            self._get_signal_net_qty(strategy_name, target_code, only_success=True) > 0
+            or self._get_signal_net_qty(strategy_name, target_code, only_success=False) > 0
+        )
+
+    def _prune_disabled_force_exit_state(
+        self,
+        cfg: StrategySchedulerConfig,
+        *,
+        repo_holdings: Optional[List[dict]] = None,
+    ) -> bool:
+        """비활성 force-exit 전략에 남은 stale position_state를 정리한다."""
+        if cfg.enabled or not cfg.force_exit_on_close:
+            return False
+
+        position_state = self._get_strategy_position_state(cfg.strategy)
+        if not position_state:
+            return False
+
+        stale_codes: List[str] = []
+        for raw_code in list(position_state.keys()):
+            norm_code = str(raw_code).strip()
+            if not norm_code or not self._is_valid_strategy_code(norm_code):
+                stale_codes.append(raw_code)
+                continue
+            if self._has_open_position_evidence(
+                cfg.strategy.name,
+                norm_code,
+                repo_holdings=repo_holdings,
+            ):
+                continue
+            stale_codes.append(raw_code)
+
+        if not stale_codes:
+            return False
+
+        for raw_code in stale_codes:
+            position_state.pop(raw_code, None)
+
+        self._persist_strategy_position_state(cfg.strategy)
+        self._logger.warning(
+            f"[Scheduler] stale position_state cleared: strategy={cfg.strategy.name}, codes={stale_codes}"
+        )
+        return True
+
+    def _build_strategy_state_holding(
+        self,
+        strategy_name: str,
+        code: str,
+        state: object,
+        existing: Optional[dict] = None,
+    ) -> dict:
+        """전략 position_state를 scheduler holding 포맷으로 맞춘다."""
+        holding = dict(existing or {})
+        holding["strategy"] = strategy_name
+        holding["code"] = code
+
+        if not holding.get("buy_price"):
+            entry_price = getattr(state, "entry_price", None)
+            if entry_price is not None:
+                holding["buy_price"] = entry_price
+
+        latest_buy = self._get_latest_open_buy_record(strategy_name, code, only_success=True)
+        if latest_buy is None:
+            latest_buy = self._get_latest_open_buy_record(strategy_name, code, only_success=False)
+
+        if latest_buy is not None:
+            if not holding.get("buy_price"):
+                holding["buy_price"] = latest_buy.price
+            if not holding.get("buy_date") and latest_buy.timestamp:
+                holding["buy_date"] = latest_buy.timestamp
+            if not holding.get("name") and latest_buy.name:
+                holding["name"] = latest_buy.name
+
+        if not holding.get("qty"):
+            qty = self._get_signal_net_qty(strategy_name, code, only_success=True)
+            if qty <= 0:
+                qty = self._get_signal_net_qty(strategy_name, code, only_success=False)
+            holding["qty"] = qty if qty > 0 else 1
+
+        if not holding.get("buy_date"):
+            entry_date = str(getattr(state, "entry_date", "") or "")
+            if len(entry_date) == 8 and entry_date.isdigit():
+                holding["buy_date"] = f"{entry_date[:4]}-{entry_date[4:6]}-{entry_date[6:8]} 00:00:00"
+            elif entry_date:
+                holding["buy_date"] = entry_date
+
+        holding["status"] = "HOLD"
+        if not holding.get("name"):
+            holding["name"] = self.stock_code_repository.get_name_by_code(code) or code
+
+        return holding
+
+    def _get_strategy_holdings(self, cfg: StrategySchedulerConfig) -> List[dict]:
+        """가상매매 DB와 전략 내부 position_state를 병합한 보유 목록."""
+        strategy_name = cfg.strategy.name
+        merged: Dict[str, dict] = {}
+
+        repo_holdings = self._virtual_trade_service.get_holds_by_strategy(strategy_name) or []
+        for hold in repo_holdings:
+            code = str(hold.get("code", "")).strip()
+            if code:
+                merged[code] = dict(hold)
+
+        self._prune_disabled_force_exit_state(cfg, repo_holdings=repo_holdings)
+
+        for code, state in list(self._get_strategy_position_state(cfg.strategy).items()):
+            norm_code = str(code).strip()
+            if not norm_code:
+                continue
+            if not self._is_valid_strategy_code(norm_code):
+                self._logger.warning(
+                    f"[Scheduler] invalid position_state code ignored: strategy={strategy_name}, code={norm_code}"
+                )
+                continue
+            merged[norm_code] = self._build_strategy_state_holding(
+                strategy_name,
+                norm_code,
+                state,
+                existing=merged.get(norm_code),
+            )
+
+        return list(merged.values())
+
+    def _get_all_current_positions(self) -> List[dict]:
+        """등록된 전략 전체 보유 목록을 합친다."""
+        positions: List[dict] = []
+        for cfg in self._strategies:
+            positions.extend(self._get_strategy_holdings(cfg))
+        return positions
+
     # ── 상태 조회 ──
 
     def get_status(self) -> dict:
@@ -622,7 +833,7 @@ class StrategyScheduler:
         for cfg in self._strategies:
             name = cfg.strategy.name
             last = self._last_run.get(name)
-            holdings = self._virtual_trade_service.get_holds_by_strategy(name)
+            holdings = self._get_strategy_holdings(cfg)
             strategies.append({
                 "name": name,
                 "interval_minutes": cfg.interval_minutes,
@@ -672,7 +883,7 @@ class StrategyScheduler:
     def _save_scheduler_state(self):
         """활성 전략 목록 및 설정을 DB에 저장."""
         enabled_names = [cfg.strategy.name for cfg in self._strategies if cfg.enabled]
-        current_positions = self._virtual_trade_service.get_holds()
+        current_positions = self._get_all_current_positions()
         state = {
             "running": self._running,
             "enabled_strategies": enabled_names,
@@ -712,6 +923,7 @@ class StrategyScheduler:
             enabled_names = state.get("enabled_strategies", [])
             saved_positions = state.get("current_positions", [])
             strategy_configs = state.get("strategy_configs", {})
+            stale_state_cleared = False
 
             if saved_positions:
                 self._logger.info(
@@ -727,11 +939,16 @@ class StrategyScheduler:
                 if cfg.strategy.name in enabled_names:
                     cfg.enabled = True
                     restored.append(cfg.strategy.name)
+                elif self._prune_disabled_force_exit_state(cfg):
+                    stale_state_cleared = True
 
             if restored:
                 self._running = True
                 self._task = asyncio.create_task(self._loop())
                 self._logger.info(f"[Scheduler] 이전 상태 복원 — 자동 시작: {restored}")
+
+            if stale_state_cleared:
+                self._save_scheduler_state()
 
             # 복원된 전략의 가상 보유 종목을 스트리밍 구독에 재등록
             if self._price_sub_svc and restored:
@@ -739,7 +956,7 @@ class StrategyScheduler:
                     if cfg.strategy.name not in restored:
                         continue
                     name = cfg.strategy.name
-                    holdings = self._virtual_trade_service.get_holds_by_strategy(name)
+                    holdings = self._get_strategy_holdings(cfg)
                     for hold in holdings:
                         code = hold.get("code")
                         if code:
