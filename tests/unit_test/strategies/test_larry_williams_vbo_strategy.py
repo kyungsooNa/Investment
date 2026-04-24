@@ -1,0 +1,355 @@
+import unittest
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
+
+import pytz
+
+from common.types import ErrorCode, ResCommonResponse
+from services.stock_query_service import StockQueryService
+from strategies.larry_williams_vbo_strategy import (
+    LarryWilliamsVBOConfig,
+    LarryWilliamsVBOStrategy,
+)
+
+KST = pytz.timezone("Asia/Seoul")
+
+
+def _kst(h: int, m: int, date: str = "2026-01-15") -> datetime:
+    y, mo, d = (int(x) for x in date.split("-"))
+    return KST.localize(datetime(y, mo, d, h, m))
+
+
+def _price_resp(current: int, open_price: int,
+                pgtr_ntby_qty: int = 500000,
+                acml_tr_pbmn: int = 50_000_000_000) -> ResCommonResponse:
+    """현재가 API mock 응답 헬퍼."""
+    return ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={
+            "price": str(current),
+            "stck_prpr": str(current),
+            "open": str(open_price),
+            "pgtr_ntby_qty": str(pgtr_ntby_qty),   # 프로그램 순매수 수량
+            "acml_tr_pbmn": str(acml_tr_pbmn),     # 누적 거래대금
+        },
+    )
+
+
+def _ohlcv_resp(high: int, low: int, close: int = 0, volume: int = 10_000_000) -> ResCommonResponse:
+    """일봉 API mock 응답 헬퍼 (limit=5 가정)."""
+    close = close or (high + low) // 2
+    row = {"date": "20260114", "open": low + 100, "high": high, "low": low, "close": close, "volume": volume}
+    return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[row] * 5)
+
+
+def _conclusion_resp(tday_rltv: float) -> ResCommonResponse:
+    """체결강도 API mock 응답 헬퍼."""
+    return ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={"output": [{"tday_rltv": str(tday_rltv)}]},
+    )
+
+
+class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
+
+    def _make_strategy(self, now_time: datetime = None, **cfg_kwargs) -> tuple:
+        sqs = MagicMock(spec=StockQueryService)
+        sqs.get_top_trading_value_stocks = AsyncMock()
+        sqs.get_recent_daily_ohlcv = AsyncMock()
+        sqs.handle_get_current_stock_price = AsyncMock()
+        sqs.get_stock_conclusion = AsyncMock()
+
+        tm = MagicMock()
+        tm.get_current_kst_time.return_value = now_time or _kst(10, 0)
+
+        cfg_values = {"k_value": 0.5, "min_market_cap": 0, "min_5d_trading_value": 0,
+                      "confidence_threshold": 120.0, "program_buy_ratio": 0.10, "stop_loss_pct": -3.0}
+        cfg_values.update(cfg_kwargs)
+        config = LarryWilliamsVBOConfig(**cfg_values)
+
+        strategy = LarryWilliamsVBOStrategy(
+            stock_query_service=sqs,
+            market_clock=tm,
+            config=config,
+            logger=MagicMock(),
+        )
+        return strategy, sqs, tm
+
+    def _pool_b(self, code: str = "005930", name: str = "삼성전자",
+                stck_avls: str = "500000000000") -> ResCommonResponse:
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+            data=[{"mksc_shrn_iscd": code, "hts_kor_isnm": name, "stck_avls": stck_avls}],
+        )
+
+    # ── name ──────────────────────────────────────────────────────────
+
+    def test_name(self):
+        strategy, _, _ = self._make_strategy()
+        self.assertEqual(strategy.name, "래리윌리엄스VBO")
+
+    # ── 진입 시간대 가드 ────────────────────────────────────────────────
+
+    async def test_scan_skipped_before_entry_start(self):
+        """09:10 이전은 신호 없음."""
+        strategy, sqs, _ = self._make_strategy(now_time=_kst(9, 5))
+        signals = await strategy.scan()
+        self.assertEqual(signals, [])
+        sqs.get_top_trading_value_stocks.assert_not_called()
+
+    async def test_scan_skipped_after_entry_cutoff(self):
+        """14:00 이후는 신호 없음."""
+        strategy, sqs, _ = self._make_strategy(now_time=_kst(14, 1))
+        signals = await strategy.scan()
+        self.assertEqual(signals, [])
+        sqs.get_top_trading_value_stocks.assert_not_called()
+
+    # ── Pool B 실패 ─────────────────────────────────────────────────
+
+    async def test_scan_empty_on_pool_b_failure(self):
+        """Pool B API 실패 시 빈 리스트 반환."""
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="err", data=None
+        )
+        signals = await strategy.scan()
+        self.assertEqual(signals, [])
+
+    # ── Target 돌파 → BUY 신호 ────────────────────────────────────────
+
+    async def test_scan_generates_buy_signal_on_breakout(self):
+        """Target 돌파 + 체결강도 120%+ + 프로그램 순매수 10%+ → BUY 신호."""
+        strategy, sqs, _ = self._make_strategy(k_value=0.5)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        # Range=2000, K=0.5 → Target = 70000 + 1000 = 71000
+        # current=72000 > target=71000 → 돌파
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000,
+            pgtr_ntby_qty=700_000,          # 700000주 × 72000원 = 50.4억
+            acml_tr_pbmn=50_000_000_000,   # 500억 → 비율 10.08% > 10%
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        signals = await strategy.scan()
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].code, "005930")
+        self.assertEqual(signals[0].action, "BUY")
+        self.assertIn("VBO돌파", signals[0].reason)
+
+    # ── Target 미달 → 거절 ────────────────────────────────────────────
+
+    async def test_scan_rejects_below_target(self):
+        """현재가 < Target이면 BUY 신호 없음."""
+        strategy, sqs, _ = self._make_strategy(k_value=0.5)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        # Range=2000, Target=71000, current=70500 (미달)
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=70500, open_price=70000
+        )
+
+        signals = await strategy.scan()
+        self.assertEqual(signals, [])
+
+    # ── 체결강도 필터 ────────────────────────────────────────────────
+
+    async def test_scan_rejects_low_execution_strength(self):
+        """체결강도 120% 미만이면 BUY 신호 없음."""
+        strategy, sqs, _ = self._make_strategy(k_value=0.5, confidence_threshold=120.0)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000,
+            pgtr_ntby_qty=700_000, acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(110.0)  # 110% < 120%
+
+        signals = await strategy.scan()
+        self.assertEqual(signals, [])
+
+    # ── 프로그램 순매수 필터 ──────────────────────────────────────────
+
+    async def test_scan_rejects_negative_program_buy(self):
+        """프로그램 순매수 음수이면 BUY 신호 없음."""
+        strategy, sqs, _ = self._make_strategy(k_value=0.5)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000,
+            pgtr_ntby_qty=-100_000,         # 음수 → 거절
+            acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        signals = await strategy.scan()
+        self.assertEqual(signals, [])
+
+    async def test_scan_rejects_low_program_buy_ratio(self):
+        """프로그램 순매수 비율 < 10%이면 BUY 신호 없음."""
+        strategy, sqs, _ = self._make_strategy(k_value=0.5, program_buy_ratio=0.10)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000,
+            pgtr_ntby_qty=50_000,           # 50000주 × 72000원 = 36억 / 500억 = 7.2%
+            acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        signals = await strategy.scan()
+        self.assertEqual(signals, [])
+
+    # ── Range 미확보 → 거절 ───────────────────────────────────────────
+
+    async def test_scan_rejects_when_range_unavailable(self):
+        """일봉 API 실패로 Range 미확보 시 BUY 신호 없음."""
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="err", data=[]
+        )
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000
+        )
+
+        signals = await strategy.scan()
+        self.assertEqual(signals, [])
+
+    # ── 당일 재진입 금지 ──────────────────────────────────────────────
+
+    async def test_scan_no_reentry_same_day(self):
+        """allow_reentry=False: 당일 동일 종목 두 번째 신호 차단."""
+        strategy, sqs, _ = self._make_strategy(k_value=0.5)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000,
+            pgtr_ntby_qty=700_000, acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        first = await strategy.scan()
+        self.assertEqual(len(first), 1)
+
+        second = await strategy.scan()  # 같은 날
+        self.assertEqual(len(second), 0)
+
+    # ── check_exits: 오버나이트 방어 ─────────────────────────────────
+
+    async def test_check_exits_overnight_guard(self):
+        """매수일 ≠ 오늘이면 즉시 청산 신호."""
+        strategy, sqs, tm = self._make_strategy(now_time=_kst(10, 0, date="2026-01-15"))
+        holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 70000,
+                     "buy_date": "20260114", "qty": 1}]  # 전일 매수
+
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].action, "SELL")
+        self.assertIn("오버나이트방어", signals[0].reason)
+        sqs.handle_get_current_stock_price.assert_not_called()
+
+    # ── check_exits: 칼손절 ───────────────────────────────────────────
+
+    async def test_check_exits_stop_loss(self):
+        """진입가 대비 -3% 이하 → 칼손절 SELL 신호."""
+        strategy, sqs, tm = self._make_strategy(
+            now_time=_kst(11, 0), stop_loss_pct=-3.0
+        )
+        today = tm.get_current_kst_time().strftime("%Y%m%d")
+        # 매수가 70000, 현재가 67800 → -3.14%
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=67800, open_price=70000
+        )
+        holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 70000,
+                     "buy_date": today, "qty": 1}]
+
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].action, "SELL")
+        self.assertIn("칼손절", signals[0].reason)
+
+    # ── check_exits: EOD 강제 청산 ────────────────────────────────────
+
+    async def test_check_exits_eod_flatten(self):
+        """15:20 이후 → EOD 강제 청산 SELL 신호."""
+        strategy, sqs, tm = self._make_strategy(now_time=_kst(15, 20))
+        today = tm.get_current_kst_time().strftime("%Y%m%d")
+        # 수익권이어도 강제 청산
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000
+        )
+        holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 70000,
+                     "buy_date": today, "qty": 2}]
+
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].action, "SELL")
+        self.assertEqual(signals[0].qty, 2)
+        self.assertIn("EOD청산", signals[0].reason)
+
+    # ── check_exits: 조건 미충족 → HOLD ─────────────────────────────
+
+    async def test_check_exits_hold_when_no_condition_met(self):
+        """손절/EOD 모두 미충족 → 신호 없음(HOLD)."""
+        strategy, sqs, tm = self._make_strategy(now_time=_kst(11, 0), stop_loss_pct=-3.0)
+        today = tm.get_current_kst_time().strftime("%Y%m%d")
+        # 매수가 70000, 현재가 70500 → +0.71% (손절 아님)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=70500, open_price=70000
+        )
+        holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 70000,
+                     "buy_date": today, "qty": 1}]
+
+        signals = await strategy.check_exits(holdings)
+        self.assertEqual(signals, [])
+
+    # ── check_exits: 현재가 조회 실패 → 스킵 ─────────────────────────
+
+    async def test_check_exits_skips_on_price_api_failure(self):
+        """현재가 조회 실패 시 해당 종목 스킵 (SELL 신호 없음)."""
+        strategy, sqs, tm = self._make_strategy(now_time=_kst(11, 0))
+        today = tm.get_current_kst_time().strftime("%Y%m%d")
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="err"
+        )
+        holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 70000,
+                     "buy_date": today, "qty": 1}]
+
+        signals = await strategy.check_exits(holdings)
+        self.assertEqual(signals, [])
+
+    # ── Range 캐시: 날짜 변경 시 갱신 ────────────────────────────────
+
+    async def test_range_cache_refreshes_on_date_change(self):
+        """날짜가 바뀌면 Range 캐시를 새로 로드한다."""
+        strategy, sqs, tm = self._make_strategy(now_time=_kst(10, 0, "2026-01-15"))
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000,
+            pgtr_ntby_qty=700_000, acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        await strategy.scan()
+        first_call_count = sqs.get_recent_daily_ohlcv.call_count
+
+        # 같은 날: 캐시 재사용
+        await strategy.scan()
+        self.assertEqual(sqs.get_recent_daily_ohlcv.call_count, first_call_count)
+
+        # 날짜 변경 → 캐시 갱신
+        tm.get_current_kst_time.return_value = _kst(10, 0, "2026-01-16")
+        await strategy.scan()
+        self.assertGreater(sqs.get_recent_daily_ohlcv.call_count, first_call_count)
+
+
+if __name__ == "__main__":
+    unittest.main()
