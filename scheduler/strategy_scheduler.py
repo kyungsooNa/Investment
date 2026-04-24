@@ -668,6 +668,78 @@ class StrategyScheduler:
         state = getattr(strategy, "_position_state", None)
         return state if isinstance(state, dict) else {}
 
+    def _persist_strategy_position_state(self, strategy: LiveStrategy):
+        """전략이 제공하는 state 저장 함수를 통해 position_state를 즉시 반영한다."""
+        save_state = getattr(strategy, "_save_state", None)
+        if not callable(save_state):
+            return
+        try:
+            save_state()
+        except Exception as e:
+            self._logger.warning(f"[Scheduler] 전략 state 저장 실패: {strategy.name} - {e}")
+
+    def _has_open_position_evidence(
+        self,
+        strategy_name: str,
+        code: str,
+        *,
+        repo_holdings: Optional[List[dict]] = None,
+    ) -> bool:
+        """가상매매 DB 또는 시그널 이력에 현재 포지션 근거가 남아 있는지 확인한다."""
+        target_code = str(code).strip()
+        holdings = repo_holdings
+        if holdings is None:
+            holdings = self._virtual_trade_service.get_holds_by_strategy(strategy_name) or []
+
+        for hold in holdings:
+            if str(hold.get("code", "")).strip() == target_code:
+                return True
+
+        return (
+            self._get_signal_net_qty(strategy_name, target_code, only_success=True) > 0
+            or self._get_signal_net_qty(strategy_name, target_code, only_success=False) > 0
+        )
+
+    def _prune_disabled_force_exit_state(
+        self,
+        cfg: StrategySchedulerConfig,
+        *,
+        repo_holdings: Optional[List[dict]] = None,
+    ) -> bool:
+        """비활성 force-exit 전략에 남은 stale position_state를 정리한다."""
+        if cfg.enabled or not cfg.force_exit_on_close:
+            return False
+
+        position_state = self._get_strategy_position_state(cfg.strategy)
+        if not position_state:
+            return False
+
+        stale_codes: List[str] = []
+        for raw_code in list(position_state.keys()):
+            norm_code = str(raw_code).strip()
+            if not norm_code or not self._is_valid_strategy_code(norm_code):
+                stale_codes.append(raw_code)
+                continue
+            if self._has_open_position_evidence(
+                cfg.strategy.name,
+                norm_code,
+                repo_holdings=repo_holdings,
+            ):
+                continue
+            stale_codes.append(raw_code)
+
+        if not stale_codes:
+            return False
+
+        for raw_code in stale_codes:
+            position_state.pop(raw_code, None)
+
+        self._persist_strategy_position_state(cfg.strategy)
+        self._logger.warning(
+            f"[Scheduler] stale position_state cleared: strategy={cfg.strategy.name}, codes={stale_codes}"
+        )
+        return True
+
     def _build_strategy_state_holding(
         self,
         strategy_name: str,
@@ -727,7 +799,9 @@ class StrategyScheduler:
             if code:
                 merged[code] = dict(hold)
 
-        for code, state in self._get_strategy_position_state(cfg.strategy).items():
+        self._prune_disabled_force_exit_state(cfg, repo_holdings=repo_holdings)
+
+        for code, state in list(self._get_strategy_position_state(cfg.strategy).items()):
             norm_code = str(code).strip()
             if not norm_code:
                 continue
@@ -849,6 +923,7 @@ class StrategyScheduler:
             enabled_names = state.get("enabled_strategies", [])
             saved_positions = state.get("current_positions", [])
             strategy_configs = state.get("strategy_configs", {})
+            stale_state_cleared = False
 
             if saved_positions:
                 self._logger.info(
@@ -864,11 +939,16 @@ class StrategyScheduler:
                 if cfg.strategy.name in enabled_names:
                     cfg.enabled = True
                     restored.append(cfg.strategy.name)
+                elif self._prune_disabled_force_exit_state(cfg):
+                    stale_state_cleared = True
 
             if restored:
                 self._running = True
                 self._task = asyncio.create_task(self._loop())
                 self._logger.info(f"[Scheduler] 이전 상태 복원 — 자동 시작: {restored}")
+
+            if stale_state_cleared:
+                self._save_scheduler_state()
 
             # 복원된 전략의 가상 보유 종목을 스트리밍 구독에 재등록
             if self._price_sub_svc and restored:

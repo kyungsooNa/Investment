@@ -258,6 +258,67 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(holding["buy_price"], 377500)
         self.assertEqual(holding["buy_date"], "2026-04-24 12:38:34")
 
+    def test_get_status_prunes_disabled_force_exit_strategy_state_without_position_evidence(self):
+        """비활성 당일청산 전략에 DB/신호 근거 없는 state만 남으면 stale로 정리한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="거래량돌파(전통)")
+        strategy._position_state = {
+            "B": SimpleNamespace(breakout_level=1000, peak_price=1100),
+            "010060": SimpleNamespace(breakout_level=326500, peak_price=377500),
+        }
+        strategy._save_state = MagicMock()
+        scheduler.register(StrategySchedulerConfig(
+            strategy=strategy,
+            interval_minutes=1,
+            max_positions=5,
+            enabled=False,
+            force_exit_on_close=True,
+        ))
+        vm.get_holds_by_strategy.return_value = []
+
+        status = scheduler.get_status()
+
+        self.assertEqual(status["strategies"][0]["current_holds"], 0)
+        self.assertEqual(status["strategies"][0]["holdings"], [])
+        self.assertEqual(strategy._position_state, {})
+        strategy._save_state.assert_called_once()
+
+    def test_get_status_keeps_disabled_force_exit_strategy_state_when_signal_evidence_exists(self):
+        """비활성 당일청산 전략이라도 열린 포지션 근거가 있으면 state를 유지한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="거래량돌파(전통)")
+        strategy._position_state = {
+            "010060": SimpleNamespace(breakout_level=326500, peak_price=377500),
+        }
+        strategy._save_state = MagicMock()
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="거래량돌파(전통)",
+                code="010060",
+                name="OCI홀딩스",
+                action="BUY",
+                price=377500,
+                qty=1,
+                reason="test",
+                timestamp="2026-04-24 12:38:34",
+                api_success=True,
+            )
+        ]
+        scheduler.register(StrategySchedulerConfig(
+            strategy=strategy,
+            interval_minutes=1,
+            max_positions=5,
+            enabled=False,
+            force_exit_on_close=True,
+        ))
+        vm.get_holds_by_strategy.return_value = []
+
+        status = scheduler.get_status()
+
+        self.assertEqual(status["strategies"][0]["current_holds"], 1)
+        self.assertEqual(status["strategies"][0]["holdings"][0]["code"], "010060")
+        strategy._save_state.assert_not_called()
+
     def test_get_status_empty(self):
         """전략 미등록 상태에서 get_status 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
