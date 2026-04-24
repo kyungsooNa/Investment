@@ -857,6 +857,25 @@ def test_get_strategy_return_history_and_all_strategies_empty_paths(virutal_trad
     assert virutal_trade_repository.get_all_strategies() == []
 
 
+def test_get_strategy_return_history_skips_leading_empty_dates_in_repository(virutal_trade_repository):
+    """repository history도 첫 실제 snapshot 이전 날짜를 포함하지 않는다."""
+    virutal_trade_repository._save_data({
+        "daily": {
+            "2025-03-25": {"OldStrategy": -1.0},
+            "2025-03-26": {"OldStrategy": -0.5},
+            "2025-04-24": {"TodayStrategy": 0.0},
+            "2025-04-25": {"TodayStrategy": 1.2},
+        },
+        "prev_values": {}
+    })
+    virutal_trade_repository._cached_data = None
+
+    assert virutal_trade_repository.get_strategy_return_history("TodayStrategy") == [
+        {"date": "2025-04-24", "return_rate": 0.0},
+        {"date": "2025-04-25", "return_rate": 1.2},
+    ]
+
+
 def test_migrate_legacy_data_handles_failures(tmp_path):
     """레거시 마이그레이션 중 일부 파일 실패가 나도 나머지는 진행한다."""
     db_dir = tmp_path / "data" / "VirtualTradeRepository"

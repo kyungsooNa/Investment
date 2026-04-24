@@ -87,6 +87,27 @@ def _get_trading_dates(daily: dict) -> list[str]:
     return trading
 
 
+def _build_strategy_return_history(daily: dict, strategy_name: str) -> list[dict]:
+    if not daily:
+        return []
+
+    df = pd.DataFrame.from_dict(daily, orient='index')
+    if strategy_name not in df.columns:
+        return []
+
+    series = df[strategy_name].sort_index()
+    first_valid = series.first_valid_index()
+    if first_valid is None:
+        return []
+
+    series = series.loc[first_valid:].ffill()
+    return [
+        {"date": date, "return_rate": float(val)}
+        for date, val in series.items()
+        if _is_weekday(date) and pd.notna(val)
+    ]
+
+
 class VirtualTradeRepository:
     def __init__(self, db_path: str = "data/VirtualTradeRepository/virtual_trade.db", market_clock: MarketClock = None):
         self._cached_data = None
@@ -920,15 +941,7 @@ class VirtualTradeRepository:
     def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
         data = self._load_data()
         daily = data.get("daily", {})
-        if not daily:
-            return []
-
-        df = pd.DataFrame.from_dict(daily, orient='index')
-        if strategy_name not in df.columns:
-            return []
-
-        series = df[strategy_name].sort_index().ffill().fillna(0.0)
-        return [{"date": date, "return_rate": float(val)} for date, val in series.items() if _is_weekday(date)]
+        return _build_strategy_return_history(daily, strategy_name)
 
     def get_all_strategies(self) -> list[str]:
         data = self._load_data()
