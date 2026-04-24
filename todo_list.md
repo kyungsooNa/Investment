@@ -73,20 +73,6 @@
     - `services/indicator_service.py`
     - 필요 시 신규 유틸 모듈
 
-- [ ] 주문 추적용 Trace ID 파이프라인 구축
-  - 목표: 신호 생성부터 주문 전송, 체결, 취소, 알림까지 하나의 ID로 추적 가능하게 만든다.
-  - 대상:
-    - `core/loggers/app_logger.py`
-    - `core/loggers/json_formatter.py`
-    - `services/order_execution_service.py`
-    - `scheduler/strategy_scheduler.py`
-
-- [ ] 모의투자 기록에 실제 전략의 매매 기록과 sync가 안맞는 버그 존재
-  - 4.24에 오닐PP/BGU	한화비전(489790), 오닐스퀴즈돌파	코리아써키트(007810), 하이타이트플래그	코리아써키트(007810), 첫눌림목	SNT에너지(100840), 오닐PP/BGU	SNT에너지(100840)	등 존재하는 기록이 있지만 반영안되어있음.
-  - 대상:
-    - `repositories/virtual_trade_repository.py`
-    - `services/virtual_trade_service.py`
-    - `view/web/routes/virtual.py`
 ---
 
 ## Tier 2. 구조 안정화 / 유지보수성
