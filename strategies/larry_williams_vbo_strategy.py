@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import time
 from typing import Dict, List, Optional
 
 from common.types import ErrorCode, TradeSignal
@@ -12,11 +12,8 @@ from interfaces.live_strategy import LiveStrategy
 from services.stock_query_service import StockQueryService
 from strategies.base_strategy_config import BaseStrategyConfig
 
-# 진입 가능 시간대: 09:10 ~ 14:00
 _ENTRY_START = time(9, 10)
 _ENTRY_CUTOFF = time(14, 0)
-
-# EOD 강제 청산 시각: 15:20
 _EOD_FLATTEN = time(15, 20)
 
 
@@ -32,10 +29,11 @@ class LarryWilliamsVBOConfig(BaseStrategyConfig):
 
 
 @dataclass
-class _RangeCache:
-    """전일 고저 Range 종목별 캐시 (장 시작 전 1회 선취)."""
+class _DailyCache:
+    """장 시작 전 1회 선취하는 전일 데이터 캐시."""
     date: str = ""
-    ranges: Dict[str, float] = field(default_factory=dict)  # code -> Range
+    ranges: Dict[str, float] = field(default_factory=dict)    # code -> Range(전일 고저차)
+    avg_5d_tv: Dict[str, float] = field(default_factory=dict) # code -> 5일 평균 거래대금
 
 
 class LarryWilliamsVBOStrategy(LiveStrategy):
@@ -71,7 +69,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
 
         self._bought_today: set[str] = set()
         self._last_date: str = ""
-        self._range_cache = _RangeCache()
+        self._cache = _DailyCache()
 
     @property
     def name(self) -> str:
@@ -92,7 +90,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             self._bought_today.clear()
             self._last_date = today
 
-        # 1) 진입 시간대 가드
+        # 1) 진입 시간대 가드 (09:10 ~ 14:00)
         current_time = now.time()
         if not (_ENTRY_START <= current_time <= _ENTRY_CUTOFF):
             self._logger.info({"event": "scan_skipped", "reason": f"진입 시간대 외 ({current_time})"})
@@ -104,8 +102,8 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             return signals
         self._logger.info({"event": "pool_b_loaded", "count": len(candidates)})
 
-        # 3) Range 캐시 갱신 (당일 1회)
-        await self._refresh_range_cache(today, [c.get("code", "") for c in candidates])
+        # 3) 전일 Range / 5일 평균 거래대금 캐시 갱신 (당일 1회)
+        await self._refresh_daily_cache(today, [c.get("code", "") for c in candidates if c.get("code")])
 
         for stock in candidates:
             code: str = stock.get("code", "")
@@ -118,11 +116,11 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 continue
 
             try:
-                # 4a) 유동성·규모 필터
-                if not await self._passes_validity_filter(code, stock, log_data):
+                # 4) 유동성·규모 필터 (시총, 5일 평균 거래대금)
+                if not self._passes_validity_filter(code, stock, log_data):
                     continue
 
-                # 4b) 현재가/시가 조회
+                # 5) 현재가/시가 조회
                 price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     log_data["reason"] = "현재가 조회 실패"
@@ -137,10 +135,10 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
 
-                # 5) Target = Open + Range × K
-                rng = self._range_cache.ranges.get(code, 0.0)
+                # 6) Target = Open + Range × K
+                rng = self._cache.ranges.get(code, 0.0)
                 if rng <= 0:
-                    log_data["reason"] = "Range 미확보"
+                    log_data["reason"] = "Range 미확보 (전일 일봉 조회 실패)"
                     self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
 
@@ -152,30 +150,38 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
 
-                # 6) 스냅샷 체결강도 필터
-                if not self._passes_confidence_filter(data, log_data):
+                # 7) 스냅샷 체결강도 >= 120%
+                cgld = await self._get_execution_strength(code)
+                log_data["execution_strength"] = cgld
+                if cgld < self._cfg.confidence_threshold:
+                    log_data["reason"] = f"체결강도({cgld:.1f}%) < {self._cfg.confidence_threshold}%"
+                    self._logger.info({"event": "candidate_rejected", **log_data})
                     continue
 
-                # 7) 프로그램 순매수 필터
+                # 8) 프로그램 순매수 >= 거래대금 × 10% AND 양수(+)
                 if not self._passes_program_buy_filter(data, log_data):
                     continue
 
                 # BUY 신호 생성
                 reason = (
-                    f"VBO돌파: 시가({open_price:,})+Range({rng:.0f})×K({self._cfg.k_value})"
-                    f"=Target({round(target):,}) / 현재가({current:,})"
+                    f"VBO돌파: Open({open_price:,})+Range({rng:.0f})×K{self._cfg.k_value}"
+                    f"=Target({round(target):,}) / 현재({current:,}) / 체결강도({cgld:.1f}%)"
                 )
                 signals.append(TradeSignal(
                     code=code, name=name, action="BUY", price=current, qty=1,
                     reason=reason, strategy_name=self.name,
                 ))
                 self._bought_today.add(code)
-                self._logger.info({"event": "buy_signal_generated", "strategy_name": self.name,
-                                   "code": code, "name": name, "price": current, "reason": reason})
+                self._logger.info({
+                    "event": "buy_signal_generated", "strategy_name": self.name,
+                    "code": code, "name": name, "price": current, "reason": reason,
+                })
 
             except Exception as e:
-                self._logger.error({"event": "scan_error", "strategy_name": self.name,
-                                    "code": code, "error": str(e)}, exc_info=True)
+                self._logger.error({
+                    "event": "scan_error", "strategy_name": self.name,
+                    "code": code, "error": str(e),
+                }, exc_info=True)
 
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
@@ -188,8 +194,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         signals: List[TradeSignal] = []
         now = self._tm.get_current_kst_time()
         today = now.strftime("%Y%m%d")
-        current_time = now.time()
-        is_eod = current_time >= _EOD_FLATTEN
+        is_eod = now.time() >= _EOD_FLATTEN
         self._logger.info({"event": "check_exits_started", "holdings_count": len(holdings), "is_eod": is_eod})
 
         for hold in holdings:
@@ -205,7 +210,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
 
             try:
-                # 오버나이트 방어: 전일 매수건 즉시 청산
+                # 오버나이트 방어: 매수일 ≠ 오늘이면 즉시 시장가 청산
                 if buy_date and buy_date != today:
                     qty = int(hold.get("qty", 1))
                     reason = f"오버나이트방어: 매수일({buy_date}) ≠ 오늘({today})"
@@ -238,7 +243,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     reason = f"칼손절: 매수가대비 {pnl_pct:.1f}%"
                     should_sell = True
 
-                # EOD 강제 청산: 15:20
+                # EOD 강제청산: 15:20
                 if not should_sell and is_eod:
                     reason = f"EOD청산: {_EOD_FLATTEN.strftime('%H:%M')} 전량 시장가"
                     should_sell = True
@@ -267,61 +272,139 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
     # ------------------------------------------------------------------
 
     async def _load_pool_b(self) -> List[dict]:
-        """Pool B(당일 거래대금 급등주)를 반환한다.
+        """Pool B(당일 거래대금 급등주 30종목) 로드.
 
-        TODO: OneilUniverseService 의존성을 주입받아 get_pool_b() 호출로 교체.
-              현재는 StockQueryService.get_top_trading_value_stocks() 로 대체.
+        TODO: OneilUniverseService 의존성 주입 후 get_pool_b() 로 교체.
         """
         resp = await self._sqs.get_top_trading_value_stocks()
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning({"event": "pool_b_load_failed"})
             return []
-        raw = resp.data or []
         result = []
-        for item in raw:
+        for item in (resp.data or []):
             code = item.get("mksc_shrn_iscd") or item.get("stck_shrn_iscd") or ""
             if code:
-                result.append({"code": code, "name": item.get("hts_kor_isnm", code), "_raw": item})
+                result.append({
+                    "code": code,
+                    "name": item.get("hts_kor_isnm", code),
+                    "stck_avls": item.get("stck_avls", "0"),  # 시가총액
+                    "_raw": item,
+                })
         return result
 
-    async def _refresh_range_cache(self, today: str, codes: List[str]) -> None:
-        """전일 고저 Range를 종목별로 선취하여 캐시에 저장한다.
+    async def _refresh_daily_cache(self, today: str, codes: List[str]) -> None:
+        """전일 Range 및 5일 평균 거래대금을 일봉 API로 선취하여 캐시에 저장한다.
 
-        TODO: stock_query_service 의 일봉 조회 API(get_daily_ohlcv 등)로
-              각 종목의 전일 high/low를 가져와 range_cache.ranges[code] 에 기록.
-              현재는 placeholder — scan() 에서 Range 미확보로 처리됨.
+        get_recent_daily_ohlcv(limit=5) 반환:
+          rows[0] = 가장 최근 완성된 일봉(장중에는 전일)
+          각 row: {date, open, high, low, close, volume}
         """
-        if self._range_cache.date == today:
+        if self._cache.date == today:
             return
-        self._range_cache.date = today
-        self._range_cache.ranges.clear()
-        # TODO: 일봉 API로 전일 고저 조회 후 self._range_cache.ranges[code] = high - low 저장
+        self._cache.date = today
+        self._cache.ranges.clear()
+        self._cache.avg_5d_tv.clear()
 
-    async def _passes_validity_filter(self, code: str, stock: dict, log_data: dict) -> bool:
-        """5일 평균 거래대금 / 시총 유효성 필터.
+        for code in codes:
+            try:
+                resp = await self._sqs.get_recent_daily_ohlcv(code, limit=5)
+                if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                    continue
+                rows: list = resp.data or []
+                if not rows:
+                    continue
 
-        TODO: stock_query_service 에서 5일 평균 거래대금 및 시총을 조회하여 비교.
-              Pool B API 응답에 해당 컬럼이 포함되어 있으면 _raw 에서 직접 파싱.
-        """
-        # TODO: 실제 필터 구현 (현재는 통과)
+                # 전일 Range
+                yesterday = rows[0]
+                high = int(yesterday.get("high", 0) or 0)
+                low = int(yesterday.get("low", 0) or 0)
+                if high > low > 0:
+                    self._cache.ranges[code] = float(high - low)
+
+                # 5일 평균 거래대금 (close × volume)
+                tv_list = [
+                    int(r.get("close", 0) or 0) * int(r.get("volume", 0) or 0)
+                    for r in rows[:5]
+                    if int(r.get("close", 0) or 0) > 0
+                ]
+                if tv_list:
+                    self._cache.avg_5d_tv[code] = sum(tv_list) / len(tv_list)
+
+            except Exception as e:
+                self._logger.warning({"event": "daily_cache_error", "code": code, "error": str(e)})
+
+    def _passes_validity_filter(self, code: str, stock: dict, log_data: dict) -> bool:
+        """시가총액 / 5일 평균 거래대금 필터."""
+        # 시가총액: Pool B 응답의 stck_avls (원 단위 문자열)
+        market_cap = int(stock.get("stck_avls", "0") or "0")
+        if market_cap > 0 and market_cap < self._cfg.min_market_cap:
+            log_data["reason"] = f"시총({market_cap:,}) < {self._cfg.min_market_cap:,}"
+            self._logger.info({"event": "candidate_rejected", **log_data})
+            return False
+
+        # 5일 평균 거래대금
+        avg_5d = self._cache.avg_5d_tv.get(code, 0.0)
+        if avg_5d > 0 and avg_5d < self._cfg.min_5d_trading_value:
+            log_data["reason"] = f"5일평균거래대금({avg_5d:,.0f}) < {self._cfg.min_5d_trading_value:,}"
+            self._logger.info({"event": "candidate_rejected", **log_data})
+            return False
+
         return True
 
-    def _passes_confidence_filter(self, data: dict, log_data: dict) -> bool:
-        """스냅샷 체결강도 120% 이상 확인.
+    async def _get_execution_strength(self, code: str) -> float:
+        """체결강도(%) 스냅샷 1회 조회.
 
-        data: handle_get_current_stock_price 응답의 .data dict.
-        체결강도 필드명: TODO — API 응답 필드 확인 후 키 지정.
+        get_stock_conclusion() → data["output"][0]["tday_rltv"]
         """
-        # TODO: data 에서 체결강도 필드 파싱 후 self._cfg.confidence_threshold 와 비교
-        # 예시: strength = float(data.get("체결강도_키", "0") or "0")
-        #       if strength < self._cfg.confidence_threshold: ...
-        return True
+        try:
+            resp = await self._sqs.get_stock_conclusion(code)
+            if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+                output = resp.data.get("output") if isinstance(resp.data, dict) else None
+                if output and isinstance(output, list) and output:
+                    val = output[0].get("tday_rltv")
+                    return float(val) if val else 0.0
+        except Exception as e:
+            self._logger.warning({"event": "execution_strength_error", "code": code, "error": str(e)})
+        return 0.0
 
     def _passes_program_buy_filter(self, data: dict, log_data: dict) -> bool:
         """프로그램 누적 순매수 >= 거래대금 × 10% AND 양수(+) 확인.
 
-        TODO: 프로그램 순매수 금액 및 거래대금 필드명 확인 후 구현.
-              현재가 API가 해당 필드를 제공하지 않으면 별도 API 호출 필요.
+        ResStockFullInfoApiOutput 필드:
+          pgtr_ntby_qty : 프로그램 순매수 수량 (주, 음수 가능)
+          stck_prpr     : 현재가 (원)
+          acml_tr_pbmn  : 누적 거래대금 (원)
         """
-        # TODO: 프로그램 순매수 / 거래대금 비율 계산 및 양수 여부 확인
+        try:
+            ntby_qty = int(data.get("pgtr_ntby_qty", "0") or "0")
+            prpr = int(data.get("stck_prpr", "0") or data.get("price", "0") or "0")
+            acml_tv = int(data.get("acml_tr_pbmn", "0") or "0")
+
+            if acml_tv <= 0 or prpr <= 0:
+                log_data["reason"] = "프로그램 순매수 계산 불가 (거래대금/현재가 0)"
+                self._logger.info({"event": "candidate_rejected", **log_data})
+                return False
+
+            # 순매수 금액 = 수량 × 현재가 (부호 유지)
+            ntby_amt = ntby_qty * prpr
+            ratio = ntby_amt / acml_tv
+
+            log_data.update({"program_ntby_qty": ntby_qty, "program_ratio": round(ratio * 100, 2)})
+
+            # 양수(+) 조건
+            if ntby_amt <= 0:
+                log_data["reason"] = f"프로그램 순매수 음수 ({ntby_amt:,}원)"
+                self._logger.info({"event": "candidate_rejected", **log_data})
+                return False
+
+            # 거래대금 10% 이상 조건
+            if ratio < self._cfg.program_buy_ratio:
+                log_data["reason"] = f"프로그램비율({ratio*100:.1f}%) < {self._cfg.program_buy_ratio*100:.0f}%"
+                self._logger.info({"event": "candidate_rejected", **log_data})
+                return False
+
+        except Exception as e:
+            self._logger.warning({"event": "program_filter_error", "code": log_data.get("code"), "error": str(e)})
+            return False
+
         return True
