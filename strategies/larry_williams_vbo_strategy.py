@@ -392,9 +392,9 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
           acml_tr_pbmn  : 누적 거래대금 (원)
         """
         try:
-            ntby_qty = int(data.get("pgtr_ntby_qty", "0") or "0")
-            prpr = int(data.get("stck_prpr", "0") or data.get("price", "0") or "0")
-            acml_tv = int(data.get("acml_tr_pbmn", "0") or "0")
+            ntby_qty = int(data.get("pgtr_ntby_qty") or "0")
+            prpr = int(data.get("stck_prpr") or data.get("price") or "0")
+            acml_tv = int(data.get("acml_tr_pbmn") or "0")
 
             if acml_tv <= 0 or prpr <= 0:
                 log_data["reason"] = "프로그램 순매수 계산 불가 (거래대금/현재가 0)"

@@ -5,7 +5,28 @@ from datetime import datetime
 from pytz import timezone
 
 from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy, LarryWilliamsVBOConfig
-from common.types import ResCommonResponse
+from common.types import ResCommonResponse, ResStockFullInfoApiOutput
+
+
+def _price_output(**overrides):
+    data = {name: "0" for name in ResStockFullInfoApiOutput.model_fields}
+    data.update({
+        "stck_prpr": "72000",
+        "stck_oprc": "70000",
+        "stck_hgpr": "73000",
+        "stck_lwpr": "69500",
+        "stck_sdpr": "70000",
+        "prdy_vrss": "2000",
+        "prdy_vrss_sign": "2",
+        "acml_vol": "3000000",
+        "pgtr_ntby_qty": "700000",
+        "acml_tr_pbmn": "50000000000",
+        "hts_avls": "10000",
+        "stck_llam": "10000",
+        "new_hgpr_lwpr_cls_code": "-",
+    })
+    data.update(overrides)
+    return ResStockFullInfoApiOutput.model_validate(data)
 
 
 @pytest.mark.asyncio
@@ -46,21 +67,11 @@ async def test_vbo_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     mock_get_price = mocker.patch.object(
         broker, "get_current_price",
         new_callable=AsyncMock,
-        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data={
-            "output": {
-                "stck_prpr":     "72000",
-                "stck_oprc":     "70000",
-                "stck_hgpr":     "73000",
-                "stck_lwpr":     "69500",
-                "prdy_vrss":     "2000",
-                "prdy_vrss_sign": "2",
-                "acml_vol":      "3000000",
-                "pgtr_ntby_qty": "700000",
-                "acml_tr_pbmn":  "50000000000",
-                "hts_avls":      "10000",
-                "stck_llam":     "10000",
-            }
-        })
+        return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="ok",
+            data={"output": _price_output()},
+        )
     )
 
     # 4. 전일 일봉 API 모킹 (Broker 레벨 — Range 계산용)
