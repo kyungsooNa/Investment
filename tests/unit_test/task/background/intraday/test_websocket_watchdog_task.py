@@ -45,7 +45,7 @@ def mock_deps():
     streaming_service = MagicMock()
     streaming_service.connect_websocket = AsyncMock(return_value=True)
     streaming_service.subscribe_program_trading = AsyncMock()
-    streaming_service.subscribe_realtime_price = AsyncMock()
+    streaming_service.subscribe_unified_price = AsyncMock()
     streaming_service.disconnect_websocket = AsyncMock()
     streaming_service.broker = MagicMock()
     streaming_service.broker.disconnect_websocket = AsyncMock()
@@ -141,7 +141,7 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
 
     assert svc._streaming_service.connect_websocket.call_count == 1
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
-    assert svc._streaming_service.subscribe_realtime_price.call_count == 2
+    assert svc._streaming_service.subscribe_unified_price.call_count == 2
     svc._streaming_logger.log_subscription_recovery_done.assert_called_once()
 
 
@@ -312,7 +312,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
     svc._streaming_service.disconnect_websocket.assert_awaited_once()
     assert svc._streaming_service.connect_websocket.call_count == 1
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
-    assert svc._streaming_service.subscribe_realtime_price.call_count == 2
+    assert svc._streaming_service.subscribe_unified_price.call_count == 2
     svc._streaming_logger.log_force_reconnect_done.assert_called_once_with("manual")
 
 

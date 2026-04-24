@@ -390,6 +390,18 @@ def test_is_subscribed_realtime_price_uses_streaming_stock_repo(streaming_servic
     assert streaming_service.is_subscribed_realtime_price("000660") is False
 
 
+def test_is_subscribed_realtime_price_treats_program_trading_as_price_expected(streaming_service):
+    """프로그램매매 desired만 있어도 PT 누락 판단을 위해 True를 반환한다."""
+    repo = MagicMock()
+    repo.get_desired.side_effect = lambda streaming_type: (
+        set() if streaming_type.name == "UNIFIED_PRICE" else {"005930"}
+    )
+    streaming_service.set_streaming_stock_repo(repo)
+
+    assert streaming_service.is_subscribed_realtime_price("005930") is True
+    assert streaming_service.is_subscribed_realtime_price("000660") is False
+
+
 @pytest.mark.asyncio
 async def test_subscribe_realtime_price_marks_subscription_requested(streaming_service, mock_broker):
     """실시간 가격 구독 전 price stream service에 구독 요청 시각을 기록한다."""

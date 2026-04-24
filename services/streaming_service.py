@@ -356,7 +356,10 @@ class StreamingService:
         if not self._streaming_stock_repo:
             return False
         from repositories.streaming_stock_repo import StreamingType
-        return code in self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE)
+        return (
+            code in self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE)
+            or code in self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)
+        )
 
     # ── REST 조회 ─────────────────────────────────────────────────
 

@@ -331,7 +331,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                         await self._streaming_service.subscribe_program_trading(code)
                         if self._streaming_logger:
                             self._streaming_logger.log_pt_subscribe(code, reason="restore")
-                        await self._streaming_service.subscribe_realtime_price(code)
+                        await self._streaming_service.subscribe_unified_price(code)
                         if self._streaming_logger:
                             self._streaming_logger.log_price_subscribe(code, reason="restore")
                         if self._streaming_stock_repo:
