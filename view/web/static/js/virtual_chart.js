@@ -25,6 +25,8 @@ function getStrategyColor(name) {
 
 const chartDataCache = new Map();
 const chartDataPromiseCache = new Map();
+const CHART_LIBRARY_WAIT_MS = 5000;
+const CHART_LIBRARY_RETRY_MS = 50;
 
 function getChartSelectionKey(selectedStrategies) {
     if (!selectedStrategies || selectedStrategies.includes('ALL')) {
@@ -71,9 +73,28 @@ async function getChartData(selectedStrategies) {
     return chartDataPromiseCache.get(cacheKey);
 }
 
+function isChartLibraryReady() {
+    return typeof window.Chart === 'function';
+}
+
+async function waitForChartLibrary(timeoutMs = CHART_LIBRARY_WAIT_MS) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (isChartLibraryReady()) {
+            return;
+        }
+        await new Promise(resolve => setTimeout(resolve, CHART_LIBRARY_RETRY_MS));
+    }
+    throw new Error('Chart.js library not loaded');
+}
+
 async function initVirtualChart() {
+    if (yieldChart) return yieldChart;
+
     const canvas = document.getElementById('virtualYieldChart');
     if (!canvas) return;
+
+    await waitForChartLibrary();
 
     const ctx = canvas.getContext('2d');
     yieldChart = new Chart(ctx, {
@@ -253,11 +274,17 @@ window.refreshVirtualChart = async function(selectedStrategies) {
     if (!selectedStrategies) selectedStrategies = ['ALL'];
 
     if (!yieldChart) {
-        if (!chartInitPromise) {
-            chartInitPromise = initVirtualChart();
+        try {
+            if (!chartInitPromise) {
+                chartInitPromise = initVirtualChart();
+            }
+            await chartInitPromise;
+            if (!yieldChart) return;
+        } catch (error) {
+            chartInitPromise = null;
+            console.error('[VirtualChart] init failed:', error);
+            return;
         }
-        await chartInitPromise;
-        if (!yieldChart) return;
     }
 
     try {
