@@ -325,6 +325,60 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         signals = await strategy.check_exits(holdings)
         self.assertEqual(signals, [])
 
+    # ── universe_service 경로 ──────────────────────────────────────────
+
+    async def test_scan_uses_universe_service_when_provided(self):
+        """universe_service가 주어지면 get_watchlist()를 사용하고 fallback API는 호출하지 않는다."""
+        sqs = MagicMock(spec=StockQueryService)
+        sqs.get_top_trading_value_stocks = AsyncMock()
+        sqs.get_recent_daily_ohlcv = AsyncMock()
+        sqs.handle_get_current_stock_price = AsyncMock()
+        sqs.get_stock_conclusion = AsyncMock()
+
+        tm = MagicMock()
+        tm.get_current_kst_time.return_value = _kst(10, 0)
+
+        # OSBWatchlistItem 흉내 (MagicMock)
+        item = MagicMock()
+        item.code = "005930"
+        item.name = "삼성전자"
+        item.market_cap = 300_000_000_000   # 3,000억 → 필터 통과
+        item.avg_trading_value_5d = 200_000_000_000  # 2,000억 → 필터 통과
+
+        universe = MagicMock()
+        universe.get_watchlist = AsyncMock(return_value={"005930": item})
+
+        config = LarryWilliamsVBOConfig(
+            k_value=0.5,
+            min_market_cap=200_000_000_000,
+            min_5d_trading_value=100_000_000_000,
+            confidence_threshold=120.0,
+            program_buy_ratio=0.10,
+            stop_loss_pct=-3.0,
+        )
+        strategy = LarryWilliamsVBOStrategy(
+            stock_query_service=sqs,
+            market_clock=tm,
+            universe_service=universe,
+            config=config,
+            logger=MagicMock(),
+        )
+
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000,
+            pgtr_ntby_qty=700_000, acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        signals = await strategy.scan()
+
+        universe.get_watchlist.assert_called_once()
+        sqs.get_top_trading_value_stocks.assert_not_called()   # fallback 미사용
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].code, "005930")
+        self.assertEqual(signals[0].action, "BUY")
+
     # ── Range 캐시: 날짜 변경 시 갱신 ────────────────────────────────
 
     async def test_range_cache_refreshes_on_date_change(self):

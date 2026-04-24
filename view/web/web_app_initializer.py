@@ -771,6 +771,7 @@ class WebAppContext:
         vbo_strategy = LarryWilliamsVBOStrategy(
             stock_query_service=self.stock_query_service,
             market_clock=self.market_clock,
+            universe_service=self.oneil_universe_service,
             logger=get_strategy_logger('LarryWilliamsVBO'),
         )
         self.scheduler.register(StrategySchedulerConfig(
