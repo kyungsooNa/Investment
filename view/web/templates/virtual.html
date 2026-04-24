@@ -70,6 +70,10 @@
 <script src="/static/js/stock.js?v=1"></script>
 <script src="/static/js/virtual.js?v=1"></script>
 <script>
-    loadVirtualHistory();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => loadVirtualHistory(), { once: true });
+    } else {
+        loadVirtualHistory();
+    }
 </script>
 {% endblock %}
