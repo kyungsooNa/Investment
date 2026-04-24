@@ -138,6 +138,44 @@ async def test_get_strategy_chart_all_and_failure(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_strategy_chart_selected_strategies_use_selected_date_range(web_client, mock_web_ctx):
+    """선택 전략 조합 차트는 선택 전략들의 실제 시작일 기준으로 benchmark를 계산한다."""
+    history_map = {
+        "OldStrategy": [{"date": "2025-03-25", "return_rate": 1.0}],
+        "StrategyB": [{"date": "2025-04-24", "return_rate": 0.5}],
+        "StrategyC": [
+            {"date": "2025-04-24", "return_rate": -0.2},
+            {"date": "2025-04-25", "return_rate": 0.1},
+        ],
+    }
+    mock_web_ctx.virtual_trade_service.get_all_strategies.return_value = list(history_map.keys())
+    mock_web_ctx.virtual_trade_service.get_strategy_return_history.side_effect = lambda name: history_map[name]
+    mock_web_ctx.stock_query_service.get_ohlcv_range = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="Success",
+            data=[
+                {"date": "20250424", "close": 30000},
+                {"date": "20250425", "close": 30300},
+            ],
+        )
+    )
+
+    response = web_client.get("/api/virtual/chart/ALL?strategies=StrategyB,StrategyC")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data["histories"].keys()) == {"StrategyB", "StrategyC"}
+    assert "ALL" not in data["histories"]
+    assert [item["date"] for item in data["benchmarks"]["KOSPI200"]] == ["2025-04-24", "2025-04-25"]
+
+    calls = mock_web_ctx.stock_query_service.get_ohlcv_range.await_args_list
+    assert len(calls) == 2
+    assert all(call.kwargs["start_date"] == "20250424" for call in calls)
+    assert all(call.kwargs["end_date"] == "20250425" for call in calls)
+
+
+@pytest.mark.asyncio
 async def test_calculate_benchmark_zero_base_price(web_client, mock_web_ctx):
     """_calculate_benchmark 기준가 0일 때 테스트"""
     mock_web_ctx.virtual_trade_service.get_all_strategies.return_value = ["StratA"]

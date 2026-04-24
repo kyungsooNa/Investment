@@ -23,7 +23,53 @@ function getStrategyColor(name) {
     return strategyColorMap[name];
 }
 
-let cachedAllChartData = null;
+const chartDataCache = new Map();
+const chartDataPromiseCache = new Map();
+
+function getChartSelectionKey(selectedStrategies) {
+    if (!selectedStrategies || selectedStrategies.includes('ALL')) {
+        return 'ALL';
+    }
+    return [...selectedStrategies].sort().join('|');
+}
+
+function buildChartDataUrl(selectedStrategies) {
+    if (!selectedStrategies || selectedStrategies.includes('ALL')) {
+        return '/api/virtual/chart/ALL';
+    }
+    const sortedStrategies = [...selectedStrategies].sort();
+    const params = new URLSearchParams({
+        strategies: sortedStrategies.join(',')
+    });
+    return `/api/virtual/chart/ALL?${params.toString()}`;
+}
+
+async function getChartData(selectedStrategies) {
+    const cacheKey = getChartSelectionKey(selectedStrategies);
+    if (chartDataCache.has(cacheKey)) {
+        return chartDataCache.get(cacheKey);
+    }
+    if (!chartDataPromiseCache.has(cacheKey)) {
+        const pendingRequest = fetch(buildChartDataUrl(selectedStrategies))
+            .then(async response => {
+                if (!response.ok) {
+                    throw new Error(`Chart API ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                chartDataCache.set(cacheKey, data);
+                chartDataPromiseCache.delete(cacheKey);
+                return data;
+            })
+            .catch(error => {
+                chartDataPromiseCache.delete(cacheKey);
+                throw error;
+            });
+        chartDataPromiseCache.set(cacheKey, pendingRequest);
+    }
+    return chartDataPromiseCache.get(cacheKey);
+}
 
 async function initVirtualChart() {
     const canvas = document.getElementById('virtualYieldChart');
@@ -36,6 +82,7 @@ async function initVirtualChart() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            animation: false,
             scales: {
                 x: {
                     grid: {
@@ -214,12 +261,7 @@ window.refreshVirtualChart = async function(selectedStrategies) {
     }
 
     try {
-        if (!cachedAllChartData) {
-            const response = await fetch('/api/virtual/chart/ALL');
-            cachedAllChartData = await response.json();
-        }
-
-        const data = cachedAllChartData;
+        const data = await getChartData(selectedStrategies);
         if (!data.histories || Object.keys(data.histories).length === 0) return;
 
         const allHistories = data.histories;
@@ -327,7 +369,14 @@ window.refreshVirtualChart = async function(selectedStrategies) {
 }
 
 window.invalidateVirtualChartCache = function() {
-    cachedAllChartData = null;
+    chartDataCache.clear();
+    chartDataPromiseCache.clear();
+}
+
+window.prefetchVirtualChart = function(selectedStrategies) {
+    return getChartData(selectedStrategies).catch(error => {
+        console.error('[VirtualChart] prefetch failed:', error);
+    });
 }
 
 document.addEventListener('DOMContentLoaded', initVirtualChart);
@@ -338,6 +387,6 @@ document.addEventListener('pjax:ready', async (e) => {
     // Pjax 클린업에서 destroy된 인스턴스 → null 리셋 후 재초기화
     yieldChart = null;
     chartInitPromise = null;
-    cachedAllChartData = null;
+    window.invalidateVirtualChartCache();
     await initVirtualChart();
 });

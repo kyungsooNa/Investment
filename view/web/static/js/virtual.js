@@ -65,6 +65,16 @@ async function loadVirtualHistory(forceCode = null) {
 
         if (params.length > 0) url += '?' + params.join('&');
 
+        const selectedArray = selectedVirtualStrategies.has('ALL')
+            ? ['ALL']
+            : [...selectedVirtualStrategies];
+        if (typeof invalidateVirtualChartCache === 'function') {
+            invalidateVirtualChartCache();
+        }
+        if (typeof prefetchVirtualChart === 'function') {
+            prefetchVirtualChart(selectedArray);
+        }
+
         const listRes = await fetchWithTimeout(url, {}, 30000);
         console.log('[Virtual] response status:', listRes.status);
         if (listRes.ok) {
